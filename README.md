@@ -5,15 +5,18 @@ mesh, no shipped assets, no third-party model licences. The engine-agnostic half
 of the pair; [`bevy_symbios_avatar`] binds it to Bevy.
 
 ```text
-Skeleton  ──►  control cage  ──►  Catmull-Clark  ──►  render mesh
-(capsules)     (quad-dominant)    (smooth, all-quad)
+Record  ──►  Skeleton  ──►  control cage  ──►  Catmull-Clark  ──►  render mesh
+(9 axes)     (capsules)     (quad-dominant)    (smooth, all-quad)
 ```
 
 ```rust
-use symbios_avatar::{CageConfig, build_cage, catmull_clark, demo};
+use symbios_avatar::{AvatarRecord, CageConfig, build_cage, catmull_clark};
 
-let skeleton = demo::humanoid();
-let cage = build_cage(&skeleton, &CageConfig::default())?;
+// An avatar is a small parametric record, not a mesh.
+let mut record = AvatarRecord::default();
+record.reroll(42);
+
+let cage = build_cage(&record.skeleton(), &CageConfig::default())?;
 let body = catmull_clark(&cage, 2);
 
 assert!(body.is_closed_manifold());
@@ -23,16 +26,50 @@ assert_eq!(body.quad_fraction(), 1.0);
 
 ## What it does
 
-- **Skeleton in, watertight body out.** A graph of key balls — position and
-  radius — becomes a closed, quad-dominant control cage with edge loops running
-  the way a deforming character needs them.
+- **A body is a record, not a mesh.** Nine semantic axes for a biped, eight for a
+  quadruped, in a few hundred bytes. Geometry is derived on demand, so the avatar
+  belongs to the identity rather than to whichever app rendered it.
+- **Every point of the space is a body.** Procedural character systems classically
+  fail when sliders reach shapes that cannot be built. The constraints live in the
+  body plans, and a sweep over 3,000 random bodies plus every axis extreme holds
+  them honest.
 - **Humanoids and creatures on one engine.** Only the graph differs; a pelvis
   carrying two legs and a quadruped girdle carrying four are the same code path.
-- **Deterministic.** The same skeleton always yields the same vertex layout, so
-  a record round-trips to identical geometry and caches stay valid.
+- **Deterministic.** The same record always yields the same vertex layout, so
+  geometry caches stay valid and a look reproduces exactly.
 - **Honest failures.** When a joint is too crowded to mesh, the error names the
   limbs and the distance shortfall, because the fix is nearly always to widen a
   joint or lengthen a bone rather than to retune the mesher.
+
+## Records
+
+Avatars live in the owner's AT Protocol repository under
+`network.symbios.avatar.*`, with the published schemas in [`lexicons/`](lexicons).
+Each avatar is its own record — a wardrobe, not a single pinned identity — and
+`network.symbios.avatar.profile` names the default.
+
+Two consequences of the protocol shape the record and are worth knowing before
+adding fields:
+
+- **There is no float type.** The data model omits floating point so records have
+  one canonical encoding, so axes are stored as thousandths and lengths as
+  millimetres. Sanitising quantises to match, which is what makes a record equal
+  itself after a round trip.
+- **Records only ever grow.** New fields are optional with `#[serde(default)]`
+  *on the field* — a container-level default silently resets sibling fields when
+  one is missing — and unknown fields are ignored on read.
+
+Re-rolling draws each category (stature, build, frame, proportions, features)
+from its own seed stream, so locking one category never reshuffles another.
+A look also renders as a short share code:
+
+```text
+040S4-27HTV-7YXXG-AT5TY-0
+```
+
+Codes are deliberately lossy — quantised to a byte per axis, checksummed, and
+written in Crockford base32 so `I`/`L`/`O` survive being copied by hand. The
+record remains the source of truth.
 
 ## How joints work
 
@@ -57,8 +94,9 @@ Two degeneracies have to be handled rather than wished away:
 ## Debug tooling
 
 ```text
-cargo run --example dump              # every demo body, cage + 2 subdivisions
-cargo run --example dump -- humanoid  # just one
+cargo run --example dump               # every demo body, cage + 2 subdivisions
+cargo run --example dump -- humanoid   # just one
+cargo run --example dump -- --rolls 8  # eight rerolled avatar records
 ```
 
 Writes OBJ files to `target/dump` (override with `SYMBIOS_AVATAR_DUMP_DIR`) and
@@ -77,8 +115,9 @@ glTF export.
 
 ## Status
 
-Early. The mesher is in place and tested; the parametric record layer, skinning,
-animation, and glTF/VRM export are still ahead — see [`docs/plan.md`](docs/plan.md).
+Early. Records, body plans, and the mesher are in place and tested. Skinning,
+animation, hair and outfits, and glTF/VRM export are still ahead — see
+[`docs/plan.md`](docs/plan.md).
 
 ## Licence
 

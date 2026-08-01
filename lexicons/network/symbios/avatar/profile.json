@@ -1,0 +1,26 @@
+{
+  "lexicon": 1,
+  "id": "network.symbios.avatar.profile",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "An identity's avatar preferences. Avatars live under their own record keys; this record only names which one to wear by default, so replacing or renaming the default does not disturb the avatars themselves.",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "required": ["createdAt"],
+        "properties": {
+          "defaultAvatar": {
+            "type": "string",
+            "description": "Record key of the wardrobe's default avatar within network.symbios.avatar.avatar.",
+            "maxLength": 512
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

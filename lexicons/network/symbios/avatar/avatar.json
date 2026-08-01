@@ -1,0 +1,44 @@
+{
+  "lexicon": 1,
+  "id": "network.symbios.avatar.avatar",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "One parametric avatar in an identity's wardrobe. The record is the source of truth: geometry is derived from these parameters on demand rather than stored, so an avatar is owned by the identity rather than by any application that renders it. Several avatars may exist; network.symbios.avatar.profile names the default.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["name", "archetype", "createdAt"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Display name, as shown in a wardrobe.",
+            "maxLength": 640,
+            "maxGraphemes": 64
+          },
+          "archetype": {
+            "type": "union",
+            "description": "The body this avatar describes. Open: readers that do not recognise a variant should say so rather than substitute another body.",
+            "refs": [
+              "network.symbios.avatar.defs#humanoid",
+              "network.symbios.avatar.defs#quadruped"
+            ]
+          },
+          "seed": {
+            "type": "integer",
+            "description": "Seed of the last re-roll, kept so a look can be reproduced."
+          },
+          "locks": {
+            "type": "integer",
+            "description": "Bitmask of parameter categories a re-roll must leave alone. Bit 0 stature, 1 build, 2 frame, 3 proportions, 4 features. Unknown bits must be preserved on write so a newer client's locks survive an older one editing the record.",
+            "minimum": 0
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

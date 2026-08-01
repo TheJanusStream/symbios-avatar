@@ -1,0 +1,139 @@
+{
+  "lexicon": 1,
+  "id": "network.symbios.avatar.defs",
+  "defs": {
+    "humanoid": {
+      "type": "object",
+      "description": "An upright biped. Axes run -1 to 1 with 0 neutral, unless noted. Every combination of these values is guaranteed to produce a valid body; a reader that clamps out-of-range values to the stated bounds will always be able to build one.",
+      "required": ["height"],
+      "properties": {
+        "height": {
+          "type": "integer",
+          "description": "Standing height in millimetres. Extreme builds may exceed this slightly, since a body that cannot be constructed is worse than one a little off its nominal stature.",
+          "minimum": 1200,
+          "maximum": 2200,
+          "default": 1750
+        },
+        "build": {
+          "type": "integer",
+          "description": "Overall mass, from slight to heavy. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "muscle": {
+          "type": "integer",
+          "description": "Musculature. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0
+        },
+        "shoulderWidth": {
+          "type": "integer",
+          "description": "Width of the shoulder girdle. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "hipWidth": {
+          "type": "integer",
+          "description": "Width of the pelvis. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "limbLength": {
+          "type": "integer",
+          "description": "Limb length relative to the torso. Longer limbs raise the pelvis and so shorten the torso at a fixed stature. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "neckLength": {
+          "type": "integer",
+          "description": "Neck length. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "headSize": {
+          "type": "integer",
+          "description": "Head size. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "extremitySize": {
+          "type": "integer",
+          "description": "Hand and foot size. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        }
+      }
+    },
+    "quadruped": {
+      "type": "object",
+      "description": "A four-legged creature. Axes run -1 to 1 with 0 neutral, unless noted.",
+      "required": ["height"],
+      "properties": {
+        "height": {
+          "type": "integer",
+          "description": "Height of the back line in millimetres.",
+          "minimum": 250,
+          "maximum": 1800,
+          "default": 580
+        },
+        "bodyLength": {
+          "type": "integer",
+          "description": "Body length from shoulder to hip. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "build": {
+          "type": "integer",
+          "description": "Overall mass, from slight to heavy. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "muscle": {
+          "type": "integer",
+          "description": "Musculature. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0
+        },
+        "legLength": {
+          "type": "integer",
+          "description": "Legginess. Longer legs slim the body at a fixed back height. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "neckLength": {
+          "type": "integer",
+          "description": "Neck length. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "headSize": {
+          "type": "integer",
+          "description": "Head size. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "tailLength": {
+          "type": "integer",
+          "description": "Tail length. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        }
+      }
+    }
+  }
+}

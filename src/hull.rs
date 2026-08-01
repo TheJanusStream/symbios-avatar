@@ -15,6 +15,7 @@
 //! incremental hulling with coplanar merging bolted on.
 
 use glam::Vec3;
+use std::collections::HashSet;
 use thiserror::Error;
 
 /// Upper bound on hull input size, keeping the `O(n⁴)` search negligible.
@@ -38,13 +39,13 @@ pub enum HullError {
     /// Every point lies in one plane, so the hull has no volume.
     #[error("all {0} points lie in a single plane, so the hull has no volume")]
     Coplanar(usize),
-}
-
-/// A supporting plane oriented so every input point satisfies `n·p ≤ d`.
-#[derive(Clone, Copy, Debug)]
-struct Plane {
-    normal: Vec3,
-    offset: f32,
+    /// The facets found do not enclose a volume.
+    ///
+    /// Raised when the point set is degenerate enough that the facet search
+    /// cannot resolve it — nearly coincident points, or a hull so squashed that
+    /// neighbouring facets fall inside the working tolerance of each other.
+    #[error("hull facets left {0} unmatched edges, so the surface is not closed")]
+    NotClosed(usize),
 }
 
 /// Computes the convex hull of `points`.
@@ -68,24 +69,108 @@ pub fn convex_hull(points: &[Vec3]) -> Result<Vec<Vec<u32>>, HullError> {
     }
 
     let scale = extent(points).max(1e-6);
-    let eps = 1e-4 * scale;
+    let base_eps = 1e-4 * scale;
 
-    reject_degenerate(points, eps)?;
+    reject_degenerate(points, base_eps)?;
 
-    let planes = supporting_planes(points, eps);
-    let mut faces = Vec::with_capacity(planes.len());
-    for plane in planes {
-        let on_plane: Vec<u32> = points
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| (plane.normal.dot(**p) - plane.offset).abs() <= eps)
-            .map(|(i, _)| i as u32)
-            .collect();
-        if on_plane.len() >= 3 {
-            faces.push(order_ccw(points, &on_plane, plane.normal));
+    // Symmetric bodies produce near-ties — a girdle whose legs sit at exactly
+    // the spine's depth puts four points on a knife edge — and at the base
+    // tolerance those resolve into facets that do not quite meet. Widening the
+    // tolerance merges the near-tie into a single facet, which is the answer the
+    // geometry was reaching for. Retry a few times before giving up, so a
+    // genuinely broken input still fails loudly rather than silently.
+    let mut last = HullError::NotClosed(0);
+    for step in 0..HULL_TOLERANCE_STEPS {
+        let eps = base_eps * 4f32.powi(step);
+        let faces = facets(points, eps);
+        match ensure_closed(&faces) {
+            Ok(()) => return Ok(faces),
+            Err(error) => last = error,
         }
     }
-    Ok(faces)
+    Err(last)
+}
+
+/// How many times the working tolerance is widened before a hull is abandoned.
+const HULL_TOLERANCE_STEPS: i32 = 4;
+
+/// Every facet of the hull, deduplicated by the points it contains.
+///
+/// Deduplicating by *point set* rather than by plane geometry matters: many
+/// triples span the same facet and must collapse to one, but two genuinely
+/// distinct facets can be nearly parallel and nearly coincident on a squashed
+/// hull. An angular tolerance cannot tell those cases apart, and merging them
+/// drops one facet's points, leaving a hole in an otherwise plausible surface.
+/// The point set distinguishes them exactly.
+fn facets(points: &[Vec3], eps: f32) -> Vec<Vec<u32>> {
+    let mut seen: Vec<Vec<u32>> = Vec::new();
+    let mut faces: Vec<Vec<u32>> = Vec::new();
+    let count = points.len();
+
+    for i in 0..count {
+        for j in (i + 1)..count {
+            for k in (j + 1)..count {
+                let normal = (points[j] - points[i]).cross(points[k] - points[i]);
+                let length = normal.length();
+                if length <= eps * eps {
+                    continue;
+                }
+                let normal = normal / length;
+                let offset = normal.dot(points[i]);
+
+                let mut above = false;
+                let mut below = false;
+                for &p in points {
+                    let signed = normal.dot(p) - offset;
+                    above |= signed > eps;
+                    below |= signed < -eps;
+                }
+                // Orient so the surviving side faces outward; a plane the points
+                // straddle cannot support the hull at all.
+                let (normal, offset) = match (above, below) {
+                    (false, _) => (normal, offset),
+                    (_, false) => (-normal, -offset),
+                    _ => continue,
+                };
+
+                let on_plane: Vec<u32> = points
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| (normal.dot(**p) - offset).abs() <= eps)
+                    .map(|(index, _)| index as u32)
+                    .collect();
+                if on_plane.len() < 3 || seen.contains(&on_plane) {
+                    continue;
+                }
+                seen.push(on_plane.clone());
+                faces.push(order_ccw(points, &on_plane, normal));
+            }
+        }
+    }
+
+    faces
+}
+
+/// Fails unless every directed edge is matched by its reverse.
+///
+/// A hull that is not closed means the input was degenerate enough to defeat the
+/// facet search. Returning an error keeps that from surfacing later as a hole in
+/// a body, which is far harder to trace back to its cause.
+fn ensure_closed(faces: &[Vec<u32>]) -> Result<(), HullError> {
+    let mut directed: HashSet<(u32, u32)> = HashSet::new();
+    for face in faces {
+        for corner in 0..face.len() {
+            directed.insert((face[corner], face[(corner + 1) % face.len()]));
+        }
+    }
+    let open = directed
+        .iter()
+        .filter(|&&(a, b)| !directed.contains(&(b, a)))
+        .count();
+    if open > 0 {
+        return Err(HullError::NotClosed(open));
+    }
+    Ok(())
 }
 
 /// Largest side of the axis-aligned bounding box, used to scale epsilons.
@@ -137,55 +222,6 @@ fn reject_degenerate(points: &[Vec3], eps: f32) -> Result<(), HullError> {
     }
 
     Ok(())
-}
-
-/// Every distinct plane that supports the point set, oriented outward.
-fn supporting_planes(points: &[Vec3], eps: f32) -> Vec<Plane> {
-    let mut planes: Vec<Plane> = Vec::new();
-    let count = points.len();
-
-    for i in 0..count {
-        for j in (i + 1)..count {
-            for k in (j + 1)..count {
-                let normal = (points[j] - points[i]).cross(points[k] - points[i]);
-                let length = normal.length();
-                if length <= eps * eps {
-                    continue;
-                }
-                let normal = normal / length;
-                let offset = normal.dot(points[i]);
-
-                let mut above = false;
-                let mut below = false;
-                for &p in points {
-                    let signed = normal.dot(p) - offset;
-                    above |= signed > eps;
-                    below |= signed < -eps;
-                }
-                let plane = match (above, below) {
-                    // Points sit only on the negative side: `normal` faces out.
-                    (false, _) => Plane { normal, offset },
-                    // Only on the positive side: the opposite face is the hull's.
-                    (_, false) => Plane {
-                        normal: -normal,
-                        offset: -offset,
-                    },
-                    // Points straddle the plane, so it cannot support the hull.
-                    _ => continue,
-                };
-                if !planes.iter().any(|seen| same_plane(seen, &plane, eps)) {
-                    planes.push(plane);
-                }
-            }
-        }
-    }
-
-    planes
-}
-
-/// Whether two oriented planes describe the same facet.
-fn same_plane(a: &Plane, b: &Plane, eps: f32) -> bool {
-    a.normal.dot(b.normal) > 0.9999 && (a.offset - b.offset).abs() <= eps
 }
 
 /// Orders a facet's points counter-clockwise about `normal`.

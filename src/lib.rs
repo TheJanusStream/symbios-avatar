@@ -60,12 +60,16 @@ pub mod cage;
 pub mod demo;
 pub mod hull;
 pub mod mesh;
+pub mod plan;
+pub mod record;
 pub mod skeleton;
 pub mod subdiv;
 
 pub use cage::{CageConfig, CageError, build_cage};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
+pub use plan::{Archetype, BodyPlan, Category, HumanoidParams, QuadrupedParams};
+pub use record::{AvatarRecord, LockSet, ProfileRecord, ShareCodeError};
 pub use skeleton::{Limb, Node, NodeKind, Skeleton, SkeletonError};
 pub use subdiv::catmull_clark;
 
