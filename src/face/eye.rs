@@ -164,6 +164,8 @@ pub struct Eyes {
     pub right: Eye,
     /// The joint the pair is parented to.
     pub head: usize,
+    /// The skull's radius, which every landmark on the face is measured in.
+    pub skull: f32,
 }
 
 impl Eyes {
@@ -207,6 +209,7 @@ impl Eyes {
             ),
             right: eye(1.0, Vec3::new(placed.x, placed.y, forward), radius, params),
             head,
+            skull,
         })
     }
 

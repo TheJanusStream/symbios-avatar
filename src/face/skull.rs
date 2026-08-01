@@ -77,13 +77,32 @@ const OCCIPUT: [(f32, f32); 5] = [
     (-0.55, -0.26),
 ];
 
+/// How far the brow ridge stands proud, in skull radii, at each height.
+///
+/// The bone above the eye, not the hair on it. Without it the forehead runs
+/// straight down into the eye socket and the face has no ledge for the eyes to
+/// sit under — which is a large part of why a smooth head reads as a doll.
+const BROW: [(f32, f32); 5] = [
+    (0.58, 0.0),
+    (0.42, 0.018),
+    (0.28, 0.042),
+    (0.14, 0.030),
+    (0.02, 0.0),
+];
+
+/// How far the temples are drawn in, in skull radii, at each height.
+///
+/// The flat at the side of the skull between the brow and the ear. A head
+/// without it is a barrel from every angle above the cheekbone.
+const TEMPLE: [(f32, f32); 4] = [(0.62, 0.0), (0.40, 0.040), (0.14, 0.034), (-0.06, 0.0)];
+
 /// How far the chin and jaw project forward at each height, in skull radii.
 const CHIN: [(f32, f32); 5] = [
     (0.05, 0.0),
-    (-0.20, 0.03),
-    (-0.38, 0.10),
-    (-0.52, 0.13),
-    (-0.62, 0.07),
+    (-0.20, 0.04),
+    (-0.38, 0.15),
+    (-0.52, 0.22),
+    (-0.62, 0.12),
 ];
 
 /// Shapes the head of a built body, in place.
@@ -153,10 +172,18 @@ pub fn reshape(local: Vec3, radius: f32) -> Vec3 {
         * (1.0 + ELONGATION)
         * (1.0 + knot(&OCCIPUT, height) * behind * behind);
 
+    // The chin is a narrow central prominence, so its push falls off much faster
+    // round the jaw than the other terms do. Spread evenly across the front — an
+    // `ahead` squared, as the brow uses — it carries the whole lower face
+    // forward and reads as a muzzle rather than as a chin.
+    let point = ahead * ahead * ahead * ahead;
+    let ledge = knot(&BROW, height) * ahead * ahead;
+    let hollow = knot(&TEMPLE, height) * (local.x / reach) * (local.x / reach);
+
     Vec3::new(
-        local.x * wide,
+        local.x * (wide - hollow),
         local.y,
-        local.z * deep + knot(&CHIN, height) * ahead * ahead * radius,
+        local.z * deep + (knot(&CHIN, height) * point + ledge) * radius,
     )
 }
 

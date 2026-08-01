@@ -66,6 +66,20 @@ const PART_SPREAD: f32 = 0.75;
 const CAP_STEPS: usize = 10;
 const FALL_STEPS: usize = 9;
 
+/// How far a lock's tip is drawn back toward the middle of its clump.
+///
+/// Locks that fall exactly as they were rooted stay parallel all the way down
+/// and read as a comb. Real hair gathers: the cards of a clump spread at the
+/// scalp and converge at the tips, and that convergence is most of what makes a
+/// head of hair read as hair rather than as fringing.
+const CLUMP: f32 = 0.34;
+
+/// How much lock lengths vary either side of their nominal.
+///
+/// Without it every tip lands on the same line and the hair ends in a clean
+/// edge, which nothing on a head does.
+const RAGGED: f32 = 0.16;
+
 /// How far a falling strand may move outward per unit it drops.
 ///
 /// Draping hair leans out; it does not jut. Taking a clearance correction whole
@@ -242,6 +256,9 @@ impl Hair {
                 // which is exactly how it first rendered.
                 let spoke = column as f32 + (row as f32 + 0.5) / ROWS as f32;
                 let azimuth = part_aside(step * spoke, params.part);
+                // Where this lock's clump gathers: the column's own line, which
+                // the rows are staggered either side of.
+                let gathers = part_aside(step * (column as f32 + 0.5), params.part);
                 let hairline = hairline(scalp, azimuth, params.coverage);
                 if hairline >= crown {
                     continue;
@@ -260,13 +277,15 @@ impl Hair {
                 let layer = (ROWS - 1 - row) as f32;
                 let lift = stand + layer * thickness * 1.2;
                 let front = frontness(azimuth);
-                let fall = (reach + (fringe - reach) * front) * (1.0 - 0.15 * row as f32);
+                let ragged = 1.0 + RAGGED * (jitter(column, row) * 2.0 - 1.0);
+                let fall = (reach + (fringe - reach) * front) * (1.0 - 0.15 * row as f32) * ragged;
 
                 let path = sweep(
                     scalp,
                     body,
                     Fall {
                         azimuth,
+                        gathers,
                         root,
                         hairline,
                         stand: lift,
@@ -326,6 +345,8 @@ impl Hair {
 struct Fall {
     /// Which way round the head it is rooted.
     azimuth: f32,
+    /// The line its clump gathers toward as it falls.
+    gathers: f32,
     /// The root's height, in head radii.
     root: f32,
     /// The height its cap phase ends at, in head radii.
@@ -360,6 +381,10 @@ fn sweep(scalp: &Scalp, body: Option<(&Rig, &Surface)>, fall: Fall) -> Vec<Vec3>
 
     let from = *path.last().expect("the cap always has points");
     let radial = Vec3::new(azimuth.sin(), 0.0, azimuth.cos());
+    // Where the tip would hang if the lock belonged to its clump's centre line
+    // rather than to its own spoke.
+    let gathered = Vec3::new(fall.gathers.sin(), 0.0, fall.gathers.cos());
+    let toward = (gathered - radial) * Vec3::new(from.x, 0.0, from.z).length();
     // How far the strand has already leaned out to clear the body. It may grow
     // with the drop but never jump, which is what keeps a drape a drape.
     let mut leaned = 0.0f32;
@@ -370,10 +395,13 @@ fn sweep(scalp: &Scalp, body: Option<(&Rig, &Surface)>, fall: Fall) -> Vec<Vec3>
         // of hanging inside them.
         let flare = 1.0 + 0.22 * along;
         let wave = (along * TAU * 1.6 + fall.phase).sin() * fall.waving * along;
+        // Gathering grows with the fall, so the lock leaves the scalp on its own
+        // spoke and arrives at the clump's.
+        let gather = toward * (CLUMP * along * along);
         let point = Vec3::new(
-            from.x * flare + radial.x * wave,
+            from.x * flare + radial.x * wave + gather.x,
             from.y - fall.fall * along,
-            from.z * flare + radial.z * wave,
+            from.z * flare + radial.z * wave + gather.z,
         );
 
         let placed = match body {
@@ -391,6 +419,17 @@ fn sweep(scalp: &Scalp, body: Option<(&Rig, &Surface)>, fall: Fall) -> Vec<Vec3>
 
     path.dedup_by(|a, b| a.distance_squared(*b) < 1e-10);
     path
+}
+
+/// A settled pseudo-random value in `0..1` for one lock.
+///
+/// Hashed rather than drawn from a generator, so a head of hair is the same
+/// every time it is grown without anything having to carry a seed around.
+fn jitter(column: usize, row: usize) -> f32 {
+    let mixed = (column as u32)
+        .wrapping_mul(73_856_093)
+        .wrapping_add((row as u32).wrapping_mul(19_349_663));
+    f32::from(((mixed >> 7) % 1024) as u16) / 1024.0
 }
 
 /// How much a direction faces the front, from `0` at the back to `1` at the face.

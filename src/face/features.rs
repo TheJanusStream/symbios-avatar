@@ -91,25 +91,29 @@ impl Features {
         let unit = eyes.left.radius;
         let apart = eyes.right.pivot.x.abs();
         let level = eyes.left.pivot.y;
-        // Where the face's surface is, not where the eye's centre is. An eye is
-        // set INTO the head — deliberately, or it bulges like a goggle — so
-        // anything placed at a fraction of the eye's depth ends up buried inside
-        // the skull. The brows and the mouth were, and simply did not appear.
-        let front = eyes.left.pivot.z + unit * 0.42;
+        let skull = eyes.skull;
+
+        // Where the face's surface is AT EACH FEATURE'S OWN HEIGHT. One depth
+        // for the whole face is not enough: the skull carries a brow ridge that
+        // stands proud and a chin that projects further still, so a mouth placed
+        // at the eye line's depth ends up inside the jaw beneath it. That is
+        // exactly what happened when the chin was sharpened.
+        let surface =
+            |height: f32| super::skull::reshape(Vec3::new(0.0, height, skull * 0.60), skull).z;
 
         // Sided features are built once and mirrored. Building each side from
         // its own signed arithmetic looks equivalent and is not: a brow arches
         // from the midline outward, and the expression that says so on the right
         // says the opposite on the left. It also leaves the two halves disagreeing
         // by the width of a segment even when the maths is right.
-        let brow = brow(unit, apart, level, front, params.brow);
+        let brow = brow(unit, apart, level, &surface, params.brow);
         let ear = ear(unit, apart, level, params.ears);
         let flip = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
 
         Self {
-            nose: nose(unit, level, front, params.nose),
+            nose: nose(unit, level, &surface, params.nose),
             brows: vec![brow.transformed(flip), brow],
-            lips: lips(unit, level, front, params.mouth),
+            lips: lips(unit, level, &surface, params.mouth),
             ears: vec![ear.transformed(flip), ear],
             head: eyes.head,
         }
@@ -130,18 +134,34 @@ impl Features {
 ///
 /// Its root is at the eye line, not above it. The bridge starts where the brows
 /// meet — put it higher and the face grows a snout.
-fn nose(unit: f32, level: f32, front: f32, prominence: f32) -> PolyMesh {
+fn nose(unit: f32, level: f32, surface: &dyn Fn(f32) -> f32, prominence: f32) -> PolyMesh {
     let reach = unit * (0.38 + 0.30 * prominence);
     // A third of the face, measured from the brow, puts the base of the nose
     // about one and three quarter eye-radii below the eye line.
     let base = level - unit * 1.85;
 
     let path = [
-        Vec3::new(0.0, level + unit * 0.40, front * 0.90),
-        Vec3::new(0.0, level - unit * 0.55, front * 0.97 + reach * 0.34),
-        Vec3::new(0.0, base + unit * 0.55, front + reach * 0.80),
-        Vec3::new(0.0, base, front * 0.98 + reach * 0.86),
-        Vec3::new(0.0, base - unit * 0.16, front * 0.86 + reach * 0.46),
+        Vec3::new(
+            0.0,
+            level + unit * 0.40,
+            surface(level + unit * 0.40) * 0.94,
+        ),
+        Vec3::new(
+            0.0,
+            level - unit * 0.55,
+            surface(level - unit * 0.55) + reach * 0.34,
+        ),
+        Vec3::new(
+            0.0,
+            base + unit * 0.55,
+            surface(base + unit * 0.55) + reach * 0.80,
+        ),
+        Vec3::new(0.0, base, surface(base) + reach * 0.86),
+        Vec3::new(
+            0.0,
+            base - unit * 0.16,
+            surface(base - unit * 0.16) * 0.92 + reach * 0.46,
+        ),
     ];
     // Narrow at the bridge, widest at the nostrils, and about one eye-width
     // across there.
@@ -159,7 +179,7 @@ fn nose(unit: f32, level: f32, front: f32, prominence: f32) -> PolyMesh {
 }
 
 /// One brow ridge, arching over its eye.
-fn brow(unit: f32, across: f32, level: f32, front: f32, weight: f32) -> PolyMesh {
+fn brow(unit: f32, across: f32, level: f32, surface: &dyn Fn(f32) -> f32, weight: f32) -> PolyMesh {
     let rise = unit * (0.62 + 0.30 * weight);
     let thickness = unit * (0.10 + 0.10 * weight);
     let span = unit * 1.05;
@@ -167,9 +187,17 @@ fn brow(unit: f32, across: f32, level: f32, front: f32, weight: f32) -> PolyMesh
     // Three points: inner end, over the pupil, outer end — the outer end sitting
     // lower and further back, which is the arch.
     let path = [
-        Vec3::new(across - span * 0.85, level + rise * 0.86, front * 0.95),
-        Vec3::new(across, level + rise, front),
-        Vec3::new(across + span * 0.95, level + rise * 0.74, front * 0.80),
+        Vec3::new(
+            across - span * 0.85,
+            level + rise * 0.86,
+            surface(level + rise * 0.86) * 0.95,
+        ),
+        Vec3::new(across, level + rise, surface(level + rise)),
+        Vec3::new(
+            across + span * 0.95,
+            level + rise * 0.74,
+            surface(level + rise * 0.74) * 0.80,
+        ),
     ];
     let sections = [
         Vec2::new(thickness * 0.7, thickness * 0.8),
@@ -183,7 +211,7 @@ fn brow(unit: f32, across: f32, level: f32, front: f32, weight: f32) -> PolyMesh
 ///
 /// Two pieces rather than one: a mouth modelled as a single bar has no line
 /// across it, and the line is the whole feature.
-fn lips(unit: f32, level: f32, front: f32, fullness: f32) -> Vec<PolyMesh> {
+fn lips(unit: f32, level: f32, surface: &dyn Fn(f32) -> f32, fullness: f32) -> Vec<PolyMesh> {
     // Halfway between the base of the nose and the chin, which is where the
     // lower third puts it.
     // A third of the way from the base of the nose down to the chin, which for
@@ -197,11 +225,13 @@ fn lips(unit: f32, level: f32, front: f32, fullness: f32) -> Vec<PolyMesh> {
         .iter()
         .map(|&(up, size)| {
             let lift = plump * up * 0.62;
+            let corner = surface(mouth - plump * 0.30) * 0.80;
+            let middle = surface(mouth + lift) * 0.99;
             let path = [
-                Vec3::new(-half, mouth - plump * 0.30, front * 0.72),
-                Vec3::new(-half * 0.35, mouth + lift, front * 0.90),
-                Vec3::new(half * 0.35, mouth + lift, front * 0.90),
-                Vec3::new(half, mouth - plump * 0.30, front * 0.72),
+                Vec3::new(-half, mouth - plump * 0.30, corner),
+                Vec3::new(-half * 0.35, mouth + lift, middle),
+                Vec3::new(half * 0.35, mouth + lift, middle),
+                Vec3::new(half, mouth - plump * 0.30, corner),
             ];
             let sections = [
                 Vec2::new(plump * 0.30, plump * 0.45),

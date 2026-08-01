@@ -134,7 +134,12 @@ impl BodyPlan for HumanoidParams {
         let waist_r = h * 0.078 * girth;
         let chest_r = h * 0.088 * girth * (1.0 + 0.08 * self.shoulder_width);
         let girdle_r = h * 0.062 * girth * (1.0 + 0.06 * self.shoulder_width);
-        let neck_r = h * 0.046 * girth;
+        // A neck is a good deal narrower than the skull above it. At the old
+        // figure it measured WIDER than the head — 0.098 m against 0.093 — which
+        // reads as a tree trunk and, worse, swallows the jaw: the chin is shaped
+        // and narrows properly, but a neck two and a half times its width leaves
+        // nothing of it to see.
+        let neck_r = h * 0.038 * girth;
         let head_r = h * 0.075 * (1.0 + 0.25 * self.head_size);
 
         let ankle_y = h * 0.0686;
@@ -159,8 +164,11 @@ impl BodyPlan for HumanoidParams {
         // The neck above it is a plain connector and constrains nothing — an
         // earlier floor here was invented rather than required, and it alone
         // added half a head-height of giraffe.
-        let neck_y = girdle_y + (h * 0.05 * (1.0 + 0.3 * self.neck_length)).max(girdle_r * 1.05);
-        let head_y = neck_y + (h * 0.05).max(head_r * 0.45);
+        // The neck has to clear the girdle's socket, but the floor was doing all
+        // the work: a neck sitting exactly as high as the sockets allow leaves
+        // barely any column between the collar and the jaw.
+        let neck_y = girdle_y + (h * 0.072 * (1.0 + 0.3 * self.neck_length)).max(girdle_r * 1.32);
+        let head_y = neck_y + (h * 0.052).max(head_r * 0.45);
 
         // The pelvis carries the spine and both legs; the drop to the hip is
         // what gives that joint the room to separate three sockets.

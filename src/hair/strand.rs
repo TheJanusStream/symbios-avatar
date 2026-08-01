@@ -57,17 +57,22 @@ impl Strand {
 
     /// Sweeps the ribbon into geometry.
     ///
-    /// The tip is narrower than the root but not a point: hair that tapers to
-    /// nothing reads as a spike, and a lock of hair ends in a bundle of ends.
+    /// The taper is deliberately late. A lock has to finish in a wisp — held
+    /// near its root width it reads as a strap cut off square — but thinning it
+    /// steadily from the root takes the covering with it, and the whole head
+    /// turns into separate tendrils with scalp showing between them. So it keeps
+    /// almost its full width for most of the fall and gives it up in the last
+    /// quarter, which is what a clump of hair actually does.
     #[must_use]
     pub fn mesh(&self) -> PolyMesh {
-        prim::ribbon(
-            &self.path,
-            Vec2::new(self.width, self.thickness),
-            Vec2::new(self.width * 0.38, self.thickness * 0.7),
-            SIDES,
-            self.across,
-        )
+        let sections: Vec<Vec2> = (0..self.path.len())
+            .map(|at| {
+                let along = at as f32 / (self.path.len().max(2) - 1) as f32;
+                let taper = 1.0 - 0.88 * along * along * along;
+                Vec2::new(self.width * taper, self.thickness * taper.max(0.34))
+            })
+            .collect();
+        prim::sweep(&self.path, &sections, SIDES, self.across)
     }
 }
 
