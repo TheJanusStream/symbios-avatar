@@ -1,0 +1,14 @@
+/target
+# Workspace members keep their build output here too; ignore at any depth.
+target/
+**/*.rs.bk
+/.claude
+/.chainlink
+# Hook-created .chainlink caches inside workspace member crates.
+**/.chainlink/
+Cargo.lock
+CHANGELOG.md
+symbios-avatar-primer.sh
+symbios_avatar_primer_*
+.mcp.json
+/exports
