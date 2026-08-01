@@ -16,9 +16,9 @@ use std::path::PathBuf;
 use glam::Mat4;
 use symbios_avatar::{
     Archetype, AvatarRecord, Blink, CageConfig, Extremities, EyeParams, Eyes, FootingConfig, Gait,
-    Ground, Hair, HairParams, PolyMesh, Pose, QuadrupedParams, Rig, Scalp, Skeleton, SkinConfig,
-    SkinParams, Stride, Surface, UvConfig, Vec3, anim::gait, anim::plant_feet_of, build_cage,
-    catmull_clark, demo, rig::skin, texture, unwrap,
+    Ground, Hair, HairParams, Outfit, OutfitParams, PolyMesh, Pose, QuadrupedParams, Rig, Scalp,
+    Skeleton, SkinConfig, SkinParams, Stride, Surface, UvConfig, Vec3, anim::gait,
+    anim::plant_feet_of, build_cage, catmull_clark, demo, rig::skin, texture, unwrap,
 };
 
 fn main() {
@@ -204,6 +204,31 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
                 rig.joints[scalp.head].radius,
                 hair.drop(),
             );
+        }
+
+        // Clothing, and where each hem lands. Cuts follow the body's zones, so
+        // a hem goes where the zone ends rather than where its name suggests —
+        // worth printing, because that is how two of the cut names turned out
+        // to be describing somewhere else entirely.
+        let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
+        let zones = weights.zone_map(&mesh, &rig);
+        let outfit = Outfit::wear(&mesh, &weights, &zones, &OutfitParams::default());
+        if !outfit.is_empty() {
+            let path = dir.join(format!("{name}_outfit.obj"));
+            if let Err(error) = std::fs::write(&path, outfit.mesh().to_obj()) {
+                eprintln!("cannot write {}: {error}", path.display());
+            }
+            for garment in &outfit.garments {
+                let (lo, hi) = garment.mesh.bounds();
+                println!(
+                    "{name:<16} {:<7} {:>6} verts  spans y {:.3}..{:.3}  reaches x {:.3}",
+                    "worn",
+                    garment.vertex_count(),
+                    lo.y,
+                    hi.y,
+                    hi.x,
+                );
+            }
         }
 
         // Hands and feet, and the measured girths they were sized from. The

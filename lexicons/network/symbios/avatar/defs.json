@@ -268,6 +268,60 @@
           "default": 128
         }
       }
+    },
+    "outfit": {
+      "type": "object",
+      "description": "What a body is wearing. Close-fitting garments are cut from the body's own surface a few millimetres outside it, so they fit any wearer without being re-cut and cannot intersect the body. Colour axes are thousandths, as elsewhere: the AT Protocol data model has no floating-point type.",
+      "properties": {
+        "sleeve": {
+          "type": "string",
+          "description": "How far down the arm the top's sleeves run. Named for where the hem lands, not for a tailoring term: a cut follows the body's zones and an arm carries two of them, so 'forearm' ends about 70% of the way down and 'wrist' at 93%. Readers that do not recognise a value should fall back to 'forearm'.",
+          "knownValues": [
+            "bare",
+            "forearm",
+            "wrist"
+          ],
+          "default": "forearm"
+        },
+        "leg": {
+          "type": "string",
+          "description": "How far down the leg the trousers run. As with the sleeve, named for where the hem lands: the middle cut finishes below the knee rather than at it. Readers that do not recognise a value should fall back to 'ankle'.",
+          "knownValues": [
+            "shorts",
+            "calf",
+            "ankle"
+          ],
+          "default": "ankle"
+        },
+        "topHue": {
+          "type": "integer",
+          "description": "The top's colour around the wheel. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 40
+        },
+        "topShade": {
+          "type": "integer",
+          "description": "How light the top is. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 620
+        },
+        "legHue": {
+          "type": "integer",
+          "description": "The trousers' colour around the wheel. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 610
+        },
+        "legShade": {
+          "type": "integer",
+          "description": "How light the trousers are. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 200
+        }
+      }
     }
   }
 }

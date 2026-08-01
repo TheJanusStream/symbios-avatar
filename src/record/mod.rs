@@ -33,6 +33,7 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use serde::{Deserialize, Serialize};
 
+use crate::dress::OutfitParams;
 use crate::face::EyeParams;
 use crate::hair::HairParams;
 use crate::plan::{Archetype, Category};
@@ -77,6 +78,9 @@ pub struct AvatarRecord {
     /// The hair grown on its head.
     #[serde(default)]
     pub hair: HairParams,
+    /// What it is wearing.
+    #[serde(default)]
+    pub outfit: OutfitParams,
     /// Seed of the last re-roll, kept so a look can be reproduced.
     ///
     /// Signed because AT Protocol integers are signed 64-bit; an unsigned seed
@@ -102,6 +106,7 @@ impl Default for AvatarRecord {
             skin: SkinParams::default(),
             eyes: EyeParams::default(),
             hair: HairParams::default(),
+            outfit: OutfitParams::default(),
             seed: 0,
             locks: LockSet::NONE,
             created_at: None,
@@ -136,6 +141,7 @@ impl AvatarRecord {
         self.skin.sanitize();
         self.eyes.sanitize();
         self.hair.sanitize();
+        self.outfit.sanitize();
     }
 
     /// Builds the capsule graph for this avatar's body.

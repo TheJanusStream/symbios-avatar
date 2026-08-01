@@ -55,6 +55,11 @@
             "type": "ref",
             "ref": "network.symbios.avatar.defs#hair",
             "description": "The hair grown on the head. Absent means the default."
+          },
+          "outfit": {
+            "type": "ref",
+            "ref": "network.symbios.avatar.defs#outfit",
+            "description": "What the avatar is wearing. Absent means the default."
           }
         }
       }

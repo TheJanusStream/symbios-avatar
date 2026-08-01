@@ -23,8 +23,8 @@
 use glam::{Mat4, Vec2, Vec3};
 use symbios_avatar::{
     Archetype, AvatarRecord, Blink, CageConfig, Extremities, Eyes, FootingConfig, Gait, Ground,
-    Hair, HairParams, PolyMesh, Pose, Rig, SkinConfig, Stride, Surface, UvConfig, UvUnwrap, Zone,
-    anim::gait, anim::plant_feet_of, build_cage, catmull_clark, rig::skin, texture, unwrap,
+    Hair, HairParams, Outfit, PolyMesh, Pose, Rig, SkinConfig, Stride, Surface, UvConfig, UvUnwrap,
+    Zone, anim::gait, anim::plant_feet_of, build_cage, catmull_clark, rig::skin, texture, unwrap,
 };
 
 /// Pixels per side of one view in the sheet.
@@ -173,6 +173,7 @@ struct Subject {
     eyes: Option<Eyes>,
     hair: Option<Hair>,
     extremities: Extremities,
+    outfit: Outfit,
     gait: Gait,
     stride: Stride,
     height: f32,
@@ -202,6 +203,7 @@ impl Subject {
             hair: Hair::build(&mesh, &rig, hair),
             // The plan stands its bodies on the origin.
             extremities: Extremities::build(&rig, &surface, 0.0),
+            outfit: Outfit::wear(&mesh, &weights, &zones, &record.outfit),
             gait: Gait::natural(&rig),
             stride: Stride::for_body(&rig, 1.0),
             height: (hi.y - lo.y).max(0.1),
@@ -369,6 +371,23 @@ impl Subject {
             (locks, Vec3::from_array(hair.colour))
         });
 
+        // Clothing is skinned like the body, with the weights it inherited from
+        // the vertices it was cut from — which is the whole point of cutting it
+        // that way.
+        let worn: Vec<(Vec<Vec3>, &PolyMesh, Vec3)> = self
+            .outfit
+            .garments
+            .iter()
+            .map(|garment| {
+                let moved = if self.linear {
+                    posed.deform_linear(&self.rig, &garment.mesh.positions, &garment.weights)
+                } else {
+                    posed.deform(&self.rig, &garment.mesh.positions, &garment.weights)
+                };
+                (moved, &garment.mesh, Vec3::from_array(garment.colour))
+            })
+            .collect();
+
         // Hands and feet ride their own joints, the way the eyes ride the head.
         let limbs: Vec<PolyMesh> = self
             .extremities
@@ -392,6 +411,13 @@ impl Subject {
             // that is not in the body mesh.
             for part in &limbs {
                 draw_solid(&mut view, part, frame, &|_| Vec3::new(0.86, 0.68, 0.60));
+            }
+            for (moved, shape, tone) in &worn {
+                let dressed = PolyMesh {
+                    positions: moved.clone(),
+                    faces: shape.faces.clone(),
+                };
+                draw_solid(&mut view, &dressed, frame, &|_| *tone);
             }
             if let Some((globes, lids, centres)) = &parts {
                 // A pale globe with a dark iris facing forward, so the eye reads
