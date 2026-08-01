@@ -36,7 +36,7 @@ use glam::Vec3;
 use std::collections::VecDeque;
 use thiserror::Error;
 
-use crate::plan::Zone;
+use crate::plan::{Limb, Zone};
 use crate::skeleton::{Skeleton, SkeletonError};
 
 pub use landmark::{Anchor, Landmark, Landmarks};
@@ -272,6 +272,76 @@ impl Rig {
             .filter(|(_, joint)| joint.zone == zone)
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// The three joints an [`crate::anim::ik::two_bone`] solve needs for `limb`.
+    ///
+    /// Returns `[root, mid, tip]` — hip, knee, ankle, or shoulder, elbow, wrist —
+    /// or `None` if the body does not articulate that limb far enough to solve.
+    ///
+    /// The tip is the last joint *above* the extremity where a limb has enough
+    /// of them, so a biped solves to its ankle and lets the foot hang off it. A
+    /// quadruped's leg has one segment fewer, so its extremity is the tip. Both
+    /// are handled by taking whatever the limb has and topping up from the end,
+    /// rather than by assuming a particular anatomy.
+    #[must_use]
+    pub fn limb_chain(&self, limb: Limb) -> Option<[usize; 3]> {
+        let mut chain = self.in_zone(Zone::UpperLimb(limb));
+        chain.extend(self.in_zone(Zone::LowerLimb(limb)));
+        if chain.len() < 3 {
+            chain.extend(self.in_zone(Zone::Extremity(limb)));
+        }
+        if chain.len() < 3 {
+            return None;
+        }
+        let tail = &chain[chain.len() - 3..];
+        Some([tail[0], tail[1], tail[2]])
+    }
+
+    /// Limbs whose extremity rests near the ground.
+    ///
+    /// Which limbs carry a body is a property of the body, not of its plan: a
+    /// biped stands on two of its four, a quadruped on all four. Reading it off
+    /// the rest pose gets both right without either having to declare it, and
+    /// gets a future six-legged plan right for free.
+    #[must_use]
+    pub fn ground_contacts(&self) -> Vec<Limb> {
+        let extremities: Vec<(Limb, f32)> = Limb::ALL
+            .into_iter()
+            .filter_map(|limb| {
+                let joint = *self.in_zone(Zone::Extremity(limb)).first()?;
+                Some((limb, self.joints[joint].position.y))
+            })
+            .collect();
+
+        let Some(lowest) = extremities
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(None, |acc: Option<f32>, y| {
+                Some(acc.map_or(y, |a| a.min(y)))
+            })
+        else {
+            return Vec::new();
+        };
+        // A quarter of the body's height of slack: enough that four legs of
+        // slightly different length all count, far too little for a T-posed
+        // biped's hands to.
+        let slack = self.extent() * 0.25;
+
+        extremities
+            .into_iter()
+            .filter(|(_, y)| *y - lowest <= slack)
+            .map(|(limb, _)| limb)
+            .collect()
+    }
+
+    /// Vertical extent of the rig's rest pose, in metres.
+    #[must_use]
+    pub fn extent(&self) -> f32 {
+        let (low, high) = self.joints.iter().fold((f32::MAX, f32::MIN), |acc, joint| {
+            (acc.0.min(joint.position.y), acc.1.max(joint.position.y))
+        });
+        (high - low).max(f32::EPSILON)
     }
 
     /// Named anchors for fitting hair, hats, and garments.

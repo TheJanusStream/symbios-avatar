@@ -215,12 +215,53 @@ Two rules the layers follow, both learned the hard way:
 alongside the OBJs, which is the only real way to judge whether skin reads as
 skin.
 
+## Motion
+
+Motion is described by **goals** rather than joint angles, because a joint angle
+bakes in the skeleton it was authored on and a body's proportions come from its
+record. A goal — this foot is on the ground here, this hand is on that handle —
+survives being replayed on a body that did not exist when it was written.
+
+```rust
+use symbios_avatar::{AvatarRecord, Ground, Rig, Vec3, anim::{Pose, plant_feet}, FootingConfig};
+
+let rig = Rig::from_skeleton(&AvatarRecord::default().skeleton())?;
+let mut pose = Pose::rest(&rig);
+
+// Stand the body on whatever is beneath it. The closure is the only thing that
+// knows about the world, so the same code works against a physics engine, a
+// heightmap, or a flat plane.
+let footing = plant_feet(
+    &rig,
+    &mut pose,
+    |foot| Some(Ground::level(Vec3::new(foot.x, foot.x * 0.2, foot.z))),
+    &FootingConfig::default(),
+);
+assert!(footing.is_settled());
+# Ok::<(), symbios_avatar::RigError>(())
+```
+
+- `anim::ik::two_bone` solves a limb analytically; `anim::ik::fabrik` iterates a
+  spine or a tail. Both preserve bone lengths and the twist a limb was holding.
+- `plant_feet` probes beneath each contact, drops the pelvis by the largest
+  downward correction so the most stretched leg can still reach, then solves each
+  leg to its own ground. Skipping the pelvis drop is the classic mistake: legs
+  hyperextend and the body hovers on tiptoe.
+- `Inertializer` transitions between poses by decaying the *offset* between them
+  rather than crossfading, so a limb that was moving keeps moving. Only the
+  incoming pose is ever evaluated, and it composes with anything — a clip, a
+  solver, a gait.
+
+Which limbs carry a body is read off the rig rather than declared: a biped stands
+on two of its four, a quadruped on all four, and a six-legged plan would work
+without changing any of this.
+
 ## Status
 
 Early. Records, body plans, the mesher, rigging, skinning, zones, landmarks, UV
-charting, and procedural skin are in place and tested. Eyes and hair, outfits,
-animation, and glTF/VRM export are still ahead — see
-[`docs/plan.md`](docs/plan.md).
+charting, procedural skin, and the motion foundation (pose, IK, foot placement,
+inertialization) are in place and tested. Gait, goal-space clips, eyes and hair,
+outfits, and glTF/VRM export are still ahead — see [`docs/plan.md`](docs/plan.md).
 
 ## Licence
 
