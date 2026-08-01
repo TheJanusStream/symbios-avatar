@@ -8,6 +8,11 @@
 //!
 //! Dimensions are metres, `+Y` up, `+Z` forward — the convention the whole
 //! crate and the eventual VRM 1.0 export share.
+//!
+//! These skeletons carry **no zone tags**, because they exist to exercise the
+//! mesher rather than to be dressed. Anything that reads zones — rigging,
+//! landmarks, unwrapping — should be tested against [`crate::plan`] instead,
+//! where the body plans tag every node.
 
 use glam::Vec3;
 

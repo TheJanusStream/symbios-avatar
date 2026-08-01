@@ -29,7 +29,7 @@
 //! # Ok::<(), symbios_avatar::RigError>(())
 //! ```
 
-mod landmark;
+pub mod landmark;
 pub mod skin;
 
 use glam::Vec3;

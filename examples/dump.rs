@@ -13,8 +13,8 @@
 use std::path::PathBuf;
 
 use symbios_avatar::{
-    Archetype, AvatarRecord, CageConfig, PolyMesh, QuadrupedParams, Skeleton, build_cage,
-    catmull_clark, demo,
+    Archetype, AvatarRecord, CageConfig, PolyMesh, QuadrupedParams, Rig, Skeleton, SkinConfig,
+    UvConfig, build_cage, catmull_clark, demo, rig::skin, unwrap,
 };
 
 fn main() {
@@ -97,6 +97,29 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton) -> usize {
     report(name, "smooth", &smooth);
     write(dir, name, "cage", &cage);
     write(dir, name, "smooth", &smooth);
+
+    // A body is only finished when it can also be posed and painted.
+    match Rig::from_skeleton(skeleton) {
+        Ok(rig) => {
+            let weights = skin::bind(&smooth, &rig, &SkinConfig::default());
+            let zones = weights.zone_map(&smooth, &rig);
+            let uv = unwrap(&smooth, &rig, &zones, &UvConfig::default());
+            let used: f32 = uv.charts.iter().map(|c| c.rect.area()).sum();
+            println!(
+                "{name:<16} {:<7} {:>6} joints {:>6} charts  {:>6} split verts  {:.0}% atlas used",
+                "rig",
+                rig.len(),
+                uv.charts.len(),
+                uv.vertex_count() - smooth.vertex_count(),
+                used * 100.0,
+            );
+            let path = dir.join(format!("{name}_unwrapped.obj"));
+            if let Err(error) = std::fs::write(&path, uv.to_obj(&smooth)) {
+                eprintln!("cannot write {}: {error}", path.display());
+            }
+        }
+        Err(error) => println!("{name:<16} rig     FAILED  {error}"),
+    }
     0
 }
 

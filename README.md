@@ -148,11 +148,35 @@ Garments declare the zones they cover as a `ZoneSet`, and the body suppresses
 those zones underneath — poke-through is avoided by not emitting the geometry
 rather than by hiding it.
 
+## Texture atlas
+
+A body unwraps into charts that follow its own zones, so a chart is *named*: a
+procedural painter addresses "the chest" rather than "island 7". Two conventions
+match what character artists do by hand — the seam runs up the back, so a face is
+one unbroken island paintable as plain 2-D maths; and chart area is weighted by
+importance, so the face and hands get more texels than an equal area of forearm.
+
+```text
+record_biped     rig         23 joints     29 charts     568 split verts  61% atlas used
+```
+
+Unwrapping duplicates vertices at chart boundaries and seams, so `UvUnwrap`
+carries its own vertex list plus a `source` index back into the mesh — `gather`
+pulls positions, normals, and skin weights through it. `to_obj` writes the
+unwrapped body with texture coordinates, which is the only real way to judge
+whether a chart reads as the body part it covers.
+
+One thing to know before writing a painter: the zones charted are the same for
+every body of a plan, but the *number* of charts is not. A zone can be genuinely
+disconnected — each clavicle is cut off from the torso by the shoulder's own zone
+— so key on `Chart::zone` and expect more than one chart per zone.
+
 ## Status
 
-Early. Records, body plans, the mesher, rigging, skinning, zones, and landmarks
-are in place and tested. UV charting, hair and outfits, animation, and glTF/VRM
-export are still ahead — see [`docs/plan.md`](docs/plan.md).
+Early. Records, body plans, the mesher, rigging, skinning, zones, landmarks, and
+UV charting are in place and tested. The character texture stack, hair and
+outfits, animation, and glTF/VRM export are still ahead — see
+[`docs/plan.md`](docs/plan.md).
 
 ## Licence
 
