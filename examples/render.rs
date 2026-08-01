@@ -14,12 +14,14 @@
 //! cargo run --example render                  # the default body
 //! cargo run --example render -- --seed 7      # a rerolled one
 //! cargo run --example render -- --walk 8      # a walk cycle, one sheet per frame
+//! cargo run --example render -- --head        # close up on face, neck and hair
+//! cargo run --example render -- --hair 1,0,0,0.5,0.6,0.2   # override hair axes
 //! ```
 
 use glam::{Mat4, Vec2, Vec3};
 use symbios_avatar::{
     Archetype, AvatarRecord, Blink, CageConfig, Eyes, FootingConfig, Gait, Ground, Hair,
-    HairParams, PolyMesh, Pose, Rig, SkinConfig, Stride, UvConfig, UvUnwrap, anim::gait,
+    HairParams, PolyMesh, Pose, Rig, SkinConfig, Stride, UvConfig, UvUnwrap, Zone, anim::gait,
     anim::plant_feet_of, build_cage, catmull_clark, rig::skin, texture, unwrap,
 };
 
@@ -27,6 +29,10 @@ use symbios_avatar::{
 const VIEW: usize = 420;
 /// How much of the body's height the frame covers, as a multiple of it.
 const MARGIN: f32 = 1.12;
+/// The same, for a head close-up, over the head-and-neck box's larger side.
+const HEAD_MARGIN: f32 = 1.5;
+/// How far the crown view tilts over, in radians.
+const CROWN_PITCH: f32 = 1.0;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -37,6 +43,7 @@ fn main() {
     };
     let seed = value("--seed").and_then(|s| s.parse::<i64>().ok());
     let frames = value("--walk").and_then(|s| s.parse::<usize>().ok());
+    let close_up = args.iter().any(|arg| arg == "--head");
     // Six numbers, in the order the axes are declared: length, volume,
     // coverage, part, wave, shade. For walking the parameter space by eye,
     // which is the only way any of it got tuned.
@@ -78,23 +85,45 @@ fn main() {
         std::process::exit(1);
     };
 
+    // One shot, framed either on the whole body or on the head.
+    let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
+        if close_up {
+            subject.head_sheet(pose, closure)
+        } else {
+            Some(subject.sheet(pose, closure))
+        }
+    };
+    let stem = if close_up { "render_head" } else { "render" };
+
     match frames {
         Some(frames) => {
             let mut blink = Blink::seeded(1);
             for frame in 0..frames.max(1) {
                 let cycle = frame as f32 / frames.max(1) as f32;
                 let closure = blink.advance(1.0 / frames.max(1) as f32);
-                let sheet = subject.sheet(&subject.walking(cycle), closure);
-                write(&out, &format!("render_walk_{frame:02}"), &sheet);
+                let Some(sheet) = shoot(&subject.walking(cycle), closure) else {
+                    eprintln!("this body has no head to frame");
+                    std::process::exit(1);
+                };
+                write(&out, &format!("{stem}_walk_{frame:02}"), &sheet);
             }
             println!("rendered {} walk frames", frames.max(1));
         }
         None => {
-            let sheet = subject.sheet(&subject.standing(), 0.0);
-            write(&out, "render", &sheet);
-            let blinking = subject.sheet(&subject.standing(), 1.0);
-            write(&out, "render_blink", &blinking);
-            println!("rendered a standing body, eyes open and shut");
+            let (Some(sheet), Some(blinking)) = (
+                shoot(&subject.standing(), 0.0),
+                shoot(&subject.standing(), 1.0),
+            ) else {
+                eprintln!("this body has no head to frame");
+                std::process::exit(1);
+            };
+            write(&out, stem, &sheet);
+            write(&out, &format!("{stem}_blink"), &blinking);
+            if close_up {
+                println!("rendered the head close up, eyes open and shut");
+            } else {
+                println!("rendered a standing body, eyes open and shut");
+            }
         }
     }
     println!("wrote PNGs to {}", out.display());
@@ -108,6 +137,8 @@ struct Subject {
     atlas: u32,
     weights: symbios_avatar::SkinWeights,
     rig: Rig,
+    /// Which part of the body each vertex belongs to, for framing a close-up.
+    zones: Vec<Zone>,
     eyes: Option<Eyes>,
     hair: Option<Hair>,
     gait: Gait,
@@ -143,6 +174,7 @@ impl Subject {
             uv,
             weights,
             rig,
+            zones,
         })
     }
 
@@ -165,19 +197,78 @@ impl Subject {
         pose
     }
 
-    /// Four views of the body in one image.
+    /// Four views of the whole body in one image.
     fn sheet(&self, pose: &Pose, closure: f32) -> Image {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        let of = |turn: f32| Frame {
+            turn,
+            pitch: 0.0,
+            centre: Vec3::new(0.0, self.height * 0.5, 0.0),
+            span: self.height * MARGIN,
+        };
+        // Front, side, back, three-quarter.
+        let frames = [of(0.0), of(FRAC_PI_2), of(PI), of(FRAC_PI_4)];
+        self.render(pose, closure, &frames)
+    }
+
+    /// Four close-ups of the head in one image.
+    ///
+    /// Different angles from the body sheet, because different things are being
+    /// judged. A three-quarter view is where a face either reads or does not; a
+    /// profile is where the brow, nose line and chin live; and the view from
+    /// above is the only one that shows the crown, the parting, and whether the
+    /// hair actually closes over the whorl.
+    fn head_sheet(&self, pose: &Pose, closure: f32) -> Option<Image> {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
         let posed = pose.forward(&self.rig);
         let deformed = posed.deform(&self.rig, &self.mesh.positions, &self.weights);
+
+        // Framed on the head and neck alone. Long hair is deliberately left to
+        // fall out of frame: this is a close-up, and zooming out far enough to
+        // hold the whole drape would put us back where we started.
+        let mut lo = Vec3::splat(f32::MAX);
+        let mut hi = Vec3::splat(f32::MIN);
+        for (vertex, zone) in self.zones.iter().enumerate() {
+            if !matches!(zone, Zone::Head | Zone::Neck) {
+                continue;
+            }
+            lo = lo.min(deformed[vertex]);
+            hi = hi.max(deformed[vertex]);
+        }
+        if lo.x > hi.x {
+            return None;
+        }
+
+        let of = |turn: f32, pitch: f32| Frame {
+            turn,
+            pitch,
+            centre: (lo + hi) * 0.5,
+            // Generous, so hair standing off the crown and a fringe hanging past
+            // the brow both stay in frame.
+            span: (hi.x - lo.x).max(hi.y - lo.y) * HEAD_MARGIN,
+        };
+        let frames = [
+            of(0.0, 0.0),
+            of(FRAC_PI_4, 0.0),
+            of(FRAC_PI_2, 0.0),
+            of(0.0, CROWN_PITCH),
+        ];
+        Some(self.render(pose, closure, &frames))
+    }
+
+    /// Draws one pose from four frames into a two-by-two sheet.
+    fn render(&self, pose: &Pose, closure: f32, frames: &[Frame; 4]) -> Image {
+        let posed = pose.forward(&self.rig);
+        let deformed = posed.deform(&self.rig, &self.mesh.positions, &self.weights);
+
+        let head_of = |head: usize| {
+            Mat4::from_rotation_translation(posed.rotations[head], posed.positions[head])
+        };
 
         // Eyes ride the head rigidly rather than being skinned. Globes and lids
         // are kept apart so they can be shaded differently — drawn in one colour
         // a shut eye is invisible, which is how a working blink first looked
         // broken.
-        let head_of = |head: usize| {
-            Mat4::from_rotation_translation(posed.rotations[head], posed.positions[head])
-        };
-
         let parts = self.eyes.as_ref().map(|eyes| {
             let to_world = head_of(eyes.head);
 
@@ -197,28 +288,30 @@ impl Subject {
                 globes.transformed(to_world),
                 lids.transformed(to_world),
                 centres,
-                eyes.left.radius,
             )
         });
 
-        // Hair rides the head rigidly too. It is drawn as one solid in one
-        // colour: strand groups overlap by design, so there is nothing to shade
-        // apart the way the lids had to be.
-        let hair = self
-            .hair
-            .as_ref()
-            .map(|hair| (hair.mesh().transformed(head_of(hair.head)), hair.colour));
+        // Hair rides the head rigidly too, and is drawn one lock at a time.
+        // Drawn as a single solid in a single colour it reads as a helmet at
+        // close range, because nothing separates one group from the next.
+        let hair = self.hair.as_ref().map(|hair| {
+            let to_world = head_of(hair.head);
+            let locks: Vec<PolyMesh> = hair
+                .groups
+                .iter()
+                .map(|group| group.mesh().transformed(to_world))
+                .collect();
+            (locks, Vec3::from_array(hair.colour))
+        });
 
         let mut sheet = Image::new(VIEW * 2, VIEW * 2);
-        // Front, side, back, three-quarter.
-        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
-        for (index, turn) in [0.0, FRAC_PI_2, PI, FRAC_PI_4].into_iter().enumerate() {
+        for (index, frame) in frames.iter().enumerate() {
             let mut view = Image::new(VIEW, VIEW);
-            self.draw(&mut view, &deformed, turn);
-            if let Some((globes, lids, centres, radius)) = &parts {
+            self.draw(&mut view, &deformed, frame);
+            if let Some((globes, lids, centres)) = &parts {
                 // A pale globe with a dark iris facing forward, so the eye reads
                 // as an eye rather than a bead.
-                draw_solid(&mut view, globes, turn, self.height, &|point| {
+                draw_solid(&mut view, globes, frame, &|point| {
                     let nearest = centres
                         .iter()
                         .min_by(|a, b| point.distance(**a).total_cmp(&point.distance(**b)))
@@ -233,15 +326,18 @@ impl Subject {
                         Vec3::new(0.95, 0.94, 0.93)
                     }
                 });
-                let _ = radius;
                 // Lids are skin, so shutting them plainly covers the eye.
-                draw_solid(&mut view, lids, turn, self.height, &|_| {
-                    Vec3::new(0.78, 0.58, 0.50)
-                });
+                draw_solid(&mut view, lids, frame, &|_| Vec3::new(0.78, 0.58, 0.50));
             }
-            if let Some((mesh, colour)) = &hair {
-                let tone = Vec3::from_array(*colour);
-                draw_solid(&mut view, mesh, turn, self.height, &|_| tone);
+            if let Some((locks, tone)) = &hair {
+                for (lock, mesh) in locks.iter().enumerate() {
+                    // A golden-ratio walk over brightness: neighbouring locks
+                    // never land on the same tone, and no generator is needed to
+                    // keep it reproducible.
+                    let step = (lock as f32 * 0.618_034).fract();
+                    let shade = *tone * (0.78 + 0.44 * step);
+                    draw_solid(&mut view, mesh, frame, &|_| shade);
+                }
             }
             sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
         }
@@ -249,10 +345,10 @@ impl Subject {
     }
 
     /// Draws the textured body into one view.
-    fn draw(&self, image: &mut Image, deformed: &[Vec3], turn: f32) {
+    fn draw(&self, image: &mut Image, deformed: &[Vec3], frame: &Frame) {
         let positions: Vec<Vec3> = self.uv.gather(deformed);
         let normals = normals_of(&positions, &self.uv.faces);
-        let camera = camera(turn, self.height);
+        let camera = frame.camera();
 
         for face in &self.uv.faces {
             for corner in 1..face.len().saturating_sub(1) {
@@ -264,7 +360,7 @@ impl Subject {
                 raster(
                     image,
                     tri.map(|i| camera.transform_point3(positions[i as usize])),
-                    tri.map(|i| eye_turn(turn) * normals[i as usize]),
+                    tri.map(|i| frame.eye() * normals[i as usize]),
                     tri.map(shade),
                 );
             }
@@ -288,47 +384,63 @@ impl Subject {
 }
 
 /// Draws an untextured mesh, colouring each vertex by where it sits.
-fn draw_solid(
-    image: &mut Image,
-    mesh: &PolyMesh,
-    turn: f32,
-    height: f32,
-    colour: &dyn Fn(Vec3) -> Vec3,
-) {
+fn draw_solid(image: &mut Image, mesh: &PolyMesh, frame: &Frame, colour: &dyn Fn(Vec3) -> Vec3) {
     let normals = normals_of(&mesh.positions, &mesh.faces);
-    let camera = camera(turn, height);
+    let camera = frame.camera();
     for face in &mesh.faces {
         for corner in 1..face.len().saturating_sub(1) {
             let tri = [face[0], face[corner], face[corner + 1]];
             raster(
                 image,
                 tri.map(|i| camera.transform_point3(mesh.positions[i as usize])),
-                tri.map(|i| eye_turn(turn) * normals[i as usize]),
+                tri.map(|i| frame.eye() * normals[i as usize]),
                 tri.map(|i| colour(mesh.positions[i as usize])),
             );
         }
     }
 }
 
-/// Carries a world normal into the turned camera's frame.
+/// One orthographic view: where it looks from, at what, and how close.
 ///
-/// The key light and the rim term are both written in the camera's space, so
-/// without this every view but the front is lit from behind — which left the
-/// back view a flat silhouette and hid whatever was wrong with it.
-fn eye_turn(turn: f32) -> glam::Quat {
-    // The same rotation the camera applies to positions. Guessing its sign got
-    // the back view right and the side view wrong, which is what a rotation by
-    // pi being its own inverse will do to you.
-    glam::Quat::from_rotation_y(turn)
+/// Framing is a parameter rather than a constant because the body and the head
+/// need wildly different ones. A skull is about a twelfth of a body's height, so
+/// in a full-body frame it lands in a few dozen pixels — which is most of why
+/// the eye bulge, the floating hair and the bald crown all survived so long.
+#[derive(Clone, Copy)]
+struct Frame {
+    /// Rotation about the body's own axis; zero looks at the face.
+    turn: f32,
+    /// Tilt, in radians. Positive looks down from above.
+    pitch: f32,
+    /// The point the view is centred on, in world space.
+    centre: Vec3,
+    /// How much of the world the frame covers, in metres.
+    span: f32,
 }
 
-/// An orthographic camera turned `turn` radians about the body.
-fn camera(turn: f32, height: f32) -> Mat4 {
-    let span = height * MARGIN;
-    // Normalised device space: x and y in -1..1, z increasing away from the eye.
-    Mat4::from_scale(Vec3::new(2.0 / span, 2.0 / span, -1.0 / span))
-        * Mat4::from_translation(Vec3::new(0.0, -height * 0.5, 0.0))
-        * Mat4::from_rotation_y(turn)
+impl Frame {
+    /// World space to normalised device space: x and y in -1..1, z away.
+    fn camera(&self) -> Mat4 {
+        Mat4::from_scale(Vec3::new(
+            2.0 / self.span,
+            2.0 / self.span,
+            -1.0 / self.span,
+        )) * Mat4::from_rotation_x(self.pitch)
+            * Mat4::from_rotation_y(self.turn)
+            * Mat4::from_translation(-self.centre)
+    }
+
+    /// Carries a world normal into this view's frame.
+    ///
+    /// The key light and the rim term are both written in the camera's space, so
+    /// without this every view but the front is lit from behind — which left the
+    /// back view a flat silhouette and hid whatever was wrong with it. It must
+    /// be the same rotation `camera` applies: guessing the sign once got the
+    /// back view right and the side wrong, which is what a rotation by pi being
+    /// its own inverse will do to you.
+    fn eye(&self) -> glam::Quat {
+        glam::Quat::from_rotation_x(self.pitch) * glam::Quat::from_rotation_y(self.turn)
+    }
 }
 
 /// Smooth vertex normals for a mesh given as faces over positions.

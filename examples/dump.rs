@@ -200,7 +200,7 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
                 "hair",
                 grown.vertex_count(),
                 hair.groups.len(),
-                surface.radius(scalp.head),
+                surface.widest(scalp.head),
                 rig.joints[scalp.head].radius,
                 hair.drop(),
             );

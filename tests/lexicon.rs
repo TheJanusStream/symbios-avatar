@@ -178,3 +178,42 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
         );
     }
 }
+
+#[test]
+fn declared_defaults_match_the_values_the_crate_writes() {
+    // A schema's stated default is a promise to every reader that omits the
+    // field. This drifted the moment a default changed in Rust — the hair group
+    // count went to 128 while the lexicon still said 96 — and nothing caught it,
+    // because every other check here is about names and bounds.
+    let defs = lexicon("defs");
+    let declared = |fragment: &str| -> Value { defs["defs"][fragment]["properties"].clone() };
+
+    let cases: [(&str, Value); 3] = [
+        (
+            "skin",
+            serde_json::to_value(symbios_avatar::SkinParams::default()).expect("serialises"),
+        ),
+        (
+            "eyes",
+            serde_json::to_value(symbios_avatar::EyeParams::default()).expect("serialises"),
+        ),
+        (
+            "hair",
+            serde_json::to_value(symbios_avatar::HairParams::default()).expect("serialises"),
+        ),
+    ];
+
+    for (fragment, written) in cases {
+        let schema = declared(fragment);
+        let written = written.as_object().expect("serialises to an object");
+        for (field, value) in written {
+            let Some(declared) = schema[field].get("default") else {
+                panic!("{fragment}#{field} declares no default");
+            };
+            assert_eq!(
+                declared, value,
+                "{fragment}#{field}: the lexicon promises {declared} but the crate writes {value}"
+            );
+        }
+    }
+}

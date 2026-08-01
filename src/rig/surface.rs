@@ -22,10 +22,21 @@ use crate::rig::Rig;
 /// body rests on it rather than in it.
 const PERCENTILE: f32 = 0.9;
 
-/// The body's measured thickness, one radius per joint.
+/// How many places along each bone the thickness is measured.
+///
+/// One number per bone is not enough. A clavicle runs from the base of the neck
+/// out to the shoulder: at its inner end the nearest surface is the whole upper
+/// chest, at its outer end it is a thin cap. Measured as a single radius it came
+/// out at 0.098 m against a 0.070 m node — and anything draped against that
+/// figure gets flung out into a horizontal shelf at the shoulder, which is
+/// exactly what hair did. The same holds for a thigh, thick at the hip and
+/// slender at the knee.
+const SAMPLES: usize = 5;
+
+/// The body's measured thickness, sampled along each bone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Surface {
-    radii: Vec<f32>,
+    profiles: Vec<[f32; SAMPLES]>,
 }
 
 impl Surface {
@@ -35,32 +46,54 @@ impl Surface {
     /// is the best guess available for them.
     #[must_use]
     pub fn measure(mesh: &PolyMesh, rig: &Rig) -> Self {
-        let mut spreads: Vec<Vec<f32>> = vec![Vec::new(); rig.len()];
+        let mut spreads: Vec<Vec<Vec<f32>>> = vec![vec![Vec::new(); SAMPLES]; rig.len()];
         for &point in &mesh.positions {
             let hit = rig.nearest_bone(point);
-            spreads[hit.joint].push(hit.distance);
+            let bin = (along_bone(rig, hit.joint, hit.closest) * (SAMPLES - 1) as f32).round();
+            spreads[hit.joint][(bin as usize).min(SAMPLES - 1)].push(hit.distance);
         }
 
-        let radii = spreads
+        let profiles = spreads
             .iter_mut()
             .enumerate()
-            .map(|(joint, spread)| {
-                if spread.is_empty() {
-                    return rig.joints[joint].radius;
+            .map(|(joint, bins)| {
+                let fallback = rig.joints[joint].radius;
+                let mut profile = [f32::NAN; SAMPLES];
+                for (sample, spread) in bins.iter_mut().enumerate() {
+                    if spread.is_empty() {
+                        continue;
+                    }
+                    spread.sort_by(f32::total_cmp);
+                    let at = ((spread.len() - 1) as f32 * PERCENTILE).round() as usize;
+                    profile[sample] = spread[at];
                 }
-                spread.sort_by(f32::total_cmp);
-                let at = ((spread.len() - 1) as f32 * PERCENTILE).round() as usize;
-                spread[at]
+                fill_gaps(&mut profile, fallback);
+                profile
             })
             .collect();
 
-        Self { radii }
+        Self { profiles }
     }
 
-    /// How far the body's surface stands from a joint's bone, in metres.
+    /// How far the body's surface stands from a bone, `along` its length in
+    /// `0..=1`, in metres.
     #[must_use]
-    pub fn radius(&self, joint: usize) -> f32 {
-        self.radii.get(joint).copied().unwrap_or(0.0)
+    pub fn radius(&self, joint: usize, along: f32) -> f32 {
+        let Some(profile) = self.profiles.get(joint) else {
+            return 0.0;
+        };
+        let at = along.clamp(0.0, 1.0) * (SAMPLES - 1) as f32;
+        let sample = (at.floor() as usize).min(SAMPLES - 2);
+        let blend = at - sample as f32;
+        profile[sample] + (profile[sample + 1] - profile[sample]) * blend
+    }
+
+    /// The thickest the body gets along a bone, in metres.
+    #[must_use]
+    pub fn widest(&self, joint: usize) -> f32 {
+        self.profiles
+            .get(joint)
+            .map_or(0.0, |profile| profile.iter().fold(0.0f32, |a, b| a.max(*b)))
     }
 
     /// Pushes a point out of the body, if it is inside it.
@@ -70,15 +103,70 @@ impl Surface {
     /// the body toward the shoulders.
     #[must_use]
     pub fn clear(&self, rig: &Rig, point: Vec3, margin: f32) -> Vec3 {
+        point + self.clearance(rig, point, margin)
+    }
+
+    /// How far, and which way, a point would have to move to clear the body.
+    ///
+    /// Separate from [`Self::clear`] so a caller that drapes something along a
+    /// path can smooth the correction rather than take it whole at one step —
+    /// an abrupt sideways jog turns a falling ribbon into a horizontal shelf.
+    #[must_use]
+    pub fn clearance(&self, rig: &Rig, point: Vec3, margin: f32) -> Vec3 {
         let hit = rig.nearest_bone(point);
-        let needed = self.radius(hit.joint) + margin;
+        let along = along_bone(rig, hit.joint, hit.closest);
+        let needed = self.radius(hit.joint, along) + margin;
         if hit.distance >= needed {
-            return point;
+            return Vec3::ZERO;
         }
         let away = point - hit.closest;
         let flat = Vec3::new(away.x, 0.0, away.z);
         let out = flat.normalize_or(Vec3::Z);
-        point + out * (needed - flat.length()).max(0.0)
+        out * (needed - flat.length()).max(0.0)
+    }
+}
+
+/// How far along a bone a point sits, in `0..=1`.
+fn along_bone(rig: &Rig, joint: usize, point: Vec3) -> f32 {
+    let (start, end) = rig.bone(joint);
+    let axis = end - start;
+    if axis.length_squared() <= f32::EPSILON {
+        return 0.0;
+    }
+    ((point - start).dot(axis) / axis.length_squared()).clamp(0.0, 1.0)
+}
+
+/// Fills samples no vertex landed in, so a profile is continuous.
+fn fill_gaps(profile: &mut [f32; SAMPLES], fallback: f32) {
+    let Some(first) = profile.iter().position(|width| width.is_finite()) else {
+        profile.fill(fallback);
+        return;
+    };
+    let last = profile
+        .iter()
+        .rposition(|width| width.is_finite())
+        .unwrap_or(first);
+    for sample in 0..first {
+        profile[sample] = profile[first];
+    }
+    for sample in last + 1..SAMPLES {
+        profile[sample] = profile[last];
+    }
+    let mut sample = first;
+    while sample <= last {
+        if profile[sample].is_finite() {
+            sample += 1;
+            continue;
+        }
+        let gap = sample;
+        while !profile[sample].is_finite() {
+            sample += 1;
+        }
+        let (before, after) = (profile[gap - 1], profile[sample]);
+        let span = (sample - gap + 1) as f32;
+        for (step, hole) in (gap..sample).enumerate() {
+            profile[hole] = before + (after - before) * (step + 1) as f32 / span;
+        }
     }
 }
 
@@ -107,9 +195,9 @@ mod tests {
         let surface = Surface::measure(&mesh, &rig);
         let head = *rig.in_zone(Zone::Head).first().expect("a head");
         assert!(
-            surface.radius(head) < rig.joints[head].radius,
+            surface.widest(head) < rig.joints[head].radius,
             "the skull measured {} against a node radius of {}",
-            surface.radius(head),
+            surface.widest(head),
             rig.joints[head].radius
         );
     }
@@ -120,9 +208,9 @@ mod tests {
         let surface = Surface::measure(&mesh, &rig);
         for joint in 0..rig.len() {
             assert!(
-                surface.radius(joint) > 0.0,
+                surface.widest(joint) > 0.0,
                 "joint {joint} measured {}",
-                surface.radius(joint)
+                surface.widest(joint)
             );
         }
     }
@@ -136,11 +224,12 @@ mod tests {
 
         let pushed = surface.clear(&rig, inside, 0.01);
         let hit = rig.nearest_bone(pushed);
+        let along = super::along_bone(&rig, hit.joint, hit.closest);
         assert!(
-            hit.distance >= surface.radius(hit.joint) + 0.009,
+            hit.distance >= surface.radius(hit.joint, along) + 0.009,
             "a pushed point still sat {} inside a surface of {}",
             hit.distance,
-            surface.radius(hit.joint)
+            surface.radius(hit.joint, along)
         );
     }
 
@@ -150,6 +239,25 @@ mod tests {
         let surface = Surface::measure(&mesh, &rig);
         let outside = rig.joints[0].position + Vec3::new(10.0, 0.0, 0.0);
         assert_eq!(surface.clear(&rig, outside, 0.01), outside);
+    }
+
+    #[test]
+    fn a_bone_is_measured_along_its_length_not_as_one_number() {
+        // A clavicle is thick where it meets the neck and thin at the shoulder.
+        // Read as a single radius it came out half again too wide, and anything
+        // draped against that figure juts out into a shelf.
+        let (mesh, rig) = body(1);
+        let surface = Surface::measure(&mesh, &rig);
+        let clavicles = rig.in_zone(Zone::Chest);
+        let varying = clavicles.iter().any(|&joint| {
+            let ends: Vec<f32> = (0..5)
+                .map(|s| surface.radius(joint, s as f32 / 4.0))
+                .collect();
+            let wide = ends.iter().fold(0.0f32, |a, b| a.max(*b));
+            let narrow = ends.iter().fold(f32::MAX, |a, b| a.min(*b));
+            wide > narrow * 1.25
+        });
+        assert!(varying, "no bone measured meaningfully thicker at one end");
     }
 
     #[test]

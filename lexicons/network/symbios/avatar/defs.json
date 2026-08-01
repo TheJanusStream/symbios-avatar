@@ -265,7 +265,7 @@
           "description": "How many strand groups to grow. Costs geometry, so it is bounded; readers may lower it for distant or low-end rendering without changing the record.",
           "minimum": 24,
           "maximum": 256,
-          "default": 96
+          "default": 128
         }
       }
     }

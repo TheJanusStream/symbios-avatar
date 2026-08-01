@@ -58,8 +58,19 @@ const PART_PUSH: f32 = 0.12;
 const PART_SPREAD: f32 = 0.75;
 
 /// How many points sample a strand's cap and its fall.
-const CAP_STEPS: usize = 5;
+///
+/// The cap is sampled densely because the scalp's curvature is worst exactly
+/// where the cap begins. At five steps the chord from the crown to the next
+/// sample cut *under* the skull, and the close-up showed a bald disc at the
+/// whorl — invisible at body framing.
+const CAP_STEPS: usize = 10;
 const FALL_STEPS: usize = 9;
+
+/// How far a falling strand may move outward per unit it drops.
+///
+/// Draping hair leans out; it does not jut. Taking a clearance correction whole
+/// at one step turned strands into horizontal shelves at the shoulders.
+const MAX_LEAN: f32 = 0.55;
 
 /// How shape parameters describe a head of hair.
 ///
@@ -100,7 +111,7 @@ impl Default for HairParams {
             part: 0.0,
             wave: 0.25,
             shade: 0.3,
-            groups: 96,
+            groups: 128,
         }
     }
 }
@@ -192,12 +203,17 @@ impl Hair {
         let columns = (params.groups as usize / ROWS).max(MIN_COLUMNS);
         let step = TAU / columns as f32;
 
-        let thickness = radius * 0.035;
+        let thickness = radius * 0.024;
 
-        // Rooted a hair's breadth below the crown rather than at it: the crown
-        // is a pole, so every column's top root converges there, which is the
-        // whorl real hair has.
-        let crown = scalp.top() - 0.04;
+        // Rooted AT the pole, so every column's top row converges on one point
+        // and radiates outward — which is the whorl real hair has.
+        //
+        // Rooting a hair's breadth below it does not work: the profile closes
+        // very fast near the crown, so a mere 0.04 of a head radius down still
+        // leaves a circle 0.038 m across with nothing inside it. That is half
+        // the skull's own width, and the close-up showed it as a clean bald
+        // disc — entirely invisible at body framing.
+        let crown = scalp.top();
         let stand = radius * (0.05 + 0.05 * params.volume.clamp(-1.0, 1.0));
         let reach = radius * (0.15 + 3.8 * params.length.clamp(0.0, 1.0));
         // A fringe is a fringe whatever the rest is doing: it stops above the
@@ -214,7 +230,7 @@ impl Hair {
         // produced slabs nearly as broad as the head. The gaps were the wave
         // pulling neighbours apart, and that is fixed where the wave is.
         let outermost = scalp.width_at(0.0) * radius + stand + (ROWS - 1) as f32 * thickness * 1.2;
-        let width = outermost * step * 0.62;
+        let width = outermost * step * 0.80;
 
         let mut groups = Vec::with_capacity(columns * ROWS);
         for column in 0..columns {
@@ -344,6 +360,10 @@ fn sweep(scalp: &Scalp, body: Option<(&Rig, &Surface)>, fall: Fall) -> Vec<Vec3>
 
     let from = *path.last().expect("the cap always has points");
     let radial = Vec3::new(azimuth.sin(), 0.0, azimuth.cos());
+    // How far the strand has already leaned out to clear the body. It may grow
+    // with the drop but never jump, which is what keeps a drape a drape.
+    let mut leaned = 0.0f32;
+    let mut previous = from;
     for step in 1..=FALL_STEPS {
         let along = step as f32 / FALL_STEPS as f32;
         // Widening as it falls, so long hair drapes over the shoulders instead
@@ -355,12 +375,18 @@ fn sweep(scalp: &Scalp, body: Option<(&Rig, &Surface)>, fall: Fall) -> Vec<Vec3>
             from.y - fall.fall * along,
             from.z * flare + radial.z * wave,
         );
-        path.push(match body {
+
+        let placed = match body {
             Some((rig, surface)) => {
-                surface.clear(rig, point + scalp.origin(), fall.clearance) - scalp.origin()
+                let push = surface.clearance(rig, point + scalp.origin(), fall.clearance);
+                let drop = (previous.y - point.y).max(0.0);
+                leaned = push.length().min(leaned + drop * MAX_LEAN);
+                point + push.normalize_or_zero() * leaned
             }
             None => point,
-        });
+        };
+        previous = placed;
+        path.push(placed);
     }
 
     path.dedup_by(|a, b| a.distance_squared(*b) < 1e-10);
@@ -368,9 +394,13 @@ fn sweep(scalp: &Scalp, body: Option<(&Rig, &Surface)>, fall: Fall) -> Vec<Vec3>
 }
 
 /// How much a direction faces the front, from `0` at the back to `1` at the face.
+///
+/// Deliberately a gentle falloff. Squaring it made the window too narrow: the
+/// strands a third of the way round still counted as side hair, fell full
+/// length, and passed straight down the eye line — the close-up showed a face
+/// behind a curtain. A forehead is broad, so the fringe window is broad.
 fn frontness(azimuth: f32) -> f32 {
-    let facing = 0.5 + 0.5 * azimuth.cos();
-    facing * facing
+    0.5 + 0.5 * azimuth.cos()
 }
 
 /// The lowest a strand group may root at this azimuth, in head radii.
