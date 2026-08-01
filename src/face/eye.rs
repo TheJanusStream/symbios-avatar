@@ -184,12 +184,28 @@ impl Eyes {
         // goggles, which is exactly how it first looked.
         let radius = skull * (0.14 + 0.08 * params.size);
         let apart = skull * (0.34 + 0.10 * params.spacing);
-        let forward = skull * (0.60 - 0.10 * params.depth) - radius * 0.35;
         let rise = skull * 0.05;
 
+        // Placed on the *shaped* skull. The face is carved out of the sphere the
+        // body plan builds — a quarter longer front to back, with a jaw and a
+        // chin — so a point measured against that sphere lands well inside the
+        // head it is supposed to sit in.
+        let on_sphere = Vec3::new(apart, rise, skull * (0.60 - 0.10 * params.depth));
+        let placed = super::skull::reshape(on_sphere, skull);
+        // Set most of the way into the socket. The old inset was a third of the
+        // globe, which worked only because it was measured against a sphere that
+        // was already well inside the real face; against the true surface the
+        // same figure leaves the eye standing out like a bubble.
+        let forward = placed.z - radius * 0.82;
+
         Some(Self {
-            left: eye(-1.0, Vec3::new(-apart, rise, forward), radius, params),
-            right: eye(1.0, Vec3::new(apart, rise, forward), radius, params),
+            left: eye(
+                -1.0,
+                Vec3::new(-placed.x, placed.y, forward),
+                radius,
+                params,
+            ),
+            right: eye(1.0, Vec3::new(placed.x, placed.y, forward), radius, params),
             head,
         })
     }

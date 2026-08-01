@@ -11,6 +11,10 @@
 
 pub mod blink;
 pub mod eye;
+pub mod features;
+pub mod skull;
 
 pub use blink::Blink;
 pub use eye::{Eye, EyeParams, Eyes};
+pub use features::{FaceParams, Features};
+pub use skull::shape as shape_skull;

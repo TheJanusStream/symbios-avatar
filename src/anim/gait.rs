@@ -16,11 +16,11 @@
 //! question about the world — speed, terrain, intent — and this crate does not
 //! know about any of that.
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use super::ground::solve_contact;
 use super::pose::Pose;
-use crate::plan::Limb;
+use crate::plan::{Limb, Zone};
 use crate::rig::Rig;
 
 /// Where one contact is in the cycle.
@@ -349,6 +349,88 @@ pub fn step(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycle: f32
     }
 
     steps
+}
+
+/// How far an arm swings fore and aft, in radians.
+const ARM_SWING: f32 = 0.46;
+
+/// How far the arms drop from the pose the body is built in, in radians.
+///
+/// Bodies are modelled with the arms straight out, because that is the pose that
+/// meshes and skins well. Nobody walks in it. Anything that poses a body has to
+/// bring the arms down first, and that is not the gait's business to assume — so
+/// it is a separate call.
+///
+/// Held short of straight down on purpose. A rotation this size from a T-pose
+/// stretches the shoulder however it is skinned — measured the same under both
+/// dual quaternions and matrices — and the deeper the drop the worse the bulge.
+/// The real fix is to build bodies in an A-pose, which halves the worst-case
+/// rotation and is why production models are made that way.
+const ARM_DROP: f32 = 1.02;
+
+/// How far the shoulders twist against the hips, in radians.
+const SHOULDER_TWIST: f32 = 0.14;
+
+/// How far behind the legs the arms run, as a share of the cycle.
+///
+/// Not zero. Arms driven in lockstep with the legs read as clockwork; the lag is
+/// most of what makes a swing look like it is being carried rather than driven.
+const ARM_LAG: f32 = 0.07;
+
+/// How far a swinging arm bends at the elbow, in radians.
+const ELBOW_BEND: f32 = 0.34;
+
+/// Swings the arms against the legs and counter-rotates the shoulders.
+///
+/// The arm on one side follows the leg on the *other*, which is the whole of why
+/// a walk reads as a walk: a body swinging its arms in time with the legs on the
+/// same side looks like it is marching, and one not swinging them at all — which
+/// is what this gait did until now — does not look like it is walking.
+///
+/// Call after [`step`], which places the feet; this only touches the upper body.
+pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
+    if !pose.fits(rig) {
+        return;
+    }
+
+    let mut lead = 0.0;
+    for limb in [Limb::ForeLeft, Limb::ForeRight] {
+        let Some([shoulder, elbow, _]) = rig.limb_chain(limb) else {
+            continue;
+        };
+        // The leg diagonally opposite drives this arm.
+        let Some(driver) = gait
+            .limbs
+            .iter()
+            .position(|&other| other == limb.mirrored().paired())
+        else {
+            continue;
+        };
+        let offset = gait.offsets.get(driver).copied().unwrap_or(0.0);
+        let drive = ((cycle - offset + ARM_LAG) * std::f32::consts::TAU).sin();
+        if limb == Limb::ForeLeft {
+            lead = drive;
+        }
+
+        // Down first, then fore and aft about the body's own axis. Positive
+        // rotation about X carries a hanging arm backward, so a forward swing is
+        // the negative one.
+        let side = rig.joints[shoulder].position.x.signum();
+        pose.rotations[shoulder] =
+            Quat::from_rotation_x(-ARM_SWING * drive) * Quat::from_rotation_z(-ARM_DROP * side);
+        // A straight arm reads as a mannequin being carried along.
+        pose.rotations[elbow] =
+            Quat::from_rotation_y(-ELBOW_BEND * side * (0.5 + 0.5 * drive.max(0.0)));
+    }
+
+    // Shoulders against hips, and then the neck against the shoulders so the
+    // head keeps looking where it is going rather than being turned by the walk.
+    if let Some(&neck) = rig.in_zone(Zone::Neck).first()
+        && let Some(girdle) = rig.joints[neck].parent
+    {
+        pose.rotations[girdle] = Quat::from_rotation_y(SHOULDER_TWIST * lead);
+        pose.rotations[neck] = Quat::from_rotation_y(-SHOULDER_TWIST * lead);
+    }
 }
 
 /// Where a limb's contact rests when the body is standing.

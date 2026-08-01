@@ -53,6 +53,20 @@ impl Limb {
         matches!(self, Limb::ForeLeft | Limb::ForeRight)
     }
 
+    /// The limb at the other end of the body on the same side.
+    ///
+    /// A fore limb's diagonal partner is `self.mirrored().paired()`, which is
+    /// the pairing a walk is built on.
+    #[must_use]
+    pub fn paired(self) -> Limb {
+        match self {
+            Limb::ForeLeft => Limb::HindLeft,
+            Limb::ForeRight => Limb::HindRight,
+            Limb::HindLeft => Limb::ForeLeft,
+            Limb::HindRight => Limb::ForeRight,
+        }
+    }
+
     /// This limb's mirror across the body's plane of symmetry.
     #[must_use]
     pub fn mirrored(self) -> Limb {

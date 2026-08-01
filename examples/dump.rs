@@ -18,7 +18,7 @@ use symbios_avatar::{
     Archetype, AvatarRecord, Blink, CageConfig, Extremities, EyeParams, Eyes, FootingConfig, Gait,
     Ground, Hair, HairParams, Outfit, OutfitParams, PolyMesh, Pose, QuadrupedParams, Rig, Scalp,
     Skeleton, SkinConfig, SkinParams, Stride, Surface, UvConfig, Vec3, anim::gait,
-    anim::plant_feet_of, build_cage, catmull_clark, demo, rig::skin, texture, unwrap,
+    anim::plant_feet_of, build_body, build_cage, demo, rig::skin, texture, unwrap,
 };
 
 fn main() {
@@ -103,7 +103,9 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
             return 1;
         }
     };
-    let smooth = catmull_clark(&cage, 2);
+    // The cage as built, and the surface as a consumer actually gets it —
+    // subdivided and with the skull shaped, which no capsule graph can express.
+    let smooth = build_body(skeleton, &CageConfig::default(), 2).unwrap_or_default();
 
     report(name, "cage", &cage);
     report(name, "smooth", &smooth);
@@ -181,9 +183,8 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
     // built mesh, so both are worth reporting: a skull that measures wrong puts
     // the hair somewhere wrong, and nothing downstream would say so.
     if let Ok(rig) = Rig::from_skeleton(skeleton)
-        && let Ok(cage) = build_cage(skeleton, &CageConfig::default())
+        && let Ok(mesh) = build_body(skeleton, &CageConfig::default(), 2)
     {
-        let mesh = catmull_clark(&cage, 2);
         if let Some(hair) = Hair::build(&mesh, &rig, &HairParams::default())
             && let Some(scalp) = Scalp::measure(&mesh, &rig)
         {
@@ -268,11 +269,10 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
 fn walk(dir: &std::path::Path, frames: usize) -> usize {
     let record = AvatarRecord::default();
     let skeleton = record.skeleton();
-    let Ok(cage) = build_cage(&skeleton, &CageConfig::default()) else {
+    let Ok(mesh) = build_body(&skeleton, &CageConfig::default(), 2) else {
         eprintln!("the walking body would not mesh");
         return 1;
     };
-    let mesh = catmull_clark(&cage, 2);
     let Ok(rig) = Rig::from_skeleton(&skeleton) else {
         eprintln!("the walking body would not rig");
         return 1;

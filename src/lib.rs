@@ -81,7 +81,7 @@ pub use anim::{
 pub use cage::{CageConfig, CageError, build_cage};
 pub use dress::{Garment, GarmentCut, Leg, Outfit, OutfitParams, Sleeve};
 pub use extremity::{Attached, Extremities, Foot, Hand};
-pub use face::{Blink, EyeParams, Eyes};
+pub use face::{Blink, EyeParams, Eyes, FaceParams, Features, shape_skull};
 pub use hair::{Hair, HairParams, Scalp, Strand};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
@@ -94,6 +94,30 @@ pub use rig::{
 };
 pub use skeleton::{Chain, Node, NodeKind, Skeleton, SkeletonError};
 pub use subdiv::catmull_clark;
+
+/// Builds a body's surface from its skeleton, shaped and ready to bind.
+///
+/// The whole of it: cage, subdivision, and the skull shaping that a capsule
+/// graph cannot express. Kept as one call because the order matters and the
+/// shaping has to happen before anything is bound or unwrapped — do it after
+/// and the skin weights, the texture charts and every attached part are fitted
+/// to a head that no longer exists.
+///
+/// # Errors
+///
+/// Returns [`CageError`] if the skeleton cannot be meshed.
+pub fn build_body(
+    skeleton: &Skeleton,
+    config: &CageConfig,
+    subdivisions: usize,
+) -> Result<PolyMesh, CageError> {
+    let cage = build_cage(skeleton, config)?;
+    let mut mesh = catmull_clark(&cage, subdivisions);
+    if let Ok(rig) = Rig::from_skeleton(skeleton) {
+        face::shape_skull(&mut mesh, &rig);
+    }
+    Ok(mesh)
+}
 pub use texture::{AtlasGeometry, SkinParams, bake_geometry, paint_skin};
 pub use uv::{Chart, UvConfig, UvUnwrap, unwrap};
 

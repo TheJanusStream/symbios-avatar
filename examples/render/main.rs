@@ -36,10 +36,10 @@ use glam::{Mat4, Vec2, Vec3};
 use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
-    Archetype, AvatarRecord, Blink, CageConfig, Extremities, Eyes, FootingConfig, Gait, Ground,
-    Hair, HairParams, Outfit, PolyMesh, Pose, Posed, Rig, SkinConfig, Stride, Surface, UvConfig,
-    UvUnwrap, Zone, anim::gait, anim::plant_feet_of, build_cage, catmull_clark, rig::skin, texture,
-    unwrap,
+    Archetype, AvatarRecord, Blink, CageConfig, Extremities, Eyes, FaceParams, Features,
+    FootingConfig, Gait, Ground, Hair, HairParams, Outfit, PolyMesh, Pose, Posed, Rig, SkinConfig,
+    Stride, Surface, UvConfig, UvUnwrap, Zone, anim::gait, anim::plant_feet_of, build_body,
+    rig::skin, texture, unwrap,
 };
 
 /// Pixels per side of one view in the finished sheet.
@@ -191,6 +191,7 @@ struct Subject {
     /// Which part of the body each vertex belongs to, for framing a close-up.
     zones: Vec<Zone>,
     eyes: Option<Eyes>,
+    features: Option<Features>,
     hair: Option<Hair>,
     extremities: Extremities,
     outfit: Outfit,
@@ -208,8 +209,7 @@ impl Subject {
         pass: Option<String>,
     ) -> Option<Self> {
         let skeleton = record.skeleton();
-        let cage = build_cage(&skeleton, &CageConfig::default()).ok()?;
-        let mesh = catmull_clark(&cage, 2);
+        let mesh = build_body(&skeleton, &CageConfig::default(), 2).ok()?;
         let rig = Rig::from_skeleton(&skeleton).ok()?;
         let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
         let zones = weights.zone_map(&mesh, &rig);
@@ -225,6 +225,8 @@ impl Subject {
             linear,
             pass,
             eyes: Eyes::build(&rig, &record.eyes),
+            features: Eyes::build(&rig, &record.eyes)
+                .map(|eyes| Features::build(&eyes, &FaceParams::default())),
             hair: Hair::build(&mesh, &rig, hair),
             // The plan stands its bodies on the origin.
             extremities: Extremities::build(&rig, &surface, 0.0),
@@ -251,6 +253,7 @@ impl Subject {
     fn walking(&self, cycle: f32) -> Pose {
         let mut pose = Pose::rest(&self.rig);
         let steps = gait::step(&self.rig, &mut pose, &self.gait, &self.stride, cycle);
+        gait::swing_arms(&self.rig, &mut pose, &self.gait, cycle);
         plant_feet_of(
             &self.rig,
             &mut pose,
@@ -470,7 +473,13 @@ impl Subject {
             )
         });
 
+        let face = self
+            .features
+            .as_ref()
+            .map(|features| features.assembled().transformed(rigid(features.head)));
+
         Built {
+            face,
             positions,
             normals,
             faces: self.uv.faces.clone(),
@@ -494,6 +503,7 @@ impl Subject {
 
 /// One pose's worth of world-space geometry.
 struct Built<'a> {
+    face: Option<PolyMesh>,
     positions: Vec<Vec3>,
     normals: Vec<Vec3>,
     faces: Vec<Vec<u32>>,
@@ -566,6 +576,15 @@ impl Built<'_> {
                 normals: None,
                 paint: Paint::Flat,
                 material: Material::hair(*tone),
+            });
+        }
+        if let Some(face) = &self.face {
+            items.push(Item {
+                positions: &face.positions,
+                faces: &face.faces,
+                normals: None,
+                paint: Paint::Flat,
+                material: Material::skin(BARE),
             });
         }
         if let Some((globes, lids, _)) = &self.eyes {
