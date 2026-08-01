@@ -251,6 +251,12 @@ assert!(footing.is_settled());
   rather than crossfading, so a limb that was moving keeps moving. Only the
   incoming pose is ever evaluated, and it composes with anything — a clip, a
   solver, a gait.
+- `anim::gait` walks a body with two numbers: a phase offset per contact and a
+  duty factor. A biped's walk, a horse's trot, and a wave gait rippling down a
+  centipede all fall out of those, which is what no library of authored walk
+  cycles can do. Stride length scales with the legs' own reach, and the body
+  sinks exactly as far as it must for its feet to stay within it — a leg standing
+  straight has no slack to step with.
 
 Which limbs carry a body is read off the rig rather than declared: a biped stands
 on two of its four, a quadruped on all four, and a six-legged plan would work

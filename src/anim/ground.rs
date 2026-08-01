@@ -108,11 +108,30 @@ pub fn plant_feet<F>(rig: &Rig, pose: &mut Pose, beneath: F, config: &FootingCon
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
+    plant_feet_of(rig, pose, &rig.ground_contacts(), beneath, config)
+}
+
+/// Solves only the named contacts onto the surface beneath them.
+///
+/// What a gait needs: its stance feet are carrying the body and belong on the
+/// ground, while its swinging feet are travelling over that ground and must be
+/// left alone. Planting everything would drag each swinging foot down and reduce
+/// the walk to a shuffle.
+pub fn plant_feet_of<F>(
+    rig: &Rig,
+    pose: &mut Pose,
+    limbs: &[Limb],
+    beneath: F,
+    config: &FootingConfig,
+) -> Footing
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
     if !pose.fits(rig) {
         return Footing::default();
     }
 
-    let contacts = rig.ground_contacts();
+    let contacts: Vec<Limb> = limbs.to_vec();
     let mut footing = Footing::default();
 
     for _ in 0..config.passes.max(1) {
@@ -149,23 +168,12 @@ where
         footing.straining.clear();
 
         for (limb, foot, ground) in probes {
-            let Some(chain) = rig.limb_chain(limb) else {
-                continue;
-            };
             if ground.position.y - posed.positions[foot].y > config.max_step_up {
                 footing.straining.push(limb);
                 continue;
             }
 
-            // The leg solves to the joint above the foot, and the foot hangs off
-            // it — so the goal is offset by however far that is.
-            let target = ground.position + (posed.positions[chain[2]] - posed.positions[foot]);
-
-            // Bend the knee away from the body's centre line, which is forward
-            // for a biped's knee and a quadruped's stifle alike.
-            let pole = posed.positions[chain[0]] + Vec3::Z * rig.extent();
-
-            if two_bone(rig, pose, chain, target, pole) {
+            if solve_contact(rig, pose, limb, ground.position) {
                 footing.planted.push(limb);
             } else {
                 footing.straining.push(limb);
@@ -174,6 +182,29 @@ where
     }
 
     footing
+}
+
+/// Solves one limb so its ground contact lands on `target`.
+///
+/// The leg solves to the joint *above* the contact, because the foot hangs off
+/// it — aiming the ankle itself at the ground would bury the foot in it. Shared
+/// with the gait engine, which places contacts for a different reason but has
+/// exactly the same problem.
+pub(crate) fn solve_contact(rig: &Rig, pose: &mut Pose, limb: Limb, target: Vec3) -> bool {
+    let Some(chain) = rig.limb_chain(limb) else {
+        return false;
+    };
+    let Some(&foot) = rig.in_zone(Zone::Extremity(limb)).first() else {
+        return false;
+    };
+
+    let posed = pose.forward(rig);
+    let offset = posed.positions[chain[2]] - posed.positions[foot];
+    // Bend the knee away from the body's centre line, which is forward for a
+    // biped's knee and a quadruped's stifle alike.
+    let pole = posed.positions[chain[0]] + Vec3::Z * rig.extent();
+
+    two_bone(rig, pose, chain, target + offset, pole)
 }
 
 #[cfg(test)]

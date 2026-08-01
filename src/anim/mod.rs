@@ -18,6 +18,7 @@
 //! * [`plant_feet`] — putting a body's contacts on whatever it is standing on,
 //!   which is what makes it look like it is *in* a place rather than played back
 //!   near one.
+//! * [`gait`] — walking, for whatever number of legs a body turns out to have.
 //!
 //! ```rust
 //! use symbios_avatar::{
@@ -42,11 +43,13 @@
 //! ```
 
 pub mod blend;
+pub mod gait;
 pub mod ground;
 pub mod ik;
 pub mod pose;
 
 pub use blend::Inertializer;
-pub use ground::{Footing, FootingConfig, Ground, plant_feet};
+pub use gait::{Gait, Phase, Steps, Stride};
+pub use ground::{Footing, FootingConfig, Ground, plant_feet, plant_feet_of};
 pub use ik::{FabrikConfig, fabrik, two_bone};
 pub use pose::{Pose, Posed};

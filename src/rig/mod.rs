@@ -335,6 +335,19 @@ impl Rig {
             .collect()
     }
 
+    /// How far a limb can reach: the sum of the bones an IK solve controls.
+    ///
+    /// The straight-line distance to the extremity is the wrong measure twice
+    /// over — it stops short of the bones' true extent when the limb rests bent,
+    /// and it includes the foot, which hangs off the chain rather than being part
+    /// of it. Summing the chain's bones is what a solver can actually deliver.
+    #[must_use]
+    pub fn limb_reach(&self, limb: Limb) -> Option<f32> {
+        let chain = self.limb_chain(limb)?;
+        let joint = |index: usize| self.joints[chain[index]].position;
+        Some(joint(0).distance(joint(1)) + joint(1).distance(joint(2)))
+    }
+
     /// Vertical extent of the rig's rest pose, in metres.
     #[must_use]
     pub fn extent(&self) -> f32 {

@@ -69,7 +69,9 @@ pub mod subdiv;
 pub mod texture;
 pub mod uv;
 
-pub use anim::{Footing, Ground, Inertializer, Pose, Posed, plant_feet};
+pub use anim::{
+    Footing, FootingConfig, Gait, Ground, Inertializer, Pose, Posed, Stride, plant_feet,
+};
 pub use cage::{CageConfig, CageError, build_cage};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
