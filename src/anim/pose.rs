@@ -13,6 +13,7 @@
 
 use glam::{Mat4, Quat, Vec3};
 
+use crate::anim::dual::{self, DualQuat};
 use crate::rig::{Rig, SkinWeights};
 
 /// One local rotation per joint, plus where the root sits.
@@ -137,13 +138,59 @@ impl Posed {
             .collect()
     }
 
-    /// Deforms rest-pose vertices by linear blend skinning.
+    /// The same transforms as [`Self::skinning_matrices`], as dual quaternions.
+    ///
+    /// Every skinning transform here is rigid — a rotation about the joint's
+    /// rest position followed by a move to where it ended up — so nothing is
+    /// lost in the conversion. A transform that scaled would be, silently, which
+    /// is why nothing in this crate produces one.
+    #[must_use]
+    pub fn skinning_transforms(&self, rig: &Rig) -> Vec<DualQuat> {
+        (0..self.len())
+            .map(|index| {
+                let rotation = self.rotations[index];
+                let carried = self.positions[index] - rotation * rig.joints[index].position;
+                DualQuat::from_rotation_translation(rotation, carried)
+            })
+            .collect()
+    }
+
+    /// Deforms rest-pose vertices by dual quaternion skinning.
     ///
     /// The reference implementation: a renderer does this on the GPU, but having
     /// it here means a pose can be measured — that a foot reached the ground, or
-    /// that a limb did not tear — without rendering anything.
+    /// that a hip did not pinch — without rendering anything.
+    ///
+    /// Dual quaternions rather than matrices, because averaging matrices does
+    /// not average rotations: where two bones turn apart, the surface between
+    /// them collapses toward the axis. See [`crate::anim::dual`]. An integration
+    /// that skins on the GPU has to match this, which is why the method chosen
+    /// here is one a shader can run.
     #[must_use]
     pub fn deform(&self, rig: &Rig, positions: &[Vec3], weights: &SkinWeights) -> Vec<Vec3> {
+        let transforms = self.skinning_transforms(rig);
+        positions
+            .iter()
+            .zip(&weights.vertices)
+            .map(|(&position, influences)| {
+                dual::blend(
+                    influences
+                        .iter()
+                        .filter(|influence| influence.weight > 0.0)
+                        .map(|influence| (transforms[influence.joint as usize], influence.weight)),
+                )
+                .transform_point(position)
+            })
+            .collect()
+    }
+
+    /// Deforms rest-pose vertices by linear blend skinning.
+    ///
+    /// Kept for comparison and for integrations that cannot do better —
+    /// [`Self::deform`] is what a body should use. This is the method that
+    /// pinches; the tests measure the difference rather than asserting it.
+    #[must_use]
+    pub fn deform_linear(&self, rig: &Rig, positions: &[Vec3], weights: &SkinWeights) -> Vec<Vec3> {
         let matrices = self.skinning_matrices(rig);
         positions
             .iter()

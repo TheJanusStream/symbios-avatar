@@ -246,3 +246,106 @@ fn a_faster_pace_takes_longer_steps_and_sinks_further() {
         "a body standing still has nothing to sink for"
     );
 }
+
+/// Twice the area of a triangle.
+fn area(corners: [Vec3; 3]) -> f32 {
+    (corners[1] - corners[0])
+        .cross(corners[2] - corners[0])
+        .length()
+        * 0.5
+}
+
+#[test]
+fn dual_quaternion_skinning_compresses_less_of_the_body_than_matrices_do() {
+    // Averaging matrices does not average rotations, so where two bones turn
+    // apart the surface between them collapses toward the axis. This is the
+    // measurement that chose the default, and it is deliberately a measurement
+    // over the WHOLE surface: judged on the single worst triangle instead, the
+    // two methods trade places and the answer comes out backwards.
+    let record = AvatarRecord::new("Skinned", Archetype::default());
+    let skeleton = record.skeleton();
+    let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+    let mesh = catmull_clark(&cage, 2);
+    let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+    let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
+    let triangles = mesh.triangulated();
+
+    let rest: Vec<f32> = triangles
+        .iter()
+        .map(|tri| area(tri.map(|corner| mesh.positions[corner as usize])))
+        .collect();
+
+    let gait = Gait::natural(&rig);
+    let stride = Stride::for_body(&rig, 1.0);
+
+    // How many triangles lose a third of their area, and how bad the worst
+    // hundredth gets.
+    let judge = |deformed: &[Vec3]| -> (usize, f32) {
+        let mut ratios: Vec<f32> = triangles
+            .iter()
+            .enumerate()
+            .map(|(index, tri)| {
+                area(tri.map(|corner| deformed[corner as usize])) / rest[index].max(1e-12)
+            })
+            .collect();
+        ratios.sort_by(f32::total_cmp);
+        let crushed = ratios.iter().filter(|ratio| **ratio < 0.667).count();
+        (crushed, ratios[(ratios.len() - 1) / 100])
+    };
+
+    let (mut linear_total, mut dual_total) = (0usize, 0usize);
+    for step in 0..8 {
+        let cycle = step as f32 / 8.0;
+        let mut pose = Pose::rest(&rig);
+        gait::step(&rig, &mut pose, &gait, &stride, cycle);
+        let posed = pose.forward(&rig);
+
+        let (linear_crushed, linear_low) =
+            judge(&posed.deform_linear(&rig, &mesh.positions, &weights));
+        let (dual_crushed, dual_low) = judge(&posed.deform(&rig, &mesh.positions, &weights));
+
+        // Per phase, only the bulk measure holds: at the extremes of the
+        // stride dual quaternions give up a handful of triangles at the crotch,
+        // where three bones meet and there is barely any surface to work with.
+        assert!(
+            dual_low >= linear_low - 1e-4,
+            "cycle {cycle}: the worst hundredth fell to {dual_low}, against {linear_low} for matrices"
+        );
+        linear_total += linear_crushed;
+        dual_total += dual_crushed;
+    }
+
+    assert!(
+        linear_total > 0,
+        "no phase of the walk compressed anything under matrix skinning, so nothing was compared"
+    );
+    assert!(
+        dual_total * 2 < linear_total,
+        "over a whole cycle dual quaternions crushed {dual_total} triangles and matrices {linear_total}"
+    );
+}
+
+#[test]
+fn skinning_leaves_the_rest_pose_exactly_alone() {
+    // Whatever the method, a body that is not posed must not move. Dual
+    // quaternion blending normalises, and a normalisation that is even slightly
+    // wrong shows up here first.
+    let record = AvatarRecord::new("Still", Archetype::default());
+    let skeleton = record.skeleton();
+    let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+    let mesh = catmull_clark(&cage, 2);
+    let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+    let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
+
+    let posed = Pose::rest(&rig).forward(&rig);
+    for (original, moved) in
+        mesh.positions
+            .iter()
+            .zip(posed.deform(&rig, &mesh.positions, &weights))
+    {
+        assert!(
+            original.distance(moved) < 1e-4,
+            "the rest pose moved {original:?} to {moved:?}"
+        );
+    }
+}

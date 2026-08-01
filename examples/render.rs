@@ -16,6 +16,7 @@
 //! cargo run --example render -- --walk 8      # a walk cycle, one sheet per frame
 //! cargo run --example render -- --head        # close up on face, neck and hair
 //! cargo run --example render -- --close hand  # or head, hand, foot
+//! cargo run --example render -- --walk 6 --linear   # matrix skinning, to compare
 //! cargo run --example render -- --hair 1,0,0,0.5,0.6,0.2   # override hair axes
 //! ```
 
@@ -70,6 +71,9 @@ fn main() {
     // Six numbers, in the order the axes are declared: length, volume,
     // coverage, part, wave, shade. For walking the parameter space by eye,
     // which is the only way any of it got tuned.
+    // Skinning is a choice with a visible cost either way, so it is a flag:
+    // dual quaternions pinch less and can bulge, matrices are the opposite.
+    let linear = args.iter().any(|arg| arg == "--linear");
     let overridden: Vec<f32> = value("--hair")
         .map(|spec| {
             spec.split(',')
@@ -103,7 +107,7 @@ fn main() {
         ..record.hair
     };
 
-    let Some(subject) = Subject::build(&record, &hair) else {
+    let Some(subject) = Subject::build(&record, &hair, linear) else {
         eprintln!("the body could not be built");
         std::process::exit(1);
     };
@@ -157,6 +161,7 @@ fn main() {
 
 /// Everything needed to draw one avatar.
 struct Subject {
+    linear: bool,
     mesh: PolyMesh,
     uv: UvUnwrap,
     albedo: Vec<u8>,
@@ -175,7 +180,7 @@ struct Subject {
 
 impl Subject {
     /// Builds a body from a record, all the way to something drawable.
-    fn build(record: &AvatarRecord, hair: &HairParams) -> Option<Self> {
+    fn build(record: &AvatarRecord, hair: &HairParams, linear: bool) -> Option<Self> {
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).ok()?;
         let mesh = catmull_clark(&cage, 2);
@@ -192,6 +197,7 @@ impl Subject {
         let surface = Surface::measure(&mesh, &rig);
 
         Some(Self {
+            linear,
             eyes: Eyes::build(&rig, &record.eyes),
             hair: Hair::build(&mesh, &rig, hair),
             // The plan stands its bodies on the origin.
@@ -251,7 +257,7 @@ impl Subject {
     fn close_up(&self, pose: &Pose, closure: f32, focus: Focus) -> Option<Image> {
         use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
         let posed = pose.forward(&self.rig);
-        let deformed = posed.deform(&self.rig, &self.mesh.positions, &self.weights);
+        let deformed = self.skinned(&posed);
 
         // Framed on the part's own vertices. Anything hanging off it — long
         // hair, most obviously — is deliberately left to fall out of frame:
@@ -318,7 +324,7 @@ impl Subject {
     /// Draws one pose from four frames into a two-by-two sheet.
     fn render(&self, pose: &Pose, closure: f32, frames: &[Frame; 4]) -> Image {
         let posed = pose.forward(&self.rig);
-        let deformed = posed.deform(&self.rig, &self.mesh.positions, &self.weights);
+        let deformed = self.skinned(&posed);
 
         let head_of = |head: usize| {
             Mat4::from_rotation_translation(posed.rotations[head], posed.positions[head])
@@ -423,10 +429,25 @@ impl Subject {
         sheet
     }
 
+    /// Deforms the body by whichever skinning method was asked for.
+    fn skinned(&self, posed: &symbios_avatar::Posed) -> Vec<Vec3> {
+        if self.linear {
+            posed.deform_linear(&self.rig, &self.mesh.positions, &self.weights)
+        } else {
+            posed.deform(&self.rig, &self.mesh.positions, &self.weights)
+        }
+    }
+
     /// Draws the textured body into one view.
     fn draw(&self, image: &mut Image, deformed: &[Vec3], frame: &Frame) {
         let positions: Vec<Vec3> = self.uv.gather(deformed);
-        let normals = normals_of(&positions, &self.uv.faces);
+        // Normals from the *unsplit* mesh, then gathered. Computing them over
+        // the unwrapped topology instead gives every UV seam two different
+        // normals — one per chart, each blind to the faces on the other side —
+        // and the seam shows as a hard faceted band. Charts are split by zone,
+        // so those bands land at the hips and shoulders and read exactly like a
+        // skinning defect.
+        let normals = self.uv.gather(&normals_of(deformed, &self.mesh.faces));
         let camera = frame.camera();
 
         for face in &self.uv.faces {

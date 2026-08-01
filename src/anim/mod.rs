@@ -48,6 +48,7 @@
 
 pub mod blend;
 pub mod clip;
+pub mod dual;
 pub mod gait;
 pub mod gaze;
 pub mod ground;
