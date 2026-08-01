@@ -221,7 +221,14 @@ fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
             -Eye::LOWER_SWING
         };
         // Built around +Y then turned so the pair meet across the eye when shut.
-        let rest = Quat::from_rotation_x(swing * (1.0 - open))
+        //
+        // The sign matters and it was wrong: written as `swing * (1 - open)`
+        // this CLOSES the lids as the aperture rises, and the default aperture
+        // left a fifteen-degree slit — an eye that read as a letterbox with a
+        // stripe of iris in it. Opening the upper lid is a negative rotation
+        // about X and opening the lower one is positive, which is exactly what
+        // multiplying by each lid's own swing gives.
+        let rest = Quat::from_rotation_x(swing * (0.42 - 0.72 * open))
             * if upper {
                 Quat::IDENTITY
             } else {
