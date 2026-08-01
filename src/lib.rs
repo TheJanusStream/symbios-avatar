@@ -62,15 +62,19 @@ pub mod hull;
 pub mod mesh;
 pub mod plan;
 pub mod record;
+pub mod rig;
 pub mod skeleton;
 pub mod subdiv;
 
 pub use cage::{CageConfig, CageError, build_cage};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
-pub use plan::{Archetype, BodyPlan, Category, HumanoidParams, QuadrupedParams};
+pub use plan::{
+    Archetype, BodyPlan, Category, HumanoidParams, Limb, QuadrupedParams, Zone, ZoneSet,
+};
 pub use record::{AvatarRecord, LockSet, ProfileRecord, ShareCodeError};
-pub use skeleton::{Limb, Node, NodeKind, Skeleton, SkeletonError};
+pub use rig::{Anchor, Joint, Landmark, Landmarks, Rig, RigError, SkinConfig, SkinWeights};
+pub use skeleton::{Chain, Node, NodeKind, Skeleton, SkeletonError};
 pub use subdiv::catmull_clark;
 
 pub use glam::{Vec2, Vec3};

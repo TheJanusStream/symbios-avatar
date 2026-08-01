@@ -10,7 +10,7 @@ use glam::{Quat, Vec2, Vec3};
 
 use super::{CageConfig, CageError, MIN_BONE_LENGTH, Socket};
 use crate::mesh::PolyMesh;
-use crate::skeleton::{Limb, NodeKind, Skeleton};
+use crate::skeleton::{Chain, NodeKind, Skeleton};
 
 /// Rings of one meshed limb, ordered from start to end.
 pub(crate) struct LimbBuild {
@@ -25,7 +25,7 @@ pub(crate) struct LimbBuild {
 /// Builds the ring chain for `limb`, registering a [`Socket`] at each joint end.
 pub(crate) fn build_limb(
     skeleton: &Skeleton,
-    limb: &Limb,
+    limb: &Chain,
     config: &CageConfig,
     mesh: &mut PolyMesh,
     sockets: &mut Vec<Socket>,

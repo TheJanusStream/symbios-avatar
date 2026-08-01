@@ -113,11 +113,46 @@ joint failed to weld to a limb, a winding conflict means a face was emitted
 backwards, and both are silent in a renderer but fatal to normals, skinning, and
 glTF export.
 
+## Rigging and dressing
+
+A meshed body is also a posable one. [`Rig`] roots the capsule graph into a
+hierarchy ordered parent-before-child — the order glTF and VRM want joints
+written in — and `rig::skin::bind` attaches a mesh to it. Weights are derived
+analytically rather than solved for, because the same code generated both the
+skeleton and the surface, then smoothed across the surface so a torso does not
+crease where two bones' influence meets.
+
+Every node carries a **zone** saying what part of the body it is, which is what
+lets the rest of the system address a body without knowing which plan built it:
+
+```rust
+use symbios_avatar::{AvatarRecord, Landmark, Limb, Rig, Zone};
+
+let rig = Rig::from_skeleton(&AvatarRecord::default().skeleton())?;
+
+// Semantic queries instead of bone names — the same call works on a quadruped.
+let feet = rig.query(|zone| matches!(zone, Zone::Extremity(limb) if !limb.is_fore()));
+assert_eq!(feet.len(), 2);
+
+// Named anchors for fitting hair, hats, and garments.
+let marks = rig.landmarks();
+let hat = marks.get(Landmark::Crown).expect("every body has a crown");
+let shoulders = marks.span(
+    Landmark::LimbRoot(Limb::ForeLeft),
+    Landmark::LimbRoot(Limb::ForeRight),
+);
+# Ok::<(), symbios_avatar::RigError>(())
+```
+
+Garments declare the zones they cover as a `ZoneSet`, and the body suppresses
+those zones underneath — poke-through is avoided by not emitting the geometry
+rather than by hiding it.
+
 ## Status
 
-Early. Records, body plans, and the mesher are in place and tested. Skinning,
-animation, hair and outfits, and glTF/VRM export are still ahead — see
-[`docs/plan.md`](docs/plan.md).
+Early. Records, body plans, the mesher, rigging, skinning, zones, and landmarks
+are in place and tested. UV charting, hair and outfits, animation, and glTF/VRM
+export are still ahead — see [`docs/plan.md`](docs/plan.md).
 
 ## Licence
 

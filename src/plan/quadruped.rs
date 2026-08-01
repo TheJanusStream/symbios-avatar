@@ -18,6 +18,7 @@ use super::{
     BodyPlan, Category, PlanDecodeError, put_length, put_signed, put_unit, take_length,
     take_signed, take_unit,
 };
+use super::{Limb, Zone};
 use crate::skeleton::{Node, Skeleton};
 
 /// Smallest and largest back height this plan accepts, in metres.
@@ -144,35 +145,49 @@ impl BodyPlan for QuadrupedParams {
         let foot_y = h * 0.086;
 
         let mut skeleton = Skeleton::new();
-        let hips = skeleton.add_node(Node::new(Vec3::new(0.0, h * 0.966, hips_z), girdle_r));
-        let spine = skeleton.extend_from(hips, Node::new(Vec3::new(0.0, h, spine_z), spine_r));
-        let withers =
-            skeleton.extend_from(spine, Node::new(Vec3::new(0.0, h, withers_z), withers_r));
+        let hips = skeleton
+            .add_node(Node::new(Vec3::new(0.0, h * 0.966, hips_z), girdle_r).in_zone(Zone::Pelvis));
+        let spine = skeleton.extend_from(
+            hips,
+            Node::new(Vec3::new(0.0, h, spine_z), spine_r).in_zone(Zone::Abdomen),
+        );
+        let withers = skeleton.extend_from(
+            spine,
+            Node::new(Vec3::new(0.0, h, withers_z), withers_r).in_zone(Zone::Chest),
+        );
         let neck = skeleton.extend_from(
             withers,
-            Node::new(Vec3::new(0.0, h * 1.086, neck_z), neck_r),
+            Node::new(Vec3::new(0.0, h * 1.086, neck_z), neck_r).in_zone(Zone::Neck),
         );
         skeleton.extend_from(
             neck,
             Node::new(
                 Vec3::new(0.0, h * 1.069, head_z),
                 h * 0.129 * (1.0 + 0.25 * self.head_size),
-            ),
+            )
+            .in_zone(Zone::Head),
         );
 
-        let tail = skeleton.extend_from(hips, Node::new(Vec3::new(0.0, h * 0.862, tail_z), tail_r));
+        let tail = skeleton.extend_from(
+            hips,
+            Node::new(Vec3::new(0.0, h * 0.862, tail_z), tail_r).in_zone(Zone::Tail),
+        );
         skeleton.extend_from(
             tail,
-            Node::new(Vec3::new(0.0, h * 0.724, tip_z), h * 0.031 * girth),
+            Node::new(Vec3::new(0.0, h * 0.724, tip_z), h * 0.031 * girth).in_zone(Zone::Tail),
         );
 
-        for side in [-1.0f32, 1.0] {
+        for (side, fore, hind) in [
+            (-1.0f32, Limb::ForeLeft, Limb::HindLeft),
+            (1.0, Limb::ForeRight, Limb::HindRight),
+        ] {
             let stifle = skeleton.extend_from(
                 hips,
                 Node::new(
                     Vec3::new(side * rear_x, rear_leg_y, hips_z - h * 0.017),
                     h * 0.078 * girth,
-                ),
+                )
+                .in_zone(Zone::UpperLimb(hind)),
             );
             let hock = skeleton.extend_from(
                 stifle,
@@ -183,14 +198,16 @@ impl BodyPlan for QuadrupedParams {
                         hips_z + h * 0.052,
                     ),
                     h * 0.055 * girth,
-                ),
+                )
+                .in_zone(Zone::LowerLimb(hind)),
             );
             skeleton.extend_from(
                 hock,
                 Node::new(
                     Vec3::new(side * rear_x, foot_y, hips_z + h * 0.121),
                     h * 0.062 * girth,
-                ),
+                )
+                .in_zone(Zone::Extremity(hind)),
             );
 
             // Set slightly behind the withers, as a real shoulder is. Attaching
@@ -202,7 +219,8 @@ impl BodyPlan for QuadrupedParams {
                 Node::new(
                     Vec3::new(side * front_x, front_leg_y, withers_z - h * 0.014),
                     h * 0.078 * girth,
-                ),
+                )
+                .in_zone(Zone::UpperLimb(fore)),
             );
             let fetlock = skeleton.extend_from(
                 knee,
@@ -213,14 +231,16 @@ impl BodyPlan for QuadrupedParams {
                         withers_z + h * 0.017,
                     ),
                     h * 0.055 * girth,
-                ),
+                )
+                .in_zone(Zone::LowerLimb(fore)),
             );
             skeleton.extend_from(
                 fetlock,
                 Node::new(
                     Vec3::new(side * front_x, foot_y, withers_z + h * 0.086),
                     h * 0.062 * girth,
-                ),
+                )
+                .in_zone(Zone::Extremity(fore)),
             );
         }
 

@@ -18,6 +18,7 @@ use super::{
     BodyPlan, Category, PlanDecodeError, put_length, put_signed, put_unit, take_length,
     take_signed, take_unit,
 };
+use super::{Limb, Zone};
 use crate::skeleton::{Node, Skeleton};
 
 /// Smallest and largest stature this plan accepts, in metres.
@@ -178,68 +179,93 @@ impl BodyPlan for HumanoidParams {
         let extremity = 1.0 + 0.3 * self.extremity_size;
 
         let mut skeleton = Skeleton::new();
-        let pelvis = skeleton.add_node(Node::new(Vec3::new(0.0, pelvis_y, 0.0), pelvis_r));
-        let waist = skeleton.extend_from(pelvis, Node::new(Vec3::new(0.0, waist_y, 0.0), waist_r));
-        let chest = skeleton.extend_from(waist, Node::new(Vec3::new(0.0, chest_y, 0.0), chest_r));
-        let neck = skeleton.extend_from(chest, Node::new(Vec3::new(0.0, neck_y, 0.0), neck_r));
-        skeleton.extend_from(neck, Node::new(Vec3::new(0.0, head_y, 0.0), head_r));
+        let pelvis = skeleton
+            .add_node(Node::new(Vec3::new(0.0, pelvis_y, 0.0), pelvis_r).in_zone(Zone::Pelvis));
+        let waist = skeleton.extend_from(
+            pelvis,
+            Node::new(Vec3::new(0.0, waist_y, 0.0), waist_r).in_zone(Zone::Abdomen),
+        );
+        let chest = skeleton.extend_from(
+            waist,
+            Node::new(Vec3::new(0.0, chest_y, 0.0), chest_r).in_zone(Zone::Chest),
+        );
+        let neck = skeleton.extend_from(
+            chest,
+            Node::new(Vec3::new(0.0, neck_y, 0.0), neck_r).in_zone(Zone::Neck),
+        );
+        skeleton.extend_from(
+            neck,
+            Node::new(Vec3::new(0.0, head_y, 0.0), head_r).in_zone(Zone::Head),
+        );
 
-        for side in [-1.0f32, 1.0] {
+        for (side, fore, hind) in [
+            (-1.0f32, Limb::ForeLeft, Limb::HindLeft),
+            (1.0, Limb::ForeRight, Limb::HindRight),
+        ] {
             // Arms rest in a T-pose: VRM 1.0 requires it of exported humanoids.
             let clavicle = skeleton.extend_from(
                 chest,
                 Node::new(
                     Vec3::new(side * clavicle_x, clavicle_y, 0.0),
                     h * 0.0314 * girth,
-                ),
+                )
+                .in_zone(Zone::Chest),
             );
             let shoulder = skeleton.extend_from(
                 clavicle,
                 Node::new(
                     Vec3::new(side * shoulder_x, clavicle_y, 0.0),
                     h * 0.0286 * girth,
-                ),
+                )
+                .in_zone(Zone::UpperLimb(fore)),
             );
             let elbow = skeleton.extend_from(
                 shoulder,
                 Node::new(
                     Vec3::new(side * elbow_x, clavicle_y, 0.0),
                     h * 0.0240 * girth,
-                ),
+                )
+                .in_zone(Zone::UpperLimb(fore)),
             );
             let wrist = skeleton.extend_from(
                 elbow,
                 Node::new(
                     Vec3::new(side * wrist_x, clavicle_y, 0.0),
                     h * 0.0189 * girth,
-                ),
+                )
+                .in_zone(Zone::LowerLimb(fore)),
             );
             skeleton.extend_from(
                 wrist,
                 Node::new(
                     Vec3::new(side * hand_x, clavicle_y, 0.0),
                     h * 0.0217 * extremity,
-                ),
+                )
+                .in_zone(Zone::Extremity(fore)),
             );
 
             let hip = skeleton.extend_from(
                 pelvis,
-                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.0429 * girth),
+                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.0429 * girth)
+                    .in_zone(Zone::UpperLimb(hind)),
             );
             let knee = skeleton.extend_from(
                 hip,
-                Node::new(Vec3::new(side * hip_x, knee_y, 0.0), h * 0.0343 * girth),
+                Node::new(Vec3::new(side * hip_x, knee_y, 0.0), h * 0.0343 * girth)
+                    .in_zone(Zone::UpperLimb(hind)),
             );
             let ankle = skeleton.extend_from(
                 knee,
-                Node::new(Vec3::new(side * hip_x, ankle_y, 0.0), h * 0.0240 * girth),
+                Node::new(Vec3::new(side * hip_x, ankle_y, 0.0), h * 0.0240 * girth)
+                    .in_zone(Zone::LowerLimb(hind)),
             );
             skeleton.extend_from(
                 ankle,
                 Node::new(
                     Vec3::new(side * hip_x, foot_y, foot_z),
                     h * 0.0257 * extremity,
-                ),
+                )
+                .in_zone(Zone::Extremity(hind)),
             );
         }
 

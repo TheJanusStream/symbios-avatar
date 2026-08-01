@@ -24,6 +24,7 @@
 
 mod humanoid;
 mod quadruped;
+mod zone;
 
 use rand_pcg::Pcg64Mcg;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,7 @@ use crate::skeleton::Skeleton;
 
 pub use humanoid::HumanoidParams;
 pub use quadruped::QuadrupedParams;
+pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};
 
 /// Smallest and largest biped stature accepted, in metres.
 #[must_use]

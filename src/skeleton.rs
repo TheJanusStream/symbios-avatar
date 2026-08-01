@@ -2,7 +2,7 @@
 //!
 //! A [`Skeleton`] is a graph of [`Node`]s (a position plus a cross-section
 //! radius) joined by bones. Nodes are classified by degree — leaf, connector,
-//! joint — and the graph is decomposed into [`Limb`]s: maximal chains that run
+//! joint — and the graph is decomposed into [`Chain`]s: maximal chains that run
 //! through connectors and terminate at leaves or joints. The cage builder meshes
 //! limbs as swept tubes and joints as hulls, so this decomposition is the seam
 //! the whole mesher is organised around.
@@ -10,6 +10,8 @@
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::plan::Zone;
 
 /// One key ball of the skeleton: where the surface passes and how wide it is.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -23,16 +25,24 @@ pub struct Node {
     /// along its second; the frame is parallel-transported down each limb from
     /// a world-up reference, so for an upright body `x` is broadly lateral.
     pub scale: Vec2,
+    /// Which part of the body this node belongs to.
+    ///
+    /// This is what makes the skeleton a *semantic* body plan rather than a bag
+    /// of capsules: garments, landmarks, and eventually animation all address
+    /// the body through zones instead of node indices, so they work on any body
+    /// without knowing which plan built it.
+    pub zone: Zone,
 }
 
 impl Node {
-    /// A node with a circular cross-section.
+    /// A node with a circular cross-section, in the neutral zone.
     #[must_use]
     pub fn new(position: Vec3, radius: f32) -> Self {
         Self {
             position,
             radius,
             scale: Vec2::ONE,
+            zone: Zone::default(),
         }
     }
 
@@ -40,6 +50,13 @@ impl Node {
     #[must_use]
     pub fn with_scale(mut self, scale: Vec2) -> Self {
         self.scale = scale;
+        self
+    }
+
+    /// Tags which part of the body this node belongs to.
+    #[must_use]
+    pub fn in_zone(mut self, zone: Zone) -> Self {
+        self.zone = zone;
         self
     }
 
@@ -63,14 +80,18 @@ pub enum NodeKind {
 
 /// A maximal chain of nodes running between two terminals (leaf or joint).
 ///
+/// Named a chain rather than a limb because it is a *meshing* unit: a spine
+/// segment and a tail are chains too. [`crate::plan::Limb`] is the different,
+/// semantic notion of which of four limb positions a part occupies.
+///
 /// The endpoints are terminals; every interior entry is a connector.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Limb {
+pub struct Chain {
     /// Node indices in traversal order; at least two entries.
     pub nodes: Vec<u32>,
 }
 
-impl Limb {
+impl Chain {
     /// The first node index.
     #[must_use]
     pub fn start(&self) -> u32 {
@@ -260,7 +281,7 @@ impl Skeleton {
     /// Returns [`SkeletonError`] if [`Skeleton::validate`] fails, or
     /// [`SkeletonError::UnanchoredRing`] if bones remain that form a closed loop
     /// of connectors with no terminal on it.
-    pub fn limbs(&self) -> Result<Vec<Limb>, SkeletonError> {
+    pub fn limbs(&self) -> Result<Vec<Chain>, SkeletonError> {
         self.validate()?;
 
         let mut used = vec![false; self.bones.len()];
@@ -318,7 +339,7 @@ impl Skeleton {
     }
 
     /// Walks from `start` across `bone` until the next terminal.
-    fn walk_limb(&self, start: u32, bone: usize, used: &mut [bool]) -> Limb {
+    fn walk_limb(&self, start: u32, bone: usize, used: &mut [bool]) -> Chain {
         let mut nodes = vec![start];
         let mut current = bone;
         let mut cursor = self.other_end(bone, start);
@@ -342,7 +363,7 @@ impl Skeleton {
             nodes.push(cursor);
         }
 
-        Limb { nodes }
+        Chain { nodes }
     }
 }
 
