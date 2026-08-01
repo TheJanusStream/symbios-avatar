@@ -15,24 +15,33 @@
 //! cargo run --example render -- --seed 7      # a rerolled one
 //! cargo run --example render -- --walk 8      # a walk cycle, one sheet per frame
 //! cargo run --example render -- --head        # close up on face, neck and hair
+//! cargo run --example render -- --close hand  # or head, hand, foot
 //! cargo run --example render -- --hair 1,0,0,0.5,0.6,0.2   # override hair axes
 //! ```
 
 use glam::{Mat4, Vec2, Vec3};
 use symbios_avatar::{
-    Archetype, AvatarRecord, Blink, CageConfig, Eyes, FootingConfig, Gait, Ground, Hair,
-    HairParams, PolyMesh, Pose, Rig, SkinConfig, Stride, UvConfig, UvUnwrap, Zone, anim::gait,
-    anim::plant_feet_of, build_cage, catmull_clark, rig::skin, texture, unwrap,
+    Archetype, AvatarRecord, Blink, CageConfig, Extremities, Eyes, FootingConfig, Gait, Ground,
+    Hair, HairParams, PolyMesh, Pose, Rig, SkinConfig, Stride, Surface, UvConfig, UvUnwrap, Zone,
+    anim::gait, anim::plant_feet_of, build_cage, catmull_clark, rig::skin, texture, unwrap,
 };
 
 /// Pixels per side of one view in the sheet.
 const VIEW: usize = 420;
 /// How much of the body's height the frame covers, as a multiple of it.
 const MARGIN: f32 = 1.12;
-/// The same, for a head close-up, over the head-and-neck box's larger side.
-const HEAD_MARGIN: f32 = 1.5;
-/// How far the crown view tilts over, in radians.
-const CROWN_PITCH: f32 = 1.0;
+/// The same, for a close-up, over the focused part's largest side.
+const CLOSE_MARGIN: f32 = 1.5;
+/// How far the overhead view tilts over, in radians.
+const OVERHEAD_PITCH: f32 = 1.0;
+
+/// Which part of the body a close-up frames.
+#[derive(Clone, Copy, PartialEq)]
+enum Focus {
+    Head,
+    Hand,
+    Foot,
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -43,7 +52,21 @@ fn main() {
     };
     let seed = value("--seed").and_then(|s| s.parse::<i64>().ok());
     let frames = value("--walk").and_then(|s| s.parse::<usize>().ok());
-    let close_up = args.iter().any(|arg| arg == "--head");
+    // --head is the common case and stays as its own flag; --close names any of
+    // them.
+    let focus = match value("--close").map(String::as_str) {
+        Some("head") => Some(Focus::Head),
+        Some("hand") => Some(Focus::Hand),
+        Some("foot") => Some(Focus::Foot),
+        Some(other) => {
+            eprintln!("unknown --close target {other}: expected head, hand or foot");
+            std::process::exit(1);
+        }
+        None => args
+            .iter()
+            .any(|arg| arg == "--head")
+            .then_some(Focus::Head),
+    };
     // Six numbers, in the order the axes are declared: length, volume,
     // coverage, part, wave, shade. For walking the parameter space by eye,
     // which is the only way any of it got tuned.
@@ -87,13 +110,17 @@ fn main() {
 
     // One shot, framed either on the whole body or on the head.
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
-        if close_up {
-            subject.head_sheet(pose, closure)
-        } else {
-            Some(subject.sheet(pose, closure))
+        match focus {
+            Some(focus) => subject.close_up(pose, closure, focus),
+            None => Some(subject.sheet(pose, closure)),
         }
     };
-    let stem = if close_up { "render_head" } else { "render" };
+    let stem = match focus {
+        Some(Focus::Head) => "render_head",
+        Some(Focus::Hand) => "render_hand",
+        Some(Focus::Foot) => "render_foot",
+        None => "render",
+    };
 
     match frames {
         Some(frames) => {
@@ -102,7 +129,7 @@ fn main() {
                 let cycle = frame as f32 / frames.max(1) as f32;
                 let closure = blink.advance(1.0 / frames.max(1) as f32);
                 let Some(sheet) = shoot(&subject.walking(cycle), closure) else {
-                    eprintln!("this body has no head to frame");
+                    eprintln!("this body has no such part to frame");
                     std::process::exit(1);
                 };
                 write(&out, &format!("{stem}_walk_{frame:02}"), &sheet);
@@ -114,15 +141,14 @@ fn main() {
                 shoot(&subject.standing(), 0.0),
                 shoot(&subject.standing(), 1.0),
             ) else {
-                eprintln!("this body has no head to frame");
+                eprintln!("this body has no such part to frame");
                 std::process::exit(1);
             };
             write(&out, stem, &sheet);
             write(&out, &format!("{stem}_blink"), &blinking);
-            if close_up {
-                println!("rendered the head close up, eyes open and shut");
-            } else {
-                println!("rendered a standing body, eyes open and shut");
+            match focus {
+                Some(_) => println!("rendered {stem} close up, eyes open and shut"),
+                None => println!("rendered a standing body, eyes open and shut"),
             }
         }
     }
@@ -141,6 +167,7 @@ struct Subject {
     zones: Vec<Zone>,
     eyes: Option<Eyes>,
     hair: Option<Hair>,
+    extremities: Extremities,
     gait: Gait,
     stride: Stride,
     height: f32,
@@ -162,9 +189,13 @@ impl Subject {
         let painted = texture::paint_skin(&geometry, &rig, &record.skin);
         let (lo, hi) = mesh.bounds();
 
+        let surface = Surface::measure(&mesh, &rig);
+
         Some(Self {
             eyes: Eyes::build(&rig, &record.eyes),
             hair: Hair::build(&mesh, &rig, hair),
+            // The plan stands its bodies on the origin.
+            extremities: Extremities::build(&rig, &surface, 0.0),
             gait: Gait::natural(&rig),
             stride: Stride::for_body(&rig, 1.0),
             height: (hi.y - lo.y).max(0.1),
@@ -211,29 +242,57 @@ impl Subject {
         self.render(pose, closure, &frames)
     }
 
-    /// Four close-ups of the head in one image.
+    /// Four close-ups of one part of the body in one image.
     ///
     /// Different angles from the body sheet, because different things are being
     /// judged. A three-quarter view is where a face either reads or does not; a
-    /// profile is where the brow, nose line and chin live; and the view from
-    /// above is the only one that shows the crown, the parting, and whether the
-    /// hair actually closes over the whorl.
-    fn head_sheet(&self, pose: &Pose, closure: f32) -> Option<Image> {
+    /// profile is where the brow line and chin live; and the view from above is
+    /// the only one that shows a crown, a parting, or the back of a hand.
+    fn close_up(&self, pose: &Pose, closure: f32, focus: Focus) -> Option<Image> {
         use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
         let posed = pose.forward(&self.rig);
         let deformed = posed.deform(&self.rig, &self.mesh.positions, &self.weights);
 
-        // Framed on the head and neck alone. Long hair is deliberately left to
-        // fall out of frame: this is a close-up, and zooming out far enough to
-        // hold the whole drape would put us back where we started.
+        // Framed on the part's own vertices. Anything hanging off it — long
+        // hair, most obviously — is deliberately left to fall out of frame:
+        // this is a close-up, and zooming out far enough to hold the whole
+        // drape would put us back where we started.
         let mut lo = Vec3::splat(f32::MAX);
         let mut hi = Vec3::splat(f32::MIN);
-        for (vertex, zone) in self.zones.iter().enumerate() {
-            if !matches!(zone, Zone::Head | Zone::Neck) {
-                continue;
+        let mut hold = |point: Vec3| {
+            lo = lo.min(point);
+            hi = hi.max(point);
+        };
+
+        match focus {
+            Focus::Head => {
+                for (vertex, zone) in self.zones.iter().enumerate() {
+                    if matches!(zone, Zone::Head | Zone::Neck) {
+                        hold(deformed[vertex]);
+                    }
+                }
             }
-            lo = lo.min(deformed[vertex]);
-            hi = hi.max(deformed[vertex]);
+            Focus::Hand | Focus::Foot => {
+                // One of them, not both: a pair framed together sits a body's
+                // width apart and zooms straight back out to the body sheet.
+                let parts = if matches!(focus, Focus::Hand) {
+                    &self.extremities.hands
+                } else {
+                    &self.extremities.feet
+                };
+                let part = parts.first()?;
+                let to_world = Mat4::from_rotation_translation(
+                    posed.rotations[part.joint],
+                    posed.positions[part.joint],
+                );
+                for &point in &part.mesh.positions {
+                    hold(to_world.transform_point3(point));
+                }
+                // A little of the limb above it, for the join.
+                let wrist = posed.positions[part.joint];
+                hold(wrist + Vec3::splat(part.reach * 0.25));
+                hold(wrist - Vec3::splat(part.reach * 0.25));
+            }
         }
         if lo.x > hi.x {
             return None;
@@ -243,15 +302,15 @@ impl Subject {
             turn,
             pitch,
             centre: (lo + hi) * 0.5,
-            // Generous, so hair standing off the crown and a fringe hanging past
-            // the brow both stay in frame.
-            span: (hi.x - lo.x).max(hi.y - lo.y) * HEAD_MARGIN,
+            // Generous, so hair standing off the crown or a thumb held wide
+            // both stay in frame.
+            span: (hi.x - lo.x).max(hi.y - lo.y).max(hi.z - lo.z) * CLOSE_MARGIN,
         };
         let frames = [
             of(0.0, 0.0),
             of(FRAC_PI_4, 0.0),
             of(FRAC_PI_2, 0.0),
-            of(0.0, CROWN_PITCH),
+            of(0.0, OVERHEAD_PITCH),
         ];
         Some(self.render(pose, closure, &frames))
     }
@@ -304,10 +363,30 @@ impl Subject {
             (locks, Vec3::from_array(hair.colour))
         });
 
+        // Hands and feet ride their own joints, the way the eyes ride the head.
+        let limbs: Vec<PolyMesh> = self
+            .extremities
+            .hands
+            .iter()
+            .chain(&self.extremities.feet)
+            .map(|part| {
+                let joint = part.joint;
+                part.mesh.transformed(Mat4::from_rotation_translation(
+                    posed.rotations[joint],
+                    posed.positions[joint],
+                ))
+            })
+            .collect();
+
         let mut sheet = Image::new(VIEW * 2, VIEW * 2);
         for (index, frame) in frames.iter().enumerate() {
             let mut view = Image::new(VIEW, VIEW);
             self.draw(&mut view, &deformed, frame);
+            // Skin-coloured, and untextured: the atlas has no chart for a part
+            // that is not in the body mesh.
+            for part in &limbs {
+                draw_solid(&mut view, part, frame, &|_| Vec3::new(0.86, 0.68, 0.60));
+            }
             if let Some((globes, lids, centres)) = &parts {
                 // A pale globe with a dark iris facing forward, so the eye reads
                 // as an eye rather than a bead.

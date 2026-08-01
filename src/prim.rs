@@ -154,9 +154,23 @@ pub fn tube(path: &[Vec3], base: Vec2, tip: Vec2, sides: usize) -> PolyMesh {
 /// sheet showed as separate strings instead.
 #[must_use]
 pub fn ribbon(path: &[Vec3], base: Vec2, tip: Vec2, sides: usize, across: Vec3) -> PolyMesh {
+    let sections: Vec<Vec2> = (0..path.len())
+        .map(|at| base.lerp(tip, at as f32 / (path.len().max(2) - 1) as f32))
+        .collect();
+    sweep(path, &sections, sides, across)
+}
+
+/// A tube swept with a half-extent given at every point on the path.
+///
+/// [`ribbon`] can only run one cross-section into another, which is enough for a
+/// lock of hair and not enough for anything whose width comes and goes: a foot
+/// is narrow at the heel, widest at the ball, and narrows again at the toe, and
+/// no interpolation between two ends will say that.
+#[must_use]
+pub fn sweep(path: &[Vec3], sections: &[Vec2], sides: usize, across: Vec3) -> PolyMesh {
     let sides = sides.max(3);
     let mut mesh = PolyMesh::new();
-    if path.len() < 2 {
+    if path.len() < 2 || sections.len() < path.len() {
         return mesh;
     }
 
@@ -182,8 +196,7 @@ pub fn ribbon(path: &[Vec3], base: Vec2, tip: Vec2, sides: usize, across: Vec3) 
         (u, v) = transport(u, v, direction, bend);
         direction = bend;
 
-        let along = index as f32 / (path.len() - 1) as f32;
-        let half = base.lerp(tip, along);
+        let half = sections[index];
         let ring: Vec<u32> = (0..sides)
             .map(|side| {
                 let angle = turn(side, sides);

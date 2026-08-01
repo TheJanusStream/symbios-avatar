@@ -59,6 +59,7 @@
 pub mod anim;
 pub mod cage;
 pub mod demo;
+pub mod extremity;
 pub mod face;
 pub mod hair;
 pub mod hull;
@@ -77,6 +78,7 @@ pub use anim::{
     Stride, Target, Track, look_at, plant_feet,
 };
 pub use cage::{CageConfig, CageError, build_cage};
+pub use extremity::{Attached, Extremities, Foot, Hand};
 pub use face::{Blink, EyeParams, Eyes};
 pub use hair::{Hair, HairParams, Scalp, Strand};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};

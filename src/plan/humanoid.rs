@@ -254,9 +254,14 @@ impl BodyPlan for HumanoidParams {
             );
             skeleton.extend_from(
                 wrist,
+                // Slim: this is the base of the hand, not a stand-in for one.
+                // While the limbs ended in these nodes they were fattened to
+                // read as a fist and a boot, and now that real hands and feet
+                // hang off them a blob only pokes through the part it is meant
+                // to be inside.
                 Node::new(
                     Vec3::new(side * hand_x, clavicle_y, 0.0),
-                    h * 0.030 * extremity,
+                    h * 0.020 * extremity,
                 )
                 .in_zone(Zone::Extremity(fore)),
             );
@@ -280,7 +285,7 @@ impl BodyPlan for HumanoidParams {
                 ankle,
                 Node::new(
                     Vec3::new(side * hip_x, foot_y, foot_z),
-                    h * 0.034 * extremity,
+                    h * 0.019 * extremity,
                 )
                 .in_zone(Zone::Extremity(hind)),
             );

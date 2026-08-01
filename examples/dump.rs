@@ -15,10 +15,10 @@ use std::path::PathBuf;
 
 use glam::Mat4;
 use symbios_avatar::{
-    Archetype, AvatarRecord, Blink, CageConfig, EyeParams, Eyes, FootingConfig, Gait, Ground, Hair,
-    HairParams, PolyMesh, Pose, QuadrupedParams, Rig, Scalp, Skeleton, SkinConfig, SkinParams,
-    Stride, Surface, UvConfig, Vec3, anim::gait, anim::plant_feet_of, build_cage, catmull_clark,
-    demo, rig::skin, texture, unwrap,
+    Archetype, AvatarRecord, Blink, CageConfig, Extremities, EyeParams, Eyes, FootingConfig, Gait,
+    Ground, Hair, HairParams, PolyMesh, Pose, QuadrupedParams, Rig, Scalp, Skeleton, SkinConfig,
+    SkinParams, Stride, Surface, UvConfig, Vec3, anim::gait, anim::plant_feet_of, build_cage,
+    catmull_clark, demo, rig::skin, texture, unwrap,
 };
 
 fn main() {
@@ -204,6 +204,32 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
                 rig.joints[scalp.head].radius,
                 hair.drop(),
             );
+        }
+
+        // Hands and feet, and the measured girths they were sized from. The
+        // plan's own numbers are printed beside them because sizing parts off
+        // the planned radius rather than the measured one is the mistake this
+        // crate keeps making.
+        let surface = Surface::measure(&mesh, &rig);
+        let extremities = Extremities::build(&rig, &surface, 0.0);
+        if !extremities.is_empty() {
+            let whole =
+                extremities.assembled(|joint| Mat4::from_translation(rig.joints[joint].position));
+            let path = dir.join(format!("{name}_extremities.obj"));
+            if let Err(error) = std::fs::write(&path, whole.to_obj()) {
+                eprintln!("cannot write {}: {error}", path.display());
+            }
+            for part in extremities.hands.iter().chain(&extremities.feet) {
+                println!(
+                    "{name:<16} {:<7} {:>6} verts  {:?} reach {:.3}m  girth {:.4}m measured vs {:.4}m planned",
+                    if part.limb.is_fore() { "hand" } else { "foot" },
+                    part.mesh.vertex_count(),
+                    part.limb,
+                    part.reach,
+                    surface.radius(part.joint, 0.0),
+                    rig.joints[part.joint].radius,
+                );
+            }
         }
     }
     0
