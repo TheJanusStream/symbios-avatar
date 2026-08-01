@@ -104,10 +104,30 @@ fn main() {
         span(Zone::UpperLimb(Limb::HindLeft)),
         0.190
     );
+    // Measured along the arm, not across the body. Arms rest angled down, so
+    // twice their horizontal reach is not the span anybody means by arm span.
+    let mut reach = rig
+        .in_zone(Zone::Chest)
+        .iter()
+        .map(|&joint| rig.joints[joint].position.x.abs())
+        .fold(0.0f32, f32::max);
+    let mut joint = *rig
+        .in_zone(Zone::Extremity(Limb::ForeRight))
+        .first()
+        .expect("a humanoid has hands");
+    while let Some(parent) = rig.joints[joint].parent {
+        reach += rig.joints[joint]
+            .position
+            .distance(rig.joints[parent].position);
+        if rig.joints[parent].zone == Zone::Chest {
+            break;
+        }
+        joint = parent;
+    }
     println!(
         "{:<10} {:>8.3} {:>8.3}",
         "arm span",
-        span(Zone::Extremity(Limb::ForeLeft)),
+        reach * 2.0 / height,
         1.000
     );
 }

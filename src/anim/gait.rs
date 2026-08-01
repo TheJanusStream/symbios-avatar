@@ -356,17 +356,11 @@ const ARM_SWING: f32 = 0.46;
 
 /// How far the arms drop from the pose the body is built in, in radians.
 ///
-/// Bodies are modelled with the arms straight out, because that is the pose that
-/// meshes and skins well. Nobody walks in it. Anything that poses a body has to
-/// bring the arms down first, and that is not the gait's business to assume — so
-/// it is a separate call.
-///
-/// Held short of straight down on purpose. A rotation this size from a T-pose
-/// stretches the shoulder however it is skinned — measured the same under both
-/// dual quaternions and matrices — and the deeper the drop the worse the bulge.
-/// The real fix is to build bodies in an A-pose, which halves the worst-case
-/// rotation and is why production models are made that way.
-const ARM_DROP: f32 = 1.02;
+/// Bodies are modelled with their arms already angled down — an A-pose — so this
+/// is only the rest of the way to a hanging arm, not the whole of it. Measured
+/// from a T-pose the same drop needs roughly twice the rotation, and a shoulder
+/// turned that far bulges however it is skinned.
+const ARM_DROP: f32 = 0.66;
 
 /// How far the shoulders twist against the hips, in radians.
 const SHOULDER_TWIST: f32 = 0.14;

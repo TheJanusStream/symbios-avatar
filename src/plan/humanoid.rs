@@ -24,6 +24,13 @@ use crate::skeleton::{Node, Skeleton};
 /// Smallest and largest stature this plan accepts, in metres.
 pub const HEIGHT_RANGE: (f32, f32) = (1.2, 2.2);
 
+/// How far below horizontal a resting arm lies, in radians.
+///
+/// The A in A-pose. Forty degrees: far enough that neither hanging the arms nor
+/// raising them to horizontal asks for a rotation big enough to tear the
+/// shoulder, and shallow enough that the armpit still opens up for the mesher.
+const A_POSE: f32 = 0.70;
+
 /// Parameters describing one biped.
 ///
 /// Axes run `-1..=1` unless noted, with `0` the neutral middle.
@@ -184,9 +191,21 @@ impl BodyPlan for HumanoidParams {
         let clavicle_x = girdle_r * (2.15 + 0.25 * self.shoulder_width);
         let clavicle_y = girdle_y + h * 0.004;
         let shoulder_x = clavicle_x + h * 0.048;
-        let elbow_x = shoulder_x + h * (0.113 + 0.025 * self.limb_length);
-        let wrist_x = elbow_x + h * (0.101 + 0.025 * self.limb_length);
-        let hand_x = wrist_x + h * 0.040 * (1.0 + 0.3 * self.extremity_size);
+        // Arms hang at an angle, not straight out. Built in a T-pose, posing
+        // them down to walk rotates each shoulder about 75 degrees and the
+        // shoulder bulges — measured the same under dual quaternions and under
+        // matrices, so it is the size of the rotation and not the skinning. An
+        // A-pose roughly halves the worst case in both directions, down to a
+        // hanging arm and up to a raised one, and is why production models are
+        // built this way.
+        let arm = Vec3::new(A_POSE.cos(), -A_POSE.sin(), 0.0);
+        let upper_arm = h * (0.113 + 0.025 * self.limb_length);
+        let forearm = h * (0.101 + 0.025 * self.limb_length);
+        let hand_len = h * 0.040 * (1.0 + 0.3 * self.extremity_size);
+        let shoulder_at = Vec3::new(shoulder_x, clavicle_y, 0.0);
+        let elbow_at = shoulder_at + arm * upper_arm;
+        let wrist_at = elbow_at + arm * forearm;
+        let hand_at = wrist_at + arm * hand_len;
 
         let extremity = 1.0 + 0.3 * self.extremity_size;
 
@@ -239,7 +258,7 @@ impl BodyPlan for HumanoidParams {
             let shoulder = skeleton.extend_from(
                 clavicle,
                 Node::new(
-                    Vec3::new(side * shoulder_x, clavicle_y, 0.0),
+                    Vec3::new(side * shoulder_at.x, shoulder_at.y, shoulder_at.z),
                     h * 0.038 * girth,
                 )
                 .in_zone(Zone::UpperLimb(fore)),
@@ -247,7 +266,7 @@ impl BodyPlan for HumanoidParams {
             let elbow = skeleton.extend_from(
                 shoulder,
                 Node::new(
-                    Vec3::new(side * elbow_x, clavicle_y, 0.0),
+                    Vec3::new(side * elbow_at.x, elbow_at.y, elbow_at.z),
                     h * 0.032 * girth,
                 )
                 .in_zone(Zone::UpperLimb(fore)),
@@ -255,7 +274,7 @@ impl BodyPlan for HumanoidParams {
             let wrist = skeleton.extend_from(
                 elbow,
                 Node::new(
-                    Vec3::new(side * wrist_x, clavicle_y, 0.0),
+                    Vec3::new(side * wrist_at.x, wrist_at.y, wrist_at.z),
                     h * 0.025 * girth,
                 )
                 .in_zone(Zone::LowerLimb(fore)),
@@ -268,7 +287,7 @@ impl BodyPlan for HumanoidParams {
                 // hang off them a blob only pokes through the part it is meant
                 // to be inside.
                 Node::new(
-                    Vec3::new(side * hand_x, clavicle_y, 0.0),
+                    Vec3::new(side * hand_at.x, hand_at.y, hand_at.z),
                     h * 0.020 * extremity,
                 )
                 .in_zone(Zone::Extremity(fore)),
