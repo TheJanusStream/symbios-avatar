@@ -70,7 +70,8 @@ pub mod texture;
 pub mod uv;
 
 pub use anim::{
-    Footing, FootingConfig, Gait, Ground, Inertializer, Pose, Posed, Stride, plant_feet,
+    Clip, Footing, FootingConfig, Gait, Gaze, GazeConfig, Ground, Inertializer, Key, Pose, Posed,
+    Stride, Target, Track, look_at, plant_feet,
 };
 pub use cage::{CageConfig, CageError, build_cage};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};

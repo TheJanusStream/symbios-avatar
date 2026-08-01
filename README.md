@@ -258,16 +258,31 @@ assert!(footing.is_settled());
   sinks exactly as far as it must for its feet to stay within it — a leg standing
   straight has no slack to step with.
 
+- `anim::clip` describes authored motion the same way: a **semantic query**
+  naming which parts it moves — every ground contact, every grasper — and goals
+  measured in fractions of the limb's own reach. "Raise both graspers" waves a
+  biped's arms and does nothing to a quadruped, which has none free, and neither
+  case needs a special path.
+- `look_at` turns a body toward something, sharing the rotation down the chain
+  from the torso outward. A body that swivels only its skull reads as a doll.
+
 Which limbs carry a body is read off the rig rather than declared: a biped stands
 on two of its four, a quadruped on all four, and a six-legged plan would work
 without changing any of this.
 
+```text
+cargo run --example dump -- --walk 12   # a walk cycle over a slope, frame by frame
+```
+
 ## Status
 
-Early. Records, body plans, the mesher, rigging, skinning, zones, landmarks, UV
-charting, procedural skin, and the motion foundation (pose, IK, foot placement,
-inertialization) are in place and tested. Gait, goal-space clips, eyes and hair,
-outfits, and glTF/VRM export are still ahead — see [`docs/plan.md`](docs/plan.md).
+Early, but a body can now be described, built, dressed in its own skin, rigged,
+and walked. Records, body plans, the mesher, rigging, skinning, zones, landmarks,
+UV charting, procedural skin, and motion (pose, IK, foot placement,
+inertialization, gait, goal-space clips, gaze) are in place and tested.
+
+Eyes and hair, outfits, and glTF/VRM export are still ahead — see
+[`docs/plan.md`](docs/plan.md).
 
 ## Licence
 

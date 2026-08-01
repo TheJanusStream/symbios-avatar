@@ -78,8 +78,14 @@ impl Gait {
     /// Contacts lifting one after another, evenly spread around the cycle.
     ///
     /// The general answer for any number of legs, and for two it is simply a
-    /// walk. Duty is set so exactly one contact is airborne at a time, which is
-    /// the most stable way to move a body of any leg count.
+    /// walk. Duty is set so exactly one contact is airborne at a time on a body
+    /// with several, which is the most stable way to move one.
+    ///
+    /// Two legs are the case that needs care: `1 − 1/2` is a duty of exactly a
+    /// half, which means each foot leaves the instant the other lands and the
+    /// body is never on both at once. Walking is defined by having that overlap;
+    /// without it the result is a run performed at walking pace, and it reads as
+    /// one. [`DOUBLE_SUPPORT`] is the floor that keeps it.
     #[must_use]
     pub fn wave(rig: &Rig) -> Self {
         let limbs = rig.ground_contacts();
@@ -89,7 +95,7 @@ impl Gait {
                 .map(|index| index as f32 / count as f32)
                 .collect(),
             limbs,
-            duty: (1.0 - 1.0 / count as f32).max(0.5),
+            duty: (1.0 - 1.0 / count as f32).max(0.5 + DOUBLE_SUPPORT),
         }
     }
 
@@ -169,6 +175,11 @@ impl Gait {
             .count()
     }
 }
+
+/// Fraction of a walk cycle a two-legged body spends on both feet.
+///
+/// The overlap that makes a walk a walk rather than a slow run.
+pub const DOUBLE_SUPPORT: f32 = 0.1;
 
 /// How much further than strictly necessary a body sinks to take its stride.
 ///
@@ -396,6 +407,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_two_legged_walk_has_both_feet_down_some_of_the_time() {
+        // Without an overlap each foot leaves as the other lands, which is a run
+        // performed slowly rather than a walk.
+        let gait = Gait::wave(&biped());
+        let samples = 200;
+        let both = (0..samples)
+            .filter(|step| gait.grounded(*step as f32 / samples as f32) == 2)
+            .count() as f32
+            / samples as f32;
+        assert!(
+            (both - 2.0 * DOUBLE_SUPPORT).abs() < 0.05,
+            "double support was {both:.2} of the cycle"
+        );
     }
 
     #[test]

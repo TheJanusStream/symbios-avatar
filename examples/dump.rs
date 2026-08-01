@@ -8,13 +8,15 @@
 //! cargo run --example dump                 # demo skeletons, cage + 2 levels
 //! cargo run --example dump -- humanoid     # one demo body
 //! cargo run --example dump -- --rolls 8    # eight rerolled avatar records
+//! cargo run --example dump -- --walk 12    # twelve frames of a walk cycle
 //! ```
 
 use std::path::PathBuf;
 
 use symbios_avatar::{
-    Archetype, AvatarRecord, CageConfig, PolyMesh, QuadrupedParams, Rig, Skeleton, SkinConfig,
-    SkinParams, UvConfig, build_cage, catmull_clark, demo, rig::skin, texture, unwrap,
+    Archetype, AvatarRecord, CageConfig, FootingConfig, Gait, Ground, PolyMesh, Pose,
+    QuadrupedParams, Rig, Skeleton, SkinConfig, SkinParams, Stride, UvConfig, Vec3, anim::gait,
+    anim::plant_feet_of, build_cage, catmull_clark, demo, rig::skin, texture, unwrap,
 };
 
 fn main() {
@@ -34,9 +36,17 @@ fn main() {
         std::process::exit(1);
     }
 
+    let frames = args
+        .iter()
+        .position(|arg| arg == "--walk")
+        .and_then(|at| args.get(at + 1))
+        .and_then(|count| count.parse::<usize>().ok());
+
     let mut failures = 0;
 
-    if let Some(rolls) = rolls {
+    if let Some(frames) = frames {
+        failures += walk(&out, frames);
+    } else if let Some(rolls) = rolls {
         // What a creator's randomise button actually produces.
         for seed in 0..rolls {
             for (label, archetype) in [
@@ -142,6 +152,73 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
             }
         }
         Err(error) => println!("{name:<16} rig     FAILED  {error}"),
+    }
+    0
+}
+
+/// Walks a body over a slope, writing each frame as a posed OBJ.
+///
+/// The only way to judge motion is to look at it. These frames open in any DCC
+/// tool as a sequence, and the printed line per frame says what the gait and the
+/// terrain each decided.
+fn walk(dir: &std::path::Path, frames: usize) -> usize {
+    let record = AvatarRecord::default();
+    let skeleton = record.skeleton();
+    let Ok(cage) = build_cage(&skeleton, &CageConfig::default()) else {
+        eprintln!("the walking body would not mesh");
+        return 1;
+    };
+    let mesh = catmull_clark(&cage, 2);
+    let Ok(rig) = Rig::from_skeleton(&skeleton) else {
+        eprintln!("the walking body would not rig");
+        return 1;
+    };
+    let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
+    let gait = Gait::natural(&rig);
+    let stride = Stride::for_body(&rig, 1.0);
+    let grade = 0.12;
+
+    for frame in 0..frames.max(1) {
+        let cycle = frame as f32 / frames.max(1) as f32;
+        let mut pose = Pose::rest(&rig);
+        let steps = gait::step(&rig, &mut pose, &gait, &stride, cycle);
+
+        let footing = plant_feet_of(
+            &rig,
+            &mut pose,
+            &steps.stance,
+            |foot| {
+                Some(Ground {
+                    position: Vec3::new(foot.x, foot.z * grade, foot.z),
+                    normal: Vec3::new(0.0, 1.0, -grade).normalize(),
+                })
+            },
+            &FootingConfig::default(),
+        );
+
+        println!(
+            "walk frame {frame:<3} cycle {cycle:.2}  stance {:?}  swing {:?}  \
+             crouch {:.3}m  drop {:.3}m{}",
+            steps.stance,
+            steps.swing,
+            steps.crouch,
+            footing.pelvis_drop,
+            if steps.is_clean() && footing.straining.is_empty() {
+                ""
+            } else {
+                "  STRAINING"
+            },
+        );
+
+        let posed = pose.forward(&rig);
+        let moved = PolyMesh {
+            positions: posed.deform(&rig, &mesh.positions, &weights),
+            faces: mesh.faces.clone(),
+        };
+        let path = dir.join(format!("walk_{frame:02}.obj"));
+        if let Err(error) = std::fs::write(&path, moved.to_obj()) {
+            eprintln!("cannot write {}: {error}", path.display());
+        }
     }
     0
 }
