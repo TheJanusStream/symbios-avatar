@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::plan::{Archetype, Category};
 use crate::skeleton::Skeleton;
+use crate::texture::SkinParams;
 
 pub use code::{SHARE_CODE_VERSION, ShareCodeError};
 pub use lock::LockSet;
@@ -65,6 +66,9 @@ pub struct AvatarRecord {
     /// The body this avatar describes.
     #[serde(default)]
     pub archetype: Archetype,
+    /// The complexion painted onto it.
+    #[serde(default)]
+    pub skin: SkinParams,
     /// Seed of the last re-roll, kept so a look can be reproduced.
     ///
     /// Signed because AT Protocol integers are signed 64-bit; an unsigned seed
@@ -87,6 +91,7 @@ impl Default for AvatarRecord {
         Self {
             name: String::from("Unnamed"),
             archetype: Archetype::default(),
+            skin: SkinParams::default(),
             seed: 0,
             locks: LockSet::NONE,
             created_at: None,
@@ -118,6 +123,7 @@ impl AvatarRecord {
         }
         self.name = self.name.trim().to_string();
         self.archetype.sanitize();
+        self.skin.sanitize();
     }
 
     /// Builds the capsule graph for this avatar's body.
@@ -142,6 +148,9 @@ impl AvatarRecord {
             }
             let mut rng = category_stream(seed, category);
             self.archetype.reroll(category, &mut rng);
+            if category == Category::Features {
+                reroll_skin(&mut self.skin, &mut rng);
+            }
         }
         self.sanitize();
     }
@@ -149,7 +158,7 @@ impl AvatarRecord {
     /// Renders this avatar's look as a compact share code.
     #[must_use]
     pub fn share_code(&self) -> String {
-        code::encode(&self.archetype)
+        code::encode(&self.archetype, &self.skin)
     }
 
     /// Replaces this avatar's body with the look a share code describes,
@@ -159,7 +168,9 @@ impl AvatarRecord {
     ///
     /// Returns [`ShareCodeError`] if the code is malformed or unsupported.
     pub fn apply_share_code(&mut self, share_code: &str) -> Result<(), ShareCodeError> {
-        self.archetype = code::decode(share_code)?;
+        let (archetype, skin) = code::decode(share_code)?;
+        self.archetype = archetype;
+        self.skin = skin;
         self.sanitize();
         Ok(())
     }
@@ -173,7 +184,11 @@ impl AvatarRecord {
         name: impl Into<String>,
         share_code: &str,
     ) -> Result<Self, ShareCodeError> {
-        Ok(Self::new(name, code::decode(share_code)?))
+        let (archetype, skin) = code::decode(share_code)?;
+        let mut record = Self::new(name, archetype);
+        record.skin = skin;
+        record.sanitize();
+        Ok(record)
     }
 
     /// Size of this record once serialised, in bytes.
@@ -219,6 +234,29 @@ impl ProfileRecord {
             created_at: None,
         }
     }
+}
+
+/// Draws a fresh complexion.
+///
+/// Skin rides along with `Features` rather than getting a category of its own:
+/// it is the same kind of choice as head and hand size, and a creator with one
+/// lock per slider ends up with more locks than anyone reads.
+fn reroll_skin(skin: &mut SkinParams, rng: &mut Pcg64Mcg) {
+    use rand::Rng;
+    skin.melanin = rng.random_range(0.0..=1.0);
+    skin.undertone = rng.random_range(-1.0..=1.0);
+    skin.blush = rng.random_range(0.15..=0.8);
+    // Most people have neither, so both stay off more often than not.
+    skin.freckles = if rng.random_bool(0.3) {
+        rng.random_range(0.2..=1.0)
+    } else {
+        0.0
+    };
+    skin.stubble = if rng.random_bool(0.25) {
+        rng.random_range(0.3..=1.0)
+    } else {
+        0.0
+    };
 }
 
 /// The random stream one category draws from for a given seed.

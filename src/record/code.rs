@@ -16,9 +16,10 @@
 use thiserror::Error;
 
 use crate::plan::{Archetype, PlanDecodeError};
+use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
-pub const SHARE_CODE_VERSION: u8 = 1;
+pub const SHARE_CODE_VERSION: u8 = 2;
 
 /// Crockford base32 digits.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -46,11 +47,18 @@ pub enum ShareCodeError {
     Payload(#[from] PlanDecodeError),
 }
 
-/// Renders `archetype` as a share code.
+/// Renders a body and complexion as a share code.
 #[must_use]
-pub fn encode(archetype: &Archetype) -> String {
+pub fn encode(archetype: &Archetype, skin: &SkinParams) -> String {
+    use crate::plan::{put_signed, put_unit};
+
     let mut payload = vec![SHARE_CODE_VERSION];
     archetype.encode(&mut payload);
+    put_unit(&mut payload, skin.melanin);
+    put_signed(&mut payload, skin.undertone);
+    put_unit(&mut payload, skin.blush);
+    put_unit(&mut payload, skin.freckles);
+    put_unit(&mut payload, skin.stubble);
     payload.push(checksum(&payload));
     group(&base32_encode(&payload))
 }
@@ -63,7 +71,7 @@ pub fn encode(archetype: &Archetype) -> String {
 ///
 /// Returns [`ShareCodeError`] if the code contains an unknown character, is
 /// truncated, fails its checksum, or was written by a newer format.
-pub fn decode(code: &str) -> Result<Archetype, ShareCodeError> {
+pub fn decode(code: &str) -> Result<(Archetype, SkinParams), ShareCodeError> {
     let bytes = base32_decode(code)?;
     // Version, archetype tag, at least one axis, checksum.
     if bytes.len() < 4 {
@@ -82,7 +90,18 @@ pub fn decode(code: &str) -> Result<Archetype, ShareCodeError> {
         return Err(ShareCodeError::UnsupportedVersion(version));
     }
 
-    Ok(Archetype::decode(&mut payload)?)
+    use crate::plan::{take_signed, take_unit};
+
+    let archetype = Archetype::decode(&mut payload)?;
+    let mut skin = SkinParams {
+        melanin: take_unit(&mut payload)?,
+        undertone: take_signed(&mut payload)?,
+        blush: take_unit(&mut payload)?,
+        freckles: take_unit(&mut payload)?,
+        stubble: take_unit(&mut payload)?,
+    };
+    skin.sanitize();
+    Ok((archetype, skin))
 }
 
 /// Position-weighted sum, enough to catch a mistyped or transposed character.
@@ -166,6 +185,7 @@ fn digit(ch: char) -> Result<u8, ShareCodeError> {
 mod tests {
     use super::*;
     use crate::plan::{HumanoidParams, QuadrupedParams};
+    use crate::texture::SkinParams;
 
     #[test]
     fn a_look_round_trips() {
@@ -176,8 +196,8 @@ mod tests {
             shoulder_width: -0.25,
             ..Default::default()
         });
-        let code = encode(&original);
-        let Archetype::Humanoid(back) = decode(&code).expect("decodes") else {
+        let code = encode(&original, &SkinParams::default());
+        let (Archetype::Humanoid(back), _) = decode(&code).expect("decodes") else {
             panic!("archetype changed");
         };
 
@@ -195,8 +215,8 @@ mod tests {
             leg_length: -0.5,
             ..Default::default()
         });
-        let code = encode(&original);
-        let Archetype::Quadruped(back) = decode(&code).expect("decodes") else {
+        let code = encode(&original, &SkinParams::default());
+        let (Archetype::Quadruped(back), _) = decode(&code).expect("decodes") else {
             panic!("archetype changed");
         };
         assert!((back.height - 0.9).abs() < 0.002);
@@ -206,14 +226,16 @@ mod tests {
 
     #[test]
     fn codes_stay_short_and_grouped() {
-        let code = encode(&Archetype::default());
-        assert!(code.len() <= 32, "code is {} chars: {code}", code.len());
+        let code = encode(&Archetype::default(), &SkinParams::default());
+        // Short enough to read aloud or fit a QR code comfortably. Body plus
+        // complexion is about a dozen bytes; the ceiling leaves room to grow.
+        assert!(code.len() <= 48, "code is {} chars: {code}", code.len());
         assert!(code.contains('-'), "grouped for legibility: {code}");
     }
 
     #[test]
     fn codes_survive_being_written_down() {
-        let code = encode(&Archetype::default());
+        let code = encode(&Archetype::default(), &SkinParams::default());
         // Lower case, look-alike letters, stray spaces, missing hyphens.
         let mangled = code
             .to_lowercase()
@@ -225,7 +247,7 @@ mod tests {
 
     #[test]
     fn a_mistyped_character_is_caught() {
-        let code = encode(&Archetype::default());
+        let code = encode(&Archetype::default(), &SkinParams::default());
         let digits: String = code.chars().filter(|c| *c != '-').collect();
 
         // Swap one digit for a different one; the checksum must notice.

@@ -171,11 +171,55 @@ every body of a plan, but the *number* of charts is not. A zone can be genuinely
 disconnected — each clavicle is cut off from the torso by the shoulder's own zone
 — so key on `Chart::zone` and expect more than one chart per zone.
 
+## Painting
+
+Painting a body needs the inverse of rendering: for each texel, *where on the
+body is this?* `bake_geometry` answers that once by rasterising the charts into a
+buffer of position, normal, and zone per texel. `paint_skin` is then a pure
+function of one texel's sample, which is what makes a procedural complexion
+tractable — a freckle becomes arithmetic on a position rather than a search
+through geometry.
+
+```rust
+use symbios_avatar::{AvatarRecord, texture};
+# use symbios_avatar::{CageConfig, Rig, SkinConfig, UvConfig, build_cage, catmull_clark, rig::skin, unwrap};
+
+let record = AvatarRecord::default();
+# let skeleton = record.skeleton();
+# let mesh = catmull_clark(&build_cage(&skeleton, &CageConfig::default())?, 2);
+# let rig = Rig::from_skeleton(&skeleton)?;
+# let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);
+# let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
+let geometry = texture::bake_geometry(&mesh, &uv, 1024);
+let map = texture::paint_skin(&geometry, &rig, &record.skin);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The output is a `symbios_texture::generator::TextureMap` — the same container
+every other symbios generator produces — so an avatar's skin travels through the
+ecosystem's existing image-conversion and upload path unchanged.
+
+Two rules the layers follow, both learned the hard way:
+
+- **Sample in body space, never atlas space.** Atlas space is discontinuous
+  across chart boundaries, so a freckle field sampled there breaks at every seam.
+  Body space is continuous by construction.
+- **Shade from smooth geometry, not from zones.** A per-zone weight steps
+  abruptly where two zones meet, drawing a visible line across a jaw or a wrist.
+  Subdermal colour therefore comes from how thin the flesh is (the local radius),
+  and cavity shading from how much the surface folds back on itself — both
+  smooth everywhere. Zones stay for masking discrete things, where a step is
+  invisible.
+
+`cargo run --example dump` writes the albedo, normal, and ORM atlases as PNGs
+alongside the OBJs, which is the only real way to judge whether skin reads as
+skin.
+
 ## Status
 
-Early. Records, body plans, the mesher, rigging, skinning, zones, landmarks, and
-UV charting are in place and tested. The character texture stack, hair and
-outfits, animation, and glTF/VRM export are still ahead — see
+Early. Records, body plans, the mesher, rigging, skinning, zones, landmarks, UV
+charting, and procedural skin are in place and tested. Eyes and hair, outfits,
+animation, and glTF/VRM export are still ahead — see
 [`docs/plan.md`](docs/plan.md).
 
 ## Licence

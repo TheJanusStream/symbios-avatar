@@ -84,6 +84,38 @@ impl PolyMesh {
         iter.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)))
     }
 
+    /// Smooth per-vertex normals, area-weighted across incident faces.
+    ///
+    /// Weighting by face area rather than averaging unit normals keeps a ring of
+    /// small faces from outvoting the large face they abut, which is what makes
+    /// a subdivided limb shade evenly instead of banding at every ring.
+    #[must_use]
+    pub fn vertex_normals(&self) -> Vec<Vec3> {
+        let mut normals = vec![Vec3::ZERO; self.positions.len()];
+        for face in &self.faces {
+            if face.len() < 3 {
+                continue;
+            }
+            let anchor = self.positions[face[0] as usize];
+            // The un-normalised cross product is twice the triangle's area, so
+            // summing them weights by area for free.
+            let weighted: Vec3 = (1..face.len() - 1)
+                .map(|corner| {
+                    let a = self.positions[face[corner] as usize] - anchor;
+                    let b = self.positions[face[corner + 1] as usize] - anchor;
+                    a.cross(b)
+                })
+                .sum();
+            for &index in face {
+                normals[index as usize] += weighted;
+            }
+        }
+        for normal in &mut normals {
+            *normal = normal.normalize_or(Vec3::Y);
+        }
+        normals
+    }
+
     /// Fan-triangulates every face, for renderers that only take triangles.
     #[must_use]
     pub fn triangulated(&self) -> Vec<[u32; 3]> {

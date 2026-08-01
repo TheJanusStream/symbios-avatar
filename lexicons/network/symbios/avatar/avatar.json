@@ -8,7 +8,11 @@
       "key": "tid",
       "record": {
         "type": "object",
-        "required": ["name", "archetype", "createdAt"],
+        "required": [
+          "name",
+          "archetype",
+          "createdAt"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -36,6 +40,11 @@
           "createdAt": {
             "type": "string",
             "format": "datetime"
+          },
+          "skin": {
+            "type": "ref",
+            "ref": "network.symbios.avatar.defs#skin",
+            "description": "The complexion painted onto the body. Absent means the default."
           }
         }
       }

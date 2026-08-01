@@ -5,7 +5,9 @@
     "humanoid": {
       "type": "object",
       "description": "An upright biped. Axes run -1 to 1 with 0 neutral, unless noted. Every combination of these values is guaranteed to produce a valid body; a reader that clamps out-of-range values to the stated bounds will always be able to build one.",
-      "required": ["height"],
+      "required": [
+        "height"
+      ],
       "properties": {
         "height": {
           "type": "integer",
@@ -75,7 +77,9 @@
     "quadruped": {
       "type": "object",
       "description": "A four-legged creature. Axes run -1 to 1 with 0 neutral, unless noted.",
-      "required": ["height"],
+      "required": [
+        "height"
+      ],
       "properties": {
         "height": {
           "type": "integer",
@@ -130,6 +134,47 @@
           "type": "integer",
           "description": "Tail length. Thousandths, -1000 to 1000.",
           "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        }
+      }
+    },
+    "skin": {
+      "type": "object",
+      "description": "A body's complexion. Axes are thousandths, as elsewhere: the AT Protocol data model has no floating-point type. Every combination is a usable complexion.",
+      "properties": {
+        "melanin": {
+          "type": "integer",
+          "description": "Base depth of tone, from palest to deepest. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 350
+        },
+        "undertone": {
+          "type": "integer",
+          "description": "Hue beneath the tone: -1000 cool and pink, +1000 warm and olive.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "blush": {
+          "type": "integer",
+          "description": "How much blood shows through at cheeks, ears, and knuckles. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 450
+        },
+        "freckles": {
+          "type": "integer",
+          "description": "Freckle density. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0
+        },
+        "stubble": {
+          "type": "integer",
+          "description": "Stubble across the lower face. Thousandths, 0 to 1000.",
+          "minimum": 0,
           "maximum": 1000,
           "default": 0
         }

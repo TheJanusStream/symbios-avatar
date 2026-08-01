@@ -65,6 +65,7 @@ pub mod record;
 pub mod rig;
 pub mod skeleton;
 pub mod subdiv;
+pub mod texture;
 pub mod uv;
 
 pub use cage::{CageConfig, CageError, build_cage};
@@ -77,6 +78,7 @@ pub use record::{AvatarRecord, LockSet, ProfileRecord, ShareCodeError};
 pub use rig::{Anchor, Joint, Landmark, Landmarks, Rig, RigError, SkinConfig, SkinWeights};
 pub use skeleton::{Chain, Node, NodeKind, Skeleton, SkeletonError};
 pub use subdiv::catmull_clark;
+pub use texture::{AtlasGeometry, SkinParams, bake_geometry, paint_skin};
 pub use uv::{Chart, UvConfig, UvUnwrap, unwrap};
 
 pub use glam::{Vec2, Vec3};

@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use symbios_avatar::{
     Archetype, AvatarRecord, CageConfig, PolyMesh, QuadrupedParams, Rig, Skeleton, SkinConfig,
-    UvConfig, build_cage, catmull_clark, demo, rig::skin, unwrap,
+    SkinParams, UvConfig, build_cage, catmull_clark, demo, rig::skin, texture, unwrap,
 };
 
 fn main() {
@@ -50,7 +50,7 @@ fn main() {
                 record.reroll(seed);
                 let name = format!("{label}_{seed}");
                 println!("{name:<16} {}", record.share_code());
-                failures += emit(&out, &name, &record.skeleton());
+                failures += emit(&out, &name, &record.skeleton(), &record.skin);
             }
         }
     } else {
@@ -71,7 +71,7 @@ fn main() {
             if !wanted.is_empty() && !wanted.iter().any(|w| *w == name) {
                 continue;
             }
-            failures += emit(&out, name, &skeleton);
+            failures += emit(&out, name, &skeleton, &SkinParams::default());
         }
     }
 
@@ -83,7 +83,7 @@ fn main() {
 }
 
 /// Meshes one skeleton, reports it, and writes both stages. Returns 1 on failure.
-fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton) -> usize {
+fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &SkinParams) -> usize {
     let cage = match build_cage(skeleton, &CageConfig::default()) {
         Ok(cage) => cage,
         Err(error) => {
@@ -116,6 +116,29 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton) -> usize {
             let path = dir.join(format!("{name}_unwrapped.obj"));
             if let Err(error) = std::fs::write(&path, uv.to_obj(&smooth)) {
                 eprintln!("cannot write {}: {error}", path.display());
+            }
+
+            // Paint the body so the atlas can actually be looked at.
+            let atlas = texture::bake_geometry(&smooth, &uv, 1024);
+            let map = texture::paint_skin(&atlas, &rig, skin_params);
+            println!(
+                "{name:<16} {:<7} {:>6} texels {:.0}% covered",
+                "skin",
+                atlas.covered(),
+                atlas.coverage() * 100.0,
+            );
+            for (suffix, pixels) in [
+                ("albedo", &map.albedo),
+                ("normal", &map.normal),
+                ("orm", &map.roughness),
+            ] {
+                let path = dir.join(format!("{name}_{suffix}.png"));
+                let saved = image::RgbaImage::from_raw(map.width, map.height, pixels.clone())
+                    .ok_or("pixel buffer is the wrong size".to_string())
+                    .and_then(|image| image.save(&path).map_err(|e| e.to_string()));
+                if let Err(error) = saved {
+                    eprintln!("cannot write {}: {error}", path.display());
+                }
             }
         }
         Err(error) => println!("{name:<16} rig     FAILED  {error}"),

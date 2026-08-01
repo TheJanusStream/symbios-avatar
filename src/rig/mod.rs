@@ -42,6 +42,35 @@ use crate::skeleton::{Skeleton, SkeletonError};
 pub use landmark::{Anchor, Landmark, Landmarks};
 pub use skin::{Influence, MAX_INFLUENCES, SkinConfig, SkinWeights};
 
+/// Where the body's skeleton lies beneath a point on its surface.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoneHit {
+    /// The nearest joint's index.
+    pub joint: usize,
+    /// Distance from the query point to that joint's bone.
+    pub distance: f32,
+    /// The body's radius where the bone was met.
+    pub radius: f32,
+    /// The nearest point on the bone itself.
+    pub closest: Vec3,
+}
+
+impl BoneHit {
+    /// How convex the surface is at `point`, given its outward `normal`.
+    ///
+    /// Returns `0` on a smooth tube and rises toward `1` in a crease. Comparing
+    /// the normal against the direction away from the bone is what distinguishes
+    /// a genuine cavity — an armpit, a crotch, the inside of an elbow, where the
+    /// surface folds back on itself — from merely being past the end of a bone,
+    /// which is what a fingertip is. Distance to the bone alone cannot tell those
+    /// apart, and reads every limb tip as a deep crease.
+    #[must_use]
+    pub fn crease(&self, point: Vec3, normal: Vec3) -> f32 {
+        let outward = (point - self.closest).normalize_or(normal);
+        ((1.0 - normal.dot(outward)) * 1.4).clamp(0.0, 1.0)
+    }
+}
+
 /// One posable joint.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Joint {
@@ -200,6 +229,38 @@ impl Rig {
             Some(parent) => (self.joints[parent].radius, here.radius),
             None => (here.radius, here.radius),
         }
+    }
+
+    /// The bone nearest `point`, and where on it the nearest spot lies.
+    #[must_use]
+    pub fn nearest_bone(&self, point: Vec3) -> BoneHit {
+        let mut best = BoneHit {
+            joint: 0,
+            distance: f32::INFINITY,
+            radius: 1.0,
+            closest: point,
+        };
+        for joint in 0..self.len() {
+            let (start, end) = self.bone(joint);
+            let (start_radius, end_radius) = self.bone_radii(joint);
+            let axis = end - start;
+            let along = if axis.length_squared() <= f32::EPSILON {
+                0.0
+            } else {
+                ((point - start).dot(axis) / axis.length_squared()).clamp(0.0, 1.0)
+            };
+            let closest = start + axis * along;
+            let distance = point.distance(closest);
+            if distance < best.distance {
+                best = BoneHit {
+                    joint,
+                    distance,
+                    radius: start_radius + (end_radius - start_radius) * along,
+                    closest,
+                };
+            }
+        }
+        best
     }
 
     /// Joints belonging to `zone`, in hierarchy order.

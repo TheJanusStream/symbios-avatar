@@ -12,6 +12,10 @@ categories = ["simulation", "game-development", "graphics"]
 
 [dependencies]
 glam = { version = "0.30.10", features = ["serde"] }
+# Skin detail must be sampled in *body* space, not atlas space, or every chart
+# boundary shows a seam — which needs 3-D noise. Same version symbios-texture
+# already pulls in, so no new entry in the tree.
+noise = "0.9"
 rand = "0.9"
 rand_pcg = "0.9"
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -19,4 +23,13 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 # crate holds itself to — so the serialiser is a runtime dependency, not a
 # test-only one.
 serde_json = "1.0"
+# Procedural-generation primitives — noise fields, cosine palettes, the
+# TextureMap pixel container, and height-to-normal conversion — shared with the
+# rest of the symbios ecosystem rather than reimplemented here.
+symbios-texture = "0.4"
 thiserror = "2.0.17"
+
+[dev-dependencies]
+# Examples only — writing atlas PNGs to look at. The library itself emits raw
+# pixel buffers and never encodes an image.
+image = { version = "0.25", default-features = false, features = ["png"] }
