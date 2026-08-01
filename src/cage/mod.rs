@@ -72,10 +72,10 @@ impl Default for CageConfig {
     fn default() -> Self {
         Self {
             socket_distance: 0.9,
-            max_socket_fraction: 0.7,
+            max_socket_fraction: 0.82,
             socket_margin: 0.06,
-            tip_extend: 0.35,
-            tip_shrink: 0.55,
+            tip_extend: 0.22,
+            tip_shrink: 0.72,
             socket_push_step: 1.15,
             socket_push_attempts: 6,
             socket_clearance: 0.5,

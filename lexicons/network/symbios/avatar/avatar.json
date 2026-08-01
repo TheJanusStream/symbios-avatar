@@ -45,6 +45,16 @@
             "type": "ref",
             "ref": "network.symbios.avatar.defs#skin",
             "description": "The complexion painted onto the body. Absent means the default."
+          },
+          "eyes": {
+            "type": "ref",
+            "ref": "network.symbios.avatar.defs#eyes",
+            "description": "How the eyes are shaped and set. Absent means the default."
+          },
+          "hair": {
+            "type": "ref",
+            "ref": "network.symbios.avatar.defs#hair",
+            "description": "The hair grown on the head. Absent means the default."
           }
         }
       }

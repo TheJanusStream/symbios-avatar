@@ -13,10 +13,12 @@
 
 use std::path::PathBuf;
 
+use glam::Mat4;
 use symbios_avatar::{
-    Archetype, AvatarRecord, CageConfig, FootingConfig, Gait, Ground, PolyMesh, Pose,
-    QuadrupedParams, Rig, Skeleton, SkinConfig, SkinParams, Stride, UvConfig, Vec3, anim::gait,
-    anim::plant_feet_of, build_cage, catmull_clark, demo, rig::skin, texture, unwrap,
+    Archetype, AvatarRecord, Blink, CageConfig, EyeParams, Eyes, FootingConfig, Gait, Ground, Hair,
+    HairParams, PolyMesh, Pose, QuadrupedParams, Rig, Scalp, Skeleton, SkinConfig, SkinParams,
+    Stride, Surface, UvConfig, Vec3, anim::gait, anim::plant_feet_of, build_cage, catmull_clark,
+    demo, rig::skin, texture, unwrap,
 };
 
 fn main() {
@@ -153,6 +155,57 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
         }
         Err(error) => println!("{name:<16} rig     FAILED  {error}"),
     }
+
+    // Eyes, open and shut, so a blink can be checked before it is animated.
+    if let Ok(rig) = Rig::from_skeleton(skeleton)
+        && let Some(eyes) = Eyes::build(&rig, &EyeParams::default())
+    {
+        let to_head = Mat4::from_translation(rig.joints[eyes.head].position);
+        for (state, closure) in [("open", 0.0f32), ("shut", 1.0)] {
+            let mesh = eyes.assembled(closure).transformed(to_head);
+            let path = dir.join(format!("{name}_eyes_{state}.obj"));
+            if let Err(error) = std::fs::write(&path, mesh.to_obj()) {
+                eprintln!("cannot write {}: {error}", path.display());
+            }
+        }
+        println!(
+            "{name:<16} {:<7} {:>6} verts  radius {:.4}m  pivot {:?}",
+            "eyes",
+            eyes.assembled(0.0).vertex_count(),
+            eyes.left.radius,
+            eyes.left.pivot,
+        );
+    }
+
+    // Hair, and the surface it was grown against. Both are measured from the
+    // built mesh, so both are worth reporting: a skull that measures wrong puts
+    // the hair somewhere wrong, and nothing downstream would say so.
+    if let Ok(rig) = Rig::from_skeleton(skeleton)
+        && let Ok(cage) = build_cage(skeleton, &CageConfig::default())
+    {
+        let mesh = catmull_clark(&cage, 2);
+        if let Some(hair) = Hair::build(&mesh, &rig, &HairParams::default())
+            && let Some(scalp) = Scalp::measure(&mesh, &rig)
+        {
+            let grown = hair
+                .mesh()
+                .transformed(Mat4::from_translation(scalp.origin()));
+            let path = dir.join(format!("{name}_hair.obj"));
+            if let Err(error) = std::fs::write(&path, grown.to_obj()) {
+                eprintln!("cannot write {}: {error}", path.display());
+            }
+            let surface = Surface::measure(&mesh, &rig);
+            println!(
+                "{name:<16} {:<7} {:>6} verts  {} groups  skull {:.3}m measured vs {:.3}m planned  drop {:.3}m",
+                "hair",
+                grown.vertex_count(),
+                hair.groups.len(),
+                surface.radius(scalp.head),
+                rig.joints[scalp.head].radius,
+                hair.drop(),
+            );
+        }
+    }
     0
 }
 
@@ -177,6 +230,8 @@ fn walk(dir: &std::path::Path, frames: usize) -> usize {
     let gait = Gait::natural(&rig);
     let stride = Stride::for_body(&rig, 1.0);
     let grade = 0.12;
+    let eyes = Eyes::build(&rig, &EyeParams::default());
+    let mut blink = Blink::seeded(1);
 
     for frame in 0..frames.max(1) {
         let cycle = frame as f32 / frames.max(1) as f32;
@@ -211,10 +266,25 @@ fn walk(dir: &std::path::Path, frames: usize) -> usize {
         );
 
         let posed = pose.forward(&rig);
-        let moved = PolyMesh {
+        let mut moved = PolyMesh {
             positions: posed.deform(&rig, &mesh.positions, &weights),
             faces: mesh.faces.clone(),
         };
+
+        // The eyes ride the head rather than being skinned, so they follow it
+        // through one rigid transform.
+        if let Some(eyes) = &eyes {
+            let closure = blink.advance(1.0 / frames.max(1) as f32);
+            let head = Mat4::from_rotation_translation(
+                posed.rotations[eyes.head],
+                posed.positions[eyes.head],
+            ) * Mat4::from_translation(-rig.joints[eyes.head].position);
+            moved.append(
+                &eyes
+                    .assembled(closure)
+                    .transformed(head * Mat4::from_translation(rig.joints[eyes.head].position)),
+            );
+        }
         let path = dir.join(format!("walk_{frame:02}.obj"));
         if let Err(error) = std::fs::write(&path, moved.to_obj()) {
             eprintln!("cannot write {}: {error}", path.display());

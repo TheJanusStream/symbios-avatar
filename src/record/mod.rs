@@ -33,6 +33,8 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use serde::{Deserialize, Serialize};
 
+use crate::face::EyeParams;
+use crate::hair::HairParams;
 use crate::plan::{Archetype, Category};
 use crate::skeleton::Skeleton;
 use crate::texture::SkinParams;
@@ -69,6 +71,12 @@ pub struct AvatarRecord {
     /// The complexion painted onto it.
     #[serde(default)]
     pub skin: SkinParams,
+    /// How its eyes are shaped and set.
+    #[serde(default)]
+    pub eyes: EyeParams,
+    /// The hair grown on its head.
+    #[serde(default)]
+    pub hair: HairParams,
     /// Seed of the last re-roll, kept so a look can be reproduced.
     ///
     /// Signed because AT Protocol integers are signed 64-bit; an unsigned seed
@@ -92,6 +100,8 @@ impl Default for AvatarRecord {
             name: String::from("Unnamed"),
             archetype: Archetype::default(),
             skin: SkinParams::default(),
+            eyes: EyeParams::default(),
+            hair: HairParams::default(),
             seed: 0,
             locks: LockSet::NONE,
             created_at: None,
@@ -124,6 +134,8 @@ impl AvatarRecord {
         self.name = self.name.trim().to_string();
         self.archetype.sanitize();
         self.skin.sanitize();
+        self.eyes.sanitize();
+        self.hair.sanitize();
     }
 
     /// Builds the capsule graph for this avatar's body.
@@ -150,6 +162,7 @@ impl AvatarRecord {
             self.archetype.reroll(category, &mut rng);
             if category == Category::Features {
                 reroll_skin(&mut self.skin, &mut rng);
+                reroll_face(&mut self.eyes, &mut self.hair, &mut rng);
             }
         }
         self.sanitize();
@@ -241,6 +254,26 @@ impl ProfileRecord {
 /// Skin rides along with `Features` rather than getting a category of its own:
 /// it is the same kind of choice as head and hand size, and a creator with one
 /// lock per slider ends up with more locks than anyone reads.
+/// Draws a new face: eyes, and the hair over them.
+///
+/// Hair rides with features rather than owning a lock category of its own. A
+/// creator who locks "features" has locked what their face looks like, and hair
+/// is the loudest part of that.
+fn reroll_face(eyes: &mut EyeParams, hair: &mut HairParams, rng: &mut Pcg64Mcg) {
+    use rand::Rng;
+    eyes.size = rng.random_range(0.25..=0.85);
+    eyes.spacing = rng.random_range(-0.6..=0.6);
+    eyes.depth = rng.random_range(-0.5..=0.7);
+    eyes.aperture = rng.random_range(0.55..=1.0);
+
+    hair.length = rng.random_range(0.0..=1.0);
+    hair.volume = rng.random_range(-0.7..=0.9);
+    hair.coverage = rng.random_range(-0.8..=0.8);
+    hair.part = rng.random_range(-1.0..=1.0);
+    hair.wave = rng.random_range(0.0..=1.0);
+    hair.shade = rng.random_range(0.0..=1.0);
+}
+
 fn reroll_skin(skin: &mut SkinParams, rng: &mut Pcg64Mcg) {
     use rand::Rng;
     skin.melanin = rng.random_range(0.0..=1.0);
@@ -281,7 +314,7 @@ mod tests {
         assert_eq!(record.name, "Ari");
         assert!(record.fits_budget());
         assert!(
-            record.serialized_size().expect("serialises") < 400,
+            record.serialized_size().expect("serialises") < 700,
             "a body is a few hundred bytes, not kilobytes"
         );
     }

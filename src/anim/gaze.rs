@@ -66,13 +66,28 @@ pub fn look_at(rig: &Rig, pose: &mut Pose, target: Vec3, config: &GazeConfig) ->
         return idle;
     }
 
-    let chain: Vec<usize> = [Zone::Chest, Zone::Neck, Zone::Head]
-        .into_iter()
-        .filter_map(|zone| rig.in_zone(zone).last().copied())
-        .collect();
-    let Some(&head) = chain.last() else {
+    // Walked up the hierarchy from the head rather than looked up by zone: a
+    // zone can hold several joints — a head has a crown above it, a chest has
+    // both clavicles — and picking one by position gets a different joint the
+    // moment a body plan gains a node.
+    let Some(&head) = rig.in_zone(Zone::Head).first() else {
         return idle;
     };
+    let mut chain = vec![head];
+    let mut cursor = head;
+    while let Some(parent) = rig.joints[cursor].parent {
+        if !matches!(rig.joints[parent].zone, Zone::Neck | Zone::Chest) {
+            break;
+        }
+        chain.push(parent);
+        cursor = parent;
+    }
+    chain.reverse();
+    // The joints nearest the head do the looking; anything further down the
+    // spine belongs to posture rather than gaze.
+    if chain.len() > config.shares.len() {
+        chain.drain(..chain.len() - config.shares.len());
+    }
 
     // Where the head is looking before anything turns. Every joint's share is
     // measured against this, so the clamp applies to the whole gesture rather
@@ -182,15 +197,16 @@ mod tests {
         let target = head_at(&rig, &pose) + Vec3::new(2.0, 0.0, 1.0);
         look_at(&rig, &mut pose, target, &GazeConfig::default());
 
-        let angle_of = |zone: Zone| {
-            let joint = *rig.in_zone(zone).last().expect("joint");
-            pose.rotations[joint].to_axis_angle().1
-        };
-        for zone in [Zone::Chest, Zone::Neck, Zone::Head] {
+        // Walk the same joints the gaze does, rather than naming them: the head,
+        // and the two spine joints beneath it.
+        let head = rig.in_zone(Zone::Head)[0];
+        let neck = rig.joints[head].parent.expect("a neck");
+        let girdle = rig.joints[neck].parent.expect("a girdle");
+        for (name, joint) in [("head", head), ("neck", neck), ("girdle", girdle)] {
+            let angle = pose.rotations[joint].to_axis_angle().1;
             assert!(
-                angle_of(zone) > 0.02,
-                "{zone:?} should carry part of the turn, has {:.3}",
-                angle_of(zone)
+                angle > 0.02,
+                "the {name} should carry part of the turn, has {angle:.3}"
             );
         }
     }

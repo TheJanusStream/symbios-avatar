@@ -59,9 +59,12 @@
 pub mod anim;
 pub mod cage;
 pub mod demo;
+pub mod face;
+pub mod hair;
 pub mod hull;
 pub mod mesh;
 pub mod plan;
+pub mod prim;
 pub mod record;
 pub mod rig;
 pub mod skeleton;
@@ -74,13 +77,17 @@ pub use anim::{
     Stride, Target, Track, look_at, plant_feet,
 };
 pub use cage::{CageConfig, CageError, build_cage};
+pub use face::{Blink, EyeParams, Eyes};
+pub use hair::{Hair, HairParams, Scalp, Strand};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
 pub use plan::{
     Archetype, BodyPlan, Category, HumanoidParams, Limb, QuadrupedParams, Zone, ZoneSet,
 };
 pub use record::{AvatarRecord, LockSet, ProfileRecord, ShareCodeError};
-pub use rig::{Anchor, Joint, Landmark, Landmarks, Rig, RigError, SkinConfig, SkinWeights};
+pub use rig::{
+    Anchor, Joint, Landmark, Landmarks, Rig, RigError, SkinConfig, SkinWeights, Surface,
+};
 pub use skeleton::{Chain, Node, NodeKind, Skeleton, SkeletonError};
 pub use subdiv::catmull_clark;
 pub use texture::{AtlasGeometry, SkinParams, bake_geometry, paint_skin};

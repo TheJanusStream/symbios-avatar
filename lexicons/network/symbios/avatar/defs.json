@@ -179,6 +179,95 @@
           "default": 0
         }
       }
+    },
+    "eyes": {
+      "type": "object",
+      "description": "How a body's eyes are shaped and set. Axes are thousandths, as elsewhere: the AT Protocol data model has no floating-point type. Eyes are geometry that moves rather than a painted feature, so these place a globe and the lids that close over it.",
+      "properties": {
+        "size": {
+          "type": "integer",
+          "description": "Eye size, as a fraction of the head's radius. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 500
+        },
+        "spacing": {
+          "type": "integer",
+          "description": "How far apart the eyes are set: -1000 close, +1000 wide.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "depth": {
+          "type": "integer",
+          "description": "How deeply the eyes are set: -1000 protruding, +1000 sunken.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "aperture": {
+          "type": "integer",
+          "description": "How far open the lids rest: 0 shut, 1000 wide.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 800
+        }
+      }
+    },
+    "hair": {
+      "type": "object",
+      "description": "The hair grown on a body's head, as strand groups swept over the scalp. Axes are thousandths, as elsewhere: the AT Protocol data model has no floating-point type. A reader that clamps out-of-range values to the stated bounds will always be able to grow hair.",
+      "properties": {
+        "length": {
+          "type": "integer",
+          "description": "How far the hair falls: 0 cropped, 1000 past the shoulder blades. The fringe over the brow is always short, whatever this says.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 450
+        },
+        "volume": {
+          "type": "integer",
+          "description": "How far the hair stands off the scalp: -1000 flat, +1000 full.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "coverage": {
+          "type": "integer",
+          "description": "Where the hairline sits: -1000 receding, +1000 low on the brow.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "part": {
+          "type": "integer",
+          "description": "Where the parting runs: -1000 over the left ear, +1000 over the right.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "wave": {
+          "type": "integer",
+          "description": "How much the hair waves as it falls: 0 straight, 1000 curling.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 250
+        },
+        "shade": {
+          "type": "integer",
+          "description": "Colour along a melanin ramp: 0 black, 1000 pale blonde.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 300
+        },
+        "groups": {
+          "type": "integer",
+          "description": "How many strand groups to grow. Costs geometry, so it is bounded; readers may lower it for distant or low-end rendering without changing the record.",
+          "minimum": 24,
+          "maximum": 256,
+          "default": 96
+        }
+      }
     }
   }
 }

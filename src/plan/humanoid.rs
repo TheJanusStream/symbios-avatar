@@ -123,57 +123,61 @@ impl BodyPlan for HumanoidParams {
         let h = self.height;
         let girth = self.girth();
 
-        // Torso radii. The chest also answers to shoulder width, because a broad
-        // frame reads as a deep chest, not just wide-set arms.
-        let pelvis_r = h * 0.0657 * girth;
-        let waist_r = h * 0.0714 * girth;
-        let chest_r = h * 0.0771 * girth * (1.0 + 0.08 * self.shoulder_width);
+        // The torso carries a separate shoulder girdle above the ribcage. That
+        // is not decoration: a single node carrying spine, neck, and both arms
+        // needs every one of those sockets to clear the others, and the room
+        // that takes scales with its own girth — so a chest wide enough to read
+        // as a chest forces a neck long enough to read as a giraffe. Splitting
+        // the two lets the ribcage be broad while the girdle above it stays
+        // slim, which is what shortens the neck.
+        let pelvis_r = h * 0.079 * girth;
+        let waist_r = h * 0.078 * girth;
+        let chest_r = h * 0.088 * girth * (1.0 + 0.08 * self.shoulder_width);
+        let girdle_r = h * 0.062 * girth * (1.0 + 0.06 * self.shoulder_width);
+        let neck_r = h * 0.046 * girth;
+        let head_r = h * 0.075 * (1.0 + 0.25 * self.head_size);
 
-        // Vertical layout, built from the ground up so that every spacing
-        // requirement can be satisfied in turn. Doing it top-down instead lets
-        // two floors fight — a heavy short body wants a torso longer than the
-        // stature leaves room for — and whichever clamp is applied last wins,
-        // silently producing a chest the waist cannot attach to.
         let ankle_y = h * 0.0686;
         let hip_drop = pelvis_r * 1.85;
 
-        // The chest's four sockets — waist, neck, two clavicles — each need bone
-        // length proportional to the radii involved, so a heavy body needs a
-        // longer torso than a slight one. Room for it comes out of the legs
-        // first: dropping the pelvis keeps the stature honest, where growing the
-        // chest upward would leave a maxed-out body a quarter metre too tall.
-        // Only once the pelvis reaches the leg's own floor does the chest rise.
-        let torso_min = pelvis_r * 1.5 + chest_r * 1.55 + h * 0.01;
-        let nominal_chest = h * 0.754;
-        let pelvis_y = (h * (0.543 + 0.03 * self.limb_length))
-            .min(nominal_chest - torso_min)
-            .max(ankle_y + hip_drop + h * 0.10);
-        let chest_y = nominal_chest.max(pelvis_y + torso_min);
-        let neck_y = chest_y + (h * 0.086 * (1.0 + 0.25 * self.neck_length)).max(chest_r * 1.2);
-        let head_r = h * 0.0571 * (1.0 + 0.25 * self.head_size);
-        let neck_r = h * 0.0343 * girth;
-        let head_y = neck_y + (h * 0.086).max(neck_r * 1.5 + head_r * 0.9);
+        // Only the pelvis and the girdle are joints; the waist and chest between
+        // them are connectors and constrain nothing.
+        let pelvis_gap = pelvis_r * 1.5;
+        let chest_gap = girdle_r * 1.3;
+        let torso_min = pelvis_gap + h * 0.06 + chest_gap;
 
-        // Both bounds are now guaranteed compatible by `torso_min`.
-        let waist_y = (pelvis_y + (chest_y - pelvis_y) * 0.46)
-            .clamp(pelvis_y + pelvis_r * 1.5, chest_y - chest_r * 1.55);
+        let nominal_girdle = h * 0.755;
+        let pelvis_y = (h * (0.5 + 0.03 * self.limb_length))
+            .min(nominal_girdle - torso_min)
+            .max(ankle_y + hip_drop + h * 0.10);
+        let girdle_y = nominal_girdle.max(pelvis_y + torso_min);
+        let chest_y = girdle_y - chest_gap;
+        let waist_y = (pelvis_y + (chest_y - pelvis_y) * 0.5)
+            .clamp(pelvis_y + pelvis_gap, chest_y - h * 0.02);
+
+        // The girdle is a joint, so its neck socket has to clear the clavicles'.
+        // The neck above it is a plain connector and constrains nothing — an
+        // earlier floor here was invented rather than required, and it alone
+        // added half a head-height of giraffe.
+        let neck_y = girdle_y + (h * 0.05 * (1.0 + 0.3 * self.neck_length)).max(girdle_r * 1.05);
+        let head_y = neck_y + (h * 0.05).max(head_r * 0.45);
 
         // The pelvis carries the spine and both legs; the drop to the hip is
         // what gives that joint the room to separate three sockets.
-        let hip_x = pelvis_r * (1.75 + 0.35 * self.hip_width);
+        let hip_x = pelvis_r * (1.6 + 0.35 * self.hip_width);
         let hip_y = pelvis_y - hip_drop;
 
-        let knee_y = ankle_y + (hip_y - ankle_y) * 0.55;
+        let knee_y = ankle_y + (hip_y - ankle_y) * 0.60;
         let foot_y = h * 0.0257;
         let foot_z = h * 0.057 * (1.0 + 0.3 * self.extremity_size);
 
-        // The clavicle has to reach past the waist ring's corners before an arm
-        // can attach — the single tightest constraint on the whole body.
-        let clavicle_x = chest_r * (1.85 + 0.35 * self.shoulder_width);
-        let clavicle_y = chest_y + h * 0.006;
-        let shoulder_x = clavicle_x + h * 0.051;
-        let elbow_x = shoulder_x + h * (0.103 + 0.025 * self.limb_length);
-        let wrist_x = elbow_x + h * (0.091 + 0.025 * self.limb_length);
+        // The clavicle has to reach past the chest socket's corners before an
+        // arm can attach — the single tightest constraint on the whole body.
+        let clavicle_x = girdle_r * (2.15 + 0.25 * self.shoulder_width);
+        let clavicle_y = girdle_y + h * 0.004;
+        let shoulder_x = clavicle_x + h * 0.048;
+        let elbow_x = shoulder_x + h * (0.113 + 0.025 * self.limb_length);
+        let wrist_x = elbow_x + h * (0.101 + 0.025 * self.limb_length);
         let hand_x = wrist_x + h * 0.040 * (1.0 + 0.3 * self.extremity_size);
 
         let extremity = 1.0 + 0.3 * self.extremity_size;
@@ -189,13 +193,26 @@ impl BodyPlan for HumanoidParams {
             waist,
             Node::new(Vec3::new(0.0, chest_y, 0.0), chest_r).in_zone(Zone::Chest),
         );
-        let neck = skeleton.extend_from(
+        let girdle = skeleton.extend_from(
             chest,
+            Node::new(Vec3::new(0.0, girdle_y, 0.0), girdle_r).in_zone(Zone::Chest),
+        );
+        let neck = skeleton.extend_from(
+            girdle,
             Node::new(Vec3::new(0.0, neck_y, 0.0), neck_r).in_zone(Zone::Neck),
         );
-        skeleton.extend_from(
+        // A skull takes two nodes. One leaf gives a capped tube whose dome
+        // collapses under subdivision, leaving a flat-topped stub with the head
+        // joint sitting at the very top of the body — which is exactly what a
+        // measured rendering showed. A crown above it fills the cranium out.
+        let head = skeleton.extend_from(
             neck,
             Node::new(Vec3::new(0.0, head_y, 0.0), head_r).in_zone(Zone::Head),
+        );
+        skeleton.extend_from(
+            head,
+            Node::new(Vec3::new(0.0, head_y + head_r * 0.72, 0.0), head_r * 0.66)
+                .in_zone(Zone::Head),
         );
 
         for (side, fore, hind) in [
@@ -204,10 +221,10 @@ impl BodyPlan for HumanoidParams {
         ] {
             // Arms rest in a T-pose: VRM 1.0 requires it of exported humanoids.
             let clavicle = skeleton.extend_from(
-                chest,
+                girdle,
                 Node::new(
                     Vec3::new(side * clavicle_x, clavicle_y, 0.0),
-                    h * 0.0314 * girth,
+                    h * 0.040 * girth,
                 )
                 .in_zone(Zone::Chest),
             );
@@ -215,7 +232,7 @@ impl BodyPlan for HumanoidParams {
                 clavicle,
                 Node::new(
                     Vec3::new(side * shoulder_x, clavicle_y, 0.0),
-                    h * 0.0286 * girth,
+                    h * 0.038 * girth,
                 )
                 .in_zone(Zone::UpperLimb(fore)),
             );
@@ -223,7 +240,7 @@ impl BodyPlan for HumanoidParams {
                 shoulder,
                 Node::new(
                     Vec3::new(side * elbow_x, clavicle_y, 0.0),
-                    h * 0.0240 * girth,
+                    h * 0.032 * girth,
                 )
                 .in_zone(Zone::UpperLimb(fore)),
             );
@@ -231,7 +248,7 @@ impl BodyPlan for HumanoidParams {
                 elbow,
                 Node::new(
                     Vec3::new(side * wrist_x, clavicle_y, 0.0),
-                    h * 0.0189 * girth,
+                    h * 0.025 * girth,
                 )
                 .in_zone(Zone::LowerLimb(fore)),
             );
@@ -239,31 +256,31 @@ impl BodyPlan for HumanoidParams {
                 wrist,
                 Node::new(
                     Vec3::new(side * hand_x, clavicle_y, 0.0),
-                    h * 0.0217 * extremity,
+                    h * 0.030 * extremity,
                 )
                 .in_zone(Zone::Extremity(fore)),
             );
 
             let hip = skeleton.extend_from(
                 pelvis,
-                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.0429 * girth)
+                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.052 * girth)
                     .in_zone(Zone::UpperLimb(hind)),
             );
             let knee = skeleton.extend_from(
                 hip,
-                Node::new(Vec3::new(side * hip_x, knee_y, 0.0), h * 0.0343 * girth)
+                Node::new(Vec3::new(side * hip_x, knee_y, 0.0), h * 0.042 * girth)
                     .in_zone(Zone::UpperLimb(hind)),
             );
             let ankle = skeleton.extend_from(
                 knee,
-                Node::new(Vec3::new(side * hip_x, ankle_y, 0.0), h * 0.0240 * girth)
+                Node::new(Vec3::new(side * hip_x, ankle_y, 0.0), h * 0.030 * girth)
                     .in_zone(Zone::LowerLimb(hind)),
             );
             skeleton.extend_from(
                 ankle,
                 Node::new(
                     Vec3::new(side * hip_x, foot_y, foot_z),
-                    h * 0.0257 * extremity,
+                    h * 0.034 * extremity,
                 )
                 .in_zone(Zone::Extremity(hind)),
             );
@@ -335,10 +352,13 @@ mod tests {
         let skeleton = HumanoidParams::default().skeleton();
         skeleton.validate().expect("valid skeleton");
 
-        // Pelvis carries spine plus two legs; chest carries spine, neck, two arms.
+        // The pelvis carries the spine and two legs; the shoulder girdle carries
+        // the spine, the neck, and both arms. The chest between them is a plain
+        // connector, which is the whole reason the girdle exists.
         assert_eq!(skeleton.kind(0), NodeKind::Joint);
         assert_eq!(skeleton.degree(0), 3, "pelvis");
-        assert_eq!(skeleton.degree(2), 4, "chest");
+        assert_eq!(skeleton.kind(2), NodeKind::Connector, "chest");
+        assert_eq!(skeleton.degree(3), 4, "shoulder girdle");
 
         // Two hands, two feet, one head: five leaves.
         let leaves = (0..skeleton.nodes.len() as u32)
@@ -395,8 +415,22 @@ mod tests {
             ..Default::default()
         }
         .skeleton();
-        // Chest (2) and an upper arm (6) both respond to the one axis.
-        assert!(heavy.nodes[2].radius > slight.nodes[2].radius * 1.4);
-        assert!(heavy.nodes[6].radius > slight.nodes[6].radius * 1.4);
+        // The torso and a limb both answer to the one axis. Found by zone
+        // rather than by index, so adding a node does not silently retarget the
+        // assertion at some other part of the body.
+        let radius_in = |skeleton: &Skeleton, zone: Zone| {
+            skeleton
+                .nodes
+                .iter()
+                .find(|node| node.zone == zone)
+                .expect("zone exists")
+                .radius
+        };
+        for zone in [Zone::Chest, Zone::UpperLimb(Limb::ForeLeft)] {
+            assert!(
+                radius_in(&heavy, zone) > radius_in(&slight, zone) * 1.4,
+                "{zone:?} should thicken with build"
+            );
+        }
     }
 }

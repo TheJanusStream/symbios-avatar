@@ -31,6 +31,7 @@
 
 pub mod landmark;
 pub mod skin;
+pub mod surface;
 
 use glam::Vec3;
 use std::collections::VecDeque;
@@ -41,6 +42,7 @@ use crate::skeleton::{Skeleton, SkeletonError};
 
 pub use landmark::{Anchor, Landmark, Landmarks};
 pub use skin::{Influence, MAX_INFLUENCES, SkinConfig, SkinWeights};
+pub use surface::Surface;
 
 /// Where the body's skeleton lies beneath a point on its surface.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -433,7 +435,8 @@ mod tests {
         let graspers = rig.query(|zone| matches!(zone, Zone::Extremity(limb) if limb.is_fore()));
         assert_eq!(graspers.len(), 2, "and has two hands");
 
-        assert_eq!(rig.in_zone(Zone::Head).len(), 1);
+        // Skull and crown; a head takes two nodes to have a dome.
+        assert_eq!(rig.in_zone(Zone::Head).len(), 2);
         assert_eq!(rig.in_zone(Zone::UpperLimb(Limb::ForeLeft)).len(), 2);
     }
 
