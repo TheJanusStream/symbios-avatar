@@ -34,6 +34,7 @@
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,96
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
+//! cargo run --release --example render -- --face 1,1,1,0.5        # nose,brow,mouth,ears
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --budget    # what one avatar costs
@@ -46,8 +47,8 @@ use glam::{Mat4, Vec3};
 use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
-    Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, FootingConfig, Gait, Ground,
-    HairParams, MeshKind, PolyMesh, Pose, SkinParams, Stride, Zone, anim::gait,
+    Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, FaceParams, FootingConfig,
+    Gait, Ground, HairParams, MeshKind, PolyMesh, Pose, SkinParams, Stride, Zone, anim::gait,
     anim::plant_feet_of,
 };
 
@@ -143,6 +144,25 @@ fn main() {
     let mut record = AvatarRecord::new("Rendered", archetype);
     if let Some(seed) = seed {
         record.reroll(seed);
+    }
+
+    // Four numbers, in the order the axes are declared: nose, brow, mouth,
+    // ears. Set on the record rather than through a config override, because
+    // that is where a face lives. Same reason `--skin` exists: a face cannot be
+    // judged from its numbers, and these are the numbers that decide whether
+    // two records describe two people (#61).
+    if let Some(spec) = value("--face") {
+        let given: Vec<f32> = spec
+            .split(',')
+            .filter_map(|axis| axis.trim().parse().ok())
+            .collect();
+        let axis = |at: usize, fallback: f32| given.get(at).copied().unwrap_or(fallback);
+        record.face = FaceParams {
+            nose: axis(0, record.face.nose),
+            brow: axis(1, record.face.brow),
+            mouth: axis(2, record.face.mouth),
+            ears: axis(3, record.face.ears),
+        };
     }
 
     // The record carries its own hair; the flag only replaces the axes it names.

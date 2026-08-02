@@ -12,7 +12,8 @@
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use symbios_avatar::{
-    Archetype, AvatarRecord, BodyPlan, CageConfig, HumanoidParams, QuadrupedParams, build_cage,
+    Archetype, AvatarRecord, BodyPlan, CageConfig, HumanoidParams, Limb, QuadrupedParams, Rig,
+    Zone, build_body, build_cage,
 };
 
 /// Builds a body and asserts it is watertight, reporting the parameters if not.
@@ -114,6 +115,45 @@ fn random_humanoids_always_mesh() {
             &format!("random humanoid #{sample}: {params:?}"),
         );
     }
+}
+
+#[test]
+fn the_default_body_stands_near_the_proportion_canon() {
+    // #66. Shoulder and hip breadth are set by coefficients that are ALSO
+    // meshability floors, so widening them back would make every sweep above
+    // pass more easily and nothing else would complain. Measured against the
+    // rendered height rather than the nominal one, because subdivision shrinks
+    // a body by about six percent and it is the rendered body that is looked at.
+    let params = HumanoidParams::default();
+    let skeleton = params.skeleton();
+    let body = build_body(&skeleton, &CageConfig::default(), 2).expect("the default body meshes");
+    let (lo, hi) = body.bounds();
+    let height = hi.y - lo.y;
+    let rig = Rig::from_skeleton(&skeleton).expect("the default body rigs");
+    let span = |zone: Zone| {
+        rig.in_zone(zone)
+            .iter()
+            .map(|&joint| rig.joints[joint].position.x.abs())
+            .fold(0.0f32, f32::max)
+            * 2.0
+            / height
+    };
+
+    let shoulders = span(Zone::Chest);
+    assert!(
+        (shoulders - 0.245).abs() < 0.015,
+        "shoulders span {shoulders:.3} of height, against a canon 0.245"
+    );
+
+    // Not asserted at canon, because it cannot reach it: 0.190 needs a hip
+    // coefficient of about 1.13, and below 1.35 the pelvis stops being able to
+    // separate two leg sockets from the spine's. This is the value that is
+    // actually reachable, and it is here to stop the old 0.270 coming back.
+    let hips = span(Zone::UpperLimb(Limb::HindLeft));
+    assert!(
+        hips < 0.24,
+        "hips span {hips:.3} of height; the canon is 0.190 and 0.228 is what the pelvis allows"
+    );
 }
 
 #[test]

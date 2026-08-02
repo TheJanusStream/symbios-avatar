@@ -211,7 +211,19 @@ impl BodyPlan for HumanoidParams {
 
         // The pelvis carries the spine and both legs; the drop to the hip is
         // what gives that joint the room to separate three sockets.
-        let hip_x = pelvis_r * (1.6 + 0.35 * self.hip_width);
+        //
+        // The coefficient is a MESHABILITY FLOOR, not a style choice, and the
+        // difference matters because the canon is on the far side of it. A
+        // default body measured 0.270 of height across the hips against a canon
+        // 0.190, and #66 asked for canon. Swept: 1.60 and 1.45 mesh every seed,
+        // 1.30 loses one, and 1.13 — the figure that actually lands on 0.190 —
+        // loses five of ten. The two leg sockets and the spine's have to clear
+        // each other on one node, and bringing the legs together is what takes
+        // that room away. 1.35 is the tightest value with margin over the floor
+        // and gives 0.228, which is most of the way and as far as this joint
+        // goes. Reaching canon needs a narrower pelvis or sockets placed
+        // differently, and both are changes to the body rather than to a number.
+        let hip_x = pelvis_r * (1.35 + 0.35 * self.hip_width);
         let hip_y = pelvis_y - hip_drop;
 
         let knee_y = ankle_y + (hip_y - ankle_y) * 0.60;
@@ -220,7 +232,11 @@ impl BodyPlan for HumanoidParams {
 
         // The clavicle has to reach past the chest socket's corners before an
         // arm can attach — the single tightest constraint on the whole body.
-        let clavicle_x = girdle_r * (2.15 + 0.25 * self.shoulder_width);
+        //
+        // 1.85 puts the default body exactly on the canonical 0.245 of height
+        // across the shoulders, down from 0.285 (#66). Unlike the hips this one
+        // had room: 1.85 meshes every seed and only 1.70 starts to lose them.
+        let clavicle_x = girdle_r * (1.85 + 0.25 * self.shoulder_width);
         let clavicle_y = girdle_y + h * 0.004;
         let shoulder_x = clavicle_x + h * 0.048;
         // Arms hang at an angle, not straight out. Built in a T-pose, posing
@@ -231,8 +247,15 @@ impl BodyPlan for HumanoidParams {
         // hanging arm and up to a raised one, and is why production models are
         // built this way.
         let arm = Vec3::new(A_POSE.cos(), -A_POSE.sin(), 0.0);
-        let upper_arm = h * (0.113 + 0.025 * self.limb_length);
-        let forearm = h * (0.101 + 0.025 * self.limb_length);
+        // Lengthened with the shoulders, not independently of them. Arm span is
+        // measured fingertip to fingertip, so it carries the shoulder span
+        // inside it: narrowing the clavicles for #66 took the body from 0.929 of
+        // height to 0.890, moving one canon figure by breaking another. These
+        // put it back to 0.930. The remaining 7% against a canon 1.000 was there
+        // before and is left alone — closing it means arms about a fifth longer,
+        // which is a change to the silhouette and wants deciding on its own.
+        let upper_arm = h * (0.123 + 0.025 * self.limb_length);
+        let forearm = h * (0.110 + 0.025 * self.limb_length);
         let hand_len = h * 0.040 * (1.0 + 0.3 * self.extremity_size);
         let shoulder_at = Vec3::new(shoulder_x, clavicle_y, 0.0);
         let elbow_at = shoulder_at + arm * upper_arm;
