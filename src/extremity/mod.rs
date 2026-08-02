@@ -54,9 +54,12 @@ pub struct Extremities {
 impl Extremities {
     /// Builds hands and feet for a body.
     ///
-    /// Fore limbs get hands and hind limbs get feet. A body whose fore limbs
-    /// walk on the ground — most creatures — is a case for [`crate::plan`] to
-    /// decide by naming its limbs, not for this to guess at.
+    /// A limb that carries the body gets a foot; one that does not gets a hand.
+    ///
+    /// Asked of the rig, not assumed from which end of the body the limb is on.
+    /// Fore limbs are hands only on something that stands upright: a quadruped
+    /// walks on all four, and giving its front legs fingers — which is what
+    /// reading `is_fore` did — puts a pair of human hands on the ground.
     ///
     /// `ground` is the plane the body **stands on** — `0` for the humanoid
     /// plan, which builds bodies with the floor at the origin. Feet reach down
@@ -70,6 +73,7 @@ impl Extremities {
     #[must_use]
     pub fn build(rig: &Rig, surface: &Surface, ground: f32) -> Self {
         let mut extremities = Self::default();
+        let carries = rig.ground_contacts();
 
         for limb in Limb::ALL {
             let Some(&joint) = rig.in_zone(Zone::Extremity(limb)).first() else {
@@ -91,7 +95,7 @@ impl Extremities {
                 continue;
             }
 
-            if limb.is_fore() {
+            if !carries.contains(&limb) {
                 extremities.hands.push(grow_hand(limb, joint, along, girth));
             } else {
                 let drop = rig.joints[joint].position.y - ground;
@@ -200,11 +204,28 @@ mod tests {
     }
 
     #[test]
-    fn hands_go_on_fore_limbs_and_feet_on_hind_ones() {
+    fn feet_go_on_the_limbs_that_carry_the_body() {
         let (rig, surface, ground) = body(7);
         let built = Extremities::build(&rig, &surface, ground);
-        assert!(built.hands.iter().all(|part| part.limb.is_fore()));
-        assert!(built.feet.iter().all(|part| !part.limb.is_fore()));
+        let carries = rig.ground_contacts();
+        assert!(built.feet.iter().all(|part| carries.contains(&part.limb)));
+        assert!(built.hands.iter().all(|part| !carries.contains(&part.limb)));
+    }
+
+    #[test]
+    fn a_quadruped_walks_on_four_feet_and_has_no_hands() {
+        // Read from which end of the body a limb is on, a quadruped's front
+        // legs come out as a pair of human hands, on the ground.
+        use crate::plan::{BodyPlan, QuadrupedParams};
+        let skeleton = QuadrupedParams::default().skeleton();
+        let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+        let mesh = catmull_clark(&cage, 2);
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let surface = Surface::measure(&mesh, &rig);
+
+        let built = Extremities::build(&rig, &surface, 0.0);
+        assert_eq!(built.feet.len(), 4, "a quadruped stands on four");
+        assert!(built.hands.is_empty(), "a quadruped has no hands");
     }
 
     #[test]

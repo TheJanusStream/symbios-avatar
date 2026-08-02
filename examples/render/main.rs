@@ -27,6 +27,7 @@
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
+//! cargo run --release --example render -- --quadruped
 //! ```
 
 mod light;
@@ -110,7 +111,14 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mut record = AvatarRecord::new("Rendered", Archetype::default());
+    // Both archetypes, because everything on a body is shared between them and
+    // only one of them has ever been looked at.
+    let archetype = if args.iter().any(|arg| arg == "--quadruped") {
+        Archetype::Quadruped(symbios_avatar::QuadrupedParams::default())
+    } else {
+        Archetype::default()
+    };
+    let mut record = AvatarRecord::new("Rendered", archetype);
     if let Some(seed) = seed {
         record.reroll(seed);
     }
@@ -197,7 +205,10 @@ struct Subject {
     outfit: Outfit,
     gait: Gait,
     stride: Stride,
-    height: f32,
+    /// The centre of the body's rest extent.
+    middle: Vec3,
+    /// Its largest side, so a long body is framed by its length.
+    reach: f32,
 }
 
 impl Subject {
@@ -220,20 +231,33 @@ impl Subject {
         let painted = texture::paint_skin(&geometry, &rig, &record.skin);
         let (lo, hi) = mesh.bounds();
         let surface = Surface::measure(&mesh, &rig);
+        let upright = matches!(record.archetype, Archetype::Humanoid(_));
 
         Some(Self {
             linear,
             pass,
             eyes: Eyes::build(&rig, &record.eyes),
-            features: Eyes::build(&rig, &record.eyes)
+            // A human face, human hair and human clothing on a quadruped is a
+            // costume, not a creature: the front legs wear sleeves and a fringe
+            // hangs off a muzzle. Creatures need their own — fur, a muzzle, a
+            // harness — which is WS6. Until then a quadruped goes bare rather
+            // than dressed as something it is not.
+            features: upright
+                .then(|| Eyes::build(&rig, &record.eyes))
+                .flatten()
                 .map(|eyes| Features::build(&eyes, &record.face)),
-            hair: Hair::build(&mesh, &rig, hair),
+            hair: upright.then(|| Hair::build(&mesh, &rig, hair)).flatten(),
             // The plan stands its bodies on the origin.
             extremities: Extremities::build(&rig, &surface, 0.0),
-            outfit: Outfit::wear(&mesh, &weights, &zones, &record.outfit),
+            outfit: if upright {
+                Outfit::wear(&mesh, &weights, &zones, &record.outfit)
+            } else {
+                Outfit::default()
+            },
             gait: Gait::natural(&rig),
             stride: Stride::for_body(&rig, 1.0),
-            height: (hi.y - lo.y).max(0.1),
+            middle: (lo + hi) * 0.5,
+            reach: (hi - lo).max_element().max(0.1),
             albedo: painted.albedo,
             atlas,
             mesh,
@@ -267,11 +291,15 @@ impl Subject {
     /// Four views of the whole body in one image.
     fn sheet(&self, pose: &Pose, closure: f32) -> Image {
         use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        // Framed on the body's whole extent, not on its height. A quadruped is
+        // longer than it is tall, and a frame sized by height alone crops the
+        // ends off it — which is not a small thing when the frame is the only
+        // way anyone judges the body.
         let of = |turn: f32| Frame {
             turn,
             pitch: 0.0,
-            centre: Vec3::new(0.0, self.height * 0.5, 0.0),
-            span: self.height * MARGIN,
+            centre: self.middle,
+            span: self.reach * MARGIN,
         };
         // Front, side, back, three-quarter.
         let frames = [of(0.0), of(FRAC_PI_2), of(PI), of(FRAC_PI_4)];

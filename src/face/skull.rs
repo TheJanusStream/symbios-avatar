@@ -111,6 +111,13 @@ const CHIN: [(f32, f32); 5] = [
 /// a function of the rest positions — call it once, on the rest mesh, before
 /// binding or unwrapping.
 pub fn shape(mesh: &mut PolyMesh, rig: &Rig) {
+    // These are a HUMAN skull's proportions — a chin, a brow ridge, cheekbones
+    // widest. On something that walks on all fours they are simply wrong, in the
+    // same way that giving its front legs fingers was wrong. A creature's head
+    // is its own shape and belongs with the rest of the creature work.
+    if rig.ground_contacts().len() > 2 {
+        return;
+    }
     let Some(&head) = rig.in_zone(Zone::Head).first() else {
         return;
     };
@@ -376,6 +383,22 @@ mod tests {
         shape(&mut twice, &rig);
         assert_ne!(twice.positions, shaped.positions);
         assert_eq!(twice.vertex_count(), plain.vertex_count());
+    }
+
+    #[test]
+    fn a_body_that_walks_on_all_fours_keeps_its_own_head() {
+        use crate::plan::{BodyPlan, QuadrupedParams};
+        let skeleton = QuadrupedParams::default().skeleton();
+        let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+        let plain = catmull_clark(&cage, 2);
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+
+        let mut shaped = plain.clone();
+        shape(&mut shaped, &rig);
+        assert_eq!(
+            plain.positions, shaped.positions,
+            "a quadruped was given a human chin and brow"
+        );
     }
 
     #[test]
