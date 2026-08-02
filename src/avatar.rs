@@ -47,7 +47,7 @@ use crate::anim::Pose;
 use crate::cage::CageConfig;
 use crate::dress::Outfit;
 use crate::extremity::Extremities;
-use crate::face::{Eyes, Features};
+use crate::face::{Eyes, Features, Skull};
 use crate::hair::{Hair, HairParams};
 use crate::mesh::PolyMesh;
 use crate::plan::{Limb, Zone};
@@ -263,11 +263,16 @@ impl Avatar {
         }
 
         let eyes = Eyes::build(&rig, &record.eyes);
+        // Measured from the body that was built, not from the plan that asked
+        // for it: the two differ by about a third at the head, and by a
+        // different third on every body.
+        let skull = Skull::measure(&body, &rig);
         let parts = Parts {
             features: handed
                 .then(|| {
-                    eyes.as_ref()
-                        .map(|eyes| Features::build(eyes, &record.face))
+                    let eyes = eyes.as_ref()?;
+                    let skull = skull.as_ref()?;
+                    Some(Features::build(eyes, skull, &record.face))
                 })
                 .flatten(),
             hair: handed

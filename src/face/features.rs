@@ -25,6 +25,7 @@ use crate::mesh::PolyMesh;
 use crate::prim;
 
 use super::eye::Eyes;
+use super::skull::Skull;
 
 /// How prominent each feature is.
 ///
@@ -80,6 +81,20 @@ impl FaceParams {
     }
 }
 
+/// Where each feature sits between the eye line and the chin, as a fraction of
+/// that span on the **measured** head.
+///
+/// These reproduce the face the old eye-radii figures gave on a default body —
+/// which is where they came from — and unlike those figures they follow a head
+/// that is shallower, or eyes that are larger, instead of walking off the
+/// bottom of it.
+const EAR_HEIGHT: f32 = 0.25;
+/// See [`EAR_HEIGHT`]. The base of the nose, where the nostrils are.
+const NOSE_BASE: f32 = 0.45;
+/// See [`EAR_HEIGHT`]. Placed by eye the mouth drifts onto the chin and the face
+/// reads as a muzzle.
+const MOUTH_HEIGHT: f32 = 0.62;
+
 /// The features of one face, in head-local space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Features {
@@ -97,22 +112,39 @@ pub struct Features {
 
 impl Features {
     /// Builds a face around eyes that have already been placed.
+    ///
+    /// `skull` is the head as it was actually built. Every landmark here is
+    /// anchored to it rather than to the sphere the plan asked for, because the
+    /// two differ by a third and the difference is not constant: features placed
+    /// against the plan sat proud on one body and buried on the next.
     #[must_use]
-    pub fn build(eyes: &Eyes, params: &FaceParams) -> Self {
+    pub fn build(eyes: &Eyes, skull: &Skull, params: &FaceParams) -> Self {
         // An eye's radius is the unit the canons are expressed in: a face is
         // five eye-widths across, and every other landmark follows from that.
         let unit = eyes.left.radius;
         let apart = eyes.right.pivot.x.abs();
         let level = eyes.left.pivot.y;
-        let skull = eyes.skull;
+        // The bottom of the measured head. Feature HEIGHTS used to be counted in
+        // eye-radii down from the eye line, which quietly assumes the eye and the
+        // head are the same size — and they are separate axes. On a body with
+        // large eyes in a shallow head the mouth was placed below where the head
+        // has any surface at all, which is what 'buried' turned out to mean.
+        // Counting them as fractions of the eye-line-to-chin span instead
+        // reproduces the default face and follows every other one.
+        let chin = skull.span().0;
+        let down = |fraction: f32| level + (chin - level) * fraction;
 
         // Where the face's surface is AT EACH FEATURE'S OWN HEIGHT. One depth
         // for the whole face is not enough: the skull carries a brow ridge that
         // stands proud and a chin that projects further still, so a mouth placed
         // at the eye line's depth ends up inside the jaw beneath it. That is
         // exactly what happened when the chin was sharpened.
-        let surface =
-            |height: f32| super::skull::reshape(Vec3::new(0.0, height, skull * 0.60), skull).z;
+        //
+        // Measured, not derived. This used to reshape a point on the planned
+        // sphere, which overstates the built head by about a third — enough that
+        // every inset below had been tuned as a *fraction* of a number that was
+        // wrong, and the insets are now distances in eye-radii instead.
+        let surface = |height: f32| skull.depth(height);
 
         // Sided features are built once and mirrored. Building each side from
         // its own signed arithmetic looks equivalent and is not: a brow arches
@@ -120,13 +152,13 @@ impl Features {
         // says the opposite on the left. It also leaves the two halves disagreeing
         // by the width of a segment even when the maths is right.
         let brow = brow(unit, apart, level, &surface, params.brow);
-        let ear = ear(unit, apart, level, params.ears);
+        let ear = ear(unit, skull, down(EAR_HEIGHT), params.ears);
         let flip = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
 
         Self {
-            nose: nose(unit, level, &surface, params.nose),
+            nose: nose(unit, level, down(NOSE_BASE), &surface, params.nose),
             brows: vec![brow.transformed(flip), brow],
-            lips: lips(unit, level, &surface, params.mouth),
+            lips: lips(unit, down(MOUTH_HEIGHT), skull, params.mouth),
             ears: vec![ear.transformed(flip), ear],
             head: eyes.head,
         }
@@ -147,17 +179,20 @@ impl Features {
 ///
 /// Its root is at the eye line, not above it. The bridge starts where the brows
 /// meet — put it higher and the face grows a snout.
-fn nose(unit: f32, level: f32, surface: &dyn Fn(f32) -> f32, prominence: f32) -> PolyMesh {
+fn nose(
+    unit: f32,
+    level: f32,
+    base: f32,
+    surface: &dyn Fn(f32) -> f32,
+    prominence: f32,
+) -> PolyMesh {
     let reach = unit * (0.38 + 0.30 * prominence);
-    // A third of the face, measured from the brow, puts the base of the nose
-    // about one and three quarter eye-radii below the eye line.
-    let base = level - unit * 1.85;
 
     let path = [
         Vec3::new(
             0.0,
             level + unit * 0.40,
-            surface(level + unit * 0.40) * 0.94,
+            surface(level + unit * 0.40) - unit * 0.22,
         ),
         Vec3::new(
             0.0,
@@ -173,7 +208,7 @@ fn nose(unit: f32, level: f32, surface: &dyn Fn(f32) -> f32, prominence: f32) ->
         Vec3::new(
             0.0,
             base - unit * 0.16,
-            surface(base - unit * 0.16) * 0.92 + reach * 0.46,
+            surface(base - unit * 0.16) - unit * 0.24 + reach * 0.46,
         ),
     ];
     // Narrow at the bridge, widest at the nostrils, and about one eye-width
@@ -203,13 +238,13 @@ fn brow(unit: f32, across: f32, level: f32, surface: &dyn Fn(f32) -> f32, weight
         Vec3::new(
             across - span * 0.85,
             level + rise * 0.86,
-            surface(level + rise * 0.86) * 0.95,
+            surface(level + rise * 0.86) - unit * 0.16,
         ),
         Vec3::new(across, level + rise, surface(level + rise)),
         Vec3::new(
             across + span * 0.95,
             level + rise * 0.74,
-            surface(level + rise * 0.74) * 0.80,
+            surface(level + rise * 0.74) - unit * 0.42,
         ),
     ];
     let sections = [
@@ -224,13 +259,7 @@ fn brow(unit: f32, across: f32, level: f32, surface: &dyn Fn(f32) -> f32, weight
 ///
 /// Two pieces rather than one: a mouth modelled as a single bar has no line
 /// across it, and the line is the whole feature.
-fn lips(unit: f32, level: f32, surface: &dyn Fn(f32) -> f32, fullness: f32) -> Vec<PolyMesh> {
-    // Halfway between the base of the nose and the chin, which is where the
-    // lower third puts it.
-    // A third of the way from the base of the nose down to the chin, which for
-    // this head is about two and a half eye-radii below the eye line. Placed by
-    // eye it drifts down onto the chin and the face reads as a muzzle.
-    let mouth = level - unit * 2.62;
+fn lips(unit: f32, mouth: f32, skull: &Skull, fullness: f32) -> Vec<PolyMesh> {
     let half = unit * 0.98;
     let plump = unit * (0.15 + 0.15 * fullness);
 
@@ -238,8 +267,17 @@ fn lips(unit: f32, level: f32, surface: &dyn Fn(f32) -> f32, fullness: f32) -> V
         .iter()
         .map(|&(up, size)| {
             let lift = plump * up * 0.62;
-            let corner = surface(mouth - plump * 0.30) * 0.80;
-            let middle = surface(mouth + lift) * 0.99;
+            // Anchored ON the measured face, with the lip's own body standing
+            // proud of it. Tucked back by a fraction of the surface — which is
+            // how this read before the surface was measured — a mouth sits
+            // inside the jaw on any body whose face is shallower than average.
+            // Each end placed against the face AT ITS OWN WIDTH. A mouth
+            // spans nearly two eye-widths, and over that distance the face has
+            // curved back by several millimetres; anchoring the corners to the
+            // midline depth is what left a third of the lip inside the jaw on
+            // the worst bodies and standing off it on the best.
+            let corner = skull.depth_across(mouth - plump * 0.30, half) + plump * 0.30;
+            let middle = skull.depth_across(mouth + lift, half * 0.35) + plump * 0.45;
             let path = [
                 Vec3::new(-half, mouth - plump * 0.30, corner),
                 Vec3::new(-half * 0.35, mouth + lift, middle),
@@ -261,18 +299,34 @@ fn lips(unit: f32, level: f32, surface: &dyn Fn(f32) -> f32, fullness: f32) -> V
 ///
 /// Between the brow line and the base of the nose, which is where a real one
 /// sits — people place them too low from memory.
-fn ear(unit: f32, apart: f32, level: f32, stand: f32) -> PolyMesh {
+///
+/// Placed by **measuring the shell it just built**. Two things made that
+/// necessary. The head's true half-width is a third less than the planned
+/// radius the old placement was derived from; and the shell is built around
+/// `+Y` and turned by a quarter turn about `Z`, which carries `+Y` to `-X` —
+/// so the ear pointed *into* the head, and its body sat inward of wherever its
+/// origin was put. Both errors ran the same way, which is why an ear was buried
+/// on every seed rather than on some of them.
+fn ear(unit: f32, skull: &Skull, seat: f32, stand: f32) -> PolyMesh {
     let height = unit * 1.35;
-    let out = apart * 1.62;
     let shell = prim::cap_shell(height, height * (0.22 + 0.16 * stand), 1.15, 3, 10);
 
-    // Built around +Y, so it is turned to face outward and tipped back a little.
-    let turn = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.28);
-    shell.transformed(
-        Mat4::from_translation(Vec3::new(out, level - unit * 0.55, -unit * 0.35))
-            * Mat4::from_quat(turn)
-            * Mat4::from_scale(Vec3::new(1.0, 1.0, 0.62)),
-    )
+    // Turned to face outward — away from the head, which is the negative
+    // quarter turn — and tipped back a little.
+    let turn = Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.28);
+    // Flattened along its own pole into a dish. At full height the cap's pole is
+    // the outermost point of the ear and it reads as a cone — which is what a
+    // sphere cap is. Nobody had seen it: pointing the wrong way, it had been
+    // inside the head since it was written.
+    let oriented =
+        shell.transformed(Mat4::from_quat(turn) * Mat4::from_scale(Vec3::new(1.0, 0.42, 0.62)));
+
+    // Now that the shape is known, sit it against the head: its innermost point
+    // a little under the surface, so the ear is attached rather than floating,
+    // and everything beyond that standing proud.
+    let inner = oriented.bounds().0.x;
+    let out = skull.half_width(seat) - inner - unit * 0.30;
+    oriented.transformed(Mat4::from_translation(Vec3::new(out, seat, -unit * 0.35)))
 }
 
 #[cfg(test)]
@@ -280,13 +334,17 @@ mod tests {
     use super::*;
     use crate::face::EyeParams;
     use crate::rig::Rig;
-    use crate::{Archetype, AvatarRecord, HumanoidParams, plan::BodyPlan};
+    use crate::{HumanoidParams, plan::BodyPlan};
 
     fn face(params: &FaceParams) -> (Features, Eyes) {
-        let _ = AvatarRecord::new("Faced", Archetype::default());
-        let rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        // Built, not planned: the whole point of these features is that they are
+        // placed against the head the body actually grew.
+        let skeleton = HumanoidParams::default().skeleton();
+        let mesh = crate::build_body(&skeleton, &crate::CageConfig::default(), 2).expect("meshes");
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let eyes = Eyes::build(&rig, &EyeParams::default()).expect("a humanoid has eyes");
-        (Features::build(&eyes, params), eyes)
+        let skull = Skull::measure(&mesh, &rig).expect("a humanoid has a skull");
+        (Features::build(&eyes, &skull, params), eyes)
     }
 
     #[test]

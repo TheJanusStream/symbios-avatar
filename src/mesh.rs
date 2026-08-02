@@ -472,6 +472,61 @@ impl PolyMesh {
         tris
     }
 
+    /// Whether `point` lies inside this mesh.
+    ///
+    /// Exact for a closed, consistently wound manifold — which every authoring
+    /// mesh in this crate is, and which [`PolyMesh::is_closed_manifold`] checks.
+    /// A ray is cast along `+X` and its crossings counted: an odd number means
+    /// the point started inside.
+    ///
+    /// This is the primitive the between-part checks are written against. The
+    /// obvious alternatives are both wrong in the places it matters: nearest
+    /// vertex plus its normal mis-reports any point sitting in a concave region
+    /// — a mouth between a nose and a chin is exactly that — and comparing
+    /// against a profile of the body reports a well-fitted part as buried,
+    /// because a part that hugs a curved surface is behind its own midline.
+    ///
+    /// Rays that graze an edge are the classic failure. This one is nudged off
+    /// the axes by an irrational-ish slope, so a shared edge is never hit twice.
+    #[must_use]
+    pub fn contains(&self, point: Vec3) -> bool {
+        let direction = Vec3::new(1.0, 0.017_321, 0.010_101).normalize();
+        let mut crossings = 0usize;
+        // Fanned in place rather than through `triangulated`, which allocates:
+        // this is called once per vertex of every attached part, over every seed
+        // of a sweep, and a body carries a few thousand faces.
+        for face in &self.faces {
+            // Most of them cannot be hit at all. Bound where the ray can be by
+            // the time it reaches this face's slab of `x`, and skip the face if
+            // that window misses its extent. Conservative in both directions, so
+            // no crossing is ever lost.
+            let (lo, hi) = face_bounds(&self.positions, face);
+            if hi.x <= point.x {
+                continue;
+            }
+            let near = ((lo.x - point.x) / direction.x).max(0.0);
+            let far = (hi.x - point.x) / direction.x;
+            let misses = |axis: usize| {
+                let from = point[axis] + direction[axis] * near;
+                let to = point[axis] + direction[axis] * far;
+                from.min(to) > hi[axis] || from.max(to) < lo[axis]
+            };
+            if misses(1) || misses(2) {
+                continue;
+            }
+
+            let anchor = self.positions[face[0] as usize];
+            for corner in 1..face.len().saturating_sub(1) {
+                let b = self.positions[face[corner] as usize];
+                let c = self.positions[face[corner + 1] as usize];
+                if ray_hits_triangle(point, direction, anchor, b, c) {
+                    crossings += 1;
+                }
+            }
+        }
+        crossings % 2 == 1
+    }
+
     /// Audits topology and winding.
     #[must_use]
     pub fn manifold_report(&self) -> ManifoldReport {
@@ -558,6 +613,44 @@ impl PolyMesh {
         }
         out
     }
+}
+
+/// Axis-aligned bounds of one face.
+fn face_bounds(positions: &[Vec3], face: &[u32]) -> (Vec3, Vec3) {
+    let mut lo = Vec3::splat(f32::MAX);
+    let mut hi = Vec3::splat(f32::MIN);
+    for &corner in face {
+        let point = positions[corner as usize];
+        lo = lo.min(point);
+        hi = hi.max(point);
+    }
+    (lo, hi)
+}
+
+/// Whether a ray from `origin` along `direction` crosses the triangle.
+///
+/// Moller-Trumbore, front and back faces alike: a crossing count does not care
+/// which way a face points, only how many it passed through.
+fn ray_hits_triangle(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3) -> bool {
+    let edge1 = b - a;
+    let edge2 = c - a;
+    let across = direction.cross(edge2);
+    let determinant = edge1.dot(across);
+    if determinant.abs() < 1e-12 {
+        return false;
+    }
+    let inverse = 1.0 / determinant;
+    let to_origin = origin - a;
+    let u = to_origin.dot(across) * inverse;
+    if !(0.0..=1.0).contains(&u) {
+        return false;
+    }
+    let along = to_origin.cross(edge1);
+    let v = direction.dot(along) * inverse;
+    if v < 0.0 || u + v > 1.0 {
+        return false;
+    }
+    edge2.dot(along) * inverse > 1e-9
 }
 
 /// The `u` below which a face's corners belong to the far side of the wrap.

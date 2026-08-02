@@ -17,4 +17,4 @@ pub mod skull;
 pub use blink::Blink;
 pub use eye::{Eye, EyeParams, Eyes};
 pub use features::{FaceParams, Features};
-pub use skull::shape as shape_skull;
+pub use skull::{Skull, shape as shape_skull};
