@@ -41,10 +41,12 @@ const TRIANGLE_CEILING: usize = 29_600;
 
 /// Draw calls the crate currently costs.
 ///
-/// Five: skin, hair, cloth, eyes, lids. Two of the excess are the eye pair —
-/// globes need a glossy material and lids move without a joint to move them
-/// (#35) — and the third is the attached-part draw that charting parts into the
-/// skin atlas absorbs (#58).
+/// Five: skin, hair, cloth, eye globes, lids. The comment here used to blame a
+/// third of the excess on attached parts having no atlas region; charting them
+/// (#58) absorbed that draw and the count stayed at five, so it was never the
+/// third. Both of the two over target are the eyes — globes want a glossy
+/// material of their own, and the lids are geometry rather than a pose because
+/// nothing rigs a lid. Which of those survives is #35's to decide.
 const MESH_CEILING: usize = 5;
 
 fn built(seed: Option<i64>) -> Avatar {
