@@ -30,15 +30,20 @@
 //! }
 //! ```
 //!
-//! ## What is not done yet
+//! ## One atlas, whole avatar
 //!
-//! Attached parts — hands, feet, brows, lids — are generated with honest texture
-//! coordinates of their own but have no region of the skin atlas to put them in,
-//! because nothing rasterises or paints one. Until that exists they are mapped
-//! to a single texel at the middle of the chart covering the body part they
-//! attach to, so a hand takes the complexion of the arm it grows from. That is a
-//! degenerate chart, not a missing one: when regions exist, the same call places
-//! the same coordinates in them.
+//! Attached parts — a nose, an ear, a hand — are not part of the body mesh and
+//! so are not part of its unwrap. They are nonetheless most of what a face is
+//! judged on, so they are given regions of the **same** atlas: their sizes are
+//! requested before the body is unwrapped, packed alongside its charts, and
+//! rasterised into the same geometry buffer. By the time the painter runs there
+//! is no difference between a nose and the cheek beside it, which is what lets
+//! one complexion cover an avatar.
+//!
+//! One thing is still degenerate: eyelids. They do not exist when the atlas is
+//! packed, because a blink is geometry rather than a pose until the face has a
+//! rig, so there is nothing to reserve a region for. A lid samples one texel of
+//! the face's chart, which at a lid's size is all it needs.
 
 use glam::{Mat4, Vec2, Vec3};
 use symbios_texture::generator::TextureMap;
@@ -54,7 +59,7 @@ use crate::plan::{Limb, Zone};
 use crate::record::AvatarRecord;
 use crate::rig::{Rig, SkinConfig, SkinWeights, Surface, skin};
 use crate::texture;
-use crate::uv::{UvConfig, UvUnwrap, unwrap};
+use crate::uv::{Rect, UvConfig, UvUnwrap, unwrap_with};
 
 /// Which material a merged mesh needs.
 ///
@@ -241,15 +246,37 @@ impl Avatar {
 
         let weights = skin::bind(&body, &rig, &config.skin);
         let zones = weights.zone_map(&body, &rig);
-        let charts = unwrap(&body, &rig, &zones, &config.uv);
-        let geometry = texture::bake_geometry(&body, &charts, config.atlas);
-        let painted = texture::paint_skin(&geometry, &rig, &record.skin);
         let surface = Surface::measure(&body, &rig);
 
         // A limb the body does not stand on is a hand, and a body with hands is
         // the kind that wears things. See the note above.
         let handed = rig.ground_contacts().len() < Limb::ALL.len();
         let hair_params = config.hair.unwrap_or(record.hair);
+
+        let eyes = Eyes::build(&rig, &record.eyes);
+        // Measured from the body that was built, not from the plan that asked
+        // for it: the two differ by about a third at the head, and by a
+        // different third on every body.
+        let skull = Skull::measure(&body, &rig);
+        let mut features = handed
+            .then(|| {
+                let eyes = eyes.as_ref()?;
+                let skull = skull.as_ref()?;
+                Some(Features::build(eyes, skull, &record.face))
+            })
+            .flatten();
+        let mut extremities = Extremities::build(&rig, &surface, config.ground);
+
+        // The attached parts exist BEFORE the body is unwrapped, so the packer
+        // can reserve them regions of the same atlas rather than being asked
+        // afterwards for whatever the body did not want. The parts are the half
+        // that needs the texels — a face is judged on its nose, its mouth and
+        // its ears, and none of those is part of the body mesh.
+        let wanted: Vec<Vec2> = attached_meshes(&features, &extremities)
+            .map(|(mesh, zone)| chart_request(mesh, zone, &config.uv))
+            .collect();
+        let (charts, reserved) = unwrap_with(&body, &rig, &zones, &config.uv, &wanted);
+        place_charts(&mut features, &mut extremities, &reserved);
 
         // Cut from the body, so charted where the body is charted.
         let mut outfit = if handed {
@@ -262,23 +289,20 @@ impl Avatar {
             garment.chart(&body_uvs);
         }
 
-        let eyes = Eyes::build(&rig, &record.eyes);
-        // Measured from the body that was built, not from the plan that asked
-        // for it: the two differ by about a third at the head, and by a
-        // different third on every body.
-        let skull = Skull::measure(&body, &rig);
+        // Baked in body space, which is where a painter wants them: a nose is
+        // then painted by the same complexion arithmetic as the cheek beside it.
+        let placed = attached_in_body(&rig, &features, &extremities);
+        let borrowed: Vec<(&PolyMesh, Zone)> =
+            placed.iter().map(|(mesh, zone)| (mesh, *zone)).collect();
+        let geometry = texture::bake(&body, &charts, &borrowed, config.atlas);
+        let painted = texture::paint_skin(&geometry, &rig, &record.skin);
+
         let parts = Parts {
-            features: handed
-                .then(|| {
-                    let eyes = eyes.as_ref()?;
-                    let skull = skull.as_ref()?;
-                    Some(Features::build(eyes, skull, &record.face))
-                })
-                .flatten(),
             hair: handed
                 .then(|| Hair::build(&body, &rig, &hair_params))
                 .flatten(),
-            extremities: Extremities::build(&rig, &surface, config.ground),
+            features,
+            extremities,
             outfit,
             eyes,
             handed,
@@ -381,14 +405,8 @@ impl Avatar {
     /// Merges every static part into one mesh per material.
     fn merge(&self) -> Vec<AvatarMesh> {
         let mut skin = self.charted_body();
-        for part in self
-            .parts
-            .extremities
-            .hands
-            .iter()
-            .chain(&self.parts.extremities.feet)
-        {
-            let mut mesh = self.charted(&part.mesh, Zone::Extremity(part.limb));
+        for part in self.parts.extremities.all() {
+            let mut mesh = part.mesh.clone();
             mesh.set_normals(mesh.vertex_normals());
             mesh.paint(Vec3::ONE);
             let mut placed =
@@ -397,7 +415,7 @@ impl Avatar {
             skin.append(&placed.split_uv_seams());
         }
         if let Some(features) = &self.parts.features {
-            let mut mesh = self.charted(&features.assembled(), Zone::Head);
+            let mut mesh = features.assembled();
             mesh.set_normals(mesh.vertex_normals());
             mesh.paint(Vec3::ONE);
             let mut placed = mesh.transformed(Mat4::from_translation(
@@ -468,11 +486,15 @@ impl Avatar {
         mesh
     }
 
-    /// Maps a part's own coordinates into the atlas region covering `zone`.
+    /// Maps a part's own coordinates onto one texel of the chart covering `zone`.
     ///
-    /// The region is a point rather than a rectangle, because nothing paints
-    /// attached parts into the atlas yet — see the note in the module
-    /// documentation. Everything else about the call is already final.
+    /// A degenerate region, and deliberately the last one left. Eyelids are the
+    /// only attached geometry that does not exist at build time — they are
+    /// rebuilt per blink, because nothing rigs a lid yet (#35) — so there is
+    /// nothing to reserve a region *for* when the atlas is packed. A lid takes
+    /// the complexion of the face it sits in, which at a lid's size is all it
+    /// needs; when the face has a rig, a lid becomes ordinary geometry and gets
+    /// an ordinary chart.
     fn charted(&self, mesh: &PolyMesh, zone: Zone) -> PolyMesh {
         let middle = self
             .parts
@@ -501,6 +523,78 @@ impl Avatar {
                 + self.skin.emissive.as_ref().map_or(0, Vec::len),
         }
     }
+}
+
+/// Every attached part's mesh and the zone it belongs to, in one fixed order.
+///
+/// One walk, used three times — to size the regions, to hand them out, and to
+/// bake them. Two hand-written lists in the same order would agree until the
+/// first time somebody added a feature to one of them.
+fn attached_meshes<'a>(
+    features: &'a Option<Features>,
+    extremities: &'a Extremities,
+) -> impl Iterator<Item = (&'a PolyMesh, Zone)> {
+    features
+        .iter()
+        .flat_map(|face| face.meshes().map(|mesh| (mesh, Zone::Head)))
+        .chain(
+            extremities
+                .all()
+                .map(|part| (&part.mesh, Zone::Extremity(part.limb))),
+        )
+}
+
+/// How much atlas a part asks for, in the units the body's charts are sized in.
+///
+/// Its two largest sides, so a long thin ear asks for a long thin region rather
+/// than a square one, weighted by the same density the zone earns elsewhere —
+/// otherwise a face's features would be charted at body density while the cheek
+/// beside them got four times the texels.
+fn chart_request(mesh: &PolyMesh, zone: Zone, config: &UvConfig) -> Vec2 {
+    let (lo, hi) = mesh.bounds();
+    let mut sides = (hi - lo).to_array();
+    sides.sort_by(f32::total_cmp);
+    let density = match zone {
+        Zone::Head => config.head_density,
+        Zone::Extremity(_) => config.extremity_density,
+        _ => 1.0,
+    };
+    Vec2::new(sides[2], sides[1]).max(Vec2::splat(1e-4)) * density.sqrt()
+}
+
+/// Moves each part's own coordinates into the region reserved for it.
+fn place_charts(features: &mut Option<Features>, extremities: &mut Extremities, reserved: &[Rect]) {
+    let meshes = features
+        .iter_mut()
+        .flat_map(|face| face.meshes_mut())
+        .chain(extremities.all_mut().map(|part| &mut part.mesh));
+    for (mesh, rect) in meshes.zip(reserved) {
+        *mesh = mesh.uvs_within(rect.min, rect.size());
+    }
+}
+
+/// Every attached part, moved into body space so a painter can reach it.
+///
+/// The parts are built in their joint's local space, which is what lets a
+/// renderer parent them; a texel, though, has to say where on the *body* it
+/// sits, because that is what the complexion is a function of.
+fn attached_in_body(
+    rig: &Rig,
+    features: &Option<Features>,
+    extremities: &Extremities,
+) -> Vec<(PolyMesh, Zone)> {
+    let mut placed = Vec::new();
+    if let Some(face) = features {
+        let to_body = Mat4::from_translation(rig.joints[face.head].position);
+        for mesh in face.meshes() {
+            placed.push((mesh.transformed(to_body), Zone::Head));
+        }
+    }
+    for part in extremities.all() {
+        let to_body = Mat4::from_translation(rig.joints[part.joint].position);
+        placed.push((part.mesh.transformed(to_body), Zone::Extremity(part.limb)));
+    }
+    placed
 }
 
 /// A pale globe with a dark iris facing forward, so an eye reads as an eye.

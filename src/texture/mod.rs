@@ -32,5 +32,5 @@
 pub mod bake;
 pub mod skin;
 
-pub use bake::{AtlasGeometry, DILATION, Texel, bake_geometry};
+pub use bake::{AtlasGeometry, DILATION, Texel, bake, bake_geometry};
 pub use skin::{SkinParams, paint_skin};

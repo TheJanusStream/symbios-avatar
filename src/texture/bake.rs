@@ -74,38 +74,88 @@ impl AtlasGeometry {
 pub const DILATION: u32 = 8;
 
 /// Rasterises `uv`'s charts into a geometry buffer of `size` texels square.
+///
+/// The body only. Use [`bake`] for an avatar that also carries attached parts,
+/// which is every avatar with a face.
 #[must_use]
 pub fn bake_geometry(mesh: &PolyMesh, uv: &UvUnwrap, size: u32) -> AtlasGeometry {
-    if size == 0 || uv.faces.is_empty() {
+    bake(mesh, uv, &[], size)
+}
+
+/// Rasterises a body **and its attached parts** into one geometry buffer.
+///
+/// Each part is a mesh already carrying body-space positions and atlas
+/// coordinates — that is, one whose reserved region from
+/// [`crate::uv::unwrap_with`] has already been applied. Baking them into the
+/// same buffer is what lets one painter cover the whole avatar: a nose is
+/// painted by the same complexion arithmetic as the cheek beside it, because by
+/// the time the painter runs there is no difference between them.
+///
+/// Dilation happens once, at the end, over everything. Doing it per part would
+/// let one part's grown edge overwrite a neighbour's genuine texels.
+#[must_use]
+pub fn bake(
+    mesh: &PolyMesh,
+    uv: &UvUnwrap,
+    parts: &[(&PolyMesh, Zone)],
+    size: u32,
+) -> AtlasGeometry {
+    if size == 0 || (uv.faces.is_empty() && parts.is_empty()) {
         return AtlasGeometry::default();
     }
 
-    let normals = uv.gather(&mesh.vertex_normals());
-    let positions = uv.gather(&mesh.positions);
     let mut geometry = AtlasGeometry {
         width: size,
         height: size,
         texels: vec![None; (size * size) as usize],
     };
 
-    for (index, face) in uv.faces.iter().enumerate() {
-        let zone = uv.charts[uv.chart_of_face[index] as usize].zone;
-        // Fan-triangulate: a quad from a subdivided body is planar enough that
-        // which diagonal is chosen makes no visible difference.
-        for corner in 1..face.len().saturating_sub(1) {
-            let triangle = [face[0], face[corner], face[corner + 1]];
-            rasterize(
-                &mut geometry,
-                zone,
-                triangle.map(|v| uv.uvs[v as usize]),
-                triangle.map(|v| positions[v as usize]),
-                triangle.map(|v| normals[v as usize]),
-            );
+    if !uv.faces.is_empty() {
+        let normals = uv.gather(&mesh.vertex_normals());
+        let positions = uv.gather(&mesh.positions);
+        for (index, face) in uv.faces.iter().enumerate() {
+            let zone = uv.charts[uv.chart_of_face[index] as usize].zone;
+            // Fan-triangulate: a quad from a subdivided body is planar enough
+            // that which diagonal is chosen makes no visible difference.
+            for corner in 1..face.len().saturating_sub(1) {
+                let triangle = [face[0], face[corner], face[corner + 1]];
+                rasterize(
+                    &mut geometry,
+                    zone,
+                    triangle.map(|v| uv.uvs[v as usize]),
+                    triangle.map(|v| positions[v as usize]),
+                    triangle.map(|v| normals[v as usize]),
+                );
+            }
         }
+    }
+
+    for &(part, zone) in parts {
+        draw_part(&mut geometry, part, zone);
     }
 
     dilate(&mut geometry, DILATION);
     geometry
+}
+
+/// Rasterises one attached part, using the coordinates it carries.
+fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone) {
+    if part.uvs.len() != part.positions.len() {
+        return;
+    }
+    let normals = part.shading_normals();
+    for face in &part.faces {
+        for corner in 1..face.len().saturating_sub(1) {
+            let triangle = [face[0], face[corner], face[corner + 1]];
+            rasterize(
+                geometry,
+                zone,
+                triangle.map(|v| part.uvs[v as usize]),
+                triangle.map(|v| part.positions[v as usize]),
+                triangle.map(|v| normals[v as usize]),
+            );
+        }
+    }
 }
 
 /// Fills every texel a triangle covers.

@@ -164,11 +164,32 @@ impl Features {
         }
     }
 
+    /// Every feature's mesh, in a fixed order.
+    ///
+    /// The order is the contract: whatever asks these for their size assigns
+    /// them their atlas regions through [`Self::meshes_mut`], and the two only
+    /// agree because they are the same walk. Two hand-written lists would drift
+    /// the first time a feature was added.
+    pub fn meshes(&self) -> impl Iterator<Item = &PolyMesh> {
+        std::iter::once(&self.nose)
+            .chain(&self.brows)
+            .chain(&self.lips)
+            .chain(&self.ears)
+    }
+
+    /// The same walk, for writing.
+    pub fn meshes_mut(&mut self) -> impl Iterator<Item = &mut PolyMesh> {
+        std::iter::once(&mut self.nose)
+            .chain(&mut self.brows)
+            .chain(&mut self.lips)
+            .chain(&mut self.ears)
+    }
+
     /// Every feature as one mesh.
     #[must_use]
     pub fn assembled(&self) -> PolyMesh {
-        let mut mesh = self.nose.clone();
-        for part in self.brows.iter().chain(&self.lips).chain(&self.ears) {
+        let mut mesh = PolyMesh::new();
+        for part in self.meshes() {
             mesh.append(part);
         }
         mesh

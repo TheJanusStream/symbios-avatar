@@ -108,6 +108,19 @@ impl Extremities {
         extremities
     }
 
+    /// Every hand and foot, in a fixed order.
+    ///
+    /// As with [`crate::face::Features::meshes`], the order is the contract
+    /// between whatever sizes these and whatever places them.
+    pub fn all(&self) -> impl Iterator<Item = &Attached> {
+        self.hands.iter().chain(&self.feet)
+    }
+
+    /// The same walk, for writing.
+    pub fn all_mut(&mut self) -> impl Iterator<Item = &mut Attached> {
+        self.hands.iter_mut().chain(&mut self.feet)
+    }
+
     /// Every part on the body, as one mesh, given each joint's transform.
     ///
     /// For tools that want the whole body in one piece; a renderer is better off

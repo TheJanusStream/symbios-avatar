@@ -186,8 +186,35 @@ impl UvUnwrap {
 /// [`crate::rig::SkinWeights::zone_map`], and `rig` supplies each zone's axis.
 #[must_use]
 pub fn unwrap(mesh: &PolyMesh, rig: &Rig, zones: &[Zone], config: &UvConfig) -> UvUnwrap {
+    unwrap_with(mesh, rig, zones, config, &[]).0
+}
+
+/// Unwraps `mesh`, reserving atlas space for parts that are not part of it.
+///
+/// A body is not the whole of an avatar. Hands, ears, lips and every other
+/// attached part carry texture coordinates of their own, and until they have
+/// somewhere in the atlas to put them they can only be flat-shaded — which is
+/// most of a character's look missing, since the parts a face is judged from are
+/// all attached ones.
+///
+/// `extra` requests one region per part, in the same units the body's own charts
+/// are sized in: a width and a height in metres of surface, which the packer
+/// scales together until everything fits. Requests come back as rectangles in
+/// the same order, ready for [`crate::PolyMesh::uvs_within`].
+///
+/// Packing them **together** with the body rather than afterwards is the point.
+/// A second pass over the leftovers would give the parts whatever the body
+/// happened not to want, and the parts are the half that needs the texels.
+#[must_use]
+pub fn unwrap_with(
+    mesh: &PolyMesh,
+    rig: &Rig,
+    zones: &[Zone],
+    config: &UvConfig,
+    extra: &[Vec2],
+) -> (UvUnwrap, Vec<Rect>) {
     if mesh.faces.is_empty() || zones.len() != mesh.positions.len() {
-        return UvUnwrap::default();
+        return (UvUnwrap::default(), Vec::new());
     }
 
     let face_zones: Vec<Zone> = mesh
@@ -203,11 +230,15 @@ pub fn unwrap(mesh: &PolyMesh, rig: &Rig, zones: &[Zone], config: &UvConfig) -> 
         projections.push(project(mesh, rig, group));
     }
 
-    let sizes: Vec<Vec2> = projections
+    let mut sizes: Vec<Vec2> = projections
         .iter()
         .map(|projection| projection.atlas_size(config))
         .collect();
-    let rects = pack::shelf_pack(&sizes, config.gutter);
+    let charts = sizes.len();
+    sizes.extend_from_slice(extra);
+    let packed = pack::shelf_pack(&sizes, config.gutter);
+    let (rects, reserved) = packed.split_at(charts);
+    let reserved = reserved.to_vec();
 
     let mut out = UvUnwrap {
         chart_of_face: vec![0; mesh.faces.len()],
@@ -250,7 +281,7 @@ pub fn unwrap(mesh: &PolyMesh, rig: &Rig, zones: &[Zone], config: &UvConfig) -> 
         });
     }
 
-    out
+    (out, reserved)
 }
 
 /// The zone most of a face's corners agree on.
