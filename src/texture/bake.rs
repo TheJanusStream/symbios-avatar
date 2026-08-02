@@ -25,6 +25,11 @@ pub struct Texel {
     pub position: Vec3,
     /// Smooth surface normal there.
     pub normal: Vec3,
+    /// How deeply the surface folds back on itself here, `0` on open skin and
+    /// rising to `1` in a cavity. Carried from the geometry rather than derived
+    /// by the painter, because the mesh is the only thing that knows: see
+    /// [`PolyMesh::crease`].
+    pub crease: f32,
     /// Which part of the body it belongs to.
     pub zone: Zone,
 }
@@ -113,6 +118,9 @@ pub fn bake(
     if !uv.faces.is_empty() {
         let normals = uv.gather(&mesh.vertex_normals());
         let positions = uv.gather(&mesh.positions);
+        // Measured on the body before it was split at its seams, so a crease
+        // that runs across a chart boundary is the same depth on both sides.
+        let creases = uv.gather(&mesh.crease());
         for (index, face) in uv.faces.iter().enumerate() {
             let zone = uv.charts[uv.chart_of_face[index] as usize].zone;
             // Fan-triangulate: a quad from a subdivided body is planar enough
@@ -125,6 +133,7 @@ pub fn bake(
                     triangle.map(|v| uv.uvs[v as usize]),
                     triangle.map(|v| positions[v as usize]),
                     triangle.map(|v| normals[v as usize]),
+                    triangle.map(|v| creases[v as usize]),
                 );
             }
         }
@@ -144,6 +153,7 @@ fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone) {
         return;
     }
     let normals = part.shading_normals();
+    let creases = part.crease();
     for face in &part.faces {
         for corner in 1..face.len().saturating_sub(1) {
             let triangle = [face[0], face[corner], face[corner + 1]];
@@ -153,6 +163,7 @@ fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone) {
                 triangle.map(|v| part.uvs[v as usize]),
                 triangle.map(|v| part.positions[v as usize]),
                 triangle.map(|v| normals[v as usize]),
+                triangle.map(|v| creases[v as usize]),
             );
         }
     }
@@ -165,6 +176,7 @@ fn rasterize(
     uvs: [Vec2; 3],
     positions: [Vec3; 3],
     normals: [Vec3; 3],
+    creases: [f32; 3],
 ) {
     let scale = Vec2::new(geometry.width as f32, geometry.height as f32);
     let pixels = uvs.map(|uv| uv * scale);
@@ -208,6 +220,7 @@ fn rasterize(
                     + positions[2] * weights.z,
                 normal: (normals[0] * weights.x + normals[1] * weights.y + normals[2] * weights.z)
                     .normalize_or(Vec3::Y),
+                crease: creases[0] * weights.x + creases[1] * weights.y + creases[2] * weights.z,
                 zone,
             });
         }
@@ -347,6 +360,7 @@ mod tests {
                     triangle.map(|v| uv.uvs[v as usize]),
                     triangle.map(|v| positions[v as usize]),
                     triangle.map(|v| normals[v as usize]),
+                    [0.0; 3],
                 );
             }
         }

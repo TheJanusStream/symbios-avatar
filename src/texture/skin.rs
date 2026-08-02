@@ -283,9 +283,14 @@ pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> T
         // and a visible seam in skin tone across a jaw or a wrist is far worse
         // than the slight loss of control. Thinness is smooth everywhere and
         // means the same thing anatomically: less flesh between blood and air.
-        // How much the surface folds back on itself here.
+        // How much the surface folds back on itself here, measured from the
+        // geometry at bake time. It used to be derived from the nearest bone,
+        // which is only meaningful where the surface was swept around one — an
+        // attached hand, nose or ear sits past the end of the nearest bone and
+        // read as a full crease everywhere, darkening every one of them by up
+        // to 35% (#63).
         let hit = rig.nearest_bone(p);
-        let crease = hit.crease(p, texel.normal);
+        let crease = texel.crease;
         let thinness = (1.0 - hit.radius / stoutest).clamp(0.0, 1.0).powf(0.7);
         // Melanin sits above the blood and absorbs what would have shown
         // through it, so the same blush axis has to mean less on deeper skin —
@@ -424,7 +429,7 @@ mod tests {
     use crate::plan::{BodyPlan, HumanoidParams};
     use crate::rig::{SkinConfig, skin};
     use crate::subdiv::catmull_clark;
-    use crate::texture::bake::bake_geometry;
+    use crate::texture::bake::{Texel, bake_geometry};
     use crate::uv::{UvConfig, unwrap};
 
     fn painted(params: &SkinParams) -> (AtlasGeometry, Rig, TextureMap) {
@@ -738,30 +743,72 @@ mod tests {
 
     #[test]
     fn creases_are_darker_and_more_occluded_than_open_skin() {
-        let (geometry, _, map) = painted(&SkinParams::default());
-        let mut creased = (0.0, 0.0);
-        let mut open = (0.0, 0.0);
-
-        for (index, sample) in geometry.texels.iter().enumerate() {
-            if sample.is_none() {
-                continue;
-            }
-            let occlusion = f32::from(map.roughness[index * 4]);
-            if occlusion < 200.0 {
-                creased = (
-                    creased.0 + f32::from(map.albedo[index * 4]),
-                    creased.1 + 1.0,
-                );
-            } else {
-                open = (open.0 + f32::from(map.albedo[index * 4]), open.1 + 1.0);
-            }
+        // Driven by two texels differing in nothing but their crease, rather
+        // than by whichever texels of a body happen to be creased. The earlier
+        // version compared "occluded" against "open" texels of the default
+        // body, and passed because the crease it read was derived from the
+        // nearest bone and so was non-zero almost everywhere. Measured against
+        // the geometry, that body has no cavity below the jaw at all (#63) —
+        // the test was asserting a property of a defect.
+        let mut geometry = AtlasGeometry {
+            width: 2,
+            height: 1,
+            texels: vec![None; 2],
+        };
+        let at = Vec3::new(0.0, 1.2, 0.1);
+        for (index, crease) in [0.0f32, 0.8].into_iter().enumerate() {
+            geometry.texels[index] = Some(Texel {
+                position: at,
+                normal: Vec3::Z,
+                crease,
+                zone: Zone::Chest,
+            });
         }
 
-        assert!(creased.1 > 0.0, "the body has creases to shade");
+        let rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let map = paint_skin(&geometry, &rig, &SkinParams::default());
+
         assert!(
-            creased.0 / creased.1 < open.0 / open.1,
-            "creases must be darker than open skin"
+            map.albedo[4] < map.albedo[0],
+            "a crease must be painted darker than open skin: {} against {}",
+            map.albedo[4],
+            map.albedo[0]
         );
+        assert!(
+            map.roughness[4] < map.roughness[0],
+            "a crease must be more occluded than open skin: {} against {}",
+            map.roughness[4],
+            map.roughness[0]
+        );
+    }
+
+    #[test]
+    fn a_body_is_creased_only_where_it_actually_folds() {
+        // The regression #63 was: crease came from the nearest bone, which only
+        // means anything where the surface was swept around that bone. Anything
+        // attached — a hand, a nose, an ear — sits past the end of the nearest
+        // bone and read as a deep cavity over its whole surface, so the painter
+        // darkened every one of them by up to 35%.
+        let avatar = crate::avatar::demo().expect("a default body builds");
+
+        let features = avatar.parts.features.as_ref().expect("a face");
+        for (index, mesh) in features.meshes().enumerate() {
+            let mean = mesh.crease().iter().sum::<f32>() / mesh.vertex_count() as f32;
+            assert!(
+                mean < 0.30,
+                "facial feature {index} reads as a cavity over its whole surface: mean crease {mean:.3}"
+            );
+        }
+
+        for part in avatar.parts.extremities.all() {
+            let crease = part.mesh.crease();
+            let mean = crease.iter().sum::<f32>() / crease.len() as f32;
+            assert!(
+                mean < 0.05,
+                "{:?} reads as a cavity: mean crease {mean:.3}",
+                part.limb
+            );
+        }
     }
 
     #[test]

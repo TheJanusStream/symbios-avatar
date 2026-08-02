@@ -34,6 +34,25 @@ use std::fmt::Write as _;
 
 use crate::rig::skin::{Influence, MAX_INFLUENCES};
 
+/// How tight a fold [`PolyMesh::crease`] calls fully creased, in metres.
+///
+/// A curvature radius, not a gain, and that is what makes the measure independent
+/// of how finely anything is tessellated. The discrete estimate below recovers a
+/// mean curvature in reciprocal metres; multiplying by a length turns it into a
+/// number, and the length says which folds count. Measured against cylindrical
+/// arcs of known radius, a fold of radius `r` reads `CREASE_FOLD / 4r`: at
+/// `0.035` anything tighter than 9 mm shades fully, the fillet where a jaw meets
+/// a neck reads about `0.3`, and a curve on the scale of a waist stays near zero.
+///
+/// Tessellation independence is not academic here. The body is subdivided and
+/// the attached parts are not, so a measure that scaled with edge length would
+/// read the same physical fold differently on either side of a wrist — and put a
+/// shading seam exactly where a hand meets an arm. It holds for surfaces that
+/// curve smoothly, which is what a subdivided body is; a hard fold is a curvature
+/// singularity and reads sharper the more finely it is cut, which is correct but
+/// means nothing here reads a hard edge as a cavity by accident.
+const CREASE_FOLD: f32 = 0.035;
+
 /// A vertex's bone influences, strongest first — one entry of [`PolyMesh::skin`].
 pub type VertexSkin = [Influence; MAX_INFLUENCES];
 
@@ -460,6 +479,70 @@ impl PolyMesh {
         normals
     }
 
+    /// How deeply each vertex sits in a cavity: `0` on flat or convex surface,
+    /// rising toward `1` in a fold.
+    ///
+    /// Measured from the surface itself rather than from the skeleton, which is
+    /// the whole point. Comparing a normal against the direction away from the
+    /// nearest bone only works where the surface was swept around that bone; an
+    /// attached part — a hand, a nose, an ear — sits *past* the end of the
+    /// nearest bone, so the direction away from it is the limb's own axis while
+    /// the part's normals point every other way. That reads as a deep crease
+    /// over the whole part, and cavity shading then darkened every hand, foot
+    /// and facial feature by up to 35% (#63).
+    ///
+    /// The measure here is the discrete mean curvature: where the neighbours of
+    /// a vertex sit relative to its tangent plane. Neighbours *above* the plane,
+    /// along the normal, mean the surface folds back on itself — an armpit, a
+    /// crotch, the cleft between two fingers. Neighbours below it mean a convex
+    /// bulge, which is what a fingertip and a nose are. The offset scales with
+    /// the square of the edge length, so dividing by it recovers a curvature in
+    /// reciprocal metres, and a reference fold size turns it back into a number:
+    /// a fold of radius `r` reads `0.035 / 4r`, so anything tighter than 9 mm
+    /// shades fully and a curve on the scale of a waist stays near zero.
+    #[must_use]
+    pub fn crease(&self) -> Vec<f32> {
+        let normals = self.vertex_normals();
+        let mut sum = vec![Vec3::ZERO; self.positions.len()];
+        let mut span = vec![0.0f32; self.positions.len()];
+        let mut count = vec![0u32; self.positions.len()];
+
+        for face in &self.faces {
+            for corner in 0..face.len() {
+                let here = face[corner] as usize;
+                let next = face[(corner + 1) % face.len()] as usize;
+                let edge = self.positions[next] - self.positions[here];
+                // Both ends, so one walk over the faces covers every edge from
+                // both directions and no vertex is left with an empty ring.
+                sum[here] += edge;
+                span[here] += edge.length();
+                count[here] += 1;
+                sum[next] -= edge;
+                span[next] += edge.length();
+                count[next] += 1;
+            }
+        }
+
+        (0..self.positions.len())
+            .map(|index| {
+                if count[index] == 0 {
+                    return 0.0;
+                }
+                let neighbours = count[index] as f32;
+                let offset = sum[index] / neighbours;
+                let length = span[index] / neighbours;
+                if length <= 1e-9 {
+                    return 0.0;
+                }
+                // Twice the mean curvature, near enough: the offset of a
+                // neighbour ring from the tangent plane goes as curvature times
+                // the square of its radius.
+                let curvature = offset.dot(normals[index]) / (length * length);
+                (curvature * CREASE_FOLD).clamp(0.0, 1.0)
+            })
+            .collect()
+    }
+
     /// Fan-triangulates every face, for renderers that only take triangles.
     #[must_use]
     pub fn triangulated(&self) -> Vec<[u32; 3]> {
@@ -784,5 +867,85 @@ mod tests {
         let obj = cube().to_obj();
         assert_eq!(obj.lines().filter(|l| l.starts_with("v ")).count(), 8);
         assert_eq!(obj.lines().filter(|l| l.starts_with('f')).count(), 6);
+    }
+
+    /// A strip bent around a cylinder of `radius`, `cells` quads along the arc.
+    ///
+    /// `concave` winds it so its normals point at the axis — the inside of the
+    /// curve, which is what a cavity is — rather than away from it. Curvature is
+    /// then known in advance, which is what makes it worth testing against.
+    fn arc(cells: usize, radius: f32, concave: bool) -> PolyMesh {
+        let mut mesh = PolyMesh::new();
+        let sweep = std::f32::consts::FRAC_PI_2;
+        let width = radius * sweep / cells as f32;
+        for i in 0..=cells {
+            let angle = sweep * i as f32 / cells as f32;
+            let point = Vec3::new(0.0, radius * angle.cos(), radius * angle.sin());
+            mesh.push_vertex(point);
+            mesh.push_vertex(point + Vec3::X * width);
+        }
+        for segment in 0..cells {
+            let base = (segment * 2) as u32;
+            if concave {
+                mesh.push_face([base, base + 1, base + 3, base + 2]);
+            } else {
+                mesh.push_face([base, base + 2, base + 3, base + 1]);
+            }
+        }
+        mesh
+    }
+
+    fn peak_crease(mesh: &PolyMesh) -> f32 {
+        mesh.crease().iter().copied().fold(0.0f32, f32::max)
+    }
+
+    #[test]
+    fn a_convex_solid_has_no_creases() {
+        // Every vertex of a cube is a convex corner, and cavity shading must not
+        // touch any of it. This is the shape of every attached part — a hand, a
+        // nose, an ear is a convex solid — and reading them as creased darkened
+        // all of them (#63).
+        for value in cube().crease() {
+            assert_eq!(value, 0.0, "a cube corner is convex, not a cavity");
+        }
+    }
+
+    #[test]
+    fn a_cavity_creases_and_the_same_curve_seen_from_outside_does_not() {
+        // The one thing the measure has to get right: which side of the surface
+        // the material is on. A ridge and a groove have identical geometry and
+        // opposite normals, and only one of them is a place light cannot reach.
+        let inside = peak_crease(&arc(8, 0.035, true));
+        assert!(
+            inside > 0.2,
+            "the inside of a 35 mm curve should read as a cavity: {inside:.3}"
+        );
+        assert_eq!(
+            peak_crease(&arc(8, 0.035, false)),
+            0.0,
+            "the outside of the same curve is a ridge, not a cavity"
+        );
+    }
+
+    #[test]
+    fn crease_reads_curvature_rather_than_how_finely_a_shape_is_cut() {
+        // The body is subdivided and the attached parts are not. A measure that
+        // scaled with edge length would read the same physical fold differently
+        // on either side of a wrist and put a shading seam exactly there.
+        let coarse = peak_crease(&arc(4, 0.035, true));
+        let fine = peak_crease(&arc(32, 0.035, true));
+        assert!(
+            (coarse - fine).abs() < 0.01,
+            "an eightfold change in tessellation moved the same curve from \
+             {coarse:.3} to {fine:.3}"
+        );
+
+        // And it does track the curvature itself: halving the radius doubles it.
+        let tight = peak_crease(&arc(8, 0.020, true));
+        let broad = peak_crease(&arc(8, 0.040, true));
+        assert!(
+            (tight / broad - 2.0).abs() < 0.1,
+            "halving the radius should double the crease: {tight:.3} against {broad:.3}"
+        );
     }
 }

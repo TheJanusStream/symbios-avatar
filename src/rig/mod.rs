@@ -45,6 +45,16 @@ pub use skin::{Influence, MAX_INFLUENCES, SkinConfig, SkinWeights};
 pub use surface::Surface;
 
 /// Where the body's skeleton lies beneath a point on its surface.
+///
+/// Answers questions about the *skeleton* — how thick the body is here, how far
+/// under the skin the bone runs. It deliberately answers nothing about the shape
+/// of the surface. This type used to carry a `crease` that compared a normal
+/// against the direction away from the bone, which holds only where the surface
+/// was swept around that bone: an attached hand, nose or ear sits past the end
+/// of the nearest bone, so the direction away from it is the limb's own axis
+/// while the part's normals point every other way, and every one of them read as
+/// a deep cavity (#63). Surface shape is [`crate::mesh::PolyMesh::crease`], which
+/// measures the mesh.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoneHit {
     /// The nearest joint's index.
@@ -55,22 +65,6 @@ pub struct BoneHit {
     pub radius: f32,
     /// The nearest point on the bone itself.
     pub closest: Vec3,
-}
-
-impl BoneHit {
-    /// How convex the surface is at `point`, given its outward `normal`.
-    ///
-    /// Returns `0` on a smooth tube and rises toward `1` in a crease. Comparing
-    /// the normal against the direction away from the bone is what distinguishes
-    /// a genuine cavity — an armpit, a crotch, the inside of an elbow, where the
-    /// surface folds back on itself — from merely being past the end of a bone,
-    /// which is what a fingertip is. Distance to the bone alone cannot tell those
-    /// apart, and reads every limb tip as a deep crease.
-    #[must_use]
-    pub fn crease(&self, point: Vec3, normal: Vec3) -> f32 {
-        let outward = (point - self.closest).normalize_or(normal);
-        ((1.0 - normal.dot(outward)) * 1.4).clamp(0.0, 1.0)
-    }
 }
 
 /// What a joint is for.
