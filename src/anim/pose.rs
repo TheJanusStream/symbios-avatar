@@ -14,6 +14,7 @@
 use glam::{Mat4, Quat, Vec3};
 
 use crate::anim::dual::{self, DualQuat};
+use crate::mesh::PolyMesh;
 use crate::rig::{Rig, SkinWeights};
 
 /// One local rotation per joint, plus where the root sits.
@@ -182,6 +183,47 @@ impl Posed {
                 .transform_point(position)
             })
             .collect()
+    }
+
+    /// Deforms a whole skinned mesh, normals and all.
+    ///
+    /// The mesh's own [`PolyMesh::skin`] channel says which bones hold each
+    /// vertex, so nothing has to be passed alongside it and nothing can be
+    /// passed that does not match. Normals are carried by the *rotation* of the
+    /// same blended transform, which is what a skinning shader does and what
+    /// keeps a seam-split copy shading as one surface: derived afresh from the
+    /// deformed geometry they would crease along every cut.
+    ///
+    /// Texture coordinates, influences and colours come through untouched. A
+    /// mesh with no skin channel is returned as it was — it is not attached to
+    /// anything, so nothing moves it.
+    #[must_use]
+    pub fn deform_mesh(&self, rig: &Rig, mesh: &PolyMesh) -> PolyMesh {
+        if mesh.skin.is_empty() {
+            return mesh.clone();
+        }
+        let transforms = self.skinning_transforms(rig);
+        let blended: Vec<DualQuat> = mesh
+            .skin
+            .iter()
+            .map(|influences| {
+                dual::blend(
+                    influences
+                        .iter()
+                        .filter(|influence| influence.weight > 0.0)
+                        .map(|influence| (transforms[influence.joint as usize], influence.weight)),
+                )
+            })
+            .collect();
+
+        let mut out = mesh.clone();
+        for (vertex, position) in out.positions.iter_mut().enumerate() {
+            *position = blended[vertex].transform_point(*position);
+        }
+        for (vertex, normal) in out.normals.iter_mut().enumerate() {
+            *normal = blended[vertex].rotation() * *normal;
+        }
+        out
     }
 
     /// Deforms rest-pose vertices by linear blend skinning.

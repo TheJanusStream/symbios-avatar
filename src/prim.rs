@@ -10,8 +10,21 @@
 //! surface for that reason: it is never seen from inside, but a mesh with a
 //! boundary edge is one that normals, subdivision, and glTF export all have to
 //! make a special case for.
+//!
+//! Everything here also comes out **mapped**: each primitive knows its own
+//! parameterisation, so it fills in texture coordinates as it builds. A sphere
+//! is mapped by latitude and longitude, a swept tube by angle around the ring
+//! and distance along the path. Both wrap, and the vertices that straddle the
+//! wrap are *not* duplicated here — that would cost the closed-manifold
+//! property every caller relies on. [`crate::PolyMesh::split_uv_seams`] makes
+//! the cut on a render-ready copy instead.
+//!
+//! The one place the mapping is knowingly poor is a sweep's end caps, which
+//! reuse their ring's vertices and so reuse its coordinates. A cap is the tip of
+//! a finger or the end of a lock of hair — a few square millimetres — and giving
+//! it an honest chart would mean splitting it off the ring it closes.
 
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 
 use crate::mesh::PolyMesh;
 
@@ -19,21 +32,29 @@ use crate::mesh::PolyMesh;
 ///
 /// `rings` counts the divisions between the poles and `segments` those around
 /// the equator; both are clamped to what still makes a solid.
+///
+/// Mapped by longitude across and latitude up, with each pole placed at the
+/// middle of its edge of the chart — the best a single shared vertex can do
+/// where a whole row of texels meets.
 #[must_use]
 pub fn sphere(radius: f32, rings: usize, segments: usize) -> PolyMesh {
     let rings = rings.max(2);
     let segments = segments.max(3);
     let mut mesh = PolyMesh::new();
 
-    let north = mesh.push_vertex(Vec3::Y * radius);
+    let north = mesh.push_uv_vertex(Vec3::Y * radius, Vec2::new(0.5, 1.0));
     // Interior rings only; the poles are single vertices.
     for ring in 1..rings {
-        let polar = std::f32::consts::PI * ring as f32 / rings as f32;
+        let along = ring as f32 / rings as f32;
+        let polar = std::f32::consts::PI * along;
         for segment in 0..segments {
-            mesh.push_vertex(on_sphere(radius, polar, turn(segment, segments)));
+            mesh.push_uv_vertex(
+                on_sphere(radius, polar, turn(segment, segments)),
+                Vec2::new(segment as f32 / segments as f32, 1.0 - along),
+            );
         }
     }
-    let south = mesh.push_vertex(-Vec3::Y * radius);
+    let south = mesh.push_uv_vertex(-Vec3::Y * radius, Vec2::new(0.5, 0.0));
 
     let at = |ring: usize, segment: usize| (1 + (ring - 1) * segments + segment % segments) as u32;
 
@@ -75,20 +96,30 @@ pub fn cap_shell(
     let half_angle = half_angle.clamp(0.05, std::f32::consts::PI - 0.05);
     let inner = (radius - thickness.abs()).max(radius * 0.2);
 
+    // Outer surface over the top half of the chart, inner over the bottom, both
+    // running from their pole out to the rim they share at the middle.
     let mut mesh = PolyMesh::new();
-    let outer_pole = mesh.push_vertex(Vec3::Y * radius);
+    let outer_pole = mesh.push_uv_vertex(Vec3::Y * radius, Vec2::new(0.5, 1.0));
     for ring in 1..=rings {
-        let polar = half_angle * ring as f32 / rings as f32;
+        let along = ring as f32 / rings as f32;
+        let polar = half_angle * along;
         for segment in 0..segments {
-            mesh.push_vertex(on_sphere(radius, polar, turn(segment, segments)));
+            mesh.push_uv_vertex(
+                on_sphere(radius, polar, turn(segment, segments)),
+                Vec2::new(segment as f32 / segments as f32, 1.0 - 0.5 * along),
+            );
         }
     }
     let inner_start = mesh.vertex_count();
-    let inner_pole = mesh.push_vertex(Vec3::Y * inner);
+    let inner_pole = mesh.push_uv_vertex(Vec3::Y * inner, Vec2::new(0.5, 0.0));
     for ring in 1..=rings {
-        let polar = half_angle * ring as f32 / rings as f32;
+        let along = ring as f32 / rings as f32;
+        let polar = half_angle * along;
         for segment in 0..segments {
-            mesh.push_vertex(on_sphere(inner, polar, turn(segment, segments)));
+            mesh.push_uv_vertex(
+                on_sphere(inner, polar, turn(segment, segments)),
+                Vec2::new(segment as f32 / segments as f32, 0.5 * along),
+            );
         }
     }
 
@@ -181,6 +212,10 @@ pub fn sweep(path: &[Vec3], sections: &[Vec2], sides: usize, across: Vec3) -> Po
         (u, direction.cross(u))
     };
     let mut rings: Vec<Vec<u32>> = Vec::with_capacity(path.len());
+    // `v` follows arc length rather than the point index, so a path whose
+    // samples bunch up — a hair strand's densely sampled cap, a foot's ball —
+    // does not stretch its texture where it was sampled finely.
+    let along_path = arc_lengths(path);
 
     for (index, &point) in path.iter().enumerate() {
         let next = if index + 1 < path.len() {
@@ -200,7 +235,10 @@ pub fn sweep(path: &[Vec3], sections: &[Vec2], sides: usize, across: Vec3) -> Po
         let ring: Vec<u32> = (0..sides)
             .map(|side| {
                 let angle = turn(side, sides);
-                mesh.push_vertex(point + u * (angle.cos() * half.x) + v * (angle.sin() * half.y))
+                mesh.push_uv_vertex(
+                    point + u * (angle.cos() * half.x) + v * (angle.sin() * half.y),
+                    Vec2::new(side as f32 / sides as f32, along_path[index]),
+                )
             })
             .collect();
         rings.push(ring);
@@ -219,6 +257,28 @@ pub fn sweep(path: &[Vec3], sections: &[Vec2], sides: usize, across: Vec3) -> Po
     mesh.push_face(rings[rings.len() - 1].clone());
 
     mesh
+}
+
+/// How far along `path` each point sits, as a fraction of its whole length.
+///
+/// A path of zero length — every sample in one spot — spreads its points evenly
+/// rather than dividing by nothing.
+fn arc_lengths(path: &[Vec3]) -> Vec<f32> {
+    let mut run = 0.0f32;
+    let mut lengths = Vec::with_capacity(path.len());
+    lengths.push(0.0);
+    for step in path.windows(2) {
+        run += step[0].distance(step[1]);
+        lengths.push(run);
+    }
+    if run <= f32::EPSILON {
+        let last = (path.len().max(2) - 1) as f32;
+        return (0..path.len()).map(|at| at as f32 / last).collect();
+    }
+    for length in &mut lengths {
+        *length /= run;
+    }
+    lengths
 }
 
 /// A point on a sphere at the given polar and azimuthal angles.
@@ -252,50 +312,10 @@ fn transport(u: Vec3, v: Vec3, from: Vec3, to: Vec3) -> (Vec3, Vec3) {
     (turn * u, turn * v)
 }
 
-impl PolyMesh {
-    /// A copy of this mesh with every vertex transformed.
-    ///
-    /// A mirroring transform reverses each face's winding to match, so a
-    /// left-handed copy of a right-handed part still faces outward.
-    #[must_use]
-    pub fn transformed(&self, transform: Mat4) -> PolyMesh {
-        let mirrored = transform.determinant() < 0.0;
-        PolyMesh {
-            positions: self
-                .positions
-                .iter()
-                .map(|&point| transform.transform_point3(point))
-                .collect(),
-            faces: self
-                .faces
-                .iter()
-                .map(|face| {
-                    if mirrored {
-                        face.iter().rev().copied().collect()
-                    } else {
-                        face.clone()
-                    }
-                })
-                .collect(),
-        }
-    }
-
-    /// Appends another mesh, re-indexing its faces.
-    pub fn append(&mut self, other: &PolyMesh) {
-        let base = self.positions.len() as u32;
-        self.positions.extend_from_slice(&other.positions);
-        self.faces.extend(
-            other
-                .faces
-                .iter()
-                .map(|face| face.iter().map(|index| index + base).collect::<Vec<u32>>()),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Mat4;
 
     #[test]
     fn a_sphere_is_closed_and_the_right_size() {
@@ -394,6 +414,181 @@ mod tests {
                 "mirrored face {index} turned inside out"
             );
         }
+    }
+
+    #[test]
+    fn every_primitive_comes_out_mapped() {
+        let shapes = [
+            ("sphere", sphere(0.5, 8, 12)),
+            ("cap_shell", cap_shell(0.5, 0.03, 1.2, 4, 12)),
+            (
+                "sweep",
+                tube(
+                    &[Vec3::ZERO, Vec3::new(0.0, -0.2, 0.0), Vec3::NEG_Y],
+                    Vec2::splat(0.03),
+                    Vec2::splat(0.01),
+                    6,
+                ),
+            ),
+        ];
+        for (name, mesh) in shapes {
+            assert!(mesh.channels_are_consistent(), "{name}");
+            assert_eq!(mesh.uvs.len(), mesh.vertex_count(), "{name} is unmapped");
+            for uv in &mesh.uvs {
+                assert!(
+                    (0.0..=1.0).contains(&uv.x) && (0.0..=1.0).contains(&uv.y),
+                    "{name} put a vertex at {uv:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_sweep_measures_v_by_arc_length_not_by_sample() {
+        // Half the samples cover the first tenth of the path. Indexed v would
+        // give that tenth half the texture; arc length gives it a tenth.
+        let mut path = vec![Vec3::ZERO];
+        for step in 1..=5 {
+            path.push(Vec3::new(0.0, -0.02 * step as f32, 0.0));
+        }
+        path.push(Vec3::new(0.0, -1.0, 0.0));
+        let mesh = tube(&path, Vec2::splat(0.01), Vec2::splat(0.01), 4);
+        let at = |ring: usize| mesh.uvs[ring * 4].y;
+        assert!(
+            (at(5) - 0.1).abs() < 0.01,
+            "the dense end took {} of the chart",
+            at(5)
+        );
+        assert!((at(6) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_wrapping_chart_splits_into_a_seam_only_where_it_wraps() {
+        // The last column of a tube runs from high u back to zero. Split, the
+        // face becomes continuous; unsplit, it covers the whole chart backwards.
+        let mesh = tube(
+            &[Vec3::ZERO, Vec3::NEG_Y],
+            Vec2::splat(0.1),
+            Vec2::splat(0.1),
+            8,
+        );
+        // Measured over the walls only. The two end caps span the whole chart
+        // by construction and are documented as doing so — they are poles, and
+        // splitting one would only move the smear.
+        let widest = |mesh: &PolyMesh| {
+            mesh.faces
+                .iter()
+                .filter(|face| face.len() == 4)
+                .map(|face| {
+                    let (lo, hi) = face.iter().fold((f32::MAX, f32::MIN), |acc, &c| {
+                        (
+                            acc.0.min(mesh.uvs[c as usize].x),
+                            acc.1.max(mesh.uvs[c as usize].x),
+                        )
+                    });
+                    hi - lo
+                })
+                .fold(0.0f32, f32::max)
+        };
+        assert!(
+            widest(&mesh) > 0.5,
+            "the wrap should be there to begin with"
+        );
+
+        let split = mesh.split_uv_seams();
+        assert!(split.channels_are_consistent());
+        assert_eq!(split.face_count(), mesh.face_count(), "no face was lost");
+        // Only the seam column duplicates: one vertex per ring, two rings.
+        assert_eq!(split.vertex_count(), mesh.vertex_count() + 2);
+        assert!(
+            widest(&split) <= 0.5,
+            "a wall still spans {} of the chart",
+            widest(&split)
+        );
+        // Every duplicate sits exactly on top of the vertex it came from.
+        for extra in mesh.vertex_count()..split.vertex_count() {
+            assert!(
+                mesh.positions.contains(&split.positions[extra]),
+                "a split vertex moved"
+            );
+        }
+        // And a cap is left whole rather than being cut into a worse smear.
+        let caps: Vec<&Vec<u32>> = split.faces.iter().filter(|f| f.len() != 4).collect();
+        assert_eq!(caps.len(), 2);
+        for cap in caps {
+            assert!(cap.iter().all(|&c| (c as usize) < mesh.vertex_count()));
+        }
+    }
+
+    #[test]
+    fn splitting_an_unmapped_mesh_changes_nothing() {
+        let mut mesh = sphere(0.3, 5, 8);
+        mesh.set_uvs(Vec::new());
+        assert_eq!(mesh.split_uv_seams(), mesh);
+    }
+
+    #[test]
+    fn transforming_carries_the_channels_and_reorients_the_normals() {
+        let mut mesh = sphere(0.4, 6, 10);
+        mesh.set_normals(mesh.vertex_normals());
+        mesh.bind_rigidly(3);
+        mesh.paint(Vec3::new(0.2, 0.4, 0.6));
+
+        let turned = mesh.transformed(Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2));
+        assert!(turned.channels_are_consistent());
+        assert_eq!(turned.uvs, mesh.uvs, "coordinates are not positions");
+        assert_eq!(turned.skin, mesh.skin);
+        assert_eq!(turned.colours, mesh.colours);
+        for (before, after) in mesh.normals.iter().zip(&turned.normals) {
+            assert!(
+                (after.length() - 1.0).abs() < 1e-4,
+                "a normal lost its unit"
+            );
+            assert!(
+                (after.y - before.x).abs() < 1e-4 && (after.x + before.y).abs() < 1e-4,
+                "{before:?} turned into {after:?}"
+            );
+        }
+
+        // A mirror flips winding, and the inverse transpose flips the normals
+        // with it, so the copy still faces out of its own surface.
+        let flipped = mesh.transformed(Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)));
+        for (index, face) in flipped.faces.iter().enumerate() {
+            let a = flipped.positions[face[0] as usize];
+            let b = flipped.positions[face[1] as usize];
+            let c = flipped.positions[face[2] as usize];
+            assert!(
+                (b - a).cross(c - a).dot(flipped.normals[face[0] as usize]) > 0.0,
+                "face {index} disagrees with its normal"
+            );
+        }
+    }
+
+    #[test]
+    fn appending_unions_the_channels_rather_than_dropping_them() {
+        // The failure this exists to prevent: merge a mapped part into an
+        // unmapped one and every coordinate after the join belongs to the wrong
+        // vertex — or the channel vanishes and the part draws untextured.
+        let mapped = sphere(0.3, 5, 8);
+        let mut plain = sphere(0.3, 5, 8);
+        plain.set_uvs(Vec::new());
+
+        let mut onto_plain = plain.clone();
+        onto_plain.append(&mapped);
+        assert!(onto_plain.channels_are_consistent());
+        assert_eq!(
+            &onto_plain.uvs[plain.vertex_count()..],
+            mapped.uvs.as_slice(),
+            "the mapped half lost its coordinates"
+        );
+
+        let mut onto_mapped = mapped.clone();
+        onto_mapped.append(&plain);
+        assert!(onto_mapped.channels_are_consistent());
+        assert_eq!(&onto_mapped.uvs[..mapped.vertex_count()], mapped.uvs);
+
+        // And a channel neither side carries stays absent.
+        assert!(onto_mapped.skin.is_empty() && onto_mapped.colours.is_empty());
     }
 
     #[test]

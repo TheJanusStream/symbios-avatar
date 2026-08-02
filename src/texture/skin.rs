@@ -48,22 +48,22 @@ const SUBDERMAL_TINT: Vec3 = Vec3::new(0.30, -0.10, -0.13);
 /// Axes run `0..=1`, and every combination is a usable complexion — there is no
 /// arrangement of these that produces something that reads as a mistake.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct SkinParams {
     /// Base depth of tone, from palest to deepest.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub melanin: f32,
     /// Hue beneath the tone: `-1` cool and pink, `+1` warm and olive.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub undertone: f32,
     /// How much blood shows through at cheeks, ears, and knuckles.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub blush: f32,
     /// Freckle density.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub freckles: f32,
     /// Stubble across the lower face.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub stubble: f32,
 }
 

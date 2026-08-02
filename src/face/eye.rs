@@ -25,19 +25,19 @@ use crate::rig::{Rig, landmark};
 
 /// How a body's eyes are shaped and set.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct EyeParams {
     /// Eye size, as a fraction of the head's radius.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub size: f32,
     /// How far apart the eyes are set, `-1` close and `+1` wide.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub spacing: f32,
     /// How deeply the eyes are set into the head, `-1` protruding and `+1` sunken.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub depth: f32,
     /// How far open the lids rest, `0` shut and `1` wide.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub aperture: f32,
 }
 

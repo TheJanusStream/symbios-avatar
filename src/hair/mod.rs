@@ -91,28 +91,31 @@ const MAX_LEAN: f32 = 0.55;
 /// Axes run `-1` to `+1` where a direction is meant and `0` to `1` where an
 /// amount is, matching the body plan's convention.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct HairParams {
     /// How far the hair falls, `0` cropped and `1` past the shoulder blades.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub length: f32,
     /// How far the hair stands off the scalp, `-1` flat and `+1` full.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub volume: f32,
     /// Where the hairline sits, `-1` receding and `+1` low on the brow.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub coverage: f32,
     /// Where the parting runs, `-1` over the left ear and `+1` over the right.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub part: f32,
     /// How much the hair waves as it falls, `0` straight and `1` curling.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub wave: f32,
     /// Colour along a melanin ramp, `0` black and `1` pale blonde.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub shade: f32,
     /// How many strand groups to grow.
-    #[serde(default)]
+    #[serde(
+        deserialize_with = "crate::plan::scaled::deserialize_count",
+        serialize_with = "crate::plan::scaled::serialize_count"
+    )]
     pub groups: u32,
 }
 

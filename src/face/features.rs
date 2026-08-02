@@ -32,19 +32,19 @@ use super::eye::Eyes;
 /// Protocol data model has no floating-point type, and a record that writes one
 /// is a record other readers cannot round-trip.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct FaceParams {
     /// How far the nose stands out, `0` flat and `1` prominent.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub nose: f32,
     /// How heavy the brow ridge is.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub brow: f32,
     /// How full the lips are.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub mouth: f32,
     /// How far the ears stand out from the head.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub ears: f32,
 }
 

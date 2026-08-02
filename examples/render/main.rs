@@ -15,6 +15,13 @@
 //! So: a small deferred renderer. Geometry lands in a G-buffer, occlusion is
 //! measured, and everything is lit together in linear light, supersampled.
 //!
+//! It draws whatever [`symbios_avatar::Avatar`] hands it and knows nothing about
+//! how a body is made. That is deliberate: this file used to carry its own copy
+//! of the recipe, and a second copy of the recipe is a second implementation of
+//! the crate — one that had already drifted from the other. Now it is a
+//! conformance test. If the library returns something that cannot be drawn, this
+//! is where that shows.
+//!
 //! **Run it in release.** Debug is roughly thirty times slower and there is
 //! nothing to debug in a rasteriser that is working.
 //!
@@ -28,19 +35,18 @@
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
 //! cargo run --release --example render -- --quadruped
+//! cargo run --release --example render -- --budget    # what one avatar costs
 //! ```
 
 mod light;
 mod scene;
 
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec3};
 use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
-    Archetype, AvatarRecord, Blink, CageConfig, Extremities, Eyes, Features, FootingConfig, Gait,
-    Ground, Hair, HairParams, Outfit, PolyMesh, Pose, Posed, Rig, SkinConfig, Stride, Surface,
-    UvConfig, UvUnwrap, Zone, anim::gait, anim::plant_feet_of, build_body, rig::skin, texture,
-    unwrap,
+    Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, FootingConfig, Gait, Ground,
+    HairParams, MeshKind, PolyMesh, Pose, Stride, Zone, anim::gait, anim::plant_feet_of,
 };
 
 /// Pixels per side of one view in the finished sheet.
@@ -125,20 +131,27 @@ fn main() {
 
     // The record carries its own hair; the flag only replaces the axes it names.
     let axis = |at: usize, fallback: f32| overridden.get(at).copied().unwrap_or(fallback);
-    let hair = HairParams {
-        length: axis(0, record.hair.length),
-        volume: axis(1, record.hair.volume),
-        coverage: axis(2, record.hair.coverage),
-        part: axis(3, record.hair.part),
-        wave: axis(4, record.hair.wave),
-        shade: axis(5, record.hair.shade),
-        ..record.hair
+    let config = AvatarConfig {
+        hair: (!overridden.is_empty()).then(|| HairParams {
+            length: axis(0, record.hair.length),
+            volume: axis(1, record.hair.volume),
+            coverage: axis(2, record.hair.coverage),
+            part: axis(3, record.hair.part),
+            wave: axis(4, record.hair.wave),
+            shade: axis(5, record.hair.shade),
+            ..record.hair
+        }),
+        ..Default::default()
     };
 
-    let Some(subject) = Subject::build(&record, &hair, linear, pass) else {
+    let Some(avatar) = Avatar::build_with(&record, &config) else {
         eprintln!("the body could not be built");
         std::process::exit(1);
     };
+    if args.iter().any(|arg| arg == "--budget") {
+        report(&avatar);
+    }
+    let subject = Subject::new(avatar, linear, pass);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
         match focus {
@@ -186,23 +199,36 @@ fn main() {
     println!("wrote PNGs to {}", out.display());
 }
 
-/// Everything needed to draw one avatar.
+/// Prints what one avatar costs, against the targets it is judged by.
+///
+/// The numbers, not a verdict: the WebGL2 tier wants one to three skinned
+/// meshes and fifteen to thirty thousand triangles, and knowing how far over
+/// that a body is, is the only way to know which half of it to cut.
+fn report(avatar: &Avatar) {
+    let budget = avatar.budget;
+    println!(
+        "{:<8} {:>7} tris  {:>2} meshes  {:>3} joints  {:>5} KiB texture",
+        "budget",
+        budget.tris,
+        budget.meshes,
+        budget.joints,
+        budget.texture_bytes / 1024,
+    );
+    for drawn in avatar.drawn(0.0) {
+        println!(
+            "{:<8} {:>7} tris  {:>6} verts",
+            drawn.kind.name(),
+            drawn.mesh.triangulated().len(),
+            drawn.mesh.vertex_count(),
+        );
+    }
+}
+
+/// An avatar, and the gait it walks with.
 struct Subject {
+    avatar: Avatar,
     linear: bool,
     pass: Option<String>,
-    mesh: PolyMesh,
-    uv: UvUnwrap,
-    albedo: Vec<u8>,
-    atlas: u32,
-    weights: symbios_avatar::SkinWeights,
-    rig: Rig,
-    /// Which part of the body each vertex belongs to, for framing a close-up.
-    zones: Vec<Zone>,
-    eyes: Option<Eyes>,
-    features: Option<Features>,
-    hair: Option<Hair>,
-    extremities: Extremities,
-    outfit: Outfit,
     gait: Gait,
     stride: Stride,
     /// The centre of the body's rest extent.
@@ -212,74 +238,33 @@ struct Subject {
 }
 
 impl Subject {
-    /// Builds a body from a record, all the way to something drawable.
-    fn build(
-        record: &AvatarRecord,
-        hair: &HairParams,
-        linear: bool,
-        pass: Option<String>,
-    ) -> Option<Self> {
-        let skeleton = record.skeleton();
-        let mesh = build_body(&skeleton, &CageConfig::default(), 2).ok()?;
-        let rig = Rig::from_skeleton(&skeleton).ok()?;
-        let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
-        let zones = weights.zone_map(&mesh, &rig);
-        let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
-
-        let atlas = 1024;
-        let geometry = texture::bake_geometry(&mesh, &uv, atlas);
-        let painted = texture::paint_skin(&geometry, &rig, &record.skin);
-        let (lo, hi) = mesh.bounds();
-        let surface = Surface::measure(&mesh, &rig);
-        let upright = matches!(record.archetype, Archetype::Humanoid(_));
-
-        Some(Self {
-            linear,
-            pass,
-            eyes: Eyes::build(&rig, &record.eyes),
-            // A human face, human hair and human clothing on a quadruped is a
-            // costume, not a creature: the front legs wear sleeves and a fringe
-            // hangs off a muzzle. Creatures need their own — fur, a muzzle, a
-            // harness — which is WS6. Until then a quadruped goes bare rather
-            // than dressed as something it is not.
-            features: upright
-                .then(|| Eyes::build(&rig, &record.eyes))
-                .flatten()
-                .map(|eyes| Features::build(&eyes, &record.face)),
-            hair: upright.then(|| Hair::build(&mesh, &rig, hair)).flatten(),
-            // The plan stands its bodies on the origin.
-            extremities: Extremities::build(&rig, &surface, 0.0),
-            outfit: if upright {
-                Outfit::wear(&mesh, &weights, &zones, &record.outfit)
-            } else {
-                Outfit::default()
-            },
-            gait: Gait::natural(&rig),
-            stride: Stride::for_body(&rig, 1.0),
+    /// Wraps a built avatar in what a contact sheet additionally needs.
+    fn new(avatar: Avatar, linear: bool, pass: Option<String>) -> Self {
+        let (lo, hi) = avatar.parts.body.bounds();
+        Self {
+            gait: Gait::natural(&avatar.rig),
+            stride: Stride::for_body(&avatar.rig, 1.0),
             middle: (lo + hi) * 0.5,
             reach: (hi - lo).max_element().max(0.1),
-            albedo: painted.albedo,
-            atlas,
-            mesh,
-            uv,
-            weights,
-            rig,
-            zones,
-        })
+            avatar,
+            linear,
+            pass,
+        }
     }
 
     /// The body standing still.
     fn standing(&self) -> Pose {
-        Pose::rest(&self.rig)
+        Pose::rest(&self.avatar.rig)
     }
 
     /// The body mid-walk, with its stance feet on the ground.
     fn walking(&self, cycle: f32) -> Pose {
-        let mut pose = Pose::rest(&self.rig);
-        let steps = gait::step(&self.rig, &mut pose, &self.gait, &self.stride, cycle);
-        gait::swing_arms(&self.rig, &mut pose, &self.gait, cycle);
+        let rig = &self.avatar.rig;
+        let mut pose = Pose::rest(rig);
+        let steps = gait::step(rig, &mut pose, &self.gait, &self.stride, cycle);
+        gait::swing_arms(rig, &mut pose, &self.gait, cycle);
         plant_feet_of(
-            &self.rig,
+            rig,
             &mut pose,
             &steps.stance,
             |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
@@ -312,15 +297,19 @@ impl Subject {
     /// judged. A three-quarter view is where a face either reads or does not; a
     /// profile is where the brow line and chin live; and the view from above is
     /// the only one that shows a crown, a parting, or the back of a hand.
+    ///
+    /// Framed on the *parts*, not on the merged meshes: a merged mesh cannot say
+    /// which of its vertices are a head, which is exactly what a close-up needs
+    /// to know and exactly why [`symbios_avatar::Parts`] is kept.
     fn close_up(&self, pose: &Pose, closure: f32, focus: Focus) -> Option<Image> {
         use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
-        let posed = pose.forward(&self.rig);
-        let deformed = self.skinned(&posed);
+        let parts = &self.avatar.parts;
+        let posed = pose.forward(&self.avatar.rig);
 
-        // Framed on the part's own vertices. Anything hanging off it — long
-        // hair, most obviously — is deliberately left to fall out of frame:
-        // this is a close-up, and zooming out far enough to hold the whole
-        // drape would put us back where we started.
+        // Anything hanging off the part — long hair, most obviously — is
+        // deliberately left to fall out of frame: this is a close-up, and
+        // zooming out far enough to hold the whole drape would put us back where
+        // we started.
         let mut lo = Vec3::splat(f32::MAX);
         let mut hi = Vec3::splat(f32::MIN);
         let mut hold = |point: Vec3| {
@@ -330,7 +319,9 @@ impl Subject {
 
         match focus {
             Focus::Head => {
-                for (vertex, zone) in self.zones.iter().enumerate() {
+                let deformed =
+                    posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+                for (vertex, zone) in parts.zones.iter().enumerate() {
                     if matches!(zone, Zone::Head | Zone::Neck) {
                         hold(deformed[vertex]);
                     }
@@ -339,12 +330,12 @@ impl Subject {
             Focus::Hand | Focus::Foot => {
                 // One of them, not both: a pair framed together sits a body's
                 // width apart and zooms straight back out to the body sheet.
-                let parts = if matches!(focus, Focus::Hand) {
-                    &self.extremities.hands
+                let attached = if matches!(focus, Focus::Hand) {
+                    &parts.extremities.hands
                 } else {
-                    &self.extremities.feet
+                    &parts.extremities.feet
                 };
-                let part = parts.first()?;
+                let part = attached.first()?;
                 let to_world = Mat4::from_rotation_translation(
                     posed.rotations[part.joint],
                     posed.positions[part.joint],
@@ -376,25 +367,20 @@ impl Subject {
         Some(self.render(pose, closure, &frames))
     }
 
-    /// Deforms the body by whichever skinning method was asked for.
-    fn skinned(&self, posed: &Posed) -> Vec<Vec3> {
-        if self.linear {
-            posed.deform_linear(&self.rig, &self.mesh.positions, &self.weights)
-        } else {
-            posed.deform(&self.rig, &self.mesh.positions, &self.weights)
-        }
-    }
-
     /// Draws one pose from four frames into a two-by-two sheet.
     fn render(&self, pose: &Pose, closure: f32, frames: &[Frame; 4]) -> Image {
-        let posed = pose.forward(&self.rig);
-        let built = self.assemble(&posed, closure);
+        let built = self.deformed(pose, closure);
 
         let mut sheet = Image::new(VIEW * 2, VIEW * 2);
         let side = VIEW * SUPERSAMPLE;
         for (index, frame) in frames.iter().enumerate() {
             let wall = backdrop(frame);
-            let items = built.items(&wall);
+            let items = items(
+                &built,
+                &wall,
+                self.avatar.skin.albedo.as_slice(),
+                self.atlas(),
+            );
             // The key light is written in the camera's frame, so its shadow has
             // to be cast anew for each view. Cheap enough at this size, and it
             // keeps every view internally consistent.
@@ -414,267 +400,94 @@ impl Subject {
         sheet
     }
 
-    /// Everything to be drawn for one pose, in world space.
-    fn assemble(&self, posed: &Posed, closure: f32) -> Built<'_> {
-        let deformed = self.skinned(posed);
-        // Normals over the body's own topology, then gathered through the
-        // unwrap. Deriving them from the unwrapped copy splits every seam.
-        let normals = self
-            .uv
-            .gather(&scene::smooth_normals(&deformed, &self.mesh.faces));
-        let positions = self.uv.gather(&deformed);
+    /// Side of the skin atlas.
+    fn atlas(&self) -> u32 {
+        self.avatar.skin.width
+    }
 
-        let rigid = |joint: usize| {
-            Mat4::from_rotation_translation(posed.rotations[joint], posed.positions[joint])
-        };
-
-        // Clothing carries the skin weights of the vertices it was cut from.
-        let worn: Vec<(PolyMesh, Vec3)> = self
-            .outfit
-            .garments
-            .iter()
-            .map(|garment| {
-                let moved = if self.linear {
-                    posed.deform_linear(&self.rig, &garment.mesh.positions, &garment.weights)
-                } else {
-                    posed.deform(&self.rig, &garment.mesh.positions, &garment.weights)
-                };
-                (
-                    PolyMesh {
-                        positions: moved,
-                        faces: garment.mesh.faces.clone(),
-                    },
-                    Vec3::from_array(garment.colour),
-                )
-            })
-            .collect();
-
-        let limbs: Vec<PolyMesh> = self
-            .extremities
-            .hands
-            .iter()
-            .chain(&self.extremities.feet)
-            .map(|part| part.mesh.transformed(rigid(part.joint)))
-            .collect();
-
-        // Hair is drawn one lock at a time, with a walk over brightness: as a
-        // single solid in a single colour it reads as a helmet at close range.
-        let locks: Vec<(PolyMesh, Vec3)> = self
-            .hair
-            .as_ref()
-            .map(|hair| {
-                let to_world = rigid(hair.head);
-                let tone = Vec3::from_array(hair.colour);
-                hair.groups
-                    .iter()
-                    .enumerate()
-                    .map(|(at, group)| {
-                        let step = (at as f32 * 0.618_034).fract();
-                        (
-                            group.mesh().transformed(to_world),
-                            tone * (0.74 + 0.5 * step),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Globes and lids are kept apart so they can be shaded differently:
-        // drawn in one colour a shut eye is invisible, which is how a working
-        // blink first looked broken.
-        let eyes = self.eyes.as_ref().map(|eyes| {
-            let to_world = rigid(eyes.head);
-            let mut globes = eyes.left.globe.clone();
-            globes.append(&eyes.right.globe);
-            let mut lids = PolyMesh::new();
-            for eye in [&eyes.left, &eyes.right] {
-                lids.append(&eye.upper_lid.transformed(eye.lid_transform(closure, true)));
-                lids.append(&eye.lower_lid.transformed(eye.lid_transform(closure, false)));
-            }
-            (
-                globes.transformed(to_world),
-                lids.transformed(to_world),
-                [
-                    to_world.transform_point3(eyes.left.pivot),
-                    to_world.transform_point3(eyes.right.pivot),
-                ],
-            )
-        });
-
-        let face = self
-            .features
-            .as_ref()
-            .map(|features| features.assembled().transformed(rigid(features.head)));
-
-        Built {
-            bare: bare_skin(&self.albedo),
-            face,
-            positions,
-            normals,
-            faces: self.uv.faces.clone(),
-            uvs: self.uv.uvs.clone(),
-            albedo: &self.albedo,
-            atlas: self.atlas,
-            worn,
-            limbs,
-            locks,
-            iris: match &eyes {
-                Some((_, _, centres)) => {
-                    let centres = *centres;
-                    Box::new(move |point| iris(point, &centres))
-                }
-                None => Box::new(|_| Vec3::ONE),
-            },
-            eyes,
+    /// Everything the avatar draws, deformed into the pose.
+    ///
+    /// The `--linear` flag is the one thing that cannot go through
+    /// [`Avatar::posed`], because comparing the two skinning methods is the
+    /// point of it.
+    fn deformed(&self, pose: &Pose, closure: f32) -> Vec<AvatarMesh> {
+        if !self.linear {
+            return self.avatar.posed(pose, closure);
         }
+        let posed = pose.forward(&self.avatar.rig);
+        self.avatar
+            .drawn(closure)
+            .into_iter()
+            .map(|drawn| {
+                let mut mesh = drawn.mesh.clone();
+                mesh.positions = posed.deform_linear(
+                    &self.avatar.rig,
+                    &drawn.mesh.positions,
+                    &symbios_avatar::SkinWeights {
+                        vertices: drawn.mesh.skin.clone(),
+                    },
+                );
+                AvatarMesh {
+                    kind: drawn.kind,
+                    mesh,
+                }
+            })
+            .collect()
     }
 }
 
-/// One pose's worth of world-space geometry.
-struct Built<'a> {
-    bare: Vec3,
-    face: Option<PolyMesh>,
-    positions: Vec<Vec3>,
-    normals: Vec<Vec3>,
-    faces: Vec<Vec<u32>>,
-    uvs: Vec<Vec2>,
+/// Everything to draw, as items, against the given backdrop.
+///
+/// One item per merged mesh, which is the whole argument for merging: what used
+/// to be a draw per lock of hair and a draw per garment is now a draw per
+/// material, and the colours that distinguished them ride on the vertices.
+fn items<'a>(
+    built: &'a [AvatarMesh],
+    wall: &'a PolyMesh,
     albedo: &'a [u8],
     atlas: u32,
-    worn: Vec<(PolyMesh, Vec3)>,
-    limbs: Vec<PolyMesh>,
-    locks: Vec<(PolyMesh, Vec3)>,
-    eyes: Option<(PolyMesh, PolyMesh, [Vec3; 2])>,
-    /// Held here rather than made inline: an item borrows it, so it has to
-    /// outlive the list of items.
-    iris: Box<dyn Fn(Vec3) -> Vec3>,
-}
+) -> Vec<Item<'a>> {
+    let mut items = vec![Item {
+        positions: &wall.positions,
+        faces: &wall.faces,
+        normals: None,
+        paint: Paint::Flat,
+        material: Material {
+            albedo: Vec3::new(0.30, 0.31, 0.35),
+            roughness: 1.0,
+            specular: 0.02,
+            wrap: 0.0,
+        },
+    }];
 
-/// Skin for the parts that carry no chart in the atlas.
-///
-/// Averaged from the baked skin rather than fixed, because a fixed one is a
-/// pale mask on every avatar whose complexion is not pale — hands, feet, lids
-/// and every facial feature came out lighter than the face they sat on.
-fn bare_skin(albedo: &[u8]) -> Vec3 {
-    let mut sum = Vec3::ZERO;
-    let mut taken = 0.0f32;
-    for texel in albedo.chunks_exact(4) {
-        if texel[3] == 0 {
-            continue;
-        }
-        sum += Vec3::new(
-            f32::from(texel[0]),
-            f32::from(texel[1]),
-            f32::from(texel[2]),
-        ) / 255.0;
-        taken += 1.0;
-    }
-    if taken == 0.0 {
-        Vec3::new(0.86, 0.68, 0.60)
-    } else {
-        sum / taken
-    }
-}
-
-impl Built<'_> {
-    /// Everything as draw items, against the given backdrop.
-    fn items<'a>(&'a self, wall: &'a PolyMesh) -> Vec<Item<'a>> {
-        let mut items = vec![
-            Item {
-                positions: &wall.positions,
-                faces: &wall.faces,
-                normals: None,
-                paint: Paint::Flat,
-                material: Material {
-                    albedo: Vec3::new(0.30, 0.31, 0.35),
-                    roughness: 1.0,
-                    specular: 0.02,
-                    wrap: 0.0,
-                },
+    for drawn in built {
+        let material = match drawn.kind {
+            MeshKind::Skin => Material::skin(Vec3::ONE),
+            MeshKind::Hair => Material::hair(Vec3::ONE),
+            MeshKind::Cloth => Material::cloth(Vec3::ONE),
+            MeshKind::Eye => Material::glossy(Vec3::ONE),
+        };
+        // Skin is the only thing the atlas covers; everything else carries the
+        // colour it wants on its vertices. See the note in `symbios_avatar::avatar`
+        // about attached parts, which are mapped to one texel of it for now.
+        let paint = match drawn.kind {
+            MeshKind::Skin => Paint::Atlas {
+                uvs: &drawn.mesh.uvs,
+                pixels: albedo,
+                side: atlas,
             },
-            Item {
-                positions: &self.positions,
-                faces: &self.faces,
-                normals: Some(&self.normals),
-                paint: Paint::Atlas {
-                    uvs: &self.uvs,
-                    pixels: self.albedo,
-                    side: self.atlas,
-                },
-                material: Material::skin(Vec3::ONE),
-            },
-        ];
-
-        for part in &self.limbs {
-            items.push(Item {
-                positions: &part.positions,
-                faces: &part.faces,
-                normals: None,
-                paint: Paint::Flat,
-                material: Material::skin(self.bare),
-            });
-        }
-        for (mesh, tone) in &self.worn {
-            items.push(Item {
-                positions: &mesh.positions,
-                faces: &mesh.faces,
-                normals: None,
-                paint: Paint::Flat,
-                material: Material::cloth(*tone),
-            });
-        }
-        for (mesh, tone) in &self.locks {
-            items.push(Item {
-                positions: &mesh.positions,
-                faces: &mesh.faces,
-                normals: None,
-                paint: Paint::Flat,
-                material: Material::hair(*tone),
-            });
-        }
-        if let Some(face) = &self.face {
-            items.push(Item {
-                positions: &face.positions,
-                faces: &face.faces,
-                normals: None,
-                paint: Paint::Flat,
-                material: Material::skin(self.bare),
-            });
-        }
-        if let Some((globes, lids, _)) = &self.eyes {
-            items.push(Item {
-                positions: &globes.positions,
-                faces: &globes.faces,
-                normals: None,
-                paint: Paint::Shaded(self.iris.as_ref()),
-                material: Material::glossy(Vec3::ONE),
-            });
-            items.push(Item {
-                positions: &lids.positions,
-                faces: &lids.faces,
-                normals: None,
-                paint: Paint::Flat,
-                material: Material::skin(self.bare),
-            });
-        }
-        items
+            _ => Paint::Vertex(&drawn.mesh.colours),
+        };
+        items.push(Item {
+            positions: &drawn.mesh.positions,
+            faces: &drawn.mesh.faces,
+            normals: Some(&drawn.mesh.normals),
+            paint,
+            material,
+        });
     }
-}
 
-/// A pale globe with a dark iris facing forward, so an eye reads as an eye.
-fn iris(point: Vec3, centres: &[Vec3; 2]) -> Vec3 {
-    let nearest = centres
-        .iter()
-        .min_by(|a, b| point.distance(**a).total_cmp(&point.distance(**b)))
-        .copied()
-        .unwrap_or(Vec3::ZERO);
-    let forward = (point - nearest).normalize_or(Vec3::Z).z;
-    if forward > 0.78 {
-        Vec3::new(0.05, 0.06, 0.08)
-    } else if forward > 0.50 {
-        Vec3::new(0.24, 0.38, 0.46)
-    } else {
-        Vec3::new(0.93, 0.92, 0.90)
-    }
+    items
 }
 
 /// A wall behind the subject, square to whichever way the camera is looking.

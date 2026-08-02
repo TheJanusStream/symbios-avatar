@@ -26,6 +26,7 @@ mod humanoid;
 mod quadruped;
 mod zone;
 
+use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use serde::{Deserialize, Serialize};
 
@@ -85,6 +86,65 @@ impl Category {
     }
 }
 
+/// One re-roll's random draws, with an independent stream per named axis.
+///
+/// Drawing every axis in sequence from one stream is reproducible but not
+/// *stable*: inserting an axis shifts every draw after it, so the same seed
+/// yields a different person than it did before the insertion. A record keeps
+/// its seed precisely so a look can be reproduced, and there is no way for a
+/// reader to notice that the promise has been broken.
+///
+/// Keying each stream on the axis's own name removes the coupling entirely.
+/// Adding, removing or reordering an axis changes that axis and nothing else,
+/// which is what makes the seed worth storing. The cost is that axis names are
+/// now part of the wire contract in the same way field names are: renaming one
+/// re-rolls it.
+///
+/// Names are namespaced by the struct they belong to — `humanoid.height`,
+/// `skin.melanin` — because two axes called `height` on different plans must not
+/// share a stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rolls {
+    seed: i64,
+}
+
+impl Rolls {
+    /// The draws for one seed.
+    #[must_use]
+    pub fn new(seed: i64) -> Self {
+        Self { seed }
+    }
+
+    /// The stream one named axis draws from.
+    ///
+    /// FNV-1a over the name, mixed into the seed. Any decent hash would do; what
+    /// matters is that it depends on the name and on nothing else about where
+    /// the axis sits.
+    #[must_use]
+    pub fn stream(&self, axis: &str) -> Pcg64Mcg {
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for byte in axis.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        Pcg64Mcg::seed_from_u64((self.seed as u64) ^ hash)
+    }
+
+    /// A value drawn uniformly from `low..=high`.
+    #[must_use]
+    pub fn range(&self, axis: &str, low: f32, high: f32) -> f32 {
+        use rand::Rng;
+        self.stream(axis).random_range(low..=high)
+    }
+
+    /// Whether a one-in-`probability` event happened.
+    #[must_use]
+    pub fn chance(&self, axis: &str, probability: f64) -> bool {
+        use rand::Rng;
+        self.stream(axis).random_bool(probability)
+    }
+}
+
 /// Behaviour every body plan provides.
 pub trait BodyPlan: Sized {
     /// Clamps every axis into its valid range.
@@ -99,7 +159,10 @@ pub trait BodyPlan: Sized {
     fn skeleton(&self) -> Skeleton;
 
     /// Draws fresh values for the axes belonging to `category`.
-    fn reroll(&mut self, category: Category, rng: &mut Pcg64Mcg);
+    ///
+    /// Each axis draws from its own named stream — see [`Rolls`] — so adding one
+    /// never changes what the others produce for a given seed.
+    fn reroll(&mut self, category: Category, rolls: &Rolls);
 
     /// Appends this plan's quantised parameters to a share code.
     fn encode(&self, out: &mut Vec<u8>);
@@ -123,21 +186,104 @@ pub enum PlanDecodeError {
     UnknownArchetype(u8),
 }
 
+/// Type name of the humanoid variant, in the shared definitions lexicon.
+pub const HUMANOID_TYPE: &str = "network.symbios.avatar.defs#humanoid";
+/// Type name of the quadruped variant.
+pub const QUADRUPED_TYPE: &str = "network.symbios.avatar.defs#quadruped";
+
 /// Which kind of body a record describes.
 ///
 /// An open union discriminated by `$type`, as AT Protocol lexicons require:
 /// each variant names a definition in `network.symbios.avatar.defs`, so a reader
 /// that does not know a variant can recognise that fact rather than mis-render
 /// the body. New archetypes are added as variants without disturbing old ones.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "$type")]
+///
+/// **Open means a reader must survive a `$type` it has never heard of.** WS6
+/// adds creature archetypes by design, so the day the first one exists every
+/// deployed client would otherwise lose the ability to render even a
+/// placeholder — a derived `Deserialize` fails the whole record on an unknown
+/// variant, taking the name, the seed and the locks down with the body. The
+/// [`Archetype::Unknown`] variant keeps the type name and every field verbatim
+/// so a read-modify-write cannot destroy a body this build does not understand,
+/// and [`Archetype::is_understood`] lets a client say so rather than pretend.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Archetype {
     /// An upright biped.
-    #[serde(rename = "network.symbios.avatar.defs#humanoid")]
     Humanoid(HumanoidParams),
     /// A four-legged creature.
-    #[serde(rename = "network.symbios.avatar.defs#quadruped")]
     Quadruped(QuadrupedParams),
+    /// A body this build does not know about, preserved as written.
+    Unknown {
+        /// The `$type` that was read.
+        type_name: String,
+        /// Every other field, kept so writing the record back loses nothing.
+        fields: serde_json::Map<String, serde_json::Value>,
+    },
+}
+
+impl Serialize for Archetype {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let (type_name, body) = match self {
+            Archetype::Humanoid(params) => (HUMANOID_TYPE, serde_json::to_value(params)),
+            Archetype::Quadruped(params) => (QUADRUPED_TYPE, serde_json::to_value(params)),
+            Archetype::Unknown { type_name, fields } => {
+                let mut map = serializer.serialize_map(Some(fields.len() + 1))?;
+                map.serialize_entry("$type", type_name)?;
+                for (key, value) in fields {
+                    map.serialize_entry(key, value)?;
+                }
+                return map.end();
+            }
+        };
+        let body = body.map_err(serde::ser::Error::custom)?;
+        let body = body
+            .as_object()
+            .ok_or_else(|| serde::ser::Error::custom("a body plan must serialise to an object"))?;
+        let mut map = serializer.serialize_map(Some(body.len() + 1))?;
+        map.serialize_entry("$type", type_name)?;
+        for (key, value) in body {
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Archetype {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        // Read the object first, then dispatch on its `$type`. A derived
+        // internally-tagged enum cannot express "and otherwise keep what you
+        // were given", which is the whole requirement here.
+        let mut value = serde_json::Map::deserialize(deserializer)?;
+        let type_name = match value.remove("$type") {
+            Some(serde_json::Value::String(name)) => name,
+            // No discriminator at all: an older writer, or a hand-written
+            // record. Treat it as the default body rather than as a loss.
+            None => HUMANOID_TYPE.to_string(),
+            Some(other) => {
+                return Err(D::Error::custom(format!(
+                    "$type must be a string, got {other}"
+                )));
+            }
+        };
+        let body = serde_json::Value::Object(value);
+        match type_name.as_str() {
+            HUMANOID_TYPE => serde_json::from_value(body)
+                .map(Archetype::Humanoid)
+                .map_err(D::Error::custom),
+            QUADRUPED_TYPE => serde_json::from_value(body)
+                .map(Archetype::Quadruped)
+                .map_err(D::Error::custom),
+            _ => Ok(Archetype::Unknown {
+                type_name,
+                fields: match body {
+                    serde_json::Value::Object(fields) => fields,
+                    _ => serde_json::Map::new(),
+                },
+            }),
+        }
+    }
 }
 
 impl Default for Archetype {
@@ -148,45 +294,76 @@ impl Default for Archetype {
 
 impl Archetype {
     /// Tag byte identifying the variant inside a share code.
+    ///
+    /// Zero for a body this build does not understand: a share code carries
+    /// quantised axes, and there are none to quantise for a plan whose axes are
+    /// unknown.
     #[must_use]
     pub fn tag(&self) -> u8 {
         match self {
             Archetype::Humanoid(_) => 1,
             Archetype::Quadruped(_) => 2,
+            Archetype::Unknown { .. } => 0,
         }
     }
 
     /// Human-readable name, for creator panels and diagnostics.
     #[must_use]
-    pub fn name(&self) -> &'static str {
+    pub fn name(&self) -> &str {
         match self {
             Archetype::Humanoid(_) => "humanoid",
             Archetype::Quadruped(_) => "quadruped",
+            Archetype::Unknown { type_name, .. } => type_name,
         }
     }
 
+    /// Whether this build knows what kind of body this is.
+    ///
+    /// A client showing an avatar it cannot render should say so — "this body
+    /// needs a newer version" — rather than silently show the stand-in
+    /// [`Archetype::skeleton`] hands back.
+    #[must_use]
+    pub fn is_understood(&self) -> bool {
+        !matches!(self, Archetype::Unknown { .. })
+    }
+
     /// Clamps the wrapped parameters into range.
+    ///
+    /// An unknown body is left exactly as it was read. Nothing here knows what
+    /// its axes mean, so clamping them would be guessing, and guessing wrong
+    /// destroys the record on the next write.
     pub fn sanitize(&mut self) {
         match self {
             Archetype::Humanoid(params) => params.sanitize(),
             Archetype::Quadruped(params) => params.sanitize(),
+            Archetype::Unknown { .. } => {}
         }
     }
 
     /// Builds the capsule graph for these parameters.
+    ///
+    /// An unknown body gets the default humanoid, so a client renders a
+    /// stand-in rather than nothing. Pair it with [`Archetype::is_understood`]:
+    /// showing the stand-in *and* saying it is one is the honest behaviour;
+    /// showing it silently is the substitution the lexicon warns against.
     #[must_use]
     pub fn skeleton(&self) -> Skeleton {
         match self {
             Archetype::Humanoid(params) => params.skeleton(),
             Archetype::Quadruped(params) => params.skeleton(),
+            Archetype::Unknown { .. } => HumanoidParams::default().skeleton(),
         }
     }
 
     /// Re-rolls one category of axes.
-    pub fn reroll(&mut self, category: Category, rng: &mut Pcg64Mcg) {
+    ///
+    /// An unknown body is left alone: re-rolling axes whose meaning is unknown
+    /// would be inventing a body, not re-rolling one.
+    pub fn reroll(&mut self, category: Category, rolls: &Rolls) {
         match self {
-            Archetype::Humanoid(params) => params.reroll(category, rng),
-            Archetype::Quadruped(params) => params.reroll(category, rng),
+            Archetype::Humanoid(params) => params.reroll(category, rolls),
+            Archetype::Quadruped(params) => params.reroll(category, rolls),
+            Archetype::Unknown { .. } => {}
         }
     }
 
@@ -196,6 +373,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(params) => params.encode(out),
             Archetype::Quadruped(params) => params.encode(out),
+            Archetype::Unknown { .. } => {}
         }
     }
 
@@ -243,11 +421,38 @@ pub(crate) mod scaled {
 
     /// Reads a scaled integer back into a float.
     ///
+    /// Read as `i64` — the widest AT Protocol integer — rather than as the `i32`
+    /// the writer produces. A value outside the axis's range is bad *data* and
+    /// belongs to `sanitize`, which clamps it; reading it narrowly makes it a
+    /// bad *parse* instead, and the whole record is lost over one field being
+    /// out of bounds. Sanitising cannot run on a record that would not load.
+    ///
     /// # Errors
     ///
     /// Propagates the deserialiser's own failure.
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
-        Ok(i32::deserialize(deserializer)? as f32 / SCALE)
+        Ok(i64::deserialize(deserializer)? as f32 / SCALE)
+    }
+
+    /// Reads a count that must survive being out of range.
+    ///
+    /// The same argument as [`deserialize`]: a hair group count of four billion
+    /// is a value for `sanitize` to clamp, not a reason to lose the avatar.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the deserialiser's own failure.
+    pub fn deserialize_count<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+        Ok(i64::deserialize(deserializer)?.clamp(0, i64::from(u32::MAX)) as u32)
+    }
+
+    /// Writes a count.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the serialiser's own failure.
+    pub fn serialize_count<S: Serializer>(value: &u32, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_i64(i64::from(*value))
     }
 
     /// Snaps a value to the precision the wire format can carry.

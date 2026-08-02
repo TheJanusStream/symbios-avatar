@@ -37,6 +37,12 @@
             "description": "Bitmask of parameter categories a re-roll must leave alone. Bit 0 stature, 1 build, 2 frame, 3 proportions, 4 features. Unknown bits must be preserved on write so a newer client's locks survive an older one editing the record.",
             "minimum": 0
           },
+          "generator": {
+            "type": "integer",
+            "description": "Which generation of the re-roll produced this record's parameters. A seed reproduces a look only against the generator that drew it; each axis draws from its own named stream so adding an axis cannot disturb another, but a reader carrying a lower number should not assume it can rebuild the same body from the seed alone.",
+            "minimum": 0,
+            "default": 1
+          },
           "createdAt": {
             "type": "string",
             "format": "datetime"

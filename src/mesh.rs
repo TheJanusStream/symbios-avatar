@@ -5,18 +5,64 @@
 //! live in one mesh. [`PolyMesh::manifold_report`] is the workhorse diagnostic:
 //! a correct body cage is a closed, consistently wound 2-manifold, and every
 //! stage of the pipeline is checked against that.
+//!
+//! ## Vertex attributes
+//!
+//! Positions are not enough to draw with. A mesh may carry four further
+//! **channels** — texture coordinates, normals, skin influences, and colours —
+//! each of which is either *absent* (empty) or exactly as long as `positions`.
+//! Nothing is forced to carry them: a control cage has no use for UVs, and the
+//! joint hulls it is built from would have nothing sensible to put there.
+//!
+//! Every operation that changes the vertex list keeps that invariant. In
+//! particular [`PolyMesh::append`] pads whichever side is missing a channel the
+//! other has, so merging a UV-mapped part into an un-mapped one cannot silently
+//! shift every coordinate after the join — which is the failure mode parallel
+//! arrays are famous for.
+//!
+//! ## Seams
+//!
+//! A tube's texture coordinates wrap: the last column of faces runs from `u`
+//! near one back round to zero. Splitting the vertices that straddle it is the
+//! only fix, and it costs the mesh its closed-manifold property — so it is not
+//! done at build time. Authoring meshes stay closed and shareable;
+//! [`PolyMesh::split_uv_seams`] makes the render-ready copy.
 
-use glam::Vec3;
+use glam::{Mat4, Vec2, Vec3};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
+use crate::rig::skin::{Influence, MAX_INFLUENCES};
+
+/// A vertex's bone influences, strongest first — one entry of [`PolyMesh::skin`].
+pub type VertexSkin = [Influence; MAX_INFLUENCES];
+
 /// A polygon soup with shared vertices.
+///
+/// See the [module documentation](self#vertex-attributes) for the rule every
+/// attribute channel obeys.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PolyMesh {
     /// Vertex positions, indexed by the entries of [`PolyMesh::faces`].
     pub positions: Vec<Vec3>,
     /// Face loops, each a counter-clockwise ring of indices into `positions`.
     pub faces: Vec<Vec<u32>>,
+    /// Texture coordinate per vertex, or empty when the mesh carries none.
+    pub uvs: Vec<Vec2>,
+    /// Explicit normal per vertex, or empty to derive them from the surface.
+    ///
+    /// Worth carrying only where the derived ones would be wrong: after a seam
+    /// split, neighbouring copies of one vertex are no longer joined, so
+    /// [`PolyMesh::vertex_normals`] would crease the surface along every seam.
+    pub normals: Vec<Vec3>,
+    /// Bone influences per vertex, or empty when the mesh is not skinned.
+    pub skin: Vec<VertexSkin>,
+    /// Linear-space colour per vertex, or empty when the mesh is untinted.
+    ///
+    /// This is what lets parts of one material merge into a single draw and
+    /// still differ: every lock of hair is its own shade, and drawn as one solid
+    /// in one colour a head of hair reads as a helmet.
+    pub colours: Vec<Vec3>,
 }
 
 impl PolyMesh {
@@ -39,15 +85,313 @@ impl PolyMesh {
     }
 
     /// Appends a vertex and returns its index.
+    ///
+    /// Any channel the mesh already carries grows with it, so the invariant
+    /// holds however a mesh is built up.
     pub fn push_vertex(&mut self, position: Vec3) -> u32 {
         let index = self.positions.len() as u32;
         self.positions.push(position);
+        self.pad_channels();
+        index
+    }
+
+    /// Appends a vertex carrying a texture coordinate, and returns its index.
+    ///
+    /// Starts the UV channel if the mesh had none, back-filling the vertices
+    /// already present.
+    pub fn push_uv_vertex(&mut self, position: Vec3, uv: Vec2) -> u32 {
+        let index = self.positions.len() as u32;
+        self.positions.push(position);
+        self.uvs.resize(index as usize, Vec2::ZERO);
+        self.uvs.push(uv);
+        self.pad_channels();
         index
     }
 
     /// Appends a face loop.
     pub fn push_face(&mut self, face: impl Into<Vec<u32>>) {
         self.faces.push(face.into());
+    }
+
+    /// Grows every non-empty channel to one entry per vertex.
+    fn pad_channels(&mut self) {
+        let vertices = self.positions.len();
+        if !self.uvs.is_empty() {
+            self.uvs.resize(vertices, Vec2::ZERO);
+        }
+        if !self.normals.is_empty() {
+            self.normals.resize(vertices, Vec3::Y);
+        }
+        if !self.skin.is_empty() {
+            self.skin.resize(vertices, VertexSkin::default());
+        }
+        if !self.colours.is_empty() {
+            self.colours.resize(vertices, Vec3::ONE);
+        }
+    }
+
+    /// Whether every channel present has one entry per vertex.
+    ///
+    /// The invariant the whole module rests on, asserted in tests rather than
+    /// checked on every call.
+    #[must_use]
+    pub fn channels_are_consistent(&self) -> bool {
+        let vertices = self.positions.len();
+        let fits = |len: usize| len == 0 || len == vertices;
+        fits(self.uvs.len())
+            && fits(self.normals.len())
+            && fits(self.skin.len())
+            && fits(self.colours.len())
+    }
+
+    /// Attaches texture coordinates.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `uvs` is neither empty nor one per vertex. A mismatch is a
+    /// generator bug, not bad input: nothing downstream could do anything
+    /// sensible with a half-mapped mesh.
+    #[track_caller]
+    pub fn set_uvs(&mut self, uvs: Vec<Vec2>) {
+        assert!(
+            uvs.is_empty() || uvs.len() == self.positions.len(),
+            "{} uvs for {} vertices",
+            uvs.len(),
+            self.positions.len()
+        );
+        self.uvs = uvs;
+    }
+
+    /// Attaches explicit normals.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `normals` is neither empty nor one per vertex.
+    #[track_caller]
+    pub fn set_normals(&mut self, normals: Vec<Vec3>) {
+        assert!(
+            normals.is_empty() || normals.len() == self.positions.len(),
+            "{} normals for {} vertices",
+            normals.len(),
+            self.positions.len()
+        );
+        self.normals = normals;
+    }
+
+    /// Attaches bone influences.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `skin` is neither empty nor one per vertex.
+    #[track_caller]
+    pub fn set_skin(&mut self, skin: Vec<VertexSkin>) {
+        assert!(
+            skin.is_empty() || skin.len() == self.positions.len(),
+            "{} skin entries for {} vertices",
+            skin.len(),
+            self.positions.len()
+        );
+        self.skin = skin;
+    }
+
+    /// Binds every vertex rigidly to one joint.
+    ///
+    /// How an attached part joins the body's skinned mesh: a hand does not
+    /// deform, it rides the wrist, and saying so is all the skinning it needs.
+    pub fn bind_rigidly(&mut self, joint: u16) {
+        let mut influences = VertexSkin::default();
+        influences[0] = Influence { joint, weight: 1.0 };
+        self.skin = vec![influences; self.positions.len()];
+    }
+
+    /// Paints every vertex one colour.
+    pub fn paint(&mut self, colour: Vec3) {
+        self.colours = vec![colour; self.positions.len()];
+    }
+
+    /// Attaches a colour per vertex.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `colours` is neither empty nor one per vertex.
+    #[track_caller]
+    pub fn set_colours(&mut self, colours: Vec<Vec3>) {
+        assert!(
+            colours.is_empty() || colours.len() == self.positions.len(),
+            "{} colours for {} vertices",
+            colours.len(),
+            self.positions.len()
+        );
+        self.colours = colours;
+    }
+
+    /// The mesh's normals: the explicit ones if it carries any, else derived.
+    #[must_use]
+    pub fn shading_normals(&self) -> Vec<Vec3> {
+        if self.normals.is_empty() {
+            self.vertex_normals()
+        } else {
+            self.normals.clone()
+        }
+    }
+
+    /// A copy of this mesh with every vertex transformed.
+    ///
+    /// A mirroring transform reverses each face's winding to match, so a
+    /// left-handed copy of a right-handed part still faces outward. Normals go
+    /// through the inverse transpose, which handles the mirror as well as any
+    /// non-uniform scale; texture coordinates, influences and colours are
+    /// properties of the vertex rather than of where it sits, and ride along
+    /// unchanged.
+    #[must_use]
+    pub fn transformed(&self, transform: Mat4) -> PolyMesh {
+        let mirrored = transform.determinant() < 0.0;
+        let reorient = transform.inverse().transpose();
+        PolyMesh {
+            positions: self
+                .positions
+                .iter()
+                .map(|&point| transform.transform_point3(point))
+                .collect(),
+            faces: self
+                .faces
+                .iter()
+                .map(|face| {
+                    if mirrored {
+                        face.iter().rev().copied().collect()
+                    } else {
+                        face.clone()
+                    }
+                })
+                .collect(),
+            normals: self
+                .normals
+                .iter()
+                .map(|&normal| reorient.transform_vector3(normal).normalize_or(normal))
+                .collect(),
+            uvs: self.uvs.clone(),
+            skin: self.skin.clone(),
+            colours: self.colours.clone(),
+        }
+    }
+
+    /// Appends another mesh, re-indexing its faces.
+    ///
+    /// Channels are unioned: one the other mesh carries and this one does not is
+    /// started here with defaults for the vertices already present, and one this
+    /// mesh carries and the other does not is padded out over the new vertices.
+    /// The alternative — dropping the channel, or letting the arrays fall out of
+    /// step — turns a merge into silently wrong texturing.
+    pub fn append(&mut self, other: &PolyMesh) {
+        let base = self.positions.len() as u32;
+        let joined = self.positions.len() + other.positions.len();
+        self.positions.extend_from_slice(&other.positions);
+        self.faces.extend(
+            other
+                .faces
+                .iter()
+                .map(|face| face.iter().map(|index| index + base).collect::<Vec<u32>>()),
+        );
+
+        merge_channel(&mut self.uvs, &other.uvs, base as usize, joined, Vec2::ZERO);
+        merge_channel(
+            &mut self.normals,
+            &other.normals,
+            base as usize,
+            joined,
+            Vec3::Y,
+        );
+        merge_channel(
+            &mut self.skin,
+            &other.skin,
+            base as usize,
+            joined,
+            VertexSkin::default(),
+        );
+        merge_channel(
+            &mut self.colours,
+            &other.colours,
+            base as usize,
+            joined,
+            Vec3::ONE,
+        );
+    }
+
+    /// A copy whose texture coordinates no longer wrap across a seam.
+    ///
+    /// A face straddling the wrap has its corners bunched at both ends of `u`
+    /// with nothing in between; the low ones are duplicated with `u` lifted by a
+    /// whole turn, which makes the face continuous again. The same trick the
+    /// body's unwrap uses, applied to parts that were built as closed solids.
+    ///
+    /// Emptiness in the middle is what identifies the wrap, and it is the reason
+    /// this looks for a *gap* rather than a wide span. A tube's end cap also
+    /// spans the whole of `u` — its corners sit at every angle around the ring
+    /// at once — but they are spread evenly, because it is a pole and not a
+    /// seam. Lifting half of one only moves the smear. Caps are therefore left
+    /// as they are: see the note on end caps in [`crate::prim`].
+    ///
+    /// The result is **not** a closed manifold — a seam is a cut — so this is
+    /// the last step before drawing, never part of authoring. A mesh carrying no
+    /// UVs is returned unchanged.
+    #[must_use]
+    pub fn split_uv_seams(&self) -> PolyMesh {
+        if self.uvs.is_empty() {
+            return self.clone();
+        }
+        let mut out = self.clone();
+        out.faces.clear();
+        // One duplicate per original vertex at most: every straddling face lifts
+        // the same corners by the same whole turn.
+        let mut lifted: HashMap<u32, u32> = HashMap::new();
+
+        for face in &self.faces {
+            let Some(below) = wrap_threshold(face, &self.uvs) else {
+                out.faces.push(face.clone());
+                continue;
+            };
+            let mapped: Vec<u32> = face
+                .iter()
+                .map(|&corner| {
+                    if self.uvs[corner as usize].x > below {
+                        return corner;
+                    }
+                    *lifted.entry(corner).or_insert_with(|| {
+                        let at = out.positions.len() as u32;
+                        out.positions.push(self.positions[corner as usize]);
+                        out.uvs
+                            .push(self.uvs[corner as usize] + Vec2::new(1.0, 0.0));
+                        if !out.normals.is_empty() {
+                            out.normals.push(self.normals[corner as usize]);
+                        }
+                        if !out.skin.is_empty() {
+                            out.skin.push(self.skin[corner as usize]);
+                        }
+                        if !out.colours.is_empty() {
+                            out.colours.push(self.colours[corner as usize]);
+                        }
+                        at
+                    })
+                })
+                .collect();
+            out.faces.push(mapped);
+        }
+
+        out
+    }
+
+    /// A copy with every texture coordinate mapped into `rect`.
+    ///
+    /// How a part takes its place in the shared atlas: it is generated in its own
+    /// unit square and moved into the region reserved for it, so the generator
+    /// never has to know what else is being packed alongside.
+    #[must_use]
+    pub fn uvs_within(&self, min: Vec2, size: Vec2) -> PolyMesh {
+        let mut out = self.clone();
+        for uv in &mut out.uvs {
+            *uv = min + *uv * size;
+        }
+        out
     }
 
     /// Fraction of faces that are quads, in `0.0..=1.0` (`1.0` for an empty mesh).
@@ -181,23 +525,72 @@ impl PolyMesh {
     /// Serialises to Wavefront OBJ, keeping n-gons intact.
     ///
     /// Dependency-free debug affordance: dump a cage, open it in any DCC tool,
-    /// and read the edge flow directly.
+    /// and read the edge flow directly. Texture coordinates and normals are
+    /// written when the mesh carries them, so a chart can be looked at in the
+    /// same way rather than taken on trust.
     #[must_use]
     pub fn to_obj(&self) -> String {
         let mut out = String::new();
-        out.push_str("# symbios-avatar cage dump\n");
+        out.push_str("# symbios-avatar mesh dump\n");
         for p in &self.positions {
             let _ = writeln!(out, "v {} {} {}", p.x, p.y, p.z);
         }
+        for uv in &self.uvs {
+            let _ = writeln!(out, "vt {} {}", uv.x, uv.y);
+        }
+        for normal in &self.normals {
+            let _ = writeln!(out, "vn {} {} {}", normal.x, normal.y, normal.z);
+        }
+        let mapped = !self.uvs.is_empty();
+        let shaded = !self.normals.is_empty();
         for face in &self.faces {
             out.push('f');
             for &i in face {
-                let _ = write!(out, " {}", i + 1);
+                let at = i + 1;
+                let _ = match (mapped, shaded) {
+                    (false, false) => write!(out, " {at}"),
+                    (true, false) => write!(out, " {at}/{at}"),
+                    (false, true) => write!(out, " {at}//{at}"),
+                    (true, true) => write!(out, " {at}/{at}/{at}"),
+                };
             }
             out.push('\n');
         }
         out
     }
+}
+
+/// The `u` below which a face's corners belong to the far side of the wrap.
+///
+/// `None` when the face does not straddle a seam. A wrapping face leaves half
+/// the chart empty between its two clusters of corners, so the widest gap
+/// between neighbouring `u` values identifies both that it wraps and where the
+/// cut falls. A face merely spanning a lot of `u` — a tube's end cap, whose
+/// corners are spread evenly all the way round — has no such gap.
+fn wrap_threshold(face: &[u32], uvs: &[Vec2]) -> Option<f32> {
+    let mut spread: Vec<f32> = face.iter().map(|&c| uvs[c as usize].x).collect();
+    spread.sort_by(f32::total_cmp);
+    spread.dedup();
+    spread
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0], pair[0]))
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .filter(|(gap, _)| *gap > 0.5)
+        .map(|(_, below)| below)
+}
+
+/// Joins one attribute channel onto another during [`PolyMesh::append`].
+///
+/// `base` is how many vertices the receiving mesh had and `joined` how many it
+/// has now. Whichever side lacks the channel is filled with `absent`, so the
+/// channel is present on the result exactly when either input carried it.
+fn merge_channel<T: Clone>(into: &mut Vec<T>, from: &[T], base: usize, joined: usize, absent: T) {
+    if into.is_empty() && from.is_empty() {
+        return;
+    }
+    into.resize(base, absent.clone());
+    into.extend_from_slice(from);
+    into.resize(joined, absent);
 }
 
 /// Result of auditing a [`PolyMesh`]'s topology and winding.

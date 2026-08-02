@@ -4,8 +4,19 @@
 //! `.obj` files in any DCC tool, and read the edge flow directly. The printed
 //! audit is usually enough on its own to tell whether a change helped.
 //!
+//! Two kinds of body come through here and they are reported differently. A
+//! *demo skeleton* is a test case for the mesher, so only its cage and its
+//! subdivided surface are audited. A *record* is an avatar, so it goes through
+//! [`symbios_avatar::Avatar`] — the same call a renderer makes — and what is
+//! reported is what a consumer actually receives.
+//!
+//! That split is the point. This file used to carry its own copy of the
+//! record-to-renderable recipe, which had already drifted from the render
+//! example's copy: it dressed a quadruped in hair and two garments, because the
+//! rule about which bodies wear clothes lived in the other file.
+//!
 //! ```text
-//! cargo run --example dump                 # demo skeletons, cage + 2 levels
+//! cargo run --example dump                 # demo skeletons and default records
 //! cargo run --example dump -- humanoid     # one demo body
 //! cargo run --example dump -- --rolls 8    # eight rerolled avatar records
 //! cargo run --example dump -- --walk 12    # twelve frames of a walk cycle
@@ -13,12 +24,10 @@
 
 use std::path::PathBuf;
 
-use glam::Mat4;
 use symbios_avatar::{
-    Archetype, AvatarRecord, Blink, CageConfig, Extremities, EyeParams, Eyes, FootingConfig, Gait,
-    Ground, Hair, HairParams, Outfit, OutfitParams, PolyMesh, Pose, QuadrupedParams, Rig, Scalp,
-    Skeleton, SkinConfig, SkinParams, Stride, Surface, UvConfig, Vec3, anim::gait,
-    anim::plant_feet_of, build_body, build_cage, demo, rig::skin, texture, unwrap,
+    Archetype, Avatar, AvatarRecord, Blink, CageConfig, FootingConfig, Gait, Ground, PolyMesh,
+    Pose, QuadrupedParams, Skeleton, Stride, Vec3, anim::gait, anim::plant_feet_of, build_body,
+    build_cage, demo,
 };
 
 fn main() {
@@ -62,7 +71,8 @@ fn main() {
                 record.reroll(seed);
                 let name = format!("{label}_{seed}");
                 println!("{name:<16} {}", record.share_code());
-                failures += emit(&out, &name, &record.skeleton(), &record.skin);
+                failures += mesh_report(&out, &name, &record.skeleton());
+                failures += avatar_report(&out, &name, &record);
             }
         }
     } else {
@@ -72,30 +82,42 @@ fn main() {
             ("flat_tripod", demo::flat_tripod()),
             ("humanoid", demo::humanoid()),
             ("quadruped", demo::quadruped()),
-            ("record_biped", AvatarRecord::default().skeleton()),
-            (
-                "record_beast",
-                AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()))
-                    .skeleton(),
-            ),
         ];
         for (name, skeleton) in bodies {
             if !wanted.is_empty() && !wanted.iter().any(|w| *w == name) {
                 continue;
             }
-            failures += emit(&out, name, &skeleton, &SkinParams::default());
+            failures += mesh_report(&out, name, &skeleton);
+        }
+
+        let records = [
+            ("record_biped", AvatarRecord::default()),
+            (
+                "record_beast",
+                AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default())),
+            ),
+        ];
+        for (name, record) in records {
+            if !wanted.is_empty() && !wanted.iter().any(|w| *w == name) {
+                continue;
+            }
+            failures += mesh_report(&out, name, &record.skeleton());
+            failures += avatar_report(&out, name, &record);
         }
     }
 
     println!("\nwrote OBJ files to {}", out.display());
     if failures > 0 {
-        eprintln!("{failures} body/bodies failed to mesh");
+        eprintln!("{failures} body/bodies failed to build");
         std::process::exit(1);
     }
 }
 
-/// Meshes one skeleton, reports it, and writes both stages. Returns 1 on failure.
-fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &SkinParams) -> usize {
+/// Audits the mesher on one skeleton. Returns 1 on failure.
+///
+/// The cage as built, and the surface as a consumer actually gets it —
+/// subdivided and with the skull shaped, which no capsule graph can express.
+fn mesh_report(dir: &std::path::Path, name: &str, skeleton: &Skeleton) -> usize {
     let cage = match build_cage(skeleton, &CageConfig::default()) {
         Ok(cage) => cage,
         Err(error) => {
@@ -103,160 +125,136 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
             return 1;
         }
     };
-    // The cage as built, and the surface as a consumer actually gets it —
-    // subdivided and with the skull shaped, which no capsule graph can express.
     let smooth = build_body(skeleton, &CageConfig::default(), 2).unwrap_or_default();
 
-    report(name, "cage", &cage);
-    report(name, "smooth", &smooth);
+    topology(name, "cage", &cage);
+    topology(name, "smooth", &smooth);
     write(dir, name, "cage", &cage);
     write(dir, name, "smooth", &smooth);
+    0
+}
 
-    // A body is only finished when it can also be posed and painted.
-    match Rig::from_skeleton(skeleton) {
-        Ok(rig) => {
-            let weights = skin::bind(&smooth, &rig, &SkinConfig::default());
-            let zones = weights.zone_map(&smooth, &rig);
-            let uv = unwrap(&smooth, &rig, &zones, &UvConfig::default());
-            let used: f32 = uv.charts.iter().map(|c| c.rect.area()).sum();
-            println!(
-                "{name:<16} {:<7} {:>6} joints {:>6} charts  {:>6} split verts  {:.0}% atlas used",
-                "rig",
-                rig.len(),
-                uv.charts.len(),
-                uv.vertex_count() - smooth.vertex_count(),
-                used * 100.0,
-            );
-            let path = dir.join(format!("{name}_unwrapped.obj"));
-            if let Err(error) = std::fs::write(&path, uv.to_obj(&smooth)) {
-                eprintln!("cannot write {}: {error}", path.display());
-            }
+/// Builds a record the way a consumer does, and reports what comes back.
+///
+/// Returns 1 if the record could not be built at all.
+fn avatar_report(dir: &std::path::Path, name: &str, record: &AvatarRecord) -> usize {
+    let Some(avatar) = Avatar::build(record) else {
+        println!("{name:<16} avatar  FAILED to build");
+        return 1;
+    };
+    let budget = avatar.budget;
+    println!(
+        "{name:<16} {:<7} {:>6} tris  {:>2} meshes  {:>3} joints  {:>5} KiB texture",
+        "budget",
+        budget.tris,
+        budget.meshes,
+        budget.joints,
+        budget.texture_bytes / 1024,
+    );
 
-            // Paint the body so the atlas can actually be looked at.
-            let atlas = texture::bake_geometry(&smooth, &uv, 1024);
-            let map = texture::paint_skin(&atlas, &rig, skin_params);
-            println!(
-                "{name:<16} {:<7} {:>6} texels {:.0}% covered",
-                "skin",
-                atlas.covered(),
-                atlas.coverage() * 100.0,
-            );
-            for (suffix, pixels) in [
-                ("albedo", &map.albedo),
-                ("normal", &map.normal),
-                ("orm", &map.roughness),
-            ] {
-                let path = dir.join(format!("{name}_{suffix}.png"));
-                let saved = image::RgbaImage::from_raw(map.width, map.height, pixels.clone())
-                    .ok_or("pixel buffer is the wrong size".to_string())
-                    .and_then(|image| image.save(&path).map_err(|e| e.to_string()));
-                if let Err(error) = saved {
-                    eprintln!("cannot write {}: {error}", path.display());
-                }
-            }
+    // Every mesh a renderer is handed, in one file each. These carry texture
+    // coordinates and normals, so what opens in a DCC tool is what draws.
+    let drawn = avatar.drawn(0.0);
+    let mut whole = PolyMesh::new();
+    for (index, part) in drawn.iter().enumerate() {
+        println!(
+            "{name:<16} {:<7} {:>6} tris  {:>6} verts",
+            part.kind.name(),
+            part.mesh.triangulated().len(),
+            part.mesh.vertex_count(),
+        );
+        write(
+            dir,
+            name,
+            &format!("{}_{index}", part.kind.name()),
+            &part.mesh,
+        );
+        whole.append(&part.mesh);
+    }
+    write(dir, name, "whole", &whole);
+
+    // The unwrap, and the atlas painted into it. A skull that measures wrong
+    // puts every attached part somewhere wrong and nothing downstream says so,
+    // so the measured figures are printed beside the planned ones.
+    let parts = &avatar.parts;
+    let used: f32 = parts.unwrap.charts.iter().map(|c| c.rect.area()).sum();
+    println!(
+        "{name:<16} {:<7} {:>6} charts  {:>6} split verts  {:.0}% atlas used",
+        "unwrap",
+        parts.unwrap.charts.len(),
+        parts.unwrap.vertex_count() - parts.body.vertex_count(),
+        used * 100.0,
+    );
+    let path = dir.join(format!("{name}_unwrapped.obj"));
+    if let Err(error) = std::fs::write(&path, parts.unwrap.to_obj(&parts.body)) {
+        eprintln!("cannot write {}: {error}", path.display());
+    }
+    for (suffix, pixels) in [
+        ("albedo", &avatar.skin.albedo),
+        ("normal", &avatar.skin.normal),
+        ("orm", &avatar.skin.roughness),
+    ] {
+        let path = dir.join(format!("{name}_{suffix}.png"));
+        let saved =
+            image::RgbaImage::from_raw(avatar.skin.width, avatar.skin.height, pixels.clone())
+                .ok_or("pixel buffer is the wrong size".to_string())
+                .and_then(|image| image.save(&path).map_err(|e| e.to_string()));
+        if let Err(error) = saved {
+            eprintln!("cannot write {}: {error}", path.display());
         }
-        Err(error) => println!("{name:<16} rig     FAILED  {error}"),
     }
 
-    // Eyes, open and shut, so a blink can be checked before it is animated.
-    if let Ok(rig) = Rig::from_skeleton(skeleton)
-        && let Some(eyes) = Eyes::build(&rig, &EyeParams::default())
-    {
-        let to_head = Mat4::from_translation(rig.joints[eyes.head].position);
-        for (state, closure) in [("open", 0.0f32), ("shut", 1.0)] {
-            let mesh = eyes.assembled(closure).transformed(to_head);
-            let path = dir.join(format!("{name}_eyes_{state}.obj"));
-            if let Err(error) = std::fs::write(&path, mesh.to_obj()) {
-                eprintln!("cannot write {}: {error}", path.display());
-            }
-        }
+    if let Some(eyes) = &parts.eyes {
         println!(
-            "{name:<16} {:<7} {:>6} verts  radius {:.4}m  pivot {:?}",
-            "eyes",
-            eyes.assembled(0.0).vertex_count(),
-            eyes.left.radius,
-            eyes.left.pivot,
+            "{name:<16} {:<7} radius {:.4}m  pivot {:?}",
+            "eyes", eyes.left.radius, eyes.left.pivot,
         );
     }
-
-    // Hair, and the surface it was grown against. Both are measured from the
-    // built mesh, so both are worth reporting: a skull that measures wrong puts
-    // the hair somewhere wrong, and nothing downstream would say so.
-    if let Ok(rig) = Rig::from_skeleton(skeleton)
-        && let Ok(mesh) = build_body(skeleton, &CageConfig::default(), 2)
-    {
-        if let Some(hair) = Hair::build(&mesh, &rig, &HairParams::default())
-            && let Some(scalp) = Scalp::measure(&mesh, &rig)
-        {
-            let grown = hair
-                .mesh()
-                .transformed(Mat4::from_translation(scalp.origin()));
-            let path = dir.join(format!("{name}_hair.obj"));
-            if let Err(error) = std::fs::write(&path, grown.to_obj()) {
-                eprintln!("cannot write {}: {error}", path.display());
-            }
-            let surface = Surface::measure(&mesh, &rig);
-            println!(
-                "{name:<16} {:<7} {:>6} verts  {} groups  skull {:.3}m measured vs {:.3}m planned  drop {:.3}m",
-                "hair",
-                grown.vertex_count(),
-                hair.groups.len(),
-                surface.widest(scalp.head),
-                rig.joints[scalp.head].radius,
-                hair.drop(),
-            );
-        }
-
-        // Clothing, and where each hem lands. Cuts follow the body's zones, so
-        // a hem goes where the zone ends rather than where its name suggests —
-        // worth printing, because that is how two of the cut names turned out
-        // to be describing somewhere else entirely.
-        let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
-        let zones = weights.zone_map(&mesh, &rig);
-        let outfit = Outfit::wear(&mesh, &weights, &zones, &OutfitParams::default());
-        if !outfit.is_empty() {
-            let path = dir.join(format!("{name}_outfit.obj"));
-            if let Err(error) = std::fs::write(&path, outfit.mesh().to_obj()) {
-                eprintln!("cannot write {}: {error}", path.display());
-            }
-            for garment in &outfit.garments {
-                let (lo, hi) = garment.mesh.bounds();
-                println!(
-                    "{name:<16} {:<7} {:>6} verts  spans y {:.3}..{:.3}  reaches x {:.3}",
-                    "worn",
-                    garment.vertex_count(),
-                    lo.y,
-                    hi.y,
-                    hi.x,
-                );
-            }
-        }
-
-        // Hands and feet, and the measured girths they were sized from. The
-        // plan's own numbers are printed beside them because sizing parts off
-        // the planned radius rather than the measured one is the mistake this
-        // crate keeps making.
-        let surface = Surface::measure(&mesh, &rig);
-        let extremities = Extremities::build(&rig, &surface, 0.0);
-        if !extremities.is_empty() {
-            let whole =
-                extremities.assembled(|joint| Mat4::from_translation(rig.joints[joint].position));
-            let path = dir.join(format!("{name}_extremities.obj"));
-            if let Err(error) = std::fs::write(&path, whole.to_obj()) {
-                eprintln!("cannot write {}: {error}", path.display());
-            }
-            for part in extremities.hands.iter().chain(&extremities.feet) {
-                println!(
-                    "{name:<16} {:<7} {:>6} verts  {:?} reach {:.3}m  girth {:.4}m measured vs {:.4}m planned",
-                    if part.limb.is_fore() { "hand" } else { "foot" },
-                    part.mesh.vertex_count(),
-                    part.limb,
-                    part.reach,
-                    surface.radius(part.joint, 0.0),
-                    rig.joints[part.joint].radius,
-                );
-            }
-        }
+    if let Some(hair) = &parts.hair {
+        println!(
+            "{name:<16} {:<7} {:>6} groups  skull {:.3}m measured vs {:.3}m planned  drop {:.3}m",
+            "hair",
+            hair.groups.len(),
+            parts.surface.widest(hair.head),
+            avatar.rig.joints[hair.head].radius,
+            hair.drop(),
+        );
+    }
+    // Cuts follow the body's zones, so a hem goes where the zone ends rather
+    // than where its name suggests — worth printing, because that is how two of
+    // the cut names turned out to be describing somewhere else entirely.
+    for garment in &parts.outfit.garments {
+        let (lo, hi) = garment.mesh.bounds();
+        println!(
+            "{name:<16} {:<7} {:>6} verts  spans y {:.3}..{:.3}  reaches x {:.3}",
+            "worn",
+            garment.vertex_count(),
+            lo.y,
+            hi.y,
+            hi.x,
+        );
+    }
+    // Sizing a part off the planned radius rather than the measured one is the
+    // mistake this crate keeps making, so both are printed side by side.
+    //
+    // Labelled by which list the part came out of, not by which end of the body
+    // its limb is on: a quadruped's front legs end in feet, and reading
+    // `is_fore` reported four hands on something with none.
+    let attached = parts
+        .extremities
+        .hands
+        .iter()
+        .map(|part| ("hand", part))
+        .chain(parts.extremities.feet.iter().map(|part| ("foot", part)));
+    for (label, part) in attached {
+        println!(
+            "{name:<16} {label:<7} {:>6} verts  {:?} reach {:.3}m  girth {:.4}m measured vs {:.4}m planned",
+            part.mesh.vertex_count(),
+            part.limb,
+            part.reach,
+            parts.surface.radius(part.joint, 0.0),
+            avatar.rig.joints[part.joint].radius,
+        );
     }
     0
 }
@@ -268,29 +266,23 @@ fn emit(dir: &std::path::Path, name: &str, skeleton: &Skeleton, skin_params: &Sk
 /// terrain each decided.
 fn walk(dir: &std::path::Path, frames: usize) -> usize {
     let record = AvatarRecord::default();
-    let skeleton = record.skeleton();
-    let Ok(mesh) = build_body(&skeleton, &CageConfig::default(), 2) else {
-        eprintln!("the walking body would not mesh");
+    let Some(avatar) = Avatar::build(&record) else {
+        eprintln!("the walking body would not build");
         return 1;
     };
-    let Ok(rig) = Rig::from_skeleton(&skeleton) else {
-        eprintln!("the walking body would not rig");
-        return 1;
-    };
-    let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
-    let gait = Gait::natural(&rig);
-    let stride = Stride::for_body(&rig, 1.0);
+    let rig = &avatar.rig;
+    let gait = Gait::natural(rig);
+    let stride = Stride::for_body(rig, 1.0);
     let grade = 0.12;
-    let eyes = Eyes::build(&rig, &EyeParams::default());
     let mut blink = Blink::seeded(1);
 
     for frame in 0..frames.max(1) {
         let cycle = frame as f32 / frames.max(1) as f32;
-        let mut pose = Pose::rest(&rig);
-        let steps = gait::step(&rig, &mut pose, &gait, &stride, cycle);
+        let mut pose = Pose::rest(rig);
+        let steps = gait::step(rig, &mut pose, &gait, &stride, cycle);
 
         let footing = plant_feet_of(
-            &rig,
+            rig,
             &mut pose,
             &steps.stance,
             |foot| {
@@ -316,25 +308,12 @@ fn walk(dir: &std::path::Path, frames: usize) -> usize {
             },
         );
 
-        let posed = pose.forward(&rig);
-        let mut moved = PolyMesh {
-            positions: posed.deform(&rig, &mesh.positions, &weights),
-            faces: mesh.faces.clone(),
-        };
-
-        // The eyes ride the head rather than being skinned, so they follow it
-        // through one rigid transform.
-        if let Some(eyes) = &eyes {
-            let closure = blink.advance(1.0 / frames.max(1) as f32);
-            let head = Mat4::from_rotation_translation(
-                posed.rotations[eyes.head],
-                posed.positions[eyes.head],
-            ) * Mat4::from_translation(-rig.joints[eyes.head].position);
-            moved.append(
-                &eyes
-                    .assembled(closure)
-                    .transformed(head * Mat4::from_translation(rig.joints[eyes.head].position)),
-            );
+        // The whole avatar, blinking as it goes: everything a renderer draws,
+        // in one file per frame.
+        let closure = blink.advance(1.0 / frames.max(1) as f32);
+        let mut moved = PolyMesh::new();
+        for part in avatar.posed(&pose, closure) {
+            moved.append(&part.mesh);
         }
         let path = dir.join(format!("walk_{frame:02}.obj"));
         if let Err(error) = std::fs::write(&path, moved.to_obj()) {
@@ -345,7 +324,7 @@ fn walk(dir: &std::path::Path, frames: usize) -> usize {
 }
 
 /// Prints one line of topology stats.
-fn report(name: &str, stage: &str, mesh: &PolyMesh) {
+fn topology(name: &str, stage: &str, mesh: &PolyMesh) {
     let audit = mesh.manifold_report();
     let (lo, hi) = mesh.bounds();
     let size = hi - lo;

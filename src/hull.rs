@@ -282,6 +282,7 @@ mod tests {
         PolyMesh {
             positions: points.to_vec(),
             faces,
+            ..Default::default()
         }
     }
 

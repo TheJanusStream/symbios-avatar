@@ -19,6 +19,8 @@
 //! and a single offset surface has none of those: seen from underneath it
 //! vanishes, and at the hem it reads as a sticker.
 
+use glam::{Vec2, Vec3};
+
 use crate::mesh::PolyMesh;
 use crate::plan::{Zone, ZoneSet};
 use crate::rig::{Influence, MAX_INFLUENCES, SkinWeights};
@@ -60,10 +62,15 @@ impl Default for GarmentCut {
 /// One piece of close-fitting clothing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Garment {
-    /// Its geometry, in body space.
+    /// Its geometry, in body space, carrying the body's skin weights and colour.
     pub mesh: PolyMesh,
-    /// Skin weights, one per vertex of [`Self::mesh`], taken from the body.
-    pub weights: SkinWeights,
+    /// The body vertex each garment vertex was cut from.
+    ///
+    /// Twice as long as the body's contribution, because the outer and inner
+    /// shells are cut from the same points. This is the one lookup that gives a
+    /// garment texture coordinates: it was made of body, so it is charted where
+    /// the body is charted, and nothing has to unwrap it separately.
+    pub source: Vec<u32>,
     /// The colour it should be shaded.
     pub colour: [f32; 3],
 }
@@ -149,16 +156,19 @@ impl Garment {
 
         // Weights come straight from the body vertex each point was made from,
         // which is the whole reason a garment cut this way needs no rigging.
-        let mut worn = Vec::with_capacity(source.len() * 2);
-        for _ in 0..2 {
-            for &from in &source {
-                worn.push(borrowed(weights, from as usize));
-            }
-        }
+        // Both shells were cut from the same points, hence the doubling.
+        let cut_from: Vec<u32> = source.iter().chain(&source).copied().collect();
+        garment.set_skin(
+            cut_from
+                .iter()
+                .map(|&from| borrowed(weights, from as usize))
+                .collect(),
+        );
+        garment.paint(Vec3::from_array(colour));
 
         Some(Self {
             mesh: garment,
-            weights: SkinWeights { vertices: worn },
+            source: cut_from,
             colour,
         })
     }
@@ -167,6 +177,20 @@ impl Garment {
     #[must_use]
     pub fn vertex_count(&self) -> usize {
         self.mesh.vertex_count()
+    }
+
+    /// Charts the garment against the body's atlas.
+    ///
+    /// `body_uvs` is one coordinate per *body* vertex — the unwrap's first copy
+    /// of each, which is enough because a garment is shaded rather than painted
+    /// with detail that would show a seam.
+    pub fn chart(&mut self, body_uvs: &[Vec2]) {
+        self.mesh.set_uvs(
+            self.source
+                .iter()
+                .map(|&from| body_uvs.get(from as usize).copied().unwrap_or(Vec2::ZERO))
+                .collect(),
+        );
     }
 }
 
@@ -352,16 +376,50 @@ mod tests {
             ..Default::default()
         };
         let garment = Garment::cut(&mesh, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
-        assert_eq!(garment.weights.vertices.len(), garment.vertex_count());
-        assert!(garment.weights.is_normalized(1e-3));
+        assert!(garment.mesh.channels_are_consistent());
+        assert_eq!(garment.mesh.skin.len(), garment.vertex_count());
+        let worn = SkinWeights {
+            vertices: garment.mesh.skin.clone(),
+        };
+        assert!(worn.is_normalized(1e-3));
         assert!(
             garment
-                .weights
-                .vertices
+                .mesh
+                .skin
                 .iter()
                 .all(|influences| influences.iter().any(|i| i.weight > 0.0)),
             "a garment vertex came out unweighted"
         );
+        // Each garment vertex names the body vertex it was cut from, and the
+        // two shells name the same ones.
+        assert_eq!(garment.source.len(), garment.vertex_count());
+        let half = garment.vertex_count() / 2;
+        assert_eq!(garment.source[..half], garment.source[half..]);
+    }
+
+    #[test]
+    fn a_garment_is_charted_where_the_body_is_charted() {
+        let (mesh, weights, zones) = body();
+        let cut = GarmentCut {
+            zones: torso(),
+            ..Default::default()
+        };
+        let mut garment = Garment::cut(&mesh, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
+        assert!(
+            garment.mesh.uvs.is_empty(),
+            "a cut garment is not yet charted"
+        );
+
+        // Stand-in for the body's atlas: one coordinate per body vertex.
+        let body_uvs: Vec<Vec2> = (0..mesh.vertex_count())
+            .map(|v| Vec2::new(v as f32 / mesh.vertex_count() as f32, 0.25))
+            .collect();
+        garment.chart(&body_uvs);
+
+        assert!(garment.mesh.channels_are_consistent());
+        for (vertex, &from) in garment.source.iter().enumerate() {
+            assert_eq!(garment.mesh.uvs[vertex], body_uvs[from as usize]);
+        }
     }
 
     #[test]

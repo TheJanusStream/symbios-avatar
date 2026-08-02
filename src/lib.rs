@@ -57,6 +57,7 @@
 #![warn(missing_docs)]
 
 pub mod anim;
+pub mod avatar;
 pub mod cage;
 pub mod demo;
 pub mod dress;
@@ -78,6 +79,7 @@ pub use anim::{
     Clip, Footing, FootingConfig, Gait, Gaze, GazeConfig, Ground, Inertializer, Key, Pose, Posed,
     Stride, Target, Track, look_at, plant_feet,
 };
+pub use avatar::{Avatar, AvatarConfig, AvatarMesh, Budget, MeshKind, Parts};
 pub use cage::{CageConfig, CageError, build_cage};
 pub use dress::{Garment, GarmentCut, Leg, Outfit, OutfitParams, Sleeve};
 pub use extremity::{Attached, Extremities, Foot, Hand};

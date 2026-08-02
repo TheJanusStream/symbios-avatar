@@ -129,6 +129,30 @@ impl UvUnwrap {
             .collect()
     }
 
+    /// One atlas coordinate per *mesh* vertex, rather than per unwrapped one.
+    ///
+    /// A vertex on a chart boundary has several coordinates and this keeps the
+    /// first, so the result is only ever an approximation — for anything painted
+    /// with detail it would show a seam. It is what a garment needs, though: a
+    /// garment is cut from body vertices and shaded rather than painted, so one
+    /// lookup per vertex gives it the complexion of the skin beneath it without
+    /// unwrapping it separately.
+    ///
+    /// Vertices no chart uses come back at the middle of the atlas.
+    #[must_use]
+    pub fn by_source(&self, vertices: usize) -> Vec<Vec2> {
+        let mut out = vec![Vec2::splat(0.5); vertices];
+        let mut taken = vec![false; vertices];
+        for (index, &source) in self.source.iter().enumerate() {
+            let at = source as usize;
+            if at < vertices && !taken[at] {
+                taken[at] = true;
+                out[at] = self.uvs[index];
+            }
+        }
+        out
+    }
+
     /// Serialises the unwrapped mesh to Wavefront OBJ, texture coordinates and all.
     ///
     /// Open the result in any DCC tool to see the atlas laid out — which is the

@@ -10,19 +10,26 @@ Record  ──►  Skeleton  ──►  control cage  ──►  Catmull-Clark  
 ```
 
 ```rust
-use symbios_avatar::{AvatarRecord, CageConfig, build_cage, catmull_clark};
+use symbios_avatar::{Avatar, AvatarRecord};
 
 // An avatar is a small parametric record, not a mesh.
 let mut record = AvatarRecord::default();
 record.reroll(42);
 
-let cage = build_cage(&record.skeleton(), &CageConfig::default())?;
-let body = catmull_clark(&cage, 2);
+// One call from record to something drawable: merged skinned meshes grouped by
+// material, a painted skin atlas, the rig they are bound to, and the bill.
+let avatar = Avatar::build(&record).expect("a default body builds");
+println!("{} tris across {} meshes", avatar.budget.tris, avatar.budget.meshes);
 
-assert!(body.is_closed_manifold());
-assert_eq!(body.quad_fraction(), 1.0);
-# Ok::<(), symbios_avatar::CageError>(())
+for drawn in avatar.drawn(0.0) {
+    assert_eq!(drawn.mesh.skin.len(), drawn.mesh.vertex_count());
+}
 ```
+
+The stages are all public — `build_cage`, `catmull_clark`, `skin::bind`,
+`unwrap`, `paint_skin` — but `Avatar::build` is the one recipe, and it is what
+the examples consume. Two of them used to carry their own copy and had already
+drifted apart.
 
 ## What it does
 
@@ -55,9 +62,16 @@ adding fields:
   one canonical encoding, so axes are stored as thousandths and lengths as
   millimetres. Sanitising quantises to match, which is what makes a record equal
   itself after a round trip.
-- **Records only ever grow.** New fields are optional with `#[serde(default)]`
-  *on the field* — a container-level default silently resets sibling fields when
-  one is missing — and unknown fields are ignored on read.
+- **Records only ever grow.** `#[serde(default)]` goes on the *container*, not
+  on the field: a field-level default yields the field type's zero rather than
+  the struct's default, so one specified axis dragged every sibling to zero.
+  Unknown fields are kept rather than ignored, so an older client rewriting a
+  newer client's record cannot delete what it did not understand, and an
+  unrecognised `$type` or token degrades to a stand-in instead of failing the
+  whole avatar.
+- **A seed reproduces a look.** Each axis draws from its own stream keyed on its
+  name, so adding an axis cannot shift the others, and `generator` records which
+  generation of the draw produced the parameters.
 
 Re-rolling draws each category (stature, build, frame, proportions, features)
 from its own seed stream, so locking one category never reshuffles another.

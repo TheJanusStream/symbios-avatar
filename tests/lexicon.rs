@@ -75,14 +75,91 @@ fn the_profile_record_matches_its_schema() {
     let schema = lexicon("profile")["defs"]["main"]["record"].clone();
     let declared = property_names(&schema);
 
-    let mut profile = ProfileRecord::pointing_at("3lm2k4x");
-    profile.created_at = Some("2026-08-01T00:00:00Z".into());
+    let profile = ProfileRecord::pointing_at("3lm2k4x", "2026-08-01T00:00:00Z");
     for field in field_names(&profile) {
         assert!(
             declared.contains(&field),
             "profile writes `{field}`, which the lexicon does not declare"
         );
     }
+}
+
+/// Field names a schema object marks required.
+fn required_names(schema: &Value) -> Vec<String> {
+    schema["required"]
+        .as_array()
+        .map(|names| {
+            names
+                .iter()
+                .map(|name| {
+                    name.as_str()
+                        .expect("required names are strings")
+                        .to_string()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn every_required_field_is_actually_written() {
+    // The direction that was missing, and the reason a whole class of invalid
+    // record shipped: the checks above run written-to-declared, which passes
+    // happily when a required field is never written at all. A PDS that
+    // resolves the lexicon rejects such a record outright.
+    let avatar =
+        AvatarRecord::new("Complete", Archetype::default()).created("2026-08-01T00:00:00Z");
+    assert_eq!(avatar.publishable(), Ok(()));
+    let written = field_names(&avatar);
+    for field in required_names(&lexicon("avatar")["defs"]["main"]["record"]) {
+        assert!(
+            written.contains(&field),
+            "the lexicon requires `{field}`, which the avatar record does not write"
+        );
+    }
+
+    let profile = ProfileRecord::pointing_at("3lm2k4x", "2026-08-01T00:00:00Z");
+    assert_eq!(profile.publishable(), Ok(()));
+    let written = field_names(&profile);
+    for field in required_names(&lexicon("profile")["defs"]["main"]["record"]) {
+        assert!(
+            written.contains(&field),
+            "the lexicon requires `{field}`, which the profile record does not write"
+        );
+    }
+}
+
+#[test]
+fn a_record_missing_a_required_field_says_so_before_it_is_published() {
+    // The counterpart: the crate can hold a partial record — that is what an
+    // in-progress creator has — but it must not let one be written as if it
+    // were complete.
+    let unstamped = AvatarRecord::new("Draft", Archetype::default());
+    assert!(unstamped.publishable().is_err());
+    assert!(
+        !field_names(&unstamped).contains(&"createdAt".to_string()),
+        "an unstamped record must not invent a timestamp"
+    );
+}
+
+#[test]
+fn an_unknown_archetype_round_trips_through_the_union() {
+    // The archetype union is declared open, and an open union is only open if a
+    // reader survives a variant it has never seen. WS6 adds creature
+    // archetypes, so this is a dated promise rather than a hypothetical.
+    let json = r#"{"name":"Hexapod","archetype":{"$type":"network.symbios.avatar.defs#hexapod","legs":6}}"#;
+    let record: AvatarRecord = serde_json::from_str(json).expect("an unknown body still loads");
+    assert!(!record.archetype.is_understood());
+
+    let back = serde_json::to_value(&record).expect("serialises");
+    assert_eq!(
+        back["archetype"]["$type"],
+        "network.symbios.avatar.defs#hexapod"
+    );
+    assert_eq!(
+        back["archetype"]["legs"], 6,
+        "the unknown body was rewritten lossily"
+    );
 }
 
 #[test]

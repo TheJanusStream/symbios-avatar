@@ -10,12 +10,10 @@
 //! parameter space meshable (see the module docs for [`super`]).
 
 use glam::Vec3;
-use rand::Rng;
-use rand_pcg::Pcg64Mcg;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BodyPlan, Category, PlanDecodeError, put_length, put_signed, put_unit, take_length,
+    BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_signed, put_unit, take_length,
     take_signed, take_unit,
 };
 use super::{Limb, Zone};
@@ -35,35 +33,35 @@ const A_POSE: f32 = 0.70;
 ///
 /// Axes run `-1..=1` unless noted, with `0` the neutral middle.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct HumanoidParams {
     /// Standing height in metres, within [`super::humanoid_height_range`].
-    #[serde(default = "default_height", with = "super::scaled")]
+    #[serde(with = "super::scaled")]
     pub height: f32,
     /// Overall mass, from slight to heavy.
-    #[serde(default, with = "super::scaled")]
+    #[serde(with = "super::scaled")]
     pub build: f32,
     /// Musculature, `0..=1`.
-    #[serde(default, with = "super::scaled")]
+    #[serde(with = "super::scaled")]
     pub muscle: f32,
     /// Width of the shoulder girdle.
-    #[serde(default, with = "super::scaled")]
+    #[serde(with = "super::scaled")]
     pub shoulder_width: f32,
     /// Width of the pelvis.
-    #[serde(default, with = "super::scaled")]
+    #[serde(with = "super::scaled")]
     pub hip_width: f32,
     /// Limb length relative to the torso; longer limbs raise the pelvis and so
     /// shorten the torso at a fixed stature.
-    #[serde(default, with = "super::scaled")]
+    #[serde(with = "super::scaled")]
     pub limb_length: f32,
     /// Neck length.
-    #[serde(default, with = "super::scaled")]
+    #[serde(with = "super::scaled")]
     pub neck_length: f32,
     /// Head size.
-    #[serde(default, with = "super::scaled")]
+    #[serde(with = "super::scaled")]
     pub head_size: f32,
     /// Hand and foot size.
-    #[serde(default, with = "super::scaled")]
+    #[serde(with = "super::scaled")]
     pub extremity_size: f32,
 }
 
@@ -321,26 +319,26 @@ impl BodyPlan for HumanoidParams {
         skeleton
     }
 
-    fn reroll(&mut self, category: Category, rng: &mut Pcg64Mcg) {
+    fn reroll(&mut self, category: Category, rolls: &Rolls) {
         match category {
             Category::Stature => {
-                self.height = rng.random_range(HEIGHT_RANGE.0..=HEIGHT_RANGE.1);
+                self.height = rolls.range("humanoid.height", HEIGHT_RANGE.0, HEIGHT_RANGE.1);
             }
             Category::Build => {
-                self.build = rng.random_range(-1.0..=1.0);
-                self.muscle = rng.random_range(0.0..=1.0);
+                self.build = rolls.range("humanoid.build", -1.0, 1.0);
+                self.muscle = rolls.range("humanoid.muscle", 0.0, 1.0);
             }
             Category::Frame => {
-                self.shoulder_width = rng.random_range(-1.0..=1.0);
-                self.hip_width = rng.random_range(-1.0..=1.0);
+                self.shoulder_width = rolls.range("humanoid.shoulderWidth", -1.0, 1.0);
+                self.hip_width = rolls.range("humanoid.hipWidth", -1.0, 1.0);
             }
             Category::Proportions => {
-                self.limb_length = rng.random_range(-1.0..=1.0);
-                self.neck_length = rng.random_range(-1.0..=1.0);
+                self.limb_length = rolls.range("humanoid.limbLength", -1.0, 1.0);
+                self.neck_length = rolls.range("humanoid.neckLength", -1.0, 1.0);
             }
             Category::Features => {
-                self.head_size = rng.random_range(-1.0..=1.0);
-                self.extremity_size = rng.random_range(-1.0..=1.0);
+                self.head_size = rolls.range("humanoid.headSize", -1.0, 1.0);
+                self.extremity_size = rolls.range("humanoid.extremitySize", -1.0, 1.0);
             }
         }
     }

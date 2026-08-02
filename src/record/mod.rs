@@ -13,11 +13,25 @@
 //!
 //! ## Schema evolution
 //!
-//! Records only ever grow. New fields are optional with `#[serde(default)]`
-//! **on the field**, never on the container — a container-level default silently
-//! resets sibling fields when one is missing, which is the subtle way this goes
-//! wrong. Unknown fields are ignored on read, so a record written by a newer
-//! build still loads.
+//! Records only ever grow, and every rule here exists because the alternative
+//! was reproduced and found to corrupt bodies.
+//!
+//! * **`#[serde(default)]` goes on the container, not on the field.** This is
+//!   the opposite of what this module used to say, and the old advice was wrong.
+//!   A field-level default on a scalar yields the *type's* zero, not the
+//!   struct's default: `{"skin":{"melanin":600}}` parsed to `blush: 0.0` where
+//!   the default is `0.45`, giving pale, shut-eyed, black-haired avatars from
+//!   any partial object — which is exactly what a field-eliding encoder writes.
+//!   A container-level default fills only the fields that are *absent*; it does
+//!   not touch siblings that are present.
+//! * **Integers are read wide, then clamped.** An axis that arrives out of
+//!   `i32` range must be clamped by [`AvatarRecord::sanitize`], not rejected by
+//!   the parser before sanitising can run.
+//! * **Unknown fields are kept, not ignored.** [`AvatarRecord::extra`] holds
+//!   them, so an older client editing a newer client's record writes back what
+//!   it did not understand instead of deleting it.
+//! * **Unknown `$type`s and unknown tokens degrade rather than fail.** See
+//!   [`crate::plan::Archetype`] and [`crate::dress::Sleeve`].
 //!
 //! ## Budget
 //!
@@ -29,14 +43,12 @@
 mod code;
 mod lock;
 
-use rand::SeedableRng;
-use rand_pcg::Pcg64Mcg;
 use serde::{Deserialize, Serialize};
 
 use crate::dress::OutfitParams;
 use crate::face::{EyeParams, FaceParams};
 use crate::hair::HairParams;
-use crate::plan::{Archetype, Category};
+use crate::plan::{Archetype, Category, Rolls};
 use crate::skeleton::Skeleton;
 use crate::texture::SkinParams;
 
@@ -58,6 +70,34 @@ pub const RECORD_BUDGET_BYTES: usize = 100 * 1024;
 
 /// Longest accepted avatar name, in characters.
 pub const MAX_NAME_CHARS: usize = 64;
+
+/// Which generation of the re-roll this build implements.
+///
+/// A seed is stored so a look can be reproduced, and that promise only holds
+/// against the generator that drew it. Per-axis streams (see
+/// [`crate::plan::Rolls`]) mean adding or removing an axis no longer disturbs
+/// the others, so this should move rarely — but when it does, a reader carrying
+/// an older number knows the body it rebuilds is not the body that was rolled.
+///
+/// **1** — the first numbered generation. Everything before it drew whole
+/// categories in sequence from one stream, so any seed rolled by an earlier
+/// build reproduces a different person here. That break is taken deliberately
+/// and once, while the lexicon is unpublished and nothing depends on it.
+pub const GENERATOR_VERSION: u32 = 1;
+
+/// A field the lexicon requires that this record does not carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum NotPublishable {
+    /// The record has no creation timestamp.
+    ///
+    /// This crate is deliberately clock-free — `std::time` panics on wasm — so
+    /// the application supplies it. Nothing else can.
+    #[error("createdAt is required by the lexicon and this record has none")]
+    MissingCreatedAt,
+    /// The avatar has no name.
+    #[error("name is required by the lexicon and this record's is empty")]
+    MissingName,
+}
 
 /// One avatar: a parametric body plus the state its creator needs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -93,12 +133,30 @@ pub struct AvatarRecord {
     /// Categories a re-roll must leave alone.
     #[serde(default)]
     pub locks: LockSet,
+    /// Which build of the generator last re-rolled this record.
+    ///
+    /// A seed only reproduces a look against the generator that drew it. Every
+    /// care is taken that it keeps doing so — each axis draws from its own named
+    /// stream, so adding an axis cannot shift another — but a deliberate change
+    /// to how an axis is drawn is still possible, and a reader has to be able to
+    /// tell. See [`GENERATOR_VERSION`].
+    #[serde(default)]
+    pub generator: u32,
     /// When the record was created, as an ISO-8601 timestamp.
     ///
     /// Supplied by the application: this crate stays clock-free so it can build
     /// bodies anywhere, including on wasm where the system clock will panic.
+    /// The lexicon marks it required, so a record without one is not
+    /// publishable — see [`AvatarRecord::publishable`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    /// Fields this build does not know about, kept verbatim.
+    ///
+    /// Without this, an older client reading and re-writing a record silently
+    /// deletes every field a newer client added — the read-modify-write cycle
+    /// that quietly destroys data across a whole network of readers.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for AvatarRecord {
@@ -113,7 +171,9 @@ impl Default for AvatarRecord {
             outfit: OutfitParams::default(),
             seed: 0,
             locks: LockSet::NONE,
+            generator: GENERATOR_VERSION,
             created_at: None,
+            extra: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -165,18 +225,59 @@ impl AvatarRecord {
     /// stays, and it would be broken if unlocking changed unrelated axes.
     pub fn reroll(&mut self, seed: i64) {
         self.seed = seed;
+        self.generator = GENERATOR_VERSION;
+        let rolls = Rolls::new(seed);
         for category in Category::ALL {
             if self.locks.is_locked(category) {
                 continue;
             }
-            let mut rng = category_stream(seed, category);
-            self.archetype.reroll(category, &mut rng);
+            self.archetype.reroll(category, &rolls);
             if category == Category::Features {
-                reroll_skin(&mut self.skin, &mut rng);
-                reroll_face(&mut self.eyes, &mut self.face, &mut self.hair, &mut rng);
+                reroll_skin(&mut self.skin, &rolls);
+                reroll_face(&mut self.eyes, &mut self.face, &mut self.hair, &rolls);
             }
         }
         self.sanitize();
+    }
+
+    /// Whether this record carries everything the lexicon marks required.
+    ///
+    /// The crate can write a partial record — that is what an in-progress
+    /// creator holds — but a PDS that resolves the lexicon rejects one, and
+    /// finding that out at the point of publication is too late. Call this
+    /// before writing.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first required field that is missing.
+    pub fn publishable(&self) -> Result<(), NotPublishable> {
+        if self.name.trim().is_empty() {
+            return Err(NotPublishable::MissingName);
+        }
+        if self
+            .created_at
+            .as_ref()
+            .is_none_or(|at| at.trim().is_empty())
+        {
+            return Err(NotPublishable::MissingCreatedAt);
+        }
+        Ok(())
+    }
+
+    /// Stamps the record with the time its owner created it.
+    ///
+    /// The one required field this crate cannot supply for itself.
+    #[must_use]
+    pub fn created(mut self, timestamp: impl Into<String>) -> Self {
+        self.created_at = Some(timestamp.into());
+        self
+    }
+
+    /// Renames the avatar.
+    #[must_use]
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
     }
 
     /// Renders this avatar's look as a compact share code.
@@ -251,12 +352,34 @@ pub struct ProfileRecord {
 
 impl ProfileRecord {
     /// A profile pointing at one avatar record key.
+    ///
+    /// `created_at` is taken here rather than left to be filled in later,
+    /// because the lexicon marks it required and the version of this
+    /// constructor that did not take one produced a record every conformant PDS
+    /// rejects — with nothing in the type system, and nothing in the tests, to
+    /// say so.
     #[must_use]
-    pub fn pointing_at(record_key: impl Into<String>) -> Self {
+    pub fn pointing_at(record_key: impl Into<String>, created_at: impl Into<String>) -> Self {
         Self {
             default_avatar: Some(record_key.into()),
-            created_at: None,
+            created_at: Some(created_at.into()),
         }
+    }
+
+    /// Whether this record carries everything the lexicon marks required.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first required field that is missing.
+    pub fn publishable(&self) -> Result<(), NotPublishable> {
+        if self
+            .created_at
+            .as_ref()
+            .is_none_or(|at| at.trim().is_empty())
+        {
+            return Err(NotPublishable::MissingCreatedAt);
+        }
+        Ok(())
     }
 }
 
@@ -270,58 +393,42 @@ impl ProfileRecord {
 /// Hair rides with features rather than owning a lock category of its own. A
 /// creator who locks "features" has locked what their face looks like, and hair
 /// is the loudest part of that.
-fn reroll_face(
-    eyes: &mut EyeParams,
-    face: &mut FaceParams,
-    hair: &mut HairParams,
-    rng: &mut Pcg64Mcg,
-) {
-    use rand::Rng;
-    face.nose = rng.random_range(0.15..=0.9);
-    face.brow = rng.random_range(0.1..=0.9);
-    face.mouth = rng.random_range(0.15..=0.95);
-    face.ears = rng.random_range(0.1..=0.85);
+fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, hair: &mut HairParams, rolls: &Rolls) {
+    face.nose = rolls.range("face.nose", 0.15, 0.9);
+    face.brow = rolls.range("face.brow", 0.1, 0.9);
+    face.mouth = rolls.range("face.mouth", 0.15, 0.95);
+    face.ears = rolls.range("face.ears", 0.1, 0.85);
 
-    eyes.size = rng.random_range(0.25..=0.85);
-    eyes.spacing = rng.random_range(-0.6..=0.6);
-    eyes.depth = rng.random_range(-0.5..=0.7);
-    eyes.aperture = rng.random_range(0.55..=1.0);
+    eyes.size = rolls.range("eyes.size", 0.25, 0.85);
+    eyes.spacing = rolls.range("eyes.spacing", -0.6, 0.6);
+    eyes.depth = rolls.range("eyes.depth", -0.5, 0.7);
+    eyes.aperture = rolls.range("eyes.aperture", 0.55, 1.0);
 
-    hair.length = rng.random_range(0.0..=1.0);
-    hair.volume = rng.random_range(-0.7..=0.9);
-    hair.coverage = rng.random_range(-0.8..=0.8);
-    hair.part = rng.random_range(-1.0..=1.0);
-    hair.wave = rng.random_range(0.0..=1.0);
-    hair.shade = rng.random_range(0.0..=1.0);
+    hair.length = rolls.range("hair.length", 0.0, 1.0);
+    hair.volume = rolls.range("hair.volume", -0.7, 0.9);
+    hair.coverage = rolls.range("hair.coverage", -0.8, 0.8);
+    hair.part = rolls.range("hair.part", -1.0, 1.0);
+    hair.wave = rolls.range("hair.wave", 0.0, 1.0);
+    hair.shade = rolls.range("hair.shade", 0.0, 1.0);
 }
 
-fn reroll_skin(skin: &mut SkinParams, rng: &mut Pcg64Mcg) {
-    use rand::Rng;
-    skin.melanin = rng.random_range(0.0..=1.0);
-    skin.undertone = rng.random_range(-1.0..=1.0);
-    skin.blush = rng.random_range(0.15..=0.8);
-    // Most people have neither, so both stay off more often than not.
-    skin.freckles = if rng.random_bool(0.3) {
-        rng.random_range(0.2..=1.0)
+fn reroll_skin(skin: &mut SkinParams, rolls: &Rolls) {
+    skin.melanin = rolls.range("skin.melanin", 0.0, 1.0);
+    skin.undertone = rolls.range("skin.undertone", -1.0, 1.0);
+    skin.blush = rolls.range("skin.blush", 0.15, 0.8);
+    // Most people have neither, so both stay off more often than not. The
+    // coin and the amount draw from separate streams, so changing how much
+    // stubble a stubbled face has cannot change which faces have any.
+    skin.freckles = if rolls.chance("skin.freckled", 0.3) {
+        rolls.range("skin.freckles", 0.2, 1.0)
     } else {
         0.0
     };
-    skin.stubble = if rng.random_bool(0.25) {
-        rng.random_range(0.3..=1.0)
+    skin.stubble = if rolls.chance("skin.stubbled", 0.25) {
+        rolls.range("skin.stubble", 0.3, 1.0)
     } else {
         0.0
     };
-}
-
-/// The random stream one category draws from for a given seed.
-///
-/// Mixing the category into the seed — rather than drawing categories in
-/// sequence from one stream — is what makes locks independent.
-fn category_stream(seed: i64, category: Category) -> Pcg64Mcg {
-    let salt = (category as u64)
-        .wrapping_add(1)
-        .wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    Pcg64Mcg::seed_from_u64(seed as u64 ^ salt)
 }
 
 #[cfg(test)]
@@ -433,10 +540,175 @@ mod tests {
     }
 
     #[test]
-    fn unknown_fields_are_ignored_on_read() {
+    fn a_partial_object_keeps_the_defaults_of_the_fields_it_omits() {
+        // Reproduced defect: a field-level serde(default) on a scalar yields the
+        // TYPE's zero, not the struct's default, so one specified axis dragged
+        // every sibling to zero — pale, shut-eyed, black-haired avatars out of
+        // any field-eliding encoder. Omitting the object entirely was always
+        // fine; the partial object was the bug, and it is what a JS client
+        // writes.
+        let json = r#"{"name":"Partial","skin":{"melanin":600},"eyes":{"size":700}}"#;
+        let record: AvatarRecord = serde_json::from_str(json).expect("deserialises");
+
+        assert_eq!(record.skin.melanin, 0.6, "the specified axis is honoured");
+        assert_eq!(
+            record.skin.blush,
+            SkinParams::default().blush,
+            "an omitted sibling keeps the default, not zero"
+        );
+        assert_eq!(record.eyes.size, 0.7);
+        assert_eq!(record.eyes.aperture, EyeParams::default().aperture);
+        assert_eq!(record.hair.groups, HairParams::default().groups);
+    }
+
+    #[test]
+    fn an_out_of_range_number_is_clamped_rather_than_failing_the_parse() {
+        // Sanitising cannot run on a record that would not load, so the reader
+        // has to be wide enough to accept the value first.
+        let json = r#"{"name":"Wide","skin":{"melanin":3000000000},"hair":{"groups":4000000000}}"#;
+        let mut record: AvatarRecord = serde_json::from_str(json).expect("loads a wild value");
+        record.sanitize();
+        assert_eq!(record.skin.melanin, 1.0);
+        assert_eq!(record.hair.groups, crate::hair::MAX_GROUPS);
+    }
+
+    #[test]
+    fn unknown_fields_are_kept_so_an_old_client_cannot_delete_them() {
+        // The read-modify-write that quietly destroys data: an older build reads
+        // a newer build's record, writes it back, and every field it did not
+        // understand is gone.
         let json = r#"{"name":"Future","hairstyle":{"kind":"bob"},"$type":"network.symbios.avatar.avatar"}"#;
         let record: AvatarRecord = serde_json::from_str(json).expect("tolerates new fields");
         assert_eq!(record.name, "Future");
+
+        let back = serde_json::to_value(&record).expect("serialises");
+        assert_eq!(back["hairstyle"]["kind"], "bob", "a new field was dropped");
+        assert_eq!(back["$type"], AVATAR_NSID, "the record type was dropped");
+    }
+
+    #[test]
+    fn an_unknown_archetype_still_loads_and_survives_a_rewrite() {
+        // WS6 adds creature archetypes by design. On the day the first one
+        // exists, every deployed client must still render a placeholder rather
+        // than lose the name, the seed and the locks along with the body.
+        let json = r#"{"name":"Hexapod","seed":42,"archetype":{"$type":"network.symbios.avatar.defs#hexapod","height":900,"legs":6}}"#;
+        let mut record: AvatarRecord = serde_json::from_str(json).expect("loads an unknown body");
+        assert_eq!(record.name, "Hexapod");
+        assert_eq!(record.seed, 42);
+        assert!(!record.archetype.is_understood());
+        assert_eq!(
+            record.archetype.name(),
+            "network.symbios.avatar.defs#hexapod"
+        );
+
+        // Something renders.
+        assert!(!record.skeleton().nodes.is_empty());
+        // And nothing this build does to it loses what it could not read.
+        record.sanitize();
+        record.reroll(7);
+        let back = serde_json::to_value(&record).expect("serialises");
+        assert_eq!(back["archetype"]["legs"], 6);
+        assert_eq!(back["archetype"]["height"], 900);
+        assert_eq!(
+            back["archetype"]["$type"],
+            "network.symbios.avatar.defs#hexapod"
+        );
+    }
+
+    #[test]
+    fn an_unknown_garment_cut_is_worn_as_the_default() {
+        use crate::dress::{Leg, Sleeve};
+        let json = r#"{"name":"Dressed","outfit":{"sleeve":"cape","leg":"culottes"}}"#;
+        let record: AvatarRecord = serde_json::from_str(json).expect("loads unknown tokens");
+        assert_eq!(record.outfit.sleeve, Sleeve::Other("cape".into()));
+        assert_eq!(record.outfit.leg.cut(), Leg::default());
+
+        // And the token survives a rewrite, so a newer client's cape is intact.
+        let back = serde_json::to_value(&record).expect("serialises");
+        assert_eq!(back["outfit"]["sleeve"], "cape");
+    }
+
+    #[test]
+    fn a_record_says_when_it_cannot_be_published() {
+        // Both lexicons mark createdAt required, and this crate is clock-free by
+        // design, so the one thing it can do is refuse to pretend.
+        let record = AvatarRecord::new("Unstamped", Archetype::default());
+        assert_eq!(record.publishable(), Err(NotPublishable::MissingCreatedAt));
+
+        let stamped = record.created("2026-08-02T09:00:00Z");
+        assert_eq!(stamped.publishable(), Ok(()));
+
+        let nameless = AvatarRecord::default()
+            .created("2026-08-02T09:00:00Z")
+            .named("");
+        assert_eq!(nameless.publishable(), Err(NotPublishable::MissingName));
+
+        assert_eq!(
+            ProfileRecord::default().publishable(),
+            Err(NotPublishable::MissingCreatedAt)
+        );
+        assert_eq!(
+            ProfileRecord::pointing_at("3lm2k4x", "2026-08-02T09:00:00Z").publishable(),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn adding_an_axis_does_not_move_the_axes_beside_it() {
+        // The property the whole per-axis-stream design exists for. Drawing in
+        // sequence, inserting one axis shifts every later draw and seed 42
+        // becomes a different person; keyed by name, only the new axis appears.
+        let rolls = Rolls::new(42);
+        let before: Vec<f32> = ["skin.melanin", "hair.length", "eyes.size"]
+            .iter()
+            .map(|axis| rolls.range(axis, 0.0, 1.0))
+            .collect();
+
+        // Whatever a future build inserts, it draws from its own stream.
+        let _inserted = rolls.range("skin.freckleSize", 0.0, 1.0);
+
+        let after: Vec<f32> = ["skin.melanin", "hair.length", "eyes.size"]
+            .iter()
+            .map(|axis| rolls.range(axis, 0.0, 1.0))
+            .collect();
+        assert_eq!(before, after);
+        // And two axes do not secretly share a stream.
+        assert_ne!(before[0], before[1]);
+    }
+
+    #[test]
+    fn a_seed_reproduces_the_same_person() {
+        // A golden table. It exists to make a change to the draw LOUD: if this
+        // fails, every stored seed now names a different avatar, and
+        // GENERATOR_VERSION has to move with it.
+        assert_eq!(
+            GENERATOR_VERSION, 1,
+            "bump the table below with the version"
+        );
+        let quantised = |seed: i64| {
+            let mut record = AvatarRecord::new("Golden", Archetype::default());
+            record.reroll(seed);
+            let Archetype::Humanoid(params) = record.archetype else {
+                panic!("archetype changed");
+            };
+            (
+                (params.height * 1000.0).round() as i32,
+                (params.build * 1000.0).round() as i32,
+                (record.skin.melanin * 1000.0).round() as i32,
+                (record.hair.length * 1000.0).round() as i32,
+            )
+        };
+        assert_eq!(quantised(1), (1604, -565, 594, 238));
+        assert_eq!(quantised(42), (1702, 644, 933, 973));
+        assert_eq!(quantised(-7), (2178, 719, 513, 903));
+    }
+
+    #[test]
+    fn a_reroll_stamps_the_generation_that_drew_it() {
+        let mut record = AvatarRecord::new("Stamped", Archetype::default());
+        record.generator = 0;
+        record.reroll(3);
+        assert_eq!(record.generator, GENERATOR_VERSION);
     }
 
     #[test]
@@ -477,9 +749,16 @@ mod tests {
 
     #[test]
     fn a_profile_names_the_default_avatar() {
-        let profile = ProfileRecord::pointing_at("3lm2k4x");
+        // Written WITH its timestamp: the lexicon marks createdAt required, and
+        // the version of this test that asserted `{"defaultAvatar":"3lm2k4x"}`
+        // was enshrining a record every conformant PDS rejects.
+        let profile = ProfileRecord::pointing_at("3lm2k4x", "2026-08-01T00:00:00Z");
         let json = serde_json::to_string(&profile).expect("serialises");
-        assert_eq!(json, r#"{"defaultAvatar":"3lm2k4x"}"#);
+        assert_eq!(
+            json,
+            r#"{"defaultAvatar":"3lm2k4x","createdAt":"2026-08-01T00:00:00Z"}"#
+        );
+        assert_eq!(profile.publishable(), Ok(()));
         let back: ProfileRecord = serde_json::from_str(&json).expect("deserialises");
         assert_eq!(back, profile);
     }

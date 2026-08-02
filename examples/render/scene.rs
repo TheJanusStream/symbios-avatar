@@ -77,8 +77,11 @@ impl Material {
 pub enum Paint<'a> {
     /// One colour over the whole thing.
     Flat,
-    /// Worked out per point, for the few things that need it.
-    Shaded(&'a dyn Fn(Vec3) -> Vec3),
+    /// Carried on the vertices.
+    ///
+    /// How a merged mesh keeps the colours its parts used to be drawn in: every
+    /// lock of hair is its own shade and every garment its own dye, in one draw.
+    Vertex(&'a [Vec3]),
     /// Sampled from a baked atlas.
     Atlas {
         /// Texture coordinates, one per vertex.
@@ -273,7 +276,12 @@ impl GBuffer {
                 let point = world[0] * bary.x + world[1] * bary.y + world[2] * bary.z;
                 let albedo = match &item.paint {
                     Paint::Flat => item.material.albedo,
-                    Paint::Shaded(pick) => pick(point),
+                    Paint::Vertex(colours) => tri
+                        .iter()
+                        .zip(bary.to_array())
+                        .fold(Vec3::ZERO, |sum, (&index, weight)| {
+                            sum + colours[index as usize] * weight
+                        }),
                     Paint::Atlas { uvs, pixels, side } => {
                         let uv = tri
                             .iter()

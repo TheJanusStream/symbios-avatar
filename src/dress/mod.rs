@@ -28,7 +28,11 @@ pub use garment::{Garment, GarmentCut, dye};
 /// them, so there is no cut that stops at the elbow: the shorter of these ends
 /// about 70% of the way down the arm and the longer at 93%. Calling the first
 /// one "short" would have been a lie in the record and in the lexicon.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// An open union, like every other token in these records: a cut this build has
+/// never heard of is kept as [`Sleeve::Other`] and worn as the default, rather
+/// than failing the whole avatar. See [`Sleeve::cut`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Sleeve {
     /// No sleeve at all.
@@ -38,13 +42,27 @@ pub enum Sleeve {
     Forearm,
     /// To the wrist.
     Wrist,
+    /// A cut added after this build, kept verbatim.
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl Sleeve {
+    /// The cut to actually wear: this one, or the default if it is unknown.
+    #[must_use]
+    pub fn cut(&self) -> Sleeve {
+        match self {
+            Sleeve::Other(_) => Sleeve::default(),
+            known => known.clone(),
+        }
+    }
 }
 
 /// How far down the leg a pair of trousers runs.
 ///
 /// As with [`Sleeve`], named for where the hem lands. The middle cut finishes
-/// below the knee rather than at it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// below the knee rather than at it, and an unknown cut is worn as the default.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Leg {
     /// To just below the hip.
@@ -54,29 +72,44 @@ pub enum Leg {
     /// To the ankle.
     #[default]
     Ankle,
+    /// A cut added after this build, kept verbatim.
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl Leg {
+    /// The cut to actually wear: this one, or the default if it is unknown.
+    #[must_use]
+    pub fn cut(&self) -> Leg {
+        match self {
+            Leg::Other(_) => Leg::default(),
+            known => known.clone(),
+        }
+    }
 }
 
 /// What a body is wearing.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+///
+/// Not `Copy`: a cut may be an unrecognised token this build is preserving, and
+/// preserving it means owning the string it came in as.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct OutfitParams {
     /// How far the top's sleeves run.
-    #[serde(default)]
     pub sleeve: Sleeve,
     /// How far the trousers run.
-    #[serde(default)]
     pub leg: Leg,
     /// The top's colour around the wheel.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub top_hue: f32,
     /// How light the top is.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub top_shade: f32,
     /// The trousers' colour around the wheel.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub leg_hue: f32,
     /// How light the trousers are.
-    #[serde(default, with = "crate::plan::scaled")]
+    #[serde(with = "crate::plan::scaled")]
     pub leg_shade: f32,
 }
 
@@ -137,7 +170,7 @@ impl Outfit {
         let mut garments = Vec::with_capacity(2);
 
         let trousers = GarmentCut {
-            zones: leg_zones(params.leg),
+            zones: leg_zones(&params.leg),
             // Up into the abdomen, so the waist seam belongs to exactly one
             // garment. The faces that straddle it are wholly inside neither the
             // top's zones nor the trousers', and without this neither takes them
@@ -156,7 +189,7 @@ impl Outfit {
         }
 
         let top = GarmentCut {
-            zones: top_zones(params.sleeve),
+            zones: top_zones(&params.sleeve),
             ..Default::default()
         };
         if let Some(worn) = Garment::cut(
@@ -199,34 +232,39 @@ impl Outfit {
 }
 
 /// Which zones a top covers.
-fn top_zones(sleeve: Sleeve) -> ZoneSet {
+///
+/// An unrecognised cut is worn as the default one — see [`Sleeve::cut`] — so a
+/// record written by a newer build dresses rather than going bare.
+fn top_zones(sleeve: &Sleeve) -> ZoneSet {
     let mut zones = ZoneSet::default().with(Zone::Chest).with(Zone::Abdomen);
     for limb in [Limb::ForeLeft, Limb::ForeRight] {
-        match sleeve {
-            Sleeve::Bare => {}
+        match sleeve.cut() {
             Sleeve::Forearm => zones = zones.with(Zone::UpperLimb(limb)),
             Sleeve::Wrist => {
                 zones = zones
                     .with(Zone::UpperLimb(limb))
                     .with(Zone::LowerLimb(limb));
             }
+            Sleeve::Bare | Sleeve::Other(_) => {}
         }
     }
     zones
 }
 
 /// Which zones trousers cover.
-fn leg_zones(leg: Leg) -> ZoneSet {
+///
+/// As with [`top_zones`], an unrecognised cut falls back to the default.
+fn leg_zones(leg: &Leg) -> ZoneSet {
     let mut zones = ZoneSet::default().with(Zone::Pelvis);
     for limb in [Limb::HindLeft, Limb::HindRight] {
-        match leg {
-            Leg::Shorts => {}
+        match leg.cut() {
             Leg::Calf => zones = zones.with(Zone::UpperLimb(limb)),
             Leg::Ankle => {
                 zones = zones
                     .with(Zone::UpperLimb(limb))
                     .with(Zone::LowerLimb(limb));
             }
+            Leg::Shorts | Leg::Other(_) => {}
         }
     }
     zones
@@ -266,8 +304,8 @@ mod tests {
         for sleeve in [Sleeve::Bare, Sleeve::Forearm, Sleeve::Wrist] {
             for leg in [Leg::Shorts, Leg::Calf, Leg::Ankle] {
                 let params = OutfitParams {
-                    sleeve,
-                    leg,
+                    sleeve: sleeve.clone(),
+                    leg: leg.clone(),
                     ..Default::default()
                 };
                 let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
@@ -353,12 +391,12 @@ mod tests {
         let (mesh, _weights, zones) = body(11);
         let params = OutfitParams::default();
         let trousers = GarmentCut {
-            zones: leg_zones(params.leg),
+            zones: leg_zones(&params.leg),
             reach: ZoneSet::default().with(Zone::Abdomen),
             ..Default::default()
         };
         let top = GarmentCut {
-            zones: top_zones(params.sleeve),
+            zones: top_zones(&params.sleeve),
             ..Default::default()
         };
         let claimed = |cut: &GarmentCut| -> Vec<usize> {
@@ -408,7 +446,7 @@ mod tests {
         assert_eq!(params.leg_hue, 0.5);
         assert_eq!(params.leg_shade, 1.0);
 
-        let once = params;
+        let once = params.clone();
         params.sanitize();
         assert_eq!(once, params, "sanitize must reach a fixpoint");
     }
