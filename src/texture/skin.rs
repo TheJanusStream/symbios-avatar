@@ -25,16 +25,93 @@ use noise::{NoiseFn, Simplex};
 use serde::{Deserialize, Serialize};
 use symbios_texture::generator::TextureMap;
 use symbios_texture::normal::{BoundaryMode, height_to_normal};
-use symbios_texture::palette::CosinePalette;
 
 use super::bake::AtlasGeometry;
 use crate::plan::Zone;
 use crate::rig::Rig;
 
-/// The palest skin tone on the melanin ramp, in sRGB.
-const PALE: [f32; 3] = [0.98, 0.85, 0.78];
-/// The deepest skin tone on the melanin ramp, in sRGB.
-const DEEP: [f32; 3] = [0.28, 0.17, 0.12];
+/// The melanin ramp, palest to deepest, in sRGB.
+///
+/// Fitted to the ten shades of the **Monk Skin Tone Scale** — Ellis Monk's open
+/// scale, developed with Google to replace Fitzpatrick in computer vision —
+/// rather than authored by eye. A skin-tone ramp is the one thing in this crate
+/// where "it looks right to me" is the least trustworthy possible test, and a
+/// published reference is available for free.
+///
+/// It replaces a two-stop cosine ramp between a pale and a deep colour, and
+/// measuring the two against each other says exactly why two stops cannot work:
+///
+/// - **Hue was flat.** The old ramp held 18–21° from end to end. Real skin runs
+///   30–40° at the pale end, falls through the high teens in the middle, and
+///   comes back up toward 26° at the deepest. A straight line between two
+///   colours cannot do that, which is what "give it an interior control point"
+///   meant.
+/// - **Saturation was inverted where it matters most.** The old ramp climbed
+///   monotonically to `0.56` at full melanin. The reference *peaks* near `0.48`
+///   around the seventh shade and falls to `0.22` at the tenth: deep skin is
+///   darker and **less** saturated, not more. Climbing saturation into a dark
+///   value is the definition of a garish orange, and that is what the deep end
+///   was.
+/// - **It did not go dark enough.** The old deepest tone sat at value `0.28`,
+///   about the eighth shade. The scale reaches `0.16`.
+///
+/// **Hue and value are the reference's; saturation is held up at the ends.**
+/// That deviation was forced by the render, and measuring the lit result is the
+/// only way it showed. The scale's outermost chips are nearly neutral — 0.07
+/// saturation at the palest, 0.22 at the deepest — which is right for a chip
+/// judged flat under neutral light and wrong for a character: rendered against
+/// a cool fill, melanin `0.05` came back at 0.05 saturation, a colourless
+/// mannequin, and melanin `0.95` at 0.21, charcoal-grey. The middle of the
+/// ramp, where the reference is already saturated, needed nothing — melanin
+/// `0.70` measured 0.52 and read as skin immediately.
+///
+/// So the ends are lifted to 0.16 and 0.34, and the deepest value is raised
+/// from `0.16` to `0.19`. That is a deliberate move from a colorimetric scale
+/// toward the stylised semi-realistic target the project is aimed at, and it
+/// keeps everything the reference is actually being used for: the hue curve,
+/// and saturation that *peaks* in the deep middle and falls away either side
+/// rather than climbing into the dark.
+///
+/// One more stop moved, for an unrelated reason. The scale is a set of sample
+/// chips, not a ramp, and its third chip is *lighter* than its second — read as
+/// a slider it briefly runs backwards. The third stop is darkened from `0.97`
+/// to `0.94` to fix that. Imperceptible either way, and still worth doing:
+/// dragging melanin up has to darken skin at every point on the axis, and
+/// `the_ramp_runs_dark_monotonically` is what noticed.
+const RAMP: [[f32; 3]; 10] = [
+    [0.960, 0.883, 0.806],
+    [0.950, 0.864, 0.779],
+    [0.940, 0.877, 0.752],
+    [0.920, 0.846, 0.699],
+    [0.840, 0.732, 0.571],
+    [0.630, 0.497, 0.340],
+    [0.510, 0.362, 0.265],
+    [0.380, 0.257, 0.205],
+    [0.240, 0.189, 0.149],
+    [0.190, 0.154, 0.125],
+];
+
+/// How far each end of the undertone axis rotates the hue, in degrees.
+///
+/// A rotation, in degrees, because that is the quantity the axis is *about* —
+/// and getting there took two wrong answers, both of which measured as the same
+/// failure at opposite ends of the ramp.
+///
+/// The original shift was **absolute**: `0.06` of blue whatever lay underneath
+/// it. That is 15% of the blue in the palest complexion and **100%** of the blue
+/// in the deepest, so full warmth drove deep skin to `rgb(71, 52, 15)` — a
+/// garish orange rather than a complexion.
+///
+/// Making the shift **proportional to each channel** fixed the deep end and
+/// broke the pale one, for the mirror-image reason. The palest tones are nearly
+/// neutral — barely 7% saturated — so a 7.5% swing of green against blue is
+/// enormous in *hue* terms even while it is tiny in absolute ones: it clipped
+/// green and swung the pale end from magenta to yellow-green.
+///
+/// What is actually wanted is the same *hue* movement everywhere, and saying so
+/// directly costs one conversion. Value and saturation are untouched, so no
+/// channel can clip and no tone can leave the skin range it started in.
+const UNDERTONE_DEGREES: f32 = 15.0;
 /// How blood shifts the skin's colour where it runs close to the surface.
 ///
 /// A *shift*, not a colour to blend toward: haemoglobin absorbs green and blue
@@ -97,13 +174,59 @@ impl SkinParams {
     /// The base complexion this melanin and undertone describe, in sRGB.
     #[must_use]
     pub fn base_tone(&self) -> Vec3 {
-        let ramp = CosinePalette::between(PALE, DEEP);
-        let tone = Vec3::from_array(ramp.sample(self.melanin.clamp(0.0, 1.0)));
-        // Undertone rotates the hue without moving the value: cool skin loses
-        // green and gains blue, warm skin does the reverse.
-        let shift = Vec3::new(0.0, 0.035, -0.06) * self.undertone;
-        (tone + shift).clamp(Vec3::ZERO, Vec3::ONE)
+        let along = self.melanin.clamp(0.0, 1.0) * (RAMP.len() - 1) as f32;
+        let stop = (along.floor() as usize).min(RAMP.len() - 2);
+        let blend = along - stop as f32;
+        let tone = Vec3::from_array(RAMP[stop]).lerp(Vec3::from_array(RAMP[stop + 1]), blend);
+
+        // Undertone rotates the hue and nothing else: cool skin turns toward
+        // pink, warm skin toward olive, and neither gets lighter, darker or
+        // more saturated on the way. See [`UNDERTONE_DEGREES`] for the two
+        // simpler formulations that both failed.
+        rotate_hue(tone, UNDERTONE_DEGREES * self.undertone.clamp(-1.0, 1.0))
     }
+}
+
+/// Turns an sRGB colour `degrees` around the hue circle, keeping its value and
+/// its saturation.
+///
+/// Round-tripped through HSV rather than approximated with a channel matrix.
+/// The matrix forms of a hue rotation are cheap because they do not renormalise,
+/// and what they do instead is drift saturation — which is the one thing a skin
+/// tone cannot afford, since an over-saturated dark tone is exactly the garish
+/// orange this replaced. This runs once per body.
+fn rotate_hue(colour: Vec3, degrees: f32) -> Vec3 {
+    let max = colour.max_element();
+    let min = colour.min_element();
+    let range = max - min;
+    if range <= f32::EPSILON || max <= f32::EPSILON {
+        // A neutral has no hue to turn.
+        return colour;
+    }
+
+    let hue = if max == colour.x {
+        60.0 * (((colour.y - colour.z) / range).rem_euclid(6.0))
+    } else if max == colour.y {
+        60.0 * ((colour.z - colour.x) / range + 2.0)
+    } else {
+        60.0 * ((colour.x - colour.y) / range + 4.0)
+    };
+    // Rebuilt from the same `max` and `range` it was taken apart with, so both
+    // value and saturation (`range / max`) survive the trip by construction
+    // rather than by being carried and reapplied.
+    let hue = (hue + degrees).rem_euclid(360.0);
+    let sector = hue / 60.0;
+    let fall = range * (1.0 - (sector % 2.0 - 1.0).abs());
+    let (r, g, b) = match sector as u32 {
+        0 => (range, fall, 0.0),
+        1 => (fall, range, 0.0),
+        2 => (0.0, range, fall),
+        3 => (0.0, fall, range),
+        4 => (fall, 0.0, range),
+        _ => (range, 0.0, fall),
+    };
+    let base = max - range;
+    Vec3::new(r + base, g + base, b + base).clamp(Vec3::ZERO, Vec3::ONE)
 }
 
 /// Clamps to `0..=1`, substituting `fallback` for a non-finite value.
@@ -164,7 +287,14 @@ pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> T
         let hit = rig.nearest_bone(p);
         let crease = hit.crease(p, texel.normal);
         let thinness = (1.0 - hit.radius / stoutest).clamp(0.0, 1.0).powf(0.7);
+        // Melanin sits above the blood and absorbs what would have shown
+        // through it, so the same blush axis has to mean less on deeper skin —
+        // held at full strength it painted a red cheek onto a complexion that
+        // physically cannot have one. Not all the way to nothing at the deepest
+        // end, because deep skin does still warm where it is thin.
+        let showing = 1.0 - 0.75 * params.melanin.clamp(0.0, 1.0);
         let blood = params.blush
+            * showing
             * (0.25 + 0.95 * thinness)
             * (0.7 + 0.3 * noise3(&mottle, p, 6.0).abs())
             * (1.0 + crease * 0.8);
@@ -358,26 +488,150 @@ mod tests {
         );
     }
 
-    #[test]
-    fn undertone_shifts_hue_without_moving_value() {
-        let cool = SkinParams {
-            undertone: -1.0,
-            ..Default::default()
-        }
-        .base_tone();
-        let warm = SkinParams {
-            undertone: 1.0,
-            ..Default::default()
-        }
-        .base_tone();
+    /// Hue in degrees, saturation and value, for a tone in `0..=1` sRGB.
+    fn hsv(c: Vec3) -> (f32, f32, f32) {
+        let (max, min) = (c.max_element(), c.min_element());
+        let range = max - min;
+        let hue = if range <= f32::EPSILON {
+            0.0
+        } else if max == c.x {
+            60.0 * ((c.y - c.z) / range).rem_euclid(6.0)
+        } else if max == c.y {
+            60.0 * ((c.z - c.x) / range + 2.0)
+        } else {
+            60.0 * ((c.x - c.y) / range + 4.0)
+        };
+        (hue, if max <= 0.0 { 0.0 } else { range / max }, max)
+    }
 
-        assert!(warm.z < cool.z, "warm skin loses blue");
-        assert!(warm.y > cool.y, "and gains green");
-        let value = |c: Vec3| c.element_sum();
+    #[test]
+    fn undertone_turns_the_hue_and_changes_nothing_else() {
+        // This test used to assert that warm skin "loses blue and gains green".
+        // That was a description of the arithmetic rather than of the axis: red
+        // is the largest channel in every complexion and blue the smallest, so
+        // turning the hue between them moves *green* and leaves blue exactly
+        // where it was. The old assertion passed only because the old shift was
+        // a hand-written offset that happened to move both.
+        //
+        // What the axis is actually for is hue, so that is what is checked —
+        // along with the two things it must not do, which is where both earlier
+        // attempts failed. See `UNDERTONE_DEGREES`.
+        for melanin in [0.0f32, 0.2, 0.5, 0.8, 1.0] {
+            let at = |undertone: f32| {
+                hsv(SkinParams {
+                    melanin,
+                    undertone,
+                    ..Default::default()
+                }
+                .base_tone())
+            };
+            let (cool_h, cool_s, cool_v) = at(-1.0);
+            let (warm_h, warm_s, warm_v) = at(1.0);
+
+            let turned = (warm_h - cool_h + 540.0).rem_euclid(360.0) - 180.0;
+            assert!(
+                (turned - 2.0 * UNDERTONE_DEGREES).abs() < 1.0,
+                "melanin {melanin} turned {turned}°, not {}°",
+                2.0 * UNDERTONE_DEGREES
+            );
+            assert!(
+                (warm_v - cool_v).abs() < 1e-4,
+                "melanin {melanin} changed how light the skin is"
+            );
+            assert!(
+                (warm_s - cool_s).abs() < 1e-4,
+                "melanin {melanin} changed how saturated the skin is"
+            );
+        }
+    }
+
+    #[test]
+    fn no_complexion_clips_a_channel() {
+        // The failure mode of the second attempt: a swing proportional to each
+        // channel drove green past 1.0 on the palest tones, which both clips and
+        // silently changes the hue it was trying to preserve.
+        for step in 0..=20 {
+            let melanin = step as f32 / 20.0;
+            for undertone in [-1.0f32, -0.5, 0.0, 0.5, 1.0] {
+                let tone = SkinParams {
+                    melanin,
+                    undertone,
+                    ..Default::default()
+                }
+                .base_tone();
+                for channel in [tone.x, tone.y, tone.z] {
+                    assert!(
+                        (0.02..=0.999).contains(&channel),
+                        "melanin {melanin} undertone {undertone} reached {tone:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn saturation_peaks_in_the_middle_of_the_ramp_and_falls_at_both_ends() {
+        // The defect that made deep skin read as a garish orange. The ramp this
+        // replaced climbed saturation monotonically to 0.56 at full melanin,
+        // which is what "saturated colour at a dark value" means. Real skin
+        // peaks in the deep middle and falls away either side, and that shape —
+        // not any particular colour — is what the reference scale is here for.
+        let saturation = |melanin: f32| {
+            hsv(SkinParams {
+                melanin,
+                undertone: 0.0,
+                ..Default::default()
+            }
+            .base_tone())
+            .1
+        };
+        let peak = (0..=20)
+            .map(|step| (step as f32 / 20.0, saturation(step as f32 / 20.0)))
+            .fold(
+                (0.0f32, 0.0f32),
+                |best, at| if at.1 > best.1 { at } else { best },
+            );
         assert!(
-            (value(warm) - value(cool)).abs() < 0.1,
-            "undertone must not change how light the skin is"
+            (0.5..=0.9).contains(&peak.0),
+            "saturation peaked at melanin {}, not in the deep middle",
+            peak.0
         );
+        assert!(
+            saturation(1.0) < peak.1 * 0.85,
+            "the deepest tone is {} saturated against a peak of {}; a dark tone \
+             that stays this saturated is the orange this ramp replaced",
+            saturation(1.0),
+            peak.1
+        );
+        assert!(
+            saturation(0.0) < peak.1 * 0.5,
+            "the palest tone is nearly as saturated as the peak"
+        );
+    }
+
+    #[test]
+    fn the_ramp_runs_dark_monotonically() {
+        // Whatever else it does, more melanin is never lighter skin. The value
+        // curve is the reference's and this is the one property of it that a
+        // creator would notice being wrong immediately.
+        let value = |melanin: f32| {
+            hsv(SkinParams {
+                melanin,
+                undertone: 0.0,
+                ..Default::default()
+            }
+            .base_tone())
+            .2
+        };
+        for step in 0..40 {
+            let (here, next) = (step as f32 / 40.0, (step + 1) as f32 / 40.0);
+            assert!(
+                value(next) <= value(here) + 1e-4,
+                "melanin {next} is lighter than {here}"
+            );
+        }
+        assert!(value(0.0) > 0.9, "the palest tone should be pale");
+        assert!(value(1.0) < 0.25, "the deepest tone should be deep");
     }
 
     #[test]
@@ -408,6 +662,49 @@ mod tests {
         assert!(
             redness(Zone::Head) > redness(Zone::Abdomen),
             "blood shows through a face more than a belly"
+        );
+    }
+
+    #[test]
+    fn blush_shows_through_pale_skin_more_than_deep_skin() {
+        // Melanin sits above the blood and absorbs what would have shown
+        // through it. Held at full strength regardless, the blush axis painted
+        // a red cheek onto a complexion that physically cannot have one.
+        //
+        // Measured as how far the face's red runs ahead of its green, against
+        // the same body with no blush at all — the difference the axis makes,
+        // rather than the absolute redness, which melanin moves on its own.
+        let face_warmth = |melanin: f32, blush: f32| {
+            let params = SkinParams {
+                melanin,
+                blush,
+                ..Default::default()
+            };
+            let (geometry, _, map) = painted(&params);
+            let mut total = 0.0;
+            let mut count = 0.0f32;
+            for (index, sample) in geometry.texels.iter().enumerate() {
+                let Some(texel) = sample else { continue };
+                if texel.zone != Zone::Head {
+                    continue;
+                }
+                let at = index * 4;
+                total += f32::from(map.albedo[at]) - f32::from(map.albedo[at + 1]);
+                count += 1.0;
+            }
+            total / count.max(1.0)
+        };
+
+        let pale = face_warmth(0.15, 1.0) - face_warmth(0.15, 0.0);
+        let deep = face_warmth(0.95, 1.0) - face_warmth(0.95, 0.0);
+        assert!(
+            pale > deep * 1.5,
+            "blush added {pale} to pale skin and {deep} to deep skin; it should \
+             show through far less where there is melanin above it"
+        );
+        assert!(
+            deep > 0.0,
+            "deep skin still warms where it is thin; blush should not vanish"
         );
     }
 

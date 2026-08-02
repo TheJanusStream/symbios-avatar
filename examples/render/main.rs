@@ -33,6 +33,7 @@
 //! cargo run --release --example render -- --close hand # or head, hand, foot
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,96
+//! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --budget    # what one avatar costs
@@ -46,7 +47,8 @@ use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, FootingConfig, Gait, Ground,
-    HairParams, MeshKind, PolyMesh, Pose, Stride, Zone, anim::gait, anim::plant_feet_of,
+    HairParams, MeshKind, PolyMesh, Pose, SkinParams, Stride, Zone, anim::gait,
+    anim::plant_feet_of,
 };
 
 /// Pixels per side of one view in the finished sheet.
@@ -111,6 +113,18 @@ fn main() {
         })
         .unwrap_or_default();
 
+    // Five numbers, in the order the axes are declared: melanin, undertone,
+    // blush, freckles, stubble. A complexion cannot be judged from its numbers,
+    // and the melanin ramp is the one place in the crate where "it looks right
+    // to me" is the least trustworthy test there is.
+    let complexion: Vec<f32> = value("--skin")
+        .map(|spec| {
+            spec.split(',')
+                .filter_map(|a| a.trim().parse().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+
     let out = std::path::PathBuf::from(
         std::env::var("SYMBIOS_AVATAR_DUMP_DIR").unwrap_or_else(|_| "target/dump".into()),
     );
@@ -142,6 +156,16 @@ fn main() {
             wave: axis(4, record.hair.wave),
             shade: axis(5, record.hair.shade),
             groups: axis(6, record.hair.groups as f32) as u32,
+        }),
+        complexion: (!complexion.is_empty()).then(|| {
+            let axis = |at: usize, fallback: f32| complexion.get(at).copied().unwrap_or(fallback);
+            SkinParams {
+                melanin: axis(0, record.skin.melanin),
+                undertone: axis(1, record.skin.undertone),
+                blush: axis(2, record.skin.blush),
+                freckles: axis(3, record.skin.freckles),
+                stubble: axis(4, record.skin.stubble),
+            }
         }),
         ..Default::default()
     };

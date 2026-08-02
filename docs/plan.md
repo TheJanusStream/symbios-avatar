@@ -135,11 +135,40 @@ practitioner accounts of the joint-primary hybrid at
 [Tech-Artists.Org](https://www.tech-artists.org/t/blendshapes-vs-joint-driven-facial-set-up/1127)
 and [Polycount](https://polycount.com/discussion/217908/cost-of-morphs-blendshapes-vs-bones).
 
+### 2026-08-02, the complexion (#39, half closed)
+
+The melanin ramp was two stops interpolated between a pale colour and a deep one, and measuring it
+against the **Monk Skin Tone Scale** — Ellis Monk's ten published shades, developed with Google —
+found three faults rather than the one the issue reported. Hue was flat at 18–21° from end to end
+where real skin runs 30–40° pale and falls through the high teens; the ramp did not reach far
+enough into the dark; and, worst, **saturation climbed monotonically into the deepest tones** where
+the reference peaks in the deep middle and falls away. A saturated colour at a dark value is a
+garish orange, and that is what full melanin produced. The undertone axis was an absolute offset,
+so it moved 15% of the blue in the palest complexion and **100%** of it in the deepest.
+
+The ramp is now ten stops fitted to that reference, undertone is a hue *rotation* that preserves
+value and saturation, and blush is scaled down by melanin because pigment sits above blood and
+absorbs what would have shown through it. `AvatarConfig::complexion` and `render -- --skin` were
+added so the axes can be walked by eye, symmetric with `--hair`.
+
+Two things worth carrying forward. **The reference is a set of colour chips, not a ramp** — its
+outermost shades are nearly neutral, which is right under flat neutral light and rendered as a
+colourless mannequin at one end and charcoal grey at the other. Saturation is held up at both ends
+against the reference, deliberately, toward the stylised target in the table above. And **fitting
+it verbatim measured correct and looked wrong**, which is the second time in this file that a
+number has been right and a body has not; the deviation was found by sampling rendered pixels, not
+by reasoning about albedo.
+
+The **geometry** half of #39 — `FaceParams` is four prominence scalars over one fixed skull, and
+`skull.rs` ships six const tables no record touches — is split out as **#61**, deliberately
+sequenced *after* #59: widening the face axes means tuning feature shapes by eye against a topology
+#59 is about to replace.
+
 ### Where this leaves the gate
 
-**Open and blocking:** #39 (face parameter space — the last of the P1s), #38 (spring chains, now
-unblocked by #34), and #59 before WS4. **Gate #6 (#36) is closed to re-judging until #34–#39
-clear.**
+**Open and blocking:** #38 (spring chains, now unblocked by #34) is the last of the P1 band. **Gate
+#6 (#36) is closed to re-judging until #34–#39 clear** — which, with #39 closed, means #38 alone.
+Behind it and not gating: #59 before WS4 can start, then #61, then #60 if measurement asks for it.
 
 ## 1. Headline research findings
 

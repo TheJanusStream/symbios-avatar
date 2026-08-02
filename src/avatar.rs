@@ -59,6 +59,7 @@ use crate::plan::{Limb, Zone};
 use crate::record::AvatarRecord;
 use crate::rig::{Rig, SkinConfig, SkinWeights, Surface, skin};
 use crate::texture;
+use crate::texture::SkinParams;
 use crate::uv::{Rect, UvConfig, UvUnwrap, unwrap_with};
 
 /// Which material a merged mesh needs.
@@ -134,6 +135,11 @@ pub struct AvatarConfig {
     pub ground: f32,
     /// Hair parameters replacing the record's, for walking the axes by eye.
     pub hair: Option<HairParams>,
+    /// Complexion replacing the record's, for the same reason. Named apart from
+    /// `skin` above, which is how the mesh is bound rather than what colour it
+    /// is. A complexion is judged by looking at it under light, not by reading a
+    /// triple of numbers, and a body is the only place to do that.
+    pub complexion: Option<SkinParams>,
 }
 
 impl Default for AvatarConfig {
@@ -146,6 +152,7 @@ impl Default for AvatarConfig {
             atlas: 1024,
             ground: 0.0,
             hair: None,
+            complexion: None,
         }
     }
 }
@@ -295,7 +302,8 @@ impl Avatar {
         let borrowed: Vec<(&PolyMesh, Zone)> =
             placed.iter().map(|(mesh, zone)| (mesh, *zone)).collect();
         let geometry = texture::bake(&body, &charts, &borrowed, config.atlas);
-        let painted = texture::paint_skin(&geometry, &rig, &record.skin);
+        let painted =
+            texture::paint_skin(&geometry, &rig, &config.complexion.unwrap_or(record.skin));
 
         let parts = Parts {
             hair: handed
