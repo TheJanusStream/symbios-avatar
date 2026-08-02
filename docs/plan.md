@@ -11,13 +11,40 @@ Synthesized 2026-08-01 from six web-research dossiers in [docs/research/](resear
 | Visual target | Stylized semi-realistic (Fortnite / Overwatch / Sea-of-Thieves class) |
 | Geometry | Fully procedural — no shipped mesh assets, records stay tiny |
 | Scope | Humanoid + creatures from day one (goal-space animation mandatory) |
-| Interop | Native atproto records are canonical; VRM 1.0 export bake (0.x toggle); creatures export plain GLB |
+| Interop | Native atproto records are canonical; **GLB export only — VRM 1.0 was dropped 2026-08-02** (see below) |
 | Lexicon root | `network.symbios.avatar.*` (symbios ecosystem, outside overlands) |
 | Multiplicity | Wardrobe of named avatars per identity, one marked default |
 | Baked artifacts | Stored on PDS within reason; degree decided along the way by content size |
 | Repos | `~/Workspace/symbios-avatar` + `~/Workspace/bevy_symbios_avatar` (each with own chainlink + docs) |
 | Overlands chassis | All four existing families — vehicles included — eventually migrate onto this system |
-| Face parameter space | ARKit-52 blendshape naming + Oculus-15 visemes (confirmed design constraint) |
+| Face parameter space | ARKit-52 naming + Oculus-15 visemes. **Morph-vs-bone is now an open decision (#35)** — VRM forced morphs; without it, a bone rig is viable and ARKit-52 can be naming-only |
+
+## 0. Revisions
+
+**2026-08-02, after a sixteen-agent adversarial review** (seven lenses, each attacked by an
+independent skeptic, plus a completeness critic). Verdict: **sound with corrections**. The
+foundations were examined and defended — shared-socket-ring joint construction, goal-space clips
+over joint-space, `rig::Surface` as the rule that you measure the built mesh and never trust the
+plan, `Zone` + `ground_contacts()` as a generalised body plan, integer-only wire encoding with a
+test that checks it, and the two-bone/FABRIK/inertializer trio that has no equivalent in the Bevy
+ecosystem. None of those change.
+
+What was missing is a **product**: `PolyMesh` carries no vertex attributes and there is no `Avatar`
+type, so the record-to-renderable recipe lives in the examples and has already diverged between
+two of them. Everything else the review found is downstream of that. Filed as #27 with the work in
+#28–#57.
+
+Three locked decisions changed by the owner in the same session:
+
+- **VRM 1.0 export dropped.** Native records plus our own GLB. This retires the T-pose conflict
+  that #19 introduced, frees dual-quaternion skinning, and removes VRM as a constraint on mesh
+  decomposition and on how the face animates. Research-05 stays in the repository as a record of
+  what conformance would have cost.
+- **Horizon: build it properly, no deadline.** Foundations get fixed even where that discards work.
+- **Creatures stay day one.** Humanoid-only assumptions are therefore a live architectural problem.
+  Three were found and fixed in a single session (#26); the underlying pattern — a rule stated
+  about a body *part* where it should be stated about what that part *does* — is the thing to
+  design against, not the three instances.
 
 ## 1. Headline research findings
 
@@ -71,8 +98,8 @@ Design work happens in WS0 (#2); this is the starting shape:
 | #7 | WS4 Face | |
 | #8 | WS5 Dress | |
 | #9 | WS6 Creatures | |
-| #10 | WS7 Export (glTF/VRM) | |
-| #11 | WS8 Creator UX + Overlands adoption (incl. eventual vehicle-chassis migration) | spans sibling repos |
+| #10 | WS7 Export (GLB) | **split**: the assembly half is pre-gate (#28, #29); the writer half moves to immediately post-gate. VRM dropped. |
+| #11 | WS8 Creator UX + Overlands adoption (incl. eventual vehicle-chassis migration) | spans sibling repos. **Starts at the gate, not last** (#37): the gate says "and in-app" and that clause has never been executed. |
 
 Milestone **"v0.1 vertical slice"** = #2–#6: one parametric humanoid walking/idling/running on terrain with blink + look-at, one outfit, one hair style, judged against the Fortnite/Overwatch bar via render contact sheets and in-app. AAA feel is won by iteration; the slice is where we find out early.
 
