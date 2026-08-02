@@ -262,9 +262,9 @@
         },
         "groups": {
           "type": "integer",
-          "description": "How many strand groups to grow. Costs geometry, so it is bounded; readers may lower it for distant or low-end rendering without changing the record.",
+          "description": "How many strand groups to ask for. This is a request rather than a count: group count is the one axis that costs geometry, so a reader grows fewer than asked whenever the rest of the axes are expensive enough that the asked-for count would not fit its triangle budget, and fewer again for distant or low-end rendering. Neither changes the record.",
           "minimum": 24,
-          "maximum": 256,
+          "maximum": 128,
           "default": 128
         }
       }

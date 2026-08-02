@@ -125,10 +125,20 @@ impl SkinWeights {
 ///
 /// Every vertex ends up with at most [`MAX_INFLUENCES`] joints whose weights sum
 /// to one, sorted strongest first.
+///
+/// Only [`crate::rig::Role::Deform`] joints are bound against. A rig may carry
+/// joints the body is not made of — a spring chain down a lock of hair, a face
+/// rig, a socket a prop hangs from — and the body's surface has to ignore every
+/// one of them. Binding against a bone with no capsule behind it does not fail
+/// loudly; it quietly attaches a patch of skin to something that was never
+/// meant to move it.
 #[must_use]
 pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
     let vertices = mesh.positions.len();
     let joints = rig.len();
+    let Some(first_deforming) = rig.deforming().next() else {
+        return SkinWeights::default();
+    };
     if vertices == 0 || joints == 0 {
         return SkinWeights::default();
     }
@@ -136,9 +146,12 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
     let mut dense = vec![0.0f32; vertices * joints];
     for (vertex, &position) in mesh.positions.iter().enumerate() {
         let row = &mut dense[vertex * joints..(vertex + 1) * joints];
-        let mut nearest = (f32::INFINITY, 0usize);
+        let mut nearest = (f32::INFINITY, first_deforming);
 
         for (joint, weight) in row.iter_mut().enumerate() {
+            if !rig.joints[joint].role.deforms() {
+                continue;
+            }
             let (start, end) = rig.bone(joint);
             let (start_radius, end_radius) = rig.bone_radii(joint);
             let (distance, along) = distance_to_segment(position, start, end);

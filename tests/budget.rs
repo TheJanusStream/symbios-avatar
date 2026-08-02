@@ -26,12 +26,18 @@ const MESH_TARGET: usize = 3;
 /// Not a target — a high-water mark. Lowering it is the work; raising it needs
 /// a reason written down beside the change.
 ///
-/// Measured over 64 seeds: 43,236 to 43,388, with the default at 43,308. That
-/// range is worth noticing on its own. A body's cost is almost **independent of
-/// its parameters**, because hair dominates the count and hair group count is a
-/// fixed default rather than something the axes move. Nothing a creator does
-/// makes an avatar cheaper, which is why the cut has to come from the generator.
-const TRIANGLE_CEILING: usize = 43_500;
+/// It was 43,500 before the hair cut (#40), of which hair alone was 30,208.
+/// Sampling each lock by how far it actually travels, rather than giving every
+/// lock the count the crown row needs, took hair to 15,976 without touching the
+/// cross-section, the group count, or any axis a creator sets.
+///
+/// One thing that used to be true here no longer is. A body's cost used to be
+/// almost independent of its parameters, because every lock cost the same and
+/// the group count was fixed; now a lock's price follows its length and its
+/// wave, and a head of hair ranges over more than a factor of five. What keeps
+/// the ceiling is [`symbios_avatar::hair::MAX_TRIANGLES`], which tiers the
+/// group count down when the rest of the axes are expensive.
+const TRIANGLE_CEILING: usize = 29_600;
 
 /// Draw calls the crate currently costs.
 ///
@@ -117,10 +123,14 @@ fn a_creature_is_not_more_expensive_than_a_person() {
 }
 
 #[test]
-fn hair_is_where_the_triangles_are() {
-    // Measured rather than assumed, because it decides where the next cut goes:
-    // halving everything else would not reach the target, and halving hair
-    // nearly does.
+fn hair_is_no_longer_where_all_the_triangles_are() {
+    // This test used to assert that hair was over 60% of the budget, and say
+    // that if the share ever fell, the cut had worked. It fell: 69.8% to 54.9%.
+    //
+    // It is kept, inverted, because the share is still the number that decides
+    // where any further cut goes — and because hair is the one part whose cost
+    // a record can move, so a share that climbs back is a sign the tier stopped
+    // biting rather than that hair got dearer.
     let avatar = built(None);
     let hair = avatar
         .drawn(0.0)
@@ -132,25 +142,61 @@ fn hair_is_where_the_triangles_are() {
         .len();
     let share = hair as f32 / avatar.budget.tris as f32;
     assert!(
-        share > 0.6,
-        "hair is {:.0}% of the budget; if this has fallen, the cut worked and \
-         the ceiling above should come down with it",
+        share < 0.6,
+        "hair is back to {:.0}% of the budget",
+        share * 100.0
+    );
+    // And it is still the largest single part, so it is still where to look.
+    assert!(
+        share > 0.4,
+        "hair is down to {:.0}% of the budget; the next cut belongs elsewhere \
+         and this test should say where",
         share * 100.0
     );
 }
 
 #[test]
-#[ignore = "the target, not the state: needs the hair cut (#40) and parts charted into the atlas (#58)"]
-fn a_default_avatar_fits_the_webgl2_budget() {
-    // Turn this on — and delete the ceilings above — when it passes. It is the
-    // number the engine is actually judged by; everything else here is a guard
-    // against drifting further from it.
+fn a_default_avatar_fits_the_webgl2_triangle_budget() {
+    // The number the engine is actually judged by. It was ignored until the
+    // hair cut (#40) landed; the ceilings above are now only a guard against
+    // drifting back toward it.
     let avatar = built(None);
     assert!(
         avatar.budget.tris <= TRIANGLE_TARGET,
         "{} triangles against a budget of {TRIANGLE_TARGET}",
         avatar.budget.tris
     );
+}
+
+#[test]
+fn the_budget_holds_for_a_record_that_asks_for_the_most_expensive_hair() {
+    // The target has to survive a record off the network, not just the default
+    // one. Hair is the only part whose cost a record can move, and until #40 it
+    // could move it to twice the whole avatar's budget.
+    let mut record = AvatarRecord::new("Greedy", Archetype::default());
+    record.hair = symbios_avatar::HairParams {
+        length: 1.0,
+        wave: 1.0,
+        volume: 1.0,
+        groups: u32::MAX,
+        ..record.hair
+    };
+    record.sanitize();
+    let avatar = Avatar::build(&record).expect("a biped builds");
+    assert!(
+        avatar.budget.tris <= TRIANGLE_TARGET,
+        "the dearest legal hair brought the body to {} triangles",
+        avatar.budget.tris
+    );
+}
+
+#[test]
+#[ignore = "the target, not the state: eye globes need a glossy material and lids move without a joint (#35)"]
+fn a_default_avatar_fits_the_webgl2_draw_budget() {
+    // The triangle half of the WebGL2 target passes; this half does not, and
+    // will not until the eyes stop needing draws of their own. Turn it on — and
+    // delete MESH_CEILING — when it does.
+    let avatar = built(None);
     assert!(
         avatar.budget.meshes <= MESH_TARGET,
         "{} draws against a budget of {MESH_TARGET}",

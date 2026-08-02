@@ -92,10 +92,16 @@ pub use plan::{
 };
 pub use record::{AvatarRecord, LockSet, ProfileRecord, ShareCodeError};
 pub use rig::{
-    Anchor, Joint, Landmark, Landmarks, Rig, RigError, SkinConfig, SkinWeights, Surface,
+    Anchor, Joint, Landmark, Landmarks, Rig, RigError, Role, SkinConfig, SkinWeights, Surface,
 };
 pub use skeleton::{Chain, Node, NodeKind, Skeleton, SkeletonError};
 pub use subdiv::catmull_clark;
+/// The painted atlas an [`Avatar`] carries.
+///
+/// Re-exported because it is the type of a public field and a consumer cannot
+/// otherwise name it without depending on `symbios-texture` at exactly the
+/// version this crate pins.
+pub use symbios_texture::generator::TextureMap;
 
 /// Builds a body's surface from its skeleton, shaped and ready to bind.
 ///

@@ -73,11 +73,51 @@ impl BoneHit {
     }
 }
 
+/// What a joint is for.
+///
+/// Every joint a skeleton produces deforms the body, because every skeleton
+/// node is a capsule the cage was swept over — the two are the same list. The
+/// other roles are joints the body has *no* geometry for, and the fact they all
+/// share is the one that matters: the body's own surface must not be bound to
+/// them. A spring bone hanging in the hair that drags a patch of scalp with it
+/// is not a subtle defect.
+///
+/// Nothing here makes a joint behave differently when it is posed. A helper
+/// joint is a joint: it has a parent, it inherits its parent's transform, and
+/// [`crate::anim::Pose`] evaluates it like any other. The role says who is
+/// allowed to bind to it, not how it moves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Role {
+    /// Drives the body's own surface. Every joint from a skeleton is one.
+    #[default]
+    Deform,
+    /// Carries something without deforming anything — an attachment point for a
+    /// prop, a pivot a constraint aims at, the target end of a twist.
+    Helper,
+    /// Driven by simulation rather than by a pose: hair, hems, tails, ears.
+    Spring,
+    /// Moves a face. Kept apart from [`Role::Helper`] because a face rig is
+    /// addressed as a set — retargeted, named against ARKit, driven by an
+    /// expression track — and asking for "the facial joints" is a question
+    /// something will need to answer.
+    Facial,
+}
+
+impl Role {
+    /// Whether the body's own surface may be bound to a joint in this role.
+    #[must_use]
+    pub fn deforms(self) -> bool {
+        matches!(self, Self::Deform)
+    }
+}
+
 /// One posable joint.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Joint {
-    /// The skeleton node this joint came from.
-    pub node: u32,
+    /// The skeleton node this joint came from, or `None` if it came from no
+    /// node — every joint that is not a [`Role::Deform`] one is attached to the
+    /// rig after the fact and has no capsule behind it.
+    pub node: Option<u32>,
     /// Index of this joint's parent, or `None` for the root.
     pub parent: Option<usize>,
     /// Rest position in body space.
@@ -86,6 +126,8 @@ pub struct Joint {
     pub radius: f32,
     /// Which part of the body this joint drives.
     pub zone: Zone,
+    /// What the joint is for, and so what may bind to it.
+    pub role: Role,
 }
 
 /// Errors raised while rooting a skeleton.
@@ -172,11 +214,12 @@ impl Rig {
             let source = skeleton.nodes[node as usize];
             joint_of[node as usize] = Some(joints.len());
             joints.push(Joint {
-                node,
+                node: Some(node),
                 parent,
                 position: source.position,
                 radius: source.radius,
                 zone: source.zone,
+                role: Role::Deform,
             });
             let here = joints.len() - 1;
             for neighbor in skeleton.neighbors(node) {
@@ -197,6 +240,44 @@ impl Rig {
         }
 
         Ok(Self { joints })
+    }
+
+    /// Hangs a joint off an existing one, and returns its index.
+    ///
+    /// This is the only way a rig gets a joint the body has no capsule for — a
+    /// spring chain down a lock of hair, a bone under a cheek, a socket a prop
+    /// hangs from. It appends, so the parent-before-child order the rest of the
+    /// crate relies on survives: a new joint's parent is always already in the
+    /// list.
+    ///
+    /// The joint takes its parent's zone, because a bone under a cheek is part
+    /// of the head and a chain down a tail is part of the tail, and a radius of
+    /// zero, because it stands for no geometry. Both are public fields if a
+    /// caller wants otherwise.
+    ///
+    /// Returns `None` if `parent` is not a joint of this rig. Attaching a
+    /// [`Role::Deform`] joint is allowed and does what it says — the body binds
+    /// to it — but the point of this is the roles that do not.
+    pub fn attach(&mut self, parent: usize, position: Vec3, role: Role) -> Option<usize> {
+        let zone = self.joints.get(parent)?.zone;
+        self.joints.push(Joint {
+            node: None,
+            parent: Some(parent),
+            position,
+            radius: 0.0,
+            zone,
+            role,
+        });
+        Some(self.joints.len() - 1)
+    }
+
+    /// The joints the body's own surface may be bound to, in hierarchy order.
+    pub fn deforming(&self) -> impl Iterator<Item = usize> + '_ {
+        self.joints
+            .iter()
+            .enumerate()
+            .filter(|(_, joint)| joint.role.deforms())
+            .map(|(index, _)| index)
     }
 
     /// How many joints the rig has.
@@ -234,15 +315,22 @@ impl Rig {
     }
 
     /// The bone nearest `point`, and where on it the nearest spot lies.
+    ///
+    /// Only bones the body is actually made of. This answers "what part of the
+    /// body lies under this point", which everything that measures a surface
+    /// asks — the scalp profile, the garment shells, the skin shading — and a
+    /// joint with no geometry behind it has no answer to give. A face rig would
+    /// otherwise put a dozen bones inside the skull and win every one of those
+    /// queries.
     #[must_use]
     pub fn nearest_bone(&self, point: Vec3) -> BoneHit {
         let mut best = BoneHit {
-            joint: 0,
+            joint: self.deforming().next().unwrap_or(0),
             distance: f32::INFINITY,
             radius: 1.0,
             closest: point,
         };
-        for joint in 0..self.len() {
+        for joint in self.deforming() {
             let (start, end) = self.bone(joint);
             let (start_radius, end_radius) = self.bone_radii(joint);
             let axis = end - start;
@@ -470,10 +558,136 @@ mod tests {
         let rig = Rig::rooted_at(&skeleton, 0).expect("rigs");
         assert_eq!(rig.len(), skeleton.nodes.len());
 
-        let mut nodes: Vec<u32> = rig.joints.iter().map(|j| j.node).collect();
+        let mut nodes: Vec<u32> = rig
+            .joints
+            .iter()
+            .map(|j| j.node.expect("a joint from a skeleton came from a node"))
+            .collect();
         nodes.sort_unstable();
         nodes.dedup();
         assert_eq!(nodes.len(), skeleton.nodes.len());
+    }
+
+    /// A rig with a three-link spring chain hanging off the head, of the kind
+    /// hair or an ear would want, and the head joint it hangs from.
+    fn with_a_spring_chain() -> (Rig, usize, Vec<usize>) {
+        let mut rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let head = *rig.in_zone(Zone::Head).first().expect("a head");
+        let mut chain = Vec::new();
+        let mut parent = head;
+        for link in 1..=3 {
+            // Hung out to the side and downward, well inside the body's reach,
+            // so that if the skin did bind to these it would certainly show.
+            let at = rig.joints[head].position + Vec3::new(0.04 * link as f32, -0.02, 0.0);
+            parent = rig
+                .attach(parent, at, Role::Spring)
+                .expect("the head exists");
+            chain.push(parent);
+        }
+        (rig, head, chain)
+    }
+
+    #[test]
+    fn an_attached_joint_hangs_off_its_parent_in_order() {
+        let (mut rig, head, chain) = with_a_spring_chain();
+        assert_eq!(rig.joints[chain[0]].parent, Some(head));
+        for (index, &joint) in chain.iter().enumerate() {
+            assert!(
+                rig.joints[joint].parent.expect("attached") < joint,
+                "attaching broke parent-before-child at {joint}"
+            );
+            assert_eq!(rig.joints[joint].role, Role::Spring);
+            assert_eq!(rig.joints[joint].node, None, "link {index} claims a node");
+            // The zone comes down the chain from the head it hangs off.
+            assert_eq!(rig.joints[joint].zone, Zone::Head);
+        }
+        assert_eq!(rig.attach(rig.len(), Vec3::ZERO, Role::Helper), None);
+    }
+
+    #[test]
+    fn the_body_does_not_bind_to_a_joint_it_has_no_geometry_for() {
+        // The whole issue. A rig that carries hair, a face or a prop socket has
+        // joints with no capsule behind them, and the body's own surface has to
+        // ignore every one — silently binding to them attaches a patch of skin
+        // to something that was never meant to move it.
+        use crate::cage::{CageConfig, build_cage};
+        use crate::rig::skin;
+        use crate::subdiv::catmull_clark;
+
+        let skeleton = HumanoidParams::default().skeleton();
+        let mesh = catmull_clark(
+            &build_cage(&skeleton, &CageConfig::default()).expect("meshes"),
+            1,
+        );
+        let plain = Rig::from_skeleton(&skeleton).expect("rigs");
+        let (sprung, _, chain) = with_a_spring_chain();
+
+        let before = skin::bind(&mesh, &plain, &SkinConfig::default());
+        let after = skin::bind(&mesh, &sprung, &SkinConfig::default());
+        assert_eq!(
+            before, after,
+            "adding joints the body is not made of changed how it is skinned"
+        );
+        for vertex in &after.vertices {
+            for influence in vertex {
+                assert!(
+                    !chain.contains(&(influence.joint as usize)),
+                    "a body vertex was bound to a spring bone"
+                );
+            }
+        }
+        assert!(
+            after.is_normalized(1e-4),
+            "the weights stopped summing to one"
+        );
+    }
+
+    #[test]
+    fn a_joint_with_no_geometry_never_wins_a_surface_query() {
+        // nearest_bone answers "what part of the body is under this point", and
+        // a face rig would otherwise put a dozen bones inside the skull and win
+        // that question at every vertex of the head.
+        let (rig, head, chain) = with_a_spring_chain();
+        for &joint in &chain {
+            let at = rig.joints[joint].position;
+            assert_ne!(
+                rig.nearest_bone(at).joint,
+                joint,
+                "a spring bone answered for the point it sits on"
+            );
+        }
+        // And the answer is the one it was before the chain was hung there.
+        let plain = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let probe = rig.joints[head].position + Vec3::new(0.04, -0.02, 0.0);
+        assert_eq!(
+            rig.nearest_bone(probe).joint,
+            plain.nearest_bone(probe).joint
+        );
+    }
+
+    #[test]
+    fn an_attached_joint_is_still_posed_like_any_other() {
+        // The role says who may bind to a joint, not how it moves. A spring
+        // chain that did not follow the head would be useless for the thing it
+        // exists for.
+        use crate::anim::Pose;
+        use glam::Quat;
+
+        let (rig, head, chain) = with_a_spring_chain();
+        let rest = Pose::rest(&rig).forward(&rig);
+        for &joint in &chain {
+            assert!(rest.positions[joint].distance(rig.joints[joint].position) < 1e-5);
+        }
+
+        let mut pose = Pose::rest(&rig);
+        pose.rotations[head] = Quat::from_rotation_z(0.6);
+        let turned = pose.forward(&rig);
+        for &joint in &chain {
+            assert!(
+                turned.positions[joint].distance(rest.positions[joint]) > 0.005,
+                "a spring bone did not follow the head it hangs from"
+            );
+        }
     }
 
     #[test]

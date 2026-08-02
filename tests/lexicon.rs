@@ -254,6 +254,21 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
             "{fragment} maximum height disagrees with the crate"
         );
     }
+
+    // The one axis that costs geometry, and the one whose ceiling was wrong:
+    // the lexicon said 256 while the budget could pay for 128, so a record
+    // could legally ask for twice the whole avatar's worth of hair.
+    let groups = &defs["defs"]["hair"]["properties"]["groups"];
+    assert_eq!(
+        groups["minimum"].as_u64(),
+        Some(u64::from(symbios_avatar::hair::MIN_GROUPS)),
+        "the declared floor on hair groups disagrees with the crate"
+    );
+    assert_eq!(
+        groups["maximum"].as_u64(),
+        Some(u64::from(symbios_avatar::hair::MAX_GROUPS)),
+        "the declared ceiling on hair groups disagrees with the crate"
+    );
 }
 
 #[test]

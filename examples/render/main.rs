@@ -32,7 +32,7 @@
 //! cargo run --release --example render -- --head       # close up on face and hair
 //! cargo run --release --example render -- --close hand # or head, hand, foot
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
-//! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2
+//! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,96
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --budget    # what one avatar costs
@@ -99,8 +99,10 @@ fn main() {
     // Which stage to show instead of the finished picture.
     let pass = value("--pass").cloned();
     // Six numbers, in the order the axes are declared: length, volume,
-    // coverage, part, wave, shade. For walking the parameter space by eye,
-    // which is the only way any of it got tuned.
+    // coverage, part, wave, shade, and optionally the group count after them.
+    // For walking the parameter space by eye, which is the only way any of it
+    // got tuned — including the group count, which is where the helmet the
+    // module docs warn about would show.
     let overridden: Vec<f32> = value("--hair")
         .map(|spec| {
             spec.split(',')
@@ -139,7 +141,7 @@ fn main() {
             part: axis(3, record.hair.part),
             wave: axis(4, record.hair.wave),
             shade: axis(5, record.hair.shade),
-            ..record.hair
+            groups: axis(6, record.hair.groups as f32) as u32,
         }),
         ..Default::default()
     };

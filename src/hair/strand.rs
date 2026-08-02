@@ -55,6 +55,20 @@ impl Strand {
             .sum()
     }
 
+    /// What sweeping it will cost, in triangles.
+    ///
+    /// Derived rather than measured, so the group count can be tiered to a
+    /// budget without meshing anything: walls are a quad per side per step, and
+    /// each end cap is a `SIDES`-gon fanned. `tris_matches_the_mesh` is what
+    /// keeps the two in step.
+    #[must_use]
+    pub fn tris(&self) -> usize {
+        if self.path.len() < 2 {
+            return 0;
+        }
+        2 * SIDES * (self.path.len() - 1) + 2 * (SIDES - 2)
+    }
+
     /// Sweeps the ribbon into geometry.
     ///
     /// The taper is deliberately late. A lock has to finish in a wisp — held
@@ -118,6 +132,26 @@ mod tests {
             hi.x - lo.x,
             hi.z - lo.z
         );
+    }
+
+    #[test]
+    fn tris_matches_the_mesh() {
+        // The budget tiers a group count down by arithmetic on paths, without
+        // sweeping anything. That is only safe while the arithmetic agrees with
+        // the sweep, so it is checked rather than trusted.
+        for points in 2..12 {
+            let strand = Strand {
+                path: (0..points)
+                    .map(|step| Vec3::new(0.0, -0.02 * step as f32, 0.05))
+                    .collect(),
+                ..straight()
+            };
+            assert_eq!(
+                strand.tris(),
+                strand.mesh().triangulated().len(),
+                "a {points}-point strand"
+            );
+        }
     }
 
     #[test]

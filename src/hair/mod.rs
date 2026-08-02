@@ -22,6 +22,18 @@
 //!   is long at the back and a fringe at the front, and that difference is most
 //!   of what makes a head of hair look like one.
 //!
+//! Hair is also the most expensive thing on a body by some way — it was 70% of
+//! the whole triangle budget — so two things here are about cost. Each lock is
+//! **sampled by how far it actually travels** rather than by a fixed count,
+//! which follows from the point above: if a fringe is a tenth the length of the
+//! hair behind it, it does not need the same number of points. And the group
+//! count a record asks for is a **request**, tiered down when the rest of the
+//! axes are expensive enough that granting it would not fit; see
+//! [`MAX_TRIANGLES`]. Neither touches the cross-section or the group count of a
+//! default head, because both of those are what the two decisions above
+//! protect: cheapening the ribbon turns locks into rope or into one shell, and
+//! growing fewer of them shows scalp.
+//!
 //! Everything is built in head-local space, as the eyes are, so a renderer
 //! parents it to the head joint and the hair follows the body for free.
 
@@ -57,14 +69,47 @@ const PART_PUSH: f32 = 0.12;
 /// How far either side of the parting that push reaches, in radians.
 const PART_SPREAD: f32 = 0.75;
 
-/// How many points sample a strand's cap and its fall.
+/// How many points sample the cap of the row rooted at the crown.
 ///
-/// The cap is sampled densely because the scalp's curvature is worst exactly
-/// where the cap begins. At five steps the chord from the crown to the next
+/// That row is sampled densely because the scalp's curvature is worst exactly
+/// where its cap begins. At five steps the chord from the crown to the next
 /// sample cut *under* the skull, and the close-up showed a bald disc at the
 /// whorl — invisible at body framing.
-const CAP_STEPS: usize = 10;
+const CROWN_STEPS: usize = 10;
+
+/// How much scalp one cap sample covers, in head radii.
+///
+/// Every lock used to get the crown row's sample count whatever it had to hug,
+/// and a lock's cap is not a fixed length: at the front it runs from the crown
+/// to the brow, half a head radius, and at the back it runs on to the nape,
+/// nearly three times as far. Sampling by how much scalp a lock actually
+/// crosses spends the same total on a much better distribution.
+///
+/// Measured on built hair rather than on a reconstruction of it, because a
+/// synthetic meridian at one azimuth said the opposite and was wrong twice
+/// over — it made a coarser cap look *better* than the one it replaced, and it
+/// never saw the back of the head, which is where the deepest chord is. The
+/// figure the value is set by is how far a centre-line falls inside the
+/// measured profile, worst case over five bodies and all three volumes: a lock
+/// is `0.024` head radii thick, and no chord sags as much as half of that, so
+/// every lock's outer surface still stands proud of the skull.
+const CAP_PER_STEP: f32 = 0.15;
+
+/// The most points that sample a lock's fall.
 const FALL_STEPS: usize = 9;
+
+/// The fewest points either phase of a lock is sampled with.
+const MIN_STEPS: usize = 2;
+
+/// How much fall one sample of it covers, in head radii.
+///
+/// Sampling a fringe at a back lock's resolution was most of what hair cost.
+/// At the default length the locks over the face fall a tenth as far as the
+/// ones behind them and were given the same nine points; a lock's samples
+/// should follow how far it actually travels, which is the same principle that
+/// sizes the cap by how much scalp its row crosses. Waving counts toward the
+/// distance, because a wave is path the lock goes round.
+const FALL_PER_STEP: f32 = 0.21;
 
 /// How far a lock's tip is drawn back toward the middle of its clump.
 ///
@@ -138,9 +183,41 @@ impl Default for HairParams {
 /// A floor because a handful of ribbons is a wig, not hair; a ceiling because
 /// group count is the one axis that costs geometry, and a record read off the
 /// network is not to be trusted with that.
+///
+/// The ceiling used to be 256, which admitted more triangles of hair than the
+/// whole avatar is allowed to cost — so it was not doing the job its own
+/// comment claimed. It is now the count the default asks for, because that is
+/// the most the budget can pay for even at the cheap end of the look axes.
+/// Asking is still not getting: see [`MAX_TRIANGLES`].
 pub const MIN_GROUPS: u32 = 24;
 /// See [`MIN_GROUPS`].
-pub const MAX_GROUPS: u32 = 256;
+pub const MAX_GROUPS: u32 = 128;
+
+/// The most triangles a head of hair may cost, whatever a record asks for.
+///
+/// The whole avatar is judged against 30,000 on a WebGL2 tier, and everything
+/// that is not hair measures between 13,028 and 13,180 across the seeds swept
+/// in `tests/budget.rs`. What is left is a little under 16,900, and this sits
+/// below that so the parts that are not hair have somewhere to grow.
+///
+/// This is the number that makes group count a *request*. A record may ask for
+/// [`MAX_GROUPS`]; whether it gets them depends on what the rest of its axes
+/// cost, because a lock's price is no longer fixed — it follows how far the
+/// lock actually travels. Longest and waviest, a lock costs nearly twice what
+/// the default's does.
+pub const MAX_TRIANGLES: usize = 16_500;
+
+/// The fewest groups the budget will tier a request down to.
+///
+/// Tiering is the renderer overruling the creator, and it has a floor because
+/// the thing it protects is a triangle count, which knows nothing about
+/// whether the result still reads as hair. At 96 groups the locks are visibly
+/// broader than the default's and the crown starts to read as one shell; at 64
+/// they are slabs with daylight between them. So: 96, and never lower.
+///
+/// It costs nothing to hold that line. Measured across the whole parameter
+/// space, no legal record exceeds [`MAX_TRIANGLES`] at 96 groups.
+const TIER_FLOOR: u32 = 96;
 
 impl HairParams {
     /// Clamps every axis into range. Idempotent.
@@ -214,10 +291,45 @@ impl Hair {
     /// Given the body's rig, falling hair is pushed clear of whatever it lands
     /// on. Without that, anything past a bob hangs *inside* the chest and reads
     /// as dark stripes painted on the skin.
+    ///
+    /// The group count in `params` is a **request**. If the hair it grows costs
+    /// more than [`MAX_TRIANGLES`], fewer groups are grown until it fits or the
+    /// tier reaches its floor — which is what stops a record read off the
+    /// network from spending the whole avatar's budget on its hair. Every other
+    /// axis is the creator's and is never touched: length, wave and volume are
+    /// what the hair *looks like*, and quietly shortening someone's hair to
+    /// save triangles is a different thing from drawing fewer locks of it.
+    ///
+    /// Cost is close to linear in the group count, so this settles in one
+    /// regrow in practice; it is bounded by the strictly decreasing count.
     #[must_use]
     pub fn over(scalp: &Scalp, body: Option<(&Rig, &Surface)>, params: &HairParams) -> Self {
+        let mut asked = params.groups;
+        let mut grown = Self::grow(scalp, body, params, asked);
+        while grown.tris() > MAX_TRIANGLES && asked > TIER_FLOOR {
+            let afford = asked as usize * MAX_TRIANGLES / grown.tris();
+            asked = (afford as u32).clamp(TIER_FLOOR, asked - 1);
+            grown = Self::grow(scalp, body, params, asked);
+        }
+        grown
+    }
+
+    /// What a head of hair will cost to sweep, in triangles.
+    #[must_use]
+    pub fn tris(&self) -> usize {
+        self.groups.iter().map(Strand::tris).sum()
+    }
+
+    /// Grows exactly `groups` strand groups, without regard to the budget.
+    #[must_use]
+    fn grow(
+        scalp: &Scalp,
+        body: Option<(&Rig, &Surface)>,
+        params: &HairParams,
+        groups: u32,
+    ) -> Self {
         let radius = scalp.radius();
-        let columns = (params.groups as usize / ROWS).max(MIN_COLUMNS);
+        let columns = (groups as usize / ROWS).max(MIN_COLUMNS);
         let step = TAU / columns as f32;
 
         let thickness = radius * 0.024;
@@ -294,6 +406,16 @@ impl Hair {
                         stand: lift,
                         fall,
                         waving,
+                        // The crown row keeps its floor whatever it crosses: it
+                        // is the only one that goes over the pole, where the
+                        // profile turns through a right angle inside a couple
+                        // of bands, and a chord across that is the bald disc at
+                        // the whorl.
+                        cap_steps: (((root - hairline) / CAP_PER_STEP).round() as usize)
+                            .max(if row == 0 { CROWN_STEPS } else { MIN_STEPS }),
+                        fall_steps: (((fall + 3.0 * waving) / (FALL_PER_STEP * radius)).round()
+                            as usize)
+                            .clamp(MIN_STEPS, FALL_STEPS),
                         // Phase follows the azimuth, so neighbours wave
                         // together the way a lock of hair does. A phase per
                         // strand looks like corrugated iron.
@@ -364,6 +486,10 @@ struct Fall {
     phase: f32,
     /// How far clear of the body it is kept, in metres.
     clearance: f32,
+    /// How many points sample its cap.
+    cap_steps: usize,
+    /// How many points sample its fall.
+    fall_steps: usize,
 }
 
 /// The centre-line of one strand group.
@@ -374,10 +500,10 @@ struct Fall {
 /// dropped on a head.
 fn sweep(scalp: &Scalp, body: Option<(&Rig, &Surface)>, fall: Fall) -> Vec<Vec3> {
     let Fall { azimuth, .. } = fall;
-    let mut path = Vec::with_capacity(CAP_STEPS + FALL_STEPS);
+    let mut path = Vec::with_capacity(fall.cap_steps + fall.fall_steps + 1);
 
-    for step in 0..=CAP_STEPS {
-        let along = step as f32 / CAP_STEPS as f32;
+    for step in 0..=fall.cap_steps {
+        let along = step as f32 / fall.cap_steps as f32;
         let height = fall.root + (fall.hairline - fall.root) * along;
         path.push(scalp.point(azimuth, height) + scalp.normal(azimuth, height) * fall.stand);
     }
@@ -392,8 +518,8 @@ fn sweep(scalp: &Scalp, body: Option<(&Rig, &Surface)>, fall: Fall) -> Vec<Vec3>
     // with the drop but never jump, which is what keeps a drape a drape.
     let mut leaned = 0.0f32;
     let mut previous = from;
-    for step in 1..=FALL_STEPS {
-        let along = step as f32 / FALL_STEPS as f32;
+    for step in 1..=fall.fall_steps {
+        let along = step as f32 / fall.fall_steps as f32;
         // Widening as it falls, so long hair drapes over the shoulders instead
         // of hanging inside them.
         let flare = 1.0 + 0.22 * along;
@@ -646,6 +772,148 @@ mod tests {
                 "a parting at {part} opened by {moved}, not {}",
                 2.0 * PART_PUSH
             );
+        }
+    }
+
+    #[test]
+    fn no_lock_sinks_into_the_skull() {
+        // What the sampling rules are actually for. A centre-line runs between
+        // its samples as a chord, and a chord across a curve falls inside it;
+        // if it falls further in than the ribbon is thick, the lock's outer
+        // surface is inside the skull and there is a bald patch where it should
+        // have been.
+        //
+        // Measured, not assumed, and the measurement had to be built twice: a
+        // synthetic meridian at one azimuth reported the opposite ordering of
+        // two sampling rules, because it never looked at the back of the head —
+        // where the cap runs nearly three times as far as it does at the brow,
+        // and where the deepest chord always is.
+        //
+        // The worst case over these five bodies is 0.80 of a half-thickness,
+        // and it is on the row rooted lowest: that row is the underlayer, with
+        // the other three stacked outside it, so it is also the row nothing can
+        // see. The row that is on top is the one rooted at the crown, and it
+        // keeps a sample count of its own for exactly that reason.
+        for seed in [0, 1, 7, 23, 42] {
+            let (scalp, rig, surface) = scalp(seed);
+            let thickness = scalp.radius() * 0.024;
+            for volume in [-1.0f32, 0.0, 1.0] {
+                let params = HairParams {
+                    volume,
+                    ..Default::default()
+                };
+                let hair = Hair::over(&scalp, Some((&rig, &surface)), &params);
+                for group in &hair.groups {
+                    for step in group.path.windows(2) {
+                        for sub in 0..=8 {
+                            let point = step[0].lerp(step[1], sub as f32 / 8.0);
+                            let height = point.y / scalp.radius();
+                            if height < scalp.bottom() || height > scalp.top() {
+                                continue;
+                            }
+                            let skull = scalp.width_at(height) * scalp.radius();
+                            let across = Vec3::new(point.x, 0.0, point.z).length();
+                            assert!(
+                                skull - across < thickness,
+                                "seed {seed} at volume {volume}: a lock sank {} of a \
+                                 half-thickness into the skull at height {height}",
+                                (skull - across) / thickness
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_expensive_head_of_hair_is_tiered_down_rather_than_grown() {
+        // The half of this that a record can attack. Group count is what costs
+        // geometry, so it is what gets taken away — and only it: the axes that
+        // say what the hair looks like are the creator's.
+        let (scalp, rig, surface) = scalp(1);
+        let dear = HairParams {
+            length: 1.0,
+            wave: 1.0,
+            groups: MAX_GROUPS,
+            ..Default::default()
+        };
+        let hair = Hair::over(&scalp, Some((&rig, &surface)), &dear);
+        assert!(
+            hair.tris() <= MAX_TRIANGLES,
+            "the dearest legal hair cost {}",
+            hair.tris()
+        );
+        assert!(
+            hair.groups.len() < MAX_GROUPS as usize,
+            "it asked for {MAX_GROUPS} groups at the dearest look and got them all"
+        );
+        assert!(
+            hair.groups.len() >= TIER_FLOOR as usize - ROWS,
+            "tiering went past its floor, to {} groups",
+            hair.groups.len()
+        );
+        // The look survives the tier: it is still long hair, not cropped.
+        let cheap = Hair::over(&scalp, Some((&rig, &surface)), &HairParams::default());
+        assert!(
+            hair.drop() > cheap.drop() * 1.5,
+            "the tier shortened the hair, from {} to {}",
+            cheap.drop(),
+            hair.drop()
+        );
+    }
+
+    #[test]
+    fn the_default_head_of_hair_is_not_tiered() {
+        // A budget that bites on the default is a budget set too low: the
+        // number a creator sees when they change nothing has to be the number
+        // they asked for.
+        let (scalp, rig, surface) = scalp(1);
+        let params = HairParams::default();
+        let hair = Hair::over(&scalp, Some((&rig, &surface)), &params);
+        let ungoverned = Hair::grow(&scalp, Some((&rig, &surface)), &params, params.groups);
+        assert_eq!(
+            hair.groups.len(),
+            ungoverned.groups.len(),
+            "the default asked for {} groups and was tiered",
+            params.groups
+        );
+    }
+
+    #[test]
+    fn no_record_can_spend_more_than_the_budget_on_hair() {
+        // The whole point of the ceiling. Swept rather than argued, because the
+        // cost of a lock is no longer fixed — it follows how far the lock
+        // travels — so which corner of the space is dearest is not obvious and
+        // was not the one guessed at.
+        let (scalp, rig, surface) = scalp(1);
+        for length in [0.0, 0.5, 1.0] {
+            for volume in [-1.0, 0.0, 1.0] {
+                for coverage in [-1.0, 0.0, 1.0] {
+                    for wave in [0.0, 0.5, 1.0] {
+                        // Above the ceiling too: sanitize clamps a record, but
+                        // nothing makes a caller sanitize one.
+                        for groups in [MIN_GROUPS, 96, MAX_GROUPS, 1024] {
+                            let mut params = HairParams {
+                                length,
+                                volume,
+                                coverage,
+                                wave,
+                                groups,
+                                ..Default::default()
+                            };
+                            let hair = Hair::over(&scalp, Some((&rig, &surface)), &params);
+                            assert!(
+                                hair.tris() <= MAX_TRIANGLES,
+                                "{params:?} cost {} triangles",
+                                hair.tris()
+                            );
+                            params.sanitize();
+                            assert!(params.groups <= MAX_GROUPS);
+                        }
+                    }
+                }
+            }
         }
     }
 
