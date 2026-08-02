@@ -161,14 +161,46 @@ by reasoning about albedo.
 
 The **geometry** half of #39 — `FaceParams` is four prominence scalars over one fixed skull, and
 `skull.rs` ships six const tables no record touches — is split out as **#61**, deliberately
-sequenced *after* #59: widening the face axes means tuning feature shapes by eye against a topology
-#59 is about to replace.
+sequenced *after* #59: widening the face axes means tuning feature shapes by eye against a
+topology that #59 is about to replace.
+
+### 2026-08-02, spring chains (#38, closed)
+
+WS3 named spring chains in its own description and had zero grep hits for them. `anim::spring` now
+carries the simulation: `Springs::of` finds a chain in any run of [`Role::Spring`] joints hanging
+off one that is not, and `advance` integrates it and writes rotations back into the pose. It knows
+nothing about *what* it is moving, which is what `Role` (#34) was for — hair, a hem and a tail are
+the same code.
+
+`VRMC_springBone` remains the vocabulary, and the departures from it are all in one direction —
+away from things that only worked because a particular engine did them a particular way. Drag is
+per *second* rather than per frame, so hair is not limp at 30 Hz and lively at 144 Hz. Stiffness is
+a real spring toward the pose's own answer rather than a constant pull along the rest direction,
+which cannot settle. Collision is against `rig::Surface` — the body as measured, which hair already
+clears itself against at generation time — rather than hand-placed collider capsules that would
+have to be authored and kept in sync. Long steps are subdivided rather than trusted. And an anchor
+that jumps more than four chain-lengths in a step is treated as having been *relocated*, which the
+spec has no answer for and a game that moves bodies between regions very much needs.
+
+Gravity defaults to **zero**, which is not what the spec would do. It is a real force here, so it
+moves where a chain comes to rest, and everything this crate generates is already drooped: hair is
+grown falling, with its own lean and its own clearance. A gentle `1.2` sagged a four-link chain by
+6.6 cm and left it there. Set it for a chain whose rest shape does not already hang.
+
+Nothing yet *attaches* spring joints in the shipping path — hair is still bound rigidly to the head
+joint. That is **#62**, and it is explicitly a measure-first job: a chain per lock would put the rig
+past Bevy's 256-joint limit, so how many chains a head of hair gets is a design choice constrained
+by a hard number that should be found before a shape is committed to.
 
 ### Where this leaves the gate
 
-**Open and blocking:** #38 (spring chains, now unblocked by #34) is the last of the P1 band. **Gate
-#6 (#36) is closed to re-judging until #34–#39 clear** — which, with #39 closed, means #38 alone.
-Behind it and not gating: #59 before WS4 can start, then #61, then #60 if measurement asks for it.
+**The P1 band #34–#39 is closed.** Gate #6 (#36) was shut to re-judging until it cleared, and it
+has — so rewriting the gate as a checklist with numeric thresholds, and executing its "and in-app" half
+for the first time through `bevy_symbios_avatar`, is now the next thing rather than a deferred one.
+
+Behind it, in order: **#59** (weld the face) before WS4 can start, then **#61** (face geometry axes),
+then **#62** (wire hair to the springs), then **#60** (the pose-space corrective driver) only if
+measurement asks for it.
 
 ## 1. Headline research findings
 

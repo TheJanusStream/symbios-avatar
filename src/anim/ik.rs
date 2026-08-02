@@ -191,12 +191,16 @@ fn perpendicular(vector: Vec3, axis: Vec3) -> Option<Vec3> {
 
 /// Rewrites a chain's local rotations so its joints land on `solved`.
 ///
+/// Shared with [`crate::anim::spring`], which solves chain positions by
+/// simulation rather than by iteration and then needs exactly this. A second
+/// copy of it would be a second implementation of the same subtle arithmetic.
+///
 /// Each joint is turned by the rotation carrying the direction its child sits in
 /// onto the direction the solution wants — *after* the corrections its ancestors
 /// already received, which is what `carried` accumulates. Composing onto the
 /// existing world rotation rather than replacing it preserves the twist the limb
 /// was already holding.
-fn retarget(
+pub(crate) fn retarget(
     rig: &Rig,
     pose: &mut Pose,
     chain: &[usize],

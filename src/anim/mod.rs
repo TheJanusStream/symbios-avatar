@@ -23,6 +23,8 @@
 //!   goals so one description serves every body.
 //! * [`look_at`] — turning a body toward something, shared down the chain from
 //!   the torso rather than swivelled by the skull alone.
+//! * [`Springs`] — the hair, hems and tails that follow late, which is most of
+//!   what stops a body reading as a puppet.
 //!
 //! ```rust
 //! use symbios_avatar::{
@@ -54,6 +56,7 @@ pub mod gaze;
 pub mod ground;
 pub mod ik;
 pub mod pose;
+pub mod spring;
 
 pub use blend::Inertializer;
 pub use clip::{Clip, Key, Target, Track};
@@ -62,3 +65,4 @@ pub use gaze::{Gaze, GazeConfig, look_at};
 pub use ground::{Footing, FootingConfig, Ground, plant_feet, plant_feet_of};
 pub use ik::{FabrikConfig, fabrik, two_bone};
 pub use pose::{Pose, Posed};
+pub use spring::{SpringConfig, Springs};
