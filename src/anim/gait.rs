@@ -382,13 +382,30 @@ const ELBOW_BEND: f32 = 0.34;
 /// is what this gait did until now — does not look like it is walking.
 ///
 /// Call after [`step`], which places the feet; this only touches the upper body.
+///
+/// **A limb the body stands on is left alone.** A quadruped's fore limbs are
+/// legs, and they have just been placed by an IK solve; swinging them as though
+/// they were arms moved each fore contact by 0.21 to 0.24 m every frame the
+/// render tool drew. Asking which limbs carry the body — rather than which end
+/// of it they are on — is also what makes this right for bodies nobody has
+/// planned, a centaur's arms swinging while its four legs walk.
+///
+/// **Rotations are composed, not assigned.** This was the one pose producer
+/// that overwrote whatever ran before it, which is why it could destroy an IK
+/// solve rather than merely disagree with one. Each producer contributes to a
+/// pose once; running this twice compounds its own drop, as any additive layer
+/// would.
 pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
     if !pose.fits(rig) {
         return;
     }
 
+    let carries = rig.ground_contacts();
     let mut lead = 0.0;
     for limb in [Limb::ForeLeft, Limb::ForeRight] {
+        if carries.contains(&limb) {
+            continue;
+        }
         let Some([shoulder, elbow, _]) = rig.limb_chain(limb) else {
             continue;
         };
@@ -410,10 +427,10 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
         // rotation about X carries a hanging arm backward, so a forward swing is
         // the negative one.
         let side = rig.joints[shoulder].position.x.signum();
-        pose.rotations[shoulder] =
+        pose.rotations[shoulder] *=
             Quat::from_rotation_x(-ARM_SWING * drive) * Quat::from_rotation_z(-ARM_DROP * side);
         // A straight arm reads as a mannequin being carried along.
-        pose.rotations[elbow] =
+        pose.rotations[elbow] *=
             Quat::from_rotation_y(-ELBOW_BEND * side * (0.5 + 0.5 * drive.max(0.0)));
     }
 
@@ -422,8 +439,8 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
     if let Some(&neck) = rig.in_zone(Zone::Neck).first()
         && let Some(girdle) = rig.joints[neck].parent
     {
-        pose.rotations[girdle] = Quat::from_rotation_y(SHOULDER_TWIST * lead);
-        pose.rotations[neck] = Quat::from_rotation_y(-SHOULDER_TWIST * lead);
+        pose.rotations[girdle] *= Quat::from_rotation_y(SHOULDER_TWIST * lead);
+        pose.rotations[neck] *= Quat::from_rotation_y(-SHOULDER_TWIST * lead);
     }
 }
 

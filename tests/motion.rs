@@ -349,3 +349,143 @@ fn skinning_leaves_the_rest_pose_exactly_alone() {
         );
     }
 }
+
+#[test]
+fn swinging_arms_leaves_the_limbs_the_body_stands_on_alone() {
+    // Measured defect: on a quadruped every fore contact moved 0.21-0.24 m the
+    // moment the arms swung, because the fore limbs are legs and had just been
+    // placed by IK. swing_arms was the one pose producer that assigned rather
+    // than composed, so it did not merely disagree with the solve — it erased it.
+    use symbios_avatar::{Limb, Zone, anim::gait};
+
+    for (name, archetype) in [
+        ("biped", Archetype::default()),
+        (
+            "quadruped",
+            Archetype::Quadruped(QuadrupedParams::default()),
+        ),
+    ] {
+        let rig = Rig::from_skeleton(&archetype.skeleton()).expect("rigs");
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let carries = rig.ground_contacts();
+
+        for frame in 0..8 {
+            let cycle = frame as f32 / 8.0;
+            let mut pose = Pose::rest(&rig);
+            let steps = gait::step(&rig, &mut pose, &gait, &stride, cycle);
+            plant_feet_of(
+                &rig,
+                &mut pose,
+                &steps.stance,
+                |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
+                &FootingConfig::default(),
+            );
+
+            let planted = pose.forward(&rig);
+            gait::swing_arms(&rig, &mut pose, &gait, cycle);
+            let swung = pose.forward(&rig);
+
+            for &limb in &carries {
+                let contact = *rig
+                    .in_zone(Zone::Extremity(limb))
+                    .first()
+                    .expect("a contact limb has an extremity");
+                let moved = planted.positions[contact].distance(swung.positions[contact]);
+                assert!(
+                    moved < 1e-4,
+                    "{name} {limb:?} contact moved {moved:.4} m at cycle {cycle:.2}"
+                );
+            }
+        }
+
+        // And on a body that has arms, the swing must still do something.
+        if carries.len() < Limb::ALL.len() {
+            let mut pose = Pose::rest(&rig);
+            let before = pose.clone();
+            gait::swing_arms(&rig, &mut pose, &gait, 0.25);
+            assert_ne!(pose, before, "{name} did not swing its arms at all");
+        }
+    }
+}
+
+#[test]
+fn a_limb_folds_the_way_its_own_plan_says_it_folds() {
+    // The pole was hardcoded forward at the one call site, which is right for a
+    // knee and backwards for every other joint that can be solved.
+    //
+    // The expectations here were *measured*, not assumed. A first attempt keyed
+    // the direction on fore-versus-hind and the render disagreed: a quadruped's
+    // hock folds backward like its carpus, so the rule got half a creature
+    // wrong. The rest pose already knew — a quadruped's limbs are built with the
+    // bend in them — and reading it beats any rule about limb names.
+    use symbios_avatar::{Limb, anim::ik};
+
+    // Backward for everything a quadruped has; on a biped, whose limbs are all
+    // dead straight at rest, the anatomical fallback decides.
+    let expected = |name: &str, limb: Limb| -> f32 {
+        match (name, limb.is_fore()) {
+            ("quadruped", _) => -1.0,
+            (_, true) => -1.0,
+            (_, false) => 1.0,
+        }
+    };
+
+    for (name, archetype) in [
+        ("biped", Archetype::default()),
+        (
+            "quadruped",
+            Archetype::Quadruped(QuadrupedParams::default()),
+        ),
+    ] {
+        let rig = Rig::from_skeleton(&archetype.skeleton()).expect("rigs");
+        for limb in Limb::ALL {
+            let Some(chain) = rig.limb_chain(limb) else {
+                continue;
+            };
+            let pole = rig.bend_pole(limb).expect("a solvable limb has a pole");
+
+            // Reach for a point well inside the limb's span, so it must bend.
+            let root = rig.joints[chain[0]].position;
+            let tip = rig.joints[chain[2]].position;
+            let target = root + (tip - root) * 0.55;
+
+            let mut pose = Pose::rest(&rig);
+            ik::two_bone(&rig, &mut pose, chain, target, pole);
+            let posed = pose.forward(&rig);
+
+            // The apex is how far the middle joint left the line from root to
+            // tip, measured fore-and-aft.
+            let line =
+                (posed.positions[chain[2]] - posed.positions[chain[0]]).normalize_or(Vec3::Y);
+            let out = posed.positions[chain[1]] - posed.positions[chain[0]];
+            let apex = (out - line * out.dot(line)).z;
+            let want = expected(name, limb);
+            assert!(
+                apex * want > 1e-3,
+                "{name} {limb:?} folded the wrong way: apex {apex:+.4}, wanted sign {want:+}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_plan_that_states_its_own_bend_is_believed_over_the_fallback() {
+    // The property that makes the fallback safe to keep: where a plan has an
+    // opinion, the opinion wins. A quadruped's hind limb folds backward, which
+    // is the opposite of what the fore-versus-hind fallback would choose, so
+    // this fails the moment the measurement stops being consulted.
+    use symbios_avatar::Limb;
+
+    let rig = Rig::from_skeleton(&Archetype::Quadruped(QuadrupedParams::default()).skeleton())
+        .expect("rigs");
+    for limb in [Limb::HindLeft, Limb::HindRight] {
+        let chain = rig.limb_chain(limb).expect("a hind limb solves");
+        let root = rig.joints[chain[0]].position;
+        let pole = rig.bend_pole(limb).expect("a solvable limb has a pole");
+        assert!(
+            (pole - root).z < 0.0,
+            "{limb:?} was given a forward pole despite resting bent backward"
+        );
+    }
+}

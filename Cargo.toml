@@ -16,7 +16,10 @@ glam = { version = "0.30.10", features = ["serde"] }
 # boundary shows a seam — which needs 3-D noise. Same version symbios-texture
 # already pulls in, so no new entry in the tree.
 noise = "0.9"
-rand = "0.9"
+# Default features off: this crate never asks for OS entropy. Every draw comes
+# from a seeded `Pcg64Mcg`, which is what makes a record reproduce the same body
+# on every machine, so `thread_rng` and `os_rng` are surface it does not want.
+rand = { version = "0.9", default-features = false }
 rand_pcg = "0.9"
 serde = { version = "1.0", features = ["derive", "rc"] }
 # Records are JSON on the wire, and their serialised size is the budget this
@@ -28,6 +31,19 @@ serde_json = "1.0"
 # rest of the symbios ecosystem rather than reimplemented here.
 symbios-texture = "0.4"
 thiserror = "2.0.17"
+
+# Browsers are the first platform this engine ships to, and `getrandom` refuses
+# to build for `wasm32-unknown-unknown` unless it is told where entropy comes
+# from. Nothing here wants entropy — see the note on `rand` above — but
+# `symbios-texture` pulls `rand` with its defaults on and Cargo unifies features
+# across the graph, so the requirement arrives anyway.
+#
+# Declared here rather than left to the consumer because it is half of a
+# two-part answer: the feature turns the backend on, and `.cargo/config.toml`
+# carries the `--cfg` that selects it. A consuming application still needs the
+# second half; getting the first for free is one less way to be stuck.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 # Examples only — writing atlas PNGs to look at. The library itself emits raw

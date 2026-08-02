@@ -1,0 +1,13 @@
+# getrandom 0.3 refuses to build for wasm32-unknown-unknown unless it is told
+# which entropy source the host provides. This crate never asks for OS entropy —
+# every draw comes from a seeded `Pcg64Mcg`, which is what makes a record
+# reproduce the same body — but `symbios-texture` pulls `rand` with its default
+# features on, and Cargo unifies features across the graph, so the requirement
+# arrives transitively.
+#
+# The flag is scoped to the wasm target, so native builds are untouched. A
+# consuming application needs the same line; browsers are the first platform
+# this engine ships to, so finding that out here rather than downstream is the
+# whole point of the CI job that uses it.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

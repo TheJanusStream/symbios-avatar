@@ -200,9 +200,13 @@ pub(crate) fn solve_contact(rig: &Rig, pose: &mut Pose, limb: Limb, target: Vec3
 
     let posed = pose.forward(rig);
     let offset = posed.positions[chain[2]] - posed.positions[foot];
-    // Bend the knee away from the body's centre line, which is forward for a
-    // biped's knee and a quadruped's stifle alike.
-    let pole = posed.positions[chain[0]] + Vec3::Z * rig.extent();
+    // Which way the joint folds is the rig's to say, not this function's. It
+    // used to be hardcoded forward here, which is right for a biped's knee and
+    // a quadruped's stifle and backwards for everything else that can be
+    // solved. See [`Rig::bend_pole`].
+    let Some(pole) = rig.bend_pole(limb) else {
+        return false;
+    };
 
     two_bone(rig, pose, chain, target + offset, pole)
 }

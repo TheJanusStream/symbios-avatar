@@ -337,6 +337,57 @@ impl Rig {
             .collect()
     }
 
+    /// A point the middle joint of `limb` should bend toward.
+    ///
+    /// Every two-bone solve needs one, because the bend plane is undetermined
+    /// whenever the limb is straight. Callers were inventing it, and all of them
+    /// invented the same forward direction — right for a knee, backwards for
+    /// everything else that can be solved.
+    ///
+    /// **The rest pose answers it wherever the rest pose has an opinion.** A
+    /// body plan that builds a limb with a bend in it has already said which way
+    /// that limb folds, and reading it is strictly better than any rule about
+    /// limb names: it is measured from the body in hand rather than assumed
+    /// about bodies in general, and a plan nobody has written yet gets it right
+    /// for free. Measured on the plans that exist, a quadruped's fore and hind
+    /// limbs *both* fold backward — the carpus and the hock — which is exactly
+    /// the case a fore-versus-hind rule gets wrong.
+    ///
+    /// **Only a straight limb needs the fallback, and then it is anatomy:** fore
+    /// folds back, hind folds forward. Every limb of the humanoid plan is dead
+    /// straight at rest — the arms by design, an A-pose being what it is, and
+    /// the legs because the plan puts hip, knee and ankle on one line — so this
+    /// is the branch a biped always takes.
+    ///
+    /// Returns `None` for a limb this body does not articulate far enough to
+    /// solve.
+    #[must_use]
+    pub fn bend_pole(&self, limb: Limb) -> Option<Vec3> {
+        let chain = self.limb_chain(limb)?;
+        let [root, mid, tip] = chain.map(|joint| self.joints[joint].position);
+
+        // How far the middle joint stands off the line from root to tip: the
+        // bend the plan built in, if it built one.
+        let line = (tip - root).normalize_or(landmark::UP);
+        let offset = mid - root;
+        let bend = offset - line * offset.dot(line);
+
+        // Half a percent of the body's height. Below that it is arithmetic
+        // noise rather than an articulation — the humanoid's limbs measure
+        // exactly zero, and the quadruped's smallest genuine bend is six times
+        // this.
+        let toward = if bend.length() > self.extent() * 0.005 {
+            bend.normalize()
+        } else if limb.is_fore() {
+            -landmark::FORWARD
+        } else {
+            landmark::FORWARD
+        };
+        // Anchored at the chain's root and thrown a body's length out, so the
+        // direction survives the limb swinging about underneath it.
+        Some(root + toward * self.extent())
+    }
+
     /// How far a limb can reach: the sum of the bones an IK solve controls.
     ///
     /// The straight-line distance to the extremity is the wrong measure twice

@@ -198,3 +198,57 @@ fn a_look_survives_a_share_code_and_still_meshes() {
         assert_meshable(&copy.archetype, &format!("share-code copy of seed {seed}"));
     }
 }
+
+/// Extent of one zone's surface along each axis, in metres.
+///
+/// Measured off the built body rather than off the plan, because the plan's
+/// numbers are what a node was asked for and this is about what the mesh did.
+fn zone_extent(record: &AvatarRecord, zone: symbios_avatar::Zone) -> [f32; 3] {
+    let avatar = symbios_avatar::Avatar::build(record).expect("the body builds");
+    let parts = &avatar.parts;
+    let mut lo = [f32::MAX; 3];
+    let mut hi = [f32::MIN; 3];
+    for (vertex, at) in parts.zones.iter().enumerate() {
+        if *at != zone {
+            continue;
+        }
+        let point = parts.body.positions[vertex];
+        for axis in 0..3 {
+            lo[axis] = lo[axis].min(point[axis]);
+            hi[axis] = hi[axis].max(point[axis]);
+        }
+    }
+    assert!(lo[0] <= hi[0], "{zone:?} has no surface");
+    [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]]
+}
+
+#[test]
+fn a_trunk_is_not_a_surface_of_revolution() {
+    // Every node used to be a circle, so a chest measured perfectly round and
+    // the body read as a stack of drums. `Node::scale` was plumbed through the
+    // mesher the whole time and simply never set.
+    //
+    // Measured on the ABDOMEN of each plan, which is the one trunk zone that is
+    // a plain connector: a chest or a pelvis carries limb sockets, and their
+    // spread dominates the lateral extent, so a ratio taken there would report
+    // the arms rather than the ribcage.
+    let biped = AvatarRecord::new("Trunk", Archetype::default());
+    let [wide, _, deep] = zone_extent(&biped, symbios_avatar::Zone::Abdomen);
+    assert!(
+        wide / deep > 1.2,
+        "an upright trunk measured {wide:.4} across and {deep:.4} through — ratio {:.2}",
+        wide / deep
+    );
+
+    // And the same anatomy comes out with the axes swapped, because a
+    // quadruped's spine runs fore-and-aft: its ribcage is narrow and deep, which
+    // is the opposite proportion in the same two numbers. If this ever reports a
+    // ratio near one, the scale is being dropped somewhere between plan and cage.
+    let beast = AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
+    let [across, tall, _] = zone_extent(&beast, symbios_avatar::Zone::Abdomen);
+    assert!(
+        tall / across > 1.15,
+        "a four-legged trunk measured {across:.4} across and {tall:.4} deep — ratio {:.2}",
+        tall / across
+    );
+}

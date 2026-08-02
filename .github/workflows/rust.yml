@@ -13,16 +13,43 @@ jobs:
     build:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
 
             - name: Check Formatting
               run: cargo fmt -- --check
 
+            # --all-targets, so examples and tests are linted too. The render
+            # tool is the instrument every quality judgement here is made with;
+            # letting it rot behind a lint gate that does not cover it is how it
+            # stops being trustworthy.
             - name: Clippy (Linting)
-              run: cargo clippy -- -D warnings
+              run: cargo clippy --all-targets -- -D warnings
 
             - name: Build
               run: cargo build --verbose
 
             - name: Run Tests
               run: cargo test --verbose
+
+            # Documentation is the design record for this crate; a warning here
+            # is usually a link gone stale against a rename.
+            - name: Documentation
+              run: cargo doc --no-deps --document-private-items
+              env:
+                  RUSTDOCFLAGS: -D warnings
+
+    # The first consuming application is wasm32 on WebGL2. Finding out that the
+    # engine does not build for it after a Bevy integration has been written
+    # against a native-only API is the expensive order to discover it in.
+    wasm:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Add the wasm target
+              run: rustup target add wasm32-unknown-unknown
+
+            # `.cargo/config.toml` carries the getrandom backend flag this
+            # needs; see the note there for why it is required at all.
+            - name: Check for wasm32
+              run: cargo check --target wasm32-unknown-unknown --lib --verbose

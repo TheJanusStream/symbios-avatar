@@ -9,7 +9,7 @@
 //! and a squat animal is a barrel. Letting the two axes move independently
 //! produces bodies that read as mistakes.
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -18,6 +18,27 @@ use super::{
 };
 use super::{Limb, Zone};
 use crate::skeleton::{Node, Skeleton};
+
+/// Cross-sections of the trunk, as `(lateral, vertical)` multiples of the node's
+/// radius.
+///
+/// The same idea as the humanoid's, and the axes come out the other way round
+/// for a reason worth stating. The ring frame is transported from a world-up
+/// reference, so `x` is lateral on any body; but a quadruped's spine runs
+/// fore-and-aft rather than vertically, which leaves `y` pointing *up* instead
+/// of forward. A galloping animal's ribcage is narrow and deep — the opposite
+/// proportion to a person's, in the same two numbers.
+///
+/// As on the humanoid, every axis that moves moves *downward*: a socket's
+/// clearance demand is its largest half-extent, so shrinking is free and growing
+/// costs a joint its room. Both girdles here carry four sockets each.
+const HIPS_SECTION: Vec2 = Vec2::new(0.86, 1.0);
+/// See [`HIPS_SECTION`]. The deepest point of the barrel.
+const SPINE_SECTION: Vec2 = Vec2::new(0.80, 1.0);
+/// See [`HIPS_SECTION`].
+const WITHERS_SECTION: Vec2 = Vec2::new(0.84, 1.0);
+/// See [`HIPS_SECTION`]. A neck is rounder than the body it leaves.
+const NECK_SECTION: Vec2 = Vec2::new(0.92, 1.0);
 
 /// Smallest and largest back height this plan accepts, in metres.
 pub const HEIGHT_RANGE: (f32, f32) = (0.25, 1.8);
@@ -143,19 +164,28 @@ impl BodyPlan for QuadrupedParams {
         let foot_y = h * 0.086;
 
         let mut skeleton = Skeleton::new();
-        let hips = skeleton
-            .add_node(Node::new(Vec3::new(0.0, h * 0.966, hips_z), girdle_r).in_zone(Zone::Pelvis));
+        let hips = skeleton.add_node(
+            Node::new(Vec3::new(0.0, h * 0.966, hips_z), girdle_r)
+                .with_scale(HIPS_SECTION)
+                .in_zone(Zone::Pelvis),
+        );
         let spine = skeleton.extend_from(
             hips,
-            Node::new(Vec3::new(0.0, h, spine_z), spine_r).in_zone(Zone::Abdomen),
+            Node::new(Vec3::new(0.0, h, spine_z), spine_r)
+                .with_scale(SPINE_SECTION)
+                .in_zone(Zone::Abdomen),
         );
         let withers = skeleton.extend_from(
             spine,
-            Node::new(Vec3::new(0.0, h, withers_z), withers_r).in_zone(Zone::Chest),
+            Node::new(Vec3::new(0.0, h, withers_z), withers_r)
+                .with_scale(WITHERS_SECTION)
+                .in_zone(Zone::Chest),
         );
         let neck = skeleton.extend_from(
             withers,
-            Node::new(Vec3::new(0.0, h * 1.086, neck_z), neck_r).in_zone(Zone::Neck),
+            Node::new(Vec3::new(0.0, h * 1.086, neck_z), neck_r)
+                .with_scale(NECK_SECTION)
+                .in_zone(Zone::Neck),
         );
         skeleton.extend_from(
             neck,

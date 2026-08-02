@@ -9,7 +9,7 @@
 //! serve. Those floors are not styling — they are what keeps every point of the
 //! parameter space meshable (see the module docs for [`super`]).
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -21,6 +21,40 @@ use crate::skeleton::{Node, Skeleton};
 
 /// Smallest and largest stature this plan accepts, in metres.
 pub const HEIGHT_RANGE: (f32, f32) = (1.2, 2.2);
+
+/// Cross-sections of the torso, as `(lateral, fore-and-aft)` multiples of the
+/// node's radius.
+///
+/// Without these every node is a circle and the body is a **surface of
+/// revolution** — the chest measured perfectly round, which is much of what
+/// separates this silhouette from a character's. A real torso is a flattened
+/// box: broad across the shoulders and shallow front to back, and that ratio is
+/// what the eye reads as a ribcage.
+///
+/// The ring frame is parallel-transported from a world-up reference, so on an
+/// upright body `x` is broadly lateral and `y` runs fore-and-aft; see
+/// [`crate::skeleton::Node::scale`].
+///
+/// **Every one of these flattens rather than widens, and that is not a
+/// compromise.** A joint refuses to mesh when two of its sockets overlap, and
+/// the clearance a socket demands is its *largest* half-extent — so shrinking an
+/// axis is free and growing one is not. Widening the chest to reach the same
+/// ratio was tried first and cost the girdle its clavicle clearance at ordinary
+/// parameters, which `tests/plan.rs` caught on the first run. Flattening also
+/// happens to be the honest anatomy: a torso's width comes from the shoulder
+/// girdle, which `shoulder_width` already drives, and its depth is what makes it
+/// read as a ribcage rather than a drum. The front silhouette every radius here
+/// was tuned against is untouched.
+const PELVIS_SECTION: Vec2 = Vec2::new(1.0, 0.80);
+/// See [`PELVIS_SECTION`]. The waist is the shallowest part of the trunk.
+const WAIST_SECTION: Vec2 = Vec2::new(1.0, 0.76);
+/// See [`PELVIS_SECTION`]. A ribcage is about three-quarters as deep as it is
+/// wide, which is the strongest single cue in the set.
+const CHEST_SECTION: Vec2 = Vec2::new(1.0, 0.74);
+/// See [`PELVIS_SECTION`].
+const GIRDLE_SECTION: Vec2 = Vec2::new(1.0, 0.80);
+/// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite.
+const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 
 /// How far below horizontal a resting arm lies, in radians.
 ///
@@ -208,23 +242,34 @@ impl BodyPlan for HumanoidParams {
         let extremity = 1.0 + 0.3 * self.extremity_size;
 
         let mut skeleton = Skeleton::new();
-        let pelvis = skeleton
-            .add_node(Node::new(Vec3::new(0.0, pelvis_y, 0.0), pelvis_r).in_zone(Zone::Pelvis));
+        let pelvis = skeleton.add_node(
+            Node::new(Vec3::new(0.0, pelvis_y, 0.0), pelvis_r)
+                .with_scale(PELVIS_SECTION)
+                .in_zone(Zone::Pelvis),
+        );
         let waist = skeleton.extend_from(
             pelvis,
-            Node::new(Vec3::new(0.0, waist_y, 0.0), waist_r).in_zone(Zone::Abdomen),
+            Node::new(Vec3::new(0.0, waist_y, 0.0), waist_r)
+                .with_scale(WAIST_SECTION)
+                .in_zone(Zone::Abdomen),
         );
         let chest = skeleton.extend_from(
             waist,
-            Node::new(Vec3::new(0.0, chest_y, 0.0), chest_r).in_zone(Zone::Chest),
+            Node::new(Vec3::new(0.0, chest_y, 0.0), chest_r)
+                .with_scale(CHEST_SECTION)
+                .in_zone(Zone::Chest),
         );
         let girdle = skeleton.extend_from(
             chest,
-            Node::new(Vec3::new(0.0, girdle_y, 0.0), girdle_r).in_zone(Zone::Chest),
+            Node::new(Vec3::new(0.0, girdle_y, 0.0), girdle_r)
+                .with_scale(GIRDLE_SECTION)
+                .in_zone(Zone::Chest),
         );
         let neck = skeleton.extend_from(
             girdle,
-            Node::new(Vec3::new(0.0, neck_y, 0.0), neck_r).in_zone(Zone::Neck),
+            Node::new(Vec3::new(0.0, neck_y, 0.0), neck_r)
+                .with_scale(NECK_SECTION)
+                .in_zone(Zone::Neck),
         );
         // A skull takes two nodes. One leaf gives a capped tube whose dome
         // collapses under subdivision, leaving a flat-topped stub with the head
