@@ -253,7 +253,7 @@ Design work happens in WS0 (#2); this is the starting shape:
 | #3 | WS1 Body engine | high — **joint-merge topology prototype first** |
 | #4 | WS2 Look (textures, eyes, hair, skin material) | |
 | #5 | WS3 Motion (IK, foot placement, inertialization, gait, goal-space) | high |
-| #6 | Vertical slice checkpoint | gate for everything after |
+| #6 | Vertical slice checkpoint | gate for everything after. **Rewritten as six numeric criteria** (#36); not judged since. Four are met or now measurable; criterion 5 is blocked on #59 then #61 |
 | #7 | WS4 Face | bone-driven, per #35. Blocked by #59 (the face is currently detached solids) |
 | #8 | WS5 Dress | |
 | #9 | WS6 Creatures | |
@@ -261,6 +261,18 @@ Design work happens in WS0 (#2); this is the starting shape:
 | #11 | WS8 Creator UX + Overlands adoption (incl. eventual vehicle-chassis migration) | spans sibling repos. **Started at the gate, not last**: #37 stood the Bevy crate up, so the gate's "and in-app" clause is now executable. The creator UI itself is still post-gate. |
 
 Milestone **"v0.1 vertical slice"** = #2–#6: one parametric humanoid walking/idling/running on terrain with blink + look-at, one outfit, one hair style, judged against the Fortnite/Overwatch bar via render contact sheets and in-app. AAA feel is won by iteration; the slice is where we find out early.
+
+The gate has been judged three times, and each time it answered the question it was built to ask —
+*is the bar reachable* — with yes. That question is settled, and re-asking it stopped producing
+information, which is why #36 replaced the prose with six pass/fail criteria and shut the gate to
+re-judging until the P1 band cleared. It has now cleared. **The next judgement is a different and
+much less forgiving question: is the bar *met*.**
+
+Two things will be true of that judgement that were not true of any before it. There are **two
+instruments** rather than one, so a defect in one renderer is the renderer's and a defect in both is
+the body's — a distinction that has never been available, and the whole reason `bevy_symbios_avatar`
+exists. And the gate's own "and in-app" clause, which all three previous judgements silently
+skipped because there was no app, can finally be executed.
 
 ## 5. Risks
 
