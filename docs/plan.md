@@ -17,7 +17,8 @@ Synthesized 2026-08-01 from six web-research dossiers in [docs/research/](resear
 | Baked artifacts | Stored on PDS within reason; degree decided along the way by content size |
 | Repos | `~/Workspace/symbios-avatar` + `~/Workspace/bevy_symbios_avatar` (each with own chainlink + docs) |
 | Overlands chassis | All four existing families — vehicles included — eventually migrate onto this system |
-| Face parameter space | ARKit-52 naming + Oculus-15 visemes. **Morph-vs-bone is now an open decision (#35)** — VRM forced morphs; without it, a bone rig is viable and ARKit-52 can be naming-only |
+| Face parameter space | ARKit-52 naming + Oculus-15 visemes |
+| How the face animates | **Bone-driven macro rig, ARKit-52 naming-only**, with generated pose-space correctives held in reserve for where bones are *measured* to fail. Decided 2026-08-02 (#35) — see §0 |
 
 ## 0. Revisions
 
@@ -65,8 +66,10 @@ Three more closed in a second pass, and each changed something the plan asserts:
   is sampled by how far it *travels* rather than at a fixed resolution, and the cheaper
   cross-sections were rendered and rejected (a four-sided lock reads as rope; a flat card reads as a
   helmet). The draw-call half of the target is **not** met: five draws against a target of three,
-  and both of the extra two — the eye globes, which want a glossy material, and the lids, which are
-  geometry because nothing rigs them — are #35's business.
+  and both of the extra two are the eyes — the globes, which want a glossy material of their own,
+  and the lids, which are geometry rather than a pose because nothing rigs a lid. The lids are
+  answered by the face decision below; the globes are not, and a body that draws four is the honest
+  expectation until something merges them.
 - **A rig can carry joints the body is not made of** (#34). `Role { Deform, Helper, Spring, Facial }`
   on `Joint`, with `Rig::attach` and a filter in both `skin::bind` and `Rig::nearest_bone`. This is
   the prerequisite §3 assumed for both spring chains (#38) and a bone-driven face rig (WS4/#7), and
@@ -77,9 +80,66 @@ Three more closed in a second pass, and each changed something the plan asserts:
   frame (hands and feet shade differently in the two renderers), which is precisely the class of
   thing §5's "unproven Bevy quality ceiling" risk needed an instrument to see.
 
-**Open and blocking the gate:** #39 (face parameter space — the last of the P1s), #38 (spring
-chains, now unblocked by #34), and #35 (how the face animates — an owner decision, see the
-Locked-decisions table). **Gate #6 (#36) is closed to re-judging until #34–#39 clear.**
+### 2026-08-02, how the face animates (#35, closed)
+
+**Decided: a bone-driven macro rig, ARKit-52 naming-only, with generated pose-space correctives
+held in reserve for where bones are *measured* to fail.** VRM forced morph targets; with VRM gone
+this was a real choice, and it was made on measurement rather than on preference.
+
+The arithmetic. Bevy stores morph targets as an R32Float 3D texture at nine floats per vertex per
+target — position, normal *and* tangent deltas, unconditionally, with no sparse form. Over the
+merged 3,643-vertex skin mesh that is 128 KiB per target: **6.5 MiB for ARKit-52**, 8.4 MiB with
+Oculus-15 as well, on top of a 12 MiB atlas. Bones cost nothing comparable — 25 joints are in use
+of Bevy's 256, the skinning uniform is 16 KiB whether or not it is filled, and a face rig of about
+thirty adds no per-vertex data at all. Neither costs record bytes; both are generated.
+
+What settled it was not the ratio but a structural trap: **a morph target image is sized by the
+whole mesh**, so face targets pay for all 3,643 vertices including the feet, and confining them to
+the 189 head-zone vertices means giving the head its own mesh — a **draw call**, on the half of the
+budget that is already failing (five against three). Bones move that number the right way instead,
+because the eyelids become a pose rather than geometry.
+
+This is not an improvisation. It is **pose space deformation** (Lewis et al., 2000) — corrective
+displacements interpolated in a pose space of joint angles and added to the skinned surface —
+shipped by Maya, Houdini and Unreal. MetaHuman, Epic's flagship real-time human, is the same shape:
+Rig Logic drives a facial *joint* hierarchy with RBF solvers mapping joint rotations onto corrective
+bones and shapes. It is not blendshape-primary. §1's finding 2 already described this pattern
+without naming it — "additive identity/pose/**corrective** layers before one standard LBS pass" is
+PSD — so the decision follows the research the plan was built on rather than departing from it.
+
+One way this repository is better placed than the studios that invented the technique: in
+production a corrective is a hand sculpt, and that labour is why they are rationed. Here
+`skull::reshape` is already an analytic parametric head deformation, so a corrective is that
+function evaluated at another parameter and subtracted. The usual reason to keep the set small does
+not apply; memory is the only one left, and memory agrees.
+
+Two prerequisites came out of the decision, neither previously costed:
+
+- **#59 — weld the face into a continuous surface.** `Features::build` appends nose, brows, lips
+  and ears as detached rigid solids. Nothing can deform across a boundary that does not exist, so
+  this is true whichever way the decision had gone, and WS4 cannot start without it.
+- **#60 — `anim/` has no pose-space corrective driver.** Bevy blends morph weights but nothing
+  reads a joint angle and produces one. That solver is ours, belongs beside the inertializer, and
+  must stay engine-agnostic so the software renderer can use it too. **Not to be built
+  speculatively** — the decision was bones first, correctives where measurement demands them.
+
+`Role::Facial` (#34) already exists and the body skin already ignores it, so nothing blocks WS4.
+
+*Sources for the technique, since the research dossiers predate the decision:* [Lewis et al., pose
+space deformation](https://en.wikipedia.org/wiki/Pose_space_deformation) and its shipped forms in
+[Maya](https://help.autodesk.com/cloudhelp/2018/ENU/Maya-CharacterAnimation/files/GUID-45D389D6-B8E4-4225-B27B-9927BB61C28D.htm)
+and [Houdini](https://www.sidefx.com/docs/houdini/nodes/sop/posespacedeform.html);
+[Rig Logic for MetaHumans](https://kalyansthupili.wordpress.com/2025/04/14/demystifying-rig-logic-for-metahumans/)
+and its [RBF corrective layer](https://www.cgchannel.com/2026/03/metahuman-dna-add-on-for-blender-gets-new-rbf-editor/);
+practitioner accounts of the joint-primary hybrid at
+[Tech-Artists.Org](https://www.tech-artists.org/t/blendshapes-vs-joint-driven-facial-set-up/1127)
+and [Polycount](https://polycount.com/discussion/217908/cost-of-morphs-blendshapes-vs-bones).
+
+### Where this leaves the gate
+
+**Open and blocking:** #39 (face parameter space — the last of the P1s), #38 (spring chains, now
+unblocked by #34), and #59 before WS4. **Gate #6 (#36) is closed to re-judging until #34–#39
+clear.**
 
 ## 1. Headline research findings
 
@@ -114,11 +174,11 @@ Design work happens in WS0 (#2); this is the starting shape:
 - `plan/` — body-plan graph (typed parts: spine chain, limb chains, head, tail, digits, sockets), macro-axis → graph resolution, constraint/correlation layer, semantic capability tags (ground contacts, graspers, gaze) feeding both meshing and animation.
 - `mesh/` — capsule graph → B-Mesh quad cage → subdivision; skeleton derivation; analytic weights + smoothing; landmark/measurement API; zone bitmask; canonical UV charting (fixed face layout).
 - `dress/` — hair groups, tight-garment re-evaluation, swept-panel loose garments, accessory generators + sockets, region/layer arbitration.
-- `face/` — the macro rig, plus ARKit-52 naming and Oculus-15 visemes. **Bone-driven, morph-driven
-  or both is open (#35)** — this line used to say "bone-driven macro rig + small generated morph
-  set", which was a description of what VRM permitted rather than a decision. `Role::Facial` (#34)
-  exists so that whichever way it goes, the body skin already ignores a face joint.
-- `anim/` — goal-space clip format, two-bone + FABRIK IK, gait engine (phase + duty-cycle over N contacts), inertialization, spring chains (VRMC_springBone semantics), look-at. Pure math, no engine deps.
+- `face/` — a **bone-driven** macro rig on `Role::Facial` joints, with ARKit-52 naming and
+  Oculus-15 visemes over it, and generated pose-space correctives only where bones are measured to
+  fail (#35). The face must be welded into a continuous surface first (#59); the driver that turns
+  a joint angle into a corrective weight lives in `anim/`, not here (#60).
+- `anim/` — goal-space clip format, two-bone + FABRIK IK, gait engine (phase + duty-cycle over N contacts), inertialization, spring chains (VRMC_springBone semantics, #38), look-at, and the pose-space driver that turns joint angles into corrective weights (#60). Pure math, no engine deps — the software renderer needs all of it too.
 - `texture/` — character generators atop symbios-texture: skin stack (melanin/subdermal/freckle/stubble/AO-bevel), iris, hair strand, fabric weave/knit/print, gradient-map palette baking.
 - `export/` — glTF/GLB writer. (VRM dropped; see §0.)
 
@@ -133,7 +193,7 @@ Design work happens in WS0 (#2); this is the starting shape:
 | #4 | WS2 Look (textures, eyes, hair, skin material) | |
 | #5 | WS3 Motion (IK, foot placement, inertialization, gait, goal-space) | high |
 | #6 | Vertical slice checkpoint | gate for everything after |
-| #7 | WS4 Face | |
+| #7 | WS4 Face | bone-driven, per #35. Blocked by #59 (the face is currently detached solids) |
 | #8 | WS5 Dress | |
 | #9 | WS6 Creatures | |
 | #10 | WS7 Export (GLB) | **split**: the assembly half is pre-gate and **done** (#28, #29); the writer half moves to immediately post-gate. VRM dropped. |
