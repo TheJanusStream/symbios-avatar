@@ -19,6 +19,7 @@
 //! from the body plan is a smooth blob with no nose to pull out of it.
 
 use glam::{Mat4, Quat, Vec2, Vec3};
+use serde::{Deserialize, Serialize};
 
 use crate::mesh::PolyMesh;
 use crate::prim;
@@ -26,15 +27,24 @@ use crate::prim;
 use super::eye::Eyes;
 
 /// How prominent each feature is.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// Stored as scaled integers like every other parameter block here: the AT
+/// Protocol data model has no floating-point type, and a record that writes one
+/// is a record other readers cannot round-trip.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FaceParams {
     /// How far the nose stands out, `0` flat and `1` prominent.
+    #[serde(default, with = "crate::plan::scaled")]
     pub nose: f32,
     /// How heavy the brow ridge is.
+    #[serde(default, with = "crate::plan::scaled")]
     pub brow: f32,
     /// How full the lips are.
+    #[serde(default, with = "crate::plan::scaled")]
     pub mouth: f32,
     /// How far the ears stand out from the head.
+    #[serde(default, with = "crate::plan::scaled")]
     pub ears: f32,
 }
 
@@ -52,17 +62,20 @@ impl Default for FaceParams {
 impl FaceParams {
     /// Clamps every axis into range. Idempotent.
     pub fn sanitize(&mut self) {
+        use crate::plan::scaled::quantize;
         for axis in [
             &mut self.nose,
             &mut self.brow,
             &mut self.mouth,
             &mut self.ears,
         ] {
-            *axis = if axis.is_nan() {
+            // Quantised as well as clamped, so a record equals itself after a
+            // round trip through the thousandths the wire carries.
+            *axis = quantize(if axis.is_nan() {
                 0.5
             } else {
                 axis.clamp(0.0, 1.0)
-            };
+            });
         }
     }
 }
@@ -384,6 +397,19 @@ mod tests {
             hi.x - lo.x
         };
         assert!(width(&features.lips[0]) > width(&features.nose) * 1.2);
+    }
+
+    #[test]
+    fn a_face_survives_a_round_trip_through_json() {
+        let params = FaceParams::default();
+        let text = serde_json::to_string(&params).expect("serialises");
+        assert_eq!(
+            params,
+            serde_json::from_str::<FaceParams>(&text).expect("deserialises")
+        );
+        // Thousandths, not floating point: the wire format has no floats.
+        assert!(text.contains("500"), "{text}");
+        assert!(!text.contains('.'), "{text}");
     }
 
     #[test]

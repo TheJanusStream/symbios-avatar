@@ -36,10 +36,10 @@ use glam::{Mat4, Vec2, Vec3};
 use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
-    Archetype, AvatarRecord, Blink, CageConfig, Extremities, Eyes, FaceParams, Features,
-    FootingConfig, Gait, Ground, Hair, HairParams, Outfit, PolyMesh, Pose, Posed, Rig, SkinConfig,
-    Stride, Surface, UvConfig, UvUnwrap, Zone, anim::gait, anim::plant_feet_of, build_body,
-    rig::skin, texture, unwrap,
+    Archetype, AvatarRecord, Blink, CageConfig, Extremities, Eyes, Features, FootingConfig, Gait,
+    Ground, Hair, HairParams, Outfit, PolyMesh, Pose, Posed, Rig, SkinConfig, Stride, Surface,
+    UvConfig, UvUnwrap, Zone, anim::gait, anim::plant_feet_of, build_body, rig::skin, texture,
+    unwrap,
 };
 
 /// Pixels per side of one view in the finished sheet.
@@ -226,7 +226,7 @@ impl Subject {
             pass,
             eyes: Eyes::build(&rig, &record.eyes),
             features: Eyes::build(&rig, &record.eyes)
-                .map(|eyes| Features::build(&eyes, &FaceParams::default())),
+                .map(|eyes| Features::build(&eyes, &record.face)),
             hair: Hair::build(&mesh, &rig, hair),
             // The plan stands its bodies on the origin.
             extremities: Extremities::build(&rig, &surface, 0.0),
@@ -479,6 +479,7 @@ impl Subject {
             .map(|features| features.assembled().transformed(rigid(features.head)));
 
         Built {
+            bare: bare_skin(&self.albedo),
             face,
             positions,
             normals,
@@ -503,6 +504,7 @@ impl Subject {
 
 /// One pose's worth of world-space geometry.
 struct Built<'a> {
+    bare: Vec3,
     face: Option<PolyMesh>,
     positions: Vec<Vec3>,
     normals: Vec<Vec3>,
@@ -520,7 +522,30 @@ struct Built<'a> {
 }
 
 /// Skin for the parts that carry no chart in the atlas.
-const BARE: Vec3 = Vec3::new(0.86, 0.68, 0.60);
+///
+/// Averaged from the baked skin rather than fixed, because a fixed one is a
+/// pale mask on every avatar whose complexion is not pale — hands, feet, lids
+/// and every facial feature came out lighter than the face they sat on.
+fn bare_skin(albedo: &[u8]) -> Vec3 {
+    let mut sum = Vec3::ZERO;
+    let mut taken = 0.0f32;
+    for texel in albedo.chunks_exact(4) {
+        if texel[3] == 0 {
+            continue;
+        }
+        sum += Vec3::new(
+            f32::from(texel[0]),
+            f32::from(texel[1]),
+            f32::from(texel[2]),
+        ) / 255.0;
+        taken += 1.0;
+    }
+    if taken == 0.0 {
+        Vec3::new(0.86, 0.68, 0.60)
+    } else {
+        sum / taken
+    }
+}
 
 impl Built<'_> {
     /// Everything as draw items, against the given backdrop.
@@ -557,7 +582,7 @@ impl Built<'_> {
                 faces: &part.faces,
                 normals: None,
                 paint: Paint::Flat,
-                material: Material::skin(BARE),
+                material: Material::skin(self.bare),
             });
         }
         for (mesh, tone) in &self.worn {
@@ -584,7 +609,7 @@ impl Built<'_> {
                 faces: &face.faces,
                 normals: None,
                 paint: Paint::Flat,
-                material: Material::skin(BARE),
+                material: Material::skin(self.bare),
             });
         }
         if let Some((globes, lids, _)) = &self.eyes {
@@ -600,7 +625,7 @@ impl Built<'_> {
                 faces: &lids.faces,
                 normals: None,
                 paint: Paint::Flat,
-                material: Material::skin(BARE),
+                material: Material::skin(self.bare),
             });
         }
         items

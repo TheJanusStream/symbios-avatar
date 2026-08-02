@@ -51,6 +51,11 @@
             "ref": "network.symbios.avatar.defs#eyes",
             "description": "How the eyes are shaped and set. Absent means the default."
           },
+          "face": {
+            "type": "ref",
+            "ref": "network.symbios.avatar.defs#face",
+            "description": "How prominent the nose, brow, mouth and ears are. Absent means the default."
+          },
           "hair": {
             "type": "ref",
             "ref": "network.symbios.avatar.defs#hair",

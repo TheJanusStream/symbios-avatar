@@ -34,7 +34,7 @@ use rand_pcg::Pcg64Mcg;
 use serde::{Deserialize, Serialize};
 
 use crate::dress::OutfitParams;
-use crate::face::EyeParams;
+use crate::face::{EyeParams, FaceParams};
 use crate::hair::HairParams;
 use crate::plan::{Archetype, Category};
 use crate::skeleton::Skeleton;
@@ -75,6 +75,9 @@ pub struct AvatarRecord {
     /// How its eyes are shaped and set.
     #[serde(default)]
     pub eyes: EyeParams,
+    /// How prominent its nose, brow, mouth and ears are.
+    #[serde(default)]
+    pub face: FaceParams,
     /// The hair grown on its head.
     #[serde(default)]
     pub hair: HairParams,
@@ -105,6 +108,7 @@ impl Default for AvatarRecord {
             archetype: Archetype::default(),
             skin: SkinParams::default(),
             eyes: EyeParams::default(),
+            face: FaceParams::default(),
             hair: HairParams::default(),
             outfit: OutfitParams::default(),
             seed: 0,
@@ -140,6 +144,7 @@ impl AvatarRecord {
         self.archetype.sanitize();
         self.skin.sanitize();
         self.eyes.sanitize();
+        self.face.sanitize();
         self.hair.sanitize();
         self.outfit.sanitize();
     }
@@ -168,7 +173,7 @@ impl AvatarRecord {
             self.archetype.reroll(category, &mut rng);
             if category == Category::Features {
                 reroll_skin(&mut self.skin, &mut rng);
-                reroll_face(&mut self.eyes, &mut self.hair, &mut rng);
+                reroll_face(&mut self.eyes, &mut self.face, &mut self.hair, &mut rng);
             }
         }
         self.sanitize();
@@ -265,8 +270,18 @@ impl ProfileRecord {
 /// Hair rides with features rather than owning a lock category of its own. A
 /// creator who locks "features" has locked what their face looks like, and hair
 /// is the loudest part of that.
-fn reroll_face(eyes: &mut EyeParams, hair: &mut HairParams, rng: &mut Pcg64Mcg) {
+fn reroll_face(
+    eyes: &mut EyeParams,
+    face: &mut FaceParams,
+    hair: &mut HairParams,
+    rng: &mut Pcg64Mcg,
+) {
     use rand::Rng;
+    face.nose = rng.random_range(0.15..=0.9);
+    face.brow = rng.random_range(0.1..=0.9);
+    face.mouth = rng.random_range(0.15..=0.95);
+    face.ears = rng.random_range(0.1..=0.85);
+
     eyes.size = rng.random_range(0.25..=0.85);
     eyes.spacing = rng.random_range(-0.6..=0.6);
     eyes.depth = rng.random_range(-0.5..=0.7);

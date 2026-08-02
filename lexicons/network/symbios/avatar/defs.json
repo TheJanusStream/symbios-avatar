@@ -322,6 +322,40 @@
           "default": 200
         }
       }
+    },
+    "face": {
+      "type": "object",
+      "description": "How prominent a body's facial features are. Placed from the published proportion canons \u2014 the face divides into thirds from hairline to brow to the base of the nose to the chin, and into fifths across, one fifth being an eye's width \u2014 so these axes say how far each feature stands out, not where it sits. Thousandths, as elsewhere: the AT Protocol data model has no floating-point type.",
+      "properties": {
+        "nose": {
+          "type": "integer",
+          "description": "How far the nose stands out: 0 flat, 1000 prominent. Thousandths.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 500
+        },
+        "brow": {
+          "type": "integer",
+          "description": "How heavy the brow ridge is. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 500
+        },
+        "mouth": {
+          "type": "integer",
+          "description": "How full the lips are. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 500
+        },
+        "ears": {
+          "type": "integer",
+          "description": "How far the ears stand out from the head. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 500
+        }
+      }
     }
   }
 }

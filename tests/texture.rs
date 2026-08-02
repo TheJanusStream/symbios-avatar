@@ -138,7 +138,7 @@ fn painting_does_not_bloat_the_record() {
     record.reroll(3);
     assert!(record.fits_budget());
     assert!(
-        record.serialized_size().expect("serialises") < 600,
-        "a body and a complexion are still a few hundred bytes"
+        record.serialized_size().expect("serialises") < 800,
+        "a whole avatar is still under a kilobyte"
     );
 }
