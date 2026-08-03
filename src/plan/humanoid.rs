@@ -207,7 +207,51 @@ impl BodyPlan for HumanoidParams {
         // the work: a neck sitting exactly as high as the sockets allow leaves
         // barely any column between the collar and the jaw.
         let neck_y = girdle_y + (h * 0.072 * (1.0 + 0.3 * self.neck_length)).max(girdle_r * 1.32);
-        let head_y = neck_y + (h * 0.052).max(head_r * 0.45);
+        // How far the head reaches below its own joint, and it is a HEAD measure
+        // rather than a stature one. This was `(h * 0.052).max(head_r * 0.45)`,
+        // where the second term can never bind — 0.45 of a head radius is at most
+        // 0.042 h against the first term's 0.052 — so the whole lower face was a
+        // stature constant. Two things followed. The head_size axis moved the
+        // crown 55 mm and left the chin at −64.6 mm both times; and the entire
+        // jaw, chin and throat transition had 91 mm to happen in, of which 27 was
+        // throat. The lower face measured 39% short of the canon and read, in the
+        // owner's words, as mangled (#78).
+        //
+        // `face::skull::shape` already scales its whole below-joint domain so the
+        // head's measured floor lands at JUNCTION, so this coefficient stretches
+        // every profile below the joint and moves nothing above it. The chin is
+        // 0.7097 of the floor, measured to 0.1 mm on four seeds, so it lands at
+        // 0.78 R below the joint here.
+        //
+        // Derived rather than picked, and derived TWICE — the first attempt is
+        // recorded because it is the kind of mistake this coefficient invites.
+        // The chain is: the head's own floor is a fixed share of this extent,
+        // the chin is 0.7097 of that floor, and the crown sits 0.806 R above the
+        // eye line. Measured over four seeds the floor is 0.895 of the extent
+        // (0.890 to 0.904) and the crown ratio is 0.806 (0.8058 to 0.8067), both
+        // stable to under 2%. So the eye-to-chin frame is R x (0.05 + 0.6352 K),
+        // and setting it equal to the crown's 0.806 R — a cranium:face of 1.0,
+        // which is life's — gives K = 1.19.
+        //
+        // Predicted 1.11 first, by assuming the floor was the whole extent. It is
+        // not: ownership stops about a ninth short of the neck node, and that one
+        // wrong factor put the frame 12 mm under target.
+        //
+        // The frame still lands at 92% of the canon's absolute 114.7 mm rather
+        // than 100%, and the missing 8% is not here: it is that the crown itself
+        // is 8% short of life once subdivision has collapsed the cap (#79).
+        // Chasing the absolute figure from this end would buy it by making the
+        // face too long for its own cranium.
+        //
+        // RAISED rather than dropping `neck_y` to hold stature, which is what #78
+        // asked for and cannot be done: `neck_y` sits exactly on its girdle-socket
+        // floor above (143.2 mm against a nominal 126.0), so lowering it breaks
+        // `tests/plan.rs`'s meshability sweep. Raising is sound because a built
+        // body already stands about 6% under its nominal stature — the crown
+        // collapses under subdivision — so this spends height the body was
+        // already missing.
+        const HEAD_BELOW_JOINT: f32 = 1.19;
+        let head_y = neck_y + head_r * HEAD_BELOW_JOINT;
 
         // The pelvis carries the spine and both legs; the drop to the hip is
         // what gives that joint the room to separate three sockets.

@@ -161,9 +161,13 @@ impl Face {
             // load-bearing is the tell that the quantity was measured in the
             // wrong ruler. In the frame, the bound is met by construction: the
             // lowest lobe sits 1.32 plumps below the mouth line, which is at
-            // 0.69 of the frame, so the stack stays above the tip while
-            // `plump` stays under 0.235 — and the axis tops out at 0.218.
-            plump: canon.frame * (0.170 + 0.048 * params.mouth),
+            // 0.596 of the frame, so the stack stays above the tip while
+            // `plump` stays under 0.306 — and the axis tops out at 0.146.
+            //
+            // Rebased by 0.6717 with the rest of the heights when #78 lengthened
+            // the frame, holding the lip stack at 13.7 mm where life is 11 to 14.
+            // Left at its old fraction it would have grown by half.
+            plump: canon.frame * (0.1142 + 0.0322 * params.mouth),
             apart: canon.apart,
             params: *params,
         }
@@ -206,14 +210,16 @@ impl Face {
     fn brow(&self, local: Vec3) -> f32 {
         let unit = self.unit;
         let weight = self.params.brow;
-        // Heights in the frame, widths and reaches in the unit. The figures are
-        // the old eye-radius ones rebased — 0.7423 for a width, 0.3348 for a
-        // height — so a default body's brow is where it was to within a tenth
-        // of a millimetre, and every other body's is now measured in something
-        // that means the same thing on it.
-        let rise = self.frame * (0.2076 + 0.1004 * weight);
+        // Heights in the frame, widths and reaches in the unit (#77) — and the
+        // height fractions were then multiplied by 0.6717 when #78 lengthened
+        // the frame by half, because every one of these was fitted by eye
+        // against a render and each already lands near life: the crest ends up
+        // 18.2 mm above the eye line, where a brow ridge is about 20. A fraction
+        // fitted against a frame that was 39% short does not survive that frame
+        // being corrected; the millimetres do.
+        let rise = self.frame * (0.1394 + 0.0674 * weight);
         let span = unit * 0.8536;
-        let thick = self.frame * (0.1138 + 0.0536 * weight);
+        let thick = self.frame * (0.0764 + 0.0360 * weight);
         let reach = unit * (0.1039 + 0.1336 * weight);
 
         // Zero over the pupil, negative toward the midline, positive outward.
@@ -270,7 +276,7 @@ impl Face {
         let across = local.x.abs() / half;
         // The mouth line is not level: the corners sit lower than the middle,
         // and a mouth drawn straight across reads as a slot.
-        let line = self.mouth - self.frame * 0.0435 * across * across;
+        let line = self.mouth - self.frame * 0.0292 * across * across;
         let up = (local.y - line) / plump;
 
         let lips = if across > 1.20 || !(-2.40..=2.20).contains(&up) {
@@ -321,8 +327,11 @@ impl Face {
         // surface show it.
         let reach = unit * (0.3340 + 0.3712 * self.params.nose);
 
-        let root = self.level + self.frame * 0.1841;
-        let under = self.base - self.frame * 0.1004;
+        // Rebased by 0.6717 with every other height when #78 lengthened the
+        // frame: the nose holds its 49 mm from root to under, which is life's
+        // nasion-to-subnasale. At the old fractions it would have grown to 74.
+        let root = self.level + self.frame * 0.1237;
+        let under = self.base - self.frame * 0.0674;
         let along = (root - local.y) / (root - under);
         // **Outside its own span, not clamped to the end of it.** A ramp read
         // with a clamped parameter holds its first value forever, so a nose
@@ -543,6 +552,7 @@ mod tests {
         // cells and the mouth rendered as a stack of horizontal bars. The
         // fourth pass covers the mouth band alone and takes it to about 2.0
         // (#85). Below about 1.5 a Gaussian cannot survive being sampled.
+        let mut worst: Vec<(Option<i64>, f32, f32, f32)> = Vec::new();
         for seed in [None, Some(7), Some(29), Some(99)] {
             let mut record = crate::AvatarRecord::new("Mouth", crate::Archetype::default());
             if let Some(seed) = seed {
@@ -571,16 +581,29 @@ mod tests {
             assert!(!edges.is_empty(), "seed {seed:?}: no faces under the mouth");
             edges.sort_by(f32::total_cmp);
             let cell = edges[edges.len() / 2];
-            let cells = face.finest() / cell;
-            assert!(
-                cells > 1.5,
-                "seed {seed:?}: the narrowest term in the mouth is {:.2} mm against a \
-                 {:.2} mm cell — {cells:.2} cells, and a Gaussian that narrow renders \
-                 as one displaced row of vertices, which is a bar",
-                face.finest() * 1000.0,
-                cell * 1000.0
-            );
+            worst.push((seed, face.finest(), cell, face.finest() / cell));
         }
+
+        // Every seed reported, not the first to fail. The ratio moves with the
+        // head's size, the mouth axis and the refinement band all at once, so
+        // one seed's number says almost nothing about where the margin is.
+        let table: Vec<String> = worst
+            .iter()
+            .map(|(seed, finest, cell, ratio)| {
+                format!(
+                    "{seed:?}: {:.2} mm term / {:.2} mm cell = {ratio:.2}",
+                    finest * 1000.0,
+                    cell * 1000.0
+                )
+            })
+            .collect();
+        let tightest = worst.iter().fold(f32::MAX, |low, entry| low.min(entry.3));
+        assert!(
+            tightest > 1.5,
+            "the narrowest term in the mouth is {tightest:.2} cells wide, and a Gaussian \
+             that narrow renders as one displaced row of vertices, which is a bar — {}",
+            table.join("; ")
+        );
     }
 
     #[test]

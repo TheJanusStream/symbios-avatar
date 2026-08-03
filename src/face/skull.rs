@@ -232,12 +232,35 @@ const SETTLE: f32 = 0.92;
 /// the mouth with them, which is the other half of the answer. A lip line is
 /// 1–2 mm across on a person, so a mouth wide enough to survive 3.6 mm sampling
 /// is not a mouth. The band gets the resolution instead, and keeps its shape.
-const FACE_PASSES: [(f32, f32, f32); 3] = [
-    (0.25, -1.05, 0.60),
-    (0.55, -0.90, 0.50),
+/// **The heights moved with the frame in #78 and had to.** These are vertex
+/// heights, not frame fractions, so lengthening the head below its joint slides
+/// every feature down through them: the mouth line went from −0.32 R to −0.43,
+/// and its field's lower edge from −0.47 to −0.57, which walked straight out of
+/// a band that ended at −0.55. A refinement band that no longer contains the
+/// feature it exists for is the #85 defect back again with nothing in the code to
+/// say so.
+/// **The fifth region is the LIP LINE alone**, and it is that narrow because the
+/// whole mouth band could not be afforded. #78's stretch coarsened the cells
+/// under the mouth by about a fifth, which took the narrowest term — the groove
+/// between the lips, at 0.26 of a lip stack — from 2.0 cells to 1.43, and the
+/// bars of #85 came straight back on screen. Refining the whole mouth band again
+/// fixes it and costs 10,244 triangles, putting skin at 66% of the body against
+/// `tests/budget.rs`'s 0.60 guard. So the pass goes where the shortfall is: every
+/// other lip term measures 2.2 to 2.9 cells and needs nothing.
+///
+/// Bounded at plus or minus 0.9 of a lip stack about the mouth line, where the
+/// groove's own Gaussian has fallen to nothing, so the resolution boundary lands
+/// on a part of the field that is not doing anything. It still takes in both
+/// vermilion lobes.
+const FACE_PASSES: [(f32, f32, f32); 5] = [
+    (0.25, -1.15, 0.60),
+    (0.55, -1.00, 0.50),
     // Nose base to below the chin: the only band where the features are
-    // smaller than the surface carrying them.
-    (0.55, -0.55, -0.18),
+    // smaller than the surface carrying them. Listed twice because a region is
+    // refined once per pass that names it, and this one wants two.
+    (0.55, -0.62, -0.24),
+    (0.55, -0.62, -0.24),
+    (0.92, -0.52, -0.34),
 ];
 
 /// Gives the face enough surface to carry features, before anything shapes it.
@@ -888,21 +911,25 @@ mod tests {
     fn the_chin_projects_further_forward_than_the_brow() {
         // A face whose chin sits behind its brow reads as receding, and an
         // unshaped head has exactly that: a sphere's widest point is its middle.
+        //
+        // **Asked at the chin's own landmark, and bisected.** This used to bin
+        // vertices in a ±0.09 radii window at a hard-coded −0.45 R, which was
+        // where a chin sat when the head reached 0.69 radii below its joint. At
+        // 1.19 (#78) two things broke at once: −0.45 R is now the mouth, and the
+        // rows below the joint are spread 0.31 radii apart on this deliberately
+        // coarse fixture — wider than the window — so the filter came back EMPTY
+        // and the subtraction of two `f32::MIN`s reported a tidy zero. A test
+        // that bins vertices reads the mesh's row spacing as much as its shape.
         let (plain, shaped, rig, centre, radius) = head(3);
-        let front = |mesh: &PolyMesh, at: f32| {
-            mesh.positions
-                .iter()
-                .filter(|p| {
-                    ((p.y - centre.y) / radius - at).abs() < 0.09
-                        && rig.joints[rig.nearest_bone(**p).joint].zone == Zone::Head
-                })
-                .map(|p| p.z - centre.z)
-                .fold(f32::MIN, f32::max)
-        };
-        let gained = front(&shaped, -0.45) - front(&plain, -0.45);
+        let skull = Skull::measure(&shaped, &rig).expect("a skull");
+        let at = centre.y + skull.chin();
+        let gained = bisect(&shaped, centre.with_y(at), Vec3::Z).expect("a chin to measure")
+            - bisect(&plain, centre.with_y(at), Vec3::Z).expect("an egg to measure it against");
         assert!(
             gained > radius * 0.05,
-            "the chin only came forward by {gained}"
+            "the chin only came forward by {:.1} mm, against a {:.1} mm floor",
+            gained * 1000.0,
+            radius * 50.0
         );
     }
 
@@ -959,17 +986,21 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "the target, not the state: the chin is a fixed fraction of the throat (#78)"]
     fn the_chin_landmark_lands_on_the_chin_of_the_shipped_face() {
-        // The test above runs on a head that has been shaped but NOT carved,
-        // and passes. The shipped surface has a face on it, and against that
-        // one the same landmark is 12.5 mm out on the default and 14.7 on seed
-        // 99 — two to three times the 5 mm alarm the uncarved test sets for
-        // itself. A tolerance is only worth what the mesh under it is worth.
+        // **A target when it was written, and met.** The test above runs on a
+        // head that has been shaped but NOT carved; this one runs on the surface
+        // that ships, and against that the landmark used to be 12.5 mm out on
+        // the default and 14.7 on seed 99 — two to three times the 5 mm alarm
+        // the uncarved test sets for itself. A tolerance is only worth what the
+        // mesh under it is worth.
         //
-        // Kept as a pair rather than replacing the first: they measure
-        // different surfaces and both are real, and the one that passes is the
-        // ratchet that stops the derivation drifting while #78 is open.
+        // What closed it was not a better derivation but abandoning derivation
+        // for measurement: [`menton`] bisects the built midline around the
+        // profile's estimate, so the landmark is on the surface by construction
+        // whether or not a face has been carved into it (#78).
+        //
+        // Kept as a pair rather than replacing the first: they measure different
+        // surfaces and both are real.
         for seed in [1i64, 23, 42, 99] {
             let mut record = AvatarRecord::new("Skulled", Archetype::default());
             record.reroll(seed);
@@ -1486,7 +1517,11 @@ impl Skull {
                 |best, &knot| if knot.1 > best.1 { knot } else { best },
             )
             .0;
-        let chin = (peak * (floor * SETTLE) / JUNCTION * radius).max(lo);
+        let chin = menton(
+            mesh,
+            centre,
+            (peak * (floor * SETTLE) / JUNCTION * radius).max(lo),
+        );
         let height = |point: &Vec3| (point.y - lo) / (hi - lo) * (BANDS - 1) as f32;
 
         let mut across = [0.0f32; BANDS];
@@ -1622,16 +1657,15 @@ impl Skull {
     /// below it reads as the whole jaw rotated up into the throat (#72), which
     /// is exactly how the owner reported it.
     ///
-    /// The one landmark read off the plan rather than the surface: the `CHIN`
-    /// profile's peak knot through the same floor scaling [`shape`] used. That
-    /// is sound where measuring is not, for two reasons. [`reshape_to`] never
-    /// moves a vertex in `y`, so the floor this recomputes is bit-identical to
-    /// the one `shape` scaled by; and the surface's own maximum is a plateau —
-    /// bisected on the default body the tip sits at −63.0 mm against the knot's
-    /// −64.5, but finding that maximum from 20 measured bands needs the shallow
-    /// 2 mm dip above the chin to survive binning, and it does not. Verified
-    /// against the bisected surface across seeds by
-    /// `the_chin_landmark_lands_on_the_chin`.
+    /// **Estimated from the plan, then found on the surface.** The `CHIN`
+    /// profile's peak knot through the same floor scaling [`shape`] used says
+    /// roughly where the tip is; `menton` below bisects the built midline around
+    /// that to say exactly where. Binning cannot do the second part — finding
+    /// the maximum from 20 measured bands needs the shallow 2 mm dip above the
+    /// chin to survive them, and it does not — which is why it was left as an
+    /// estimate until the estimate started drifting: lengthening the head below
+    /// its joint (#78) took the disagreement from under 2 mm to 6.0 on seed 1.
+    /// Verified across seeds by `the_chin_landmark_lands_on_the_chin`.
     ///
     /// Clamped to the span so a head whose shaping was skipped — a creature's —
     /// still answers inside its own surface.
@@ -1675,6 +1709,59 @@ impl Skull {
         let blend = at - band as f32;
         profile[band] + (profile[band + 1] - profile[band]) * blend
     }
+}
+
+/// The chin's tip, refined from the profile's estimate onto the built surface.
+///
+/// **The derivation says roughly where; the surface says exactly where**, and
+/// until #78 the difference did not matter. The knot estimate is `CHIN`'s peak
+/// through the floor scaling, and it was verified to within 2 mm on every seed —
+/// on a head whose whole below-joint domain was 0.69 radii. Stretching that
+/// domain to 1.19 stretched the disagreement with it, to 6.0 mm on seed 1, which
+/// is a landmark drifting off the thing it is named for. The frame every feature
+/// on the face is a fraction of hangs from this number, so 6 mm here is 6 mm of
+/// misplaced mouth.
+///
+/// Bisected on the midline, which is the instrument the rest of this crate
+/// judges with, and searched over a WINDOW around the estimate rather than over
+/// the whole lower face. The window is what keeps it honest on a head that has
+/// already been carved: a carved lower lip reaches further forward than the chin
+/// does — 106.2 mm against 103.2 on a default body — so "the forward-most point
+/// below the joint" would answer with the lip. A quarter radius is far wider
+/// than the drift and far narrower than the gap to the mouth.
+fn menton(mesh: &PolyMesh, centre: Vec3, estimate: f32) -> f32 {
+    /// How far either side of the estimate to look, in metres per metre of head.
+    const WINDOW: f32 = 0.016;
+    /// How finely, in metres. Half the finest cell the face ever carries.
+    const STEP: f32 = 0.0009;
+
+    let reach = |y: f32| {
+        let inside = |z: f32| mesh.contains(Vec3::new(centre.x, centre.y + y, centre.z + z));
+        if !inside(0.0) {
+            return f32::MIN;
+        }
+        let (mut near, mut out) = (0.0f32, 0.30f32);
+        for _ in 0..24 {
+            let mid = 0.5 * (near + out);
+            if inside(mid) {
+                near = mid;
+            } else {
+                out = mid;
+            }
+        }
+        near
+    };
+
+    let steps = (WINDOW / STEP) as i32;
+    let mut best = (f32::MIN, estimate);
+    for step in -steps..=steps {
+        let y = estimate + step as f32 * STEP;
+        let at = reach(y);
+        if at > best.0 {
+            best = (at, y);
+        }
+    }
+    best.1
 }
 
 /// Where a lateral offset falls in a band's own columns.

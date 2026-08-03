@@ -97,25 +97,25 @@ impl FaceParams {
 /// Where each feature sits between the eye line and the **chin's tip**, as a
 /// fraction of that span on the measured head.
 ///
-/// The denominator changed once, and every figure here was rebased to hold its
-/// landmark still (#72). These were authored as fractions of the eye line to
-/// `span().0`, believing that was the chin; it is the throat, 28 mm further
-/// down on a default body, so the fractions were right against a frame that was
-/// wrong — the mouth's 0.62 landed 9 mm above the chin's tip instead of 20.
-/// Against [`Skull::chin`] the frame is 71 mm on the default head where the old
-/// one was 97, and the figures below put the base of the nose at −30 mm and the
-/// mouth at −42 about the eye line, which is where the canon's thirds put them.
+/// **These are the canon's figures now, and until #78 they were not.** They were
+/// 0.19, 0.51 and 0.69, each about 0.09 too low as a fraction — and each landing
+/// near its correct height in MILLIMETRES anyway, because the frame they were
+/// fractions of was itself 39% short. Two errors cancelling, which is why they
+/// survived being checked against a render three times, and why #78 required
+/// them to move in the same commit that fixes the frame: correcting either one
+/// alone makes the face worse than leaving both.
 ///
-/// The ear's is its CENTRE, and it holds the −7 mm the canon and #67 agreed on:
-/// an ear runs from the brow line to the base of the nose. It is the one figure
-/// rebased to keep its OLD position exactly, because the ears were validated on
-/// screen against that seat and the frame change is not a reason to move them.
-const EAR_HEIGHT: f32 = 0.19;
+/// Against a 115 mm pupil-to-menton frame, Farkas puts subnasale 45.3 mm below
+/// the pupil (0.394) and stomion 68.5 (0.596). The ear's is its CENTRE, half way
+/// between the brow line and the base of the nose, which on the same frame is
+/// 0.110 — it was 0.19, and only read correctly because a short frame turned it
+/// into the right number of millimetres.
+pub(super) const EAR_HEIGHT: f32 = 0.110;
 /// See [`EAR_HEIGHT`]. The base of the nose, where the nostrils are.
-pub(super) const NOSE_BASE: f32 = 0.51;
+pub(super) const NOSE_BASE: f32 = 0.394;
 /// See [`EAR_HEIGHT`]. Placed by eye the mouth drifts onto the chin and the face
 /// reads as a muzzle.
-pub(super) const MOUTH_HEIGHT: f32 = 0.69;
+pub(super) const MOUTH_HEIGHT: f32 = 0.596;
 
 /// The parts of one face that are not the head's own surface, in head-local
 /// space.

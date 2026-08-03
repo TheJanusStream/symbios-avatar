@@ -47,7 +47,17 @@ fn main() {
     // not a thing that can be done here any more — which is the point.
     let eyes: &Eyes = avatar.parts.eyes.as_ref().expect("a humanoid has eyes");
     let skull = Skull::measure(body, rig).expect("a skull");
-    let canon = Canon::measure(rig, &skull, &record.eyes);
+    // The canon off the SHAPED head, which is the one the build read it from —
+    // `Avatar::build_with` measures before it carves. Read off the carved body
+    // instead it comes back with a frame 3.3 mm longer, because the carve's own
+    // chin field moves the menton the frame ends at. A report that prints
+    // landmarks the build did not use is the same defect as the hard-coded
+    // fractions this file carried until #78.
+    let skeleton = record.skeleton();
+    let plain = symbios_avatar::build_body(&skeleton, &symbios_avatar::CageConfig::default(), 2)
+        .expect("a body builds");
+    let shaped = Skull::measure(&plain, rig).expect("a skull");
+    let canon = Canon::measure(rig, &shaped, &record.eyes);
 
     println!(
         "# HEAD AUDIT — seed {}\n",
@@ -115,14 +125,17 @@ fn main() {
         "| eye-to-chin frame | {:.1} | the span every feature fraction is OF |",
         frame * 1000.0
     );
-    for (name, fraction) in [
-        ("nose base", 0.51f32),
-        ("mouth line", 0.69),
-        ("ear centre", 0.19),
+    // Asked of the canon rather than recomputed from a copy of its fractions,
+    // which is what this did until #78 moved them and it went on printing the
+    // old ones.
+    for (name, at) in [
+        ("nose base", canon.nose_base()),
+        ("mouth line", canon.mouth_line()),
+        ("ear centre", canon.ear_centre()),
     ] {
         println!(
-            "| {name} | {:+.1} | eye + {fraction} x frame |",
-            (level + (chin - level) * fraction) * 1000.0
+            "| {name} | {:+.1} | Canon, as a fraction of the frame |",
+            at * 1000.0
         );
     }
     println!();
@@ -277,9 +290,6 @@ fn main() {
 
     // ---- The carve's own contribution -------------------------------------
     println!("## What the relief carve moves, by height\n");
-    let skeleton = record.skeleton();
-    let plain = symbios_avatar::build_body(&skeleton, &symbios_avatar::CageConfig::default(), 2)
-        .expect("a body builds");
     let mut carved = plain.clone();
     face::carve_face(&mut carved, rig, &canon, &record.face);
     println!("| mm up | greatest outward | greatest inward |");

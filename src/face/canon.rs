@@ -127,6 +127,30 @@ impl Canon {
     pub fn down(&self, fraction: f32) -> f32 {
         self.level - self.frame * fraction
     }
+
+    /// Where the base of the nose sits.
+    ///
+    /// These three exist so that nothing outside this module has to keep its own
+    /// copy of the canon's fractions. `examples/headaudit` did, and went on
+    /// printing the old 0.51, 0.69 and 0.19 after #78 moved them — a measurement
+    /// tool reporting landmarks the crate had stopped using, which is the exact
+    /// failure this crate has now hit six times under different names.
+    #[must_use]
+    pub fn nose_base(&self) -> f32 {
+        self.down(super::features::NOSE_BASE)
+    }
+
+    /// Where the lips meet.
+    #[must_use]
+    pub fn mouth_line(&self) -> f32 {
+        self.down(super::features::MOUTH_HEIGHT)
+    }
+
+    /// Where the ear's centre sits.
+    #[must_use]
+    pub fn ear_centre(&self) -> f32 {
+        self.down(super::features::EAR_HEIGHT)
+    }
 }
 
 #[cfg(test)]
@@ -198,14 +222,28 @@ mod tests {
     }
 
     #[test]
-    fn the_frame_and_the_unit_are_independent_across_bodies() {
-        // Both rulers scale with the head, so their RATIO is what says whether
-        // one can stand in for the other. Measured on the shipped build, the old
-        // eye-radius ruler ran 0.249 to 0.458 of the frame — a body's worth of
-        // spread — which is what a coefficient fitted on one seed was up against.
-        // Splitting them does not shrink that spread; it stops it mattering,
-        // because a width is now counted in a width and a height in a height.
-        // Asserted so the next reader can see the number rather than trust it.
+    fn the_two_rulers_hold_a_steady_ratio_across_bodies() {
+        // **This test asserted the opposite when it was written, and the reversal
+        // is the finding.** #77 measured the old eye-radius ruler at 0.249 to
+        // 0.458 of the frame — an 84% spread across sixteen bodies — and read it
+        // as proof that a width ruler and a height ruler are independent
+        // quantities that must be kept apart. So this demanded they diverge.
+        //
+        // They do not. That spread was #78's defect wearing #77's clothes: the
+        // frame was a fraction of a head that reached below its joint by a
+        // STATURE constant, while the width came off the head's own radius, so
+        // the ratio of the two was really the ratio of stature to head size —
+        // free to be anything. With the head's lower boundary made a head
+        // measure, both rulers scale with the same radius and the spread falls
+        // to 9%.
+        //
+        // Which is what a correctly proportioned head SHOULD do, so the property
+        // is worth holding onto in the other direction: a face's height and its
+        // width keep a near-fixed relationship, and if this blows out again it
+        // means something has gone back to sizing a face by the body it is on.
+        // The split #77 made is still right — a width belongs in a width and the
+        // eyeball belongs in neither — and `no_ruler_moves_when_the_eye_axes_move`
+        // is the test that says so. This one is no longer its evidence.
         let mut spread = (f32::MAX, f32::MIN);
         for seed in 0..16 {
             let mut record = AvatarRecord::new("Spread", Archetype::default());
@@ -215,12 +253,12 @@ mod tests {
             spread = (spread.0.min(ratio), spread.1.max(ratio));
         }
         assert!(
-            spread.1 / spread.0 > 1.2,
-            "the two rulers now track each other to within {:.0}%, so one of them \
-             is redundant and this split bought nothing: {:.3} to {:.3}",
-            (spread.1 / spread.0 - 1.0) * 100.0,
+            spread.1 / spread.0 < 1.20,
+            "the width ruler runs {:.3} to {:.3} of the frame across sixteen bodies, \
+             a {:.0}% spread — a face is being sized by something that is not its head",
             spread.0,
-            spread.1
+            spread.1,
+            (spread.1 / spread.0 - 1.0) * 100.0
         );
     }
 

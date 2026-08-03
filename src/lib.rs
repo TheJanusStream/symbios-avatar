@@ -139,9 +139,23 @@ pub use symbios_texture::generator::TextureMap;
 /// single displaced row of vertices, which is a bar. The prediction was that
 /// halving the cell would remove the bars and keep the lips; it did (#85).
 ///
+/// **The fifth pass is the fourth's again, and it is here because #78 took the
+/// fourth one's margin away.** The cage lays one ring per node, so lengthening
+/// the head below its joint from 0.69 radii to 1.19 spread the rings under the
+/// face by the same 1.7 and the mouth's cells grew with them. Measured, the
+/// narrowest lip term went from 2.0–3.5 cells to 1.43–1.76 — back under the 1.5
+/// a Gaussian needs to survive sampling — and the bars came back on screen,
+/// plainly, in the same place they were in #85. The mouth field was rebased to
+/// hold its millimetres, so the terms did not shrink; the surface under them
+/// coarsened.
+///
+/// It is affordable because the same stretch made the face refinement CHEAPER:
+/// the bands are fixed heights in head radii, so a taller head puts less of
+/// itself inside them. The body went 23,182 triangles to 20,668 on the stretch
+/// alone, and this spends part of that back.
+///
 /// The three passes cost about 3,500 triangles and the fourth about 2,150,
-/// measured on the default body: skin goes 11,172 to 13,326 and the whole body
-/// 21,028 to 23,182, against a 30,000 target. The ceiling and every seed still
+/// measured on the default body before #78. The ceiling and every seed still
 /// pass; what it moves is the balance, and that is recorded in
 /// `tests/budget.rs`.
 ///
@@ -149,7 +163,7 @@ pub use symbios_texture::generator::TextureMap;
 /// the second pass moved the profile the ears are placed from, and one seed's
 /// ear fell to 18% visible against a 25% floor. That was a defect in the
 /// measurement rather than in the refinement, and it is fixed (#67).
-const FACE_REFINEMENT: usize = 4;
+const FACE_REFINEMENT: usize = 5;
 
 /// Builds a body's surface from its skeleton, shaped and ready to bind.
 ///
