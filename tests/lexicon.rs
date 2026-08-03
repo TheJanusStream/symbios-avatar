@@ -255,19 +255,21 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
         );
     }
 
-    // The one axis that costs geometry, and the one whose ceiling was wrong:
-    // the lexicon said 256 while the budget could pay for 128, so a record
-    // could legally ask for twice the whole avatar's worth of hair.
-    let groups = &defs["defs"]["hair"]["properties"]["groups"];
+    // How many locks the rim of the hair breaks into. This used to be `groups`,
+    // the count of strand groups, and it was the one axis a record could spend
+    // the whole avatar's triangle budget through. The mass is a shell now and
+    // costs what the head's size dictates (#68), so the bounds here are about
+    // what still reads as hair rather than about what is affordable.
+    let locks = &defs["defs"]["hair"]["properties"]["locks"];
     assert_eq!(
-        groups["minimum"].as_u64(),
-        Some(u64::from(symbios_avatar::hair::MIN_GROUPS)),
-        "the declared floor on hair groups disagrees with the crate"
+        locks["minimum"].as_u64(),
+        Some(u64::from(symbios_avatar::hair::MIN_LOCKS)),
+        "the declared floor on hair locks disagrees with the crate"
     );
     assert_eq!(
-        groups["maximum"].as_u64(),
-        Some(u64::from(symbios_avatar::hair::MAX_GROUPS)),
-        "the declared ceiling on hair groups disagrees with the crate"
+        locks["maximum"].as_u64(),
+        Some(u64::from(symbios_avatar::hair::MAX_LOCKS)),
+        "the declared ceiling on hair locks disagrees with the crate"
     );
 }
 

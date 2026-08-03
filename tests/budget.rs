@@ -191,7 +191,8 @@ fn the_budget_holds_for_a_record_that_asks_for_the_most_expensive_hair() {
         length: 1.0,
         wave: 1.0,
         volume: 1.0,
-        groups: u32::MAX,
+        locks: u32::MAX,
+        curl: 1.0,
         ..record.hair
     };
     record.sanitize();

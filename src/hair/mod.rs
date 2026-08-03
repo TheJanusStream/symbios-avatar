@@ -149,12 +149,30 @@ pub struct HairParams {
     /// Colour along a melanin ramp, `0` black and `1` pale blonde.
     #[serde(with = "crate::plan::scaled")]
     pub shade: f32,
-    /// How many strand groups to grow.
+    /// How many locks the rim of the hair breaks into.
+    ///
+    /// The mass of hair is one sculpted shell, and a shell whose bottom edge is
+    /// a smooth ring is a hood. This is how many wedges that rim is cut into,
+    /// and so how many points the hair ends in — the single strongest control
+    /// over whether it reads as hair or as headgear.
+    ///
+    /// It replaced a `groups` axis that asked how many strand groups to grow.
+    /// That axis was the one thing that cost geometry, which is why it used to
+    /// be a request the budget could refuse; the shell costs what the head's own
+    /// size dictates and a record cannot inflate it, so this is a count and it
+    /// is granted (#68).
     #[serde(
         deserialize_with = "crate::plan::scaled::deserialize_count",
         serialize_with = "crate::plan::scaled::serialize_count"
     )]
-    pub groups: u32,
+    pub locks: u32,
+    /// How curved the sides of those wedges are, `0` straight and `1` swept.
+    ///
+    /// At `0` the rim scallops evenly, which is tidy and a little mechanical. As
+    /// it rises the notches narrow and their flanks bow, so the hair ends in
+    /// drawn-out points rather than in even scoops.
+    #[serde(with = "crate::plan::scaled")]
+    pub curl: f32,
 }
 
 impl Default for HairParams {
@@ -166,54 +184,34 @@ impl Default for HairParams {
             part: 0.0,
             wave: 0.25,
             shade: 0.3,
-            groups: 128,
+            locks: 12,
+            curl: 0.45,
         }
     }
 }
 
-/// The fewest and most strand groups a record may ask for.
+/// The fewest and most locks a record may break the rim into.
 ///
-/// A floor because a handful of ribbons is a wig, not hair; a ceiling because
-/// group count is the one axis that costs geometry, and a record read off the
-/// network is not to be trusted with that.
-///
-/// The ceiling used to be 256, which admitted more triangles of hair than the
-/// whole avatar is allowed to cost — so it was not doing the job its own
-/// comment claimed. It is now the count the default asks for, because that is
-/// the most the budget can pay for even at the cheap end of the look axes.
-/// Asking is still not getting: see [`MAX_TRIANGLES`].
-pub const MIN_GROUPS: u32 = 24;
-/// See [`MIN_GROUPS`].
-pub const MAX_GROUPS: u32 = 128;
+/// A floor because two or three wedges is a bonnet with bites out of it rather
+/// than hair; a ceiling because past a couple of dozen the notches are finer
+/// than the shell's own quads and the rim goes back to reading as a smooth ring,
+/// which is the thing they exist to prevent.
+pub const MIN_LOCKS: u32 = 3;
+/// See [`MIN_LOCKS`].
+pub const MAX_LOCKS: u32 = 24;
 
 /// The most triangles a head of hair may cost, whatever a record asks for.
 ///
 /// The whole avatar is judged against 30,000 on a WebGL2 tier, and this is
-/// whatever is left once everything that is not hair has been paid for. It is
-/// DERIVED, so it moves when they do: giving the face enough surface to carry
-/// features (#59) took everything that is not hair from about 13,100 triangles
-/// to about 13,400, and the worst legal head of hair now brings a body to
-/// 29,900 against the 30,000 it is allowed. That is most of the slack, and the
-/// next thing to want triangles has to take them from here.
+/// whatever is left once everything that is not hair has been paid for.
 ///
-/// This is the number that makes group count a *request*. A record may ask for
-/// [`MAX_GROUPS`]; whether it gets them depends on what the rest of its axes
-/// cost, because a lock's price is no longer fixed — it follows how far the
-/// lock actually travels. Longest and waviest, a lock costs nearly twice what
-/// the default's does.
+/// It is no longer the pressing number it was. Hair was 15,976 triangles — 54%
+/// of the whole avatar — while it was built from a hundred and twenty-eight
+/// locks; as a sculpted shell it is about 2,700, or 17% (#68). The ceiling is
+/// kept because a limit that is never checked is a limit nobody knows is
+/// broken, and because the cost of the locks at the rim does still follow how
+/// far each one travels.
 pub const MAX_TRIANGLES: usize = 16_500;
-
-/// The fewest groups the budget will tier a request down to.
-///
-/// Tiering is the renderer overruling the creator, and it has a floor because
-/// the thing it protects is a triangle count, which knows nothing about
-/// whether the result still reads as hair. At 96 groups the locks are visibly
-/// broader than the default's and the crown starts to read as one shell; at 64
-/// they are slabs with daylight between them. So: 96, and never lower.
-///
-/// It costs nothing to hold that line. Measured across the whole parameter
-/// space, no legal record exceeds [`MAX_TRIANGLES`] at 96 groups.
-const TIER_FLOOR: u32 = 96;
 
 impl HairParams {
     /// Clamps every axis into range. Idempotent.
@@ -225,7 +223,8 @@ impl HairParams {
         self.volume = quantize(finite(self.volume, 0.0).clamp(-1.0, 1.0));
         self.coverage = quantize(finite(self.coverage, 0.0).clamp(-1.0, 1.0));
         self.part = quantize(finite(self.part, 0.0).clamp(-1.0, 1.0));
-        self.groups = self.groups.clamp(MIN_GROUPS, MAX_GROUPS);
+        self.curl = quantize(finite(self.curl, 0.45).clamp(0.0, 1.0));
+        self.locks = self.locks.clamp(MIN_LOCKS, MAX_LOCKS);
     }
 
     /// The hair's colour, along a melanin ramp.
@@ -299,23 +298,21 @@ impl Hair {
     /// on. Without that, anything past a bob hangs *inside* the chest and reads
     /// as dark stripes painted on the skin.
     ///
-    /// The group count in `params` is a **request**. If the hair it grows costs
-    /// more than [`MAX_TRIANGLES`], fewer groups are grown until it fits or the
-    /// tier reaches its floor — which is what stops a record read off the
-    /// network from spending the whole avatar's budget on its hair. Every other
-    /// axis is the creator's and is never touched: length, wave and volume are
-    /// what the hair *looks like*, and quietly shortening someone's hair to
-    /// save triangles is a different thing from drawing fewer locks of it.
-    ///
-    /// Cost is close to linear in the group count, so this settles in one
-    /// regrow in practice; it is bounded by the strictly decreasing count.
+    /// The lock count in `params` is granted in practice and guarded anyway.
+    /// The mass is a shell whose cost follows the head's own size, so a record
+    /// can no longer inflate what its hair costs — which is the whole reason the
+    /// old `groups` axis was a request the budget could refuse (#68). The guard
+    /// stays because the locks do still cost something and a ceiling that is
+    /// never tested is a ceiling nobody knows is broken. Every other axis is the
+    /// creator's and is never touched: length, wave and volume are what the hair
+    /// *looks like*, and quietly shortening someone's hair to save triangles is
+    /// a different thing from drawing fewer locks of it.
     #[must_use]
     pub fn over(scalp: &Scalp, body: Option<(&Rig, &Surface)>, params: &HairParams) -> Self {
-        let mut asked = params.groups;
+        let mut asked = params.locks.clamp(MIN_LOCKS, MAX_LOCKS);
         let mut grown = Self::grow(scalp, body, params, asked);
-        while grown.tris() > MAX_TRIANGLES && asked > TIER_FLOOR {
-            let afford = asked as usize * MAX_TRIANGLES / grown.tris();
-            asked = (afford as u32).clamp(TIER_FLOOR, asked - 1);
+        while grown.tris() > MAX_TRIANGLES && asked > MIN_LOCKS {
+            asked -= 1;
             grown = Self::grow(scalp, body, params, asked);
         }
         grown
@@ -344,7 +341,11 @@ impl Hair {
         let radius = scalp.radius();
         let thickness = radius * 0.024;
         let crown = scalp.top();
-        let stand = radius * (0.05 + 0.05 * params.volume.clamp(-1.0, 1.0));
+        // How far the hair stands off the scalp. Hair has body: it is not paint.
+        // This was 0.05 + 0.05 when every one of these was a thin ribbon and the
+        // gaps between ribbons carried the loft, and a solid shell at the same
+        // figure sat 3 mm off the skull and read as wet hair stuck to it (#69).
+        let stand = radius * (0.11 + 0.06 * params.volume.clamp(-1.0, 1.0));
         let reach = radius * (0.15 + 3.8 * params.length.clamp(0.0, 1.0));
         // A fringe is a fringe whatever the rest is doing: it stops above the
         // eyes or it is not a fringe, so it barely tracks the length axis.
@@ -359,7 +360,7 @@ impl Hair {
         // stand-off is measured to its middle: at `volume` -1 the old expression
         // came to zero and the inner surface went under the scalp, which a lock
         // could never do because a lock has no inner surface.
-        let lift = (stand * 0.5).max(radius * shell::THICKNESS * 0.65);
+        let lift = stand.max(radius * shell::THICKNESS * 0.65);
 
         // One curve, asked for at an azimuth. `ragged` is what separates an edge
         // lock from the mass: the shell is a sculpted surface and wants none of
@@ -371,7 +372,12 @@ impl Hair {
             // run through and the column would collapse to a point.
             let hairline = hairline(scalp, turned, params.coverage).min(crown - CAP_PER_STEP);
             let front = frontness(turned);
-            let fall = (reach + (fringe - reach) * front) * ragged;
+            // Cut back at the notches between locks, so the rim ends in points.
+            // Measured on the UNTURNED azimuth, so the wedges stay put when the
+            // parting moves the roots around: a parting slides hair sideways, it
+            // does not re-cut the ends.
+            let wedge = shell::wedge(azimuth, params.locks, params.curl);
+            let fall = (reach + (fringe - reach) * front) * ragged * wedge;
             sweep(
                 scalp,
                 body,
@@ -401,14 +407,15 @@ impl Hair {
         let (columns, rows) = shell::grid_for(scalp, reach.max(fringe) + 3.0 * waving);
         let shell = Shell::loft(scalp, columns, rows, |azimuth| curve(azimuth, 1.0, 0.0));
 
-        // The edge locks. Placed where hair parts from itself rather than evenly
-        // — evenly spaced they read as a fence — and standing one layer proud of
-        // the mass so they break its silhouette instead of sinking into it.
-        let wanted = (pieces as usize).min(shell::SILHOUETTE.len());
+        // One lock per wedge, at the middle of it — where the rim reaches
+        // furthest and the hair comes to a point. Placing them anywhere else
+        // means the mass and the locks disagree about where the hair ends, which
+        // is what makes edge geometry read as decoration stuck on afterwards.
+        let wanted = pieces.clamp(MIN_LOCKS, MAX_LOCKS) as usize;
         let width = radius * 0.10;
         let mut groups = Vec::with_capacity(wanted);
-        for (index, &fraction) in shell::SILHOUETTE.iter().take(wanted).enumerate() {
-            let azimuth = TAU * fraction;
+        for index in 0..wanted {
+            let azimuth = TAU * (index as f32 + 0.5) / wanted as f32;
             let ragged = 1.0 + RAGGED * (jitter(index, 0) * 2.0 - 1.0);
             // Outside the shell's outer surface, not merely above the scalp.
             // The shell's middle sits at `lift` and its own half-thickness is
@@ -650,12 +657,14 @@ mod tests {
             let root = group.root();
             let height = root.y / scalp.radius();
             let across = Vec3::new(root.x, 0.0, root.z).length() / scalp.radius();
+            let bearing = root.x.atan2(root.z);
             // Outside-ness has to be judged against the profile, not against the
             // width at the root's own height: standing a root off the crown
             // carries it *above* the crown, where the profile has closed to
             // nothing and any comparison there is meaningless.
             assert!(
-                across >= scalp.width_at(height) - 0.02 || height >= scalp.top() - 0.02,
+                across >= scalp.width_around(bearing, height) - 0.02
+                    || height >= scalp.top() - 0.02,
                 "a root sank inside the skull at height {height}, {across} across"
             );
             let out = Vec3::new(across, height, 0.0).length();
@@ -817,7 +826,8 @@ mod tests {
                             if height < scalp.bottom() || height > scalp.top() {
                                 continue;
                             }
-                            let skull = scalp.width_at(height) * scalp.radius();
+                            let bearing = point.x.atan2(point.z);
+                            let skull = scalp.width_around(bearing, height) * scalp.radius();
                             let across = Vec3::new(point.x, 0.0, point.z).length();
                             assert!(
                                 skull - across < thickness,
@@ -843,7 +853,8 @@ mod tests {
         let dear = HairParams {
             length: 1.0,
             wave: 1.0,
-            groups: MAX_GROUPS,
+            locks: MAX_LOCKS,
+            curl: 1.0,
             ..Default::default()
         };
         let hair = Hair::over(&scalp, Some((&rig, &surface)), &dear);
@@ -870,12 +881,12 @@ mod tests {
         let (scalp, rig, surface) = scalp(1);
         let params = HairParams::default();
         let hair = Hair::over(&scalp, Some((&rig, &surface)), &params);
-        let ungoverned = Hair::grow(&scalp, Some((&rig, &surface)), &params, params.groups);
+        let ungoverned = Hair::grow(&scalp, Some((&rig, &surface)), &params, params.locks);
         assert_eq!(
             hair.groups.len(),
             ungoverned.groups.len(),
             "the default asked for {} groups and was tiered",
-            params.groups
+            params.locks
         );
     }
 
@@ -892,13 +903,13 @@ mod tests {
                     for wave in [0.0, 0.5, 1.0] {
                         // Above the ceiling too: sanitize clamps a record, but
                         // nothing makes a caller sanitize one.
-                        for groups in [MIN_GROUPS, 96, MAX_GROUPS, 1024] {
+                        for locks in [MIN_LOCKS, 9, MAX_LOCKS, 1024] {
                             let mut params = HairParams {
                                 length,
                                 volume,
                                 coverage,
                                 wave,
-                                groups,
+                                locks,
                                 ..Default::default()
                             };
                             let hair = Hair::over(&scalp, Some((&rig, &surface)), &params);
@@ -908,7 +919,7 @@ mod tests {
                                 hair.tris()
                             );
                             params.sanitize();
-                            assert!(params.groups <= MAX_GROUPS);
+                            assert!(params.locks <= MAX_LOCKS);
                         }
                     }
                 }
@@ -984,7 +995,8 @@ mod tests {
             part: 3.0,
             wave: -1.0,
             shade: f32::INFINITY,
-            groups: 4,
+            locks: 1,
+            curl: f32::NAN,
         };
         params.sanitize();
         assert_eq!(params.length, 1.0);
@@ -993,7 +1005,11 @@ mod tests {
         assert_eq!(params.part, 1.0);
         assert_eq!(params.wave, 0.0);
         assert_eq!(params.shade, 0.3);
-        assert_eq!(params.groups, MIN_GROUPS);
+        assert_eq!(params.locks, MIN_LOCKS);
+        assert_eq!(
+            params.curl, 0.45,
+            "a non-finite curl falls back to the default"
+        );
 
         let once = params;
         params.sanitize();

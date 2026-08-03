@@ -558,18 +558,18 @@ mod tests {
         );
         assert_eq!(record.eyes.size, 0.7);
         assert_eq!(record.eyes.aperture, EyeParams::default().aperture);
-        assert_eq!(record.hair.groups, HairParams::default().groups);
+        assert_eq!(record.hair.locks, HairParams::default().locks);
     }
 
     #[test]
     fn an_out_of_range_number_is_clamped_rather_than_failing_the_parse() {
         // Sanitising cannot run on a record that would not load, so the reader
         // has to be wide enough to accept the value first.
-        let json = r#"{"name":"Wide","skin":{"melanin":3000000000},"hair":{"groups":4000000000}}"#;
+        let json = r#"{"name":"Wide","skin":{"melanin":3000000000},"hair":{"locks":4000000000}}"#;
         let mut record: AvatarRecord = serde_json::from_str(json).expect("loads a wild value");
         record.sanitize();
         assert_eq!(record.skin.melanin, 1.0);
-        assert_eq!(record.hair.groups, crate::hair::MAX_GROUPS);
+        assert_eq!(record.hair.locks, crate::hair::MAX_LOCKS);
     }
 
     #[test]

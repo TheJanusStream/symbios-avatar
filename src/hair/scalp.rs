@@ -22,6 +22,19 @@ use crate::rig::Rig;
 /// How many heights the profile is sampled at.
 const BANDS: usize = 24;
 
+/// How many directions round the head each band is sampled at.
+///
+/// A head is not a surface of revolution and the parts that depart from one are
+/// exactly the parts hair has to clear: `shape_skull` gives it a brow ridge
+/// standing proud, an occiput at the back and temples drawn in. Measured on the
+/// default body, the skull stands up to 12.7 mm outside a radius-against-height
+/// profile — worst straight ahead at the brow and straight back at the occiput —
+/// against a hair stand-off of about 3 mm, so hair lofted on one profile sat
+/// nine millimetres inside the head and the brow and occiput came through it
+/// (#69). Sixteen is enough to catch a brow ridge without turning the profile
+/// into a copy of the mesh.
+const SECTORS: usize = 16;
+
 /// How far below the head joint to sample, in head radii.
 ///
 /// Far enough to catch the nape, since hair covers it, but not so far as to
@@ -39,6 +52,7 @@ pub struct Scalp {
     centre: Vec3,
     radius: f32,
     profile: [f32; BANDS],
+    around: [[f32; SECTORS]; BANDS],
     lo: f32,
     hi: f32,
 }
@@ -61,7 +75,7 @@ impl Scalp {
         // nearest is what keeps the shoulders out of the profile — they sit
         // within a head radius of the skull on a compact body, and a plain
         // height cut-off lets them in.
-        let mut samples: Vec<(f32, f32)> = Vec::new();
+        let mut samples: Vec<(f32, f32, usize)> = Vec::new();
         for &point in &mesh.positions {
             let hit = rig.nearest_bone(point);
             if rig.joints[hit.joint].zone != Zone::Head {
@@ -71,15 +85,20 @@ impl Scalp {
             if height < FLOOR {
                 continue;
             }
-            let across = Vec3::new(point.x - centre.x, 0.0, point.z - centre.z).length() / radius;
-            samples.push((height, across));
+            let offset = Vec3::new(point.x - centre.x, 0.0, point.z - centre.z);
+            let across = offset.length() / radius;
+            // Same convention as `point`: zero straight ahead at +Z, turning
+            // toward the body's right.
+            let bearing = offset.x.atan2(offset.z).rem_euclid(std::f32::consts::TAU);
+            let sector = ((bearing / std::f32::consts::TAU) * SECTORS as f32) as usize % SECTORS;
+            samples.push((height, across, sector));
         }
         if samples.len() < BANDS {
             return None;
         }
 
         let lo = FLOOR;
-        let hi = samples.iter().fold(f32::MIN, |top, &(h, _)| top.max(h));
+        let hi = samples.iter().fold(f32::MIN, |top, &(h, _, _)| top.max(h));
         if hi <= lo + f32::EPSILON {
             return None;
         }
@@ -92,8 +111,8 @@ impl Scalp {
             let at = lo + step * band as f32;
             let widest = samples
                 .iter()
-                .filter(|(height, _)| (height - at).abs() <= step * 0.75)
-                .fold(f32::MIN, |wide, &(_, across)| wide.max(across));
+                .filter(|(height, _, _)| (height - at).abs() <= step * 0.75)
+                .fold(f32::MIN, |wide, &(_, across, _)| wide.max(across));
             if widest > f32::MIN {
                 *width = widest;
             }
@@ -104,11 +123,35 @@ impl Scalp {
         profile[BANDS - 1] = 0.0;
         fill_gaps(&mut profile)?;
 
+        // The same again, per direction round the head. Each sector falls back
+        // to the band's own widest rather than to a shared value, so a sector
+        // that sampled thinly reports the head it is part of instead of a pinch.
+        let mut around = [[f32::NAN; SECTORS]; BANDS];
+        for (band, row) in around.iter_mut().enumerate() {
+            let at = lo + step * band as f32;
+            for (sector, width) in row.iter_mut().enumerate() {
+                let widest = samples
+                    .iter()
+                    .filter(|(height, _, bearing)| {
+                        (height - at).abs() <= step * 0.75 && *bearing == sector
+                    })
+                    .fold(f32::MIN, |wide, &(_, across, _)| wide.max(across));
+                *width = if widest > f32::MIN {
+                    widest
+                } else {
+                    profile[band]
+                };
+            }
+        }
+        // The crown is a pole in every direction.
+        around[BANDS - 1] = [0.0; SECTORS];
+
         Some(Self {
             head,
             centre,
             radius,
             profile,
+            around,
             lo,
             hi,
         })
@@ -157,13 +200,38 @@ impl Scalp {
         self.profile[band] + (self.profile[band + 1] - self.profile[band]) * blend
     }
 
+    /// How far the surface reaches sideways at `height`, looking along `azimuth`.
+    ///
+    /// The measure hair should use. [`Self::width_at`] answers for the head as a
+    /// whole, which is a surface of revolution the head is not: a brow ridge and
+    /// an occiput both stand well outside it, and hair placed against it sits
+    /// inside them (#69).
+    #[must_use]
+    pub fn width_around(&self, azimuth: f32, height: f32) -> f32 {
+        let at = ((height - self.lo) / (self.hi - self.lo) * (BANDS - 1) as f32)
+            .clamp(0.0, (BANDS - 1) as f32);
+        let band = (at.floor() as usize).min(BANDS - 2);
+        let blend = at - band as f32;
+
+        let turn = azimuth.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU;
+        let column = turn * SECTORS as f32;
+        let near = (column.floor() as usize) % SECTORS;
+        let far = (near + 1) % SECTORS;
+        let along = column - column.floor();
+
+        let row = |band: usize| {
+            self.around[band][near] + (self.around[band][far] - self.around[band][near]) * along
+        };
+        row(band) + (row(band + 1) - row(band)) * blend
+    }
+
     /// A point on the surface, in head-local metres.
     ///
     /// `azimuth` is measured from the face — zero is straight ahead, `+Z` —
     /// turning toward the body's right.
     #[must_use]
     pub fn point(&self, azimuth: f32, height: f32) -> Vec3 {
-        let across = self.width_at(height) * self.radius;
+        let across = self.width_around(azimuth, height) * self.radius;
         Vec3::new(
             azimuth.sin() * across,
             height * self.radius,
@@ -178,7 +246,9 @@ impl Scalp {
         // of (dh, -dw). At the crown the profile falls away steeply and this
         // turns to point straight up, which is what it should do.
         let step = (self.hi - self.lo) / (BANDS - 1) as f32;
-        let slope = (self.width_at(height + step) - self.width_at(height - step)) / (2.0 * step);
+        let slope = (self.width_around(azimuth, height + step)
+            - self.width_around(azimuth, height - step))
+            / (2.0 * step);
         let radial = Vec3::new(azimuth.sin(), 0.0, azimuth.cos());
         (radial - Vec3::Y * slope).normalize_or(radial)
     }

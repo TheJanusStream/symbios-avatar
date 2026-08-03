@@ -260,12 +260,19 @@
           "maximum": 1000,
           "default": 300
         },
-        "groups": {
+        "locks": {
           "type": "integer",
-          "description": "How many strand groups to ask for. This is a request rather than a count: group count is the one axis that costs geometry, so a reader grows fewer than asked whenever the rest of the axes are expensive enough that the asked-for count would not fit its triangle budget, and fewer again for distant or low-end rendering. Neither changes the record.",
-          "minimum": 24,
-          "maximum": 128,
-          "default": 128
+          "description": "How many locks the rim of the hair breaks into. The mass of a head of hair is one sculpted shell, and a shell whose lower edge is a smooth ring reads as headgear rather than as hair; this is how many wedges that edge is cut into, and so how many points the hair ends in. A reader may draw fewer for distant or low-end rendering, which does not change the record.",
+          "minimum": 3,
+          "maximum": 24,
+          "default": 12
+        },
+        "curl": {
+          "type": "integer",
+          "description": "How curved the sides of those wedges are: 0 scallops the rim evenly, 1000 narrows each notch and bows its flanks so the hair ends in drawn-out points. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 450
         }
       }
     },

@@ -111,11 +111,38 @@ impl Shell {
                 inner.push(point - away * thickness * 0.5);
             }
         }
-        Self {
+        let mut shell = Self {
             outer,
             inner,
             columns,
             rows,
+        };
+        shell.weld_crown();
+        shell
+    }
+
+    /// Pulls the first row onto a single apex.
+    ///
+    /// The first row is the crown, which is a POLE: every column starts at the
+    /// same point on the scalp. They do not stay there, because the stand-off
+    /// is applied along the surface normal and at the crown that normal still
+    /// leans outward — measured, about 0.38 of it is radial — so each column is
+    /// pushed sideways by a fraction of the stand-off and the ring they leave
+    /// is a hole at the top of the head. It was invisible while hair clung to
+    /// the scalp and opened to eleven millimetres the moment hair was given
+    /// volume (#69), which is the same bald spot the strand hair had for a
+    /// different reason (#65).
+    fn weld_crown(&mut self) {
+        let mean = |points: &[Vec3]| {
+            let sum: Vec3 = (0..self.columns)
+                .map(|column| points[column * self.rows])
+                .sum();
+            sum / self.columns.max(1) as f32
+        };
+        let (apex_out, apex_in) = (mean(&self.outer), mean(&self.inner));
+        for column in 0..self.columns {
+            self.outer[column * self.rows] = apex_out;
+            self.inner[column * self.rows] = apex_in;
         }
     }
 
@@ -304,19 +331,36 @@ fn tangent(curve: &[Vec3], at: usize) -> Vec3 {
     (after - before).normalize_or(Vec3::Y)
 }
 
-/// Where the silhouette pieces go, as fractions round the head from the front.
+/// How far a wedge cuts back into the rim, as a fraction of the fall.
 ///
-/// Not evenly spaced. A shell is a solid mass and what breaks it up is where the
-/// hair naturally parts from itself: over the brow, at the temples where the
-/// fringe ends, and at the two lines where the fall leaves the shoulders. Spread
-/// them evenly and they read as a fence.
-pub(super) const SILHOUETTE: [f32; 12] = [
-    0.0, 0.05, 0.10, 0.90, 0.95, // the fringe, densest at the parting
-    0.17, 0.83, // the temples
-    0.30, 0.70, // where the fall leaves the jaw
-    0.42, 0.58, // either side of the back
-    0.50, // the centre back
-];
+/// The rim of a shell is otherwise a smooth ring, which is a hood. Cutting it
+/// back to two-thirds at the notches is enough for the hair to end in points
+/// rather than in a hem, and shallow enough that the shortest part still covers
+/// the head it hangs from.
+const WEDGE_DEPTH: f32 = 0.34;
+
+/// How much a wedge's flanks bow at full `curl`.
+///
+/// Raising the exponent narrows the notch and draws its sides out, so the rim
+/// ends in points rather than in even scoops. At `1` the profile is a plain
+/// cosine and the scallops are symmetrical.
+const WEDGE_BOW: f32 = 2.6;
+
+/// How much of its fall the hair keeps at `azimuth`, given the rim's wedges.
+///
+/// `locks` is how many wedges the rim is cut into and `curl` how curved their
+/// sides are. Returns `1` at the middle of a lock, where the hair is longest,
+/// falling toward `1 - WEDGE_DEPTH` at a notch.
+#[must_use]
+pub fn wedge(azimuth: f32, locks: u32, curl: f32) -> f32 {
+    let locks = locks.max(1) as f32;
+    // Distance from the middle of the nearest lock, 0 at the middle and 1 at
+    // the notch between two of them.
+    let turn = (azimuth * locks / std::f32::consts::TAU).rem_euclid(1.0);
+    let from_middle = (turn * 2.0 - 1.0).abs();
+    let bowed = from_middle.powf(1.0 + (WEDGE_BOW - 1.0) * curl.clamp(0.0, 1.0));
+    1.0 - WEDGE_DEPTH * bowed
+}
 
 #[cfg(test)]
 mod tests {
@@ -377,6 +421,35 @@ mod tests {
             "the shell is not watertight: {:?}",
             mesh.manifold_report()
         );
+    }
+
+    #[test]
+    fn the_crown_closes_to_a_point() {
+        // The crown is a pole and the stand-off is applied along the surface
+        // normal, which at the crown still leans outward — so without welding,
+        // every column is pushed sideways and the ring they leave is a hole in
+        // the top of the head. It scales with the stand-off, so it was invisible
+        // while hair clung to the scalp and opened up as soon as hair was given
+        // volume (#69).
+        let scalp = scalp(1);
+        let shell = Shell::loft(&scalp, 32, 16, |azimuth| {
+            // A curve that leaves the crown leaning outward, as a real one does.
+            (0..12)
+                .map(|step| {
+                    let down = step as f32 * 0.02;
+                    Vec3::new(azimuth.sin() * down, 0.12 - down, azimuth.cos() * down)
+                })
+                .collect()
+        });
+        let (columns, rows) = shell.grid();
+        let apex = shell.outer[0];
+        for column in 0..columns {
+            let at = shell.outer[column * rows];
+            assert!(
+                at.abs_diff_eq(apex, 1e-6),
+                "column {column} starts at {at:?}, not the apex {apex:?}"
+            );
+        }
     }
 
     #[test]

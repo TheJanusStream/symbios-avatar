@@ -32,7 +32,7 @@
 //! cargo run --release --example render -- --head       # close up on face and hair
 //! cargo run --release --example render -- --close hand # or head, hand, foot
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
-//! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,96
+//! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
 //! cargo run --release --example render -- --face 1,1,1,0.5        # nose,brow,mouth,ears
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
@@ -175,7 +175,8 @@ fn main() {
             part: axis(3, record.hair.part),
             wave: axis(4, record.hair.wave),
             shade: axis(5, record.hair.shade),
-            groups: axis(6, record.hair.groups as f32) as u32,
+            locks: axis(6, record.hair.locks as f32) as u32,
+            curl: axis(7, record.hair.curl),
         }),
         complexion: (!complexion.is_empty()).then(|| {
             let axis = |at: usize, fallback: f32| complexion.get(at).copied().unwrap_or(fallback);
