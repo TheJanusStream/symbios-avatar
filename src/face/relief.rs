@@ -243,15 +243,22 @@ impl Face {
         // The philtrum: the groove from the base of the nose to the bow of the
         // upper lip. Small, and one of the two or three things that most says a
         // face was modelled rather than assembled.
+        //
+        // **No gate, a bump in its own coordinate.** This used to be bracketed
+        // by `if local.y > top && local.y < self.base`, and at `top` the groove
+        // was at full depth — `down` is 1 there — so it fell to nothing across
+        // one row of vertices: a 2.1 mm cliff on the default and 3.1 on seed
+        // 99, in a window about one cell tall (#84). A term with a boundary can
+        // grow a step back the moment a neighbouring constant moves it; a term
+        // with no boundary cannot. The philtrum is deepest in the middle and
+        // fades into the nose base above and the bow of the lip below, which is
+        // what it does on a face anyway.
         let top = line + plump * 0.62;
-        let groove = if local.y > top && local.y < self.base {
-            let down = ((self.base - local.y) / (self.base - top)).clamp(0.0, 1.0);
-            let wide = unit * 0.26;
-            let sides = 1.0 - (local.x.abs() / wide).min(1.0);
-            -0.34 * sides * sides * smooth(down)
-        } else {
-            0.0
-        };
+        let middle = 0.5 * (top + self.base);
+        let half = (self.base - top).abs().max(f32::EPSILON) * 0.5;
+        let wide = unit * 0.26;
+        let sides = 1.0 - (local.x.abs() / wide).min(1.0);
+        let groove = -0.34 * sides * sides * bump((local.y - middle) / half, 0.0, 0.62);
 
         reach * (lips + groove)
     }
@@ -309,9 +316,18 @@ impl Face {
         // The crease where a wing meets the cheek. Narrow, negative, and only
         // down at the wings, which is the whole of what makes a nostril read as
         // a nostril rather than as the end of a bump.
+        //
+        // **It fades out at the bottom as well as the top**, and it did not.
+        // The gate above returns zero outside the nose's span, and this term
+        // used to arrive there at FULL amplitude — so the field fell 0.16 of
+        // the nose's reach across one row of vertices, 2.5 mm on the default
+        // and 3.9 on seed 99, drawing the topmost of the sub-nasal ledges
+        // (#84). A term that ends inside its own window cannot step out of it.
         let wing = if along > 0.68 {
             let outside = (across - 1.0).abs();
-            -0.16 * (1.0 - (outside / 0.45).min(1.0)).powi(2) * ((along - 0.68) / 0.32).min(1.0)
+            let held =
+                smooth(((along - 0.68) / 0.20).min(1.0)) * smooth(((1.0 - along) / 0.14).min(1.0));
+            -0.16 * (1.0 - (outside / 0.45).min(1.0)).powi(2) * held
         } else {
             0.0
         };
@@ -381,6 +397,80 @@ mod tests {
         carve(&mut carved, &rig, &eyes, &FaceParams::default());
         let centre = rig.joints[eyes.head].position;
         (plain, carved, rig, centre)
+    }
+
+    #[test]
+    fn the_relief_field_has_no_cliffs_in_it() {
+        // One assertion for every gated term in the file, present and future,
+        // which a per-feature test cannot be. A field with a hard `if` in it
+        // steps by the term's full amplitude across one row of vertices, and
+        // that is a ledge on the face — the owner reported the lower third as
+        // a stack of horizontal bars (#84).
+        //
+        // **This measures the FIELD, not the surface**, and the distinction is
+        // the difference between the two defects tangled together here. A
+        // discontinuity is in the field and shows up at any sampling; ALIASING
+        // is in the relationship between a smooth field and the mesh under it —
+        // the lip line's Gaussian is 0.99 cells wide — and this test is blind
+        // to it by construction. That half is still open (#82).
+        //
+        // Sampled at 0.1 mm down the face, an order finer than the 3.6 mm cells,
+        // so the steepest honest gradient in the field (the nose's tail, about
+        // 1.33) contributes 0.13 mm per step while a gate contributes its whole
+        // amplitude. Measured before the gates were fixed: 2.63 mm.
+        let skeleton = HumanoidParams::default().skeleton();
+        let plain = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let eyes = Eyes::build(&rig, &EyeParams::default()).expect("eyes");
+        let skull = Skull::measure(&plain, &rig).expect("a skull");
+        let face = Face::new(&eyes, &skull, &FaceParams::default());
+
+        // Asked by HALVING THE STEP, like the profile test in `super::skull`,
+        // because a threshold cannot tell a cliff from a steep slope. A true
+        // discontinuity gives the same jump however finely it is sampled; a
+        // steep but continuous feature halves with the step.
+        //
+        // The measured ratios say exactly what the field is made of. A gate
+        // gives 1.00 — both gates did, before this issue. A smooth feature
+        // gives 0.50. What is left here gives **0.65 at the nose's flank**, and
+        // that figure is not arbitrary: it is 2^-0.65, the signature of the
+        // `powf(0.65)` shoulder that rounds the nose's section. So the worst
+        // remaining thing in the field is a cusp with an infinite derivative
+        // rather than a step — continuous, and it is where a nose wing meets a
+        // cheek, which on a face is a crease. It will still alias against a
+        // 3.6 mm cell, and that half of the problem is #82's, not this one's.
+        let unit = eyes.left.radius;
+        let (top, bottom) = (face.level + unit * 1.2, skull.chin() - unit * 0.4);
+        let worst_jump = |step: f32| {
+            let mut worst = (0.0f32, Vec3::ZERO);
+            let mut across = -unit * 2.0;
+            while across <= unit * 2.0 {
+                let mut height = bottom;
+                while height <= top {
+                    let here = Vec3::new(across, height, 0.0);
+                    let jump = (face.lift(here + Vec3::Y * step) - face.lift(here)).abs();
+                    if jump > worst.0 {
+                        worst = (jump, here);
+                    }
+                    height += step;
+                }
+                across += 0.0005;
+            }
+            worst
+        };
+        let coarse = worst_jump(0.0002).0;
+        let (fine, at) = worst_jump(0.0001);
+        assert!(
+            coarse > f32::EPSILON && fine / coarse < 0.75,
+            "the relief field's worst step is {:.3} mm sampled coarsely and {:.3} mm \
+             sampled twice as finely, at ({:.1}, {:.1}) mm — a ratio of {:.2}. A steep \
+             slope halves; a cliff does not care.",
+            coarse * 1000.0,
+            fine * 1000.0,
+            at.x * 1000.0,
+            at.y * 1000.0,
+            fine / coarse
+        );
     }
 
     #[test]
