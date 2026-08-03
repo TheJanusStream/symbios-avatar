@@ -477,6 +477,156 @@ mod tests {
         );
     }
 
+    /// Where the built body's surface actually is, by bisecting on the mesh
+    /// itself along `axis` from the head joint.
+    ///
+    /// The only thing here that does not go through [`Skull`], and so the only
+    /// thing that can catch [`Skull`] being wrong. `contains` is the same
+    /// primitive `tests/parts.rs` judges a buried feature with.
+    fn probe(mesh: &PolyMesh, from: Vec3, axis: Vec3) -> Option<f32> {
+        let inside = |reach: f32| mesh.contains(from + axis * reach);
+        if !inside(0.0) || inside(0.3) {
+            return None;
+        }
+        let (mut near, mut far) = (0.0f32, 0.3f32);
+        for _ in 0..40 {
+            let middle = (near + far) * 0.5;
+            if inside(middle) {
+                near = middle
+            } else {
+                far = middle
+            }
+        }
+        Some(near)
+    }
+
+    /// A measured skull, and the head it was measured from.
+    fn skull(seed: i64, levels: usize) -> (PolyMesh, Skull, Vec3) {
+        let mut record = AvatarRecord::new("Skulled", Archetype::default());
+        record.reroll(seed);
+        let skeleton = record.skeleton();
+        let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let mut mesh = refine_face(&catmull_clark(&cage, 2), &rig, levels);
+        shape(&mut mesh, &rig);
+        let measured = Skull::measure(&mesh, &rig).expect("a humanoid has a skull");
+        let centre = rig.joints[measured.head].position;
+        (mesh, measured, centre)
+    }
+
+    #[test]
+    fn the_profile_agrees_with_the_surface_it_was_measured_from() {
+        // The whole contract. Every figure below is millimetres, and every one
+        // of them was a measurement before it was an assertion (#67). Measured
+        // over sixteen seeds and thirteen heights each: the midline depth runs
+        // -1.7 to +4.0, the width -2.2 to +5.8, and the depth off the midline
+        // +0.1 to +9.0. The bounds here are those with room to move.
+        //
+        // ASYMMETRIC ON PURPOSE, both ways. A bin's answer is the outermost
+        // sample in it, so it sits slightly OUTSIDE the surface at the bin's
+        // centre — hence the wide upper bound. And the failure this guards
+        // against is a profile that reports the head too NARROW, which is what
+        // buries a feature; too wide only stands one off. The vertex-binned
+        // profile this replaced would fail the lower bound at four of these
+        // thirteen heights on the first seed alone.
+        for seed in 0..6 {
+            let (mesh, skull, centre) = skull(seed, 1);
+            let (lo, hi) = skull.span();
+            for step in 0..=12 {
+                let height = lo + (hi - lo) * (0.15 + 0.55 * step as f32 / 12.0);
+                let from = centre + Vec3::Y * height;
+
+                if let Some(surface) = probe(&mesh, from, Vec3::Z) {
+                    let error = (skull.depth(height) - surface) * 1000.0;
+                    assert!(
+                        (-4.0..9.0).contains(&error),
+                        "seed {seed} at {height:.3}: the midline depth is {error:.1} mm out"
+                    );
+                }
+                if let Some(surface) = probe(&mesh, from, Vec3::X) {
+                    let error = (skull.width_across(height, 0.0) - surface) * 1000.0;
+                    assert!(
+                        (-4.0..9.0).contains(&error),
+                        "seed {seed} at {height:.3}: the width is {error:.1} mm out"
+                    );
+                }
+                // Off the midline, where a mouth's corners sit and where the
+                // per-band normalisation earns its keep.
+                let across = skull.half_width(height) * 0.5;
+                if let Some(surface) = probe(&mesh, from + Vec3::X * across, Vec3::Z) {
+                    let error = (skull.depth_across(height, across) - surface) * 1000.0;
+                    assert!(
+                        (-4.0..14.0).contains(&error),
+                        "seed {seed} at {height:.3}: the depth off the midline is {error:.1} mm out"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn refining_the_face_does_not_move_the_profile() {
+        // Refinement adds vertices and moves none, so the surface is unchanged
+        // and the measurement of it must be too. It was NOT: binning the raw
+        // vertex list, the half-width at the ear line moved eleven millimetres
+        // between one refinement pass and two while the mesh moved half of one,
+        // and an ear seated from it fell from 53% visible to 11% (#67).
+        //
+        // Eight millimetres, not zero, and the gap is a known residual rather
+        // than slack. On five seeds in sixteen, refining re-labels one row of
+        // vertices at the jaw from neck-owned to head-owned, and the measured
+        // chin steps 6.6 mm lower — the surface is identical, the LABELLING of
+        // it is finer. That slides the band grid, which moves the profile by up
+        // to 4.2 mm where the head's width is changing fastest. Mean movement
+        // is 0.3 mm. It is bounded, it does not bite in the one refinement
+        // setting that ships, and fixing it means cutting the head from the
+        // skeleton instead of by nearest bone, which would redefine the chin
+        // every feature height is measured down from.
+        for seed in 0..6 {
+            let (_, coarse, centre) = skull(seed, 1);
+            let (_, fine, _) = skull(seed, 2);
+            let (lo, hi) = coarse.span();
+            for step in 0..=12 {
+                let height = lo + (hi - lo) * (0.15 + 0.55 * step as f32 / 12.0);
+                let _ = centre;
+                let moved =
+                    (fine.width_across(height, 0.0) - coarse.width_across(height, 0.0)).abs();
+                assert!(
+                    moved < 0.008,
+                    "seed {seed} at {height:.3}: refining moved the width {:.1} mm",
+                    moved * 1000.0
+                );
+                let deeper = (fine.depth(height) - coarse.depth(height)).abs();
+                assert!(
+                    deeper < 0.008,
+                    "seed {seed} at {height:.3}: refining moved the depth {:.1} mm",
+                    deeper * 1000.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_width_falls_away_behind_the_cheekbone() {
+        // The axis this profile gained for the ear. If it answered the same at
+        // every depth it would be the band maximum again under a longer name,
+        // and the test would pass while measuring nothing.
+        let (_, skull, _) = skull(3, 1);
+        let (lo, hi) = skull.span();
+        let height = lo + (hi - lo) * 0.45;
+        let reach = (hi - lo) * 0.25;
+        let front = skull.width_across(height, reach * 0.5);
+        let back = skull.width_across(height, -reach);
+        assert!(
+            back < front,
+            "the head was no narrower behind the cheek: {back:.4} against {front:.4}"
+        );
+        assert!(
+            back > front * 0.5,
+            "the head fell away implausibly fast: {back:.4} against {front:.4}"
+        );
+    }
+
     #[test]
     fn a_profile_reads_between_its_knots() {
         assert_eq!(knot(&BREADTH, 2.0), BREADTH[0].1);
@@ -496,7 +646,47 @@ const BANDS: usize = 20;
 /// only knows height. Placed against the midline depth, a lip's corners sit
 /// well proud of a face that has curved away from them, or well inside one that
 /// has not.
-const COLUMNS: usize = 9;
+///
+/// **Columns are a fraction of the band's own width, not of the head's.** Scaled
+/// against one figure for the whole head, the chin — which is a third as wide as
+/// the cheekbones — puts every sample it has into the first two columns and
+/// leaves the rest to be filled in from them, so the map answers with the
+/// midline wherever it is asked. Measured that way the forward reach came back
+/// 14 mm too deep at the chin against 5 mm at the cheek (#67).
+///
+/// Fifteen, not nine, and not twenty-one. A bin's answer is the outermost sample
+/// in it, so halving the bin halves how far the surface has curved away inside
+/// it: nine columns reported the face 4.2 mm too deep on average, fifteen
+/// 1.9 mm. At twenty-one the bins start coming up empty and are filled from a
+/// neighbour instead — the mean keeps falling, to 1.1 mm, while the worst case
+/// turns round and becomes 16 mm too *shallow*. The mean is the wrong thing to
+/// tune against; the tail is what buries a lip.
+const COLUMNS: usize = 15;
+
+/// How many fore-aft columns the width map is sampled at.
+///
+/// The mirror of [`COLUMNS`], and it exists for the ear: an ear sits on the side
+/// of the head and about a third of an eye-radius *behind* the midline, where
+/// the head is a couple of millimetres narrower than at the cheekbone in front
+/// of it. A width that only knows height reports the cheekbone (#67).
+///
+/// Normalised per band for the same reason [`COLUMNS`] is.
+const DEPTHS: usize = 15;
+
+/// How far either side of a bin's centre a sample still counts, in bins.
+///
+/// Half a bin, so bins share only their boundaries — a sample exactly between
+/// two centres counts for both, and nothing else does.
+///
+/// **Wider is not safer.** [`crate::hair::Scalp`] carries three quarters of a
+/// bin, which is right there: it needs a profile that clears the head
+/// *everywhere*, so overstating is the safe direction. This one is a
+/// measurement, and a maximum taken over a wide window is not a measurement of
+/// the middle of it. Measured at three quarters, the face came back 2.2 mm too
+/// wide and 7.9 mm too deep off the midline; at a half, 0.9 mm and 4.2 mm, with
+/// no bins left empty and the ear's visibility unchanged between refinement
+/// passes either way.
+const WINDOW: f32 = 0.5;
 
 /// The skull as it was actually built.
 ///
@@ -515,6 +705,13 @@ const COLUMNS: usize = 9;
 ///
 /// The same argument as [`crate::hair::Scalp`], and for the same reason: measure
 /// the body in hand rather than the plan that asked for it.
+///
+/// Sampled from the **surface**, not from the vertex list. A head carries a few
+/// hundred vertices and a feature is placed to within a couple of millimetres,
+/// so a bin holding two or three quad corners reports a number that is several
+/// millimetres under the surface and jumps about as the mesh is refined. Face
+/// centroids and edge midpoints cost nothing and take the sample count up by
+/// nearly an order of magnitude; overlapping bins do the rest.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Skull {
     /// The head joint everything on the face hangs from.
@@ -523,8 +720,9 @@ pub struct Skull {
     hi: f32,
     across: [f32; BANDS],
     ahead: [f32; BANDS],
+    behind: [f32; BANDS],
     front: [[f32; COLUMNS]; BANDS],
-    half: f32,
+    side: [[f32; DEPTHS]; BANDS],
 }
 
 impl Skull {
@@ -536,16 +734,7 @@ impl Skull {
     pub fn measure(mesh: &PolyMesh, rig: &Rig) -> Option<Self> {
         let head = *rig.in_zone(Zone::Head).first()?;
         let centre = rig.joints[head].position;
-
-        // Only the head's own surface. A vertex whose nearest bone is the neck
-        // belongs to the neck however close to the jaw it sits, and including it
-        // would report the throat as the face.
-        let mine: Vec<Vec3> = mesh
-            .positions
-            .iter()
-            .filter(|&&point| matches!(rig.joints[rig.nearest_bone(point).joint].zone, Zone::Head))
-            .map(|&point| point - centre)
-            .collect();
+        let mine = samples(mesh, rig, centre);
         if mine.len() < BANDS {
             return None;
         }
@@ -556,40 +745,50 @@ impl Skull {
         if hi - lo <= f32::EPSILON {
             return None;
         }
+        let height = |point: &Vec3| (point.y - lo) / (hi - lo) * (BANDS - 1) as f32;
 
         let mut across = [0.0f32; BANDS];
-        let mut ahead = [0.0f32; BANDS];
+        let mut ahead = [f32::MIN; BANDS];
+        let mut behind = [f32::MAX; BANDS];
         for point in &mine {
-            let at = ((point.y - lo) / (hi - lo) * (BANDS - 1) as f32).round() as usize;
-            let band = at.min(BANDS - 1);
-            across[band] = across[band].max(point.x.abs());
-            ahead[band] = ahead[band].max(point.z);
+            for band in window(height(point), BANDS) {
+                across[band] = across[band].max(point.x.abs());
+                ahead[band] = ahead[band].max(point.z);
+                behind[band] = behind[band].min(point.z);
+            }
         }
-        // A band with no vertex in it takes its neighbour's, so a sparse sample
+        // A band with no sample in it takes its neighbour's, so a sparse sample
         // never reports a skull that pinches to nothing.
         fill(&mut across);
-        fill(&mut ahead);
+        carry(&mut ahead, f32::MIN);
+        carry(&mut behind, f32::MAX);
 
-        // The same forward reach, now also binned by how far across the face it
-        // was measured. Mirrored into one half, because a head is symmetric and
+        // The same reaches, now also binned across the other axis: forward reach
+        // by how far across the face it was measured, and lateral reach by how
+        // far back. Mirrored into one half, because a head is symmetric and
         // folding doubles the samples in every bin.
-        let half = across
-            .iter()
-            .fold(0.0f32, |a, b| a.max(*b))
-            .max(f32::EPSILON);
         let mut front = [[f32::MIN; COLUMNS]; BANDS];
+        let mut side = [[f32::MIN; DEPTHS]; BANDS];
         for point in &mine {
-            let at = ((point.y - lo) / (hi - lo) * (BANDS - 1) as f32).round() as usize;
-            let band = at.min(BANDS - 1);
-            let column = ((point.x.abs() / half) * (COLUMNS - 1) as f32).round() as usize;
-            let column = column.min(COLUMNS - 1);
-            front[band][column] = front[band][column].max(point.z);
+            for band in window(height(point), BANDS) {
+                let lateral = lateral(across[band], point.x.abs());
+                for column in window(lateral, COLUMNS) {
+                    front[band][column] = front[band][column].max(point.z);
+                }
+                let fore = fore(behind[band], ahead[band], point.z);
+                for column in window(fore, DEPTHS) {
+                    side[band][column] = side[band][column].max(point.x.abs());
+                }
+            }
         }
-        // Each row falls back to ITS OWN midline depth. Falling back to one
-        // shared value puts the bottom of the skull's depth on every band that
-        // happened to sample thinly.
+        // Each row falls back to ITS OWN band. Falling back to one shared value
+        // puts the bottom of the skull's depth on every band that happened to
+        // sample thinly.
         for (band, row) in front.iter_mut().enumerate() {
             spread(row, ahead[band]);
+        }
+        for (band, row) in side.iter_mut().enumerate() {
+            spread(row, across[band]);
         }
 
         Some(Self {
@@ -598,15 +797,37 @@ impl Skull {
             hi,
             across,
             ahead,
+            behind,
             front,
-            half,
+            side,
         })
     }
 
     /// How far the skull reaches sideways at `height`, in head-local metres.
+    ///
+    /// The widest the head gets anywhere in that band of heights. Use
+    /// [`Self::width_across`] for anything seated at a known depth, which on a
+    /// head means anything behind the cheekbone.
     #[must_use]
     pub fn half_width(&self, height: f32) -> f32 {
         self.sample(&self.across, height)
+    }
+
+    /// How far the skull reaches sideways at `height`, `depth` in front of the
+    /// head joint.
+    ///
+    /// All three in head-local metres; the answer is a half-width, a head being
+    /// symmetric. The mirror of [`Self::depth_across`], and it exists for the
+    /// same reason: a head is no more a cylinder than it is a surface of
+    /// revolution. An ear seats about a third of an eye-radius behind the
+    /// midline, where the skull has already begun to fall away, and
+    /// [`Self::half_width`] answers there with the cheekbone in front of it
+    /// (#67).
+    #[must_use]
+    pub fn width_across(&self, height: f32, depth: f32) -> f32 {
+        self.bilinear(&self.side, height, |band| {
+            fore(self.behind[band], self.ahead[band], depth)
+        })
     }
 
     /// How far the skull reaches forward at `height`, in head-local metres.
@@ -627,27 +848,42 @@ impl Skull {
     /// standing off the face.
     #[must_use]
     pub fn depth_across(&self, height: f32, across: f32) -> f32 {
-        let at = ((height - self.lo) / (self.hi - self.lo) * (BANDS - 1) as f32)
-            .clamp(0.0, (BANDS - 1) as f32);
-        let band = (at.floor() as usize).min(BANDS - 2);
-        let blend = at - band as f32;
-
-        let column =
-            ((across.abs() / self.half) * (COLUMNS - 1) as f32).clamp(0.0, (COLUMNS - 1) as f32);
-        let left = (column.floor() as usize).min(COLUMNS - 2);
-        let sideways = column - left as f32;
-
-        let row = |band: usize| {
-            self.front[band][left]
-                + (self.front[band][left + 1] - self.front[band][left]) * sideways
-        };
-        row(band) + (row(band + 1) - row(band)) * blend
+        self.bilinear(&self.front, height, |band| {
+            lateral(self.across[band], across)
+        })
     }
 
     /// The lowest and highest the measured profile reaches, in head-local metres.
     #[must_use]
     pub fn span(&self) -> (f32, f32) {
         (self.lo, self.hi)
+    }
+
+    /// Reads a two-axis table at a height and an already-scaled column.
+    ///
+    /// One walk for both maps, so the fore-aft one cannot drift from the lateral
+    /// one the way two hand-written interpolations would.
+    fn bilinear<const COLS: usize>(
+        &self,
+        table: &[[f32; COLS]; BANDS],
+        height: f32,
+        column: impl Fn(usize) -> f32,
+    ) -> f32 {
+        let at = ((height - self.lo) / (self.hi - self.lo) * (BANDS - 1) as f32)
+            .clamp(0.0, (BANDS - 1) as f32);
+        let band = (at.floor() as usize).min(BANDS - 2);
+        let blend = at - band as f32;
+
+        // The column is asked of each band separately, because the axis it
+        // indexes is a fraction of THAT band's own extent. Taking one column
+        // index for both is what put the chin's whole width into two columns.
+        let row = |band: usize| {
+            let column = column(band).clamp(0.0, (COLS - 1) as f32);
+            let left = (column.floor() as usize).min(COLS - 2);
+            let along = column - left as f32;
+            table[band][left] + (table[band][left + 1] - table[band][left]) * along
+        };
+        row(band) + (row(band + 1) - row(band)) * blend
     }
 
     /// Reads one profile at a height, interpolating between bands.
@@ -660,8 +896,83 @@ impl Skull {
     }
 }
 
+/// Where a lateral offset falls in a band's own columns.
+///
+/// Zero on the midline, [`COLUMNS`] minus one at the band's widest. Anything
+/// wider than the band clamps, which is the honest answer: a mouth wider than
+/// the jaw it sits on has its corners at the edge of the jaw.
+fn lateral(width: f32, across: f32) -> f32 {
+    (across.abs() / width.max(f32::EPSILON)) * (COLUMNS - 1) as f32
+}
+
+/// Where a fore-aft offset falls in a band's own columns.
+///
+/// Zero at the back of the band, [`DEPTHS`] minus one at the front.
+fn fore(behind: f32, ahead: f32, depth: f32) -> f32 {
+    ((depth - behind) / (ahead - behind).max(f32::EPSILON)) * (DEPTHS - 1) as f32
+}
+
+/// Every bin whose window covers `at`, clamped to the table.
+///
+/// Samples outside the table entirely still land in the nearest bin: a head is
+/// convex enough that the edge of a profile is a better answer than a hole.
+fn window(at: f32, bins: usize) -> std::ops::RangeInclusive<usize> {
+    let last = bins - 1;
+    let at = at.clamp(0.0, last as f32);
+    let first = (at - WINDOW).ceil().max(0.0) as usize;
+    let end = ((at + WINDOW).floor().max(0.0) as usize).min(last);
+    // A window narrower than half a bin can fall between two centres, and a
+    // sample that lands in no bin at all is a sample thrown away.
+    if end < first {
+        let nearest = (at.round() as usize).min(last);
+        return nearest..=nearest;
+    }
+    first..=end
+}
+
+/// The head's surface, in head-local metres, as points to bin.
+///
+/// Vertices, plus each fully-head face's centroid and the midpoint of each of
+/// its edges and of each corner-to-centroid span. Those interior samples are on
+/// the same surface [`PolyMesh::contains`] tests against, and they are what
+/// takes a 283-vertex head to something a twenty-band profile can be read from.
+///
+/// Only the head's own surface. A vertex whose nearest bone is the neck belongs
+/// to the neck however close to the jaw it sits, and including it would report
+/// the throat as the face. Faces are held to a stricter rule than vertices —
+/// every corner head-owned, not just the centroid — because a face straddling
+/// the jaw would otherwise drag samples off the throat into the lowest bands,
+/// which is exactly where the chin is read from.
+fn samples(mesh: &PolyMesh, rig: &Rig, centre: Vec3) -> Vec<Vec3> {
+    let mine = |point: Vec3| rig.joints[rig.nearest_bone(point).joint].zone == Zone::Head;
+    let owned: Vec<bool> = mesh.positions.iter().map(|&point| mine(point)).collect();
+
+    let mut out: Vec<Vec3> = mesh
+        .positions
+        .iter()
+        .zip(&owned)
+        .filter(|&(_, &ours)| ours)
+        .map(|(&point, _)| point - centre)
+        .collect();
+
+    for (face, corners) in mesh.faces.iter().enumerate() {
+        if !corners.iter().all(|&corner| owned[corner as usize]) {
+            continue;
+        }
+        let centroid = mesh.face_centroid(face);
+        out.push(centroid - centre);
+        for (at, &corner) in corners.iter().enumerate() {
+            let here = mesh.positions[corner as usize];
+            let next = mesh.positions[corners[(at + 1) % corners.len()] as usize];
+            out.push((here + next) * 0.5 - centre);
+            out.push((here + centroid) * 0.5 - centre);
+        }
+    }
+    out
+}
+
 /// Fills a row's empty columns from the nearest measured one.
-fn spread(row: &mut [f32; COLUMNS], fallback: f32) {
+fn spread(row: &mut [f32], fallback: f32) {
     let mut last = f32::MIN;
     for value in row.iter_mut() {
         if *value == f32::MIN {
@@ -681,6 +992,25 @@ fn spread(row: &mut [f32; COLUMNS], fallback: f32) {
     for value in row.iter_mut() {
         if *value == f32::MIN {
             *value = fallback;
+        }
+    }
+}
+
+/// Replaces bands that no sample reached with the nearest one that was.
+///
+/// Separate from [`fill`] because these profiles are signed — the back of a
+/// skull is a negative depth — so "empty" cannot be spelled as "not positive".
+fn carry(profile: &mut [f32; BANDS], empty: f32) {
+    let Some(first) = profile.iter().position(|value| *value != empty) else {
+        profile.fill(0.0);
+        return;
+    };
+    for band in 0..first {
+        profile[band] = profile[first];
+    }
+    for band in first + 1..BANDS {
+        if profile[band] == empty {
+            profile[band] = profile[band - 1];
         }
     }
 }

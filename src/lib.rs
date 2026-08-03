@@ -110,7 +110,22 @@ pub use symbios_texture::generator::TextureMap;
 /// of the face alone take its mean edge from 24 mm to about 6 mm, which is what
 /// a 10 mm brow ridge needs to exist at all (#59), and leave the rest of the
 /// body exactly as it was.
-const FACE_REFINEMENT: usize = 1;
+///
+/// Measured across the four bands the features occupy — brow, eye, nose, mouth —
+/// as the median edge of a face on the front of the head:
+///
+/// ```text
+///  0 passes   25.9  28.2  26.6  26.6 mm
+///  1 pass     13.2  14.1  14.1  13.7 mm
+///  2 passes    6.6   6.8   6.9   6.8 mm   <- here
+///  3 passes    3.2   3.4   3.4   3.3 mm
+/// ```
+///
+/// It sat at one for a long time for a reason that was nothing to do with cost:
+/// the second pass moved the profile the ears are placed from, and one seed's
+/// ear fell to 18% visible against a 25% floor. That was a defect in the
+/// measurement rather than in the refinement, and it is fixed (#67).
+const FACE_REFINEMENT: usize = 2;
 
 /// Builds a body's surface from its skeleton, shaped and ready to bind.
 ///

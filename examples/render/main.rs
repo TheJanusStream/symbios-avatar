@@ -31,6 +31,7 @@
 //! cargo run --release --example render -- --walk 8     # a walk, one sheet per frame
 //! cargo run --release --example render -- --head       # close up on face and hair
 //! cargo run --release --example render -- --close hand # or head, hand, foot
+//! cargo run --release --example render -- --bare      # no hair, to see the face
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
@@ -99,6 +100,7 @@ fn main() {
     // Skinning is a choice with a visible cost either way, so it is a flag:
     // dual quaternions pinch less and can bulge, matrices are the opposite.
     let linear = args.iter().any(|arg| arg == "--linear");
+    let bare = args.iter().any(|arg| arg == "--bare");
     // Which stage to show instead of the finished picture.
     let pass = value("--pass").cloned();
     // Six numbers, in the order the axes are declared: length, volume,
@@ -198,7 +200,7 @@ fn main() {
     if args.iter().any(|arg| arg == "--budget") {
         report(&avatar);
     }
-    let subject = Subject::new(avatar, linear, pass);
+    let subject = Subject::new(avatar, linear, bare, pass);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
         match focus {
@@ -275,6 +277,12 @@ fn report(avatar: &Avatar) {
 struct Subject {
     avatar: Avatar,
     linear: bool,
+    /// Whether to draw the hair at all.
+    ///
+    /// A shell of hair covers the ears and most of the brow on almost every
+    /// seed, and the face is the thing under active work — judging a feature
+    /// through a fringe is judging the fringe (#67, #59).
+    bare: bool,
     pass: Option<String>,
     gait: Gait,
     stride: Stride,
@@ -286,7 +294,7 @@ struct Subject {
 
 impl Subject {
     /// Wraps a built avatar in what a contact sheet additionally needs.
-    fn new(avatar: Avatar, linear: bool, pass: Option<String>) -> Self {
+    fn new(avatar: Avatar, linear: bool, bare: bool, pass: Option<String>) -> Self {
         let (lo, hi) = avatar.parts.body.bounds();
         Self {
             gait: Gait::natural(&avatar.rig),
@@ -295,6 +303,7 @@ impl Subject {
             reach: (hi - lo).max_element().max(0.1),
             avatar,
             linear,
+            bare,
             pass,
         }
     }
@@ -458,28 +467,36 @@ impl Subject {
     /// [`Avatar::posed`], because comparing the two skinning methods is the
     /// point of it.
     fn deformed(&self, pose: &Pose, closure: f32) -> Vec<AvatarMesh> {
+        let bare = |built: Vec<AvatarMesh>| {
+            built
+                .into_iter()
+                .filter(|drawn| !self.bare || drawn.kind != MeshKind::Hair)
+                .collect()
+        };
         if !self.linear {
-            return self.avatar.posed(pose, closure);
+            return bare(self.avatar.posed(pose, closure));
         }
         let posed = pose.forward(&self.avatar.rig);
-        self.avatar
-            .drawn(closure)
-            .into_iter()
-            .map(|drawn| {
-                let mut mesh = drawn.mesh.clone();
-                mesh.positions = posed.deform_linear(
-                    &self.avatar.rig,
-                    &drawn.mesh.positions,
-                    &symbios_avatar::SkinWeights {
-                        vertices: drawn.mesh.skin.clone(),
-                    },
-                );
-                AvatarMesh {
-                    kind: drawn.kind,
-                    mesh,
-                }
-            })
-            .collect()
+        bare(
+            self.avatar
+                .drawn(closure)
+                .into_iter()
+                .map(|drawn| {
+                    let mut mesh = drawn.mesh.clone();
+                    mesh.positions = posed.deform_linear(
+                        &self.avatar.rig,
+                        &drawn.mesh.positions,
+                        &symbios_avatar::SkinWeights {
+                            vertices: drawn.mesh.skin.clone(),
+                        },
+                    );
+                    AvatarMesh {
+                        kind: drawn.kind,
+                        mesh,
+                    }
+                })
+                .collect(),
+        )
     }
 }
 

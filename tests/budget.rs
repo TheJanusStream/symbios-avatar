@@ -29,8 +29,10 @@ const MESH_TARGET: usize = 3;
 /// It rose from 29,600 when the front of the head was refined (#59): the head
 /// arrives from the cage with a mean mesh edge of 24 mm and every feature a
 /// face needs is smaller than that, so there was nothing there to shape. The
-/// refinement is graded and confined to the face, which is why it cost about
-/// 300 triangles rather than the 2,700 another whole subdivision level would.
+/// refinement is graded and confined to the face, which is why two passes of it
+/// cost about 1,200 triangles rather than the 2,700 a single extra whole
+/// subdivision level would — and land at a 6.8 mm cell rather than a 12 mm one
+/// doing it. The second of those passes waited on #67, never on this ceiling.
 ///
 /// It was 43,500 before the hair cut (#40), of which hair alone was 30,208.
 /// Sampling each lock by how far it actually travels, rather than giving every

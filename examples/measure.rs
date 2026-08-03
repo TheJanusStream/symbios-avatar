@@ -13,6 +13,7 @@
 //! ```text
 //! cargo run --example measure
 //! cargo run --example measure -- --seed 7
+//! cargo run --example measure -- --face     # how fine the face's surface is
 //! ```
 
 use symbios_avatar::{
@@ -130,4 +131,96 @@ fn main() {
         reach * 2.0 / height,
         1.000
     );
+
+    if args.iter().any(|arg| arg == "--face") {
+        cells(&skeleton);
+    }
+}
+
+/// How fine the face's surface is, in each band a feature occupies.
+///
+/// The argument of #59 in one table. A brow ridge is 10 mm tall and a nose is
+/// one eye-width across; neither can be shaped into a surface whose quads are
+/// 24 mm on a side, and no amount of tuning the feature generators changes that.
+/// The figure to watch is the median edge, because a mean is dragged down by the
+/// slivers around a pole.
+///
+/// Prints every refinement level rather than the one that ships, so the cost of
+/// the next one is on the same page as what it buys.
+fn cells(skeleton: &symbios_avatar::Skeleton) {
+    use symbios_avatar::{Zone, refine_face, shape_skull};
+
+    /// Each band as a fraction of the way up the head, bottom to crown.
+    const BANDS: [(&str, f32, f32); 4] = [
+        ("brow", 0.55, 0.75),
+        ("eye", 0.42, 0.58),
+        ("nose", 0.25, 0.45),
+        ("mouth", 0.12, 0.28),
+    ];
+
+    let Ok(cage) = build_cage(skeleton, &CageConfig::default()) else {
+        return;
+    };
+    let Ok(rig) = Rig::from_skeleton(skeleton) else {
+        return;
+    };
+    let Some(&head) = rig.in_zone(Zone::Head).first() else {
+        return;
+    };
+    let centre = rig.joints[head].position;
+
+    println!(
+        "\n{:<8} {:>8}  median edge in each feature band",
+        "passes", "tris"
+    );
+    for levels in 0..=3 {
+        let mut mesh = refine_face(&catmull_clark(&cage, 2), &rig, levels);
+        shape_skull(&mut mesh, &rig);
+
+        let (lo, hi) = mesh
+            .positions
+            .iter()
+            .filter(|&&point| rig.joints[rig.nearest_bone(point).joint].zone == Zone::Head)
+            .fold((f32::MAX, f32::MIN), |(lo, hi), point| {
+                (lo.min(point.y), hi.max(point.y))
+            });
+
+        let mut found: Vec<Vec<f32>> = vec![Vec::new(); BANDS.len()];
+        for face in 0..mesh.face_count() {
+            let at = mesh.face_centroid(face) - centre;
+            // The front of the head only. A cheek behind the ear carries no
+            // feature and averaging it in would flatter the figure.
+            if at.z <= 0.0 {
+                continue;
+            }
+            let up = (at.y + centre.y - lo) / (hi - lo);
+            let corners = &mesh.faces[face];
+            let mean = (0..corners.len())
+                .map(|corner| {
+                    mesh.positions[corners[corner] as usize]
+                        .distance(mesh.positions[corners[(corner + 1) % corners.len()] as usize])
+                })
+                .sum::<f32>()
+                / corners.len() as f32;
+            for (band, (_, low, high)) in BANDS.iter().enumerate() {
+                if up >= *low && up <= *high {
+                    found[band].push(mean * 1000.0);
+                }
+            }
+        }
+
+        print!(
+            "{levels:<8} {:>8}",
+            mesh.faces.iter().map(|face| face.len() - 2).sum::<usize>()
+        );
+        for (band, (name, ..)) in BANDS.iter().enumerate() {
+            found[band].sort_by(f32::total_cmp);
+            let middle = found[band]
+                .get(found[band].len() / 2)
+                .copied()
+                .unwrap_or(0.0);
+            print!("   {name} {middle:>5.1} mm");
+        }
+        println!();
+    }
 }

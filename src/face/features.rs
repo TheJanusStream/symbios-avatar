@@ -88,7 +88,15 @@ impl FaceParams {
 /// which is where they came from — and unlike those figures they follow a head
 /// that is shallower, or eyes that are larger, instead of walking off the
 /// bottom of it.
-const EAR_HEIGHT: f32 = 0.25;
+///
+/// The ear's is its CENTRE, and it was 0.25 — which put the top of the ear four
+/// millimetres above the eye line and its bottom ten below the base of the nose.
+/// The canon this file is written from, and the name of the test that guards it,
+/// both say an ear runs from the brow line to the base of the nose; measured on
+/// a default body those are +26 mm and -41 mm about the eye line, so the centre
+/// belongs at -7 (#67). The old figure reproduced an older face, and that face
+/// had the ear too low.
+const EAR_HEIGHT: f32 = 0.135;
 /// See [`EAR_HEIGHT`]. The base of the nose, where the nostrils are.
 const NOSE_BASE: f32 = 0.45;
 /// See [`EAR_HEIGHT`]. Placed by eye the mouth drifts onto the chin and the face
@@ -329,25 +337,98 @@ fn lips(unit: f32, mouth: f32, skull: &Skull, fullness: f32) -> Vec<PolyMesh> {
 /// origin was put. Both errors ran the same way, which is why an ear was buried
 /// on every seed rather than on some of them.
 fn ear(unit: f32, skull: &Skull, seat: f32, stand: f32) -> PolyMesh {
+    /// How far behind the midline the ear sits, in eye-radii.
+    const BACK: f32 = 0.35;
+    /// How much of the ear's own depth is buried in the head.
+    ///
+    /// **A fraction of the ear, not of an eye.** This was 0.30 eye-radii, and an
+    /// ear is 0.56 of one thick — so more than half of it was inside the head
+    /// before the skull's curvature was considered at all, which left nothing in
+    /// hand when the measurement it was seated from moved (#67). A quarter is
+    /// enough to read as attached rather than stuck on, and it now scales with
+    /// the ear: a flatter ear sinks less deep, which is what "attached" means.
+    const SINK: f32 = 0.25;
+    /// How wide the lobe is against the helix above it.
+    ///
+    /// **An ear is not symmetric about its middle and this one was.** A cap
+    /// scaled into an oval is the same shape at the top as at the bottom, and
+    /// what stands furthest out is its centre — so on a head that narrows
+    /// downward, the part that clears the skull and gets seen is the BOTTOM
+    /// half, tapering to a point. It read as a fin hanging off the jaw. Nearly
+    /// half again: the helix is broad and stands proud, the lobe is small and
+    /// tucks in, and that asymmetry is most of what says which way up an ear is.
+    const LOBE: f32 = 0.45;
+    /// How far the ear turns to face forward, in radians.
+    const FACING: f32 = 0.28;
+
     let height = unit * 1.35;
     let shell = prim::cap_shell(height, height * (0.22 + 0.16 * stand), 1.15, 3, 10);
 
-    // Turned to face outward — away from the head, which is the negative
-    // quarter turn — and tipped back a little.
-    let turn = Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.28);
+    // Turned so the hollow faces OUT. `cap_shell` domes around `+Y`, and the
+    // quarter turn that carries `+Y` to `+X` points that dome away from the
+    // head — which is a smooth convex bump, an ear with the concha on the
+    // inside. The positive quarter turn puts the pole against the skull and
+    // leaves the rim standing proud, which is the way round an ear is.
+    //
+    // Then a yaw, which is what the rotation about the cap's own `X` becomes
+    // once that axis has been carried to vertical: it turns the opening toward
+    // the front of the head. It used to run the other way and aim the ear
+    // behind the listener.
+    let turn = Quat::from_rotation_y(-FACING) * Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
     // Flattened along its own pole into a dish. At full height the cap's pole is
     // the outermost point of the ear and it reads as a cone — which is what a
-    // sphere cap is. Nobody had seen it: pointing the wrong way, it had been
-    // inside the head since it was written.
+    // sphere cap is.
     let oriented =
         shell.transformed(Mat4::from_quat(turn) * Mat4::from_scale(Vec3::new(1.0, 0.42, 0.62)));
 
-    // Now that the shape is known, sit it against the head: its innermost point
-    // a little under the surface, so the ear is attached rather than floating,
-    // and everything beyond that standing proud.
-    let inner = oriented.bounds().0.x;
-    let out = skull.half_width(seat) - inner - unit * 0.30;
-    oriented.transformed(Mat4::from_translation(Vec3::new(out, seat, -unit * 0.35)))
+    // Now sit it against the head — **every vertex against the surface under
+    // that vertex**, not the whole ear against one number.
+    //
+    // Seated on a plane, the ear stood 19.5 mm off the head at its bottom and
+    // 0.0 mm at its top, measured (#67). Nothing about the ear caused that: a
+    // head narrows by 26 mm over the 62 mm an ear spans, so a rigid dish laid
+    // on one is flush at the temple and hanging off the jaw. It read as a fin,
+    // which is the right thing to call an ear whose only visible part is its
+    // bottom half.
+    //
+    // Conforming it makes the stand-off the EAR'S OWN shape instead: the rim
+    // proud, the pole sunk, the lobe tucked in by its taper. Which is what
+    // decides whether it reads as an ear.
+    //
+    // The depth axis earns its keep here too. An ear sits behind the cheekbone,
+    // and `half_width` is the widest the head gets anywhere in a band of
+    // heights — which at the ear line *is* the cheekbone, several millimetres
+    // in front of the ear and a couple of millimetres wider.
+    let back = -unit * BACK;
+    let mut placed = taper(&oriented, LOBE);
+    let (near, far) = placed.bounds();
+    let sink = near.x + (far.x - near.x) * SINK;
+    for point in &mut placed.positions {
+        let (up, deep) = (seat + point.y, back + point.z);
+        *point = Vec3::new(point.x + skull.width_across(up, deep) - sink, up, deep);
+    }
+    placed
+}
+
+/// Narrows a shape toward its own base, leaving its top alone.
+///
+/// Not a matrix: a taper is not affine, and doing it with a shear instead
+/// leaves the base the same size and merely leans it. Both the fore-aft extent
+/// and the stand-off from the head shrink, so the narrow end tucks against the
+/// surface rather than hanging off it in mid-air.
+fn taper(mesh: &PolyMesh, base: f32) -> PolyMesh {
+    let (near, far) = mesh.bounds();
+    let rise = (far.y - near.y).max(f32::EPSILON);
+    let middle = (near.z + far.z) * 0.5;
+
+    let mut tapered = mesh.clone();
+    for point in &mut tapered.positions {
+        let along = (point.y - near.y) / rise;
+        let scale = base + (1.0 - base) * along;
+        point.x = near.x + (point.x - near.x) * scale;
+        point.z = middle + (point.z - middle) * scale;
+    }
+    tapered
 }
 
 #[cfg(test)]
@@ -358,14 +439,21 @@ mod tests {
     use crate::{HumanoidParams, plan::BodyPlan};
 
     fn face(params: &FaceParams) -> (Features, Eyes) {
-        // Built, not planned: the whole point of these features is that they are
-        // placed against the head the body actually grew.
+        let (eyes, _, skull) = built();
+        (Features::build(&eyes, &skull, params), eyes)
+    }
+
+    /// A default body's eyes and measured skull.
+    ///
+    /// Built, not planned: the whole point of these features is that they are
+    /// placed against the head the body actually grew.
+    fn built() -> (Eyes, PolyMesh, Skull) {
         let skeleton = HumanoidParams::default().skeleton();
         let mesh = crate::build_body(&skeleton, &crate::CageConfig::default(), 2).expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let eyes = Eyes::build(&rig, &EyeParams::default()).expect("a humanoid has eyes");
         let skull = Skull::measure(&mesh, &rig).expect("a humanoid has a skull");
-        (Features::build(&eyes, &skull, params), eyes)
+        (eyes, mesh, skull)
     }
 
     #[test]
@@ -442,16 +530,67 @@ mod tests {
     #[test]
     fn the_ears_sit_between_the_brow_and_the_base_of_the_nose() {
         // People place them too low from memory, which is a good reason to
-        // assert where they go.
-        let (features, _) = face(&FaceParams::default());
+        // assert where they go — and this test used to say so while checking
+        // something much weaker: that an ear was below the brow MESH and above
+        // the bottom of the lip. It passed with the ear four millimetres above
+        // the eye line and ten below the base of the nose (#67), which is a
+        // whole ear's worth of wrong in the direction the comment warns about.
+        // So it now checks the thing it is named after.
+        let (features, eyes) = face(&FaceParams::default());
+        let unit = eyes.left.radius;
         for ear in &features.ears {
             let (lo, hi) = ear.bounds();
+            let brow = features.brows[0].bounds().1.y;
+            let nose = features.nose.bounds().0.y;
             assert!(
-                hi.y < features.brows[0].bounds().1.y + 1e-3,
-                "an ear rode too high"
+                (hi.y - brow).abs() < unit * 0.5,
+                "the ear's top is {:.1} eye-radii from the brow line",
+                (hi.y - brow) / unit
             );
-            assert!(lo.y > features.lips[0].bounds().0.y, "an ear hung too low");
+            assert!(
+                (lo.y - nose).abs() < unit * 0.5,
+                "the ear's bottom is {:.1} eye-radii from the base of the nose",
+                (lo.y - nose) / unit
+            );
         }
+    }
+
+    #[test]
+    fn an_ear_follows_the_head_instead_of_lying_on_a_plane() {
+        // What decides whether an ear reads as an ear rather than as a fin.
+        // Seated against one number, the ear stood 19.5 mm off the head at its
+        // bottom and 0.0 mm at its top, because a head narrows by 26 mm over the
+        // 62 mm an ear spans (#67). Conformed, the stand-off is the ear's own
+        // shape, so it is roughly even all the way up.
+        let (features, _) = face(&FaceParams::default());
+        let skull = built().2;
+        let ear = &features.ears[1];
+        let (lo, hi) = ear.bounds();
+
+        let stands = |at: f32| {
+            let y = lo.y + (hi.y - lo.y) * at;
+            let slice = (hi.y - lo.y) / 12.0;
+            ear.positions
+                .iter()
+                .filter(|point| (point.y - y).abs() < slice)
+                .map(|point| point.x - skull.width_across(point.y, point.z))
+                .fold(f32::MIN, f32::max)
+        };
+        // Directional, not symmetric: the taper MEANS to leave the lobe closer
+        // in than the helix, so demanding one ratio would be asserting against
+        // the design. What must never come back is the ordering — flush at the
+        // top and standing off at the bottom, which is an ear upside down.
+        // Measured now: 3.1 mm at the lobe, 8.2 mm at the helix. Before: 19.5
+        // and 0.0.
+        let (low, high) = (stands(0.1), stands(0.9));
+        assert!(
+            low > 0.0 && high > 0.0,
+            "the ear is inside the head somewhere: {low} at the lobe, {high} at the helix"
+        );
+        assert!(
+            high >= low && high < low * 4.0,
+            "the ear stands {low} proud at the lobe and {high} at the helix"
+        );
     }
 
     #[test]
