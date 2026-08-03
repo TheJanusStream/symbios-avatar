@@ -240,7 +240,7 @@ impl Eyes {
     #[must_use]
     pub fn build(rig: &Rig, mesh: &PolyMesh, canon: &Canon, params: &EyeParams) -> Self {
         let centre = rig.joints[canon.head].position;
-        let radius = globe(mesh, params);
+        let radius = globe_radius(mesh, params);
         let proud = PROUD - PROUD_RANGE * params.depth.clamp(-1.0, 1.0);
 
         // The eye's own column, not the midline: the face has curved away by
@@ -285,7 +285,7 @@ impl Eyes {
 ///
 /// Keyed to the body's own measured height and to nothing else on the head. See
 /// [`GLOBE`] for why that is the anatomy rather than a simplification.
-fn globe(mesh: &PolyMesh, params: &EyeParams) -> f32 {
+fn globe_radius(mesh: &PolyMesh, params: &EyeParams) -> f32 {
     let (lo, hi) = mesh.bounds();
     let stature = (hi.y - lo.y).max(f32::EPSILON);
     let grown = GLOBE * (1.0 + STATURE_GAIN * (stature / REFERENCE - 1.0));
@@ -316,9 +316,83 @@ fn reach(mesh: &PolyMesh, from: Vec3, far: f32) -> Option<f32> {
     Some(inside)
 }
 
+/// Half-angle of the pupil, in radians.
+///
+/// **The eye's landmarks are ANGLES, and they live here so that the geometry and
+/// the colours cannot drift apart.** They were two bare cosines in
+/// `avatar::iris_of` — 0.78 and 0.50, which is 38.7° and 60° — and the globe was
+/// a sphere with rings 18° apart about `+Y`, so neither threshold landed near a
+/// ring and the pupil covered 91.7% of the visible cap by solid angle (#81).
+///
+/// A pupil is about 3.5 mm across a 24.2 mm globe at an ordinary indoor light
+/// level, which is this.
+const PUPIL: f32 = 0.1431;
+
+/// Half-angle of the iris.
+///
+/// An 11.7 mm iris on a 24.2 mm globe. This is the best-sourced figure on the
+/// whole face: visible iris diameter is near-constant across sex, age past
+/// infancy and ethnicity, in the same way the globe itself is (#77).
+const LIMBUS: f32 = 0.5044;
+
+/// How much of the iris, at its outer edge, is the darker limbal ring.
+///
+/// Life has one and it is most of what makes an iris read as an iris rather than
+/// as a coloured disc.
+const LIMBAL: f32 = 0.0454;
+
+/// How tight a colour boundary is: the gap between the ring pair straddling it.
+///
+/// A colour boundary on a Gouraud-shaded mesh is only as sharp as the gap
+/// between the two rings that carry the two colours. At 1.4° that is 0.3 mm on a
+/// 12.5 mm globe, which reads as an edge; at the 18° the old ring spacing gave,
+/// it read as a smear.
+const EDGE: f32 = 0.0244;
+
+/// Where a point on the globe falls, as a colour.
+///
+/// Takes an offset from the eye's own pivot, so it turns with the gaze for free.
+/// Lives here rather than in [`crate::avatar`] because it and `globe` below have to
+/// agree about the angles above, and a threshold in one file with the rings that
+/// carry it in another is how they came to disagree by 30° in the first place.
+#[must_use]
+pub fn iris_of(offset: Vec3) -> Vec3 {
+    let polar = offset.normalize_or(Vec3::Z).z.clamp(-1.0, 1.0).acos();
+    if polar < PUPIL {
+        Vec3::new(0.05, 0.06, 0.08)
+    } else if polar < LIMBUS - LIMBAL {
+        Vec3::new(0.24, 0.38, 0.46)
+    } else if polar < LIMBUS {
+        // The limbal ring: the same hue, well down in value.
+        Vec3::new(0.10, 0.15, 0.19)
+    } else {
+        Vec3::new(0.93, 0.92, 0.90)
+    }
+}
+
+/// The eyeball, with a latitude ring either side of every colour boundary.
+///
+/// The filler rings past the limbus only have to round a sphere off; nothing is
+/// drawn on them and nothing looks at them, since the back of an eye is inside a
+/// head.
+fn globe(radius: f32) -> PolyMesh {
+    /// How many facets round the iris. Sixteen puts a 12 mm iris on a 16-gon,
+    /// which is under a third of a millimetre of chord error.
+    const SEGMENTS: usize = 16;
+
+    let mut polars = Vec::with_capacity(12);
+    for boundary in [PUPIL, LIMBUS - LIMBAL, LIMBUS] {
+        polars.push(boundary - EDGE * 0.5);
+        polars.push(boundary + EDGE * 0.5);
+    }
+    // Enough to be a sphere behind the iris, and no more.
+    polars.extend([0.30, 0.70, 1.2, 1.7, 2.2, 2.7]);
+    prim::sphere_rings(radius, &polars, SEGMENTS)
+}
+
 /// Builds one eye at `pivot`.
 fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
-    let globe = prim::sphere(radius, 10, 14).transformed(Mat4::from_translation(pivot));
+    let globe = globe(radius).transformed(Mat4::from_translation(pivot));
 
     // A lid is a shell just clear of the globe, so it never intersects it as it
     // swings. Its rest position is set by the aperture: a wide-open eye starts

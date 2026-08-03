@@ -387,12 +387,17 @@ impl Avatar {
         let mut globes = PolyMesh::new();
         let mut lids = PolyMesh::new();
         for eye in [&eyes.left, &eyes.right] {
+            // Baked per vertex rather than evaluated per pixel: an iris is a
+            // property of the geometry here, and carrying it as colour is what
+            // lets both eyes be one draw. The globe's latitude rings are placed
+            // to straddle the angles this thresholds at, so the boundaries land
+            // between adjacent rings rather than across them (#81).
             let mut globe = eye.globe.clone();
             globe.set_colours(
                 globe
                     .positions
                     .iter()
-                    .map(|&point| iris_of(point, eye.pivot))
+                    .map(|&point| face::eye::iris_of(point - eye.pivot))
                     .collect(),
             );
             globes.append(&globe);
@@ -631,21 +636,6 @@ fn attached_in_body(
         placed.push((part.mesh.transformed(to_body), Zone::Extremity(part.limb)));
     }
     placed
-}
-
-/// A pale globe with a dark iris facing forward, so an eye reads as an eye.
-///
-/// Baked per vertex rather than evaluated per pixel: it is a property of the
-/// geometry, and carrying it as colour is what lets both eyes be one draw.
-fn iris_of(point: Vec3, pivot: Vec3) -> Vec3 {
-    let forward = (point - pivot).normalize_or(Vec3::Z).z;
-    if forward > 0.78 {
-        Vec3::new(0.05, 0.06, 0.08)
-    } else if forward > 0.50 {
-        Vec3::new(0.24, 0.38, 0.46)
-    } else {
-        Vec3::new(0.93, 0.92, 0.90)
-    }
 }
 
 /// A default humanoid, for tools with nothing better to show.

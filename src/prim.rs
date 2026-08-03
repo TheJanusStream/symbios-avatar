@@ -78,6 +78,83 @@ pub fn sphere(radius: f32, rings: usize, segments: usize) -> PolyMesh {
     mesh
 }
 
+/// A sphere about `+Z` whose latitude rings are placed where the caller says.
+///
+/// [`sphere`] spaces its rings evenly about `+Y`, which is the right answer for
+/// a ball and the wrong one for an eyeball. An iris is a set of CONCENTRIC
+/// circles about the gaze axis, and the two things that decide whether one reads
+/// as an eye are both angular: an 11.7 mm iris is 28.9° of half-angle on a life
+/// globe and a 3.5 mm pupil is 8.2°. Evenly spaced rings about `+Y` cross that
+/// pattern diagonally and land nowhere near either boundary, so a per-vertex
+/// colour draws a limbus as an 18° Gouraud smear and cannot draw a pupil at all
+/// (#81).
+///
+/// So `polars` is the list of interior latitudes, in radians from the `+Z` pole,
+/// and a caller that wants a crisp colour boundary puts a PAIR of rings a degree
+/// or two either side of it. Sorted and clamped here rather than trusted: a ring
+/// list out of order would wind faces backwards.
+///
+/// Mapped as an azimuthal projection about the same pole — the `+Z` pole at the
+/// middle of the chart and latitude running out to its rim. Unlike a longitude
+/// map this has **no wrap seam**, because azimuth enters only through a sine and
+/// a cosine, which is what an eye wants: the seam of a lat-long map would run
+/// straight through the iris.
+#[must_use]
+pub fn sphere_rings(radius: f32, polars: &[f32], segments: usize) -> PolyMesh {
+    let segments = segments.max(3);
+    let mut rings: Vec<f32> = polars
+        .iter()
+        .copied()
+        .filter(|polar| polar.is_finite())
+        .map(|polar| polar.clamp(1e-4, std::f32::consts::PI - 1e-4))
+        .collect();
+    rings.sort_by(f32::total_cmp);
+    if rings.is_empty() {
+        rings.push(std::f32::consts::FRAC_PI_2);
+    }
+
+    let mut mesh = PolyMesh::new();
+    let front = mesh.push_uv_vertex(Vec3::Z * radius, Vec2::splat(0.5));
+    for &polar in &rings {
+        // The chart's radius, running 0 at the near pole to 0.5 at the far one.
+        let out = polar / std::f32::consts::PI * 0.5;
+        for segment in 0..segments {
+            let azimuth = turn(segment, segments);
+            let (sin, cos) = azimuth.sin_cos();
+            mesh.push_uv_vertex(
+                Vec3::new(
+                    radius * polar.sin() * cos,
+                    radius * polar.sin() * sin,
+                    radius * polar.cos(),
+                ),
+                Vec2::new(0.5 + out * cos, 0.5 + out * sin),
+            );
+        }
+    }
+    let back = mesh.push_uv_vertex(-Vec3::Z * radius, Vec2::new(0.5, 1.0));
+
+    let at = |ring: usize, segment: usize| (1 + ring * segments + segment % segments) as u32;
+    for segment in 0..segments {
+        mesh.push_face([front, at(0, segment), at(0, segment + 1)]);
+    }
+    for ring in 0..rings.len() - 1 {
+        for segment in 0..segments {
+            mesh.push_face([
+                at(ring, segment),
+                at(ring + 1, segment),
+                at(ring + 1, segment + 1),
+                at(ring, segment + 1),
+            ]);
+        }
+    }
+    let last = rings.len() - 1;
+    for segment in 0..segments {
+        mesh.push_face([back, at(last, segment + 1), at(last, segment)]);
+    }
+
+    mesh
+}
+
 /// A closed shell cut from a sphere, capping the `+Y` pole.
 ///
 /// `half_angle` is how far down from the pole the cap reaches, in radians;

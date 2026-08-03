@@ -66,6 +66,14 @@ const MUST_SHOW: f32 = 0.25;
 /// are separate meshes — so whatever part of the globe lies outside the skin is
 /// very nearly what a viewer sees. A real eye shows about a sixth of its
 /// surface, which is what puts the ceiling here rather than near zero.
+///
+/// **Measured as AREA, and it used to be measured as a share of vertices.** The
+/// two agree only while a mesh's vertices are spread evenly over it, which the
+/// globe's were until #81 placed six of its twelve rings inside the first 30° so
+/// the iris could have edges. Nothing about the eye's placement changed and this
+/// number went from 14% to 51%, which is a test reporting the vertex budget it
+/// was handed rather than the surface a viewer sees. Area is what the sixth
+/// above was always about.
 const EYE_SHOWS: (f32, f32) = (0.03, 0.25);
 
 /// How far an eye may stand proud of the face around it, in metres.
@@ -77,6 +85,10 @@ const EYE_SHOWS: (f32, f32) = (0.03, 0.25);
 const EYE_PROUD: f32 = 0.005;
 
 /// What share of `part`'s vertices lie outside `body`.
+///
+/// Still vertices, and only for the parts whose vertices are spread evenly over
+/// them — an ear, a hand, a foot. See [`EYE_SHOWS`] for why the globe needs
+/// [`exposed`] instead.
 fn proud(body: &PolyMesh, part: &PolyMesh, offset: Vec3) -> f32 {
     if part.positions.is_empty() {
         return 1.0;
@@ -87,6 +99,46 @@ fn proud(body: &PolyMesh, part: &PolyMesh, offset: Vec3) -> f32 {
         .filter(|point| !body.contains(**point + offset))
         .count();
     outside as f32 / part.positions.len() as f32
+}
+
+/// Hands every triangle of `part` to `visit` with its centroid, its area, and
+/// whether that centroid lies outside `body`.
+///
+/// One walk, because two tests need the same one split different ways: how much
+/// of the eye shows, and what colour the part that shows is.
+fn triangles(
+    body: &PolyMesh,
+    part: &PolyMesh,
+    offset: Vec3,
+    mut visit: impl FnMut(Vec3, f64, bool),
+) {
+    for face in &part.faces {
+        for corner in 1..face.len().saturating_sub(1) {
+            let (a, b, c) = (
+                part.positions[face[0] as usize],
+                part.positions[face[corner] as usize],
+                part.positions[face[corner + 1] as usize],
+            );
+            let at = (a + b + c) / 3.0;
+            let area = f64::from((b - a).cross(c - a).length() * 0.5);
+            visit(at, area, !body.contains(at + offset));
+        }
+    }
+}
+
+/// What share of `part`'s surface area lies outside `body`.
+fn exposed(body: &PolyMesh, part: &PolyMesh, offset: Vec3) -> f32 {
+    let (mut outside, mut whole) = (0.0f64, 0.0f64);
+    triangles(body, part, offset, |_, area, out| {
+        whole += area;
+        if out {
+            outside += area;
+        }
+    });
+    if whole <= 0.0 {
+        return 1.0;
+    }
+    (outside / whole) as f32
 }
 
 /// Every attached part of one avatar, named, with the transform placing it.
@@ -165,7 +217,7 @@ fn an_eye_is_seated_in_the_face_rather_than_resting_on_it() {
         let centre = avatar.rig.joints[eyes.head].position;
 
         for (side, eye) in [("left", &eyes.left), ("right", &eyes.right)] {
-            let shows = proud(body, &eye.globe, centre);
+            let shows = exposed(body, &eye.globe, centre);
             assert!(
                 (EYE_SHOWS.0..=EYE_SHOWS.1).contains(&shows),
                 "seed {seed}: the {side} eye has {:.0}% of its surface outside the face, \
@@ -198,6 +250,81 @@ fn an_eye_is_seated_in_the_face_rather_than_resting_on_it() {
                  against a ceiling of {:.1}",
                 stands * 1000.0,
                 EYE_PROUD * 1000.0
+            );
+        }
+    }
+}
+
+#[test]
+fn an_eye_shows_more_white_than_pupil() {
+    // The other half of "the eyes look popped out" (#73), and it outlived the
+    // placement fix: seated correctly, the eye still read as a black bead,
+    // because `iris_of` thresholded at 38.7° and the whole visible cap is only
+    // 40.5°. Measured before this was fixed, the near-black pupil covered 91.7%
+    // of the globe's exposed surface and no sclera was drawn at all.
+    //
+    // Measured as AREA, not as a vertex count: the mesh's vertices cluster where
+    // its rings are, which is exactly where this change put them, so counting
+    // vertices would measure the fix rather than the face. Classified by asking
+    // `iris_of` itself for the two colours it uses at the poles, so the test
+    // carries no copy of an angle that the geometry could drift away from.
+    let pupil = symbios_avatar::face::eye::iris_of(Vec3::new(0.0, 0.0, 1.0));
+    let sclera = symbios_avatar::face::eye::iris_of(Vec3::new(0.0, 0.0, -1.0));
+    assert_ne!(pupil, sclera, "the test's premise");
+
+    for seed in 0..SEEDS {
+        let mut record = AvatarRecord::new("Sweep", Archetype::default());
+        record.reroll(seed);
+        let avatar = Avatar::build_with(&record, &geometry_only()).expect("the body builds");
+        let Some(eyes) = &avatar.parts.eyes else {
+            continue;
+        };
+        let body = &avatar.parts.body;
+        let centre = avatar.rig.joints[eyes.head].position;
+
+        for (side, eye) in [("left", &eyes.left), ("right", &eyes.right)] {
+            let mut share = [0.0f64; 3];
+            triangles(body, &eye.globe, centre, |at, area, outside| {
+                if !outside {
+                    return;
+                }
+                let colour = symbios_avatar::face::eye::iris_of(at - eye.pivot);
+                let class = if colour == pupil {
+                    0
+                } else if colour == sclera {
+                    2
+                } else {
+                    1
+                };
+                share[class] += area;
+            });
+            let total: f64 = share.iter().sum();
+            assert!(
+                total > 0.0,
+                "seed {seed}: the {side} eye shows nothing at all"
+            );
+            let pct = |at: usize| share[at] / total * 100.0;
+            // Three bounds, because they fail independently. A pupil that eats
+            // the eye is the defect; no sclera at all is the same defect; and an
+            // iris that has shrunk to nothing is that defect mirrored, which a
+            // ceiling on its own could not see.
+            assert!(
+                pct(0) < 10.0,
+                "seed {seed}: the {side} eye is {:.0}% pupil, against 92% before this \
+                 was fixed and about 4% of a circular aperture",
+                pct(0)
+            );
+            assert!(
+                pct(2) > 25.0,
+                "seed {seed}: the {side} eye shows {:.0}% sclera; a face with no white \
+                 in its eyes reads as a bead",
+                pct(2)
+            );
+            assert!(
+                pct(1) > 8.0,
+                "seed {seed}: only {:.0}% of the {side} eye is iris — it has shrunk \
+                 past the point of being visible",
+                pct(1)
             );
         }
     }
