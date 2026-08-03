@@ -103,6 +103,8 @@ struct Face {
     base: f32,
     /// Where the lips meet.
     mouth: f32,
+    /// How tall the lip stack is, from the mouth line to a lobe's centre.
+    plump: f32,
     /// How far each eye sits from the midline.
     apart: f32,
     /// How prominent each feature is.
@@ -112,15 +114,31 @@ struct Face {
 impl Face {
     fn new(eyes: &Eyes, skull: &Skull, params: &FaceParams) -> Self {
         let level = eyes.left.pivot.y;
-        let chin = skull.span().0;
+        // The chin's tip, NOT `span().0`. The span ends at the throat, 28 mm
+        // below the chin on a default body, and a frame stretched to the throat
+        // put the whole feature stack a third of a storey too low: the lower
+        // lip landed on the chin's own tip and the crease under it was carved
+        // into the underside of the jaw, which read as the jaw rotated up into
+        // the throat (#72).
+        let chin = skull.chin();
+        let unit = eyes.left.radius;
         Self {
-            unit: eyes.left.radius,
+            unit,
             level,
             // The same fraction of the eye-line-to-chin span `super::features`
             // counts in, so a nose carved here and an ear placed there agree
             // about where the middle third of the face ends.
             base: level + (chin - level) * super::features::NOSE_BASE,
             mouth: level + (chin - level) * super::features::MOUTH_HEIGHT,
+            // Sized by the eye, like everything else — but never deeper than
+            // the face has room for. The eye and the face length are separate
+            // axes, and on a large-eyed short-faced head an uncapped lip stack
+            // reached past the chin: seed 99 put the sulcus lobe at −69.1 mm
+            // against a chin at −68.7, carving the crease into the tip itself.
+            // The lowest lobe sits at 1.32 plumps below the mouth line and the
+            // chin 0.31 frames below it, so 0.20 keeps the whole stack above
+            // the tip with about 0.05 frames to spare, on every head.
+            plump: (unit * (0.46 + 0.24 * params.mouth)).min(0.20 * (level - chin)),
             apart: eyes.right.pivot.x.abs(),
             params: *params,
         }
@@ -192,7 +210,7 @@ impl Face {
         let unit = self.unit;
         let full = self.params.mouth;
         let half = unit * (0.92 + 0.16 * full);
-        let plump = unit * (0.46 + 0.24 * full);
+        let plump = self.plump;
         // Lips stand about five millimetres off the face around them, and this
         // is that. It was nearly ten, and at ten the profile below has to swing
         // through its whole range inside a single cell — which does not draw a
@@ -436,12 +454,83 @@ mod tests {
     }
 
     #[test]
+    fn the_carve_leaves_the_jaw_to_the_skull() {
+        // Written from the defect that reached the owner twice (#71, #72). The
+        // feature frame used to end at `span().0` — the THROAT — so the whole
+        // stack sat a third of a storey too low: the lower lip was painted onto
+        // the chin's own tip (+6.8 mm at −63 on the default) and the crease
+        // under the lip was carved into the underside of the jaw (−2.7 mm at
+        // −75). Material added above the tip and removed below it reads as the
+        // jaw rotated up into the throat, which is exactly how it was reported.
+        //
+        // So the assertion is about territory rather than about a margin: below
+        // the chin the face belongs to the skull profile, and the carve keeps
+        // its hands off it. At the tip itself the sulcus tail may graze — about
+        // a millimetre, measured — but nothing like a lip's worth.
+        //
+        // Every seed, which the old frame could not survive: this replaced a
+        // default-only test whose "lip" band on seed 99 held the side of a
+        // nose.
+        for seed in [
+            None,
+            Some(1),
+            Some(7),
+            Some(23),
+            Some(29),
+            Some(42),
+            Some(99),
+        ] {
+            let mut record = crate::AvatarRecord::new("Jaw", crate::Archetype::default());
+            if let Some(seed) = seed {
+                record.reroll(seed);
+            }
+            let skeleton = record.skeleton();
+            let plain = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
+            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+            let eyes = Eyes::build(&rig, &record.eyes).expect("eyes");
+            let skull = Skull::measure(&plain, &rig).expect("a skull");
+            let mut carved = plain.clone();
+            carve(&mut carved, &rig, &eyes, &record.face);
+
+            let unit = eyes.left.radius;
+            let chin = skull.chin();
+            let centre = rig.joints[eyes.head].position;
+            for (was, now) in plain.positions.iter().zip(&carved.positions) {
+                let height = was.y - centre.y;
+                let moved = was.distance(*now) * 1000.0;
+                if height < chin - unit * 0.35 {
+                    assert!(
+                        moved < 1.0,
+                        "seed {seed:?}: the carve moved the underside of the jaw \
+                         {moved:.1} mm at {:.1} mm below the chin",
+                        (chin - height) * 1000.0
+                    );
+                } else if height < chin + unit * 0.15 {
+                    assert!(
+                        moved < 2.5,
+                        "seed {seed:?}: the carve moved the chin's tip {moved:.1} mm"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_more_prominent_nose_stands_further_out() {
         let skeleton = HumanoidParams::default().skeleton();
         let plain = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let eyes = Eyes::build(&rig, &EyeParams::default()).expect("eyes");
 
+        // In the nose's own band, not over the whole mesh. This asserted against
+        // `bounds().1.z` and started failing the moment the chin was pulled back
+        // to where a chin belongs (#71) — because the furthest-forward point of
+        // a head is its BROW, and a bounding box asked about a nose answers
+        // about a brow. It had been passing for the same reason it then failed:
+        // by accident.
+        let centre = rig.joints[eyes.head].position;
+        let level = eyes.left.pivot.y;
+        let unit = eyes.left.radius;
         let reach = |nose: f32| {
             let mut mesh = plain.clone();
             carve(
@@ -453,11 +542,21 @@ mod tests {
                     ..Default::default()
                 },
             );
-            mesh.bounds().1.z
+            mesh.positions
+                .iter()
+                .map(|point| *point - centre)
+                .filter(|local| {
+                    local.x.abs() < unit * 0.6
+                        && local.y < level - unit * 0.4
+                        && local.y > level - unit * 2.4
+                })
+                .fold(f32::MIN, |far, local| far.max(local.z))
         };
         assert!(
             reach(1.0) > reach(0.0) + 0.004,
-            "the whole nose axis moved the face by under 4 mm"
+            "the whole nose axis moved the nose by under 4 mm: {:.1} against {:.1}",
+            reach(1.0) * 1000.0,
+            reach(0.0) * 1000.0
         );
     }
 }

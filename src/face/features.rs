@@ -94,27 +94,28 @@ impl FaceParams {
     }
 }
 
-/// Where each feature sits between the eye line and the chin, as a fraction of
-/// that span on the **measured** head.
+/// Where each feature sits between the eye line and the **chin's tip**, as a
+/// fraction of that span on the measured head.
 ///
-/// These reproduce the face the old eye-radii figures gave on a default body —
-/// which is where they came from — and unlike those figures they follow a head
-/// that is shallower, or eyes that are larger, instead of walking off the
-/// bottom of it.
+/// The denominator changed once, and every figure here was rebased to hold its
+/// landmark still (#72). These were authored as fractions of the eye line to
+/// `span().0`, believing that was the chin; it is the throat, 28 mm further
+/// down on a default body, so the fractions were right against a frame that was
+/// wrong — the mouth's 0.62 landed 9 mm above the chin's tip instead of 20.
+/// Against [`Skull::chin`] the frame is 71 mm on the default head where the old
+/// one was 97, and the figures below put the base of the nose at −30 mm and the
+/// mouth at −42 about the eye line, which is where the canon's thirds put them.
 ///
-/// The ear's is its CENTRE, and it was 0.25 — which put the top of the ear four
-/// millimetres above the eye line and its bottom ten below the base of the nose.
-/// The canon this file is written from, and the name of the test that guards it,
-/// both say an ear runs from the brow line to the base of the nose; measured on
-/// a default body those are +26 mm and -41 mm about the eye line, so the centre
-/// belongs at -7 (#67). The old figure reproduced an older face, and that face
-/// had the ear too low.
-const EAR_HEIGHT: f32 = 0.135;
+/// The ear's is its CENTRE, and it holds the −7 mm the canon and #67 agreed on:
+/// an ear runs from the brow line to the base of the nose. It is the one figure
+/// rebased to keep its OLD position exactly, because the ears were validated on
+/// screen against that seat and the frame change is not a reason to move them.
+const EAR_HEIGHT: f32 = 0.19;
 /// See [`EAR_HEIGHT`]. The base of the nose, where the nostrils are.
-pub(super) const NOSE_BASE: f32 = 0.45;
+pub(super) const NOSE_BASE: f32 = 0.51;
 /// See [`EAR_HEIGHT`]. Placed by eye the mouth drifts onto the chin and the face
 /// reads as a muzzle.
-pub(super) const MOUTH_HEIGHT: f32 = 0.62;
+pub(super) const MOUTH_HEIGHT: f32 = 0.69;
 
 /// The parts of one face that are not the head's own surface, in head-local
 /// space.
@@ -139,14 +140,15 @@ impl Features {
         // five eye-widths across, and every other landmark follows from that.
         let unit = eyes.left.radius;
         let level = eyes.left.pivot.y;
-        // The bottom of the measured head. Feature HEIGHTS used to be counted in
-        // eye-radii down from the eye line, which quietly assumes the eye and the
-        // head are the same size — and they are separate axes. On a body with
-        // large eyes in a shallow head the mouth was placed below where the head
-        // has any surface at all, which is what 'buried' turned out to mean.
-        // Counting them as fractions of the eye-line-to-chin span instead
-        // reproduces the default face and follows every other one.
-        let chin = skull.span().0;
+        // The chin's tip. Feature HEIGHTS used to be counted in eye-radii down
+        // from the eye line, which quietly assumes the eye and the head are the
+        // same size — and they are separate axes. On a body with large eyes in
+        // a shallow head the mouth was placed below where the head has any
+        // surface at all, which is what 'buried' turned out to mean. Counting
+        // them as fractions of the eye-line-to-chin span fixes that — but the
+        // first version used `span().0`, which is the THROAT, 28 mm below the
+        // chin, and squeezed the whole lower face onto the jaw (#72).
+        let chin = skull.chin();
 
         // Built once and mirrored. Building each side from its own signed
         // arithmetic looks equivalent and is not: it leaves the two halves
@@ -358,7 +360,7 @@ mod tests {
         let unit = eyes.left.radius;
         let level = eyes.left.pivot.y;
         let brow = level + unit * (0.62 + 0.30 * FaceParams::default().brow);
-        let nose = level + (skull.span().0 - level) * NOSE_BASE;
+        let nose = level + (skull.chin() - level) * NOSE_BASE;
 
         for ear in &features.ears {
             let (lo, hi) = ear.bounds();

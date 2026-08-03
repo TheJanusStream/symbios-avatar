@@ -135,14 +135,31 @@ fn containment_is_exact_on_a_closed_body() {
         "a point in the air is not"
     );
 
-    // And every vertex of the body is on its own boundary, so neither answer is
-    // wrong — but pushing one along its normal must land outside every time.
+    // And every vertex of the body is on its own boundary, so a vertex pushed
+    // along its own normal must ESCAPE the body within a couple of millimetres.
+    //
+    // Not "must land outside at one fixed distance", which is what this said
+    // for a long time, because no fixed distance exists (#72). It pushed 5% of
+    // the body — 82 mm — which quietly assumed no overhang on the body faces
+    // the body; then the nose gained a real underside, whose normals aim up
+    // and back through the skull, and three of its vertices pushed 82 mm
+    // landed inside the head. And the small distances are no better: at 0.7 mm
+    // a temple vertex sits stably inside the fold where the temple hollow
+    // meets the cheekbone — geometry this change never touched. A face is made
+    // of overhangs and near-touching folds, so the invariant that survives is
+    // the escape: an outward normal leaves its own flesh quickly, and a vertex
+    // that stays buried for 2 mm in every direction sample means an inverted
+    // normal or a self-intersection, which is what this is for.
     let normals = body.vertex_normals();
-    let reach = (hi - lo).max_element() * 0.05;
+    let step = (hi - lo).max_element() * 0.0002;
     for (vertex, point) in body.positions.iter().enumerate() {
+        let escapes =
+            (1..=10).any(|out| !body.contains(*point + normals[vertex] * step * out as f32));
         assert!(
-            !body.contains(*point + normals[vertex] * reach),
-            "vertex {vertex} pushed out along its own normal is still inside"
+            escapes,
+            "vertex {vertex} pushed along its own normal is still inside at every \
+             distance to {:.1} mm",
+            step * 10.0 * 1000.0
         );
     }
 }

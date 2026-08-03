@@ -123,18 +123,52 @@ const TEMPLE: [(f32, f32); 4] = [(0.62, 0.0), (0.40, 0.040), (0.14, 0.034), (-0.
 
 /// How far the chin and jaw project forward at each height, in skull radii.
 ///
-/// Raised at the point, and let go EARLIER than [`JUNCTION`] — before the other
-/// profiles, not with them. A chin is a forward prominence, so its underside is
-/// where a shelf forms: holding any push within a mesh row of the junction stood
-/// the head's lowest band 27 mm forward of the throat it meets, a chin
-/// overhanging a neck rather than running into it (#47). It used to hold 0.12
-/// all the way to the bottom of the head, which was the same defect twice over.
-const CHIN: [(f32, f32); 5] = [
+/// **This curve is two things at once, and each of the two has been got wrong on
+/// its own.** Where it rises is the underside of the jaw; how high it rises is
+/// the chin's projection. Fixing either without watching the other put a defect
+/// on screen both times.
+///
+/// The outline, bisected against the built surface on the midline every 2 mm and
+/// given here as millimetres forward of the head joint:
+///
+/// ```text
+///   height     shelf   pulled back    here     what it is
+///   -84.7 mm    51.0      51.0        51.0     the throat
+///   -76.7       52.4      66.3        74.3     the underside of the jaw
+///   -70.7       65.7      79.0        88.5
+///   -68.7       97.9      91.1       100.1     <- a 32 mm step, in 2 mm
+///   -62.7      104.7      98.7       105.7     the chin
+///   -52.7      100.6      95.1        98.2     the crease under the lip
+///   -46.7      104.7      99.3       101.6     the lower lip
+/// ```
+///
+/// In the first column the surface gains 32 mm of projection inside one 2 mm
+/// step: a horizontal shelf with the chin's tip at the top of the wall above it,
+/// which is a chin aimed upward and read exactly that way (#71). Spreading the
+/// rise from the junction to the tip fixes that — the largest step here is
+/// 12 mm — and it is the whole of the fix.
+///
+/// **The amplitude was not part of it, and cutting it was a mistake.** Pulling
+/// the peak from 0.30 to 0.24 to steepen the underside cost the chin 7 mm of
+/// projection and put the lower lip in front of it. A face whose lip swallows
+/// its chin has no jaw at all, which is how it looked. The peak sits at 0.34
+/// now, set against a lip that is finally in the right place (#72): the carved
+/// tip comes out within a couple of millimetres of the lower lip's line across
+/// seeds, which is where a chin sits. It looks higher than the 0.30 that
+/// started all this only because the frame moved — against the old throat-based
+/// frame this value would have read as a pigeon chest.
+///
+/// It reaches zero at [`JUNCTION`] like everything else. An earlier version let
+/// go before the others, because holding 0.16 within a mesh row of the junction
+/// stood the head's lowest band 27 mm forward of the throat (#47); the gentler
+/// tail here does not need the exception.
+const CHIN: [(f32, f32); 6] = [
     (0.05, 0.0),
-    (-0.20, 0.05),
-    (-0.40, 0.20),
-    (-0.54, 0.30),
-    (-0.62, 0.0),
+    (-0.24, 0.08),
+    (-0.42, 0.21),
+    (-0.54, 0.34),
+    (-0.62, 0.26),
+    (JUNCTION, 0.0),
 ];
 
 /// Where the head's surface runs into the neck's, in skull radii.
@@ -617,6 +651,58 @@ mod tests {
     }
 
     #[test]
+    fn the_chin_landmark_lands_on_the_chin() {
+        // [`Skull::chin`] is the one landmark read off the plan rather than the
+        // surface, so this is the test that keeps it honest: bisect the built
+        // surface on the midline around the landmark and find where the forward
+        // reach actually peaks. Measured before the tolerance was set: the tip
+        // sits 0 to 2 mm above the landmark on every seed tried, because the
+        // profile's peak rides on the egg's own slope. 5 mm is the alarm for
+        // the profile and the landmark drifting apart — which is exactly what
+        // would happen silently if a CHIN knot moved without this file's
+        // derivation moving with it.
+        for seed in [1i64, 23, 42, 99] {
+            let mut record = AvatarRecord::new("Skulled", Archetype::default());
+            record.reroll(seed);
+            let skeleton = record.skeleton();
+            let mesh =
+                crate::build_body(&skeleton, &CageConfig::default(), 2).expect("a body builds");
+            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+            let skull = Skull::measure(&mesh, &rig).expect("a skull");
+            let centre = rig.joints[skull.head].position;
+
+            let reach = |y: f32| {
+                let inside = |z: f32| mesh.contains(Vec3::new(centre.x, y, centre.z + z));
+                let (mut near, mut far) = (0.0f32, 0.30f32);
+                for _ in 0..30 {
+                    let mid = 0.5 * (near + far);
+                    if inside(mid) {
+                        near = mid;
+                    } else {
+                        far = mid;
+                    }
+                }
+                near
+            };
+            let chin = centre.y + skull.chin();
+            let mut tip = (f32::MIN, 0.0f32);
+            let mut y = chin - 0.020;
+            while y < chin + 0.020 {
+                let at = reach(y);
+                if at > tip.0 {
+                    tip = (at, y);
+                }
+                y += 0.002;
+            }
+            assert!(
+                (tip.1 - chin).abs() < 0.005,
+                "seed {seed}: the surface's chin peaks {:+.1} mm from the landmark",
+                (tip.1 - chin) * 1000.0
+            );
+        }
+    }
+
+    #[test]
     fn the_back_of_the_cranium_is_fuller_than_the_back_of_the_jaw() {
         let (_, shaped, rig, centre, radius) = head(11);
         let back = |at: f32| {
@@ -921,6 +1007,7 @@ pub struct Skull {
     pub head: usize,
     lo: f32,
     hi: f32,
+    chin: f32,
     across: [f32; BANDS],
     ahead: [f32; BANDS],
     behind: [f32; BANDS],
@@ -948,6 +1035,27 @@ impl Skull {
         if hi - lo <= f32::EPSILON {
             return None;
         }
+
+        // Where the chin's tip is, found the way [`shape`] decided it: the
+        // CHIN profile's peak knot, mapped through the same floor scaling.
+        // The one landmark here that is read off the plan rather than off the
+        // surface, and deliberately — see [`Self::chin`] for why that is sound
+        // and for the measurement that checked it.
+        let radius = rig.joints[head].radius;
+        let floor = mesh
+            .positions
+            .iter()
+            .filter(|p| rig.joints[rig.nearest_bone(**p).joint].zone == Zone::Head)
+            .fold(0.0f32, |low, p| low.min(p.y - centre.y))
+            / radius.max(f32::EPSILON);
+        let peak = CHIN
+            .iter()
+            .fold(
+                CHIN[0],
+                |best, &knot| if knot.1 > best.1 { knot } else { best },
+            )
+            .0;
+        let chin = (peak * (floor * SETTLE) / JUNCTION * radius).max(lo);
         let height = |point: &Vec3| (point.y - lo) / (hi - lo) * (BANDS - 1) as f32;
 
         let mut across = [0.0f32; BANDS];
@@ -998,6 +1106,7 @@ impl Skull {
             head,
             lo,
             hi,
+            chin,
             across,
             ahead,
             behind,
@@ -1057,9 +1166,43 @@ impl Skull {
     }
 
     /// The lowest and highest the measured profile reaches, in head-local metres.
+    ///
+    /// **The low end is the throat, not the chin.** The head's surface runs
+    /// 28 mm past the chin on a default body before the neck owns it, and two
+    /// call sites named this value `chin` and hung the whole feature frame from
+    /// it (#72). Anything placed as a fraction of the way down the face wants
+    /// [`Self::chin`].
     #[must_use]
     pub fn span(&self) -> (f32, f32) {
         (self.lo, self.hi)
+    }
+
+    /// Where the chin's tip is, in head-local metres.
+    ///
+    /// The forward-most point of the lower face — what the feature frame ends
+    /// at. Placing features down to [`Self::span`]'s low end instead put the
+    /// mouth 9 mm above the chin's tip where a face has about 20: the lower lip
+    /// was painted onto the chin itself and the crease below the lip was carved
+    /// into the underside of the jaw. Material added above the tip and removed
+    /// below it reads as the whole jaw rotated up into the throat (#72), which
+    /// is exactly how the owner reported it.
+    ///
+    /// The one landmark read off the plan rather than the surface: the `CHIN`
+    /// profile's peak knot through the same floor scaling [`shape`] used. That
+    /// is sound where measuring is not, for two reasons. [`reshape_to`] never
+    /// moves a vertex in `y`, so the floor this recomputes is bit-identical to
+    /// the one `shape` scaled by; and the surface's own maximum is a plateau —
+    /// bisected on the default body the tip sits at −63.0 mm against the knot's
+    /// −64.5, but finding that maximum from 20 measured bands needs the shallow
+    /// 2 mm dip above the chin to survive binning, and it does not. Verified
+    /// against the bisected surface across seeds by
+    /// `the_chin_landmark_lands_on_the_chin`.
+    ///
+    /// Clamped to the span so a head whose shaping was skipped — a creature's —
+    /// still answers inside its own surface.
+    #[must_use]
+    pub fn chin(&self) -> f32 {
+        self.chin
     }
 
     /// Reads a two-axis table at a height and an already-scaled column.
