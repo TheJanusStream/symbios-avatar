@@ -29,10 +29,15 @@ const MESH_TARGET: usize = 3;
 /// It rose from 29,600 when the front of the head was refined (#59): the head
 /// arrives from the cage with a mean mesh edge of 24 mm and every feature a
 /// face needs is smaller than that, so there was nothing there to shape. The
-/// refinement is graded and confined to the face, which is why two passes of it
-/// cost about 1,200 triangles rather than the 2,700 a single extra whole
-/// subdivision level would — and land at a 6.8 mm cell rather than a 12 mm one
-/// doing it. The second of those passes waited on #67, never on this ceiling.
+/// refinement is graded and confined to the face, and a third pass went in with
+/// #59 because a nostril crease is 5 mm wide and 7 mm cells cannot hold one.
+/// Three passes cost about 4,800 triangles against the 12,000 two more whole
+/// subdivision levels would, and take the face to a 3.6 mm cell.
+///
+/// Measured after that, the dearest legal record — maximum hair, every axis at
+/// its most expensive — is 25,660. This ceiling has four thousand of slack in
+/// it and is due a ratchet down; it is left where it is only because lowering a
+/// ceiling in the same change that raises a cost hides which did what.
 ///
 /// It was 43,500 before the hair cut (#40), of which hair alone was 30,208.
 /// Sampling each lock by how far it actually travels, rather than giving every

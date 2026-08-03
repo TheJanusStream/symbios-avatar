@@ -43,6 +43,10 @@ const SEEDS: i64 = 16;
 /// Measured across 32 seeds when this was written, the worst body gave: brow
 /// 89%, ear 57%, nose 60%, lip 33%. A quarter leaves room for the parameter
 /// space to move without leaving room for a part to vanish.
+///
+/// Only ears and extremities are weighed against it now. An ear that hugs the
+/// head is less visible than one hanging off it, and the worst seed sits at
+/// about 65% since the ear was conformed to the measured surface (#67).
 const MUST_SHOW: f32 = 0.25;
 
 /// What share of `part`'s vertices lie outside `body`.
@@ -63,15 +67,13 @@ fn attached(avatar: &Avatar) -> Vec<(String, &PolyMesh, Vec3)> {
     let parts = &avatar.parts;
     let mut out: Vec<(String, &PolyMesh, Vec3)> = Vec::new();
 
+    // Ears only, since #59: the nose, the brows and the lips are displacements
+    // of the body's own surface now, so "is it buried in the body" is not a
+    // question that can be asked of them — they ARE the body. What replaced this
+    // check for them is in `face::relief`, which measures how far the surface
+    // moved rather than how much of a solid is outside another one.
     if let Some(features) = &parts.features {
         let head = avatar.rig.joints[features.head].position;
-        out.push(("nose".into(), &features.nose, head));
-        for (side, brow) in features.brows.iter().enumerate() {
-            out.push((format!("brow {side}"), brow, head));
-        }
-        for (side, lip) in features.lips.iter().enumerate() {
-            out.push((format!("lip {side}"), lip, head));
-        }
         for (side, ear) in features.ears.iter().enumerate() {
             out.push((format!("ear {side}"), ear, head));
         }
@@ -165,7 +167,7 @@ fn every_attached_part_owns_a_region_of_the_atlas() {
             uv_max(&part.mesh),
         ));
     }
-    assert!(regions.len() >= 11, "a face and four extremities at least");
+    assert!(regions.len() >= 6, "two ears and four extremities at least");
 
     for (name, lo, hi) in &regions {
         assert!(

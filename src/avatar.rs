@@ -52,7 +52,7 @@ use crate::anim::Pose;
 use crate::cage::CageConfig;
 use crate::dress::Outfit;
 use crate::extremity::Extremities;
-use crate::face::{Eyes, Features, Skull};
+use crate::face::{self, Eyes, Features, Skull};
 use crate::hair::{Hair, HairParams};
 use crate::mesh::PolyMesh;
 use crate::plan::{Limb, Zone};
@@ -248,8 +248,18 @@ impl Avatar {
     #[must_use]
     pub fn build_with(record: &AvatarRecord, config: &AvatarConfig) -> Option<Self> {
         let skeleton = record.skeleton();
-        let body = crate::build_body(&skeleton, &config.cage, config.subdivisions).ok()?;
+        let mut body = crate::build_body(&skeleton, &config.cage, config.subdivisions).ok()?;
         let rig = Rig::from_skeleton(&skeleton).ok()?;
+
+        // The face is carved into the body's own surface, so it has to happen
+        // before ANY of what follows: skin weights, texture charts, the garment
+        // cut and every attached part are all fitted to the mesh in hand, and a
+        // nose that appears afterwards is a nose none of them knows about (#59).
+        let eyes = Eyes::build(&rig, &record.eyes);
+        if let Some(eyes) = &eyes {
+            face::carve_face(&mut body, &rig, eyes, &record.face);
+        }
+        let body = body;
 
         let weights = skin::bind(&body, &rig, &config.skin);
         let zones = weights.zone_map(&body, &rig);
@@ -260,7 +270,6 @@ impl Avatar {
         let handed = rig.ground_contacts().len() < Limb::ALL.len();
         let hair_params = config.hair.unwrap_or(record.hair);
 
-        let eyes = Eyes::build(&rig, &record.eyes);
         // Measured from the body that was built, not from the plan that asked
         // for it: the two differ by about a third at the head, and by a
         // different third on every body.

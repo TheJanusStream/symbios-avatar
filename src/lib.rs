@@ -117,15 +117,25 @@ pub use symbios_texture::generator::TextureMap;
 /// ```text
 ///  0 passes   25.9  28.2  26.6  26.6 mm
 ///  1 pass     13.2  14.1  14.1  13.7 mm
-///  2 passes    6.6   6.8   6.9   6.8 mm   <- here
-///  3 passes    3.2   3.4   3.4   3.3 mm
+///  2 passes    6.6   7.1   7.2   7.3 mm
+///  3 passes    3.3   3.6   3.6   3.6 mm   <- here
 /// ```
+///
+/// **The third pass is what makes a nose a nose.** Carved into 7 mm cells
+/// (#59), the nose was a soft mound with no bridge, no tip and no wing — a
+/// nostril crease is about 5 mm wide and simply cannot exist there. At 3.6 mm
+/// the same field, unchanged, comes out with all three. The alternative was
+/// exaggerating the amplitude until the feature read through a coarse surface,
+/// and the owner's stylisation call rules that out by name.
+///
+/// It costs about 3,500 triangles, and it fits: measured, the dearest legal
+/// record is 25,660 against a 30,000 target.
 ///
 /// It sat at one for a long time for a reason that was nothing to do with cost:
 /// the second pass moved the profile the ears are placed from, and one seed's
 /// ear fell to 18% visible against a 25% floor. That was a defect in the
 /// measurement rather than in the refinement, and it is fixed (#67).
-const FACE_REFINEMENT: usize = 2;
+const FACE_REFINEMENT: usize = 3;
 
 /// Builds a body's surface from its skeleton, shaped and ready to bind.
 ///

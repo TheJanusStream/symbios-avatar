@@ -1,4 +1,17 @@
-//! A nose, brows, a mouth and ears.
+//! Ears.
+//!
+//! This file used to build a nose, two brows and two lips as well, as separate
+//! closed solids appended to the body. They are displacements of the head's own
+//! surface now — see [`super::relief`] — because a feature that is a solid laid
+//! on a surface has a boundary, and a boundary is a shading seam, a UV seam, and
+//! a rigid piece half-buried in skin that bends around it (#59).
+//!
+//! An ear did not go with them, and that is a judgement rather than an
+//! oversight. A nose is a swelling of the face and an ear is a separate
+//! structure standing off the side of the head with a hollow in it; a
+//! displacement field over the skull cannot make one without the skull already
+//! having somewhere to put it. It is conformed to the measured surface instead
+//! (#67), which is the same relationship by another route.
 //!
 //! Placed from the published proportion canons rather than by eye, because those
 //! canons are exactly the kind of thing that is cheap to look up and expensive to
@@ -18,7 +31,7 @@
 //! Attached parts, like the eyes and the hair, and for the same reason: a head
 //! from the body plan is a smooth blob with no nose to pull out of it.
 
-use glam::{Mat4, Quat, Vec2, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::mesh::PolyMesh;
@@ -98,20 +111,15 @@ impl FaceParams {
 /// had the ear too low.
 const EAR_HEIGHT: f32 = 0.135;
 /// See [`EAR_HEIGHT`]. The base of the nose, where the nostrils are.
-const NOSE_BASE: f32 = 0.45;
+pub(super) const NOSE_BASE: f32 = 0.45;
 /// See [`EAR_HEIGHT`]. Placed by eye the mouth drifts onto the chin and the face
 /// reads as a muzzle.
-const MOUTH_HEIGHT: f32 = 0.62;
+pub(super) const MOUTH_HEIGHT: f32 = 0.62;
 
-/// The features of one face, in head-local space.
+/// The parts of one face that are not the head's own surface, in head-local
+/// space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Features {
-    /// The nose.
-    pub nose: PolyMesh,
-    /// One ridge per eye.
-    pub brows: Vec<PolyMesh>,
-    /// Upper and lower lip.
-    pub lips: Vec<PolyMesh>,
     /// One per side.
     pub ears: Vec<PolyMesh>,
     /// The head joint everything hangs from.
@@ -119,18 +127,17 @@ pub struct Features {
 }
 
 impl Features {
-    /// Builds a face around eyes that have already been placed.
+    /// Builds the ears for eyes that have already been placed.
     ///
     /// `skull` is the head as it was actually built. Every landmark here is
     /// anchored to it rather than to the sphere the plan asked for, because the
-    /// two differ by a third and the difference is not constant: features placed
+    /// two differ by a third and the difference is not constant: parts placed
     /// against the plan sat proud on one body and buried on the next.
     #[must_use]
     pub fn build(eyes: &Eyes, skull: &Skull, params: &FaceParams) -> Self {
         // An eye's radius is the unit the canons are expressed in: a face is
         // five eye-widths across, and every other landmark follows from that.
         let unit = eyes.left.radius;
-        let apart = eyes.right.pivot.x.abs();
         let level = eyes.left.pivot.y;
         // The bottom of the measured head. Feature HEIGHTS used to be counted in
         // eye-radii down from the eye line, which quietly assumes the eye and the
@@ -140,33 +147,19 @@ impl Features {
         // Counting them as fractions of the eye-line-to-chin span instead
         // reproduces the default face and follows every other one.
         let chin = skull.span().0;
-        let down = |fraction: f32| level + (chin - level) * fraction;
 
-        // Where the face's surface is AT EACH FEATURE'S OWN HEIGHT. One depth
-        // for the whole face is not enough: the skull carries a brow ridge that
-        // stands proud and a chin that projects further still, so a mouth placed
-        // at the eye line's depth ends up inside the jaw beneath it. That is
-        // exactly what happened when the chin was sharpened.
-        //
-        // Measured, not derived. This used to reshape a point on the planned
-        // sphere, which overstates the built head by about a third — enough that
-        // every inset below had been tuned as a *fraction* of a number that was
-        // wrong, and the insets are now distances in eye-radii instead.
-        let surface = |height: f32| skull.depth(height);
-
-        // Sided features are built once and mirrored. Building each side from
-        // its own signed arithmetic looks equivalent and is not: a brow arches
-        // from the midline outward, and the expression that says so on the right
-        // says the opposite on the left. It also leaves the two halves disagreeing
-        // by the width of a segment even when the maths is right.
-        let brow = brow(unit, apart, level, &surface, params.brow);
-        let ear = ear(unit, skull, down(EAR_HEIGHT), params.ears);
+        // Built once and mirrored. Building each side from its own signed
+        // arithmetic looks equivalent and is not: it leaves the two halves
+        // disagreeing by the width of a segment even when the maths is right.
+        let ear = ear(
+            unit,
+            skull,
+            level + (chin - level) * EAR_HEIGHT,
+            params.ears,
+        );
         let flip = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
 
         Self {
-            nose: nose(unit, level, down(NOSE_BASE), &surface, params.nose),
-            brows: vec![brow.transformed(flip), brow],
-            lips: lips(unit, down(MOUTH_HEIGHT), skull, params.mouth),
             ears: vec![ear.transformed(flip), ear],
             head: eyes.head,
         }
@@ -179,18 +172,12 @@ impl Features {
     /// agree because they are the same walk. Two hand-written lists would drift
     /// the first time a feature was added.
     pub fn meshes(&self) -> impl Iterator<Item = &PolyMesh> {
-        std::iter::once(&self.nose)
-            .chain(&self.brows)
-            .chain(&self.lips)
-            .chain(&self.ears)
+        self.ears.iter()
     }
 
     /// The same walk, for writing.
     pub fn meshes_mut(&mut self) -> impl Iterator<Item = &mut PolyMesh> {
-        std::iter::once(&mut self.nose)
-            .chain(&mut self.brows)
-            .chain(&mut self.lips)
-            .chain(&mut self.ears)
+        self.ears.iter_mut()
     }
 
     /// Every feature as one mesh.
@@ -202,126 +189,6 @@ impl Features {
         }
         mesh
     }
-}
-
-/// The nose: a wedge from between the eyes down to the nostrils.
-///
-/// Its root is at the eye line, not above it. The bridge starts where the brows
-/// meet — put it higher and the face grows a snout.
-fn nose(
-    unit: f32,
-    level: f32,
-    base: f32,
-    surface: &dyn Fn(f32) -> f32,
-    prominence: f32,
-) -> PolyMesh {
-    let reach = unit * (0.38 + 0.30 * prominence);
-
-    let path = [
-        Vec3::new(
-            0.0,
-            level + unit * 0.40,
-            surface(level + unit * 0.40) - unit * 0.22,
-        ),
-        Vec3::new(
-            0.0,
-            level - unit * 0.55,
-            surface(level - unit * 0.55) + reach * 0.34,
-        ),
-        Vec3::new(
-            0.0,
-            base + unit * 0.55,
-            surface(base + unit * 0.55) + reach * 0.80,
-        ),
-        Vec3::new(0.0, base, surface(base) + reach * 0.86),
-        Vec3::new(
-            0.0,
-            base - unit * 0.16,
-            surface(base - unit * 0.16) - unit * 0.24 + reach * 0.46,
-        ),
-    ];
-    // Narrow at the bridge, widest at the nostrils, and about one eye-width
-    // across there.
-    let sections = [
-        Vec2::new(unit * 0.22, unit * 0.22),
-        Vec2::new(unit * 0.26, unit * 0.30),
-        Vec2::new(unit * 0.44, unit * 0.40),
-        Vec2::new(unit * 0.50, unit * 0.34),
-        Vec2::new(unit * 0.38, unit * 0.15),
-    ];
-    // An even number of sides. An odd ring has a vertex at zero and none
-    // opposite it, so a shape swept down the midline comes out very slightly
-    // lopsided — which on a nose is the one place it will be noticed.
-    prim::sweep(&path, &sections, 8, Vec3::X)
-}
-
-/// One brow ridge, arching over its eye.
-fn brow(unit: f32, across: f32, level: f32, surface: &dyn Fn(f32) -> f32, weight: f32) -> PolyMesh {
-    let rise = unit * (0.62 + 0.30 * weight);
-    let thickness = unit * (0.10 + 0.10 * weight);
-    let span = unit * 1.05;
-
-    // Three points: inner end, over the pupil, outer end — the outer end sitting
-    // lower and further back, which is the arch.
-    let path = [
-        Vec3::new(
-            across - span * 0.85,
-            level + rise * 0.86,
-            surface(level + rise * 0.86) - unit * 0.16,
-        ),
-        Vec3::new(across, level + rise, surface(level + rise)),
-        Vec3::new(
-            across + span * 0.95,
-            level + rise * 0.74,
-            surface(level + rise * 0.74) - unit * 0.42,
-        ),
-    ];
-    let sections = [
-        Vec2::new(thickness * 0.7, thickness * 0.8),
-        Vec2::new(thickness, thickness),
-        Vec2::new(thickness * 0.55, thickness * 0.6),
-    ];
-    prim::sweep(&path, &sections, 6, Vec3::Y)
-}
-
-/// Upper and lower lip.
-///
-/// Two pieces rather than one: a mouth modelled as a single bar has no line
-/// across it, and the line is the whole feature.
-fn lips(unit: f32, mouth: f32, skull: &Skull, fullness: f32) -> Vec<PolyMesh> {
-    let half = unit * 0.98;
-    let plump = unit * (0.15 + 0.15 * fullness);
-
-    [(1.0f32, 0.9f32), (-1.0, 1.1)]
-        .iter()
-        .map(|&(up, size)| {
-            let lift = plump * up * 0.62;
-            // Anchored ON the measured face, with the lip's own body standing
-            // proud of it. Tucked back by a fraction of the surface — which is
-            // how this read before the surface was measured — a mouth sits
-            // inside the jaw on any body whose face is shallower than average.
-            // Each end placed against the face AT ITS OWN WIDTH. A mouth
-            // spans nearly two eye-widths, and over that distance the face has
-            // curved back by several millimetres; anchoring the corners to the
-            // midline depth is what left a third of the lip inside the jaw on
-            // the worst bodies and standing off it on the best.
-            let corner = skull.depth_across(mouth - plump * 0.30, half) + plump * 0.30;
-            let middle = skull.depth_across(mouth + lift, half * 0.35) + plump * 0.45;
-            let path = [
-                Vec3::new(-half, mouth - plump * 0.30, corner),
-                Vec3::new(-half * 0.35, mouth + lift, middle),
-                Vec3::new(half * 0.35, mouth + lift, middle),
-                Vec3::new(half, mouth - plump * 0.30, corner),
-            ];
-            let sections = [
-                Vec2::new(plump * 0.30, plump * 0.45),
-                Vec2::new(plump * size, plump * 0.95),
-                Vec2::new(plump * size, plump * 0.95),
-                Vec2::new(plump * 0.30, plump * 0.45),
-            ];
-            prim::sweep(&path, &sections, 6, Vec3::Y)
-        })
-        .collect()
 }
 
 /// One ear, on the side of the head.
@@ -445,7 +312,7 @@ mod tests {
 
     /// A default body's eyes and measured skull.
     ///
-    /// Built, not planned: the whole point of these features is that they are
+    /// Built, not planned: the whole point of these parts is that they are
     /// placed against the head the body actually grew.
     fn built() -> (Eyes, PolyMesh, Skull) {
         let skeleton = HumanoidParams::default().skeleton();
@@ -457,74 +324,22 @@ mod tests {
     }
 
     #[test]
-    fn a_face_gets_every_feature() {
+    fn a_face_gets_an_ear_on_each_side() {
         let (features, _) = face(&FaceParams::default());
-        assert!(features.nose.face_count() > 8);
-        assert_eq!(features.brows.len(), 2);
-        assert_eq!(features.lips.len(), 2);
         assert_eq!(features.ears.len(), 2);
-        assert!(features.assembled().face_count() > 100);
+        assert!(features.assembled().face_count() > 40);
     }
 
     #[test]
-    fn every_feature_is_a_closed_solid() {
+    fn every_ear_is_a_closed_solid() {
         let (features, _) = face(&FaceParams::default());
-        let mut parts = vec![("nose", &features.nose)];
-        for (index, part) in features.brows.iter().enumerate() {
-            let _ = index;
-            parts.push(("brow", part));
-        }
-        for part in &features.lips {
-            parts.push(("lip", part));
-        }
-        for part in &features.ears {
-            parts.push(("ear", part));
-        }
-        for (name, part) in parts {
+        for ear in &features.ears {
             assert!(
-                part.is_closed_manifold(),
-                "{name}: {:?}",
-                part.manifold_report()
+                ear.is_closed_manifold(),
+                "an ear: {:?}",
+                ear.manifold_report()
             );
         }
-    }
-
-    #[test]
-    fn the_features_stack_down_the_face_in_order() {
-        // Brow above eye above nose above mouth. Stated because it is the one
-        // thing that makes a face a face, and a sign error anywhere in the
-        // placement breaks it without breaking anything else.
-        let (features, eyes) = face(&FaceParams::default());
-        let top = |mesh: &PolyMesh| mesh.bounds().1.y;
-        let bottom = |mesh: &PolyMesh| mesh.bounds().0.y;
-
-        assert!(bottom(&features.brows[0]) > eyes.left.pivot.y);
-        assert!(bottom(&features.nose) < eyes.left.pivot.y);
-        assert!(top(&features.lips[0]) < bottom(&features.nose));
-    }
-
-    #[test]
-    fn the_nose_stands_out_in_front_of_the_eyes() {
-        let (features, eyes) = face(&FaceParams::default());
-        assert!(
-            features.nose.bounds().1.z > eyes.left.pivot.z,
-            "the nose sat behind the eye line"
-        );
-    }
-
-    #[test]
-    fn a_more_prominent_nose_stands_further_out() {
-        let flat = face(&FaceParams {
-            nose: 0.0,
-            ..Default::default()
-        })
-        .0;
-        let sharp = face(&FaceParams {
-            nose: 1.0,
-            ..Default::default()
-        })
-        .0;
-        assert!(sharp.nose.bounds().1.z > flat.nose.bounds().1.z);
     }
 
     #[test]
@@ -535,20 +350,25 @@ mod tests {
         // the bottom of the lip. It passed with the ear four millimetres above
         // the eye line and ten below the base of the nose (#67), which is a
         // whole ear's worth of wrong in the direction the comment warns about.
-        // So it now checks the thing it is named after.
+        //
+        // Both landmarks are now derived the way `super::relief` derives them,
+        // since neither is a mesh any more.
         let (features, eyes) = face(&FaceParams::default());
+        let (_, _, skull) = built();
         let unit = eyes.left.radius;
+        let level = eyes.left.pivot.y;
+        let brow = level + unit * (0.62 + 0.30 * FaceParams::default().brow);
+        let nose = level + (skull.span().0 - level) * NOSE_BASE;
+
         for ear in &features.ears {
             let (lo, hi) = ear.bounds();
-            let brow = features.brows[0].bounds().1.y;
-            let nose = features.nose.bounds().0.y;
             assert!(
-                (hi.y - brow).abs() < unit * 0.5,
+                (hi.y - brow).abs() < unit * 0.6,
                 "the ear's top is {:.1} eye-radii from the brow line",
                 (hi.y - brow) / unit
             );
             assert!(
-                (lo.y - nose).abs() < unit * 0.5,
+                (lo.y - nose).abs() < unit * 0.6,
                 "the ear's bottom is {:.1} eye-radii from the base of the nose",
                 (lo.y - nose) / unit
             );
@@ -580,8 +400,6 @@ mod tests {
         // in than the helix, so demanding one ratio would be asserting against
         // the design. What must never come back is the ordering — flush at the
         // top and standing off at the bottom, which is an ear upside down.
-        // Measured now: 3.1 mm at the lobe, 8.2 mm at the helix. Before: 19.5
-        // and 0.0.
         let (low, high) = (stands(0.1), stands(0.9));
         assert!(
             low > 0.0 && high > 0.0,
@@ -594,27 +412,13 @@ mod tests {
     }
 
     #[test]
-    fn the_face_is_symmetric_about_the_midline() {
+    fn the_ears_are_a_mirrored_pair() {
         let (features, _) = face(&FaceParams::default());
         let (lo, hi) = features.assembled().bounds();
         assert!(
             (hi.x + lo.x).abs() < 1e-4,
-            "the face spanned {lo:?} to {hi:?}"
+            "the ears spanned {lo:?} to {hi:?}"
         );
-        // The nose is on the midline.
-        let nose = features.nose.bounds();
-        assert!((nose.1.x + nose.0.x).abs() < 1e-5);
-    }
-
-    #[test]
-    fn the_mouth_is_wider_than_the_nose() {
-        // One and a half eye-widths against one, per the canon of fifths.
-        let (features, _) = face(&FaceParams::default());
-        let width = |mesh: &PolyMesh| {
-            let (lo, hi) = mesh.bounds();
-            hi.x - lo.x
-        };
-        assert!(width(&features.lips[0]) > width(&features.nose) * 1.2);
     }
 
     #[test]

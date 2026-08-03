@@ -12,9 +12,11 @@
 pub mod blink;
 pub mod eye;
 pub mod features;
+pub mod relief;
 pub mod skull;
 
 pub use blink::Blink;
 pub use eye::{Eye, EyeParams, Eyes};
 pub use features::{FaceParams, Features};
+pub use relief::carve as carve_face;
 pub use skull::{Skull, refine_face, shape as shape_skull};
