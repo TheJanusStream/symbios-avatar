@@ -38,14 +38,32 @@ const ELONGATION: f32 = 0.24;
 /// Widest at the cheekbones, which sit just below the eye line — not at the
 /// cranium, which is where an unshaped head is widest and part of why it reads
 /// as a ball.
-const BREADTH: [(f32, f32); 7] = [
-    (0.86, 0.62),  // crown
-    (0.55, 0.90),  // upper cranium
-    (0.25, 0.99),  // temples
-    (-0.05, 1.03), // cheekbones, the widest part of a head
-    (-0.25, 0.93), // below the cheek
-    (-0.42, 0.74), // the angle of the jaw
-    (-0.58, 0.46), // under the chin
+///
+/// **The lower half narrows far less than it looks like it should, and returns
+/// to nothing at all where the head meets the neck.** Two reasons, both
+/// measured (#47).
+///
+/// The unshaped head is already a taper. It is a capsule blend from a 131 mm
+/// head node down to a 66 mm neck node, so it goes from 78.5 mm half-width at
+/// the joint to 53.6 mm at the junction on its own — a third, with no profile
+/// applied. Narrowing that by another 54% is what produced a jaw thinner than
+/// the throat under it.
+///
+/// And the mesh is continuous across the junction while the shaping is not: it
+/// moves head-owned vertices and leaves neck-owned ones exactly where they are.
+/// Whatever this profile says at the bottom of the head is therefore a STEP in
+/// the silhouette, and it said 0.46 — a 19 mm cliff in 11 mm of height, against
+/// a neck the unshaped head met to within 2 mm. Anything but 1.0 down there is
+/// a seam.
+const BREADTH: [(f32, f32); 8] = [
+    (0.86, 0.62),     // crown
+    (0.55, 0.90),     // upper cranium
+    (0.25, 0.99),     // temples
+    (-0.05, 1.03),    // cheekbones, the widest part of a head
+    (-0.28, 0.95),    // below the cheek
+    (-0.46, 0.80),    // the angle of the jaw
+    (-0.60, 0.66),    // the chin
+    (JUNCTION, 1.00), // the throat, which is the neck's width and not this one's
 ];
 
 /// How deep the skull is at each height, relative to its unshaped depth.
@@ -54,13 +72,19 @@ const BREADTH: [(f32, f32); 7] = [
 /// profile on the fore-aft axis too and narrowing the jaw drags the chin
 /// backwards, which cancels the chin out entirely. A jaw narrows across; it does
 /// not retreat.
-const DEPTH: [(f32, f32); 6] = [
+/// The last knot is [`JUNCTION`], and its value is not a shape: it is whatever
+/// makes `deep` come out at exactly one, so the head's fore-aft extent matches
+/// the neck's where they meet. See [`BREADTH`] for why anything else is a seam —
+/// unshaped, the two agreed to within 2 mm, and the profile was opening an 11 mm
+/// gap at the nape and a 7 mm overhang at the throat (#47).
+const DEPTH: [(f32, f32); 7] = [
     (0.86, 0.66),
     (0.55, 0.94),
     (0.20, 1.00),
     (-0.10, 1.00),
-    (-0.42, 0.90),
-    (-0.58, 0.68),
+    (-0.46, 0.90),
+    (-0.60, 0.78),
+    (JUNCTION, 1.0 / (1.0 + ELONGATION)),
 ];
 
 /// How much fuller the back of the skull is than the front, at each height.
@@ -69,12 +93,13 @@ const DEPTH: [(f32, f32); 6] = [
 /// entirely. Negative below it is the jaw cutting in — the hollow between the
 /// jaw's angle and the neck, without which a head sits on its neck like a ball
 /// on a post.
-const OCCIPUT: [(f32, f32); 5] = [
+const OCCIPUT: [(f32, f32); 6] = [
     (0.70, 0.04),
     (0.35, 0.14),
     (0.05, 0.08),
-    (-0.25, -0.10),
-    (-0.55, -0.26),
+    (-0.30, -0.10),
+    (-0.58, -0.24),
+    (JUNCTION, 0.0),
 ];
 
 /// How far the brow ridge stands proud, in skull radii, at each height.
@@ -97,13 +122,52 @@ const BROW: [(f32, f32); 5] = [
 const TEMPLE: [(f32, f32); 4] = [(0.62, 0.0), (0.40, 0.040), (0.14, 0.034), (-0.06, 0.0)];
 
 /// How far the chin and jaw project forward at each height, in skull radii.
+///
+/// Raised at the point, and let go EARLIER than [`JUNCTION`] — before the other
+/// profiles, not with them. A chin is a forward prominence, so its underside is
+/// where a shelf forms: holding any push within a mesh row of the junction stood
+/// the head's lowest band 27 mm forward of the throat it meets, a chin
+/// overhanging a neck rather than running into it (#47). It used to hold 0.12
+/// all the way to the bottom of the head, which was the same defect twice over.
 const CHIN: [(f32, f32); 5] = [
     (0.05, 0.0),
-    (-0.20, 0.04),
-    (-0.38, 0.15),
-    (-0.52, 0.22),
-    (-0.62, 0.12),
+    (-0.20, 0.05),
+    (-0.40, 0.20),
+    (-0.54, 0.30),
+    (-0.62, 0.0),
 ];
+
+/// Where the head's surface runs into the neck's, in skull radii.
+///
+/// Every profile below the joint has to reach identity here, because [`shape`]
+/// moves head-owned vertices and leaves neck-owned ones — so whatever a profile
+/// says at the bottom of the head is a step in the silhouette, not a shape.
+///
+/// One figure rather than each profile's own, because they all have to arrive at
+/// the same place: a profile that lets go 0.05 radii before its neighbour leaves
+/// a shoulder in the surface where its neighbour is still pulling.
+///
+/// **It is a nominal depth, not a real one.** Measured over sixteen seeds, the
+/// head's surface reaches anywhere from -0.55 to -0.89 radii below the joint,
+/// depending on how large the head node is against the neck node — a spread of
+/// sixty percent, and no worse in millimetres. So no constant is the junction on
+/// every body, and [`shape`] measures each head and scales the whole below-joint
+/// domain so that its own floor lands exactly here. A chin authored at -0.52 is
+/// then three quarters of the way down every head rather than off the bottom of
+/// some and halfway down others.
+const JUNCTION: f32 = -0.70;
+
+/// How far down the head the profiles have finished letting go, as a fraction of
+/// the way to its floor.
+///
+/// **Not one, and it has to be measured to see why.** Reaching identity exactly
+/// at the floor still left an eleven-millimetre shelf at the throat, because the
+/// zone boundary is per-vertex and the mesh's rings do not line up with it: a
+/// triangle spans from a neck vertex that was never touched to a head vertex a
+/// centimetre higher that got the chin's full push, and the surface between them
+/// is the shelf. Settling out a little above the floor leaves a band of head that
+/// is simply unshaped, which is what the neck has to meet.
+const SETTLE: f32 = 0.92;
 
 /// The region each refinement pass covers: how far round the head it reaches as
 /// a cosine of the angle from dead ahead, then its lowest and highest point in
@@ -212,11 +276,23 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig) {
         .map(|&point| rig.joints[rig.nearest_bone(point).joint].zone == Zone::Head)
         .collect();
 
+    // How far the head's own surface reaches below its joint. Measured rather
+    // than assumed: it is set by how large the head node is against the neck
+    // node, which a record varies, and every profile below the joint is scaled
+    // to land on it. See [`JUNCTION`].
+    let floor = mesh
+        .positions
+        .iter()
+        .zip(&owned)
+        .filter(|&(_, &mine)| mine)
+        .fold(0.0f32, |low, (point, _)| low.min(point.y - centre.y))
+        / radius;
+
     for (point, &mine) in mesh.positions.iter_mut().zip(&owned) {
         if !mine {
             continue;
         }
-        *point = centre + reshape(*point - centre, radius);
+        *point = centre + reshape_to(*point - centre, radius, floor);
     }
 }
 
@@ -232,10 +308,28 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig) {
 /// Takes and returns a position relative to the head joint, in metres.
 #[must_use]
 pub fn reshape(local: Vec3, radius: f32) -> Vec3 {
+    reshape_to(local, radius, JUNCTION)
+}
+
+/// The same, on a head whose surface is known to run out at `floor`.
+///
+/// Heights below the joint are scaled so that `floor` lands where the profiles
+/// have finished letting go, which is what makes a profile knot mean the same
+/// fraction of the way down every head. Above the joint nothing changes, which is why [`reshape`] can
+/// still be called by anything placed on the face without knowing the floor:
+/// the eyes sit at `+0.05` radii and every feature is placed from [`Skull`],
+/// which measures the built surface rather than predicting it.
+#[must_use]
+pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
     if radius <= f32::EPSILON {
         return local;
     }
     let height = local.y / radius;
+    let height = if height < 0.0 {
+        height * (JUNCTION / (floor * SETTLE).min(-f32::EPSILON))
+    } else {
+        height
+    };
     let across = Vec3::new(local.x, 0.0, local.z);
     let reach = across.length();
     if reach <= f32::EPSILON {
@@ -250,7 +344,21 @@ pub fn reshape(local: Vec3, radius: f32) -> Vec3 {
     // Breadth across, depth fore and aft, and the head longer than it is wide.
     // The occiput swells the back of the cranium, and the same curve gone
     // negative lower down cuts the jaw in under the ear.
-    let wide = knot(&BREADTH, height);
+    //
+    // Below the joint the breadth narrowing is weighted TOWARD THE FRONT, and
+    // that is what lets a chin exist at all. A cross-section has one width, and
+    // at the height of a chin it has to be two things: a chin is 45 mm across
+    // and the throat directly behind it is the width of a neck. Narrowing the
+    // whole ring to make the chin gave a head with a wasp waist above its own
+    // neck — measured, 43 mm of head sitting on 52 mm of neck (#47) — and not
+    // narrowing it at all gave a face that ran into the throat with no jawline.
+    // Full at the front, half at the sides, none at the back.
+    //
+    // Faded in by height rather than applied everywhere, because the same
+    // weighting on the CRANIUM would leave the back of the skull wide and the
+    // forehead narrow, which is a different animal.
+    let frontal = (-height / -JUNCTION).clamp(0.0, 1.0) * (0.5 + 0.5 * facing - 1.0) + 1.0;
+    let wide = 1.0 - (1.0 - knot(&BREADTH, height)) * frontal;
     let deep = knot(&DEPTH, height)
         * (1.0 + ELONGATION)
         * (1.0 + knot(&OCCIPUT, height) * behind * behind);
@@ -375,12 +483,48 @@ mod tests {
         );
     }
 
+    /// How wide the FRONT of the head is in a band of heights.
+    ///
+    /// Head vertices in the forward half only. A chin is 45 mm across and the
+    /// throat right behind it is the width of a neck, so the widest point of
+    /// that cross-section is the throat and a test that takes it is measuring
+    /// the neck and calling it the chin (#47).
+    fn face_width(mesh: &PolyMesh, rig: &Rig, centre: Vec3, radius: f32, at: f32) -> f32 {
+        let mut wide: f32 = 0.0;
+        for point in &mesh.positions {
+            let local = *point - centre;
+            if (local.y / radius - at).abs() > 0.08
+                || local.z <= 0.0
+                || rig.joints[rig.nearest_bone(*point).joint].zone != Zone::Head
+            {
+                continue;
+            }
+            wide = wide.max(local.x.abs());
+        }
+        wide / radius
+    }
+
     #[test]
     fn the_jaw_narrows_toward_the_chin() {
+        // Measured across the FRONT of the head, which is what changed here.
+        // This used to take the widest point of the whole cross-section, and
+        // passed while the head had a wasp waist above its own neck — because at
+        // the chin's height the widest point of the cross-section is the throat,
+        // and the only way to narrow it was to narrow the throat too (#47).
+        // Heights as fractions of the head's OWN extent below its joint, which
+        // is how `shape` reads them: a head reaches anywhere from -0.55 to -0.89
+        // radii down depending on its node sizes, so a fixed figure is the jaw
+        // on one body and the throat on another.
         let (_, shaped, rig, centre, radius) = head(23);
-        let cheek = band(&shaped, &rig, centre, radius, -0.05).0;
-        let angle = band(&shaped, &rig, centre, radius, -0.42).0;
-        let chin = band(&shaped, &rig, centre, radius, -0.56).0;
+        let floor = shaped
+            .positions
+            .iter()
+            .filter(|&&point| rig.joints[rig.nearest_bone(point).joint].zone == Zone::Head)
+            .fold(0.0f32, |low, point| low.min(point.y - centre.y))
+            / radius;
+        let cheek = face_width(&shaped, &rig, centre, radius, -0.05);
+        let angle = face_width(&shaped, &rig, centre, radius, floor * 0.55);
+        let chin = face_width(&shaped, &rig, centre, radius, floor * 0.76);
         assert!(
             angle < cheek * 0.85,
             "the jaw did not narrow: {angle} of {cheek}"
@@ -389,6 +533,65 @@ mod tests {
             chin < angle * 0.80,
             "the chin did not narrow: {chin} of {angle}"
         );
+    }
+
+    #[test]
+    fn the_head_meets_the_neck_without_a_step() {
+        // The defect this issue is named for. `shape` moves head-owned vertices
+        // and leaves neck-owned ones exactly where they are, so anything the
+        // profiles still say at the bottom of the head is a cliff in the
+        // silhouette rather than a shape. It measured 19 mm across 11 mm of
+        // height, against an unshaped body that met itself to within 2 mm.
+        //
+        // The assertion is that the head's lowest surface is where the UNSHAPED
+        // body left it, because that is what the untouched neck below is still
+        // agreeing with. An earlier version of this test compared the surface a
+        // little either side of the junction instead, and could not tell a step
+        // from a slope: the head genuinely flares by a centimetre over that
+        // span, so the figure it produced was mostly the flare.
+        //
+        // Read by bisection rather than off the vertex list, since the step is
+        // between two rings and that is exactly where no vertex is. Measured
+        // across sixteen seeds it comes out under 0.1 mm everywhere; before the
+        // fix the default body was 23 mm out on the side alone.
+        for seed in [1, 3, 6, 8, 9, 12] {
+            let (plain, shaped, rig, centre, radius) = head(seed);
+            let floor = shaped
+                .positions
+                .iter()
+                .filter(|&&point| rig.joints[rig.nearest_bone(point).joint].zone == Zone::Head)
+                .fold(f32::MAX, |low, point| low.min(point.y));
+
+            let reach = |mesh: &PolyMesh, axis: Vec3| -> Option<f32> {
+                let inside =
+                    |at: f32| mesh.contains(Vec3::new(centre.x, floor, centre.z) + axis * at);
+                if !inside(0.0) || inside(radius * 4.0) {
+                    return None;
+                }
+                let (mut near, mut far) = (0.0f32, radius * 4.0);
+                for _ in 0..32 {
+                    let middle = (near + far) * 0.5;
+                    if inside(middle) {
+                        near = middle
+                    } else {
+                        far = middle
+                    }
+                }
+                Some(near)
+            };
+
+            for axis in [Vec3::X, Vec3::Z, -Vec3::Z] {
+                let (Some(was), Some(now)) = (reach(&plain, axis), reach(&shaped, axis)) else {
+                    continue;
+                };
+                assert!(
+                    (now - was).abs() < 0.001,
+                    "seed {seed} on {axis}: the shaping moved the head's lowest surface \
+                     {:.1} mm away from the neck it has to meet",
+                    (now - was) * 1000.0
+                );
+            }
+        }
     }
 
     #[test]
