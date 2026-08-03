@@ -26,6 +26,12 @@ const MESH_TARGET: usize = 3;
 /// Not a target — a high-water mark. Lowering it is the work; raising it needs
 /// a reason written down beside the change.
 ///
+/// It rose from 29,600 when the front of the head was refined (#59): the head
+/// arrives from the cage with a mean mesh edge of 24 mm and every feature a
+/// face needs is smaller than that, so there was nothing there to shape. The
+/// refinement is graded and confined to the face, which is why it cost about
+/// 300 triangles rather than the 2,700 another whole subdivision level would.
+///
 /// It was 43,500 before the hair cut (#40), of which hair alone was 30,208.
 /// Sampling each lock by how far it actually travels, rather than giving every
 /// lock the count the crown row needs, took hair to 15,976 without touching the
@@ -37,7 +43,7 @@ const MESH_TARGET: usize = 3;
 /// wave, and a head of hair ranges over more than a factor of five. What keeps
 /// the ceiling is [`symbios_avatar::hair::MAX_TRIANGLES`], which tiers the
 /// group count down when the rest of the axes are expensive.
-const TRIANGLE_CEILING: usize = 29_600;
+const TRIANGLE_CEILING: usize = 29_800;
 
 /// Draw calls the crate currently costs.
 ///

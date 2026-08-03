@@ -195,10 +195,13 @@ pub const MAX_GROUPS: u32 = 128;
 
 /// The most triangles a head of hair may cost, whatever a record asks for.
 ///
-/// The whole avatar is judged against 30,000 on a WebGL2 tier, and everything
-/// that is not hair measures between 13,028 and 13,180 across the seeds swept
-/// in `tests/budget.rs`. What is left is a little under 16,900, and this sits
-/// below that so the parts that are not hair have somewhere to grow.
+/// The whole avatar is judged against 30,000 on a WebGL2 tier, and this is
+/// whatever is left once everything that is not hair has been paid for. It is
+/// DERIVED, so it moves when they do: giving the face enough surface to carry
+/// features (#59) took everything that is not hair from about 13,100 triangles
+/// to about 13,400, and the worst legal head of hair now brings a body to
+/// 29,900 against the 30,000 it is allowed. That is most of the slack, and the
+/// next thing to want triangles has to take them from here.
 ///
 /// This is the number that makes group count a *request*. A record may ask for
 /// [`MAX_GROUPS`]; whether it gets them depends on what the rest of its axes

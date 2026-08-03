@@ -34,6 +34,15 @@ use std::fmt::Write as _;
 
 use crate::rig::skin::{Influence, MAX_INFLUENCES};
 
+/// The two ends of an edge, in the order that makes both its faces agree.
+///
+/// A shared edge is visited once from each side, in opposite directions. Keying
+/// on the ordered pair is what lets the second visit find the midpoint the first
+/// one made, instead of building a duplicate and tearing the surface along it.
+fn edge_key(a: u32, b: u32) -> (u32, u32) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
 /// How tight a fold [`PolyMesh::crease`] calls fully creased, in metres.
 ///
 /// A curvature radius, not a gain, and that is what makes the measure independent
@@ -479,6 +488,90 @@ impl PolyMesh {
         normals
     }
 
+    /// Splits the selected faces into four, leaving the rest of the mesh alone.
+    ///
+    /// Resolution where it is needed and nowhere else. A face has to be carried
+    /// by the surface it is part of, and the head arrives from the cage as a
+    /// four-sided tube: subdivided twice it is 189 faces with a **mean edge of
+    /// 24 mm**, while a brow ridge is 10 mm tall and a nose one quad wide. There
+    /// is nothing there to shape (#59). Subdividing the whole body again would
+    /// buy that at four times the triangles everywhere, most of them on a shin.
+    ///
+    /// **Linear, not smooth.** New vertices are plain midpoints and centroids
+    /// and no existing vertex moves, so this adds places to put detail without
+    /// changing the shape. That separation is the point: refining and reshaping
+    /// in one step makes it impossible to tell which of them moved a silhouette.
+    ///
+    /// **No T-junctions.** An unselected face that borders a selected one takes
+    /// the new edge midpoints into its own corner list and becomes an n-gon,
+    /// rather than being left with a vertex hanging in the middle of one of its
+    /// edges — which is a crack the moment anything shades or deforms it.
+    ///
+    /// Positions only, like [`crate::subdiv::catmull_clark`], because like it
+    /// this belongs to the rest mesh before anything is bound or unwrapped: a
+    /// vertex that does not exist yet cannot have been given a weight or a
+    /// texel. `selected` is indexed by face; a shorter slice refines nothing
+    /// past its end.
+    #[must_use]
+    pub fn refine(&self, selected: &[bool]) -> PolyMesh {
+        let chosen = |face: usize| selected.get(face).copied().unwrap_or(false);
+        if !(0..self.faces.len()).any(chosen) {
+            return self.clone();
+        }
+
+        let mut refined = PolyMesh::new();
+        refined.positions.clone_from(&self.positions);
+
+        // One midpoint per edge of a selected face, shared with whatever is on
+        // the other side of it. Keyed on the ordered pair so the two faces
+        // meeting at an edge find the same vertex.
+        let mut midpoints: HashMap<(u32, u32), u32> = HashMap::new();
+        for (index, face) in self.faces.iter().enumerate() {
+            if !chosen(index) || face.len() < 3 {
+                continue;
+            }
+            for corner in 0..face.len() {
+                let next = (corner + 1) % face.len();
+                let (a, b) = (face[corner], face[next]);
+                if let std::collections::hash_map::Entry::Vacant(slot) =
+                    midpoints.entry(edge_key(a, b))
+                {
+                    let at = (self.positions[a as usize] + self.positions[b as usize]) * 0.5;
+                    slot.insert(refined.push_vertex(at));
+                }
+            }
+        }
+
+        for (index, face) in self.faces.iter().enumerate() {
+            if face.len() < 3 {
+                continue;
+            }
+            if chosen(index) {
+                let centre = refined.push_vertex(self.face_centroid(index));
+                for corner in 0..face.len() {
+                    let previous = (corner + face.len() - 1) % face.len();
+                    let next = (corner + 1) % face.len();
+                    let ahead = midpoints[&edge_key(face[corner], face[next])];
+                    let behind = midpoints[&edge_key(face[previous], face[corner])];
+                    refined.push_face([behind, face[corner], ahead, centre]);
+                }
+            } else {
+                // Absorb any midpoint a neighbour put on one of our edges.
+                let mut corners = Vec::with_capacity(face.len());
+                for corner in 0..face.len() {
+                    let next = (corner + 1) % face.len();
+                    corners.push(face[corner]);
+                    if let Some(&between) = midpoints.get(&edge_key(face[corner], face[next])) {
+                        corners.push(between);
+                    }
+                }
+                refined.push_face(corners);
+            }
+        }
+
+        refined
+    }
+
     /// How deeply each vertex sits in a cavity: `0` on flat or convex surface,
     /// rising toward `1` in a fold.
     ///
@@ -897,6 +990,67 @@ mod tests {
 
     fn peak_crease(mesh: &PolyMesh) -> f32 {
         mesh.crease().iter().copied().fold(0.0f32, f32::max)
+    }
+
+    #[test]
+    fn refining_adds_vertices_without_moving_any() {
+        // The whole reason refinement is linear: it buys places to put detail
+        // and changes nothing about the shape, so anything that moves after it
+        // moved because it was reshaped and not because it was refined.
+        let cube = cube();
+        let before = cube.positions.clone();
+        let refined = cube.refine(&vec![true; cube.face_count()]);
+
+        assert_eq!(
+            &refined.positions[..before.len()],
+            &before[..],
+            "refinement moved a vertex that already existed"
+        );
+        // Each quad becomes four, and every new vertex is a midpoint or centre.
+        assert_eq!(refined.face_count(), cube.face_count() * 4);
+        assert!(refined.is_closed_manifold(), "refinement tore the surface");
+
+        let (lo, hi) = refined.bounds();
+        let (was_lo, was_hi) = cube.bounds();
+        assert!(
+            lo.abs_diff_eq(was_lo, 1e-6) && hi.abs_diff_eq(was_hi, 1e-6),
+            "refinement changed the silhouette: {lo:?}..{hi:?} against {was_lo:?}..{was_hi:?}"
+        );
+    }
+
+    #[test]
+    fn refining_part_of_a_mesh_leaves_no_hanging_vertices() {
+        // A vertex sitting in the middle of a neighbour's edge is a crack: the
+        // two sides interpolate differently and daylight shows between them the
+        // moment anything shades or deforms the surface. The neighbour has to
+        // take the new midpoint into its own corner list instead.
+        let cube = cube();
+        let mut selected = vec![false; cube.face_count()];
+        selected[0] = true;
+        let refined = cube.refine(&selected);
+
+        assert!(
+            refined.is_closed_manifold(),
+            "a partly refined mesh is not watertight: {:?}",
+            refined.manifold_report()
+        );
+        // The four faces around the refined one each took one midpoint, so each
+        // is now a pentagon; the face opposite is untouched.
+        let pentagons = refined.faces.iter().filter(|face| face.len() == 5).count();
+        assert_eq!(pentagons, 4, "the neighbours did not absorb the midpoints");
+        assert_eq!(
+            refined.faces.iter().filter(|face| face.len() == 4).count(),
+            4 + 1,
+            "expected the four new quads and the one untouched face"
+        );
+    }
+
+    #[test]
+    fn refining_nothing_changes_nothing() {
+        let cube = cube();
+        let refined = cube.refine(&vec![false; cube.face_count()]);
+        assert_eq!(refined.positions, cube.positions);
+        assert_eq!(refined.faces, cube.faces);
     }
 
     #[test]

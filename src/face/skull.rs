@@ -105,6 +105,82 @@ const CHIN: [(f32, f32); 5] = [
     (-0.62, 0.12),
 ];
 
+/// The region each refinement pass covers: how far round the head it reaches as
+/// a cosine of the angle from dead ahead, then its lowest and highest point in
+/// skull radii above the head joint.
+///
+/// **Graded, not uniform, and that is what makes it affordable.** Refining the
+/// whole front of the head twice costs 2,660 triangles and spends most of them
+/// on a forehead and a pair of cheeks, which carry nothing. The first pass is
+/// broad — the front of the head plus the sides that hold the temples and the
+/// jaw, stopping around the ears so the boundary between fine and coarse
+/// geometry falls where the hair usually is. The second is only the band the
+/// features actually occupy, brow to chin.
+///
+/// Measured, not guessed: at one pass the median edge under the brow is 12.7 mm
+/// and a brow ridge is 10 mm tall, so a whole feature spans one quad. At two it
+/// is 6.2 mm.
+const FACE_PASSES: [(f32, f32, f32); 2] = [(0.25, -1.05, 0.60), (0.55, -0.90, 0.50)];
+
+/// Gives the face enough surface to carry features, before anything shapes it.
+///
+/// The head arrives from the cage as a four-sided tube. Subdivided twice it is
+/// 189 faces with a mean edge of 24 mm, and every feature a face needs is at or
+/// below that: a brow ridge is 10 mm tall and a nose one quad wide. Nothing can
+/// be shaped into a surface that has no vertices where the shape goes (#59).
+///
+/// Refines only the front of the head, because the cost is triangles and the
+/// back of a skull carries nothing. Runs BEFORE [`shape`], so the vertices it
+/// adds are placed on the sphere and then mapped onto the skull by [`reshape`]
+/// along with every other one — which samples the skull more finely, rather than
+/// subdividing the facets of an already-shaped one.
+///
+/// Does nothing to a body with no head, or to one that walks on four legs: this
+/// is a human skull's geometry and a creature's head is its own shape.
+#[must_use]
+pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
+    if levels == 0 || rig.ground_contacts().len() > 2 {
+        return mesh.clone();
+    }
+    let Some(&head) = rig.in_zone(Zone::Head).first() else {
+        return mesh.clone();
+    };
+    let centre = rig.joints[head].position;
+    let radius = rig.joints[head].radius;
+    if radius <= f32::EPSILON {
+        return mesh.clone();
+    }
+
+    let mut refined = mesh.clone();
+    for pass in 0..levels {
+        // Passes past the last named one repeat the tightest region rather than
+        // widening again, so asking for more resolution never spends it on a
+        // forehead.
+        let (reach, low, high) = FACE_PASSES[pass.min(FACE_PASSES.len() - 1)];
+        let selected: Vec<bool> = (0..refined.face_count())
+            .map(|face| {
+                let at = refined.face_centroid(face);
+                // Asked of the rig rather than cut by height, for the same
+                // reason `shape` does: the neck runs up into the same band and
+                // refining it would spend triangles on a throat.
+                if rig.joints[rig.nearest_bone(at).joint].zone != Zone::Head {
+                    return false;
+                }
+                let local = at - centre;
+                let height = local.y / radius;
+                if height < low || height > high {
+                    return false;
+                }
+                let across = Vec3::new(local.x, 0.0, local.z);
+                let span = across.length();
+                span > f32::EPSILON && across.z / span > reach
+            })
+            .collect();
+        refined = refined.refine(&selected);
+    }
+    refined
+}
+
 /// Shapes the head of a built body, in place.
 ///
 /// Does nothing to a body with no head. Idempotent only in the sense that it is

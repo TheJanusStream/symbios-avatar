@@ -83,7 +83,7 @@ pub use avatar::{Avatar, AvatarConfig, AvatarMesh, Budget, MeshKind, Parts};
 pub use cage::{CageConfig, CageError, build_cage};
 pub use dress::{Garment, GarmentCut, Leg, Outfit, OutfitParams, Sleeve};
 pub use extremity::{Attached, Extremities, Foot, Hand};
-pub use face::{Blink, EyeParams, Eyes, FaceParams, Features, shape_skull};
+pub use face::{Blink, EyeParams, Eyes, FaceParams, Features, refine_face, shape_skull};
 pub use hair::{Hair, HairParams, Scalp, Strand};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
@@ -103,10 +103,20 @@ pub use subdiv::catmull_clark;
 /// version this crate pins.
 pub use symbios_texture::generator::TextureMap;
 
+/// How many extra times the front of the head is split.
+///
+/// Not a subdivision level for the body: the whole body at one more level costs
+/// four times the triangles everywhere, most of them on a shin. Two extra splits
+/// of the face alone take its mean edge from 24 mm to about 6 mm, which is what
+/// a 10 mm brow ridge needs to exist at all (#59), and leave the rest of the
+/// body exactly as it was.
+const FACE_REFINEMENT: usize = 1;
+
 /// Builds a body's surface from its skeleton, shaped and ready to bind.
 ///
-/// The whole of it: cage, subdivision, and the skull shaping that a capsule
-/// graph cannot express. Kept as one call because the order matters and the
+/// The whole of it: cage, subdivision, the face refinement that gives a head
+/// somewhere to put a face, and the skull shaping that a capsule graph cannot
+/// express. Kept as one call because the order matters and the
 /// shaping has to happen before anything is bound or unwrapped — do it after
 /// and the skin weights, the texture charts and every attached part are fitted
 /// to a head that no longer exists.
@@ -122,6 +132,10 @@ pub fn build_body(
     let cage = build_cage(skeleton, config)?;
     let mut mesh = catmull_clark(&cage, subdivisions);
     if let Ok(rig) = Rig::from_skeleton(skeleton) {
+        // Resolution first, then shape. `refine_face` only adds vertices and
+        // moves none, so `shape_skull` maps all of them onto the skull together
+        // and the face is sampled finely rather than subdivided after the fact.
+        mesh = face::refine_face(&mesh, &rig, FACE_REFINEMENT);
         face::shape_skull(&mut mesh, &rig);
     }
     Ok(mesh)
