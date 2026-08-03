@@ -412,22 +412,131 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
     )
 }
 
-/// Reads a piecewise-linear profile, which is given from the crown downward.
+/// The slope of the straight line between two neighbouring knots.
+fn secant(profile: &[(f32, f32)], segment: usize) -> f32 {
+    let (upper, above) = profile[segment];
+    let (lower, below) = profile[segment + 1];
+    (below - above) / (lower - upper)
+}
+
+/// The tangent to take at a knot: the average of the slopes either side, held
+/// inside the range that keeps the curve monotone.
+///
+/// **Limited here, at the knot, and not inside [`knot`] per segment.** The
+/// textbook Fritsch–Carlson presentation rescales a segment's two tangents
+/// together, which means a tangent shared by two segments can be pulled back by
+/// one of them and left alone by the other — and then the curve arrives at that
+/// knot with two different slopes. That is a corner, reintroduced by the very
+/// step meant to tame the curve. [`DEPTH`]'s knot at 0.55 had exactly it: the
+/// segment above finished at −0.537 and the one below started at −0.514,
+/// leaving a 0.023 break that survived halving the sample step.
+///
+/// Limiting each tangent once, against BOTH its neighbours, gives one slope per
+/// knot — so the result is C1 by construction — and holding it to three times
+/// the shorter adjacent secant is the classical sufficient condition for the
+/// cubic to stay monotone across both segments.
+///
+/// **Zero wherever the profile turns around.** At a knot where it stops falling
+/// and starts rising, any non-zero tangent carries the curve past the knot's own
+/// value before it comes back. [`BREADTH`] turns at its chin knot — the secants
+/// either side are +1.0 and −3.4 — and averaging them dipped the profile 0.0007
+/// below the 0.66 it is authored to reach.
+fn tangent(profile: &[(f32, f32)], at: usize) -> f32 {
+    if profile.len() < 2 {
+        return 0.0;
+    }
+    match at {
+        0 => secant(profile, 0),
+        at if at + 1 == profile.len() => secant(profile, at - 1),
+        at => {
+            let (before, after) = (secant(profile, at - 1), secant(profile, at));
+            if before * after <= 0.0 {
+                return 0.0;
+            }
+            let average = 0.5 * (before + after);
+            let room = 3.0 * before.abs().min(after.abs());
+            average.signum() * average.abs().min(room)
+        }
+    }
+}
+
+/// Reads a profile, which is given from the crown downward.
+///
+/// **Monotone cubic Hermite (Fritsch–Carlson), and both halves of that name are
+/// load-bearing.**
+///
+/// *Cubic*, because this was piecewise linear and a piecewise-linear profile has
+/// a slope that jumps at every knot. The union of the six profiles' knot heights
+/// is 27 values over a 212 mm span — a tangent discontinuity every 7.9 mm — and
+/// [`BREADTH`] and [`DEPTH`] carry no azimuthal window, so each of theirs runs
+/// the whole way round the head. That is the signature the owner reported as a
+/// terraced lower face, and it is visible as full-width horizontal bands in the
+/// renderer's normal pass (#83).
+///
+/// **Finer sampling makes a C0 break worse, not better**, which is why three
+/// refinement passes made the face look worse: a slope jump spread across a
+/// 24 mm quad is hidden by Gouraud interpolation, and the same jump resolved at
+/// 3.6 mm is a ledge. Refining onto the limit surface was tried first and
+/// measured: it moves the head 0.059 mm and changes the banding not at all
+/// (#75). The interpolant was always the cause.
+///
+/// *Monotone*, because an ordinary interpolating spline overshoots, and there is
+/// one segment here where overshoot is a shipped defect rather than a wobble:
+/// [`CHIN`] runs `(-0.62, 0.26) -> (JUNCTION, 0.0)`, and a natural or
+/// Catmull-Rom spline dips **below zero** across it, which stands the head's
+/// lowest band behind the throat it has to meet — the #47 seam, returning.
+/// Fritsch–Carlson's limiter forbids that by construction: where a segment is
+/// monotone the interpolant is monotone, so no profile can leave the interval
+/// its own knots span.
+///
+/// The knot values are unchanged from the linear version. Changing the values
+/// and the interpolant in one step would make it impossible to say which of
+/// them moved a silhouette, which is the same discipline
+/// [`crate::mesh::PolyMesh::refine`] keeps for shape and resolution.
 fn knot(profile: &[(f32, f32)], height: f32) -> f32 {
     let Some(&(top, first)) = profile.first() else {
         return 0.0;
     };
-    if height >= top {
+    if height >= top || profile.len() < 2 {
         return first;
     }
-    for pair in profile.windows(2) {
-        let ((upper, above), (lower, below)) = (pair[0], pair[1]);
-        if height >= lower {
-            let along = (upper - height) / (upper - lower).max(f32::EPSILON);
-            return above + (below - above) * along;
-        }
+    let Some(&(bottom, last)) = profile.last() else {
+        return first;
+    };
+    if height <= bottom {
+        return last;
     }
-    profile.last().map_or(0.0, |&(_, value)| value)
+
+    // The segment this height falls in. Heights descend down the profile.
+    let segment = (0..profile.len() - 1)
+        .find(|&at| height >= profile[at + 1].0)
+        .unwrap_or(profile.len() - 2);
+    let (upper, above) = profile[segment];
+    let (lower, below) = profile[segment + 1];
+
+    let run = lower - upper;
+    if run.abs() <= f32::EPSILON {
+        return above;
+    }
+    let slope = (below - above) / run;
+    let (mut start, mut end) = (tangent(profile, segment), tangent(profile, segment + 1));
+
+    // A flat segment must stay flat: a cubic through two equal values bulges
+    // between them unless both its tangents are zero. Everything else is
+    // already held in range by `tangent`, which limits each knot ONCE so that
+    // both segments meeting there agree — see its documentation for why doing
+    // it per segment leaves a corner behind.
+    if slope.abs() <= f32::EPSILON {
+        start = 0.0;
+        end = 0.0;
+    }
+
+    let along = (height - upper) / run;
+    let (square, cube) = (along * along, along * along * along);
+    (2.0 * cube - 3.0 * square + 1.0) * above
+        + (cube - 2.0 * square + along) * run * start
+        + (-2.0 * cube + 3.0 * square) * below
+        + (cube - square) * run * end
 }
 
 #[cfg(test)]
@@ -1129,10 +1238,102 @@ mod tests {
 
     #[test]
     fn a_profile_reads_between_its_knots() {
-        assert_eq!(knot(&BREADTH, 2.0), BREADTH[0].1);
-        assert_eq!(knot(&BREADTH, -5.0), BREADTH[BREADTH.len() - 1].1);
-        let middle = knot(&BREADTH, (BREADTH[0].0 + BREADTH[1].0) * 0.5);
-        assert!((middle - (BREADTH[0].1 + BREADTH[1].1) * 0.5).abs() < 1e-5);
+        // This used to assert that a segment's midpoint is the AVERAGE of its
+        // two knot values, which is a test for linear interpolation wearing an
+        // interval property's name. The interval property is the one worth
+        // having, and it is the one the monotone limiter exists to guarantee:
+        // no profile may leave the range its own knots span, because the
+        // segment where that would bite is CHIN's tail into JUNCTION, and a
+        // spline dipping below zero there stands the head's lowest band behind
+        // the throat (#47, #83).
+        for (name, profile) in PROFILES {
+            assert_eq!(knot(profile, profile[0].0 + 1.0), profile[0].1, "{name}");
+            let end = profile.len() - 1;
+            assert_eq!(
+                knot(profile, profile[end].0 - 1.0),
+                profile[end].1,
+                "{name}"
+            );
+
+            for step in 0..=2000 {
+                let height =
+                    profile[end].0 + (profile[0].0 - profile[end].0) * step as f32 / 2000.0;
+                let value = knot(profile, height);
+                let segment = (0..end)
+                    .find(|&at| height >= profile[at + 1].0)
+                    .unwrap_or(end - 1);
+                let (low, high) = (
+                    profile[segment].1.min(profile[segment + 1].1),
+                    profile[segment].1.max(profile[segment + 1].1),
+                );
+                assert!(
+                    value >= low - 1e-4 && value <= high + 1e-4,
+                    "{name} at {height:.4} reads {value:.4}, outside the {low:.4}..{high:.4} \
+                     its own knots span"
+                );
+            }
+        }
+    }
+
+    /// Every shaping profile, for the checks that must hold of all of them.
+    const PROFILES: [(&str, &[(f32, f32)]); 6] = [
+        ("BREADTH", &BREADTH),
+        ("DEPTH", &DEPTH),
+        ("OCCIPUT", &OCCIPUT),
+        ("BROW", &BROW),
+        ("TEMPLE", &TEMPLE),
+        ("CHIN", &CHIN),
+    ];
+
+    #[test]
+    fn a_profile_has_no_corners_in_it() {
+        // The defect this file's terracing turned out to be (#83). A
+        // piecewise-linear profile's SLOPE jumps at every knot, and with 27
+        // knot heights across the six profiles that is a tangent break every
+        // 7.9 mm down the head — running the whole way round it, since BREADTH
+        // and DEPTH carry no azimuthal window.
+        //
+        // **Asked by halving the step, not by a threshold**, because a
+        // threshold cannot tell a corner from a tight curve. Sampling the slope
+        // by finite difference, a genuine tangent discontinuity gives the same
+        // jump however finely it is sampled, while smooth curvature gives a
+        // jump proportional to the step. So the discriminator is the RATIO.
+        //
+        // A first version of this test asserted the jump was under 0.02 and
+        // failed at 0.053 on BREADTH's chin knot — where the profile is
+        // correctly C1 and merely turning hard. It was measuring curvature
+        // times sampling step and calling it a corner.
+        //
+        // Measured: with the piecewise-linear interpolant this replaced, the
+        // ratio is 1.00 on every profile — the corner does not care about the
+        // step. With the cubic it is at most 0.51.
+        for (name, profile) in PROFILES {
+            let end = profile.len() - 1;
+            let span = profile[0].0 - profile[end].0;
+            let worst_jump = |ticks: usize| {
+                let step = span / ticks as f32;
+                let slope =
+                    |height: f32| (knot(profile, height + step) - knot(profile, height)) / step;
+                (1..ticks).fold((0.0f32, 0.0f32), |worst, tick| {
+                    let height = profile[end].0 + span * tick as f32 / ticks as f32;
+                    let jump = (slope(height) - slope(height - step)).abs();
+                    if jump > worst.0 {
+                        (jump, height)
+                    } else {
+                        worst
+                    }
+                })
+            };
+            let coarse = worst_jump(2000).0;
+            let (fine, at) = worst_jump(4000);
+            assert!(
+                coarse > f32::EPSILON && fine / coarse < 0.75,
+                "{name}'s worst slope jump is {coarse:.4} sampled coarsely and {fine:.4} \
+                 sampled twice as finely at {at:.4} — a ratio of {:.2}. A smooth profile \
+                 halves; a corner does not care.",
+                fine / coarse
+            );
+        }
     }
 }
 
