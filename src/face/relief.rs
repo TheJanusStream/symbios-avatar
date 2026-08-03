@@ -38,6 +38,25 @@ use super::eye::Eyes;
 use super::features::FaceParams;
 use super::skull::Skull;
 
+/// The mouth's lobes: how far each stands out, where it sits and how wide it is,
+/// in units of the lip stack's half-height.
+///
+/// **Gathered into one place because their WIDTHS are the thing that decides
+/// whether a mouth reads at all.** Every one of them has to be wider than the
+/// mesh cell under it — a Gaussian one cell across renders as a single displaced
+/// row of vertices, which is a horizontal bar, and four of those stacked is what
+/// the owner reported as a terraced lower face (#85). At 3.6 mm cells they
+/// measured 0.99, 1.29, 1.67 and 1.75 cells; the mouth band is refined a fourth
+/// time so they are 2.0 to 3.5. `the_mouth_is_wider_than_the_mesh_under_it`
+/// holds that, as a ratio rather than a millimetre figure, because the cell size
+/// moves with the refinement level and with the size of the head.
+const LIPS: [(f32, f32, f32); 4] = [
+    (0.88, -0.60, 0.46),  // the lower lip
+    (0.82, 0.58, 0.44),   // the upper lip
+    (-0.44, 0.00, 0.26),  // the line between them, the narrowest thing on a face
+    (-0.24, -1.32, 0.34), // the crease under the lower lip
+];
+
 /// How far round the head a feature can reach before it is faded out.
 ///
 /// A cosine of the angle from dead ahead. Every field below is bounded in `x`
@@ -144,6 +163,24 @@ impl Face {
         }
     }
 
+    /// The narrowest Gaussian any of this face's fields uses, in metres.
+    ///
+    /// The number that decides whether a mouth can render at all: a term
+    /// narrower than the mesh cell under it becomes one displaced row of
+    /// vertices, which is a bar rather than a lip. See [`LIPS`].
+    ///
+    /// Test-only, and deliberately a method rather than arithmetic repeated in
+    /// the test: a check that recomputes the widths from its own copy of the
+    /// constants stops meaning anything the first time one of them moves.
+    #[cfg(test)]
+    fn finest(&self) -> f32 {
+        self.plump
+            * LIPS
+                .iter()
+                .map(|&(_, _, width)| width)
+                .fold(f32::MAX, f32::min)
+    }
+
     /// How far the surface stands out at a point, in metres.
     ///
     /// Summed, not maximised. Features that meet — the wing of a nose against
@@ -232,9 +269,10 @@ impl Face {
             // the lower lip that separates it from the chin. The line is a
             // groove in one surface rather than a seam between two pieces,
             // which is what it is on a person.
-            let profile = 0.88 * bump(up, -0.60, 0.46) + 0.82 * bump(up, 0.58, 0.44)
-                - 0.44 * bump(up, 0.00, 0.26)
-                - 0.24 * bump(up, -1.32, 0.34);
+            let profile = LIPS
+                .iter()
+                .map(|&(weight, centre, width)| weight * bump(up, centre, width))
+                .sum::<f32>();
             let corner = smooth(((1.20 - across) / 0.30).min(1.0));
             let ends = smooth((2.40 - up.abs()) / 0.6);
             profile * corner * ends
@@ -471,6 +509,61 @@ mod tests {
             at.y * 1000.0,
             fine / coarse
         );
+    }
+
+    #[test]
+    fn the_mouth_is_wider_than_the_mesh_under_it() {
+        // A RATIO, not a millimetre figure. The cell size moves with
+        // FACE_REFINEMENT and with the size of the head, so a constant here
+        // would be the next thing in this codebase named for one quantity and
+        // holding another.
+        //
+        // Measured: at three refinement passes the lip line's groove was 0.99
+        // cells and the mouth rendered as a stack of horizontal bars. The
+        // fourth pass covers the mouth band alone and takes it to about 2.0
+        // (#85). Below about 1.5 a Gaussian cannot survive being sampled.
+        for seed in [None, Some(7), Some(29), Some(99)] {
+            let mut record = crate::AvatarRecord::new("Mouth", crate::Archetype::default());
+            if let Some(seed) = seed {
+                record.reroll(seed);
+            }
+            let skeleton = record.skeleton();
+            let mesh = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
+            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+            let eyes = Eyes::build(&rig, &record.eyes).expect("eyes");
+            let skull = Skull::measure(&mesh, &rig).expect("a skull");
+            let face = Face::new(&eyes, &skull, &record.face);
+            let centre = rig.joints[eyes.head].position;
+
+            // The median edge of the faces the mouth actually sits on.
+            let mut edges: Vec<f32> = Vec::new();
+            for index in 0..mesh.face_count() {
+                let at = mesh.face_centroid(index) - centre;
+                if at.z <= 0.0 || (at.y - face.mouth).abs() > face.plump * 1.4 {
+                    continue;
+                }
+                let ring = &mesh.faces[index];
+                for corner in 0..ring.len() {
+                    let next = (corner + 1) % ring.len();
+                    edges.push(
+                        mesh.positions[ring[corner] as usize]
+                            .distance(mesh.positions[ring[next] as usize]),
+                    );
+                }
+            }
+            assert!(!edges.is_empty(), "seed {seed:?}: no faces under the mouth");
+            edges.sort_by(f32::total_cmp);
+            let cell = edges[edges.len() / 2];
+            let cells = face.finest() / cell;
+            assert!(
+                cells > 1.5,
+                "seed {seed:?}: the narrowest term in the mouth is {:.2} mm against a \
+                 {:.2} mm cell — {cells:.2} cells, and a Gaussian that narrow renders \
+                 as one displaced row of vertices, which is a bar",
+                face.finest() * 1000.0,
+                cell * 1000.0
+            );
+        }
     }
 
     #[test]

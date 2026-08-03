@@ -118,8 +118,12 @@ pub use symbios_texture::generator::TextureMap;
 ///  0 passes   25.9  28.2  26.6  26.6 mm
 ///  1 pass     13.2  14.1  14.1  13.7 mm
 ///  2 passes    6.6   7.1   7.2   7.3 mm
-///  3 passes    3.3   3.6   3.6   3.6 mm   <- here
+///  3 passes    3.3   3.6   3.6   3.6 mm
+///  4 passes    3.3   3.6   3.6   1.8 mm   <- here
 /// ```
+///
+/// The fourth pass covers the mouth band only — see [`face::skull`]'s
+/// `FACE_PASSES` — which is why only the last column halves.
 ///
 /// **The third pass is what makes a nose a nose.** Carved into 7 mm cells
 /// (#59), the nose was a soft mound with no bridge, no tip and no wing — a
@@ -128,14 +132,24 @@ pub use symbios_texture::generator::TextureMap;
 /// exaggerating the amplitude until the feature read through a coarse surface,
 /// and the owner's stylisation call rules that out by name.
 ///
-/// It costs about 3,500 triangles, and it fits: measured, the dearest legal
-/// record is 25,660 against a 30,000 target.
+/// **The fourth pass is what makes a mouth a mouth**, for the same reason and
+/// with the arithmetic stated in advance this time. At 3.6 mm every term in the
+/// lip field was about one cell wide — the lip line's groove 0.99, the sulcus
+/// 1.29, the lobes 1.67 and 1.75 — and a Gaussian one cell wide renders as a
+/// single displaced row of vertices, which is a bar. The prediction was that
+/// halving the cell would remove the bars and keep the lips; it did (#85).
+///
+/// The three passes cost about 3,500 triangles and the fourth about 2,150,
+/// measured on the default body: skin goes 11,172 to 13,326 and the whole body
+/// 21,028 to 23,182, against a 30,000 target. The ceiling and every seed still
+/// pass; what it moves is the balance, and that is recorded in
+/// `tests/budget.rs`.
 ///
 /// It sat at one for a long time for a reason that was nothing to do with cost:
 /// the second pass moved the profile the ears are placed from, and one seed's
 /// ear fell to 18% visible against a 25% floor. That was a defect in the
 /// measurement rather than in the refinement, and it is fixed (#67).
-const FACE_REFINEMENT: usize = 3;
+const FACE_REFINEMENT: usize = 4;
 
 /// Builds a body's surface from its skeleton, shaped and ready to bind.
 ///

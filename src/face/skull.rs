@@ -218,7 +218,27 @@ const SETTLE: f32 = 0.92;
 /// Measured, not guessed: at one pass the median edge under the brow is 12.7 mm
 /// and a brow ridge is 10 mm tall, so a whole feature spans one quad. At two it
 /// is 6.2 mm.
-const FACE_PASSES: [(f32, f32, f32); 2] = [(0.25, -1.05, 0.60), (0.55, -0.90, 0.50)];
+///
+/// **The third region is the mouth alone, and it exists because a mouth is made
+/// of smaller parts than the rest of a face.** With the face at 3.6 mm cells,
+/// every term in the lip field was at or near one cell wide — the lip line's
+/// groove 0.99, the sulcus 1.29, the two vermilion lobes 1.67 and 1.75 — and a
+/// Gaussian one cell wide cannot render as anything but a single displaced row
+/// of vertices, which is a bar. That is what the owner had been reporting as a
+/// terraced lower face through three rounds of fixes aimed elsewhere (#85).
+///
+/// Confirmed by the experiment before it was built: widening every lip term to
+/// three cells and changing nothing else removed the bars outright — and took
+/// the mouth with them, which is the other half of the answer. A lip line is
+/// 1–2 mm across on a person, so a mouth wide enough to survive 3.6 mm sampling
+/// is not a mouth. The band gets the resolution instead, and keeps its shape.
+const FACE_PASSES: [(f32, f32, f32); 3] = [
+    (0.25, -1.05, 0.60),
+    (0.55, -0.90, 0.50),
+    // Nose base to below the chin: the only band where the features are
+    // smaller than the surface carrying them.
+    (0.55, -0.55, -0.18),
+];
 
 /// Gives the face enough surface to carry features, before anything shapes it.
 ///
