@@ -49,6 +49,33 @@ const SEEDS: i64 = 16;
 /// about 65% since the ear was conformed to the measured surface (#67).
 const MUST_SHOW: f32 = 0.25;
 
+/// What share of an eye may stand outside the face, and what share must.
+///
+/// **A ceiling, which this file did not have.** Everything above [`MUST_SHOW`]
+/// is a floor, and a floor cannot see a part that is too far OUT — so a globe
+/// with 59% of its surface outside the skin, standing 30 mm proud of the face
+/// around it, passed every check in this crate with room to spare (#73). It was
+/// also never checked at all: [`attached`] collected ears, hands and feet, and
+/// the eyes were not in the sweep.
+///
+/// Both bounds, and the lower one is not padding. A ceiling on its own is the
+/// same defect mirrored: a globe sunk a whole radius behind the skin scores 0%
+/// outside and 0 mm proud, and so does an eye that was never built.
+///
+/// The face carries no eye opening — the body is a closed surface and the lids
+/// are separate meshes — so whatever part of the globe lies outside the skin is
+/// very nearly what a viewer sees. A real eye shows about a sixth of its
+/// surface, which is what puts the ceiling here rather than near zero.
+const EYE_SHOWS: (f32, f32) = (0.03, 0.25);
+
+/// How far an eye may stand proud of the face around it, in metres.
+///
+/// Measured on the shipped build: 30.4 mm on the default and 24.2–29.8 across
+/// seeds, which is 0.18–0.26 of a head radius on every one of them — systematic,
+/// not a tuning slip. In life the corneal apex sits roughly level with the
+/// surrounding lids, so anything past a few millimetres is a bulge.
+const EYE_PROUD: f32 = 0.005;
+
 /// What share of `part`'s vertices lie outside `body`.
 fn proud(body: &PolyMesh, part: &PolyMesh, offset: Vec3) -> f32 {
     if part.positions.is_empty() {
@@ -113,6 +140,66 @@ fn no_attached_part_is_buried_in_the_body() {
                     MUST_SHOW * 100.0
                 );
             }
+        }
+    }
+}
+
+#[test]
+#[ignore = "the target, not the state: the eye is placed by a prediction that is 26 mm wrong off the midline (#76)"]
+fn an_eye_is_seated_in_the_face_rather_than_resting_on_it() {
+    // The instrument that did not exist for the defect the owner reported as
+    // "the eyes look popped out" (#73). Two quantities, because they fail
+    // independently: how much of the globe is outside the face, and how far the
+    // furthest part of it stands from the face around it. A globe can be mostly
+    // inside and still poke through like a knuckle.
+    //
+    // Measured on the shipped build, so the failure message is the diagnosis:
+    // 41–69% outside and 24–30 mm proud, on every seed.
+    for seed in 0..SEEDS {
+        let mut record = AvatarRecord::new("Sweep", Archetype::default());
+        record.reroll(seed);
+        let avatar = Avatar::build_with(&record, &geometry_only()).expect("the body builds");
+        let Some(eyes) = &avatar.parts.eyes else {
+            continue;
+        };
+        let body = &avatar.parts.body;
+        let centre = avatar.rig.joints[eyes.head].position;
+
+        for (side, eye) in [("left", &eyes.left), ("right", &eyes.right)] {
+            let shows = proud(body, &eye.globe, centre);
+            assert!(
+                (EYE_SHOWS.0..=EYE_SHOWS.1).contains(&shows),
+                "seed {seed}: the {side} eye has {:.0}% of its surface outside the face, \
+                 against the {:.0}–{:.0}% a seated eye shows",
+                shows * 100.0,
+                EYE_SHOWS.0 * 100.0,
+                EYE_SHOWS.1 * 100.0
+            );
+
+            // How far the globe's front pole stands past the skin on its own
+            // column — bisected, because the surface curves fast enough across
+            // the eye that the nearest VERTEX is a different question (#71).
+            let column = Vec3::new(centre.x + eye.pivot.x, centre.y + eye.pivot.y, centre.z);
+            if !body.contains(column) {
+                continue;
+            }
+            let (mut near, mut far) = (0.0f32, 0.30f32);
+            for _ in 0..30 {
+                let mid = 0.5 * (near + far);
+                if body.contains(column + Vec3::Z * mid) {
+                    near = mid;
+                } else {
+                    far = mid;
+                }
+            }
+            let stands = (eye.pivot.z + eye.radius) - (column.z + near - centre.z);
+            assert!(
+                stands <= EYE_PROUD,
+                "seed {seed}: the {side} eye stands {:.1} mm proud of the face around it, \
+                 against a ceiling of {:.1}",
+                stands * 1000.0,
+                EYE_PROUD * 1000.0
+            );
         }
     }
 }

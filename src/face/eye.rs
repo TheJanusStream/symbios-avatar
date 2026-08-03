@@ -365,9 +365,13 @@ mod tests {
     }
 
     #[test]
-    fn a_blink_covers_the_eye_and_opening_uncovers_it() {
-        // The property that makes a blink read: when shut, no part of the globe
-        // is left showing at the front.
+    fn a_blink_reaches_further_down_the_front_of_the_globe_than_an_open_lid() {
+        // Renamed to what it checks. It folds every lid vertex to its frontmost
+        // point and compares that on the MIDLINE, so it is a profile test, not
+        // a coverage test — and the thing it cannot see is that the lids never
+        // meet at the sides at all (#81). The property it does check is real,
+        // so it keeps it under an honest name and
+        // `the_lids_close_at_corners_rather_than_leaving_a_band` asks the rest.
         let pair = eyes(&EyeParams::default());
         let eye = &pair.left;
 
@@ -393,6 +397,51 @@ mod tests {
         assert!(
             exposed(1.0) < eye.radius * 0.25,
             "a shut eye should be almost entirely covered"
+        );
+    }
+
+    #[test]
+    #[ignore = "the target, not the state: the lids are caps of the globe and never meet at the sides (#81)"]
+    fn the_lids_close_at_corners_rather_than_leaving_a_band() {
+        // What makes an eye read as an eye rather than as a bead in a ring: the
+        // lids MEET, at a medial and a lateral canthus, so the uncovered region
+        // is a lens. Here both lids are `cap_shell` domes concentric with the
+        // globe, 71.6° in half-angle and set 163° apart at the default
+        // aperture. Two caps summing 143° cannot close a 163° gap, so the
+        // uncovered set is an ANNULUS running the full width of the globe.
+        //
+        // Sampled round the globe's equator rather than on the midline, which
+        // is the whole point — the test above looks only where the lids do
+        // meet.
+        let pair = eyes(&EyeParams::default());
+        let eye = &pair.left;
+        let upper = eye.upper_lid.transformed(eye.lid_transform(0.0, true));
+        let lower = eye.lower_lid.transformed(eye.lid_transform(0.0, false));
+
+        // For each azimuth round the front of the globe, how tall the gap
+        // between the lids is, in degrees of latitude.
+        let mut open = Vec::new();
+        for step in 0..=8 {
+            let azimuth = std::f32::consts::FRAC_PI_2 * step as f32 / 8.0;
+            let (sin, cos) = azimuth.sin_cos();
+            let mut gap = 0.0f32;
+            for tick in -60..=60 {
+                let latitude = (tick as f32).to_radians();
+                let on_globe = eye.pivot
+                    + Vec3::new(sin * latitude.cos(), latitude.sin(), cos * latitude.cos())
+                        * eye.radius;
+                if !upper.contains(on_globe) && !lower.contains(on_globe) {
+                    gap += 1.0;
+                }
+            }
+            open.push((azimuth.to_degrees().round() as i32, gap));
+        }
+        // At the outer corner the lids must have closed on each other.
+        let corner = open.last().expect("sampled").1;
+        assert!(
+            corner < 5.0,
+            "at the outer corner the lids leave {corner:.0}° of the globe bare; \
+             the gap by azimuth is {open:?}"
         );
     }
 

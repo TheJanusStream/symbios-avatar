@@ -60,7 +60,7 @@ fn main() {
     let unit = eyes.left.radius;
     let level = eyes.left.pivot.y;
     let chin = skull.chin();
-    let (span_lo, span_hi) = skull.span();
+    let (span_lo, span_hi) = skull.throat_and_crown();
     println!("## What the crate believes\n");
     println!("| landmark | mm | source |");
     println!("|---|---|---|");

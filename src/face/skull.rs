@@ -449,6 +449,31 @@ mod tests {
         (plain, shaped, rig, centre, radius)
     }
 
+    /// How far the surface reaches from `from` along `along`, in metres.
+    ///
+    /// **Bisected against the mesh, not binned over its vertices.** A band that
+    /// takes the extreme vertex within a window of heights is reading the mesh's
+    /// row spacing as much as its shape: on the coarse fixture here the rows are
+    /// 0.18 radii apart, so two adjacent windows routinely return the same row
+    /// and a slope series comes back as alternating zeros and cliffs. `contains`
+    /// answers about the surface at the point asked, which is what a silhouette
+    /// is. Returns `None` if `from` is not inside to begin with.
+    fn bisect(mesh: &PolyMesh, from: Vec3, along: Vec3) -> Option<f32> {
+        if !mesh.contains(from) {
+            return None;
+        }
+        let (mut near, mut far) = (0.0f32, 0.30f32);
+        for _ in 0..30 {
+            let middle = 0.5 * (near + far);
+            if mesh.contains(from + along * middle) {
+                near = middle;
+            } else {
+                far = middle;
+            }
+        }
+        Some(near)
+    }
+
     /// The widest and deepest the head gets in a band of heights.
     ///
     /// Head vertices only. The neck runs up through the same heights and is
@@ -503,18 +528,41 @@ mod tests {
     }
 
     #[test]
-    fn the_cheekbones_are_the_widest_part_of_the_head() {
-        // Not the cranium, which is where an unshaped head is widest.
-        let (_, shaped, rig, centre, radius) = head(7);
-        let cheek = band(&shaped, &rig, centre, radius, -0.05).0;
-        assert!(
-            cheek > band(&shaped, &rig, centre, radius, 0.45).0,
-            "the crown was wider"
-        );
-        assert!(
-            cheek > band(&shaped, &rig, centre, radius, -0.45).0,
-            "the jaw was wider"
-        );
+    #[ignore = "the target, not the state: BREADTH narrows the vault on an inverted premise (#79)"]
+    fn the_head_is_widest_above_the_eye_line() {
+        // This replaces `the_cheekbones_are_the_widest_part_of_the_head`, which
+        // asserted the opposite and passed — and would have blocked the fix.
+        //
+        // A head's maximum breadth is at the EURION, high on the parietal:
+        // eu-eu is about 156 mm against a bizygomatic 137, and the widest band
+        // sits roughly 25–45 mm above the pupil line. [`BREADTH`] was authored
+        // on the belief that a head is widest at the cheekbones, which is where
+        // an unshaped head is *narrower* than its own cranium, so the profile
+        // narrows the vault to 0.62 and hands the maximum to the eye line.
+        //
+        // Measured on the shipped build, the widest band is at −0.0 to +0.05
+        // radii on every seed — at or just below the eye — which is the "pointed
+        // egg" read (#73).
+        for seed in [7, 23, 29, 42] {
+            let (_, shaped, rig, centre, radius) = head(seed);
+            let mut widest = (0.0f32, 0.0f32);
+            let mut at = -0.50;
+            while at <= 0.70 {
+                let wide = band(&shaped, &rig, centre, radius, at).0;
+                if wide > widest.0 {
+                    widest = (wide, at);
+                }
+                at += 0.05;
+            }
+            // The eye line sits at +0.05 radii, and the parietal maximum wants
+            // to be a fifth to a third of the way up from there to the crown.
+            assert!(
+                widest.1 > 0.20,
+                "seed {seed}: the head is widest at {:+.2} radii, at or below the \
+                 eye line rather than up on the parietal",
+                widest.1
+            );
+        }
     }
 
     /// How wide the FRONT of the head is in a band of heights.
@@ -539,7 +587,86 @@ mod tests {
     }
 
     #[test]
-    fn the_jaw_narrows_toward_the_chin() {
+    #[ignore = "the target, not the state: the jawline is a cone, not a polyline (#80)"]
+    fn the_jawline_turns_a_corner() {
+        // **A jawline is an angle, and every test here measures a ratio.**
+        // `the_face_narrows_from_cheekbone_to_chin` below is satisfied by any
+        // smooth taper, which is why the owner's "there is no jaw" survived
+        // three rounds of work with a green suite.
+        //
+        // Measured on the shipped build, the front silhouette falls a DEAD
+        // CONSTANT −2.22 mm per 4 mm across nine consecutive bands from −28 to
+        // −64 mm, spread 0.025 mm/mm — a right circular frustum to within
+        // 0.2 mm on every seed. A mandible instead runs down the ramus, turns
+        // through the gonial angle (122–128° in life) and runs forward along
+        // the body to the menton.
+        //
+        // So this asks for the CORNER: the largest change of slope anywhere
+        // down the lower face. Today it is 1.4°.
+        let mut corners = Vec::new();
+        for seed in [7, 23, 29, 42] {
+            let (_, shaped, rig, centre, radius) = head(seed);
+            let floor = shaped
+                .positions
+                .iter()
+                .filter(|&&point| rig.joints[rig.nearest_bone(point).joint].zone == Zone::Head)
+                .fold(0.0f32, |low, point| low.min(point.y - centre.y))
+                / radius;
+
+            // BISECTED against the surface, not binned over vertices. The
+            // first version of this test sampled `face_width` in 0.08-radius
+            // windows on a mesh whose rows are 0.18 radii apart, so adjacent
+            // windows kept returning the SAME row: the slope series came back
+            // [22.9, 0.0, 46.2, 0.0, 47.6, 0.0] and the test passed on 47.6° of
+            // vertex quantisation while the jawline underneath it was a cone.
+            let width = |y: f32| {
+                let axis = Vec3::new(centre.x, centre.y + y * radius, centre.z);
+                let reach = bisect(&shaped, axis, Vec3::Z)?;
+                bisect(&shaped, axis + Vec3::Z * reach * 0.5, Vec3::X)
+            };
+            // Stopping at the CHIN, not at the floor. Below the chin the head
+            // flares back out into the neck — the slope series runs
+            // [.., 33.1, 23.9, -38.4, -38.4] — so a search that reaches the
+            // floor finds a 62° "corner" that is the throat, passes, and
+            // certifies the very defect #78 is about.
+            let mut slopes = Vec::new();
+            let mut at = -0.05;
+            while at > floor * 0.71 {
+                let step = 0.04;
+                if let (Some(here), Some(below)) = (width(at), width(at - step)) {
+                    slopes.push((here - below).atan2(step * radius).to_degrees());
+                }
+                at -= step;
+            }
+            corners.push((
+                seed,
+                slopes
+                    .windows(2)
+                    .map(|pair| (pair[1] - pair[0]).abs())
+                    .fold(0.0f32, f32::max),
+            ));
+        }
+        // Every seed in one message rather than the first failure: a threshold
+        // set from one body is how the last three rounds were tuned.
+        assert!(
+            corners.iter().all(|&(_, corner)| corner > 20.0),
+            "the sharpest turn in the jawline, by seed: {:?} — a mandible turns \
+             through 50° or so at the gonion, and these are cones",
+            corners
+                .iter()
+                .map(|&(seed, corner)| (seed, (corner * 10.0).round() / 10.0))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn the_face_narrows_from_cheekbone_to_chin() {
+        // Renamed from `the_jaw_narrows_toward_the_chin`, which is not what it
+        // checks: a width RATIO at three heights is satisfied by any smooth
+        // taper, and the built jawline is a cone. The property it does check is
+        // real and worth keeping, so it keeps it under its own name and
+        // `the_jawline_turns_a_corner` above asks the question this cannot.
+        //
         // Measured across the FRONT of the head, which is what changed here.
         // This used to take the widest point of the whole cross-section, and
         // passed while the head had a wasp waist above its own neck — because at
@@ -703,6 +830,50 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "the target, not the state: the chin is a fixed fraction of the throat (#78)"]
+    fn the_chin_landmark_lands_on_the_chin_of_the_shipped_face() {
+        // The test above runs on a head that has been shaped but NOT carved,
+        // and passes. The shipped surface has a face on it, and against that
+        // one the same landmark is 12.5 mm out on the default and 14.7 on seed
+        // 99 — two to three times the 5 mm alarm the uncarved test sets for
+        // itself. A tolerance is only worth what the mesh under it is worth.
+        //
+        // Kept as a pair rather than replacing the first: they measure
+        // different surfaces and both are real, and the one that passes is the
+        // ratchet that stops the derivation drifting while #78 is open.
+        for seed in [1i64, 23, 42, 99] {
+            let mut record = AvatarRecord::new("Skulled", Archetype::default());
+            record.reroll(seed);
+            let skeleton = record.skeleton();
+            let mut mesh =
+                crate::build_body(&skeleton, &CageConfig::default(), 2).expect("a body builds");
+            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+            let skull = Skull::measure(&mesh, &rig).expect("a skull");
+            let centre = rig.joints[skull.head].position;
+            if let Some(eyes) = crate::face::Eyes::build(&rig, &Default::default()) {
+                crate::face::carve_face(&mut mesh, &rig, &eyes, &Default::default());
+            }
+
+            let chin = centre.y + skull.chin();
+            let mut tip = (f32::MIN, 0.0f32);
+            let mut y = chin - 0.025;
+            while y < chin + 0.025 {
+                if let Some(at) = bisect(&mesh, Vec3::new(centre.x, y, centre.z), Vec3::Z)
+                    && at > tip.0
+                {
+                    tip = (at, y);
+                }
+                y += 0.002;
+            }
+            assert!(
+                (tip.1 - chin).abs() < 0.005,
+                "seed {seed}: on the carved face the chin peaks {:+.1} mm from the landmark",
+                (tip.1 - chin) * 1000.0
+            );
+        }
+    }
+
+    #[test]
     fn the_back_of_the_cranium_is_fuller_than_the_back_of_the_jaw() {
         let (_, shaped, rig, centre, radius) = head(11);
         let back = |at: f32| {
@@ -818,11 +989,20 @@ mod tests {
         // buries a feature; too wide only stands one off. The vertex-binned
         // profile this replaced would fail the lower bound at four of these
         // thirteen heights on the first seed alone.
+        //
+        // **The sweep starts at 0.08 of the span so that the CHIN is inside
+        // it.** It began at 0.15, and since `chin` is always 0.7097 × the
+        // throat the chin lands at 0.13 of the span — so the one region the
+        // owner kept reporting as wrong was, by construction, the region this
+        // contract never looked at (#74). It stops at 0.90 rather than 1.0
+        // because the crown is a subdivided cap whose bins are the worst in the
+        // profile; `the_profile_agrees_over_its_whole_span` below is that
+        // target, and it is 13.3 mm out at the throat today.
         for seed in 0..6 {
             let (mesh, skull, centre) = skull(seed, 1);
-            let (lo, hi) = skull.span();
+            let (lo, hi) = skull.throat_and_crown();
             for step in 0..=12 {
-                let height = lo + (hi - lo) * (0.15 + 0.55 * step as f32 / 12.0);
+                let height = lo + (hi - lo) * (0.08 + 0.82 * step as f32 / 12.0);
                 let from = centre + Vec3::Y * height;
 
                 if let Some(surface) = probe(&mesh, from, Vec3::Z) {
@@ -854,6 +1034,37 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "the target, not the state: the profile's end bins are 13 mm out at the throat (#74)"]
+    fn the_profile_agrees_over_its_whole_span() {
+        // The contract above covers 0.08–0.90 of the span. This is the same
+        // check over 0.02–0.98, which is what "the profile agrees with the
+        // surface" ought to mean without qualification.
+        //
+        // It fails at the ends, and the reason is worth writing down: BANDS is
+        // 20 over `throat..crown`, and 26–28 mm of that span is throat, so the
+        // pitch is 7.8–12.8 mm and the outermost bins each straddle a region
+        // where the surface is turning fastest. Fixing it means spending the
+        // band budget on the face rather than on the neck — measure `lo` as the
+        // chin, or scale BANDS so the eye-to-chin frame gets a pitch matching
+        // the refined cells.
+        for seed in 0..6 {
+            let (mesh, skull, centre) = skull(seed, 1);
+            let (lo, hi) = skull.throat_and_crown();
+            for step in 0..=12 {
+                let height = lo + (hi - lo) * (0.02 + 0.96 * step as f32 / 12.0);
+                let from = centre + Vec3::Y * height;
+                if let Some(surface) = probe(&mesh, from, Vec3::Z) {
+                    let error = (skull.depth(height) - surface) * 1000.0;
+                    assert!(
+                        (-4.0..9.0).contains(&error),
+                        "seed {seed} at {height:.3}: the midline depth is {error:.1} mm out"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn refining_the_face_does_not_move_the_profile() {
         // Refinement adds vertices and moves none, so the surface is unchanged
         // and the measurement of it must be too. It was NOT: binning the raw
@@ -874,7 +1085,7 @@ mod tests {
         for seed in 0..6 {
             let (_, coarse, centre) = skull(seed, 1);
             let (_, fine, _) = skull(seed, 2);
-            let (lo, hi) = coarse.span();
+            let (lo, hi) = coarse.throat_and_crown();
             for step in 0..=12 {
                 let height = lo + (hi - lo) * (0.15 + 0.55 * step as f32 / 12.0);
                 let _ = centre;
@@ -901,7 +1112,7 @@ mod tests {
         // every depth it would be the band maximum again under a longer name,
         // and the test would pass while measuring nothing.
         let (_, skull, _) = skull(3, 1);
-        let (lo, hi) = skull.span();
+        let (lo, hi) = skull.throat_and_crown();
         let height = lo + (hi - lo) * 0.45;
         let reach = (hi - lo) * 0.25;
         let front = skull.width_across(height, reach * 0.5);
@@ -1165,22 +1376,26 @@ impl Skull {
         })
     }
 
-    /// The lowest and highest the measured profile reaches, in head-local metres.
+    /// The throat and the crown — the lowest and highest the measured profile
+    /// reaches, in head-local metres.
     ///
-    /// **The low end is the throat, not the chin.** The head's surface runs
-    /// 28 mm past the chin on a default body before the neck owns it, and two
-    /// call sites named this value `chin` and hung the whole feature frame from
-    /// it (#72). Anything placed as a fraction of the way down the face wants
-    /// [`Self::chin`].
+    /// **The low end is the THROAT, not the chin**, and the name says so now
+    /// because the old one (`span`) did not. The head's surface runs 28 mm past
+    /// the chin on a default body before the neck owns it; two call sites read
+    /// `span().0` as the chin and hung the entire feature frame from it, which
+    /// put the mouth 9 mm above the chin's tip where a face has about 20 and
+    /// read as the whole jaw rotated up into the throat (#72). A third reader
+    /// made the same mistake in a test (#73). Anything placed as a fraction of
+    /// the way down the FACE wants [`Self::chin`].
     #[must_use]
-    pub fn span(&self) -> (f32, f32) {
+    pub fn throat_and_crown(&self) -> (f32, f32) {
         (self.lo, self.hi)
     }
 
     /// Where the chin's tip is, in head-local metres.
     ///
     /// The forward-most point of the lower face — what the feature frame ends
-    /// at. Placing features down to [`Self::span`]'s low end instead put the
+    /// at. Placing features down to [`Self::throat_and_crown`]'s low end instead put the
     /// mouth 9 mm above the chin's tip where a face has about 20: the lower lip
     /// was painted onto the chin itself and the crease below the lip was carved
     /// into the underside of the jaw. Material added above the tip and removed
