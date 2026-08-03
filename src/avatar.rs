@@ -52,7 +52,7 @@ use crate::anim::Pose;
 use crate::cage::CageConfig;
 use crate::dress::Outfit;
 use crate::extremity::Extremities;
-use crate::face::{self, Eyes, Features, Skull};
+use crate::face::{self, Canon, Eyes, Features, Skull};
 use crate::hair::{Hair, HairParams};
 use crate::mesh::PolyMesh;
 use crate::plan::{Limb, Zone};
@@ -255,11 +255,26 @@ impl Avatar {
         // before ANY of what follows: skin weights, texture charts, the garment
         // cut and every attached part are all fitted to the mesh in hand, and a
         // nose that appears afterwards is a nose none of them knows about (#59).
-        let eyes = Eyes::build(&rig, &record.eyes);
-        if let Some(eyes) = &eyes {
-            face::carve_face(&mut body, &rig, eyes, &record.face);
+        //
+        // **Measure, carve, then seat**, and that order is the fix for the eyes
+        // (#76). It used to be place-then-carve, because the carve read the eye
+        // line, the pupil spacing and the proportion unit out of a built `Eyes`
+        // — so an eye could not be placed against the face it belonged in
+        // without a cycle. None of those three needs a globe: they are the
+        // measured skull's, and `Canon` is where they live now. Which leaves the
+        // eye free to be seated last, against the orbit-carved surface it will
+        // actually be seen against. `half_width` at the eye line and `chin` are
+        // bit-identical before and after the carve on every body measured, so
+        // reading the canon from the uncarved head costs nothing.
+        let canon =
+            Skull::measure(&body, &rig).map(|skull| Canon::measure(&rig, &skull, &record.eyes));
+        if let Some(canon) = &canon {
+            face::carve_face(&mut body, &rig, canon, &record.face);
         }
         let body = body;
+        let eyes = canon
+            .as_ref()
+            .map(|canon| Eyes::build(&rig, &body, canon, &record.eyes));
 
         let weights = skin::bind(&body, &rig, &config.skin);
         let zones = weights.zone_map(&body, &rig);
@@ -272,13 +287,15 @@ impl Avatar {
 
         // Measured from the body that was built, not from the plan that asked
         // for it: the two differ by about a third at the head, and by a
-        // different third on every body.
+        // different third on every body. Measured again here rather than reused
+        // from above, because an ear is conformed to the surface it sits on and
+        // that surface now has a face carved into it.
         let skull = Skull::measure(&body, &rig);
         let mut features = handed
             .then(|| {
-                let eyes = eyes.as_ref()?;
+                let canon = canon.as_ref()?;
                 let skull = skull.as_ref()?;
-                Some(Features::build(eyes, skull, &record.face))
+                Some(Features::build(canon, skull, &record.face))
             })
             .flatten();
         let mut extremities = Extremities::build(&rig, &surface, config.ground);

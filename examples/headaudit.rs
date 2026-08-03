@@ -15,7 +15,7 @@
 //! cargo run --release --example headaudit -- 99     # one seed
 //! ```
 
-use symbios_avatar::face::{Eyes, Skull};
+use symbios_avatar::face::{Canon, Eyes, Skull};
 use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3, Zone, face};
 
 /// Millimetres between samples, everywhere.
@@ -42,8 +42,12 @@ fn main() {
     let head = *rig.in_zone(Zone::Head).first().expect("a head");
     let centre = rig.joints[head].position;
     let radius = rig.joints[head].radius;
-    let eyes = Eyes::build(rig, &record.eyes).expect("a humanoid has eyes");
+    // The eyes as the avatar carries them, not a fresh pair: they are seated by
+    // bisecting the carved surface now (#76), so rebuilding them from a plan is
+    // not a thing that can be done here any more — which is the point.
+    let eyes: &Eyes = avatar.parts.eyes.as_ref().expect("a humanoid has eyes");
     let skull = Skull::measure(body, rig).expect("a skull");
+    let canon = Canon::measure(rig, &skull, &record.eyes);
 
     println!(
         "# HEAD AUDIT — seed {}\n",
@@ -57,16 +61,30 @@ fn main() {
     );
 
     // ---- The landmarks the crate believes in ------------------------------
-    let unit = eyes.left.radius;
-    let level = eyes.left.pivot.y;
+    //
+    // The globe and the ruler are two numbers now, and were one until #77. Both
+    // are printed, because "the eye is twice life size" and "every feature is
+    // measured in the eye" were the same defect wearing two faces.
+    let unit = canon.unit;
+    let eyeball = eyes.left.radius;
+    let level = canon.level;
     let chin = skull.chin();
     let (span_lo, span_hi) = skull.throat_and_crown();
     println!("## What the crate believes\n");
     println!("| landmark | mm | source |");
     println!("|---|---|---|");
     println!(
-        "| eye globe radius | {:.1} | eyes.left.radius, the unit every feature is sized in |",
+        "| eye globe radius | {:.1} | eyes.left.radius, the anatomical eyeball |",
+        eyeball * 1000.0
+    );
+    println!(
+        "| proportion unit | {:.1} | Canon::unit, one eye-width by fifths of the measured \
+         half-width |",
         unit * 1000.0
+    );
+    println!(
+        "| frame ruler | {:.1} | Canon::frame, the eye line to the chin |",
+        canon.frame * 1000.0
     );
     println!(
         "| eye pivot, height | {:+.1} | eyes.left.pivot.y |",
@@ -226,7 +244,7 @@ fn main() {
     let eye_line = centre.y + level;
     let socket = Vec3::new(centre.x + side, eye_line, centre.z);
     let skin_at_eye = bisect(socket, Vec3::Z, 0.30);
-    let pole = eyes.left.pivot.z + unit;
+    let pole = eyes.left.pivot.z + eyeball;
     match skin_at_eye {
         Some(reach) => println!(
             "- At the eye's own height and {:.1} mm off the midline, the skin reaches \
@@ -263,7 +281,7 @@ fn main() {
     let plain = symbios_avatar::build_body(&skeleton, &symbios_avatar::CageConfig::default(), 2)
         .expect("a body builds");
     let mut carved = plain.clone();
-    face::carve_face(&mut carved, rig, &eyes, &record.face);
+    face::carve_face(&mut carved, rig, &canon, &record.face);
     println!("| mm up | greatest outward | greatest inward |");
     println!("|---|---|---|");
     let mut band = 0.02f32;

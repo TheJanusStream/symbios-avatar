@@ -34,9 +34,8 @@ use crate::mesh::PolyMesh;
 use crate::plan::Zone;
 use crate::rig::Rig;
 
-use super::eye::Eyes;
+use super::canon::Canon;
 use super::features::FaceParams;
-use super::skull::Skull;
 
 /// The mouth's lobes: how far each stands out, where it sits and how wide it is,
 /// in units of the lip stack's half-height.
@@ -77,12 +76,9 @@ const FRONTAL: f32 = 0.15;
 /// wing of a nose and the corner of a mouth both sit where the head has already
 /// turned thirty degrees away from the front, and a push along one axis
 /// flattens them into the cheek instead of standing them off it.
-pub fn carve(mesh: &mut PolyMesh, rig: &Rig, eyes: &Eyes, params: &FaceParams) {
-    let Some(skull) = Skull::measure(mesh, rig) else {
-        return;
-    };
-    let centre = rig.joints[skull.head].position;
-    let face = Face::new(eyes, &skull, params);
+pub fn carve(mesh: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) {
+    let centre = rig.joints[canon.head].position;
+    let face = Face::new(canon, params);
 
     // Taken before anything moves. Displacing along a normal that is itself
     // being displaced makes the result depend on vertex order, which is a
@@ -113,9 +109,19 @@ pub fn carve(mesh: &mut PolyMesh, rig: &Rig, eyes: &Eyes, params: &FaceParams) {
 }
 
 /// The landmarks every field here is placed from, in head-local metres.
+///
+/// **Two rulers, not one.** Every coefficient below used to be a multiple of the
+/// eyeball's radius, which meant the eye-size slider silently resized the nose,
+/// the mouth, the lips, the brow and both ears — and meant a coefficient fitted
+/// on one body was up to 84% out on another, because that ruler's ratio to the
+/// face it was ruling was itself a free variable (#77). Widths and reaches are
+/// counted in [`Canon::unit`], heights in [`Canon::frame`], and the two are
+/// measured off the built head rather than derived from each other.
 struct Face {
-    /// An eye's radius, which the proportion canons are expressed in.
+    /// One eye-width: what anything across, or standing out, is counted in.
     unit: f32,
+    /// The eye line to the chin: what anything up or down is counted in.
+    frame: f32,
     /// The eye line.
     level: f32,
     /// Where the base of the nose sits.
@@ -131,34 +137,34 @@ struct Face {
 }
 
 impl Face {
-    fn new(eyes: &Eyes, skull: &Skull, params: &FaceParams) -> Self {
-        let level = eyes.left.pivot.y;
-        // The chin's tip, NOT `span().0`. The span ends at the throat, 28 mm
-        // below the chin on a default body, and a frame stretched to the throat
-        // put the whole feature stack a third of a storey too low: the lower
-        // lip landed on the chin's own tip and the crease under it was carved
-        // into the underside of the jaw, which read as the jaw rotated up into
-        // the throat (#72).
-        let chin = skull.chin();
-        let unit = eyes.left.radius;
+    fn new(canon: &Canon, params: &FaceParams) -> Self {
         Self {
-            unit,
-            level,
+            unit: canon.unit,
+            frame: canon.frame,
+            level: canon.level,
             // The same fraction of the eye-line-to-chin span `super::features`
             // counts in, so a nose carved here and an ear placed there agree
-            // about where the middle third of the face ends.
-            base: level + (chin - level) * super::features::NOSE_BASE,
-            mouth: level + (chin - level) * super::features::MOUTH_HEIGHT,
-            // Sized by the eye, like everything else — but never deeper than
-            // the face has room for. The eye and the face length are separate
-            // axes, and on a large-eyed short-faced head an uncapped lip stack
-            // reached past the chin: seed 99 put the sulcus lobe at −69.1 mm
-            // against a chin at −68.7, carving the crease into the tip itself.
-            // The lowest lobe sits at 1.32 plumps below the mouth line and the
-            // chin 0.31 frames below it, so 0.20 keeps the whole stack above
-            // the tip with about 0.05 frames to spare, on every head.
-            plump: (unit * (0.46 + 0.24 * params.mouth)).min(0.20 * (level - chin)),
-            apart: eyes.right.pivot.x.abs(),
+            // about where the middle third of the face ends. Counted from the
+            // chin's TIP, not from `throat_and_crown().0`: the span ends at the
+            // throat, 28 mm below the chin on a default body, and a frame
+            // stretched to the throat put the whole feature stack a third of a
+            // storey too low (#72).
+            base: canon.down(super::features::NOSE_BASE),
+            mouth: canon.down(super::features::MOUTH_HEIGHT),
+            // A height, so counted in the frame — and that is what retires the
+            // clamp this line used to carry. Sized by the eyeball, the lip stack
+            // could reach past the chin on a large-eyed short-faced head (seed
+            // 99 put the sulcus lobe at −69.1 mm against a chin at −68.7), so it
+            // was capped at 0.20 of the frame; and the cap then BOUND on every
+            // mouth value on that seed and above 0.594 on the default, which
+            // made most of the slider dead on half the bodies. A clamp that is
+            // load-bearing is the tell that the quantity was measured in the
+            // wrong ruler. In the frame, the bound is met by construction: the
+            // lowest lobe sits 1.32 plumps below the mouth line, which is at
+            // 0.69 of the frame, so the stack stays above the tip while
+            // `plump` stays under 0.235 — and the axis tops out at 0.218.
+            plump: canon.frame * (0.170 + 0.048 * params.mouth),
+            apart: canon.apart,
             params: *params,
         }
     }
@@ -200,10 +206,15 @@ impl Face {
     fn brow(&self, local: Vec3) -> f32 {
         let unit = self.unit;
         let weight = self.params.brow;
-        let rise = unit * (0.62 + 0.30 * weight);
-        let span = unit * 1.15;
-        let thick = unit * (0.34 + 0.16 * weight);
-        let reach = unit * (0.14 + 0.18 * weight);
+        // Heights in the frame, widths and reaches in the unit. The figures are
+        // the old eye-radius ones rebased — 0.7423 for a width, 0.3348 for a
+        // height — so a default body's brow is where it was to within a tenth
+        // of a millimetre, and every other body's is now measured in something
+        // that means the same thing on it.
+        let rise = self.frame * (0.2076 + 0.1004 * weight);
+        let span = unit * 0.8536;
+        let thick = self.frame * (0.1138 + 0.0536 * weight);
+        let reach = unit * (0.1039 + 0.1336 * weight);
 
         // Zero over the pupil, negative toward the midline, positive outward.
         let side = (local.x.abs() - self.apart) / span;
@@ -246,7 +257,7 @@ impl Face {
     fn mouth(&self, local: Vec3) -> f32 {
         let unit = self.unit;
         let full = self.params.mouth;
-        let half = unit * (0.92 + 0.16 * full);
+        let half = unit * (0.6829 + 0.1188 * full);
         let plump = self.plump;
         // Lips stand about five millimetres off the face around them, and this
         // is that. It was nearly ten, and at ten the profile below has to swing
@@ -254,12 +265,12 @@ impl Face {
         // lip line, it draws a terrace. The mouth came out as a stack of
         // horizontal bars, and no amount of re-authoring the knots fixed it
         // while the amplitude was the thing at fault.
-        let reach = unit * (0.19 + 0.15 * full);
+        let reach = unit * (0.1410 + 0.1113 * full);
 
         let across = local.x.abs() / half;
         // The mouth line is not level: the corners sit lower than the middle,
         // and a mouth drawn straight across reads as a slot.
-        let line = self.mouth - unit * 0.13 * across * across;
+        let line = self.mouth - self.frame * 0.0435 * across * across;
         let up = (local.y - line) / plump;
 
         let lips = if across > 1.20 || !(-2.40..=2.20).contains(&up) {
@@ -294,7 +305,7 @@ impl Face {
         let top = line + plump * 0.62;
         let middle = 0.5 * (top + self.base);
         let half = (self.base - top).abs().max(f32::EPSILON) * 0.5;
-        let wide = unit * 0.26;
+        let wide = unit * 0.1930;
         let sides = 1.0 - (local.x.abs() / wide).min(1.0);
         let groove = -0.34 * sides * sides * bump((local.y - middle) / half, 0.0, 0.62);
 
@@ -308,10 +319,10 @@ impl Face {
         // and this lands near it: the axis moves it by half again either way
         // rather than by the factor that would be needed to make a coarse
         // surface show it.
-        let reach = unit * (0.45 + 0.50 * self.params.nose);
+        let reach = unit * (0.3340 + 0.3712 * self.params.nose);
 
-        let root = self.level + unit * 0.55;
-        let under = self.base - unit * 0.30;
+        let root = self.level + self.frame * 0.1841;
+        let under = self.base - self.frame * 0.1004;
         let along = (root - local.y) / (root - under);
         // **Outside its own span, not clamped to the end of it.** A ramp read
         // with a clamped parameter holds its first value forever, so a nose
@@ -341,7 +352,12 @@ impl Face {
         // at the nostrils, per the canon of fifths.
         let half = unit
             * ramp(
-                &[(0.00, 0.30), (0.35, 0.26), (0.75, 0.40), (0.92, 0.52)],
+                &[
+                    (0.00, 0.2227),
+                    (0.35, 0.1930),
+                    (0.75, 0.2969),
+                    (0.92, 0.3860),
+                ],
                 along,
             );
 
@@ -422,18 +438,26 @@ fn smooth(at: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::face::EyeParams;
-    use crate::{CageConfig, HumanoidParams, plan::BodyPlan};
+    use crate::CageConfig;
+    use crate::face::skull::Skull;
+
+    /// A body's uncarved head, its canon, and the rig that built it.
+    fn measured(record: &crate::AvatarRecord) -> (PolyMesh, Rig, Canon) {
+        let skeleton = record.skeleton();
+        let plain = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let skull = Skull::measure(&plain, &rig).expect("a skull");
+        let canon = Canon::measure(&rig, &skull, &record.eyes);
+        (plain, rig, canon)
+    }
 
     /// A default head, before and after carving.
     fn head() -> (PolyMesh, PolyMesh, Rig, Vec3) {
-        let skeleton = HumanoidParams::default().skeleton();
-        let plain = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
-        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-        let eyes = Eyes::build(&rig, &EyeParams::default()).expect("a humanoid has eyes");
+        let record = crate::AvatarRecord::new("Carved", crate::Archetype::default());
+        let (plain, rig, canon) = measured(&record);
         let mut carved = plain.clone();
-        carve(&mut carved, &rig, &eyes, &FaceParams::default());
-        let centre = rig.joints[eyes.head].position;
+        carve(&mut carved, &rig, &canon, &FaceParams::default());
+        let centre = rig.joints[canon.head].position;
         (plain, carved, rig, centre)
     }
 
@@ -456,12 +480,9 @@ mod tests {
         // so the steepest honest gradient in the field (the nose's tail, about
         // 1.33) contributes 0.13 mm per step while a gate contributes its whole
         // amplitude. Measured before the gates were fixed: 2.63 mm.
-        let skeleton = HumanoidParams::default().skeleton();
-        let plain = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
-        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-        let eyes = Eyes::build(&rig, &EyeParams::default()).expect("eyes");
-        let skull = Skull::measure(&plain, &rig).expect("a skull");
-        let face = Face::new(&eyes, &skull, &FaceParams::default());
+        let record = crate::AvatarRecord::new("Cliffs", crate::Archetype::default());
+        let (_, _, canon) = measured(&record);
+        let face = Face::new(&canon, &FaceParams::default());
 
         // Asked by HALVING THE STEP, like the profile test in `super::skull`,
         // because a threshold cannot tell a cliff from a steep slope. A true
@@ -477,8 +498,8 @@ mod tests {
         // rather than a step — continuous, and it is where a nose wing meets a
         // cheek, which on a face is a crease. It will still alias against a
         // 3.6 mm cell, and that half of the problem is #82's, not this one's.
-        let unit = eyes.left.radius;
-        let (top, bottom) = (face.level + unit * 1.2, skull.chin() - unit * 0.4);
+        let unit = canon.unit;
+        let (top, bottom) = (face.level + unit * 1.2, canon.chin() - unit * 0.4);
         let worst_jump = |step: f32| {
             let mut worst = (0.0f32, Vec3::ZERO);
             let mut across = -unit * 2.0;
@@ -527,13 +548,9 @@ mod tests {
             if let Some(seed) = seed {
                 record.reroll(seed);
             }
-            let skeleton = record.skeleton();
-            let mesh = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
-            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-            let eyes = Eyes::build(&rig, &record.eyes).expect("eyes");
-            let skull = Skull::measure(&mesh, &rig).expect("a skull");
-            let face = Face::new(&eyes, &skull, &record.face);
-            let centre = rig.joints[eyes.head].position;
+            let (mesh, rig, canon) = measured(&record);
+            let face = Face::new(&canon, &record.face);
+            let centre = rig.joints[canon.head].position;
 
             // The median edge of the faces the mouth actually sits on.
             let mut edges: Vec<f32> = Vec::new();
@@ -603,9 +620,11 @@ mod tests {
     fn a_nose_stands_off_the_face_it_is_carved_into() {
         // The measurement that says a nose exists: how far the surface on the
         // midline moved, against how far it moved a nose-width to the side.
-        let (plain, carved, rig, centre) = head();
-        let eyes = Eyes::build(&rig, &EyeParams::default()).expect("eyes");
-        let unit = eyes.left.radius;
+        let (plain, carved, ..) = head();
+        let record = crate::AvatarRecord::new("Nosed", crate::Archetype::default());
+        let (_, rig, canon) = measured(&record);
+        let centre = rig.joints[canon.head].position;
+        let unit = canon.unit;
 
         let moved = |low: f32, high: f32, near: f32, far: f32| {
             plain
@@ -620,7 +639,7 @@ mod tests {
                 .fold(0.0f32, f32::max)
         };
 
-        let level = eyes.left.pivot.y;
+        let level = canon.level;
         let bridge = moved(level - unit * 1.4, level, 0.0, unit * 0.4);
         let cheek = moved(level - unit * 1.4, level, unit * 1.6, unit * 3.0);
         assert!(
@@ -667,17 +686,13 @@ mod tests {
             if let Some(seed) = seed {
                 record.reroll(seed);
             }
-            let skeleton = record.skeleton();
-            let plain = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
-            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-            let eyes = Eyes::build(&rig, &record.eyes).expect("eyes");
-            let skull = Skull::measure(&plain, &rig).expect("a skull");
+            let (plain, rig, canon) = measured(&record);
             let mut carved = plain.clone();
-            carve(&mut carved, &rig, &eyes, &record.face);
+            carve(&mut carved, &rig, &canon, &record.face);
 
-            let unit = eyes.left.radius;
-            let chin = skull.chin();
-            let centre = rig.joints[eyes.head].position;
+            let unit = canon.unit;
+            let chin = canon.chin();
+            let centre = rig.joints[canon.head].position;
             for (was, now) in plain.positions.iter().zip(&carved.positions) {
                 let height = was.y - centre.y;
                 let moved = was.distance(*now) * 1000.0;
@@ -700,10 +715,8 @@ mod tests {
 
     #[test]
     fn a_more_prominent_nose_stands_further_out() {
-        let skeleton = HumanoidParams::default().skeleton();
-        let plain = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
-        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-        let eyes = Eyes::build(&rig, &EyeParams::default()).expect("eyes");
+        let record = crate::AvatarRecord::new("Nosier", crate::Archetype::default());
+        let (plain, rig, canon) = measured(&record);
 
         // In the nose's own band, not over the whole mesh. This asserted against
         // `bounds().1.z` and started failing the moment the chin was pulled back
@@ -711,15 +724,15 @@ mod tests {
         // a head is its BROW, and a bounding box asked about a nose answers
         // about a brow. It had been passing for the same reason it then failed:
         // by accident.
-        let centre = rig.joints[eyes.head].position;
-        let level = eyes.left.pivot.y;
-        let unit = eyes.left.radius;
+        let centre = rig.joints[canon.head].position;
+        let level = canon.level;
+        let unit = canon.unit;
         let reach = |nose: f32| {
             let mut mesh = plain.clone();
             carve(
                 &mut mesh,
                 &rig,
-                &eyes,
+                &canon,
                 &FaceParams {
                     nose,
                     ..Default::default()

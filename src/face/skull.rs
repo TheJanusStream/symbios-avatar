@@ -979,9 +979,8 @@ mod tests {
             let rig = Rig::from_skeleton(&skeleton).expect("rigs");
             let skull = Skull::measure(&mesh, &rig).expect("a skull");
             let centre = rig.joints[skull.head].position;
-            if let Some(eyes) = crate::face::Eyes::build(&rig, &Default::default()) {
-                crate::face::carve_face(&mut mesh, &rig, &eyes, &Default::default());
-            }
+            let canon = crate::face::Canon::measure(&rig, &skull, &Default::default());
+            crate::face::carve_face(&mut mesh, &rig, &canon, &Default::default());
 
             let chin = centre.y + skull.chin();
             let mut tip = (f32::MIN, 0.0f32);

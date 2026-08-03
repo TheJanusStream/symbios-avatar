@@ -10,12 +10,14 @@
 //! about what exists and — for eyes at least — very nearly what anatomy does.
 
 pub mod blink;
+pub mod canon;
 pub mod eye;
 pub mod features;
 pub mod relief;
 pub mod skull;
 
 pub use blink::Blink;
+pub use canon::Canon;
 pub use eye::{Eye, EyeParams, Eyes};
 pub use features::{FaceParams, Features};
 pub use relief::carve as carve_face;

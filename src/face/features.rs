@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use crate::mesh::PolyMesh;
 use crate::prim;
 
-use super::eye::Eyes;
+use super::canon::Canon;
 use super::skull::Skull;
 
 /// How prominent each feature is.
@@ -128,42 +128,25 @@ pub struct Features {
 }
 
 impl Features {
-    /// Builds the ears for eyes that have already been placed.
+    /// Builds the ears for a face whose proportions have been measured.
     ///
-    /// `skull` is the head as it was actually built. Every landmark here is
-    /// anchored to it rather than to the sphere the plan asked for, because the
-    /// two differ by a third and the difference is not constant: parts placed
-    /// against the plan sat proud on one body and buried on the next.
+    /// `skull` is the head as it was actually built — **carved**, since an ear
+    /// is conformed to the surface it sits against. Every landmark here is
+    /// anchored to a measurement rather than to the sphere the plan asked for,
+    /// because the two differ by a third and the difference is not constant:
+    /// parts placed against the plan sat proud on one body and buried on the
+    /// next.
     #[must_use]
-    pub fn build(eyes: &Eyes, skull: &Skull, params: &FaceParams) -> Self {
-        // An eye's radius is the unit the canons are expressed in: a face is
-        // five eye-widths across, and every other landmark follows from that.
-        let unit = eyes.left.radius;
-        let level = eyes.left.pivot.y;
-        // The chin's tip. Feature HEIGHTS used to be counted in eye-radii down
-        // from the eye line, which quietly assumes the eye and the head are the
-        // same size — and they are separate axes. On a body with large eyes in
-        // a shallow head the mouth was placed below where the head has any
-        // surface at all, which is what 'buried' turned out to mean. Counting
-        // them as fractions of the eye-line-to-chin span fixes that — but the
-        // first version used `span().0`, which is the THROAT, 28 mm below the
-        // chin, and squeezed the whole lower face onto the jaw (#72).
-        let chin = skull.chin();
-
+    pub fn build(canon: &Canon, skull: &Skull, params: &FaceParams) -> Self {
         // Built once and mirrored. Building each side from its own signed
         // arithmetic looks equivalent and is not: it leaves the two halves
         // disagreeing by the width of a segment even when the maths is right.
-        let ear = ear(
-            unit,
-            skull,
-            level + (chin - level) * EAR_HEIGHT,
-            params.ears,
-        );
+        let ear = ear(canon, skull, canon.down(EAR_HEIGHT), params.ears);
         let flip = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
 
         Self {
             ears: vec![ear.transformed(flip), ear],
-            head: eyes.head,
+            head: canon.head,
         }
     }
 
@@ -205,9 +188,14 @@ impl Features {
 /// so the ear pointed *into* the head, and its body sat inward of wherever its
 /// origin was put. Both errors ran the same way, which is why an ear was buried
 /// on every seed rather than on some of them.
-fn ear(unit: f32, skull: &Skull, seat: f32, stand: f32) -> PolyMesh {
-    /// How far behind the midline the ear sits, in eye-radii.
-    const BACK: f32 = 0.35;
+fn ear(canon: &Canon, skull: &Skull, seat: f32, stand: f32) -> PolyMesh {
+    /// How far behind the midline the ear sits, in eye-widths.
+    ///
+    /// A depth, so counted in the width ruler. The figure is the old eye-radius
+    /// one rebased by 0.7423 (#77), which holds a default body's ear exactly
+    /// where it was — it was validated on screen there (#67) and the change of
+    /// ruler is not a reason to move it.
+    const BACK: f32 = 0.2598;
     /// How much of the ear's own depth is buried in the head.
     ///
     /// **A fraction of the ear, not of an eye.** This was 0.30 eye-radii, and an
@@ -230,7 +218,10 @@ fn ear(unit: f32, skull: &Skull, seat: f32, stand: f32) -> PolyMesh {
     /// How far the ear turns to face forward, in radians.
     const FACING: f32 = 0.28;
 
-    let height = unit * 1.35;
+    // An ear's long axis is vertical, so its size is a HEIGHT and belongs in the
+    // frame; how far it stands off the head is a depth and belongs in the unit.
+    // The two used to be the same number, and that number was the eyeball.
+    let height = canon.frame * 0.4520;
     let shell = prim::cap_shell(height, height * (0.22 + 0.16 * stand), 1.15, 3, 10);
 
     // Turned so the hollow faces OUT. `cap_shell` domes around `+Y`, and the
@@ -268,7 +259,7 @@ fn ear(unit: f32, skull: &Skull, seat: f32, stand: f32) -> PolyMesh {
     // and `half_width` is the widest the head gets anywhere in a band of
     // heights — which at the ear line *is* the cheekbone, several millimetres
     // in front of the ear and a couple of millimetres wider.
-    let back = -unit * BACK;
+    let back = -canon.unit * BACK;
     let mut placed = taper(&oriented, LOBE);
     let (near, far) = placed.bounds();
     let sink = near.x + (far.x - near.x) * SINK;
@@ -307,22 +298,22 @@ mod tests {
     use crate::rig::Rig;
     use crate::{HumanoidParams, plan::BodyPlan};
 
-    fn face(params: &FaceParams) -> (Features, Eyes) {
-        let (eyes, _, skull) = built();
-        (Features::build(&eyes, &skull, params), eyes)
+    fn face(params: &FaceParams) -> (Features, Canon) {
+        let (canon, _, skull) = built();
+        (Features::build(&canon, &skull, params), canon)
     }
 
-    /// A default body's eyes and measured skull.
+    /// A default body's canon and measured skull.
     ///
     /// Built, not planned: the whole point of these parts is that they are
     /// placed against the head the body actually grew.
-    fn built() -> (Eyes, PolyMesh, Skull) {
+    fn built() -> (Canon, PolyMesh, Skull) {
         let skeleton = HumanoidParams::default().skeleton();
         let mesh = crate::build_body(&skeleton, &crate::CageConfig::default(), 2).expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-        let eyes = Eyes::build(&rig, &EyeParams::default()).expect("a humanoid has eyes");
         let skull = Skull::measure(&mesh, &rig).expect("a humanoid has a skull");
-        (eyes, mesh, skull)
+        let canon = Canon::measure(&rig, &skull, &EyeParams::default());
+        (canon, mesh, skull)
     }
 
     #[test]
@@ -355,24 +346,25 @@ mod tests {
         //
         // Both landmarks are now derived the way `super::relief` derives them,
         // since neither is a mesh any more.
-        let (features, eyes) = face(&FaceParams::default());
-        let (_, _, skull) = built();
-        let unit = eyes.left.radius;
-        let level = eyes.left.pivot.y;
-        let brow = level + unit * (0.62 + 0.30 * FaceParams::default().brow);
-        let nose = level + (skull.chin() - level) * NOSE_BASE;
+        let (features, canon) = face(&FaceParams::default());
+        // Both landmarks in the ruler each belongs to, which is what #77 split:
+        // the brow's rise is a height and so counted in the frame, and the
+        // tolerance below is a height too.
+        let brow = canon.level + canon.frame * (0.2076 + 0.1004 * FaceParams::default().brow);
+        let nose = canon.down(NOSE_BASE);
+        let slack = canon.frame * 0.2;
 
         for ear in &features.ears {
             let (lo, hi) = ear.bounds();
             assert!(
-                (hi.y - brow).abs() < unit * 0.6,
-                "the ear's top is {:.1} eye-radii from the brow line",
-                (hi.y - brow) / unit
+                (hi.y - brow).abs() < slack,
+                "the ear's top is {:.2} frames from the brow line",
+                (hi.y - brow) / canon.frame
             );
             assert!(
-                (lo.y - nose).abs() < unit * 0.6,
-                "the ear's bottom is {:.1} eye-radii from the base of the nose",
-                (lo.y - nose) / unit
+                (lo.y - nose).abs() < slack,
+                "the ear's bottom is {:.2} frames from the base of the nose",
+                (lo.y - nose) / canon.frame
             );
         }
     }

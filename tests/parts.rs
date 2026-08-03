@@ -145,7 +145,6 @@ fn no_attached_part_is_buried_in_the_body() {
 }
 
 #[test]
-#[ignore = "the target, not the state: the eye is placed by a prediction that is 26 mm wrong off the midline (#76)"]
 fn an_eye_is_seated_in_the_face_rather_than_resting_on_it() {
     // The instrument that did not exist for the defect the owner reported as
     // "the eyes look popped out" (#73). Two quantities, because they fail

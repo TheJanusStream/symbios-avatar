@@ -19,15 +19,22 @@ use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::mesh::PolyMesh;
-use crate::plan::Zone;
 use crate::prim;
 use crate::rig::{Rig, landmark};
+
+use super::canon::Canon;
 
 /// How a body's eyes are shaped and set.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct EyeParams {
-    /// Eye size, as a fraction of the head's radius.
+    /// Eye size, `0` small and `1` large.
+    ///
+    /// **Not a fraction of the head's radius**, which is what it used to be and
+    /// what put a globe 1.9 to 2.2 times life on every body: an eyeball is the
+    /// one facial dimension that does not scale with the face around it. This
+    /// stretches a near-constant anatomical globe by about a sixth either way,
+    /// which is as far as a stylised eye can go before it stops being one.
     #[serde(with = "crate::plan::scaled")]
     pub size: f32,
     /// How far apart the eyes are set, `-1` close and `+1` wide.
@@ -164,53 +171,105 @@ pub struct Eyes {
     pub right: Eye,
     /// The joint the pair is parented to.
     pub head: usize,
-    /// The skull's radius, which every landmark on the face is measured in.
-    pub skull: f32,
 }
 
+/// The globe's radius on a body of reference stature, in metres.
+///
+/// A measured human eyeball is 24.2 mm across the transverse axis and 23.7 front
+/// to back, and it is the one facial dimension that holds still: no significant
+/// dependence on sex, on age past infancy, or on ethnicity. Uniformly scaling a
+/// head by 8% mis-sizes its eye by 2 mm, so an eyeball keyed to the head is
+/// wrong by construction rather than by tuning — which is how this crate came to
+/// carry a globe twice life size on every body it built (#77).
+const GLOBE: f32 = 0.0121;
+
+/// The measured height of the reference body's skin, in metres.
+///
+/// The stature the globe above belongs to, measured the way the globe is placed:
+/// off the body in hand. A 1.75 m adult's *skin* spans about 1.64 m — the crown
+/// of the head sits below the nominal stature — and across seventeen bodies that
+/// ratio holds to within 4%.
+const REFERENCE: f32 = 1.65;
+
+/// How much of a change in stature the globe follows.
+///
+/// Not none, because a small body's eye really is a little smaller, and not one,
+/// because it is nothing like proportional. A third takes a 1.25 m body to
+/// 11.2 mm and a 2.09 m body to 13.3 against life's 12.1 — a millimetre or two
+/// either way, which is what the anthropometry says the spread actually is.
+const STATURE_GAIN: f32 = 0.35;
+
+/// How far the globe's front pole stands proud of the skin at rest, in metres.
+///
+/// In life the corneal apex sits roughly level with the lids around it, so this
+/// is small on purpose. It is also the whole of what decides how much eye shows:
+/// the body is a closed surface with no opening cut for an eye, so the visible
+/// part of the globe is exactly the cap that clears the skin. Three millimetres
+/// on a 12.4 mm globe is a lens 16.2 mm wide, against a globe that until now
+/// stood 19 to 51 mm proud on every body (#76).
+const PROUD: f32 = 0.003;
+
+/// How far the depth axis moves that, in metres.
+///
+/// Kept inside `tests/parts.rs`'s 5 mm ceiling at both ends of the axis, so a
+/// sunken eye and a protruding one are both eyes that are seated.
+const PROUD_RANGE: f32 = 0.0018;
+
 impl Eyes {
-    /// Builds a pair of eyes for a body.
+    /// Builds a pair of eyes, seated in a head that has already been built.
     ///
-    /// Returns `None` for a body with no head to put them in.
+    /// `mesh` is the body **as it will be rendered** — carved, since that is the
+    /// surface the eye is seen against. Where the last version of this predicted
+    /// the surface by warping an interior point through [`super::skull::reshape`],
+    /// this bisects the real one.
+    ///
+    /// That is not a refinement, it is the fix: `reshape` scales `z` by a single
+    /// factor with no dependence on `x`, so its answer is right on the midline
+    /// (98.5 predicted against 97.1 measured) and 26.3 mm too deep at the eye's
+    /// own column — a globe whose *centre* stood 6.8 mm outside the head, with
+    /// 41 to 69% of its surface in the air. Nor is [`super::skull::Skull::depth_across`]
+    /// the answer, which is what #76 proposed: measured against a bisection of
+    /// the same column it overstates by 2.0 to 6.0 mm across seventeen bodies,
+    /// which is most of a 5 mm budget. Bins are for profiles; a seat wants the
+    /// surface.
+    ///
+    /// It also works on a head this crate does not shape. `reshape` was called
+    /// unconditionally while [`super::skull::shape`] bails for anything with more
+    /// than two feet, so a creature's eyes were placed by a human skull's
+    /// transform that had never been applied to its head.
     #[must_use]
-    pub fn build(rig: &Rig, params: &EyeParams) -> Option<Self> {
-        let head = *rig.in_zone(Zone::Head).first()?;
-        let skull = rig.joints[head].radius;
+    pub fn build(rig: &Rig, mesh: &PolyMesh, canon: &Canon, params: &EyeParams) -> Self {
+        let centre = rig.joints[canon.head].position;
+        let radius = globe(mesh, params);
+        let proud = PROUD - PROUD_RANGE * params.depth.clamp(-1.0, 1.0);
 
-        // Set into the face: forward, a little above centre, and apart. All
-        // proportional to the skull, so a large head gets large eyes without
-        // anything being retuned.
-        // Set *into* the face, not onto it. The skull's rendered surface sits
-        // well inside its node radius — subdivision pulls a capped tube in — so
-        // placing eyes against the nominal radius leaves them bulging like
-        // goggles, which is exactly how it first looked.
-        let radius = skull * (0.14 + 0.08 * params.size);
-        let apart = skull * (0.34 + 0.10 * params.spacing);
-        let rise = skull * 0.05;
+        // The eye's own column, not the midline: the face has curved away by
+        // several millimetres by the time it reaches a pupil, and that curve is
+        // exactly what the old prediction could not express.
+        //
+        // Falling back inward rather than outward, because a column that is not
+        // inside the body at all is a head narrower than its own canon — and the
+        // midline always is.
+        let far = {
+            let (lo, hi) = mesh.bounds();
+            (hi.z - lo.z).max(f32::EPSILON)
+        };
+        let level = centre.y + canon.level;
+        let skin = reach(
+            mesh,
+            Vec3::new(centre.x + canon.apart, level, centre.z),
+            far,
+        )
+        .or_else(|| reach(mesh, Vec3::new(centre.x, level, centre.z), far))
+        .or_else(|| reach(mesh, centre, far))
+        .unwrap_or(0.0);
 
-        // Placed on the *shaped* skull. The face is carved out of the sphere the
-        // body plan builds — a quarter longer front to back, with a jaw and a
-        // chin — so a point measured against that sphere lands well inside the
-        // head it is supposed to sit in.
-        let on_sphere = Vec3::new(apart, rise, skull * (0.60 - 0.10 * params.depth));
-        let placed = super::skull::reshape(on_sphere, skull);
-        // Set most of the way into the socket. The old inset was a third of the
-        // globe, which worked only because it was measured against a sphere that
-        // was already well inside the real face; against the true surface the
-        // same figure leaves the eye standing out like a bubble.
-        let forward = placed.z - radius * 0.82;
-
-        Some(Self {
-            left: eye(
-                -1.0,
-                Vec3::new(-placed.x, placed.y, forward),
-                radius,
-                params,
-            ),
-            right: eye(1.0, Vec3::new(placed.x, placed.y, forward), radius, params),
-            head,
-            skull,
-        })
+        let pivot = Vec3::new(canon.apart, canon.level, skin - radius + proud);
+        Self {
+            left: eye(-1.0, Vec3::new(-pivot.x, pivot.y, pivot.z), radius, params),
+            right: eye(1.0, pivot, radius, params),
+            head: canon.head,
+        }
     }
 
     /// Both eyes as one mesh, posed at the given closure.
@@ -220,6 +279,41 @@ impl Eyes {
         mesh.append(&self.right.assembled(closure));
         mesh
     }
+}
+
+/// How large this body's eyeball is, in metres.
+///
+/// Keyed to the body's own measured height and to nothing else on the head. See
+/// [`GLOBE`] for why that is the anatomy rather than a simplification.
+fn globe(mesh: &PolyMesh, params: &EyeParams) -> f32 {
+    let (lo, hi) = mesh.bounds();
+    let stature = (hi.y - lo.y).max(f32::EPSILON);
+    let grown = GLOBE * (1.0 + STATURE_GAIN * (stature / REFERENCE - 1.0));
+    grown * (0.80 + 0.45 * params.size.clamp(0.0, 1.0))
+}
+
+/// How far `mesh` reaches forward from `from`, or `None` if `from` is outside it.
+///
+/// Bisected against [`PolyMesh::contains`], which is the same primitive
+/// `tests/parts.rs` judges the result with and the one the head audit measures
+/// through. Binning the frontmost vertex in a band reported six millimetres of
+/// ripple that is not in the mesh, off the midline where the surface curves fast
+/// across a band (#71) — and off the midline is precisely where an eye sits.
+fn reach(mesh: &PolyMesh, from: Vec3, far: f32) -> Option<f32> {
+    if !mesh.contains(from) {
+        return None;
+    }
+    let (mut inside, mut outside) = (0.0f32, far);
+    // Thirty halvings takes any head to well under a micron.
+    for _ in 0..30 {
+        let mid = 0.5 * (inside + outside);
+        if mesh.contains(from + Vec3::Z * mid) {
+            inside = mid;
+        } else {
+            outside = mid;
+        }
+    }
+    Some(inside)
 }
 
 /// Builds one eye at `pivot`.
@@ -270,11 +364,26 @@ fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::face::skull::Skull;
     use crate::plan::{BodyPlan, HumanoidParams, QuadrupedParams};
+    use crate::skeleton::Skeleton;
+
+    /// A body's eyes, seated in the head it actually grew.
+    ///
+    /// Carved, because that is the surface the seat is bisected against — and
+    /// the difference is not decorative: the orbit the brow cuts is 1.2 to
+    /// 3.3 mm deep at the eye's own column on every body measured.
+    fn seated(skeleton: &Skeleton, params: &EyeParams) -> Eyes {
+        let rig = Rig::from_skeleton(skeleton).expect("rigs");
+        let mut mesh = crate::build_body(skeleton, &crate::CageConfig::default(), 2).expect("mesh");
+        let skull = Skull::measure(&mesh, &rig).expect("a skull");
+        let canon = super::Canon::measure(&rig, &skull, params);
+        crate::face::carve_face(&mut mesh, &rig, &canon, &Default::default());
+        Eyes::build(&rig, &mesh, &canon, params)
+    }
 
     fn eyes(params: &EyeParams) -> Eyes {
-        let rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
-        Eyes::build(&rig, params).expect("a head to put eyes in")
+        seated(&HumanoidParams::default().skeleton(), params)
     }
 
     #[test]
@@ -306,29 +415,72 @@ mod tests {
     }
 
     #[test]
-    fn eyes_scale_with_the_head_they_sit_in() {
-        let of_height = |height: f32| {
-            let rig = Rig::from_skeleton(
-                &HumanoidParams {
-                    height,
-                    ..Default::default()
-                }
-                .skeleton(),
-            )
-            .expect("rigs");
-            let pair = Eyes::build(&rig, &EyeParams::default()).expect("eyes");
-            let skull = rig.joints[pair.head].radius;
-            (pair.left.radius, skull)
+    fn an_eyeball_barely_notices_the_head_it_is_in() {
+        // **This test used to assert the opposite**, under the name
+        // `eyes_scale_with_the_head_they_sit_in`: it demanded that the eye/skull
+        // ratio be constant, which is the one facial dimension anatomy holds
+        // constant AGAINST head size. It passed for three rounds while shipping
+        // a globe 1.9 to 2.2 times life on every body (#77).
+        //
+        // What is measured instead is what the anthropometry actually says: an
+        // eyeball follows stature weakly and head size not at all, so growing
+        // the head must make the eye a SMALLER share of it.
+        let of = |height: f32, head_size: f32| {
+            let skeleton = HumanoidParams {
+                height,
+                head_size,
+                ..Default::default()
+            }
+            .skeleton();
+            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+            let pair = seated(&skeleton, &EyeParams::default());
+            (pair.left.radius, rig.joints[pair.head].radius)
         };
 
-        let (small, small_skull) = of_height(1.3);
-        let (large, large_skull) = of_height(2.1);
-        assert!(large > small, "a bigger head has bigger eyes");
-        let ratio = (large / large_skull) / (small / small_skull);
+        // Head size alone, at a fixed stature: the globe must hold still.
+        let (small_head, small_skull) = of(1.75, 0.0);
+        let (large_head, large_skull) = of(1.75, 1.0);
         assert!(
-            (ratio - 1.0).abs() < 0.05,
-            "and the same size relative to itself, got {ratio:.3}"
+            large_skull > small_skull * 1.2,
+            "the fixture did not actually change the head: {small_skull} to {large_skull}"
         );
+        assert!(
+            (large_head - small_head).abs() < 0.0005,
+            "the globe moved {:.2} mm when only the head grew",
+            (large_head - small_head).abs() * 1000.0
+        );
+        assert!(
+            large_head / large_skull < small_head / small_skull * 0.85,
+            "a bigger head must wear its eye as a smaller share of itself"
+        );
+
+        // Stature: a millimetre or two, not a proportion.
+        let (short, _) = of(1.3, 0.5);
+        let (tall, _) = of(2.1, 0.5);
+        assert!(tall > short, "a taller body's eye is a little larger");
+        assert!(
+            tall - short < 0.004,
+            "stature moved the globe {:.1} mm, which is a proportion rather than a \
+             millimetre or two",
+            (tall - short) * 1000.0
+        );
+    }
+
+    #[test]
+    fn an_eyeball_is_about_the_size_of_an_eyeball() {
+        // 24.2 mm across in life, on everyone. The globe used to run 34 to
+        // 72 mm across depending on the body, which is what made it read as
+        // goggles and what made every feature keyed to it unreliable.
+        for seed in 0..8i64 {
+            let mut record = crate::AvatarRecord::new("Sized", crate::Archetype::default());
+            record.reroll(seed);
+            let pair = seated(&record.skeleton(), &record.eyes);
+            let across = pair.left.radius * 2000.0;
+            assert!(
+                (18.0..=32.0).contains(&across),
+                "seed {seed}: a {across:.1} mm eyeball, against life's 24.2"
+            );
+        }
     }
 
     #[test]
@@ -500,20 +652,80 @@ mod tests {
 
     #[test]
     fn a_body_without_a_head_gets_no_eyes() {
-        use crate::skeleton::{Node, Skeleton};
+        // The `None` moved up a level with the placement (#76): there is nothing
+        // to measure a canon from, so there is nothing to seat an eye against,
+        // and `Avatar::build_with` skips both together.
+        use crate::skeleton::Node;
         let mut bare = Skeleton::new();
         let a = bare.add_node(Node::new(Vec3::ZERO, 0.2));
         bare.extend_from(a, Node::new(Vec3::Y, 0.2));
         let rig = Rig::from_skeleton(&bare).expect("rigs");
-        assert_eq!(Eyes::build(&rig, &EyeParams::default()), None);
+        let mesh = crate::build_body(&bare, &crate::CageConfig::default(), 2).expect("mesh");
+        assert_eq!(Skull::measure(&mesh, &rig), None);
     }
 
     #[test]
     fn a_creature_gets_eyes_too() {
-        let rig = Rig::from_skeleton(&QuadrupedParams::default().skeleton()).expect("rigs");
-        let pair = Eyes::build(&rig, &EyeParams::default()).expect("eyes");
+        // The trap on #76: the old placement warped an interior point through
+        // `skull::reshape` UNCONDITIONALLY, while `skull::shape` bails for
+        // anything with more than two feet — so a creature's eyes were placed by
+        // a human skull's transform that had never been applied to its head.
+        // Bisecting the built surface asks the head in hand instead, whatever
+        // shape it came out.
+        let pair = seated(
+            &QuadrupedParams::default().skeleton(),
+            &EyeParams::default(),
+        );
         assert!(pair.left.radius > 0.0);
         assert!(pair.assembled(0.0).is_closed_manifold());
+        assert!(
+            pair.left.pivot.z > 0.0,
+            "a muzzle has a front too: {:?}",
+            pair.left.pivot
+        );
+    }
+
+    #[test]
+    fn the_globe_is_seated_against_the_surface_rather_than_against_a_prediction() {
+        // The measurement the whole of #76 turns on, in the file that does the
+        // seating: how far the globe's front pole stands past the skin on its
+        // own column. Measured on the shipped build it was 19 to 51 mm on every
+        // body, because the prediction it was seated from had no dependence on
+        // x and so was right only on the midline.
+        //
+        // Bisected, not binned, and against the CARVED head — the same
+        // instrument `tests/parts.rs` judges the built avatar with, so the two
+        // cannot quietly disagree about the same column.
+        for seed in 0..8i64 {
+            let mut record = crate::AvatarRecord::new("Seated", crate::Archetype::default());
+            record.reroll(seed);
+            let skeleton = record.skeleton();
+            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+            let mut mesh =
+                crate::build_body(&skeleton, &crate::CageConfig::default(), 2).expect("mesh");
+            let skull = Skull::measure(&mesh, &rig).expect("a skull");
+            let canon = super::Canon::measure(&rig, &skull, &record.eyes);
+            crate::face::carve_face(&mut mesh, &rig, &canon, &record.face);
+            let pair = Eyes::build(&rig, &mesh, &canon, &record.eyes);
+
+            let centre = rig.joints[canon.head].position;
+            let far = {
+                let (lo, hi) = mesh.bounds();
+                hi.z - lo.z
+            };
+            let column = Vec3::new(
+                centre.x + pair.right.pivot.x,
+                centre.y + canon.level,
+                centre.z,
+            );
+            let skin = reach(&mesh, column, far).expect("the eye's column is inside the head");
+            let stands = (pair.right.pivot.z + pair.right.radius) - skin;
+            assert!(
+                (0.0005..=0.005).contains(&stands),
+                "seed {seed}: the globe's pole stands {:.2} mm past the skin",
+                stands * 1000.0
+            );
+        }
     }
 
     #[test]
