@@ -11,7 +11,7 @@
 //! CI and teach everyone to ignore it; writing only the ratchet would quietly
 //! bless whatever today happens to cost.
 
-use symbios_avatar::{Archetype, Avatar, AvatarRecord, MeshKind};
+use symbios_avatar::{Archetype, Avatar, AvatarRecord};
 
 /// Triangles a WebGL2-tier avatar may draw.
 ///
@@ -131,34 +131,39 @@ fn a_creature_is_not_more_expensive_than_a_person() {
 }
 
 #[test]
-fn hair_is_no_longer_where_all_the_triangles_are() {
-    // This test used to assert that hair was over 60% of the budget, and say
-    // that if the share ever fell, the cut had worked. It fell: 69.8% to 54.9%.
+fn no_one_part_of_a_body_dominates_its_budget() {
+    // This test has now been rewritten twice by its own failure, which is what
+    // it is for. It began asserting hair was over 60% of the budget. The hair
+    // cut (#40) took that to 54.9% and it was inverted to catch the share
+    // climbing back. Rebuilding hair as a sculpted shell (#68) took it to 19%,
+    // and the lower bound fired with the message that the next cut belongs
+    // elsewhere. It does: skin is now the largest single part.
     //
-    // It is kept, inverted, because the share is still the number that decides
-    // where any further cut goes — and because hair is the one part whose cost
-    // a record can move, so a share that climbs back is a sign the tier stopped
-    // biting rather than that hair got dearer.
+    // So it asks the question that outlives any particular answer — is any one
+    // part eating the body? — rather than naming a part.
     let avatar = built(None);
-    let hair = avatar
-        .drawn(0.0)
-        .into_iter()
-        .find(|mesh| mesh.kind == MeshKind::Hair)
-        .expect("a biped has hair")
-        .mesh
-        .triangulated()
-        .len();
-    let share = hair as f32 / avatar.budget.tris as f32;
+    let mut largest = ("nothing", 0usize);
+    let mut by_kind: Vec<(&str, usize)> = Vec::new();
+    for drawn in avatar.drawn(0.0) {
+        let tris = drawn.mesh.triangulated().len();
+        let name = drawn.kind.name();
+        if let Some(entry) = by_kind.iter_mut().find(|(kind, _)| *kind == name) {
+            entry.1 += tris;
+        } else {
+            by_kind.push((name, tris));
+        }
+    }
+    for (name, tris) in &by_kind {
+        if *tris > largest.1 {
+            largest = (name, *tris);
+        }
+    }
+    let share = largest.1 as f32 / avatar.budget.tris as f32;
     assert!(
-        share < 0.6,
-        "hair is back to {:.0}% of the budget",
-        share * 100.0
-    );
-    // And it is still the largest single part, so it is still where to look.
-    assert!(
-        share > 0.4,
-        "hair is down to {:.0}% of the budget; the next cut belongs elsewhere \
-         and this test should say where",
+        share < 0.55,
+        "{} is {:.0}% of the budget, and a body that is mostly one thing is \
+         where the next cut goes: {by_kind:?}",
+        largest.0,
         share * 100.0
     );
 }

@@ -441,7 +441,9 @@ impl Avatar {
         if let Some(hair) = &self.parts.hair {
             let to_body = Mat4::from_translation(self.rig.joints[hair.head].position);
             let tone = Vec3::from_array(hair.colour);
-            let mut locks = PolyMesh::new();
+            // The sculpted mass first, then the locks that break its edge.
+            let mut locks = hair.shell.painted(tone);
+            locks.set_normals(locks.vertex_normals());
             for (index, group) in hair.groups.iter().enumerate() {
                 let mut lock = group.mesh();
                 lock.set_normals(lock.vertex_normals());

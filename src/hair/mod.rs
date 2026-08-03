@@ -38,6 +38,7 @@
 //! parents it to the head joint and the hair follows the body for free.
 
 pub mod scalp;
+pub mod shell;
 pub mod strand;
 
 use std::f32::consts::TAU;
@@ -49,16 +50,8 @@ use crate::mesh::PolyMesh;
 use crate::rig::{Rig, Surface};
 
 pub use scalp::Scalp;
+pub use shell::Shell;
 pub use strand::Strand;
-
-/// How many rows of roots run from the crown down to the hairline.
-///
-/// Layering matters more than raw count: one row of very wide ribbons reads as a
-/// helmet, because a helmet is exactly what a single shell is.
-const ROWS: usize = 4;
-
-/// The fewest columns of strand groups worth building.
-const MIN_COLUMNS: usize = 8;
 
 /// How far a strand group's root is pushed away from the parting, in radians.
 ///
@@ -267,9 +260,20 @@ fn finite(value: f32, fallback: f32) -> f32 {
 }
 
 /// A head of hair, in head-local space.
+///
+/// A sculpted mass plus a handful of locks at its edge. The mass used to be
+/// locks too — a hundred and twenty-eight of them, costing 54% of the whole
+/// avatar's triangle budget — and at close range they read as flat ribbons
+/// rather than as hair, so the cost bought nothing (#68). What makes hair read
+/// as hair at this scale is its silhouette, so that is what the locks are spent
+/// on now.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hair {
-    /// The groups it is made of.
+    /// The sculpted mass.
+    pub shell: Shell,
+    /// The locks at its edge: the fringe, the parting, and where the fall leaves
+    /// the head. Kept under the old name because everything downstream that
+    /// reads a lock — the per-lock shade, the spring chains — still means these.
     pub groups: Vec<Strand>,
     /// The head joint the hair is parented to.
     pub head: usize,
@@ -320,31 +324,25 @@ impl Hair {
     /// What a head of hair will cost to sweep, in triangles.
     #[must_use]
     pub fn tris(&self) -> usize {
-        self.groups.iter().map(Strand::tris).sum()
+        self.shell.tris() + self.groups.iter().map(Strand::tris).sum::<usize>()
     }
 
-    /// Grows exactly `groups` strand groups, without regard to the budget.
+    /// Grows the mass and `pieces` locks at its edge, without regard to budget.
+    ///
+    /// Both are shaped by the same call. A shell column and an edge lock ask
+    /// [`sweep`] for the same thing — the curve hair takes at this azimuth, down
+    /// the scalp to the hairline and then falling free — and differ only in what
+    /// is done with the answer. That is what keeps the axes meaning what they
+    /// meant when every one of these was a lock.
     #[must_use]
     fn grow(
         scalp: &Scalp,
         body: Option<(&Rig, &Surface)>,
         params: &HairParams,
-        groups: u32,
+        pieces: u32,
     ) -> Self {
         let radius = scalp.radius();
-        let columns = (groups as usize / ROWS).max(MIN_COLUMNS);
-        let step = TAU / columns as f32;
-
         let thickness = radius * 0.024;
-
-        // Rooted AT the pole, so every column's top row converges on one point
-        // and radiates outward — which is the whorl real hair has.
-        //
-        // Rooting a hair's breadth below it does not work: the profile closes
-        // very fast near the crown, so a mere 0.04 of a head radius down still
-        // leaves a circle 0.038 m across with nothing inside it. That is half
-        // the skull's own width, and the close-up showed it as a clean bald
-        // disc — entirely invisible at body framing.
         let crown = scalp.top();
         let stand = radius * (0.05 + 0.05 * params.volume.clamp(-1.0, 1.0));
         let reach = radius * (0.15 + 3.8 * params.length.clamp(0.0, 1.0));
@@ -352,106 +350,100 @@ impl Hair {
         // eyes or it is not a fringe, so it barely tracks the length axis.
         let fringe = radius * (0.10 + 0.22 * params.length.clamp(0.0, 1.0));
         let waving = radius * 0.28 * params.wave.clamp(0.0, 1.0);
-
-        // Sized at the radius a strand actually sits at — the skull plus the
-        // stand-off plus the layers stacked on it — rather than at the skull.
+        // The mass sits close to the scalp, NOT where the outermost lock used to.
+        // A lock at that radius was a ribbon with daylight either side of it; a
+        // solid at the same radius is a bonnet standing a centimetre off the
+        // head, which is how the first sweep of this read.
         //
-        // The factor is what makes a lock read as a lock. Rows are staggered
-        // across the column gap, so coverage is four times finer than this and
-        // was never the thing leaving gaps; widening ribbons to close them
-        // produced slabs nearly as broad as the head. The gaps were the wave
-        // pulling neighbours apart, and that is fixed where the wave is.
-        let outermost = scalp.width_at(0.0) * radius + stand + (ROWS - 1) as f32 * thickness * 1.2;
-        let width = outermost * step * 0.80;
+        // Floored at its own half-thickness, because a shell is a solid and the
+        // stand-off is measured to its middle: at `volume` -1 the old expression
+        // came to zero and the inner surface went under the scalp, which a lock
+        // could never do because a lock has no inner surface.
+        let lift = (stand * 0.5).max(radius * shell::THICKNESS * 0.65);
 
-        let mut groups = Vec::with_capacity(columns * ROWS);
-        for column in 0..columns {
-            for row in 0..ROWS {
-                // Rows are staggered *across* the gap between columns as well as
-                // stacked down it. Without the stagger, all four rows of a
-                // column reach the hairline at one point and fall down one line
-                // — four ribbons in the same place and bare gaps between them,
-                // which is exactly how it first rendered.
-                let spoke = column as f32 + (row as f32 + 0.5) / ROWS as f32;
-                let azimuth = part_aside(step * spoke, params.part);
-                // Where this lock's clump gathers: the column's own line, which
-                // the rows are staggered either side of.
-                let gathers = part_aside(step * (column as f32 + 0.5), params.part);
-                let hairline = hairline(scalp, azimuth, params.coverage);
-                if hairline >= crown {
-                    continue;
-                }
+        // One curve, asked for at an azimuth. `ragged` is what separates an edge
+        // lock from the mass: the shell is a sculpted surface and wants none of
+        // it, while a lock that ends exactly where its neighbour does reads as a
+        // cut fringe rather than as hair.
+        let curve = |azimuth: f32, ragged: f32, layer: f32| {
+            let turned = part_aside(azimuth, params.part);
+            // Never at or above the crown: the cap phase would have no height to
+            // run through and the column would collapse to a point.
+            let hairline = hairline(scalp, turned, params.coverage).min(crown - CAP_PER_STEP);
+            let front = frontness(turned);
+            let fall = (reach + (fringe - reach) * front) * ragged;
+            sweep(
+                scalp,
+                body,
+                Fall {
+                    azimuth: turned,
+                    gathers: turned,
+                    // Rooted AT the pole, so every column meets at the whorl and
+                    // radiates outward. Rooting even a little below it leaves a
+                    // bald disc half the skull's width at the crown, which is
+                    // what the locks did (#65).
+                    root: crown,
+                    hairline,
+                    stand: lift + layer * thickness * 1.2,
+                    fall,
+                    waving,
+                    phase: turned * 3.0,
+                    clearance: thickness * 1.5,
+                    cap_steps: (((crown - hairline) / CAP_PER_STEP).round() as usize)
+                        .max(CROWN_STEPS),
+                    fall_steps: (((fall + 3.0 * waving) / (FALL_PER_STEP * radius)).round()
+                        as usize)
+                        .clamp(MIN_STEPS, FALL_STEPS),
+                },
+            )
+        };
 
-                // The top row roots at the whorl itself. Starting it even an
-                // eighth of the way down left a bare patch at the crown, since
-                // every strand travels downward and nothing covers what is
-                // above the highest root.
-                let down = row as f32 / ROWS as f32;
-                let root = crown + (hairline - crown) * down;
+        let (columns, rows) = shell::grid_for(scalp, reach.max(fringe) + 3.0 * waving);
+        let shell = Shell::loft(scalp, columns, rows, |azimuth| curve(azimuth, 1.0, 0.0));
 
-                // Layering. The strand rooted at the crown travels over all the
-                // others to reach the hairline, so it lies furthest out and
-                // hangs longest; the ones rooted low are the underlayer.
-                let layer = (ROWS - 1 - row) as f32;
-                let lift = stand + layer * thickness * 1.2;
-                let front = frontness(azimuth);
-                let ragged = 1.0 + RAGGED * (jitter(column, row) * 2.0 - 1.0);
-                let fall = (reach + (fringe - reach) * front) * (1.0 - 0.15 * row as f32) * ragged;
-
-                let path = sweep(
-                    scalp,
-                    body,
-                    Fall {
-                        azimuth,
-                        gathers,
-                        root,
-                        hairline,
-                        stand: lift,
-                        fall,
-                        waving,
-                        // The crown row keeps its floor whatever it crosses: it
-                        // is the only one that goes over the pole, where the
-                        // profile turns through a right angle inside a couple
-                        // of bands, and a chord across that is the bald disc at
-                        // the whorl.
-                        cap_steps: (((root - hairline) / CAP_PER_STEP).round() as usize)
-                            .max(if row == 0 { CROWN_STEPS } else { MIN_STEPS }),
-                        fall_steps: (((fall + 3.0 * waving) / (FALL_PER_STEP * radius)).round()
-                            as usize)
-                            .clamp(MIN_STEPS, FALL_STEPS),
-                        // Phase follows the azimuth, so neighbours wave
-                        // together the way a lock of hair does. A phase per
-                        // strand looks like corrugated iron.
-                        phase: azimuth * 3.0,
-                        clearance: thickness * 1.5,
-                    },
-                );
-                if path.len() < 2 {
-                    continue;
-                }
-                groups.push(Strand {
-                    path,
-                    width,
-                    thickness,
-                    across: Vec3::new(azimuth.cos(), 0.0, -azimuth.sin()),
-                });
+        // The edge locks. Placed where hair parts from itself rather than evenly
+        // — evenly spaced they read as a fence — and standing one layer proud of
+        // the mass so they break its silhouette instead of sinking into it.
+        let wanted = (pieces as usize).min(shell::SILHOUETTE.len());
+        let width = radius * 0.10;
+        let mut groups = Vec::with_capacity(wanted);
+        for (index, &fraction) in shell::SILHOUETTE.iter().take(wanted).enumerate() {
+            let azimuth = TAU * fraction;
+            let ragged = 1.0 + RAGGED * (jitter(index, 0) * 2.0 - 1.0);
+            // Outside the shell's outer surface, not merely above the scalp.
+            // The shell's middle sits at `lift` and its own half-thickness is
+            // radius * THICKNESS / 2, so a lock any closer than this is buried
+            // in the mass it is supposed to break the edge of — and at volume
+            // -1, where the stand-off is at its floor, buried in the skull.
+            let clear = (radius * shell::THICKNESS * 0.5 + thickness) / (thickness * 1.2);
+            let path = curve(azimuth, ragged, clear.max(1.0));
+            if path.len() < 2 {
+                continue;
             }
+            groups.push(Strand {
+                path,
+                width,
+                thickness,
+                across: Vec3::new(azimuth.cos(), 0.0, -azimuth.sin()),
+            });
         }
 
         Self {
+            shell,
             groups,
             head: scalp.head,
             colour: params.colour(),
         }
     }
 
-    /// Every group swept into one mesh.
+    /// The mass and its edge locks swept into one mesh.
     ///
-    /// The result is not a manifold — strand groups overlap, which is the point
-    /// of them — though each group on its own is a closed solid.
+    /// The result is not a manifold — the locks lie over the shell and over each
+    /// other, which is the point of them — though the shell and each lock are
+    /// closed solids on their own.
     #[must_use]
     pub fn mesh(&self) -> PolyMesh {
-        let mut mesh = PolyMesh::new();
+        let mut mesh = self.shell.mesh();
         for group in &self.groups {
             mesh.append(&group.mesh());
         }
@@ -461,11 +453,12 @@ impl Hair {
     /// How far the lowest tip hangs below the head joint, in metres.
     #[must_use]
     pub fn drop(&self) -> f32 {
-        -self
+        let locks = -self
             .groups
             .iter()
             .map(Strand::tip)
-            .fold(0.0f32, |low, tip| low.min(tip.y))
+            .fold(0.0f32, |low, tip| low.min(tip.y));
+        locks.max(self.shell.drop())
     }
 }
 
@@ -619,8 +612,16 @@ mod tests {
     fn a_head_grows_hair() {
         let (scalp, rig, surface) = scalp(1);
         let hair = Hair::over(&scalp, Some((&rig, &surface)), &HairParams::default());
-        assert!(hair.groups.len() > 40, "only {} groups", hair.groups.len());
-        assert!(hair.mesh().face_count() > 1000);
+        // A mass and a handful of locks at its edge, not a hundred locks: the
+        // count moved from 128 to a dozen when the geometry changed (#68), and
+        // what has to be true is that hair exists, not that it is made of parts.
+        let (columns, rows) = hair.shell.grid();
+        assert!(
+            columns >= 20 && rows >= 8,
+            "the mass swept {columns}x{rows}"
+        );
+        assert!(!hair.groups.is_empty(), "no locks broke the mass's edge");
+        assert!(hair.mesh().face_count() > 500);
     }
 
     #[test]
@@ -754,13 +755,15 @@ mod tests {
                     ..Default::default()
                 },
             )
-            .groups
-            .iter()
-            .filter(|group| group.root().z > 0.4 * scalp.radius())
-            .map(|group| group.root().y)
-            .fold(f32::MAX, f32::min)
+            .shell
+            .front_edge(0.4 * scalp.radius())
         };
-        assert!(lowest(1.0) < lowest(-1.0));
+        assert!(
+            lowest(1.0) < lowest(-1.0),
+            "a low hairline reached {} and a receding one {}",
+            lowest(1.0),
+            lowest(-1.0)
+        );
     }
 
     #[test]
@@ -830,10 +833,12 @@ mod tests {
     }
 
     #[test]
-    fn an_expensive_head_of_hair_is_tiered_down_rather_than_grown() {
-        // The half of this that a record can attack. Group count is what costs
-        // geometry, so it is what gets taken away — and only it: the axes that
-        // say what the hair looks like are the creator's.
+    fn the_dearest_look_still_fits_the_budget() {
+        // What a record can attack, and what changed when hair became a mass.
+        // Group count used to be the lever: it was what cost geometry, so it
+        // was what tiering took away. The mass costs what the head's own size
+        // says it costs and a record cannot inflate it, so the dearest look is
+        // now simply affordable rather than tiered down to affordable (#68).
         let (scalp, rig, surface) = scalp(1);
         let dear = HairParams {
             length: 1.0,
@@ -847,22 +852,13 @@ mod tests {
             "the dearest legal hair cost {}",
             hair.tris()
         );
-        assert!(
-            hair.groups.len() < MAX_GROUPS as usize,
-            "it asked for {MAX_GROUPS} groups at the dearest look and got them all"
-        );
-        assert!(
-            hair.groups.len() >= TIER_FLOOR as usize - ROWS,
-            "tiering went past its floor, to {} groups",
-            hair.groups.len()
-        );
-        // The look survives the tier: it is still long hair, not cropped.
+        // And the look survives: it is still long hair, not cropped.
         let cheap = Hair::over(&scalp, Some((&rig, &surface)), &HairParams::default());
         assert!(
             hair.drop() > cheap.drop() * 1.5,
-            "the tier shortened the hair, from {} to {}",
-            cheap.drop(),
-            hair.drop()
+            "the dearest look hangs {} against the default's {}",
+            hair.drop(),
+            cheap.drop()
         );
     }
 
@@ -961,12 +957,17 @@ mod tests {
                                 ..Default::default()
                             };
                             let hair = Hair::over(&scalp, Some((&rig, &surface)), &params);
+                            let (columns, rows) = hair.shell.grid();
                             assert!(
-                                hair.groups.len() > 20,
-                                "{params:?} grew {} groups",
-                                hair.groups.len()
+                                columns >= 20 && rows >= 8,
+                                "{params:?} swept a mass of {columns}x{rows}"
                             );
                             assert!(hair.mesh().face_count() > 500, "{params:?} swept nothing");
+                            assert!(
+                                hair.tris() <= MAX_TRIANGLES,
+                                "{params:?} cost {}",
+                                hair.tris()
+                            );
                         }
                     }
                 }
