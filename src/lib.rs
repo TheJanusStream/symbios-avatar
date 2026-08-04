@@ -149,6 +149,16 @@ pub use symbios_texture::generator::TextureMap;
 /// hold its millimetres, so the terms did not shrink; the surface under them
 /// coarsened.
 ///
+/// **The sixth and seventh are the JAW FLANK, and they are the cheapest passes
+/// here by an order of magnitude.** Every pass above reaches from dead ahead
+/// round to a cosine, so widening one to take in the angle of the jaw pays for
+/// another refinement of a nose as well. Past about 57° from dead ahead the
+/// lower face was still at the base subdivision — 24 mm cells against 1.8 mm on
+/// the front — and half the mandible's border lives out there, so its 5 mm knee
+/// was a fifth of a cell. Giving a pass a near AND a far cosine lets these two
+/// take the strip alone: they cost 652 triangles between them and quarter the
+/// cells they cover (#80).
+///
 /// It is affordable because the same stretch made the face refinement CHEAPER:
 /// the bands are fixed heights in head radii, so a taller head puts less of
 /// itself inside them. The body went 23,182 triangles to 20,668 on the stretch
@@ -163,7 +173,7 @@ pub use symbios_texture::generator::TextureMap;
 /// the second pass moved the profile the ears are placed from, and one seed's
 /// ear fell to 18% visible against a 25% floor. That was a defect in the
 /// measurement rather than in the refinement, and it is fixed (#67).
-const FACE_REFINEMENT: usize = 5;
+const FACE_REFINEMENT: usize = 7;
 
 /// Builds a body's surface from its skeleton, shaped and ready to bind.
 ///

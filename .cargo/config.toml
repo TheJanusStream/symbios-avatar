@@ -11,3 +11,6 @@
 # whole point of the CI job that uses it.
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+
+[build]
+jobs = 6

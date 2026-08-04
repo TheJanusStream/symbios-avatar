@@ -30,6 +30,7 @@
 
 use glam::Vec3;
 
+use super::smooth;
 use crate::mesh::PolyMesh;
 use crate::plan::Zone;
 use crate::rig::Rig;
@@ -486,12 +487,6 @@ fn ramp(curve: &[(f32, f32)], at: f32) -> f32 {
 fn bump(at: f32, centre: f32, width: f32) -> f32 {
     let along = (at - centre) / width.max(f32::EPSILON);
     (-along * along).exp()
-}
-
-/// Smoothstep, for fading a field out without leaving a crease where it ends.
-fn smooth(at: f32) -> f32 {
-    let at = at.clamp(0.0, 1.0);
-    at * at * (3.0 - 2.0 * at)
 }
 
 #[cfg(test)]

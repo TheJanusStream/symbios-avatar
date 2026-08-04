@@ -162,6 +162,16 @@ fn no_one_part_of_a_body_dominates_its_budget() {
     //
     // The number to watch is now hair (3,416) and cloth (5,936). If the total
     // ever presses the ceiling, those are where the room is, not the face.
+    //
+    // **The jaw's two passes took skin from 57.3% to 57.9% for 652 triangles
+    // (#80), and the guard is what stopped a third.** The jaw's border out at
+    // the gonion is carved across three quarters of a cell; a third pass over
+    // the knee's own band would take it to 1.9 and cost 664 more, which lands
+    // at 59.0% — one percent of guard left. A guard with one percent left in it
+    // is not a guard, so the pass was not taken and the softness is recorded in
+    // `FACE_PASSES` instead. Note also that the default body is NOT the worst
+    // case here: the refinement bands are fixed heights in head radii, so a
+    // record with a small head refines more (#86).
     let avatar = built(None);
     let mut largest = ("nothing", 0usize);
     let mut by_kind: Vec<(&str, usize)> = Vec::new();
