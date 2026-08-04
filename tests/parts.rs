@@ -510,3 +510,71 @@ fn translated(mesh: &PolyMesh, offset: Vec3) -> PolyMesh {
     }
     moved
 }
+
+#[test]
+fn an_eye_shows_white_on_both_sides_of_its_iris() {
+    // #91. `an_eye_shows_more_white_than_pupil` above already demands 25% sclera
+    // and passed throughout, because it measures the TOTAL and every one of
+    // those percent was on the outer side: the skin beside the nose stood in
+    // front of the globe, the iris met it directly, and the eye read as looking
+    // sideways. A total that cannot see which side its white is on is not a
+    // check on this — the failing case and the passing case give the same
+    // number, which is why this is a second test rather than a tighter bound on
+    // that one.
+    //
+    // Classified by asking `iris_of` for its own pole colours, as that test
+    // does, so no angle is copied here for the geometry to drift away from.
+    let sclera = symbios_avatar::face::eye::iris_of(Vec3::new(0.0, 0.0, -1.0));
+
+    for seed in 0..SEEDS {
+        let mut record = AvatarRecord::new("Sweep", Archetype::default());
+        record.reroll(seed);
+        let avatar = Avatar::build_with(&record, &geometry_only()).expect("the body builds");
+        let Some(eyes) = &avatar.parts.eyes else {
+            continue;
+        };
+        let body = &avatar.parts.body;
+        let centre = avatar.rig.joints[eyes.head].position;
+
+        for (side, eye) in [("left", &eyes.left), ("right", &eyes.right)] {
+            let (mut medial, mut lateral) = (0.0f64, 0.0f64);
+            triangles(body, &eye.globe, centre, |at, area, outside| {
+                if !outside || symbios_avatar::face::eye::iris_of(at - eye.pivot) != sclera {
+                    return;
+                }
+                // `eye.side` is +1 for the body's right eye, so this is positive
+                // away from the midline whichever eye it is.
+                if (at.x - eye.pivot.x) * eye.side > 0.0 {
+                    lateral += area;
+                } else {
+                    medial += area;
+                }
+            });
+            let total = medial + lateral;
+            assert!(total > 0.0, "seed {seed}: the {side} eye shows no white");
+            let share = medial / total * 100.0;
+            // **Two percent, and the bar is low on purpose rather than by
+            // accident.** It is not asking for parity: the outer white is
+            // genuinely the larger, because the lid's margin closes the aperture
+            // at 59° laterally while the medial side ends in a corner. Nor is it
+            // asking for as much as the geometry can give, because it cannot
+            // give much — the medial aperture here is bounded by SKIN rather
+            // than by the lid, and how far the socket may be deepened is capped
+            // by `an_eye_is_seated_in_the_face_rather_than_resting_on_it` above,
+            // which fails at 26% globe exposure one step past where the orbit
+            // now sits. Measured across these sixteen seeds the nasal share runs
+            // 3.9% to 31.2%, and it ran 0.0% on all but one of them before (#91).
+            //
+            // So this catches a return to zero, which is what the defect was,
+            // and it is set two points under the worst seed because the measure
+            // itself is triangulation-noisy: a symmetric body reports 3.9% for
+            // one eye and 5.7% for the other.
+            assert!(
+                share > 2.0,
+                "seed {seed}: only {share:.1}% of the {side} eye's white is on the \
+                 nasal side, so the iris runs into the skin there and the eye reads \
+                 as turned outward"
+            );
+        }
+    }
+}

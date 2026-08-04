@@ -616,7 +616,7 @@ impl PolyMesh {
             }
         }
 
-        (0..self.positions.len())
+        let raw: Vec<f32> = (0..self.positions.len())
             .map(|index| {
                 if count[index] == 0 {
                     return 0.0;
@@ -631,7 +631,47 @@ impl PolyMesh {
                 // neighbour ring from the tangent plane goes as curvature times
                 // the square of its radius.
                 let curvature = offset.dot(normals[index]) / (length * length);
-                (curvature * CREASE_FOLD).clamp(0.0, 1.0)
+                curvature * CREASE_FOLD
+            })
+            .collect();
+
+        // **Smoothed once against the one-ring, because a second derivative
+        // estimated per vertex is mostly noise** (#92). Measured on a default
+        // body, the mean vertex on the NECK sat 0.0797 away from the mean of its
+        // own neighbours against a mean crease of 0.1144 — seventy percent of
+        // the signal was the difference between a vertex and the ones touching
+        // it. Interpolated into the atlas that draws as a row of dark chevrons,
+        // one per quad, across the throat: an even sawtooth that reads as damage
+        // rather than as shading, and it is what made the head-to-body
+        // transition look mangled in front view.
+        //
+        // Smoothed BEFORE the clamp, so a vertex that reads spuriously concave
+        // can be pulled back by convex neighbours rather than being floored at
+        // zero first and averaged after. Half its own value and half the ring's:
+        // enough to halve the noise, little enough that a real fold — where the
+        // whole ring is creased together — barely moves, which is why the arc
+        // and cube cases below are unaffected.
+        let mut ring = vec![0.0f32; self.positions.len()];
+        let mut ring_count = vec![0u32; self.positions.len()];
+        for face in &self.faces {
+            for corner in 0..face.len() {
+                let here = face[corner] as usize;
+                let next = face[(corner + 1) % face.len()] as usize;
+                ring[here] += raw[next];
+                ring_count[here] += 1;
+                ring[next] += raw[here];
+                ring_count[next] += 1;
+            }
+        }
+
+        (0..self.positions.len())
+            .map(|index| {
+                let smoothed = if ring_count[index] == 0 {
+                    raw[index]
+                } else {
+                    0.5 * raw[index] + 0.5 * ring[index] / ring_count[index] as f32
+                };
+                smoothed.clamp(0.0, 1.0)
             })
             .collect()
     }
@@ -1051,6 +1091,33 @@ mod tests {
         let refined = cube.refine(&vec![false; cube.face_count()]);
         assert_eq!(refined.positions, cube.positions);
         assert_eq!(refined.faces, cube.faces);
+    }
+
+    #[test]
+    fn one_stray_vertex_cannot_light_a_crease() {
+        // #92. The measure is a second derivative, so a single vertex sitting a
+        // little off its neighbours reads as a fold as loudly as a real fold
+        // does. On a body that drew an even row of dark chevrons across the
+        // throat, one per quad — seventy percent of the neck's crease signal was
+        // the difference between a vertex and the ring touching it.
+        //
+        // Compared against a REAL fold rather than against an absolute number,
+        // because the smoothing has to leave real folds alone to be worth
+        // having: a genuine cavity is creased across its whole ring and survives
+        // averaging, a lone spike is not and does not.
+        let fold = peak_crease(&arc(8, 0.035, true));
+
+        let mut poked = arc(8, 0.035, false);
+        let stray = poked.positions.len() / 2;
+        let normals = poked.vertex_normals();
+        // Inward along its own normal by a fraction of the arc's own radius.
+        poked.positions[stray] += normals[stray] * 0.004;
+        let spike = peak_crease(&poked);
+
+        assert!(
+            spike < fold * 0.5,
+            "one displaced vertex reads {spike:.3} against a real fold's {fold:.3};              a lone spike must not shade like a cavity"
+        );
     }
 
     #[test]

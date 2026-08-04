@@ -221,7 +221,15 @@ fn ear(canon: &Canon, skull: &Skull, seat: f32, stand: f32) -> PolyMesh {
     // An ear's long axis is vertical, so its size is a HEIGHT and belongs in the
     // frame; how far it stands off the head is a depth and belongs in the unit.
     // The two used to be the same number, and that number was the eyeball.
-    let height = canon.frame * 0.4520;
+    //
+    // **Down from 0.4520, because the ear was half again too big** (#90). This
+    // is the cap's RADIUS rather than the ear's height — the built shell spans
+    // about 1.83 of it — so the name flattered it: at 0.4520 the ear measured
+    // 89.5 mm tall on a 214.2 mm head, a ratio of 0.418 against life's 0.267 to
+    // 0.289. That is 49% oversize, and an ear half again too big reads as an elf
+    // ear on its own, before anything about its outline is considered. #90 named
+    // the point and not the size; the size was the larger error of the two.
+    let height = canon.frame * 0.3030;
     let shell = prim::cap_shell(height, height * (0.22 + 0.16 * stand), 1.15, 3, 10);
 
     // Turned so the hollow faces OUT. `cap_shell` domes around `+Y`, and the
@@ -321,6 +329,32 @@ mod tests {
         let (features, _) = face(&FaceParams::default());
         assert_eq!(features.ears.len(), 2);
         assert!(features.assembled().face_count() > 40);
+    }
+
+    #[test]
+    fn an_ear_is_the_size_of_an_ear() {
+        // #90 named the ear's outline — a cap has an apex, so the helix comes to
+        // a point — and the SIZE turned out to be the larger error. Nothing
+        // measured it, because the constant that sets it is the shell's radius
+        // rather than the ear's height, and the built shell spans about 1.83 of
+        // that: a name that flattered the number by nearly two to one.
+        //
+        // Against the head the ear is on, not against the frame, because that is
+        // the comparison an eye makes and the one life is quoted in: an ear runs
+        // 60 to 65 mm on a head about 225 mm tall.
+        let (canon, _, skull) = built();
+        let features = Features::build(&canon, &skull, &FaceParams::default());
+        let head = skull.throat_and_crown().1 - skull.chin();
+        for ear in &features.ears {
+            let (lo, hi) = ear.bounds();
+            let share = (hi.y - lo.y) / head;
+            assert!(
+                (0.24..=0.33).contains(&share),
+                "an ear spanning {:.1} mm on a {:.1} mm head is {share:.3} of it,                  against life's 0.267 to 0.289; it was 0.418 before #90",
+                (hi.y - lo.y) * 1000.0,
+                head * 1000.0
+            );
+        }
     }
 
     #[test]
