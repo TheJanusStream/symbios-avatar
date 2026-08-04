@@ -141,6 +141,72 @@ impl Eye {
         Quat::from_axis_angle(axis, angle.min(limit.max(0.0)))
     }
 
+    /// What a viewer can see of this eye, with the lids at rest.
+    ///
+    /// `skin` is the body as it will be drawn, paired with the head joint it is
+    /// measured from, since the eye's own parts are head-local and the body is
+    /// not. Passing `None` measures what the LIDS alone leave bare, and `lids`
+    /// turns them off in the same way — the three readings together are what
+    /// diagnose an aperture, because each names an owner:
+    ///
+    /// ```text
+    ///                    share   centre az   spans az     owner
+    ///   skin and lids    13.9%      +34.8    -23..+97
+    ///   skin alone       18.5%      +38.2    -23..+97     the medial edge
+    ///   lids alone       32.1%       +0.0   -180..+179    top and bottom
+    /// ```
+    ///
+    /// Those were the shipped numbers before #81. Reading them together says
+    /// what no single one of them does: the elevation is identical with and
+    /// without the skin, so the lids own it; the medial azimuth is identical
+    /// with and without the lids, so the skin owns it; and the lateral edge is
+    /// the same in all three, so **nothing owned it** and the eye was bare 97°
+    /// round the side of the head.
+    ///
+    /// Sampled on the globe's own surface and weighted by solid angle. It is not
+    /// a cheap call — a containment test per sample per occluder — and nothing
+    /// in a build path uses it.
+    #[must_use]
+    pub fn aperture(&self, skin: Option<(&PolyMesh, Vec3)>, lids: bool) -> Aperture {
+        let upper = self.upper_lid.transformed(self.lid_transform(0.0, true));
+        let lower = self.lower_lid.transformed(self.lid_transform(0.0, false));
+
+        let (mut whole, mut bare, mut moment) = (0.0f32, 0.0f32, Vec3::ZERO);
+        let mut span = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        let mut elevation = -std::f32::consts::FRAC_PI_2 + APERTURE_STEP;
+        while elevation < std::f32::consts::FRAC_PI_2 {
+            let band = elevation.cos();
+            let mut azimuth = -std::f32::consts::PI;
+            while azimuth < std::f32::consts::PI {
+                let (sin, cos) = azimuth.sin_cos();
+                let toward = Vec3::new(sin * band, elevation.sin(), cos * band);
+                let on_globe = self.pivot + toward * self.radius;
+                whole += band;
+                let hidden = skin.is_some_and(|(mesh, head)| mesh.contains(head + on_globe))
+                    || (lids && (upper.contains(on_globe) || lower.contains(on_globe)));
+                if !hidden {
+                    bare += band;
+                    moment += toward * band;
+                    span = (
+                        span.0.min(azimuth),
+                        span.1.max(azimuth),
+                        span.2.min(elevation),
+                        span.3.max(elevation),
+                    );
+                }
+                azimuth += APERTURE_STEP;
+            }
+            elevation += APERTURE_STEP;
+        }
+
+        let axis = moment.normalize_or(Vec3::Z);
+        Aperture {
+            share: bare / whole.max(f32::EPSILON),
+            centre: (axis.x.atan2(axis.z), axis.y.clamp(-1.0, 1.0).asin()),
+            span,
+        }
+    }
+
     /// Every part of this eye as one mesh, posed at the given closure.
     ///
     /// Convenient for inspection and export; a renderer keeps the parts separate
@@ -161,6 +227,41 @@ impl Eye {
         mesh
     }
 }
+
+/// What a viewer can see of one eye, measured on the globe's own surface.
+///
+/// **The measurement the eye's whole shape turns on, and it lives here so that
+/// nothing has to keep its own copy.** `examples/headaudit` reports it and
+/// `the_eye_opens_on_the_gaze_rather_than_where_the_skin_falls_away` asserts on
+/// it; the last time an instrument and the code it judged carried two copies of
+/// the same angles they drifted 30° apart (#81), and the time before that a tool
+/// went on printing fractions the canon had moved (#74).
+///
+/// Angles are about the **gaze**, not about the head: azimuth is the turn right
+/// of dead ahead and elevation the rise above it, both in radians, both measured
+/// from the eye's own pivot. That frame is the point — an aperture centred
+/// anywhere but zero is one the skin cut rather than one the lids opened.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Aperture {
+    /// How much of the globe is bare, as a share of its whole surface.
+    ///
+    /// Solid-angle weighted, not a count of samples: a degree of latitude near
+    /// the pole is a shorter arc than one at the equator, and a share of samples
+    /// is a share of the sampling (#81).
+    pub share: f32,
+    /// Where the middle of the bare set points: azimuth, then elevation.
+    pub centre: (f32, f32),
+    /// How far it reaches: azimuth least and greatest, then elevation least and
+    /// greatest.
+    pub span: (f32, f32, f32, f32),
+}
+
+/// How finely [`Eye::aperture`] samples the globe, in radians.
+///
+/// A degree. The features it has to resolve — a canthus closing, a lid margin
+/// crossing the skin's own edge — are tens of degrees across, and the cost is a
+/// containment test per sample per occluder.
+const APERTURE_STEP: f32 = 0.017_453;
 
 /// A body's pair of eyes, and where they belong.
 #[derive(Clone, Debug, PartialEq)]
@@ -536,6 +637,54 @@ mod tests {
 
     fn eyes(params: &EyeParams) -> Eyes {
         seated(&HumanoidParams::default().skeleton(), params)
+    }
+
+    #[test]
+    #[ignore = "the target, not the state: the skin still cuts the aperture medially (#88)"]
+    fn the_eye_opens_on_the_gaze_rather_than_where_the_skin_falls_away() {
+        // **The question this whole part turns on, and it is about WHERE the eye
+        // opens rather than how much of it shows.** A head here has no socket:
+        // the body is a closed surface and the globe pokes through it, so the
+        // opening is whatever the skin happens to be doing at the eye's column —
+        // and that surface tilts laterally. Before the lids were given a margin
+        // (#81) the bare set ran from 16° medial to 99° LATERAL, an opening 115°
+        // wide whose middle sat 42° off the direction the eye was looking; the
+        // iris is the one thing on an eye that is centred, so it read as shoved
+        // to the nasal side.
+        //
+        // The lid margin took the lateral edge, and the orbital hollow (#88)
+        // took most of the medial one. Measured after both, the centre of the
+        // bare set on the seeds below: +13.1 / +11.8 / +8.6 / +1.3 degrees,
+        // against +35 to +40 before either. Five degrees is the ask, and one
+        // seed in four meets it.
+        //
+        // **Slow, and that is why it is a target rather than a ratchet.** Each
+        // seed builds a whole avatar and then asks `contains` of the body and
+        // both lids at every degree of the globe: about half a minute a seed.
+        //
+        // The residual is not the eye's and not the lids': it is how far the
+        // skin beside the NOSE reaches across the globe, and it varies with the
+        // head rather than with the eye — the medial edge lands anywhere from
+        // −27° to −48° across these four while the lateral edge is +59 on every
+        // one of them, because that edge is authored and this one is not.
+        let mut worst: Vec<(i64, f32)> = Vec::new();
+        for seed in [1i64, 7, 23, 42] {
+            let mut record = crate::AvatarRecord::new("Opened", crate::Archetype::default());
+            record.reroll(seed);
+            let avatar = crate::Avatar::build(&record).expect("a biped builds");
+            let eyes = avatar.parts.eyes.as_ref().expect("a humanoid has eyes");
+            let head = avatar.rig.joints[eyes.head].position;
+            let at = eyes.right.aperture(Some((&avatar.parts.body, head)), true);
+            worst.push((seed, at.centre.0.to_degrees()));
+        }
+        assert!(
+            worst.iter().all(|&(_, off)| off.abs() < 5.0),
+            "the bare eye's centre sits this far off the gaze, by seed: {:?}",
+            worst
+                .iter()
+                .map(|&(seed, off)| (seed, (off * 10.0).round() / 10.0))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

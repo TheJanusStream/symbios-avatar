@@ -232,6 +232,90 @@ fn main() {
 
     // ---- The eyes ---------------------------------------------------------
     println!("## The eyes\n");
+
+    // The APERTURE, which is a different question from where the globe is and
+    // the one the eye's shape turns on: not how much of the eye shows but WHERE,
+    // and which of the two occluders decided it. Asked of [`Eye::aperture`]
+    // rather than worked out here, so this report and
+    // `the_eye_opens_on_the_gaze_rather_than_where_the_skin_falls_away` cannot
+    // drift apart — which is the defect this whole file was rewritten for (#74).
+    println!("| what covers the eye | bare | centred az/el | spans az | spans el |");
+    println!("|---|---|---|---|---|");
+    for (name, skin, lids) in [
+        ("skin and lids", true, true),
+        ("skin alone", true, false),
+        ("lids alone", false, true),
+    ] {
+        let at = eyes.right.aperture(skin.then_some((body, centre)), lids);
+        let deg = |radians: f32| radians.to_degrees();
+        println!(
+            "| {name} | {:.1}% | {:+.0} / {:+.0} | {:+.0}..{:+.0} | {:+.0}..{:+.0} |",
+            at.share * 100.0,
+            deg(at.centre.0),
+            deg(at.centre.1),
+            deg(at.span.0),
+            deg(at.span.1),
+            deg(at.span.2),
+            deg(at.span.3),
+        );
+    }
+    println!(
+        "\nAzimuth is measured right of the GAZE, so positive is lateral for the \
+         right eye. An aperture centred anywhere but zero is one the skin cut \
+         rather than one the lids opened.\n"
+    );
+
+    // How far the skin sits in front of the globe, round the eye's own axis.
+    // Positive means the skin is covering the globe there; negative means the
+    // globe has already broken through. This is the profile an orbit has to
+    // answer (#88), and reading it round the eye rather than across the face is
+    // the point: the two are only the same on the midline.
+    println!(
+        "Round the eye's own axis: 0° is lateral, 90° up, 180° medial, 270° down. \
+         How deep the globe's own surface lies UNDER the skin at that angle off \
+         the gaze, measured along the head's outward radial — which is what a \
+         carve displacing along vertex normals would have to remove to uncover \
+         it. Negative means the globe is already bare there.\n\
+         \n\
+         Measured this way rather than along the ray from the eye's pivot. That \
+         ray runs nearly tangential to the face on the nasal side, so it travels \
+         28 mm inside the head at 60° medial and reports a clearance that is \
+         mostly the length of the ray rather than the depth of the skin.\n"
+    );
+    print!("| off the gaze |");
+    for step in 0..12 {
+        print!(" {:.0}° |", step as f32 * 30.0);
+    }
+    println!();
+    println!("|---|{}", "---|".repeat(12));
+    for polar in [40.0f32, 50.0, 60.0, 70.0] {
+        print!("| {polar:.0}° |");
+        for step in 0..12 {
+            let roll = (step as f32 * 30.0).to_radians();
+            let (sin, cos) = polar.to_radians().sin_cos();
+            let toward = Vec3::new(sin * roll.cos(), sin * roll.sin(), cos);
+            let on_globe = centre + eyes.right.pivot + toward * eyes.right.radius;
+            // Outward along the head's own radial from this point, which stands
+            // in for the skin's normal on a surface as convex as a skull.
+            let out = (on_globe - centre).normalize_or(Vec3::Z);
+            let (mut near, mut far) = (0.0f32, eyes.right.radius * 4.0);
+            if !inside(on_globe) {
+                print!(" {:+.1} |", 0.0);
+                continue;
+            }
+            for _ in 0..30 {
+                let mid = 0.5 * (near + far);
+                if inside(on_globe + out * mid) {
+                    near = mid;
+                } else {
+                    far = mid;
+                }
+            }
+            print!(" {:+.1} |", near * 1000.0);
+        }
+        println!();
+    }
+    println!();
     // `eyes.left.globe`, which is HEAD-LOCAL. Not `Avatar::eyes_at`, whose
     // meshes have already been through `to_body` — the first version of this
     // probe added the head joint to those and measured a globe a metre and a

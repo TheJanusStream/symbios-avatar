@@ -242,7 +242,78 @@ impl Face {
     /// the philtrum below it, the brow against the socket — have to add up
     /// across the join or there is a crease where one field wins.
     fn lift(&self, local: Vec3) -> f32 {
-        self.nose(local) + self.brow(local) + self.mouth(local)
+        self.nose(local) + self.brow(local) + self.mouth(local) + self.orbit(local)
+    }
+
+    /// The hollow on the nasal side of each eye, where the medial canthus sits.
+    ///
+    /// **A head here has no eye socket at all, and the consequence is not that
+    /// the eye looks shallow — it is that the eye is not where it says it is.**
+    /// The body is a closed surface with no opening cut for an eye, so the globe
+    /// simply pokes through it and the shape of what emerges is set by whatever
+    /// the skin happens to be doing rather than by the gaze. Measured on the
+    /// globe's own surface about its own axis, the skin used to cover it from
+    /// 16° medial inward and not reach it at all until 99° lateral: an opening
+    /// 115° wide whose middle sat 42° off the direction the eye was looking.
+    /// The iris is the one thing on an eye that IS centred, so it read as
+    /// shoved to the nasal side (#88).
+    ///
+    /// **Medial only, and that is a measurement rather than a saving.** Laterally
+    /// the lid's own margin closes the aperture at 59° while the skin does not
+    /// reach the globe until 99, so the LID owns that edge already (#81) and
+    /// anything added out there is a rim rather than an aperture. Medially the
+    /// globe lies 3.6 mm under the skin at 40° off the gaze — which is where the
+    /// aperture's centroid comes back inside 5° of the gaze — rising to 7.7 at
+    /// 60°.
+    ///
+    /// **Near zero on the gaze axis, and that is the whole shape of it.**
+    /// [`super::eye::Eyes::build`] seats the globe by bisecting the CARVED
+    /// surface at the eye's own column, so a socket cut there sinks the globe by
+    /// the same amount and takes its medial surface with it: a bowl centred on
+    /// the eye achieves exactly nothing. Only the difference between the cut at
+    /// the column and the cut at the canthus counts, so this is a hollow beside
+    /// the nose rather than a socket around the eye — which is also what the
+    /// anatomy has, the medial orbital wall being the deepest part of the rim.
+    ///
+    /// **Carried by no axis on purpose.** Every other field here is weighted by
+    /// a [`FaceParams`] slider; this one is not, because a brow slider that also
+    /// controlled the socket would put the eye back off its own axis at one end
+    /// of its range, and an eye has to be seated everywhere in the parameter
+    /// space rather than at the default. If an orbit deserves an axis, that is
+    /// the face's parameter space to widen, not this term's to borrow.
+    fn orbit(&self, local: Vec3) -> f32 {
+        /// How deep the hollow cuts, in eye-widths: 7.4 mm on a default body.
+        ///
+        /// **Set from a measured efficiency, not from the depth it has to
+        /// clear.** The globe lies 3.6 mm under the skin at 40° medial, but a
+        /// carve displaces along the vertex NORMAL and the normal on the nasal
+        /// flank runs about 44° off the head's radial, so only 0.72 of what is
+        /// cut is depth the globe recovers. The eye then sinks 1.1 mm with the
+        /// column and takes another share back. Authored 5.5 mm delivered 2.7 of
+        /// clearance; this delivers 4.7.
+        const DEPTH: f32 = 0.240;
+        /// How far medial of the pupil it is deepest, in eye-widths.
+        ///
+        /// 8.7 mm, which is where the aperture's edge has to reach. Pushing it
+        /// further out was tried and measured WORSE — 0.36 took the medial edge
+        /// from −42° to −19° on seed 7 — because the cut then falls where the
+        /// skin is already steep rather than where it is thick.
+        const MEDIAL: f32 = 0.28;
+        /// How far it reaches across and up, as Gaussian widths in eye-widths.
+        ///
+        /// Narrow across on purpose: the hollow is only 0.02 of its depth at the
+        /// eye's own column, which is what keeps the globe's seat where it was.
+        /// Both are six to eleven cells where the face is refined, well clear of
+        /// the one-cell floor that renders a field as a bar (#85). Widening `UP`
+        /// past 0.40 buys nothing — 0.48 moves the aperture's centre by under a
+        /// degree — so the medial edge is bounded by the skin's thickness rather
+        /// than by how tall this reaches.
+        const ACROSS: f32 = 0.18;
+        const UP: f32 = 0.40;
+
+        let medial = (self.apart - local.x.abs()) / self.unit;
+        let up = (local.y - self.level) / self.unit;
+        -self.unit * DEPTH * bump(medial, MEDIAL, ACROSS) * bump(up, 0.0, UP)
     }
 
     /// A brow ridge arching over each eye, with the socket beneath it.

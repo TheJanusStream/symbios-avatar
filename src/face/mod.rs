@@ -18,7 +18,7 @@ pub mod skull;
 
 pub use blink::Blink;
 pub use canon::Canon;
-pub use eye::{Eye, EyeParams, Eyes};
+pub use eye::{Aperture, Eye, EyeParams, Eyes};
 pub use features::{FaceParams, Features};
 pub use relief::carve as carve_face;
 pub use skull::{Skull, refine_face, shape as shape_skull};
