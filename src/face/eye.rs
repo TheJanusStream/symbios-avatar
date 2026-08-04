@@ -261,6 +261,8 @@ pub struct Aperture {
 /// A degree. The features it has to resolve — a canthus closing, a lid margin
 /// crossing the skin's own edge — are tens of degrees across, and the cost is a
 /// containment test per sample per occluder.
+/// Provenance: **derived** — a degree, chosen against the angular size of
+/// the features it must resolve and the cost per sample.
 const APERTURE_STEP: f32 = 0.017_453;
 
 /// A body's pair of eyes, and where they belong.
@@ -282,6 +284,11 @@ pub struct Eyes {
 /// head by 8% mis-sizes its eye by 2 mm, so an eyeball keyed to the head is
 /// wrong by construction rather than by tuning — which is how this crate came to
 /// carry a globe twice life size on every body it built (#77).
+/// Provenance: **looked up** — 24.2 mm transverse, 23.7 mm axial. No
+/// citation is attached and one should be: these are standard ocular
+/// dimensions, quoted here from general knowledge rather than from a named
+/// table. The invariance claim (no dependence on sex, age past infancy or
+/// ethnicity) is the load-bearing part and is the part most worth a source.
 const GLOBE: f32 = 0.0121;
 
 /// The measured height of the reference body's skin, in metres.
@@ -290,6 +297,10 @@ const GLOBE: f32 = 0.0121;
 /// off the body in hand. A 1.75 m adult's *skin* spans about 1.64 m — the crown
 /// of the head sits below the nominal stature — and across seventeen bodies that
 /// ratio holds to within 4%.
+/// Provenance: **derived**, and measured in-crate rather than looked up — it
+/// is this pipeline's own skin height for a 1.75 m body, checked across
+/// seventeen bodies. It is therefore a fact about the mesher, not about
+/// people, and it moves when the body plan does.
 const REFERENCE: f32 = 1.65;
 
 /// How much of a change in stature the globe follows.
@@ -298,6 +309,8 @@ const REFERENCE: f32 = 1.65;
 /// because it is nothing like proportional. A third takes a 1.25 m body to
 /// 11.2 mm and a 2.09 m body to 13.3 against life's 12.1 — a millimetre or two
 /// either way, which is what the anthropometry says the spread actually is.
+/// Provenance: **tuned by render**, bounded by looked-up spread — a third
+/// puts the extremes at 11.2 and 13.3 mm against life's 12.1.
 const STATURE_GAIN: f32 = 0.35;
 
 /// How far the globe's front pole stands proud of the skin at rest, in metres.
@@ -308,12 +321,17 @@ const STATURE_GAIN: f32 = 0.35;
 /// part of the globe is exactly the cap that clears the skin. Three millimetres
 /// on a 12.4 mm globe is a lens 16.2 mm wide, against a globe that until now
 /// stood 19 to 51 mm proud on every body (#76).
+/// Provenance: **looked up, then tuned by render** (#76). The looked-up part
+/// is that the corneal apex sits roughly level with the lids; 3 mm is what
+/// that came to on a 12.4 mm globe.
 const PROUD: f32 = 0.003;
 
 /// How far the depth axis moves that, in metres.
 ///
 /// Kept inside `tests/parts.rs`'s 5 mm ceiling at both ends of the axis, so a
 /// sunken eye and a protruding one are both eyes that are seated.
+/// Provenance: **derived** from a test ceiling — `tests/parts.rs` allows
+/// 5 mm, and this is what keeps both ends of the axis inside it.
 const PROUD_RANGE: f32 = 0.0018;
 
 impl Eyes {
@@ -427,6 +445,11 @@ fn reach(mesh: &PolyMesh, from: Vec3, far: f32) -> Option<f32> {
 ///
 /// A pupil is about 3.5 mm across a 24.2 mm globe at an ordinary indoor light
 /// level, which is this.
+/// Provenance: **looked up** (#81) — 3.5 mm across a 24.2 mm globe at an
+/// ordinary indoor light level. **This is the constant #52 was written
+/// about.** Its predecessor was the bare cosine 0.78 sitting in another file
+/// with nothing saying whether it had been measured or fitted, and it was
+/// silently absorbing an error in the face's width.
 const PUPIL: f32 = 0.1431;
 
 /// Half-angle of the iris.
@@ -434,12 +457,17 @@ const PUPIL: f32 = 0.1431;
 /// An 11.7 mm iris on a 24.2 mm globe. This is the best-sourced figure on the
 /// whole face: visible iris diameter is near-constant across sex, age past
 /// infancy and ethnicity, in the same way the globe itself is (#77).
+/// Provenance: **looked up** (#77) — 11.7 mm visible iris on a 24.2 mm
+/// globe, and the docstring's claim that this is the best-sourced figure on
+/// the face is true only in the sense that it is the most invariant; it
+/// carries no more citation than the rest.
 const LIMBUS: f32 = 0.5044;
 
 /// How much of the iris, at its outer edge, is the darker limbal ring.
 ///
 /// Life has one and it is most of what makes an iris read as an iris rather than
 /// as a coloured disc.
+/// Provenance: **tuned by render**.
 const LIMBAL: f32 = 0.0454;
 
 /// How tight a colour boundary is: the gap between the ring pair straddling it.
@@ -448,6 +476,8 @@ const LIMBAL: f32 = 0.0454;
 /// between the two rings that carry the two colours. At 1.4° that is 0.3 mm on a
 /// 12.5 mm globe, which reads as an edge; at the 18° the old ring spacing gave,
 /// it read as a smear.
+/// Provenance: **derived** from the ring spacing — 1.4 degrees is 0.3 mm on
+/// a 12.5 mm globe, which is the width a colour boundary reads as an edge at.
 const EDGE: f32 = 0.0244;
 
 /// Where a point on the globe falls, as a colour.
@@ -498,6 +528,10 @@ fn globe(radius: f32) -> PolyMesh {
 /// midline, which is a fissure as long as the eye is wide — and it falls exactly
 /// on a vertex at [`SEGMENTS`], so the corner is a corner rather than a chord
 /// across one.
+/// Provenance: **derived**, and doubly so — 60 degrees puts the corner at
+/// 0.87 R off the midline, a fissure as long as the eye is wide, and it is
+/// also exactly a multiple of the [`SEGMENTS`] spacing so the corner lands on
+/// a vertex. Two independent reasons for one number is the strongest kind.
 const CANTHUS: f32 = std::f32::consts::FRAC_PI_3;
 
 /// Where the upper lid's margin sits at the midline, in radians above the gaze,
@@ -508,12 +542,16 @@ const CANTHUS: f32 = std::f32::consts::FRAC_PI_3;
 /// but could not change the SHAPE of what it left bare. Shut is the upper margin
 /// BELOW the lower one, so the two overlap; there is no separate closed state to
 /// keep in step.
+/// Provenance: **tuned by render**; see [`LOWER_MARGIN`] for the measurement
+/// the pair was checked against.
 const UPPER_MARGIN: (f32, f32) = (-0.105, 0.681);
 
 /// The same for the lower lid, in radians below the gaze.
 ///
 /// At the default aperture the pair open 52° of latitude, against life's 11 mm
 /// of palpebral fissure on a 12.1 mm globe, which is 52°.
+/// Provenance: **looked up, then tuned by render** — 11 mm of palpebral
+/// fissure on a 12.1 mm globe is 52 degrees, which is what the pair opens.
 const LOWER_MARGIN: (f32, f32) = (-0.070, -0.463);
 
 /// How far the lateral canthus sits above the medial one, in radians.
@@ -522,6 +560,8 @@ const LOWER_MARGIN: (f32, f32) = (-0.070, -0.463);
 /// this entirely: level canthi read flat and sad. It cancels out of where the
 /// two margins meet, so it tilts the fissure without opening a gap at either
 /// corner.
+/// Provenance: **looked up, then tuned by render** — one to two millimetres
+/// in life.
 const CANTHAL_TILT: f32 = 0.035;
 
 /// How far round the lid's rim is sampled.
@@ -529,6 +569,9 @@ const CANTHAL_TILT: f32 = 0.035;
 /// Twenty-four puts a vertex every 15°, which is what makes [`CANTHUS`] a point
 /// rather than a chord, and keeps four lids inside `tests/budget.rs`'s dominance
 /// guard — they are charted into the head's atlas, so they count as skin.
+/// Provenance: **derived** from two constraints at once — it must divide
+/// [`CANTHUS`] exactly, and four lids must stay inside `tests/budget.rs`'s
+/// dominance guard.
 const SEGMENTS: usize = 24;
 
 /// How far the lid's rim may reach below the pole, in radians.
@@ -537,6 +580,8 @@ const SEGMENTS: usize = 24;
 /// where nothing can see it and every ring spent on it sags the shell into the
 /// eye. Capped at 112°, which is past where the skin closes over on every seed
 /// measured (97° to 101° lateral).
+/// Provenance: **derived** from the built surface — 112 degrees is past
+/// where the skin closes over on every seed measured, 97 to 101 lateral.
 const RIM_LIMIT: f32 = 1.955;
 
 /// Where a lid's margin sits at an azimuth from the gaze, in radians of

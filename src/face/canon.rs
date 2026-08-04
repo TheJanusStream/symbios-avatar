@@ -67,6 +67,14 @@ impl Canon {
     /// deliberately: it was measured against the head's own height and found
     /// right (#73), and moving it moves every feature on the face. What the
     /// vertical frame should be is #78's question, not this one's.
+    /// Provenance: **unsourced**, and it is the one constant on this face
+    /// whose supporting measurement was later withdrawn. #73 recorded the eye
+    /// at 0.520 of head height against a Farkas 0.522 and called the vertical
+    /// settled; #78 could not reproduce 0.520 against either candidate
+    /// denominator on seventeen bodies — chin-to-crown gives 0.400, throat-to-
+    /// crown 0.478 — so whatever surface that check measured, it was neither.
+    /// The value has not moved because moving it moves every feature, but it
+    /// should be read as untested rather than as confirmed.
     const EYE_LINE: f32 = 0.05;
 
     /// A face is five eye-widths across, so a half-face is two and a half and
@@ -79,6 +87,13 @@ impl Canon {
     /// 159 mm across, against a measured human bizygomatic 137 and eu-eu 151.
     /// #79 narrowed the head; the same half-width is 69.0 mm now and the face
     /// 138, which is what a bizygomatic is.
+    /// Provenance: **looked up** — the canon of fifths, the oldest measured
+    /// thing in this file. **And it is the worked example the whole provenance
+    /// exercise exists for** (#52): it was calibrated against a half-width the
+    /// same docstring recorded as 159 mm on a face whose bizygomatic should be
+    /// 137, so the canon was right and the surface it was applied to was 16%
+    /// too wide. Nothing said which of the two had been measured. See
+    /// [`Canon::PUPIL`] for the number that was absorbing the error.
     const FIFTH: f32 = 0.40;
 
     /// Where the same canon puts the eye's centre, in eye-widths from the
@@ -100,12 +115,18 @@ impl Canon {
     /// units. The old placement, `0.34` of a node radius, gave 90.9 — which
     /// parked the pupil out on the flank where the surface has already receded,
     /// and cost 11.5 mm of the 26 mm depth error all by itself.
+    /// Provenance: **derived** — 63.5 mm inter-pupillary over a 27.4 mm unit
+    /// from a 137 mm bizygomatic. Derived deliberately against life rather
+    /// than against the fifths, because deriving it from the fifths is exactly
+    /// what made the old 1.0 agree with reality by coincidence.
     const PUPIL: f32 = 1.16;
 
     /// How far the spacing axis moves the pupils, as a share of the unit.
     ///
     /// Plus or minus 16% covers an inter-pupillary 53.4 to 73.8 mm on a default
     /// body, against a population range of about 52 to 78.
+    /// Provenance: **derived** from a looked-up population range — plus or
+    /// minus 16% spans 53.4 to 73.8 mm against a population 52 to 78.
     const SPREAD: f32 = 0.16;
 
     /// Reads the canon off a measured head.

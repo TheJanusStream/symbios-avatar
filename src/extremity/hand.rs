@@ -42,12 +42,19 @@ const PALM_SIDES: usize = 8;
 /// The offsets are in half-palm-widths and are spaced so that neighbouring
 /// fingers *touch*. Spread apart with daylight between them, four fingers read
 /// as the tines of a rake however well proportioned each one is.
+/// Provenance: **tuned by render**. The relative lengths are the looked-up
+/// part — middle longest, little much shorter than people remember — but the
+/// figures themselves were set by eye, and the constraint that decided the
+/// offsets is that neighbouring fingers must touch, which is a rendering
+/// observation and not an anthropometric one.
 const FINGERS: [(f32, f32); 4] = [(-0.75, 0.94), (-0.25, 1.0), (0.25, 0.92), (0.75, 0.76)];
 
 /// A finger's radius, as a share of the palm's half-width.
 ///
 /// Four of them side by side fill the palm, which is what sets this: a hand is
 /// as wide as its fingers are, not wider.
+/// Provenance: **derived** — four fingers side by side fill the palm, so
+/// this is one quarter by construction.
 const FINGER_RADIUS: f32 = 0.25;
 
 /// A built hand, in wrist-local space.

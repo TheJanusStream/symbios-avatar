@@ -26,6 +26,8 @@
 //! ```rust
 //! use symbios_avatar::{CageConfig, build_cage, catmull_clark, demo};
 //!
+//! // A mesher fixture with no zones — see [`demo`]. For a body with a face,
+//! // skin zones and a real UV unwrap, build one from [`HumanoidParams`].
 //! let skeleton = demo::humanoid();
 //! let cage = build_cage(&skeleton, &CageConfig::default())?;
 //! let body = catmull_clark(&cage, 2);
@@ -52,6 +54,35 @@
 //!   [`CageError::SocketNotOnHull`] name the limbs involved, because the fix is
 //!   nearly always to widen a joint or spread its limbs rather than to retune
 //!   the mesher.
+//!
+//! ## Where the numbers come from
+//!
+//! This crate ships no data, only constants: profile tables, facial canons and
+//! body coefficients, several hundred numbers that together decide what a body
+//! looks like. Each is tagged in its own docstring with one of four
+//! provenances, and the tags are worth reading before changing anything (#52).
+//!
+//! * **Looked up** — a published proportion, with the source named. There are
+//!   few of these and they are the only numbers that mean anything outside this
+//!   crate.
+//! * **Derived** — computed from another constant, with the arithmetic written
+//!   out so it can be re-run when what it depends on moves. A derived constant
+//!   that does not show its working is indistinguishable from a guess.
+//! * **Tuned by render** — chosen by building the body and looking at it, named
+//!   with the issue that tuned it. This is clean provenance, not an admission:
+//!   a number honestly labelled this way is one nobody will later mistake for a
+//!   measurement.
+//! * **Unsourced** — carried from an early implementation and never checked
+//!   against anything. Most of [`HumanoidParams`] is in this state.
+//!
+//! **The failure this exists to prevent is two wrong numbers that agree.** The
+//! face's `FIFTH` was calibrated against a face the same file recorded as 16%
+//! too wide, with `PUPIL = 1.0` silently absorbing the error; both read as
+//! correct and their agreement was a coincidence, and it took a test failure to
+//! find (#79). Nothing about either number said which had been measured and
+//! which had been fitted to it. Neither is *licence* provenance, which is the
+//! other reason this matters: a crate that claims to ship no encumbered data
+//! should be able to say where every number in it came from.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

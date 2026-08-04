@@ -64,6 +64,8 @@ use super::features::FaceParams;
 /// commissure is the DEEPEST part of the mouth line, not the shallowest, and
 /// fading the groove out along with the vermilion is what leaves a bar with a
 /// rounded end instead of two lips meeting at a point.
+/// Provenance: **tuned by render** (#82), against a bisected profile — the
+/// 5.34 mm dead-flat measurement above is what condemned the previous table.
 const LIPS: [(f32, f32, f32, Across); 4] = [
     (0.88, -0.60, 0.46, Across::Lens), // the lower lip
     (0.82, 0.58, 0.44, Across::Lens),  // the upper lip
@@ -107,6 +109,9 @@ impl Across {
 /// and `y` already, so this is a backstop rather than a shape: without it a
 /// nose whose lateral falloff has not quite reached zero by the ear puts a
 /// ripple on the side of the head.
+/// Provenance: **unsourced**, and a backstop rather than a shape, so it is
+/// one of the few numbers here that no measurement could confirm — it exists
+/// to be far enough round the head that nothing reaches it.
 const FRONTAL: f32 = 0.15;
 
 /// Carves a face into a built head, in place.

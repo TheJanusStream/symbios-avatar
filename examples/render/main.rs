@@ -39,6 +39,7 @@
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --budget    # what one avatar costs
+//! cargo run --release --example render -- --cost      # and what it costs to build
 //! ```
 
 mod light;
@@ -200,6 +201,9 @@ fn main() {
     if args.iter().any(|arg| arg == "--budget") {
         report(&avatar);
     }
+    if args.iter().any(|arg| arg == "--cost") {
+        cost(&record, &config);
+    }
     let subject = Subject::new(avatar, linear, bare, pass);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
@@ -246,6 +250,62 @@ fn main() {
         }
     }
     println!("wrote PNGs to {}", out.display());
+}
+
+/// Prints what one avatar costs to *build*, at three atlas sizes.
+///
+/// **A baseline exists to be re-taken, so it lives in the tool rather than in a
+/// comment** (#56). The figures wander by a percent between runs and are useful
+/// to about that: what they are for is attributing a regression to a change,
+/// which needs a before as well as an after.
+///
+/// Two separate levers, and this print is arranged to show that they are
+/// separate. Time scales with the atlas because `paint_skin` calls
+/// `nearest_bone` per texel; geometry does not move with the atlas at all. At
+/// the shipping 1024 the atlas is fifteen times the drawn geometry, so atlas
+/// size is the whole of the memory lever and `nearest_bone` is the whole of the
+/// time lever — see #56 for the remedies, which are deliberately not here.
+///
+/// The geometry figure is counted rather than estimated: position, normal, uv,
+/// colour, four joint indices and four weights per drawn vertex.
+fn cost(record: &AvatarRecord, config: &AvatarConfig) {
+    /// Bytes one drawn vertex occupies, counted channel by channel.
+    const PER_VERTEX: usize = 3 * 4 + 3 * 4 + 2 * 4 + 3 * 4 + 4 * 2 + 4 * 4;
+
+    for atlas in [1024u32, 512, 256] {
+        let at = AvatarConfig {
+            atlas,
+            ..config.clone()
+        };
+        // One warm build first: the first build of a process pays for
+        // allocations the steady-state case does not, and the steady-state case
+        // is the one twenty avatars in a room will see.
+        let Some(_) = Avatar::build_with(record, &at) else {
+            eprintln!("the body could not be built at atlas {atlas}");
+            return;
+        };
+        let mut best = f64::MAX;
+        let mut built = None;
+        for _ in 0..3 {
+            let start = std::time::Instant::now();
+            let avatar = Avatar::build_with(record, &at);
+            best = best.min(start.elapsed().as_secs_f64() * 1000.0);
+            built = avatar;
+        }
+        let Some(avatar) = built else {
+            return;
+        };
+        let vertices: usize = avatar
+            .meshes
+            .iter()
+            .map(|drawn| drawn.mesh.positions.len())
+            .sum();
+        println!(
+            "atlas {atlas:>5}  build {best:>7.1} ms  texture {:>6} KiB  geometry {:>4} KiB",
+            avatar.budget.texture_bytes / 1024,
+            vertices * PER_VERTEX / 1024,
+        );
+    }
 }
 
 /// Prints what one avatar costs, against the targets it is judged by.

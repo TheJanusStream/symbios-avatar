@@ -149,7 +149,12 @@ impl Rolls {
 pub trait BodyPlan: Sized {
     /// Clamps every axis into its valid range.
     ///
-    /// Must be idempotent: sanitising twice equals sanitising once.
+    /// Must be idempotent: sanitising twice equals sanitising once, and a
+    /// sanitised record must always mesh. A non-finite axis — which the public
+    /// Rust API can be handed, and which is what a creator UI produces when a
+    /// slider is fed a division that blew up — takes that axis's documented
+    /// default. Build each axis with `plan::sanitize_axis` and both hold by
+    /// construction; do the clamping by hand and see #55.
     fn sanitize(&mut self);
 
     /// Builds the capsule graph this plan describes.
@@ -468,6 +473,34 @@ pub(crate) mod scaled {
             0.0
         }
     }
+}
+
+/// Brings one axis into range: substitute, then clamp, then quantise.
+///
+/// **The order is the whole point, and getting it wrong is silent.**
+/// `f32::clamp` propagates `NaN` rather than choosing a bound, and
+/// [`scaled::quantize`] maps every non-finite value to `0.0` — so a guard
+/// placed *after* those two can never fire, and the axis lands on zero
+/// whatever its range says. Both body plans had exactly that shape, and it was
+/// only visible on `height`, whose range excludes zero (#55). Every other axis
+/// agreed with zero because zero is its neutral, which made fifteen of
+/// seventeen axes correct by coincidence rather than by construction.
+///
+/// So the fallback is passed in rather than assumed: callers hand over the
+/// axis's own value from `Default::default()`, which cannot drift from the
+/// documented default because it *is* the documented default. An axis added
+/// later whose neutral is not zero is then correct for free — which is the
+/// case this helper exists to serve, since nothing would have caught it.
+///
+/// Infinities take the fallback too, not the near bound. A slider cannot
+/// produce one; an arithmetic accident upstream can, and answering it with a
+/// 2.2 m body is a worse guess than answering with the default. This matches
+/// `EyeParams::sanitize` and the hair and skin params, which already
+/// substitute before clamping.
+#[must_use]
+pub(crate) fn sanitize_axis(value: f32, fallback: f32, range: (f32, f32)) -> f32 {
+    let value = if value.is_finite() { value } else { fallback };
+    scaled::quantize(value.clamp(range.0, range.1))
 }
 
 /// Quantises a `-1..=1` axis to one byte.

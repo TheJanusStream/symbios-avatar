@@ -104,27 +104,20 @@ impl QuadrupedParams {
 
 impl BodyPlan for QuadrupedParams {
     fn sanitize(&mut self) {
-        self.height = super::scaled::quantize(self.height.clamp(HEIGHT_RANGE.0, HEIGHT_RANGE.1));
-        self.muscle = super::scaled::quantize(self.muscle.clamp(0.0, 1.0));
-        for axis in [
-            &mut self.body_length,
-            &mut self.build,
-            &mut self.leg_length,
-            &mut self.neck_length,
-            &mut self.head_size,
-            &mut self.tail_length,
+        // See [`super::humanoid::HumanoidParams::sanitize`]: same shape, same
+        // reason, and it carried the same bug (#55).
+        let default = Self::default();
+        self.height = super::sanitize_axis(self.height, default.height, HEIGHT_RANGE);
+        self.muscle = super::sanitize_axis(self.muscle, default.muscle, (0.0, 1.0));
+        for (axis, fallback) in [
+            (&mut self.body_length, default.body_length),
+            (&mut self.build, default.build),
+            (&mut self.leg_length, default.leg_length),
+            (&mut self.neck_length, default.neck_length),
+            (&mut self.head_size, default.head_size),
+            (&mut self.tail_length, default.tail_length),
         ] {
-            *axis = super::scaled::quantize(if axis.is_finite() {
-                axis.clamp(-1.0, 1.0)
-            } else {
-                0.0
-            });
-        }
-        if !self.height.is_finite() {
-            self.height = default_height();
-        }
-        if !self.muscle.is_finite() {
-            self.muscle = 0.0;
+            *axis = super::sanitize_axis(*axis, fallback, (-1.0, 1.0));
         }
     }
 

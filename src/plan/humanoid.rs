@@ -8,6 +8,28 @@
 //! Several derived lengths are floored at a multiple of the joint radius they
 //! serve. Those floors are not styling — they are what keeps every point of the
 //! parameter space meshable (see the module docs for [`super`]).
+//!
+//! # Where these numbers came from
+//!
+//! Every coefficient below carries a provenance tag; the four categories and
+//! why they are worth the trouble are in the crate docs (#52). Where a value
+//! here is **looked up**, the source is always the eight-head figure of
+//! academic figure drawing, tabulated as `CANON` in `examples/measure` and
+//! compared there against the *rendered* body.
+//!
+//! **Most of this file is unsourced, and that is the finding rather than an
+//! apology.** `git blame` puts about thirty of the forty coefficients here in
+//! the initial commits: the shape of the default body is largely a first guess
+//! that has survived by never being contradicted. What holds them in place
+//! today is not a source, it is `tests/plan.rs` — which proves they *mesh*, and
+//! proving a body meshes says nothing at all about whether it is the right
+//! body. An overhaul should treat the tagged minority as load-bearing and the
+//! rest as open.
+//!
+//! The one thing to read before touching anything is the note on `clavicle_x`
+//! in [`HumanoidParams::skeleton`], where a comment claiming the default body
+//! sat *exactly* on canon was made false by a change in another file that never
+//! touched this one.
 
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -45,6 +67,12 @@ pub const HEIGHT_RANGE: (f32, f32) = (1.2, 2.2);
 /// girdle, which `shoulder_width` already drives, and its depth is what makes it
 /// read as a ribcage rather than a drum. The front silhouette every radius here
 /// was tuned against is untouched.
+///
+/// Provenance: **tuned by render** (commit `f54f38a`), all five of them, and
+/// bounded from below by `tests/plan.rs` rather than by a source. The
+/// three-quarters figure quoted for the chest is a remembered rule of thumb and
+/// not a citation — if this set is ever revisited it should be measured, not
+/// re-remembered.
 const PELVIS_SECTION: Vec2 = Vec2::new(1.0, 0.80);
 /// See [`PELVIS_SECTION`]. The waist is the shallowest part of the trunk.
 const WAIST_SECTION: Vec2 = Vec2::new(1.0, 0.76);
@@ -61,6 +89,10 @@ const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 /// See [`CROWN_WIDE`]: this came down from 0.72 when that went up, so the built
 /// crown lands in the same place. The pair is chosen together and neither
 /// number means anything alone.
+///
+/// Provenance: **derived** from [`CROWN_WIDE`] (#79). The arithmetic is that
+/// the built crown height must not move while the node widens, so the two were
+/// swept together and the pair that held the measured crown fixed was kept.
 const CROWN_HIGH: f32 = 0.68;
 
 /// How wide the crown node is, in head radii.
@@ -79,6 +111,13 @@ const CROWN_HIGH: f32 = 0.68;
 /// at the same time so the built crown does not move: this issue is the vault's
 /// SHAPE, and cranium:face measures 1.00 after #78, so there is no proportion
 /// left to spend on height.
+///
+/// Provenance: **looked up, then tuned by render** (#79) — the only coefficient
+/// in this file with a stated anthropometric premise underneath it. The premise
+/// is that maximum head breadth is at eurion, high on the parietal roughly 25
+/// to 45 mm above the pupil line, and exceeds bizygomatic breadth (156 mm
+/// against 137). The value itself was swept against the built half-widths,
+/// which is what the figures above are.
 const CROWN_WIDE: f32 = 0.87;
 
 /// How far below horizontal a resting arm lies, in radians.
@@ -86,6 +125,12 @@ const CROWN_WIDE: f32 = 0.87;
 /// The A in A-pose. Forty degrees: far enough that neither hanging the arms nor
 /// raising them to horizontal asks for a rotation big enough to tear the
 /// shoulder, and shallow enough that the armpit still opens up for the mesher.
+///
+/// Provenance: **derived** from the worst-case skinning rotation. A T-pose
+/// arm posed down to walk turns the shoulder about 75°, which bulges under both
+/// dual quaternions and matrices; halving that in each direction is what picks
+/// 40°, and it is why production models are built this way. The floor under it
+/// is the mesher's, not taste: the armpit has to stay open.
 const A_POSE: f32 = 0.70;
 
 /// Parameters describing one biped.
@@ -151,6 +196,12 @@ impl HumanoidParams {
     /// Mass and musculature both add girth, and girth feeds every torso and
     /// limb radius — that single correlation is most of what makes `build` read
     /// as one coherent slider rather than a dozen independent ones.
+    ///
+    /// Provenance: **unsourced**, both gains, from the initial body plan. What
+    /// is defensible here is the *structure* — one girth factor feeding every
+    /// radius, so the axes cannot drift apart — rather than the ±28% and +15%
+    /// it spans. Nothing has ever measured whether a heavy body is 28% thicker
+    /// than a neutral one.
     fn girth(&self) -> f32 {
         1.0 + 0.28 * self.build + 0.15 * self.muscle
     }
@@ -158,28 +209,22 @@ impl HumanoidParams {
 
 impl BodyPlan for HumanoidParams {
     fn sanitize(&mut self) {
-        self.height = super::scaled::quantize(self.height.clamp(HEIGHT_RANGE.0, HEIGHT_RANGE.1));
-        self.muscle = super::scaled::quantize(self.muscle.clamp(0.0, 1.0));
-        for axis in [
-            &mut self.build,
-            &mut self.shoulder_width,
-            &mut self.hip_width,
-            &mut self.limb_length,
-            &mut self.neck_length,
-            &mut self.head_size,
-            &mut self.extremity_size,
+        // Fallbacks come from `Default` rather than being written out again, so
+        // they cannot drift from the documented defaults. See
+        // [`super::sanitize_axis`] for why the guard has to precede the clamp.
+        let default = Self::default();
+        self.height = super::sanitize_axis(self.height, default.height, HEIGHT_RANGE);
+        self.muscle = super::sanitize_axis(self.muscle, default.muscle, (0.0, 1.0));
+        for (axis, fallback) in [
+            (&mut self.build, default.build),
+            (&mut self.shoulder_width, default.shoulder_width),
+            (&mut self.hip_width, default.hip_width),
+            (&mut self.limb_length, default.limb_length),
+            (&mut self.neck_length, default.neck_length),
+            (&mut self.head_size, default.head_size),
+            (&mut self.extremity_size, default.extremity_size),
         ] {
-            *axis = super::scaled::quantize(if axis.is_finite() {
-                axis.clamp(-1.0, 1.0)
-            } else {
-                0.0
-            });
-        }
-        if !self.height.is_finite() {
-            self.height = default_height();
-        }
-        if !self.muscle.is_finite() {
-            self.muscle = 0.0;
+            *axis = super::sanitize_axis(*axis, fallback, (-1.0, 1.0));
         }
     }
 
@@ -194,6 +239,15 @@ impl BodyPlan for HumanoidParams {
         // as a chest forces a neck long enough to read as a giraffe. Splitting
         // the two lets the ribcage be broad while the girdle above it stays
         // slim, which is what shortens the neck.
+        // Provenance: **unsourced**, every figure on these four lines, from the
+        // initial body plan. They are fractions of stature that nobody has
+        // compared to a stature-fraction table; `examples/measure` prints the
+        // built radii as `radius/H` beside the canon column precisely so that
+        // comparison can be made, and it never has been. The two
+        // `shoulder_width` gains are unsourced too, and note they are gains on a
+        // RADIUS while the shoulder breadth anyone would check is set by
+        // `clavicle_x` below — so this axis moves the torso and the girdle by
+        // different amounts and no measurement ties them together.
         let pelvis_r = h * 0.079 * girth;
         let waist_r = h * 0.078 * girth;
         let chest_r = h * 0.088 * girth * (1.0 + 0.08 * self.shoulder_width);
@@ -203,24 +257,75 @@ impl BodyPlan for HumanoidParams {
         // reads as a tree trunk and, worse, swallows the jaw: the chin is shaped
         // and narrows properly, but a neck two and a half times its width leaves
         // nothing of it to see.
+        // Provenance: **tuned by render** (commit `0d7684f`). The evidence is
+        // the paragraph above — a measured 0.098 m neck against a 0.093 m head —
+        // which is the right shape of argument for a tuned number: a comparison
+        // that came out the wrong way round.
         let neck_r = h * 0.038 * girth;
+        // Provenance: **unsourced**, both the 0.075 and the 0.25 gain. 0.075 of
+        // stature is close to the eight-head figure's head, but the eight-head
+        // figure specifies head HEIGHT and this is a node RADIUS, so the
+        // resemblance is not a derivation and must not be written up as one —
+        // the built head is 214 mm tall on a 160 mm breadth (#79), which is not
+        // a number this coefficient predicts.
         let head_r = h * 0.075 * (1.0 + 0.25 * self.head_size);
 
+        // Provenance: **unsourced**, from the very first commit. Compare
+        // `examples/measure`, whose canon column has no ankle row, so nothing
+        // checks this even indirectly.
         let ankle_y = h * 0.0686;
+        // Provenance: **unsourced**. This one is load-bearing in a way the
+        // others are not — it sets how far the hip sockets sit below the pelvis
+        // node, so it trades against `hip_x` for the room the pelvis needs to
+        // separate three sockets, and `hip_x` is a meshability floor (below).
         let hip_drop = pelvis_r * 1.85;
 
         // Only the pelvis and the girdle are joints; the waist and chest between
         // them are connectors and constrain nothing.
+        // Provenance: **unsourced** multipliers serving a **derived** purpose.
+        // The purpose is exact — a joint's sockets must clear each other, so the
+        // spine has to leave the pelvis and reach the girdle with room to spare
+        // — but the 1.5, the 1.3 and the 0.06 that express it were picked rather
+        // than solved for. Whether each is the tightest value that meshes is
+        // unknown; `hip_x` and `clavicle_x` below are the two that were actually
+        // swept, and both turned out to be sitting well above their floors.
         let pelvis_gap = pelvis_r * 1.5;
         let chest_gap = girdle_r * 1.3;
         let torso_min = pelvis_gap + h * 0.06 + chest_gap;
 
+        // Provenance: **unsourced**. Nearest canon landmark is the chest at
+        // 0.720 of height (`examples/measure`), which this is not: the girdle
+        // built from it measures 0.675, and the two are different points on the
+        // body, so the 0.045 gap printed there is not evidence of an error.
         let nominal_girdle = h * 0.755;
+        // Provenance: **unsourced** (the 0.5, the 0.03 gain and the 0.10 floor).
+        // The canon puts the pelvis at 0.545 of height and the built one lands
+        // at 0.492, but do not read that as this coefficient being 0.045 low:
+        // the 0.5 is nominal and both `min` and `max` here can override it, so
+        // what is printed is the outcome of a three-way clamp rather than of
+        // this number.
+        //
+        // **On the default body the nominal 0.5 does not bind — the `min` does.**
+        // Hand-evaluated: 0.875 nominal against a `min` of 0.8678 and a `max` of
+        // 0.5508, so the pelvis is pulled 7.2 mm DOWN to leave the torso its
+        // minimum length, landing at 0.4959 h. And because that term binds
+        // exactly, `girdle_y` falls out at `pelvis_y + torso_min` = the nominal
+        // girdle to the last decimal, so its `max` is a tie rather than a
+        // clearance. Raising `nominal_girdle` or shrinking `torso_min` therefore
+        // moves the pelvis, which is not what either name suggests. And raising
+        // the 0.5 does nothing whatever — the `min` caps it at any value — while
+        // lowering it does nothing until it passes below 0.4959. An overhaul
+        // that edits this number and watches the render will conclude the
+        // coefficient is inert, and be half right for the wrong reason.
+
         let pelvis_y = (h * (0.5 + 0.03 * self.limb_length))
             .min(nominal_girdle - torso_min)
             .max(ankle_y + hip_drop + h * 0.10);
         let girdle_y = nominal_girdle.max(pelvis_y + torso_min);
         let chest_y = girdle_y - chest_gap;
+        // Provenance: **derived** — the waist is the midpoint of pelvis and
+        // chest, which is a definition rather than a measurement. The 0.02
+        // clearance that keeps it off the chest is **unsourced**.
         let waist_y = (pelvis_y + (chest_y - pelvis_y) * 0.5)
             .clamp(pelvis_y + pelvis_gap, chest_y - h * 0.02);
 
@@ -231,6 +336,12 @@ impl BodyPlan for HumanoidParams {
         // The neck has to clear the girdle's socket, but the floor was doing all
         // the work: a neck sitting exactly as high as the sockets allow leaves
         // barely any column between the collar and the jaw.
+        // Provenance: **tuned by render** (commit `0d7684f`), and the note above
+        // is what tuning it looked like — an earlier floor here was invented
+        // rather than required and cost the body half a head-height of giraffe.
+        // The 1.32 socket floor BINDS on the default body (143.2 mm against a
+        // nominal 126.0, measured in #78), so what ships is the floor and not
+        // the 0.072: same trap as `pelvis_y` above, one line apart.
         let neck_y = girdle_y + (h * 0.072 * (1.0 + 0.3 * self.neck_length)).max(girdle_r * 1.32);
         // How far the head reaches below its own joint, and it is a HEAD measure
         // rather than a stature one. This was `(h * 0.052).max(head_r * 0.45)`,
@@ -275,6 +386,10 @@ impl BodyPlan for HumanoidParams {
         // body already stands about 6% under its nominal stature — the crown
         // collapses under subdivision — so this spends height the body was
         // already missing.
+        // Provenance: **derived** (#78), and the whole chain is written out
+        // above rather than summarised — which is what this tag is supposed to
+        // mean. It is the one coefficient in this file whose first derivation
+        // was recorded alongside its correction.
         const HEAD_BELOW_JOINT: f32 = 1.19;
         let head_y = neck_y + head_r * HEAD_BELOW_JOINT;
 
@@ -292,20 +407,62 @@ impl BodyPlan for HumanoidParams {
         // and gives 0.228, which is most of the way and as far as this joint
         // goes. Reaching canon needs a narrower pelvis or sockets placed
         // differently, and both are changes to the body rather than to a number.
+        //
+        // Provenance: **looked up, then bounded by a sweep** (#66). The looked-up
+        // half is the eight-head figure's 0.190 of height across the hips; the
+        // sweep is 1.60 / 1.45 / 1.35 / 1.30 / 1.13 against ten seeds, and it is
+        // why the canon figure is not what ships. The 0.35 gain is
+        // **unsourced**. See the note on `clavicle_x` below before trusting the
+        // 0.228 quoted here: it was measured against a body that has since grown.
         let hip_x = pelvis_r * (1.35 + 0.35 * self.hip_width);
         let hip_y = pelvis_y - hip_drop;
 
+        // Provenance: **unsourced**. The canon has a knee row — 0.285 of height
+        // — and the built knee measures 0.227, the largest single deviation
+        // `examples/measure` prints. Whether the 0.60 or the pelvis above it is
+        // responsible is undetermined, because the knee is placed as a fraction
+        // of the hip-to-ankle span and the hip is itself clamped.
         let knee_y = ankle_y + (hip_y - ankle_y) * 0.60;
+        // Provenance: **unsourced**, all three figures.
         let foot_y = h * 0.0257;
         let foot_z = h * 0.057 * (1.0 + 0.3 * self.extremity_size);
 
         // The clavicle has to reach past the chest socket's corners before an
         // arm can attach — the single tightest constraint on the whole body.
         //
-        // 1.85 puts the default body exactly on the canonical 0.245 of height
+        // 1.85 put the default body exactly on the canonical 0.245 of height
         // across the shoulders, down from 0.285 (#66). Unlike the hips this one
         // had room: 1.85 meshes every seed and only 1.70 starts to lose them.
+        //
+        // Provenance: **looked up, then tuned by render** (#66) — the eight-head
+        // figure's 0.245, reached by sweep and confirmed by `examples/measure`.
+        //
+        // **AND IT NO LONGER HOLDS, which is the whole argument of #52 happening
+        // to this file.** That sentence is written in the past tense above
+        // because the default body now measures 0.235, and NOTHING HERE MOVED.
+        // The head overhaul (#78, #79) grew the rendered body from 1.639 m to
+        // 1.705 m, and every one of these figures is a fraction of rendered
+        // height, so all three fell by that same 4.03% at once:
+        //
+        // ```text
+        //   shoulders  0.245 -> 0.235   0.245 x 1.639/1.705 = 0.2355
+        //   hips       0.228 -> 0.219   0.228 x 1.639/1.705 = 0.2192
+        //   arm span   0.930 -> 0.894   0.930 x 1.639/1.705 = 0.8940
+        // ```
+        //
+        // Three independent quantities predicted to the printed precision by one
+        // ratio, so this is the denominator moving and not a regression in any
+        // coefficient. It is exactly the shape of the `FIFTH`/`PUPIL` defect:
+        // a number calibrated against another number, with nothing recording the
+        // dependency, so a change somewhere else falsifies a comment here
+        // silently. `tests/plan.rs` still passes because its tolerance is 0.015
+        // and the error is 0.010 — two thirds of the margin spent, no warning.
+        //
+        // Whether to re-tune for the taller body is the body overhaul's call and
+        // an owner one: it is a change to the silhouette, and arm span at 0.894
+        // against a canon 1.000 is the bigger deviation of the two.
         let clavicle_x = girdle_r * (1.85 + 0.25 * self.shoulder_width);
+        // Provenance: **unsourced**, both.
         let clavicle_y = girdle_y + h * 0.004;
         let shoulder_x = clavicle_x + h * 0.048;
         // Arms hang at an angle, not straight out. Built in a T-pose, posing
@@ -323,8 +480,16 @@ impl BodyPlan for HumanoidParams {
         // put it back to 0.930. The remaining 7% against a canon 1.000 was there
         // before and is left alone — closing it means arms about a fifth longer,
         // which is a change to the silhouette and wants deciding on its own.
+        //
+        // Provenance: **derived** (#66) — solved backwards from arm span, which
+        // is the measurement, rather than picked as segment lengths. Same caveat
+        // as `clavicle_x`: the 0.930 they were solved for now reads 0.894, and
+        // for the same reason. The 0.025 gains are **unsourced**.
         let upper_arm = h * (0.123 + 0.025 * self.limb_length);
         let forearm = h * (0.110 + 0.025 * self.limb_length);
+        // Provenance: **unsourced**, and note it feeds arm span through
+        // `hand_at` below — so the extremity axis moves a figure that `#66`
+        // tuned, and nothing connects the two.
         let hand_len = h * 0.040 * (1.0 + 0.3 * self.extremity_size);
         let shoulder_at = Vec3::new(shoulder_x, clavicle_y, 0.0);
         let elbow_at = shoulder_at + arm * upper_arm;
@@ -333,6 +498,15 @@ impl BodyPlan for HumanoidParams {
 
         let extremity = 1.0 + 0.3 * self.extremity_size;
 
+        // Provenance for every node radius below — clavicle 0.040, shoulder
+        // 0.038, elbow 0.032, wrist 0.025, hand 0.020, hip 0.052, knee 0.042,
+        // ankle 0.030, foot 0.019, all times stature: **unsourced**, from the
+        // initial body plan, nine numbers in one ladder. They are also the set
+        // most likely to look right and be wrong, because a limb tapering
+        // monotonically from hip to foot reads as a limb whatever the actual
+        // figures are — there is no silhouette cue that a wrong taper violates.
+        // `examples/measure` prints `radius/H` for the zones it knows, which is
+        // the instrument to point at them if anyone ever does.
         let mut skeleton = Skeleton::new();
         let pelvis = skeleton.add_node(
             Node::new(Vec3::new(0.0, pelvis_y, 0.0), pelvis_r)

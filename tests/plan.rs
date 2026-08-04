@@ -36,6 +36,85 @@ const EXTREMES: [f32; 3] = [-1.0, 0.0, 1.0];
 /// A named axis of a body plan, so each can be driven to its extremes in turn.
 type Axis<P> = (&'static str, fn(&mut P, f32));
 
+/// A named axis that can also be read back, to check what sanitising did to it.
+type Readable<P> = (&'static str, fn(&mut P, f32), fn(&P) -> f32);
+
+/// Every non-finite value the public API can be handed.
+const NON_FINITE: [(&str, f32); 3] = [
+    ("NaN", f32::NAN),
+    ("+inf", f32::INFINITY),
+    ("-inf", f32::NEG_INFINITY),
+];
+
+/// Poisons each axis in turn and checks both halves of the contract.
+///
+/// **Both assertions are load-bearing and the weaker one is the meshability
+/// check.** Poisoning any of the `-1..=1` axes and asserting only that the body
+/// meshes passes even when the guard is missing entirely, because a lost axis
+/// lands on `0.0` and `0.0` is that axis's neutral — fifteen of seventeen axes
+/// across the two plans were correct by that coincidence rather than by any
+/// guard (#55). Only `height`, whose range excludes zero, failed visibly. So
+/// the value is checked against `Default` as well, and it is read out of
+/// `Default` rather than written down here so the two cannot drift apart.
+fn assert_non_finite_axes_fall_back<P>(plan: &str, axes: &[Readable<P>], wrap: fn(P) -> Archetype)
+where
+    P: BodyPlan + Default + Copy,
+{
+    let default = P::default();
+    for &(name, poison, read) in axes {
+        for (label, value) in NON_FINITE {
+            let mut params = default;
+            poison(&mut params, value);
+            params.sanitize();
+            assert_eq!(
+                read(&params),
+                read(&default),
+                "{plan} {name}={label} should sanitize to its documented default"
+            );
+            assert_meshable(&wrap(params), &format!("{plan} {name}={label}"));
+        }
+    }
+}
+
+#[test]
+fn a_non_finite_humanoid_axis_takes_its_documented_default() {
+    let axes: [Readable<HumanoidParams>; 9] = [
+        ("height", |p, v| p.height = v, |p| p.height),
+        ("build", |p, v| p.build = v, |p| p.build),
+        ("muscle", |p, v| p.muscle = v, |p| p.muscle),
+        (
+            "shoulder_width",
+            |p, v| p.shoulder_width = v,
+            |p| p.shoulder_width,
+        ),
+        ("hip_width", |p, v| p.hip_width = v, |p| p.hip_width),
+        ("limb_length", |p, v| p.limb_length = v, |p| p.limb_length),
+        ("neck_length", |p, v| p.neck_length = v, |p| p.neck_length),
+        ("head_size", |p, v| p.head_size = v, |p| p.head_size),
+        (
+            "extremity_size",
+            |p, v| p.extremity_size = v,
+            |p| p.extremity_size,
+        ),
+    ];
+    assert_non_finite_axes_fall_back("humanoid", &axes, Archetype::Humanoid);
+}
+
+#[test]
+fn a_non_finite_quadruped_axis_takes_its_documented_default() {
+    let axes: [Readable<QuadrupedParams>; 8] = [
+        ("height", |p, v| p.height = v, |p| p.height),
+        ("body_length", |p, v| p.body_length = v, |p| p.body_length),
+        ("build", |p, v| p.build = v, |p| p.build),
+        ("muscle", |p, v| p.muscle = v, |p| p.muscle),
+        ("leg_length", |p, v| p.leg_length = v, |p| p.leg_length),
+        ("neck_length", |p, v| p.neck_length = v, |p| p.neck_length),
+        ("head_size", |p, v| p.head_size = v, |p| p.head_size),
+        ("tail_length", |p, v| p.tail_length = v, |p| p.tail_length),
+    ];
+    assert_non_finite_axes_fall_back("quadruped", &axes, Archetype::Quadruped);
+}
+
 #[test]
 fn every_humanoid_axis_meshes_at_its_extremes() {
     let heights = [1.2f32, 1.75, 2.2];

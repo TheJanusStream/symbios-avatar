@@ -13,6 +13,30 @@
 //! mesher rather than to be dressed. Anything that reads zones — rigging,
 //! landmarks, unwrapping — should be tested against [`crate::plan`] instead,
 //! where the body plans tag every node.
+//!
+//! # These are not bodies, and the difference is not cosmetic (#54)
+//!
+//! That paragraph has been here all along and was not enough: someone audited
+//! UV charts on [`humanoid`] and reported an anisotropy defect that does not
+//! exist, because an unzoned body unwraps into 9 charts where the plan's
+//! default unwraps into 30. So the warning is repeated on each function, and
+//! `tests/topology.rs` now pins the property rather than trusting the prose.
+//!
+//! **The right fix was to keep these as mesher fixtures, not to zone them**, and
+//! the deciding evidence is structural rather than a matter of effort. A zone
+//! tag is not a label — it is what `face::skull::shape` and `face::refine`
+//! dispatch on, and they expect the head the *plan* builds, which is two nodes:
+//! a head joint with a crown above it. [`humanoid`] has one node above the neck
+//! and [`quadruped`] likewise, so tagging either `Zone::Head` would run the
+//! skull profiles down a single capped tube whose dome collapses under
+//! subdivision. That does not produce a body the whole pipeline can be
+//! exercised on; it produces a *second* misleading fixture, one that fails
+//! quietly with a deformed head instead of loudly with no head at all. The
+//! honest fixture is the one that cannot be mistaken for anatomy.
+//!
+//! Nothing was lost by deciding this way: every caller of these skeletons in
+//! the crate is a topology test or `examples/dump`, and the parametric bodies
+//! already carry every zone-driven test there is.
 
 use glam::Vec3;
 
@@ -24,6 +48,13 @@ use crate::skeleton::{Node, Skeleton};
 /// and a four-way chest joint. The rest pose is a T deliberately: VRM 1.0
 /// requires it of exported humanoids, so the reference body is authored the way
 /// it will have to be baked.
+///
+/// **A mesher fixture, not an avatar.** It carries no zones, so it has no head
+/// as far as the rest of the crate is concerned: no face, no skin zone map, no
+/// garment cut, no landmarks, and a UV unwrap with no zone boundaries to chart
+/// on. Auditing any of those here will produce a confident wrong answer — it
+/// already has once (#54). Build [`crate::HumanoidParams::default`] and call
+/// [`crate::BodyPlan::skeleton`] for a body the whole pipeline runs on.
 #[must_use]
 pub fn humanoid() -> Skeleton {
     let mut skeleton = Skeleton::new();
@@ -67,6 +98,10 @@ pub fn humanoid() -> Skeleton {
 /// Both girdles are four-way joints carrying a spine segment in each direction
 /// plus two legs, which is the topology a quadruped shares with an insect or a
 /// dragon — only the leg count changes.
+///
+/// **A mesher fixture, not an avatar**, on the same terms as [`humanoid`]: see
+/// that function and the module docs. Use [`crate::QuadrupedParams::default`]
+/// for a body anything zone-driven can be tested on.
 #[must_use]
 pub fn quadruped() -> Skeleton {
     let mut skeleton = Skeleton::new();

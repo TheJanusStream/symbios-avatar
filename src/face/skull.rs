@@ -39,6 +39,11 @@ use crate::rig::Rig;
 ///
 /// About a quarter, on a human. A head with a circular cross-section reads as a
 /// ball however well the rest of it is shaped.
+/// Provenance: **unsourced**. "About a quarter, on a human" is a
+/// recollection and not a citation; the built head measures H:D:W
+/// 1.33:1.29:1.00 against a human 1.48:1.28:1.00 (#79), so the depth this
+/// governs is the one ratio that is right to within one percent — which is
+/// weak evidence for the number and no evidence at all for the source.
 const ELONGATION: f32 = 0.24;
 
 /// How wide the skull is at each height, relative to its unshaped width.
@@ -80,6 +85,11 @@ const ELONGATION: f32 = 0.24;
 /// the silhouette, and it said 0.46 — a 19 mm cliff in 11 mm of height, against
 /// a neck the unshaped head met to within 2 mm. Anything but 1.0 down there is
 /// a seam.
+/// Provenance: **looked up, then tuned by render** (#79). Eurion 156 mm
+/// against a bizygomatic 137, with eurion 25 to 45 mm above the pupil line,
+/// is the looked-up half and it is what inverted this table's premise. The
+/// knots from the cheekbone down are tuned: the head was 11 to 21 percent too
+/// wide for its height and narrowing it had to be judged by eye.
 const BREADTH: [(f32, f32); 9] = [
     (0.86, 0.58),     // crown
     (0.62, 0.88),     // upper cranium
@@ -103,6 +113,10 @@ const BREADTH: [(f32, f32); 9] = [
 /// the neck's where they meet. See [`BREADTH`] for why anything else is a seam —
 /// unshaped, the two agreed to within 2 mm, and the profile was opening an 11 mm
 /// gap at the nape and a 7 mm overhang at the throat (#47).
+/// Provenance: **tuned by render** (#47 for the junction knot), except the
+/// last, which is **derived** — `1/(1 + ELONGATION)` is exactly what makes
+/// `deep` come out at one where the head meets the neck, and is a solved
+/// value rather than a shape.
 const DEPTH: [(f32, f32); 7] = [
     (0.86, 0.66),
     (0.55, 0.94),
@@ -119,6 +133,9 @@ const DEPTH: [(f32, f32); 7] = [
 /// entirely. Negative below it is the jaw cutting in — the hollow between the
 /// jaw's angle and the neck, without which a head sits on its neck like a ball
 /// on a post.
+/// Provenance: **tuned by render**. No issue number: this table predates the
+/// head overhaul and has not been revisited since, which makes it the least
+/// examined of the six.
 const OCCIPUT: [(f32, f32); 6] = [
     (0.70, 0.04),
     (0.35, 0.14),
@@ -133,6 +150,8 @@ const OCCIPUT: [(f32, f32); 6] = [
 /// The bone above the eye, not the hair on it. Without it the forehead runs
 /// straight down into the eye socket and the face has no ledge for the eyes to
 /// sit under — which is a large part of why a smooth head reads as a doll.
+/// Provenance: **tuned by render**, and in skull radii — unlike [`TEMPLE`]
+/// directly below, which is the confusion #79 had to unpick.
 const BROW: [(f32, f32); 5] = [
     (0.58, 0.0),
     (0.42, 0.018),
@@ -161,6 +180,10 @@ const BROW: [(f32, f32); 5] = [
 /// just above the zygomatic arch and *below* the greatest breadth of the skull;
 /// at 0.40 R this was hollowing the parietal instead — about 28 mm above the
 /// brow crest — which is the one part of the vault that should be full.
+/// Provenance: **tuned by render** (#79), at a strength that was documented
+/// in the wrong unit for as long as it existed. Worth reading as a caution:
+/// a number tuned against a docstring that lies about its unit gets tuned
+/// twice and moves half as far as its author expects.
 const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.06, 0.0)];
 
 /// How far the chin and jaw project forward at each height, in skull radii.
@@ -204,6 +227,10 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// go before the others, because holding 0.16 within a mesh row of the junction
 /// stood the head's lowest band 27 mm forward of the throat (#47); the gentler
 /// tail here does not need the exception.
+/// Provenance: **tuned by render** (#71 for the spacing, #72 for the
+/// amplitude, #47 for the tail), and the bisected outline above is what
+/// tuning it looked like. The amplitude was cut once on an argument that
+/// sounded good and measured badly, which is why the reasoning is kept.
 const CHIN: [(f32, f32); 6] = [
     (0.05, 0.0),
     (-0.24, 0.08),
@@ -222,6 +249,11 @@ const CHIN: [(f32, f32); 6] = [
 /// 0.30 of its radius, and through the floor remap that is 0.20 of a profile
 /// height above [`MENTON`]. It lands within 0.02 of where [`crate::face::Canon`]
 /// puts the mouth line, which is where a gonion sits on a face.
+/// Provenance: **derived**, and the arithmetic is above: a mandibular plane
+/// of 22 to 28 degrees over an 85 mm gonion-to-menton run is a 40 mm rise,
+/// which is 0.30 R on the default head and 0.20 profile heights above
+/// [`MENTON`] through the floor remap. The 22-28 degree plane is the
+/// looked-up input and carries no source here.
 const GONION: f32 = -0.31;
 
 /// Where that same border sits on the midline, in profile heights.
@@ -229,6 +261,9 @@ const GONION: f32 = -0.31;
 /// [`CHIN`]'s peak knot, and the same number rather than a second one: the
 /// border ends at the point of the chin by definition, and two constants for
 /// one landmark is how a chin and the thing measuring it drift apart.
+/// Provenance: **derived** from [`CHIN`], by identity rather than by
+/// arithmetic — it is that table's peak knot and deliberately not a second
+/// number for one landmark.
 const MENTON: f32 = -0.54;
 
 /// How far below the border the jaw's hollow reaches full depth, in profile
@@ -243,6 +278,9 @@ const MENTON: f32 = -0.54;
 /// the cells are 24 mm, so out at the gonion this knee is a fifth of a cell and
 /// the border is smeared however sharp the field is. That is a resolution defect
 /// and not a shape one; see [`FACE_PASSES`].
+/// Provenance: **derived** from the mesh, not from a face: it is the #85
+/// floor for a feature that must read as a shape rather than a bar, given
+/// the cell sizes quoted above.
 const JAW_RISE: f32 = 0.035;
 
 /// How deep the hollow under the jaw cuts, as a fraction of the horizontal
@@ -259,6 +297,9 @@ const JAW_RISE: f32 = 0.035;
 /// menton against the half-width at the angle of the jaw went from 0.92 to 0.98,
 /// where a face converges. A hollow that is still near full depth at the chin's
 /// own height is not a hollow under the jaw, it is a smaller head.
+/// Provenance: **tuned by render**, against a bisected convergence
+/// measurement rather than by eye — the 0.92-to-0.98 figure above is what
+/// rejected the first value.
 const JAW_DEPTH: f32 = 0.145;
 
 /// How much of the way from the border to the junction the hollow takes to let
@@ -269,6 +310,7 @@ const JAW_DEPTH: f32 = 0.145;
 /// neck. Releasing over 0.85 of the run puts the deepest point just under the
 /// border — where a submandibular hollow is — and leaves the surface converging
 /// the rest of the way, which is what the chin needs.
+/// Provenance: **tuned by render**.
 const JAW_RELEASE: f32 = 0.85;
 
 /// Where the head's surface runs into the neck's, in skull radii.
@@ -289,6 +331,9 @@ const JAW_RELEASE: f32 = 0.85;
 /// domain so that its own floor lands exactly here. A chin authored at -0.52 is
 /// then three quarters of the way down every head rather than off the bottom of
 /// some and halfway down others.
+/// Provenance: **derived**, and it is a nominal rather than a measured
+/// depth — the paragraph above is the derivation, including why no constant
+/// can be the junction on every body.
 const JUNCTION: f32 = -0.70;
 
 /// How far down the head the profiles have finished letting go, as a fraction of
@@ -301,6 +346,8 @@ const JUNCTION: f32 = -0.70;
 /// centimetre higher that got the chin's full push, and the surface between them
 /// is the shelf. Settling out a little above the floor leaves a band of head that
 /// is simply unshaped, which is what the neck has to meet.
+/// Provenance: **tuned by render**, against an eleven-millimetre shelf that
+/// only appears when the value is exactly one.
 const SETTLE: f32 = 0.92;
 
 /// The region each refinement pass covers: how far round the head it reaches as

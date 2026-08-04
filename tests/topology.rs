@@ -6,7 +6,7 @@
 //! backwards. Both are silent in a renderer and fatal downstream — normals,
 //! skinning, and the eventual glTF export all assume a watertight surface.
 
-use symbios_avatar::{CageConfig, PolyMesh, Skeleton, build_cage, catmull_clark, demo};
+use symbios_avatar::{CageConfig, PolyMesh, Skeleton, Zone, build_cage, catmull_clark, demo};
 
 /// Builds a cage and asserts the manifold contract, returning the mesh.
 fn cage_of(skeleton: &Skeleton, label: &str) -> PolyMesh {
@@ -156,5 +156,37 @@ fn a_crowded_joint_reports_which_bone_to_lengthen() {
             );
         }
         other => panic!("expected a crowded-joint diagnostic, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_demo_skeletons_carry_no_zones() {
+    // #54. This was stated in `demo`'s module docs and believed by nobody who
+    // needed to believe it: a reviewer audited UV charts on `demo::humanoid`
+    // and reported an anisotropy defect that is not there, because an unzoned
+    // body unwraps into a handful of charts where a real one unwraps into
+    // thirty. Prose did not hold the line, so this does.
+    //
+    // Asserting the ABSENCE is what makes this a check rather than a comment.
+    // The tempting version — assert the cage still meshes — passes whatever the
+    // zones say, since the mesher does not read them at all.
+    for (label, skeleton) in [
+        ("humanoid", demo::humanoid()),
+        ("quadruped", demo::quadruped()),
+        ("tripod", demo::tripod()),
+        ("flat tripod", demo::flat_tripod()),
+        ("chain", demo::chain(3)),
+    ] {
+        for (index, node) in skeleton.nodes.iter().enumerate() {
+            assert_eq!(
+                node.zone,
+                Zone::default(),
+                "{label} node {index} carries a zone. These are mesher fixtures: \
+                 the head here is one node where a plan body's is two, so zoning \
+                 it runs the skull profiles down a capped tube and produces a \
+                 fixture that lies quietly instead of one that is obviously \
+                 empty. Add zone-driven coverage to tests/plan.rs instead."
+            );
+        }
     }
 }
