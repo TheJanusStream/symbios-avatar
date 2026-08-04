@@ -227,6 +227,21 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// go before the others, because holding 0.16 within a mesh row of the junction
 /// stood the head's lowest band 27 mm forward of the throat (#47); the gentler
 /// tail here does not need the exception.
+///
+/// **The knot below the peak came down from 0.26 to 0.17, which is where a
+/// straight run puts it** (#94). Between the peak at `-0.54` and zero at
+/// `JUNCTION`, the chord passes through 0.170 at `-0.62`; the table said 0.260,
+/// so the knot stood 0.09 skull radii — about 11.8 mm — proud of a straight
+/// line, and the underside of the jaw bulged forward instead of running back to
+/// the throat.
+///
+/// **It is worth 2.2 mm of a 9.2 mm defect and no more, which is why the
+/// measurement matters more than the knot.** `the_underside_of_the_jaw_does_not_bulge`
+/// measures the whole submental run against its own chord, and the remaining
+/// seven millimetres are NOT in this table: zeroing every below-joint knot here
+/// still leaves +3.4 mm, putting the tail exactly on the chord leaves +7.0, and
+/// adding knots to force the descent to start at the peak leaves +6.9. Whatever
+/// puts the rest there survives this profile being deleted.
 /// Provenance: **tuned by render** (#71 for the spacing, #72 for the
 /// amplitude, #47 for the tail), and the bisected outline above is what
 /// tuning it looked like. The amplitude was cut once on an argument that
@@ -236,7 +251,7 @@ const CHIN: [(f32, f32); 6] = [
     (-0.24, 0.08),
     (-0.42, 0.21),
     (-0.54, 0.34),
-    (-0.62, 0.26),
+    (-0.62, 0.170),
     (JUNCTION, 0.0),
 ];
 

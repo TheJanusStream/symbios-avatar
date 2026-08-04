@@ -12,8 +12,9 @@
 //! a single body, and each time it came back somewhere else. A sweep is the only
 //! thing that settles it.
 
+use symbios_avatar::face::Skull;
 use symbios_avatar::{
-    Archetype, Avatar, AvatarConfig, AvatarRecord, PolyMesh, QuadrupedParams, Vec3,
+    Archetype, Avatar, AvatarConfig, AvatarRecord, PolyMesh, QuadrupedParams, Vec3, Zone,
 };
 
 /// Build settings for a sweep about geometry.
@@ -576,5 +577,87 @@ fn an_eye_shows_white_on_both_sides_of_its_iris() {
                  as turned outward"
             );
         }
+    }
+}
+
+#[test]
+fn the_underside_of_the_jaw_does_not_bulge() {
+    // #94. From the side, the run from the chin's tip back to the throat read as
+    // one convex arc — a soft double chin where life has a straight-to-hollow
+    // line. Measured as the forward deviation from the CHORD joining those two
+    // points, which is the whole requirement in one number: positive is a bulge.
+    //
+    // **The bound is the state, not the target**, and the target is near zero.
+    // 10.5 is a hair above the worst of these sixteen seeds, which is 10.0. Its
+    // job is to stop the defect deepening and to give whoever finds the cause a
+    // number to drive down; tightening it IS the fix.
+    //
+    // **Sixteen seeds, because four were not enough and that is the finding.**
+    // #94's analysis ran on the default body plus three seeds and read 9.2 mm
+    // falling to 7.0 after the `CHIN` knot came onto its chord. Over the full
+    // sweep the worst is 10.0 mm AFTER that fix — the four-seed sample missed
+    // the tail of the population entirely, so the "2.2 mm recovered" figure
+    // describes those four bodies and not this one.
+    //
+    // What the residual is not, all measured: the cage is straight there (-0.1
+    // to -0.7 mm before any profile runs), the relief face carve contributes
+    // exactly nothing (identical to the last decimal with it and without), and
+    // deleting every below-joint knot of `CHIN` still leaves +3.4 mm.
+    for seed in 0..SEEDS {
+        let mut record = AvatarRecord::new("Jaw", Archetype::default());
+        record.reroll(seed);
+        let avatar = Avatar::build_with(&record, &geometry_only()).expect("the body builds");
+        let body = &avatar.parts.body;
+        let Some(head) = avatar.rig.in_zone(Zone::Head).first().copied() else {
+            continue;
+        };
+        let at = avatar.rig.joints[head].position;
+        let Some(skull) = Skull::measure(body, &avatar.rig) else {
+            continue;
+        };
+
+        // How far the midline surface reaches forward at a height, bisected —
+        // never binned, for the reason the head audit gives.
+        let reach = |y: f32| -> Option<f32> {
+            if !body.contains(Vec3::new(at.x, y, at.z)) {
+                return None;
+            }
+            let (mut inside, mut outside) = (at.z, at.z + 0.40);
+            for _ in 0..32 {
+                let mid = 0.5 * (inside + outside);
+                if body.contains(Vec3::new(at.x, y, mid)) {
+                    inside = mid;
+                } else {
+                    outside = mid;
+                }
+            }
+            Some(inside)
+        };
+
+        let chin_y = at.y + skull.chin();
+        let throat_y = at.y + skull.throat_and_crown().0;
+        let (Some(chin_z), Some(throat_z)) = (reach(chin_y), reach(throat_y)) else {
+            continue;
+        };
+
+        let mut worst = 0.0f32;
+        let mut worst_at = 0.0f32;
+        for step in 1..20 {
+            let t = step as f32 / 20.0;
+            let y = chin_y + (throat_y - chin_y) * t;
+            if let Some(z) = reach(y) {
+                let out = (z - (chin_z + (throat_z - chin_z) * t)) * 1000.0;
+                if out > worst {
+                    worst = out;
+                    worst_at = (y - at.y) * 1000.0;
+                }
+            }
+        }
+        assert!(
+            worst < 10.5,
+            "seed {seed}: the underside of the jaw stands {worst:.1} mm forward of \
+             the chord from the chin to the throat, at {worst_at:.1} mm. A \
+             jawline should be straight to hollow, so the target is near zero."
+        );
     }
 }
