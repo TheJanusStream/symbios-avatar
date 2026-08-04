@@ -390,39 +390,109 @@ fn globe(radius: f32) -> PolyMesh {
     prim::sphere_rings(radius, &polars, SEGMENTS)
 }
 
+/// Where the lids meet, as an azimuth either side of the gaze.
+///
+/// The canthi, and the only two points on the eye where both lids are. Sixty
+/// degrees lands the visible corner at 0.87 of the globe's radius off the
+/// midline, which is a fissure as long as the eye is wide — and it falls exactly
+/// on a vertex at [`SEGMENTS`], so the corner is a corner rather than a chord
+/// across one.
+const CANTHUS: f32 = std::f32::consts::FRAC_PI_3;
+
+/// Where the upper lid's margin sits at the midline, in radians above the gaze,
+/// with the lids shut and with them at their widest.
+///
+/// **The aperture lives in the margin now, not in a rest rotation.** It used to
+/// be a rigid turn applied to a circular cap, which could open and shut the eye
+/// but could not change the SHAPE of what it left bare. Shut is the upper margin
+/// BELOW the lower one, so the two overlap; there is no separate closed state to
+/// keep in step.
+const UPPER_MARGIN: (f32, f32) = (-0.105, 0.681);
+
+/// The same for the lower lid, in radians below the gaze.
+///
+/// At the default aperture the pair open 52° of latitude, against life's 11 mm
+/// of palpebral fissure on a 12.1 mm globe, which is 52°.
+const LOWER_MARGIN: (f32, f32) = (-0.070, -0.463);
+
+/// How far the lateral canthus sits above the medial one, in radians.
+///
+/// One to two millimetres in life, and absent from the first specification for
+/// this entirely: level canthi read flat and sad. It cancels out of where the
+/// two margins meet, so it tilts the fissure without opening a gap at either
+/// corner.
+const CANTHAL_TILT: f32 = 0.035;
+
+/// How far round the lid's rim is sampled.
+///
+/// Twenty-four puts a vertex every 15°, which is what makes [`CANTHUS`] a point
+/// rather than a chord, and keeps four lids inside `tests/budget.rs`'s dominance
+/// guard — they are charted into the head's atlas, so they count as skin.
+const SEGMENTS: usize = 24;
+
+/// How far the lid's rim may reach below the pole, in radians.
+///
+/// The margin would carry on past the canthus to the far side of the globe,
+/// where nothing can see it and every ring spent on it sags the shell into the
+/// eye. Capped at 112°, which is past where the skin closes over on every seed
+/// measured (97° to 101° lateral).
+const RIM_LIMIT: f32 = 1.955;
+
+/// Where a lid's margin sits at an azimuth from the gaze, in radians of
+/// elevation.
+///
+/// **The two margins cross at exactly one pair of azimuths, and that is the
+/// point.** Both are the same cosine, which is zero at `±`[`CANTHUS`] and
+/// nowhere else in range, so `upper` and `lower` are equal there whatever the
+/// aperture and whatever the tilt — the lids meet at two corners by
+/// construction. Past the canthus the cosine goes negative, so the upper margin
+/// drops below the eye's equator while the lower rises above it and the two
+/// overlap: there is no bare band outside the fissure, which is the whole defect
+/// this replaces (#81).
+fn margin(azimuth: f32, side: f32, open: f32, upper: bool) -> f32 {
+    let (shut, wide) = if upper { UPPER_MARGIN } else { LOWER_MARGIN };
+    let reach = shut + (wide - shut) * open;
+    let along = (azimuth / (2.0 * CANTHUS)).clamp(-1.0, 1.0);
+    reach * (std::f32::consts::PI * along).cos()
+        + CANTHAL_TILT * (azimuth / CANTHUS).clamp(-1.0, 1.0) * side
+}
+
 /// Builds one eye at `pivot`.
 fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
     let globe = globe(radius).transformed(Mat4::from_translation(pivot));
 
-    // A lid is a shell just clear of the globe, so it never intersects it as it
-    // swings. Its rest position is set by the aperture: a wide-open eye starts
-    // with the lids further back.
-    let shell = radius * 1.06;
+    // A lid is a shell clear of the globe, so it never intersects the eye it
+    // covers. **1.08 rather than 1.06, and it is the rim's doing.** The surface
+    // between two rings is a chord, and a rim that now reaches 112° instead of
+    // 72° puts three rings 37° apart — a chord that sags to 0.947 of the shell,
+    // which at 1.06 passes 0.9996 of the globe and z-fights it.
+    let shell = radius * 1.08;
     let thickness = radius * 0.10;
     let open = params.aperture.clamp(0.0, 1.0);
 
     let lid = |upper: bool| {
-        let swing = if upper {
-            Eye::UPPER_SWING
+        // `prim::margin_shell` domes around +Y and counts its segments from +X,
+        // so a segment at `turn` sits at gaze azimuth `FRAC_PI_2 - turn` and the
+        // rim's polar angle is a quarter turn less the margin's elevation. The
+        // lower lid is the same shell brought under the eye by a half turn about
+        // X, which negates both, hence the mirrored azimuth and the sign.
+        let half = std::f32::consts::FRAC_PI_2;
+        let rim: Vec<f32> = (0..SEGMENTS)
+            .map(|segment| {
+                let turn = std::f32::consts::TAU * segment as f32 / SEGMENTS as f32;
+                let azimuth = if upper { half - turn } else { half + turn };
+                let at = margin(wrap(azimuth), side, open, upper);
+                let polar = if upper { half - at } else { half + at };
+                polar.min(RIM_LIMIT)
+            })
+            .collect();
+        let flip = if upper {
+            Quat::IDENTITY
         } else {
-            -Eye::LOWER_SWING
+            Quat::from_rotation_x(std::f32::consts::PI)
         };
-        // Built around +Y then turned so the pair meet across the eye when shut.
-        //
-        // The sign matters and it was wrong: written as `swing * (1 - open)`
-        // this CLOSES the lids as the aperture rises, and the default aperture
-        // left a fifteen-degree slit — an eye that read as a letterbox with a
-        // stripe of iris in it. Opening the upper lid is a negative rotation
-        // about X and opening the lower one is positive, which is exactly what
-        // multiplying by each lid's own swing gives.
-        let rest = Quat::from_rotation_x(swing * (0.42 - 0.72 * open))
-            * if upper {
-                Quat::IDENTITY
-            } else {
-                Quat::from_rotation_x(std::f32::consts::PI)
-            };
-        prim::cap_shell(shell, thickness, 1.25, 3, 14)
-            .transformed(Mat4::from_translation(pivot) * Mat4::from_quat(rest))
+        prim::margin_shell(shell, thickness, &rim, 3)
+            .transformed(Mat4::from_translation(pivot) * Mat4::from_quat(flip))
     };
 
     Eye {
@@ -433,6 +503,14 @@ fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
         radius,
         side,
     }
+}
+
+/// An angle brought into `-π..=π`, so an azimuth round the back of the globe is
+/// read as the far side of the fissure rather than as many turns from it.
+fn wrap(angle: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let turned = (angle + PI).rem_euclid(TAU);
+    turned - PI
 }
 
 #[cfg(test)]
@@ -626,48 +704,75 @@ mod tests {
         );
     }
 
+    /// How much of the globe the lids leave bare at one azimuth from the gaze,
+    /// in degrees of latitude, and where the middle of that gap sits.
+    ///
+    /// **Sampled on the globe's own surface, not off the lids' bounding box.**
+    /// A lid's rim is a curve now, so its lowest point is out at the canthus
+    /// rather than over the pupil, and a test that reads `bounds()` is reading
+    /// the corner while claiming to measure the opening — which is how
+    /// `a_resting_aperture_sets_how_open_the_eyes_start` came to invert when the
+    /// rim stopped being a circle (#81).
+    fn bare(eye: &Eye, azimuth: f32) -> (f32, f32) {
+        let upper = eye.upper_lid.transformed(eye.lid_transform(0.0, true));
+        let lower = eye.lower_lid.transformed(eye.lid_transform(0.0, false));
+        let (sin, cos) = azimuth.to_radians().sin_cos();
+        let (mut gap, mut sum) = (0.0f32, 0.0f32);
+        for tick in -890..=890 {
+            let latitude = (tick as f32 * 0.1).to_radians();
+            let on_globe = eye.pivot
+                + Vec3::new(sin * latitude.cos(), latitude.sin(), cos * latitude.cos())
+                    * eye.radius;
+            if !upper.contains(on_globe) && !lower.contains(on_globe) {
+                gap += 0.1;
+                sum += tick as f32 * 0.1;
+            }
+        }
+        (gap, if gap > 0.0 { sum * 0.1 / gap } else { 0.0 })
+    }
+
     #[test]
-    #[ignore = "the target, not the state: the lids are caps of the globe and never meet at the sides (#81)"]
     fn the_lids_close_at_corners_rather_than_leaving_a_band() {
         // What makes an eye read as an eye rather than as a bead in a ring: the
         // lids MEET, at a medial and a lateral canthus, so the uncovered region
-        // is a lens. Here both lids are `cap_shell` domes concentric with the
-        // globe, 71.6° in half-angle and set 163° apart at the default
-        // aperture. Two caps summing 143° cannot close a 163° gap, so the
-        // uncovered set is an ANNULUS running the full width of the globe.
+        // is a lens. Both lids used to be `cap_shell` domes concentric with the
+        // globe, 71.6° in half-angle and set 163° apart at the default aperture.
+        // Two caps summing 143° cannot close a 163° gap, so the uncovered set
+        // was an ANNULUS: measured round the front, 54 / 54 / 53 / 52 / 50 / 48
+        // / 44 / 41 / 38 degrees of bare globe at every azimuth out to 90 —
+        // there was no corner at any aperture at which the eye was open, and the
+        // aperture's whole lateral edge was wherever the skin happened to fall
+        // away, 97° round the side of the head.
         //
-        // Sampled round the globe's equator rather than on the midline, which
-        // is the whole point — the test above looks only where the lids do
-        // meet.
+        // Sampled round the globe rather than on the midline, which is the whole
+        // point: `a_blink_reaches_further_down_the_front_of_the_globe_than_an_
+        // open_lid` looks only where the lids always did meet.
         let pair = eyes(&EyeParams::default());
         let eye = &pair.left;
-        let upper = eye.upper_lid.transformed(eye.lid_transform(0.0, true));
-        let lower = eye.lower_lid.transformed(eye.lid_transform(0.0, false));
+        let open: Vec<(i32, f32)> = (0..=9)
+            .map(|step| {
+                let azimuth = 10.0 * step as f32;
+                (azimuth as i32, bare(eye, azimuth).0)
+            })
+            .collect();
 
-        // For each azimuth round the front of the globe, how tall the gap
-        // between the lids is, in degrees of latitude.
-        let mut open = Vec::new();
-        for step in 0..=8 {
-            let azimuth = std::f32::consts::FRAC_PI_2 * step as f32 / 8.0;
-            let (sin, cos) = azimuth.sin_cos();
-            let mut gap = 0.0f32;
-            for tick in -60..=60 {
-                let latitude = (tick as f32).to_radians();
-                let on_globe = eye.pivot
-                    + Vec3::new(sin * latitude.cos(), latitude.sin(), cos * latitude.cos())
-                        * eye.radius;
-                if !upper.contains(on_globe) && !lower.contains(on_globe) {
-                    gap += 1.0;
-                }
+        // Shut by the canthus and stays shut past it. Sampled at 70° and beyond
+        // rather than at the canthus itself, because a lens closes to nothing
+        // gradually and its last degree is a chord of the rim.
+        for &(azimuth, gap) in &open {
+            if azimuth >= 70 {
+                assert!(
+                    gap < 2.0,
+                    "past the canthus the lids leave {gap:.1}° of the globe bare at \
+                     {azimuth}°; the gap by azimuth is {open:?}"
+                );
             }
-            open.push((azimuth.to_degrees().round() as i32, gap));
         }
-        // At the outer corner the lids must have closed on each other.
-        let corner = open.last().expect("sampled").1;
+        // And it is a lens rather than a slit: still open over the pupil.
         assert!(
-            corner < 5.0,
-            "at the outer corner the lids leave {corner:.0}° of the globe bare; \
-             the gap by azimuth is {open:?}"
+            open[0].1 > 30.0,
+            "the fissure is only {:.1}° tall at the midline",
+            open[0].1
         );
     }
 
@@ -684,22 +789,27 @@ mod tests {
 
     #[test]
     fn a_resting_aperture_sets_how_open_the_eyes_start() {
-        let narrow = eyes(&EyeParams {
-            aperture: 0.1,
-            ..Default::default()
-        });
-        let wide = eyes(&EyeParams {
-            aperture: 1.0,
-            ..Default::default()
-        });
-
-        let gap = |pair: &Eyes| {
-            let (lo, _) = pair.left.upper_lid.bounds();
-            lo.y
+        // **Measured over the pupil, not off the lid's bounding box.** This read
+        // `upper_lid.bounds().0.y` and asked that a narrowed lid hang lower.
+        // That was true only while the rim was a circle: with a margin curve the
+        // lid's lowest point is out at the canthus, where it dips furthest below
+        // the eye's equator precisely BECAUSE the eye is wide open, so the test
+        // inverted while the aperture did exactly what it says (#81).
+        let at = |aperture: f32| {
+            let pair = eyes(&EyeParams {
+                aperture,
+                ..Default::default()
+            });
+            bare(&pair.left, 0.0).0
         };
+        let (shut, narrow, wide) = (at(0.0), at(0.3), at(1.0));
         assert!(
-            gap(&narrow) < gap(&wide),
-            "narrowed lids should hang lower over the eye"
+            shut < 1.0,
+            "at aperture zero the lids left {shut:.1}° of the globe bare over the pupil"
+        );
+        assert!(
+            narrow < wide * 0.8,
+            "a narrowed eye opened {narrow:.1}° against a wide one's {wide:.1}°"
         );
     }
 

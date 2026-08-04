@@ -160,6 +160,9 @@ pub fn sphere_rings(radius: f32, polars: &[f32], segments: usize) -> PolyMesh {
 /// `half_angle` is how far down from the pole the cap reaches, in radians;
 /// `thickness` is how far its inner surface sits below the outer one. The result
 /// is a solid: outer surface, inner surface, and a rim joining them.
+///
+/// A circular rim, which is the one thing a cap cannot help being — see
+/// [`margin_shell`], which is this with the rim allowed to move.
 #[must_use]
 pub fn cap_shell(
     radius: f32,
@@ -168,9 +171,39 @@ pub fn cap_shell(
     rings: usize,
     segments: usize,
 ) -> PolyMesh {
-    let rings = rings.max(1);
     let segments = segments.max(3);
-    let half_angle = half_angle.clamp(0.05, std::f32::consts::PI - 0.05);
+    margin_shell(radius, thickness, &vec![half_angle; segments], rings)
+}
+
+/// The same shell with its rim free to move: one polar angle per segment.
+///
+/// **Because two circles cannot meet at two points.** An eyelid is a cap whose
+/// rim has to run from one canthus round to the other and back, meeting its
+/// opposite lid at both — and two spherical caps with circular rims either miss
+/// each other everywhere (leaving an annulus of bare eye, which is what this
+/// crate shipped) or overlap along a whole arc. Letting the rim's polar angle
+/// vary with azimuth is the smallest change that lets a boundary be authored
+/// rather than inherited from the shape of a cap (#81).
+///
+/// `rim` gives the polar angle at each segment, measured from the `+Y` pole, and
+/// its length is the segment count. Angles past 90° are meaningful and used: a
+/// lid reaches well below the eye's equator away from the fissure.
+///
+/// **A rim that varies faster than the rings can follow will sag into whatever
+/// the shell is meant to clear.** The surface between two rings is a chord, and
+/// a chord across `d` radians sits at `cos(d/2)` of the radius: three rings over
+/// a 112° rim leaves 0.947, so a shell at 1.06 of a globe passes 0.9996 of it
+/// and z-fights. Either add rings or stand the shell further off.
+#[must_use]
+pub fn margin_shell(radius: f32, thickness: f32, rim: &[f32], rings: usize) -> PolyMesh {
+    let rings = rings.max(1);
+    let segments = rim.len().max(3);
+    let at = |segment: usize| {
+        rim.get(segment % rim.len())
+            .copied()
+            .unwrap_or(1.0)
+            .clamp(0.05, std::f32::consts::PI - 0.05)
+    };
     let inner = (radius - thickness.abs()).max(radius * 0.2);
 
     // Outer surface over the top half of the chart, inner over the bottom, both
@@ -179,10 +212,9 @@ pub fn cap_shell(
     let outer_pole = mesh.push_uv_vertex(Vec3::Y * radius, Vec2::new(0.5, 1.0));
     for ring in 1..=rings {
         let along = ring as f32 / rings as f32;
-        let polar = half_angle * along;
         for segment in 0..segments {
             mesh.push_uv_vertex(
-                on_sphere(radius, polar, turn(segment, segments)),
+                on_sphere(radius, at(segment) * along, turn(segment, segments)),
                 Vec2::new(segment as f32 / segments as f32, 1.0 - 0.5 * along),
             );
         }
@@ -191,10 +223,9 @@ pub fn cap_shell(
     let inner_pole = mesh.push_uv_vertex(Vec3::Y * inner, Vec2::new(0.5, 0.0));
     for ring in 1..=rings {
         let along = ring as f32 / rings as f32;
-        let polar = half_angle * along;
         for segment in 0..segments {
             mesh.push_uv_vertex(
-                on_sphere(inner, polar, turn(segment, segments)),
+                on_sphere(inner, at(segment) * along, turn(segment, segments)),
                 Vec2::new(segment as f32 / segments as f32, 0.5 * along),
             );
         }
@@ -432,6 +463,41 @@ mod tests {
         let (lo, hi) = mesh.bounds();
         assert!(hi.y > 0.4, "the cap should reach the pole");
         assert!(lo.y > -0.2, "and should not wrap round the bottom");
+    }
+
+    #[test]
+    fn a_margin_shell_takes_its_rim_from_the_angles_it_is_given() {
+        // The property [`cap_shell`] cannot have: a rim that is somewhere else
+        // at every azimuth. Two shells like this can meet at two points, which
+        // is what an eyelid needs and what two circles cannot do (#81).
+        let segments = 16;
+        let rim: Vec<f32> = (0..segments)
+            .map(|segment| {
+                // Shallow at +X, reaching past the equator a quarter turn on.
+                let turn = std::f32::consts::TAU * segment as f32 / segments as f32;
+                1.0 - 0.8 * turn.cos()
+            })
+            .collect();
+        let mesh = margin_shell(0.5, 0.03, &rim, 4);
+        assert!(mesh.is_closed_manifold(), "{:?}", mesh.manifold_report());
+
+        // Every rim vertex sits at the polar angle it was asked for, on the
+        // outer surface. Read off the mesh rather than trusted: the rim is the
+        // last ring of the outer run, which is where the two surfaces join.
+        for (segment, &want) in rim.iter().enumerate() {
+            let at = mesh.positions[1 + (4 - 1) * segments + segment];
+            let polar = (at.y / at.length()).clamp(-1.0, 1.0).acos();
+            assert!(
+                (polar - want).abs() < 1e-3,
+                "segment {segment} sits at {polar:.4} rad against the {want:.4} it was given"
+            );
+        }
+
+        // And a constant rim is exactly a cap, so the two cannot drift apart.
+        let capped = cap_shell(0.5, 0.03, 1.2, 4, 16);
+        let flat = margin_shell(0.5, 0.03, &[1.2; 16], 4);
+        assert_eq!(capped.positions, flat.positions);
+        assert_eq!(capped.faces, flat.faces);
     }
 
     #[test]
