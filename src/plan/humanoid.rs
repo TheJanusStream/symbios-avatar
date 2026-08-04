@@ -56,6 +56,31 @@ const GIRDLE_SECTION: Vec2 = Vec2::new(1.0, 0.80);
 /// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite.
 const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 
+/// Where the crown node sits above the head joint, in head radii.
+///
+/// See [`CROWN_WIDE`]: this came down from 0.72 when that went up, so the built
+/// crown lands in the same place. The pair is chosen together and neither
+/// number means anything alone.
+const CROWN_HIGH: f32 = 0.68;
+
+/// How wide the crown node is, in head radii.
+///
+/// **Up from 0.66, and it is the cage's half of #79.** A cranium is very nearly
+/// a cylinder in front view — its greatest breadth is on the parietal, 25 to
+/// 45 mm above the pupil line, not at the cheekbone — and at 0.66 this node was
+/// so much smaller than the head node below it that the blend between the two
+/// converged toward an apex. Measured on the built cage, with no profile
+/// applied at all, the half-width fell from 0.584 head radii at the joint to
+/// 0.407 at +0.75 R: a cone before the skull's breadth profile ever ran.
+///
+/// At 0.87 the same measurement reads 0.620 / 0.632 / 0.630 / 0.599 / 0.513 at
+/// +0.05 / +0.20 / +0.35 / +0.55 / +0.75 R — flat through the mid-cranium and
+/// falling only where a skull does. [`CROWN_HIGH`] came down from 0.72 to 0.68
+/// at the same time so the built crown does not move: this issue is the vault's
+/// SHAPE, and cranium:face measures 1.00 after #78, so there is no proportion
+/// left to spend on height.
+const CROWN_WIDE: f32 = 0.87;
+
 /// How far below horizontal a resting arm lies, in radians.
 ///
 /// The A in A-pose. Forty degrees: far enough that neither hanging the arms nor
@@ -348,8 +373,11 @@ impl BodyPlan for HumanoidParams {
         );
         skeleton.extend_from(
             head,
-            Node::new(Vec3::new(0.0, head_y + head_r * 0.72, 0.0), head_r * 0.66)
-                .in_zone(Zone::Head),
+            Node::new(
+                Vec3::new(0.0, head_y + head_r * CROWN_HIGH, 0.0),
+                head_r * CROWN_WIDE,
+            )
+            .in_zone(Zone::Head),
         );
 
         for (side, fore, hind) in [

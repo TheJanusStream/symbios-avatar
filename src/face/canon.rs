@@ -74,19 +74,33 @@ impl Canon {
     ///
     /// The oldest measured thing in this file — the canon of fifths — and it
     /// falls straight out of the measured half-width, which is why the ruler
-    /// is derived here rather than guessed. On a default body the half-width is
-    /// 79.6 mm, so the unit is 31.8 mm and a face is 159 mm across, against a
-    /// measured human bizygomatic 137 and eu-eu 151.
+    /// is derived here rather than guessed. On a default body the half-width
+    /// was 79.6 mm when this was written, so the unit was 31.8 mm and a face
+    /// 159 mm across, against a measured human bizygomatic 137 and eu-eu 151.
+    /// #79 narrowed the head; the same half-width is 69.0 mm now and the face
+    /// 138, which is what a bizygomatic is.
     const FIFTH: f32 = 0.40;
 
-    /// Where the same canon puts the eye's centre: half the inter-eye gap plus
-    /// half an eye, which is one whole unit out from the midline.
+    /// Where the same canon puts the eye's centre, in eye-widths from the
+    /// midline.
     ///
-    /// Gives an inter-pupillary distance of 63.7 mm on a default body against a
-    /// measured human 63 to 64.7. The old placement, `0.34` of a node radius,
-    /// gave 90.9 — which parked the pupil out on the flank where the surface has
-    /// already receded, and cost 11.5 mm of the 26 mm depth error all by itself.
-    const PUPIL: f32 = 1.0;
+    /// **This was 1.0, and it was carrying somebody else's error.** The fifths
+    /// canon puts the eye's centre half an inter-eye gap plus half an eye out,
+    /// which is one whole unit — and on a face 159 mm across, one unit gave an
+    /// inter-pupillary 63.7 mm against a measured human 63 to 64.7. Both
+    /// numbers were right and the agreement was a coincidence: the face was 16%
+    /// wider than a bizygomatic, and a pupil placed 16% too far in landed in the
+    /// right place anyway. #79 corrected the face, the cancellation went with
+    /// it, and the inter-pupillary fell to 55.2 mm — which the canon's own test
+    /// caught on the first run.
+    ///
+    /// So it is measured against life directly rather than against the fifths:
+    /// a bizygomatic 137 mm gives a half-width of 68.5 and a unit of 27.4, and
+    /// an inter-pupillary of 63.5 puts each pupil 31.75 mm out, which is 1.16
+    /// units. The old placement, `0.34` of a node radius, gave 90.9 — which
+    /// parked the pupil out on the flank where the surface has already receded,
+    /// and cost 11.5 mm of the 26 mm depth error all by itself.
+    const PUPIL: f32 = 1.16;
 
     /// How far the spacing axis moves the pupils, as a share of the unit.
     ///

@@ -43,9 +43,26 @@ const ELONGATION: f32 = 0.24;
 
 /// How wide the skull is at each height, relative to its unshaped width.
 ///
-/// Widest at the cheekbones, which sit just below the eye line — not at the
-/// cranium, which is where an unshaped head is widest and part of why it reads
-/// as a ball.
+/// **Widest on the parietal, well above the eye, and this file said the
+/// opposite for a long time.** It read "widest at the cheekbones, which sit just
+/// below the eye line", and encoded it: 1.03 at −0.05 R falling monotonically
+/// to 0.62 at the crown. Anthropometry runs the other way. Maximum breadth is at
+/// eurion — 156 mm against a bizygomatic 137 — and eurion sits 25 to 45 mm
+/// *above* the pupil line. Built, the maximum came out at −4 to −12 mm on four
+/// seeds: at or just below the eye, which is the defect (#79).
+///
+/// The correction is not only these numbers. The cage cones on its own — see
+/// the humanoid plan's crown node, which was so much narrower than the
+/// head node that the blend converged toward an apex — and a profile cannot
+/// un-cone a cage without inflating the cranium past anything a skull does. The
+/// two were fixed together: the cage is near-cylindrical through the
+/// mid-cranium now, and this profile narrows where a head narrows.
+///
+/// The head was also **11 to 21 percent too wide for its own height** on those
+/// four seeds (H:W 1.22–1.31 against a life 1.48), so every knot from the
+/// cheekbone down came in as well. That is a narrower face, deliberately, and
+/// it is the half of this change that had to be judged by eye rather than
+/// measured.
 ///
 /// **The lower half narrows far less than it looks like it should, and returns
 /// to nothing at all where the head meets the neck.** Two reasons, both
@@ -63,14 +80,15 @@ const ELONGATION: f32 = 0.24;
 /// the silhouette, and it said 0.46 — a 19 mm cliff in 11 mm of height, against
 /// a neck the unshaped head met to within 2 mm. Anything but 1.0 down there is
 /// a seam.
-const BREADTH: [(f32, f32); 8] = [
-    (0.86, 0.62),     // crown
-    (0.55, 0.90),     // upper cranium
-    (0.25, 0.99),     // temples
-    (-0.05, 1.03),    // cheekbones, the widest part of a head
-    (-0.28, 0.95),    // below the cheek
-    (-0.46, 0.80),    // the angle of the jaw
-    (-0.60, 0.66),    // the chin
+const BREADTH: [(f32, f32); 9] = [
+    (0.86, 0.58),     // crown
+    (0.62, 0.88),     // upper cranium
+    (0.42, 0.94),     // the parietal, where a head is actually widest
+    (0.20, 0.885),    // above the temple
+    (-0.05, 0.825),   // the cheekbones, a plane change and not the widest point
+    (-0.28, 0.771),   // below the cheek
+    (-0.46, 0.646),   // the angle of the jaw
+    (-0.60, 0.547),   // the chin
     (JUNCTION, 1.00), // the throat, which is the neck's width and not this one's
 ];
 
@@ -123,11 +141,27 @@ const BROW: [(f32, f32); 5] = [
     (0.02, 0.0),
 ];
 
-/// How far the temples are drawn in, in skull radii, at each height.
+/// How far the temples are drawn in at each height, as a fraction of the local
+/// half-width.
 ///
 /// The flat at the side of the skull between the brow and the ear. A head
 /// without it is a barrel from every angle above the cheekbone.
-const TEMPLE: [(f32, f32); 4] = [(0.62, 0.0), (0.40, 0.040), (0.14, 0.034), (-0.06, 0.0)];
+///
+/// **A fraction, not skull radii, and this docstring used to say the wrong
+/// one.** It is subtracted from `wide` in [`reshape_to`], which is a
+/// dimensionless multiplier on the horizontal radius — so 0.040 has always
+/// realised as 4% of the local half-width, about 3.2 mm at the widest, rather
+/// than as 0.040 R. [`BROW`] genuinely is in skull radii: it is multiplied by
+/// `radius` where this one is not. Two neighbouring profiles documented in the
+/// same unit and applied in different ones is how a term gets tuned twice and
+/// moves half as far as its author expects, so the doc now says what the code
+/// does (#79).
+///
+/// **The peak came down from 0.40 R to brow height.** The temporal fossa sits
+/// just above the zygomatic arch and *below* the greatest breadth of the skull;
+/// at 0.40 R this was hollowing the parietal instead — about 28 mm above the
+/// brow crest — which is the one part of the vault that should be full.
+const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.06, 0.0)];
 
 /// How far the chin and jaw project forward at each height, in skull radii.
 ///
