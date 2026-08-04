@@ -1438,10 +1438,26 @@ mod tests {
                 let height = lo + (hi - lo) * (0.08 + 0.82 * step as f32 / 12.0);
                 let from = centre + Vec3::Y * height;
 
+                // **The lowest sample gets its own ceiling, and only it.**
+                // Step 0 sits at 0.08 of the span, BELOW the chin at 0.13 — it
+                // is in the throat band, where the head's surface is running
+                // into the neck's and where `the_profile_agrees_over_its_whole_span`
+                // already records and tolerates 13.3 mm. Measured across all six
+                // seeds, every midline error over 7 mm is at step 0 and the
+                // worst is 9.7; the band above it is unaffected, which is why
+                // this is a second ceiling rather than a wider one (#93).
+                //
+                // It was raised from 9.0 to take #93's shorter neck, which drops
+                // the whole head about 18 mm and so lands its lowest band where
+                // the body is already rising into the trapezius. That is a real
+                // cost of that change and this is where it is paid. Widening the
+                // whole sweep to fit it would have hidden a regression anywhere
+                // else in the profile; this cannot.
+                let ceiling = if step == 0 { 11.0 } else { 9.0 };
                 if let Some(surface) = probe(&mesh, from, Vec3::Z) {
                     let error = (skull.depth(height) - surface) * 1000.0;
                     assert!(
-                        (-4.0..9.0).contains(&error),
+                        (-4.0..ceiling).contains(&error),
                         "seed {seed} at {height:.3}: the midline depth is {error:.1} mm out"
                     );
                 }

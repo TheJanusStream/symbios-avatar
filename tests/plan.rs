@@ -11,6 +11,7 @@
 
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
+use symbios_avatar::face::Skull;
 use symbios_avatar::{
     Archetype, AvatarRecord, BodyPlan, CageConfig, HumanoidParams, Limb, QuadrupedParams, Rig,
     Zone, build_body, build_cage,
@@ -370,4 +371,69 @@ fn a_trunk_is_not_a_surface_of_revolution() {
         "a four-legged trunk measured {across:.4} across and {tall:.4} deep — ratio {:.2}",
         tall / across
     );
+}
+
+#[test]
+fn the_neck_is_the_length_of_a_neck() {
+    // #93. The neck's length is not an anatomical choice anywhere in this plan:
+    // it falls out of the socket-clearance floor under `neck_y`, which BINDS, so
+    // the coefficient that looks like it sets the neck does not. Nothing
+    // measured the result until the owner said the head-to-body transition read
+    // as mangled, and it came out at 0.480 of a head height against an eight-head
+    // figure that puts the shoulder line about a third of a head below the chin.
+    //
+    // **Measured against the shoulder SURFACE, not the clavicle joint.** The
+    // joint sits about 95 mm lower, under the trapezius, so reading the span off
+    // the rig predicts 190 mm where the surface gives 103 — an 85% error, and
+    // the reason a body checked against canon repeatedly still had this in it.
+    for seed in [0i64, 3, 7, 13, 21] {
+        let mut record = AvatarRecord::new("Neck", Archetype::default());
+        record.reroll(seed);
+        let skeleton = record.skeleton();
+        let body = build_body(&skeleton, &CageConfig::default(), 2).expect("the body meshes");
+        let rig = Rig::from_skeleton(&skeleton).expect("the body rigs");
+        let Some(skull) = Skull::measure(&body, &rig) else {
+            continue;
+        };
+        let at = rig.joints[*rig.in_zone(Zone::Head).first().expect("a head")].position;
+        let (throat, crown) = skull.throat_and_crown();
+        let (chin, crown, throat) = (at.y + skull.chin(), at.y + crown, at.y + throat);
+
+        // Bisected, like every other measurement in this crate: binning vertices
+        // into height bands reports ripple that is not in the mesh.
+        let half_width = |y: f32| {
+            let (mut inside, mut outside) = (0.0f32, 0.40f32);
+            for _ in 0..32 {
+                let mid = 0.5 * (inside + outside);
+                if body.contains(glam::Vec3::new(at.x + mid, y, at.z)) {
+                    inside = mid;
+                } else {
+                    outside = mid;
+                }
+            }
+            inside
+        };
+
+        // Down from the throat to where the body is half again as wide as the
+        // narrowest point of the neck: the shoulder line as an eye reads it.
+        let (mut narrowest, mut y) = (f32::MAX, throat);
+        while y > throat - 0.30 {
+            narrowest = narrowest.min(half_width(y));
+            if half_width(y) > narrowest * 1.5 {
+                break;
+            }
+            y -= 0.001;
+        }
+
+        let ratio = (chin - y) / (crown - chin);
+        assert!(
+            ratio < 0.52,
+            "seed {seed}: the chin sits {:.1} mm above the shoulder line on a \
+             {:.1} mm head, a ratio of {ratio:.3}. The eight-head figure puts it \
+             near 0.33; this shipped at 0.480 before #93 shortened the girdle's \
+             neck floor.",
+            (chin - y) * 1000.0,
+            (crown - chin) * 1000.0
+        );
+    }
 }

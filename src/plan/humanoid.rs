@@ -333,16 +333,50 @@ impl BodyPlan for HumanoidParams {
         // The neck above it is a plain connector and constrains nothing — an
         // earlier floor here was invented rather than required, and it alone
         // added half a head-height of giraffe.
-        // The neck has to clear the girdle's socket, but the floor was doing all
-        // the work: a neck sitting exactly as high as the sockets allow leaves
-        // barely any column between the collar and the jaw.
-        // Provenance: **tuned by render** (commit `0d7684f`), and the note above
-        // is what tuning it looked like — an earlier floor here was invented
-        // rather than required and cost the body half a head-height of giraffe.
-        // The 1.32 socket floor BINDS on the default body (143.2 mm against a
-        // nominal 126.0, measured in #78), so what ships is the floor and not
-        // the 0.072: same trap as `pelvis_y` above, one line apart.
-        let neck_y = girdle_y + (h * 0.072 * (1.0 + 0.3 * self.neck_length)).max(girdle_r * 1.32);
+        //
+        // **The floor BINDS, so this line sets the length of the neck and the
+        // 0.072 has nothing to do with it** — the same trap as `pelvis_y` above,
+        // one screen apart. Down from 1.32 (#93): at 1.32 the chin sat 103.0 mm
+        // above the shoulder line on a 214.6 mm head, a ratio of 0.480, where
+        // the eight-head figure puts the shoulder about a third of a head below
+        // the chin. 1.15 gives 88.1 mm and 0.411.
+        //
+        // **Measure that span against the shoulder SURFACE, never against the
+        // clavicle joint.** The joint sits about 95 mm lower, under the
+        // trapezius, so reading the neck off the rig predicts 190 mm where the
+        // surface gives 103 — an 85% error, and the reason a body that had been
+        // measured against canon repeatedly still had this in it.
+        //
+        // **Length was the smaller half of the defect.** At 1.32 the neck was
+        // not merely long, it was LUMPY: half-width ran 42.0 under the chin,
+        // swelled to 54.0, pinched back to 51.5, and only then flared — a bulge
+        // above a waist, the #47 defect in a new place, the head capsule's swell
+        // and the neck node's failing to merge over a 143 mm span. At 1.15 the
+        // profile is monotone from the narrowest point into the shoulders (41.5,
+        // 42.9, 45.0, 47.1, 48.8, 49.6, 50.5, 50.6, 52.0, 57.6, 72.4).
+        // Shortening is what fixed the shape.
+        //
+        // **This drops the whole head, and that is what it costs.** `head_y`
+        // follows `neck_y`, so the head sits about 18 mm lower and its lowest
+        // band lands where the body's own surface is already rising into the
+        // trapezius — which is why `face::skull`'s profile-against-surface
+        // contract had to have its throat bound restated to take this. See the
+        // note there; it is the one place this change is not free.
+        //
+        // **Not shortened further, and not from the other end.** Below about
+        // 1.16 this floor stops binding at all, so lower values change nothing
+        // on a default body while still failing extreme ones — 0.85 loses
+        // `tests/plan.rs`. Reaching the canon's 0.33 needs the 0.072 down too,
+        // and that steepens the shoulder ramp into a coat-hanger: the same flare
+        // over less height. And it must not come from ABOVE — lowering the head
+        // by cutting `HEAD_BELOW_JOINT` takes it out of the lower face, which
+        // #78 raised to fix a face measuring 39% short, and cranium:face is
+        // exactly 1.00 now.
+        //
+        // Provenance: **derived from a sweep against the canon** (#93), bounded
+        // below by socket clearance — 1.32, 1.15 and 1.00 all mesh across
+        // `tests/plan.rs`'s 1500 random bodies and its corners; 0.85 does not.
+        let neck_y = girdle_y + (h * 0.072 * (1.0 + 0.3 * self.neck_length)).max(girdle_r * 1.15);
         // How far the head reaches below its own joint, and it is a HEAD measure
         // rather than a stature one. This was `(h * 0.052).max(head_r * 0.45)`,
         // where the second term can never bind — 0.45 of a head radius is at most

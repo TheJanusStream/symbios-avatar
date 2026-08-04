@@ -302,7 +302,7 @@ impl Face {
     /// space rather than at the default. If an orbit deserves an axis, that is
     /// the face's parameter space to widen, not this term's to borrow.
     fn orbit(&self, local: Vec3) -> f32 {
-        /// How deep the hollow cuts, in eye-widths: 17.1 mm on a default body.
+        /// How deep the hollow cuts, in eye-widths: 16.0 mm on a default body.
         ///
         /// **Up from 0.240, and it is pinned by a ceiling rather than chosen.**
         /// A carve displaces along the vertex NORMAL, and the normal on the
@@ -316,11 +316,18 @@ impl Face {
         /// **What stops it going further is `an_eye_is_seated_in_the_face`, not
         /// taste.** Deepening the socket exposes more of the globe, and that
         /// test holds exposure under 25% because an eye past it reads as popped
-        /// out (#73). 0.620 passes; 0.680 puts seed 13 at 26% and fails. The two
-        /// requirements pull against each other and this sits at the boundary,
-        /// so a future change that wants a deeper orbit has to buy exposure back
-        /// somewhere else rather than raise that ceiling.
-        const DEPTH: f32 = 0.620;
+        /// out (#73). The two requirements pull against each other and this sits
+        /// at the boundary, so a future change that wants a deeper orbit has to
+        /// buy exposure back somewhere else rather than raise that ceiling.
+        ///
+        /// **Down from 0.620 because #93 shortened the neck**, which drops the
+        /// head about 18 mm and re-scales the skull's below-joint domain, and
+        /// that was enough to put seed 13's right eye at 25% exposure. Sitting
+        /// on a ceiling means any change to the head spends the margin, and this
+        /// is the second time in two passes that has happened here; 0.540 is too
+        /// shallow and loses the nasal white again, so the usable band is narrow
+        /// in both directions.
+        const DEPTH: f32 = 0.580;
         /// How far medial of the pupil it is deepest, in eye-widths.
         ///
         /// **Down from 0.28, and inward is the direction nobody had tried.**
