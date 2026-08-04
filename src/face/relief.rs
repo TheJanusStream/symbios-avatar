@@ -49,12 +49,56 @@ use super::features::FaceParams;
 /// time so they are 2.0 to 3.5. `the_mouth_is_wider_than_the_mesh_under_it`
 /// holds that, as a ratio rather than a millimetre figure, because the cell size
 /// moves with the refinement level and with the size of the head.
-const LIPS: [(f32, f32, f32); 4] = [
-    (0.88, -0.60, 0.46),  // the lower lip
-    (0.82, 0.58, 0.44),   // the upper lip
-    (-0.44, 0.00, 0.26),  // the line between them, the narrowest thing on a face
-    (-0.24, -1.32, 0.34), // the crease under the lower lip
+/// **The fourth number is how each lobe ends at the corner of the mouth, and
+/// giving them all the same one is what drew the bars.** Every lobe used to be
+/// multiplied by a single `corner` factor that is 1.0 out to 0.90 of the mouth's
+/// half-width and only then lets go: measured off the vertices, the lower lip
+/// stood 5.34 mm proud DEAD FLAT from the midline to 20 mm out, with the whole
+/// taper crammed into the last 6 mm of 26. That is an extruded bar with a
+/// rounded end, and no amount of resolution can make it a lip (#82).
+///
+/// The two vermilion lobes and the sulcus below them are `Lens`: they thin
+/// continuously from the middle and vanish where the lips meet. The line between
+/// them is `Groove`, and it is the whole reason this is per-lobe — on a face the
+/// commissure is the DEEPEST part of the mouth line, not the shallowest, and
+/// fading the groove out along with the vermilion is what leaves a bar with a
+/// rounded end instead of two lips meeting at a point.
+const LIPS: [(f32, f32, f32, Across); 4] = [
+    (0.88, -0.60, 0.46, Across::Lens), // the lower lip
+    (0.82, 0.58, 0.44, Across::Lens),  // the upper lip
+    // The line between them, the narrowest thing on a face.
+    (-0.44, 0.00, 0.26, Across::Groove),
+    (-0.24, -1.32, 0.34, Across::Lens), // the crease under the lower lip
 ];
+
+/// How a lobe of the mouth ends at the corner.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Across {
+    /// Thins from the middle and reaches nothing where the lips meet.
+    ///
+    /// `1 - across²`, and deliberately not raised to a fractional power. The
+    /// prettier `(1 - across²)^0.65` has an INFINITE derivative at the corner,
+    /// which trades a bar for a crease — the same cusp this file already carries
+    /// on the nose's flank and knows it aliases.
+    Lens,
+    /// Holds its depth almost to the corner, then ends without a cusp.
+    ///
+    /// Reaches past the vermilion on purpose: the lobes are gone by `1.0` and
+    /// this is still going at `1.05`, which is what makes a corner read as two
+    /// lips meeting rather than as the end of a slab.
+    Groove,
+}
+
+impl Across {
+    /// How much of a lobe survives, `across` being distance from the midline in
+    /// mouth half-widths.
+    fn taper(self, across: f32) -> f32 {
+        match self {
+            Self::Lens => (1.0 - across * across).max(0.0),
+            Self::Groove => smooth(((1.05 - across) / 0.20).min(1.0)),
+        }
+    }
+}
 
 /// How far round the head a feature can reach before it is faded out.
 ///
@@ -187,7 +231,7 @@ impl Face {
         self.plump
             * LIPS
                 .iter()
-                .map(|&(_, _, width)| width)
+                .map(|&(_, _, width, _)| width)
                 .fold(f32::MAX, f32::min)
     }
 
@@ -279,20 +323,26 @@ impl Face {
         let line = self.mouth - self.frame * 0.0292 * across * across;
         let up = (local.y - line) / plump;
 
-        let lips = if across > 1.20 || !(-2.40..=2.20).contains(&up) {
+        let lips = if across > 1.05 || !(-2.40..=2.20).contains(&up) {
             0.0
         } else {
             // Lower lip, upper lip, the line between them, and the crease under
             // the lower lip that separates it from the chin. The line is a
             // groove in one surface rather than a seam between two pieces,
             // which is what it is on a person.
-            let profile = LIPS
+            //
+            // **Each lobe carries its own taper across the face**, which is what
+            // stops the pair reading as two stacked slabs — see [`LIPS`]. The
+            // gate above is where the widest of them, the groove, has already
+            // reached zero, so it cuts nothing.
+            let profile: f32 = LIPS
                 .iter()
-                .map(|&(weight, centre, width)| weight * bump(up, centre, width))
-                .sum::<f32>();
-            let corner = smooth(((1.20 - across) / 0.30).min(1.0));
+                .map(|&(weight, centre, width, across_the_face)| {
+                    weight * bump(up, centre, width) * across_the_face.taper(across)
+                })
+                .sum();
             let ends = smooth((2.40 - up.abs()) / 0.6);
-            profile * corner * ends
+            profile * ends
         };
 
         // The philtrum: the groove from the base of the nose to the bow of the
