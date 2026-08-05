@@ -74,6 +74,16 @@ impl Extremities {
     pub fn build(rig: &Rig, surface: &Surface, ground: f32) -> Self {
         let mut extremities = Self::default();
         let carries = rig.ground_contacts();
+        // How tall the body actually stands, which is what a foot is in
+        // proportion to. Taken from the MEASURED surface at the head rather than
+        // from its node radius — subdivision pulls the mesh well inside the
+        // radius the plan asked for, so a crown predicted from the plan overshoots
+        // and every foot on the body grows with it.
+        let stature = rig
+            .in_zone(Zone::Head)
+            .first()
+            .map(|&head| rig.joints[head].position.y + surface.widest(head) - ground)
+            .filter(|tall| *tall > f32::EPSILON);
 
         for limb in Limb::ALL {
             let Some(&joint) = rig.in_zone(Zone::Extremity(limb)).first() else {
@@ -101,7 +111,7 @@ impl Extremities {
                 let drop = rig.joints[joint].position.y - ground;
                 extremities
                     .feet
-                    .push(grow_foot(limb, joint, along, girth, drop));
+                    .push(grow_foot(limb, joint, along, girth, drop, stature));
             }
         }
 
@@ -168,15 +178,49 @@ fn grow_hand(limb: Limb, joint: usize, along: Vec3, girth: f32) -> Attached {
 }
 
 /// Builds one foot, pointing the way the ankle bone leans.
-fn grow_foot(limb: Limb, joint: usize, along: Vec3, girth: f32, drop: f32) -> Attached {
+fn grow_foot(
+    limb: Limb,
+    joint: usize,
+    along: Vec3,
+    girth: f32,
+    drop: f32,
+    stature: Option<f32>,
+) -> Attached {
     // Only the horizontal part of the bone. The ankle bone drops as well as
     // reaching forward, and a foot built along it would point its toes into the
     // ground.
     let flat = Vec3::new(along.x, 0.0, along.z);
     let forward = flat.normalize_or(Vec3::Z);
-    // The plan has already said how long a foot is, by how far forward of the
-    // ankle it put the last node. Toes carry on past it.
-    let length = (flat.length() * 1.85).max(girth * 2.4);
+    // **A foot's length is set by how high its ankle is, not by the bone.** The
+    // ankle bone only says which way the toes point; how far forward the plan put
+    // that node is a fact about the shin, and reading a foot off it gave one
+    // 10.6% of stature long against a measured 15.7–16.4% — two thirds the size
+    // it should be, which is the single most visible thing about our feet (#110).
+    //
+    // Measured on both Quaternius bodies, a foot is 16.4% of stature (male) and
+    // 15.7% (female). **Against STATURE, not against `drop`**, and that was
+    // decided by measuring the alternative rather than by argument: a foot is
+    // also close to three times its own ankle height on the reference (3.06 and
+    // 2.95), and that relation gives the wrong answer here — it produced a foot
+    // 7.8% of stature, shorter than the 10.6% the previous guess managed.
+    //
+    // The reason is that `drop` is NOT the ankle's height. It is the height of
+    // the plan's last leg node, the one this part hangs from, which sits at 2.57%
+    // of stature where the ankle proper is at 6.86%. Reading the reference's
+    // ankle against it compares two different landmarks — the reference ankle is
+    // at 5.3–5.4% of stature, so our ankle is if anything slightly HIGH, and the
+    // thing that is low is the node the foot is grown from.
+    //
+    // That is also why the foot comes out thin: its depth is `drop`, so it is as
+    // thick as a node that sits barely above the floor, against a reference foot
+    // about 4.8% of stature thick. Fixing it means meshing the foot from the
+    // capsule graph instead of hanging a slab off one low node (#111), which is
+    // what is happening next; this keeps the length honest in the meantime.
+    //
+    // Falls back to the `drop` relation on a body with no head to measure against.
+    let length = stature
+        .map_or(drop * 3.0, |tall| tall * 0.16)
+        .max(girth * 2.4);
     let foot = Foot::build(girth, forward, Vec3::Y, length, drop.max(girth * 0.6));
 
     // Built about the ankle, which sits behind the joint the part hangs from.

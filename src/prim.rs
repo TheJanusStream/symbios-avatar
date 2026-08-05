@@ -308,8 +308,46 @@ pub fn ribbon(path: &[Vec3], base: Vec2, tip: Vec2, sides: usize, across: Vec3) 
 #[must_use]
 pub fn sweep(path: &[Vec3], sections: &[Vec2], sides: usize, across: Vec3) -> PolyMesh {
     let sides = sides.max(3);
+    let outlines: Vec<Vec<Vec2>> = sections
+        .iter()
+        .map(|half| {
+            (0..sides)
+                .map(|side| {
+                    let angle = turn(side, sides);
+                    Vec2::new(angle.cos() * half.x, angle.sin() * half.y)
+                })
+                .collect()
+        })
+        .collect();
+    sweep_outline(path, &outlines, across)
+}
+
+/// A tube swept along `path` with an explicit closed outline at every station.
+///
+/// **The cross-section a body part wants is not always an ellipse, and a foot is
+/// the case that proves it.** [`sweep`]'s ring puts a vertex at every `turn`,
+/// which on an even count means one pointing straight down — so a foot swept that
+/// way rests on a keel rather than on a sole, and measured by ray-cast against the
+/// built mesh it touched the ground along its centre line and rose 6 mm at the
+/// quarter width and up to 19 mm at its edges. Both Quaternius reference bodies
+/// are flat across the whole sole to within a few millimetres (#110).
+///
+/// Flattening an ellipse afterwards would be the wrong repair: the outline is what
+/// is wrong, so the outline is what this takes. [`sweep`] is now an ellipse
+/// outline through here, which keeps one stitcher, one parallel-transport frame
+/// and one UV convention for every swept part in the crate.
+///
+/// Each outline is in the section's own plane — `x` along `across`, `y` along the
+/// path's up — and must have the same number of points as every other, since the
+/// stations are stitched to each other in order.
+#[must_use]
+pub fn sweep_outline(path: &[Vec3], outlines: &[Vec<Vec2>], across: Vec3) -> PolyMesh {
     let mut mesh = PolyMesh::new();
-    if path.len() < 2 || sections.len() < path.len() {
+    if path.len() < 2 || outlines.len() < path.len() {
+        return mesh;
+    }
+    let sides = outlines[0].len();
+    if sides < 3 || outlines.iter().any(|ring| ring.len() != sides) {
         return mesh;
     }
 
@@ -339,12 +377,12 @@ pub fn sweep(path: &[Vec3], sections: &[Vec2], sides: usize, across: Vec3) -> Po
         (u, v) = transport(u, v, direction, bend);
         direction = bend;
 
-        let half = sections[index];
+        let outline = &outlines[index];
         let ring: Vec<u32> = (0..sides)
             .map(|side| {
-                let angle = turn(side, sides);
+                let at = outline[side];
                 mesh.push_uv_vertex(
-                    point + u * (angle.cos() * half.x) + v * (angle.sin() * half.y),
+                    point + u * at.x + v * at.y,
                     Vec2::new(side as f32 / sides as f32, along_path[index]),
                 )
             })

@@ -20,15 +20,65 @@ use glam::{Vec2, Vec3};
 use crate::mesh::PolyMesh;
 use crate::prim;
 
-/// Faces around the foot.
-const SIDES: usize = 8;
-
 /// Where along the foot the ankle sits, from the heel.
 ///
 /// Well back. A foot balanced on its middle reads as a flipper, and every
 /// picture of a walk depends on there being more foot in front of the joint
 /// than behind it.
-const ANKLE_AT: f32 = 0.28;
+///
+/// Provenance: **looked up**, from the Quaternius reference bodies — the ankle
+/// joint sits 16% along the foot on the male and 19% on the female, measured
+/// from the heel as a fraction of foot length (#110). It was 0.28 before, from a
+/// first guess, which carried nearly twice the heel a foot has and left too
+/// little in front of the joint for the toe to roll over.
+const ANKLE_AT: f32 = 0.18;
+
+/// The foot's cross-section, in half-width and half-depth, going the way
+/// [`prim::sweep_outline`] winds: `x` across the foot, `y` **toward the sole**.
+///
+/// **A foot rests on a sole, and an ellipse has no sole.** The ring this used to
+/// be put a vertex straight down, so the foot touched the ground along its centre
+/// line and rose away from it to either side — measured on the built mesh by
+/// ray-cast, 0.0 mm at the centre, 6 mm at the quarter width and up to 19 mm at
+/// the edges. Both Quaternius bodies are flat across the whole sole to within a
+/// few millimetres, and a foot that contacts along a line rocks under everything
+/// that plants it (#110).
+///
+/// So the sole is three points at full depth — dead flat across the middle 90% of
+/// the width — with the edges rolled up over two more, and the instep an ellipse
+/// above. Twelve points, because ten cannot both hold the flat and round the top,
+/// and because the foot is 5 stations long so this is 60 vertices either way.
+///
+/// Provenance: **derived** from the sole flatness measured on the reference — the
+/// rolled corners sit 5% of the half-depth above the sole plane, which on a
+/// default body is about a millimetre, inside the 0.3–8.9 mm the references
+/// measure across their own soles.
+const SECTION: [(f32, f32); 12] = [
+    (1.00, 0.00),
+    (0.98, 0.55),
+    (0.80, 0.95),
+    (0.45, 1.00),
+    (0.00, 1.00),
+    (-0.45, 1.00),
+    (-0.80, 0.95),
+    (-0.98, 0.55),
+    (-1.00, 0.00),
+    (-0.75, -0.72),
+    (0.00, -1.00),
+    (0.75, -0.72),
+];
+
+/// Half-widths along the foot, as fractions of its length.
+///
+/// Narrow at the heel, widest at the ball, narrowing again to the toe — which is
+/// the whole reason a foot is a sweep rather than a tapered tube.
+///
+/// Provenance: **looked up**, read off the Quaternius male's own sole outline at
+/// the five stations below. Its half-width runs 0.149 of foot length at the heel,
+/// 0.161 a tenth along, 0.185–0.186 across the ball, 0.174 at four fifths and
+/// 0.142 at nine tenths (#110). The previous values peaked at 0.21, which made
+/// the foot 42% of its length wide against a measured 37–38%.
+const WIDTHS: [f32; 5] = [0.150, 0.161, 0.185, 0.175, 0.130];
 
 /// A built foot, in ankle-local space.
 #[derive(Clone, Debug, PartialEq)]
@@ -66,20 +116,27 @@ impl Foot {
         // shape the instep would tilt every ring and take the sole with it.
         let toe = length - heel;
         let reach = [-heel, -heel * 0.35, toe * 0.45, toe * 0.8, toe];
-        // Widths scale with the foot's length, not the ankle's girth: a foot is
-        // wider than the leg above it, and sizing it off the ankle gave a sole
-        // narrower than the shin that stood on it.
-        let widths = [0.115, 0.15, 0.20, 0.21, 0.15];
+
         let half = drop * 0.5;
 
         let centre = -up * half;
         let path: Vec<Vec3> = reach.iter().map(|&at| centre + forward * at).collect();
-        let sections: Vec<Vec2> = widths
+        // Widths scale with the foot's length, not the ankle's girth: a foot is
+        // wider than the leg above it, and sizing it off the ankle gave a sole
+        // narrower than the shin that stood on it. The girth still sets a floor,
+        // for a body whose ankle is thicker than its foot is long.
+        let outlines: Vec<Vec<Vec2>> = WIDTHS
             .iter()
-            .map(|&wide| Vec2::new((length * wide).max(ankle * 0.5), half))
+            .map(|&wide| {
+                let wide = (length * wide).max(ankle * 0.5);
+                SECTION
+                    .iter()
+                    .map(|&(x, y)| Vec2::new(x * wide, y * half))
+                    .collect()
+            })
             .collect();
 
-        let mut mesh = prim::sweep(&path, &sections, SIDES, across);
+        let mut mesh = prim::sweep_outline(&path, &outlines, across);
 
         // The instep is shaped afterwards, by pressing the top of the slab down
         // toward the sole. Measuring the squash from the sole means the sole
@@ -101,20 +158,37 @@ impl Foot {
 ///
 /// A foot is deepest where the ankle sits on it and shallowest at the toe. The
 /// curve is gentle through the middle so the instep does not read as a step.
+/// Provenance: **derived** from the reference toe. A Quaternius foot is 9.1%
+/// (male) and 10.3% (female) of its own length thick at the toe, and a foot is
+/// about three times its ankle height long — so the toe wants to come out near
+/// 0.30 of the heel's depth. The tail was 0.42 before, leaving the toe at 0.58
+/// and the foot a slab of nearly even thickness: a 1.6:1 wedge against the
+/// references' 2.9:1 and 3.2:1 (#110).
 fn instep(at: f32) -> f32 {
     let along = at.clamp(0.0, 1.0);
     // Gentle, and gentlest through the middle. Tapering hard from the ankle
     // forward thins the foot exactly where the leg's last node sits, and the
     // node then shows through the top of the foot it is supposed to be inside.
-    1.0 - 0.42 * along * along * along
+    1.0 - 0.70 * along * along * along
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// A foot the crate would actually build.
+    ///
+    /// The length is three times the drop because that is the relation
+    /// `grow_foot` uses, measured off both reference bodies (#110). It was 0.11
+    /// against a 0.045 drop — a ratio of 2.4 — and a fixture with proportions the
+    /// builder never produces is a fixture that answers about nothing. It also
+    /// hid the sole: a foot that short comes out narrower than it is deep, which
+    /// is the shape `a_foot_is_longer_than_it_is_wide_and_wider_than_it_is_deep`
+    /// exists to rule out.
+    const DROP: f32 = 0.045;
+
     fn foot() -> Foot {
-        Foot::build(0.03, Vec3::Z, Vec3::Y, 0.11, 0.045)
+        Foot::build(0.03, Vec3::Z, Vec3::Y, DROP * 3.0, DROP)
     }
 
     #[test]
@@ -124,6 +198,60 @@ mod tests {
             foot.mesh.is_closed_manifold(),
             "{:?}",
             foot.mesh.manifold_report()
+        );
+    }
+
+    #[test]
+    fn the_sole_is_flat_across_its_width_and_not_a_keel() {
+        // **The defect this file shipped with, and the reason `SECTION` exists.**
+        // An elliptical ring puts a vertex straight down, so the foot rested on
+        // its centre line and rose away to both sides: measured on the built body
+        // by ray-cast, 0.0 mm at the centre, 6 mm at the quarter width and up to
+        // 19 mm at the edges. A foot that touches along a line rocks under
+        // everything that plants it, and nothing in this file said so (#110).
+        //
+        // **Asked as contact AREA, not as height spread**, because a height
+        // spread measured over a band is a measurement of the band: filter the
+        // vertices within a tenth of the drop and the worst of them is a tenth of
+        // the drop, whatever the shape. So this takes a tight band — the height a
+        // sole may vary by and still be one surface — and asks how far ACROSS the
+        // foot it reaches. A keel answers with almost nothing, because its
+        // neighbours climb away from the contact line immediately; a sole answers
+        // with most of the width.
+        let foot = foot();
+        let (lo, hi) = foot.mesh.bounds();
+        let band = DROP * 0.05;
+        let contact: Vec<_> = foot
+            .mesh
+            .positions
+            .iter()
+            .filter(|p| p.y - lo.y < band)
+            .collect();
+        assert!(
+            contact.len() >= 10,
+            "only {} vertices lie on the sole",
+            contact.len()
+        );
+
+        let across = contact.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+            (lo.min(p.x), hi.max(p.x))
+        });
+        let width = hi.x - lo.x;
+        assert!(
+            (across.1 - across.0) > width * 0.7,
+            "the foot contacts the ground over {:.0}% of its width — a keel, not a sole",
+            (across.1 - across.0) / width * 100.0
+        );
+
+        // And it is level along its length as well as across: a sole that tilts
+        // plants on an edge.
+        let ends = contact.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+            (lo.min(p.z), hi.max(p.z))
+        });
+        assert!(
+            (ends.1 - ends.0) > (hi.z - lo.z) * 0.7,
+            "the sole reaches {:.0}% of the way from heel to toe",
+            (ends.1 - ends.0) / (hi.z - lo.z) * 100.0
         );
     }
 
@@ -239,7 +367,10 @@ mod tests {
         assert!((deep.drop / shallow.drop - 4.0).abs() < 1e-4);
         assert!(deep.mesh.bounds().0.y < shallow.mesh.bounds().0.y);
 
-        let long = Foot::build(0.03, Vec3::Z, Vec3::Y, 0.22, 0.045);
+        // Twice the fixture's length, expressed against the fixture rather than
+        // as a literal, so this keeps saying "the length passes through" when the
+        // fixture's proportions move.
+        let long = Foot::build(0.03, Vec3::Z, Vec3::Y, DROP * 6.0, DROP);
         assert!((long.length / foot().length - 2.0).abs() < 1e-4);
     }
 
