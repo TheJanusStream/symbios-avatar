@@ -12,10 +12,42 @@ use super::{CageConfig, CageError, MIN_BONE_LENGTH, Socket};
 use crate::mesh::PolyMesh;
 use crate::skeleton::{Chain, NodeKind, Skeleton};
 
+/// How many vertices each ring carries.
+///
+/// **This is the single biggest lever on how fat the cage has to be** (#107).
+/// A ring is a control polygon, and Catmull-Clark converges to a curve well
+/// inside it: a 4-point diamond delivers about 0.64 of its own half-extent as
+/// rendered surface, so every node radius in a body plan has to be inflated by
+/// half again to render at the size it means. That inflation is not free — the
+/// mesher's socket clearances are computed on the *cage*, so a body ends up
+/// clearing a phantom ribcage 1.5× wider than the one anybody sees, and the
+/// shoulders are pushed out to match.
+///
+/// Eight points sit much closer to the curve they approximate, so the same
+/// surface can be asked for with a smaller node and every clearance floor comes
+/// down with it.
+///
+/// The value is a constant rather than a config field because it changes the
+/// *shape* of `Socket::ring` and `LimbBuild::rings`. Anything reading those
+/// should loop to `RING` rather than assume four.
+pub(crate) const RING: usize = 4;
+
+/// Ring vertex offsets from a centre, wound counter-clockwise about `u × v`.
+///
+/// Shared by ring creation and by [`super::Socket::write`], which rewrites the
+/// same vertices after a socket slides. Two copies of this drifting apart would
+/// tear the cage open along one limb.
+pub(crate) fn ring_offsets(u: Vec3, v: Vec3, half: Vec2) -> [Vec3; RING] {
+    std::array::from_fn(|corner| {
+        let angle = std::f32::consts::TAU * corner as f32 / RING as f32;
+        u * (half.x * angle.cos()) + v * (half.y * angle.sin())
+    })
+}
+
 /// Rings of one meshed limb, ordered from start to end.
 pub(crate) struct LimbBuild {
-    /// Ring vertex indices, four per ring.
-    pub rings: Vec<[u32; 4]>,
+    /// Ring vertex indices, [`RING`] per ring.
+    pub rings: Vec<[u32; RING]>,
     /// Whether the start end is a leaf and needs a cap.
     pub cap_start: bool,
     /// Whether the end end is a leaf and needs a cap.
@@ -53,7 +85,7 @@ pub(crate) fn build_limb(
     let start_is_joint = skeleton.kind(nodes[0]) == NodeKind::Joint;
     let end_is_joint = skeleton.kind(nodes[count - 1]) == NodeKind::Joint;
 
-    let mut rings: Vec<[u32; 4]> = Vec::with_capacity(count + 2);
+    let mut rings: Vec<[u32; RING]> = Vec::with_capacity(count + 2);
     let mut dir = dirs[0];
     let (mut u, mut v) = initial_frame(dir);
 
@@ -132,8 +164,8 @@ pub(crate) fn build_limb(
 pub(crate) fn emit_limb_faces(build: &LimbBuild, mesh: &mut PolyMesh) {
     for pair in build.rings.windows(2) {
         let (back, front) = (pair[0], pair[1]);
-        for corner in 0..4 {
-            let next = (corner + 1) % 4;
+        for corner in 0..RING {
+            let next = (corner + 1) % RING;
             mesh.push_face([back[corner], back[next], front[next], front[corner]]);
         }
     }
@@ -141,11 +173,11 @@ pub(crate) fn emit_limb_faces(build: &LimbBuild, mesh: &mut PolyMesh) {
     if build.cap_start {
         let ring = build.rings[0];
         // Reversed: the start cap faces against the direction of travel.
-        mesh.push_face([ring[3], ring[2], ring[1], ring[0]]);
+        mesh.push_face(ring.iter().rev().copied().collect::<Vec<u32>>());
     }
     if build.cap_end {
         let ring = build.rings[build.rings.len() - 1];
-        mesh.push_face([ring[0], ring[1], ring[2], ring[3]]);
+        mesh.push_face(ring.to_vec());
     }
 }
 
@@ -191,20 +223,15 @@ fn place_socket(
     }
 }
 
-/// Appends a four-vertex ring, wound counter-clockwise about `u × v`.
+/// Appends a [`RING`]-vertex ring, wound counter-clockwise about `u × v`.
 pub(crate) fn push_ring(
     mesh: &mut PolyMesh,
     center: Vec3,
     u: Vec3,
     v: Vec3,
     half: Vec2,
-) -> [u32; 4] {
-    [
-        mesh.push_vertex(center + u * half.x),
-        mesh.push_vertex(center + v * half.y),
-        mesh.push_vertex(center - u * half.x),
-        mesh.push_vertex(center - v * half.y),
-    ]
+) -> [u32; RING] {
+    ring_offsets(u, v, half).map(|offset| mesh.push_vertex(center + offset))
 }
 
 /// An orthonormal frame `(u, v)` with `u × v == dir`.

@@ -181,8 +181,8 @@ pub(crate) struct Socket {
     pub base_dist: f32,
     /// Largest distance the socket may be moved to.
     pub max_dist: f32,
-    /// The four shared ring vertices.
-    pub ring: [u32; 4],
+    /// The shared ring vertices, [`limb::RING`] of them.
+    pub ring: [u32; limb::RING],
 }
 
 impl Socket {
@@ -214,13 +214,11 @@ impl Socket {
     /// Rewrites the shared ring vertices after `dist` changes.
     pub(crate) fn write(&self, positions: &mut [Vec3]) {
         let center = self.center();
-        let offsets = [
-            self.u * self.half.x,
-            self.v * self.half.y,
-            -self.u * self.half.x,
-            -self.v * self.half.y,
-        ];
-        for (index, offset) in self.ring.iter().zip(offsets) {
+        for (index, offset) in self
+            .ring
+            .iter()
+            .zip(limb::ring_offsets(self.u, self.v, self.half))
+        {
             positions[*index as usize] = center + offset;
         }
     }

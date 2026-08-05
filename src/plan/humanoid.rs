@@ -269,17 +269,45 @@ impl BodyPlan for HumanoidParams {
         // as a chest forces a neck long enough to read as a giraffe. Splitting
         // the two lets the ribcage be broad while the girdle above it stays
         // slim, which is what shortens the neck.
-        // Provenance: **unsourced**, every figure on these four lines, from the
-        // initial body plan. They are fractions of stature that nobody has
-        // compared to a stature-fraction table; `examples/measure` prints the
-        // built radii as `radius/H` beside the canon column precisely so that
-        // comparison can be made, and it never has been. The two
-        // `shoulder_width` gains are unsourced too, and note they are gains on a
-        // RADIUS while the shoulder breadth anyone would check is set by
-        // `clavicle_x` below — so this axis moves the torso and the girdle by
-        // different amounts and no measurement ties them together.
+        // Provenance: **unsourced**, the pelvis and the girdle, from the initial
+        // body plan. The two `shoulder_width` gains are unsourced too, and note
+        // they are gains on a RADIUS while the shoulder breadth anyone would
+        // check is set by `clavicle_x` below — so this axis moves the torso and
+        // the girdle by different amounts and no measurement ties them together.
+        //
+        // **The waist is measured and the chest is not, and the difference
+        // between them is a constraint rather than an oversight** (#106). The
+        // trunk renders 13–29% narrower than the reference all the way up, and
+        // dividing through by the delivered fraction the way #104 did for the
+        // limbs asks for 0.097 here and 0.118 on the chest.
+        //
+        // The waist reached 0.086 of that 0.097 and stopped, because the
+        // pelvis's spine socket blends toward this node as it slides: a wider
+        // waist inflates the ring the hip sockets have to clear, and above about
+        // 0.087 the pelvis stops meshing (`SocketNotOnHull` at joint 0, swept —
+        // 0.083 passes, 0.088 does not). That closes a little over half the
+        // gap: the bands from 0.54 to 0.66 of stature went from 13–20% narrow
+        // to 9–14%.
+        //
+        // The chest did not move at all. Its own floor is the same rule one
+        // joint up — the girdle's chest socket blends toward this radius, so
+        // widening the ribcage widens the shoulders in near-lockstep:
+        //
+        // ```text
+        //   chest_r   chest surface   shoulder span   (reference 0.0799 / 0.190)
+        //    0.088       0.0598           0.214
+        //    0.103       0.0700           0.238
+        //    0.118       0.0803           0.272
+        // ```
+        //
+        // There is no good point on that line, and no coefficient escapes it:
+        // the socket must clear the chest's *cage* half-width, which is 1.5×
+        // what the limit surface renders, so a shoulder ends up pushed half
+        // again as far out as the ribcage it clears. Escaping it means changing
+        // where the arm attaches, which is a change to the body. Left at 0.088
+        // pending that decision.
         let pelvis_r = h * 0.079 * girth;
-        let waist_r = h * 0.078 * girth;
+        let waist_r = h * 0.086 * girth;
         let chest_r = h * 0.088 * girth * (1.0 + 0.08 * self.shoulder_width);
         let girdle_r = h * 0.062 * girth * (1.0 + 0.06 * self.shoulder_width);
         // A neck is a good deal narrower than the skull above it. At the old

@@ -21,6 +21,7 @@
 use glam::Vec3;
 use std::collections::BTreeSet;
 
+use super::limb::RING;
 use super::{CageConfig, CageError, Socket};
 use crate::hull::{HullError, convex_hull};
 use crate::mesh::PolyMesh;
@@ -64,7 +65,7 @@ pub(crate) fn build_joint(
         // A socket is resolved when some facet is exactly its four points.
         let openings: Vec<Option<usize>> = (0..socket_indices.len())
             .map(|slot| {
-                let want: BTreeSet<u32> = (0..4).map(|k| (slot * 4 + k) as u32).collect();
+                let want: BTreeSet<u32> = (0..RING).map(|k| (slot * RING + k) as u32).collect();
                 faces
                     .iter()
                     .position(|face| face.iter().copied().collect::<BTreeSet<u32>>() == want)
@@ -217,7 +218,7 @@ fn check_clearance(
 
 /// Socket ring positions, four per socket in socket order.
 fn gather_points(socket_indices: &[usize], sockets: &[Socket], mesh: &PolyMesh) -> Vec<Vec3> {
-    let mut points = Vec::with_capacity(socket_indices.len() * 4 + 2);
+    let mut points = Vec::with_capacity(socket_indices.len() * RING + 2);
     for &index in socket_indices {
         for &vertex in &sockets[index].ring {
             points.push(mesh.positions[vertex as usize]);
@@ -288,7 +289,7 @@ mod tests {
     use super::*;
     use glam::Vec2;
 
-    fn socket(dir: Vec3, half: f32, ring: [u32; 4], toward: u32) -> Socket {
+    fn socket(dir: Vec3, half: f32, first: u32, toward: u32) -> Socket {
         let (u, v) = crate::cage::limb::initial_frame(dir);
         Socket {
             joint: 0,
@@ -304,7 +305,7 @@ mod tests {
             dist: 1.0,
             base_dist: 1.0,
             max_dist: 2.0,
-            ring,
+            ring: std::array::from_fn(|k| first + k as u32),
         }
     }
 
@@ -312,8 +313,8 @@ mod tests {
     fn overlapping_sockets_are_reported_with_both_limbs() {
         let config = CageConfig::default();
         let sockets = vec![
-            socket(Vec3::Y, 0.5, [0, 1, 2, 3], 7),
-            socket(Vec3::new(0.05, 1.0, 0.0).normalize(), 0.5, [4, 5, 6, 7], 9),
+            socket(Vec3::Y, 0.5, 0, 7),
+            socket(Vec3::new(0.05, 1.0, 0.0).normalize(), 0.5, RING as u32, 9),
         ];
         let error = check_clearance(0, &[0, 1], &sockets, &config).expect_err("sockets collide");
         assert!(matches!(
@@ -331,9 +332,9 @@ mod tests {
     fn well_spread_sockets_pass_clearance() {
         let config = CageConfig::default();
         let sockets = vec![
-            socket(Vec3::Y, 0.2, [0, 1, 2, 3], 1),
-            socket(Vec3::X, 0.2, [4, 5, 6, 7], 2),
-            socket(-Vec3::Z, 0.2, [8, 9, 10, 11], 3),
+            socket(Vec3::Y, 0.2, 0, 1),
+            socket(Vec3::X, 0.2, RING as u32, 2),
+            socket(-Vec3::Z, 0.2, 2 * RING as u32, 3),
         ];
         assert!(check_clearance(0, &[0, 1, 2], &sockets, &config).is_ok());
     }
