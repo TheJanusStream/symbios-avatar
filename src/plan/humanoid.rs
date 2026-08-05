@@ -39,6 +39,7 @@ use super::{
     take_signed, take_unit,
 };
 use super::{Limb, Zone};
+use crate::cage::limb::HALF_SEGMENT;
 use crate::skeleton::{Node, Skeleton};
 
 /// Smallest and largest stature this plan accepts, in metres.
@@ -652,9 +653,39 @@ impl BodyPlan for HumanoidParams {
         // fraction of stature.
         const KNEE_FORWARD: f32 = 0.0222;
         let knee_z = h * KNEE_FORWARD;
-        // Provenance: **unsourced**, all three figures.
-        let foot_y = h * 0.0257;
-        let foot_z = h * 0.057 * (1.0 + 0.3 * self.extremity_size);
+        // **The foot's own geometry, all of it measured** (#111). It used to be
+        // one node at `h * 0.0257` high and `h * 0.057` forward, tagged unsourced,
+        // with a swept slab hung off it. The slab is gone: these place the ball
+        // and the toe as real nodes in the leg chain.
+        //
+        // Provenance for every figure below: **looked up**, from the Quaternius
+        // male and female (which share one skeleton), as fractions of stature or
+        // of foot length. Foot length is 16.4% of stature on the male and 15.7% on
+        // the female; the ball is 53.7% of the foot's length forward of the ankle and
+        // the toe tip 82.3%; the ball's own height is 0.83% of stature and the
+        // toe's 0.63%.
+        const FOOT_LONG: f32 = 0.160;
+        const FOOT_BALL_ALONG: f32 = 0.537;
+        const FOOT_TOE_ALONG: f32 = 0.823;
+        let foot_long = h * FOOT_LONG;
+        let ball_z = foot_long * FOOT_BALL_ALONG;
+        let toe_z = foot_long * FOOT_TOE_ALONG;
+        let ball_y = h * 0.0083;
+        let toe_y = h * 0.0063;
+        // The radius that makes the foot the right WIDTH, and the width is what a
+        // sole is measured by: 37–38% of foot length on both references. A node
+        // radius is a request the mesher delivers about 0.64 of at four ring
+        // points, and a section rolled half a segment reaches 0.707 of its
+        // half-extent along each axis — so the request is the wanted half-width
+        // divided by both.
+        let foot_r = foot_long * 0.185 / (0.64 * 0.707);
+        // How thick the foot is against how wide, from the same outlines: the ball
+        // is about 20% of foot length deep against 37% wide.
+        const FOOT_FLAT: f32 = 0.55;
+        const FOOT_BALL_WIDE: f32 = 1.0;
+        // The toe is narrower than the ball — the sole outline runs 0.185 of foot
+        // length at the ball and 0.142 at nine tenths along.
+        const FOOT_TOE_WIDE: f32 = 0.77;
 
         // The clavicle has to reach past the chest socket's corners before an
         // arm can attach — the single tightest constraint on the whole body.
@@ -1005,12 +1036,34 @@ impl BodyPlan for HumanoidParams {
                 Node::new(Vec3::new(side * hip_x, ankle_y, 0.0), h * 0.025 * girth)
                     .in_zone(Zone::LowerLimb(hind)),
             );
-            skeleton.extend_from(
+            // **The foot is part of the leg, not a slab hung off its end** (#111).
+            // Two more nodes carry it — the ball of the foot and the toe — so the
+            // cage rings run through it and the ankle is continuous surface. Both
+            // reference bodies are built that way: the male's foot is inside the
+            // leg shell and the female's inside one shell running crown to sole,
+            // which is why neither has a seam where ours had one.
+            //
+            // Rolled by half a ring segment, which is what stands the section on
+            // a flat edge instead of on a vertex. Without it a foot meshed from
+            // the graph rests on a keel for exactly the reason the swept foot did.
+            let ball = skeleton.extend_from(
                 ankle,
                 Node::new(
-                    Vec3::new(side * hip_x, foot_y, foot_z),
-                    h * 0.019 * extremity,
+                    Vec3::new(side * hip_x, ball_y, ball_z),
+                    foot_r * FOOT_BALL_WIDE * extremity,
                 )
+                .with_scale(Vec2::new(1.0, FOOT_FLAT))
+                .with_roll(HALF_SEGMENT)
+                .in_zone(Zone::Extremity(hind)),
+            );
+            skeleton.extend_from(
+                ball,
+                Node::new(
+                    Vec3::new(side * hip_x, toe_y, toe_z),
+                    foot_r * FOOT_TOE_WIDE * extremity,
+                )
+                .with_scale(Vec2::new(1.0, FOOT_FLAT))
+                .with_roll(HALF_SEGMENT)
                 .in_zone(Zone::Extremity(hind)),
             );
         }

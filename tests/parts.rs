@@ -398,7 +398,10 @@ fn every_attached_part_owns_a_region_of_the_atlas() {
             uv_max(&part.mesh),
         ));
     }
-    assert!(regions.len() >= 6, "two ears and four extremities at least");
+    // Two ears and two hands. Feet stopped being attached parts in #111 — they
+    // are meshed with the body now — so they are charted as body surface and are
+    // covered by whatever tests the body's own unwrap, not here.
+    assert!(regions.len() >= 4, "two ears and two hands at least");
 
     for (name, lo, hi) in &regions {
         assert!(

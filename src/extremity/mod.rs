@@ -86,7 +86,8 @@ impl Extremities {
             .filter(|tall| *tall > f32::EPSILON);
 
         for limb in Limb::ALL {
-            let Some(&joint) = rig.in_zone(Zone::Extremity(limb)).first() else {
+            let extremity = rig.in_zone(Zone::Extremity(limb));
+            let Some(&joint) = extremity.first() else {
                 continue;
             };
             let Some(parent) = rig.joints[joint].parent else {
@@ -107,7 +108,18 @@ impl Extremities {
 
             if !carries.contains(&limb) {
                 extremities.hands.push(grow_hand(limb, joint, along, girth));
-            } else {
+            } else if extremity.len() < 2 {
+                // **A foot is only a part on a plan that has not got one.** The
+                // humanoid meshes its feet as nodes in the capsule graph — ankle,
+                // ball, toe — so the leg runs continuously into the foot and there
+                // is no seam to hide (#111), and hanging a swept slab there as
+                // well would bury one solid inside another.
+                //
+                // Asked of the graph rather than of the plan: a limb whose
+                // extremity zone holds more than one node has its foot already.
+                // The quadruped plan still ends each leg in a single node and
+                // still gets a built foot, and will go on doing so until it grows
+                // the same chain.
                 let drop = rig.joints[joint].position.y - ground;
                 extremities
                     .feet
@@ -251,12 +263,17 @@ mod tests {
     }
 
     #[test]
-    fn a_biped_gets_two_hands_and_two_feet() {
+    fn a_biped_gets_two_hands_and_leaves_its_feet_to_the_cage() {
+        // **A biped's feet are not parts any more** (#111). They are ankle, ball
+        // and toe nodes in the capsule graph, so the leg is continuous into the
+        // foot and nothing is hung off the end of it. Two hands is the whole of
+        // what this builds for an upright body, and a foot appearing here again
+        // would mean a swept slab buried inside the meshed one.
         let (rig, surface, ground) = body(1);
         let built = Extremities::build(&rig, &surface, ground);
         assert_eq!(built.hands.len(), 2);
-        assert_eq!(built.feet.len(), 2);
-        assert_eq!(built.len(), 4);
+        assert_eq!(built.feet.len(), 0, "a humanoid foot comes from the cage");
+        assert_eq!(built.len(), 2);
         assert!(!built.is_empty());
     }
 
@@ -382,10 +399,16 @@ mod tests {
         let built = Extremities::build(&rig, &surface, ground);
         let whole = built.assembled(|joint| Mat4::from_translation(rig.joints[joint].position));
         let (lo, hi) = whole.bounds();
-        // Two hands out to the sides and two feet on the ground: the assembly
-        // should span most of the body.
+        // Two hands, one at the end of each arm. The span is lateral now that
+        // feet are meshed with the body rather than assembled here (#111), so
+        // the vertical reach this used to check went with them — what is left is
+        // the property it was really testing, that each part is placed at its own
+        // joint instead of all of them landing on the origin.
         assert!(hi.x - lo.x > 0.5, "parts spanned only {}", hi.x - lo.x);
-        assert!(hi.y - lo.y > 0.5, "parts spanned only {}", hi.y - lo.y);
+        assert!(
+            lo.x < 0.0 && hi.x > 0.0,
+            "both hands ended up on the same side"
+        );
     }
 
     #[test]

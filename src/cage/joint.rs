@@ -298,6 +298,7 @@ mod tests {
             dir,
             u,
             v,
+            roll: 0.0,
             half: Vec2::splat(half),
             joint_half: Vec2::splat(half),
             neighbor_half: Vec2::splat(half),

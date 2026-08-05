@@ -25,6 +25,34 @@ pub struct Node {
     /// along its second; the frame is parallel-transported down each limb from
     /// a world-up reference, so for an upright body `x` is broadly lateral.
     pub scale: Vec2,
+    /// How far the cross-section is rolled about the bone, in radians.
+    ///
+    /// **A ring of an even number of points has a vertex pointing straight down,
+    /// and a body part that has to rest on the ground cannot afford one.** With
+    /// the cage's ring at four points the section is a diamond standing on
+    /// its point, so a foot meshed from the graph contacts the floor along a line
+    /// and rocks — measured on the swept foot this replaces, 0.0 mm at the centre
+    /// line rising to 19 mm at the edges against a reference sole flat to a few
+    /// millimetres (#111). Rolled by half a segment the same four points become an
+    /// axis-aligned rectangle standing on a flat edge, and the sole is a face
+    /// rather than a ridge.
+    ///
+    /// Zero everywhere else, and a rotation rather than a new section shape
+    /// because it is the smallest thing that expresses the defect: the ring was
+    /// never the wrong SIZE, only turned half a segment out of phase with the
+    /// ground.
+    ///
+    /// Depends on the ring frame in exactly the way [`Node::scale`] already does —
+    /// it is transported down the limb from a world-up reference, which puts the
+    /// frame's second tangent on world up by the time a chain has turned to run
+    /// forward along a foot.
+    ///
+    /// Defaulted **at the field**, not at the container: a `Skeleton` written
+    /// before this existed still reads, and reads as unrolled, which is what it
+    /// was. A container-level default would only apply to a wholly absent struct
+    /// and would leave an older node failing to parse.
+    #[serde(default)]
+    pub roll: f32,
     /// Which part of the body this node belongs to.
     ///
     /// This is what makes the skeleton a *semantic* body plan rather than a bag
@@ -42,6 +70,7 @@ impl Node {
             position,
             radius,
             scale: Vec2::ONE,
+            roll: 0.0,
             zone: Zone::default(),
         }
     }
@@ -50,6 +79,16 @@ impl Node {
     #[must_use]
     pub fn with_scale(mut self, scale: Vec2) -> Self {
         self.scale = scale;
+        self
+    }
+
+    /// Rolls the cross-section about the bone, in radians.
+    ///
+    /// See [`Node::roll`]. Half a segment — `TAU / (2 * RING)` — is what stands a
+    /// ring on a flat edge instead of on a vertex.
+    #[must_use]
+    pub fn with_roll(mut self, roll: f32) -> Self {
+        self.roll = roll;
         self
     }
 

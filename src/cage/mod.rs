@@ -17,7 +17,7 @@
 //! construction — which [`PolyMesh::manifold_report`] verifies.
 
 mod joint;
-mod limb;
+pub(crate) mod limb;
 
 use glam::{Vec2, Vec3};
 use std::collections::BTreeMap;
@@ -168,6 +168,10 @@ pub(crate) struct Socket {
     pub v: Vec3,
     /// Ring half-extents along `u` and `v`, derived from [`Socket::dist`].
     pub half: Vec2,
+    /// How far the section is rolled about the bone, blended between the joint
+    /// and its neighbour the same way `half` is. See
+    /// [`crate::skeleton::Node::roll`].
+    pub roll: f32,
     /// The joint's own half-extents, the ring's size at distance zero.
     pub joint_half: Vec2,
     /// The neighbour node's half-extents, the ring's size at the far end.
@@ -217,7 +221,7 @@ impl Socket {
         for (index, offset) in self
             .ring
             .iter()
-            .zip(limb::ring_offsets(self.u, self.v, self.half))
+            .zip(limb::ring_offsets(self.u, self.v, self.half, self.roll))
         {
             positions[*index as usize] = center + offset;
         }

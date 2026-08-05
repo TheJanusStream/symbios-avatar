@@ -15,8 +15,10 @@
 //! let rig = Rig::from_skeleton(&AvatarRecord::default().skeleton())?;
 //!
 //! // Semantic queries instead of bone names — the same call works on a quadruped.
+//! // A hind extremity is a chain of its own — ball and toe — so this finds the
+//! // joints of both feet rather than one apiece.
 //! let feet = rig.query(|zone| matches!(zone, Zone::Extremity(limb) if !limb.is_fore()));
-//! assert_eq!(feet.len(), 2);
+//! assert_eq!(feet.len(), 4);
 //!
 //! // Named anchors for fitting hair, hats, and garments.
 //! let marks = rig.landmarks();
@@ -688,8 +690,19 @@ mod tests {
     fn semantic_queries_find_limbs_without_naming_bones() {
         let rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
 
+        // Asked as LIMBS, not as nodes. A hind extremity is a chain now — ball
+        // and toe — so counting nodes counts the foot's own joints and answers
+        // four (#111). What this test is about is that the query finds the right
+        // limbs without naming a bone, and that is unchanged.
         let contacts = rig.query(|zone| matches!(zone, Zone::Extremity(limb) if !limb.is_fore()));
-        assert_eq!(contacts.len(), 2, "a biped stands on two feet");
+        let standing: std::collections::BTreeSet<_> = contacts
+            .iter()
+            .filter_map(|&joint| match rig.joints[joint].zone {
+                Zone::Extremity(limb) => Some(limb),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(standing.len(), 2, "a biped stands on two feet");
 
         let graspers = rig.query(|zone| matches!(zone, Zone::Extremity(limb) if limb.is_fore()));
         assert_eq!(graspers.len(), 2, "and has two hands");

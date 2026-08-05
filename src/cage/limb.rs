@@ -37,12 +37,21 @@ pub(crate) const RING: usize = 4;
 /// Shared by ring creation and by [`super::Socket::write`], which rewrites the
 /// same vertices after a socket slides. Two copies of this drifting apart would
 /// tear the cage open along one limb.
-pub(crate) fn ring_offsets(u: Vec3, v: Vec3, half: Vec2) -> [Vec3; RING] {
+pub(crate) fn ring_offsets(u: Vec3, v: Vec3, half: Vec2, roll: f32) -> [Vec3; RING] {
     std::array::from_fn(|corner| {
-        let angle = std::f32::consts::TAU * corner as f32 / RING as f32;
+        let angle = std::f32::consts::TAU * corner as f32 / RING as f32 + roll;
         u * (half.x * angle.cos()) + v * (half.y * angle.sin())
     })
 }
+
+/// Half a segment of a ring, which is the roll that stands it on a flat edge
+/// rather than on a vertex.
+///
+/// Named because it is the only value of [`crate::skeleton::Node::roll`] anything
+/// has a reason to use, and because it has to follow [`RING`] rather than be written out — at
+/// four points it is 45°, at eight 22.5°, and a literal would silently stop
+/// meaning "half a segment" the moment #107 lands.
+pub(crate) const HALF_SEGMENT: f32 = std::f32::consts::TAU / (2.0 * RING as f32);
 
 /// Rings of one meshed limb, ordered from start to end.
 pub(crate) struct LimbBuild {
@@ -104,8 +113,16 @@ pub(crate) fn build_limb(
             u,
             v,
             node.half_extents() * config.tip_shrink,
+            node.roll,
         ));
-        rings.push(push_ring(mesh, node.position, u, v, node.half_extents()));
+        rings.push(push_ring(
+            mesh,
+            node.position,
+            u,
+            v,
+            node.half_extents(),
+            node.roll,
+        ));
     }
 
     for index in 1..count - 1 {
@@ -119,7 +136,14 @@ pub(crate) fn build_limb(
         };
         (u, v) = transport(u, v, dir, next);
         dir = next;
-        rings.push(push_ring(mesh, node.position, u, v, node.half_extents()));
+        rings.push(push_ring(
+            mesh,
+            node.position,
+            u,
+            v,
+            node.half_extents(),
+            node.roll,
+        ));
     }
 
     let final_dir = dirs[count - 2];
@@ -142,7 +166,14 @@ pub(crate) fn build_limb(
         sockets.push(socket);
     } else {
         let node = skeleton.nodes[nodes[count - 1] as usize];
-        rings.push(push_ring(mesh, node.position, u, v, node.half_extents()));
+        rings.push(push_ring(
+            mesh,
+            node.position,
+            u,
+            v,
+            node.half_extents(),
+            node.roll,
+        ));
         let tip = node.position + dir * (config.tip_extend * node.radius);
         rings.push(push_ring(
             mesh,
@@ -150,6 +181,7 @@ pub(crate) fn build_limb(
             u,
             v,
             node.half_extents() * config.tip_shrink,
+            node.roll,
         ));
     }
 
@@ -201,9 +233,13 @@ fn place_socket(
     let dist = (config.socket_distance * hub.radius).min(max_dist);
     let blend = (dist / bone_length).clamp(0.0, 1.0);
     let half = hub.half_extents().lerp(next.half_extents(), blend);
+    // The roll travels with the half-extents, for the same reason they blend at
+    // all: a socket that stood on a flat edge while the node beside it stood on a
+    // vertex would tear the section as it slid.
+    let roll = hub.roll + (next.roll - hub.roll) * blend;
 
     let center = hub.position + away * dist;
-    let ring = push_ring(mesh, center, u, v, half);
+    let ring = push_ring(mesh, center, u, v, half, roll);
 
     Socket {
         joint,
@@ -213,6 +249,7 @@ fn place_socket(
         u,
         v,
         half,
+        roll,
         joint_half: hub.half_extents(),
         neighbor_half: next.half_extents(),
         bone_length,
@@ -230,8 +267,9 @@ pub(crate) fn push_ring(
     u: Vec3,
     v: Vec3,
     half: Vec2,
+    roll: f32,
 ) -> [u32; RING] {
-    ring_offsets(u, v, half).map(|offset| mesh.push_vertex(center + offset))
+    ring_offsets(u, v, half, roll).map(|offset| mesh.push_vertex(center + offset))
 }
 
 /// An orthonormal frame `(u, v)` with `u × v == dir`.
