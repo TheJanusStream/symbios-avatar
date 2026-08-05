@@ -126,9 +126,126 @@ fn main() {
 
     proportions(&rig, height, low.y);
     silhouette(&rig, &mesh, &weights, height, low.y);
+    thickness(&rig, &mesh, &weights, height);
     prebend(&rig, height);
     locality(&rig, &mesh, &weights, height);
     hinge(&rig, &mesh, &weights);
+}
+
+/// How thick each limb actually is, against the reference and against the node
+/// radius that asked for it.
+///
+/// The distinction in the last clause is the whole point of this table. A node
+/// radius is what the plan *requested*; subdivision delivers a good deal less,
+/// and by different amounts for a hulled joint than for a tube of 4-point
+/// rings. Every figure in `humanoid.rs`'s radius ladder is a request, and every
+/// figure measured off a reference body is a surface, so the two have never
+/// been in the same units. The `kept` column is the conversion, measured rather
+/// than assumed — tune the ladder without it and you are sweeping against a
+/// number you cannot see.
+///
+/// Measured as the mean perpendicular distance to the bone axis, over the
+/// vertices the bone's own joint holds, which is exactly how the reference
+/// columns were measured off the GLB.
+fn thickness(rig: &Rig, mesh: &PolyMesh, weights: &SkinWeights, height: f32) {
+    /// Where along each bone the thickness is sampled.
+    const STATIONS: [f32; 4] = [0.125, 0.375, 0.625, 0.875];
+    /// `(bone, male, female)` at each station, as fractions of stature.
+    const REFERENCE: [(&str, [f32; 4], [f32; 4]); 4] = [
+        (
+            "upper arm",
+            [0.0369, 0.0347, 0.0342, 0.0263],
+            [0.0304, 0.0296, 0.0267, 0.0237],
+        ),
+        (
+            "forearm",
+            [0.0263, 0.0317, 0.0281, 0.0181],
+            [0.0238, 0.0281, 0.0242, 0.0167],
+        ),
+        (
+            "thigh",
+            [0.0442, 0.0440, 0.0400, 0.0285],
+            [0.0445, 0.0490, 0.0404, 0.0322],
+        ),
+        (
+            "shank",
+            [0.0250, 0.0366, 0.0298, 0.0183],
+            [0.0286, 0.0342, 0.0270, 0.0184],
+        ),
+    ];
+
+    println!("\nlimb thickness: mean radius at each station, fractions of H");
+    println!(
+        "{:<11} {:>6} {:>25} {:>25}   {:>10}",
+        "bone", "", "ours / male / female", "", "nominal  kept"
+    );
+
+    let mut bones = Vec::new();
+    for limb in [Limb::ForeLeft, Limb::HindLeft] {
+        if let Some([root, mid, tip]) = rig.limb_chain(limb) {
+            bones.push((root, mid));
+            bones.push((mid, tip));
+        }
+    }
+
+    for (index, (from, to)) in bones.into_iter().enumerate() {
+        let Some((name, male, female)) = REFERENCE.get(index).copied() else {
+            break;
+        };
+        let (start, end) = (rig.joints[from].position, rig.joints[to].position);
+        let axis = end - start;
+        let span = axis.length();
+        if span <= f32::EPSILON {
+            continue;
+        }
+        let along = axis / span;
+
+        let mut measured = [f32::NAN; 4];
+        for (slot, station) in STATIONS.iter().enumerate() {
+            let mut total = 0.0;
+            let mut count = 0usize;
+            for (vertex, &at) in mesh.positions.iter().enumerate() {
+                let held: f32 = weights.vertices[vertex]
+                    .iter()
+                    .filter(|influence| influence.joint as usize == from)
+                    .map(|influence| influence.weight)
+                    .sum();
+                if held <= 0.4 {
+                    continue;
+                }
+                let travel = (at - start).dot(along) / span;
+                if (travel - station).abs() >= 0.125 {
+                    continue;
+                }
+                total += (at - (start + axis * travel)).length();
+                count += 1;
+            }
+            if count >= 5 {
+                measured[slot] = total / count as f32 / height;
+            }
+        }
+
+        // The conversion from request to surface, taken at the proximal station
+        // against the node whose radius governs there.
+        let nominal = rig.joints[from].radius / height;
+        let kept = measured[0] / nominal;
+        print!("{name:<11}");
+        for slot in 0..4 {
+            if measured[slot].is_nan() {
+                print!("   --   /{:.4}/{:.4}", male[slot], female[slot]);
+            } else {
+                print!(
+                    " {:.4}/{:.4}/{:.4}",
+                    measured[slot], male[slot], female[slot]
+                );
+            }
+        }
+        if kept.is_finite() {
+            println!("   {nominal:.4}  {:.0}%", kept * 100.0);
+        } else {
+            println!("   {nominal:.4}    --");
+        }
+    }
 }
 
 /// Landmark heights, segment lengths and spans against both references.

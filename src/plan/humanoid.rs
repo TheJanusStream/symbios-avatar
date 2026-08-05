@@ -74,22 +74,30 @@ pub const HEIGHT_RANGE: (f32, f32) = (1.2, 2.2);
 /// not a citation — if this set is ever revisited it should be measured, not
 /// re-remembered.
 ///
-/// **The pelvis is the exception to the paragraph above, and deliberately so.**
-/// Its lateral axis is 0.55 rather than 1.0, which makes it the one node here
-/// that is *deeper than it is wide* — read as a shape on its own it is wrong,
-/// and read as part of a body it is right, because on a real pelvis almost none
-/// of the visible width is pelvis. Measured on the Quaternius male the trunk is
-/// 0.0910 of stature across at hip level, the hip joints sit at 0.0487 and the
-/// thigh's radius there is 0.046: 0.0487 + 0.046 = 0.0947. **The silhouette is
-/// two femoral heads plus a narrow core**, and the core is buried between them.
+/// **The pelvis was narrowed to 0.55 in #98 and put back in #104, and the round
+/// trip is worth keeping.** The narrowing was real at the time: the hip sockets
+/// could not come in past the reach of the spine socket's ring, that reach is
+/// `x · pelvis_r`, and moving it was what let `hip_x` fall from 1.35 to 0.60.
 ///
-/// This is what unblocked `hip_x` (#98). The spine socket's lateral reach is
-/// `x · pelvis_r`, and that reach is the floor under how close the hip sockets
-/// may sit — so the width had to leave this node before it could leave the
-/// hips. Narrowing it is free in exactly the sense the paragraph above
-/// describes; what is *not* free is that the pelvis stops carrying the
-/// silhouette, so the hip radius now has to.
-const PELVIS_SECTION: Vec2 = Vec2::new(0.55, 0.80);
+/// Then #104 fattened the hip node from 0.047 to 0.067 of stature, and **that
+/// changed which constraint binds.** The failure below 0.64 is now
+/// `SocketsOverlap` — the two hip sockets running into each other, which is
+/// governed by `hip_x ≥ hip_r / 1.64` and has nothing to do with this constant.
+/// Swept to confirm rather than reasoned about: at `hip_x` 0.50 the sweep fails
+/// identically at 0.55 and at 1.00, and at the shipped 0.64 it passes at both.
+/// The narrowing had stopped paying for itself.
+///
+/// Putting it back is not merely tidying. A pelvis at 0.55 is *deeper than it
+/// is wide*, which dragged the abdomen's width-to-depth ratio to 1.15 and lost
+/// `a_trunk_is_not_a_surface_of_revolution` — a test measuring the waist caught
+/// a constant describing the pelvis, because the zone spans the bone between
+/// them.
+///
+/// The moral for the rest of this file: **a meshability floor is a property of
+/// the whole joint, not of the coefficient that happens to be nearest it.**
+/// Change a radius two nodes away and the binding constraint can move without
+/// any of the numbers here being touched.
+const PELVIS_SECTION: Vec2 = Vec2::new(1.0, 0.80);
 /// See [`PELVIS_SECTION`]. The waist is the shallowest part of the trunk.
 const WAIST_SECTION: Vec2 = Vec2::new(1.0, 0.76);
 /// See [`PELVIS_SECTION`]. A ribcage is about three-quarters as deep as it is
@@ -517,26 +525,59 @@ impl BodyPlan for HumanoidParams {
         //          =  PELVIS_SECTION.x · pelvis_r / 0.82
         // ```
         //
-        // At the old section — `x` of 1.0, a pelvis as wide as it is round —
-        // that floor was 1.22 pelvis radii and this coefficient sat at 1.35,
-        // just above it. Every earlier sweep was measuring the floor rather than
-        // the hips. Narrowing [`PELVIS_SECTION`] to 0.55 moves the floor to 0.67
-        // and this follows it down.
+        // At `PELVIS_SECTION.x` of 1.0 that floor is 1.22 pelvis radii, and this
+        // coefficient sat at 1.35 — just above it. Every earlier sweep was
+        // measuring the floor rather than the hips. Narrowing the section to
+        // 0.55 moved the floor to 0.67 and this followed it down, which is how
+        // #98 got the hips to the reference.
         //
-        // The drop helps, and it is why 0.60 clears rather than merely grazes.
-        // The spine socket sits *above* the pelvis centre while a hip socket
-        // points down and out, so the two terms subtract: at the shipped
+        // **The section has since gone back to 1.0 and this has stayed down,
+        // which looks like a contradiction and is not.** The floor above is not
+        // the only one, and it stopped being the binding one when #104 fattened
+        // the hip node — see the closed form below. Swept to check rather than
+        // argued: at 0.50 the sweep fails identically whether the section is
+        // 0.55 or 1.00, and at 0.64 it passes at both.
+        //
+        // The drop also helps, and it is why this clears rather than merely
+        // grazes. The spine socket sits *above* the pelvis centre while a hip
+        // socket points down and out, so the two terms subtract: at the shipped
         // `HIP_DROP` the spine ring's projection onto the hip axis is 12.6 mm
         // against 76 mm of travel available.
         //
-        // **The gain came down with the base**, 0.35 to 0.16, and had to. It is
+        // **The gain came down with the base**, 0.35 to 0.10, and had to. It is
         // a multiple of `pelvis_r`, so at `hip_width = −1` the old pair gave
         // 1.00 radii and the new base alone would give 0.25 — a bone too short
-        // to carry a socket at all. The span it covers is now 0.44 to 0.76.
+        // to carry a socket at all.
         //
-        // Provenance: **derived, then bounded by a sweep** (#98) — the plane
-        // condition above, confirmed against `tests/plan.rs`.
-        let hip_x = pelvis_r * (0.60 + 0.16 * self.hip_width);
+        // **The narrow end of the axis is what bounds this pair, not the middle,
+        // and there is a closed form for it** (#104). The two hip sockets both
+        // sit at `max_socket_fraction` of their own bone, because the distance
+        // `socket_distance` asks for is further than the bone is long — so their
+        // centres are `2 · 0.82 · bone · (hip_x / bone)` apart, and the bone
+        // cancels:
+        //
+        // ```text
+        //   separation  =  1.64 · hip_x        (whatever the drop)
+        // ```
+        //
+        // Which has to clear `socket_clearance · (r + r)`, and by the time a
+        // socket has slid 82% of the way to the hip its ring is essentially the
+        // hip's own radius. So `hip_x ≥ hip_r / 1.64`, or 0.516 pelvis radii at
+        // the shipped ladder — and `girth` cancels there too, since it scales
+        // both. 0.64 − 0.10 leaves 4.5% over that floor.
+        //
+        // This is the constraint that #104's fatter hip ran into: at the old
+        // 0.60 − 0.16 the axis reached 0.44 and `tests/plan.rs` found bodies
+        // whose two hip sockets interpenetrated, by 0.16% on the first one it
+        // hit. The drop is no help — it is not in the formula. **And it is now
+        // the binding one**, at 0.516 against the spine socket's 0.67-with-the-
+        // drop-subtracted, which is why [`PELVIS_SECTION`] could go back to 1.0.
+        //
+        // Provenance: **derived, then bounded by a sweep** (#98, #104) — two
+        // conditions, both written out above, both confirmed against
+        // `tests/plan.rs`. Which of them binds depends on the hip radius, so
+        // neither can be dropped from the record.
+        let hip_x = pelvis_r * (0.64 + 0.10 * self.hip_width);
         let hip_y = pelvis_y - hip_drop;
 
         // Where the knee sits between hip and ankle, and so how the leg's length
@@ -742,15 +783,75 @@ impl BodyPlan for HumanoidParams {
 
         let extremity = 1.0 + 0.3 * self.extremity_size;
 
-        // Provenance for every node radius below — clavicle 0.040, shoulder
-        // 0.038, elbow 0.032, wrist 0.025, hand 0.020, hip 0.052, knee 0.042,
-        // ankle 0.030, foot 0.019, all times stature: **unsourced**, from the
-        // initial body plan, nine numbers in one ladder. They are also the set
-        // most likely to look right and be wrong, because a limb tapering
-        // monotonically from hip to foot reads as a limb whatever the actual
-        // figures are — there is no silhouette cue that a wrong taper violates.
-        // `examples/measure` prints `radius/H` for the zones it knows, which is
-        // the instrument to point at them if anyone ever does.
+        // The limb radius ladder, **measured at last** (#104).
+        //
+        // The note that stood here called these nine figures unsourced, from the
+        // initial body plan, and warned they were "the set most likely to look
+        // right and be wrong, because a limb tapering monotonically from hip to
+        // foot reads as a limb whatever the actual figures are — there is no
+        // silhouette cue that a wrong taper violates". That was exactly right,
+        // and it undersold the problem: **the thigh was not tapering at all.**
+        // Measured, its surface radius read 0.0300, 0.0297, 0.0299, 0.0299 of
+        // stature along its length, flat to four decimals, where the reference
+        // sheds 36% from hip to knee.
+        //
+        // **A node radius is a request, not a surface, and that is why nobody
+        // could check these.** Subdivision delivers about 0.64 of what is asked
+        // for — measured across all four limb bones at 65%, 66%, 61%, 65%, so
+        // the factor is a property of the mesher rather than of any one limb.
+        // Every figure below is therefore a reference surface radius divided by
+        // 0.64, and the division is the reason a decade of eyeballing the ladder
+        // against published tables could never have converged: the two columns
+        // were in different units. `examples/bodyaudit` prints both, with the
+        // conversion in the `kept` column.
+        //
+        // **The defect was at the proximal ends only**, which is why the whole
+        // ladder is not simply scaled up. Ours against the male reference at the
+        // far end of each bone: wrist 0.0177 against 0.0181, ankle 0.0210
+        // against 0.0183 — already right, the ankle slightly fat. It is the hip
+        // and the shoulder that had collapsed toward their neighbours:
+        //
+        // ```text
+        //   shoulder 0.038 -> 0.055    hip   0.047 -> 0.067
+        //   elbow    0.032 -> 0.037    knee  0.042 -> 0.037
+        //   wrist    0.025 -> 0.025    ankle 0.030 -> 0.025
+        // ```
+        //
+        // **The shoulder is the one figure here that is not its measured value,
+        // and it is held down by the wardrobe rather than by the body** (#105).
+        // It wants 0.059. Above about 0.057 a `Sleeve::Bare` hem — which cuts
+        // exactly through the saddle where the arm meets the torso — closes into
+        // a figure-eight instead of a loop and the garment stops being a closed
+        // solid. Bisected to this coefficient alone: every other figure in this
+        // ladder is innocent, and reverting this one makes the test pass. 0.055
+        // is the largest value that cuts, and it leaves the deltoid about 7%
+        // thinner than the reference. Raise it when the hem can be cut.
+        //
+        // **Two passes, because 0.64 is an average and the ends do not share
+        // it.** The first pass divided through by it uniformly and left the
+        // shoulder 14% thin and the ankle 10% fat; the second corrected each
+        // node against its own measured error. The delivered fraction runs 57%
+        // at the shoulder to 70% at the ankle — it is smaller where the node is
+        // large relative to its bone, which is what a limit surface does. Anyone
+        // re-deriving this should expect to go round twice.
+        //
+        // The hip is the largest move in the file and it does a second job: it
+        // is most of the pelvic silhouette, so it is also what puts the hips
+        // back near the reference's 0.091 of stature across.
+        //
+        // **What is left is not a coefficient problem.** The ends now match — the
+        // wrist reads 0.0182 against 0.0181, the ankle 0.0184 against 0.0183 —
+        // and the MIDDLES are thin: shank 0.0234 against 0.0366, thigh 0.0366
+        // against 0.0440. A real limb has a muscle belly and this one has two
+        // nodes interpolating linearly between its ends, so a calf or a forearm
+        // cannot bulge no matter what these figures say. Fixing it needs a
+        // mid-limb node or a radius profile, not a bigger number here.
+        //
+        // Provenance: **derived, then corrected against a second measurement**
+        // (#104) — reference surface radii over the delivered fraction, bounded
+        // by `tests/plan.rs`. Not covered: the clavicle at 0.040 and the hand
+        // and foot at 0.020 and 0.019, which are stubs inside attached geometry
+        // and have no surface of their own to measure.
         let mut skeleton = Skeleton::new();
         let pelvis = skeleton.add_node(
             Node::new(Vec3::new(0.0, pelvis_y, 0.0), pelvis_r)
@@ -815,7 +916,7 @@ impl BodyPlan for HumanoidParams {
                 clavicle,
                 Node::new(
                     Vec3::new(side * shoulder_at.x, shoulder_at.y, shoulder_at.z),
-                    h * 0.038 * girth,
+                    h * 0.055 * girth,
                 )
                 .in_zone(Zone::UpperLimb(fore)),
             );
@@ -823,7 +924,7 @@ impl BodyPlan for HumanoidParams {
                 shoulder,
                 Node::new(
                     Vec3::new(side * elbow_at.x, elbow_at.y, elbow_at.z),
-                    h * 0.032 * girth,
+                    h * 0.037 * girth,
                 )
                 .in_zone(Zone::UpperLimb(fore)),
             );
@@ -863,17 +964,17 @@ impl BodyPlan for HumanoidParams {
             // at 0.0943 of stature against the reference's 0.0910.
             let hip = skeleton.extend_from(
                 pelvis,
-                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.047 * girth)
+                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.067 * girth)
                     .in_zone(Zone::UpperLimb(hind)),
             );
             let knee = skeleton.extend_from(
                 hip,
-                Node::new(Vec3::new(side * hip_x, knee_y, knee_z), h * 0.042 * girth)
+                Node::new(Vec3::new(side * hip_x, knee_y, knee_z), h * 0.037 * girth)
                     .in_zone(Zone::UpperLimb(hind)),
             );
             let ankle = skeleton.extend_from(
                 knee,
-                Node::new(Vec3::new(side * hip_x, ankle_y, 0.0), h * 0.030 * girth)
+                Node::new(Vec3::new(side * hip_x, ankle_y, 0.0), h * 0.025 * girth)
                     .in_zone(Zone::LowerLimb(hind)),
             );
             skeleton.extend_from(
