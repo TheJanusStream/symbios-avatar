@@ -73,14 +73,36 @@ pub const HEIGHT_RANGE: (f32, f32) = (1.2, 2.2);
 /// three-quarters figure quoted for the chest is a remembered rule of thumb and
 /// not a citation — if this set is ever revisited it should be measured, not
 /// re-remembered.
-const PELVIS_SECTION: Vec2 = Vec2::new(1.0, 0.80);
+///
+/// **The pelvis is the exception to the paragraph above, and deliberately so.**
+/// Its lateral axis is 0.55 rather than 1.0, which makes it the one node here
+/// that is *deeper than it is wide* — read as a shape on its own it is wrong,
+/// and read as part of a body it is right, because on a real pelvis almost none
+/// of the visible width is pelvis. Measured on the Quaternius male the trunk is
+/// 0.0910 of stature across at hip level, the hip joints sit at 0.0487 and the
+/// thigh's radius there is 0.046: 0.0487 + 0.046 = 0.0947. **The silhouette is
+/// two femoral heads plus a narrow core**, and the core is buried between them.
+///
+/// This is what unblocked `hip_x` (#98). The spine socket's lateral reach is
+/// `x · pelvis_r`, and that reach is the floor under how close the hip sockets
+/// may sit — so the width had to leave this node before it could leave the
+/// hips. Narrowing it is free in exactly the sense the paragraph above
+/// describes; what is *not* free is that the pelvis stops carrying the
+/// silhouette, so the hip radius now has to.
+const PELVIS_SECTION: Vec2 = Vec2::new(0.55, 0.80);
 /// See [`PELVIS_SECTION`]. The waist is the shallowest part of the trunk.
 const WAIST_SECTION: Vec2 = Vec2::new(1.0, 0.76);
 /// See [`PELVIS_SECTION`]. A ribcage is about three-quarters as deep as it is
 /// wide, which is the strongest single cue in the set.
 const CHEST_SECTION: Vec2 = Vec2::new(1.0, 0.74);
-/// See [`PELVIS_SECTION`].
-const GIRDLE_SECTION: Vec2 = Vec2::new(1.0, 0.80);
+/// See [`PELVIS_SECTION`], whose exception this shares and for the same reason.
+///
+/// The girdle is the shoulders' equivalent of the pelvis: its lateral
+/// half-extent is the floor under how close the clavicle sockets may sit, so
+/// the width had to leave this node before it could leave `clavicle_x`. The
+/// shoulder silhouette is carried by the clavicle and shoulder nodes outboard
+/// of it, and the ribcage below by [`CHEST_SECTION`], which is untouched.
+const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
 /// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite.
 const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 
@@ -469,28 +491,52 @@ impl BodyPlan for HumanoidParams {
         const HEAD_BELOW_JOINT: f32 = 1.19;
         let head_y = neck_y + head_r * HEAD_BELOW_JOINT;
 
-        // The pelvis carries the spine and both legs; the drop to the hip is
-        // what gives that joint the room to separate three sockets.
+        // How far out the hip sockets sit, and until #98 the single number this
+        // file was most sure it could not move.
         //
-        // The coefficient is a MESHABILITY FLOOR, not a style choice, and the
-        // difference matters because the canon is on the far side of it. A
-        // default body measured 0.270 of height across the hips against a canon
-        // 0.190, and #66 asked for canon. Swept: 1.60 and 1.45 mesh every seed,
-        // 1.30 loses one, and 1.13 — the figure that actually lands on 0.190 —
-        // loses five of ten. The two leg sockets and the spine's have to clear
-        // each other on one node, and bringing the legs together is what takes
-        // that room away. 1.35 is the tightest value with margin over the floor
-        // and gives 0.228, which is most of the way and as far as this joint
-        // goes. Reaching canon needs a narrower pelvis or sockets placed
-        // differently, and both are changes to the body rather than to a number.
+        // **Down from 1.35, and the way through was the pelvis rather than this
+        // coefficient.** The note that stood here recorded a sweep — 1.60 and
+        // 1.45 mesh, 1.30 loses one seed, 1.13 loses five — and concluded that
+        // 0.190 of height across the hips was unreachable. It also wrote down
+        // the answer, in its last sentence: *reaching canon needs a narrower
+        // pelvis or sockets placed differently*. Both were true, and the first
+        // one is cheap.
         //
-        // Provenance: **looked up, then bounded by a sweep** (#66). The looked-up
-        // half is the eight-head figure's 0.190 of height across the hips; the
-        // sweep is 1.60 / 1.45 / 1.35 / 1.30 / 1.13 against ten seeds, and it is
-        // why the canon figure is not what ships. The 0.35 gain is
-        // **unsourced**. See the note on `clavicle_x` below before trusting the
-        // 0.228 quoted here: it was measured against a body that has since grown.
-        let hip_x = pelvis_r * (1.35 + 0.35 * self.hip_width);
+        // The condition is exact and worth stating once, because it governs the
+        // shoulders too (see `clavicle_x`). A socket surfaces as a hull facet
+        // only when its own plane clears every sibling ring point, and it may
+        // slide out at most `max_socket_fraction` of its own bone. So a socket
+        // leaving a joint SIDEWAYS has to clear whatever the socket above it
+        // reaches sideways — and that reach is the joint's own lateral
+        // half-extent, because `Socket::joint_half` is the hub's `half_extents`
+        // and the spine socket's ring frame runs `u = ±X` on an upright body.
+        // Roughly:
+        //
+        // ```text
+        //   hip_x  >  (spine ring's lateral reach) / 0.82
+        //          =  PELVIS_SECTION.x · pelvis_r / 0.82
+        // ```
+        //
+        // At the old section — `x` of 1.0, a pelvis as wide as it is round —
+        // that floor was 1.22 pelvis radii and this coefficient sat at 1.35,
+        // just above it. Every earlier sweep was measuring the floor rather than
+        // the hips. Narrowing [`PELVIS_SECTION`] to 0.55 moves the floor to 0.67
+        // and this follows it down.
+        //
+        // The drop helps, and it is why 0.60 clears rather than merely grazes.
+        // The spine socket sits *above* the pelvis centre while a hip socket
+        // points down and out, so the two terms subtract: at the shipped
+        // `HIP_DROP` the spine ring's projection onto the hip axis is 12.6 mm
+        // against 76 mm of travel available.
+        //
+        // **The gain came down with the base**, 0.35 to 0.16, and had to. It is
+        // a multiple of `pelvis_r`, so at `hip_width = −1` the old pair gave
+        // 1.00 radii and the new base alone would give 0.25 — a bone too short
+        // to carry a socket at all. The span it covers is now 0.44 to 0.76.
+        //
+        // Provenance: **derived, then bounded by a sweep** (#98) — the plane
+        // condition above, confirmed against `tests/plan.rs`.
+        let hip_x = pelvis_r * (0.60 + 0.16 * self.hip_width);
         let hip_y = pelvis_y - hip_drop;
 
         // Where the knee sits between hip and ankle, and so how the leg's length
@@ -572,13 +618,78 @@ impl BodyPlan for HumanoidParams {
         // silently. `tests/plan.rs` still passes because its tolerance is 0.015
         // and the error is 0.010 — two thirds of the margin spent, no warning.
         //
-        // Whether to re-tune for the taller body is the body overhaul's call and
-        // an owner one: it is a change to the silhouette, and arm span at 0.894
-        // against a canon 1.000 is the bigger deviation of the two.
-        let clavicle_x = girdle_r * (1.85 + 0.25 * self.shoulder_width);
-        // Provenance: **unsourced**, both.
+        // **Re-tuned, and against the reference rather than the drawing canon**
+        // (#98). The paragraph above asked whether to, and left it as an owner's
+        // call; the owner's call was to measure. The canonical 0.245 quoted
+        // throughout is *bideltoid breadth* — across the shoulder muscle — and
+        // what this coefficient actually sets is where the arm's chain begins,
+        // which the reference puts at 0.190 of stature on the male and 0.156 on
+        // the female. This now targets their midpoint, 0.173.
+        //
+        // **The constraint is the hips' constraint with one term more, and
+        // getting that term wrong is worth recording.** The first attempt here
+        // reasoned exactly as `hip_x` does: a clavicle socket leaves the girdle
+        // sideways, so it must clear the neck socket above and the chest socket
+        // below, both of which reach `GIRDLE_SECTION.x · girdle_r` laterally,
+        // and their vertical offsets project to nothing on a horizontal axis —
+        // giving a floor of `1.22 · GIRDLE_SECTION.x · girdle_r`, or 73 mm.
+        // `tests/plan.rs` rejected it immediately with `needed: 0.121`, two
+        // thirds larger.
+        //
+        // The missing term is that **a socket ring is not the size of its own
+        // joint.** `Socket::set_dist` lerps the ring from `joint_half` toward
+        // the *neighbour's* half-extents as it slides out, so the chest socket
+        // — sitting 0.9 girdle radii down a bone only 1.3 girdle radii long —
+        // arrives 69% of the way to the CHEST's width and reaches 125 mm
+        // sideways, not 60. The floor under the shoulders is set by the ribcage,
+        // not by the girdle:
+        //
+        // ```text
+        //   clavicle_x  >  (0.31 · GIRDLE_SECTION.x · girdle_r + 0.69 · chest_r) / 0.82
+        // ```
+        //
+        // That second term is fixed anatomy — the chest node measures 0.0912 of
+        // stature across against the reference's 0.0911, so it is right and must
+        // not be narrowed to buy shoulder width. So the shoulders bottom out at
+        // about 0.20 of stature rather than the 0.173 aimed for. Both halves of
+        // the fix still earn their place: `GIRDLE_SECTION` at 0.55 is worth
+        // 0.021 of stature, and the rest is this coefficient coming off its old
+        // 1.85 to sit just above the true floor.
+        //
+        // **The gain is bounded by the `shoulder_width = −1` corner, not by the
+        // neutral body.** `girth` cancels — `clavicle_x` and both floor terms
+        // are multiples of it — but `shoulder_width` does not, because it swells
+        // the chest by 0.08 and the girdle by only 0.06, so a narrow-shouldered
+        // body has proportionally *more* ribcage to clear. At −1 the floor is
+        // 1.379 girdle radii; 1.50 − 0.08 leaves 3% over it, and that corner is
+        // what the pair below is chosen for rather than the middle.
+        //
+        // Provenance: **derived, corrected against a failure, then bounded by a
+        // sweep** (#98). The first derivation is left above because it is the
+        // mistake this socket invites, and because `hip_x` gets away with the
+        // same reasoning only by accident — a hip socket's siblings blend toward
+        // the *waist*, which is no wider than the pelvis.
+        let clavicle_x = girdle_r * (1.50 + 0.08 * self.shoulder_width);
+        // Provenance: **unsourced**.
         let clavicle_y = girdle_y + h * 0.004;
-        let shoulder_x = clavicle_x + h * 0.048;
+        // How far outboard of the clavicle the arm's chain starts.
+        //
+        // Down from 0.048. This and `clavicle_x` share the shoulder's width
+        // between them and neither means anything alone: the reference splits
+        // the same span the other way round, with its clavicle joints almost on
+        // the midline (0.021 of stature apart, against this plan's 0.096) and a
+        // long clavicle bone carrying the rest. What has to match is the sum,
+        // and the sum is now 0.214 of stature against the reference's 0.190 and
+        // 0.156.
+        //
+        // Nearly all of that sum is `clavicle_x` now, because `clavicle_x` is
+        // pinned just over a floor it cannot cross. This is what is left, and it
+        // is kept non-zero only so the two nodes do not coincide and leave the
+        // cage a zero-length bone.
+        //
+        // Provenance: **derived** (#98) — whatever is left of the target span
+        // once `clavicle_x` has taken its floor.
+        let shoulder_x = clavicle_x + h * 0.010;
         // Arms hang at an angle, not straight out. Built in a T-pose, posing
         // them down to walk rotates each shoulder about 75 degrees and the
         // shoulder bulges — measured the same under dual quaternions and under
@@ -738,9 +849,21 @@ impl BodyPlan for HumanoidParams {
                 .in_zone(Zone::Extremity(fore)),
             );
 
+            // The hip carries the pelvic silhouette now, which is new: with
+            // [`PELVIS_SECTION`] narrowed, the width at hip level is these two
+            // nodes and not the pelvis between them. Measured on the reference,
+            // the thigh's mean radius at the hip is 0.0455 of stature, which is
+            // 0.0439 of nominal `h` once the 0.965 a built body loses to
+            // subdivision is taken out; 0.047 is that with a little back,
+            // because these are the radii *before* subdivision shrinks them.
+            //
+            // Down from 0.052, and it had to come down or the body would have
+            // *gained* width from #98: the hips moved in but the blobs on them
+            // did not, and the silhouette is the sum. 0.047 puts the outer edge
+            // at 0.0943 of stature against the reference's 0.0910.
             let hip = skeleton.extend_from(
                 pelvis,
-                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.052 * girth)
+                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.047 * girth)
                     .in_zone(Zone::UpperLimb(hind)),
             );
             let knee = skeleton.extend_from(

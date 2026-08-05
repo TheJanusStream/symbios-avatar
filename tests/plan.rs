@@ -199,40 +199,59 @@ fn random_humanoids_always_mesh() {
 
 #[test]
 fn the_default_body_stands_near_the_proportion_canon() {
-    // #66. Shoulder and hip breadth are set by coefficients that are ALSO
-    // meshability floors, so widening them back would make every sweep above
-    // pass more easily and nothing else would complain. Measured against the
-    // rendered height rather than the nominal one, because subdivision shrinks
-    // a body by about six percent and it is the rendered body that is looked at.
+    // #66, re-based on measured bodies in #98. Shoulder and hip breadth are set
+    // by coefficients that are ALSO meshability floors, so widening them back
+    // would make every sweep above pass more easily and nothing else would
+    // complain. Measured against the rendered height rather than the nominal
+    // one, because subdivision shrinks a body by about six percent and it is
+    // the rendered body that is looked at.
+    //
+    // **Both figures this used to assert were wrong, in different ways.**
+    //
+    // The shoulder bound compared `Zone::Chest`'s widest joint against 0.245,
+    // the canon's *bideltoid* breadth — a measurement across the shoulder
+    // muscle, which is not what any joint in this plan sits at. Two different
+    // quantities were being held equal by a tolerance. It now measures where
+    // the arm's chain actually starts, against the reference pair's 0.190 and
+    // 0.156.
+    //
+    // The hip bound asserted 0.24 and explained that the canonical 0.190 was
+    // unreachable — "0.190 needs a hip coefficient of about 1.13, and below
+    // 1.35 the pelvis stops being able to separate two leg sockets from the
+    // spine's". That was measuring the pelvis's own width, not the hips: the
+    // floor is `PELVIS_SECTION.x · pelvis_r / 0.82`, so narrowing the pelvis
+    // node moved it. The hips now sit at 0.098, inside the reference pair, and
+    // the coefficient is 0.60.
     let params = HumanoidParams::default();
     let skeleton = params.skeleton();
     let body = build_body(&skeleton, &CageConfig::default(), 2).expect("the default body meshes");
     let (lo, hi) = body.bounds();
     let height = hi.y - lo.y;
     let rig = Rig::from_skeleton(&skeleton).expect("the default body rigs");
-    let span = |zone: Zone| {
-        rig.in_zone(zone)
-            .iter()
-            .map(|&joint| rig.joints[joint].position.x.abs())
-            .fold(0.0f32, f32::max)
-            * 2.0
-            / height
+
+    // The root of each limb chain — the shoulder and the hip — rather than the
+    // widest joint of a zone, which for an A-posed arm is the elbow.
+    let root_span = |limb: Limb| {
+        rig.limb_chain(limb)
+            .map(|chain| rig.joints[chain[0]].position.x.abs() * 2.0 / height)
+            .expect("a humanoid articulates its limbs")
     };
 
-    let shoulders = span(Zone::Chest);
+    // Above the reference pair, and knowingly: `clavicle_x` sits just over a
+    // floor set by the CHEST's width, which is correct anatomy and must not be
+    // narrowed to buy shoulder span. The bound is here to stop the old 0.337
+    // coming back, not to claim the reference was reached.
+    let shoulders = root_span(Limb::ForeLeft);
     assert!(
-        (shoulders - 0.245).abs() < 0.015,
-        "shoulders span {shoulders:.3} of height, against a canon 0.245"
+        (0.15..0.23).contains(&shoulders),
+        "shoulders span {shoulders:.3} of height, against a reference 0.190 (male) \
+         and 0.156 (female)"
     );
 
-    // Not asserted at canon, because it cannot reach it: 0.190 needs a hip
-    // coefficient of about 1.13, and below 1.35 the pelvis stops being able to
-    // separate two leg sockets from the spine's. This is the value that is
-    // actually reachable, and it is here to stop the old 0.270 coming back.
-    let hips = span(Zone::UpperLimb(Limb::HindLeft));
+    let hips = root_span(Limb::HindLeft);
     assert!(
-        hips < 0.24,
-        "hips span {hips:.3} of height; the canon is 0.190 and 0.228 is what the pelvis allows"
+        (0.085..0.115).contains(&hips),
+        "hips span {hips:.3} of height, against a reference 0.097 (male) and 0.099 (female)"
     );
 }
 
