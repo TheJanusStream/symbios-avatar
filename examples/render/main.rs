@@ -50,7 +50,7 @@ use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, FaceParams, FootingConfig,
-    Gait, Ground, HairParams, MeshKind, PolyMesh, Pose, SkinParams, Stride, Zone, anim::gait,
+    Gait, Ground, HairParams, Limb, MeshKind, PolyMesh, Pose, SkinParams, Stride, Zone, anim::gait,
     anim::plant_feet_of,
 };
 
@@ -443,9 +443,23 @@ impl Subject {
                     }
                 }
             }
+            // A biped's foot is not a part any more — it is meshed into the leg
+            // (#111) — so it is framed by zone, the way the head is. One foot,
+            // not both: a pair framed together sits a body's width apart and
+            // zooms straight back out to the body sheet. The leg above it comes
+            // along, because a foot with no ankle in shot says nothing about
+            // whether the ankle is right.
+            Focus::Foot if parts.extremities.feet.is_empty() => {
+                let deformed =
+                    posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+                let limb = Limb::HindLeft;
+                for (vertex, zone) in parts.zones.iter().enumerate() {
+                    if matches!(zone, Zone::Extremity(at) | Zone::LowerLimb(at) if *at == limb) {
+                        hold(deformed[vertex]);
+                    }
+                }
+            }
             Focus::Hand | Focus::Foot => {
-                // One of them, not both: a pair framed together sits a body's
-                // width apart and zooms straight back out to the body sheet.
                 let attached = if matches!(focus, Focus::Hand) {
                     &parts.extremities.hands
                 } else {

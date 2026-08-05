@@ -15,10 +15,16 @@
 //! let rig = Rig::from_skeleton(&AvatarRecord::default().skeleton())?;
 //!
 //! // Semantic queries instead of bone names — the same call works on a quadruped.
-//! // A hind extremity is a chain of its own — ball and toe — so this finds the
-//! // joints of both feet rather than one apiece.
+//! // A hind extremity is a graph of its own — heel, the stub that closes it,
+//! // ball and toe — so this finds every joint of both feet rather than one
+//! // apiece.
 //! let feet = rig.query(|zone| matches!(zone, Zone::Extremity(limb) if !limb.is_fore()));
-//! assert_eq!(feet.len(), 4);
+//! assert_eq!(feet.len(), 8);
+//!
+//! // And the joints that DEFORM a foot are those plus the ankle they hang from,
+//! // because a joint moves the bones leaving it. See `Rig::extremity_joints`.
+//! let left = rig.extremity_joints(Limb::HindLeft);
+//! assert_eq!(left.len(), 5);
 //!
 //! // Named anchors for fitting hair, hats, and garments.
 //! let marks = rig.landmarks();
@@ -32,6 +38,7 @@
 //! ```
 
 pub mod landmark;
+pub mod patch;
 pub mod skin;
 pub mod surface;
 
@@ -43,6 +50,7 @@ use crate::plan::{Limb, Zone};
 use crate::skeleton::{Skeleton, SkeletonError};
 
 pub use landmark::{Anchor, Landmark, Landmarks};
+pub use patch::{Footprint, Patch};
 pub use skin::{Influence, MAX_INFLUENCES, SkinConfig, SkinWeights};
 pub use surface::Surface;
 
@@ -358,6 +366,35 @@ impl Rig {
             .filter(|(_, joint)| joint.zone == zone)
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// The joints that deform a limb's extremity, in hierarchy order.
+    ///
+    /// **Not the same as the extremity zone**, and the difference is the whole
+    /// reason this exists. A joint deforms the bones *leaving* it, so a leaf
+    /// joint holds no body surface at all: on a foot meshed as ankle, ball and
+    /// toe the toe holds nothing, and a heel hung off the ankle as a leaf would
+    /// hold nothing either — its surface is deformed by the **ankle**, the joint
+    /// whose bone runs out to it. The joint the extremity hangs from is
+    /// therefore part of the foot as far as anything reading the binding is
+    /// concerned, and it is included here.
+    ///
+    /// The reference mannequins are bound the same way for the same reason:
+    /// their rig has no heel bone at all, so their entire heel is held by the
+    /// joint they call `foot_l`. Selecting a foot from [`Zone::Extremity`] alone
+    /// drops the heel and then reports that the foot has not got one.
+    ///
+    /// Returns an empty vector for a limb this body does not have.
+    #[must_use]
+    pub fn extremity_joints(&self, limb: Limb) -> Vec<usize> {
+        let mut joints = self.in_zone(Zone::Extremity(limb));
+        if let Some(&first) = joints.first()
+            && let Some(parent) = self.joints[first].parent
+            && !joints.contains(&parent)
+        {
+            joints.insert(0, parent);
+        }
+        joints
     }
 
     /// The three joints an [`crate::anim::ik::two_bone`] solve needs for `limb`.

@@ -655,34 +655,146 @@ impl BodyPlan for HumanoidParams {
         let knee_z = h * KNEE_FORWARD;
         // **The foot's own geometry, all of it measured** (#111). It used to be
         // one node at `h * 0.0257` high and `h * 0.057` forward, tagged unsourced,
-        // with a swept slab hung off it. The slab is gone: these place the ball
-        // and the toe as real nodes in the leg chain.
+        // with a swept slab hung off it. The slab is gone: these place the heel,
+        // the ball and the toe as real nodes in the leg chain.
         //
-        // Provenance for every figure below: **looked up**, from the Quaternius
-        // male and female (which share one skeleton), as fractions of stature or
-        // of foot length. Foot length is 16.4% of stature on the male and 15.7% on
-        // the female; the ball is 53.7% of the foot's length forward of the ankle and
-        // the toe tip 82.3%; the ball's own height is 0.83% of stature and the
-        // toe's 0.63%.
-        const FOOT_LONG: f32 = 0.160;
+        // Provenance for the three figures below: **looked up**, from the
+        // Quaternius male and female (which share one skeleton). Foot length is
+        // 16.4% of stature on the male and 15.7% on the female; the ball is
+        // 53.7% of the foot's length forward of the ankle and the toe tip 82.3%.
+        // `FOOT_LONG` is 0.156 rather than the 0.160 those two average to
+        // because it is the length *requested* of the mesher and the built foot
+        // comes out a little longer than the nodes that ask for it — measured
+        // 0.1658 of stature at 0.156, against the reference pair's 0.157-0.164.
+        const FOOT_LONG: f32 = 0.156;
         const FOOT_BALL_ALONG: f32 = 0.537;
         const FOOT_TOE_ALONG: f32 = 0.823;
         let foot_long = h * FOOT_LONG;
         let ball_z = foot_long * FOOT_BALL_ALONG;
         let toe_z = foot_long * FOOT_TOE_ALONG;
-        let ball_y = h * 0.0083;
-        let toe_y = h * 0.0063;
-        // The radius that makes the foot the right WIDTH, and the width is what a
-        // sole is measured by: 37–38% of foot length on both references. A node
-        // radius is a request the mesher delivers about 0.64 of at four ring
-        // points, and a section rolled half a segment reaches 0.707 of its
-        // half-extent along each axis — so the request is the wanted half-width
-        // divided by both.
-        let foot_r = foot_long * 0.185 / (0.64 * 0.707);
+
+        // **The foot is a level run, and the heel is the one part of it that is
+        // not** (#111).
+        //
+        // A foot doubles back on itself — heel behind the ankle, toe well in
+        // front, leg meeting both from above — and how that is said in capsules
+        // decides whether the sole is flat, which is the property everything
+        // that plants a foot depends on.
+        //
+        // **A sole is flat only where the bone under it is level.** A cage ring
+        // stands perpendicular to its own bone, and where a chain bends it
+        // stands on the bisector, so a turn tilts the section and lifts the
+        // surface beneath it. Three arrangements were built and measured before
+        // this one, and the measurements are the argument:
+        //
+        // ```text
+        //                                 behind ankle   sole contact
+        //                                  / length      behind ankle
+        //   no heel at all                   -0.106           0.0%
+        //   ankle -> heel -> ball -> toe      0.151           0.0%
+        //   heel hulled, cap straight back    0.313          25.2%
+        //   heel hulled, cap back and down    0.164          14.5%
+        //   reference (male / female)      0.156 / 0.189  11.2% / 13.7%
+        // ```
+        //
+        // The second row is the whole lesson. Running the leg's own chain into
+        // a heel puts the foot's outline exactly where the reference has it and
+        // the foot bears **none** of its weight there: the turn at the heel is
+        // about 100 degrees, its ring tilts 39 degrees, and the sole comes out a
+        // rocker. Outline is not a heel, which is why `examples/footaudit`
+        // measures contact area rather than the rearmost point — a thick ankle
+        // has a rearmost point behind the ankle too.
+        //
+        // So `heel -> ball -> toe` is level at `foot_y`, its rings are upright,
+        // and the roll that stands a section on a flat edge does what it was
+        // added for. The heel is made a *joint* rather than a bend by hanging a
+        // short stub off the back of it: a joint is hulled from its sockets and
+        // has no bisector ring, so nothing tilts.
+        //
+        // **The stub goes back and DOWN, and that is not cosmetic.** A socket
+        // becomes an opening in the hull only where its own plane clears every
+        // sibling corner, so a stub pointing straight back has to clear the
+        // ankle's ring — which reaches backward — and needs 0.038 of bone where
+        // the whole heel is 0.014 deep. It then has to be pushed out to 0.31 of
+        // foot length, twice the reference, which is the third row above.
+        // Angled down, the ankle's ring and the ball's both project *negatively*
+        // onto it and it needs almost nothing, so the heel can sit where a heel
+        // sits.
+        //
+        // **Nothing about the rig moves**, which is what decided this over
+        // rooting the leg's chain at a heel — the other way to avoid a hull.
+        // [`Rig::limb_chain`] still answers hip, knee, ankle, because it only
+        // reaches into the extremity zone when a limb has fewer than three
+        // joints above it; so the IK solve, `Footing` and every segment length
+        // measured against the reference go on naming the same three joints. The
+        // ankle still owns the first bone of the foot, so rotating it carries
+        // heel, ball and toe together, which is what an ankle does. Rooting the
+        // foot at a heel would have moved the ankle landmark onto the heel and
+        // silently re-pointed all of that at a different bone — the mistake #110
+        // spent a session finding.
+        //
+        // Provenance: **placed by measurement** (#111), against the reference
+        // figures in the table above, and checked on twelve seeds.
+        //
+        // [`Rig::limb_chain`]: crate::rig::Rig::limb_chain
+        const FOOT_HEEL_BACK: f32 = 0.07;
+        const FOOT_CAP_BACK: f32 = 0.05;
+        const FOOT_CAP_DROP: f32 = 0.05;
+        let heel_z = -foot_long * FOOT_HEEL_BACK;
+        let cap_z = heel_z - foot_long * FOOT_CAP_BACK;
+
+        // How high the level run sits, and so where the body's sole ends up.
+        //
+        // **Not the reference's ball joint height.** That is 0.83% of stature
+        // and it is a joint buried in flesh; this is the centre of a capsule
+        // whose own section reaches most of the way to the ground. Read across
+        // as though the two were the same landmark, it put the built sole 55 mm
+        // *below* the floor this plan stands its bodies on — so the body was
+        // 55 mm taller than `h`, the ankle measured 9.6% of stature above the
+        // sole against a reference 5.4%, and every figure taken as a fraction of
+        // rendered height was quietly 3% out.
+        //
+        // Provenance: **measured** (#111) — set so the built sole lands on the
+        // plan's own ground plane, which it now does to 0.2 mm.
+        const FOOT_SOLE_UP: f32 = 0.0163;
+        let foot_y = h * FOOT_SOLE_UP;
+        let cap_y = foot_y - foot_long * FOOT_CAP_DROP;
+
+        // The radius that makes the foot the right WIDTH, and width is what a
+        // sole is measured by: 37-38% of foot length on both references, so half
+        // of it is the 0.185 below.
+        //
+        // **[`FOOT_KEPT`] is measured, not derived, and the derivation it
+        // replaced was wrong in an instructive way.** It used to read
+        // `0.64 * 0.707` — the fraction of its own half-extent a four-point ring
+        // is said to deliver, times the fraction a section rolled half a segment
+        // reaches along each axis — which is two assumptions multiplied
+        // together with nothing measuring either. Built and measured, the foot
+        // delivered 0.33, not 0.45, and the foot came out 30% narrow.
+        //
+        // The reason is worth keeping: **a fat ring between thin neighbours does
+        // not survive subdivision.** With the foot only ball and toe, the ball
+        // was a bulge with the thin ankle on one side and the tapering toe on
+        // the other, and Catmull-Clark averaged it away. The heel and its cap
+        // give it neighbours its own size and the delivered fraction rose to
+        // 0.61-0.69 on its own, with no radius changed. Adding nodes bought back
+        // what inflating a radius could not.
+        const FOOT_KEPT: f32 = 0.61;
+        let foot_r = foot_long * 0.185 / FOOT_KEPT;
         // How thick the foot is against how wide, from the same outlines: the ball
         // is about 20% of foot length deep against 37% wide.
         const FOOT_FLAT: f32 = 0.55;
         const FOOT_BALL_WIDE: f32 = 1.0;
+        // The heel is nearly as wide as the ball and never narrower than the toe:
+        // measured across the reference sole, 89.7 mm at the back against a widest
+        // 111.7 mm (male) and 85.1 against 103.3 (female), so 0.82 of the ball on
+        // both. A foot that tapers to a point at the back reads as a hoof.
+        const FOOT_HEEL_WIDE: f32 = 0.82;
+        // The stub that closes the back of the heel. Full-bodied rather than a
+        // spike, because the back of the foot is where the sole has to reach the
+        // ground: at 0.45 of the ball it rode 20 mm high there and bore 3% of
+        // the contact, and at 0.75 it lies down and bears 14%.
+        const FOOT_CAP_WIDE: f32 = 0.75;
         // The toe is narrower than the ball — the sole outline runs 0.185 of foot
         // length at the ball and 0.142 at nine tenths along.
         const FOOT_TOE_WIDE: f32 = 0.77;
@@ -1037,34 +1149,54 @@ impl BodyPlan for HumanoidParams {
                     .in_zone(Zone::LowerLimb(hind)),
             );
             // **The foot is part of the leg, not a slab hung off its end** (#111).
-            // Two more nodes carry it — the ball of the foot and the toe — so the
-            // cage rings run through it and the ankle is continuous surface. Both
-            // reference bodies are built that way: the male's foot is inside the
-            // leg shell and the female's inside one shell running crown to sole,
-            // which is why neither has a seam where ours had one.
+            // Four nodes carry it — heel, the stub that closes the heel, ball and
+            // toe — so the cage rings run through it and the ankle is continuous
+            // surface. Both reference bodies are built that way: the male's foot
+            // is inside the leg shell and the female's inside one shell running
+            // crown to sole, which is why neither has a seam where ours had one.
             //
-            // Rolled by half a ring segment, which is what stands the section on
-            // a flat edge instead of on a vertex. Without it a foot meshed from
-            // the graph rests on a keel for exactly the reason the swept foot did.
-            let ball = skeleton.extend_from(
+            // The heel takes two of the four because a *bend* in a chain tilts
+            // the section under it and a *joint* does not; the stub is what makes
+            // the heel a joint. See the placement figures above for what that is
+            // worth, measured.
+            //
+            // Every node carries the same section: squashed to [`FOOT_FLAT`] of
+            // its width, and rolled half a ring segment so it stands on a flat
+            // edge instead of on a vertex. Without the roll a foot meshed from
+            // the graph rests on a keel, for exactly the reason the swept one did.
+            let sole_section = |at: Vec3, radius: f32| {
+                Node::new(at, radius)
+                    .with_scale(Vec2::new(1.0, FOOT_FLAT))
+                    .with_roll(HALF_SEGMENT)
+                    .in_zone(Zone::Extremity(hind))
+            };
+            let heel = skeleton.extend_from(
                 ankle,
-                Node::new(
-                    Vec3::new(side * hip_x, ball_y, ball_z),
+                sole_section(
+                    Vec3::new(side * hip_x, foot_y, heel_z),
+                    foot_r * FOOT_HEEL_WIDE * extremity,
+                ),
+            );
+            skeleton.extend_from(
+                heel,
+                sole_section(
+                    Vec3::new(side * hip_x, cap_y, cap_z),
+                    foot_r * FOOT_CAP_WIDE * extremity,
+                ),
+            );
+            let ball = skeleton.extend_from(
+                heel,
+                sole_section(
+                    Vec3::new(side * hip_x, foot_y, ball_z),
                     foot_r * FOOT_BALL_WIDE * extremity,
-                )
-                .with_scale(Vec2::new(1.0, FOOT_FLAT))
-                .with_roll(HALF_SEGMENT)
-                .in_zone(Zone::Extremity(hind)),
+                ),
             );
             skeleton.extend_from(
                 ball,
-                Node::new(
-                    Vec3::new(side * hip_x, toe_y, toe_z),
+                sole_section(
+                    Vec3::new(side * hip_x, foot_y, toe_z),
                     foot_r * FOOT_TOE_WIDE * extremity,
-                )
-                .with_scale(Vec2::new(1.0, FOOT_FLAT))
-                .with_roll(HALF_SEGMENT)
-                .in_zone(Zone::Extremity(hind)),
+                ),
             );
         }
 
@@ -1142,11 +1274,25 @@ mod tests {
         assert_eq!(skeleton.kind(2), NodeKind::Connector, "chest");
         assert_eq!(skeleton.degree(3), 4, "shoulder girdle");
 
-        // Two hands, two feet, one head: five leaves.
+        // Two hands, one head, and each foot ending in both a toe and the stub
+        // that closes its heel: seven leaves. The stub is what makes the heel a
+        // joint rather than a bend, which is what keeps the sole flat (#111).
         let leaves = (0..skeleton.nodes.len() as u32)
             .filter(|&node| skeleton.kind(node) == NodeKind::Leaf)
             .count();
-        assert_eq!(leaves, 5);
+        assert_eq!(leaves, 7);
+
+        // And the heel is that joint on both legs. Said here rather than left
+        // implicit in the leaf count, because it is the property the sole
+        // depends on: a degree-2 heel is a bend, and the cage stands a bend's
+        // ring on the bisector and tilts the surface under it.
+        let heels = (0..skeleton.nodes.len() as u32)
+            .filter(|&node| {
+                skeleton.kind(node) == NodeKind::Joint
+                    && matches!(skeleton.nodes[node as usize].zone, Zone::Extremity(limb) if !limb.is_fore())
+            })
+            .count();
+        assert_eq!(heels, 2, "each foot's heel has to be a joint, not a bend");
     }
 
     #[test]

@@ -211,7 +211,18 @@ pub const MAX_LOCKS: u32 = 24;
 /// kept because a limit that is never checked is a limit nobody knows is
 /// broken, and because the cost of the locks at the rim does still follow how
 /// far each one travels.
-pub const MAX_TRIANGLES: usize = 16_500;
+///
+/// **Down from 16,500, because the body grew feet** (#111). The figure is
+/// defined as what is left over, so it is stale whenever anything else changes
+/// and it had gone stale twice: at 16,500 it was three times the room that
+/// actually existed, and the greedy-hair record — a real record off the
+/// network, not a hypothetical — took the body to 31,328 against the 30,000 the
+/// WebGL2 tier is judged on. Meshing the foot's heel cost 1,880 triangles, and
+/// this is where `tests/budget.rs` says in as many words that the room for it
+/// is. 6,000 leaves the default head of hair (3,416) untiered with most of a
+/// thousand to spare, and tiers the dearest one down by lock count, which is
+/// the axis that costs geometry.
+pub const MAX_TRIANGLES: usize = 6_000;
 
 impl HairParams {
     /// Clamps every axis into range. Idempotent.

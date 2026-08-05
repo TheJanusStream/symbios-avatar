@@ -163,6 +163,20 @@ fn no_one_part_of_a_body_dominates_its_budget() {
     // The number to watch is now hair (3,416) and cloth (5,936). If the total
     // ever presses the ceiling, those are where the room is, not the face.
     //
+    // **Raised again from 0.60 to 0.63 by the foot (#111), and it is the same
+    // kind of decision.** The heel took skin from 14,440 to 16,320 — 1,880
+    // triangles — and with it skin's share from 58% to 61%. What this guard is
+    // for is an *ornament* eating the body: hair that costs more than the
+    // person wearing it, which is the state #40 found and fixed. A foot is not
+    // an ornament, it is the body, and the alternative to paying for it is a
+    // biped with no heel. The total did press the ceiling, and the prediction
+    // in the paragraph above turned out to be right — the room came out of
+    // hair, whose leftover-defined ceiling had gone stale at three times the
+    // room that existed (`hair::MAX_TRIANGLES`, 16,500 -> 6,000).
+    //
+    // The room left is now cloth (6,248), and after that the face's refinement
+    // passes. There is not a third raise in this number.
+    //
     // **The jaw's two passes took skin from 57.3% to 57.9% for 652 triangles
     // (#80), and the guard is what stopped a third.** The jaw's border out at
     // the gonion is carved across three quarters of a cell; a third pass over
@@ -191,7 +205,7 @@ fn no_one_part_of_a_body_dominates_its_budget() {
     }
     let share = largest.1 as f32 / avatar.budget.tris as f32;
     assert!(
-        share < 0.60,
+        share < 0.63,
         "{} is {:.0}% of the budget, and a body that is mostly one thing is \
          where the next cut goes: {by_kind:?}",
         largest.0,
