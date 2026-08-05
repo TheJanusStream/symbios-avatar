@@ -347,7 +347,11 @@ mod tests {
         // it.
         let (mesh, rig, weights) = body(1);
         let patch = foot(&mesh, &rig, &weights, Limb::HindLeft);
-        assert!(patch.vertex_count() > 32, "{} vertices", patch.vertex_count());
+        assert!(
+            patch.vertex_count() > 32,
+            "{} vertices",
+            patch.vertex_count()
+        );
         assert_eq!(patch.components(&mesh), 1, "the foot came out in pieces");
     }
 
@@ -361,8 +365,7 @@ mod tests {
         let lowest = (0..mesh.vertex_count())
             .min_by(|&a, &b| mesh.positions[a].y.total_cmp(&mesh.positions[b].y))
             .expect("a body has vertices");
-        let feet = [Limb::HindLeft, Limb::HindRight]
-            .map(|limb| foot(&mesh, &rig, &weights, limb));
+        let feet = [Limb::HindLeft, Limb::HindRight].map(|limb| foot(&mesh, &rig, &weights, limb));
         assert!(
             feet.iter().any(|patch| patch.owns(lowest)),
             "the body's lowest vertex at {:?} belongs to no foot",

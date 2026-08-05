@@ -31,6 +31,7 @@
 //! cargo run --release --example render -- --walk 8     # a walk, one sheet per frame
 //! cargo run --release --example render -- --head       # close up on face and hair
 //! cargo run --release --example render -- --close hand # or head, hand, foot
+//! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --bare      # no hair, to see the face
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
@@ -45,13 +46,13 @@
 mod light;
 mod scene;
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, FaceParams, FootingConfig,
-    Gait, Ground, HairParams, Limb, MeshKind, PolyMesh, Pose, SkinParams, Stride, Zone, anim::gait,
-    anim::plant_feet_of,
+    Gait, Ground, HairParams, Limb, MeshKind, PolyMesh, Pose, Role, SkinParams, Stride, Zone,
+    anim::gait, anim::plant_feet_of,
 };
 
 /// Pixels per side of one view in the finished sheet.
@@ -102,6 +103,7 @@ fn main() {
     // dual quaternions pinch less and can bulge, matrices are the opposite.
     let linear = args.iter().any(|arg| arg == "--linear");
     let bare = args.iter().any(|arg| arg == "--bare");
+    let fist = args.iter().any(|arg| arg == "--fist");
     // Which stage to show instead of the finished picture.
     let pass = value("--pass").cloned();
     // Six numbers, in the order the axes are declared: length, volume,
@@ -204,7 +206,7 @@ fn main() {
     if args.iter().any(|arg| arg == "--cost") {
         cost(&record, &config);
     }
-    let subject = Subject::new(avatar, linear, bare, pass);
+    let subject = Subject::new(avatar, linear, bare, fist, pass);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
         match focus {
@@ -343,6 +345,8 @@ struct Subject {
     /// seed, and the face is the thing under active work — judging a feature
     /// through a fringe is judging the fringe (#67, #59).
     bare: bool,
+    /// Whether every finger is curled, to show the hand rig working.
+    fist: bool,
     pass: Option<String>,
     gait: Gait,
     stride: Stride,
@@ -354,7 +358,7 @@ struct Subject {
 
 impl Subject {
     /// Wraps a built avatar in what a contact sheet additionally needs.
-    fn new(avatar: Avatar, linear: bool, bare: bool, pass: Option<String>) -> Self {
+    fn new(avatar: Avatar, linear: bool, bare: bool, fist: bool, pass: Option<String>) -> Self {
         let (lo, hi) = avatar.parts.body.bounds();
         Self {
             gait: Gait::natural(&avatar.rig),
@@ -364,13 +368,28 @@ impl Subject {
             avatar,
             linear,
             bare,
+            fist,
             pass,
         }
     }
 
-    /// The body standing still.
+    /// The body standing still, or with its hands closed.
+    ///
+    /// Closing them is what a hand rig is *for*, and a rest pose cannot show
+    /// whether one works: before #113 the whole hand rode the wrist, so every
+    /// finger joint in the world would have moved nothing and the rest pose
+    /// looked exactly the same either way.
     fn standing(&self) -> Pose {
-        Pose::rest(&self.avatar.rig)
+        let rig = &self.avatar.rig;
+        let mut pose = Pose::rest(rig);
+        if self.fist {
+            for joint in 0..rig.len() {
+                if rig.joints[joint].role == Role::Digit {
+                    pose.rotations[joint] = Quat::from_rotation_x(0.75);
+                }
+            }
+        }
+        pose
     }
 
     /// The body mid-walk, with its stance feet on the ground.

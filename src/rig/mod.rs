@@ -105,6 +105,16 @@ pub enum Role {
     /// expression track — and asking for "the facial joints" is a question
     /// something will need to answer.
     Facial,
+    /// Bends a finger or a toe.
+    ///
+    /// A digit joint *does* deform something — the hand it belongs to — which is
+    /// why it is not a [`Role::Helper`]. What it must never deform is the
+    /// **body's own surface**: it sits inside the wrist's reach, so a bind that
+    /// considered it would attach a patch of forearm to a fingertip. Keeping it
+    /// out of [`Role::Deform`] is what stops that, and it is the same reason a
+    /// hand rig is worth naming as a set: hand poses, grips and retargeting all
+    /// want to ask for the digits and nothing else.
+    Digit,
 }
 
 impl Role {
@@ -673,6 +683,60 @@ mod tests {
             after.is_normalized(1e-4),
             "the weights stopped summing to one"
         );
+    }
+
+    #[test]
+    fn the_body_does_not_bind_to_a_finger() {
+        // A digit joint is the one kind that deforms real geometry and still
+        // must be kept away from the body's own surface: it sits *inside* the
+        // wrist's reach, so a bind that considered it would attach a patch of
+        // forearm to a fingertip and the sleeve would follow a curling hand
+        // (#113). This is the same claim as the spring-bone test above, and it
+        // matters more, because unlike a spring bone a finger has a mesh and so
+        // looks like something worth binding to.
+        use crate::extremity::Extremities;
+        use crate::rig::skin;
+        use crate::subdiv::catmull_clark;
+        use crate::{Archetype, AvatarRecord, CageConfig, build_cage};
+
+        let record = AvatarRecord::new("Fingered", Archetype::default());
+        let skeleton = record.skeleton();
+        let mesh = catmull_clark(
+            &build_cage(&skeleton, &CageConfig::default()).expect("meshes"),
+            crate::BODY_SUBDIVISIONS,
+        );
+        let mut rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let plain = rig.clone();
+        let surface = Surface::measure(&mesh, &rig);
+        let _ = Extremities::build(&mut rig, &surface, 0.0);
+
+        let digits: Vec<usize> = (0..rig.len())
+            .filter(|&joint| rig.joints[joint].role == Role::Digit)
+            .collect();
+        assert!(!digits.is_empty(), "the body grew no fingers to check");
+
+        let before = skin::bind(&mesh, &plain, &SkinConfig::default());
+        let after = skin::bind(&mesh, &rig, &SkinConfig::default());
+        assert_eq!(
+            before, after,
+            "hanging fingers on the rig changed how the body is skinned"
+        );
+        for vertex in &after.vertices {
+            for influence in vertex {
+                assert!(
+                    !digits.contains(&(influence.joint as usize)),
+                    "a body vertex was bound to a finger"
+                );
+            }
+        }
+        // And the same for the query everything that measures a surface asks.
+        for &joint in &digits {
+            assert_ne!(
+                rig.nearest_bone(rig.joints[joint].position).joint,
+                joint,
+                "a finger answered for the point it sits on"
+            );
+        }
     }
 
     #[test]

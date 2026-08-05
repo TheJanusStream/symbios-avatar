@@ -249,7 +249,7 @@ impl Avatar {
     pub fn build_with(record: &AvatarRecord, config: &AvatarConfig) -> Option<Self> {
         let skeleton = record.skeleton();
         let mut body = crate::build_body(&skeleton, &config.cage, config.subdivisions).ok()?;
-        let rig = Rig::from_skeleton(&skeleton).ok()?;
+        let mut rig = Rig::from_skeleton(&skeleton).ok()?;
 
         // The face is carved into the body's own surface, so it has to happen
         // before ANY of what follows: skin weights, texture charts, the garment
@@ -298,7 +298,11 @@ impl Avatar {
                 Some(Features::build(canon, skull, &record.face))
             })
             .flatten();
-        let mut extremities = Extremities::build(&rig, &surface, config.ground);
+        // `&mut rig`: a hand brings its own bones, and they have to
+        // land on the rig this avatar is going to carry. The body's own binding
+        // is already done above and is unaffected — digit joints are
+        // `Role::Digit`, which `skin::bind` and `nearest_bone` both skip.
+        let mut extremities = Extremities::build(&mut rig, &surface, config.ground);
 
         // The attached parts exist BEFORE the body is unwrapped, so the packer
         // can reserve them regions of the same atlas rather than being asked
@@ -450,7 +454,13 @@ impl Avatar {
             mesh.paint(Vec3::ONE);
             let mut placed =
                 mesh.transformed(Mat4::from_translation(self.rig.joints[part.joint].position));
-            placed.bind_rigidly(part.joint as u16);
+            if placed.skin.is_empty() {
+                // A foot rides its ankle whole. A hand does not: it arrives
+                // already skinned to its own twenty-one bones, and binding it
+                // rigidly here would throw them away and glue every finger shut
+                // (#113).
+                placed.bind_rigidly(part.joint as u16);
+            }
             skin.append(&placed.split_uv_seams());
         }
         if let Some(features) = &self.parts.features {

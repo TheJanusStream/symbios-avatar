@@ -116,7 +116,10 @@ fn main() {
 
     let (low, high) = mesh.bounds();
     let stature = (high.y - low.y).max(1e-3);
-    println!("rendered height {stature:.3} m, standing on y = {:.4}", low.y);
+    println!(
+        "rendered height {stature:.3} m, standing on y = {:.4}",
+        low.y
+    );
     println!("reference: Quaternius male 1.830 m, female 1.806 m (CC0, via mesh2motion)");
 
     for limb in [Limb::HindLeft, Limb::HindRight] {
@@ -145,7 +148,13 @@ fn ankle(joints: &[usize]) -> usize {
 }
 
 /// Whether the selection is a foot at all, said in numbers.
-fn selection(rig: &Rig, mesh: &symbios_avatar::PolyMesh, patch: &Patch, joints: &[usize], limb: Limb) {
+fn selection(
+    rig: &Rig,
+    mesh: &symbios_avatar::PolyMesh,
+    patch: &Patch,
+    joints: &[usize],
+    limb: Limb,
+) {
     let (lo, hi) = patch.bounds(mesh);
     println!("\n{:=<78}", "");
     println!("{limb:?}: the surface held by");
@@ -216,7 +225,9 @@ fn shape(
     };
     row("length / stature", length / stature, |r| r.length);
     row("width / length", width / length, |r| r.width);
-    row("behind ankle / length", (at.z - lo.z) / length, |r| r.behind);
+    row("behind ankle / length", (at.z - lo.z) / length, |r| {
+        r.behind
+    });
     println!(
         "  foot is {:.2} cm long, {:.2} cm wide, {:.2} cm thick; \
          ankle {:.2} cm up ({:.2}% of stature)",
@@ -248,8 +259,14 @@ fn shape(
             continue;
         }
         let sole = inside.iter().map(|at| at.y).fold(f32::INFINITY, f32::min);
-        let top = inside.iter().map(|at| at.y).fold(f32::NEG_INFINITY, f32::max);
-        let wide = inside.iter().map(|at| at.x).fold(f32::NEG_INFINITY, f32::max)
+        let top = inside
+            .iter()
+            .map(|at| at.y)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let wide = inside
+            .iter()
+            .map(|at| at.x)
+            .fold(f32::NEG_INFINITY, f32::max)
             - inside.iter().map(|at| at.x).fold(f32::INFINITY, f32::min);
         println!(
             "  {:>6}% {:>9.1} {:>9.1} {:>9.1} {:>9.1}   {}",
@@ -327,9 +344,13 @@ fn sole(rig: &Rig, mesh: &symbios_avatar::PolyMesh, patch: &Patch, joints: &[usi
     // nine bands along it, in millimetres above the lowest point: a keel reads
     // as a valley down the middle, a rocker as a ridge along the length.
     let (lo, hi) = patch.bounds(mesh);
-    println!("\n  {:<9}{}   <- heel to toe", "", (0..9)
-        .map(|band| format!("{:>7}%", band * 100 / 8))
-        .collect::<String>());
+    println!(
+        "\n  {:<9}{}   <- heel to toe",
+        "",
+        (0..9)
+            .map(|band| format!("{:>7}%", band * 100 / 8))
+            .collect::<String>()
+    );
     for row in 0..5 {
         let x = lo.x + (hi.x - lo.x) * (row as f32 + 0.5) / 5.0;
         let cells: String = (0..9)
