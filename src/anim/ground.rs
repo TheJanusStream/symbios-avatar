@@ -17,15 +17,21 @@
 //! answers "what is beneath this point?", so the same code works against a
 //! physics engine, a heightmap, or a flat plane in a test.
 //!
-//! Feet are placed but not *oriented*. Rolling a foot onto a slope needs a foot
-//! with a sole — a heel and a toe to lie across it — and a body plan's foot is
-//! currently one node, which has no orientation of its own to correct. Measuring
-//! it bore that out: every formulation tried moved the foot further from the
-//! angle it holds at rest rather than closer, because the leg leaning to reach
-//! the ground already does most of the work. It waits for feet with real
-//! geometry rather than shipping a knob that cannot be justified.
+//! Feet are placed **and now oriented**, which waited on the feet having any
+//! orientation to correct. A body plan's foot used to be one node; since #111 it
+//! is a heel, a ball and a toe lying across a sole, and [`level_feet`] holds
+//! that sole against the ground instead of letting it ride the shin.
+//!
+//! What that was costing, measured over a walk cycle by `examples/walkaudit`:
+//! **a planted foot sank 121 mm through the floor.** The leg IK aims the joint
+//! the foot hangs from, and everything below it keeps whatever orientation the
+//! rest pose left it with — so as the body travels over a planted foot, the foot
+//! turns with the shin and drives its toe into the ground. The sole started a
+//! stance 33 mm under and finished it 121 mm under. A swinging foot was no
+//! better: at its lowest it was 101 mm below the floor it was supposed to be
+//! swinging over.
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use super::ik::two_bone;
 use super::pose::Pose;
@@ -62,6 +68,13 @@ pub struct FootingConfig {
     pub max_pelvis_drop: f32,
     /// Furthest a foot may be lifted onto ground above it, in metres.
     pub max_step_up: f32,
+    /// Furthest the ankle may be turned to keep a sole flat, in radians.
+    ///
+    /// Forty degrees, which is about what an ankle has. The clamp is what keeps
+    /// a leg that is reaching hard from answering with a foot folded under
+    /// itself: on ground the body cannot properly reach, a *visibly* strained
+    /// ankle is the honest failure and a broken one is not.
+    pub max_ankle: f32,
     /// How many times to probe and re-solve.
     ///
     /// Solving a leg moves its foot, which changes what is beneath it — so on
@@ -75,6 +88,7 @@ impl Default for FootingConfig {
         Self {
             max_pelvis_drop: 0.35,
             max_step_up: 0.4,
+            max_ankle: 0.70,
             passes: 2,
         }
     }
@@ -135,18 +149,39 @@ where
     let mut footing = Footing::default();
 
     for _ in 0..config.passes.max(1) {
+        // **Level before solving, every pass, and the order is the whole of why
+        // it converges.** Turning an ankle swings the contact joint hanging off
+        // it, so levelling a foot that has just been planted un-plants it. The
+        // solve, though, measures the contact-to-ankle offset from the pose in
+        // front of it — see [`solve_contact`] — so a foot levelled first is a
+        // foot the solve places correctly. What is left over is only the shin
+        // rotation that same solve introduced, and the next pass takes most of
+        // that out again. Measured on the default walk, the sole settles from
+        // 19 mm under the floor to under 4 mm.
+        //
+        // Every contact, not only the planted ones: a swinging foot is pinned
+        // by nothing, so levelling it is free, and it is the foot most likely
+        // to be ploughing through the ground.
+        level_feet(rig, pose, &beneath, config);
         let posed = pose.forward(rig);
 
         // Probe before moving anything: the corrections have to be known against
         // one consistent pose, or each leg would be measured against a body that
         // had already shifted under it.
-        let mut probes: Vec<(Limb, usize, Ground)> = Vec::new();
+        let mut probes: Vec<(Limb, usize, Vec3)> = Vec::new();
         for &limb in &contacts {
             let Some(&foot) = rig.in_zone(Zone::Extremity(limb)).first() else {
                 continue;
             };
             if let Some(ground) = beneath(posed.positions[foot]) {
-                probes.push((limb, foot, ground));
+                // **Where the joint goes, not where the ground is.** A contact
+                // joint is inside the foot, not on its sole: on a body whose
+                // foot is a chain of its own the heel node sits 29 mm up. Aimed
+                // at the surface itself, every planted foot spends the whole
+                // stance that far under it — which is what the sole measured
+                // before this, and no amount of levelling the ankle could fix a
+                // target that was simply too low.
+                probes.push((limb, foot, ground.position + Vec3::Y * stand_off(rig, foot)));
             }
         }
         if probes.is_empty() {
@@ -157,7 +192,7 @@ where
         // stretched leg to reach; ground above a foot is met by bending instead.
         let deepest = probes
             .iter()
-            .map(|(_, foot, ground)| ground.position.y - posed.positions[*foot].y)
+            .map(|(_, foot, target)| target.y - posed.positions[*foot].y)
             .fold(0.0f32, f32::min);
         let remaining = config.max_pelvis_drop - footing.pelvis_drop;
         let drop = deepest.clamp(-remaining.max(0.0), 0.0);
@@ -167,13 +202,13 @@ where
         footing.planted.clear();
         footing.straining.clear();
 
-        for (limb, foot, ground) in probes {
-            if ground.position.y - posed.positions[foot].y > config.max_step_up {
+        for (limb, foot, target) in probes {
+            if target.y - posed.positions[foot].y > config.max_step_up {
                 footing.straining.push(limb);
                 continue;
             }
 
-            if solve_contact(rig, pose, limb, ground.position) {
+            if solve_contact(rig, pose, limb, target) {
                 footing.planted.push(limb);
             } else {
                 footing.straining.push(limb);
@@ -182,6 +217,88 @@ where
     }
 
     footing
+}
+
+/// How far above the floor a contact joint rests when the body stands.
+///
+/// **Read off the rest pose, because the rest pose is a body standing up.** Every
+/// plan in this crate builds its bodies on `y = 0` — it is what
+/// [`crate::extremity::Extremities::build`] takes a ground plane for — so the
+/// height a contact joint sits at when nothing has been posed is exactly the
+/// height it should be held at when it is planted. Nothing has to be measured
+/// off a mesh, and a plan that puts its feet somewhere else is right for free.
+///
+/// Floored at zero so a body built below its own floor cannot drive its feet
+/// further down.
+fn stand_off(rig: &Rig, foot: usize) -> f32 {
+    rig.joints[foot].position.y.max(0.0)
+}
+
+/// Turns each foot so its sole lies along the ground rather than along the shin.
+///
+/// **A foot is not a fixed part of the shin, and a walk is where that shows.**
+/// The leg solve aims the joint the foot hangs from and stops there; everything
+/// past it inherits the shin's orientation, so a planted foot rotates as the
+/// body passes over it and a swinging foot points wherever the knee left it
+/// pointing. Measured on the default body before this existed, the sole reached
+/// 121 mm below the floor during stance and 101 mm below it mid-swing.
+///
+/// `beneath` answers what lies under a foot, exactly as [`plant_feet`] asks it;
+/// a foot over nothing is levelled against world up, which is the right answer
+/// for a foot in the air and the only one available for a foot over a hole.
+///
+/// **The ankle's rotation is assigned, not composed.** It is a constraint on
+/// where the foot ends up rather than a contribution to a gesture — the same
+/// thing the contact solve does to the hip and knee, in the same pass, and for
+/// the same reason. That also makes it idempotent: levelling an already-level
+/// foot changes nothing, so a caller that runs it twice is not punished.
+///
+/// Call after the legs are placed. Running it before [`plant_feet`] would level
+/// the feet against a pose the solve is about to change.
+pub fn level_feet<F>(rig: &Rig, pose: &mut Pose, beneath: F, config: &FootingConfig)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    let beneath = &beneath;
+    if !pose.fits(rig) {
+        return;
+    }
+    let posed = pose.forward(rig);
+
+    for limb in rig.ground_contacts() {
+        // The joint the foot hangs from — the ankle on a body whose foot is a
+        // chain of its own, the last leg node on one whose foot is an attached
+        // part. `extremity_joints` answers that without either being assumed.
+        let joints = rig.extremity_joints(limb);
+        let (Some(&ankle), Some(&foot)) = (joints.first(), joints.get(1)) else {
+            continue;
+        };
+        let Some(parent) = rig.joints[ankle].parent else {
+            continue;
+        };
+
+        // Level against the ground under the foot itself, not under the ankle:
+        // on a slope those are a step apart, and the sole is what has to lie
+        // flat.
+        let up = beneath(posed.positions[foot]).map_or(Vec3::Y, |ground| ground.normal);
+        let want = Quat::from_rotation_arc(Vec3::Y, up.normalize_or(Vec3::Y));
+
+        // What the ankle must hold locally for the foot to end up there, and
+        // then how far that is from leaving it alone, so it can be clamped.
+        let local = posed.rotations[parent].inverse() * want;
+        let (axis, angle) = local.to_axis_angle();
+        let angle = angle.rem_euclid(std::f32::consts::TAU);
+        // `to_axis_angle` reports the turn the short way round or the long way
+        // depending on the sign of the scalar part; fold it into `-PI..=PI` so a
+        // small correction is never mistaken for a nearly-full turn.
+        let angle = if angle > std::f32::consts::PI {
+            angle - std::f32::consts::TAU
+        } else {
+            angle
+        };
+        pose.rotations[ankle] =
+            Quat::from_axis_angle(axis, angle.clamp(-config.max_ankle, config.max_ankle));
+    }
 }
 
 /// Solves one limb so its ground contact lands on `target`.
@@ -263,12 +380,19 @@ mod tests {
         assert!(footing.is_settled(), "{footing:?}");
         assert!(footing.pelvis_drop > 0.0, "the pelvis should sink");
 
+        // **The contact joint lands a foot's thickness above the ground, not on
+        // it.** It is inside the foot rather than on its sole, and this used to
+        // assert it went to the surface itself — which put the sole of every
+        // planted foot that far under the floor for the whole stance. What has
+        // to hold is that the joint keeps the height it stands at, which is what
+        // `stand_off` reads off the rest pose.
         for limb in [Limb::HindLeft, Limb::HindRight] {
             let landed = foot_of(&rig, &pose, limb).y;
+            let foot = rig.in_zone(Zone::Extremity(limb))[0];
+            let wanted = start - 0.1 + stand_off(&rig, foot);
             assert!(
-                (landed - (start - 0.1)).abs() < 0.02,
-                "{limb:?} landed at {landed}, wanted {}",
-                start - 0.1
+                (landed - wanted).abs() < 0.02,
+                "{limb:?} landed at {landed}, wanted {wanted}"
             );
         }
     }
@@ -343,6 +467,115 @@ mod tests {
         assert_eq!(pose, before);
     }
 
+    /// The world orientation of the foot hanging off `limb`'s contact.
+    fn foot_tilt(rig: &Rig, pose: &Pose, limb: Limb) -> f32 {
+        let joints = rig.extremity_joints(limb);
+        let posed = pose.forward(rig);
+        // Where the foot's own up axis has ended up, against the world's.
+        let up = posed.rotations[joints[0]] * Vec3::Y;
+        up.dot(Vec3::Y).clamp(-1.0, 1.0).acos().to_degrees()
+    }
+
+    #[test]
+    fn a_planted_foot_lies_flat_however_the_leg_leans() {
+        // The defect in one sentence: the leg IK aims the joint the foot hangs
+        // from and stops, so the foot rides the shin. Lean the shin and the foot
+        // tips with it — which on a walk drove the sole 121 mm through the floor
+        // by the end of a stance (#114).
+        let rig = biped();
+        let mut pose = Pose::rest(&rig);
+        // Shove the body well forward of its feet, which is what the second half
+        // of a stance is: the pelvis has travelled past the planted foot.
+        pose.translation.z += 0.2;
+        plant_feet(&rig, &mut pose, flat(0.0), &FootingConfig::default());
+
+        for limb in [Limb::HindLeft, Limb::HindRight] {
+            let tilt = foot_tilt(&rig, &pose, limb);
+            assert!(
+                tilt < 5.0,
+                "{limb:?} sat {tilt:.1} degrees off level with the body over it"
+            );
+        }
+    }
+
+    #[test]
+    fn levelling_a_foot_does_not_unplant_it() {
+        // The two constraints fight: turning an ankle swings the contact joint
+        // hanging off it. Levelling after planting therefore undoes the plant,
+        // which is why the levelling happens *inside* the solve loop and before
+        // each probe. What must hold is that both are true at the end.
+        let rig = biped();
+        let mut pose = Pose::rest(&rig);
+        pose.translation.z += 0.15;
+        let footing = plant_feet(&rig, &mut pose, flat(-0.05), &FootingConfig::default());
+        assert!(footing.is_settled(), "{footing:?}");
+
+        for limb in [Limb::HindLeft, Limb::HindRight] {
+            let foot = rig.in_zone(Zone::Extremity(limb))[0];
+            let landed = foot_of(&rig, &pose, limb).y;
+            let wanted = -0.05 + stand_off(&rig, foot);
+            assert!(
+                (landed - wanted).abs() < 0.01,
+                "{limb:?} levelled itself off its own footing: {landed} against {wanted}"
+            );
+            assert!(foot_tilt(&rig, &pose, limb) < 5.0, "{limb:?} is not flat");
+        }
+    }
+
+    #[test]
+    fn a_foot_on_a_slope_lies_along_it() {
+        // A level foot is not the goal — a foot on the ground is. On a ramp the
+        // sole should follow the ramp, which is the whole reason `level_feet`
+        // takes the surface normal rather than assuming world up.
+        let rig = biped();
+        let mut pose = Pose::rest(&rig);
+        let grade: f32 = 0.25;
+        let normal = Vec3::new(0.0, 1.0, -grade).normalize();
+        let ramp = |at: Vec3| {
+            Some(Ground {
+                position: Vec3::new(at.x, at.z * grade, at.z),
+                normal,
+            })
+        };
+        plant_feet(&rig, &mut pose, ramp, &FootingConfig::default());
+
+        let want = normal.dot(Vec3::Y).acos().to_degrees();
+        for limb in [Limb::HindLeft, Limb::HindRight] {
+            let tilt = foot_tilt(&rig, &pose, limb);
+            assert!(
+                (tilt - want).abs() < 5.0,
+                "{limb:?} tilted {tilt:.1} degrees on a slope of {want:.1}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ankle_will_not_fold_further_than_an_ankle_folds() {
+        // On ground the body cannot properly reach, a visibly strained ankle is
+        // the honest failure; one folded through itself is not.
+        let rig = biped();
+        let mut pose = Pose::rest(&rig);
+        let config = FootingConfig::default();
+        // A surface standing on end, so levelling against it asks for a right
+        // angle the clamp has to refuse.
+        let wall = |at: Vec3| {
+            Some(Ground {
+                position: Vec3::new(at.x, 0.0, at.z),
+                normal: Vec3::Z,
+            })
+        };
+        level_feet(&rig, &mut pose, wall, &config);
+
+        for limb in [Limb::HindLeft, Limb::HindRight] {
+            let tilt = foot_tilt(&rig, &pose, limb);
+            assert!(
+                tilt <= config.max_ankle.to_degrees() + 1.0,
+                "{limb:?} turned {tilt:.1} degrees against a clamp of {:.1}",
+                config.max_ankle.to_degrees()
+            );
+        }
+    }
+
     #[test]
     fn a_quadruped_plants_all_four() {
         let rig = Rig::from_skeleton(&QuadrupedParams::default().skeleton()).expect("rigs");
@@ -358,9 +591,11 @@ mod tests {
         assert_eq!(footing.planted.len(), 4, "{footing:?}");
         for limb in Limb::ALL {
             let landed = foot_of(&rig, &pose, limb).y;
+            let foot = rig.in_zone(Zone::Extremity(limb))[0];
+            let wanted = start - 0.05 + stand_off(&rig, foot);
             assert!(
-                (landed - (start - 0.05)).abs() < 0.03,
-                "{limb:?} landed at {landed}"
+                (landed - wanted).abs() < 0.03,
+                "{limb:?} landed at {landed}, wanted {wanted}"
             );
         }
     }

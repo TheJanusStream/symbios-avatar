@@ -363,7 +363,9 @@ const ARM_SWING: f32 = 0.46;
 const ARM_DROP: f32 = 0.66;
 
 /// How far the shoulders twist against the hips, in radians.
-const SHOULDER_TWIST: f32 = 0.14;
+///
+/// Spread down the spine rather than spent at one joint — see [`swing_arms`].
+const SHOULDER_TWIST: f32 = 0.17;
 
 /// How far behind the legs the arms run, as a share of the cycle.
 ///
@@ -371,8 +373,19 @@ const SHOULDER_TWIST: f32 = 0.14;
 /// most of what makes a swing look like it is being carried rather than driven.
 const ARM_LAG: f32 = 0.07;
 
-/// How far a swinging arm bends at the elbow, in radians.
-const ELBOW_BEND: f32 = 0.34;
+/// How far the elbow is bent even when the arm hangs at rest, in radians.
+///
+/// **An arm is never straight.** A body walking with locked elbows reads as a
+/// mannequin being carried along, and the rest pose this plan builds is
+/// perfectly straight — hip to knee to ankle and shoulder to elbow to wrist are
+/// each three collinear points, so without this the arm has no bend at all.
+const ELBOW_REST: f32 = 0.30;
+
+/// How much further the elbow closes as the arm swings forward, in radians.
+///
+/// A walking arm folds on the way through and opens again behind, which is most
+/// of what stops the swing reading as a pendulum.
+const ELBOW_SWING: f32 = 0.26;
 
 /// Swings the arms against the legs and counter-rotates the shoulders.
 ///
@@ -429,19 +442,66 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
         let side = rig.joints[shoulder].position.x.signum();
         pose.rotations[shoulder] *=
             Quat::from_rotation_x(-ARM_SWING * drive) * Quat::from_rotation_z(-ARM_DROP * side);
-        // A straight arm reads as a mannequin being carried along.
+
+        // **The elbow folds forward, about X, and the same way on both arms.**
+        // This used to turn about Y with a `side` factor, and both halves of
+        // that were wrong. The arm hangs in the frontal plane, so Y is only 50
+        // degrees off its own axis and most of the rotation was spent spinning
+        // the forearm rather than bending it — measured on the walk, the elbow
+        // reached 15 degrees of bend for 19 degrees of rotation asked. What
+        // little bend there was went sideways, in and out from the body, rather
+        // than forward where an elbow folds. And `side` mirrored the fold, so
+        // one arm bent forward while the other bent back; an elbow is not
+        // chiral, and folding it is the one thing about an arm that is the same
+        // on both sides.
         pose.rotations[elbow] *=
-            Quat::from_rotation_y(-ELBOW_BEND * side * (0.5 + 0.5 * drive.max(0.0)));
+            Quat::from_rotation_x(-(ELBOW_REST + ELBOW_SWING * drive.max(0.0)));
     }
 
     // Shoulders against hips, and then the neck against the shoulders so the
     // head keeps looking where it is going rather than being turned by the walk.
+    //
+    // **Spread down the whole spine, not spent at the top of it.** The twist
+    // used to go entirely into the joint the arms hang from, which turned the
+    // shoulders by the right angle and left the ribcage and waist beneath them
+    // dead still — the shoulders read as a yoke swivelling on a post rather
+    // than as a torso winding. Sharing it out costs nothing: local rotations
+    // compound down a chain, so the shoulders still arrive at the same angle.
+    //
+    // Weighted toward the top, which is where a spine actually turns: the
+    // shares run 1, 2, 3 up the chain, so the waist contributes a sixth and the
+    // shoulder girdle a half. Derived from the chain the body has rather than
+    // written out, so a plan with a longer spine winds along all of it.
     if let Some(&neck) = rig.in_zone(Zone::Neck).first()
         && let Some(girdle) = rig.joints[neck].parent
     {
-        pose.rotations[girdle] *= Quat::from_rotation_y(SHOULDER_TWIST * lead);
+        let spine = spine_to(rig, girdle);
+        let total: f32 = (1..=spine.len()).map(|rank| rank as f32).sum();
+        for (rank, &joint) in spine.iter().enumerate() {
+            let share = (rank + 1) as f32 / total.max(1.0);
+            pose.rotations[joint] *= Quat::from_rotation_y(SHOULDER_TWIST * lead * share);
+        }
         pose.rotations[neck] *= Quat::from_rotation_y(-SHOULDER_TWIST * lead);
     }
+}
+
+/// The spine from the pelvis up to `top`, pelvis end first.
+///
+/// Walked up the parent chain and stopped at the root, so it is whatever spine
+/// the body has rather than a list of names. The root itself is left out: it
+/// carries the whole body, and turning it turns the legs too.
+fn spine_to(rig: &Rig, top: usize) -> Vec<usize> {
+    let mut chain = Vec::new();
+    let mut at = Some(top);
+    while let Some(joint) = at {
+        if rig.joints[joint].parent.is_none() || !rig.joints[joint].zone.is_core() {
+            break;
+        }
+        chain.push(joint);
+        at = rig.joints[joint].parent;
+    }
+    chain.reverse();
+    chain
 }
 
 /// Where a limb's contact rests when the body is standing.
@@ -640,6 +700,144 @@ mod tests {
             "a taller body steps further"
         );
         assert!(tall.lift > short.lift);
+    }
+
+    /// How far the elbow is bent, in degrees away from straight.
+    ///
+    /// Measured at the joint, never read off the rotation asked for. A
+    /// quaternion about the arm's own axis is a perfectly good rotation that
+    /// bends nothing, and that is exactly what this used to be: turning about Y
+    /// spent most of itself spinning a forearm that hangs 50 degrees off that
+    /// axis (#114).
+    fn elbow_bend(rig: &Rig, pose: &Pose, limb: Limb) -> f32 {
+        let Some([shoulder, elbow, wrist]) = rig.limb_chain(limb) else {
+            return 0.0;
+        };
+        let posed = pose.forward(rig);
+        let upper = (posed.positions[shoulder] - posed.positions[elbow]).normalize_or_zero();
+        let fore = (posed.positions[wrist] - posed.positions[elbow]).normalize_or_zero();
+        180.0 - upper.dot(fore).clamp(-1.0, 1.0).acos().to_degrees()
+    }
+
+    #[test]
+    fn a_walking_arm_is_never_straight() {
+        // A locked elbow reads as a mannequin being carried along, and the rest
+        // pose is straight to the last decimal: shoulder, elbow and wrist are
+        // three collinear points, so the bend has to come from here.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        for frame in 0..12 {
+            let cycle = frame as f32 / 12.0;
+            let mut pose = Pose::rest(&rig);
+            swing_arms(&rig, &mut pose, &gait, cycle);
+            for limb in [Limb::ForeLeft, Limb::ForeRight] {
+                let bend = elbow_bend(&rig, &pose, limb);
+                assert!(
+                    bend > 8.0,
+                    "{limb:?} was {bend:.1} degrees from straight at cycle {cycle:.2}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn both_elbows_fold_the_same_way() {
+        // An elbow is not chiral. Folding it is the one thing about an arm that
+        // is the same on both sides, and a `side` factor here had one arm
+        // bending forward while the other bent back — the same family of mistake
+        // as building one hand by rotating the other (#113).
+        //
+        // Asked half a cycle apart, which is where the two arms are in the same
+        // place in their own swings, so the comparison is like for like.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let bend_at = |limb: Limb, cycle: f32| {
+            let mut pose = Pose::rest(&rig);
+            swing_arms(&rig, &mut pose, &gait, cycle);
+            elbow_bend(&rig, &pose, limb)
+        };
+        for frame in 0..6 {
+            let cycle = frame as f32 / 12.0;
+            let left = bend_at(Limb::ForeLeft, cycle);
+            let right = bend_at(Limb::ForeRight, cycle + 0.5);
+            assert!(
+                (left - right).abs() < 1.0,
+                "at cycle {cycle:.2} the left elbow bent {left:.1} and the right {right:.1}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_forearm_folds_forward_and_not_across_the_body() {
+        // Which plane the fold is in, which no angle at the joint can tell you.
+        // The old rotation bent the arm sideways, in and out from the hip; an
+        // elbow folds the hand toward the front of the body.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let mut pose = Pose::rest(&rig);
+        swing_arms(&rig, &mut pose, &gait, 0.0);
+        let posed = pose.forward(&rig);
+
+        for limb in [Limb::ForeLeft, Limb::ForeRight] {
+            let [shoulder, elbow, wrist] = rig.limb_chain(limb).expect("an arm bends");
+            // Where the wrist sits against the line the upper arm was heading
+            // along: forward of it is a fold, to either side of it is not.
+            let upper = (posed.positions[elbow] - posed.positions[shoulder]).normalize_or_zero();
+            let fore = posed.positions[wrist] - posed.positions[elbow];
+            let off_axis = fore - upper * fore.dot(upper);
+            assert!(
+                off_axis.z > off_axis.x.abs(),
+                "{limb:?} put its forearm {:.3} forward and {:.3} across",
+                off_axis.z,
+                off_axis.x
+            );
+        }
+    }
+
+    #[test]
+    fn the_whole_spine_turns_with_the_arms_not_just_the_top_of_it() {
+        // The twist used to go entirely into the joint the arms hang off, so the
+        // shoulders turned the right amount over a ribcage and waist that did
+        // not move at all — a yoke swivelling on a post rather than a torso
+        // winding (#114).
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let mut pose = Pose::rest(&rig);
+        // A quarter cycle, where the lead is near its widest.
+        swing_arms(&rig, &mut pose, &gait, 0.25);
+        let posed = pose.forward(&rig);
+
+        let neck = *rig.in_zone(Zone::Neck).first().expect("a neck");
+        let girdle = rig.joints[neck].parent.expect("a girdle");
+        let spine = spine_to(&rig, girdle);
+        assert!(
+            spine.len() >= 2,
+            "a spine of {} to share a twist",
+            spine.len()
+        );
+
+        // Every joint of it turns, and each one further round than the one below.
+        let mut turned = 0.0f32;
+        for &joint in &spine {
+            let angle = (posed.rotations[joint] * Vec3::X)
+                .z
+                .atan2((posed.rotations[joint] * Vec3::X).x)
+                .to_degrees();
+            assert!(
+                angle.abs() > turned,
+                "joint {joint} of the spine turned {angle:.2}, no further than the {turned:.2} \
+                 beneath it"
+            );
+            turned = angle.abs();
+        }
+        // And sharing the twist out must not ADD any: the shoulders still
+        // arrive at the angle one joint used to carry alone, because local
+        // rotations compound down a chain.
+        assert!(
+            turned <= SHOULDER_TWIST.to_degrees() + 0.5,
+            "the shoulders turned {turned:.1} degrees, past the {:.1} asked for",
+            SHOULDER_TWIST.to_degrees()
+        );
     }
 
     #[test]
