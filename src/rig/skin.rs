@@ -390,7 +390,7 @@ mod tests {
         let skeleton = HumanoidParams::default().skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-        (catmull_clark(&cage, 1), rig)
+        (catmull_clark(&cage, crate::BODY_SUBDIVISIONS), rig)
     }
 
     #[test]

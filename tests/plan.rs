@@ -13,8 +13,8 @@ use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use symbios_avatar::face::Skull;
 use symbios_avatar::{
-    Archetype, AvatarRecord, BodyPlan, CageConfig, HumanoidParams, Limb, QuadrupedParams, Rig,
-    Zone, build_body, build_cage,
+    Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, HumanoidParams, Limb,
+    QuadrupedParams, Rig, Zone, build_body, build_cage,
 };
 
 /// Builds a body and asserts it is watertight, reporting the parameters if not.
@@ -224,7 +224,8 @@ fn the_default_body_stands_near_the_proportion_canon() {
     // the coefficient is 0.60.
     let params = HumanoidParams::default();
     let skeleton = params.skeleton();
-    let body = build_body(&skeleton, &CageConfig::default(), 2).expect("the default body meshes");
+    let body = build_body(&skeleton, &CageConfig::default(), BODY_SUBDIVISIONS)
+        .expect("the default body meshes");
     let (lo, hi) = body.bounds();
     let height = hi.y - lo.y;
     let rig = Rig::from_skeleton(&skeleton).expect("the default body rigs");
@@ -409,7 +410,8 @@ fn the_neck_is_the_length_of_a_neck() {
         let mut record = AvatarRecord::new("Neck", Archetype::default());
         record.reroll(seed);
         let skeleton = record.skeleton();
-        let body = build_body(&skeleton, &CageConfig::default(), 2).expect("the body meshes");
+        let body = build_body(&skeleton, &CageConfig::default(), BODY_SUBDIVISIONS)
+            .expect("the body meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("the body rigs");
         let Some(skull) = Skull::measure(&body, &rig) else {
             continue;

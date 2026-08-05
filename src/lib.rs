@@ -208,6 +208,26 @@ pub use symbios_texture::generator::TextureMap;
 /// measurement rather than in the refinement, and it is fixed (#67).
 const FACE_REFINEMENT: usize = 7;
 
+/// How many Catmull-Clark passes a body's cage gets.
+///
+/// A constant rather than the twenty-odd literals it replaces. The level was
+/// written out at every call site, including a dozen test helpers and two
+/// examples that each had to be right independently. Two of them were already
+/// wrong in the way that matters: `the_chin_landmark_lands_on_the_chin_of_the_shipped_face`
+/// and its neighbour built at a level of their own, so they measured a head
+/// nobody renders and would have gone on passing if the shipped level moved
+/// underneath them. **Anything measuring the body's surface has to build it the
+/// way the body ships.**
+///
+/// It is a constant now because it is about to move. The cage's ring size
+/// governs how far a control cage sits outside the surface it approximates, and
+/// widening it from four points to eight closes most of that gap in the cage —
+/// which makes the second subdivision pass a smoothing of something already
+/// smooth. Measured on the default body: **24,776** triangles at four points and
+/// two passes, 43,196 at eight and two, and **15,862 at eight and one**. See
+/// #107; the pair moves together or not at all.
+pub const BODY_SUBDIVISIONS: usize = 2;
+
 /// Builds a body's surface from its skeleton, shaped and ready to bind.
 ///
 /// The whole of it: cage, subdivision, the face refinement that gives a head

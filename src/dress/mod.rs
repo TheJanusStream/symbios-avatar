@@ -282,7 +282,7 @@ mod tests {
         record.reroll(seed);
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
-        let mesh = catmull_clark(&cage, 2);
+        let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
         let zones = weights.zone_map(&mesh, &rig);

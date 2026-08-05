@@ -673,7 +673,12 @@ mod tests {
     /// 3.3 mm deep at the eye's own column on every body measured.
     fn seated(skeleton: &Skeleton, params: &EyeParams) -> Eyes {
         let rig = Rig::from_skeleton(skeleton).expect("rigs");
-        let mut mesh = crate::build_body(skeleton, &crate::CageConfig::default(), 2).expect("mesh");
+        let mut mesh = crate::build_body(
+            skeleton,
+            &crate::CageConfig::default(),
+            crate::BODY_SUBDIVISIONS,
+        )
+        .expect("mesh");
         let skull = Skull::measure(&mesh, &rig).expect("a skull");
         let canon = super::Canon::measure(&rig, &skull, params);
         crate::face::carve_face(&mut mesh, &rig, &canon, &Default::default());
@@ -1038,7 +1043,12 @@ mod tests {
         let a = bare.add_node(Node::new(Vec3::ZERO, 0.2));
         bare.extend_from(a, Node::new(Vec3::Y, 0.2));
         let rig = Rig::from_skeleton(&bare).expect("rigs");
-        let mesh = crate::build_body(&bare, &crate::CageConfig::default(), 2).expect("mesh");
+        let mesh = crate::build_body(
+            &bare,
+            &crate::CageConfig::default(),
+            crate::BODY_SUBDIVISIONS,
+        )
+        .expect("mesh");
         assert_eq!(Skull::measure(&mesh, &rig), None);
     }
 
@@ -1079,8 +1089,12 @@ mod tests {
             record.reroll(seed);
             let skeleton = record.skeleton();
             let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-            let mut mesh =
-                crate::build_body(&skeleton, &crate::CageConfig::default(), 2).expect("mesh");
+            let mut mesh = crate::build_body(
+                &skeleton,
+                &crate::CageConfig::default(),
+                crate::BODY_SUBDIVISIONS,
+            )
+            .expect("mesh");
             let skull = Skull::measure(&mesh, &rig).expect("a skull");
             let canon = super::Canon::measure(&rig, &skull, &record.eyes);
             crate::face::carve_face(&mut mesh, &rig, &canon, &record.face);

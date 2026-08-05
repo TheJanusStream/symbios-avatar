@@ -182,7 +182,7 @@ mod tests {
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("the body should mesh");
         (
-            catmull_clark(&cage, 2),
+            catmull_clark(&cage, crate::BODY_SUBDIVISIONS),
             Rig::from_skeleton(&skeleton).expect("the body should rig"),
         )
     }

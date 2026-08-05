@@ -54,8 +54,12 @@ fn main() {
     // landmarks the build did not use is the same defect as the hard-coded
     // fractions this file carried until #78.
     let skeleton = record.skeleton();
-    let plain = symbios_avatar::build_body(&skeleton, &symbios_avatar::CageConfig::default(), 2)
-        .expect("a body builds");
+    let plain = symbios_avatar::build_body(
+        &skeleton,
+        &symbios_avatar::CageConfig::default(),
+        symbios_avatar::BODY_SUBDIVISIONS,
+    )
+    .expect("a body builds");
     let shaped = Skull::measure(&plain, rig).expect("a skull");
     let canon = Canon::measure(rig, &shaped, &record.eyes);
 

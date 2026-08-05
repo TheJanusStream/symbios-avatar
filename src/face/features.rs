@@ -317,7 +317,12 @@ mod tests {
     /// placed against the head the body actually grew.
     fn built() -> (Canon, PolyMesh, Skull) {
         let skeleton = HumanoidParams::default().skeleton();
-        let mesh = crate::build_body(&skeleton, &crate::CageConfig::default(), 2).expect("meshes");
+        let mesh = crate::build_body(
+            &skeleton,
+            &crate::CageConfig::default(),
+            crate::BODY_SUBDIVISIONS,
+        )
+        .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let skull = Skull::measure(&mesh, &rig).expect("a humanoid has a skull");
         let canon = Canon::measure(&rig, &skull, &EyeParams::default());

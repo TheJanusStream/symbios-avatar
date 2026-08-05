@@ -6,9 +6,9 @@
 //! actually applied to it.
 
 use symbios_avatar::{
-    Archetype, AvatarRecord, CageConfig, FootingConfig, Gait, Ground, Inertializer, Pose,
-    QuadrupedParams, Rig, SkinConfig, Stride, Vec3, anim::gait, anim::plant_feet_of, build_cage,
-    catmull_clark, rig::skin,
+    Archetype, AvatarRecord, BODY_SUBDIVISIONS, CageConfig, FootingConfig, Gait, Ground,
+    Inertializer, Pose, QuadrupedParams, Rig, SkinConfig, Stride, Vec3, anim::gait,
+    anim::plant_feet_of, build_cage, catmull_clark, rig::skin,
 };
 
 /// Walks one body through a full cycle, asserting every step is within reach.
@@ -265,7 +265,7 @@ fn dual_quaternion_skinning_compresses_less_of_the_body_than_matrices_do() {
     let record = AvatarRecord::new("Skinned", Archetype::default());
     let skeleton = record.skeleton();
     let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
-    let mesh = catmull_clark(&cage, 2);
+    let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
     let rig = Rig::from_skeleton(&skeleton).expect("rigs");
     let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
     let triangles = mesh.triangulated();
@@ -333,7 +333,7 @@ fn skinning_leaves_the_rest_pose_exactly_alone() {
     let record = AvatarRecord::new("Still", Archetype::default());
     let skeleton = record.skeleton();
     let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
-    let mesh = catmull_clark(&cage, 2);
+    let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
     let rig = Rig::from_skeleton(&skeleton).expect("rigs");
     let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
 

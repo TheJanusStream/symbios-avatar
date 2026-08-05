@@ -17,7 +17,8 @@
 //! ```
 
 use symbios_avatar::{
-    Archetype, AvatarRecord, CageConfig, Limb, Rig, Zone, build_cage, catmull_clark,
+    Archetype, AvatarRecord, BODY_SUBDIVISIONS, CageConfig, Limb, Rig, Zone, build_cage,
+    catmull_clark,
 };
 
 /// Where each landmark sits in an eight-head figure, as a fraction of height.
@@ -48,7 +49,7 @@ fn main() {
         eprintln!("the body would not mesh");
         std::process::exit(1);
     };
-    let mesh = catmull_clark(&cage, 2);
+    let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
     let Ok(rig) = Rig::from_skeleton(&skeleton) else {
         eprintln!("the body would not rig");
         std::process::exit(1);
@@ -174,7 +175,7 @@ fn cells(skeleton: &symbios_avatar::Skeleton) {
         "passes", "tris"
     );
     for levels in 0..=3 {
-        let mut mesh = refine_face(&catmull_clark(&cage, 2), &rig, levels);
+        let mut mesh = refine_face(&catmull_clark(&cage, BODY_SUBDIVISIONS), &rig, levels);
         shape_skull(&mut mesh, &rig);
 
         let (lo, hi) = mesh

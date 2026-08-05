@@ -36,8 +36,8 @@
 
 use glam::{Quat, Vec3};
 use symbios_avatar::{
-    Archetype, AvatarRecord, CageConfig, Limb, Pose, Rig, SkinConfig, SkinWeights, Zone,
-    build_cage, catmull_clark, mesh::PolyMesh, rig::skin,
+    Archetype, AvatarRecord, BODY_SUBDIVISIONS, CageConfig, Limb, Pose, Rig, SkinConfig,
+    SkinWeights, Zone, build_cage, catmull_clark, mesh::PolyMesh, rig::skin,
 };
 
 /// A landmark's height as a fraction of stature, measured off each reference.
@@ -80,7 +80,7 @@ fn main() {
         eprintln!("the body would not mesh");
         std::process::exit(1);
     };
-    let mesh = catmull_clark(&cage, 2);
+    let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
     let Ok(rig) = Rig::from_skeleton(&skeleton) else {
         eprintln!("the body would not rig");
         std::process::exit(1);

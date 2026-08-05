@@ -199,7 +199,7 @@ mod tests {
         record.reroll(seed);
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("the body should mesh");
-        let mesh = catmull_clark(&cage, 2);
+        let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("the body should rig");
         let surface = Surface::measure(&mesh, &rig);
         // The plan stands its bodies on the origin.
@@ -232,7 +232,7 @@ mod tests {
         use crate::plan::{BodyPlan, QuadrupedParams};
         let skeleton = QuadrupedParams::default().skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
-        let mesh = catmull_clark(&cage, 2);
+        let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let surface = Surface::measure(&mesh, &rig);
 

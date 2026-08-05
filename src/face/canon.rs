@@ -198,7 +198,8 @@ mod tests {
 
     fn canon_of(record: &AvatarRecord) -> (Canon, Skull) {
         let skeleton = record.skeleton();
-        let mesh = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
+        let mesh = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
+            .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let skull = Skull::measure(&mesh, &rig).expect("a skull");
         (Canon::measure(&rig, &skull, &record.eyes), skull)
@@ -207,7 +208,8 @@ mod tests {
     #[test]
     fn the_rulers_come_off_the_surface_rather_than_off_the_plan() {
         let skeleton = HumanoidParams::default().skeleton();
-        let mesh = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
+        let mesh = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
+            .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let skull = Skull::measure(&mesh, &rig).expect("a skull");
         let canon = Canon::measure(&rig, &skull, &EyeParams::default());

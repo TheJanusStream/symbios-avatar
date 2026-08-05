@@ -125,7 +125,12 @@ fn mesh_report(dir: &std::path::Path, name: &str, skeleton: &Skeleton) -> usize 
             return 1;
         }
     };
-    let smooth = build_body(skeleton, &CageConfig::default(), 2).unwrap_or_default();
+    let smooth = build_body(
+        skeleton,
+        &CageConfig::default(),
+        symbios_avatar::BODY_SUBDIVISIONS,
+    )
+    .unwrap_or_default();
 
     topology(name, "cage", &cage);
     topology(name, "smooth", &smooth);

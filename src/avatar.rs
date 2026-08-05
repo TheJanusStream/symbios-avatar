@@ -146,7 +146,7 @@ impl Default for AvatarConfig {
     fn default() -> Self {
         Self {
             cage: CageConfig::default(),
-            subdivisions: 2,
+            subdivisions: crate::BODY_SUBDIVISIONS,
             skin: SkinConfig::default(),
             uv: UvConfig::default(),
             atlas: 1024,

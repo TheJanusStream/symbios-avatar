@@ -283,7 +283,7 @@ mod tests {
     fn baked(size: u32) -> (PolyMesh, UvUnwrap, AtlasGeometry) {
         let skeleton = HumanoidParams::default().skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
-        let mesh = catmull_clark(&cage, 2);
+        let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);
         let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());

@@ -846,7 +846,7 @@ mod tests {
         record.reroll(seed);
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
-        let plain = catmull_clark(&cage, 2);
+        let plain = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let mut shaped = plain.clone();
         shape(&mut shaped, &rig);
@@ -1238,7 +1238,8 @@ mod tests {
             record.reroll(seed);
             let skeleton = record.skeleton();
             let mesh =
-                crate::build_body(&skeleton, &CageConfig::default(), 2).expect("a body builds");
+                crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
+                    .expect("a body builds");
             let rig = Rig::from_skeleton(&skeleton).expect("rigs");
             let skull = Skull::measure(&mesh, &rig).expect("a skull");
             let centre = rig.joints[skull.head].position;
@@ -1295,7 +1296,8 @@ mod tests {
             record.reroll(seed);
             let skeleton = record.skeleton();
             let mut mesh =
-                crate::build_body(&skeleton, &CageConfig::default(), 2).expect("a body builds");
+                crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
+                    .expect("a body builds");
             let rig = Rig::from_skeleton(&skeleton).expect("rigs");
             let skull = Skull::measure(&mesh, &rig).expect("a skull");
             let centre = rig.joints[skull.head].position;
@@ -1374,7 +1376,7 @@ mod tests {
         use crate::plan::{BodyPlan, QuadrupedParams};
         let skeleton = QuadrupedParams::default().skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
-        let plain = catmull_clark(&cage, 2);
+        let plain = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
 
         let mut shaped = plain.clone();
@@ -1415,7 +1417,11 @@ mod tests {
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-        let mut mesh = refine_face(&catmull_clark(&cage, 2), &rig, levels);
+        let mut mesh = refine_face(
+            &catmull_clark(&cage, crate::BODY_SUBDIVISIONS),
+            &rig,
+            levels,
+        );
         shape(&mut mesh, &rig);
         let measured = Skull::measure(&mesh, &rig).expect("a humanoid has a skull");
         let joint = &rig.joints[measured.head];

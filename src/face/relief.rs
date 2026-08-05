@@ -613,7 +613,8 @@ mod tests {
     /// A body's uncarved head, its canon, and the rig that built it.
     fn measured(record: &crate::AvatarRecord) -> (PolyMesh, Rig, Canon) {
         let skeleton = record.skeleton();
-        let plain = crate::build_body(&skeleton, &CageConfig::default(), 2).expect("meshes");
+        let plain = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
+            .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let skull = Skull::measure(&plain, &rig).expect("a skull");
         let canon = Canon::measure(&rig, &skull, &record.eyes);
