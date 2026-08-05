@@ -239,4 +239,12 @@ pub fn build_body(
 pub use texture::{AtlasGeometry, SkinParams, bake_geometry, paint_skin};
 pub use uv::{Chart, UvConfig, UvUnwrap, unwrap};
 
-pub use glam::{Vec2, Vec3};
+/// The vector and rotation types every public signature here is written in.
+///
+/// `Quat` is one of them because [`Pose::rotations`] is a public `Vec<Quat>`:
+/// without this a consumer can be handed a pose and read it, but cannot write
+/// one without taking a direct dependency on the exact `glam` version this
+/// crate resolved to.
+///
+/// [`Pose::rotations`]: anim::Pose::rotations
+pub use glam::{Quat, Vec2, Vec3};

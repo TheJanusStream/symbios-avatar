@@ -489,3 +489,70 @@ fn a_plan_that_states_its_own_bend_is_believed_over_the_fallback() {
         );
     }
 }
+
+#[test]
+fn turning_one_joint_leaves_the_bone_before_it_alone() {
+    // The noodle, as a property (#97). A limb is two rigid bones and a hinge:
+    // flexing a knee carries the shank and must not touch the thigh. It did,
+    // for as long as the binding credited a bone to the joint at its far end
+    // while `Pose::forward` turned it from the near one — the mid-thigh
+    // travelled 39.8 mm against the mid-shank's 73.1 mm, and the whole leg
+    // curved like rope.
+    //
+    // Written against travel rather than against weights on purpose. The
+    // convention is an implementation detail and could be expressed a dozen
+    // ways; what must never come back is a limb that bends everywhere.
+    use symbios_avatar::{Limb, Quat};
+
+    let record = AvatarRecord::default();
+    let skeleton = record.skeleton();
+    let mesh = catmull_clark(
+        &build_cage(&skeleton, &CageConfig::default()).expect("meshes"),
+        1,
+    );
+    let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+    let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
+
+    for limb in [Limb::HindLeft, Limb::ForeLeft] {
+        let [root, mid, tip] = rig.limb_chain(limb).expect("a solvable limb");
+
+        let mut pose = Pose::rest(&rig);
+        pose.rotations[mid] = Quat::from_rotation_x(0.5);
+        let moved = pose.forward(&rig).deform(&rig, &mesh.positions, &weights);
+
+        // The middle half of each bone. The bands beside the joint are meant to
+        // move — that is the blend that keeps the surface from creasing — so
+        // including them would be asking a different question.
+        let travel = |from: usize, to: usize| {
+            let (start, end) = (rig.joints[from].position, rig.joints[to].position);
+            let axis = end - start;
+            let span = axis.length_squared().max(f32::EPSILON);
+            let girth = rig.joints[from].radius.max(rig.joints[to].radius) * 2.0;
+            let mut total = 0.0;
+            let mut count = 0usize;
+            for (vertex, &at) in mesh.positions.iter().enumerate() {
+                let along = (at - start).dot(axis) / span;
+                if !(0.25..0.75).contains(&along) {
+                    continue;
+                }
+                if (at - (start + axis * along)).length() > girth {
+                    continue;
+                }
+                total += at.distance(moved[vertex]);
+                count += 1;
+            }
+            (total / count.max(1) as f32, count)
+        };
+
+        let (before, seen) = travel(root, mid);
+        let (after, _) = travel(mid, tip);
+        assert!(seen > 0, "{limb:?} has no surface on its upper bone");
+        assert!(after > 1e-3, "{limb:?} did not bend at all");
+        assert!(
+            before < after * 0.10,
+            "{limb:?} leaked {:.0}% of the bend into the bone before the joint \
+             ({before:.4} m against {after:.4} m)",
+            before / after * 100.0
+        );
+    }
+}

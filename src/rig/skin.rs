@@ -11,6 +11,37 @@
 //! surface**, which is what keeps a broad region like a torso from creasing
 //! where two bones' influence meets — the classic failure of purely
 //! distance-based weighting.
+//!
+//! # Which joint owns a bone
+//!
+//! A bone spans two joints, and only one of them deforms it. [`Pose::forward`]
+//! places a joint at `positions[parent] + parent_rotation * offset`, so the
+//! rotation stored at a joint turns that joint's *children* about it: rotating
+//! a hip swings the thigh, and rotating a knee does not touch the thigh at all.
+//! The joint that deforms the bone `parent → child` is therefore the **parent**
+//! — the proximal end.
+//!
+//! [`Rig::bone`] names its segments by the distal end, because that is the
+//! joint the segment leads into and there is exactly one of them. Binding has to
+//! undo that: the weight a vertex earns from lying near the segment `hip → knee`
+//! belongs to the **hip**, not to the knee.
+//!
+//! **This was wrong until #97, and it is what made limbs bend like rope.**
+//! Binding the thigh to the knee meant flexing a knee rotated the thigh about
+//! the knee as well, so the whole leg curved instead of hinging. Measured by
+//! `examples/bodyaudit` on the default body: turning only the knee moved the
+//! mid-thigh 39.8 mm against the mid-shank's 73.1 mm, a 54% leak into the
+//! segment that must not move; the elbow leaked 76%. Both are zero once the
+//! bone is owned by the joint that actually turns it.
+//!
+//! A consequence worth stating, because it looks like a bug: **a leaf joint gets
+//! no weight from the body's own surface.** A hand, a foot, a crown has no bone
+//! leaving it, so nothing on the body is deformed by rotating one. That is
+//! correct — those joints are position markers for the body, and they earn
+//! their weight from the geometry *attached* at them, which is bound
+//! separately.
+//!
+//! [`Pose::forward`]: crate::anim::Pose::forward
 
 use glam::Vec3;
 use std::collections::BTreeSet;
@@ -60,10 +91,44 @@ pub struct SkinConfig {
 
 impl Default for SkinConfig {
     fn default() -> Self {
+        // Swept against the reference mannequin's own binding rather than
+        // picked (#97). The two figures a bind is judged on are how many bones
+        // hold a vertex — the reference averages 1.88, with 85% of its vertices
+        // on two or fewer — and how much of a bone moves when the joint *after*
+        // it turns, which the reference makes zero by giving the grandparent
+        // bone no weight at all.
+        //
+        // Down from `reach: 2.6, smoothing_iterations: 3`, which averaged 3.12
+        // bones per vertex with only 31% on two or fewer: three bones shared
+        // the middle of every bone, and the ankle held 0.18 of the mid-thigh.
+        // Measured across the sweep, at one smoothing pass:
+        //
+        // ```text
+        //   reach   bones/vertex   <=2 bones   knee leak   area kept
+        //    2.6        3.12          31%         13%        100%
+        //    2.0        2.71          49%          6%        100%
+        //    1.6        2.44          58%          3%        101%
+        //    1.3        2.13          68%          2%         99%
+        //    1.1        1.92          80%          1%         98%
+        //    0.9        1.67          92%          0%         96%
+        // ```
+        //
+        // 1.1 is where the locality lands on the reference; 0.9 overshoots it
+        // and starts spending surface area on the inside of a fold. The area
+        // column is why this is a floor rather than a preference — it is the
+        // crease the smoothing exists to prevent, and it only becomes visible
+        // below about 1.3. That it stays as high as 98% at all is dual
+        // quaternion skinning doing its job; under matrices this column would
+        // decide the value on its own.
+        //
+        // `falloff` and `smoothing_strength` were swept too and neither moved
+        // anything worth having: 1.5 through 3.0 span 1.94 to 1.85 bones per
+        // vertex, buying a percent of locality for a percent of area. They stay
+        // where they were.
         Self {
-            reach: 2.6,
+            reach: 1.1,
             falloff: 2.0,
-            smoothing_iterations: 3,
+            smoothing_iterations: 1,
             smoothing_strength: 0.5,
         }
     }
@@ -91,20 +156,41 @@ impl SkinWeights {
     ///
     /// A vertex takes the zone of the **nearer end** of the bone holding it, not
     /// the bone's own joint. A bone spans two nodes that may sit in different
-    /// zones — the thigh bone runs from pelvis to knee — and the joint owning it
-    /// is the far one. Reading the joint alone would label the whole crotch as
-    /// thigh, and leave the root's zone with no surface at all, since every
-    /// child's bone starts exactly where the root does.
+    /// zones — the thigh bone runs from pelvis to knee — and reading one end
+    /// alone would label the whole crotch as thigh, and leave the root's zone
+    /// with no surface at all.
+    ///
+    /// The dominant joint is the bone's *proximal* end (see the module docs), so
+    /// the bone in question is one of those **leaving** it. A joint may have
+    /// several — a pelvis has three — which is why the nearest has to be
+    /// searched for rather than looked up.
     #[must_use]
     pub fn zone_map(&self, mesh: &PolyMesh, rig: &Rig) -> Vec<Zone> {
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); rig.len()];
+        for joint in 0..rig.len() {
+            if let Some(parent) = rig.joints[joint].parent {
+                children[parent].push(joint);
+            }
+        }
+
         (0..self.vertices.len())
             .map(|vertex| {
                 let joint = self.dominant(vertex) as usize;
                 let here = rig.joints[joint];
-                let (start, end) = rig.bone(joint);
-                let (_, along) = distance_to_segment(mesh.positions[vertex], start, end);
-                match here.parent {
-                    Some(parent) if along < 0.5 => rig.joints[parent].zone,
+                let position = mesh.positions[vertex];
+                let nearest = children[joint]
+                    .iter()
+                    .map(|&child| {
+                        let (distance, along) = distance_to_segment(
+                            position,
+                            here.position,
+                            rig.joints[child].position,
+                        );
+                        (distance, along, child)
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                match nearest {
+                    Some((_, along, child)) if along >= 0.5 => rig.joints[child].zone,
                     _ => here.zone,
                 }
             })
@@ -148,21 +234,33 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
         let row = &mut dense[vertex * joints..(vertex + 1) * joints];
         let mut nearest = (f32::INFINITY, first_deforming);
 
-        for (joint, weight) in row.iter_mut().enumerate() {
-            if !rig.joints[joint].role.deforms() {
+        // Iterated by *segment*, credited to the joint that deforms it. See the
+        // module docs: `rig.bone(segment)` runs `parent → segment`, and it is
+        // the parent's rotation that turns it.
+        for segment in 0..joints {
+            if !rig.joints[segment].role.deforms() {
                 continue;
             }
-            let (start, end) = rig.bone(joint);
-            let (start_radius, end_radius) = rig.bone_radii(joint);
+            let owner = rig.joints[segment].parent.unwrap_or(segment);
+            if !rig.joints[owner].role.deforms() {
+                continue;
+            }
+            let (start, end) = rig.bone(segment);
+            let (start_radius, end_radius) = rig.bone_radii(segment);
             let (distance, along) = distance_to_segment(position, start, end);
             let radius = start_radius + (end_radius - start_radius) * along;
 
             if distance < nearest.0 {
-                nearest = (distance, joint);
+                nearest = (distance, owner);
             }
             let span = radius * config.reach;
             if span > 0.0 {
-                *weight = (1.0 - distance / span).max(0.0).powf(config.falloff);
+                // Several bones may leave one joint — a pelvis has three — and
+                // a joint's hold on a vertex is the strongest of them rather
+                // than their sum, which would give a crotch vertex twice the
+                // pull of a thigh one for no reason but the topology above it.
+                let pull = (1.0 - distance / span).max(0.0).powf(config.falloff);
+                row[owner] = row[owner].max(pull);
             }
         }
 

@@ -274,11 +274,53 @@ impl BodyPlan for HumanoidParams {
         // `examples/measure`, whose canon column has no ankle row, so nothing
         // checks this even indirectly.
         let ankle_y = h * 0.0686;
-        // Provenance: **unsourced**. This one is load-bearing in a way the
-        // others are not — it sets how far the hip sockets sit below the pelvis
-        // node, so it trades against `hip_x` for the room the pelvis needs to
-        // separate three sockets, and `hip_x` is a meshability floor (below).
-        let hip_drop = pelvis_r * 1.85;
+        // How far the hip sockets sit below the pelvis node, and it is the
+        // single coefficient that decides how long a leg is: every millimetre
+        // here comes straight out of the thigh.
+        //
+        // **Down from 1.85, which was never swept.** The comment it replaces
+        // said this "trades against `hip_x` for the room the pelvis needs to
+        // separate three sockets" and named `hip_x` and `clavicle_x` as the two
+        // that were actually measured — so the drop was picked, and then every
+        // later argument treated it as a constraint. It was not one. Against
+        // the Quaternius reference the leg measured 0.292 of stature where the
+        // reference is 0.456, and 1.85 was where most of that went.
+        //
+        // What the pelvis really demands is written out at `hip_x`: a socket
+        // surfaces only when its own plane clears every sibling ring. Worked
+        // through for this socket there are two candidate binders and they pull
+        // opposite ways. A steep drop makes the two hip sockets point *toward*
+        // each other — at 1.85 their axes dot at +0.30, so each has to clear the
+        // other and the sibling binds. A shallow one turns them lateral, the
+        // sibling term goes negative, and what binds instead is the spine
+        // socket's ring, whose corners reach `pelvis_r` sideways. The room
+        // available is `max_socket_fraction` of the bone, which shrinks as the
+        // drop does. Tabulated at the shipped `hip_x`:
+        //
+        // ```text
+        //   drop   spine reach   room     leg/H
+        //   1.85      -0.023    0.260     0.292
+        //   0.90      +0.044    0.184     0.369
+        //   0.40      +0.094    0.160     0.410
+        //   0.20      +0.115    0.155     0.425
+        //   0.00      +0.135    0.153     0.433
+        // ```
+        //
+        // Every row has room to spare, and the margin only closes as the drop
+        // reaches zero. 0.30 is taken rather than 0.20 because the arithmetic
+        // above is for the *default* body: `girth` swells `pelvis_r` by 28% at
+        // the heavy end, which grows the spine ring the socket must clear while
+        // growing the room by the same factor, and `tests/plan.rs` sweeps 1500
+        // bodies across that range.
+        //
+        // This does **not** narrow the hips, which are the other half of #98 and
+        // want the pelvis split in two. `hip_x` cannot come down while one node
+        // carries the spine and both legs — see the note there.
+        //
+        // Provenance: **derived, then bounded by a sweep** (#98) — the plane
+        // condition worked through above, confirmed against `tests/plan.rs`.
+        const HIP_DROP: f32 = 0.30;
+        let hip_drop = pelvis_r * HIP_DROP;
 
         // Only the pelvis and the girdle are joints; the waist and chest between
         // them are connectors and constrain nothing.
@@ -451,12 +493,50 @@ impl BodyPlan for HumanoidParams {
         let hip_x = pelvis_r * (1.35 + 0.35 * self.hip_width);
         let hip_y = pelvis_y - hip_drop;
 
-        // Provenance: **unsourced**. The canon has a knee row — 0.285 of height
-        // — and the built knee measures 0.227, the largest single deviation
-        // `examples/measure` prints. Whether the 0.60 or the pelvis above it is
-        // responsible is undetermined, because the knee is placed as a fraction
-        // of the hip-to-ankle span and the hip is itself clamped.
-        let knee_y = ankle_y + (hip_y - ankle_y) * 0.60;
+        // Where the knee sits between hip and ankle, and so how the leg's length
+        // is split between thigh and shank.
+        //
+        // **Down from 0.60**, which put 40% of the leg above the knee and 60%
+        // below — a shank half again as long as its thigh, which is a bird. The
+        // reference splits 0.2220 to 0.2339 of stature, a thigh fraction of
+        // 0.487, so the knee belongs at `1 − 0.487` of the way up. The female
+        // reference gives 0.4993, within a body's own variation of the same
+        // number.
+        //
+        // The old comment blamed this coefficient for the knee measuring 0.227
+        // against a canon 0.285 and could not tell whether the fault was here or
+        // in the pelvis above. It was the pelvis: at the shipped `HIP_DROP` the
+        // knee lands at 0.269 with the split corrected, and the rest of the gap
+        // is the hip still sitting low, which is #98's other half.
+        //
+        // Provenance: **derived** from the reference pair (#99) — a ratio of two
+        // measured segment lengths, which is the one form of derivation this
+        // file can do without a sweep, because it moves no socket.
+        const THIGH_FRACTION: f32 = 0.487;
+        let knee_y = ankle_y + (hip_y - ankle_y) * (1.0 - THIGH_FRACTION);
+        // How far forward of the hip-to-ankle line the knee stands.
+        //
+        // A leg built dead straight has no opinion about which way it folds, and
+        // [`crate::rig::Rig::bend_pole`] says so in as many words: every limb of
+        // this plan measured exactly zero, so the pole came from a hardcoded
+        // rule about limb names rather than from the body. That rule happens to
+        // be right for a knee and is one fewer thing that has to stay right.
+        //
+        // It also keeps the solver off the singularity at full extension, which
+        // is what [`crate::anim::gait::CROUCH_MARGIN`] exists to paper over from
+        // the other end.
+        //
+        // Measured on the reference: its knee sits 42 mm forward of the line
+        // through hip and ankle on a 1.830 m body, a tenth of the thigh. The
+        // elbow's equivalent is 6 mm and is **deliberately not copied** — it
+        // falls below the half-percent-of-stature floor `bend_pole` treats as
+        // arithmetic noise, so it would change nothing, and the fore-limb
+        // fallback already folds an arm the right way.
+        //
+        // Provenance: **looked up** (#99) from the Quaternius male, as a
+        // fraction of stature.
+        const KNEE_FORWARD: f32 = 0.0222;
+        let knee_z = h * KNEE_FORWARD;
         // Provenance: **unsourced**, all three figures.
         let foot_y = h * 0.0257;
         let foot_z = h * 0.057 * (1.0 + 0.3 * self.extremity_size);
@@ -519,8 +599,27 @@ impl BodyPlan for HumanoidParams {
         // is the measurement, rather than picked as segment lengths. Same caveat
         // as `clavicle_x`: the 0.930 they were solved for now reads 0.894, and
         // for the same reason. The 0.025 gains are **unsourced**.
-        let upper_arm = h * (0.123 + 0.025 * self.limb_length);
-        let forearm = h * (0.110 + 0.025 * self.limb_length);
+        //
+        // **Both bases raised against the reference pair** (#99). They measured
+        // 0.128 and 0.114 of rendered stature where the Quaternius male gives
+        // 0.162 and 0.153 and the female 0.129 and 0.155 — so the forearm was
+        // short against *both* references by a quarter of its own length, and
+        // the upper arm sat on the female figure while the pair straddle it.
+        // The bases here are the midpoint of the two, converted out of rendered
+        // height into nominal `h` by the 0.965 a built body loses to
+        // subdivision.
+        //
+        // The upper arm is where the two references disagree most in the whole
+        // body — 0.162 against 0.129, a fifth — while their forearms agree to
+        // 1%. A midpoint is the honest neutral until the frame axis (#100)
+        // carries that difference, and it is worth knowing that this one
+        // coefficient is where most of that axis's travel will be.
+        //
+        // The `limb_length` gains are left where they were. They are unsourced
+        // either way, and scaling them with the bases would be a second change
+        // wearing the first one's evidence.
+        let upper_arm = h * (0.1404 + 0.025 * self.limb_length);
+        let forearm = h * (0.1484 + 0.025 * self.limb_length);
         // Provenance: **unsourced**, and note it feeds arm span through
         // `hand_at` below — so the extremity axis moves a figure that `#66`
         // tuned, and nothing connects the two.
@@ -646,7 +745,7 @@ impl BodyPlan for HumanoidParams {
             );
             let knee = skeleton.extend_from(
                 hip,
-                Node::new(Vec3::new(side * hip_x, knee_y, 0.0), h * 0.042 * girth)
+                Node::new(Vec3::new(side * hip_x, knee_y, knee_z), h * 0.042 * girth)
                     .in_zone(Zone::UpperLimb(hind)),
             );
             let ankle = skeleton.extend_from(
