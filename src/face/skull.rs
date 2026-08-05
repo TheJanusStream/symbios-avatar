@@ -1284,42 +1284,159 @@ mod tests {
         // the uncarved test sets for itself. A tolerance is only worth what the
         // mesh under it is worth.
         //
-        // What closed it was not a better derivation but abandoning derivation
-        // for measurement: [`menton`] bisects the built midline around the
-        // profile's estimate, so the landmark is on the surface by construction
-        // whether or not a face has been carved into it (#78).
+        // **AT TWO SUBDIVISION LEVELS, AND WITH THE LANDMARK'S OWN DEFINITION,
+        // and neither of those is decoration (#108).** This used to scan ±25 mm
+        // about the landmark for the forward-most point of the carved midline,
+        // which is not what a chin is: the lower lip reaches further forward than
+        // the chin does — 119.2 mm against 114.0 on the default body — so the
+        // scan answered with the chin only while the lip stayed outside its
+        // window. Move the cage and the lip comes inside it, the argmax walks to
+        // the top of the scan, and the failure reads "+23.0 mm" on every seed and
+        // every configuration, because +23.0 is where the scan stops rather than
+        // where anything is. Two instruments that agreed on one cage, and a
+        // saturated reading of the disagreement everywhere else.
+        //
+        // So both sides now ask [`chin_of`], which has a definition — the lowest
+        // crest of the midline profile — instead of a window. The landmark comes
+        // off the shaped head at build time; the test re-asks the carved one. A
+        // disagreement is now a real distance, and a level that cannot answer at
+        // all says so rather than returning the edge of its own scan.
         //
         // Kept as a pair rather than replacing the first: they measure different
         // surfaces and both are real.
-        for seed in [1i64, 23, 42, 99] {
-            let mut record = AvatarRecord::new("Skulled", Archetype::default());
-            record.reroll(seed);
-            let skeleton = record.skeleton();
-            let mut mesh =
-                crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
+        for levels in [crate::BODY_SUBDIVISIONS - 1, crate::BODY_SUBDIVISIONS] {
+            for seed in [1i64, 23, 42, 99] {
+                let mut record = AvatarRecord::new("Skulled", Archetype::default());
+                record.reroll(seed);
+                let skeleton = record.skeleton();
+                let mut mesh = crate::build_body(&skeleton, &CageConfig::default(), levels)
                     .expect("a body builds");
-            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-            let skull = Skull::measure(&mesh, &rig).expect("a skull");
-            let centre = rig.joints[skull.head].position;
-            let canon = crate::face::Canon::measure(&rig, &skull, &Default::default());
-            crate::face::carve_face(&mut mesh, &rig, &canon, &Default::default());
+                let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+                let skull = Skull::measure(&mesh, &rig).expect("a skull");
+                let canon = crate::face::Canon::measure(&rig, &skull, &Default::default());
+                crate::face::carve_face(&mut mesh, &rig, &canon, &Default::default());
 
-            let chin = centre.y + skull.chin();
-            let mut tip = (f32::MIN, 0.0f32);
-            let mut y = chin - 0.025;
-            while y < chin + 0.025 {
-                if let Some(at) = bisect(&mesh, Vec3::new(centre.x, y, centre.z), Vec3::Z)
-                    && at > tip.0
-                {
-                    tip = (at, y);
-                }
-                y += 0.002;
+                let carved = chin_of(&mesh, &rig, skull.head, skull.throat_and_crown().0)
+                    .expect("the carved face has a chin on it");
+                assert!(
+                    (carved - skull.chin()).abs() < 0.005,
+                    "seed {seed} at {levels} subdivisions: the carved face's chin is \
+                     {:+.1} mm from the landmark the build measured",
+                    (carved - skull.chin()) * 1000.0
+                );
             }
-            assert!(
-                (tip.1 - chin).abs() < 0.005,
-                "seed {seed}: on the carved face the chin peaks {:+.1} mm from the landmark",
-                (tip.1 - chin) * 1000.0
-            );
+        }
+    }
+
+    #[test]
+    fn a_head_with_no_chin_on_it_still_answers_inside_its_own_surface() {
+        // [`shape`] bails on anything that walks on four legs, so a creature's
+        // head arrives at [`Skull::measure`] as the tube the cage laid — no
+        // chin, no crest, nothing for `chin_of` to find. The landmark then falls
+        // back to the plan's estimate, and the only thing asked of it is that it
+        // stays inside the head it claims to be on: a chin below the throat or
+        // above the crown puts every feature fraction outside the surface.
+        //
+        // Here because it is the one branch of the landmark no biped reaches,
+        // and because it used to be a clamp on an estimate that was always
+        // taken. Now it is the exception, which means nothing else exercises it.
+        use crate::plan::{BodyPlan, QuadrupedParams};
+        let skeleton = QuadrupedParams::default().skeleton();
+        let mesh = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
+            .expect("a creature builds");
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let skull = Skull::measure(&mesh, &rig).expect("a creature has a head to measure");
+        assert_eq!(
+            chin_of(&mesh, &rig, skull.head, skull.throat_and_crown().0),
+            None,
+            "an unshaped head reported a chin, so this is no longer the fallback's test"
+        );
+        let (throat, crown) = skull.throat_and_crown();
+        assert!(
+            (throat..=crown).contains(&skull.chin()),
+            "the fallback chin is at {:+.1} mm, outside a head running {:+.1} to {:+.1}",
+            skull.chin() * 1000.0,
+            throat * 1000.0,
+            crown * 1000.0
+        );
+    }
+
+    #[test]
+    fn the_chin_stands_clear_of_the_hollow_above_it() {
+        // **The margin [`FALL`] lives on, measured rather than assumed.** The
+        // landmark is the lowest crest of the midline profile, and what makes
+        // that a definition rather than a guess is that the chin's crest is
+        // separated from the lower lip's by a real hollow — the mentolabial
+        // sulcus. If a change to the cage or the shaping flattens that hollow
+        // below `FALL`, the two crests merge and the chin stops existing as a
+        // measurable feature; the landmark then falls back to the plan's
+        // estimate, silently, on whichever seeds are affected.
+        //
+        // So this measures the hollow. Sixteen seeds at both subdivision levels
+        // the crate can ship: the shallowest is 3.9 mm, nineteen times `FALL`.
+        // The floor here is five times `FALL`, which is a fifth of the room
+        // actually available.
+        //
+        // **It is expected to speak up when the cage moves, and that is the
+        // point.** Measured at eight-point rings and one subdivision — the pair
+        // #107 wants — the same sweep runs 0.67 to 8.1 mm, under the floor here
+        // on several seeds, and on two of the sixteen the lower face comes out
+        // as a smooth cone with no chin on it at all: the midline profile climbs
+        // from the throat to the brow without ever turning over, so `chin_of`
+        // has nothing to answer with and this test's `expect` is what fires.
+        // That is a real defect in that configuration, and this is where it
+        // announces itself instead of surfacing as a mouth in the wrong place.
+        for levels in [crate::BODY_SUBDIVISIONS - 1, crate::BODY_SUBDIVISIONS] {
+            for seed in 1i64..=16 {
+                let mut record = AvatarRecord::new("Skulled", Archetype::default());
+                record.reroll(seed);
+                let skeleton = record.skeleton();
+                let mesh = crate::build_body(&skeleton, &CageConfig::default(), levels)
+                    .expect("a body builds");
+                let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+                let skull = Skull::measure(&mesh, &rig).expect("a skull");
+                let centre = rig.joints[skull.head].position;
+                let Some(at) = chin_of(&mesh, &rig, skull.head, skull.throat_and_crown().0) else {
+                    panic!(
+                        "seed {seed} at {levels} subdivisions: the midline profile climbs from \
+                         the throat to the chin's own ceiling without ever turning over, so \
+                         there is no chin on this head to measure a hollow above"
+                    );
+                };
+
+                // How far the profile falls below the crest before it climbs
+                // past it again, which is the hollow's depth. Walked in two
+                // phases, because the landmark is the MIDDLE of the crest and on
+                // a long flat one the surface is still rising there: first up to
+                // the crest's own top, then down into the hollow. Measuring the
+                // fall from the landmark itself reports a hollow 0.00 mm deep on
+                // every seed whose chin is a plateau, which is a measurement of
+                // where the landmark is defined rather than of the head.
+                let mut y = at;
+                let mut top = f32::MIN;
+                while let Some(reach) = midline(&mesh, centre, y)
+                    && reach >= top
+                {
+                    top = reach;
+                    y += 0.0009;
+                }
+                let mut dip = top;
+                while y <= at + 0.045 {
+                    match midline(&mesh, centre, y) {
+                        Some(reach) if reach > top => break,
+                        Some(reach) => dip = dip.min(reach),
+                        None => {}
+                    }
+                    y += 0.0009;
+                }
+                assert!(
+                    top - dip > 5.0 * FALL,
+                    "seed {seed} at {levels} subdivisions: the hollow above the chin is only \
+                     {:.2} mm deep, against a crest rule that needs {:.2} mm to see one",
+                    (top - dip) * 1000.0,
+                    FALL * 1000.0
+                );
+            }
         }
     }
 
@@ -1809,30 +1926,27 @@ impl Skull {
             return None;
         }
 
-        // Where the chin's tip is, found the way [`shape`] decided it: the
-        // CHIN profile's peak knot, mapped through the same floor scaling.
-        // The one landmark here that is read off the plan rather than off the
-        // surface, and deliberately — see [`Self::chin`] for why that is sound
-        // and for the measurement that checked it.
-        let radius = rig.joints[head].radius;
-        let floor = mesh
-            .positions
-            .iter()
-            .filter(|p| rig.joints[rig.nearest_bone(**p).joint].zone == Zone::Head)
-            .fold(0.0f32, |low, p| low.min(p.y - centre.y))
-            / radius.max(f32::EPSILON);
-        let peak = CHIN
-            .iter()
-            .fold(
-                CHIN[0],
-                |best, &knot| if knot.1 > best.1 { knot } else { best },
-            )
-            .0;
-        let chin = menton(
-            mesh,
-            centre,
-            (peak * (floor * SETTLE) / JUNCTION * radius).max(lo),
-        );
+        // Where the chin's tip is: the lowest crest of the midline profile, found
+        // on the built surface rather than predicted from the plan. See
+        // [`chin_of`] for the definition and [`Self::chin`] for why this landmark
+        // matters enough to measure.
+        //
+        // A head with no chin on it — a creature's, which [`shape`] leaves as a
+        // sphere — falls back to where the `CHIN` profile's peak knot would have
+        // put one through the same floor scaling [`shape`] uses. That is not a
+        // chin, but it is inside the head's own surface, which is all a body
+        // without a face asks of it.
+        let chin = chin_of(mesh, rig, head, lo).unwrap_or_else(|| {
+            let radius = rig.joints[head].radius;
+            let peak = CHIN
+                .iter()
+                .fold(
+                    CHIN[0],
+                    |best, &knot| if knot.1 > best.1 { knot } else { best },
+                )
+                .0;
+            (peak * (floor(mesh, rig, centre, radius) * SETTLE) / JUNCTION * radius).max(lo)
+        });
         let height = |point: &Vec3| (point.y - lo) / (hi - lo) * (BANDS - 1) as f32;
 
         let mut across = [0.0f32; BANDS];
@@ -1968,18 +2082,25 @@ impl Skull {
     /// below it reads as the whole jaw rotated up into the throat (#72), which
     /// is exactly how the owner reported it.
     ///
-    /// **Estimated from the plan, then found on the surface.** The `CHIN`
-    /// profile's peak knot through the same floor scaling [`shape`] used says
-    /// roughly where the tip is; `menton` below bisects the built midline around
-    /// that to say exactly where. Binning cannot do the second part — finding
-    /// the maximum from 20 measured bands needs the shallow 2 mm dip above the
-    /// chin to survive them, and it does not — which is why it was left as an
-    /// estimate until the estimate started drifting: lengthening the head below
-    /// its joint (#78) took the disagreement from under 2 mm to 6.0 on seed 1.
-    /// Verified across seeds by `the_chin_landmark_lands_on_the_chin`.
+    /// **Found on the surface, by a definition rather than by a window.** It is
+    /// the lowest crest of the midline profile — see `chin_of` — and nothing
+    /// about the plan enters into it on a head that has a chin. The plan's
+    /// `CHIN` peak used to say roughly where the tip was and a ±16 mm bisected
+    /// search said exactly where; that was an estimate the search was tuned to
+    /// sit on top of, and it drifted with the head (#78 took it from under 2 mm
+    /// to 6.0 on seed 1) and then came apart entirely from the test that checked
+    /// it (#108). Binning cannot do this at all — finding the maximum from 20
+    /// measured bands needs the shallow dip above the chin to survive them, and
+    /// it does not.
     ///
-    /// Clamped to the span so a head whose shaping was skipped — a creature's —
-    /// still answers inside its own surface.
+    /// Verified across seeds by `the_chin_landmark_lands_on_the_chin`, against
+    /// the carved surface at two subdivision levels by
+    /// `the_chin_landmark_lands_on_the_chin_of_the_shipped_face`, and the margin
+    /// the definition needs by `the_chin_stands_clear_of_the_hollow_above_it`.
+    ///
+    /// A head with no chin — a creature's, which [`shape`] leaves as a sphere —
+    /// falls back to the plan's estimate, clamped to the span so it still
+    /// answers inside its own surface.
     #[must_use]
     pub fn chin(&self) -> f32 {
         self.chin
@@ -2022,57 +2143,176 @@ impl Skull {
     }
 }
 
-/// The chin's tip, refined from the profile's estimate onto the built surface.
+/// How far the head's own surface reaches below its joint, in skull radii.
 ///
-/// **The derivation says roughly where; the surface says exactly where**, and
-/// until #78 the difference did not matter. The knot estimate is `CHIN`'s peak
-/// through the floor scaling, and it was verified to within 2 mm on every seed —
-/// on a head whose whole below-joint domain was 0.69 radii. Stretching that
-/// domain to 1.19 stretched the disagreement with it, to 6.0 mm on seed 1, which
-/// is a landmark drifting off the thing it is named for. The frame every feature
-/// on the face is a fraction of hangs from this number, so 6 mm here is 6 mm of
-/// misplaced mouth.
+/// The same measurement [`shape`] scales every below-joint profile against, and
+/// taken the same way: over head-owned vertices only, because the neck runs up
+/// through the same heights and is not the head.
+fn floor(mesh: &PolyMesh, rig: &Rig, centre: Vec3, radius: f32) -> f32 {
+    mesh.positions
+        .iter()
+        .filter(|p| rig.joints[rig.nearest_bone(**p).joint].zone == Zone::Head)
+        .fold(0.0f32, |low, p| low.min(p.y - centre.y))
+        / radius.max(f32::EPSILON)
+}
+
+/// Where the chin is on a built head, in metres above the head joint.
 ///
-/// Bisected on the midline, which is the instrument the rest of this crate
-/// judges with, and searched over a WINDOW around the estimate rather than over
-/// the whole lower face. The window is what keeps it honest on a head that has
-/// already been carved: a carved lower lip reaches further forward than the chin
-/// does — 106.2 mm against 103.2 on a default body — so "the forward-most point
-/// below the joint" would answer with the lip. A quarter radius is far wider
-/// than the drift and far narrower than the gap to the mouth.
-fn menton(mesh: &PolyMesh, centre: Vec3, estimate: f32) -> f32 {
-    /// How far either side of the estimate to look, in metres per metre of head.
-    const WINDOW: f32 = 0.016;
-    /// How finely, in metres. Half the finest cell the face ever carries.
-    const STEP: f32 = 0.0009;
+/// **One definition, used twice, which is the whole point of it.**
+/// [`Skull::measure`] reads the landmark with this on the shaped head, and
+/// `the_chin_landmark_lands_on_the_chin_of_the_shipped_face` re-applies it to the
+/// carved one — so that test compares two answers to the same question instead
+/// of two different instruments that happened to agree on one cage (#108).
+///
+/// The chin is [`menton`]'s lowest crest, searched from the throat up to the
+/// highest height at which [`shape`] still pushes a chin forward at all: `CHIN`'s
+/// highest non-zero knot, through the same floor remap [`reshape_to`] uses.
+/// Above that there is no chin in the geometry to find, only the face — and the
+/// bound matters, because a head whose lower face came out as a smooth cone has
+/// its forward-most point at the brow, and a search without a ceiling answers
+/// with it. Measured at eight-point rings and one subdivision, two seeds in
+/// sixteen are that head; they return `None` here rather than a landmark 110 mm
+/// too high.
+///
+/// `None` when there is no crest below the ceiling — an unshaped head, or one
+/// whose chin the cage has flattened out of existence.
+fn chin_of(mesh: &PolyMesh, rig: &Rig, head: usize, throat: f32) -> Option<f32> {
+    let centre = rig.joints[head].position;
+    let radius = rig.joints[head].radius;
+    if radius <= f32::EPSILON {
+        return None;
+    }
+    let shoulder = CHIN
+        .iter()
+        .filter(|knot| knot.1 > 0.0)
+        .fold(f32::MIN, |high, knot| high.max(knot.0));
+    let ceiling = shoulder * (floor(mesh, rig, centre, radius) * SETTLE) / JUNCTION * radius;
+    menton(mesh, centre, throat, ceiling)
+}
 
-    let reach = |y: f32| {
-        let inside = |z: f32| mesh.contains(Vec3::new(centre.x, centre.y + y, centre.z + z));
-        if !inside(0.0) {
-            return f32::MIN;
-        }
-        let (mut near, mut out) = (0.0f32, 0.30f32);
-        for _ in 0..24 {
-            let mid = 0.5 * (near + out);
-            if inside(mid) {
-                near = mid;
-            } else {
-                out = mid;
-            }
-        }
-        near
-    };
-
-    let steps = (WINDOW / STEP) as i32;
-    let mut best = (f32::MIN, estimate);
-    for step in -steps..=steps {
-        let y = estimate + step as f32 * STEP;
-        let at = reach(y);
-        if at > best.0 {
-            best = (at, y);
+/// How far the midline surface reaches forward at `y` above the head joint.
+///
+/// `None` where the midline is not inside the mesh at all, which is what the
+/// throat does at the bottom of the scan and what a head with no surface there
+/// does everywhere. Bisected against [`PolyMesh::contains`], the same primitive
+/// the rest of the crate judges a surface with.
+fn midline(mesh: &PolyMesh, centre: Vec3, y: f32) -> Option<f32> {
+    let inside = |z: f32| mesh.contains(Vec3::new(centre.x, centre.y + y, centre.z + z));
+    if !inside(0.0) {
+        return None;
+    }
+    let (mut near, mut out) = (0.0f32, 0.30f32);
+    for _ in 0..24 {
+        let mid = 0.5 * (near + out);
+        if inside(mid) {
+            near = mid;
+        } else {
+            out = mid;
         }
     }
-    best.1
+    Some(near)
+}
+
+/// How far the midline profile has to fall for a crest to be over, in metres.
+///
+/// **The hollow above the chin is what this has to fit inside, and it is the
+/// shallowest thing here.** Measured on the midline between the chin's crest and
+/// the lower lip's, over sixteen seeds at both subdivision levels the crate can
+/// ship, it runs 3.9 to 11.9 mm. A fifth of a millimetre clears the shallowest of
+/// those nineteen times over, and there is nothing below it to reject: the
+/// bisection resolves to tens of nanometres and the surface under it is
+/// piecewise linear, so this is not a noise floor. It is the smallest hollow that
+/// still counts as separating two features.
+///
+/// The margin is measured rather than assumed, by
+/// `the_chin_stands_clear_of_the_hollow_above_it`, and it is cage-dependent: at
+/// eight-point rings and one subdivision the same hollow runs 0.67 mm at its
+/// shallowest, because the closer the cage sits to the surface the flatter the
+/// whole lower face comes out.
+const FALL: f32 = 0.0002;
+
+/// How close to a crest's maximum still counts as being on it, in metres.
+///
+/// **A chin is a plateau, not a point, and on some cages it is a long one.** The
+/// midline reach across the shipped chin falls 0.9 mm over the 2 mm either side
+/// of its tip; across an eight-point cage's it varies by 0.01 mm over 6 mm — the
+/// cage lays a flat facet where the chin is and subdivision keeps it flat. An
+/// argmax over that is not a measurement of anything: it answers with whichever
+/// end of the flat a rounding error favours, and two instruments that each take
+/// an argmax over it can disagree by the width of the plateau while both are
+/// looking at the same chin. So the landmark is the MIDDLE of the flat, and this
+/// is what counts as flat: a tenth of a millimetre, well under the millimetre
+/// this crate places features to and well over the profile's own wander.
+const FLAT: f32 = 0.0001;
+
+/// The lowest crest of the midline profile between `throat` and `ceiling`, as
+/// the height of the middle of that crest above the head joint.
+///
+/// **The chin is the first prominence you meet walking up from the throat**, and
+/// that is the whole definition — no window, no estimate, nothing tuned. Below it
+/// the surface is still climbing out of the neck; above it comes the mentolabial
+/// sulcus and then the lower lip, which on a carved face reaches FURTHER FORWARD
+/// than the chin does (119.2 mm against 114.0 on the default body). So "the
+/// forward-most point of the lower face" is not the chin and never was; the
+/// forward-most point of the FIRST crest is.
+///
+/// This is the definition [`Skull::measure`] reads the landmark with and the one
+/// `the_chin_landmark_lands_on_the_chin_of_the_shipped_face` re-applies to the
+/// carved surface, which is what makes that test a comparison rather than a
+/// coincidence. The two used to be different instruments — a bisected argmax over
+/// ±16 mm of a plan estimate here, a bisected argmax over ±25 mm of the answer
+/// there — and they agreed on exactly one cage, the one they were tuned against.
+/// On any other the test's window reached the lower lip and its argmax walked to
+/// the top of its own scan, which reads as a 23 mm error and is not one: it is a
+/// saturated measurement of an unbounded disagreement (#108).
+///
+/// Scanned coarsely and then finely: the crest is bracketed at four steps and
+/// re-read at one within that bracket, because [`PolyMesh::contains`] is the
+/// expensive thing in this file and a whole-face scan at the fine step would be
+/// four times the cost of the window it replaces rather than a sixth over.
+///
+/// `None` when the profile climbs all the way to `ceiling` without falling clear
+/// of its own maximum. That is the saturated case and it is reported as no
+/// answer rather than as the top of the scan, which is precisely the reading
+/// error that made a 23 mm figure out of an unbounded one (#108).
+fn menton(mesh: &PolyMesh, centre: Vec3, throat: f32, ceiling: f32) -> Option<f32> {
+    /// How finely, in metres. Half the finest cell the face ever carries.
+    const STEP: f32 = 0.0009;
+    /// How coarsely the crest is bracketed first, in metres. Four fine steps,
+    /// which is still a fifth of the shallowest sulcus's width.
+    const COARSE: f32 = 0.0036;
+
+    // The lowest crest in a range: the running maximum, held until the profile
+    // has fallen clear of it, reported as the span of heights that are level
+    // with that maximum. `fell` says whether the crest ended inside the range or
+    // the scan simply ran out of head.
+    let crest = |from: f32, to: f32, step: f32| {
+        let (mut top, mut lo, mut hi, mut fell) = (f32::MIN, from, from, false);
+        let mut y = from;
+        while y <= to {
+            if let Some(at) = midline(mesh, centre, y) {
+                if at > top + FLAT {
+                    (top, lo, hi) = (at, y, y);
+                } else if at >= top - FLAT {
+                    (top, hi) = (top.max(at), y);
+                } else if top - at > FALL {
+                    fell = true;
+                    break;
+                }
+            }
+            y += step;
+        }
+        (top > f32::MIN).then_some((lo, hi, fell))
+    };
+
+    let (lo, hi, fell) = crest(throat, ceiling, COARSE)?;
+    if !fell {
+        return None;
+    }
+    // Re-read at the fine step inside the bracket the coarse pass gave, widened
+    // by one coarse step either side so the plateau's own ends are inside it.
+    let (lo, hi, _) = crest(lo - COARSE, hi + COARSE, STEP)?;
+    Some(0.5 * (lo + hi))
 }
 
 /// Where a lateral offset falls in a band's own columns.

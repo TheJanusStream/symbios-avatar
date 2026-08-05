@@ -121,7 +121,7 @@ fn main() {
         span_lo * 1000.0
     );
     println!(
-        "| Skull::chin | {:+.1} | CHIN profile peak through the floor scaling |",
+        "| Skull::chin | {:+.1} | lowest crest of the measured midline profile |",
         chin * 1000.0
     );
     let frame = level - chin;
