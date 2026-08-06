@@ -2389,9 +2389,31 @@ impl Skull {
             return None;
         }
 
-        let (lo, hi) = mine.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+        // **The crown is measured and the throat is measured-but-bounded, and
+        // the asymmetry is the point** (#127). The top of a head is the head's
+        // own surface and nothing else reaches it. The bottom is the blend into
+        // the neck, so a fold over head-OWNED samples answers with whatever
+        // `Rig::nearest_bone` credited — and once a neck carries mass away from
+        // its own bone, the two segments are millimetres apart and the answer is
+        // a coin toss. Measured, giving the neck an off-centre section took this
+        // from −110 mm to −153 and `Skull::chin` followed it down to −157 on a
+        // head 200 mm tall.
+        //
+        // Replacing the fold with [`floor`] outright is WRONG and was tried:
+        // that puts the low end at −140.9 against a surface that stops near
+        // −110, and `the_profile_agrees_with_the_surface_it_was_measured_from`
+        // fails at the low end, correctly, because 30 mm of the span is then not
+        // head surface at all. `JUNCTION` and the throat were never the same
+        // place — `SETTLE` exists because ownership stops short of the neck node
+        // — so the derived floor is a CEILING on how far this may reach, not a
+        // replacement for it.
+        //
+        // Clamped rather than chosen: on every body that owns a sane amount of
+        // surface the fold wins and this reads exactly as it always did.
+        let (measured, hi) = mine.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
             (lo.min(p.y), hi.max(p.y))
         });
+        let lo = measured.max(floor(rig, head) * rig.joints[head].radius);
         if hi - lo <= f32::EPSILON {
             return None;
         }
