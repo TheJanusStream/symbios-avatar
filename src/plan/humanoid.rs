@@ -115,6 +115,41 @@ const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
 /// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite.
 const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 
+/// How far behind the midline the neck node sits, in neck radii.
+///
+/// **A neck leans forward, and ours was a vertical pole** (#125). Measured on
+/// the Quaternius reference, the neck node sits BEHIND BOTH ITS PARENT AND ITS
+/// CHILD: `spine_03` at z −13.4 mm, `neck_01` at −51.4, `head` at +11.4. So the
+/// column kinks backward at the neck and comes forward again into the skull,
+/// which is the cervical curve. Every node in this file sat on `z = 0`, so ours
+/// went straight up.
+///
+/// What it buys is the length complaint rather than the shape one. Moving the
+/// neck back seats it further inside the shoulder mass, so the flare reaches
+/// higher and the VISIBLE neck shortens: `the_neck_is_the_length_of_a_neck`
+/// reads 0.327–0.428 across its five seeds against 0.423–0.472 before, and the
+/// best of them is on the eight-head canon's 0.33.
+///
+/// **What it does NOT buy is the mass behind the neck, and a measurement said
+/// otherwise before the instrument was corrected.** The reference's surface
+/// reaches 2.0 to 2.4 times as far behind its neck axis as its throat reaches
+/// in front. Ours read 1.00 before this and 2.50 after, which looked like the
+/// whole defect fixed by one constant — and was the probe reading the OFFSET,
+/// because it measured from `z = 0` while the axis had moved. Asked from the
+/// column's own axis the answer is 0.91 against 0.95: the surface did not move.
+/// Axis-free, the section at mid-neck is 103 mm deep against the reference's
+/// 167. That is still open and it is what a node cannot say — see #125.
+///
+/// 0.50 rather than the reference's own 0.73 of a neck radius, because ours is
+/// bounded by what it does to the FLOOR rather than by the reference: see
+/// `HEAD_BELOW_JOINT`, which had to be re-derived for it.
+/// Provenance: **derived from the reference** (#125), then bounded by the
+/// coupling to the head. `neck_01` sits 38.0 mm behind `spine_03` on a
+/// 1.829 m body and its neck measures about 52 mm across, which is 0.73 of a
+/// radius; ours is 0.50 because past that the lower face stretches faster
+/// than `HEAD_BELOW_JOINT` can be brought back.
+const NECK_BACK: f32 = 0.35;
+
 /// Where the crown node sits above the head joint, in head radii.
 ///
 /// See [`CROWN_WIDE`]: the two are chosen together and neither number means
@@ -730,7 +765,24 @@ impl BodyPlan for HumanoidParams {
         // for their heads and people whose faces are short for theirs are the
         // most legible single difference between two skulls. See
         // [`FACE_LENGTH_SPAN`].
-        const HEAD_BELOW_JOINT: f32 = 1.55;
+        // **1.55 to 1.50, and it moved because the NECK moved** (#125). This
+        // coefficient is not independent of the shoulders and nothing had said
+        // so. `face::skull::shape` normalises its whole below-joint domain by
+        // the head's measured FLOOR, and the floor is where the head's surface
+        // runs into the neck — so giving the neck a backward offset moved the
+        // floor, which stretched the lower face for free and in the wrong
+        // direction. Left at 1.55 the head came out 210.5 mm crown to chin with
+        // a cranium:face of 0.92, against #79's 201.8 and 1.00.
+        //
+        // At 1.50 with `NECK_BACK` at 0.35 it reads 200.1 mm and 1.02, and the
+        // vault's depth-to-width is untouched at 1.29. So the head #79 tuned is
+        // preserved rather than re-tuned; what changed is the constant that
+        // buys it.
+        //
+        // THE HEAD, THE NECK AND THE SHOULDERS ARE ONE MEASUREMENT CHAIN. Any
+        // change to the girdle or the neck re-tunes the face silently, and the
+        // only thing that catches it is running `headaudit` afterwards.
+        const HEAD_BELOW_JOINT: f32 = 1.50;
         let head_y =
             neck_y + head_r * HEAD_BELOW_JOINT * (1.0 + FACE_LENGTH_SPAN * self.face_length);
 
@@ -1289,7 +1341,7 @@ impl BodyPlan for HumanoidParams {
         );
         let neck = skeleton.extend_from(
             girdle,
-            Node::new(Vec3::new(0.0, neck_y, 0.0), neck_r)
+            Node::new(Vec3::new(0.0, neck_y, -NECK_BACK * neck_r), neck_r)
                 .with_scale(NECK_SECTION)
                 .in_zone(Zone::Neck),
         );

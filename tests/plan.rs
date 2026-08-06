@@ -459,9 +459,24 @@ fn the_neck_is_the_length_of_a_neck() {
             y -= 0.001;
         }
 
+        // **0.52 to 0.46, a ratchet rather than a fix** (#125). The bound has
+        // always been the state and the eight-head figure it quotes is 0.33.
+        // Giving the neck the forward lean the Quaternius reference has — its
+        // neck node sits behind BOTH its parent and its child — seats the neck
+        // further inside the shoulder mass, so the flare reaches higher and the
+        // visible neck shortens on every one of these seeds: 0.423–0.472 to
+        // 0.351–0.443.
+        //
+        // Not to 0.33, and what is still missing is not length. The reference's
+        // surface reaches 2.0 to 2.4 times as far behind its neck axis as its
+        // throat reaches in front, and ours reads 0.91 — measured from the
+        // column's own axis, after a first attempt read 2.50 by measuring from
+        // the midline while the axis had moved. Axis-free: the section at
+        // mid-neck is 103 mm deep against the reference's 167. That is mass
+        // this cage cannot express and it is #125's remaining half.
         let ratio = (chin - y) / (crown - chin);
         assert!(
-            ratio < 0.52,
+            ratio < 0.46,
             "seed {seed}: the chin sits {:.1} mm above the shoulder line on a \
              {:.1} mm head, a ratio of {ratio:.3}. The eight-head figure puts it \
              near 0.33; this shipped at 0.480 before #93 shortened the girdle's \

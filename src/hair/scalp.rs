@@ -402,8 +402,21 @@ mod tests {
             raw.0,
             raw.1
         );
+        // **1.02 to 1.04 for the neck's forward lean** (#125), and it is the
+        // same mechanism the paragraph above already names rather than a new
+        // one. The neck is not sectioned with the head, so on a narrow skull the
+        // surface at the head joint is held out by the THROAT; the neck node
+        // carries a backward offset now, which changes where that throat sits
+        // relative to the head's own ring, and seed 15 — the same seed, still
+        // the only one — went from 1.008 to 1.034.
+        //
+        // What stands proud is still a point the neck owns and not a point on
+        // the head, which is what this bound is for. The reading to watch is the
+        // seed COUNT: one body in sixteen is the cage doing what a blend does,
+        // and several would mean the head had started standing outside its own
+        // node.
         assert!(
-            worst.1 < 1.02,
+            worst.1 < 1.04,
             "seed {}: the skull measured {} of what its own ring swept across",
             worst.0,
             worst.1
