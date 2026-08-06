@@ -434,6 +434,43 @@ const JUNCTION: f32 = -0.70;
 /// only appears when the value is exactly one.
 const SETTLE: f32 = 0.92;
 
+/// How far the head reaches below its own joint, as a share of the bone.
+///
+/// **The number that stops the neck from stretching the face** (#127). Every
+/// profile below the joint is scaled onto the head's floor, and the floor used
+/// to be MEASURED: the lowest vertex whose nearest bone is the head's. That
+/// reads the SURFACE, and the surface at the bottom of the head is the blend
+/// into the neck — so anything that moved the neck moved the floor, which
+/// stretched the whole lower face silently and in the wrong direction.
+///
+/// Measured three ways before it was believed. Deepening the girdle backward
+/// moved the chin from −95.8 mm to −107.7 and grew the head from 201.8 mm to
+/// 215.2. The neck's forward lean needed `HEAD_BELOW_JOINT` re-derived from 1.55
+/// to 1.50 to hold the head still, and is bounded at a third of a neck radius by
+/// this rather than by anatomy. And giving the neck the off-centre section it
+/// wants took the head to 262.9 mm with a cranium:face of 0.62, against which
+/// `HEAD_BELOW_JOINT` does not converge — 1.15 gives 178 mm, 1.30 gives 239,
+/// 1.40 gives 200 — because the floor moves under the lever.
+///
+/// So it is derived from the RIG, which a section cannot touch: the head joint
+/// stands `HEAD_BELOW_JOINT` radii above the neck joint by construction, and the
+/// head's surface runs out at this share of that bone.
+///
+/// **What it costs is that the floor is no longer exactly where the surface
+/// ends**, and `JUNCTION` is where every profile reaches identity. Measured over
+/// seven bodies the true share runs 0.894 to 0.953, so on the worst of them the
+/// identity now lands about 5% of the bone from where the surface actually
+/// stops. That is tolerable only because the profiles are FLAT there — the last
+/// knot of `BREADTH` is 1.00 and of `OCCIPUT` is 0.0 — so a small error in where
+/// the junction falls is a small step and not a cliff. Anything that gives those
+/// tables a gradient at `JUNCTION` makes this a seam again.
+/// Provenance: **measured, then fixed** (#127). Seven bodies read 0.9082,
+/// 0.9002, 0.9182, 0.9008, 0.8936, 0.9533 and 0.8984 against their own
+/// bones; 0.91 is the middle of that. #78 recorded 0.895 over four seeds on
+/// the four-point cage and called it stable, which is the same measurement
+/// one cage earlier.
+const SETTLED: f32 = 0.91;
+
 /// The region each refinement pass covers: how far round the head it reaches as
 /// a cosine of the angle from dead ahead, then its lowest and highest point.
 ///
@@ -630,7 +667,7 @@ pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
     // `refine` only adds vertices — it moves none — so the head's floor is the
     // same before the first pass and after the last, and measuring it per pass
     // would be a slower way of getting the same number.
-    let stretch = (floor(mesh, rig, centre, radius) * SETTLE / JUNCTION).max(f32::EPSILON);
+    let stretch = (floor(rig, head) * SETTLE / JUNCTION).max(f32::EPSILON);
     let section = rig.joints[head].scale.x.max(f32::EPSILON);
 
     let mut refined = mesh.clone();
@@ -709,17 +746,9 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig) {
         .map(|&point| rig.joints[rig.nearest_bone(point).joint].zone == Zone::Head)
         .collect();
 
-    // How far the head's own surface reaches below its joint. Measured rather
-    // than assumed: it is set by how large the head node is against the neck
-    // node, which a record varies, and every profile below the joint is scaled
-    // to land on it. See [`JUNCTION`].
-    let floor = mesh
-        .positions
-        .iter()
-        .zip(&owned)
-        .filter(|&(_, &mine)| mine)
-        .fold(0.0f32, |low, (point, _)| low.min(point.y - centre.y))
-        / radius;
+    // How far the head reaches below its joint, and every profile below the
+    // joint is scaled to land on it. See [`JUNCTION`] and [`floor`].
+    let floor = floor(rig, head);
 
     for (point, &mine) in mesh.positions.iter_mut().zip(&owned) {
         if !mine {
@@ -2386,7 +2415,7 @@ impl Skull {
                     |best, &knot| if knot.1 > best.1 { knot } else { best },
                 )
                 .0;
-            (peak * (floor(mesh, rig, centre, radius) * SETTLE) / JUNCTION * radius).max(lo)
+            (peak * (floor(rig, head) * SETTLE) / JUNCTION * radius).max(lo)
         });
         let height = |point: &Vec3| (point.y - lo) / (hi - lo) * (BANDS - 1) as f32;
 
@@ -2609,12 +2638,19 @@ impl Skull {
 /// The same measurement [`shape`] scales every below-joint profile against, and
 /// taken the same way: over head-owned vertices only, because the neck runs up
 /// through the same heights and is not the head.
-fn floor(mesh: &PolyMesh, rig: &Rig, centre: Vec3, radius: f32) -> f32 {
-    mesh.positions
-        .iter()
-        .filter(|p| rig.joints[rig.nearest_bone(**p).joint].zone == Zone::Head)
-        .fold(0.0f32, |low, p| low.min(p.y - centre.y))
-        / radius.max(f32::EPSILON)
+/// How far the head reaches below its own joint, in head radii, negative down.
+///
+/// **Asked of the rig and not of the mesh** (#127). See [`SETTLED`] for why, and
+/// for what it costs. The short of it: the surface at the bottom of a head is
+/// the blend into the neck, so measuring the floor there made the entire lower
+/// face a function of the neck's shape.
+fn floor(rig: &Rig, head: usize) -> f32 {
+    let joint = &rig.joints[head];
+    let parent = joint.parent.unwrap_or(head);
+    if joint.radius <= f32::EPSILON {
+        return -SETTLED;
+    }
+    -SETTLED * (joint.position.y - rig.joints[parent].position.y).abs() / joint.radius
 }
 
 /// Where the chin is on a built head, in metres above the head joint.
@@ -2647,7 +2683,7 @@ fn chin_of(mesh: &PolyMesh, rig: &Rig, head: usize, throat: f32) -> Option<f32> 
         .iter()
         .filter(|knot| knot.1 > 0.0)
         .fold(f32::MIN, |high, knot| high.max(knot.0));
-    let ceiling = shoulder * (floor(mesh, rig, centre, radius) * SETTLE) / JUNCTION * radius;
+    let ceiling = shoulder * (floor(rig, head) * SETTLE) / JUNCTION * radius;
     menton(mesh, centre, throat, ceiling)
 }
 
