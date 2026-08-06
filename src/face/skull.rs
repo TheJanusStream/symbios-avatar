@@ -2701,12 +2701,25 @@ fn chin_of(mesh: &PolyMesh, rig: &Rig, head: usize, throat: f32) -> Option<f32> 
     if radius <= f32::EPSILON {
         return None;
     }
-    let shoulder = CHIN
-        .iter()
-        .filter(|knot| knot.1 > 0.0)
-        .fold(f32::MIN, |high, knot| high.max(knot.0));
-    let ceiling = shoulder * (floor(rig, head) * SETTLE) / JUNCTION * radius;
-    menton(mesh, centre, throat, ceiling)
+    let pushed = || CHIN.iter().filter(|knot| knot.1 > 0.0);
+    let onto = |height: f32| height * (floor(rig, head) * SETTLE) / JUNCTION * radius;
+    let ceiling = onto(pushed().fold(f32::MIN, |high, knot| high.max(knot.0)));
+    // **Both ends of the search say where a chin can BE, and the lower one used
+    // to say where the surface ran out** (#127). The ceiling has always been
+    // `CHIN`'s highest non-zero knot: above it there is no chin in the geometry
+    // to find, only the face, and a head whose lower face came out as a smooth
+    // cone answers with its brow. The floor was the THROAT, which is a fact
+    // about the surface rather than about a chin — so a neck carrying mass
+    // astern puts a crest down near the nape and this search obligingly returns
+    // it. Measured, that gave a head 250.5 mm crown to chin with a cranium:face
+    // of 0.67, on a body whose head is 200.
+    //
+    // So it is `CHIN`'s lowest non-zero knot through the same remap. Below that
+    // the table pushes nothing forward, so anything found there is not a chin
+    // whatever else it is. The throat still binds when it is the higher of the
+    // two, which is every body that has not been given a nape to trip over.
+    let basement = onto(pushed().fold(f32::MAX, |low, knot| low.min(knot.0)));
+    menton(mesh, centre, throat.max(basement), ceiling)
 }
 
 /// How far the midline surface reaches forward at `y` above the head joint.
