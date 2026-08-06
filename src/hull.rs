@@ -15,7 +15,7 @@
 //! incremental hulling with coplanar merging bolted on.
 
 use glam::Vec3;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use thiserror::Error;
 
 /// Upper bound on hull input size, keeping the `O(n⁴)` search negligible.
@@ -102,9 +102,29 @@ const HULL_TOLERANCE_STEPS: i32 = 4;
 /// hull. An angular tolerance cannot tell those cases apart, and merging them
 /// drops one facet's points, leaving a hole in an otherwise plausible surface.
 /// The point set distinguishes them exactly.
+///
+/// **Only MAXIMAL point sets are facets, and that is not a refinement — it is
+/// what keeps a facet from being emitted alongside its own pieces** (#107). A
+/// supporting plane is fitted to one triple and then collects every point within
+/// `eps` of it. Where several points are *nearly* coplanar, different triples
+/// drawn from the group fit slightly different planes, and each of those
+/// collects a different subset of the group. Those subsets are distinct point
+/// sets, so deduplication passes every one of them and the hull comes back with
+/// a quad and both of the triangles that make it up.
+///
+/// Measured on the heel joint of one body in fifteen hundred, at eight-point
+/// rings: `[107, 345, 344, 106]` was returned together with `[107, 344, 106]`
+/// and `[345, 344, 107]`. Each of the quad's four edges then carried three
+/// faces, and the cage was not watertight. Four-point rings never produced
+/// enough near-coplanar points in one joint to reach it.
+///
+/// A set that is strictly contained in another is the same facet under-collected
+/// by a worse plane fit, so it is dropped. Two genuinely distinct facets share
+/// at most an edge and neither contains the other, so they both survive — which
+/// is the case the paragraph above exists to protect.
 fn facets(points: &[Vec3], eps: f32) -> Vec<Vec<u32>> {
     let mut seen: Vec<Vec<u32>> = Vec::new();
-    let mut faces: Vec<Vec<u32>> = Vec::new();
+    let mut normals: Vec<Vec3> = Vec::new();
     let count = points.len();
 
     for i in 0..count {
@@ -142,13 +162,25 @@ fn facets(points: &[Vec3], eps: f32) -> Vec<Vec<u32>> {
                 if on_plane.len() < 3 || seen.contains(&on_plane) {
                     continue;
                 }
-                seen.push(on_plane.clone());
-                faces.push(order_ccw(points, &on_plane, normal));
+                seen.push(on_plane);
+                normals.push(normal);
             }
         }
     }
 
-    faces
+    // `on_plane` is built by scanning `points` in order, so every set here is
+    // ascending and containment is one merge walk.
+    let swallowed = |small: &[u32], big: &[u32]| -> bool {
+        big.len() > small.len() && {
+            let mut have = big.iter();
+            small.iter().all(|want| have.any(|got| got == want))
+        }
+    };
+    seen.iter()
+        .zip(&normals)
+        .filter(|(on_plane, _)| !seen.iter().any(|other| swallowed(on_plane, other)))
+        .map(|(on_plane, normal)| order_ccw(points, on_plane, *normal))
+        .collect()
 }
 
 /// Fails unless every directed edge is matched by its reverse.
@@ -156,16 +188,27 @@ fn facets(points: &[Vec3], eps: f32) -> Vec<Vec<u32>> {
 /// A hull that is not closed means the input was degenerate enough to defeat the
 /// facet search. Returning an error keeps that from surfacing later as a hole in
 /// a body, which is far harder to trace back to its cause.
+///
+/// **Counted, not collected into a set** (#107). This used a `HashSet` of
+/// directed edges, which answers "is every edge matched" while discarding how
+/// MANY faces use it — so a hull that returned a facet together with the two
+/// triangles making it up passed here cleanly and surfaced later as four
+/// non-manifold edges in a cage, one joint deep in a body. In a closed oriented
+/// hull every directed edge is used exactly once. Anything else is a defeated
+/// facet search whether it leaves a hole or an overlap, and both are this
+/// error's business.
 fn ensure_closed(faces: &[Vec<u32>]) -> Result<(), HullError> {
-    let mut directed: HashSet<(u32, u32)> = HashSet::new();
+    let mut directed: HashMap<(u32, u32), usize> = HashMap::new();
     for face in faces {
         for corner in 0..face.len() {
-            directed.insert((face[corner], face[(corner + 1) % face.len()]));
+            *directed
+                .entry((face[corner], face[(corner + 1) % face.len()]))
+                .or_default() += 1;
         }
     }
     let open = directed
         .iter()
-        .filter(|&&(a, b)| !directed.contains(&(b, a)))
+        .filter(|&(&(a, b), &times)| times != 1 || directed.get(&(b, a)) != Some(&1))
         .count();
     if open > 0 {
         return Err(HullError::NotClosed(open));
@@ -274,6 +317,46 @@ mod tests {
             }
         }
         points
+    }
+
+    #[test]
+    fn a_facet_is_not_returned_alongside_the_triangles_that_make_it_up() {
+        // **A face and its own pieces, which is what took a body's cage
+        // non-manifold** (#107). Four points that are NEARLY coplanar — the
+        // fourth lifted by a third of the working tolerance — are one facet, and
+        // different triples drawn from them fit slightly different planes. Each
+        // plane collects a different subset within `eps`, every subset is a
+        // distinct point set, and before this was fixed all of them came back:
+        // the quad plus the two triangles spanning it. Every edge of the quad
+        // then carried three faces.
+        //
+        // The tolerance is `1e-4` of the extent, so the lift here is well inside
+        // it and the four points must resolve as one face.
+        let scale = 2.0f32;
+        let lift = 1e-4 * scale / 3.0;
+        let points = vec![
+            Vec3::new(-1.0, -1.0, 1.0),
+            Vec3::new(1.0, -1.0, 1.0),
+            Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(-1.0, 1.0, 1.0 - lift),
+            Vec3::new(0.0, 0.0, -1.0),
+        ];
+        let faces = convex_hull(&points).expect("a near-coplanar quad still hulls");
+        let top: Vec<&Vec<u32>> = faces
+            .iter()
+            .filter(|face| face.iter().all(|&corner| corner != 4))
+            .collect();
+        assert_eq!(
+            top.len(),
+            1,
+            "the near-coplanar group came back as {} faces: {top:?}",
+            top.len()
+        );
+        assert_eq!(top[0].len(), 4, "and it must be the whole quad: {top:?}");
+        assert!(
+            hull_mesh(&points).is_closed_manifold(),
+            "a hull carrying a face and its own pieces is not a solid"
+        );
     }
 
     /// Wraps hull output in a mesh so the manifold audit can vet winding.

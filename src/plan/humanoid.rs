@@ -308,8 +308,8 @@ impl BodyPlan for HumanoidParams {
         // where the arm attaches, which is a change to the body. Left at 0.088
         // pending that decision.
         let pelvis_r = h * 0.079 * girth;
-        let waist_r = h * 0.086 * girth;
-        let chest_r = h * 0.088 * girth * (1.0 + 0.08 * self.shoulder_width);
+        let waist_r = h * 0.074 * girth;
+        let chest_r = h * 0.086 * girth * (1.0 + 0.08 * self.shoulder_width);
         let girdle_r = h * 0.062 * girth * (1.0 + 0.06 * self.shoulder_width);
         // A neck is a good deal narrower than the skull above it. At the old
         // figure it measured WIDER than the head — 0.098 m against 0.093 — which
@@ -320,14 +320,14 @@ impl BodyPlan for HumanoidParams {
         // the paragraph above — a measured 0.098 m neck against a 0.093 m head —
         // which is the right shape of argument for a tuned number: a comparison
         // that came out the wrong way round.
-        let neck_r = h * 0.038 * girth;
+        let neck_r = h * 0.030 * girth;
         // Provenance: **unsourced**, both the 0.075 and the 0.25 gain. 0.075 of
         // stature is close to the eight-head figure's head, but the eight-head
         // figure specifies head HEIGHT and this is a node RADIUS, so the
         // resemblance is not a derivation and must not be written up as one —
         // the built head is 214 mm tall on a 160 mm breadth (#79), which is not
         // a number this coefficient predicts.
-        let head_r = h * 0.075 * (1.0 + 0.25 * self.head_size);
+        let head_r = h * 0.059 * (1.0 + 0.25 * self.head_size);
 
         // Provenance: **unsourced**, from the very first commit. Compare
         // `examples/measure`, whose canon column has no ankle row, so nothing
@@ -474,10 +474,36 @@ impl BodyPlan for HumanoidParams {
         // #78 raised to fix a face measuring 39% short, and cranium:face is
         // exactly 1.00 now.
         //
-        // Provenance: **derived from a sweep against the canon** (#93), bounded
-        // below by socket clearance — 1.32, 1.15 and 1.00 all mesh across
-        // `tests/plan.rs`'s 1500 random bodies and its corners; 0.85 does not.
-        let neck_y = girdle_y + (h * 0.072 * (1.0 + 0.3 * self.neck_length)).max(girdle_r * 1.15);
+        // **Both figures came down for the eight-point cage — 0.072 to 0.064 and
+        // 1.15 to 1.02 — and the paragraph above is why it took both** (#107).
+        // The cage moved a great deal more of the head BELOW its own joint: the
+        // head's surface used to run out around 0.75 radii under the joint and
+        // now runs to 1.07, measured over sixteen seeds. The exposed neck did not
+        // change; the head above the chin, which is what
+        // `the_neck_is_the_length_of_a_neck` divides by, shrank about 15%, and
+        // the ratio went from 0.404–0.476 across its five seeds to 0.492–0.567
+        // against a 0.52 bound.
+        //
+        // **Neither radius is the lever, and both were swept before this was
+        // touched.** `head_r` from 0.059 to 0.071 moves the worst seed only from
+        // 0.567 to 0.523, because a larger head also sits higher — `head_y`
+        // follows `head_r` — and exposes the neck it was meant to cover, so the
+        // two effects very nearly cancel. `neck_r` from 0.030 to 0.025 is worth
+        // 0.02. The neck's own LENGTH is the only term that moves it, which is
+        // what the note above already said from the other direction.
+        //
+        // So the warning above — that taking 0.072 down steepens the shoulder
+        // ramp into a coat hanger — was written against a trunk measuring 13–29%
+        // narrow. It is not that trunk any more: the same silhouette now runs
+        // within about 9% of the reference across the middle bands with no
+        // coefficient changed, so there is flare to spend the height against.
+        // At 0.064 and 1.02 the five seeds read 0.435–0.493.
+        //
+        // Provenance: **derived from a sweep against the canon** (#93, re-swept
+        // for the cage in #107), bounded below by socket clearance — 1.32, 1.15,
+        // 1.02 and 1.00 all mesh across `tests/plan.rs`'s 1500 random bodies and
+        // its corners; 0.85 does not.
+        let neck_y = girdle_y + (h * 0.064 * (1.0 + 0.3 * self.neck_length)).max(girdle_r * 1.02);
         // How far the head reaches below its own joint, and it is a HEAD measure
         // rather than a stature one. This was `(h * 0.052).max(head_r * 0.45)`,
         // where the second term can never bind — 0.45 of a head radius is at most
@@ -876,12 +902,46 @@ impl BodyPlan for HumanoidParams {
         // 1.379 girdle radii; 1.50 − 0.08 leaves 3% over it, and that corner is
         // what the pair below is chosen for rather than the middle.
         //
+        // **1.50 down to 1.42 on the eight-point cage, and this is the payment
+        // #107 was taken out for** (#106). The floor above is not a body
+        // proportion, it is cage geometry: the 0.82 in it is how far a socket
+        // ring's flat reaches against its corners, which is `cos` of half a ring
+        // segment — 0.707 at four points and 0.924 at eight. So the floor moved
+        // when the ring did, and 1.50 was pinned to the old one.
+        //
+        // Re-derived by sweep rather than by re-running the algebra, because the
+        // binding term is whichever of two clearances is worse and that is not
+        // stable across the parameter space. Against `tests/plan.rs`'s 1500
+        // random bodies and its corners:
+        //
+        // ```text
+        //   1.50   meshes    shoulder span 0.2175 of stature
+        //   1.46   meshes                  0.2122
+        //   1.42   meshes                  0.2070   <- here
+        //   1.38   FAILS                   0.2017
+        //   1.35   FAILS                   0.1978
+        // ```
+        //
+        // Reference is 0.1899, so this takes the shoulders from 14.5% over it to
+        // 9%. 1.38 is where meshing goes, and 1.42 sits about 3% above that —
+        // the same margin the `shoulder_width = −1` corner was given above.
+        //
+        // **The other half of the fix is not a coefficient and has already
+        // happened.** #106's complaint was that the socket clears the chest's
+        // CAGE half-width while the surface renders at 0.656 of it, so a
+        // shoulder sat 45% outside a ribcage nobody could see. The cage now
+        // delivers 0.79–1.00, so the same clearance puts it about 15% outside —
+        // and the ribcage it clears filled out to the reference on its own. The
+        // coat-hanger ratio, shoulder span over the trunk's own half-width at
+        // the girdle, went 3.47 to 2.78 against a reference 2.38.
+        //
         // Provenance: **derived, corrected against a failure, then bounded by a
-        // sweep** (#98). The first derivation is left above because it is the
-        // mistake this socket invites, and because `hip_x` gets away with the
-        // same reasoning only by accident — a hip socket's siblings blend toward
-        // the *waist*, which is no wider than the pelvis.
-        let clavicle_x = girdle_r * (1.50 + 0.08 * self.shoulder_width);
+        // sweep** (#98, re-swept for the eight-point cage in #107). The first
+        // derivation is left above because it is the mistake this socket
+        // invites, and because `hip_x` gets away with the same reasoning only by
+        // accident — a hip socket's siblings blend toward the *waist*, which is
+        // no wider than the pelvis.
+        let clavicle_x = girdle_r * (1.42 + 0.08 * self.shoulder_width);
         // Provenance: **unsourced**.
         let clavicle_y = girdle_y + h * 0.004;
         // How far outboard of the clavicle the arm's chain starts.
@@ -1087,7 +1147,7 @@ impl BodyPlan for HumanoidParams {
                 clavicle,
                 Node::new(
                     Vec3::new(side * shoulder_at.x, shoulder_at.y, shoulder_at.z),
-                    h * 0.055 * girth,
+                    h * 0.041 * girth,
                 )
                 .in_zone(Zone::UpperLimb(fore)),
             );
@@ -1095,7 +1155,7 @@ impl BodyPlan for HumanoidParams {
                 shoulder,
                 Node::new(
                     Vec3::new(side * elbow_at.x, elbow_at.y, elbow_at.z),
-                    h * 0.037 * girth,
+                    h * 0.026 * girth,
                 )
                 .in_zone(Zone::UpperLimb(fore)),
             );
@@ -1103,7 +1163,7 @@ impl BodyPlan for HumanoidParams {
                 elbow,
                 Node::new(
                     Vec3::new(side * wrist_at.x, wrist_at.y, wrist_at.z),
-                    h * 0.025 * girth,
+                    h * 0.018 * girth,
                 )
                 .in_zone(Zone::LowerLimb(fore)),
             );
@@ -1135,17 +1195,17 @@ impl BodyPlan for HumanoidParams {
             // at 0.0943 of stature against the reference's 0.0910.
             let hip = skeleton.extend_from(
                 pelvis,
-                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.067 * girth)
+                Node::new(Vec3::new(side * hip_x, hip_y, 0.0), h * 0.054 * girth)
                     .in_zone(Zone::UpperLimb(hind)),
             );
             let knee = skeleton.extend_from(
                 hip,
-                Node::new(Vec3::new(side * hip_x, knee_y, knee_z), h * 0.037 * girth)
+                Node::new(Vec3::new(side * hip_x, knee_y, knee_z), h * 0.028 * girth)
                     .in_zone(Zone::UpperLimb(hind)),
             );
             let ankle = skeleton.extend_from(
                 knee,
-                Node::new(Vec3::new(side * hip_x, ankle_y, 0.0), h * 0.025 * girth)
+                Node::new(Vec3::new(side * hip_x, ankle_y, 0.0), h * 0.019 * girth)
                     .in_zone(Zone::LowerLimb(hind)),
             );
             // **The foot is part of the leg, not a slab hung off its end** (#111).

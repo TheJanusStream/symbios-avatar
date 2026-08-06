@@ -438,7 +438,24 @@ const SETTLE: f32 = 0.92;
 /// softer there than the 33–57° jawline is; that is measured, it is the reason
 /// this band and not the guard is where the next resolution comes from, and it
 /// is the one thing #80 did not finish.
-const FACE_PASSES: [(f32, f32, f32, f32); 7] = [
+const FACE_PASSES: [(f32, f32, f32, f32); 8] = [
+    // **The broadest pass, and it is here because the body's subdivision level
+    // halved** (#107). Eight-point cage rings buy the body a smooth surface at
+    // one Catmull-Clark pass instead of two, which is where the triangle budget
+    // for them comes from — but the head goes through the same halving, and
+    // arrives with cells twice the size every band below was measured against.
+    // No band pass can make that up: each one refines only what it already
+    // covers, so the strip outside the first band's near cosine, and everything
+    // above its ceiling, stays at the base level however many passes follow.
+    //
+    // This one covers the whole front and both flanks — out past the ears at
+    // -0.30, from the floor of the head to well above the brow — and it runs
+    // first, so every band pass after it splits cells that are already halved.
+    // Measured as the median edge of a head-owned face over the four feature
+    // bands: 9.3 mm without it against 4.8-5.7 with, which is back inside the
+    // range the passes below were tuned at. The rendered nose has its bridge
+    // and its tip again; without it the whole feature was a mound.
+    (-0.30, 1.0, -1.15, 1.0),
     (0.25, 1.0, -1.15, 0.60),
     (0.55, 1.0, -1.00, 0.50),
     // The flank of the jaw, from where the mouth's passes give up round to
@@ -593,6 +610,28 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
         return local;
     }
     let height = local.y / radius;
+    // How many radii of real head one unit of profile height is worth, which is
+    // the inverse of the remap below. On a head whose surface runs out exactly
+    // where the profiles finish letting go this is one, and every knot means
+    // what it says.
+    //
+    // **It is not one any more, and that is what flattens a chin** (#107). The
+    // remap normalises HEIGHT and nothing normalises the push that goes with
+    // it: [`CHIN`] is added in radii while its domain is stretched to fit
+    // whatever floor the head came out with, so the chin's aspect ratio is a
+    // free variable. Eight-point cage rings and one subdivision took the floor
+    // from the −0.55 to −0.89 radii this profile was authored against to −1.07
+    // to −1.16, measured over sixteen seeds — so the chin was drawn half again
+    // as tall as before at exactly the same projection, which is a ramp and not
+    // a prominence. Measured on the shaped midline, the crest walked 0.074
+    // profile heights ABOVE [`CHIN`]'s own peak and the hollow above it fell
+    // from 3.9 mm at worst to 0.78.
+    //
+    // Applied to the whole head rather than to the remapped half, because
+    // [`CHIN`] is not quite zero at the joint — its highest knot is at +0.05 —
+    // and a factor that switched on at zero would put a step of about
+    // 0.7 mm around the head at the joint's own height.
+    let stretch = (floor * SETTLE) / JUNCTION;
     let height = if height < 0.0 {
         height * (JUNCTION / (floor * SETTLE).min(-f32::EPSILON))
     } else {
@@ -649,7 +688,7 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
     Vec3::new(
         local.x * (wide - hollow) * mandible,
         local.y,
-        local.z * deep * mandible + (knot(&CHIN, height) * point + ledge) * radius,
+        local.z * deep * mandible + (knot(&CHIN, height) * point * stretch + ledge) * radius,
     )
 }
 
@@ -1304,7 +1343,13 @@ mod tests {
         //
         // Kept as a pair rather than replacing the first: they measure different
         // surfaces and both are real.
-        for levels in [crate::BODY_SUBDIVISIONS - 1, crate::BODY_SUBDIVISIONS] {
+        // The shipped level and one ABOVE it. It used to be one below, and one
+        // below is now zero — an unsubdivided cage, which is a control polygon
+        // and not a surface anybody renders. A neighbouring level is here so the
+        // assertion cannot be tuned to exactly one resolution; which side it
+        // sits on is arbitrary, and only one side exists at
+        // [`crate::BODY_SUBDIVISIONS`] = 1.
+        for levels in [crate::BODY_SUBDIVISIONS, crate::BODY_SUBDIVISIONS + 1] {
             for seed in [1i64, 23, 42, 99] {
                 let mut record = AvatarRecord::new("Skulled", Archetype::default());
                 record.reroll(seed);
@@ -1386,7 +1431,22 @@ mod tests {
         // has nothing to answer with and this test's `expect` is what fires.
         // That is a real defect in that configuration, and this is where it
         // announces itself instead of surfacing as a mouth in the wrong place.
-        for levels in [crate::BODY_SUBDIVISIONS - 1, crate::BODY_SUBDIVISIONS] {
+        // The shipped level and one ABOVE it. It used to be one below, and one
+        // below is now zero — an unsubdivided cage, which is a control polygon
+        // and not a surface anybody renders. A neighbouring level is here so the
+        // assertion cannot be tuned to exactly one resolution; which side it
+        // sits on is arbitrary, and only one side exists at
+        // [`crate::BODY_SUBDIVISIONS`] = 1.
+        // **Swept whole and reported whole, rather than stopping at the first
+        // seed under the floor.** A hollow is a distribution over seeds — some
+        // heads have a deep sulcus and some barely have one — and an assertion
+        // that panics on seed 6 says nothing about seeds 7 to 16, so tuning the
+        // chin against it is tuning against a single sample and re-running to
+        // find the next. This collects all 32 readings, prints them in seed
+        // order, and fails once with the worst of them named. The cost is one
+        // sweep either way; what it buys is the shape of the failure.
+        let mut worst: Vec<(usize, i64, Option<f32>)> = Vec::new();
+        for levels in [crate::BODY_SUBDIVISIONS, crate::BODY_SUBDIVISIONS + 1] {
             for seed in 1i64..=16 {
                 let mut record = AvatarRecord::new("Skulled", Archetype::default());
                 record.reroll(seed);
@@ -1397,11 +1457,12 @@ mod tests {
                 let skull = Skull::measure(&mesh, &rig).expect("a skull");
                 let centre = rig.joints[skull.head].position;
                 let Some(at) = chin_of(&mesh, &rig, skull.head, skull.throat_and_crown().0) else {
-                    panic!(
-                        "seed {seed} at {levels} subdivisions: the midline profile climbs from \
-                         the throat to the chin's own ceiling without ever turning over, so \
-                         there is no chin on this head to measure a hollow above"
-                    );
+                    // No crest at all: the midline climbs from the throat to the
+                    // chin's own ceiling without ever turning over. Recorded as
+                    // an absent hollow rather than a shallow one, because the two
+                    // are different defects and a zero would read as the second.
+                    worst.push((levels, seed, None));
+                    continue;
                 };
 
                 // How far the profile falls below the crest before it climbs
@@ -1429,15 +1490,31 @@ mod tests {
                     }
                     y += 0.0009;
                 }
-                assert!(
-                    top - dip > 5.0 * FALL,
-                    "seed {seed} at {levels} subdivisions: the hollow above the chin is only \
-                     {:.2} mm deep, against a crest rule that needs {:.2} mm to see one",
-                    (top - dip) * 1000.0,
-                    FALL * 1000.0
-                );
+                worst.push((levels, seed, Some(top - dip)));
             }
         }
+
+        let floor = 5.0 * FALL;
+        let short: Vec<_> = worst
+            .iter()
+            .filter(|(_, _, depth)| depth.is_none_or(|depth| depth <= floor))
+            .collect();
+        assert!(
+            short.is_empty(),
+            "{} of {} heads have no usable hollow above the chin, against a crest rule \
+             that needs {:.2} mm to see one. The whole sweep, in millimetres:\n{}",
+            short.len(),
+            worst.len(),
+            floor * 1000.0,
+            worst
+                .iter()
+                .map(|(levels, seed, depth)| match depth {
+                    Some(depth) => format!("  {levels} sub, seed {seed:>2}: {:.2}", depth * 1000.0),
+                    None => format!("  {levels} sub, seed {seed:>2}: NO CHIN"),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 
     #[test]
@@ -1669,9 +1746,28 @@ mod tests {
         // setting that ships, and fixing it means cutting the head from the
         // skeleton instead of by nearest bone, which would redefine the chin
         // every feature height is measured down from.
+        //
+        // **Asked at the shipped refinement and one above it, because the
+        // residual is a transient at the coarse end and this used to ask at the
+        // coarsest pair there is** (#107). Swept pass by pass over the same six
+        // seeds, the worst movement in the depth is:
+        //
+        // ```text
+        //   1 -> 2   14.0 mm      5 -> 6   0.3 mm
+        //   2 -> 3    4.9 mm      6 -> 7   0.4 mm
+        //   3 -> 4    0.0 mm      7 -> 8   0.1 mm
+        //   4 -> 5    0.0 mm      8 -> 9   0.0 mm
+        // ```
+        //
+        // It has settled to nothing well before [`crate::FACE_REFINEMENT`], and
+        // the transient is bigger than it was because the first pass is no
+        // longer the one it used to be: `FACE_PASSES` now opens with a broad
+        // pass covering the whole head, so "one pass" is a different and
+        // coarser face than the front-band pass this test used to compare from.
+        // Asserting on that pair measures a head the crate has never built.
         for seed in 0..6 {
-            let (_, coarse, centre, _) = skull(seed, 1);
-            let (_, fine, ..) = skull(seed, 2);
+            let (_, coarse, centre, _) = skull(seed, crate::FACE_REFINEMENT);
+            let (_, fine, ..) = skull(seed, crate::FACE_REFINEMENT + 1);
             let (lo, hi) = coarse.throat_and_crown();
             for step in 0..=12 {
                 let height = lo + (hi - lo) * (0.15 + 0.55 * step as f32 / 12.0);

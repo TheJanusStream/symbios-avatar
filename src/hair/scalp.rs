@@ -7,6 +7,11 @@
 //! the nominal radius would leave it floating a head-width off the scalp, which
 //! is the same mistake that first made the eyes bulge like goggles.
 //!
+//! The `0.64` above was measured on a four-point cage. Eight-point rings (#107)
+//! take it to `0.84`–`0.90` across sixteen seeds, so the gap is a fifth of what
+//! it was and this module is no less necessary for it: a tenth of a head radius
+//! is 9 mm on the default body, against a hair stand-off of about 3 mm.
+//!
 //! So rather than assume a shape, this measures one — a profile of horizontal
 //! radius against height, sampled from the built mesh. The measured profile is
 //! also fuller than any ellipsoid fitted to it, which is a second reason not to
@@ -294,7 +299,11 @@ mod tests {
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("the body should mesh");
         (
-            catmull_clark(&cage, 2),
+            // [`crate::BODY_SUBDIVISIONS`], not a literal. This helper measures
+            // how much of its node radius the head's SURFACE delivers, and a
+            // level of its own measures a head nobody renders — the same defect
+            // #107 found in two of the skull tests, in the same shape.
+            catmull_clark(&cage, crate::BODY_SUBDIVISIONS),
             Rig::from_skeleton(&skeleton).expect("the body should rig"),
         )
     }
@@ -320,13 +329,28 @@ mod tests {
     fn the_measured_surface_lies_inside_the_node_radius() {
         // The whole reason this module exists: were the rendered skull the size
         // its node claims, hair could be placed by arithmetic alone.
-        let (mesh, rig) = body(23);
-        let scalp = Scalp::measure(&mesh, &rig).expect("a humanoid has a head");
-        assert!(
-            scalp.width_at(0.0) < 0.8,
-            "the skull measured {} of its node radius across",
-            scalp.width_at(0.0)
-        );
+        //
+        // **The gap is a fifth of what it was, and the module still earns its
+        // keep** (#107). Eight-point cage rings sit far closer to the surface
+        // they approximate than a four-point diamond does, so the head that used
+        // to deliver 0.65 of its node radius across now delivers 0.84 to 0.90 —
+        // swept over sixteen seeds, which is where the bound below comes from.
+        // A tenth of a head radius is still 9 mm of scalp on the default body,
+        // several times the hair's own stand-off, so hair placed by arithmetic
+        // would still sit inside the skull.
+        //
+        // **Swept rather than asked of one seed.** The figure varies by 0.06
+        // across seeds — more than the margin this bound has — so a single body
+        // cannot say where the worst case is.
+        for seed in 1i64..=16 {
+            let (mesh, rig) = body(seed);
+            let scalp = Scalp::measure(&mesh, &rig).expect("a humanoid has a head");
+            assert!(
+                scalp.width_at(0.0) < 0.92,
+                "seed {seed}: the skull measured {} of its node radius across",
+                scalp.width_at(0.0)
+            );
+        }
     }
 
     #[test]

@@ -207,7 +207,7 @@ pub use symbios_texture::generator::TextureMap;
 /// the second pass moved the profile the ears are placed from, and one seed's
 /// ear fell to 18% visible against a 25% floor. That was a defect in the
 /// measurement rather than in the refinement, and it is fixed (#67).
-const FACE_REFINEMENT: usize = 7;
+const FACE_REFINEMENT: usize = 8;
 
 /// How many Catmull-Clark passes a body's cage gets.
 ///
@@ -227,7 +227,7 @@ const FACE_REFINEMENT: usize = 7;
 /// smooth. Measured on the default body: **24,776** triangles at four points and
 /// two passes, 43,196 at eight and two, and **15,862 at eight and one**. See
 /// #107; the pair moves together or not at all.
-pub const BODY_SUBDIVISIONS: usize = 2;
+pub const BODY_SUBDIVISIONS: usize = 1;
 
 /// Builds a body's surface from its skeleton, shaped and ready to bind.
 ///

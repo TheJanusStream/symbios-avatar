@@ -23,10 +23,32 @@ fn cage_of(skeleton: &Skeleton, label: &str) -> PolyMesh {
 #[test]
 fn a_plain_chain_meshes_to_a_capped_tube() {
     let cage = cage_of(&demo::chain(3), "chain");
-    // Three bones give four node rings plus two tip rings; five bands of four
-    // quads, plus a cap at each end.
-    assert_eq!(cage.face_count(), 5 * 4 + 2);
-    assert_eq!(cage.quad_fraction(), 1.0, "a jointless limb is all quads");
+    // Three bones give four node rings plus two tip rings; five bands of one
+    // quad per ring vertex, plus a cap at each end.
+    //
+    // The ring size is read off the cage rather than written out, because it is
+    // `cage::limb::RING` and an integration test cannot name it. Writing `4`
+    // here made this the last thing to fail when #107 took the ring to eight —
+    // a count that has to be edited by hand every time is a count that tests the
+    // editor.
+    let ring = cage.vertex_count() / 6;
+    assert_eq!(cage.face_count(), 5 * ring + 2);
+    // Every band is a quad and the two caps are one polygon each over their own
+    // ring. That used to read "a jointless limb is all quads", which was true
+    // only because a cap over a four-point ring IS a quad; at eight it is an
+    // octagon and nothing is wrong with it. Catmull-Clark quadrangulates both
+    // either way — `lib.rs`'s own example still asserts the subdivided body is
+    // all quads.
+    assert_eq!(
+        cage.faces.iter().filter(|face| face.len() == 4).count(),
+        5 * ring,
+        "every band of a jointless limb is a quad"
+    );
+    assert_eq!(
+        cage.faces.iter().filter(|face| face.len() == ring).count(),
+        2,
+        "and each end is capped by a single polygon over its ring"
+    );
 }
 
 #[test]

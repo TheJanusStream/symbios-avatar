@@ -19,6 +19,8 @@
 //! and a single offset surface has none of those: seen from underneath it
 //! vanishes, and at the hem it reads as a sticker.
 
+use std::collections::HashMap;
+
 use glam::{Vec2, Vec3};
 
 use crate::mesh::PolyMesh;
@@ -113,15 +115,37 @@ impl Garment {
         // Only the vertices the cut actually uses, renumbered. Carrying the
         // body's whole vertex list would leave a garment mostly made of points
         // no face refers to, which every downstream tool then has to ignore.
-        let mut moved = vec![u32::MAX; mesh.positions.len()];
+        //
+        // **One garment vertex per FAN, not per body vertex, and that is what
+        // makes a pinched hem a closed solid** (#105). Where the covered
+        // region's boundary touches itself — the top of a pair of shorts, all
+        // the way round the waist — a single body vertex carries two separate
+        // runs of covered faces and four boundary edges. Sharing one column
+        // between them puts four rim quads on the side edge that column and its
+        // inner twin span, and four faces on an edge is not a solid. Splitting
+        // the vertex once per fan gives each boundary loop its own column and
+        // its own side edge, and the two loops stop being one figure-eight.
+        //
+        // Measured before the split: the shorts came back with 12 nonmanifold
+        // edges on ten of twelve seeds, always a multiple of four because each
+        // pinch vertex contributes exactly one. Identical across all three
+        // sleeve lengths, which is what ruled the sleeve out.
+        let fan = fans(&covered);
         let mut source: Vec<u32> = Vec::new();
-        for face in &covered {
-            for &corner in face.iter() {
-                if moved[corner as usize] == u32::MAX {
-                    moved[corner as usize] = source.len() as u32;
-                    source.push(corner);
-                }
+        // `corner_at[face][position]` is the garment vertex that corner uses.
+        let mut corner_at: Vec<Vec<u32>> = Vec::with_capacity(covered.len());
+        let mut column: HashMap<usize, u32> = HashMap::new();
+        for (index, face) in covered.iter().enumerate() {
+            let mut row = Vec::with_capacity(face.len());
+            for at in 0..face.len() {
+                let root = fan.root(index, at);
+                let next = *column.entry(root).or_insert_with(|| {
+                    source.push(face[at]);
+                    source.len() as u32 - 1
+                });
+                row.push(next);
             }
+            corner_at.push(row);
         }
 
         let mut garment = PolyMesh::new();
@@ -137,16 +161,17 @@ impl Garment {
             garment.push_vertex(at - out * cut.bite);
         }
 
-        for face in &covered {
-            let outer: Vec<u32> = face.iter().map(|&c| moved[c as usize]).collect();
+        for row in &corner_at {
+            let outer: Vec<u32> = row.clone();
             // The inner shell faces the other way, so its winding is reversed.
             let inner: Vec<u32> = outer.iter().rev().map(|&v| v + inner_base).collect();
             garment.push_face(outer);
             garment.push_face(inner);
         }
 
-        for [from, to] in hem_edges(&covered) {
-            let (a, b) = (moved[from as usize], moved[to as usize]);
+        for (face, at) in hem_edges(&covered) {
+            let row = &corner_at[face];
+            let (a, b) = (row[at], row[(at + 1) % row.len()]);
             // Reversed against the outer shell's use of the same edge. Every
             // edge of a closed solid is traversed once each way; the rim shares
             // one edge with the outer shell and one with the inner, so it must
@@ -203,49 +228,131 @@ fn borrowed(weights: &SkinWeights, vertex: usize) -> [Influence; MAX_INFLUENCES]
         .unwrap_or([Influence::default(); MAX_INFLUENCES])
 }
 
+/// The undirected key an edge is looked up by, endpoints in order.
+fn edge_key(a: u32, b: u32) -> (u32, u32) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
+/// Which covered faces use each edge, as `(face, position)` within [`Garment::cut`]'s
+/// `covered` list.
+fn edge_faces(covered: &[&Vec<u32>]) -> HashMap<(u32, u32), Vec<(usize, usize)>> {
+    let mut users: HashMap<(u32, u32), Vec<(usize, usize)>> = HashMap::new();
+    for (index, face) in covered.iter().enumerate() {
+        for at in 0..face.len() {
+            let key = edge_key(face[at], face[(at + 1) % face.len()]);
+            users.entry(key).or_default().push((index, at));
+        }
+    }
+    users
+}
+
 /// Edges that only one covered face uses — the garment's cut edges.
 ///
-/// Directed, and pointing the way the single face that owns them wound, so the
-/// rim built from them faces outward without anything having to work out which
-/// side is which.
-fn hem_edges(covered: &[&Vec<u32>]) -> Vec<[u32; 2]> {
-    let mut seen: Vec<([u32; 2], bool)> = Vec::new();
-    for face in covered {
-        for at in 0..face.len() {
-            let edge = [face[at], face[(at + 1) % face.len()]];
-            let key = if edge[0] < edge[1] {
-                [edge[0], edge[1]]
-            } else {
-                [edge[1], edge[0]]
-            };
-            match seen.iter_mut().find(|(other, _)| *other == key) {
-                Some((_, shared)) => *shared = true,
-                None => seen.push((key, false)),
-            }
-        }
-    }
-    let lone: Vec<[u32; 2]> = seen
-        .iter()
-        .filter(|(_, shared)| !shared)
-        .map(|(edge, _)| *edge)
+/// Returned as `(face, position)` rather than as a pair of body vertices, and
+/// that is not bookkeeping: at a vertex where the boundary touches itself the
+/// garment carries more than one column for the same body vertex (see
+/// [`fans`]), so a body vertex no longer names a garment one. The corner does.
+///
+/// Directed by construction — position `at` runs from `face[at]` to its
+/// successor — so the rim built from them faces outward without anything having
+/// to work out which side is which.
+fn hem_edges(covered: &[&Vec<u32>]) -> Vec<(usize, usize)> {
+    let mut hem: Vec<(usize, usize)> = edge_faces(covered)
+        .into_values()
+        .filter(|users| users.len() == 1)
+        .map(|users| users[0])
         .collect();
+    // A `HashMap` hands its values back in whatever order it likes, and a
+    // garment's face list is compared between runs by `tests/record.rs`.
+    hem.sort_unstable();
+    hem
+}
 
-    // Recover each lone edge's direction from the face that owns it.
-    let mut hem = Vec::with_capacity(lone.len());
-    for face in covered {
-        for at in 0..face.len() {
-            let edge = [face[at], face[(at + 1) % face.len()]];
-            let key = if edge[0] < edge[1] {
-                [edge[0], edge[1]]
-            } else {
-                [edge[1], edge[0]]
-            };
-            if lone.contains(&key) {
-                hem.push(edge);
-            }
+/// Runs of covered faces that meet edge to edge, one class per corner.
+///
+/// **A vertex is not a column** (#105). The covered region is a patch cut out of
+/// the body, and its boundary is a set of loops only so long as it never touches
+/// itself. It does touch itself — at the top of a pair of shorts, all the way
+/// round the waist — and there a single body vertex carries two separate runs of
+/// covered faces with four boundary edges between them. [`Garment::cut`] gives
+/// each run its own garment vertex, so each boundary loop gets its own rim
+/// column and its own side edge; sharing one put four rim quads on one edge.
+///
+/// Two corners at the same vertex are in the same run when a covered face
+/// spans the edge between them, so this is a union-find over corners with one
+/// union per interior edge. It says nothing about winding: the corners at each
+/// end of a shared edge are matched by vertex, so a face wound the wrong way
+/// round joins the same run it would have anyway.
+struct Fans {
+    /// Where each face's corners start in the flat corner numbering.
+    offset: Vec<usize>,
+    parent: Vec<usize>,
+}
+
+impl Fans {
+    /// The run a corner belongs to, named by its representative corner.
+    fn root(&self, face: usize, at: usize) -> usize {
+        let mut node = self.offset[face] + at;
+        while self.parent[node] != node {
+            node = self.parent[node];
+        }
+        node
+    }
+
+    /// Joins the runs two corners belong to.
+    fn join(&mut self, a: usize, b: usize) {
+        let (mut a, mut b) = (a, b);
+        while self.parent[a] != a {
+            a = self.parent[a];
+        }
+        while self.parent[b] != b {
+            b = self.parent[b];
+        }
+        if a != b {
+            self.parent[a] = b;
         }
     }
-    hem
+}
+
+/// Classifies every corner of `covered` into the run of faces it sits in.
+fn fans(covered: &[&Vec<u32>]) -> Fans {
+    let mut offset = Vec::with_capacity(covered.len());
+    let mut total = 0;
+    for face in covered {
+        offset.push(total);
+        total += face.len();
+    }
+    let mut built = Fans {
+        offset,
+        parent: (0..total).collect(),
+    };
+
+    for ((p, q), users) in edge_faces(covered) {
+        // Exactly two, because an edge with more than that is a body already
+        // non-manifold along it and no split here would mend the garment. One
+        // is a boundary edge, which is what separates two runs rather than
+        // joining them.
+        let [(left, left_at), (right, right_at)] = users[..] else {
+            continue;
+        };
+        // Matched by vertex rather than by winding: `at` and its successor are
+        // the edge's two ends, and which of them is `p` depends on how the face
+        // was wound.
+        for end in [p, q] {
+            let corner_of = |face: usize, at: usize| {
+                let len = covered[face].len();
+                let corner = if covered[face][at] == end {
+                    at
+                } else {
+                    (at + 1) % len
+                };
+                built.offset[face] + corner
+            };
+            let (a, b) = (corner_of(left, left_at), corner_of(right, right_at));
+            built.join(a, b);
+        }
+    }
+    built
 }
 
 /// A colour, from a hue around the wheel and a lightness.

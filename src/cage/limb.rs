@@ -30,7 +30,7 @@ use crate::skeleton::{Chain, NodeKind, Skeleton};
 /// The value is a constant rather than a config field because it changes the
 /// *shape* of `Socket::ring` and `LimbBuild::rings`. Anything reading those
 /// should loop to `RING` rather than assume four.
-pub(crate) const RING: usize = 4;
+pub(crate) const RING: usize = 8;
 
 /// Ring vertex offsets from a centre, wound counter-clockwise about `u × v`.
 ///

@@ -300,24 +300,75 @@ mod tests {
 
     #[test]
     fn every_garment_is_a_closed_solid() {
-        let (mesh, weights, zones) = body(7);
-        for sleeve in [Sleeve::Bare, Sleeve::Forearm, Sleeve::Wrist] {
-            for leg in [Leg::Shorts, Leg::Calf, Leg::Ankle] {
-                let params = OutfitParams {
-                    sleeve: sleeve.clone(),
-                    leg: leg.clone(),
-                    ..Default::default()
-                };
-                let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
-                for garment in &outfit.garments {
-                    assert!(
-                        garment.mesh.is_closed_manifold(),
-                        "{sleeve:?}/{leg:?}: {:?}",
-                        garment.mesh.manifold_report()
-                    );
+        // **Swept over seeds, because one body cannot see this defect** (#105).
+        // It used to ask seed 7 alone, on the reasoning that the failure was a
+        // bare sleeve's hem cutting through the arm-to-torso saddle. It was not:
+        // measured under the eight-point cage of #107 the same failure appears
+        // on ten of twelve seeds, identically at all three sleeve lengths, and
+        // in the TROUSERS rather than the top — the boundary running round the
+        // top of a pair of shorts touches itself, and every vertex where it does
+        // put four rim quads on one edge. A sleeve-shaped hypothesis tested on a
+        // single body is how it stayed filed as a sleeve bug.
+        for seed in 1i64..=12 {
+            let (mesh, weights, zones) = body(seed);
+            for sleeve in [Sleeve::Bare, Sleeve::Forearm, Sleeve::Wrist] {
+                for leg in [Leg::Shorts, Leg::Calf, Leg::Ankle] {
+                    let params = OutfitParams {
+                        sleeve: sleeve.clone(),
+                        leg: leg.clone(),
+                        ..Default::default()
+                    };
+                    let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
+                    for garment in &outfit.garments {
+                        assert!(
+                            garment.mesh.is_closed_manifold(),
+                            "seed {seed} {sleeve:?}/{leg:?}: {:?}",
+                            garment.mesh.manifold_report()
+                        );
+                    }
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_pinched_hem_is_cut_into_separate_columns() {
+        // The mechanism behind the test above, asserted directly so that one
+        // cannot go on passing for a reason other than the fix. `Garment::cut`
+        // gives each run of covered faces at a vertex its own garment vertex, so
+        // where the boundary touches itself the same body vertex appears in
+        // `source` more than once. If that stops happening the split has been
+        // undone and `every_garment_is_a_closed_solid` is passing on a body that
+        // happens not to pinch.
+        //
+        // Seed 7's shorts are the case #105 was filed on: six pinch vertices in
+        // the abdomen, all on one cage ring at the waist.
+        let (mesh, weights, zones) = body(7);
+        let params = OutfitParams {
+            sleeve: Sleeve::Bare,
+            leg: Leg::Shorts,
+            ..Default::default()
+        };
+        let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
+        let split: usize = outfit
+            .garments
+            .iter()
+            .map(|garment| {
+                // `source` lists the body vertex behind each garment vertex,
+                // outer shell then inner, so a body vertex carrying one column
+                // appears exactly twice.
+                let mut seen = std::collections::HashMap::<u32, usize>::new();
+                for &from in &garment.source {
+                    *seen.entry(from).or_default() += 1;
+                }
+                seen.values().filter(|&&times| times > 2).count()
+            })
+            .sum();
+        assert!(
+            split > 0,
+            "no body vertex was cut into more than one garment column, so the \
+             pinch this guards against is no longer being reached"
+        );
     }
 
     #[test]
