@@ -172,10 +172,26 @@ pub(crate) struct Socket {
     /// and its neighbour the same way `half` is. See
     /// [`crate::skeleton::Node::roll`].
     pub roll: f32,
+    /// How far the ring sits off the bone, in the `(u, v)` frame, blended the
+    /// same way `half` is. See [`crate::skeleton::Node::offset`].
+    ///
+    /// **It has to travel with the half-extents or an offset section is not one**
+    /// (#125). A socket blends its neighbour's SIZE, so a node given a deeper
+    /// section to carry mass on one side hands that depth to the joint hull —
+    /// symmetrically about the bone, because the displacement that was supposed
+    /// to cancel it stayed behind. Measured on the neck, whose section reaches
+    /// `1.56 − 0.62` radii forward and should therefore leave the throat exactly
+    /// where it was: without this the throat came 9 mm forward at mid-neck and
+    /// the CHEST 20 mm, a node the change never touched.
+    pub offset: Vec2,
     /// The joint's own half-extents, the ring's size at distance zero.
     pub joint_half: Vec2,
     /// The neighbour node's half-extents, the ring's size at the far end.
     pub neighbor_half: Vec2,
+    /// The joint's own section offset, the ring's displacement at distance zero.
+    pub joint_offset: Vec2,
+    /// The neighbour node's section offset, the displacement at the far end.
+    pub neighbor_offset: Vec2,
     /// Length of the bone the socket slides along.
     pub bone_length: f32,
     /// Current distance from the joint centre.
@@ -191,8 +207,14 @@ pub(crate) struct Socket {
 
 impl Socket {
     /// Centre of the socket ring.
+    ///
+    /// The offset is part of where the ring *is*, so everything that reads a
+    /// centre reads the displaced one — including the clearance check, which is
+    /// about two rings colliding and not about two bones diverging. The plane
+    /// test in `joint::required_distance` is untouched by it either way: an
+    /// offset lies in `(u, v)`, perpendicular to the `dir` it projects along.
     pub(crate) fn center(&self) -> Vec3 {
-        self.base + self.dir * self.dist
+        self.base + self.dir * self.dist + self.u * self.offset.x + self.v * self.offset.y
     }
 
     /// Moves the socket along its limb, re-deriving the ring's size.
@@ -204,6 +226,7 @@ impl Socket {
         self.dist = dist.clamp(self.base_dist, self.max_dist.max(self.base_dist));
         let blend = (self.dist / self.bone_length).clamp(0.0, 1.0);
         self.half = self.joint_half.lerp(self.neighbor_half, blend);
+        self.offset = self.joint_offset.lerp(self.neighbor_offset, blend);
     }
 
     /// Effective radius of the ring for clearance tests.

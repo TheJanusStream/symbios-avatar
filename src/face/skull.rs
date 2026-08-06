@@ -1863,20 +1863,42 @@ mod tests {
         // in a docstring three hundred lines above this one, and it is the
         // seventeenth instrument in this project to have been measuring
         // something other than its name.
-        let (_, shaped, _, centre, radius) = head(11);
-        let back = |at: f32| {
-            bisect(&shaped, centre + Vec3::Y * at * radius, -Vec3::Z)
-                .expect("the midline is inside the head at both heights")
-                / radius
-        };
-        assert!(
-            back(0.30) > back(-0.42) * 1.25,
-            "the occiput reaches {:.3} radii behind the head joint against the jaw's \
-             {:.3}, and a cranium that does not out-reach its own jawline by a quarter \
-             is a ball on a post",
-            back(0.30),
-            back(-0.42)
-        );
+        //
+        // **It compared the built SILHOUETTE, and the silhouette behind a jaw is
+        // not the jaw any more** (#125). Giving the neck a section swept astern
+        // fills in behind the skull — which is the reference construction, whose
+        // own back has no neck on it at all, only a slope from the occiput into
+        // the shoulders. Measured on this body, the surface behind the jawline
+        // went from 0.798 radii to 1.008 while the occiput went 1.039 to 1.070,
+        // so the ratio fell from 1.30 to 1.06 with nothing wrong with the head.
+        // Reading it off the midline does not save it: at half the band's width
+        // the ratio is 1.02 and at three quarters it is 0.93, because the nape
+        // is there too.
+        //
+        // So this asks what it was always FOR — that `shape` builds a cranium
+        // fuller than a jaw — of the only thing that can still answer: the
+        // difference `shape` itself makes. Both readings carry the same neck
+        // underneath, so the neck cancels. Measured over these six bodies it
+        // moves the occiput back by 0.185 to 0.193 radii with and without the
+        // neck's mass, against −0.047 to +0.015 at the jaw: the bound below has
+        // the whole of that gap to sit in, and a vault whose profile stops
+        // reaching — the failure this test exists for — takes it to zero.
+        for seed in [11i64, 0, 3, 5, 7, 15] {
+            let (plain, shaped, _, centre, radius) = head(seed);
+            let back = |mesh: &PolyMesh, at: f32| {
+                bisect(mesh, centre + Vec3::Y * at * radius, -Vec3::Z)
+                    .expect("the midline is inside the head at both heights")
+                    / radius
+            };
+            let occiput = back(&shaped, 0.30) - back(&plain, 0.30);
+            let jaw = back(&shaped, -0.42) - back(&plain, -0.42);
+            assert!(
+                occiput > jaw + 0.12,
+                "seed {seed}: shaping pushed the back of the cranium out {occiput:+.3} radii \
+                 and the back of the jaw {jaw:+.3}, and a cranium that is not built fuller \
+                 than its own jawline is a ball on a post"
+            );
+        }
     }
 
     #[test]
@@ -2024,11 +2046,51 @@ mod tests {
                 // cost of that change and this is where it is paid. Widening the
                 // whole sweep to fit it would have hidden a regression anywhere
                 // else in the profile; this cannot.
-                let ceiling = if step == 0 { 11.0 } else { 9.0 };
+                //
+                // **11.0 → 13.0 for the neck's off-centre section, and it is the
+                // SURFACE that moved rather than the profile** (#125). The neck
+                // is swept `NECK_SECTION.y − NECK_LOBE` radii forward of its own
+                // joint, which is exactly where its front stood before, so the
+                // cage's throat does not move at all — but the limit surface at
+                // the front is an average over ring neighbours that DID move
+                // back, and it follows them a little. Measured on the six seeds
+                // this sweeps, at step 0 and on the midline:
+                //
+                // ```text
+                //   seed   surface before   after    profile before   after   error
+                //     0        80.7          75.4        89.6         87.7    12.3
+                //     1        62.2          60.4        70.5         61.8     1.4
+                //     2        84.0          80.7        87.4         85.3     4.6
+                //     3        72.6          70.8        78.8         76.7     5.9
+                //     4        55.9          52.5        60.9         59.4     6.9
+                //     5        69.7          65.4        78.6         69.0     3.6
+                // ```
+                //
+                // Five of the six IMPROVED and seed 0 is the whole of the cost:
+                // its throat came back 5.3 mm where its profile came back 1.9.
+                //
+                // **And the POPULATION barely moved, which is the more useful
+                // reading and it makes both bounds here overdue rather than
+                // relaxed.** Run over sixteen bodies instead of the six this
+                // sweeps, the midline error ran −5.3 to +12.1 mm BEFORE the neck
+                // was given a section, against −5.6 to +12.3 after: two tenths
+                // of a millimetre at each end. Seeds 6 upward were already
+                // outside both bounds and this test never visited them, so what
+                // the neck did was move seed 0 and seed 3 into a tail that was
+                // there all along. The paragraph at the top of this test still
+                // quotes −1.7 to +4.0 from #67's sweep, and that has not
+                // described this code for some time.
+                //
+                // Split by step, over sixteen seeds with the neck applied: step
+                // 0 runs +0.7 to +12.3 and every other step runs −5.6 to +6.2.
+                // So the throat band keeps a ceiling of its own and the rest of
+                // the sweep keeps a tighter one, which is the arrangement #93
+                // introduced and the reason it is worth keeping.
+                let ceiling = if step == 0 { 13.0 } else { 9.0 };
                 if let Some(surface) = probe(&mesh, from, Vec3::Z) {
                     let error = (skull.depth(height) - surface) * 1000.0;
                     assert!(
-                        (-4.0..ceiling).contains(&error),
+                        (-6.0..ceiling).contains(&error),
                         "seed {seed} at {height:.3}: the midline depth is {error:.1} mm out"
                     );
                 }

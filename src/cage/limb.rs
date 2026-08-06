@@ -237,8 +237,13 @@ fn place_socket(
     // all: a socket that stood on a flat edge while the node beside it stood on a
     // vertex would tear the section as it slid.
     let roll = hub.roll + (next.roll - hub.roll) * blend;
+    // And so does the offset, for a sharper version of the same reason: the
+    // depth and the displacement of a lobed section are one shape, and blending
+    // one without the other hands the joint the extra depth with nothing to
+    // cancel it. See [`Socket::offset`].
+    let offset = hub.offset.lerp(next.offset, blend);
 
-    let center = hub.position + away * dist;
+    let center = hub.position + away * dist + u * offset.x + v * offset.y;
     let ring = push_ring(mesh, center, u, v, half, roll);
 
     Socket {
@@ -250,8 +255,11 @@ fn place_socket(
         v,
         half,
         roll,
+        offset,
         joint_half: hub.half_extents(),
         neighbor_half: next.half_extents(),
+        joint_offset: hub.offset,
+        neighbor_offset: next.offset,
         bone_length,
         dist,
         base_dist: dist,

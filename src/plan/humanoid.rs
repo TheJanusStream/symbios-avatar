@@ -112,8 +112,67 @@ const CHEST_SECTION: Vec2 = Vec2::new(1.0, 0.74);
 /// shoulder silhouette is carried by the clavicle and shoulder nodes outboard
 /// of it, and the ribcage below by [`CHEST_SECTION`], which is untouched.
 const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
-/// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite.
-const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
+/// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite — and it
+/// is not centred on its own joint either, which is what the depth here is for.
+///
+/// **0.94 → 1.56, and it means nothing without [`NECK_LOBE`]** (#125). The pair
+/// is one shape: the section is swept `NECK_LOBE` radii astern of the joint, so
+/// it reaches `1.56 + 0.62` behind and `1.56 − 0.62` — which is 0.94, exactly
+/// what stood here — in front. The cage's throat therefore stands exactly where
+/// it did and the mass goes behind it. Read either number alone and this looks
+/// like a neck two-thirds deeper than a neck.
+///
+/// The SURFACE follows that to within a couple of millimetres rather than
+/// exactly, and the residual is not slack in the arithmetic: the limit surface
+/// at the front of the ring is an average over neighbours which all moved back,
+/// even though the front vertex did not. Bisected on the built body, the throat
+/// comes back 2.1 mm at mid-neck and 5.3 mm at its worst, in the throat band on
+/// the widest-span seed. It never comes forward, which is the direction that
+/// would matter.
+const NECK_SECTION: Vec2 = Vec2::new(1.0, 1.56);
+
+/// How far astern of its own joint the neck's section is swept, in neck radii.
+///
+/// **A neck is the front of a column, and ours was a pole between two balls**
+/// (#125). Measured on the Quaternius reference, the surface reaches 2.0 to 2.4
+/// times as far behind the neck's axis as the throat reaches in front, at every
+/// height from the chin to the shoulders; ours read 1.00, exactly, at every
+/// height, because a centred ellipse is symmetric fore and aft by construction.
+/// Seen from above, ours was a closed oval floating in clear air where the
+/// reference is a forward lobe fused into a wide back mass — the trapezius and
+/// the upper back come right up behind the skull and there is no back of the
+/// neck as a separate surface at all.
+///
+/// **A node cannot say that and this is not a node.** Three constructions were
+/// tried and reverted before this one: a trapezius node off the girdle, which
+/// wants a fifth socket on a node that has four and cannot separate them; the
+/// same node off the neck, whose ring is too small to carry two sockets and
+/// misses by two tenths of a millimetre; and the girdle deepened backward,
+/// which meshes, half works, and stretches the whole lower face because the
+/// head's floor moves with it. What lands instead is [`Node::offset`], which
+/// moves the swept SECTION and leaves the joint — so nothing that measures the
+/// head in radii about that joint sees this at all.
+///
+/// What it buys is the figure that needs no axis, because the axis is what an
+/// instrument got wrong here twice: the section's DEPTH at mid-neck goes
+/// 104.5 mm → 155.5 against the reference's 167, and the column carries about
+/// fifty millimetres more behind it at every height from the head's floor to
+/// the shoulders. `examples/neckaudit` prints the table.
+///
+/// **Two figures recorded on #125 before this landed do not survive their own
+/// instrument, and the corrected ones are above.** The depth was reported as
+/// 167.5 — measured with the joint hull still handing the neck's extra depth to
+/// the girdle symmetrically, so a fifth of that number was the CHEST. And the
+/// column was reported monotone for the first time; asked with a width probe
+/// that takes the widest point of each slice instead of firing sideways from
+/// the joint — a ray from the axis crosses an off-centre ellipse on a chord —
+/// the column turns exactly once, at the neck's own waist, both before this
+/// change and after. The lateral profile barely moves for this at all, which is
+/// what a displacement in `z` should do.
+///
+/// Provenance: **derived from the reference** (#125), and paired with
+/// [`NECK_SECTION`] rather than chosen against it.
+const NECK_LOBE: f32 = 0.62;
 
 /// How far behind the midline the neck node sits, in neck radii.
 ///
@@ -137,17 +196,19 @@ const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 /// whole defect fixed by one constant — and was the probe reading the OFFSET,
 /// because it measured from `z = 0` while the axis had moved. Asked from the
 /// column's own axis the answer is 0.91 against 0.95: the surface did not move.
-/// Axis-free, the section at mid-neck is 103 mm deep against the reference's
-/// 167. That is still open and it is what a node cannot say — see #125.
+/// Axis-free, the section at mid-neck was 103 mm deep against the reference's
+/// 167. That is what a node's POSITION cannot say and its section can: see
+/// [`NECK_LOBE`], which closed it without touching this.
 ///
-/// 0.50 rather than the reference's own 0.73 of a neck radius, because ours is
+/// 0.35 rather than the reference's own 0.73 of a neck radius, because ours is
 /// bounded by what it does to the FLOOR rather than by the reference: see
 /// `HEAD_BELOW_JOINT`, which had to be re-derived for it.
 /// Provenance: **derived from the reference** (#125), then bounded by the
 /// coupling to the head. `neck_01` sits 38.0 mm behind `spine_03` on a
 /// 1.829 m body and its neck measures about 52 mm across, which is 0.73 of a
-/// radius; ours is 0.50 because past that the lower face stretches faster
-/// than `HEAD_BELOW_JOINT` can be brought back.
+/// radius; ours is 0.35 because past that the lower face stretches faster
+/// than `HEAD_BELOW_JOINT` can be brought back — three sentences of this
+/// docstring said 0.50, which is a value that was measured and not kept.
 const NECK_BACK: f32 = 0.35;
 
 /// Where the crown node sits above the head joint, in head radii.
@@ -1343,6 +1404,10 @@ impl BodyPlan for HumanoidParams {
             girdle,
             Node::new(Vec3::new(0.0, neck_y, -NECK_BACK * neck_r), neck_r)
                 .with_scale(NECK_SECTION)
+                // The joint stays on the axis and the mass goes behind it. See
+                // [`NECK_LOBE`], which is half of one shape with
+                // [`NECK_SECTION`]'s depth.
+                .with_offset(Vec2::new(0.0, -NECK_LOBE * neck_r))
                 .in_zone(Zone::Neck),
         );
         // A skull takes two nodes. One leaf gives a capped tube whose dome
