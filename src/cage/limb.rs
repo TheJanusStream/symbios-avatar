@@ -106,7 +106,7 @@ pub(crate) fn build_limb(
         sockets.push(socket);
     } else {
         let node = skeleton.nodes[nodes[0] as usize];
-        let tip = node.position - dir * (config.tip_extend * node.radius);
+        let tip = node.centre(u, v) - dir * (config.tip_extend * node.radius);
         rings.push(push_ring(
             mesh,
             tip,
@@ -117,7 +117,7 @@ pub(crate) fn build_limb(
         ));
         rings.push(push_ring(
             mesh,
-            node.position,
+            node.centre(u, v),
             u,
             v,
             node.half_extents(),
@@ -138,7 +138,7 @@ pub(crate) fn build_limb(
         dir = next;
         rings.push(push_ring(
             mesh,
-            node.position,
+            node.centre(u, v),
             u,
             v,
             node.half_extents(),
@@ -168,13 +168,13 @@ pub(crate) fn build_limb(
         let node = skeleton.nodes[nodes[count - 1] as usize];
         rings.push(push_ring(
             mesh,
-            node.position,
+            node.centre(u, v),
             u,
             v,
             node.half_extents(),
             node.roll,
         ));
-        let tip = node.position + dir * (config.tip_extend * node.radius);
+        let tip = node.centre(u, v) + dir * (config.tip_extend * node.radius);
         rings.push(push_ring(
             mesh,
             tip,
@@ -303,6 +303,46 @@ pub(crate) fn transport(u: Vec3, v: Vec3, from: Vec3, to: Vec3) -> (Vec3, Vec3) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Node;
+
+    #[test]
+    fn a_section_offset_moves_the_surface_and_leaves_the_joint() {
+        // **The whole reason the offset is on the section and not on the
+        // position** (#125). A node's position is a joint: bones meet there,
+        // the rig rotates about it, and `face::skull` and `hair::scalp` measure
+        // the head in radii about it. Moving a node to put mass somewhere moves
+        // the axis everything else is measured from, which is why the neck's
+        // lean is bounded at a third of a radius by what it does to the head's
+        // own floor rather than by anatomy.
+        //
+        // So: same joint, same ring frame, and a ring swept a measured distance
+        // off it. Asserted in the ring frame rather than in world axes, because
+        // `u` and `v` are transported down a chain and a test keyed to `Z`
+        // would pass on an upright bone and say nothing about any other.
+        let node = Node::new(Vec3::new(0.0, 1.0, 0.0), 0.05);
+        let (u, v) = initial_frame(Vec3::Y);
+        assert_eq!(node.centre(u, v), node.position, "a plain node is centred");
+
+        let lobed = node.with_offset(Vec2::new(0.0, -0.03));
+        assert_eq!(lobed.position, node.position, "the joint moved");
+        let moved = lobed.centre(u, v) - lobed.position;
+        assert!(
+            (moved.dot(v) + 0.03).abs() < 1e-6 && moved.dot(u).abs() < 1e-6,
+            "the section went {moved:?} for an offset of 0.03 along -v"
+        );
+
+        // And what it is FOR: reach past the joint on one side without giving
+        // any of it back on the other. A centred ellipse cannot, at any scale.
+        let deep = lobed.with_scale(Vec2::new(1.0, 1.6));
+        let half = deep.half_extents().y;
+        let behind = half - deep.centre(u, v).dot(v) + deep.position.dot(v);
+        let ahead = half + deep.centre(u, v).dot(v) - deep.position.dot(v);
+        assert!(
+            behind > ahead * 1.9,
+            "reaches {behind:.4} behind the joint and {ahead:.4} in front, which \
+             is not a lobe"
+        );
+    }
 
     #[test]
     fn the_initial_frame_is_right_handed() {

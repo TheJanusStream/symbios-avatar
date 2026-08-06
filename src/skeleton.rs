@@ -53,6 +53,30 @@ pub struct Node {
     /// and would leave an older node failing to parse.
     #[serde(default)]
     pub roll: f32,
+    /// How far the swept cross-section sits from the joint, in the ring frame.
+    ///
+    /// **The joint stays where it is and the SURFACE moves, which is the whole
+    /// point of it being here rather than on [`Node::position`]** (#125). A
+    /// node's position is a joint: bones meet there, the rig rotates about it,
+    /// and `face::skull` and `hair::scalp` measure the head in radii about it.
+    /// Moving a node to put mass somewhere therefore moves the axis everything
+    /// else is measured from — which is exactly what happened when the neck was
+    /// leaned back, and is why that lean is bounded at a third of a radius by
+    /// what it does to the head's own floor rather than by anatomy.
+    ///
+    /// This moves only the ring that is swept. A section offset back by `d` with
+    /// its depth raised by the same `d` reaches `d` further behind the joint and
+    /// stops in the same place in front — a lobe on one side of the axis, which
+    /// no centred ellipse can be however it is scaled.
+    ///
+    /// Same frame and same order as [`Node::scale`]: `x` is broadly lateral on
+    /// an upright body and `y` is the other tangent, which is forward for a
+    /// vertical bone.
+    ///
+    /// Defaulted **at the field** for the reason [`Node::roll`] gives: a
+    /// `Skeleton` written before this existed still reads, and reads as centred.
+    #[serde(default)]
+    pub offset: Vec2,
     /// Which part of the body this node belongs to.
     ///
     /// This is what makes the skeleton a *semantic* body plan rather than a bag
@@ -71,6 +95,7 @@ impl Node {
             radius,
             scale: Vec2::ONE,
             roll: 0.0,
+            offset: Vec2::ZERO,
             zone: Zone::default(),
         }
     }
@@ -79,6 +104,16 @@ impl Node {
     #[must_use]
     pub fn with_scale(mut self, scale: Vec2) -> Self {
         self.scale = scale;
+        self
+    }
+
+    /// Offsets the cross-section from the joint, in ring-frame units of length.
+    ///
+    /// See [`Node::offset`]. This is how a node says "mass on one side of me"
+    /// without moving the joint that everything else is measured from.
+    #[must_use]
+    pub fn with_offset(mut self, offset: Vec2) -> Self {
+        self.offset = offset;
         self
     }
 
@@ -103,6 +138,15 @@ impl Node {
     #[must_use]
     pub fn half_extents(&self) -> Vec2 {
         self.scale * self.radius
+    }
+
+    /// Where this node's cross-section is centred, given its ring frame.
+    ///
+    /// [`Node::position`] for every node that does not carry an
+    /// [`offset`](Node::offset), which is all of them but one.
+    #[must_use]
+    pub fn centre(&self, u: Vec3, v: Vec3) -> Vec3 {
+        self.position + u * self.offset.x + v * self.offset.y
     }
 }
 
