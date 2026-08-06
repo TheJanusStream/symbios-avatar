@@ -129,10 +129,15 @@ const ELONGATION: f32 = 0.11;
 /// knots from the cheekbone down are tuned: the head was 11 to 21 percent too
 /// wide for its height and narrowing it had to be judged by eye. The two
 /// vault knots are **derived** — they are the old pair scaled by the ratio
-/// the built crown moved by, not a new shape.
+/// the built crown moved by, not a new shape. They have been scaled twice now:
+/// 0.86/0.62 → 1.05/0.75 when the crown first moved (#79), and → 1.12/0.80 when
+/// the humanoid plan's `CROWN_HIGH` took the head to an eighth of its own
+/// stature. The parietal
+/// knot at 0.42 has never scaled and must not — eurion is quoted against the
+/// pupil line, which does not move with a crown.
 const BREADTH: [(f32, f32); 9] = [
-    (1.05, 0.58),     // crown
-    (0.75, 0.88),     // upper cranium
+    (1.12, 0.58),     // crown
+    (0.80, 0.88),     // upper cranium
     (0.42, 0.94),     // the parietal, where a head is actually widest
     (0.20, 0.885),    // above the temple
     (-0.05, 0.825),   // the cheekbones, a plane change and not the widest point
@@ -165,8 +170,8 @@ const BREADTH: [(f32, f32); 9] = [
 /// value rather than a shape — and the two vault knots, also **derived**, as
 /// the old pair scaled by the ratio the built crown moved by.
 const DEPTH: [(f32, f32); 7] = [
-    (1.05, 0.66),
-    (0.66, 0.94),
+    (1.12, 0.66),
+    (0.70, 0.94),
     (0.20, 1.00),
     (-0.10, 1.00),
     (-0.46, 0.90),
@@ -205,8 +210,8 @@ const DEPTH: [(f32, f32); 7] = [
 /// **derived** (#79) — it is where the built crown sits, the same value
 /// [`BREADTH`] and [`DEPTH`] end at, and not a shape.
 const OCCIPUT: [(f32, f32); 7] = [
-    (1.05, 0.0),
-    (0.84, 0.04),
+    (1.12, 0.0),
+    (0.90, 0.04),
     (0.35, 0.14),
     (0.05, 0.08),
     (-0.30, -0.10),
@@ -384,7 +389,7 @@ const JAW_RISE: f32 = 0.035;
 /// Provenance: **tuned by render**, against a bisected convergence
 /// measurement rather than by eye — the 0.92-to-0.98 figure above is what
 /// rejected the first value.
-const JAW_DEPTH: f32 = 0.145;
+const JAW_DEPTH: f32 = 0.25;
 
 /// How much of the way from the border to the junction the hollow takes to let
 /// go again.

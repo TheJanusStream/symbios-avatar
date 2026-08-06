@@ -337,17 +337,24 @@ mod tests {
     /// node radius" and "a fraction of what the cage swept" are two different
     /// numbers where they used to be one.
     ///
-    /// **And it is the node's largest radial reach, not its lateral one**
-    /// (#125). What the caller compares against this is [`Scalp::width_at`],
-    /// which is a RADIUS from the head joint's axis and takes the widest sample
-    /// in the band whatever direction it lies in — so holding it to `scale.x`
-    /// alone asked a radial measurement to fit inside a lateral bound. It only
-    /// ever mattered on a narrow skull, where `scale.x` is the SMALLER of the
-    /// two, and it stopped being invisible when the neck put mass astern: on
-    /// seed 15 the surface at the head joint reaches 54.1 mm sideways and 79.3
-    /// behind, and it was the 79.3 being measured against the 54-millimetre
-    /// half-extent. Bisected on the mesh, the sideways reading did not move at
-    /// all — 54.2 mm before the neck's section changed, 54.1 after.
+    /// **The node's LATERAL half-extent, and the caller asks the surface a
+    /// lateral question to match** (#79). This went briefly to the node's
+    /// largest reach instead, on the argument that [`Scalp::width_at`] is a
+    /// radius from the joint's axis and takes the widest sample in the band
+    /// whatever direction it lies in. That is true of `width_at` and it is the
+    /// wrong half of the fix: on thirteen of sixteen bodies that widest sample
+    /// IS the back one — the profile's rear reading and its maximum agree to
+    /// three decimals — so the bound had stopped measuring the head's width at
+    /// all and started measuring the nape the neck's section puts behind it.
+    /// A number that tracks the neck cannot guard the head, and it had been
+    /// re-based twice in two days for exactly that reason.
+    ///
+    /// So the caller reads [`Scalp::width_around`] at the two side bearings
+    /// instead, which is the reading this module's own opening paragraph
+    /// describes — *the rendered skull reaches only about 0.64 of that radius
+    /// SIDEWAYS*. It became askable when the per-sector fill was fixed (#125):
+    /// a side sector used to fall back to the band's widest, which is to say to
+    /// the same rear sample.
     fn sectioned_body(seed: i64) -> (PolyMesh, Rig, f32) {
         let mut record = AvatarRecord::new("Scalped", Archetype::default());
         record.reroll(seed);
@@ -361,7 +368,7 @@ mod tests {
         let section = rig.joints[head]
             .node
             .and_then(|node| skeleton.nodes.get(node as usize))
-            .map_or(1.0, |node| node.scale.max_element());
+            .map_or(1.0, |node| node.scale.x);
         (
             // [`crate::BODY_SUBDIVISIONS`], not a literal. This helper measures
             // how much of its node radius the head's SURFACE delivers, and a
@@ -436,7 +443,11 @@ mod tests {
         for seed in 1i64..=16 {
             let (mesh, rig, section) = sectioned_body(seed);
             let scalp = Scalp::measure(&mesh, &rig).expect("a humanoid has a head");
-            let across = scalp.width_at(0.0);
+            // Sideways, at the head joint's own height — see [`sectioned_body`]
+            // for why this is not `width_at`, which answers with the nape.
+            let across = scalp
+                .width_around(std::f32::consts::FRAC_PI_2, 0.0)
+                .max(scalp.width_around(-std::f32::consts::FRAC_PI_2, 0.0));
             raw = (raw.0.min(across), raw.1.max(across));
             if across / section > worst.1 {
                 worst = (seed, across / section);
@@ -450,33 +461,28 @@ mod tests {
             raw.0,
             raw.1
         );
-        // **1.02 to 1.04 for the neck's forward lean** (#125), and it is the
-        // same mechanism the paragraph above already names rather than a new
-        // one. The neck is not sectioned with the head, so on a narrow skull the
-        // surface at the head joint is held out by the THROAT; the neck node
-        // carries a backward offset now, which changes where that throat sits
-        // relative to the head's own ring, and seed 15 — the same seed, still
-        // the only one — went from 1.008 to 1.034.
+        // **1.02, then 1.04, then 1.08, and then the reading was wrong** (#79).
+        // Two of those three re-bases were the neck: the surface at the head
+        // joint is held out by the throat on a narrow skull, and #125's
+        // off-centre section put a nape behind it. Both were real and neither
+        // was the head standing outside its own node, which is what this bound
+        // is for. See [`sectioned_body`]: on thirteen of sixteen bodies the
+        // radial maximum this used to read IS the rear reading, so the number
+        // was tracking the neck and had to move whenever the neck did.
         //
-        // **1.04 to 1.08 for the neck's own MASS, and the axis fix paid for most
-        // of it first** (#125). Reading against the node's largest reach instead
-        // of its lateral one took every broad skull down — seed 1 from 0.848 of
-        // a lateral half-extent to 0.848 of a radial one, seed 12 from 0.833,
-        // both unchanged because for them the two are the same number — and took
-        // the narrow ones off a bound they were never the right side of. What is
-        // left is the neck's section reaching past the head node at the head
-        // joint's own height: bisected on the mesh, seed 9's surface behind the
-        // joint went 61.8 mm to 75.3 while its sideways reach held at 55.6, and
-        // seed 15's went 67.9 to 79.3 with its sideways reach at 54.1. Across
-        // sixteen bodies the reading now runs 0.833 to 1.054.
+        // Sideways, it does not. Measured over the same sixteen bodies with the
+        // skull's section at the humanoid plan's `SKULL_SLENDER`, the surface
+        // delivers 0.764 to
+        // 0.877 of the node's lateral half-extent — a spread of 15%, which is
+        // the argument this module exists for, and a ceiling with room in it.
         //
-        // What stands proud is still a point the neck owns and not a point on
-        // the head, which is what this bound is for. The reading to watch is the
-        // seed COUNT, and it has gone from one body in sixteen to TWO — 9 and 15,
-        // the two whose heads sit lowest on their necks. Several more would mean
-        // the head had started standing outside its own node.
+        // The reading to watch is no longer a seed count, because no body is
+        // near it: it is whether the top of the range climbs. At 1.0 the head
+        // would be standing exactly on its own ring, and subdivision does not
+        // do that.
+        //
         assert!(
-            worst.1 < 1.08,
+            worst.1 < 0.95,
             "seed {}: the skull measured {} of what its own ring swept across",
             worst.0,
             worst.1

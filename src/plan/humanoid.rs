@@ -241,7 +241,7 @@ const NECK_BACK: f32 = 0.35;
 /// the crown as far above that line as the chin is below it. Measured 0.999
 /// on the default body and 0.95 to 1.01 across eight seeds at neutral face
 /// length.
-const CROWN_HIGH: f32 = 0.86;
+const CROWN_HIGH: f32 = 0.917;
 
 /// How wide the crown node is, in head radii.
 ///
@@ -274,6 +274,33 @@ const CROWN_HIGH: f32 = 0.86;
 /// which is what the figures above are, and re-swept against the built breadth
 /// when [`CROWN_HIGH`] moved.
 const CROWN_WIDE: f32 = 0.825;
+
+/// How broad the skull is for its own height, as a scale on both cross-section
+/// axes of the head's nodes.
+///
+/// **The head was a fifth too wide for its height, and it is the last of the
+/// three axes this issue names** (#79). Measured on the default body against a
+/// life head scaled to our own crown-to-chin: the breadth read 160.6 mm where
+/// life asks 135.1, while the FACE across the cheekbones read 114.2 against a
+/// life 118.7 — so the face was right and the skull around it was not. A
+/// correctly proportioned face inset in a vault a fifth too broad is what reads
+/// as a pinched jaw, which is what the owner reported and what three width
+/// measurements disagreed about before one of them was asked the right way.
+///
+/// **Both axes, not just the lateral one.** Narrowing the breadth alone would
+/// take vault depth-to-width from 1.31 to 1.55 against a life 1.28 — that ratio
+/// is one of the few on this head that is already right, and it is right because
+/// the section is round. So this scales the section rather than squashing it.
+///
+/// It is a scale on the CAGE and costs no triangles, which matters: the dearest
+/// body in the parameter space is close enough to the ceiling that a taller
+/// crown has to be argued for and a narrower skull does not.
+///
+/// Provenance: **derived** (#79), from H:W. At 0.897 the breadth comes to about
+/// 144 mm, which keeps the default inside the life population of roughly 140 to
+/// 165 that [`HEAD_BREADTH_SPAN`] is quoted against — the reason it is not the
+/// 0.845 that H:W 1.48 asks for at the height the head had before this pass.
+const SKULL_SLENDER: f32 = 0.897;
 
 /// How far the `head_breadth` axis narrows or broadens the skull, as a share of
 /// its own lateral half-extent at each end.
@@ -843,7 +870,7 @@ impl BodyPlan for HumanoidParams {
         // THE HEAD, THE NECK AND THE SHOULDERS ARE ONE MEASUREMENT CHAIN. Any
         // change to the girdle or the neck re-tunes the face silently, and the
         // only thing that catches it is running `headaudit` afterwards.
-        const HEAD_BELOW_JOINT: f32 = 1.50;
+        const HEAD_BELOW_JOINT: f32 = 1.599;
         let head_y =
             neck_y + head_r * HEAD_BELOW_JOINT * (1.0 + FACE_LENGTH_SPAN * self.face_length);
 
@@ -1418,7 +1445,13 @@ impl BodyPlan for HumanoidParams {
         // Both carry the same section, so the breadth axis narrows the vault and
         // the face by one factor rather than tapering one into the other. See
         // [`HEAD_BREADTH_SPAN`].
-        let skull_section = Vec2::new(1.0 + HEAD_BREADTH_SPAN * self.head_breadth, 1.0);
+        //
+        // [`SKULL_SLENDER`] scales BOTH axes, so it changes how broad the head is
+        // for its own height without touching how deep it is for its breadth.
+        let skull_section = Vec2::new(
+            SKULL_SLENDER * (1.0 + HEAD_BREADTH_SPAN * self.head_breadth),
+            SKULL_SLENDER,
+        );
         let head = skeleton.extend_from(
             neck,
             Node::new(Vec3::new(0.0, head_y, 0.0), head_r)
