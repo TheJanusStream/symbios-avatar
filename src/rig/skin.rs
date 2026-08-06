@@ -233,6 +233,10 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
     for (vertex, &position) in mesh.positions.iter().enumerate() {
         let row = &mut dense[vertex * joints..(vertex + 1) * joints];
         let mut nearest = (f32::INFINITY, first_deforming);
+        // Which body part this vertex is ON, asked exactly the way
+        // [`crate::face::skull::shape`] asks it. See [`owner_of`]: for one bone
+        // in the rig the answer decides which end of it turns this vertex.
+        let mine = rig.joints[rig.nearest_bone(position).joint].zone;
 
         // Iterated by *segment*, credited to the joint that deforms it. See the
         // module docs: `rig.bone(segment)` runs `parent → segment`, and it is
@@ -241,14 +245,14 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
             if !rig.joints[segment].role.deforms() {
                 continue;
             }
-            let owner = rig.joints[segment].parent.unwrap_or(segment);
-            if !rig.joints[owner].role.deforms() {
-                continue;
-            }
             let (start, end) = rig.bone(segment);
             let (start_radius, end_radius) = rig.bone_radii(segment);
             let (distance, along) = distance_to_segment(position, start, end);
             let radius = start_radius + (end_radius - start_radius) * along;
+            let owner = owner_of(rig, segment, mine, along, start.distance(end));
+            if !rig.joints[owner].role.deforms() {
+                continue;
+            }
 
             if distance < nearest.0 {
                 nearest = (distance, owner);
@@ -277,6 +281,78 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
         vertices: (0..vertices)
             .map(|vertex| strongest(&dense[vertex * joints..(vertex + 1) * joints]))
             .collect(),
+    }
+}
+
+/// Which joint's rotation turns the bone leading into `segment`, for a vertex
+/// lying on the body part `on`.
+///
+/// **Almost always the parent, and the exception is the head** (#123). The
+/// module docs above give the rule and why it is the parent: rotating a hip
+/// swings the thigh, so the bone `hip → knee` is the hip's. That is right for
+/// every hinge in the body, and a head is not a hinge.
+///
+/// A head is a **rigid body that extends below its own joint**, and it is the
+/// only part of this rig that does. The head node sits `HEAD_BELOW_JOINT`
+/// radii above the neck node, so the whole lower face — the jaw, the chin, the
+/// mouth, the base of the nose — hangs off the `neck → head` bone, below the
+/// joint that ought to turn it. Credited to the parent, every one of those
+/// vertices belongs to the NECK. Measured on the default body before this: the
+/// mouth line and the chin were held 1.00 by the neck and moved **zero
+/// millimetres** when the head turned thirty degrees, against the 57.4 and
+/// 60.6 mm a rigid head moves them; the brow was 0.75/0.25 and lost 14.7 mm of
+/// 58.7. The face stayed behind while the skull turned out from under it, which
+/// is what the owner saw as the nose and chin smearing under look-at.
+///
+/// **It got worse twice without anything here changing.** The head used to
+/// reach 0.69 radii below its joint; #78 took that to 1.19 and #107's cage flip
+/// took the built floor to 1.07–1.16. Each of those moved more of the face onto
+/// the neck's bone, and nothing measured a head turn, so nothing said so.
+///
+/// The test is the vertex's own body part rather than a distance, because a
+/// distance cannot answer it: the chin's tip sits **1.34 head radii** from the
+/// head joint — `shape` pushes it there — so no reach keyed to the node radius
+/// covers the chin without also swallowing the throat. `on` comes from
+/// [`Rig::nearest_bone`], which is the same question `skull::shape` and
+/// `relief::carve` ask to decide what the head is. Two functions disagreeing
+/// about which vertices are the head is the defect; agreeing is the fix.
+///
+/// The neck keeps the bone for vertices whose part is the neck, so the throat
+/// still follows the neck and rotating the neck still deforms something —
+/// giving the whole bone to the head would have left the neck joint owning
+/// nothing at all.
+fn owner_of(rig: &Rig, segment: usize, on: Zone, along: f32, length: f32) -> usize {
+    let parent = rig.joints[segment].parent.unwrap_or(segment);
+    if on != Zone::Head
+        || rig.joints[segment].zone != Zone::Head
+        || rig.joints[parent].zone == Zone::Head
+    {
+        return parent;
+    }
+    // **How far down the bone the head reaches is the head node's own radius,
+    // and that is what keeps the throat the neck's.** The zone test alone hands
+    // the whole bone over, because the head's SURFACE runs on past its jaw to
+    // meet the neck — `shape` says so, and `SETTLE` exists because it does — so
+    // a vertex at the head's floor answers `Zone::Head` while plainly belonging
+    // to the throat. Measured on the default body with the zone test alone, the
+    // throat came out held 0.79 by the head and 0.03 by the neck, which turns a
+    // windpipe with a glance.
+    //
+    // The head node is a sphere of `radius` about the head joint, and the part
+    // of the bone inside it is the part the head was swept from. On the default
+    // body that is the top 84% of the bone: the chin's projection falls at 0.41
+    // and the throat's at 0.10, so the split lands between them without a
+    // constant. `along` is a projection onto the bone, which is vertical here —
+    // that the chin also stands 1.34 radii FORWARD does not enter into it, and
+    // is why a plain distance to the node cannot make this call.
+    if length <= f32::EPSILON {
+        return segment;
+    }
+    let covered = (rig.joints[segment].radius / length).min(1.0);
+    if along >= 1.0 - covered {
+        segment
+    } else {
+        parent
     }
 }
 
@@ -489,6 +565,155 @@ mod tests {
         let (_, rig) = humanoid();
         let skin = bind(&PolyMesh::new(), &rig, &SkinConfig::default());
         assert!(skin.vertices.is_empty());
+    }
+
+    #[test]
+    fn the_whole_face_turns_with_the_head() {
+        // **The defect this test exists for is that a head turn left the face
+        // behind** (#123). The head node sits a head-and-a-fifth of its own
+        // radius above the neck node, so the jaw, the chin, the mouth and the
+        // base of the nose all hang off the `neck → head` bone — below the joint
+        // that has to turn them. Credited to the bone's parent, as every other
+        // bone correctly is, all of it belonged to the NECK: measured on the
+        // default body, the mouth line and the chin were held 1.00 by the neck
+        // and moved ZERO millimetres when the head turned thirty degrees,
+        // against the 57.4 and 60.6 mm a rigid head moves them. Under look-at
+        // the skull turned out from under its own face.
+        //
+        // Nothing said so because nothing had ever posed a head. The gait tests
+        // turn hips and knees, the reference comparison is a rest pose, and the
+        // software renderer had no way to ask for a gaze until this issue — so
+        // the only instrument that could see it was the Bevy viewer, and it took
+        // the owner looking at one.
+        //
+        // A head is rigid, so the assertion is exact rather than a tolerance on
+        // a blend: every head-owned vertex must land where rotating it about the
+        // head joint would put it. Half a millimetre is the arithmetic's noise,
+        // not a budget for lag.
+        use crate::anim::Pose;
+        use glam::Quat;
+
+        let record = crate::AvatarRecord::new("Turned", crate::Archetype::default());
+        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let rig = &avatar.rig;
+        let head = *rig
+            .in_zone(Zone::Head)
+            .first()
+            .expect("a humanoid has a head");
+        let centre = rig.joints[head].position;
+        // The FACE: forward of the head joint and at or above the chin's tip.
+        // Both bounds are the blend's, and both were found by running without
+        // them. Below the chin the surface is the underside of the jaw running
+        // back into the throat, and behind the joint it is the nape — each is a
+        // place the head's hold must hand over to the neck's, so each is a blend
+        // by design and `the_throat_stays_with_the_neck` is what checks that
+        // side. The first version bounded the face at one head radius below the
+        // joint and failed on a vertex 98 mm down at the angle of the jaw; the
+        // second bounded it at the chin alone and failed on one 52 mm behind the
+        // joint at the nape. Both were the blend doing its job, and neither is
+        // the face.
+        let chin = crate::face::Skull::measure(&avatar.parts.body, rig)
+            .expect("a humanoid has a skull")
+            .chin();
+
+        let turn = Quat::from_rotation_y(30f32.to_radians());
+        let mut pose = Pose::rest(rig);
+        pose.rotations[head] = turn;
+        let matrices = pose.forward(rig).skinning_matrices(rig);
+
+        let body = &avatar.parts.body;
+        let mut worst = (0usize, 0.0f32, Vec3::ZERO);
+        let mut checked = 0usize;
+        for (vertex, &rest) in body.positions.iter().enumerate() {
+            if rig.joints[rig.nearest_bone(rest).joint].zone != Zone::Head {
+                continue;
+            }
+            if rest.y < centre.y + chin || rest.z <= centre.z {
+                continue;
+            }
+            checked += 1;
+            let mut skinned = Vec3::ZERO;
+            for influence in avatar.parts.weights.vertices[vertex] {
+                if influence.weight > 0.0 {
+                    skinned += influence.weight
+                        * matrices[influence.joint as usize].transform_point3(rest);
+                }
+            }
+            let rigid = centre + turn * (rest - centre);
+            let lag = (rigid - skinned).length();
+            if lag > worst.1 {
+                worst = (vertex, lag, rest - centre);
+            }
+        }
+        // A filter that selects nothing passes every assertion after it, which
+        // is the shape of half the instrument failures this crate has found.
+        assert!(
+            checked > 500,
+            "only {checked} vertices were read as the face; the filter, not the \
+             binding, is what this would be measuring"
+        );
+        assert!(
+            worst.1 < 0.0005,
+            "a head turn left a face vertex {:.1} mm behind, at {:+.0},{:+.0},{:+.0} mm \
+             from the head joint, of {checked} read — the face is bound to something \
+             that is not the head",
+            worst.1 * 1000.0,
+            worst.2.x * 1000.0,
+            worst.2.y * 1000.0,
+            worst.2.z * 1000.0,
+        );
+    }
+
+    #[test]
+    fn the_throat_stays_with_the_neck() {
+        // The other side of the same boundary, and the reason `owner_of` is
+        // bounded by the head node's own extent rather than by the zone alone.
+        // The head's SURFACE runs past its jaw down to meet the neck — `shape`
+        // says so and `SETTLE` exists because it does — so a vertex at the
+        // head's floor answers `Zone::Head` while plainly being a throat. With
+        // the zone test alone it came out held 0.79 by the head and 0.03 by the
+        // neck, which turns a windpipe with a glance.
+        let record = crate::AvatarRecord::new("Throated", crate::Archetype::default());
+        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let rig = &avatar.rig;
+        let head = *rig.in_zone(Zone::Head).first().expect("a head");
+        let neck = rig.joints[head].parent.expect("a head sits on a neck");
+        let centre = rig.joints[head].position;
+
+        // The forward-most vertex at the head's own floor: the throat.
+        let floor = avatar
+            .parts
+            .body
+            .positions
+            .iter()
+            .filter(|p| rig.joints[rig.nearest_bone(**p).joint].zone == Zone::Head)
+            .fold(f32::MAX, |low, p| low.min(p.y));
+        let throat = avatar
+            .parts
+            .body
+            .positions
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| {
+                (p.y - floor).abs() < rig.joints[head].radius * 0.03
+                    && (p.x - centre.x).abs() < rig.joints[head].radius * 0.05
+            })
+            .max_by(|a, b| a.1.z.total_cmp(&b.1.z))
+            .map(|(vertex, _)| vertex)
+            .expect("a body has a throat");
+
+        let held = |joint: usize| -> f32 {
+            avatar.parts.weights.vertices[throat]
+                .iter()
+                .find(|influence| influence.joint as usize == joint)
+                .map_or(0.0, |influence| influence.weight)
+        };
+        assert!(
+            held(neck) > held(head),
+            "the throat is held {:.2} by the head and {:.2} by the neck",
+            held(head),
+            held(neck)
+        );
     }
 
     /// Index of the vertex scoring highest under `score`.

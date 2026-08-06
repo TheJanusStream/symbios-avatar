@@ -32,6 +32,7 @@
 //! cargo run --release --example render -- --head       # close up on face and hair
 //! cargo run --release --example render -- --close hand # or head, hand, foot
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
+//! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair, to see the face
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
@@ -52,8 +53,8 @@ use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, FaceParams, FootingConfig,
-    Gait, Ground, HairParams, Limb, MeshKind, PolyMesh, Pose, Role, SkinParams, Stride, Zone,
-    anim::gait, anim::plant_feet_of,
+    Gait, GazeConfig, Ground, HairParams, Limb, MeshKind, PolyMesh, Pose, Role, SkinParams, Stride,
+    Zone, anim::gait, anim::gaze, anim::plant_feet_of,
 };
 
 /// Pixels per side of one view in the finished sheet.
@@ -230,7 +231,14 @@ fn main() {
     if args.iter().any(|arg| arg == "--cost") {
         cost(&record, &config);
     }
-    let subject = Subject::new(avatar, linear, bare, fist, pass);
+    // How far to one side the body is looking, in degrees. **The instrument
+    // gap #123 fell through.** Every sheet this tool has ever drawn was a rest
+    // pose from the neck up, so the entire lower face could be bound to the
+    // neck -- and was -- with the chin and the mouth moving zero millimetres
+    // under a head turn, and nothing here able to show it. The only instrument
+    // that could was the Bevy viewer, and it took the owner looking at one.
+    let gaze = value("--gaze").and_then(|degrees| degrees.parse::<f32>().ok());
+    let subject = Subject::new(avatar, linear, bare, fist, pass, gaze);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
         match focus {
@@ -371,6 +379,8 @@ struct Subject {
     bare: bool,
     /// Whether every finger is curled, to show the hand rig working.
     fist: bool,
+    /// How far to one side the body is looking, in degrees, if at all.
+    gaze: Option<f32>,
     pass: Option<String>,
     gait: Gait,
     stride: Stride,
@@ -382,7 +392,14 @@ struct Subject {
 
 impl Subject {
     /// Wraps a built avatar in what a contact sheet additionally needs.
-    fn new(avatar: Avatar, linear: bool, bare: bool, fist: bool, pass: Option<String>) -> Self {
+    fn new(
+        avatar: Avatar,
+        linear: bool,
+        bare: bool,
+        fist: bool,
+        pass: Option<String>,
+        gaze: Option<f32>,
+    ) -> Self {
         let (lo, hi) = avatar.parts.body.bounds();
         Self {
             gait: Gait::natural(&avatar.rig),
@@ -393,6 +410,7 @@ impl Subject {
             linear,
             bare,
             fist,
+            gaze,
             pass,
         }
     }
@@ -412,6 +430,18 @@ impl Subject {
                     pose.rotations[joint] = Quat::from_rotation_x(0.75);
                 }
             }
+        }
+        // Through the real gaze system rather than a rotation dropped on the
+        // head joint, because the defect this exists to show is about which
+        // joints a look-at actually turns: it distributes down the neck and the
+        // chest, and a face bound to the wrong one of those lags by exactly the
+        // share that joint did not get.
+        if let Some(degrees) = self.gaze {
+            let head = rig.in_zone(Zone::Head).first().copied().unwrap_or_default();
+            let from = rig.joints[head].position;
+            let angle = degrees.to_radians();
+            let target = from + Vec3::new(angle.sin(), 0.0, angle.cos()) * 2.0;
+            gaze::look_at(rig, &mut pose, target, &GazeConfig::default());
         }
         pose
     }
