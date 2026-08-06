@@ -117,14 +117,35 @@ const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 
 /// Where the crown node sits above the head joint, in head radii.
 ///
-/// See [`CROWN_WIDE`]: this came down from 0.72 when that went up, so the built
-/// crown lands in the same place. The pair is chosen together and neither
-/// number means anything alone.
+/// See [`CROWN_WIDE`]: the two are chosen together and neither number means
+/// anything alone. It came down 0.72 → 0.68 when that went up, to hold the built
+/// crown still while the vault was widened. It goes 0.68 → 0.86 here, to move
+/// the built crown on purpose.
 ///
-/// Provenance: **derived** from [`CROWN_WIDE`] (#79). The arithmetic is that
-/// the built crown height must not move while the node widens, so the two were
-/// swept together and the pair that held the measured crown fixed was kept.
-const CROWN_HIGH: f32 = 0.68;
+/// **Up from 0.68, and this is half of the head's missing height** (#79). The
+/// built head measured 161 mm crown to chin on a breadth of 160, where the
+/// eight-head canon on this body's own rendered stature asks 206 — a quarter
+/// short. The other half is `HEAD_BELOW_JOINT`, and splitting it between the two
+/// is what holds cranium:face at 1.00. Taking it all from either end buys the
+/// height by spoiling the proportion #78 derived and #61 measured.
+///
+/// **Delivery is very nearly one for one, which the head overhaul did not think
+/// it was.** #79 was raised recording the cap collapsing 69 mm under
+/// subdivision, and concluded the crown node was a poor lever and the vault
+/// needed shape rather than height. Swept on the eight-point cage that is no
+/// longer true: 10.0 mm of built crown per 0.10 of this, against a 10.32 mm
+/// nominal. The collapse belonged to the four-point cage.
+///
+/// At 0.86 the built crown sits at +106.0 mm on the default body — 1.03 head
+/// radii, up from 0.85 — which is the figure three profile tables in
+/// [`crate::face::skull`] had to be re-based onto, because their heights above
+/// the joint are raw radii and do not follow a crown that moves.
+/// Provenance: **derived** (#79), from cranium:face. `HEAD_BELOW_JOINT` sets
+/// the chin and `Canon::EYE_LINE` the eye line; this is the value that puts
+/// the crown as far above that line as the chin is below it. Measured 0.999
+/// on the default body and 0.95 to 1.01 across eight seeds at neutral face
+/// length.
+const CROWN_HIGH: f32 = 0.86;
 
 /// How wide the crown node is, in head radii.
 ///
@@ -139,17 +160,24 @@ const CROWN_HIGH: f32 = 0.68;
 /// At 0.87 the same measurement reads 0.620 / 0.632 / 0.630 / 0.599 / 0.513 at
 /// +0.05 / +0.20 / +0.35 / +0.55 / +0.75 R — flat through the mid-cranium and
 /// falling only where a skull does. [`CROWN_HIGH`] came down from 0.72 to 0.68
-/// at the same time so the built crown does not move: this issue is the vault's
-/// SHAPE, and cranium:face measures 1.00 after #78, so there is no proportion
-/// left to spend on height.
+/// at the same time so the built crown did not move.
 ///
+/// **Down to 0.825 when [`CROWN_HIGH`] went to 0.86, and this is the trap in
+/// that pair** (#79). Raising the crown node WIDENS the head without touching a
+/// breadth term anywhere: the node is most of a head radius across, so lifting
+/// it makes the blend below it bulge. Measured, `CROWN_HIGH` 0.90 on its own
+/// took maximum breadth from 159.7 mm to 165.7 — spending, silently, the one
+/// absolute width on this head that was RIGHT, and the one #61 chose the breadth
+/// axis's default against. At 0.825 the built breadth is 160.9 mm against a life
+/// eu-eu of 156, which is where it was.
 /// Provenance: **looked up, then tuned by render** (#79) — the only coefficient
 /// in this file with a stated anthropometric premise underneath it. The premise
 /// is that maximum head breadth is at eurion, high on the parietal roughly 25
 /// to 45 mm above the pupil line, and exceeds bizygomatic breadth (156 mm
 /// against 137). The value itself was swept against the built half-widths,
-/// which is what the figures above are.
-const CROWN_WIDE: f32 = 0.87;
+/// which is what the figures above are, and re-swept against the built breadth
+/// when [`CROWN_HIGH`] moved.
+const CROWN_WIDE: f32 = 0.825;
 
 /// How far the `head_breadth` axis narrows or broadens the skull, as a share of
 /// its own lateral half-extent at each end.
@@ -214,6 +242,21 @@ const HEAD_BREADTH_SPAN: f32 = 0.20;
 /// dearest corner and puts it over the target. The head is 32% short of life
 /// overall (#79) and 6% of that is this coefficient's; spending the budget on
 /// the small half while the large half is open is the wrong order.
+///
+/// **That deferral is discharged and the fear behind it was wrong** (#79). Both
+/// halves were spent together: `HEAD_BELOW_JOINT` 1.19 → 1.55 with
+/// [`CROWN_HIGH`] 0.68 → 0.86, cranium:face 0.999 on the default body. And the
+/// budget went the other way — a taller vault sits ABOVE `FACE_PASSES`'s
+/// above-joint ceilings, so the dearest body anywhere in the space fell from
+/// 29,886 to 29,092. The 534-triangle figure quoted above is real and it is also
+/// not monotone in the stretch: 1.19 → 1.55 costs 188 at that corner where
+/// 1.19 → 1.27 costs 534, because a band edge lands on a ring of faces rather
+/// than between them. Cost here has to be measured at the value, never
+/// interpolated to it.
+///
+/// The neutral of THIS axis is unchanged at 0.0 — what moved is the constant it
+/// multiplies, so a record asking for a long face still gets one a sixth longer
+/// than the default, and the default is now the right length to be a sixth of.
 ///
 /// Provenance: **derived** (#61), from the budget headroom measured across the
 /// space rather than from anthropometry — the anthropometry is what says where
@@ -642,6 +685,32 @@ impl BodyPlan for HumanoidParams {
         // Chasing the absolute figure from this end would buy it by making the
         // face too long for its own cranium.
         //
+        // **1.19 -> 1.55, and it is the face's half of #79's missing quarter.**
+        // Everything above is the derivation of 1.19 and it is still correct
+        // arithmetic; what changed underneath it is the head it was solved for.
+        // #107 re-derived `head_r` from 0.075 of stature to 0.059 and flipped
+        // the cage to eight-point rings, and the head came out 161 mm crown to
+        // chin against a breadth of 160 — a face frame of 78.3 mm, 68% of the
+        // 114.7 above, where #78 had left it at 92. The chain above solves for a
+        // cranium:face of 1.0 at whatever height the crown is; it cannot notice
+        // that the whole head is a quarter short, because the ratio is right at
+        // any size. So this moves WITH [`CROWN_HIGH`], not instead of it: the
+        // pair takes the head to 201.8 mm at a cranium:face of 0.999, and the
+        // frame to 100.9 mm — 88% of that 114.7.
+        //
+        // Not to 100%, and deliberately. 114.7 is the frame a head would want
+        // if it were sized for its own breadth, which is a 236 mm head; the
+        // owner's call is the eight-head canon on the body's own rendered
+        // stature, which asks about 206 and lands this at 8.4 heads against
+        // 10.2 before. The remaining 12% is that target's, not this one's.
+        //
+        // **What it costs, measured rather than feared:** +590 triangles on the
+        // default body and +188 at the dearest corner of the parameter space,
+        // both of which `CROWN_HIGH` more than pays back — a taller vault sits
+        // above `FACE_PASSES`'s above-joint ceilings, and the vault carries no
+        // features. The dearest body anywhere in the space fell from 29,886 to
+        // 29,092 across this whole change.
+        //
         // RAISED rather than dropping `neck_y` to hold stature, which is what #78
         // asked for and cannot be done: `neck_y` sits exactly on its girdle-socket
         // floor above (143.2 mm against a nominal 126.0), so lowering it breaks
@@ -661,7 +730,7 @@ impl BodyPlan for HumanoidParams {
         // for their heads and people whose faces are short for theirs are the
         // most legible single difference between two skulls. See
         // [`FACE_LENGTH_SPAN`].
-        const HEAD_BELOW_JOINT: f32 = 1.19;
+        const HEAD_BELOW_JOINT: f32 = 1.55;
         let head_y =
             neck_y + head_r * HEAD_BELOW_JOINT * (1.0 + FACE_LENGTH_SPAN * self.face_length);
 

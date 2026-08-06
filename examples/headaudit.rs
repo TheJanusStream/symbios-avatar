@@ -227,6 +227,15 @@ fn main() {
         shape.depth / shape.width
     );
     println!(
+        "| vault depth : width | {:.2} : 1.00 | 1.28 : 1.00, glabella to opisthocranion |",
+        shape.vault / shape.width
+    );
+    println!(
+        "| crown to chin | {:.1} mm, {:.3} head radii | an eighth of stature |",
+        shape.height * 1000.0,
+        shape.height / radius
+    );
+    println!(
         "| too wide for its own height | {:+.1}% | — |",
         shape.too_wide() * 100.0
     );
@@ -492,6 +501,17 @@ struct Proportions {
     width: f32,
     /// The greatest fore-and-aft extent anywhere on the head.
     depth: f32,
+    /// The same over the VAULT alone, above the brow.
+    ///
+    /// **The column life's 1.28 is actually a ratio of, and [`Proportions::depth`]
+    /// above is not** (#79). Head length is glabella to opisthocranion: it stops
+    /// at the brow and does not include a nose. Measured anywhere from the chin
+    /// up, a face with a prominent nose reports its nose — on seed 42 the
+    /// greatest extent sits at −0.08 R, which is the nose tip against the
+    /// occiput, and reads 1.39 where the cranium reads 1.31. Both numbers are
+    /// printed because the difference between them is a fact about the face; the
+    /// one to compare with 1.28 is this one.
+    vault: f32,
     /// Face width at the cheekbone and at the angle of the jaw.
     bizygomatic: f32,
     bigonial: f32,
@@ -568,7 +588,7 @@ impl Proportions {
         // a sweep that reaches the floor reports the neck as the head's widest
         // point on any body with a slender face.
         let chin = skull.chin();
-        let (mut widest, mut widest_at, mut depth) = (0.0f32, 0.0f32, 0.0f32);
+        let (mut widest, mut widest_at, mut depth, mut vault) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
         let mut y = chin;
         while y <= crown {
             if let Some(wide) = bisect(at(y), Vec3::X)
@@ -579,6 +599,11 @@ impl Proportions {
             }
             if let (Some(ahead), Some(behind)) = (bisect(at(y), Vec3::Z), bisect(at(y), -Vec3::Z)) {
                 depth = depth.max(ahead + behind);
+                // Above the brow, which `BROW` runs out at by 0.58 R, so
+                // nothing on the face reaches into this.
+                if y > 0.30 * radius {
+                    vault = vault.max(ahead + behind);
+                }
             }
             y += STEP;
         }
@@ -601,6 +626,7 @@ impl Proportions {
             height: crown - chin,
             width: widest * 2.0,
             depth,
+            vault,
             bizygomatic,
             bigonial,
             cranium_to_face: (crown - canon.level) / canon.frame,
@@ -694,10 +720,10 @@ fn walk(axis: &str) {
 /// number moved on the next seed.
 fn sweep(seeds: &[i64], axes: Axes) {
     println!(
-        "| seed | head R | widest | at R | H:W | too wide | D:W | bizyg | bigon/bizyg | \
-         cran:face | frame | nose | mouth | eye az |"
+        "| seed | head R | H | H/R | widest | at R | H:W | D:W | vault:W | bizyg | \
+         bigon/bizyg | cran:face | frame | nose | mouth | eye az |"
     );
-    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     for &seed in seeds {
         let mut record = AvatarRecord::new("Swept", Archetype::default());
         record.reroll(seed);
@@ -729,14 +755,16 @@ fn sweep(seeds: &[i64], axes: Axes) {
         let shape = Proportions::measure(body, centre, radius, &skull, &canon, eyes);
         let features = Features::measure(&record, rig, &canon, centre, radius);
         println!(
-            "| {seed} | {:.1} | {:.1} | {:+.2} | {:.3} | {:+.1}% | {:.2} | {:.1} | {:.3} | \
-             {:.2} | {:.1} | {:.1} | {:.1} | {:+.0}° |",
+            "| {seed} | {:.1} | {:.1} | {:.3} | {:.1} | {:+.2} | {:.3} | {:.2} | {:.2} | \
+             {:.1} | {:.3} | {:.2} | {:.1} | {:.1} | {:.1} | {:+.0}° |",
             radius * 1000.0,
+            shape.height * 1000.0,
+            shape.height / radius,
             shape.widest * 1000.0,
             shape.widest_at / radius,
             shape.height / shape.width,
-            shape.too_wide() * 100.0,
             shape.depth / shape.width,
+            shape.vault / shape.width,
             shape.bizygomatic * 1000.0,
             shape.bigonial / shape.bizygomatic,
             shape.cranium_to_face,

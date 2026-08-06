@@ -329,27 +329,42 @@ fn owner_of(rig: &Rig, segment: usize, on: Zone, along: f32, length: f32) -> usi
     {
         return parent;
     }
-    // **How far down the bone the head reaches is the head node's own radius,
-    // and that is what keeps the throat the neck's.** The zone test alone hands
-    // the whole bone over, because the head's SURFACE runs on past its jaw to
-    // meet the neck — `shape` says so, and `SETTLE` exists because it does — so
-    // a vertex at the head's floor answers `Zone::Head` while plainly belonging
-    // to the throat. Measured on the default body with the zone test alone, the
-    // throat came out held 0.79 by the head and 0.03 by the neck, which turns a
-    // windpipe with a glance.
+    // **The split has to land between the chin and the throat, and both of
+    // those are fixed fractions of this bone on every body.** The zone test
+    // alone hands the whole bone over, because the head's SURFACE runs on past
+    // its jaw to meet the neck — `shape` says so, and `SETTLE` exists because it
+    // does — so a vertex at the head's floor answers `Zone::Head` while plainly
+    // belonging to the throat. Measured on the default body with the zone test
+    // alone, the throat came out held 0.79 by the head and 0.03 by the neck,
+    // which turns a windpipe with a glance.
     //
-    // The head node is a sphere of `radius` about the head joint, and the part
-    // of the bone inside it is the part the head was swept from. On the default
-    // body that is the top 84% of the bone: the chin's projection falls at 0.41
-    // and the throat's at 0.10, so the split lands between them without a
-    // constant. `along` is a projection onto the bone, which is vertical here —
+    // The bone is `neck → head` and its length is `head_r * HEAD_BELOW_JOINT`,
+    // so everything below the joint is a share of it that does not depend on
+    // either. `shape` puts the head's floor at 0.896 of that extent and the chin
+    // at 0.599 — measured to three figures at `HEAD_BELOW_JOINT` 1.19 and again
+    // at 1.55, where they read 0.8958/0.5953 and 0.8956/0.5988. So the chin's
+    // projection is 0.40 along the bone and the throat's floor 0.10, on every
+    // body, and the boundary belongs halfway between them.
+    //
+    // **This was `head_radius / length`, which is `1 / HEAD_BELOW_JOINT` written
+    // in a way that hides it** (#79). At 1.19 that is 0.84 and the boundary
+    // lands at 0.16 — inside the gap, which is why it worked, but only 19% of
+    // the way up from the throat rather than halfway. The expression runs the
+    // wrong way: the further the head reaches below its joint, the LESS of the
+    // bone it claims. At 1.55 it gives 0.645, putting the boundary at 0.355
+    // against a chin at 0.401 — seven millimetres apart, close enough that
+    // `smooth` blended neck weight onto the chin and
+    // `the_whole_face_turns_with_the_head` left a chin vertex 8 mm behind.
+    //
+    // A constant is right here precisely because the two landmarks it separates
+    // are constants. `along` is a projection onto the bone, which is vertical —
     // that the chin also stands 1.34 radii FORWARD does not enter into it, and
     // is why a plain distance to the node cannot make this call.
+    const COVERED: f32 = 0.75;
     if length <= f32::EPSILON {
         return segment;
     }
-    let covered = (rig.joints[segment].radius / length).min(1.0);
-    if along >= 1.0 - covered {
+    if along >= 1.0 - COVERED {
         segment
     } else {
         parent

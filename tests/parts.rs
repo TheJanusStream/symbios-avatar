@@ -640,9 +640,36 @@ fn the_underside_of_the_jaw_does_not_bulge() {
     // below the old worst of 10.0. Seeds 6 and 12 are the two the cage left
     // with no chin at all: with no crest to find, the chord this measures
     // against started from the wrong place, which is what put them at 12 mm —
-    // and giving them chins back took them to 8.7 and 8.6. Seed 8 is the one
-    // that went the other way and it is not understood; it is a single body in
-    // sixteen, and the same tail-of-the-population warning below applies to it.
+    // and giving them chins back took them to 8.7 and 8.6.
+    //
+    // **A RATIO NOW, AND SEED 8 IS UNDERSTOOD** (#79). Every paragraph above
+    // is a millimetre figure measured against a chord whose LENGTH is a record
+    // axis — `face_length` slides the chin down and the throat with it — and
+    // which #79 then lengthened 30% outright. So the number this asserted on
+    // was tracking how long a jaw is at least as much as how straight it is.
+    //
+    // Measured over the same sixteen seeds, the deviation as a fraction of the
+    // chin-to-throat chord, before #79 and after:
+    //
+    // ```text
+    //   seed    chord    mm     ratio      chord    mm     ratio
+    //     8     117.3   11.9    0.101      136.2   14.6    0.107   <- the worst
+    //     1      72.1    6.9    0.096       83.8    8.5    0.101
+    //     9      49.8    4.3    0.086       56.7    5.2    0.092
+    //     7      60.2    5.0    0.084       69.7    6.1    0.087
+    //    14      84.2    6.2    0.074       96.2    8.0    0.083   <- the best
+    // ```
+    //
+    // The absolute figure spans 4.1 to 11.9 mm across the population and the
+    // ratio spans 0.074 to 0.101 — a factor of 2.9 against a factor of 1.4. Seed
+    // 8 was never a body with a defect the others do not have; it is the body
+    // with the longest jaw, and this test was reporting that as a bulge. Which
+    // is why #107 could not explain it: there was nothing to explain.
+    //
+    // What the ratio does say, and it is a real cost recorded rather than
+    // absorbed: a 30% longer lower face made the underside about 6% less
+    // straight, 0.074–0.101 going to 0.080–0.107 on the same seeds. The bound is
+    // still the state and the target is still zero.
     //
     // **Sixteen seeds, because four were not enough and that is the finding.**
     // #94's analysis ran on the default body plus three seeds and read 9.2 mm
@@ -705,11 +732,14 @@ fn the_underside_of_the_jaw_does_not_bulge() {
                 }
             }
         }
+        let chord = (chin_y - throat_y).hypot(chin_z - throat_z) * 1000.0;
         assert!(
-            worst < 13.0,
-            "seed {seed}: the underside of the jaw stands {worst:.1} mm forward of \
-             the chord from the chin to the throat, at {worst_at:.1} mm. A \
-             jawline should be straight to hollow, so the target is near zero."
+            chord > f32::EPSILON && worst / chord < 0.115,
+            "seed {seed}: the underside of the jaw stands {worst:.1} mm forward of the \
+             chord from the chin to the throat, at {worst_at:.1} mm — {:.3} of a chord \
+             {chord:.1} mm long. A jawline should be straight to hollow, so the target \
+             is near zero.",
+            worst / chord
         );
     }
 }

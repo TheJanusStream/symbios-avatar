@@ -35,16 +35,37 @@ use crate::mesh::PolyMesh;
 use crate::plan::Zone;
 use crate::rig::Rig;
 
-/// How much longer a head is than it is wide.
+/// How much longer a head is than it is wide, before anything else runs.
 ///
-/// About a quarter, on a human. A head with a circular cross-section reads as a
-/// ball however well the rest of it is shaped.
-/// Provenance: **unsourced**. "About a quarter, on a human" is a
-/// recollection and not a citation; the built head measures H:D:W
-/// 1.33:1.29:1.00 against a human 1.48:1.28:1.00 (#79), so the depth this
-/// governs is the one ratio that is right to within one percent — which is
-/// weak evidence for the number and no evidence at all for the source.
-const ELONGATION: f32 = 0.24;
+/// A head with a circular cross-section reads as a ball however well the rest of
+/// it is shaped.
+///
+/// **Down from 0.24, and this constant was never the built ratio** (#79). It is
+/// a raw multiplier on the fore-aft radius, applied before [`BREADTH`] narrows
+/// the lateral one and before [`OCCIPUT`] swells the back. What a head comes out
+/// at is the product of the three: at +0.35 R that was
+/// `1.24 × 0.974 / 0.891 × (1 + 0.14 behind)`, so the head built to 1.50 while
+/// the coefficient said 1.24 and the docstring said "about a quarter". True of
+/// the number, false of the head — which is [`TEMPLE`]'s unit confusion again,
+/// one table down and in a different disguise.
+///
+/// The note that stood here called itself unsourced and offered the built 1.29
+/// as weak support. That support was withdrawn by #107 without anyone noticing:
+/// the eight-point cage delivers `cos(π/8)` where four-point rings delivered
+/// `cos(π/4)`, the head's built width went up 26% and its depth 47%, and the
+/// ratio went to 1.50 with this constant untouched. A number whose only evidence
+/// is a measurement taken through a mesher does not survive the mesher changing.
+///
+/// At 0.11 the vault measures 208.1 mm deep on a width of 160.9 — 1.29, against
+/// a life head length over head breadth of 195 over 152 — and 1.29 to 1.32
+/// across eight seeds at neutral breadth.
+/// Provenance: **derived from the built ratio** (#79), which is the only
+/// honest thing to derive it from while it is one factor of three. The TARGET
+/// is looked up — head length 195 mm against head breadth 152 to 156 — and
+/// this is the value that puts the built vault on it. If [`BREADTH`],
+/// [`DEPTH`] or [`OCCIPUT`] moves through the mid-cranium, or if the cage
+/// changes again, this has to be re-measured rather than trusted.
+const ELONGATION: f32 = 0.11;
 
 /// How wide the skull is at each height, relative to its unshaped width.
 ///
@@ -85,14 +106,33 @@ const ELONGATION: f32 = 0.24;
 /// the silhouette, and it said 0.46 — a 19 mm cliff in 11 mm of height, against
 /// a neck the unshaped head met to within 2 mm. Anything but 1.0 down there is
 /// a seam.
+/// **The two vault knots moved with the crown, and that is a hazard this table
+/// carries permanently** (#79). Heights above the joint are RAW skull radii and
+/// heights below it are profile heights, so the lower half of this table follows
+/// a head's own lower face and the upper half does not follow anything. When #79
+/// took the built crown from 0.85 radii to 1.03, the knot marked "crown" stayed
+/// at 0.86 — and [`knot`] clamps above its first entry, so the top sixth of the
+/// vault held a flat 0.58 instead of tapering. Built, the half-width ran 46.5,
+/// 42.1, 40.8, 39.4 mm over 12 mm of height and then fell off a cliff: a
+/// cylinder with a cap on it, in the exact place this table exists to round.
+/// The crown knot is 1.05 and the upper-cranium knot 0.75 now, both scaled by
+/// the same 1.204 the crown moved by, and the built vault tapers smoothly from
+/// the parietal to the vertex.
+///
+/// The parietal knot at 0.42 did NOT scale and must not: it is where eurion
+/// sits, and eurion is quoted against the pupil line, which does not move with
+/// the crown. Built, the widest point lands at +0.42 to +0.43 R on eight seeds —
+/// 39 mm above the eye line against a life 25 to 45.
 /// Provenance: **looked up, then tuned by render** (#79). Eurion 156 mm
 /// against a bizygomatic 137, with eurion 25 to 45 mm above the pupil line,
 /// is the looked-up half and it is what inverted this table's premise. The
 /// knots from the cheekbone down are tuned: the head was 11 to 21 percent too
-/// wide for its height and narrowing it had to be judged by eye.
+/// wide for its height and narrowing it had to be judged by eye. The two
+/// vault knots are **derived** — they are the old pair scaled by the ratio
+/// the built crown moved by, not a new shape.
 const BREADTH: [(f32, f32); 9] = [
-    (0.86, 0.58),     // crown
-    (0.62, 0.88),     // upper cranium
+    (1.05, 0.58),     // crown
+    (0.75, 0.88),     // upper cranium
     (0.42, 0.94),     // the parietal, where a head is actually widest
     (0.20, 0.885),    // above the temple
     (-0.05, 0.825),   // the cheekbones, a plane change and not the widest point
@@ -113,13 +153,20 @@ const BREADTH: [(f32, f32); 9] = [
 /// the neck's where they meet. See [`BREADTH`] for why anything else is a seam —
 /// unshaped, the two agreed to within 2 mm, and the profile was opening an 11 mm
 /// gap at the nape and a 7 mm overhang at the throat (#47).
+///
+/// **The two vault knots moved with the crown** (#79), by the same 1.204 and for
+/// the same reason [`BREADTH`]'s did — read that table's note, which is where
+/// the mechanism is written out. 0.86 and 0.55 became 1.05 and 0.66. The knots
+/// at 0.20 and below did not move: they are the face, and the face is where it
+/// was.
 /// Provenance: **tuned by render** (#47 for the junction knot), except the
 /// last, which is **derived** — `1/(1 + ELONGATION)` is exactly what makes
 /// `deep` come out at one where the head meets the neck, and is a solved
-/// value rather than a shape.
+/// value rather than a shape — and the two vault knots, also **derived**, as
+/// the old pair scaled by the ratio the built crown moved by.
 const DEPTH: [(f32, f32); 7] = [
-    (0.86, 0.66),
-    (0.55, 0.94),
+    (1.05, 0.66),
+    (0.66, 0.94),
     (0.20, 1.00),
     (-0.10, 1.00),
     (-0.46, 0.90),
@@ -133,11 +180,33 @@ const DEPTH: [(f32, f32); 7] = [
 /// entirely. Negative below it is the jaw cutting in — the hollow between the
 /// jaw's angle and the neck, without which a head sits on its neck like a ball
 /// on a post.
-/// Provenance: **tuned by render**. No issue number: this table predates the
-/// head overhaul and has not been revisited since, which makes it the least
-/// examined of the six.
-const OCCIPUT: [(f32, f32); 6] = [
-    (0.70, 0.04),
+///
+/// **Examined at last (#79), and the defect was where it STOPPED rather than
+/// how hard it pushed.** Heights above the joint are raw skull radii and this
+/// table's top knot was 0.70 of one. [`knot`] clamps above its first entry, so
+/// everything higher carried a flat 0.04 — and when #79 took the built crown
+/// from 0.85 radii to 1.03, that clamp covered the top third of the vault. The
+/// vertex of a skull is very nearly symmetric fore and aft; this was holding a
+/// four percent backward bulge all the way to it, so the whole cap leaned.
+///
+/// It runs out at the crown now: 0.0 at 1.05 radii, where [`BREADTH`] and
+/// [`DEPTH`] also end, and 0.04 kept at 0.84 so the taper above the occiput is
+/// unchanged in the band it was tuned in.
+///
+/// **The amplitudes were left alone, and that is a finding rather than an
+/// omission.** Built and measured after the depth came down, the vault reaches
+/// 100.8 mm forward of the head joint and 107.2 behind it — 6% back-heavy, on a
+/// vault:width of 1.29 against a life 1.28. Taking the peak down would flatten
+/// the occiput to buy a symmetry nothing here has a source for: the head joint
+/// is a modelling construct rather than a landmark, so there is no anthropometry
+/// that says what a fore-and-aft split about it should be. What there IS a
+/// source for is the TOTAL, and that is [`ELONGATION`]'s and it is now right.
+/// Provenance: **tuned by render**, except the crown knot, which is
+/// **derived** (#79) — it is where the built crown sits, the same value
+/// [`BREADTH`] and [`DEPTH`] end at, and not a shape.
+const OCCIPUT: [(f32, f32); 7] = [
+    (1.05, 0.0),
+    (0.84, 0.04),
     (0.35, 0.14),
     (0.05, 0.08),
     (-0.30, -0.10),
@@ -502,7 +571,17 @@ const FACE_PASSES: [(f32, f32, f32, f32); 8] = [
     // floor is at JUNCTION / SETTLE = −0.761 profile heights on EVERY body by
     // construction, so anything past it covers the whole skull and the extra is
     // margin rather than reach.
-    (-0.30, 1.0, -0.80, 1.0),
+    //
+    // **The ceiling went 1.0 → 1.10 for the same reason the floor is −0.80**
+    // (#79). Heights ABOVE the joint are raw skull radii, not profile heights,
+    // and the built crown moved from 0.85 radii to 1.03 — so a ceiling of 1.0
+    // stopped being margin past the head and became a resolution boundary
+    // three millimetres under the vertex. It costs 22 triangles on the default
+    // body and 22 at the dearest corner to put the crown back inside, which is
+    // the price of the ceiling meaning what the sentence above says it means.
+    // The other two ceilings, 0.60 and 0.50, are NOT margin and did not move:
+    // they are feature bands, and `BROW` runs out at 0.58.
+    (-0.30, 1.0, -0.80, 1.10),
     (0.25, 1.0, -0.80, 0.60),
     (0.55, 1.0, -0.714, 0.50),
     // The flank of the jaw, from where the mouth's passes give up round to
@@ -1698,23 +1777,74 @@ mod tests {
     }
 
     #[test]
+    fn the_vault_profiles_reach_the_crown_they_shape() {
+        // **The defect this guards is silent, and it shipped for a whole pass**
+        // (#79). Heights below the joint are profile heights and follow a head's
+        // own lower face; heights ABOVE it are raw skull radii and follow
+        // nothing. `knot` clamps above its first entry, so any vault a table's
+        // top knot does not reach is held at a constant — and #79 raised the
+        // built crown from 0.85 radii to 1.03 without moving three tables that
+        // stopped at 0.86, 0.86 and 0.70.
+        //
+        // What that looked like: the top sixth of the head kept a constant
+        // relative width instead of tapering, and the built half-width ran 46.5,
+        // 42.1, 40.8, 39.4 mm over twelve millimetres of height before falling
+        // off a cliff at the cap. A cylinder with a lid, in the one part of the
+        // skull `BREADTH` exists to round. Nothing failed. The renders showed it
+        // and the numbers did not, because every ratio this crate measures — H:W,
+        // cranium:face, the widest point — is taken below where the clamp began.
+        //
+        // So the assertion is registration rather than shape: whatever the crown
+        // node is set to, the tables that shape the vault have to reach it.
+        for seed in [0i64, 3, 7, 11, 23, 42] {
+            let (_, measured, _, radius) = skull(seed, 1);
+            let crown = measured.throat_and_crown().1 / radius;
+            for (name, profile) in [
+                ("BREADTH", &BREADTH[..]),
+                ("DEPTH", &DEPTH[..]),
+                ("OCCIPUT", &OCCIPUT[..]),
+            ] {
+                let top = profile[0].0;
+                assert!(
+                    top >= crown,
+                    "seed {seed}: {name}'s top knot is at {top:.2} skull radii and the \
+                     built crown is at {crown:.2}, so `knot` clamps {name} flat over the \
+                     top {:.0}% of the vault and the cap keeps whatever the last knot \
+                     said. Move the knot, do not widen this bound.",
+                    100.0 * (crown - top) / crown
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_back_of_the_cranium_is_fuller_than_the_back_of_the_jaw() {
-        let (_, shaped, rig, centre, radius) = head(11);
+        // **Bisected, not binned, and it took a taller head to expose that**
+        // (#79). This read the furthest-back VERTEX within 0.09 radii of each
+        // height. On this fixture — the cage at `BODY_SUBDIVISIONS`, with no
+        // face refinement — the rows run about 0.18 radii apart, so a window
+        // 0.18 wide is one row on a good day and none on a bad one. Raising the
+        // crown from 0.85 radii to 1.03 respaced those rows, both windows came
+        // up EMPTY, and the fold over an empty iterator returned `f32::MIN` for
+        // the occiput and the jaw alike. The assertion then compared minus
+        // infinity against minus infinity and failed, reporting a skull with no
+        // back at all on a head whose occiput is measurably fine.
+        //
+        // Which is the defect this module's own `bisect` helper was written for,
+        // in a docstring three hundred lines above this one, and it is the
+        // seventeenth instrument in this project to have been measuring
+        // something other than its name.
+        let (_, shaped, _, centre, radius) = head(11);
         let back = |at: f32| {
-            shaped
-                .positions
-                .iter()
-                .filter(|p| {
-                    ((p.y - centre.y) / radius - at).abs() < 0.09
-                        && rig.joints[rig.nearest_bone(**p).joint].zone == Zone::Head
-                })
-                .map(|p| centre.z - p.z)
-                .fold(f32::MIN, f32::max)
+            bisect(&shaped, centre + Vec3::Y * at * radius, -Vec3::Z)
+                .expect("the midline is inside the head at both heights")
                 / radius
         };
         assert!(
             back(0.30) > back(-0.42) * 1.25,
-            "the occiput measured {} against a jaw of {}",
+            "the occiput reaches {:.3} radii behind the head joint against the jaw's \
+             {:.3}, and a cranium that does not out-reach its own jawline by a quarter \
+             is a ball on a post",
             back(0.30),
             back(-0.42)
         );
@@ -1882,11 +2012,29 @@ mod tests {
                 }
                 // Off the midline, where a mouth's corners sit and where the
                 // per-band normalisation earns its keep.
+                //
+                // **The shallow bound came out from −4.0 to −5.0 for #79's
+                // longer face, and the obvious alternative was tried first and
+                // is wrong.** The head reaches 30% further below its joint than
+                // it did, so `BANDS`'s pitch over `throat..crown` went from
+                // about 10 mm to 12.5, and the worst off-midline reading — the
+                // jaw just under the joint, where the surface turns fastest —
+                // went from −2.0 mm to −4.0. Raising `BANDS` makes it WORSE,
+                // measured: 24 bands take the worst seed to −4.7 and 26 to −5.4.
+                // A bin's answer is the outermost sample in it, so starving the
+                // bins costs more than the finer pitch buys, which is exactly
+                // what `COLUMNS`'s docstring records happening to the lateral
+                // bins at twenty-one.
+                //
+                // The fix is the one `the_profile_agrees_over_its_whole_span`
+                // already names: spend the band budget on the face rather than
+                // on the throat, which is a quarter of this span and carries
+                // nothing. That belongs with #74, not with a proportions pass.
                 let across = skull.half_width(height) * 0.5;
                 if let Some(surface) = probe(&mesh, from + Vec3::X * across, Vec3::Z) {
                     let error = (skull.depth_across(height, across) - surface) * 1000.0;
                     assert!(
-                        (-4.0..14.0).contains(&error),
+                        (-5.0..14.0).contains(&error),
                         "seed {seed} at {height:.3}: the depth off the midline is {error:.1} mm out"
                     );
                 }

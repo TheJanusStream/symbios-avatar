@@ -67,14 +67,38 @@ impl Canon {
     /// deliberately: it was measured against the head's own height and found
     /// right (#73), and moving it moves every feature on the face. What the
     /// vertical frame should be is #78's question, not this one's.
+    /// **Checked at last, and the answer is that it cannot be checked from
+    /// here** (#79). The docstring below asked for a height pass to settle this.
+    /// One happened — the head went from 161 mm crown to chin to 201.8 — and it
+    /// settles less than it looks like it does.
+    ///
+    /// Measured up from the menton as a fraction of head height, this constant
+    /// now puts the pupil line at 0.500 against #73's Farkas 0.522, where before
+    /// the pass it read 0.486. Closer, and both inside 5%. But that reading is
+    /// NOT independent of `cranium:face`: `(crown − level) / (level − chin) = 1`
+    /// and `level` halving the head are the same sentence written twice, and
+    /// #79 tuned the head until the first was true. So the agreement is
+    /// consistency, not confirmation, and a pass that moved the crown could
+    /// never have been the thing that tested this.
+    ///
+    /// What the exercise DID turn up is that the two references disagree, and
+    /// nobody had put them side by side. A pupil line at 0.522 of head height
+    /// above the menton is a cranium:face of 0.478/0.522 = **0.916**, not the
+    /// 1.00 this crate has called life's since #78. Read the other way round —
+    /// 0.522 measured DOWN from the vertex — it is 1.092. The built head sits at
+    /// 1.00, almost exactly between them, which is a defensible place to be and
+    /// is not the same as being right. Settling it means resolving which end
+    /// Farkas measured from, and that is a source question rather than a
+    /// geometry one.
     /// Provenance: **unsourced**, and it is the one constant on this face
     /// whose supporting measurement was later withdrawn. #73 recorded the eye
     /// at 0.520 of head height against a Farkas 0.522 and called the vertical
     /// settled; #78 could not reproduce 0.520 against either candidate
     /// denominator on seventeen bodies — chin-to-crown gives 0.400, throat-to-
     /// crown 0.478 — so whatever surface that check measured, it was neither.
-    /// The value has not moved because moving it moves every feature, but it
-    /// should be read as untested rather than as confirmed.
+    /// The value has not moved because moving it moves every feature, and it
+    /// should still be read as untested: see the note above for why a taller
+    /// head did not test it.
     const EYE_LINE: f32 = 0.05;
 
     /// A face is five eye-widths across, so a half-face is two and a half and
