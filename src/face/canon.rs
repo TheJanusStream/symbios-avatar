@@ -281,10 +281,27 @@ mod tests {
         // The split #77 made is still right — a width belongs in a width and the
         // eyeball belongs in neither — and `no_ruler_moves_when_the_eye_axes_move`
         // is the test that says so. This one is no longer its evidence.
+        //
+        // **Measured with the skull's own two axes held neutral, and that is the
+        // whole of what #61 changed here.** Head breadth and face length are
+        // record axes now, and they are precisely a width and a height that a
+        // record may move independently — so a re-rolled body legitimately
+        // spreads this ratio 40%, and reading a sweep of re-rolls as evidence
+        // that a face is sized by its body would be reading the feature as the
+        // defect. What must still hold is that with the record saying nothing,
+        // a head sizes its own face: everything below varies stature, build and
+        // head size and holds those two at zero.
+        //
+        // The axes' own effect is `the_skull_axes_move_one_ruler_each` below,
+        // which asserts the property this one can no longer see.
         let mut spread = (f32::MAX, f32::MIN);
         for seed in 0..16 {
             let mut record = AvatarRecord::new("Spread", Archetype::default());
             record.reroll(seed);
+            if let Archetype::Humanoid(ref mut params) = record.archetype {
+                params.head_breadth = 0.0;
+                params.face_length = 0.0;
+            }
             let (canon, _) = canon_of(&record);
             let ratio = canon.unit / canon.frame;
             spread = (spread.0.min(ratio), spread.1.max(ratio));
@@ -297,6 +314,70 @@ mod tests {
             spread.1,
             (spread.1 / spread.0 - 1.0) * 100.0
         );
+    }
+
+    #[test]
+    fn the_skull_axes_move_one_ruler_each() {
+        // **The property #61 added and the reason the sweep above had to hold
+        // them still.** Head breadth is a width and face length is a height, and
+        // the point of having two axes rather than one is that each moves its
+        // own ruler and leaves the other alone. If they moved together they
+        // would be `head_size` wearing two names.
+        //
+        // Read as ratios rather than as millimetres, because a stated tolerance
+        // in metres would be a tolerance on the default body's size.
+        let neutral = |breadth: f32, length: f32| {
+            let mut record = AvatarRecord::new("Axed", Archetype::default());
+            if let Archetype::Humanoid(ref mut params) = record.archetype {
+                params.head_breadth = breadth;
+                params.face_length = length;
+            }
+            canon_of(&record).0
+        };
+        let middle = neutral(0.0, 0.0);
+
+        let (narrow, broad) = (neutral(-1.0, 0.0), neutral(1.0, 0.0));
+        assert!(
+            broad.unit / narrow.unit > 1.30,
+            "the breadth axis moved the width ruler only {:.3} of the way, \
+             {:.4} to {:.4}",
+            broad.unit / narrow.unit,
+            narrow.unit,
+            broad.unit
+        );
+        // The frame is the eye line to the chin, and neither end of it is a
+        // width. A breadth axis that moved it would be scaling the head.
+        for canon in [narrow, broad] {
+            assert!(
+                (canon.frame / middle.frame - 1.0).abs() < 0.02,
+                "the breadth axis moved the height ruler by {:.1}%",
+                (canon.frame / middle.frame - 1.0) * 100.0
+            );
+        }
+
+        let (short, long) = (neutral(0.0, -1.0), neutral(0.0, 1.0));
+        assert!(
+            long.frame / short.frame > 1.25,
+            "the face-length axis moved the height ruler only {:.3} of the way, \
+             {:.4} to {:.4}",
+            long.frame / short.frame,
+            short.frame,
+            long.frame
+        );
+        // The other direction is looser, and honestly so: lengthening the face
+        // moves the head joint up its neck, so the eye line — which is a fixed
+        // fraction of the node radius above that joint — sits on a slightly
+        // different part of the vault and the half-width measured there moves
+        // with it. That is a consequence of where the eye line is defined, not
+        // an axis reaching across; see `Canon::EYE_LINE`, whose own docstring
+        // records that it is untested.
+        for canon in [short, long] {
+            assert!(
+                (canon.unit / middle.unit - 1.0).abs() < 0.06,
+                "the face-length axis moved the width ruler by {:.1}%",
+                (canon.unit / middle.unit - 1.0) * 100.0
+            );
+        }
     }
 
     #[test]

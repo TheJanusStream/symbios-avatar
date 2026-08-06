@@ -40,23 +40,57 @@ use crate::prim;
 use super::canon::Canon;
 use super::skull::Skull;
 
-/// How prominent each feature is.
+/// How prominent each feature is, and how wide.
 ///
 /// Stored as scaled integers like every other parameter block here: the AT
 /// Protocol data model has no floating-point type, and a record that writes one
 /// is a record other readers cannot round-trip.
+///
+/// **Four of these say how far a feature stands OUT and two say how far it
+/// reaches ACROSS, and until #61 the second pair were hard constants.** A nose's
+/// width across the wings and a mouth's width to the corners were fixed
+/// multiples of [`Canon::unit`], so every seed had the same nose seen end-on and
+/// the same mouth seen straight on however prominent either was. Those are two
+/// of the loudest differences between two faces and neither was in the record.
+///
+/// The skull's own breadth and the face's length are NOT here: they are
+/// [`crate::plan::HumanoidParams`] axes, because they are built into the cage
+/// rather than carved into it. See `HEAD_BREADTH_SPAN` there for why.
+///
+/// **All six fall under the `Features` lock, which already covers six
+/// categories of thing.** That bit now means skin, eyes, face, hair, head size
+/// and extremity size, and these do not make it worse — they are the same kind
+/// of choice as the four beside them. Whether a face deserves a lock of its own
+/// is #53's question, and answering it here by adding a seventh category ad hoc
+/// is how a lock set stops meaning anything.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct FaceParams {
     /// How far the nose stands out, `0` flat and `1` prominent.
     #[serde(with = "crate::plan::scaled")]
     pub nose: f32,
+    /// How wide the nose is across the wings, `0` narrow and `1` broad.
+    ///
+    /// Independent of [`Self::nose`], which is how far it stands off the face.
+    /// A narrow prominent nose and a broad flat one are different faces and the
+    /// record could say neither.
+    #[serde(with = "crate::plan::scaled")]
+    pub nose_width: f32,
     /// How heavy the brow ridge is.
     #[serde(with = "crate::plan::scaled")]
     pub brow: f32,
     /// How full the lips are.
     #[serde(with = "crate::plan::scaled")]
     pub mouth: f32,
+    /// How wide the mouth is, corner to corner.
+    ///
+    /// **Split out of [`Self::mouth`] rather than added beside it.** Fullness
+    /// used to widen the mouth as well as plump it, at exactly the gain this
+    /// axis now carries — so the default face is unchanged and what moved is
+    /// that a wide thin mouth and a small full one are now two records instead
+    /// of one impossible one.
+    #[serde(with = "crate::plan::scaled")]
+    pub mouth_width: f32,
     /// How far the ears stand out from the head.
     #[serde(with = "crate::plan::scaled")]
     pub ears: f32,
@@ -66,8 +100,10 @@ impl Default for FaceParams {
     fn default() -> Self {
         Self {
             nose: 0.5,
+            nose_width: 0.5,
             brow: 0.5,
             mouth: 0.5,
+            mouth_width: 0.5,
             ears: 0.5,
         }
     }
@@ -75,21 +111,27 @@ impl Default for FaceParams {
 
 impl FaceParams {
     /// Clamps every axis into range. Idempotent.
+    ///
+    /// **Through `crate::plan::sanitize_axis` rather than a second copy of the
+    /// rule.** This carried its own substitute-then-clamp, and it differed from
+    /// the shared one in exactly the case the shared one documents: it
+    /// substituted for `NaN` alone, so an infinity clamped to the near bound and
+    /// a mouth arrived at zero width rather than at its default. The fallbacks
+    /// come from `Default` for the same reason they do there — a written-out
+    /// fallback can drift from the documented default and this one cannot.
     pub fn sanitize(&mut self) {
-        use crate::plan::scaled::quantize;
-        for axis in [
-            &mut self.nose,
-            &mut self.brow,
-            &mut self.mouth,
-            &mut self.ears,
+        let default = Self::default();
+        for (axis, fallback) in [
+            (&mut self.nose, default.nose),
+            (&mut self.nose_width, default.nose_width),
+            (&mut self.brow, default.brow),
+            (&mut self.mouth, default.mouth),
+            (&mut self.mouth_width, default.mouth_width),
+            (&mut self.ears, default.ears),
         ] {
             // Quantised as well as clamped, so a record equals itself after a
             // round trip through the thousandths the wire carries.
-            *axis = quantize(if axis.is_nan() {
-                0.5
-            } else {
-                axis.clamp(0.0, 1.0)
-            });
+            *axis = crate::plan::sanitize_axis(*axis, fallback, (0.0, 1.0));
         }
     }
 }
@@ -471,15 +513,25 @@ mod tests {
     fn sanitize_clamps_and_is_idempotent() {
         let mut params = FaceParams {
             nose: 4.0,
+            nose_width: -0.5,
             brow: -2.0,
             mouth: f32::NAN,
-            ears: f32::INFINITY,
+            mouth_width: f32::NEG_INFINITY,
+            ears: 3.0,
         };
         params.sanitize();
         assert_eq!(params.nose, 1.0);
+        assert_eq!(params.nose_width, 0.0);
         assert_eq!(params.brow, 0.0);
-        assert_eq!(params.mouth, 0.5);
         assert_eq!(params.ears, 1.0);
+        // **A non-finite value takes the DEFAULT, not the near bound**, and this
+        // file used to do the second for infinities and the first for `NaN`
+        // alone. A slider cannot produce an infinity; an arithmetic accident
+        // upstream can, and answering it with a mouth of zero width is a worse
+        // guess than answering with a neutral one. See
+        // [`crate::plan::sanitize_axis`], which is where the rule lives now.
+        assert_eq!(params.mouth, 0.5);
+        assert_eq!(params.mouth_width, 0.5);
 
         let once = params;
         params.sanitize();

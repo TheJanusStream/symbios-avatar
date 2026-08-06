@@ -282,7 +282,13 @@ fn declared_defaults_match_the_values_the_crate_writes() {
     let defs = lexicon("defs");
     let declared = |fragment: &str| -> Value { defs["defs"][fragment]["properties"].clone() };
 
-    let cases: [(&str, Value); 3] = [
+    // **`face` and `humanoid` were missing from this list, and adding two axes
+    // to each is what found it** (#61). Every check above runs over the names a
+    // schema declares; this one is the only one that reads a schema's promised
+    // VALUE, and the two definitions carrying the most axes were exempt from it.
+    // A default that drifts is invisible to every reader who omits the field and
+    // to nobody else, which is the hardest kind of schema defect to notice.
+    let cases: [(&str, Value); 5] = [
         (
             "skin",
             serde_json::to_value(symbios_avatar::SkinParams::default()).expect("serialises"),
@@ -294,6 +300,14 @@ fn declared_defaults_match_the_values_the_crate_writes() {
         (
             "hair",
             serde_json::to_value(symbios_avatar::HairParams::default()).expect("serialises"),
+        ),
+        (
+            "face",
+            serde_json::to_value(symbios_avatar::FaceParams::default()).expect("serialises"),
+        ),
+        (
+            "humanoid",
+            serde_json::to_value(HumanoidParams::default()).expect("serialises"),
         ),
     ];
 

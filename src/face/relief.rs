@@ -114,6 +114,41 @@ impl Across {
 /// to be far enough round the head that nothing reaches it.
 const FRONTAL: f32 = 0.15;
 
+/// What the `noseWidth` axis multiplies the nose's authored ramp by at its
+/// middle, and how far either way it goes.
+///
+/// **The neutral is not one, and finding out why is the whole of what #61's
+/// "measure both extremes before believing it" step bought.** The axis was built
+/// symmetric about the ramp as authored, so that splitting a hard constant out
+/// into a record field moved no face. Measured on the built carve — where the
+/// displacement is still a fifth of its midline peak, at the base of the nose,
+/// on the default body — that gave 11.0 mm at one end, 20.4 in the middle and
+/// 29.8 at the other, against a life alare breadth of 31 to 42.
+///
+/// So the axis's **whole range lay below life**, and the two renders at its ends
+/// were very nearly the same picture. That is the undertone axis of #39 again in
+/// a different feature: a slider that measurably moves something, over a range
+/// where none of the movement means anything, reads as a slider that does
+/// nothing. What was wrong was not the span, it was where the span sat.
+///
+/// Re-centred so the middle of the axis IS the middle of life — 1.60 puts the
+/// neutral nose at 32.6 mm, against a population mean near 34 — and widened so
+/// both ends are somewhere a face could be: 16.3 mm at zero and 49.0 at one,
+/// with life's 31 to 42 spanning 0.44 to 0.65 of the slider.
+///
+/// This is the only default on this face that #61 moved, and it moved because a
+/// measurement said the constant it replaced was 40% under life. The skull's own
+/// two axes kept their neutrals; the reasoning for each is on that issue.
+///
+/// Provenance: **derived** from a life alare breadth of 31 to 42 mm against the
+/// built carve, measured rather than computed from the ramp — a report that
+/// recomputes a feature's width from its own copy of the constants is
+/// restating the source, not measuring the body.
+const NOSE_WIDTH_NEUTRAL: f32 = 1.60;
+
+/// See [`NOSE_WIDTH_NEUTRAL`]. How far either side of it the axis reaches.
+const NOSE_WIDTH_SPAN: f32 = 0.80;
+
 /// Carves a face into a built head, in place.
 ///
 /// Runs on the **rest** mesh, after [`super::skull::shape`] and before anything
@@ -423,7 +458,17 @@ impl Face {
     fn mouth(&self, local: Vec3) -> f32 {
         let unit = self.unit;
         let full = self.params.mouth;
-        let half = unit * (0.6829 + 0.1188 * full);
+        // **The width came off `full` and onto its own axis, at the same gain**
+        // (#61). A mouth's fullness and a mouth's width are independent on a
+        // face and were one number here, so the record could not say wide and
+        // thin, or small and full — and the second of those is most of what
+        // separates two mouths. At `mouth_width` 0.5 this is what fullness 0.5
+        // used to give, so no built face moved when the axis was split out.
+        //
+        // The span reaches 0.6829 to 0.8017 of an eye-width as a half, which is
+        // a mouth 1.37 to 1.60 eye-widths across against the canon of fifths'
+        // one and a half.
+        let half = unit * (0.6829 + 0.2376 * self.params.mouth_width);
         let plump = self.plump;
         // Lips stand about five millimetres off the face around them, and this
         // is that. It was nearly ten, and at ten the profile below has to swing
@@ -525,7 +570,25 @@ impl Face {
         );
         // Across: a narrow bridge opening into the wings, about one eye-width
         // at the nostrils, per the canon of fifths.
-        let half = unit
+        //
+        // **The ramp is authored and the axis scales it** (#61). This was a hard
+        // constant — the same nose seen end-on on every seed, whatever the
+        // prominence axis said — and nasal breadth is one of the two or three
+        // measurements that most distinguishes one face from another.
+        //
+        // Twice as much at the wings as at the root, which is a shape rather
+        // than a saving: alare breadth varies about twice as much between people
+        // as nasal root breadth does, and scaling the whole ramp uniformly gives
+        // a bigger nose rather than a broader one.
+        //
+        // `wings` is 1.60 at the axis's middle rather than 1.0, so this DID move
+        // every built face — by 60% of the nose's width. See
+        // [`NOSE_WIDTH_NEUTRAL`], which is where the measurement that says it had
+        // to is written down.
+        let wings = NOSE_WIDTH_NEUTRAL + NOSE_WIDTH_SPAN * (self.params.nose_width - 0.5) * 2.0;
+        let broad = 1.0 + (wings - 1.0) * (0.5 + 0.5 * along);
+        let half = broad
+            * unit
             * ramp(
                 &[
                     (0.00, 0.2227),

@@ -36,7 +36,8 @@
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
-//! cargo run --release --example render -- --face 1,1,1,0.5        # nose,brow,mouth,ears
+//! cargo run --release --example render -- --face 1,0.5,1,1,0.5,0.5 # nose,noseWidth,brow,mouth,mouthWidth,ears
+//! cargo run --release --example render -- --skull -1,1            # headBreadth,faceLength
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --budget    # what one avatar costs
@@ -151,11 +152,11 @@ fn main() {
         record.reroll(seed);
     }
 
-    // Four numbers, in the order the axes are declared: nose, brow, mouth,
-    // ears. Set on the record rather than through a config override, because
-    // that is where a face lives. Same reason `--skin` exists: a face cannot be
-    // judged from its numbers, and these are the numbers that decide whether
-    // two records describe two people (#61).
+    // Six numbers, in the order the axes are declared: nose, its width, brow,
+    // mouth, its width, ears. Set on the record rather than through a config
+    // override, because that is where a face lives. Same reason `--skin` exists:
+    // a face cannot be judged from its numbers, and these are the numbers that
+    // decide whether two records describe two people (#61).
     if let Some(spec) = value("--face") {
         let given: Vec<f32> = spec
             .split(',')
@@ -164,10 +165,33 @@ fn main() {
         let axis = |at: usize, fallback: f32| given.get(at).copied().unwrap_or(fallback);
         record.face = FaceParams {
             nose: axis(0, record.face.nose),
-            brow: axis(1, record.face.brow),
-            mouth: axis(2, record.face.mouth),
-            ears: axis(3, record.face.ears),
+            nose_width: axis(1, record.face.nose_width),
+            brow: axis(2, record.face.brow),
+            mouth: axis(3, record.face.mouth),
+            mouth_width: axis(4, record.face.mouth_width),
+            ears: axis(5, record.face.ears),
         };
+    }
+
+    // The skull's own two axes, which live on the body plan rather than on the
+    // face: how broad the head is across and how long the face is below the
+    // eyes. They are the pair the owner called for in #61 and the pair whose
+    // default has to be chosen by looking at both ends of the range, so the
+    // instrument that looks needs a way to ask for an end.
+    if let Some(spec) = value("--skull") {
+        let given: Vec<f32> = spec
+            .split(',')
+            .filter_map(|axis| axis.trim().parse().ok())
+            .collect();
+        if let Archetype::Humanoid(ref mut params) = record.archetype {
+            if let Some(&breadth) = given.first() {
+                params.head_breadth = breadth;
+            }
+            if let Some(&length) = given.get(1) {
+                params.face_length = length;
+            }
+        }
+        record.sanitize();
     }
 
     // The record carries its own hair; the flag only replaces the axes it names.

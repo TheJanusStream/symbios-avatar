@@ -366,8 +366,36 @@ const JUNCTION: f32 = -0.70;
 const SETTLE: f32 = 0.92;
 
 /// The region each refinement pass covers: how far round the head it reaches as
-/// a cosine of the angle from dead ahead, then its lowest and highest point in
-/// skull radii above the head joint.
+/// a cosine of the angle from dead ahead, then its lowest and highest point.
+///
+/// **Heights above the joint are skull radii; heights below it are PROFILE
+/// HEIGHTS, the same remapped unit [`reshape_to`] reads its knots in, and until
+/// #61 they were raw radii in both directions.** That was a latent defect and it
+/// became a blocking one the moment face length became a record axis.
+///
+/// A head reaches anywhere from −1.07 to −1.16 radii below its joint on the
+/// bodies that ship today and would run −0.89 to −1.36 across the new axis, so a
+/// band edge in raw radii is the mouth on one body and the chin on another. The
+/// features are not in raw radii either: every one of them is placed as a
+/// fraction of the eye-to-chin frame, and the chin is a fixed 0.7097 of the
+/// head's own floor — which works out to a **dead constant −0.540 profile
+/// heights on every body, whatever its floor**. Worked through, the mouth line
+/// lands at −0.304 to −0.310 across the whole face-length range against a −0.307
+/// on the default, so in this unit the whole feature stack holds still and a
+/// band that covers it once covers it always.
+///
+/// In raw radii it does not. The same arithmetic puts the mouth line at −0.377 R
+/// on a short face and −0.520 on a long one, against a finest pass that spans
+/// −0.52 to −0.34: the lip line walks out of its own refinement at BOTH ends of
+/// the axis, which is #85's terraced mouth returning with nothing in the code to
+/// say why. #78 had already done this once in the other direction — it
+/// lengthened the head and the mouth's field walked out of a band that ended at
+/// −0.55 — and the fix then was to move the numbers. This is the fix that stops
+/// it happening again.
+///
+/// The values below are the old ones divided through by the default body's own
+/// stretch of 1.401, so the region every pass covers on that body is unchanged
+/// to a millimetre and what moved is which bodies agree with it.
 ///
 /// **Graded, not uniform, and that is what makes it affordable.** Refining the
 /// whole front of the head twice costs 2,660 triangles and spends most of them
@@ -410,10 +438,25 @@ const SETTLE: f32 = 0.92;
 /// `tests/budget.rs`'s 0.60 guard. So the pass goes where the shortfall is: every
 /// other lip term measures 2.2 to 2.9 cells and needs nothing.
 ///
-/// Bounded at plus or minus 0.9 of a lip stack about the mouth line, where the
+/// Bounded at plus or minus 0.7 of a lip stack about the mouth line, where the
 /// groove's own Gaussian has fallen to nothing, so the resolution boundary lands
 /// on a part of the field that is not doing anything. It still takes in both
 /// vermilion lobes.
+///
+/// **0.7, down from 0.85, and it is derived rather than trimmed to fit** (#61).
+/// The groove is `bump(up, 0.00, 0.26)`, which is `exp(-(up/0.26)²)`: at 0.85 of
+/// a lip stack it is two parts in a hundred thousand of its peak and at 0.7 it
+/// is seven in ten thousand. Both are nothing, and the pass exists for the
+/// groove alone — every other lip term measures 2.2 to 2.9 cells and needs no
+/// refinement at all. The lower lip's own lobe is still at 95% of peak at 0.7,
+/// and still inside; what is outside is a tail of the one term that was ever the
+/// reason for this pass.
+///
+/// It buys 390 triangles on the default body and 750 on the dearest, which is
+/// what pays for the profile-height re-basing above: a band edge lands on a ring
+/// of faces rather than between them, so a one-percent move in an edge is a
+/// whole row of quads in or out and the re-basing cost 976 triangles on a head
+/// whose stretch differs from the default's by 1.4%.
 /// **The sixth region is the JAW FLANK, and it is the first here that is an
 /// annulus rather than a cap.** Every pass above reaches from dead ahead round
 /// to a cosine and stops, so the region a pass covers always contains the front
@@ -455,20 +498,24 @@ const FACE_PASSES: [(f32, f32, f32, f32); 8] = [
     // bands: 9.3 mm without it against 4.8-5.7 with, which is back inside the
     // range the passes below were tuned at. The rendered nose has its bridge
     // and its tip again; without it the whole feature was a mound.
-    (-0.30, 1.0, -1.15, 1.0),
-    (0.25, 1.0, -1.15, 0.60),
-    (0.55, 1.0, -1.00, 0.50),
+    // −0.80 rather than the −0.821 the old −1.15 converts to: the head's own
+    // floor is at JUNCTION / SETTLE = −0.761 profile heights on EVERY body by
+    // construction, so anything past it covers the whole skull and the extra is
+    // margin rather than reach.
+    (-0.30, 1.0, -0.80, 1.0),
+    (0.25, 1.0, -0.80, 0.60),
+    (0.55, 1.0, -0.714, 0.50),
     // The flank of the jaw, from where the mouth's passes give up round to
     // just behind the ear. Listed twice for the same reason the mouth's band
     // is, and it is the only region here that both of its bounds are real.
-    (-0.15, 0.55, -0.80, -0.28),
-    (-0.15, 0.55, -0.80, -0.28),
+    (-0.15, 0.55, -0.571, -0.200),
+    (-0.15, 0.55, -0.571, -0.200),
     // Nose base to below the chin: the only band where the features are
     // smaller than the surface carrying them. Listed twice because a region is
     // refined once per pass that names it, and this one wants two.
-    (0.55, 1.0, -0.62, -0.24),
-    (0.55, 1.0, -0.62, -0.24),
-    (0.92, 1.0, -0.52, -0.34),
+    (0.55, 1.0, -0.443, -0.171),
+    (0.55, 1.0, -0.443, -0.171),
+    (0.92, 1.0, -0.360, -0.255),
 ];
 
 /// Gives the face enough surface to carry features, before anything shapes it.
@@ -500,12 +547,24 @@ pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
         return mesh.clone();
     }
 
+    // The same remap [`shape`] applies, measured once on the mesh that arrives.
+    // `refine` only adds vertices — it moves none — so the head's floor is the
+    // same before the first pass and after the last, and measuring it per pass
+    // would be a slower way of getting the same number.
+    let stretch = (floor(mesh, rig, centre, radius) * SETTLE / JUNCTION).max(f32::EPSILON);
+    let section = rig.joints[head].scale.x.max(f32::EPSILON);
+
     let mut refined = mesh.clone();
     for pass in 0..levels {
         // Passes past the last named one repeat the tightest region rather than
         // widening again, so asking for more resolution never spends it on a
         // forehead.
         let (near, far, low, high) = FACE_PASSES[pass.min(FACE_PASSES.len() - 1)];
+        // Below the joint a band edge is a profile height, so it is stretched
+        // onto this head's own lower face; above it, a skull radius, unchanged.
+        // See [`FACE_PASSES`] and [`reshape_to`], whose remap this is.
+        let onto = |edge: f32| if edge < 0.0 { edge * stretch } else { edge };
+        let (low, high) = (onto(low), onto(high));
         let selected: Vec<bool> = (0..refined.face_count())
             .map(|face| {
                 let at = refined.face_centroid(face);
@@ -520,7 +579,17 @@ pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
                 if height < low || height > high {
                     return false;
                 }
-                let across = Vec3::new(local.x, 0.0, local.z);
+                // **The angle round the UNSECTIONED head** (#61). A pass covers
+                // an angular region — the front of the face, the flank that
+                // holds the jaw — and the skull carries a lateral section now,
+                // so the same material reports a different azimuth on a narrow
+                // head than on a broad one. Left alone, a narrow skull passed
+                // more of itself into every band and cost 29,156 triangles
+                // against a broad one's 26,424: a tenth of the whole avatar's
+                // budget decided by which way a slider was pushed. Dividing the
+                // section out asks the question of the cage's own ring, where
+                // the regions were authored.
+                let across = Vec3::new(local.x / section, 0.0, local.z);
                 let span = across.length();
                 span > f32::EPSILON && across.z / span > near && across.z / span <= far
             })
@@ -955,25 +1024,50 @@ mod tests {
     }
 
     #[test]
-    fn a_shaped_head_is_longer_than_it_is_wide() {
+    fn shaping_makes_a_head_longer_than_it_is_wide() {
         // The single clearest difference between a head and a ball.
-        let (plain, shaped, rig, centre, radius) = head(1);
-        let (was_wide, was_deep) = band(&plain, &rig, centre, radius, 0.0);
-        let (wide, deep) = band(&shaped, &rig, centre, radius, 0.0);
-        assert!(
-            (was_deep / was_wide - 1.0).abs() < 0.06,
-            "the unshaped head was already {:.2} times longer than wide",
-            was_deep / was_wide
-        );
-        assert!(
-            deep / wide > 1.12,
-            "the shaped head came out only {:.2} times longer than wide",
-            deep / wide
-        );
+        //
+        // **Read as what the SHAPING adds, and it used to be read as an absolute
+        // ratio on a head asserted to arrive round** (#61). Skull breadth is a
+        // record axis now, so the cage no longer hands this a circular section:
+        // seed 1 draws a broad skull and arrives 0.89 times as long as it is
+        // wide, which failed a precondition demanding 1.00 within 0.06. That
+        // precondition was never the property — it was a fact about the plan
+        // that happened to hold — and asserting it here made a test of `shape`
+        // fail because of something `shape` does not do.
+        //
+        // What `shape` owes is [`ELONGATION`], and it owes it on every body
+        // whatever section arrives. So the reading is the RATIO of ratios, which
+        // is the same quantity the old bound was reaching for on a body where
+        // the denominator was one, and it holds across seeds rather than on the
+        // one that used to be round.
+        //
+        // **Bisected, not binned.** `band` takes the extreme head-owned VERTEX
+        // within 0.08 radii of a height, and this fixture is deliberately coarse
+        // — so lengthening the head below its joint slid the rows and the window
+        // at the joint came back empty, which divides to `NaN` and reports
+        // nothing at all. A window over vertices reads the mesh's row spacing as
+        // much as its shape, and this file has now been caught by that four
+        // times.
+        for seed in [1i64, 7, 23, 29, 42] {
+            let (plain, shaped, _, centre, _) = head(seed);
+            let reach = |mesh: &PolyMesh, along: Vec3| {
+                bisect(mesh, centre, along).expect("the head joint is inside the head")
+            };
+            let (was_wide, was_deep) = (reach(&plain, Vec3::X), reach(&plain, Vec3::Z));
+            let (wide, deep) = (reach(&shaped, Vec3::X), reach(&shaped, Vec3::Z));
+            let gained = (deep / wide) / (was_deep / was_wide);
+            assert!(
+                gained > 1.12,
+                "seed {seed}: shaping only lengthened the head by {gained:.2}, from \
+                 {:.2} times as long as wide to {:.2}",
+                was_deep / was_wide,
+                deep / wide
+            );
+        }
     }
 
     #[test]
-    #[ignore = "the target, not the state: BREADTH narrows the vault on an inverted premise (#79)"]
     fn the_head_is_widest_above_the_eye_line() {
         // This replaces `the_cheekbones_are_the_widest_part_of_the_head`, which
         // asserted the opposite and passed — and would have blocked the fix.
@@ -985,9 +1079,19 @@ mod tests {
         // an unshaped head is *narrower* than its own cranium, so the profile
         // narrows the vault to 0.62 and hands the maximum to the eye line.
         //
-        // Measured on the shipped build, the widest band is at −0.0 to +0.05
+        // Measured when this was written, the widest band was at −0.0 to +0.05
         // radii on every seed — at or just below the eye — which is the "pointed
         // egg" read (#73).
+        //
+        // **It is not a target any more, and it has not been for two milestones**
+        // (#61). #79 inverted BREADTH's premise and this passed from that day;
+        // it stayed marked as the target because nobody re-ran an ignored test.
+        // Re-measured on nine bodies after the cage flip, the maximum sits at
+        // +0.46 to +0.48 R on every one of them — so the property survived a
+        // change that spent every other gain #79 made, which is the strongest
+        // thing that can be said for it and exactly what a ratchet is for. An
+        // ignored test asserting something true is worse than no test: it reads
+        // as an open defect and it guards nothing.
         for seed in [7, 23, 29, 42] {
             let (_, shaped, rig, centre, radius) = head(seed);
             let mut widest = (0.0f32, 0.0f32);
@@ -1145,15 +1249,27 @@ mod tests {
         // reads them: a head reaches anywhere from −0.55 to −0.89 radii below
         // its joint depending on its node sizes, so a fixed figure is the jaw on
         // one body and the throat on another.
+        //
+        // **Measured with the breadth axis held neutral** (#61). What this
+        // asserts is BREADTH's shape and [`jaw`]'s corner, and a record that
+        // asks for a narrow skull is neither. It matters because the axis moves
+        // this ratio the WRONG way at the narrow end — the neck below the head
+        // is not sectioned with it, so narrowing the skull narrows the cheek
+        // more than it narrows the angle of the jaw, and seed 42 runs 0.848 at
+        // the broad end to 0.932 at the narrow one about a neutral 0.882. That
+        // is the axis's own coupling and it has its own test; folding it in here
+        // would mean re-basing a bound that has been read four times as a
+        // statement about the head.
         for seed in [7i64, 23, 29, 42] {
-            let (mesh, measured, centre, radius) = skull(seed, crate::FACE_REFINEMENT);
+            let (mesh, measured, centre, radius) =
+                skull_of(seed, crate::FACE_REFINEMENT, Some(0.0));
             let width = |y: f32| {
                 let axis = centre + Vec3::Y * y;
                 let reach = bisect(&mesh, axis, Vec3::Z)?;
                 bisect(&mesh, axis + Vec3::Z * reach * 0.5, Vec3::X)
             };
             let cheek = width(-0.05 * radius).expect("a cheekbone");
-            let angle = width(measured.chin() * (GONION / MENTON)).expect("an angle of the jaw");
+            let angle = width(measured.gonion()).expect("an angle of the jaw");
             let chin = width(measured.chin()).expect("a menton");
             // **0.90, where this asked 0.85 of one seed.** It is not a
             // relaxation: the old bound was met by seed 23 alone, and read on
@@ -1172,6 +1288,70 @@ mod tests {
             assert!(
                 chin < angle * 0.80,
                 "seed {seed}: the chin did not narrow: {chin} of {angle}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_breadth_axis_narrows_the_jaw_with_the_cheek() {
+        // **The axis's own coupling, measured rather than assumed** (#61). A
+        // record's breadth axis scales the head and crown nodes and nothing
+        // else, so the neck below stays exactly as wide — and the angle of the
+        // jaw sits close enough to the neck that some of its width is the
+        // neck's. Narrowing the skull therefore narrows the cheekbone more than
+        // it narrows the gonion, which moves bigonial over bizygomatic the wrong
+        // way at the narrow end.
+        //
+        // Life holds that ratio near-constant across head shapes: a
+        // dolichocephalic skull has a narrow jaw to match. So the question is
+        // not whether the artefact exists — it does, and the mechanism is the
+        // throat, which cannot move — but whether it is small against the axis
+        // it rides on. Measured on two seeds over the full range: the cheekbone
+        // moves 82.3 to 118.2 mm on seed 42 and 112.9 to 165.9 on seed 23, a
+        // factor of 1.44 and 1.47, while the ratio moves 0.932 to 0.848 and
+        // 0.781 to 0.737 — a tenth as far, and monotone.
+        //
+        // Bounded at a fifth because that is comfortably above what the throat
+        // can be worth and far below the 1.44 the axis itself delivers. If this
+        // fires, the breadth axis has started reshaping the face rather than
+        // sizing it.
+        for seed in [23i64, 42] {
+            let mut widths = Vec::new();
+            for breadth in [-1.0f32, 0.0, 1.0] {
+                let (mesh, measured, centre, radius) =
+                    skull_of(seed, crate::FACE_REFINEMENT, Some(breadth));
+                let width = |y: f32| {
+                    let axis = centre + Vec3::Y * y;
+                    let reach = bisect(&mesh, axis, Vec3::Z)?;
+                    bisect(&mesh, axis + Vec3::Z * reach * 0.5, Vec3::X)
+                };
+                let cheek = width(-0.05 * radius).expect("a cheekbone");
+                let angle = width(measured.gonion()).expect("an angle of the jaw");
+                widths.push((breadth, cheek, angle));
+            }
+            let cheeks = (widths[2].1 / widths[0].1, widths[2].2 / widths[0].2);
+            assert!(
+                cheeks.0 > 1.30,
+                "seed {seed}: the breadth axis moved the cheekbone by only {:.2} \
+                 across its whole range: {widths:?}",
+                cheeks.0
+            );
+            let ratios: Vec<f32> = widths.iter().map(|&(_, c, a)| a / c).collect();
+            assert!(
+                ratios[0] / ratios[2] < 1.20,
+                "seed {seed}: the breadth axis swung bigonial over bizygomatic by \
+                 {:.0}%, {:?} — it is reshaping the face rather than sizing it",
+                (ratios[0] / ratios[2] - 1.0) * 100.0,
+                ratios
+                    .iter()
+                    .map(|r| (r * 1000.0).round() / 1000.0)
+                    .collect::<Vec<_>>()
+            );
+            // Monotone, which is what says it is one axis rather than two
+            // effects crossing over somewhere in the middle.
+            assert!(
+                widths[0].1 < widths[1].1 && widths[1].1 < widths[2].1,
+                "seed {seed}: the cheekbone did not widen monotonically: {widths:?}"
             );
         }
     }
@@ -1606,8 +1786,25 @@ mod tests {
 
     /// A measured skull, and the head it was measured from.
     fn skull(seed: i64, levels: usize) -> (PolyMesh, Skull, Vec3, f32) {
+        skull_of(seed, levels, None)
+    }
+
+    /// The same, at a chosen skull breadth rather than the seed's own.
+    ///
+    /// **Every test below that measures a WIDTH RATIO wants this, and wants
+    /// `Some(0.0)`** (#61). Skull breadth is a record axis now, so a re-rolled
+    /// seed arrives with a section the plan gave it, and a test asserting what
+    /// `BREADTH` and [`jaw`] do to a head has no business also measuring what
+    /// the record asked for. Held at neutral these read exactly what they read
+    /// before the axis existed; the axis's own effect is
+    /// `the_breadth_axis_narrows_the_jaw_with_the_cheek`.
+    fn skull_of(seed: i64, levels: usize, breadth: Option<f32>) -> (PolyMesh, Skull, Vec3, f32) {
         let mut record = AvatarRecord::new("Skulled", Archetype::default());
         record.reroll(seed);
+        if let (Some(breadth), Archetype::Humanoid(params)) = (breadth, &mut record.archetype) {
+            params.head_breadth = breadth;
+            params.face_length = 0.0;
+        }
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
@@ -2200,6 +2397,26 @@ impl Skull {
     #[must_use]
     pub fn chin(&self) -> f32 {
         self.chin
+    }
+
+    /// Where the angle of the jaw sits, in head-local metres.
+    ///
+    /// The gonion: the corner of the mandible, out at the side, which is what a
+    /// bigonial breadth is measured across. Derived from [`Self::chin`] through
+    /// the same pair of profile heights `jaw` runs the mandible's border
+    /// between, so the landmark and the border cannot come apart — which is
+    /// exactly what happened to the chin and the profile that drew it (#108).
+    ///
+    /// **Public because three things outside this impl need it and each had its
+    /// own arithmetic.** `the_face_narrows_from_cheekbone_to_chin` wrote
+    /// `chin() * (GONION / MENTON)` inline, and `examples/headaudit` could not
+    /// write it at all, because both constants are private — so the one
+    /// measurement #79 turns on lived in a test and nowhere a person could run
+    /// it. A landmark that only a test can compute is a landmark nobody
+    /// re-measures.
+    #[must_use]
+    pub fn gonion(&self) -> f32 {
+        self.chin * (GONION / MENTON)
     }
 
     /// Reads a two-axis table at a height and an already-scaled column.

@@ -13,18 +13,52 @@
 //! ```text
 //! cargo run --release --example headaudit           # the default body
 //! cargo run --release --example headaudit -- 99     # one seed
+//! cargo run --release --example headaudit -- --sweep        # the proportions, by seed
+//! cargo run --release --example headaudit -- --sweep 1 2 3  # over seeds of your own
+//! cargo run --release --example headaudit -- --axis breadth  # one axis, end to end
 //! ```
+//!
+//! `--axis` takes `breadth`, `length`, `nose` or `mouth` and walks it from one
+//! end to the other on every sweep seed, which is what #61 needs before it can
+//! choose where a default sits: an axis is not an axis until somebody has looked
+//! at both of its ends on more than one body.
 
 use symbios_avatar::face::{Canon, Eyes, Skull};
-use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3, Zone, face};
+use symbios_avatar::{Archetype, Avatar, AvatarConfig, AvatarRecord, Vec3, Zone, face};
 
 /// Millimetres between samples, everywhere.
 const STEP: f32 = 0.002;
 
+/// The seeds `--sweep` reports when it is not given any.
+///
+/// The four #79 measured its baseline on, plus the two #107 found chinless
+/// under the eight-point cage and two more for spread. A breadth default chosen
+/// on one body is a breadth default chosen on one body.
+const SWEEP_SEEDS: [i64; 8] = [7, 23, 29, 42, 1, 3, 6, 12];
+
 fn main() {
-    let seed = std::env::args()
-        .skip(1)
-        .find_map(|arg| arg.parse::<i64>().ok());
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let named = |flag: &str| -> Option<String> {
+        let at = args.iter().position(|arg| arg == flag)?;
+        args.get(at + 1).cloned()
+    };
+    if let Some(axis) = named("--axis") {
+        walk(&axis);
+        return;
+    }
+    if args.iter().any(|arg| arg == "--sweep") {
+        let seeds: Vec<i64> = args.iter().filter_map(|arg| arg.parse().ok()).collect();
+        sweep(
+            if seeds.is_empty() {
+                &SWEEP_SEEDS
+            } else {
+                &seeds
+            },
+            Axes::default(),
+        );
+        return;
+    }
+    let seed = args.iter().find_map(|arg| arg.parse::<i64>().ok());
     let mut record = AvatarRecord::new("Audited", Archetype::default());
     if let Some(seed) = seed {
         record.reroll(seed);
@@ -176,6 +210,42 @@ fn main() {
         floor = y;
         y -= STEP;
     }
+
+    println!("## Proportions\n");
+    let shape = Proportions::measure(body, centre, radius, &skull, &canon, eyes);
+    println!("| what | this head | life |");
+    println!("|---|---|---|");
+    println!(
+        "| widest half-width | {:.1} mm at {:+.1} mm ({:+.2} R) | eurion, 25 to 45 mm above the pupil line |",
+        shape.widest * 1000.0,
+        shape.widest_at * 1000.0,
+        shape.widest_at / radius
+    );
+    println!(
+        "| height : depth : width | {:.2} : {:.2} : 1.00 | 1.48 : 1.28 : 1.00 |",
+        shape.height / shape.width,
+        shape.depth / shape.width
+    );
+    println!(
+        "| too wide for its own height | {:+.1}% | — |",
+        shape.too_wide() * 100.0
+    );
+    println!(
+        "| bizygomatic | {:.1} mm | 137 |",
+        shape.bizygomatic * 1000.0
+    );
+    println!(
+        "| bigonial / bizygomatic | {:.3} | 0.73 to 0.76 |",
+        shape.bigonial / shape.bizygomatic
+    );
+    println!(
+        "| cranium : face | {:.2} | about 1.00 |",
+        shape.cranium_to_face
+    );
+    println!(
+        "| bare eye centre azimuth | {:+.0}° | 0, by construction |\n",
+        shape.eye_azimuth
+    );
 
     println!("## The surface built\n");
     println!(
@@ -401,5 +471,363 @@ fn main() {
             back * 1000.0
         );
         band -= 0.01;
+    }
+}
+
+/// The head's overall proportions, in head-local metres.
+///
+/// **Here rather than in a scratch script, which is where it was.** #79's
+/// baseline — where the head is widest, how wide it is for its height, the jaw's
+/// angle against the cheekbone — was measured by a harness that was never
+/// committed, so every number on that issue went stale the moment #107 moved the
+/// cage and there was nothing to re-run. A measurement that cannot be repeated
+/// is a measurement that has to be argued about instead.
+struct Proportions {
+    /// The widest half-width anywhere on the head, and where.
+    widest: f32,
+    widest_at: f32,
+    /// Crown to the chin's tip.
+    height: f32,
+    /// Twice [`Proportions::widest`].
+    width: f32,
+    /// The greatest fore-and-aft extent anywhere on the head.
+    depth: f32,
+    /// Face width at the cheekbone and at the angle of the jaw.
+    bizygomatic: f32,
+    bigonial: f32,
+    /// Crown-to-eye-line against eye-line-to-chin.
+    cranium_to_face: f32,
+    /// Where the eye's aperture is centred, in degrees off the gaze.
+    ///
+    /// **Skin AND lids, which is what #88 and #79 both quote and what the first
+    /// version of this column did not measure.** Asked of the skin alone the
+    /// same eye reads twenty degrees further lateral, because the lid's own
+    /// margin owns that edge (#81) — so a column headed "eye azimuth" that
+    /// omitted the lids was reporting a number nothing in the crate is tuned
+    /// against, and would have said the aperture had regressed when it had not.
+    /// The fifteenth instrument in this project to have measured something other
+    /// than its own name.
+    eye_azimuth: f32,
+}
+
+impl Proportions {
+    /// How far a life-proportioned head of this height is from this one's width.
+    ///
+    /// Human height-to-breadth is 1.48. A head broader than that for its own
+    /// length is too wide by this much, and it is the figure #79 raised and
+    /// #61 has to choose a breadth default against.
+    fn too_wide(&self) -> f32 {
+        LIFE_HEIGHT_TO_WIDTH / (self.height / self.width) - 1.0
+    }
+
+    /// Measures a built head.
+    ///
+    /// **Every reading here is a bisection against the surface and every height
+    /// comes off a landmark, not off a constant.** The chin is [`Skull::chin`]
+    /// and the angle of the jaw is [`Skull::gonion`], so this report and
+    /// `the_face_narrows_from_cheekbone_to_chin` measure the same two places by
+    /// construction. The first version of #79's harness probed DOWN the midline
+    /// for a chin, which on a body whose head and neck are one surface walks
+    /// through the throat and the chest and reports a head a metre tall.
+    fn measure(
+        body: &symbios_avatar::PolyMesh,
+        centre: Vec3,
+        radius: f32,
+        skull: &Skull,
+        canon: &Canon,
+        eyes: &Eyes,
+    ) -> Self {
+        let inside = |p: Vec3| body.contains(p);
+        let bisect = |from: Vec3, along: Vec3| -> Option<f32> {
+            if !inside(from) {
+                return None;
+            }
+            let (mut near, mut out) = (0.0f32, 0.30f32);
+            for _ in 0..40 {
+                let mid = 0.5 * (near + out);
+                if inside(from + along * mid) {
+                    near = mid;
+                } else {
+                    out = mid;
+                }
+            }
+            Some(near)
+        };
+        let at = |y: f32| Vec3::new(centre.x, centre.y + y, centre.z);
+
+        let mut crown = 0.0f32;
+        let mut y = 0.0;
+        while inside(at(y)) {
+            crown = y;
+            y += STEP;
+        }
+
+        // Widest and deepest, swept from the chin's tip to the crown. Started at
+        // the chin rather than at the head's own floor on purpose: the surface
+        // runs on past the chin into the throat, which is broader than a jaw, so
+        // a sweep that reaches the floor reports the neck as the head's widest
+        // point on any body with a slender face.
+        let chin = skull.chin();
+        let (mut widest, mut widest_at, mut depth) = (0.0f32, 0.0f32, 0.0f32);
+        let mut y = chin;
+        while y <= crown {
+            if let Some(wide) = bisect(at(y), Vec3::X)
+                && wide > widest
+            {
+                widest = wide;
+                widest_at = y;
+            }
+            if let (Some(ahead), Some(behind)) = (bisect(at(y), Vec3::Z), bisect(at(y), -Vec3::Z)) {
+                depth = depth.max(ahead + behind);
+            }
+            y += STEP;
+        }
+
+        // The face's own widths, taken half-way forward on the midline's reach
+        // rather than through the head's centre. Through the centre the sample
+        // at the chin's height sits ninety millimetres behind the chin and is
+        // the upper neck seen from the side, which is the reading that let a
+        // cone pass this check for three rounds (#80).
+        let face_width = |height: f32| -> Option<f32> {
+            let reach = bisect(at(height), Vec3::Z)?;
+            bisect(at(height) + Vec3::Z * reach * 0.5, Vec3::X)
+        };
+        let bizygomatic = face_width(-0.05 * radius).unwrap_or(f32::NAN) * 2.0;
+        let bigonial = face_width(skull.gonion()).unwrap_or(f32::NAN) * 2.0;
+
+        Self {
+            widest,
+            widest_at,
+            height: crown - chin,
+            width: widest * 2.0,
+            depth,
+            bizygomatic,
+            bigonial,
+            cranium_to_face: (crown - canon.level) / canon.frame,
+            eye_azimuth: eyes
+                .right
+                .aperture(Some((body, centre)), true)
+                .centre
+                .0
+                .to_degrees(),
+        }
+    }
+}
+
+/// Height over breadth on a human head.
+///
+/// Vertex-to-menton against maximum breadth. The one ratio #61's breadth default
+/// has to be chosen against, and the reason #79 could say the head was 11% wide
+/// without anybody having tuned it wide on purpose.
+const LIFE_HEIGHT_TO_WIDTH: f32 = 1.48;
+
+/// The four axes this report can hold at a chosen value.
+///
+/// `None` means "whatever the seed rolled", which is what the plain sweep wants;
+/// `Some` is what `--axis` walks.
+#[derive(Clone, Copy, Default)]
+struct Axes {
+    breadth: Option<f32>,
+    length: Option<f32>,
+    nose: Option<f32>,
+    mouth: Option<f32>,
+}
+
+impl Axes {
+    /// Puts them on a record.
+    fn onto(self, record: &mut AvatarRecord) {
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            params.head_breadth = self.breadth.unwrap_or(params.head_breadth);
+            params.face_length = self.length.unwrap_or(params.face_length);
+        }
+        record.face.nose_width = self.nose.unwrap_or(record.face.nose_width);
+        record.face.mouth_width = self.mouth.unwrap_or(record.face.mouth_width);
+        record.sanitize();
+    }
+}
+
+/// Walks one axis from end to end on every sweep seed.
+///
+/// **The step #61 exists to make possible, and the one the complexion half of
+/// #39 skipped**: the undertone axis swung 47 to 59 degrees of hue and was still
+/// wrong, because nobody had looked at what it did at BOTH ends on more than one
+/// body. An axis that moves something is not the same as an axis that means
+/// something.
+fn walk(axis: &str) {
+    let values: [f32; 5] = match axis {
+        "nose" | "mouth" => [0.0, 0.25, 0.5, 0.75, 1.0],
+        _ => [-1.0, -0.5, 0.0, 0.5, 1.0],
+    };
+    for value in values {
+        let axes = match axis {
+            "breadth" => Axes {
+                breadth: Some(value),
+                ..Axes::default()
+            },
+            "length" => Axes {
+                length: Some(value),
+                ..Axes::default()
+            },
+            "nose" => Axes {
+                nose: Some(value),
+                ..Axes::default()
+            },
+            "mouth" => Axes {
+                mouth: Some(value),
+                ..Axes::default()
+            },
+            other => {
+                println!("no axis named {other}; try breadth, length, nose or mouth");
+                return;
+            }
+        };
+        println!("## {axis} = {value:+.2}\n");
+        sweep(&SWEEP_SEEDS, axes);
+        println!();
+    }
+}
+
+/// One row of [`Proportions`] per seed.
+///
+/// The whole point of the mode: a breadth axis has a default, and a default
+/// chosen against one body is how the last three head passes each found their
+/// number moved on the next seed.
+fn sweep(seeds: &[i64], axes: Axes) {
+    println!(
+        "| seed | head R | widest | at R | H:W | too wide | D:W | bizyg | bigon/bizyg | \
+         cran:face | frame | nose | mouth | eye az |"
+    );
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    for &seed in seeds {
+        let mut record = AvatarRecord::new("Swept", Archetype::default());
+        record.reroll(seed);
+        axes.onto(&mut record);
+        // A 32-texel atlas: this measures geometry and a full bake is most of
+        // the build time on a sweep this size.
+        let config = AvatarConfig {
+            atlas: 32,
+            ..AvatarConfig::default()
+        };
+        let Some(avatar) = Avatar::build_with(&record, &config) else {
+            println!("| {seed} | — | this record does not describe a body that meshes |");
+            continue;
+        };
+        let body = &avatar.parts.body;
+        let rig = &avatar.rig;
+        let Some(head) = rig.in_zone(Zone::Head).first().copied() else {
+            continue;
+        };
+        let centre = rig.joints[head].position;
+        let radius = rig.joints[head].radius;
+        let Some(skull) = Skull::measure(body, rig) else {
+            continue;
+        };
+        let canon = Canon::measure(rig, &skull, &record.eyes);
+        let Some(eyes) = avatar.parts.eyes.as_ref() else {
+            continue;
+        };
+        let shape = Proportions::measure(body, centre, radius, &skull, &canon, eyes);
+        let features = Features::measure(&record, rig, &canon, centre, radius);
+        println!(
+            "| {seed} | {:.1} | {:.1} | {:+.2} | {:.3} | {:+.1}% | {:.2} | {:.1} | {:.3} | \
+             {:.2} | {:.1} | {:.1} | {:.1} | {:+.0}° |",
+            radius * 1000.0,
+            shape.widest * 1000.0,
+            shape.widest_at / radius,
+            shape.height / shape.width,
+            shape.too_wide() * 100.0,
+            shape.depth / shape.width,
+            shape.bizygomatic * 1000.0,
+            shape.bigonial / shape.bizygomatic,
+            shape.cranium_to_face,
+            canon.frame * 1000.0,
+            features.nose * 1000.0,
+            features.mouth * 1000.0,
+            shape.eye_azimuth,
+        );
+    }
+}
+
+/// How wide the carve actually draws the nose and the mouth, in metres.
+///
+/// **Measured off the displacement, not computed from the constants that drew
+/// it.** A report that recomputes a feature's width from its own copy of the
+/// ramp is not measuring the body, it is restating the source — which is how
+/// `examples/headaudit` went on printing the canon's old thirds for a whole
+/// milestone after #78 moved them. This carves a copy of the head and asks where
+/// the carve stops pushing.
+struct Features {
+    nose: f32,
+    mouth: f32,
+}
+
+impl Features {
+    /// How far from the midline the carve still moves the surface at a height.
+    ///
+    /// Taken as the widest sample whose outward movement is at least a fifth of
+    /// the movement on the midline at that same height, so it reports the
+    /// feature's own shoulder rather than the tail of its Gaussian. Doubled on
+    /// return, because a nose has two sides.
+    fn measure(
+        record: &AvatarRecord,
+        rig: &symbios_avatar::Rig,
+        canon: &Canon,
+        centre: Vec3,
+        radius: f32,
+    ) -> Self {
+        let skeleton = record.skeleton();
+        let Ok(plain) = symbios_avatar::build_body(
+            &skeleton,
+            &symbios_avatar::CageConfig::default(),
+            symbios_avatar::BODY_SUBDIVISIONS,
+        ) else {
+            return Self {
+                nose: f32::NAN,
+                mouth: f32::NAN,
+            };
+        };
+        let mut carved = plain.clone();
+        face::carve_face(&mut carved, rig, canon, &record.face);
+
+        let width = |height: f32, outward: bool| -> f32 {
+            // Every vertex within half a millimetre of the height asked for,
+            // paired with how far the carve moved it along the head's radial.
+            // The window is a fraction of the head rather than a fixed
+            // millimetre figure: the rows under the face are 0.015 radii apart,
+            // so a 1.5 mm window catches three rows on a small head and none at
+            // all on a large one — which is how the first version of this
+            // reported a nose of NaN on the two biggest seeds.
+            let mut moved: Vec<(f32, f32)> = Vec::new();
+            for (was, now) in plain.positions.iter().zip(&carved.positions) {
+                if (was.y - centre.y - height).abs() > radius * 0.02 {
+                    continue;
+                }
+                let along = (*now - *was).dot((*was - centre).normalize_or_zero());
+                moved.push((
+                    (was.x - centre.x).abs(),
+                    if outward { along } else { -along },
+                ));
+            }
+            let peak = moved
+                .iter()
+                .filter(|&&(across, _)| across < radius * 0.04)
+                .fold(0.0f32, |most, &(_, along)| most.max(along));
+            if peak <= 0.0 {
+                return f32::NAN;
+            }
+            moved
+                .iter()
+                .filter(|&&(_, along)| along >= peak * 0.20)
+                .fold(0.0f32, |wide, &(across, _)| wide.max(across))
+                * 2.0
+        };
+
+        Self {
+            // The nose at the base, where the wings are; the mouth at the lip
+            // line, where a mouth is measured. The mouth's own line is a GROOVE,
+            // so it is read as inward movement.
+            nose: width(canon.nose_base(), true),
+            mouth: width(canon.mouth_line(), false),
+        }
     }
 }

@@ -65,6 +65,20 @@
           "maximum": 1000,
           "default": 0
         },
+        "headBreadth": {
+          "type": "integer",
+          "description": "How broad the skull is across, at a fixed head size: negative is a narrow head, positive a broad one. It scales the head's lateral half-extent only, so a broad skull is broad from the parietal down through the angle of the jaw while staying exactly as deep and as tall. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "faceLength": {
+          "type": "integer",
+          "description": "How long the face is below the eyes, at a fixed head size: negative is a short face, positive a long one. It moves the head's joint up its own neck, so what changes is how much of the skull sits below it - the jaw, the chin and the whole feature stack - while the cranium above is untouched. Thousandths, -1000 to 1000.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
         "extremitySize": {
           "type": "integer",
           "description": "Hand and foot size. Thousandths, -1000 to 1000.",
@@ -332,11 +346,18 @@
     },
     "face": {
       "type": "object",
-      "description": "How prominent a body's facial features are. Placed from the published proportion canons \u2014 the face divides into thirds from hairline to brow to the base of the nose to the chin, and into fifths across, one fifth being an eye's width \u2014 so these axes say how far each feature stands out, not where it sits. Thousandths, as elsewhere: the AT Protocol data model has no floating-point type.",
+      "description": "How prominent a body's facial features are, and how wide. Placed from the published proportion canons - the face divides into thirds from hairline to brow to the base of the nose to the chin, and into fifths across, one fifth being an eye's width - so the prominence axes say how far each feature stands out, not where it sits, and the width axes say how far it reaches across. The skull's own breadth and the face's length are not here: they are properties of the body plan, since they are built into the body rather than carved into it. Thousandths, as elsewhere: the AT Protocol data model has no floating-point type.",
       "properties": {
         "nose": {
           "type": "integer",
           "description": "How far the nose stands out: 0 flat, 1000 prominent. Thousandths.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 500
+        },
+        "noseWidth": {
+          "type": "integer",
+          "description": "How wide the nose is across the wings: 0 narrow, 1000 broad. Independent of how far it stands out. Thousandths.",
           "minimum": 0,
           "maximum": 1000,
           "default": 500
@@ -351,6 +372,13 @@
         "mouth": {
           "type": "integer",
           "description": "How full the lips are. Thousandths, 0 to 1000.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 500
+        },
+        "mouthWidth": {
+          "type": "integer",
+          "description": "How wide the mouth is, corner to corner. Independent of how full the lips are. Thousandths, 0 to 1000.",
           "minimum": 0,
           "maximum": 1000,
           "default": 500

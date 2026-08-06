@@ -50,7 +50,34 @@ const MESH_TARGET: usize = 3;
 /// wave, and a head of hair ranges over more than a factor of five. What keeps
 /// the ceiling is [`symbios_avatar::hair::MAX_TRIANGLES`], which tiers the
 /// group count down when the rest of the axes are expensive.
-const TRIANGLE_CEILING: usize = 29_800;
+///
+/// **Up 100 while #61 moved both sides of it, which is worth writing out because
+/// the two nearly cancelled and neither is small.**
+///
+/// The face's refinement bands became fractions of each head's own lower face
+/// rather than raw skull radii, because a face-length axis slides the whole
+/// feature stack through bands measured in radii and the lip line walks out of
+/// its own refinement at both ends. On the default body that re-basing is
+/// bit-identical — it was derived from that body — and off it, it costs: a band
+/// edge lands ON a ring of faces rather than between them, so seed 42's stretch
+/// differing from the default's by 1.4% moved a whole row of quads inside and
+/// cost 976 triangles.
+///
+/// It was paid for twice over. The finest pass came in from ±0.85 of a lip stack
+/// to ±0.7, where the groove it exists for is seven parts in ten thousand of its
+/// peak — 390 triangles on the default and 750 on the dearest. And `refine_face`
+/// now asks its azimuth of the UNSECTIONED head, so a narrow skull no longer
+/// passes more of its own circumference into every band: that alone was worth
+/// 2,700 triangles between the two ends of the breadth axis, a tenth of the
+/// whole avatar decided by which way a slider was pushed.
+///
+/// Net, measured: the default fell from 27,464 to 27,078, every seed the test
+/// below rolls fell too, and the 100 is bought entirely by the corners the test
+/// now visits — the dearest body reachable anywhere in the space is seed 42 with
+/// a long broad skull at 29,886, where six seeds as rolled reach only 29,352.
+/// The high-water mark rose because the space being measured grew, not because
+/// a body got dearer.
+const TRIANGLE_CEILING: usize = 29_900;
 
 /// Draw calls the crate currently costs.
 ///
@@ -97,21 +124,46 @@ fn the_ceiling_holds_across_the_parameter_space() {
     // The default is one point in the space, and a budget that only holds there
     // is not a budget — the first version of this test asserted against the
     // default's own figure and seed 23 came in forty triangles above it.
-    let mut worst = 0;
+    //
+    // **A seed is not the whole space, and the axes that cost geometry are the
+    // ones a seed draws timidly** (#61). Re-rolls hold head breadth and face
+    // length inside ±0.7, so six seeds sampled a body a record can ask for and
+    // never reached it: the dearest seed came in at 29,352 while the same seed
+    // with a long broad skull costs 29,886, and the whole of that 534 is a
+    // record's to spend. The head's own two axes are pinned to their ends here
+    // for the same reason `tests/plan.rs` sweeps corners rather than samples.
+    let mut worst = (String::new(), 0);
     for seed in [1, 7, 23, 29, 42, 99] {
-        let avatar = built(Some(seed));
-        worst = worst.max(avatar.budget.tris);
-        assert!(
-            avatar.budget.tris <= TRIANGLE_CEILING,
-            "seed {seed} costs {} triangles",
-            avatar.budget.tris
-        );
-        assert!(
-            avatar.budget.meshes <= MESH_CEILING,
-            "seed {seed} costs {} draws",
-            avatar.budget.meshes
-        );
+        for (name, breadth, length) in [
+            ("as rolled", None, None),
+            ("long broad", Some(1.0f32), Some(1.0f32)),
+            ("long narrow", Some(-1.0), Some(1.0)),
+            ("short broad", Some(1.0), Some(-1.0)),
+        ] {
+            let mut record = AvatarRecord::new("Budget", Archetype::default());
+            record.reroll(seed);
+            if let Archetype::Humanoid(params) = &mut record.archetype {
+                params.head_breadth = breadth.unwrap_or(params.head_breadth);
+                params.face_length = length.unwrap_or(params.face_length);
+            }
+            let avatar = Avatar::build(&record).expect("a biped builds");
+            let at = format!("seed {seed} {name}");
+            if avatar.budget.tris > worst.1 {
+                worst = (at.clone(), avatar.budget.tris);
+            }
+            assert!(
+                avatar.budget.tris <= TRIANGLE_CEILING,
+                "{at} costs {} triangles",
+                avatar.budget.tris
+            );
+            assert!(
+                avatar.budget.meshes <= MESH_CEILING,
+                "{at} costs {} draws",
+                avatar.budget.meshes
+            );
+        }
     }
+    let worst = worst.1;
     // And the spread really is as narrow as the constant's note claims. If a
     // parameter ever does buy real geometry, this is where that shows up.
     assert!(

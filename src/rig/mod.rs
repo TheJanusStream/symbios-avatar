@@ -42,7 +42,7 @@ pub mod patch;
 pub mod skin;
 pub mod surface;
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use std::collections::VecDeque;
 use thiserror::Error;
 
@@ -138,6 +138,21 @@ pub struct Joint {
     pub position: Vec3,
     /// The node's radius, which sets how far this joint's influence reaches.
     pub radius: f32,
+    /// The node's elliptical cross-section, as multiples of that radius.
+    ///
+    /// **A radius alone does not say how wide a body part is, and anything
+    /// measuring one has to know that.** Every trunk node in the humanoid plan
+    /// carries a section, and #61 gave the skull one too — so a head's lateral
+    /// reach is `radius * section.x` and reading it as `radius` puts a broad
+    /// skull's surface outside its own node and a narrow one's well inside.
+    /// Mirrored here rather than looked up in the skeleton because the rig is
+    /// what everything downstream is handed: `refine_face` selects by the angle
+    /// round the head, and on a sectioned head that angle is not the angle on
+    /// the cage's own ring.
+    ///
+    /// `Vec2::ONE` for a joint attached after the fact, which has no node behind
+    /// it and no section either.
+    pub scale: Vec2,
     /// Which part of the body this joint drives.
     pub zone: Zone,
     /// What the joint is for, and so what may bind to it.
@@ -232,6 +247,7 @@ impl Rig {
                 parent,
                 position: source.position,
                 radius: source.radius,
+                scale: source.scale,
                 zone: source.zone,
                 role: Role::Deform,
             });
@@ -279,6 +295,7 @@ impl Rig {
             parent: Some(parent),
             position,
             radius: 0.0,
+            scale: Vec2::ONE,
             zone,
             role,
         });

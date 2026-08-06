@@ -151,6 +151,75 @@ const CROWN_HIGH: f32 = 0.68;
 /// which is what the figures above are.
 const CROWN_WIDE: f32 = 0.87;
 
+/// How far the `head_breadth` axis narrows or broadens the skull, as a share of
+/// its own lateral half-extent at each end.
+///
+/// **The head is the only major node in this file with no section, and giving it
+/// one is what makes a broad skull and a narrow one two different people rather
+/// than two different sizes** (#61). Every other trunk node carries a
+/// [`PELVIS_SECTION`]-style pair because a body part is not a surface of
+/// revolution; the head carried none, so the record could say how BIG a head was
+/// and never how it was shaped.
+///
+/// Done at the cage rather than in [`crate::face::skull`]'s `BREADTH` profile,
+/// and the reason is the seam that file spends four docstrings on. A profile
+/// there moves head-owned vertices and leaves neck-owned ones, so anything it
+/// says at the bottom of the head is a step in the silhouette and every profile
+/// has to be authored back to identity at the junction — which means the jaw,
+/// the part of a face a breadth axis most needs to move, gets the least of it.
+/// The cage has no such boundary: the blend from the head node to the neck node
+/// interpolates the section along with everything else, so a narrowed skull
+/// meets its throat by construction.
+///
+/// **A fifth either way**, which on the default body is a maximum breadth of
+/// 128 to 192 mm against a life population of roughly 140 to 165. Deliberately
+/// past life at both ends: a record axis that only reaches the population's own
+/// bounds cannot express anyone at them, since a face is the sum of several
+/// axes and each one has to have somewhere to go.
+///
+/// Provenance: **derived from a sweep, then bounded by meshability** (#61).
+/// The span is what `tests/plan.rs`'s 1500-body sweep carries — see
+/// `head_breadth` in [`HumanoidParams`] for why the broad end is the one that
+/// binds — and the life figures above are what the default is chosen against,
+/// not what the span is.
+const HEAD_BREADTH_SPAN: f32 = 0.20;
+
+/// How far the `face_length` axis stretches the head below its own joint, as a
+/// share of [`HumanoidParams::skeleton`]'s `HEAD_BELOW_JOINT`.
+///
+/// **The other half of #61's owner call, and the constant it names.** Face
+/// length was a derived quantity: `head_size` moved the crown and the chin
+/// together, so a record could ask for a bigger head and never for a longer
+/// face. This is the one coefficient that separates them, and the whole of its
+/// derivation is written beside it at its use site.
+///
+/// **A sixth either way, and what bounds it is the triangle budget rather than
+/// anything about a face.** Measured end to end on eight seeds: the eye-to-chin
+/// frame runs 51.5 to 70.9 mm on seed 7 and 78.5 to 107.6 on seed 23 — a factor
+/// of 1.38 either — and cranium:face runs 1.24–1.30 at the short end through
+/// 0.90–0.93 at the long one, so life's 1.00 sits inside the range at about
+/// `+0.45`. Nothing else moves with it: the bizygomatic holds to 0.5 mm and the
+/// eye's aperture to one degree across the whole sweep.
+///
+/// The refinement bands were the bound when this axis was designed and are not
+/// any more — they are fractions of each head's own lower face now, so the
+/// feature stack cannot walk out of them at either end. See `FACE_PASSES`. What
+/// binds instead is that a longer face is more surface to refine: the dearest
+/// body anywhere in the space is 29,886 triangles against a 30,000 target, and
+/// 826 of the distance to it is this axis's top end.
+///
+/// **Which is also why the neutral did not move**, though the measurement says
+/// it should: cranium:face is 1.05–1.08 today against the 1.00 that #78 derived
+/// `HEAD_BELOW_JOINT` to give, and restoring it costs 534 triangles at that same
+/// dearest corner and puts it over the target. The head is 32% short of life
+/// overall (#79) and 6% of that is this coefficient's; spending the budget on
+/// the small half while the large half is open is the wrong order.
+///
+/// Provenance: **derived** (#61), from the budget headroom measured across the
+/// space rather than from anthropometry — the anthropometry is what says where
+/// the DEFAULT should be, and it is recorded above rather than applied.
+const FACE_LENGTH_SPAN: f32 = 0.17;
+
 /// How far below horizontal a resting arm lies, in radians.
 ///
 /// The A in A-pose. Forty degrees: far enough that neither hanging the arms nor
@@ -195,6 +264,35 @@ pub struct HumanoidParams {
     /// Head size.
     #[serde(with = "super::scaled")]
     pub head_size: f32,
+    /// How broad the skull is across, at a fixed head size.
+    ///
+    /// Negative is a narrow head and positive a broad one. See
+    /// `HEAD_BREADTH_SPAN`: this scales the head and crown nodes' lateral
+    /// half-extent and nothing else, so a broad skull is broad from the parietal
+    /// down through the angle of the jaw while staying exactly as deep and as
+    /// tall.
+    ///
+    /// **The broad end is the one that binds.** A socket surfaces as a hull
+    /// facet only when its own plane clears every sibling ring point, and the
+    /// clearance a socket demands is its LARGEST half-extent — so narrowing a
+    /// section is free and widening one is not. The head carries a single
+    /// socket, down to the neck, which is why this reaches a fifth where
+    /// `GIRDLE_SECTION` could not.
+    #[serde(with = "super::scaled")]
+    pub head_breadth: f32,
+    /// How long the face is below the eyes, at a fixed head size.
+    ///
+    /// Negative is a short face and positive a long one. It moves the head's
+    /// joint up its own neck, so what changes is how much of the skull sits
+    /// BELOW that joint — the jaw, the chin and the whole feature stack — while
+    /// the cranium above it is untouched. See `FACE_LENGTH_SPAN`.
+    ///
+    /// Separate from [`Self::head_size`] deliberately, and it is the separation
+    /// that is the point: head size moved the crown and the chin together, so
+    /// two seeds could differ in how big their heads were and never in how long
+    /// their faces were (#61).
+    #[serde(with = "super::scaled")]
+    pub face_length: f32,
     /// Hand and foot size.
     #[serde(with = "super::scaled")]
     pub extremity_size: f32,
@@ -216,6 +314,8 @@ impl Default for HumanoidParams {
             limb_length: 0.0,
             neck_length: 0.0,
             head_size: 0.0,
+            head_breadth: 0.0,
+            face_length: 0.0,
             extremity_size: 0.0,
         }
     }
@@ -253,6 +353,8 @@ impl BodyPlan for HumanoidParams {
             (&mut self.limb_length, default.limb_length),
             (&mut self.neck_length, default.neck_length),
             (&mut self.head_size, default.head_size),
+            (&mut self.head_breadth, default.head_breadth),
+            (&mut self.face_length, default.face_length),
             (&mut self.extremity_size, default.extremity_size),
         ] {
             *axis = super::sanitize_axis(*axis, fallback, (-1.0, 1.0));
@@ -551,8 +653,17 @@ impl BodyPlan for HumanoidParams {
         // above rather than summarised — which is what this tag is supposed to
         // mean. It is the one coefficient in this file whose first derivation
         // was recorded alongside its correction.
+        //
+        // **It is an axis now, and this is the constant it multiplies** (#61).
+        // The derivation above stands unchanged at the neutral value: what the
+        // axis says is that a cranium:face of exactly 1.0 is the middle of a
+        // range rather than the only answer, since people whose faces are long
+        // for their heads and people whose faces are short for theirs are the
+        // most legible single difference between two skulls. See
+        // [`FACE_LENGTH_SPAN`].
         const HEAD_BELOW_JOINT: f32 = 1.19;
-        let head_y = neck_y + head_r * HEAD_BELOW_JOINT;
+        let head_y =
+            neck_y + head_r * HEAD_BELOW_JOINT * (1.0 + FACE_LENGTH_SPAN * self.face_length);
 
         // How far out the hip sockets sit, and until #98 the single number this
         // file was most sure it could not move.
@@ -1117,9 +1228,16 @@ impl BodyPlan for HumanoidParams {
         // collapses under subdivision, leaving a flat-topped stub with the head
         // joint sitting at the very top of the body — which is exactly what a
         // measured rendering showed. A crown above it fills the cranium out.
+        //
+        // Both carry the same section, so the breadth axis narrows the vault and
+        // the face by one factor rather than tapering one into the other. See
+        // [`HEAD_BREADTH_SPAN`].
+        let skull_section = Vec2::new(1.0 + HEAD_BREADTH_SPAN * self.head_breadth, 1.0);
         let head = skeleton.extend_from(
             neck,
-            Node::new(Vec3::new(0.0, head_y, 0.0), head_r).in_zone(Zone::Head),
+            Node::new(Vec3::new(0.0, head_y, 0.0), head_r)
+                .with_scale(skull_section)
+                .in_zone(Zone::Head),
         );
         skeleton.extend_from(
             head,
@@ -1127,6 +1245,7 @@ impl BodyPlan for HumanoidParams {
                 Vec3::new(0.0, head_y + head_r * CROWN_HIGH, 0.0),
                 head_r * CROWN_WIDE,
             )
+            .with_scale(skull_section)
             .in_zone(Zone::Head),
         );
 
@@ -1282,6 +1401,18 @@ impl BodyPlan for HumanoidParams {
             }
             Category::Features => {
                 self.head_size = rolls.range("humanoid.headSize", -1.0, 1.0);
+                // Drawn from their own named streams, so adding them cannot move
+                // `headSize` or `extremitySize` on any stored seed — which is
+                // what `a_seed_reproduces_the_same_person` holds and what
+                // `GENERATOR_VERSION` would otherwise have to move for (#57).
+                //
+                // **Not the full range, and that is a judgement.** These two are
+                // the loudest axes on a face, so a re-roll that reaches their
+                // bounds makes every third seed a caricature; a look drawn at
+                // random should be a person, and a slider taken to its end is a
+                // choice somebody made.
+                self.head_breadth = rolls.range("humanoid.headBreadth", -0.7, 0.7);
+                self.face_length = rolls.range("humanoid.faceLength", -0.7, 0.7);
                 self.extremity_size = rolls.range("humanoid.extremitySize", -1.0, 1.0);
             }
         }
@@ -1296,6 +1427,8 @@ impl BodyPlan for HumanoidParams {
         put_signed(out, self.limb_length);
         put_signed(out, self.neck_length);
         put_signed(out, self.head_size);
+        put_signed(out, self.head_breadth);
+        put_signed(out, self.face_length);
         put_signed(out, self.extremity_size);
     }
 
@@ -1309,6 +1442,8 @@ impl BodyPlan for HumanoidParams {
             limb_length: take_signed(bytes)?,
             neck_length: take_signed(bytes)?,
             head_size: take_signed(bytes)?,
+            head_breadth: take_signed(bytes)?,
+            face_length: take_signed(bytes)?,
             extremity_size: take_signed(bytes)?,
         };
         params.sanitize();

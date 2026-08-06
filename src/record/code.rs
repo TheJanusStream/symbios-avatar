@@ -19,7 +19,15 @@ use crate::plan::{Archetype, PlanDecodeError};
 use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
-pub const SHARE_CODE_VERSION: u8 = 2;
+///
+/// **3** — the humanoid plan gained `headBreadth` and `faceLength` (#61), which
+/// are two more bytes in the middle of its payload. A version 2 code read as a
+/// version 3 one would take a head's breadth from what used to be the extremity
+/// size and then run off the end, so the version gate is what keeps an old code
+/// a clean refusal rather than a body nobody asked for. Codes are for passing a
+/// look between people and re-encoding one was never a round trip; the record
+/// is the canonical avatar and reads unchanged.
+pub const SHARE_CODE_VERSION: u8 = 3;
 
 /// Crockford base32 digits.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";

@@ -119,7 +119,7 @@ fn a_non_finite_quadruped_axis_takes_its_documented_default() {
 #[test]
 fn every_humanoid_axis_meshes_at_its_extremes() {
     let heights = [1.2f32, 1.75, 2.2];
-    let axes: [Axis<HumanoidParams>; 8] = [
+    let axes: [Axis<HumanoidParams>; 10] = [
         ("build", |p, v| p.build = v),
         ("muscle", |p, v| p.muscle = v.abs()),
         ("shoulder_width", |p, v| p.shoulder_width = v),
@@ -127,6 +127,15 @@ fn every_humanoid_axis_meshes_at_its_extremes() {
         ("limb_length", |p, v| p.limb_length = v),
         ("neck_length", |p, v| p.neck_length = v),
         ("head_size", |p, v| p.head_size = v),
+        // The head's own two (#61). `head_breadth` is the one that can fail
+        // here: it widens the skull's lateral half-extent, and a socket
+        // surfaces as a hull facet only when its plane clears every sibling
+        // ring point, so the broad end has to clear the neck below it.
+        // `face_length` moves the head joint up its neck and has no socket
+        // beneath it to overlap, which is why its bound came from the
+        // refinement bands instead.
+        ("head_breadth", |p, v| p.head_breadth = v),
+        ("face_length", |p, v| p.face_length = v),
         ("extremity_size", |p, v| p.extremity_size = v),
     ];
 
@@ -163,6 +172,8 @@ fn the_humanoid_corners_of_the_space_mesh() {
                 limb_length: value,
                 neck_length: value,
                 head_size: value,
+                head_breadth: value,
+                face_length: value,
                 extremity_size: value,
             };
             params.sanitize();
@@ -187,6 +198,8 @@ fn random_humanoids_always_mesh() {
             limb_length: rng.random_range(-1.0..=1.0),
             neck_length: rng.random_range(-1.0..=1.0),
             head_size: rng.random_range(-1.0..=1.0),
+            head_breadth: rng.random_range(-1.0..=1.0),
+            face_length: rng.random_range(-1.0..=1.0),
             extremity_size: rng.random_range(-1.0..=1.0),
         };
         params.sanitize();

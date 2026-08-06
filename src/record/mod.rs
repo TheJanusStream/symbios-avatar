@@ -398,6 +398,12 @@ fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, hair: &mut HairParam
     face.brow = rolls.range("face.brow", 0.1, 0.9);
     face.mouth = rolls.range("face.mouth", 0.15, 0.95);
     face.ears = rolls.range("face.ears", 0.1, 0.85);
+    // The two width axes (#61), each from its own named stream so that adding
+    // them moved no stored seed's nose, brow, mouth or ears — which is what
+    // `adding_an_axis_does_not_move_the_axes_beside_it` holds and what
+    // `GENERATOR_VERSION` would otherwise have had to move for.
+    face.nose_width = rolls.range("face.noseWidth", 0.2, 0.9);
+    face.mouth_width = rolls.range("face.mouthWidth", 0.15, 0.9);
 
     eyes.size = rolls.range("eyes.size", 0.25, 0.85);
     eyes.spacing = rolls.range("eyes.spacing", -0.6, 0.6);

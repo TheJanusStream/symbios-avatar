@@ -294,17 +294,37 @@ mod tests {
     use crate::{Archetype, AvatarRecord, CageConfig, build_cage, catmull_clark};
 
     fn body(seed: i64) -> (PolyMesh, Rig) {
+        let (mesh, rig, _) = sectioned_body(seed);
+        (mesh, rig)
+    }
+
+    /// The same, plus how wide the head's own node is against its radius.
+    ///
+    /// **The head has an elliptical section now** (#61), so "a fraction of the
+    /// node radius" and "a fraction of what the cage swept" are two different
+    /// numbers where they used to be one.
+    fn sectioned_body(seed: i64) -> (PolyMesh, Rig, f32) {
         let mut record = AvatarRecord::new("Scalped", Archetype::default());
         record.reroll(seed);
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("the body should mesh");
+        let rig = Rig::from_skeleton(&skeleton).expect("the body should rig");
+        let head = *rig
+            .in_zone(Zone::Head)
+            .first()
+            .expect("a humanoid has a head");
+        let section = rig.joints[head]
+            .node
+            .and_then(|node| skeleton.nodes.get(node as usize))
+            .map_or(1.0, |node| node.scale.x);
         (
             // [`crate::BODY_SUBDIVISIONS`], not a literal. This helper measures
             // how much of its node radius the head's SURFACE delivers, and a
             // level of its own measures a head nobody renders — the same defect
             // #107 found in two of the skull tests, in the same shape.
             catmull_clark(&cage, crate::BODY_SUBDIVISIONS),
-            Rig::from_skeleton(&skeleton).expect("the body should rig"),
+            rig,
+            section,
         )
     }
 
@@ -342,15 +362,52 @@ mod tests {
         // **Swept rather than asked of one seed.** The figure varies by 0.06
         // across seeds — more than the margin this bound has — so a single body
         // cannot say where the worst case is.
+        //
+        // **The head has an elliptical section now, and the bound had to be told
+        // which radius it means** (#61). A broad skull sweeps a ring 1.14 node
+        // radii across and its surface duly measured 0.956 of a bare radius —
+        // outside a bound written when the two were the same number and right on
+        // the geometry. So the reading is against the cage's own lateral reach,
+        // which is what the gap this module exists for is a gap from.
+        //
+        // **And the ceiling had to come up to 1.02, which is not a relaxation.**
+        // The neck below the head is not sectioned with it, so on a NARROW skull
+        // the surface at the head joint is held out by the throat: seed 15's
+        // section is 0.869 and its surface delivers 1.008 of it. That is the
+        // cage doing what a blend does, not the module losing its argument — a
+        // point on the head's own ring is still inside it, and what stands proud
+        // is a point the neck owns.
+        //
+        // What the module exists for is unchanged and is now the FIRST reading
+        // rather than an inference from the second: across sixteen bodies the
+        // surface delivers 0.838 to 0.956 of the node radius, a spread of 14%,
+        // and no single constant can stand in for a measurement that varies that
+        // far. Before the axis it varied 6% and the argument was thinner.
+        let mut worst: (i64, f32) = (0, 0.0);
+        let mut raw = (f32::MAX, f32::MIN);
         for seed in 1i64..=16 {
-            let (mesh, rig) = body(seed);
+            let (mesh, rig, section) = sectioned_body(seed);
             let scalp = Scalp::measure(&mesh, &rig).expect("a humanoid has a head");
-            assert!(
-                scalp.width_at(0.0) < 0.92,
-                "seed {seed}: the skull measured {} of its node radius across",
-                scalp.width_at(0.0)
-            );
+            let across = scalp.width_at(0.0);
+            raw = (raw.0.min(across), raw.1.max(across));
+            if across / section > worst.1 {
+                worst = (seed, across / section);
+            }
         }
+        assert!(
+            raw.1 / raw.0 > 1.10,
+            "the head delivers {:.3} to {:.3} of its node radius across sixteen \
+             bodies — close enough to a constant that hair could be placed by \
+             arithmetic, which is what this module exists instead of",
+            raw.0,
+            raw.1
+        );
+        assert!(
+            worst.1 < 1.02,
+            "seed {}: the skull measured {} of what its own ring swept across",
+            worst.0,
+            worst.1
+        );
     }
 
     #[test]
