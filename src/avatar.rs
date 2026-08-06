@@ -834,33 +834,71 @@ mod tests {
         }
     }
 
+    /// Grows a body with one hair length and nothing else changed.
+    fn at_length(length: f32) -> Avatar {
+        let record = AvatarRecord::new("Built", Archetype::default());
+        Avatar::build_with(
+            &record,
+            &AvatarConfig {
+                hair: Some(HairParams {
+                    length,
+                    ..HairParams::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .expect("builds")
+    }
+
     #[test]
     fn a_hair_override_replaces_the_record_and_nothing_else() {
-        let record = AvatarRecord::new("Built", Archetype::default());
-        let cropped = Avatar::build_with(
-            &record,
-            &AvatarConfig {
-                hair: Some(HairParams {
-                    length: 0.0,
-                    ..HairParams::default()
-                }),
-                ..Default::default()
-            },
-        )
-        .expect("builds");
-        let long = Avatar::build_with(
-            &record,
-            &AvatarConfig {
-                hair: Some(HairParams {
-                    length: 1.0,
-                    ..HairParams::default()
-                }),
-                ..Default::default()
-            },
-        )
-        .expect("builds");
+        // **`cropped` was 0.0 and is 0.1, because zero is no longer a length**
+        // (#124). This test is about the override path, not about the bottom of
+        // the axis, and it was asserting on a value that now grows nothing —
+        // which would have failed at `.expect("hair")` rather than saying so.
+        let cropped = at_length(0.1);
+        let long = at_length(1.0);
         assert!(
             long.parts.hair.expect("hair").drop() > cropped.parts.hair.expect("hair").drop() * 2.0
+        );
+    }
+
+    #[test]
+    fn a_hair_length_of_zero_grows_no_hair_at_all() {
+        // **The whole set, not a shorter one** (#124). The fall is only part of
+        // what a head of hair costs here — the mass is a sculpted shell — so a
+        // length of zero used to build a bucket hat: 3,656 triangles and a draw
+        // call, on a record asking for none.
+        //
+        // Asserted three ways because "no hair" has three meanings and the
+        // cheap one would pass on its own: nothing in `parts`, nothing drawn,
+        // and a draw call fewer than the same body with hair. A part that is
+        // `None` while its mesh is still in the merge is exactly the sort of
+        // half-removal this crate has caught before.
+        let bald = at_length(0.0);
+        assert!(
+            bald.parts.hair.is_none(),
+            "a record asked for no hair and got some"
+        );
+        let drawn: Vec<MeshKind> = bald.drawn(0.0).iter().map(|item| item.kind).collect();
+        assert!(
+            !drawn.contains(&MeshKind::Hair),
+            "no hair was grown and one was still drawn: {drawn:?}"
+        );
+
+        let haired = at_length(0.5);
+        assert!(
+            bald.budget.meshes < haired.budget.meshes,
+            "a bald body costs {} draws against a haired body's {}, so the hair's \
+             draw call did not go with it",
+            bald.budget.meshes,
+            haired.budget.meshes
+        );
+        assert!(
+            bald.budget.tris < haired.budget.tris,
+            "a bald body costs {} triangles against a haired body's {}",
+            bald.budget.tris,
+            haired.budget.tris
         );
     }
 

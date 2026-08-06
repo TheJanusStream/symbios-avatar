@@ -131,7 +131,29 @@ const MAX_LEAN: f32 = 0.55;
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct HairParams {
-    /// How far the hair falls, `0` cropped and `1` past the shoulder blades.
+    /// How far the hair falls, `0` **bald** and `1` past the shoulder blades.
+    ///
+    /// **Zero means no hair at all, and it is the one axis on this record whose
+    /// end removes a part rather than shrinking it** (#124). It read "`0`
+    /// cropped" and did not mean it: the fall is
+    /// `radius * (0.15 + 3.8 * length)`, so zero is still 0.15 R of it, and the
+    /// MASS of a head of hair here is the shell rather than the fall. Built at
+    /// zero it rendered as a bucket hat — a brim past the ears, a crown over the
+    /// whole vault, locks cut into the rim — and no record could ask for a bald
+    /// head at all.
+    ///
+    /// **So the bottom of this axis is a cliff, deliberately.** At `0.001` a
+    /// head wears a full hood and at `0.000` it wears nothing; records quantise
+    /// to thousandths on the wire, so both are reachable and neither is a
+    /// rounding artefact. Anything that INTERPOLATES two records will pop here,
+    /// which is the price of an axis whose zero means none, and is why it is
+    /// written down rather than left to be found.
+    ///
+    /// `reroll` draws this uniformly over the whole range, so after quantising,
+    /// about one avatar in two thousand comes out bald by chance. That is left
+    /// alone on purpose — bald people exist and the end of an axis should be
+    /// reachable — and is recorded so the next person to meet a bald seed does
+    /// not go looking for a defect.
     #[serde(with = "crate::plan::scaled")]
     pub length: f32,
     /// How far the hair stands off the scalp, `-1` flat and `+1` full.
@@ -292,12 +314,28 @@ pub struct Hair {
 }
 
 impl Hair {
-    /// Grows hair over a built body.
+    /// Grows hair over a built body, or none at all if the record asked for
+    /// none.
     ///
     /// Needs the mesh, not just the rig: the scalp is measured rather than
     /// assumed, which is what keeps the hair on the head.
+    ///
+    /// **A [`HairParams::length`] of zero is a bald head, and this is the only
+    /// place that can say so** (#124). [`Hair::over`] returns a `Hair` and
+    /// therefore cannot express the absence of one; this returns `Option`
+    /// already, because a quadruped grows no fringe, so the whole of "no hair"
+    /// is one early return and every consumer downstream was already written for
+    /// it. `Parts::hair` is `Option`, `Avatar::drawn` skips the branch, and the
+    /// draw and triangle counts fall out on their own.
+    ///
+    /// Tested with `<= 0.0` rather than `== 0.0` even though
+    /// [`HairParams::sanitize`] clamps the axis to `0.0..=1.0`, because this is
+    /// public and takes a `HairParams` a caller may have built by hand.
     #[must_use]
     pub fn build(mesh: &PolyMesh, rig: &Rig, params: &HairParams) -> Option<Self> {
+        if params.length <= 0.0 {
+            return None;
+        }
         let scalp = Scalp::measure(mesh, rig)?;
         let surface = Surface::measure(mesh, rig);
         Some(Self::over(&scalp, Some((rig, &surface)), params))
