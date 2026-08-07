@@ -84,6 +84,28 @@ pub struct Node {
     /// the body through zones instead of node indices, so they work on any body
     /// without knowing which plan built it.
     pub zone: Zone,
+    /// A rig-only node: the RIG keeps it — a joint, a bone, a pivot — and the
+    /// CAGE skips it entirely.
+    ///
+    /// **This exists because the joint-hull mesher cannot carry an extra socket
+    /// beside large sibling rings, and that has now been measured at three
+    /// joints** (#134). A socket must sit past every sibling ring corner along
+    /// its own axis (see `cage::joint`), and beside the head's rings that floor
+    /// is ~0.12 m against an 0.82-of-the-bone ceiling — a mandible node meshed
+    /// as a socket would have to hang outside the head's own surface. #125
+    /// measured the same wall at the girdle and the neck for a trapezius.
+    ///
+    /// A marker is the honest answer for anatomy that is not a limb: a mandible
+    /// is a mass fused to the skull with its own hinge. The mass stays the
+    /// surface's business (`face::skull`'s submental construction); the HINGE is
+    /// the marker — `anim` gets a real pivot and a real bone, and skinning binds
+    /// surface to it by the ordinary falloff, without asking the hull for a
+    /// socket it cannot give.
+    ///
+    /// Defaulted **at the field** for the reason [`Node::roll`] gives: a
+    /// `Skeleton` written before this existed still reads, and reads as meshed.
+    #[serde(default)]
+    pub marker: bool,
 }
 
 impl Node {
@@ -97,6 +119,7 @@ impl Node {
             roll: 0.0,
             offset: Vec2::ZERO,
             zone: Zone::default(),
+            marker: false,
         }
     }
 
@@ -124,6 +147,14 @@ impl Node {
     #[must_use]
     pub fn with_roll(mut self, roll: f32) -> Self {
         self.roll = roll;
+        self
+    }
+
+    /// Marks this node rig-only: a joint the cage does not mesh. See
+    /// [`Node::marker`] for why such a node exists at all.
+    #[must_use]
+    pub fn as_marker(mut self) -> Self {
+        self.marker = true;
         self
     }
 
@@ -346,11 +377,27 @@ impl Skeleton {
     /// Classifies `node` by degree.
     #[must_use]
     pub fn kind(&self, node: u32) -> NodeKind {
-        match self.degree(node) {
+        // Meshed degree, not raw degree: a marker bone must not turn its parent
+        // into a hull. The head is a CONNECTOR — the chain neck→head→crown
+        // sweeps straight through it — and counting the jaw markers would make
+        // it a three-socket joint, which is the construction #134 measured as
+        // impossible there.
+        match self
+            .incident_bones(node)
+            .into_iter()
+            .filter(|&bone| !self.is_marker_bone(bone))
+            .count()
+        {
             0 | 1 => NodeKind::Leaf,
             2 => NodeKind::Connector,
             _ => NodeKind::Joint,
         }
+    }
+
+    /// Whether `bone` touches a marker node, making it rig-only too.
+    fn is_marker_bone(&self, bone: usize) -> bool {
+        let [a, b] = self.bones[bone];
+        self.nodes[a as usize].marker || self.nodes[b as usize].marker
     }
 
     /// Decomposes the graph into limbs: chains between leaves and joints.
@@ -367,11 +414,16 @@ impl Skeleton {
     pub fn limbs(&self) -> Result<Vec<Chain>, SkeletonError> {
         self.validate()?;
 
-        let mut used = vec![false; self.bones.len()];
+        // Marker bones are the rig's and never mesh, so they are spent before
+        // the walk begins — both so no chain crosses one and so the unanchored-
+        // ring check below does not mistake them for an unreached loop.
+        let mut used: Vec<bool> = (0..self.bones.len())
+            .map(|bone| self.is_marker_bone(bone))
+            .collect();
         let mut limbs = Vec::new();
 
         for start in 0..self.nodes.len() as u32 {
-            if self.kind(start) == NodeKind::Connector {
+            if self.nodes[start as usize].marker || self.kind(start) == NodeKind::Connector {
                 continue;
             }
             for bone in self.incident_bones(start) {
@@ -430,10 +482,13 @@ impl Skeleton {
         nodes.push(cursor);
 
         while self.kind(cursor) == NodeKind::Connector {
+            // Marker bones are filtered here too: a connector's kind already
+            // ignores them, so following one would walk the chain off the
+            // meshed graph and onto a rig-only bone.
             let Some(next) = self
                 .incident_bones(cursor)
                 .into_iter()
-                .find(|&b| b != current)
+                .find(|&b| b != current && !self.is_marker_bone(b))
             else {
                 break;
             };
@@ -471,6 +526,36 @@ mod tests {
         assert_eq!(limbs[0].nodes, vec![0, 1, 2, 3]);
         assert_eq!(skel.kind(0), NodeKind::Leaf);
         assert_eq!(skel.kind(1), NodeKind::Connector);
+    }
+
+    #[test]
+    fn a_marker_is_a_joint_and_not_geometry() {
+        // #134. A marker exists because the joint-hull mesher cannot carry an
+        // extra socket beside large sibling rings — measured at the girdle and
+        // the neck (#125) and at the head (#134) — so anatomy that is not a
+        // limb enters the rig without asking the cage for a socket. The
+        // contract, both halves: hanging markers anywhere changes NOTHING the
+        // mesher sees, and the rig still reaches them.
+        let plain = chain(4);
+        let mut marked = chain(4);
+        // A marker chain off a mid-chain connector: the exact shape that would
+        // otherwise turn node 1 into a three-socket hull.
+        let pivot = marked.extend_from(1, Node::new(Vec3::new(0.3, 1.0, 0.0), 0.1).as_marker());
+        marked.extend_from(pivot, Node::new(Vec3::new(0.6, 1.0, 0.0), 0.1).as_marker());
+
+        assert_eq!(marked.kind(1), NodeKind::Connector, "no hull grows at 1");
+        let limbs = marked.limbs().expect("markers do not break decomposition");
+        assert_eq!(limbs.len(), 1, "still one limb");
+        assert_eq!(limbs[0].nodes, vec![0, 1, 2, 3], "and the same limb");
+        assert_eq!(
+            plain.limbs().expect("plain chain decomposes")[0].nodes,
+            limbs[0].nodes,
+        );
+
+        // The rig keeps what the cage skips: both markers are joints, parented
+        // through the chain they hang off.
+        let rig = crate::Rig::rooted_at(&marked, 0).expect("markers rig");
+        assert_eq!(rig.len(), 6);
     }
 
     #[test]

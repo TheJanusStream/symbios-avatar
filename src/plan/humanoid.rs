@@ -302,6 +302,53 @@ const CROWN_WIDE: f32 = 0.825;
 /// 0.845 that H:W 1.48 asks for at the height the head had before this pass.
 const SKULL_SLENDER: f32 = 0.897;
 
+/// Where the jaw's hinge sits, in head radii about the head joint: `(down,
+/// forward)`.
+///
+/// **A MARKER, not meshed geometry — and that is a measured necessity, not a
+/// shortcut** (#134). A mandible node as a third socket on the head was swept
+/// against the cage and can never mesh: the plane rule needs ~0.12 m beside
+/// rings as large as the head's, and 0.82 of the bone only reaches that once
+/// the node hangs outside the head's own surface. The same wall #125 measured
+/// at the girdle and the neck for a trapezius, now measured at the head.
+///
+/// So the jaw enters the RIG and not the cage: this pivot and [`JAW_TIP`] give
+/// `anim` the condyle-to-chin bone a bone-driven jaw needs (#118), and the
+/// skin binds to it by the ordinary falloff. The mandible's MASS stays the
+/// skull stage's business — see `face::skull`'s submental construction, which
+/// is the other half of #134.
+///
+/// The hinge sits at the ear: the temporomandibular joint is at the ear canal,
+/// which is where #126 measured our head joint already sitting (the joint is
+/// 5.8 mm above the ear centre), and is why a nod and a bite share a centre in
+/// life. Slightly below the head joint so the bone has length, slightly
+/// forward because the condyle is.
+/// Provenance: **looked up** (#134) — TMJ at the ear canal, on the anthropometry
+/// every head instrument here quotes; the exact fractions are anatomy read off
+/// `face::skull::Canon`'s ear placement rather than swept.
+const JAW_PIVOT: Vec2 = Vec2::new(0.06, 0.10);
+
+/// Where the jaw bone ends, in head radii about the head joint: `(down,
+/// forward)`.
+///
+/// The chin. `Skull::chin` measures −0.97 radii on the default body and the
+/// projection 0.92 forward; the tip sits on that landmark so the bone
+/// `pivot → tip` IS the mandible — rotating the pivot swings the chin through
+/// the arc a jaw actually opens along.
+/// Provenance: **derived from the shipped landmark** (#134): the measured chin,
+/// not a chosen shape.
+const JAW_TIP: Vec2 = Vec2::new(0.97, 0.92);
+
+/// The marker radii of the jaw's two nodes, in head radii: `(pivot, tip)`.
+///
+/// A marker meshes nothing, so these are BINDING reaches, not sizes: the
+/// falloff that decides which skin follows the mandible scales with them. The
+/// tip's reach is the chin and the lower lip's neighbourhood; the pivot's is
+/// the jaw's angle below the ear.
+/// Provenance: **unsourced** (#134) — a first cut for #118 to tune when the
+/// macro rig actually rotates this bone; nothing poses it yet.
+const JAW_REACH: Vec2 = Vec2::new(0.24, 0.30);
+
 /// How far the `head_breadth` axis narrows or broadens the skull, as a share of
 /// its own lateral half-extent at each end.
 ///
@@ -1551,6 +1598,30 @@ impl BodyPlan for HumanoidParams {
             .with_scale(skull_section)
             .in_zone(Zone::Head),
         );
+        // The jaw: a hinge and a bone in the rig, no geometry in the cage
+        // (#134). See [`JAW_PIVOT`] for why it cannot be a socket and
+        // `face::skull` for where the mandible's mass actually comes from. The
+        // pivot hangs off the head so the whole jaw turns with a head turn; the
+        // tip hangs off the pivot so rotating the PIVOT is what opens the
+        // mouth, about the same centre a nod uses — which is what a jaw does.
+        let jaw_pivot = skeleton.extend_from(
+            head,
+            Node::new(
+                Vec3::new(0.0, head_y - head_r * JAW_PIVOT.x, head_r * JAW_PIVOT.y),
+                head_r * JAW_REACH.x,
+            )
+            .as_marker()
+            .in_zone(Zone::Head),
+        );
+        skeleton.extend_from(
+            jaw_pivot,
+            Node::new(
+                Vec3::new(0.0, head_y - head_r * JAW_TIP.x, head_r * JAW_TIP.y),
+                head_r * JAW_REACH.y,
+            )
+            .as_marker()
+            .in_zone(Zone::Head),
+        );
 
         for (side, fore, hind) in [
             (-1.0f32, Limb::ForeLeft, Limb::HindLeft),
@@ -1775,8 +1846,15 @@ mod tests {
         // Two hands, one head, and each foot ending in both a toe and the stub
         // that closes its heel: seven leaves. The stub is what makes the heel a
         // joint rather than a bend, which is what keeps the sole flat (#111).
+        //
+        // MESHED leaves: this count is a contract about the cage's topology,
+        // and the jaw's two rig-only markers (#134) are not the cage's — a
+        // marker reads as a leaf because its meshed degree is zero, which is
+        // the point of it.
         let leaves = (0..skeleton.nodes.len() as u32)
-            .filter(|&node| skeleton.kind(node) == NodeKind::Leaf)
+            .filter(|&node| {
+                !skeleton.nodes[node as usize].marker && skeleton.kind(node) == NodeKind::Leaf
+            })
             .count();
         assert_eq!(leaves, 7);
 

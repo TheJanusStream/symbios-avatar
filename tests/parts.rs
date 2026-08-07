@@ -706,6 +706,17 @@ fn the_underside_of_the_jaw_does_not_bulge() {
     // that table for the mechanism — and the population went from 0.029-0.099 to
     // 0.031-0.081. The bound is a hair above the worst of the sixteen, as it has
     // always been; it is still the state and the target is still zero.
+    //
+    // **0.085 to 0.040, AND THE TARGET IS FINALLY THE STATE** (#134). The
+    // underside is CONSTRUCTED now — `face::skull::construct_submental` planes
+    // everything between each column's own crest and the throat onto the chord
+    // joining them, with `BUTTON` of convexity for the chin's own dome — so the
+    // residue this test spent three issues measuring is simply not emitted any
+    // more. The population reads 0.000 on seven of the sixteen seeds, eleven
+    // sit at or under 0.010, and the worst is seed 9 at 0.030. The docstring
+    // above says "the target is near zero"; near zero is what the sweep now
+    // measures, and the bound's remaining slack is the chin button's
+    // entitlement plus seed 9's low-set skull, not a defect budget.
     for seed in 0..SEEDS {
         let mut record = AvatarRecord::new("Jaw", Archetype::default());
         record.reroll(seed);
@@ -757,9 +768,8 @@ fn the_underside_of_the_jaw_does_not_bulge() {
             }
         }
         let chord = (chin_y - throat_y).hypot(chin_z - throat_z) * 1000.0;
-        println!("PROBE seed {seed} ratio {:.3}", worst / chord);
         assert!(
-            chord > f32::EPSILON && worst / chord < 0.085,
+            chord > f32::EPSILON && worst / chord < 0.040,
             "seed {seed}: the underside of the jaw stands {worst:.1} mm forward of the \
              chord from the chin to the throat, at {worst_at:.1} mm — {:.3} of a chord \
              {chord:.1} mm long. A jawline should be straight to hollow, so the target \

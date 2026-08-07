@@ -864,6 +864,167 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig) {
         }
         *point = centre + reshape_to(*point - centre, radius, floor);
     }
+
+    if std::env::var_os("SKIP_SUBMENTAL").is_none() {
+        construct_submental(mesh, &owned, centre, radius, floor);
+    }
+}
+
+/// How far off the midline the submental construction reaches, in head radii,
+/// and the columns its chords stand in.
+///
+/// Half a radius covers the chin and the jaw's body out to the gonial corner
+/// on every seed measured; the ramus and the ear are beyond it and keep their
+/// own shape.
+const SUBMENTAL_SPAN: f32 = 0.50;
+const SUBMENTAL_COLUMNS: usize = 6;
+
+/// How much convexity the chin's own button may keep above the submental
+/// chord, in head radii, and the share of the run it may keep it over.
+///
+/// **This pair is the discriminator between a chin and the #94 bulge, and it
+/// took two wrong constructions to find it** (#134). The first chord was
+/// anchored at the crest with no allowance: it amputated the chin button on
+/// every soft-chinned body — a dome's lower shoulder is always forward of the
+/// straight line from its apex, so seeds 21 and 2 lost 8 mm of chin,
+/// `Skull::chin` migrated up with the surface, and cranium:face read 1.15 and
+/// 1.23 against 1.08 and 1.14. The second anchored the chord a fixed
+/// chin-thickness below the crest: that restored the buttons and spared the
+/// BULGE too, because on the default family the bulge peaks 8 mm under the
+/// crest — inside any anatomical thickness.
+///
+/// What separates them is not where they sit but how far they stand out:
+/// measured across the sweep, a button deviates from the crest-to-throat chord
+/// by about a millimetre and the bulge by eight. So the chord runs from the
+/// TRUE crest, and this allowance — about 2.3 mm on the default head, fading
+/// to nothing over the top [`BUTTON_RUN`] of the run — is the convexity a chin
+/// is entitled to. Everything past it is bulge and is planed off.
+const BUTTON: f32 = 0.022;
+/// See [`BUTTON`].
+const BUTTON_RUN: f32 = 0.35;
+
+fn construct_submental(mesh: &mut PolyMesh, owned: &[bool], centre: Vec3, radius: f32, floor: f32) {
+    let stretch = (floor * SETTLE) / JUNCTION;
+    if !stretch.is_finite() || stretch <= 0.0 {
+        return;
+    }
+    let world_y = |height: f32| centre.y + height * stretch * radius;
+
+    // **Chords stand in COLUMNS of constant |x| and clamp FORWARD reach, not
+    // radial reach — and the first construction here was radial and measurably
+    // wrong.** Radial chords cut each azimuth at its own crest, so the flank
+    // BESIDE the chin was planed at the chin's own height while the midline
+    // kept its full reach: the blade #128 closed reopened at +19.7 mm proud
+    // against 9.7. A column only ever compares the surface with itself at
+    // other HEIGHTS, so a row through the chin keeps its lateral shape whole.
+    //
+    // Bisected against the shaped surface, never binned, as everywhere.
+    let reach = |y: f32, across: f32| -> Option<f32> {
+        let from = Vec3::new(centre.x + across, y, centre.z);
+        if !mesh.contains(from) {
+            return None;
+        }
+        let (mut near, mut far) = (0.0f32, radius * 2.5);
+        if mesh.contains(from + Vec3::Z * far) {
+            return None;
+        }
+        for _ in 0..32 {
+            let middle = 0.5 * (near + far);
+            if mesh.contains(from + Vec3::Z * middle) {
+                near = middle;
+            } else {
+                far = middle;
+            }
+        }
+        Some(near)
+    };
+    let column_x =
+        |column: usize| SUBMENTAL_SPAN * radius * column as f32 / (SUBMENTAL_COLUMNS - 1) as f32;
+    // The top anchor is each column's own crest, scanned finely: the chord
+    // falls at nearly a millimetre per millimetre, so a quantized crest height
+    // turns directly into millimetres carved off the chin — a 0.03-step ladder
+    // cut 7.6 mm off seed 2's chin by quantization alone.
+    let crest = |across: f32| -> Option<(f32, f32)> {
+        // The scan stops at MENTON − 0.07: the deepest crest measured anywhere
+        // in the sweep sits at −0.59, and every rung below the crest zone is
+        // pure build cost — this scan runs inside every body build, and at its
+        // first width it alone took the lib suite from 4.9 s to 12.2 s.
+        let mut best: Option<(f32, f32)> = None;
+        for step in 0..=21 {
+            let height = MENTON + 0.14 - 0.01 * step as f32;
+            if height <= JUNCTION {
+                break;
+            }
+            let Some(forward) = reach(world_y(height), across) else {
+                continue;
+            };
+            if best.is_none_or(|(_, reach)| forward > reach) {
+                best = Some((height, forward));
+            }
+        }
+        best
+    };
+    let top: Vec<Option<(f32, f32)>> = (0..SUBMENTAL_COLUMNS)
+        .map(|column| crest(column_x(column)))
+        .collect();
+    let bottom: Vec<Option<f32>> = (0..SUBMENTAL_COLUMNS)
+        .map(|column| reach(world_y(JUNCTION), column_x(column)))
+        .collect();
+    let heights: Vec<Option<f32>> = top.iter().map(|a| a.map(|(h, _)| h)).collect();
+    let reaches: Vec<Option<f32>> = top.iter().map(|a| a.map(|(_, r)| r)).collect();
+    // A column that measured nothing keeps its surface: the clamp needs both
+    // ends of its chord, and inventing one from a neighbour is how the scalp's
+    // sector fill put the back of a head under the face (#125).
+    let chord_at = |anchors: &[Option<f32>], across: f32| -> Option<f32> {
+        let at = across / (SUBMENTAL_SPAN * radius) * (SUBMENTAL_COLUMNS - 1) as f32;
+        let low = (at.floor() as usize).min(SUBMENTAL_COLUMNS - 1);
+        let high = (low + 1).min(SUBMENTAL_COLUMNS - 1);
+        let between = at - low as f32;
+        Some(anchors[low]? * (1.0 - between) + anchors[high]? * between)
+    };
+
+    for (point, &mine) in mesh.positions.iter_mut().zip(owned) {
+        if !mine {
+            continue;
+        }
+        let local = *point - centre;
+        let height = (local.y / radius) * (JUNCTION / (floor * SETTLE).min(-f32::EPSILON));
+        if height >= MENTON + 0.14 || height <= JUNCTION || local.z <= 0.0 {
+            continue;
+        }
+        let across = local.x.abs();
+        if across >= SUBMENTAL_SPAN * radius {
+            continue;
+        }
+        let (Some(crest_at), Some(crest), Some(throat)) = (
+            chord_at(&heights, across),
+            chord_at(&reaches, across),
+            chord_at(&bottom, across),
+        ) else {
+            continue;
+        };
+        if height >= crest_at {
+            continue;
+        }
+
+        let t = (crest_at - height) / (crest_at - JUNCTION).max(f32::EPSILON);
+        // The chord plus the chin's own entitlement: [`BUTTON`] of convexity,
+        // fading to nothing over the top [`BUTTON_RUN`] of the run. The
+        // allowance is what lets one construction keep seed 21's soft dome and
+        // plane off seed 0's bulge — the two differ by magnitude, not height.
+        let allowed = BUTTON * radius * smooth((BUTTON_RUN - t) / BUTTON_RUN);
+        let ceiling = crest * (1.0 - t) + throat * t + allowed;
+        let excess = local.z - ceiling;
+        if excess <= 0.0 {
+            continue;
+        }
+        // Faded at the bottom and lateral edges so the construction meets the
+        // throat and the jaw's corner with no crease; at the top the allowance
+        // is the continuity, since the chord starts at the crest's own reach.
+        let fade =
+            smooth((1.0 - t) / 0.12) * smooth((SUBMENTAL_SPAN * radius - across) / (0.12 * radius));
+        point.z = centre.z + local.z - excess * fade;
+    }
 }
 
 /// Where a point on an unshaped head ends up once the skull is shaped.

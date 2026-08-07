@@ -825,8 +825,11 @@ mod tests {
         let graspers = rig.query(|zone| matches!(zone, Zone::Extremity(limb) if limb.is_fore()));
         assert_eq!(graspers.len(), 2, "and has two hands");
 
-        // Skull and crown; a head takes two nodes to have a dome.
-        assert_eq!(rig.in_zone(Zone::Head).len(), 2);
+        // Skull and crown, which a head needs to have a dome, plus the jaw's
+        // pivot and tip — rig-only markers, so they are joints here and nothing
+        // in the cage (#134). Anything that wants THE head joint takes the
+        // first, which is the skull.
+        assert_eq!(rig.in_zone(Zone::Head).len(), 4);
         assert_eq!(rig.in_zone(Zone::UpperLimb(Limb::ForeLeft)).len(), 2);
     }
 
