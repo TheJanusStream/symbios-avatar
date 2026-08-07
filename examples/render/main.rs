@@ -816,6 +816,21 @@ fn report_junction(rig: &Rig, span: &[Reach]) {
     let neck = rig.joints[head].parent;
     let girdle = neck.and_then(|neck| rig.joints[neck].parent);
 
+    // **Reported as a share of the neck-to-head bone as well as in millimetres,
+    // because that is the unit its own design is written in and this overlay
+    // caused a wrong conclusion for want of it.** `rig::skin::owner_of` places
+    // the split between the head's bone and the neck's at a fixed 0.25 along
+    // that bone, deliberately halfway between the throat's floor at 0.10 and
+    // the chin's projection at 0.40 — both of which are constants on every
+    // body. Read in millimetres alone this boundary looks like it disagrees
+    // with `Skull`'s measured throat by 20 mm; read in the bone's own unit it
+    // is plainly the designed gap between two landmarks.
+    let bone = neck.map(|neck| (rig.joints[neck].position.y, rig.joints[head].position.y));
+    let along = |y: f32| match bone {
+        Some((from, to)) if (to - from).abs() > f32::EPSILON => (y - from) / (to - from),
+        _ => f32::NAN,
+    };
+
     println!("the head-to-body junction, by which bone deforms the skin");
     println!("  a bone is held by its PROXIMAL joint, so these are named from below");
     for (joint, colour, what) in [
@@ -825,9 +840,12 @@ fn report_junction(rig: &Rig, span: &[Reach]) {
     ] {
         match joint.and_then(|joint| span[joint]) {
             Some((lo, hi, count)) => println!(
-                "  {colour}  {what}: {count:5} vertices, {:7.1} to {:7.1} mm up the body",
+                "  {colour}  {what}: {count:5} vertices, {:7.1} to {:7.1} mm up the body, \
+                 {:.2} to {:.2} along the neck-to-head bone",
                 lo * 1000.0,
                 hi * 1000.0,
+                along(lo),
+                along(hi),
             ),
             None => println!("  {colour}  {what}: no skin bound to it"),
         }
