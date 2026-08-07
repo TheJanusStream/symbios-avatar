@@ -316,16 +316,36 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// still leaves +3.4 mm, putting the tail exactly on the chord leaves +7.0, and
 /// adding knots to force the descent to start at the peak leaves +6.9. Whatever
 /// puts the rest there survives this profile being deleted.
+/// **Every knot came down 15% because the chin had grown into a blade** (#128).
+/// Nothing here was re-authored: the four non-zero knots are the old ones times
+/// 0.85. What made it necessary is `stretch`, and `stretch` is correct — it
+/// holds the chin's ASPECT as the head's floor moves, which is what #107 added
+/// it for. The consequence is that this table's push grows every time the head
+/// gets longer, and the head has got longer twice: measured on the default
+/// body, the midline push at the peak reached 67 mm on a section whose lateral
+/// half-extent at that height is 22 mm. A five-to-one blade is what the owner
+/// reported as a second nose.
+///
+/// At 0.85 the chin's tip projects 101.2 mm forward of the head joint against
+/// 110.7 before, and the midline stands 14.0 mm proud of its own neighbours
+/// against 21.7. The ear canal to pogonion on a life head scaled to ours is
+/// about 92 to 101 mm, so this lands at the top of that range where it was over
+/// it. Going further is available and measured — 0.75 gives 94.9 mm and 9.0 —
+/// and was not taken here because #72 records the amplitude being cut once
+/// before on an argument that measured badly, and one step at a time is how
+/// that gets caught.
+///
 /// Provenance: **tuned by render** (#71 for the spacing, #72 for the
 /// amplitude, #47 for the tail), and the bisected outline above is what
 /// tuning it looked like. The amplitude was cut once on an argument that
-/// sounded good and measured badly, which is why the reasoning is kept.
+/// sounded good and measured badly, which is why the reasoning is kept. The
+/// 15% above is **derived** from the projection against life (#128).
 const CHIN: [(f32, f32); 6] = [
     (0.05, 0.0),
-    (-0.24, 0.08),
-    (-0.42, 0.21),
-    (-0.54, 0.34),
-    (-0.62, 0.170),
+    (-0.24, 0.068),
+    (-0.42, 0.179),
+    (-0.54, 0.289),
+    (-0.62, 0.145),
     (JUNCTION, 0.0),
 ];
 
@@ -913,9 +933,31 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
 fn jaw(height: f32, facing: f32, side: f32) -> f32 {
     let side = side.abs();
     // Nothing on the midline, where the chin already rules and where a hollow
-    // would carve a groove either side of it; full from about 37° out; and dead
+    // would carve a groove either side of it; full from about 53° out; and dead
     // by 107° behind, which is past the ear and into the neck's own business.
-    let window = smooth((side - 0.15) / 0.45) * smooth((facing + 0.30) / 0.30);
+    //
+    // **The midline exclusion went from 0.15 to 0.45 when the hollow deepened**
+    // (#128). The sentence above was always the intent and 0.15 was too little
+    // of it: the ramp began 8.6° off the midline and reached full at 37°, which
+    // is 20 mm off the midline at the chin's own height. Deepening [`JAW_DEPTH`]
+    // for the front silhouette's corner (#79) duly cut a groove down both sides
+    // of the chin, and the owner reported the result as a second nose hanging
+    // off it. Measured on the default body at the chin's height, as how far the
+    // midline stands proud of a straight run through its own neighbours at 15°
+    // and 30°:
+    //
+    // ```text
+    //   exclusion   proud   reach at 15°
+    //     0.15      +37.7      56.9 mm
+    //     0.25      +34.5      58.5
+    //     0.35      +29.3      61.1
+    //     0.45      +21.7      65.1     <- the same as no hollow at all
+    // ```
+    //
+    // At 0.45 the hollow has stopped touching the chin's flank entirely and
+    // `the_jawline_turns_a_corner` still reads 22.0 to 27.3° against its bound
+    // of 20, because the gonion it is measured at is far outside this window.
+    let window = smooth((side - 0.45) / 0.35) * smooth((facing + 0.30) / 0.30);
     if window <= 0.0 {
         return 0.0;
     }
