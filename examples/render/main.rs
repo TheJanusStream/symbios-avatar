@@ -34,6 +34,7 @@
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair, to see the face
+//! cargo run --release --example render -- --junction  # tint the skin by which bone deforms it
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
@@ -53,8 +54,8 @@ use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, FaceParams, FootingConfig,
-    Gait, GazeConfig, Ground, HairParams, Limb, MeshKind, PolyMesh, Pose, Role, SkinParams, Stride,
-    Zone, anim::gait, anim::gaze, anim::plant_feet_of,
+    Gait, GazeConfig, Ground, HairParams, Limb, MeshKind, PolyMesh, Pose, Rig, Role, SkinParams,
+    Stride, Zone, anim::gait, anim::gaze, anim::plant_feet_of,
 };
 
 /// Pixels per side of one view in the finished sheet.
@@ -106,6 +107,8 @@ fn main() {
     let linear = args.iter().any(|arg| arg == "--linear");
     let bare = args.iter().any(|arg| arg == "--bare");
     let fist = args.iter().any(|arg| arg == "--fist");
+    // Which bone holds which patch of skin through the head-to-body junction.
+    let junction = args.iter().any(|arg| arg == "--junction");
     // Which stage to show instead of the finished picture.
     let pass = value("--pass").cloned();
     // Six numbers, in the order the axes are declared: length, volume,
@@ -238,7 +241,7 @@ fn main() {
     // under a head turn, and nothing here able to show it. The only instrument
     // that could was the Bevy viewer, and it took the owner looking at one.
     let gaze = value("--gaze").and_then(|degrees| degrees.parse::<f32>().ok());
-    let subject = Subject::new(avatar, linear, bare, fist, pass, gaze);
+    let subject = Subject::new(avatar, linear, bare, fist, junction, pass, gaze);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
         match focus {
@@ -379,6 +382,9 @@ struct Subject {
     bare: bool,
     /// Whether every finger is curled, to show the hand rig working.
     fist: bool,
+    /// Whether to tint the skin by which bone deforms it, through the junction
+    /// between the head and the body. See [`junction_tint`].
+    junction: bool,
     /// How far to one side the body is looking, in degrees, if at all.
     gaze: Option<f32>,
     pass: Option<String>,
@@ -397,6 +403,7 @@ impl Subject {
         linear: bool,
         bare: bool,
         fist: bool,
+        junction: bool,
         pass: Option<String>,
         gaze: Option<f32>,
     ) -> Self {
@@ -410,6 +417,7 @@ impl Subject {
             linear,
             bare,
             fist,
+            junction,
             gaze,
             pass,
         }
@@ -573,6 +581,24 @@ impl Subject {
     /// Draws one pose from four frames into a two-by-two sheet.
     fn render(&self, pose: &Pose, closure: f32, frames: &[Frame; 4]) -> Image {
         let built = self.deformed(pose, closure);
+        // Only the skin is bound to the rig, so only the skin can be tinted by
+        // it. Computed once for the sheet rather than once per view: the
+        // classification is of the surface, and the surface does not turn.
+        let mut span: Vec<Reach> = vec![None; self.avatar.rig.len()];
+        let tints: Vec<Option<Vec<Vec3>>> = built
+            .iter()
+            .map(|drawn| {
+                (self.junction && drawn.kind == MeshKind::Skin)
+                    .then(|| junction_tint(&drawn.mesh, &self.avatar.rig, &mut span))
+            })
+            .collect();
+        if self.junction {
+            // Once per run, not once per sheet. A head sheet is drawn twice —
+            // eyes open and eyes shut — and the same table printed twice reads
+            // as two different bodies.
+            static SAID: std::sync::Once = std::sync::Once::new();
+            SAID.call_once(|| report_junction(&self.avatar.rig, &span));
+        }
 
         let mut sheet = Image::new(VIEW * 2, VIEW * 2);
         let side = VIEW * SUPERSAMPLE;
@@ -583,6 +609,7 @@ impl Subject {
                 &wall,
                 self.avatar.skin.albedo.as_slice(),
                 self.atlas(),
+                &tints,
             );
             // The key light is written in the camera's frame, so its shadow has
             // to be cast anew for each view. Cheap enough at this size, and it
@@ -647,6 +674,185 @@ impl Subject {
     }
 }
 
+/// Which bone deforms each patch of skin, through the head-to-body junction.
+///
+/// **There is no boundary between a head and a body on this surface** — every
+/// audit in the crate says so, and `headaudit` prints it in as many words: head
+/// and neck are one continuous surface with no boundary anywhere. So "the
+/// connecting element" is not a thing that can be pointed at geometrically. It
+/// has to be a *definition*, and the one drawn here is the rig's own: which bone
+/// the skin binding gives each vertex to.
+///
+/// **A bone is held by its PROXIMAL joint**, which is the thing this picture is
+/// most worth looking at for. [`symbios_avatar::rig::skin`] explains why — the
+/// rotation stored at a joint turns that joint's children about it — so the
+/// bone from the neck up to the head is owned by the NECK, and the jaw and chin
+/// hanging off its far end are the neck's surface as far as deformation is
+/// concerned. That is #123's whole subject and the reason `owner_of` and its
+/// `COVERED` constant exist. Here it is as a picture rather than as a constant.
+///
+/// Three bones are named and everything else is left alone:
+///
+/// ```text
+///   girdle -> neck     blue      the shoulder's hold on the column
+///   neck   -> head     green     the connecting element itself
+///   head   -> crown    red       the head's own
+/// ```
+///
+/// **Tinted by strength, not just by label.** The weight is smooth across the
+/// surface and a hard classification would draw a crisp boundary that does not
+/// exist in the deformation, which is exactly the kind of picture that gets
+/// believed. So the colour is mixed toward white by how strongly that joint
+/// actually holds the vertex: a firmly-held patch reads saturated and a
+/// contested one fades out. Where the colours run into each other is where the
+/// blend is.
+///
+/// A joint may own several bones — the girdle has three leaving it — so the
+/// bone is found by taking the vertex's dominant joint and then the nearest of
+/// the segments leaving it, the same search `SkinWeights::zone_map` makes for
+/// the same reason.
+fn junction_tint(mesh: &PolyMesh, rig: &Rig, span: &mut [Reach]) -> Vec<Vec3> {
+    let head = rig.in_zone(Zone::Head).first().copied();
+    let Some(head) = head else {
+        return vec![Vec3::ONE; mesh.positions.len()];
+    };
+    let neck = rig.joints[head].parent;
+    let girdle = neck.and_then(|neck| rig.joints[neck].parent);
+
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); rig.len()];
+    for joint in 0..rig.len() {
+        if let Some(parent) = rig.joints[joint].parent {
+            children[parent].push(joint);
+        }
+    }
+
+    let named = |joint: usize| -> Option<Vec3> {
+        if Some(joint) == girdle {
+            Some(Vec3::new(0.35, 0.55, 1.00))
+        } else if Some(joint) == neck {
+            Some(Vec3::new(0.30, 1.00, 0.45))
+        } else if joint == head {
+            Some(Vec3::new(1.00, 0.40, 0.35))
+        } else {
+            None
+        }
+    };
+
+    let mut record = |joint: usize, y: f32| {
+        let seen = span[joint].get_or_insert((f32::MAX, f32::MIN, 0));
+        *seen = (seen.0.min(y), seen.1.max(y), seen.2 + 1);
+    };
+
+    mesh.skin
+        .iter()
+        .zip(&mesh.positions)
+        .map(|(influences, &point)| {
+            let joint = influences[0].joint as usize;
+            let Some(colour) = named(joint) else {
+                return Vec3::ONE;
+            };
+            // A named joint still has to be carrying this vertex on the bone we
+            // mean. The girdle's other two bones are the clavicles, and a
+            // shoulder tinted as the neck's would be this picture telling the
+            // exact lie it is drawn to expose.
+            let toward = children[joint]
+                .iter()
+                .min_by(|&&a, &&b| {
+                    let of = |child: usize| {
+                        segment_distance(
+                            point,
+                            rig.joints[joint].position,
+                            rig.joints[child].position,
+                        )
+                    };
+                    of(a).total_cmp(&of(b))
+                })
+                .copied();
+            let wanted = if joint == head {
+                toward.is_some()
+            } else {
+                toward
+                    == Some(if Some(joint) == neck {
+                        head
+                    } else {
+                        neck.unwrap_or(head)
+                    })
+            };
+            if !wanted {
+                return Vec3::ONE;
+            }
+            record(joint, point.y);
+            // Mixed toward white by how strongly this joint holds the vertex,
+            // so the blend shows as a gradient instead of a hard edge.
+            let hold = influences
+                .iter()
+                .filter(|influence| influence.joint as usize == joint)
+                .map(|influence| influence.weight)
+                .sum::<f32>()
+                .clamp(0.0, 1.0);
+            Vec3::ONE.lerp(colour, hold)
+        })
+        .collect()
+}
+
+/// How far up the body one bone's skin reaches, and how much of it there is.
+///
+/// Accumulated across every skin mesh before anything is printed: eyelids are
+/// skin too, and reported per mesh the lids come out as a head with no neck
+/// under it, which reads as the classification having lost the neck.
+type Reach = Option<(f32, f32, usize)>;
+
+/// What the junction overlay claims, as numbers beside it.
+///
+/// **A false-colour overlay is an instrument.** One that cannot be checked
+/// against a figure is how this project has been misled twenty-one times, so the
+/// height each bone's territory spans is printed next to the picture that draws
+/// it. If a band appears somewhere these numbers do not put it, believe the
+/// numbers and fix the picture.
+fn report_junction(rig: &Rig, span: &[Reach]) {
+    let Some(&head) = rig.in_zone(Zone::Head).first() else {
+        return;
+    };
+    let neck = rig.joints[head].parent;
+    let girdle = neck.and_then(|neck| rig.joints[neck].parent);
+
+    println!("the head-to-body junction, by which bone deforms the skin");
+    println!("  a bone is held by its PROXIMAL joint, so these are named from below");
+    for (joint, colour, what) in [
+        (girdle, "blue ", "girdle -> neck"),
+        (neck, "green", "neck   -> head"),
+        (Some(head), "red  ", "head   -> crown"),
+    ] {
+        match joint.and_then(|joint| span[joint]) {
+            Some((lo, hi, count)) => println!(
+                "  {colour}  {what}: {count:5} vertices, {:7.1} to {:7.1} mm up the body",
+                lo * 1000.0,
+                hi * 1000.0,
+            ),
+            None => println!("  {colour}  {what}: no skin bound to it"),
+        }
+    }
+    for (joint, name) in [(neck, "neck"), (girdle, "girdle")] {
+        if let Some(joint) = joint {
+            println!(
+                "  the {name} joint itself sits at {:7.1} mm",
+                rig.joints[joint].position.y * 1000.0
+            );
+        }
+    }
+}
+
+/// Distance from a point to a segment, for naming which bone a vertex lies on.
+fn segment_distance(point: Vec3, from: Vec3, to: Vec3) -> f32 {
+    let along = to - from;
+    let length = along.length_squared();
+    if length <= f32::EPSILON {
+        return point.distance(from);
+    }
+    let t = ((point - from).dot(along) / length).clamp(0.0, 1.0);
+    point.distance(from + along * t)
+}
+
 /// Everything to draw, as items, against the given backdrop.
 ///
 /// One item per merged mesh, which is the whole argument for merging: what used
@@ -657,12 +863,14 @@ fn items<'a>(
     wall: &'a PolyMesh,
     albedo: &'a [u8],
     atlas: u32,
+    tints: &'a [Option<Vec<Vec3>>],
 ) -> Vec<Item<'a>> {
     let mut items = vec![Item {
         positions: &wall.positions,
         faces: &wall.faces,
         normals: None,
         paint: Paint::Flat,
+        tint: None,
         material: Material {
             albedo: Vec3::new(0.30, 0.31, 0.35),
             roughness: 1.0,
@@ -671,7 +879,7 @@ fn items<'a>(
         },
     }];
 
-    for drawn in built {
+    for (drawn, tint) in built.iter().zip(tints) {
         let material = match drawn.kind {
             MeshKind::Skin => Material::skin(Vec3::ONE),
             MeshKind::Hair => Material::hair(Vec3::ONE),
@@ -694,6 +902,7 @@ fn items<'a>(
             faces: &drawn.mesh.faces,
             normals: Some(&drawn.mesh.normals),
             paint,
+            tint: tint.as_deref(),
             material,
         });
     }

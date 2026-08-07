@@ -107,6 +107,15 @@ pub struct Item<'a> {
     pub normals: Option<&'a [Vec3]>,
     /// How its colour is found.
     pub paint: Paint<'a>,
+    /// A per-vertex multiplier over whatever [`Item::paint`] resolved to, for
+    /// marking a surface up without replacing what it is.
+    ///
+    /// **Multiplied rather than substituted, which is the whole point of it.**
+    /// A debug overlay that replaces the albedo throws away the thing being
+    /// debugged: skin drawn in flat false colour loses its complexion, its
+    /// atlas and every shading cue that says what shape it is. Tinting keeps
+    /// the render the render and puts the classification on top of it.
+    pub tint: Option<&'a [Vec3]>,
     /// How it responds to light.
     pub material: Material,
 }
@@ -291,6 +300,18 @@ impl GBuffer {
                             });
                         sample(uv, pixels, *side)
                     }
+                };
+                let albedo = match item.tint {
+                    Some(tint) => {
+                        albedo
+                            * tri
+                                .iter()
+                                .zip(bary.to_array())
+                                .fold(Vec3::ZERO, |sum, (&index, weight)| {
+                                    sum + tint[index as usize] * weight
+                                })
+                    }
+                    None => albedo,
                 };
 
                 self.depth[pixel] = depth;
