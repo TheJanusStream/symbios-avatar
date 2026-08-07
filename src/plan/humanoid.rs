@@ -703,12 +703,50 @@ impl BodyPlan for HumanoidParams {
         // earlier floor here was invented rather than required, and it alone
         // added half a head-height of giraffe.
         //
-        // **The floor BINDS, so this line sets the length of the neck and the
-        // 0.072 has nothing to do with it** — the same trap as `pelvis_y` above,
-        // one screen apart. Down from 1.32 (#93): at 1.32 the chin sat 103.0 mm
-        // above the shoulder line on a 214.6 mm head, a ratio of 0.480, where
-        // the eight-head figure puts the shoulder about a third of a head below
-        // the chin. 1.15 gives 88.1 mm and 0.411.
+        // **The floor no longer binds on a neutral body, and this note said it
+        // did for two coefficient changes after it stopped being true** (#129).
+        // It was written when the pair were 1.32 and 0.072, where the floor gave
+        // 143.2 mm against a nominal of 126.0; #107 took them to 1.02 and 0.064
+        // and the sentence stayed. On the default body the nominal is 112.0 mm
+        // and the floor is 110.7 — the NOMINAL binds, by 1.3 mm. The claim was
+        // still being quoted as the reason the neck could not be shortened when
+        // #129 was opened, so it is corrected here rather than deleted.
+        //
+        // **What is true is that the floor binds on most bodies but not on the
+        // middle of the space.** Over the distribution `tests/plan.rs` samples
+        // it binds on 59.7% of them, because the floor carries `girth` and
+        // `shoulder_width` through `girdle_r` and the nominal carries neither.
+        // So `neck_length` is ONE-SIDED: at neutral girth the two cross at
+        // −0.04, and everything below that moves nothing at all. Multiplying the
+        // nominal by `girth` as well does not fix it — both sides then scale
+        // together and the crossover does not move. Only the floor coming down
+        // frees the short half, and the floor is a meshing constraint rather
+        // than a proportion.
+        //
+        // Down from 1.32 (#93): at 1.32 the chin sat 103.0 mm above the shoulder
+        // line on a 214.6 mm head, a ratio of 0.480, where the eight-head figure
+        // puts the shoulder about a third of a head below the chin. 1.15 gives
+        // 88.1 mm and 0.411.
+        //
+        // **And this line is a much weaker lever on the visible neck than the
+        // three passes that tuned it assumed** (#129). `examples/neckaudit`
+        // breaks the chin-to-shoulder span into its four owners, and the neck
+        // BONE's share of it is 2.1 to 5.3 mm across the guarded seeds, against
+        // 42.6 to 57.8 mm of head-owned surface hanging below the chin. The
+        // reason is `girdle_r` on both sides of this expression: the girdle's
+        // crown is `girdle_y + girdle_r` and the neck joint is `girdle_y` plus a
+        // floor of `1.02 · girdle_r`, so the two sit within a few millimetres of
+        // each other by construction and shortening the neck moves the head down
+        // onto a shoulder that came up to meet it. Measured: taking the pair to
+        // 0.060 and 0.96 drops the neck joint 7.0 mm and buys 1.5 mm of visible
+        // neck on seed 0.
+        //
+        // **Today's meshing cliff, re-measured on the eight-point cage** (#129):
+        // 0.92 passes `tests/plan.rs`'s 1500 bodies and 0.90 fails, on the
+        // girdle's own neck socket — `at joint 3, the socket toward node 4 must
+        // sit 0.0540 from the joint centre to clear its siblings, but its bone
+        // only allows 0.0507`. The sweep recorded below found 1.00 passing and
+        // 0.85 failing, which was the four-point ring; the cliff moved with it.
         //
         // **Measure that span against the shoulder SURFACE, never against the
         // clavicle joint.** The joint sits about 95 mm lower, under the
@@ -733,9 +771,11 @@ impl BodyPlan for HumanoidParams {
         // note there; it is the one place this change is not free.
         //
         // **Not shortened further, and not from the other end.** Below about
-        // 1.16 this floor stops binding at all, so lower values change nothing
-        // on a default body while still failing extreme ones — 0.85 loses
-        // `tests/plan.rs`. Reaching the canon's 0.33 needs the 0.072 down too,
+        // 1.16 this floor stopped binding on the default body — at 0.064 that
+        // crossover is 1.032, so it is behind us and the note is kept only
+        // because the shape of the argument still holds: lowering the floor
+        // alone changes nothing in the middle of the space while still failing
+        // extreme bodies. Reaching the canon's 0.33 needs the 0.072 down too,
         // and that steepens the shoulder ramp into a coat-hanger: the same flare
         // over less height. And it must not come from ABOVE — lowering the head
         // by cutting `HEAD_BELOW_JOINT` takes it out of the lower face, which
@@ -835,9 +875,12 @@ impl BodyPlan for HumanoidParams {
         // 29,092 across this whole change.
         //
         // RAISED rather than dropping `neck_y` to hold stature, which is what #78
-        // asked for and cannot be done: `neck_y` sits exactly on its girdle-socket
-        // floor above (143.2 mm against a nominal 126.0), so lowering it breaks
-        // `tests/plan.rs`'s meshability sweep. Raising is sound because a built
+        // asked for and is barely available: `neck_y` sat exactly on its
+        // girdle-socket floor when this was written — 143.2 mm against a nominal
+        // of 126.0 — and since #107 it does not. The floor is 110.7 mm against a
+        // nominal 112.0, so there is 1.3 mm of travel before the socket rule
+        // takes over and only about 9 more once the floor comes down to where
+        // `tests/plan.rs` still meshes (#129). Raising is sound because a built
         // body already stands about 6% under its nominal stature — the crown
         // collapses under subdivision — so this spends height the body was
         // already missing.
@@ -1262,7 +1305,48 @@ impl BodyPlan for HumanoidParams {
         // accident — a hip socket's siblings blend toward the *waist*, which is
         // no wider than the pelvis.
         let clavicle_x = girdle_r * (1.42 + 0.08 * self.shoulder_width);
-        // Provenance: **unsourced**.
+        // How high the shoulder mass arrives — and **raising it does not
+        // shorten the visible neck, which was measured and is worth not
+        // repeating** (#129).
+        //
+        // The argument for trying it was that the shoulder line an eye reads is
+        // a line between two crowns, the girdle's on the midline and the
+        // clavicle's out at `clavicle_x`, and that only this end of it is free
+        // of the neck's arithmetic. Both halves of that are true. What is false
+        // is that the crossing responds to it: the guard finds the shoulder line
+        // where the body is half again as wide as the narrowest point of the
+        // neck, which on the default body is 74 mm from the midline, and that
+        // close in the surface is the girdle's, not the clavicle's.
+        //
+        // Measured, 0.004 to 0.014, which is +17.5 mm on the default body:
+        //
+        // ```text
+        //   seed 0 visible neck   94.5 mm -> 92.5    ratio 0.385 -> 0.377
+        //   the flare's ramp      50.9, 59.1, 76.1, 94.9, 114.8 at 5 mm steps
+        //                    ->   50.5, 71.9, 172.8, 180.6, 188.8
+        // ```
+        //
+        // So 17.5 mm of raise bought 2.0 mm of neck, and what it did instead was
+        // bring the ARM up: the second row is a cliff where the first is a ramp,
+        // and rendered bare it reads as a shoulder pad with a notch beside the
+        // neck rather than as a shorter neck. The shape got worse for the length
+        // it bought.
+        //
+        // **And it is bounded well below where that would matter anyway.**
+        // 0.014 meshes, 0.016 loses two of the guarded seeds and 0.018 loses the
+        // default body, on the girdle's own NECK socket — raising the clavicle
+        // swings its socket up toward the neck's and the neck's has to slide out
+        // past it, which its short bone cannot do. That is the same constraint
+        // that floors `neck_y`, met from the other side, and it means a raised
+        // clavicle and a shortened neck cannot be spent together.
+        //
+        // Not taken off the clavicle node's RADIUS either. It raises the same
+        // crown, but its sphere at `clavicle_x` does not reach in to 74 mm from
+        // the midline at any radius the shoulder could carry, and it would spend
+        // this issue's evidence on #66 and #98's number.
+        //
+        // Provenance: **unsourced**, and left there deliberately — #129 swept it
+        // and the sweep argues for the value it already had.
         let clavicle_y = girdle_y + h * 0.004;
         // How far outboard of the clavicle the arm's chain starts.
         //

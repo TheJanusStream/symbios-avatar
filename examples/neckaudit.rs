@@ -17,12 +17,28 @@
 //! had come 9 mm forward and the chest 20, because the socket ring a joint hull
 //! opens for a limb blended that limb's depth without its offset.
 //!
+//! **And it says how long the neck reads, broken into who owns that length**
+//! (#129). The table at the end runs
+//! `tests/plan::the_neck_is_the_length_of_a_neck`'s own arithmetic over that
+//! test's own seeds — so its ratio column can be checked against a shipped
+//! assertion — and then splits the chin-to-shoulder span four ways. That split
+//! is the answer to why three passes of tuning the neck moved it so little: the
+//! neck bone owns two to five millimetres of it.
+//!
 //! ```text
 //! cargo run --release --example neckaudit
 //! cargo run --release --example neckaudit -- 7
 //! ```
 
+use symbios_avatar::face::Skull;
 use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3, Zone};
+
+/// The seeds `tests/plan::the_neck_is_the_length_of_a_neck` asserts over.
+///
+/// The table below reproduces that test's own arithmetic, so these have to be
+/// its seeds and not a nicer set: an instrument that cannot be checked against
+/// a shipped assertion is the one this project keeps being lied to by.
+const GUARDED: [i64; 5] = [0, 3, 7, 13, 21];
 
 fn main() {
     let seed: Option<i64> = std::env::args().nth(1).and_then(|arg| arg.parse().ok());
@@ -125,4 +141,96 @@ fn main() {
         "  turns down the column, past a {:.1} mm deadband: {turns}",
         DEADBAND * 1000.0
     );
+
+    visible_neck();
+}
+
+/// How much neck an eye actually sees: the chin down to the shoulder line.
+///
+/// This is `tests/plan::the_neck_is_the_length_of_a_neck`'s arithmetic, run for
+/// reading rather than for asserting — the same bisected half-width, the same
+/// "half again as wide as the narrowest point" rule, the same five seeds. It is
+/// duplicated rather than shared because the test is the contract and this is
+/// an instrument: the day they disagree, the instrument is the one that is
+/// wrong, and that is only checkable if the numbers can be held side by side.
+///
+/// The reference figures it is read against, both measured in #125: the
+/// Quaternius pair land on 0.13 and 0.14, and the eight-head canon this crate
+/// quotes elsewhere puts the shoulder line about a third of a head under the
+/// chin, so 0.33.
+///
+/// **The span is broken into its four owners, and that is the reading that
+/// matters** (#129). Three passes have tried to shorten this by tuning the neck
+/// — #93 the girdle's socket floor, #107 a re-sweep for the eight-point cage,
+/// #125 the neck's backward lean — and the columns below say why so little
+/// moved: the neck BONE's own contribution is the few millimetres by which its
+/// length exceeds the girdle's radius, because the girdle's crown sits directly
+/// under the neck joint by construction. Most of what an eye reads as neck is
+/// head-owned surface hanging below the chin, and the rest is the girdle.
+fn visible_neck() {
+    println!();
+    println!("visible neck, chin to the shoulder line, by the guard's own rule");
+    println!("  seed      head       neck     ratio   (canon 0.33, reference 0.13)");
+    println!("           and who owns the span: chin to the head's own floor,");
+    println!("           that floor to the neck joint, the neck joint to the");
+    println!("           girdle's crown, and the crown down to the shoulder line");
+
+    for seed in GUARDED {
+        let mut record = AvatarRecord::new("Necked", Archetype::default());
+        record.reroll(seed);
+        let avatar = Avatar::build(&record).expect("a biped builds");
+        let (mesh, rig) = (&avatar.parts.body, &avatar.rig);
+        let Some(skull) = Skull::measure(mesh, rig) else {
+            println!("  {seed:5}   no skull measured");
+            continue;
+        };
+        let at = rig.joints[*rig.in_zone(Zone::Head).first().expect("a head")].position;
+        let (throat, crown) = skull.throat_and_crown();
+        let (chin, crown, throat) = (at.y + skull.chin(), at.y + crown, at.y + throat);
+
+        // Bisected against the surface, never binned: binning vertices into
+        // height bands reports ripple that is not in the mesh.
+        let half_width = |y: f32| {
+            let (mut inside, mut outside) = (0.0f32, 0.40f32);
+            for _ in 0..32 {
+                let middle = 0.5 * (inside + outside);
+                if mesh.contains(Vec3::new(at.x + middle, y, at.z)) {
+                    inside = middle;
+                } else {
+                    outside = middle;
+                }
+            }
+            inside
+        };
+
+        let (mut narrowest, mut y) = (f32::MAX, throat);
+        while y > throat - 0.30 {
+            narrowest = narrowest.min(half_width(y));
+            if half_width(y) > narrowest * 1.5 {
+                break;
+            }
+            y -= 0.001;
+        }
+
+        // The four owners of the span, top to bottom. `throat` is where the
+        // head's own SURFACE stops, so the first is head-owned and the rest is
+        // the body's; the girdle's crown is its joint plus its radius, since a
+        // node's section scales its width and its depth and never its height.
+        let neck_joint = rig.joints[rig.joints[*rig.in_zone(Zone::Head).first().expect("a head")]
+            .parent
+            .expect("a head sits on a neck")];
+        let girdle = rig.joints[neck_joint.parent.expect("a neck sits on a girdle")];
+        let crown_of_girdle = girdle.position.y + girdle.radius;
+
+        println!(
+            "  {seed:5}   {:6.1} mm  {:6.1} mm   {:.3}    {:5.1} + {:5.1} + {:5.1} + {:5.1}",
+            (crown - chin) * 1000.0,
+            (chin - y) * 1000.0,
+            (chin - y) / (crown - chin),
+            (chin - throat) * 1000.0,
+            (throat - neck_joint.position.y) * 1000.0,
+            (neck_joint.position.y - crown_of_girdle) * 1000.0,
+            (crown_of_girdle - y) * 1000.0,
+        );
+    }
 }

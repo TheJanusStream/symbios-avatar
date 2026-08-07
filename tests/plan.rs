@@ -474,9 +474,34 @@ fn the_neck_is_the_length_of_a_neck() {
         // the midline while the axis had moved. Axis-free: the section at
         // mid-neck is 103 mm deep against the reference's 167. That is mass
         // this cage cannot express and it is #125's remaining half.
+        //
+        // **0.46 to 0.44, a ratchet on a state that did not move** (#129). No
+        // geometry changed for this: the seeds read 0.385 to 0.429 today and
+        // read the same before, and the bound is simply brought down onto them
+        // so a regression cannot hide in the slack. It is still the state and
+        // still not the target.
+        //
+        // **And what the remaining 0.10 is made of, which is why no coefficient
+        // in the neck reaches it.** `examples/neckaudit` prints this same span
+        // broken into its four owners. Across these seeds:
+        //
+        // ```text
+        //   chin to the head's own floor      42.6 – 57.8 mm   57–60%
+        //   that floor to the neck joint      12.7 – 17.8       17–18%
+        //   the neck joint to girdle's crown   2.1 –  5.3        2– 5%
+        //   the crown to the shoulder line    15.7 – 28.7       20–27%
+        // ```
+        //
+        // The neck BONE owns two to five millimetres of it, because the girdle's
+        // crown sits directly under the neck joint by construction — the joint
+        // is `girdle_y` plus a floor of `1.02 · girdle_r` and the crown is
+        // `girdle_y + girdle_r`. Most of what an eye reads as neck is head-owned
+        // surface below the chin, and the rest is the girdle's shoulder. #93,
+        // #107 and #125 all tuned the neck; this is why each of them moved the
+        // number by so much less than its own arithmetic predicted.
         let ratio = (chin - y) / (crown - chin);
         assert!(
-            ratio < 0.46,
+            ratio < 0.44,
             "seed {seed}: the chin sits {:.1} mm above the shoulder line on a \
              {:.1} mm head, a ratio of {ratio:.3}. The eight-head figure puts it \
              near 0.33; this shipped at 0.480 before #93 shortened the girdle's \
