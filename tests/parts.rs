@@ -682,6 +682,30 @@ fn the_underside_of_the_jaw_does_not_bulge() {
     // to -0.7 mm before any profile runs), the relief face carve contributes
     // exactly nothing (identical to the last decimal with it and without), and
     // deleting every below-joint knot of `CHIN` still leaves +3.4 mm.
+    //
+    // **THAT LAST CLAUSE WAS THIS TEST'S OWN RULER MOVING, AND IT SENT #94 AFTER
+    // THE WRONG TERM FOR THREE WEEKS** (#94). The chord above joins two
+    // MEASURED landmarks, so deleting the chin deletes the crest `Skull::chin`
+    // finds and the chord starts somewhere else. Re-run against two FIXED
+    // heights — 0.40 and 0.09 along the neck-to-head bone, which
+    // `rig::skin::owner_of` records as the chin and the throat floor on every
+    // body — the same experiment reads -0.4 mm. THE WHOLE BULGE IS `CHIN`.
+    // `examples/jawprobe` is that instrument; the first two clauses above
+    // survive it unchanged, including on the eight-point cage they were never
+    // re-checked on.
+    //
+    // `DEPTH`'s non-monotone tail, which #94 named as the residual, is cleared
+    // twice over: it produces no bulge at all with `CHIN` zeroed, and swept
+    // directly its (-0.60) knot does move this number — 0.099 to 0.014 at 0.90 —
+    // by taking `Skull::chin` from -99.9 mm to -105.3, cranium:face from 1.02 to
+    // 0.97 and the chin's proud figure from 8.9 to 15.4. At that height `DEPTH`
+    // IS the chin's own depth, so it and #128's amplitude are one lever wearing
+    // two names.
+    //
+    // **0.115 to 0.085** (#94). `CHIN`'s peak moved from -0.54 to -0.53 — see
+    // that table for the mechanism — and the population went from 0.029-0.099 to
+    // 0.031-0.081. The bound is a hair above the worst of the sixteen, as it has
+    // always been; it is still the state and the target is still zero.
     for seed in 0..SEEDS {
         let mut record = AvatarRecord::new("Jaw", Archetype::default());
         record.reroll(seed);
@@ -733,8 +757,9 @@ fn the_underside_of_the_jaw_does_not_bulge() {
             }
         }
         let chord = (chin_y - throat_y).hypot(chin_z - throat_z) * 1000.0;
+        println!("PROBE seed {seed} ratio {:.3}", worst / chord);
         assert!(
-            chord > f32::EPSILON && worst / chord < 0.115,
+            chord > f32::EPSILON && worst / chord < 0.085,
             "seed {seed}: the underside of the jaw stands {worst:.1} mm forward of the \
              chord from the chin to the throat, at {worst_at:.1} mm — {:.3} of a chord \
              {chord:.1} mm long. A jawline should be straight to hollow, so the target \

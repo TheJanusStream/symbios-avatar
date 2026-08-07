@@ -365,17 +365,61 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// find. So the prominence is this table's from end to end, and the amplitude is
 /// a real lever rather than the last of one.
 ///
+/// **The PEAK moved for the first time, −0.54 to −0.53, and it is the whole of
+/// #94's fix** (#94). Everything above is about how much this table pushes;
+/// this is about where.
+///
+/// The midline is `cage_reach · DEPTH · (1 + ELONGATION) + CHIN · stretch ·
+/// radius`, and `cage_reach` is falling steeply through the jaw — so the
+/// SURFACE crests ABOVE where this table crests. Measured on seed 0 at the old
+/// value: the surface's forward-most point sat at profile height −0.5045 and
+/// this table's peak at −0.54, 8.6 mm lower. `the_underside_of_the_jaw_does_not_bulge`
+/// draws its chord from the surface's crest, and for those 8.6 mm the chin was
+/// still RISING toward its own maximum. That is the bulge, entire: it is why the
+/// deviation peaks at step 3 of 20 on every seed, and why nothing below −0.58
+/// ever moved it.
+///
+/// ```text
+///   peak    worst deviation, fixed ruler    the population, 16 seeds
+///   -0.54        +8.5 to +11.6              0.029 – 0.099
+///   -0.53        +6.7 to  +7.4              0.031 – 0.081   <- here
+///   -0.52        +4.5 to  +6.5              0.031 – 0.077, seed 9 inverts
+///   -0.50        +1.0 to  +1.4              breaks the neck guard
+/// ```
+///
+/// **Bounded by two cliffs rather than chosen.** −0.50 all but deletes the
+/// bulge and cannot ship: it takes seed 21's head from 251.9 mm to 243.8 and its
+/// neck ratio from 0.416 to 0.463, past `the_neck_is_the_length_of_a_neck`. −0.52
+/// holds the neck but inverts seed 9, which goes from the best body in the sweep
+/// at 0.029 to the worst at 0.077. Both failures are the same one: [`Skull::chin`]
+/// is the crest of a sum whose two terms are moving against each other, so
+/// moving this knot moves the landmark measuring it — the same 0.02 step shifts
+/// the default body's chin 0.4 mm and seed 21's 8.1, twenty times as much, which
+/// is a crest changing identity rather than moving. Filed as its own blocker.
+///
+/// At −0.53 the head does not move at all: crown to chin 211.9 mm, cranium:face
+/// 1.02, [`Skull::chin`] −99.9, all unchanged. It costs 0.8 mm of the chin's
+/// proud figure (8.9 to 9.7, #128) and 2.4 mm of its lead over its own lip (8.9
+/// to 6.5, against a floor of 2.0).
+///
+/// **And it is below what a render can show.** 2 mm on a 90 mm run: the number
+/// improves and the picture does not. The owner's report — that the skin under
+/// the jaw should hug the bone — is not answered by this, and saying so is the
+/// point of writing it down.
+///
 /// Provenance: **tuned by render** (#71 for the spacing, #72 for the
 /// amplitude, #47 for the tail), and the bisected outline above is what
 /// tuning it looked like. The amplitude was cut once on an argument that
 /// sounded good and measured badly, which is why the reasoning is kept. The
 /// 25% off it now is **derived** from the projection against life and
-/// **bounded by a sweep** against the lip (#128).
+/// **bounded by a sweep** against the lip (#128); the peak's height is
+/// **derived** from where the surface crests and **bounded by a sweep** against
+/// the neck and the chin landmark (#94).
 const CHIN: [(f32, f32); 6] = [
     (0.05, 0.0),
     (-0.24, 0.060),
     (-0.42, 0.158),
-    (-0.54, 0.255),
+    (-0.53, 0.255),
     (-0.62, 0.128),
     (JUNCTION, 0.0),
 ];
@@ -401,10 +445,18 @@ const GONION: f32 = -0.31;
 /// [`CHIN`]'s peak knot, and the same number rather than a second one: the
 /// border ends at the point of the chin by definition, and two constants for
 /// one landmark is how a chin and the thing measuring it drift apart.
+///
+/// **−0.54 to −0.53 with that peak** (#94), which is the identity doing its job:
+/// the peak moved to stop the chin rising below the surface's own crest, and
+/// this followed without anyone having to remember it. It lifts the mandibular
+/// border about 2 mm on the default body; `the_jawline_turns_a_corner` does not
+/// move, because the gonion it reads is far out to the side where [`GONION`]
+/// rather than this dominates the border.
+///
 /// Provenance: **derived** from [`CHIN`], by identity rather than by
 /// arithmetic — it is that table's peak knot and deliberately not a second
 /// number for one landmark.
-const MENTON: f32 = -0.54;
+const MENTON: f32 = -0.53;
 
 /// How far below the border the jaw's hollow reaches full depth, in profile
 /// heights.
