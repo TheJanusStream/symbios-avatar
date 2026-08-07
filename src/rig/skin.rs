@@ -680,6 +680,257 @@ mod tests {
     }
 
     #[test]
+    fn the_jaw_opens_and_the_skull_does_not() {
+        // **The mandible bone existed for a whole issue before anything rotated
+        // it** (#134 built it, #135 posed it). Nothing caught that its binding
+        // reach was wrong, and the reason is worth stating because it defeats
+        // every other test here: dual quaternion blending deforms weights split
+        // between the head bone and the jaw bone IDENTICALLY at rest and under
+        // a head turn. `the_whole_face_turns_with_the_head` passes at any reach
+        // whatsoever — the jaw hangs off the head, so a head turn carries it
+        // rigidly however the skin is shared. Only turning the PIVOT tells a
+        // good binding from a bad one.
+        //
+        // What was measured at the unsourced first cut of `(0.24, 0.30)`: at a
+        // 20-degree open the upper lip travelled 19.2 mm against the lower
+        // lip's 28.2, held 0.652 by a bone that must not hold it at all. The
+        // lips could not part, which is the one thing a jaw is for.
+        //
+        // The bands are the crate's own landmarks and nothing else — the mouth
+        // line, the base of the nose, the chin, the eye line — and where one
+        // needs half of a span it is the half between two of them, the same
+        // construction `owner_of` puts its own boundary on. `examples/render`'s
+        // `--jawbind` prints the same bands beside the picture; if the two ever
+        // disagree, one of them is lying and neither is the binding.
+        use crate::anim::Pose;
+        use glam::Quat;
+
+        let check = |face_length: f32, what: &str| {
+            let mut record = crate::AvatarRecord::new("Jawed", crate::Archetype::default());
+            if let crate::Archetype::Humanoid(ref mut params) = record.archetype {
+                params.face_length = face_length;
+            }
+            record.sanitize();
+            let avatar = crate::Avatar::build(&record).expect("a biped builds");
+            let rig = &avatar.rig;
+            let body = &avatar.parts.body;
+            let head = *rig.in_zone(Zone::Head).first().expect("a head");
+            let centre = rig.joints[head].position;
+
+            // The mandible, by the skeleton's own marker flag: the chain runs
+            // head -> pivot -> tip, and only the tip has a marked parent.
+            let skeleton = record.skeleton();
+            let marked = |joint: usize| {
+                rig.joints[joint]
+                    .node
+                    .is_some_and(|node| skeleton.nodes[node as usize].marker)
+            };
+            let tip = (0..rig.len())
+                .find(|&joint| marked(joint) && rig.joints[joint].parent.is_some_and(marked))
+                .expect("a humanoid has a jaw");
+            let pivot = rig.joints[tip].parent.expect("the tip hangs off the pivot");
+
+            let skull = crate::face::Skull::measure(body, rig).expect("a skull");
+            let canon = crate::face::Canon::measure(rig, &skull, &Default::default());
+            let (chin, mouth, nose) = (skull.chin(), canon.mouth_line(), canon.nose_base());
+
+            // The bone is owned by its PROXIMAL joint, so the PIVOT is what
+            // opens the mouth. Rotating the tip — a leaf — would move nothing,
+            // and a test that did it would pass by measuring nothing.
+            let mut pose = Pose::rest(rig);
+            pose.rotations[pivot] = Quat::from_rotation_x(20f32.to_radians());
+            let moved = pose
+                .forward(rig)
+                .deform(rig, &body.positions, &avatar.parts.weights);
+
+            // Held, travelled and counted over one band: `(count, jaw's mean
+            // hold, head's mean hold, mean travel)`.
+            let band = |lo: f32, hi: f32, front: bool| {
+                let mut count = 0usize;
+                let (mut jaw, mut skull_hold, mut travel) = (0.0f32, 0.0f32, 0.0f32);
+                for (vertex, &rest) in body.positions.iter().enumerate() {
+                    let local = rest - centre;
+                    if local.y < lo || local.y >= hi {
+                        continue;
+                    }
+                    if front && (local.z <= 0.0 || local.x.abs() > canon.unit) {
+                        continue;
+                    }
+                    let hold = |joint: usize| {
+                        avatar.parts.weights.vertices[vertex]
+                            .iter()
+                            .filter(|i| i.joint as usize == joint)
+                            .map(|i| i.weight)
+                            .sum::<f32>()
+                    };
+                    count += 1;
+                    jaw += hold(pivot);
+                    skull_hold += hold(head);
+                    travel += (moved[vertex] - rest).length();
+                }
+                let n = count.max(1) as f32;
+                (count, jaw / n, skull_hold / n, travel / n * 1000.0)
+            };
+
+            let upper = band(mouth, mouth + (nose - mouth) * 0.5, true);
+            let lower = band(chin + (mouth - chin) * 0.5, mouth, true);
+            let cranium = band(canon.level, f32::MAX, false);
+            let neck = band(f32::MIN, skull.throat_and_crown().0, false);
+
+            // A band that selects nothing passes every assertion after it,
+            // which is the shape of half the instrument failures this crate has
+            // found. Each of these carries hundreds of vertices when it is
+            // reading the thing it is named for.
+            for (count, named) in [
+                (upper.0, "the upper lip"),
+                (lower.0, "the lower lip"),
+                (cranium.0, "the cranium"),
+                (neck.0, "the neck"),
+            ] {
+                assert!(
+                    count > 100,
+                    "{what}: {named} read {count} vertices — the band, not the binding"
+                );
+            }
+
+            // THE CONTRACT, in the two directions that oppose each other.
+            // Measured on the default body at `(0.10, 0.20)`: the upper lip is
+            // held 1.000 by the head and travels 0.00 mm, the lower lip travels
+            // 13.5 mm. Swept over `face_length` −1 to +1 the upper lip's travel
+            // stays under 0.9 mm, which is what the margins here are for.
+            assert!(
+                upper.2 > 0.90,
+                "{what}: the upper lip is held {:.3} by the head and {:.3} by the jaw — it belongs \
+                 to the skull, and a mouth whose top lip drops with its bottom one cannot open",
+                upper.2,
+                upper.1,
+            );
+            assert!(
+                upper.3 < 2.0,
+                "{what}: the upper lip travelled {:.2} mm on a jaw that opened 20 degrees, against \
+                 the lower lip's {:.2} — the lips are not parting",
+                upper.3,
+                lower.3,
+            );
+            assert!(
+                lower.3 > 8.0,
+                "{what}: the lower lip travelled only {:.2} mm — the jaw is not carrying the mouth",
+                lower.3,
+            );
+
+            // And the two that must not move at all. The cranium is a rigid
+            // skull above a hinge and the neck is below the head's own bone;
+            // either of them moving means the reach has grown past the face.
+            assert!(
+                cranium.3 < 0.05 && cranium.1 <= 0.0,
+                "{what}: the cranium travelled {:.3} mm and is held {:.3} by the jaw — a mandible \
+                 does not reach the vault",
+                cranium.3,
+                cranium.1,
+            );
+            assert!(
+                neck.3 < 0.05 && neck.1 <= 0.0,
+                "{what}: the neck travelled {:.3} mm and is held {:.3} by the jaw — read \
+                 `the_throat_stays_with_the_neck` before touching COVERED",
+                neck.3,
+                neck.1,
+            );
+        };
+
+        // The default, and the SHORT face — which is the binding case and not
+        // the obvious one: a short face packs the mouth line closer to the
+        // chin, so the reach that clears the upper lip on a long face swallows
+        // it on a short one.
+        check(0.0, "the default face");
+        check(-1.0, "a short face");
+    }
+
+    #[test]
+    fn the_chin_follows_the_jaw_and_not_the_skull() {
+        // The other half of the contract, kept apart because it is the half
+        // that is only PARTLY met and the reason is structural rather than a
+        // tuning slip. The chin follows at 0.39 and travels 44% of the arc a
+        // rigid mandible would carry it through — not the 1.0 and 100% a real
+        // jaw has.
+        //
+        // **No value of `JAW_REACH` fixes it, and the measurement that says so
+        // is the distance pair**: the bone is a single MIDLINE segment with a
+        // spherical falloff, so the chin's own flanks sit 27.4 mm from it while
+        // the upper lip sits 28.5, and nothing keyed to distance can hold one
+        // and release the other. The midline of the chin is held 1.0; its
+        // corners are held by the skull, so the jawline's silhouette does not
+        // swing even though the mouth opens. A jaw that carries its own corners
+        // wants a pair of RAMI, which markers can afford because they mesh
+        // nothing (#134), and that is #118's next slice.
+        //
+        // The floor here is therefore what the shape can currently deliver,
+        // recorded so that a change which makes it WORSE is caught. It is not
+        // an endorsement of 0.39.
+        use crate::anim::Pose;
+        use glam::Quat;
+
+        let record = crate::AvatarRecord::new("Chinned", crate::Archetype::default());
+        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let rig = &avatar.rig;
+        let body = &avatar.parts.body;
+        let head = *rig.in_zone(Zone::Head).first().expect("a head");
+        let centre = rig.joints[head].position;
+
+        let skeleton = record.skeleton();
+        let marked = |joint: usize| {
+            rig.joints[joint]
+                .node
+                .is_some_and(|node| skeleton.nodes[node as usize].marker)
+        };
+        let tip = (0..rig.len())
+            .find(|&joint| marked(joint) && rig.joints[joint].parent.is_some_and(marked))
+            .expect("a humanoid has a jaw");
+        let pivot = rig.joints[tip].parent.expect("the tip hangs off the pivot");
+
+        let skull = crate::face::Skull::measure(body, rig).expect("a skull");
+        let canon = crate::face::Canon::measure(rig, &skull, &Default::default());
+        let (chin, mouth) = (skull.chin(), canon.mouth_line());
+
+        let mut pose = Pose::rest(rig);
+        pose.rotations[pivot] = Quat::from_rotation_x(20f32.to_radians());
+        let moved = pose
+            .forward(rig)
+            .deform(rig, &body.positions, &avatar.parts.weights);
+
+        let hinge = rig.joints[pivot].position;
+        let swing = 2.0 * (20f32.to_radians() * 0.5).sin();
+        let (mut count, mut held, mut travel, mut rigid) = (0usize, 0.0f32, 0.0f32, 0.0f32);
+        for (vertex, &rest) in body.positions.iter().enumerate() {
+            let local = rest - centre;
+            if local.y < chin || local.y >= chin + (mouth - chin) * 0.5 {
+                continue;
+            }
+            if local.z <= 0.0 || local.x.abs() > canon.unit {
+                continue;
+            }
+            count += 1;
+            held += avatar.parts.weights.vertices[vertex]
+                .iter()
+                .filter(|i| i.joint as usize == pivot)
+                .map(|i| i.weight)
+                .sum::<f32>();
+            travel += (moved[vertex] - rest).length();
+            rigid += rest.distance(hinge) * swing;
+        }
+        assert!(
+            count > 100,
+            "the chin read {count} vertices — the band, not the binding"
+        );
+        let (held, share) = (held / count as f32, travel / rigid);
+        assert!(
+            held > 0.30 && share > 0.35,
+            "the chin is held {held:.3} by the jaw and travels {:.1}% of a rigid mandible's arc, \
+             of {count} vertices read — it was 0.392 and 43.6% when this was measured",
+            share * 100.0,
+        );
+    }
+
+    #[test]
     fn the_throat_stays_with_the_neck() {
         // The other side of the same boundary, and the reason `owner_of` is
         // bounded by the head node's own extent rather than by the zone alone.

@@ -328,16 +328,41 @@ const SKULL_SLENDER: f32 = 0.897;
 /// `face::skull::Canon`'s ear placement rather than swept.
 const JAW_PIVOT: Vec2 = Vec2::new(0.06, 0.10);
 
-/// Where the jaw bone ends, in head radii about the head joint: `(down,
-/// forward)`.
+/// Where the jaw bone ends: `(down as a share of the head's reach BELOW ITS
+/// JOINT, forward in head radii)`.
 ///
-/// The chin. `Skull::chin` measures −0.97 radii on the default body and the
-/// projection 0.92 forward; the tip sits on that landmark so the bone
-/// `pivot → tip` IS the mandible — rotating the pivot swings the chin through
-/// the arc a jaw actually opens along.
-/// Provenance: **derived from the shipped landmark** (#134): the measured chin,
-/// not a chosen shape.
-const JAW_TIP: Vec2 = Vec2::new(0.97, 0.92);
+/// The chin. The tip sits on that landmark so the bone `pivot → tip` IS the
+/// mandible — rotating the pivot swings the chin through the arc a jaw actually
+/// opens along.
+///
+/// **The two components are counted in two different rulers, and that is the
+/// correction #135 measured** (#134 shipped both in head radii, as 0.97 and
+/// 0.92). A head's reach below its own joint is what `face_length` stretches —
+/// it is the `HEAD_BELOW_JOINT` span at the head's placement above, scaled by
+/// [`FACE_LENGTH_SPAN`] — while the head's RADIUS does not move with it at all.
+/// So a tip pinned to the radius stayed put while the chin walked away from it:
+/// measured on the built body, the tip sat +16.5 mm BELOW the chin at
+/// `face_length` −1, +0.7 mm at 0, and 15.2 mm ABOVE it at +1, and the axis
+/// rolls over ±0.7. At +1 that put the bone's end up by the lower lip, and the
+/// binding followed it there — the upper lip came out held 0.79 by the jaw at
+/// every reach in a sweep, so the lips could not part.
+///
+/// In the span's own ruler the landmark is stationary: 0.603 of it at
+/// `face_length` −1, 0 and +1, which lands the tip within 0.1 mm of the
+/// measured chin at all three. `rig::skin::owner_of` independently measured the
+/// same landmark at 0.599 of the same span, at two very different values of
+/// `HEAD_BELOW_JOINT`, which is the second measurement this rests on.
+///
+/// The forward component has NO such ruler and stays in head radii, which is a
+/// known residual rather than a solved problem: the chin's own projection
+/// measures 0.852, 0.910 and 1.004 radii at `face_length` −1, 0 and +1 — it is
+/// constant in neither ruler — so the tip sits 7.1 mm proud of a short face's
+/// chin and 8.6 mm behind a long one's. Small against the ~28 mm falloff, and
+/// the fix is to hang the marker off the MEASURED skull rather than off the
+/// plan, which is a different issue's work.
+/// Provenance: **measured** (#135) — the chin's height on built bodies at three
+/// face lengths, agreeing with `owner_of`'s independent 0.599.
+const JAW_TIP: Vec2 = Vec2::new(0.603, 0.92);
 
 /// The marker radii of the jaw's two nodes, in head radii: `(pivot, tip)`.
 ///
@@ -345,9 +370,49 @@ const JAW_TIP: Vec2 = Vec2::new(0.97, 0.92);
 /// falloff that decides which skin follows the mandible scales with them. The
 /// tip's reach is the chin and the lower lip's neighbourhood; the pivot's is
 /// the jaw's angle below the ear.
-/// Provenance: **unsourced** (#134) — a first cut for #118 to tune when the
-/// macro rig actually rotates this bone; nothing poses it yet.
-const JAW_REACH: Vec2 = Vec2::new(0.24, 0.30);
+/// **Sourced by sweep against a posed jaw** (#135), which is the only thing
+/// that can source it: dual quaternion blending deforms a bad reach and a good
+/// one identically at rest AND under a head turn, so every suite in the crate
+/// stayed green over the unsourced first cut of `(0.24, 0.30)`. Rotating the
+/// pivot is what tells them apart, and `render --jaw 20 --jawsweep` is what
+/// rotates it.
+///
+/// The two opposed requirements: **the chin must follow the jaw and the upper
+/// lip must stay with the head.** At the first cut the upper lip was held 0.652
+/// by the mandible and travelled 19.2 mm of the lower lip's 28.2 at a 20-degree
+/// open — the lips could not part, which is the one thing a jaw is for. Swept
+/// at three face lengths, in the upper lip's travel and its worst single
+/// vertex's hold, against the separation the lips actually open by:
+///
+/// ```text
+///   pivot  tip    upper lip travel, worst hold      lips part by
+///                 short face   default   long face
+///   0.06  0.20     0.2 mm .12  0.0 .00   0.0 .00    9.9 to 13.4 mm
+///   0.10  0.20     0.9 mm .33  0.0 .01   0.0 .00   13.5 to 14.9 mm
+///   0.14  0.20     2.2 mm .51  0.2 .19   0.0 .01   15.6 to 18.5 mm
+///   0.10  0.23     3.2 mm .60  0.7 .32   0.0 .00   15.9 to 20.7 mm
+///   0.10  0.26     6.6 mm .73  3.2 .62   0.3 .12   14.3 to 26.1 mm
+///   0.24  0.30    (the first cut) 19.2 mm .90 on the default body
+/// ```
+///
+/// A SHORT face is what binds, and it is not obvious: it packs the mouth line
+/// closer to the chin, so the same reach that clears the upper lip on a long
+/// face swallows it on a short one. 0.20 at the tip is the last row where the
+/// worst upper-lip vertex stays under a third at every face length, and the
+/// pivot buys separation up to about 0.10 before it starts costing the upper
+/// lip more than the lower one gains.
+///
+/// What it does NOT buy, measured and left standing: the chin follows at 37 to
+/// 44% of a rigid mandible's arc rather than at 100, and the skin under the jaw
+/// at 8 to 20%. Both are the same limit and no value of this constant moves
+/// them — the bone is a single MIDLINE segment with a spherical falloff, so the
+/// chin's flanks sit 27.4 mm from it while the upper lip sits 28.5, and nothing
+/// keyed to distance can hold one and release the other. A jaw that carries its
+/// own corners wants a pair of rami, which markers can afford (they mesh
+/// nothing) and which is #118's next slice, not this constant's business.
+/// Provenance: **swept** (#135) against a 20-degree open at `face_length` −1, 0
+/// and +1; the table above is the sweep.
+const JAW_REACH: Vec2 = Vec2::new(0.10, 0.20);
 
 /// How far the `head_breadth` axis narrows or broadens the skull, as a share of
 /// its own lateral half-extent at each end.
@@ -1613,10 +1678,17 @@ impl BodyPlan for HumanoidParams {
             .as_marker()
             .in_zone(Zone::Head),
         );
+        // The tip's height is a share of the head's reach BELOW ITS JOINT, not
+        // of its radius: that span is what `face_length` stretches, and the chin
+        // rides it. See [`JAW_TIP`] for the three measurements.
         skeleton.extend_from(
             jaw_pivot,
             Node::new(
-                Vec3::new(0.0, head_y - head_r * JAW_TIP.x, head_r * JAW_TIP.y),
+                Vec3::new(
+                    0.0,
+                    head_y - (head_y - neck_y) * JAW_TIP.x,
+                    head_r * JAW_TIP.y,
+                ),
                 head_r * JAW_REACH.y,
             )
             .as_marker()

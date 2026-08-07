@@ -125,8 +125,8 @@ pub use plan::{
 };
 pub use record::{AvatarRecord, LockSet, ProfileRecord, ShareCodeError};
 pub use rig::{
-    Anchor, Footprint, Joint, Landmark, Landmarks, Patch, Rig, RigError, Role, SkinConfig,
-    SkinWeights, Surface,
+    Anchor, Footprint, Influence, Joint, Landmark, Landmarks, MAX_INFLUENCES, Patch, Rig, RigError,
+    Role, SkinConfig, SkinWeights, Surface,
 };
 pub use skeleton::{Chain, Node, NodeKind, Skeleton, SkeletonError};
 pub use subdiv::catmull_clark;

@@ -35,6 +35,9 @@
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair, to see the face
 //! cargo run --release --example render -- --junction  # tint the skin by which bone deforms it
+//! cargo run --release --example render -- --jawbind   # tint the skin by how the JAW bone holds it
+//! cargo run --release --example render -- --jaw 20    # open the mouth this many degrees
+//! cargo run --release --example render -- --jawsweep # tune the jaw's binding reach by measurement
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
@@ -53,9 +56,10 @@ use glam::{Mat4, Quat, Vec3};
 use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
-    Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, FaceParams, FootingConfig,
-    Gait, GazeConfig, Ground, HairParams, Limb, MeshKind, PolyMesh, Pose, Rig, Role, SkinParams,
-    Stride, Zone, anim::gait, anim::gaze, anim::plant_feet_of,
+    Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, EyeParams, FaceParams,
+    FootingConfig, Gait, GazeConfig, Ground, HairParams, Influence, Limb, MAX_INFLUENCES, MeshKind,
+    PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
+    anim::gait, anim::gaze, anim::plant_feet_of, face::Skull,
 };
 
 /// Pixels per side of one view in the finished sheet.
@@ -109,6 +113,9 @@ fn main() {
     let fist = args.iter().any(|arg| arg == "--fist");
     // Which bone holds which patch of skin through the head-to-body junction.
     let junction = args.iter().any(|arg| arg == "--junction");
+    // The same question asked of the mandible instead: which skin does the
+    // condyle-to-chin bone hold, and how strongly. See [`jaw_tint`].
+    let jawbind = args.iter().any(|arg| arg == "--jawbind");
     // Which stage to show instead of the finished picture.
     let pass = value("--pass").cloned();
     // Six numbers, in the order the axes are declared: length, volume,
@@ -241,7 +248,35 @@ fn main() {
     // under a head turn, and nothing here able to show it. The only instrument
     // that could was the Bevy viewer, and it took the owner looking at one.
     let gaze = value("--gaze").and_then(|degrees| degrees.parse::<f32>().ok());
-    let subject = Subject::new(avatar, linear, bare, fist, junction, pass, gaze);
+    // How far the mouth is opened, in degrees. The same instrument gap one step
+    // further in: #134 built a mandible bone and NOTHING had ever rotated it, so
+    // its binding reach shipped declared unsourced. A weight map cannot show
+    // whether a jaw articulates — dual quaternion blending makes a bad reach
+    // deform identically to a good one at rest and under a head turn — and only
+    // turning the PIVOT can (#135).
+    let jaw = value("--jaw").and_then(|degrees| degrees.parse::<f32>().ok());
+    let show = Show {
+        linear,
+        bare,
+        fist,
+        junction,
+        jawbind,
+        pass,
+        gaze,
+        jaw,
+    };
+    let mandible = jaw_bone(&avatar.rig, &record.skeleton());
+    if (jaw.is_some() || jawbind) && mandible.is_none() {
+        eprintln!("this body has no jaw bone: --jaw and --jawbind need a humanoid");
+        std::process::exit(1);
+    }
+    if args.iter().any(|arg| arg == "--jawsweep") {
+        match mandible {
+            Some(mandible) => sweep_jaw(&avatar, mandible, jaw.unwrap_or(20.0)),
+            None => eprintln!("this body has no jaw bone to sweep"),
+        }
+    }
+    let subject = Subject::new(avatar, show, mandible);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
         match focus {
@@ -370,9 +405,13 @@ fn report(avatar: &Avatar) {
     }
 }
 
-/// An avatar, and the gait it walks with.
-struct Subject {
-    avatar: Avatar,
+/// What a sheet is asked to show, beyond the body itself.
+///
+/// Gathered into one struct rather than passed one by one: every one of these
+/// is an instrument switch, they arrive together and they travel together, and
+/// the constructor was already at the argument count where the next one would
+/// have been a lint.
+struct Show {
     linear: bool,
     /// Whether to draw the hair at all.
     ///
@@ -385,9 +424,56 @@ struct Subject {
     /// Whether to tint the skin by which bone deforms it, through the junction
     /// between the head and the body. See [`junction_tint`].
     junction: bool,
+    /// Whether to tint the skin by the mandible's hold on it. See [`jaw_tint`].
+    jawbind: bool,
+    pass: Option<String>,
     /// How far to one side the body is looking, in degrees, if at all.
     gaze: Option<f32>,
-    pass: Option<String>,
+    /// How far the mouth is opened, in degrees, if at all.
+    jaw: Option<f32>,
+}
+
+/// The mandible, as the rig carries it.
+///
+/// **The bone is owned by its PROXIMAL joint**, which is the whole reason this
+/// pair is named rather than just the tip: rotating the PIVOT is what opens the
+/// mouth, and rotating the tip does nothing at all — it is a leaf, and
+/// `rig::skin` gives a leaf no weight from the body's own surface.
+#[derive(Clone, Copy)]
+struct JawBone {
+    /// The hinge at the ear, which the bone is owned by.
+    pivot: usize,
+    /// The chin, which the bone leads into.
+    tip: usize,
+}
+
+/// The mandible in `rig`, if this body has one.
+///
+/// Found through the SKELETON's own marker flag rather than by position or by
+/// index, because a marker is exactly what the crate calls a rig-only node and
+/// a second definition of one here is a second implementation of #134. The jaw
+/// is the marker whose parent is also a marker: the chain runs
+/// `head → pivot → tip` and only the tip has a marked parent.
+fn jaw_bone(rig: &Rig, skeleton: &Skeleton) -> Option<JawBone> {
+    let marked = |joint: usize| {
+        rig.joints[joint]
+            .node
+            .is_some_and(|node| skeleton.nodes[node as usize].marker)
+    };
+    let tip = (0..rig.len())
+        .find(|&joint| marked(joint) && rig.joints[joint].parent.is_some_and(marked))?;
+    Some(JawBone {
+        pivot: rig.joints[tip].parent?,
+        tip,
+    })
+}
+
+/// An avatar, and the gait it walks with.
+struct Subject {
+    avatar: Avatar,
+    show: Show,
+    /// The mandible, for `--jaw` and `--jawbind`.
+    jaw: Option<JawBone>,
     gait: Gait,
     stride: Stride,
     /// The centre of the body's rest extent.
@@ -398,15 +484,7 @@ struct Subject {
 
 impl Subject {
     /// Wraps a built avatar in what a contact sheet additionally needs.
-    fn new(
-        avatar: Avatar,
-        linear: bool,
-        bare: bool,
-        fist: bool,
-        junction: bool,
-        pass: Option<String>,
-        gaze: Option<f32>,
-    ) -> Self {
+    fn new(avatar: Avatar, show: Show, jaw: Option<JawBone>) -> Self {
         let (lo, hi) = avatar.parts.body.bounds();
         Self {
             gait: Gait::natural(&avatar.rig),
@@ -414,12 +492,8 @@ impl Subject {
             middle: (lo + hi) * 0.5,
             reach: (hi - lo).max_element().max(0.1),
             avatar,
-            linear,
-            bare,
-            fist,
-            junction,
-            gaze,
-            pass,
+            show,
+            jaw,
         }
     }
 
@@ -432,19 +506,28 @@ impl Subject {
     fn standing(&self) -> Pose {
         let rig = &self.avatar.rig;
         let mut pose = Pose::rest(rig);
-        if self.fist {
+        if self.show.fist {
             for joint in 0..rig.len() {
                 if rig.joints[joint].role == Role::Digit {
                     pose.rotations[joint] = Quat::from_rotation_x(0.75);
                 }
             }
         }
+        // About the lateral axis, at the PIVOT. Positive drops the chin and
+        // draws it back, which is the arc a mandible opens along: the condyle
+        // stays put at the ear and everything forward of it swings down. Set
+        // directly rather than through a system because there is no jaw system
+        // yet — that is what #118 is for, and this is the instrument that has to
+        // exist before one can be judged.
+        if let (Some(degrees), Some(jaw)) = (self.show.jaw, self.jaw) {
+            pose.rotations[jaw.pivot] = Quat::from_rotation_x(degrees.to_radians());
+        }
         // Through the real gaze system rather than a rotation dropped on the
         // head joint, because the defect this exists to show is about which
         // joints a look-at actually turns: it distributes down the neck and the
         // chest, and a face bound to the wrong one of those lags by exactly the
         // share that joint did not get.
-        if let Some(degrees) = self.gaze {
+        if let Some(degrees) = self.show.gaze {
             let head = rig.in_zone(Zone::Head).first().copied().unwrap_or_default();
             let from = rig.joints[head].position;
             let angle = degrees.to_radians();
@@ -588,16 +671,27 @@ impl Subject {
         let tints: Vec<Option<Vec<Vec3>>> = built
             .iter()
             .map(|drawn| {
-                (self.junction && drawn.kind == MeshKind::Skin)
-                    .then(|| junction_tint(&drawn.mesh, &self.avatar.rig, &mut span))
+                if drawn.kind != MeshKind::Skin {
+                    return None;
+                }
+                match (self.show.junction, self.show.jawbind, self.jaw) {
+                    (true, _, _) => Some(junction_tint(&drawn.mesh, &self.avatar.rig, &mut span)),
+                    (_, true, Some(jaw)) => Some(jaw_tint(&drawn.mesh, jaw)),
+                    _ => None,
+                }
             })
             .collect();
-        if self.junction {
-            // Once per run, not once per sheet. A head sheet is drawn twice —
-            // eyes open and eyes shut — and the same table printed twice reads
-            // as two different bodies.
-            static SAID: std::sync::Once = std::sync::Once::new();
+        // Once per run, not once per sheet. A head sheet is drawn twice — eyes
+        // open and eyes shut — and the same table printed twice reads as two
+        // different bodies.
+        static SAID: std::sync::Once = std::sync::Once::new();
+        if self.show.junction {
             SAID.call_once(|| report_junction(&self.avatar.rig, &span));
+        } else if let Some(jaw) = self
+            .jaw
+            .filter(|_| self.show.jawbind || self.show.jaw.is_some())
+        {
+            SAID.call_once(|| report_jaw(&self.avatar, jaw, pose, self.show.jaw));
         }
 
         let mut sheet = Image::new(VIEW * 2, VIEW * 2);
@@ -620,7 +714,7 @@ impl Subject {
             let mut buffer = GBuffer::new(side, side);
             buffer.draw(&items, frame);
             let ao = light::occlusion(&buffer, frame);
-            let shaded = match &self.pass {
+            let shaded = match &self.show.pass {
                 Some(pass) => light::inspect(&buffer, &ao, frame, &shadow, pass),
                 None => light::shade(&buffer, &ao, frame, &shadow),
             };
@@ -644,10 +738,10 @@ impl Subject {
         let bare = |built: Vec<AvatarMesh>| {
             built
                 .into_iter()
-                .filter(|drawn| !self.bare || drawn.kind != MeshKind::Hair)
+                .filter(|drawn| !self.show.bare || drawn.kind != MeshKind::Hair)
                 .collect()
         };
-        if !self.linear {
+        if !self.show.linear {
             return bare(self.avatar.posed(pose, closure));
         }
         let posed = pose.forward(&self.avatar.rig);
@@ -858,6 +952,520 @@ fn report_junction(rig: &Rig, span: &[Reach]) {
             );
         }
     }
+}
+
+/// How strongly the mandible holds each patch of skin.
+///
+/// **The question nobody had answered about #134's jaw.** The bone runs
+/// diagonally through the face's interior, from the hinge at the ear to the
+/// chin, so which vertices its bounded falloff actually catches is not
+/// something anyone can read off the constants: it might be the lower lip, the
+/// corners of the mouth, a midline stripe, or nothing at all. Guessing is what
+/// [`JAW_REACH`]'s *unsourced* declaration is an admission of.
+///
+/// White is no hold at all, amber a half share, red the whole vertex. Two stops
+/// rather than one, because the interesting range is the WEAK end: a chin held
+/// 0.14 and a chin held 0.9 are different bodies, and a single white-to-red
+/// lerp draws them as two shades of pink.
+///
+/// Read with the numbers [`report_jaw`] prints, never alone. A false-colour
+/// overlay is an instrument, twenty-two of this crate's instruments have lied,
+/// and this one has no way to show what it does not reach.
+///
+/// [`JAW_REACH`]: symbios_avatar::plan
+fn jaw_tint(mesh: &PolyMesh, jaw: JawBone) -> Vec<Vec3> {
+    const AMBER: Vec3 = Vec3::new(1.00, 0.62, 0.10);
+    const RED: Vec3 = Vec3::new(0.85, 0.05, 0.10);
+    mesh.skin
+        .iter()
+        .map(|influences| {
+            let hold = held(influences, jaw.pivot);
+            if hold <= 0.5 {
+                Vec3::ONE.lerp(AMBER, hold * 2.0)
+            } else {
+                AMBER.lerp(RED, (hold - 0.5) * 2.0)
+            }
+        })
+        .collect()
+}
+
+/// How strongly one joint holds one vertex.
+///
+/// Summed over the influence slots rather than searched for, because nothing
+/// forbids a joint appearing twice and a search would silently report the
+/// first.
+///
+/// The `+ 0.0` is not superstition. **Rust sums floats from an identity of
+/// `-0.0`**, because `-0.0 + x == x` for every `x` including `+0.0` while
+/// `+0.0 + -0.0` is `+0.0` — so a joint that appears in no slot at all comes
+/// back as negative zero, `clamp` keeps it (`-0.0 < 0.0` is false), and the
+/// table prints `-0.000` for "not held". That sign cost a real minute of
+/// suspecting a negative weight, which is exactly the tax an instrument is
+/// supposed to not charge.
+fn held(influences: &[Influence; MAX_INFLUENCES], joint: usize) -> f32 {
+    influences
+        .iter()
+        .filter(|influence| influence.joint as usize == joint)
+        .map(|influence| influence.weight)
+        .sum::<f32>()
+        .clamp(0.0, 1.0)
+        + 0.0
+}
+
+/// A band of the face, named by the two landmarks that bound it.
+struct Band {
+    what: &'static str,
+    /// Its floor and ceiling in head-local metres.
+    lo: f32,
+    hi: f32,
+    /// Whether it is confined to the front of the face and to the mouth's own
+    /// width, rather than running right round the head.
+    front: bool,
+}
+
+/// What the jaw overlay claims, as numbers beside it — and what a posed jaw
+/// actually moved.
+///
+/// **Measured on `parts.body` against `parts.weights`**, which is the same data
+/// the shipped binding tests read, so a disagreement between this and
+/// `the_whole_face_turns_with_the_head` is a defect in one of them rather than
+/// two tools measuring two things. The overlay is tinted from the merged skin
+/// mesh, which additionally carries the lids; the vertex counts here are
+/// therefore of the body alone.
+///
+/// The bands are bounded by the crate's own landmarks and nothing else — the
+/// mouth line, the base of the nose, the chin, the throat and the eye line —
+/// and where a band needs to be half of a span, it is the half between two of
+/// them, which is the same construction `rig::skin::owner_of` puts its own
+/// boundary on. No band is a bin of a continuum: each is the region between two
+/// measured heights, and each prints its population so a filter that selects
+/// nothing cannot pass for a result.
+fn report_jaw(avatar: &Avatar, jaw: JawBone, pose: &Pose, opened: Option<f32>) {
+    let rig = &avatar.rig;
+    let body = &avatar.parts.body;
+    let weights = &avatar.parts.weights;
+    let Some(&head) = rig.in_zone(Zone::Head).first() else {
+        return;
+    };
+    let Some(skull) = Skull::measure(body, rig) else {
+        println!("this head has no skull to measure the jaw against");
+        return;
+    };
+    // The eye axis is the only thing `Canon` reads its parameter for, and only
+    // for the pupils' spacing, which nothing below asks about.
+    let canon = Canon::measure(rig, &skull, &EyeParams::default());
+    let centre = rig.joints[head].position;
+    let pivot = rig.joints[jaw.pivot].position;
+    let tip = rig.joints[jaw.tip].position;
+    let reach = SkinConfig::default().reach;
+
+    println!("\nthe mandible, by how strongly it holds the skin");
+    println!("  the bone runs pivot -> tip and is owned by the PIVOT: rotating the pivot opens it");
+    for (what, at, radius) in [
+        ("pivot", pivot, rig.joints[jaw.pivot].radius),
+        ("tip  ", tip, rig.joints[jaw.tip].radius),
+    ] {
+        let local = at - centre;
+        println!(
+            "  {what} at {:+6.1},{:+6.1},{:+6.1} mm from the head joint, marker radius {:5.1} mm, \
+             falloff span {:5.1} mm",
+            local.x * 1000.0,
+            local.y * 1000.0,
+            local.z * 1000.0,
+            radius * 1000.0,
+            radius * reach * 1000.0,
+        );
+    }
+    println!(
+        "  the bone is {:.1} mm long; the head's own radius is {:.1} mm",
+        pivot.distance(tip) * 1000.0,
+        rig.joints[head].radius * 1000.0,
+    );
+    // **The tip claims to sit ON the measured chin, and whether it does is a
+    // parameter of the record rather than a fact.** Printed every run because
+    // the constant is written in head RADII while the chin's height is a share
+    // of the head's reach BELOW ITS JOINT, and `face_length` moves the second
+    // without moving the first.
+    println!(
+        "  the tip sits {:+.1} mm from the measured chin, which is at y {:+.1} mm (positive is BELOW it)",
+        (skull.chin() - (tip.y - centre.y)) * 1000.0,
+        skull.chin() * 1000.0,
+    );
+    println!(
+        "  and {:+.1} mm behind the chin's own projection, which reaches z {:+.1} mm",
+        (skull.depth(skull.chin()) - (tip.z - centre.z)) * 1000.0,
+        skull.depth(skull.chin()) * 1000.0,
+    );
+
+    // The territory, before any band: every vertex the bone reaches at all.
+    let mut lo = Vec3::splat(f32::MAX);
+    let mut hi = Vec3::splat(f32::MIN);
+    let (mut reached, mut dominant, mut strongest) = (0usize, 0usize, 0.0f32);
+    for (vertex, &rest) in body.positions.iter().enumerate() {
+        let hold = held(&weights.vertices[vertex], jaw.pivot);
+        if hold <= 0.01 {
+            continue;
+        }
+        reached += 1;
+        strongest = strongest.max(hold);
+        if weights.dominant(vertex) as usize == jaw.pivot {
+            dominant += 1;
+        }
+        lo = lo.min(rest - centre);
+        hi = hi.max(rest - centre);
+    }
+    println!(
+        "  held at all (over 0.01): {reached:5} of {} body vertices, {dominant} of them dominantly, \
+         strongest {strongest:.3}",
+        body.positions.len(),
+    );
+    if reached > 0 {
+        println!(
+            "  its territory spans x {:+6.1} to {:+6.1}, y {:+6.1} to {:+6.1}, z {:+6.1} to {:+6.1} mm \
+             about the head joint",
+            lo.x * 1000.0,
+            hi.x * 1000.0,
+            lo.y * 1000.0,
+            hi.y * 1000.0,
+            lo.z * 1000.0,
+            hi.z * 1000.0,
+        );
+    }
+
+    // **A marker is rig-only to the CAGE, not to everything.** `nearest_bone`
+    // asks "what part of the body is under this point" and answers it over the
+    // deforming joints — which a marker has to be, or nothing could bind to it
+    // — so the mandible competes for queries its own docstring says a face rig
+    // must never win. Every skull, relief and scalp call site reads only the
+    // hit's ZONE, which is `Head` either way and so cannot move; `paint_skin`
+    // and `rig::Surface` read its RADIUS, which the jaw's reach does move.
+    let (mut stolen, mut lowest, mut highest) = (0usize, f32::MAX, f32::MIN);
+    for &point in &body.positions {
+        let joint = rig.nearest_bone(point).joint;
+        if joint == jaw.pivot || joint == jaw.tip {
+            stolen += 1;
+            lowest = lowest.min(point.y - centre.y);
+            highest = highest.max(point.y - centre.y);
+        }
+    }
+    println!(
+        "  the marker bones win nearest_bone for {stolen} of {} body vertices, spanning y {:+.1} to \
+         {:+.1} mm — zone-only readers cannot see it, paint_skin and rig::Surface can",
+        body.positions.len(),
+        lowest * 1000.0,
+        highest * 1000.0,
+    );
+
+    let bands = face_bands(&skull, &canon);
+    println!(
+        "  bands, in head-local mm: upper lip {:.1} to {:.1}, lower lip {:.1} to {:.1}, chin {:.1} to {:.1}, \
+         throat at {:.1}",
+        bands[0].lo * 1000.0,
+        bands[0].hi * 1000.0,
+        bands[1].lo * 1000.0,
+        bands[1].hi * 1000.0,
+        bands[2].lo * 1000.0,
+        bands[2].hi * 1000.0,
+        skull.throat_and_crown().0 * 1000.0,
+    );
+    println!("               verts   jaw: least   mean    most    head: mean");
+
+    // A posed jaw is the only thing that can show whether the binding works:
+    // dual quaternion blending deforms a bad reach and a good one identically
+    // at rest and under a head turn, which is why nothing has caught this.
+    let moved = opened.map(|_| pose.forward(rig).deform(rig, &body.positions, weights));
+    let field = Field {
+        body,
+        centre,
+        unit: canon.unit,
+        jaw: jaw.pivot,
+        head,
+        pivot,
+        arc: opened.map_or(0.0, |degrees| 2.0 * (degrees.to_radians() * 0.5).sin()),
+    };
+
+    for band in &bands {
+        let Some(read) = field.tally(band, weights, moved.as_deref()) else {
+            println!("  {} : NO VERTICES — the band, not the binding", band.what);
+            continue;
+        };
+        print!(
+            "  {} {:5}      {:.3}  {:.3}  {:.3}        {:.3}",
+            band.what, read.count, read.least, read.mean, read.most, read.head,
+        );
+        if opened.is_some() {
+            print!(
+                "   moved {:6.2} mm mean, {:6.2} worst, {:5.1}% of a rigid mandible's arc",
+                read.travel * 1000.0,
+                read.worst * 1000.0,
+                read.share * 100.0,
+            );
+        }
+        println!();
+    }
+
+    cross_check_jaw(avatar, jaw, head);
+    if let Some(degrees) = opened {
+        println!("  opened {degrees:.0} degrees about the lateral axis at the pivot");
+    } else {
+        println!("  nothing is posed: run with --jaw 20 to see whether any of this articulates");
+    }
+}
+
+/// The bands of a face, bounded by the landmarks the crate itself measures.
+///
+/// Where a band needs half of a span it is the half between two landmarks,
+/// which is the construction `rig::skin::owner_of` puts its own boundary on.
+fn face_bands(skull: &Skull, canon: &Canon) -> [Band; 6] {
+    let chin = skull.chin();
+    let mouth = canon.mouth_line();
+    let nose = canon.nose_base();
+    let (throat, _) = skull.throat_and_crown();
+    [
+        Band {
+            what: "the upper lip",
+            lo: mouth,
+            hi: mouth + (nose - mouth) * 0.5,
+            front: true,
+        },
+        Band {
+            what: "the lower lip",
+            lo: chin + (mouth - chin) * 0.5,
+            hi: mouth,
+            front: true,
+        },
+        Band {
+            what: "the chin     ",
+            lo: chin,
+            hi: chin + (mouth - chin) * 0.5,
+            front: true,
+        },
+        Band {
+            what: "under the jaw",
+            lo: throat,
+            hi: chin,
+            front: true,
+        },
+        Band {
+            what: "the cranium  ",
+            lo: canon.level,
+            hi: f32::MAX,
+            front: false,
+        },
+        Band {
+            what: "the neck     ",
+            lo: f32::MIN,
+            hi: throat,
+            front: false,
+        },
+    ]
+}
+
+/// Everything a band tally needs that does not change between bands.
+struct Field<'a> {
+    body: &'a PolyMesh,
+    /// The head joint: every band bound is head-local.
+    centre: Vec3,
+    /// One eye width, which is the ruler a face's widths are counted in.
+    unit: f32,
+    /// The joint that owns the mandible — the PIVOT, not the tip.
+    jaw: usize,
+    head: usize,
+    /// The hinge's position, for the arc a rigid mandible would carry a vertex
+    /// through.
+    pivot: Vec3,
+    /// Chord over radius at the opened angle, `2 sin(θ/2)`, or zero at rest.
+    arc: f32,
+}
+
+/// What one band reads, at one binding.
+struct Tally {
+    count: usize,
+    /// The jaw's hold over the band: least, mean, most.
+    least: f32,
+    mean: f32,
+    most: f32,
+    /// The head's mean hold, which is the jaw's rival everywhere that matters.
+    head: f32,
+    /// Mean and worst travel under the pose, in METRES — both, so a "worst"
+    /// smaller than its own mean cannot pass for a result. It already did once
+    /// here, and printing one of them scaled and the other raw is how.
+    travel: f32,
+    worst: f32,
+    /// Travel as a share of the arc a rigid mandible would have carried the
+    /// band through. 1.0 is a jaw; 0.0 is a skull.
+    share: f32,
+}
+
+impl Field<'_> {
+    /// Measures one band against one binding, or `None` if the band is empty.
+    ///
+    /// A band that selects nothing passes every assertion after it, which is
+    /// the shape of half the instrument failures this crate has found — so an
+    /// empty band is not a zero, it is an absence, and it says so.
+    fn tally(&self, band: &Band, weights: &SkinWeights, moved: Option<&[Vec3]>) -> Option<Tally> {
+        let mut count = 0usize;
+        let (mut least, mut most, mut sum, mut head_sum) = (f32::MAX, 0.0f32, 0.0f32, 0.0f32);
+        let (mut travel, mut worst, mut rigid) = (0.0f32, 0.0f32, 0.0f32);
+        for (vertex, &rest) in self.body.positions.iter().enumerate() {
+            let local = rest - self.centre;
+            if local.y < band.lo || local.y >= band.hi {
+                continue;
+            }
+            if band.front && (local.z <= 0.0 || local.x.abs() > self.unit) {
+                continue;
+            }
+            count += 1;
+            let hold = held(&weights.vertices[vertex], self.jaw);
+            least = least.min(hold);
+            most = most.max(hold);
+            sum += hold;
+            head_sum += held(&weights.vertices[vertex], self.head);
+            if let Some(moved) = moved {
+                let went = (moved[vertex] - rest).length();
+                travel += went;
+                worst = worst.max(went);
+                rigid += rest.distance(self.pivot) * self.arc;
+            }
+        }
+        if count == 0 {
+            return None;
+        }
+        let n = count as f32;
+        Some(Tally {
+            count,
+            least,
+            mean: sum / n,
+            most,
+            head: head_sum / n,
+            travel: travel / n,
+            worst,
+            share: if rigid > 0.0 { travel / rigid } else { 0.0 },
+        })
+    }
+}
+
+/// Sweeps the mandible's binding reach against the face it has to move.
+///
+/// **`JAW_REACH` shipped declared unsourced and this is what sources it.** The
+/// two marker radii are the only thing that decides which skin the jaw bone
+/// catches, and the plan feeds them nowhere else — `Rig::from_skeleton` copies
+/// them straight onto the joints and the cage never sees a marker at all — so
+/// setting them on a cloned rig and re-running the crate's own `skin::bind` is
+/// exactly what editing the constant would do, to the last bit, without
+/// rebuilding a body per candidate. The mesh cannot change: markers mesh
+/// nothing.
+///
+/// What the sweep is looking for, and it is a pair of opposed requirements:
+/// the chin has to FOLLOW the jaw and the upper lip has to STAY with the head,
+/// and both are read at a real 20-degree open rather than off the weights,
+/// because travel is the thing anybody looks at.
+fn sweep_jaw(avatar: &Avatar, jaw: JawBone, degrees: f32) {
+    let body = &avatar.parts.body;
+    let Some(&head) = avatar.rig.in_zone(Zone::Head).first() else {
+        return;
+    };
+    let Some(skull) = Skull::measure(body, &avatar.rig) else {
+        return;
+    };
+    let canon = Canon::measure(&avatar.rig, &skull, &EyeParams::default());
+    let bands = face_bands(&skull, &canon);
+    let radius = avatar.rig.joints[head].radius;
+    let config = SkinConfig::default();
+
+    println!(
+        "\nsweeping the mandible's binding reach, in head radii, at a {degrees:.0} degree open"
+    );
+    println!("  the chin must follow the jaw; the upper lip must stay with the head");
+    println!(
+        "  pivot   tip |  upper lip: hold  most  moved |  chin: hold  moved   arc |  lower lip moved | \
+         under jaw hold | separation"
+    );
+    for pivot_reach in [0.06f32, 0.10, 0.14, 0.18] {
+        for tip_reach in [0.20f32, 0.23, 0.26, 0.29] {
+            let mut rig = avatar.rig.clone();
+            rig.joints[jaw.pivot].radius = radius * pivot_reach;
+            rig.joints[jaw.tip].radius = radius * tip_reach;
+            let weights = symbios_avatar::rig::skin::bind(body, &rig, &config);
+
+            let mut pose = Pose::rest(&rig);
+            pose.rotations[jaw.pivot] = Quat::from_rotation_x(degrees.to_radians());
+            let moved = pose.forward(&rig).deform(&rig, &body.positions, &weights);
+            let field = Field {
+                body,
+                centre: rig.joints[head].position,
+                unit: canon.unit,
+                jaw: jaw.pivot,
+                head,
+                pivot: rig.joints[jaw.pivot].position,
+                arc: 2.0 * (degrees.to_radians() * 0.5).sin(),
+            };
+            let read = |band: &Band| field.tally(band, &weights, Some(&moved));
+            let (Some(upper), Some(lower), Some(chin), Some(under)) = (
+                read(&bands[0]),
+                read(&bands[1]),
+                read(&bands[2]),
+                read(&bands[3]),
+            ) else {
+                continue;
+            };
+            println!(
+                "  {pivot_reach:5.2} {tip_reach:5.2} |        {:.3} {:.3} {:6.2} mm |     {:.3} {:6.2} mm \
+                 {:4.0}% | {:9.2} mm |          {:.3} | {:6.2} mm",
+                upper.mean,
+                upper.most,
+                upper.travel * 1000.0,
+                chin.mean,
+                chin.travel * 1000.0,
+                chin.share * 100.0,
+                lower.travel * 1000.0,
+                under.mean,
+                (lower.travel - upper.travel) * 1000.0,
+            );
+        }
+    }
+}
+
+/// The one number in [`report_jaw`] that a shipped assertion also computes.
+///
+/// **A new instrument is checked against an existing one before it is
+/// believed.** `rig::skin::the_throat_stays_with_the_neck` finds the throat by
+/// exactly this construction and asserts the neck outholds the head there; if
+/// the numbers printed here do not agree with that verdict, this tool is the
+/// thing that is wrong. The jaw's own hold is printed beside them because the
+/// throat is where a raised reach would first tear.
+fn cross_check_jaw(avatar: &Avatar, jaw: JawBone, head: usize) {
+    let rig = &avatar.rig;
+    let body = &avatar.parts.body;
+    let Some(neck) = rig.joints[head].parent else {
+        return;
+    };
+    let centre = rig.joints[head].position;
+    let floor = body
+        .positions
+        .iter()
+        .filter(|p| rig.joints[rig.nearest_bone(**p).joint].zone == Zone::Head)
+        .fold(f32::MAX, |low, p| low.min(p.y));
+    let throat = body
+        .positions
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            (p.y - floor).abs() < rig.joints[head].radius * 0.03
+                && (p.x - centre.x).abs() < rig.joints[head].radius * 0.05
+        })
+        .max_by(|a, b| a.1.z.total_cmp(&b.1.z));
+    let Some((throat, _)) = throat else {
+        return;
+    };
+    let influences = &avatar.parts.weights.vertices[throat];
+    println!(
+        "  cross-check, the_throat_stays_with_the_neck's own throat vertex: head {:.2}, neck {:.2}, \
+         jaw {:.2} — the test passes iff neck outholds head",
+        held(influences, head),
+        held(influences, neck),
+        held(influences, jaw.pivot),
+    );
 }
 
 /// Distance from a point to a segment, for naming which bone a vertex lies on.
