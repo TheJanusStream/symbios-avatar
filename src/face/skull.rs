@@ -316,9 +316,10 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// still leaves +3.4 mm, putting the tail exactly on the chord leaves +7.0, and
 /// adding knots to force the descent to start at the peak leaves +6.9. Whatever
 /// puts the rest there survives this profile being deleted.
-/// **Every knot came down 15% because the chin had grown into a blade** (#128).
-/// Nothing here was re-authored: the four non-zero knots are the old ones times
-/// 0.85. What made it necessary is `stretch`, and `stretch` is correct — it
+/// **Every knot came down 25% because the chin had grown into a blade** (#128),
+/// in two steps of 15% and a further 10%. Nothing here was re-authored: the four
+/// non-zero knots are the old ones times 0.75. What made it necessary is
+/// `stretch`, and `stretch` is correct — it
 /// holds the chin's ASPECT as the head's floor moves, which is what #107 added
 /// it for. The consequence is that this table's push grows every time the head
 /// gets longer, and the head has got longer twice: measured on the default
@@ -326,26 +327,56 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// half-extent at that height is 22 mm. A five-to-one blade is what the owner
 /// reported as a second nose.
 ///
-/// At 0.85 the chin's tip projects 101.2 mm forward of the head joint against
-/// 110.7 before, and the midline stands 14.0 mm proud of its own neighbours
+/// At 0.85 the chin's tip projected 101.2 mm forward of the head joint against
+/// 110.7 before, and the midline stood 14.0 mm proud of its own neighbours
 /// against 21.7. The ear canal to pogonion on a life head scaled to ours is
-/// about 92 to 101 mm, so this lands at the top of that range where it was over
-/// it. Going further is available and measured — 0.75 gives 94.9 mm and 9.0 —
-/// and was not taken here because #72 records the amplitude being cut once
-/// before on an argument that measured badly, and one step at a time is how
-/// that gets caught.
+/// about 92 to 101 mm, so that landed at the top of that range where it was over
+/// it.
+///
+/// **And 0.85 to 0.75, which is the second step and the last one available**
+/// (#128). The first step was taken alone because #72 records this amplitude
+/// being cut once before on an argument that sounded good and measured badly.
+/// So the second is taken against the measurement that argument lacked: what the
+/// chin does to its own LIP. `examples/headaudit` walks the carved midline as
+/// the anatomy runs — the chin's crest, the crease under the lip, the lip's own
+/// crest — and reports the margin between the first and the last.
+///
+/// ```text
+///   amplitude   projection   proud   chin over its lip
+///     x0.85        101.2      13.9        +8.9
+///     x0.75         94.9       8.9        +5.3   <- here
+///     x0.70         91.7       6.7        +3.5
+///     x0.65         88.6       4.2        +1.7
+///     x0.60         85.5       2.2        -0.1   <- #72, exactly
+/// ```
+///
+/// **That last row is the failure #72 recorded, reproduced at a known point.** A
+/// face whose lip swallows its chin has no jaw at all, and it happens at 0.60.
+/// 0.75 sits three steps clear of it and keeps the projection inside the 92 to
+/// 101 mm life range; below 0.70 the range is left as well. The chin landmark
+/// itself starts moving at 0.65 — [`Skull::chin`] reads −99.5 there against
+/// −99.9 above it — which is the crest going flat enough that the thing finding
+/// it picks a different point, and a second independent signal for the same
+/// edge.
+///
+/// **What this table owns, measured by deleting it.** With all four knots at
+/// zero the head has no chin: proud reads −2.7 mm, and [`Skull::chin`] comes
+/// back at +9.9 because there is no longer a crest on the lower midline to
+/// find. So the prominence is this table's from end to end, and the amplitude is
+/// a real lever rather than the last of one.
 ///
 /// Provenance: **tuned by render** (#71 for the spacing, #72 for the
 /// amplitude, #47 for the tail), and the bisected outline above is what
 /// tuning it looked like. The amplitude was cut once on an argument that
 /// sounded good and measured badly, which is why the reasoning is kept. The
-/// 15% above is **derived** from the projection against life (#128).
+/// 25% off it now is **derived** from the projection against life and
+/// **bounded by a sweep** against the lip (#128).
 const CHIN: [(f32, f32); 6] = [
     (0.05, 0.0),
-    (-0.24, 0.068),
-    (-0.42, 0.179),
-    (-0.54, 0.289),
-    (-0.62, 0.145),
+    (-0.24, 0.060),
+    (-0.42, 0.158),
+    (-0.54, 0.255),
+    (-0.62, 0.128),
     (JUNCTION, 0.0),
 ];
 
@@ -1738,6 +1769,113 @@ mod tests {
             skull.chin() * 1000.0,
             throat * 1000.0,
             crown * 1000.0
+        );
+    }
+
+    #[test]
+    fn the_chin_leads_its_own_lip() {
+        // **The contract #72 was bought with, finally asserted** (#128). Cutting
+        // [`CHIN`]'s amplitude to steepen the underside cost the chin 7 mm of
+        // projection and put the lower lip in front of it; a face whose lip
+        // swallows its chin has no jaw at all, which is how it looked, and the
+        // amplitude had to go back up. Nothing has guarded that since. #128 cut
+        // the same amplitude twice more — for a different and measured reason —
+        // and found the same cliff sitting three steps below where it stopped:
+        //
+        // ```text
+        //   amplitude   chin over its lip, default body
+        //     x0.75           +5.3 mm    <- ships
+        //     x0.70           +3.5
+        //     x0.65           +1.7
+        //     x0.60           -0.1       <- #72, exactly
+        // ```
+        //
+        // **Measured on the CARVED surface, which is the only one that has a lip
+        // on it at all.** The shaped head carries [`CHIN`] and no mouth, so the
+        // question cannot be asked of it.
+        //
+        // **And walked rather than scanned.** Up the midline from the chin the
+        // profile falls into the mentolabial crease and rises into the lip, so
+        // the two landmarks are the first turn that starts a rise and the first
+        // that starts a fall after it. A window would answer with the chin only
+        // while the lip stayed outside it and report the edge of its own scan
+        // everywhere else, which is the trap
+        // `the_chin_landmark_lands_on_the_chin_of_the_shipped_face` was rewritten
+        // to escape (#108).
+        //
+        // The floor is 2 mm. Across these seeds the margin runs 3.1 to 7.7 mm —
+        // seed 13 is the tight one — so the bound sits under the state and over
+        // the failure. Deliberately NOT ratcheted onto the distribution: this
+        // guards a cliff rather than a proportion, and the cliff is at zero.
+        // Taking the amplitude to 0.70 would put seed 13 on this floor, which is
+        // the warning firing one step before the defect rather than after it.
+        const MARGIN: f32 = 0.002;
+        /// A reversal under this is surface ripple and not a feature, the same
+        /// reason `examples/neckaudit` counts its turns with a deadband.
+        const DEADBAND: f32 = 0.0004;
+
+        let mut margins: Vec<(i64, f32)> = Vec::new();
+        for seed in [0i64, 1, 3, 7, 13, 21, 23, 42] {
+            let mut record = AvatarRecord::new("Skulled", Archetype::default());
+            record.reroll(seed);
+            let skeleton = record.skeleton();
+            let mut mesh =
+                crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
+                    .expect("a body builds");
+            let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+            let skull = Skull::measure(&mesh, &rig).expect("a skull");
+            let canon = crate::face::Canon::measure(&rig, &skull, &Default::default());
+            crate::face::carve_face(&mut mesh, &rig, &canon, &Default::default());
+
+            let centre = rig.joints[skull.head].position;
+            let chin = skull.chin();
+            let profile: Vec<(f32, f32)> = (0..)
+                .map(|step| chin + 0.001 * step as f32)
+                .take_while(|y| *y < canon.nose_base())
+                .filter_map(|y| midline(&mesh, centre, y).map(|reach| (y, reach)))
+                .collect();
+
+            let mut turns: Vec<(f32, bool)> = Vec::new();
+            let mut rising: Option<bool> = None;
+            let mut mark = profile[0];
+            for &(y, reach) in &profile[1..] {
+                if (reach - mark.1).abs() < DEADBAND {
+                    continue;
+                }
+                let now = reach > mark.1;
+                if rising.is_some_and(|was| was != now) {
+                    turns.push((mark.1, now));
+                }
+                rising = Some(now);
+                mark = (y, reach);
+            }
+            let crease = turns.iter().position(|(_, up)| *up);
+            let lip = crease.and_then(|from| {
+                turns[from..]
+                    .iter()
+                    .find(|(_, up)| !*up)
+                    .map(|(reach, _)| *reach)
+            });
+            let at_chin = midline(&mesh, centre, chin).expect("the chin is on the midline");
+            margins.push((seed, lip.map_or(f32::MAX, |lip| at_chin - lip)));
+        }
+
+        let swallowed: Vec<_> = margins
+            .iter()
+            .filter(|(_, margin)| *margin < MARGIN)
+            .collect();
+        assert!(
+            swallowed.is_empty(),
+            "the lower lip reaches past the chin on {} of {} faces, against a floor of \
+             {:.1} mm: {}. #72 is what this looks like — the chin stops reading as a jaw.",
+            swallowed.len(),
+            margins.len(),
+            MARGIN * 1000.0,
+            margins
+                .iter()
+                .map(|(seed, margin)| format!("seed {seed} {:+.1} mm", margin * 1000.0))
+                .collect::<Vec<_>>()
+                .join(", "),
         );
     }
 

@@ -24,7 +24,7 @@
 //! at both of its ends on more than one body.
 
 use symbios_avatar::face::{Canon, Eyes, Skull};
-use symbios_avatar::{Archetype, Avatar, AvatarConfig, AvatarRecord, Vec3, Zone, face};
+use symbios_avatar::{Archetype, Avatar, AvatarConfig, AvatarRecord, PolyMesh, Vec3, Zone, face};
 
 /// Millimetres between samples, everywhere.
 const STEP: f32 = 0.002;
@@ -481,6 +481,184 @@ fn main() {
         );
         band -= 0.01;
     }
+
+    chin_blade(&plain, &carved, centre, chin, canon.nose_base());
+}
+
+/// The chin's own section, and whether it is a point or a blade (#128).
+///
+/// The owner reported a second nose hanging off the chin in front view and a
+/// flab from chin to mid-neck on the diagonal — one shape from two angles. What
+/// it is, measured, is a midline that runs a long way ahead of the surface
+/// either side of it, so the section at the chin's height is a blade rather than
+/// an arc.
+///
+/// **How proud is defined, because the definition is the instrument.** Rays are
+/// fired from the head's own vertical axis at 0, 15 and 30 degrees off the
+/// midline; the two off-midline reaches give a straight run in azimuth, and
+/// PROUD is how far past that run the midline reaches. It is a shape reading and
+/// not a size one: a chin that projects a long way but carries its neighbours
+/// with it reads as a jaw, and one that projects alone reads as a blade.
+///
+/// **Both surfaces, because the two answer different questions.** The SHAPED
+/// head is where [`symbios_avatar::face`]'s own profile tables land, so it is
+/// what a change to them moves. The CARVED one is what ships, and it is the only
+/// place the lip can be compared with the chin — which is the check #72 was
+/// bought with: cutting this amplitude once before cost the chin 7 mm and put
+/// the lower lip in front of it, and a face whose lip swallows its chin has no
+/// jaw at all.
+fn chin_blade(shaped: &PolyMesh, carved: &PolyMesh, centre: Vec3, chin: f32, nose_base: f32) {
+    println!("\n## The chin's section\n");
+    println!(
+        "Rays from the head's own axis, at the chin's height. PROUD is the midline against a straight run through the 15° and 30° readings.\n"
+    );
+    println!("| surface | dead ahead | 15° off | 30° off | straight run | proud | breadth |");
+    println!("|---|---|---|---|---|---|---|");
+
+    let reach = |mesh: &PolyMesh, y: f32, degrees: f32| -> Option<f32> {
+        let from = Vec3::new(centre.x, centre.y + y, centre.z);
+        if !mesh.contains(from) {
+            return None;
+        }
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        let along = Vec3::new(sin, 0.0, cos);
+        let (mut near, mut out) = (0.0f32, 0.30f32);
+        for _ in 0..40 {
+            let mid = 0.5 * (near + out);
+            if mesh.contains(from + along * mid) {
+                near = mid;
+            } else {
+                out = mid;
+            }
+        }
+        Some(near)
+    };
+
+    for (name, mesh) in [("shaped", shaped), ("carved", carved)] {
+        let (Some(ahead), Some(off15), Some(off30)) = (
+            reach(mesh, chin, 0.0),
+            reach(mesh, chin, 15.0),
+            reach(mesh, chin, 30.0),
+        ) else {
+            println!("| {name} | the midline is outside the surface at the chin's height |");
+            continue;
+        };
+        // **BREADTH, and not a ray fired sideways from the axis.** A blade is an
+        // off-centre section, and a ray crossing one from the head's own centre
+        // depth reads a CHORD — it reports the section narrower the further
+        // forward its mass sits, which on this shape is the whole finding
+        // running backwards. #125 paid for that reading once on the neck. So the
+        // slice is swept front to back and asked for its widest point.
+        let behind = reach(mesh, chin, 180.0).unwrap_or(0.0);
+        let at = Vec3::new(centre.x, centre.y + chin, centre.z);
+        let wide = (0..=40)
+            .filter_map(|slice| {
+                let z = at.z - behind + (ahead + behind) * slice as f32 / 40.0;
+                let from = Vec3::new(at.x, at.y, z);
+                if !mesh.contains(from) {
+                    return None;
+                }
+                let (mut near, mut out) = (0.0f32, 0.30f32);
+                for _ in 0..40 {
+                    let mid = 0.5 * (near + out);
+                    if mesh.contains(from + Vec3::X * mid) {
+                        near = mid;
+                    } else {
+                        out = mid;
+                    }
+                }
+                Some(near)
+            })
+            .fold(0.0f32, f32::max);
+        // The straight run is in AZIMUTH, so the two neighbours are one step
+        // apart and the midline is one step beyond the nearer of them.
+        let run = 2.0 * off15 - off30;
+        // Breadth is context and not the defect. The section's depth-to-breadth
+        // is NOT printed beside it on purpose: at the chin's height that depth
+        // runs from the chin to the nape, so the ratio would be the head's
+        // aspect wearing the chin's name. What says blade is the fall from the
+        // midline to 15° — 37 mm on the default body — and `proud` beside it.
+        println!(
+            "| {name} | {:.1} | {:.1} | {:.1} | {:.1} | **{:+.1}** | {:.1} |",
+            ahead * 1000.0,
+            off15 * 1000.0,
+            off30 * 1000.0,
+            run * 1000.0,
+            (ahead - run) * 1000.0,
+            wide * 2000.0,
+        );
+    }
+
+    // The lip against the chin, on the surface that ships, and **by a definition
+    // rather than by a window.** #108 measured the lip reaching 119.2 mm against
+    // the chin's 114.0 and had to rewrite
+    // `the_chin_landmark_lands_on_the_chin_of_the_shipped_face` for exactly this
+    // reason: a ±25 mm scan answers with the chin only while the lip stays
+    // outside it, and reads the edge of its own window everywhere else.
+    //
+    // So the lip is found the way the anatomy runs. Walking up the midline from
+    // the chin the profile falls into the mentolabial sulcus — the crease under
+    // the lower lip — and rises again into the lip itself. The first local
+    // minimum above the chin is that crease, and the greatest reach between it
+    // and the nose base is the lip. If there is no crease the profile has no
+    // lower lip on it, and that is worth saying rather than papering over.
+    let Some(at_chin) = reach(carved, chin, 0.0) else {
+        return;
+    };
+    let profile: Vec<(f32, f32)> = (0..)
+        .map(|step| chin + 0.001 * step as f32)
+        .take_while(|y| *y < nose_base)
+        .filter_map(|y| reach(carved, y, 0.0).map(|here| (y, here)))
+        .collect();
+    // Turning points with a deadband, for the reason `neckaudit` counts its
+    // turns with one: the surface ripples a few tenths of a millimetre between
+    // samples and a reversal under that is not a feature.
+    const DEADBAND: f32 = 0.0004;
+    let mut turns: Vec<(f32, f32, bool)> = Vec::new();
+    let mut rising: Option<bool> = None;
+    let mut mark = profile[0];
+    for &(y, here) in &profile[1..] {
+        if (here - mark.1).abs() < DEADBAND {
+            continue;
+        }
+        let now = here > mark.1;
+        if rising.is_some_and(|was| was != now) {
+            turns.push((mark.0, mark.1, now));
+        }
+        rising = Some(now);
+        mark = (y, here);
+    }
+    // Up from the chin the profile falls into the crease and rises into the
+    // lip, so the two are the first turn that starts a rise and the first that
+    // starts a fall after it.
+    let crease = turns.iter().find(|(_, _, up)| *up).copied();
+    let (Some((crease_at, crease, _)), Some(&(lip_at, lip, _))) = (
+        crease,
+        turns
+            .iter()
+            .skip_while(|(_, _, up)| !*up)
+            .find(|(_, _, up)| !*up),
+    ) else {
+        println!(
+            "\nOn the carved midline the chin reaches {:.1} mm and the profile above it has no \
+             crease and crest on it before the nose base — there is no lower lip here to \
+             measure the chin against.",
+            at_chin * 1000.0,
+        );
+        return;
+    };
+    println!(
+        "\nOn the carved midline: the chin reaches {:.1} mm, the crease under the lip falls to \
+         {:.1} at {:+.1} mm, and the lower lip rises to {:.1} at {:+.1}. **The chin leads its \
+         own lip by {:+.1} mm.** A chin is supposed to win this — #72 cut this amplitude once \
+         before, lost 7 mm of projection, and put the lip in front.",
+        at_chin * 1000.0,
+        crease * 1000.0,
+        crease_at * 1000.0,
+        lip * 1000.0,
+        lip_at * 1000.0,
+        (at_chin - lip) * 1000.0,
+    );
 }
 
 /// The head's overall proportions, in head-local metres.
