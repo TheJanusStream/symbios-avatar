@@ -94,6 +94,7 @@ pub mod demo;
 pub mod dress;
 pub mod extremity;
 pub mod face;
+pub mod gltf;
 pub mod hair;
 pub mod hull;
 pub mod mesh;
