@@ -1695,11 +1695,39 @@ impl BodyPlan for HumanoidParams {
             .in_zone(Zone::Head),
         );
 
+        // **A body's left limbs are the ones at `+X`** (#142). This body faces
+        // `+Z` — measured off its own foot, whose toe is ahead of its heel — and
+        // glTF, which is the convention every consumer reads this rig through,
+        // is right-handed with `+Y` up. For a character facing `+Z` with up `+Y`,
+        // right is forward cross up, which is `Z × Y`, which is `−X`; so left is
+        // `+X`. Ours were the other way round until #142, and nothing had ever
+        // noticed because a humanoid is mirror-symmetric and nothing in the crate
+        // had ever asked which side was which. The moment a clip plays or a
+        // garment is asymmetric it stops being invisible.
+        //
+        // **The `−X` side is built first, and that order is load-bearing.**
+        // [`Rig::from_skeleton`] numbers joints breadth-first, so siblings keep
+        // the order this loop inserted them, and a [`Slot`](crate::anim::Slot) is
+        // a zone and an ordinal. Both clavicles live in [`Zone::Chest`], so which
+        // clavicle is `Chest[2]` is decided here and nowhere else —
+        // `retarget::HUMAN` addresses them by that ordinal, and it is the only
+        // place in the crate where a side rides on an ordinal rather than on a
+        // [`Limb`]. Reordering these two rows would move it in silence, which is
+        // what `the_clavicles_are_pinned_to_their_sides_by_ordinal` exists to
+        // prevent. Correcting the names was therefore done by moving the *names*
+        // and leaving the geometry where it was, so not one vertex of any body
+        // moved.
         for (side, fore, hind) in [
-            (-1.0f32, Limb::ForeLeft, Limb::HindLeft),
-            (1.0, Limb::ForeRight, Limb::HindRight),
+            (-1.0f32, Limb::ForeRight, Limb::HindRight),
+            (1.0, Limb::ForeLeft, Limb::HindLeft),
         ] {
-            // Arms rest in a T-pose: VRM 1.0 requires it of exported humanoids.
+            // Arms rest in an A-pose, about forty degrees below horizontal at
+            // the shoulder — measured at #139, which compared this rest against
+            // the CC0 reference's true T-pose and found 40.1°. The comment that
+            // used to sit here claimed a T-pose because VRM 1.0 required one of
+            // exported humanoids, and was stale on both counts: VRM was dropped
+            // at #27. Which rest this is matters to a retarget, so it is
+            // recorded rather than asserted.
             let clavicle = skeleton.extend_from(
                 girdle,
                 Node::new(

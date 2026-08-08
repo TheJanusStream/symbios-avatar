@@ -100,11 +100,14 @@ fn limb_zones_land_on_the_correct_side_of_the_body() {
         // Extremities and lower limbs are unambiguous; upper limbs meet at the
         // torso, so only check the parts that are clear of the midline.
         if matches!(zone, Zone::Extremity(_) | Zone::LowerLimb(_)) {
+            // Left is `+X` on a body facing `+Z`, which is glTF's convention —
+            // see `plan::Limb`, and #142 for the pass that moved our names onto
+            // the sides they name.
             let x = mesh.positions[vertex].x;
             if limb.is_left() {
-                assert!(x < 0.0, "vertex {vertex} in {zone:?} sits at x={x}");
-            } else {
                 assert!(x > 0.0, "vertex {vertex} in {zone:?} sits at x={x}");
+            } else {
+                assert!(x < 0.0, "vertex {vertex} in {zone:?} sits at x={x}");
             }
         }
     }

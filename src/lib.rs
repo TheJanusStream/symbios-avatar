@@ -109,8 +109,9 @@ pub mod texture;
 pub mod uv;
 
 pub use anim::{
-    Clip, Curve, Footing, FootingConfig, Gait, Gaze, GazeConfig, Ground, Inertializer, JointTrack,
-    Key, Play, Pose, PoseClip, Posed, Slot, Stride, Target, Track, look_at, plant_feet,
+    Clip, ClipLibrary, Curve, Footing, FootingConfig, Gait, Gaze, GazeConfig, Ground, Inertializer,
+    JointTrack, Key, LibraryError, Play, Pose, PoseClip, Posed, Slot, Stride, Target, Track,
+    look_at, plant_feet,
 };
 pub use avatar::{Avatar, AvatarConfig, AvatarMesh, Budget, MeshKind, Parts};
 pub use cage::{CageConfig, CageError, build_cage};

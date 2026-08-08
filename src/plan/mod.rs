@@ -548,6 +548,88 @@ fn take_byte(bytes: &mut &[u8]) -> Result<u8, PlanDecodeError> {
 mod tests {
     use super::*;
 
+    /// How far a zone's nodes reach along an axis, least and greatest.
+    fn span(skeleton: &Skeleton, zone: Zone, axis: fn(glam::Vec3) -> f32) -> (f32, f32) {
+        skeleton.nodes.iter().filter(|node| node.zone == zone).fold(
+            (f32::MAX, f32::MIN),
+            |(lo, hi), node| {
+                let at = axis(node.position);
+                (lo.min(at), hi.max(at))
+            },
+        )
+    }
+
+    /// **A body's left limbs are the ones at `+X`.** The guard #142 was missing.
+    ///
+    /// Stated as a coordinate convention rather than as a comparison between the
+    /// two sides, because that is the difference between this and the test that
+    /// let the body wear two right hands for as long as that code existed (#113):
+    /// a comparison of bounds is satisfied by a HALF TURN just as well as by a
+    /// reflection, so it cannot tell a mirrored body from a correct one. Only an
+    /// absolute statement can, and the absolute statement is glTF's: right-handed,
+    /// `+Y` up, front at `+Z`, so right is `Z × Y` which is `−X`.
+    ///
+    /// The caller has to have shown its body faces `+Z` first, off the body's own
+    /// geometry — that is the other half of the convention and it is measured
+    /// per plan below, not assumed here.
+    fn assert_left_limbs_are_at_positive_x(skeleton: &Skeleton, what: &str) {
+        for limb in Limb::ALL {
+            let mut nodes = 0;
+            for node in &skeleton.nodes {
+                if node.zone.limb() != Some(limb) {
+                    continue;
+                }
+                nodes += 1;
+                assert!(
+                    (node.position.x > 0.0) == limb.is_left(),
+                    "{what}: a node of {limb:?} sits at x {:+.1} mm, and a limb \
+                     named Left belongs at +X on a body facing +Z",
+                    node.position.x * 1000.0
+                );
+            }
+            assert!(nodes > 0, "{what}: {limb:?} has no nodes to place");
+        }
+    }
+
+    #[test]
+    fn a_humanoid_faces_forward_and_puts_its_left_at_positive_x() {
+        let skeleton = Archetype::Humanoid(HumanoidParams::default()).skeleton();
+
+        // Facing, measured off the feet exactly as #139 measured it: a foot
+        // reaches much further ahead of its ankle than behind it, so the sign of
+        // the longer reach is the sign of forward.
+        let (heel, toe) = span(&skeleton, Zone::Extremity(Limb::HindLeft), |at| at.z);
+        assert!(
+            toe > -heel,
+            "the foot reaches {:.1} mm forward and {:.1} mm back, so this body \
+             does not face +Z and the whole convention below is void",
+            toe * 1000.0,
+            -heel * 1000.0
+        );
+
+        assert_left_limbs_are_at_positive_x(&skeleton, "the humanoid");
+    }
+
+    #[test]
+    fn a_quadruped_faces_forward_and_puts_its_left_at_positive_x() {
+        let skeleton = Archetype::Quadruped(QuadrupedParams::default()).skeleton();
+
+        // No foot to measure on this plan — its extremities are single nodes —
+        // so facing is read off the two ends of the body instead: a head is
+        // ahead of a tail.
+        let (_, head) = span(&skeleton, Zone::Head, |at| at.z);
+        let (tail, _) = span(&skeleton, Zone::Tail, |at| at.z);
+        assert!(
+            head > tail,
+            "the head is at {:.1} mm and the tail at {:.1} mm, so this body does \
+             not face +Z",
+            head * 1000.0,
+            tail * 1000.0
+        );
+
+        assert_left_limbs_are_at_positive_x(&skeleton, "the quadruped");
+    }
+
     #[test]
     fn categories_occupy_distinct_bits() {
         let mut seen = 0u32;

@@ -198,9 +198,12 @@ impl BodyPlan for QuadrupedParams {
             Node::new(Vec3::new(0.0, h * 0.724, tip_z), h * 0.031 * girth).in_zone(Zone::Tail),
         );
 
+        // Left is `+X`, as it is on every plan — see `plan::humanoid` for the
+        // convention and for why the `−X` side is built first. This body faces
+        // `+Z` too: its head sits ahead of its tail.
         for (side, fore, hind) in [
-            (-1.0f32, Limb::ForeLeft, Limb::HindLeft),
-            (1.0, Limb::ForeRight, Limb::HindRight),
+            (-1.0f32, Limb::ForeRight, Limb::HindRight),
+            (1.0, Limb::ForeLeft, Limb::HindLeft),
         ] {
             let stifle = skeleton.extend_from(
                 hips,

@@ -38,6 +38,8 @@
 //! cargo run --release --example render -- --jawbind   # tint the skin by how the JAW bone holds it
 //! cargo run --release --example render -- --jaw 20    # open the mouth this many degrees
 //! cargo run --release --example render -- --jawsweep # tune the jaw's binding reach by measurement
+//! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
+//! cargo run --release --example render -- --clip Wave --clipframes 12   # more frames of it
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
@@ -59,8 +61,17 @@ use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, EyeParams, FaceParams,
     FootingConfig, Gait, GazeConfig, Ground, HairParams, Influence, Limb, MAX_INFLUENCES, MeshKind,
     PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
-    anim::gait, anim::gaze, anim::plant_feet_of, face::Skull,
+    anim::gait, anim::gaze, anim::plant_feet_of, face::Skull, gltf::Gltf, retarget,
 };
+
+/// Where the CC0 reference animations sit, relative to this checkout.
+///
+/// Not vendored — eleven megabytes of somebody else's CC0 — so `--clip` fails
+/// with this path in the message rather than with a file-not-found.
+const LIBRARY: [&str; 2] = [
+    "../mesh2motion-app/static/animations/human-base-animations.glb",
+    "../mesh2motion-app/static/animations/human-addon-animations.glb",
+];
 
 /// Pixels per side of one view in the finished sheet.
 const VIEW: usize = 512;
@@ -93,6 +104,15 @@ fn main() {
     };
     let seed = value("--seed").and_then(|s| s.parse::<i64>().ok());
     let frames = value("--walk").and_then(|s| s.parse::<usize>().ok());
+    // A CC0 clip, retargeted and sampled across its own length. The one thing
+    // no still of a rest pose can show is which SIDE a one-handed clip lands
+    // on, because a mirrored body at rest looks exactly like a correct one
+    // (#142); and a twist bug is invisible in a walk but not in a clip that
+    // rolls (#139). Both want eyes on the real motion.
+    let clip = value("--clip").cloned();
+    let clip_frames = value("--clipframes")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(8);
     let focus = match value("--close").map(String::as_str) {
         Some("head") => Some(Focus::Head),
         Some("hand") => Some(Focus::Hand),
@@ -291,6 +311,22 @@ fn main() {
         None => "render",
     };
 
+    if let Some(wanted) = &clip {
+        match clip_sheets(&subject, wanted, clip_frames, &shoot) {
+            Ok(sheets) => {
+                for (frame, sheet) in sheets.iter().enumerate() {
+                    write(&out, &format!("{stem}_clip_{frame:02}"), sheet);
+                }
+                println!("rendered {} frames of {wanted}", sheets.len());
+            }
+            Err(why) => {
+                eprintln!("{why}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     match frames {
         Some(frames) => {
             let mut blink = Blink::seeded(1);
@@ -466,6 +502,98 @@ fn jaw_bone(rig: &Rig, skeleton: &Skeleton) -> Option<JawBone> {
         pivot: rig.joints[tip].parent?,
         tip,
     })
+}
+
+/// Sheets of a body playing one CC0 clip, evenly across the clip's own length.
+///
+/// **The instrument for the two defects a still cannot show.** A mirrored
+/// correspondence poses a rest body identically to a correct one, so only a
+/// one-handed clip says which side ours landed on (#142); and a twist bug moves
+/// a bone's axes without moving its position, so only a roll-heavy clip shows it
+/// (#139). Both go through `retarget::clip` — the same path a bake takes — so
+/// what is on screen is what would be baked.
+///
+/// The feet are re-planted at playback rather than trusted from the clip,
+/// because the source was authored on a 1.830 m reference and this body is
+/// whatever the record says. That is the retargeter's own recorded position: a
+/// baked contact would freeze one ground plane into a clip that has to play on
+/// every other.
+fn clip_sheets(
+    subject: &Subject,
+    wanted: &str,
+    frames: usize,
+    shoot: &impl Fn(&Pose, f32) -> Option<Image>,
+) -> Result<Vec<Image>, String> {
+    let mut found = None;
+    for path in LIBRARY {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        let library = Gltf::read(&bytes).map_err(|why| format!("{path}: {why}"))?;
+        if let Some(animation) = library.clip(wanted) {
+            found = Some((library, animation));
+            break;
+        }
+    }
+    let Some((library, animation)) = found else {
+        return Err(format!(
+            "no clip called {wanted} in {} or {} — and if neither file is \
+             checked out beside this repository, that is why",
+            LIBRARY[0], LIBRARY[1]
+        ));
+    };
+
+    let rig = &subject.avatar.rig;
+    let skin = library.skin(0).map_err(|why| why.to_string())?;
+    let matched =
+        retarget::Correspondence::human(rig, &library, &skin).map_err(|why| why.to_string())?;
+    let baked = retarget::clip(rig, &library, &matched, animation, 30.0, false)
+        .map_err(|why| why.to_string())?;
+    println!(
+        "{wanted}: {:.2} s, {} of {} tracks move, {} bytes baked",
+        baked.duration(),
+        baked.moving(),
+        matched.len(),
+        baked.bytes()
+    );
+
+    let mut blink = Blink::seeded(1);
+    let count = frames.max(1);
+    let mut sheets = Vec::with_capacity(count);
+    for frame in 0..count {
+        let time = baked.duration() * frame as f32 / count as f32;
+        let closure = blink.advance(baked.duration() / count as f32);
+        let mut pose = baked.pose(rig, time);
+        // **Only the feet this frame already has on the ground.** A library of
+        // 162 clips is not 162 standing bodies — it sits, kneels, lies down and
+        // sleeps — and planting a foot on a body whose torso is lower than its
+        // ankles drags the whole pose through the floor. So a foot is a contact
+        // here only if it is within a hand's breadth of the lowest thing on the
+        // body, which a lying body's feet are not.
+        let posed = pose.forward(rig);
+        let floor = posed
+            .positions
+            .iter()
+            .fold(f32::MAX, |low, at| low.min(at.y));
+        let stance: Vec<Limb> = rig
+            .ground_contacts()
+            .into_iter()
+            .filter(|&limb| {
+                rig.extremity_joints(limb)
+                    .iter()
+                    .any(|&joint| posed.positions[joint].y - floor < 0.1)
+            })
+            .collect();
+        plant_feet_of(
+            rig,
+            &mut pose,
+            &stance,
+            |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
+            &FootingConfig::default(),
+        );
+        sheets.push(shoot(&pose, closure).ok_or("this body has no such part to frame")?);
+    }
+    Ok(sheets)
 }
 
 /// An avatar, and the gait it walks with.

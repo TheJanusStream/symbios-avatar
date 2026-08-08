@@ -88,7 +88,15 @@ pub struct Eye {
     pub pivot: Vec3,
     /// Radius of the globe.
     pub radius: f32,
-    /// `-1` for the body's left eye, `+1` for its right.
+    /// The sign of this eye's `x`, so `+1` for the body's left eye and `-1` for
+    /// its right.
+    ///
+    /// Left is `+X` — see [`crate::plan::Limb`] for the convention and #142 for
+    /// the pass that corrected it here. What this field actually keys is
+    /// `CANTHAL_TILT` — private, so unlinked — which tilts the outer canthus
+    /// above the inner, and that
+    /// wants the sign of `x` rather than a name; the two only ever disagreed
+    /// about what to call the eye.
     pub side: f32,
 }
 
@@ -268,9 +276,9 @@ const APERTURE_STEP: f32 = 0.017_453;
 /// A body's pair of eyes, and where they belong.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Eyes {
-    /// The body's left eye.
+    /// The body's left eye, which is the one at `+X`.
     pub left: Eye,
-    /// The body's right eye.
+    /// The body's right eye, which is the one at `−X`.
     pub right: Eye,
     /// The joint the pair is parented to.
     pub head: usize,
@@ -383,10 +391,14 @@ impl Eyes {
         .or_else(|| reach(mesh, centre, far))
         .unwrap_or(0.0);
 
+        // `canon.apart` is a half-separation, so the pivot as measured is the
+        // `+X` eye — the body's LEFT (#142). Both eyes are built from the one
+        // figure and differ only in the sign of `x`, which is also what `side`
+        // carries; nothing here is asymmetric but the name.
         let pivot = Vec3::new(canon.apart, canon.level, skin - radius + proud);
         Self {
-            left: eye(-1.0, Vec3::new(-pivot.x, pivot.y, pivot.z), radius, params),
-            right: eye(1.0, pivot, radius, params),
+            left: eye(1.0, pivot, radius, params),
+            right: eye(-1.0, Vec3::new(-pivot.x, pivot.y, pivot.z), radius, params),
             head: canon.head,
         }
     }
@@ -740,8 +752,12 @@ mod tests {
     #[test]
     fn a_body_gets_two_eyes_set_in_its_face() {
         let pair = eyes(&EyeParams::default());
-        assert!(pair.left.pivot.x < 0.0, "the left eye is on the left");
-        assert!(pair.right.pivot.x > 0.0);
+        // Named by the coordinate convention rather than by which is further
+        // along X: left is `+X` on a body facing `+Z` (#142, and see
+        // [`crate::plan::Limb`]). Comparing the two against each other would
+        // pass on a pair that was simply the wrong way round.
+        assert!(pair.left.pivot.x > 0.0, "the left eye is at +X");
+        assert!(pair.right.pivot.x < 0.0, "the right eye is at -X");
         assert!(
             pair.left.pivot.z > 0.0,
             "eyes belong on the front of a head"
@@ -844,7 +860,14 @@ mod tests {
             spacing: -1.0,
             ..Default::default()
         });
-        assert!(wide.left.pivot.x < close.left.pivot.x, "wider is wider");
+        // Measured as the SEPARATION rather than as the signed `x` of one eye,
+        // which is what the slider actually moves. Reading it off one eye's
+        // coordinate meant this test was quietly asserting which side that eye
+        // was on, and it failed when #142 corrected the answer — which is a
+        // slider test failing over a naming change, so it was measuring the
+        // wrong thing.
+        let apart = |pair: &Eyes| (pair.left.pivot.x - pair.right.pivot.x).abs();
+        assert!(apart(&wide) > apart(&close), "wider is wider");
 
         let big = eyes(&EyeParams {
             size: 1.0,

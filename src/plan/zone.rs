@@ -19,6 +19,18 @@
 use serde::{Deserialize, Serialize};
 
 /// Which of a body's four limb positions a zone belongs to.
+///
+/// **Left is `+X` on a body that faces `+Z`, and that is the whole definition.**
+/// glTF — the convention every consumer of this crate reads a body through — is
+/// right-handed with `+Y` up and an asset's front at `+Z`, so a character's
+/// right is forward cross up, which is `Z × Y`, which is `−X`. Every plan in
+/// this crate builds to that, and `a_left_limb_is_at_positive_x` holds each of
+/// them to it.
+///
+/// It was not always so: until #142 every `…Left` here named a body's right,
+/// which nothing noticed for as long as nothing on a body was asymmetric and no
+/// clip had ever played. It was corrected by moving the names rather than the
+/// geometry, so no record migrated and no vertex moved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Limb {
@@ -42,6 +54,9 @@ impl Limb {
     ];
 
     /// Whether this limb is on the body's left.
+    ///
+    /// Which is the `+X` side — see the type's own docs for why, and for the
+    /// test that holds every plan to it.
     #[must_use]
     pub fn is_left(self) -> bool {
         matches!(self, Limb::ForeLeft | Limb::HindLeft)

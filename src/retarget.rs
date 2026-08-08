@@ -9,19 +9,19 @@
 //! # Why not by bone name
 //!
 //! Because the names lie, and this crate has the receipts. The reference's bone
-//! called `head` is the jaw band; slicing its T-pose at neck height cuts both
-//! arms; and — measured at #139 — **its `_l` bones sit on the opposite side of
-//! `X` from our `Limb::…Left` ones**, with both bodies facing `+Z`. By glTF's
-//! convention (right-handed, `+Y` up, front at `+Z`) the character's left is
-//! `+X`, so the reference is named correctly and ours is not. That is #142, and
-//! it is not this module's to fix.
+//! called `head` is the jaw band, and slicing its T-pose at neck height cuts
+//! both arms. The table below is hand-authored against measured anatomy for
+//! that reason, not because two rigs happened to agree on spelling.
 //!
-//! What this module does about it is the reason its correspondence table looks
-//! wrong at a
-//! glance (it is private, so only a reader of this file sees it): **`_l` maps to
-//! our `…Right` and `_r` to our `…Left`**, so the motion
-//! lands on the anatomy it was performed with rather than mirrored. Thirty of
-//! the library's 162 clips are one-handed, so mirroring is not a detail.
+//! **The sides do agree, and that took a fix on our end.** Measured at #139,
+//! the reference's `_l` bones sat on the opposite side of `X` from our
+//! `Limb::…Left` ones with both bodies facing `+Z` — and glTF's convention
+//! (right-handed, `+Y` up, front at `+Z`) puts a character's left at `+X`, so
+//! the reference was named correctly and we were not. For as long as that was
+//! true this table mapped `_l` to our `…Right`, which looked like a bug and was
+//! not. #142 moved our limb names onto the sides they describe, so the table is
+//! now plain name to name. Thirty of the library's 162 clips are one-handed, so
+//! which way round this goes is not a detail.
 //!
 //! Our side of the table is a [`Slot`] — a zone and an ordinal — never a joint
 //! index, because indices depend on what a body turned out to have.
@@ -77,7 +77,13 @@ use crate::rig::Rig;
 /// reference's own quantisation collapses, tight enough that real motion does
 /// not: measured on the library, this leaves 45 of 66 tracks held through
 /// `Walk`, which is the figure [`PoseClip`] is sized against.
-const STILL: f32 = 1e-3;
+///
+/// **Public so that a tool measuring the source's own collapse rate asks the
+/// same question with the same number.** `examples/bakeclips` compares how many
+/// joints the reference moves against how many tracks we bake, and that
+/// comparison means nothing if the two sides use different thresholds — which
+/// is what a second copy of this constant would eventually become.
+pub const STILL: f32 = 1e-3;
 
 /// Errors raised while retargeting.
 #[derive(Clone, Debug, Error, PartialEq)]
@@ -136,10 +142,11 @@ const fn bone(name: &'static str, zone: Zone, ordinal: u8) -> Bone {
 
 /// The CC0 reference humanoid, bone by bone.
 ///
-/// **`_l` maps to our `…Right` and `_r` to our `…Left`, and that is deliberate**
-/// — see the module docs and #142. The reference's `_l` bones sit at `+X` and
-/// ours at `−X`, both bodies face `+Z`, and glTF's convention puts a character's
-/// left at `+X`. Mapping name to name would mirror every clip.
+/// **Name to name, side for side** — the reference's `_l` bones and our
+/// `Limb::…Left` ones both sit at `+X` on a body facing `+Z`, which is glTF's
+/// convention for a character's left. That agreement is younger than this
+/// table: until #142 our names were mirrored and these rows read `_l` to our
+/// `…Right`.
 ///
 /// Sixty-five of the reference's sixty-six joints are here. The missing one is
 /// its `root`, which sits above the pelvis and carries the whole body; our rig is
@@ -169,72 +176,74 @@ const HUMAN: &[Bone] = &[
     bone("head",      Zone::Head,    0),
     bone("head_leaf", Zone::Head,    1),
 
-    // The reference's LEFT arm, onto the arm of ours that sits where a left arm
-    // sits. Our clavicle at +X is Chest[3]; the wrist is what the reference
-    // calls `hand`, because that is the joint its fingers hang from.
+    // The reference's LEFT arm onto our left arm. Our clavicle at +X is
+    // Chest[3] — the clavicles are the one pair addressed by ordinal rather than
+    // by `Limb`, because both of them live in `Zone::Chest`. The wrist is what
+    // the reference calls `hand`, because that is the joint its fingers hang
+    // from.
     bone("clavicle_l", Zone::Chest, 3),
-    bone("upperarm_l", Zone::UpperLimb(Limb::ForeRight), 0),
-    bone("lowerarm_l", Zone::UpperLimb(Limb::ForeRight), 1),
-    bone("hand_l",     Zone::LowerLimb(Limb::ForeRight), 0),
-    bone("index_01_l",      Zone::Extremity(Limb::ForeRight),  1),
-    bone("index_02_l",      Zone::Extremity(Limb::ForeRight),  2),
-    bone("index_03_l",      Zone::Extremity(Limb::ForeRight),  3),
-    bone("index_04_leaf_l", Zone::Extremity(Limb::ForeRight),  4),
-    bone("middle_01_l",      Zone::Extremity(Limb::ForeRight),  5),
-    bone("middle_02_l",      Zone::Extremity(Limb::ForeRight),  6),
-    bone("middle_03_l",      Zone::Extremity(Limb::ForeRight),  7),
-    bone("middle_04_leaf_l", Zone::Extremity(Limb::ForeRight),  8),
-    bone("ring_01_l",      Zone::Extremity(Limb::ForeRight),  9),
-    bone("ring_02_l",      Zone::Extremity(Limb::ForeRight), 10),
-    bone("ring_03_l",      Zone::Extremity(Limb::ForeRight), 11),
-    bone("ring_04_leaf_l", Zone::Extremity(Limb::ForeRight), 12),
-    bone("pinky_01_l",      Zone::Extremity(Limb::ForeRight), 13),
-    bone("pinky_02_l",      Zone::Extremity(Limb::ForeRight), 14),
-    bone("pinky_03_l",      Zone::Extremity(Limb::ForeRight), 15),
-    bone("pinky_04_leaf_l", Zone::Extremity(Limb::ForeRight), 16),
-    bone("thumb_01_l",      Zone::Extremity(Limb::ForeRight), 17),
-    bone("thumb_02_l",      Zone::Extremity(Limb::ForeRight), 18),
-    bone("thumb_03_l",      Zone::Extremity(Limb::ForeRight), 19),
-    bone("thumb_04_leaf_l", Zone::Extremity(Limb::ForeRight), 20),
+    bone("upperarm_l", Zone::UpperLimb(Limb::ForeLeft), 0),
+    bone("lowerarm_l", Zone::UpperLimb(Limb::ForeLeft), 1),
+    bone("hand_l",     Zone::LowerLimb(Limb::ForeLeft), 0),
+    bone("index_01_l",      Zone::Extremity(Limb::ForeLeft),  1),
+    bone("index_02_l",      Zone::Extremity(Limb::ForeLeft),  2),
+    bone("index_03_l",      Zone::Extremity(Limb::ForeLeft),  3),
+    bone("index_04_leaf_l", Zone::Extremity(Limb::ForeLeft),  4),
+    bone("middle_01_l",      Zone::Extremity(Limb::ForeLeft),  5),
+    bone("middle_02_l",      Zone::Extremity(Limb::ForeLeft),  6),
+    bone("middle_03_l",      Zone::Extremity(Limb::ForeLeft),  7),
+    bone("middle_04_leaf_l", Zone::Extremity(Limb::ForeLeft),  8),
+    bone("ring_01_l",      Zone::Extremity(Limb::ForeLeft),  9),
+    bone("ring_02_l",      Zone::Extremity(Limb::ForeLeft), 10),
+    bone("ring_03_l",      Zone::Extremity(Limb::ForeLeft), 11),
+    bone("ring_04_leaf_l", Zone::Extremity(Limb::ForeLeft), 12),
+    bone("pinky_01_l",      Zone::Extremity(Limb::ForeLeft), 13),
+    bone("pinky_02_l",      Zone::Extremity(Limb::ForeLeft), 14),
+    bone("pinky_03_l",      Zone::Extremity(Limb::ForeLeft), 15),
+    bone("pinky_04_leaf_l", Zone::Extremity(Limb::ForeLeft), 16),
+    bone("thumb_01_l",      Zone::Extremity(Limb::ForeLeft), 17),
+    bone("thumb_02_l",      Zone::Extremity(Limb::ForeLeft), 18),
+    bone("thumb_03_l",      Zone::Extremity(Limb::ForeLeft), 19),
+    bone("thumb_04_leaf_l", Zone::Extremity(Limb::ForeLeft), 20),
 
-    // And its right arm onto ours at −X.
+    // And its right arm onto ours, whose clavicle is the one at −X.
     bone("clavicle_r", Zone::Chest, 2),
-    bone("upperarm_r", Zone::UpperLimb(Limb::ForeLeft), 0),
-    bone("lowerarm_r", Zone::UpperLimb(Limb::ForeLeft), 1),
-    bone("hand_r",     Zone::LowerLimb(Limb::ForeLeft), 0),
-    bone("index_01_r",      Zone::Extremity(Limb::ForeLeft),  1),
-    bone("index_02_r",      Zone::Extremity(Limb::ForeLeft),  2),
-    bone("index_03_r",      Zone::Extremity(Limb::ForeLeft),  3),
-    bone("index_04_leaf_r", Zone::Extremity(Limb::ForeLeft),  4),
-    bone("middle_01_r",      Zone::Extremity(Limb::ForeLeft),  5),
-    bone("middle_02_r",      Zone::Extremity(Limb::ForeLeft),  6),
-    bone("middle_03_r",      Zone::Extremity(Limb::ForeLeft),  7),
-    bone("middle_04_leaf_r", Zone::Extremity(Limb::ForeLeft),  8),
-    bone("ring_01_r",      Zone::Extremity(Limb::ForeLeft),  9),
-    bone("ring_02_r",      Zone::Extremity(Limb::ForeLeft), 10),
-    bone("ring_03_r",      Zone::Extremity(Limb::ForeLeft), 11),
-    bone("ring_04_leaf_r", Zone::Extremity(Limb::ForeLeft), 12),
-    bone("pinky_01_r",      Zone::Extremity(Limb::ForeLeft), 13),
-    bone("pinky_02_r",      Zone::Extremity(Limb::ForeLeft), 14),
-    bone("pinky_03_r",      Zone::Extremity(Limb::ForeLeft), 15),
-    bone("pinky_04_leaf_r", Zone::Extremity(Limb::ForeLeft), 16),
-    bone("thumb_01_r",      Zone::Extremity(Limb::ForeLeft), 17),
-    bone("thumb_02_r",      Zone::Extremity(Limb::ForeLeft), 18),
-    bone("thumb_03_r",      Zone::Extremity(Limb::ForeLeft), 19),
-    bone("thumb_04_leaf_r", Zone::Extremity(Limb::ForeLeft), 20),
+    bone("upperarm_r", Zone::UpperLimb(Limb::ForeRight), 0),
+    bone("lowerarm_r", Zone::UpperLimb(Limb::ForeRight), 1),
+    bone("hand_r",     Zone::LowerLimb(Limb::ForeRight), 0),
+    bone("index_01_r",      Zone::Extremity(Limb::ForeRight),  1),
+    bone("index_02_r",      Zone::Extremity(Limb::ForeRight),  2),
+    bone("index_03_r",      Zone::Extremity(Limb::ForeRight),  3),
+    bone("index_04_leaf_r", Zone::Extremity(Limb::ForeRight),  4),
+    bone("middle_01_r",      Zone::Extremity(Limb::ForeRight),  5),
+    bone("middle_02_r",      Zone::Extremity(Limb::ForeRight),  6),
+    bone("middle_03_r",      Zone::Extremity(Limb::ForeRight),  7),
+    bone("middle_04_leaf_r", Zone::Extremity(Limb::ForeRight),  8),
+    bone("ring_01_r",      Zone::Extremity(Limb::ForeRight),  9),
+    bone("ring_02_r",      Zone::Extremity(Limb::ForeRight), 10),
+    bone("ring_03_r",      Zone::Extremity(Limb::ForeRight), 11),
+    bone("ring_04_leaf_r", Zone::Extremity(Limb::ForeRight), 12),
+    bone("pinky_01_r",      Zone::Extremity(Limb::ForeRight), 13),
+    bone("pinky_02_r",      Zone::Extremity(Limb::ForeRight), 14),
+    bone("pinky_03_r",      Zone::Extremity(Limb::ForeRight), 15),
+    bone("pinky_04_leaf_r", Zone::Extremity(Limb::ForeRight), 16),
+    bone("thumb_01_r",      Zone::Extremity(Limb::ForeRight), 17),
+    bone("thumb_02_r",      Zone::Extremity(Limb::ForeRight), 18),
+    bone("thumb_03_r",      Zone::Extremity(Limb::ForeRight), 19),
+    bone("thumb_04_leaf_r", Zone::Extremity(Limb::ForeRight), 20),
 
-    // The legs, the same way round. `foot` is the ankle; `ball` and its leaf are
-    // the two nodes ours carries forward of it.
-    bone("thigh_l",     Zone::UpperLimb(Limb::HindRight), 0),
-    bone("calf_l",      Zone::UpperLimb(Limb::HindRight), 1),
-    bone("foot_l",      Zone::LowerLimb(Limb::HindRight), 0),
-    bone("ball_l",      Zone::Extremity(Limb::HindRight), 2),
-    bone("ball_leaf_l", Zone::Extremity(Limb::HindRight), 3),
-    bone("thigh_r",     Zone::UpperLimb(Limb::HindLeft), 0),
-    bone("calf_r",      Zone::UpperLimb(Limb::HindLeft), 1),
-    bone("foot_r",      Zone::LowerLimb(Limb::HindLeft), 0),
-    bone("ball_r",      Zone::Extremity(Limb::HindLeft), 2),
-    bone("ball_leaf_r", Zone::Extremity(Limb::HindLeft), 3),
+    // The legs, name to name as well. `foot` is the ankle; `ball` and its leaf
+    // are the two nodes ours carries forward of it.
+    bone("thigh_l",     Zone::UpperLimb(Limb::HindLeft), 0),
+    bone("calf_l",      Zone::UpperLimb(Limb::HindLeft), 1),
+    bone("foot_l",      Zone::LowerLimb(Limb::HindLeft), 0),
+    bone("ball_l",      Zone::Extremity(Limb::HindLeft), 2),
+    bone("ball_leaf_l", Zone::Extremity(Limb::HindLeft), 3),
+    bone("thigh_r",     Zone::UpperLimb(Limb::HindRight), 0),
+    bone("calf_r",      Zone::UpperLimb(Limb::HindRight), 1),
+    bone("foot_r",      Zone::LowerLimb(Limb::HindRight), 0),
+    bone("ball_r",      Zone::Extremity(Limb::HindRight), 2),
+    bone("ball_leaf_r", Zone::Extremity(Limb::HindRight), 3),
 ];
 
 /// How few slots may land before a body is not the one [`HUMAN`] describes.
@@ -600,6 +609,14 @@ mod tests {
     /// reads them skips with a printed reason when they are absent.
     const LIBRARY: &str = "../mesh2motion-app/static/animations/human-base-animations.glb";
 
+    /// A clip performed with one hand, for the test that asks which hand.
+    ///
+    /// A cross is thrown with the rear hand and the other stays at the guard,
+    /// which is about as one-sided as this library gets. Thirty of its 162
+    /// clips are one-handed; any of them would do, and this one is named for
+    /// the punch rather than for a side, which is the point.
+    const CROSS: &str = "Punch_Cross";
+
     /// The reference library and a body matched to it, or `None` to skip.
     fn matched() -> Option<(Gltf, Correspondence, crate::Avatar)> {
         let Ok(bytes) = std::fs::read(LIBRARY) else {
@@ -613,6 +630,43 @@ mod tests {
         let matched =
             Correspondence::human(&avatar.rig, &library, &skin).expect("the reference matches");
         Some((library, matched, avatar))
+    }
+
+    #[test]
+    fn the_clavicles_are_pinned_to_their_sides_by_ordinal() {
+        // **The one place in the crate where a side rides on an ordinal.** Both
+        // clavicles live in `Zone::Chest`, so `HUMAN` can only address them as
+        // `Chest[2]` and `Chest[3]` — and which of them is which is decided by
+        // the order `plan::humanoid` inserts its two limbs, since
+        // `Rig::from_skeleton` numbers breadth-first and siblings keep insertion
+        // order. Reordering those two rows is a tidy anybody might make, and it
+        // would put every clip's shoulders on the wrong sides with no other
+        // symptom. This is what stops it.
+        //
+        // Needs no reference file: it is a fact about our own rig.
+        let record = crate::AvatarRecord::new("Pinned", crate::Archetype::default());
+        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let chest = avatar.rig.in_zone(Zone::Chest);
+        assert_eq!(chest.len(), 4, "spine, spine, and two clavicles");
+        assert!(
+            avatar.rig.joints[chest[2]].position.x < 0.0,
+            "Chest[2] is the clavicle at -X, which is the body's RIGHT"
+        );
+        assert!(
+            avatar.rig.joints[chest[3]].position.x > 0.0,
+            "Chest[3] is the clavicle at +X, which is the body's LEFT"
+        );
+
+        // And the rows that read those ordinals still say so.
+        let of = |name: &str| {
+            HUMAN
+                .iter()
+                .find(|bone| bone.name == name)
+                .expect("a clavicle row")
+                .ordinal
+        };
+        assert_eq!(of("clavicle_l"), 3, "the reference's left is our +X");
+        assert_eq!(of("clavicle_r"), 2);
     }
 
     #[test]
@@ -701,6 +755,98 @@ mod tests {
             worst < 0.5,
             "a retargeted bone points {worst:.2} degrees away from the one it follows, \
              of {checked} read"
+        );
+    }
+
+    #[test]
+    fn a_one_sided_clip_lands_on_the_hand_that_performed_it() {
+        // **The one thing the audit's numbers cannot say.** Joints matched,
+        // worst bone error, moving-track count and baked size are every one of
+        // them invariant under a mirror, so a correspondence with its sides
+        // swapped scores exactly as well as a correct one — which is how #142
+        // went unnoticed until somebody measured X. This asks the only question
+        // that separates them: the reference punches with ONE hand, so which of
+        // ours moves?
+        //
+        // Asked of the motion rather than of the clip's title, because a title
+        // is somebody else's word for a side and this crate's whole standing
+        // finding is that names lie. Travel is measured against the pelvis so
+        // that root motion, which both hands share, cannot drown the answer.
+        let Some((library, matched, avatar)) = matched() else {
+            return;
+        };
+        let skin = library.skin(0).expect("a skin");
+        let animation = library.clip(CROSS).expect("the reference has a cross");
+        let node = |name: &str| {
+            skin.names
+                .iter()
+                .position(|had| had == name)
+                .map(|at| skin.nodes[at])
+                .expect("a named bone")
+        };
+        let (their_left, their_right, their_root) =
+            (node("hand_l"), node("hand_r"), node("pelvis"));
+
+        let rig = &avatar.rig;
+        let ours = |limb| {
+            Slot::new(Zone::LowerLimb(limb), 0)
+                .resolve(rig)
+                .expect("a wrist")
+        };
+        let (our_left, our_right) = (ours(Limb::ForeLeft), ours(Limb::ForeRight));
+
+        let baked = clip(rig, &library, &matched, animation, 30.0, false).expect("it retargets");
+        let frames = 24;
+        let mut travel = [0.0f32; 4];
+        let mut last: Option<[Vec3; 4]> = None;
+        for frame in 0..frames {
+            let time = baked.duration() * frame as f32 / frames as f32;
+            let posed = library.sample(animation, time).expect("the source samples");
+            let at = |node: usize| posed[node].transform_point3(Vec3::ZERO);
+            let their_hip = at(their_root);
+
+            let ours_posed = baked.pose(rig, time).forward(rig);
+            let our_hip = ours_posed.positions[0];
+
+            let now = [
+                at(their_left) - their_hip,
+                at(their_right) - their_hip,
+                ours_posed.positions[our_left] - our_hip,
+                ours_posed.positions[our_right] - our_hip,
+            ];
+            if let Some(before) = last {
+                // In millimetres, because both rigs are in metres and a figure
+                // printed as "1" against "1" says nothing about a margin.
+                for (sum, (a, b)) in travel.iter_mut().zip(before.iter().zip(now.iter())) {
+                    *sum += a.distance(*b) * 1000.0;
+                }
+            }
+            last = Some(now);
+        }
+
+        // A margin, not a tie-break: the idle hand in a cross still drifts, so
+        // the busy one has to be clearly busier before either body is said to
+        // have a punching side at all. Measured on Punch_Cross, the reference's
+        // busy hand travels about four times its other.
+        let clear = |busy: f32, idle: f32| busy > idle * 1.5;
+        let [their_l, their_r, our_l, our_r] = travel;
+        assert!(
+            clear(their_l, their_r) || clear(their_r, their_l),
+            "{CROSS} is not one-sided on the reference: hand_l travelled \
+             {their_l:.0} mm and hand_r {their_r:.0} mm, so it cannot judge a side"
+        );
+        assert_eq!(
+            their_l > their_r,
+            our_l > our_r,
+            "the reference punched with its {} hand and we punched with our {} \
+             one: the correspondence is mirrored. Reference travel {their_l:.0} \
+             mm left against {their_r:.0} right; ours {our_l:.0} against {our_r:.0}",
+            if their_l > their_r { "left" } else { "right" },
+            if our_l > our_r { "left" } else { "right" }
+        );
+        assert!(
+            clear(our_l.max(our_r), our_l.min(our_r)),
+            "our punch is not one-sided at all: {our_l:.0} mm against {our_r:.0}"
         );
     }
 

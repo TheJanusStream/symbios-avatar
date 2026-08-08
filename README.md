@@ -1,8 +1,13 @@
 # symbios-avatar
 
 Parametric humanoid and creature bodies, generated entirely from code — no base
-mesh, no shipped assets, no third-party model licences. The engine-agnostic half
-of the pair; [`bevy_symbios_avatar`] binds it to Bevy.
+mesh and no third-party model licences. The engine-agnostic half of the pair;
+[`bevy_symbios_avatar`] binds it to Bevy.
+
+One asset is shipped, and it is motion rather than geometry: `assets/clips.bin`
+holds twelve animations retargeted from a CC0 reference library. Every body is
+still generated. See [`docs/clips.md`](docs/clips.md) for which clip came from
+where.
 
 ```text
 Record  ──►  Skeleton  ──►  control cage  ──►  Catmull-Clark  ──►  render mesh
@@ -300,6 +305,12 @@ Eyes and hair, outfits, and glTF/VRM export are still ahead — see
 
 ## Licence
 
-MIT.
+MIT, for the code.
+
+`assets/clips.bin` is derived from [mesh2motion](https://github.com/scottpetrovic/mesh2motion-app)'s
+animations, which are CC0 1.0 — a public-domain dedication that asks for nothing,
+including attribution. [`docs/clips.md`](docs/clips.md) records what was taken
+anyway. mesh2motion's retargeting *code* is MIT and none of it was copied; it was
+read while ours was designed, and ours is a different formulation.
 
 [`bevy_symbios_avatar`]: https://github.com/TheJanusStream/bevy_symbios_avatar

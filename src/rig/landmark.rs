@@ -263,10 +263,15 @@ mod tests {
         let marks = biped();
         let x = |l: Landmark| marks.get(l).expect("present").position.x;
 
-        assert!(x(Landmark::LimbTip(Limb::ForeLeft)) < 0.0);
-        assert!(x(Landmark::LimbTip(Limb::ForeRight)) > 0.0);
-        assert!(x(Landmark::LimbRoot(Limb::HindLeft)) < 0.0);
-        assert!(x(Landmark::LimbRoot(Limb::HindRight)) > 0.0);
+        // Left is `+X` on a body facing `+Z` — see [`crate::plan::Limb`], and
+        // #142 for the pass that moved our names onto the sides they name. The
+        // signs here are absolute for the reason given there: comparing the two
+        // limbs against each other would pass on a body that was simply the
+        // wrong way round.
+        assert!(x(Landmark::LimbTip(Limb::ForeLeft)) > 0.0);
+        assert!(x(Landmark::LimbTip(Limb::ForeRight)) < 0.0);
+        assert!(x(Landmark::LimbRoot(Limb::HindLeft)) > 0.0);
+        assert!(x(Landmark::LimbRoot(Limb::HindRight)) < 0.0);
     }
 
     #[test]
