@@ -26,26 +26,44 @@
 //! Our side of the table is a [`Slot`] — a zone and an ordinal — never a joint
 //! index, because indices depend on what a body turned out to have.
 //!
-//! # Why directions and not deltas
+//! # Why directions for a limb and deltas for a spine
 //!
 //! The obvious transfer is per-joint: take the rotation the animator applied
 //! relative to the reference's rest, and apply it relative to ours. It is cheap,
 //! it needs no solver, and it carries twist for free.
 //!
-//! It does not work here, and the measurement that says so is at #139: **the
-//! reference rests in a true T-pose and we rest in an A-pose, forty degrees
-//! apart at the shoulder.** A delta reproduces our rest plus their motion, so an
-//! absolute pose — folded arms, a hand on a hip, a bow — lands forty degrees
-//! out. So bone DIRECTIONS are matched instead, which is scale-free and puts the
-//! limb where the animator put it.
+//! It does not work for a LIMB, and the measurement that says so is at #139:
+//! **the reference rests in a true T-pose and we rest in an A-pose, forty
+//! degrees apart at the shoulder.** A delta reproduces our rest plus their
+//! motion, so an absolute pose — folded arms, a hand on a hip, a fist at the
+//! chin — lands forty degrees out. So bone DIRECTIONS are matched instead, which
+//! is scale-free and puts the limb where the animator put it.
+//!
+//! **And a delta is the only thing that works for the SPINE, which took #143 to
+//! find out.** The same rest difference exists in the neck and runs the other
+//! way: the reference rests with its head carried **26.2 degrees** forward of
+//! vertical and ours rests at **6.4**, so pointing our neck where theirs points
+//! imported twenty degrees of somebody else's posture into every clip — whether
+//! or not the animator had touched the neck at all. On a body whose neck is also
+//! 1.8 times the reference's length, that carried the head 72 mm forward against
+//! their 40, and it read as a broken neck rather than as a walk.
+//!
+//! The distinction is not which is *better*. It is what the two kinds of bone
+//! mean. An arm folded across a chest is a place the animator chose and has to
+//! be reproduced as a place; a nod is a nod **relative to the shoulders it sits
+//! on**, and nobody authors an absolute neck angle. So the carriage is a per-row
+//! property of the correspondence table — per row rather than per zone, because
+//! the clavicles live in [`Zone::Chest`] with the spine and are limb roots by
+//! function.
 //!
 //! The price is that a direction says nothing about roll about its own axis, and
 //! a wave, a forearm and a sword swing are all roll. So the roll is not derived
 //! from the direction at all: the transfer applies the reference's whole world
 //! rotation first — which carries it — and then makes the smallest correction
-//! that puts the bone back on the direction theirs points. See
-//! [`Correspondence::pose_into`], which also records what the first draft got
-//! wrong and what it cost.
+//! that puts the bone back on the direction theirs points. That correction is
+//! exactly the carriage import, so a relative bone is the same formula with the
+//! correction left off. See [`Correspondence::pose_into`], which also records
+//! what the first draft got wrong and what it cost.
 //!
 //! `anim::ik`'s own `retarget` was the obvious thing to reuse and does not
 //! fit: it exists to make a chain land on positions an IK solve produced, it
@@ -121,6 +139,36 @@ pub enum RetargetError {
     },
 }
 
+/// Whether a bone takes the reference's posture or only its motion.
+///
+/// **The one thing a retarget cannot decide for itself**, because the two rigs
+/// rest in different postures and there is no reading of the source that says
+/// which of those two the animator meant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Carriage {
+    /// Point our bone where the reference's bone points.
+    ///
+    /// What a limb wants. Folded arms, a hand on a hip and a fist at the chin
+    /// are absolute positions the animator chose, and reproducing them means
+    /// reproducing the angle whatever our own rest happens to be — which at the
+    /// shoulder is forty degrees away from theirs, A-pose against T-pose (#139).
+    Absolute,
+    /// Turn our bone by however much the reference turned its own.
+    ///
+    /// What the spine wants, and #143 is what it cost to find that out. The
+    /// reference rests with its head carried **26.2 degrees** forward of
+    /// vertical and ours rests at **6.4**, so pointing our neck where theirs
+    /// points imported twenty degrees of somebody else's posture into every clip
+    /// — whether or not the animator had touched the neck at all. Nobody authors
+    /// an absolute neck angle; a nod is a nod relative to the shoulders it sits
+    /// on.
+    ///
+    /// It is one term in the transfer: the `arc` that drags our bone the rest of
+    /// the way onto theirs is exactly the carriage import, so a relative bone is
+    /// the same formula without it.
+    Relative,
+}
+
 /// One reference bone, and the joint of ours it drives.
 struct Bone {
     /// What the reference calls it.
@@ -129,14 +177,33 @@ struct Bone {
     zone: Zone,
     /// Which joint of that zone, in the order [`Rig::in_zone`] returns them.
     ordinal: u8,
+    /// Whether it takes the reference's posture or only its motion.
+    carriage: Carriage,
 }
 
-/// Shorthand for one row of [`HUMAN`].
+/// Shorthand for one row of [`HUMAN`] that points where the reference points.
 const fn bone(name: &'static str, zone: Zone, ordinal: u8) -> Bone {
     Bone {
         name,
         zone,
         ordinal,
+        carriage: Carriage::Absolute,
+    }
+}
+
+/// Shorthand for one row of [`HUMAN`] that keeps our own posture.
+///
+/// The axial skeleton, and only it. The clavicles live in [`Zone::Chest`]
+/// alongside the spine and are **not** axial: they are limb roots by function,
+/// and their rest differs from ours enough that pointing them where the
+/// reference points is earning its keep. So this cannot be decided by zone and
+/// is decided per row.
+const fn axial(name: &'static str, zone: Zone, ordinal: u8) -> Bone {
+    Bone {
+        name,
+        zone,
+        ordinal,
+        carriage: Carriage::Relative,
     }
 }
 
@@ -167,14 +234,15 @@ const fn bone(name: &'static str, zone: Zone, ordinal: u8) -> Bone {
 /// skeletons, and every row below was read off that table.
 #[rustfmt::skip]
 const HUMAN: &[Bone] = &[
-    // The spine, seven against seven.
-    bone("pelvis",    Zone::Pelvis,  0),
-    bone("spine_01",  Zone::Abdomen, 0),
-    bone("spine_02",  Zone::Chest,   0),
-    bone("spine_03",  Zone::Chest,   1),
-    bone("neck_01",   Zone::Neck,    0),
-    bone("head",      Zone::Head,    0),
-    bone("head_leaf", Zone::Head,    1),
+    // The spine, seven against seven — and every one of them RELATIVE, so a
+    // body keeps its own carriage and gains the reference's motion (#143).
+    axial("pelvis",    Zone::Pelvis,  0),
+    axial("spine_01",  Zone::Abdomen, 0),
+    axial("spine_02",  Zone::Chest,   0),
+    axial("spine_03",  Zone::Chest,   1),
+    axial("neck_01",   Zone::Neck,    0),
+    axial("head",      Zone::Head,    0),
+    axial("head_leaf", Zone::Head,    1),
 
     // The reference's LEFT arm onto our left arm. Our clavicle at +X is
     // Chest[3] — the clavicles are the one pair addressed by ordinal rather than
@@ -266,6 +334,8 @@ struct Pair {
     /// `None` for a leaf. A leaf's rotation moves nothing on the body — see
     /// [`crate::rig::skin`] — so it is left at rest rather than guessed at.
     toward: Option<(usize, usize)>,
+    /// Whether this bone takes the reference's posture or only its motion.
+    carriage: Carriage,
 }
 
 /// The reference rig, matched to one of ours.
@@ -312,12 +382,12 @@ impl Correspondence {
         // Our joint for each reference bone, and the reverse. Both are needed:
         // the walk goes down OUR hierarchy and has to find the reference joint
         // beside each of ours.
-        let mut theirs_of_ours: Vec<Option<usize>> = vec![None; rig.len()];
+        let mut theirs_of_ours: Vec<Option<(usize, Carriage)>> = vec![None; rig.len()];
         let mut landed = 0usize;
         for entry in HUMAN {
             let node = node_of(entry.name)?;
             if let Some(joint) = Slot::new(entry.zone, entry.ordinal).resolve(rig) {
-                theirs_of_ours[joint] = Some(node);
+                theirs_of_ours[joint] = Some((node, entry.carriage));
                 landed += 1;
             }
         }
@@ -342,7 +412,7 @@ impl Correspondence {
         let mut pairs = Vec::with_capacity(landed);
         let mut of_joint = vec![None; rig.len()];
         for ours in 0..rig.len() {
-            let Some(theirs) = theirs_of_ours[ours] else {
+            let Some((theirs, carriage)) = theirs_of_ours[ours] else {
                 continue;
             };
             of_joint[ours] = Some(pairs.len());
@@ -350,6 +420,7 @@ impl Correspondence {
                 ours,
                 theirs,
                 toward: next_mapped(ours, &children, &theirs_of_ours),
+                carriage,
             });
         }
 
@@ -433,6 +504,11 @@ impl Correspondence {
     /// and it is needed only because our rest pose is not theirs: forty degrees
     /// apart at the shoulder, A-pose against T-pose (#139).
     ///
+    /// **The `arc` is dropped for a bone marked relative in the table**, leaving
+    /// `W = D`: our own rest direction turned by exactly what the animator did.
+    /// That is what the spine wants, and the module docs carry the 26.2 against
+    /// 6.4 degrees that made it necessary (#143).
+    ///
     /// **The order matters and the first draft had it wrong.** Reading the roll
     /// out of `D` as an angle and applying it about our own bone in the LOCAL
     /// frame mixes two frames, and the cost is not subtle: a finger rigidly
@@ -476,7 +552,13 @@ impl Correspondence {
                         return None;
                     }
                     let moved = spin(posed, pair.theirs) * spin(&self.rest, pair.theirs).inverse();
-                    Some(Quat::from_rotation_arc(moved * was, wants) * moved)
+                    Some(match pair.carriage {
+                        // The arc is the carriage: it drags our bone the rest of
+                        // the way onto theirs, which is what a limb wants and
+                        // what a spine must not have (#143).
+                        Carriage::Absolute => Quat::from_rotation_arc(moved * was, wants) * moved,
+                        Carriage::Relative => moved,
+                    })
                 })
                 .unwrap_or(parent);
 
@@ -583,14 +665,14 @@ fn slot_of(rig: &Rig, joint: usize) -> Option<Slot> {
 fn next_mapped(
     from: usize,
     children: &[Vec<usize>],
-    theirs_of_ours: &[Option<usize>],
+    theirs_of_ours: &[Option<(usize, Carriage)>],
 ) -> Option<(usize, usize)> {
     let mut queue: Vec<usize> = children[from].clone();
     let mut at = 0usize;
     while at < queue.len() {
         let joint = queue[at];
         at += 1;
-        if let Some(theirs) = theirs_of_ours[joint] {
+        if let Some((theirs, _)) = theirs_of_ours[joint] {
             return Some((joint, theirs));
         }
         queue.extend_from_slice(&children[joint]);
@@ -719,13 +801,19 @@ mod tests {
     }
 
     #[test]
-    fn a_retargeted_pose_points_our_bones_where_the_reference_points_its_own() {
+    fn a_retargeted_limb_points_where_the_reference_points_its_own() {
         // The contract of the swing, measured as an angle rather than trusted:
-        // for every mapped bone with a child, the direction ours ends up
+        // for every mapped LIMB bone with a child, the direction ours ends up
         // pointing must match the direction theirs points, to within the
         // arithmetic's noise. This is what a wrong parent frame breaks, and it
         // breaks it by doubling a correction rather than by ignoring it — so the
         // failure is a limb bent twice as far, which reads as a plausible pose.
+        //
+        // **Limbs only, and the axial bones get their own assertion below rather
+        // than a loosened threshold here.** They are [`Carriage::Relative`] and
+        // deliberately do NOT point where the reference points (#143); folding
+        // them in would mean raising this bound to twenty degrees, at which
+        // point it would no longer catch the defect it was written for.
         let Some((library, matched, avatar)) = matched() else {
             return;
         };
@@ -742,19 +830,105 @@ mod tests {
             matched.pose_into(rig, &posed, &mut pose);
             let ours = pose.forward(rig);
 
-            for (_, off) in matched.bone_errors(&posed, &ours) {
+            for (joint, off) in matched.bone_errors(&posed, &ours) {
+                if rig.joints[joint].zone.is_core() {
+                    continue;
+                }
                 checked += 1;
                 worst = worst.max(off);
             }
         }
         assert!(
-            checked > 400,
-            "only {checked} bones were read; the filter, not the retarget, is what this measures"
+            checked > 350,
+            "only {checked} limb bones were read; the filter, not the retarget, is what \
+             this measures"
         );
         assert!(
             worst < 0.5,
-            "a retargeted bone points {worst:.2} degrees away from the one it follows, \
+            "a retargeted limb bone points {worst:.2} degrees away from the one it follows, \
              of {checked} read"
+        );
+    }
+
+    #[test]
+    fn the_spine_keeps_our_carriage_rather_than_the_reference_s() {
+        // **The other half, and it has to be asserted in both directions.** A
+        // relative bone must not point where the reference's points -- that is
+        // the whole object -- but it must not wander either: it should sit near
+        // OUR rest direction, turned by what the animator actually did.
+        //
+        // Measured at #143: the reference rests with its neck 26.2 degrees
+        // forward of vertical and ours rests at 6.4, so an absolute transfer
+        // dragged twenty degrees of somebody else's posture into every clip.
+        let Some((library, matched, avatar)) = matched() else {
+            return;
+        };
+        let rig = &avatar.rig;
+        let walk = library.clip("Walk").expect("the reference has a Walk");
+        let duration = library.duration(walk).expect("a duration");
+
+        let skin = library.skin(0).expect("a skin");
+        let node = |name: &str| {
+            skin.names
+                .iter()
+                .position(|had| had == name)
+                .map(|at| skin.nodes[at])
+                .expect("a named bone")
+        };
+        let rest = library.rest().expect("a rest pose");
+        let neck = Slot::new(Zone::Neck, 0).resolve(rig).expect("a neck");
+        let head = Slot::new(Zone::Head, 0).resolve(rig).expect("a head");
+        let lean = |from: Vec3, to: Vec3| (to - from).z.atan2((to - from).y).to_degrees();
+        let at = |world: &[Mat4], node: usize| world[node].transform_point3(Vec3::ZERO);
+
+        // **Each rig's drift from its OWN rest**, which is what a relative
+        // transfer promises to carry across. Comparing absolute leans would only
+        // restate the twenty degrees of carriage that this exists to remove.
+        let our_rest = lean(rig.joints[neck].position, rig.joints[head].position);
+        let their_rest = lean(at(&rest, node("neck_01")), at(&rest, node("head")));
+
+        let mut worst_apart: f32 = 0.0;
+        let mut moved: f32 = 0.0;
+        let mut disagreed: f32 = 0.0;
+        for step in 0..8 {
+            let time = duration * step as f32 / 8.0;
+            let posed = library.sample(walk, time).expect("a pose");
+            let mut pose = Pose::rest(rig);
+            matched.pose_into(rig, &posed, &mut pose);
+            let ours = pose.forward(rig);
+
+            let theirs = lean(at(&posed, node("neck_01")), at(&posed, node("head"))) - their_rest;
+            let mine = lean(ours.positions[neck], ours.positions[head]) - our_rest;
+            worst_apart = worst_apart.max((mine - theirs).abs());
+            moved = moved.max(theirs.abs());
+
+            for (joint, off) in matched.bone_errors(&posed, &ours) {
+                if rig.joints[joint].zone.is_core() {
+                    disagreed = disagreed.max(off);
+                }
+            }
+        }
+
+        // The animator's own neck motion has to be worth carrying, or agreeing
+        // about it says nothing — a transfer that froze the neck solid would
+        // pass an agreement test against a source that never moved it.
+        assert!(
+            moved > 3.0,
+            "the reference barely moves its neck through this clip ({moved:.1} degrees), \
+             so agreeing with it proves nothing"
+        );
+        assert!(
+            worst_apart < 2.0,
+            "our neck's drift from its own rest disagrees with the reference's by \
+             {worst_apart:.1} degrees; a relative bone should carry the motion and \
+             nothing else"
+        );
+        // And it must actually differ from the reference in ABSOLUTE terms, or
+        // the arc is still being applied and the distinction does nothing.
+        assert!(
+            disagreed > 10.0,
+            "the axial bones still point within {disagreed:.1} degrees of the reference's, \
+             so the carriage is not being kept after all"
         );
     }
 

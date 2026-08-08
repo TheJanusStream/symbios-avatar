@@ -197,6 +197,8 @@ fn transferred(library: &Gltf, avatar: &Avatar, wanted: &str) {
     );
     let mut worst = 0.0f32;
     let mut worst_at = String::new();
+    let mut axial = 0.0f32;
+    let mut axial_at = String::new();
     let steps = 24;
     for step in 0..steps {
         let time = duration * step as f32 / steps as f32;
@@ -207,13 +209,31 @@ fn transferred(library: &Gltf, avatar: &Avatar, wanted: &str) {
         matched.pose_into(rig, &posed, &mut pose);
         let ours = pose.forward(rig);
         for (joint, off) in matched.bone_errors(&posed, &ours) {
-            if off > worst {
+            // **Split, because the two halves mean opposite things** (#143). A
+            // LIMB is transferred absolutely and must point where the
+            // reference's points, so anything above noise there is a defect. An
+            // AXIAL bone is transferred relatively and deliberately does not:
+            // the number it reports is the difference in rest carriage between
+            // the two rigs, which is 19.9 degrees at the neck and is the whole
+            // reason the distinction exists. One combined figure would read as a
+            // regression the moment the spine started keeping its own posture.
+            if rig.joints[joint].zone.is_core() {
+                if off > axial {
+                    axial = off;
+                    axial_at = format!("{:?} at {time:.2} s", rig.joints[joint].zone);
+                }
+            } else if off > worst {
                 worst = off;
                 worst_at = format!("{:?} at {time:.2} s", rig.joints[joint].zone);
             }
         }
     }
-    println!("  worst bone pointing off by {worst:.3} degrees, {worst_at}");
+    println!("  worst LIMB bone pointing off by {worst:.3} degrees, {worst_at}");
+    println!(
+        "  worst AXIAL bone off by {axial:.3} degrees, {axial_at} — which is not an error:\n\
+         \x20   a relative bone keeps our own carriage, and this is how far the reference's\n\
+         \x20   rest posture is from ours"
+    );
 
     let baked = match retarget::clip(rig, library, &matched, clip, 30.0, true) {
         Ok(baked) => baked,
