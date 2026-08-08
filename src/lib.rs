@@ -101,6 +101,7 @@ pub mod mesh;
 pub mod plan;
 pub mod prim;
 pub mod record;
+pub mod retarget;
 pub mod rig;
 pub mod skeleton;
 pub mod subdiv;

@@ -810,8 +810,17 @@ struct Buffer {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// A two-joint GLB, for tests outside this module that need a readable file
+    /// which is plainly NOT the CC0 reference rig.
+    ///
+    /// Shared rather than rebuilt next door: a second hand-rolled GLB writer is
+    /// a second thing that can be wrong about the container.
+    pub(crate) fn a_two_joint_glb() -> Vec<u8> {
+        arm("LINEAR")
+    }
 
     /// Where the CC0 reference animations sit, relative to this checkout.
     ///
