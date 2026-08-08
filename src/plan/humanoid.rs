@@ -131,6 +131,17 @@ const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
 /// the silhouette ruler in `the_neck_is_the_length_of_a_neck` reads the tuck
 /// at four-decimal nothing on three of five seeds.
 ///
+/// **1.28 → 0.94, with [`NECK_LOBE`] 0.34 → 0.00, and this is the FLOOR of
+/// the mechanism** (#149). The owner judged #148's tuck an improvement and
+/// asked for a lot more; at a lobe of zero the section is symmetric about its
+/// own node and `depth` cannot go lower without pulling the throat back —
+/// which is exactly what the reverted 1.32 attempt did and what
+/// `the_chin_follows_the_jaw_and_not_the_skull` guards. The remaining astern
+/// terms are [`NECK_BACK`]'s 0.35 (the cervical lean, which moves the throat
+/// with it) and the girdle below. Judged across the same four seeds: the back
+/// of the neck now sits inside the occiput's line with a true nape hollow.
+/// Any further tuck is a different mechanism, not a smaller number here.
+///
 /// The paragraph below said this constant was SETTLED against the reference's
 /// own column, and the measurement it stands on is still true — but it was
 /// answering a different question. The reference carries its rear depth fused
@@ -196,7 +207,7 @@ const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
 /// comes back 2.1 mm at mid-neck and 5.3 mm at its worst, in the throat band on
 /// the widest-span seed. It never comes forward, which is the direction that
 /// would matter.
-const NECK_SECTION: Vec2 = Vec2::new(1.0, 1.28);
+const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 
 /// How far astern of its own joint the neck's section is swept, in neck radii.
 ///
@@ -239,11 +250,13 @@ const NECK_SECTION: Vec2 = Vec2::new(1.0, 1.28);
 ///
 /// Provenance: **derived from the reference** (#125), and paired with
 /// [`NECK_SECTION`] rather than chosen against it. The mid-neck depth figures
-/// above were measured at 0.62; **0.62 → 0.34 in #148**, the two moving as one
-/// shape so the throat held at `depth − lobe = 0.94` while the rear came in —
-/// the full record, and why the reference's own rear reach is deferred rather
-/// than matched, is on [`NECK_SECTION`].
-const NECK_LOBE: f32 = 0.34;
+/// above were measured at 0.62; **0.62 → 0.34 in #148, → 0.00 in #149**, the
+/// two moving as one shape so the throat held at `depth − lobe = 0.94` while
+/// the rear came in. Zero is this constant's floor, not its retirement: the
+/// sweep-astern mechanism stays for the day #131's shoulder mass gives the
+/// rear reach something to stand on — the full record, and why the reference's
+/// own rear reach is deferred rather than matched, is on [`NECK_SECTION`].
+const NECK_LOBE: f32 = 0.00;
 
 /// How far behind the midline the neck node sits, in neck radii.
 ///
