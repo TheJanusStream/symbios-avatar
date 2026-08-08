@@ -21,6 +21,10 @@
 //! * [`gait`] — walking, for whatever number of legs a body turns out to have.
 //! * [`Clip`] — authored motion, described by semantic queries and normalised
 //!   goals so one description serves every body.
+//! * [`PoseClip`] — the opposite trade, and it exists because the first one
+//!   cannot be walked back: motion that was performed on a body carries joint
+//!   angles no query recovers, so an imported clip keeps them. Addressed by
+//!   [`Slot`] rather than by joint index, so one bake still meets many bodies.
 //! * [`look_at`] — turning a body toward something, shared down the chain from
 //!   the torso rather than swivelled by the skull alone.
 //! * [`Springs`] — the hair, hems and tails that follow late, which is most of
@@ -56,6 +60,7 @@ pub mod gaze;
 pub mod ground;
 pub mod ik;
 pub mod pose;
+pub mod pose_clip;
 pub mod spring;
 
 pub use blend::Inertializer;
@@ -65,4 +70,5 @@ pub use gaze::{Gaze, GazeConfig, look_at};
 pub use ground::{Footing, FootingConfig, Ground, level_feet, plant_feet, plant_feet_of};
 pub use ik::{FabrikConfig, fabrik, two_bone};
 pub use pose::{Pose, Posed};
+pub use pose_clip::{Curve, JointTrack, Play, PoseClip, Slot};
 pub use spring::{SpringConfig, Springs};
