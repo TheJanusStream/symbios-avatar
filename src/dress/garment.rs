@@ -77,11 +77,90 @@ pub struct Garment {
     pub colour: [f32; 3],
 }
 
+/// Which faces `cut` claims outright, one flag per face of `mesh`.
+///
+/// A face is claimed only if *every* corner of it is in the cut's zones or
+/// reach. Taking faces on a majority instead leaves the hem straddling the
+/// boundary, which puts a ragged edge halfway into the neighbouring zone.
+#[must_use]
+pub fn claimed(mesh: &PolyMesh, zones: &[Zone], cut: &GarmentCut) -> Vec<bool> {
+    let zone_of = |corner: u32| zones.get(corner as usize).copied();
+    mesh.faces
+        .iter()
+        .map(|face| {
+            face.iter().all(|&corner| {
+                zone_of(corner)
+                    .is_some_and(|zone| cut.zones.contains(zone) || cut.reach.contains(zone))
+            }) && face
+                .iter()
+                .any(|&corner| zone_of(corner).is_some_and(|zone| cut.zones.contains(zone)))
+        })
+        .collect()
+}
+
+/// Fills the notches in a claim's hem, in place.
+///
+/// The zone boundary the claim follows is a nearest-bone classification, and
+/// where two bones hold the surface almost equally it wanders vertex by vertex
+/// across a ring — so the raw hem is a zigzag of one-face bites out of the
+/// garment and one-face spurs of it into bare skin (#148, where a neck change
+/// small enough to be invisible re-cut the collar into sawteeth). Rather than
+/// tune geometry until the boundary happens to land between rings, the hem is
+/// smoothed here, where it is made: any unclaimed face sharing two or more
+/// edges with claimed faces is a notch, and is claimed too, to a fixed point.
+/// A face past a straight hem touches it on one edge only, so the fill climbs
+/// concavities and never advances a straight front.
+///
+/// Filling is the only direction that is safe: a garment face is body pushed
+/// outward, so an extra face lies over skin, while *shaving* a spur would open
+/// a hole in anything that counts on the raw claim. `blocked` marks faces some
+/// other garment holds — a notch is never filled across a seam, or the two
+/// garments would claim the same face and flicker (`the_top_and_the_trousers_
+/// do_not_claim_the_same_face`).
+pub fn close(mesh: &PolyMesh, mine: &mut [bool], blocked: &[bool]) {
+    let mut users: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    for (index, face) in mesh.faces.iter().enumerate() {
+        for at in 0..face.len() {
+            let key = edge_key(face[at], face[(at + 1) % face.len()]);
+            users.entry(key).or_default().push(index);
+        }
+    }
+    loop {
+        let mut filled = false;
+        for index in 0..mesh.faces.len() {
+            if mine[index] || blocked.get(index).copied().unwrap_or(false) {
+                continue;
+            }
+            let face = &mesh.faces[index];
+            let holding = (0..face.len())
+                .filter(|&at| {
+                    let key = edge_key(face[at], face[(at + 1) % face.len()]);
+                    users[&key]
+                        .iter()
+                        .any(|&other| other != index && mine[other])
+                })
+                .count();
+            if holding >= 2 {
+                mine[index] = true;
+                filled = true;
+            }
+        }
+        if !filled {
+            break;
+        }
+    }
+}
+
 impl Garment {
     /// Cuts a garment from a body.
     ///
     /// `zones` says which vertex belongs to which part of the body — the same
     /// map the unwrap uses. Returns `None` when the cut covers nothing.
+    ///
+    /// This is [`claimed`], [`close`], and [`sew`](Self::sew) in one call, for
+    /// a garment worn alone. Garments that share a body go through the steps
+    /// separately — see [`Outfit::wear`](crate::dress::Outfit::wear) — because
+    /// each one's fill has to know what the others hold.
     #[must_use]
     pub fn cut(
         mesh: &PolyMesh,
@@ -90,21 +169,28 @@ impl Garment {
         cut: &GarmentCut,
         colour: [f32; 3],
     ) -> Option<Self> {
-        // A face is in, only if *every* corner of it is. Taking faces on a
-        // majority instead leaves the hem straddling the boundary, which puts a
-        // ragged edge halfway into the neighbouring zone.
-        let zone_of = |corner: u32| zones.get(corner as usize).copied();
+        let mut mine = claimed(mesh, zones, cut);
+        close(mesh, &mut mine, &[]);
+        Self::sew(mesh, weights, &mine, cut, colour)
+    }
+
+    /// Builds the garment solid over the faces `mine` marks.
+    ///
+    /// Returns `None` when the claim covers nothing.
+    #[must_use]
+    pub fn sew(
+        mesh: &PolyMesh,
+        weights: &SkinWeights,
+        mine: &[bool],
+        cut: &GarmentCut,
+        colour: [f32; 3],
+    ) -> Option<Self> {
         let covered: Vec<&Vec<u32>> = mesh
             .faces
             .iter()
-            .filter(|face| {
-                face.iter().all(|&corner| {
-                    zone_of(corner)
-                        .is_some_and(|zone| cut.zones.contains(zone) || cut.reach.contains(zone))
-                }) && face
-                    .iter()
-                    .any(|&corner| zone_of(corner).is_some_and(|zone| cut.zones.contains(zone)))
-            })
+            .enumerate()
+            .filter(|&(index, _)| mine.get(index).copied().unwrap_or(false))
+            .map(|(_, face)| face)
             .collect();
         if covered.is_empty() {
             return None;

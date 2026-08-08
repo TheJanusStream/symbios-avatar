@@ -178,24 +178,35 @@ impl Outfit {
             reach: ZoneSet::default().with(Zone::Abdomen),
             ..Default::default()
         };
-        if let Some(worn) = Garment::cut(
+        let top = GarmentCut {
+            zones: top_zones(&params.sleeve),
+            ..Default::default()
+        };
+
+        // Each garment's claim is smoothed with the other's held out of reach,
+        // so a filled notch can never hand one face to both of them. The
+        // trousers see the top's raw claim; the top sees the trousers' filled
+        // one, which by then is final.
+        let trousers_raw = garment::claimed(mesh, zones, &trousers);
+        let top_raw = garment::claimed(mesh, zones, &top);
+        let mut trousers_faces = trousers_raw.clone();
+        garment::close(mesh, &mut trousers_faces, &top_raw);
+        let mut top_faces = top_raw;
+        garment::close(mesh, &mut top_faces, &trousers_faces);
+
+        if let Some(worn) = Garment::sew(
             mesh,
             weights,
-            zones,
+            &trousers_faces,
             &trousers,
             dye(params.leg_hue, params.leg_shade),
         ) {
             garments.push(worn);
         }
-
-        let top = GarmentCut {
-            zones: top_zones(&params.sleeve),
-            ..Default::default()
-        };
-        if let Some(worn) = Garment::cut(
+        if let Some(worn) = Garment::sew(
             mesh,
             weights,
-            zones,
+            &top_faces,
             &top,
             dye(params.top_hue, params.top_shade),
         ) {

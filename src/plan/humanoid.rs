@@ -117,15 +117,28 @@ const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
 ///
 /// **0.94 → 1.56, and it means nothing without [`NECK_LOBE`]** (#125). The pair
 /// is one shape: the section is swept `NECK_LOBE` radii astern of the joint, so
-/// it reaches `1.56 + 0.62` behind and `1.56 − 0.62` — which is 0.94, exactly
-/// what stood here — in front. The cage's throat therefore stands exactly where
-/// it did and the mass goes behind it. Read either number alone and this looks
-/// like a neck two-thirds deeper than a neck.
+/// it reaches `depth + lobe` behind and `depth − lobe` in front. That front
+/// figure is 0.94 — exactly what stood here before #125 — and **every change to
+/// this pair since has held it**: the throat stands where it always did and
+/// only the rear reach moves.
 ///
-/// **SETTLED, AND THE ANSWER IS THAT THIS DOES NOT MOVE** (#144's lesson applied
-/// to #131's open question). The paragraph below records a conflict between two
-/// instruments and resolves in favour of `examples/column`; the depth figure
-/// that argued for changing this is a fixed-offset reading and is stale.
+/// **1.56 → 1.28, with [`NECK_LOBE`] 0.62 → 0.34, on the owner's side-view
+/// verdict** (#148). The nape stood proud of the head's own rear line — the
+/// neck, the back below it and the blend between them all bulging astern of
+/// the occiput — so the rear reach came in by `0.56` neck radii while the
+/// front held at 0.94. Judged on `--head --bare` renders across seeds 0, 3, 7
+/// and 21: the rear contour now runs occiput to collar without the hump, and
+/// the silhouette ruler in `the_neck_is_the_length_of_a_neck` reads the tuck
+/// at four-decimal nothing on three of five seeds.
+///
+/// The paragraph below said this constant was SETTLED against the reference's
+/// own column, and the measurement it stands on is still true — but it was
+/// answering a different question. The reference carries its rear depth fused
+/// into a trapezius it actually has; ours floats the same depth on a body with
+/// no shoulder mass under it (#131, open), and there it reads as a dowager
+/// hump rather than a back. Matching the reference's depth column is the right
+/// TARGET once #131 lands the mass below it; until then the depth defers to
+/// the render.
 ///
 /// The two columns share exactly one landmark — each has a single narrowest
 /// point — and the ratio there is stature-free and anchor-free. Depth over width
@@ -183,7 +196,7 @@ const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
 /// comes back 2.1 mm at mid-neck and 5.3 mm at its worst, in the throat band on
 /// the widest-span seed. It never comes forward, which is the direction that
 /// would matter.
-const NECK_SECTION: Vec2 = Vec2::new(1.0, 1.56);
+const NECK_SECTION: Vec2 = Vec2::new(1.0, 1.28);
 
 /// How far astern of its own joint the neck's section is swept, in neck radii.
 ///
@@ -225,8 +238,12 @@ const NECK_SECTION: Vec2 = Vec2::new(1.0, 1.56);
 /// what a displacement in `z` should do.
 ///
 /// Provenance: **derived from the reference** (#125), and paired with
-/// [`NECK_SECTION`] rather than chosen against it.
-const NECK_LOBE: f32 = 0.62;
+/// [`NECK_SECTION`] rather than chosen against it. The mid-neck depth figures
+/// above were measured at 0.62; **0.62 → 0.34 in #148**, the two moving as one
+/// shape so the throat held at `depth − lobe = 0.94` while the rear came in —
+/// the full record, and why the reference's own rear reach is deferred rather
+/// than matched, is on [`NECK_SECTION`].
+const NECK_LOBE: f32 = 0.34;
 
 /// How far behind the midline the neck node sits, in neck radii.
 ///

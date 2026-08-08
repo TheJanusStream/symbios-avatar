@@ -435,17 +435,32 @@ fn the_neck_is_the_length_of_a_neck() {
 
         // Bisected, like every other measurement in this crate: binning vertices
         // into height bands reports ripple that is not in the mesh.
+        //
+        // **The width of a slice, not a chord across it** (#148). This used to
+        // fire sideways at the head joint's own `z` alone, which crosses an
+        // off-centre section on a chord — the same trap `NECK_LOBE`'s docstring
+        // records for an earlier probe. It went unnoticed while the neck's rear
+        // lobe stood still; #148 pulled the lobe in, the chord at the joint's
+        // `z` moved with it, and this ruler drifted 0.005 for a change the
+        // lateral silhouette barely sees. Taking the widest reading across the
+        // body's depth measures the silhouette the eye actually reads.
         let half_width = |y: f32| {
-            let (mut inside, mut outside) = (0.0f32, 0.40f32);
-            for _ in 0..32 {
-                let mid = 0.5 * (inside + outside);
-                if body.contains(glam::Vec3::new(at.x + mid, y, at.z)) {
-                    inside = mid;
-                } else {
-                    outside = mid;
+            let mut widest = 0.0f32;
+            let mut probe = at.z - 0.18;
+            while probe <= at.z + 0.12 {
+                let (mut inside, mut outside) = (0.0f32, 0.40f32);
+                for _ in 0..32 {
+                    let mid = 0.5 * (inside + outside);
+                    if body.contains(glam::Vec3::new(at.x + mid, y, probe)) {
+                        inside = mid;
+                    } else {
+                        outside = mid;
+                    }
                 }
+                widest = widest.max(inside);
+                probe += 0.02;
             }
-            inside
+            widest
         };
 
         // Down from the throat to where the body is half again as wide as the
@@ -481,6 +496,18 @@ fn the_neck_is_the_length_of_a_neck() {
         // so a regression cannot hide in the slack. It is still the state and
         // still not the target.
         //
+        // **0.44 to 0.475, and it is the RULER that moved, not the neck**
+        // (#148). Every figure above was read by the chord probe; the
+        // silhouette probe reads the same bodies at 0.423–0.472, because a
+        // wider `narrowest` raises the stop threshold and the walk finds the
+        // shoulder line lower. Measured under this probe, #148's nape tuck
+        // moved seeds 0, 3 and 7 by nothing at four decimals and brought 13
+        // and 21 DOWN by 0.005 and 0.004 — the invariance the chord probe
+        // lacked, and the reason it was replaced rather than its bound eased.
+        // The bound is re-based onto the new instrument's state with the same
+        // few-thousandths of slack the old one carried. Numbers on the two
+        // rulers are not comparable.
+        //
         // **And what the remaining 0.10 is made of, which is why no coefficient
         // in the neck reaches it.** `examples/neckaudit` prints this same span
         // broken into its four owners. Across these seeds:
@@ -501,7 +528,7 @@ fn the_neck_is_the_length_of_a_neck() {
         // number by so much less than its own arithmetic predicted.
         let ratio = (chin - y) / (crown - chin);
         assert!(
-            ratio < 0.44,
+            ratio < 0.475,
             "seed {seed}: the chin sits {:.1} mm above the shoulder line on a \
              {:.1} mm head, a ratio of {ratio:.3}. The eight-head figure puts it \
              near 0.33; this shipped at 0.480 before #93 shortened the girdle's \
