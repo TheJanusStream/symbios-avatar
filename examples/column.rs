@@ -71,8 +71,16 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord, Zone};
 /// The CC0 reference body's own column, measured with this same plane cut.
 ///
 /// Rows are `(height below the chin, half-width, back z, front z)` in
-/// millimetres, taken every ten millimetres from 110 above the chin to 240
+/// millimetres, taken every ten millimetres from 250 above the chin to 240
 /// below.
+///
+/// **Extended from +110 to the crown** (#144). The old table stopped 10 mm short
+/// of where the reference is WIDEST, so every reading taken from it under-read
+/// the vault: its maximum is 86.7 mm at +120 to +140 and the top row said 85.7.
+/// The crown sits at +260.0. Regenerated with the same plane cut against the
+/// same mesh — 7,399 vertices, 13,757 triangles — and the overlapping rows
+/// reproduce the originals to 0.4 mm, which is the calibration on the chin
+/// height rather than a disagreement.
 ///
 /// Provenance: **measured** (#143), off `model-human.glb` in the mesh2motion
 /// checkout, with its chin taken at its own `head` joint — which #126 measured
@@ -82,7 +90,21 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord, Zone};
 /// support one instrument would be the largest thing in this crate that only
 /// one tool uses.
 #[rustfmt::skip]
-const REFERENCE: [(i32, f32, f32, f32); 36] = [
+const REFERENCE: [(i32, f32, f32, f32); 50] = [
+    ( 250,   54.8,   -45.2,   47.1),
+    ( 240,   62.5,   -65.1,   68.9),
+    ( 230,   70.2,   -79.8,   78.2),
+    ( 220,   77.4,   -89.7,   87.5),
+    ( 210,   80.0,   -97.5,   96.8),
+    ( 200,   82.5,  -105.2,  102.7),
+    ( 190,   84.0,  -108.2,  106.9),
+    ( 180,   85.2,  -110.5,  111.0),
+    ( 170,   86.4,  -111.1,  113.2),
+    ( 160,   86.6,  -108.6,  115.5),
+    ( 150,   86.6,  -106.2,  117.1),
+    ( 140,   86.7,  -103.8,  117.3),
+    ( 130,   86.7,  -101.3,  117.6),
+    ( 120,   86.7,   -98.6,  117.8),
     ( 110,  85.7,  -95.1, 118.0),
     ( 100,  84.6,  -91.8, 118.3),
     (  90,  83.5,  -87.4, 117.9),
@@ -187,6 +209,8 @@ fn main() {
         "widest the reference's shoulder mass leads ours: {:.0} mm, at {} below the chin",
         widest_gap.0, widest_gap.1
     );
+    vault(mesh, chin);
+
     let least = narrowest(mesh, chin);
     println!("our narrowest half-width: {least:.1} mm; the reference's: 66.7");
 
@@ -200,6 +224,61 @@ fn main() {
     println!(
         "the neck node reaches {reach:.1} mm sideways; the surface delivers {:.3} of it",
         least / reach
+    );
+}
+
+/// The head's own proportions, cut with the same planes as the column above.
+///
+/// **Why this is here and not in `headaudit`** (#144). That tool reads the crown
+/// off `Skull::span`, which is a *measured* landmark that stops about 20 mm
+/// under the mesh's actual top, and its widths off `Skull`'s azimuthal profile.
+/// Both are the right answers to their own questions and neither can be held
+/// against a foreign mesh, which has no `Skull`. Everything below is a plane cut
+/// and nothing else, so the same three lines describe our body and the CC0
+/// reference and the comparison means something.
+///
+/// The reference's own figures, from the table above: a crown 260.0 mm over its
+/// chin, a maximum breadth of 173.4 mm at +120 to +140, and about 218 mm of
+/// depth there — so **H:W 1.499 and D:W 1.257**. Life is 1.53 and 1.28.
+fn vault(mesh: &symbios_avatar::PolyMesh, chin: f32) {
+    let (mut crown, mut widest, mut at, mut depth) = (0.0f32, 0.0f32, 0, 0.0f32);
+    for step in 0..=320 {
+        let points: Vec<(f32, f32)> = cut(mesh, chin + step as f32 / 1000.0)
+            .into_iter()
+            .filter(|(x, _)| x.abs() < REACH)
+            .collect();
+        if points.len() < 3 {
+            continue;
+        }
+        crown = step as f32;
+        let half = points.iter().fold(0.0f32, |w, p| w.max(p.0.abs())) * 1000.0;
+        if half > widest {
+            let back = points.iter().fold(f32::MAX, |z, p| z.min(p.1)) * 1000.0;
+            let front = points.iter().fold(f32::MIN, |z, p| z.max(p.1)) * 1000.0;
+            (widest, at, depth) = (half, step, front - back);
+        }
+    }
+    let breadth = widest * 2.0;
+    let top = mesh.positions.iter().fold(f32::MIN, |a, p| a.max(p.y));
+    let floor = mesh.positions.iter().fold(f32::MAX, |a, p| a.min(p.y));
+    let stature = (top - floor) * 1000.0;
+    println!(
+        "\nthe vault, plane-cut: crown {crown:.0} mm over the chin, widest {breadth:.1} mm \
+         across at +{at}, {depth:.1} deep there"
+    );
+    println!(
+        "  head over stature {:.4} and breadth over stature {:.4} on a {stature:.0} mm body \
+         (reference 0.1421 and 0.0948)",
+        crown / stature,
+        breadth / stature
+    );
+    println!(
+        "  height : width {:.3}   (reference 1.499, life 1.53)",
+        crown / breadth
+    );
+    println!(
+        "  depth  : width {:.3}   (reference 1.257, life 1.28)",
+        depth / breadth
     );
 }
 
@@ -223,17 +302,42 @@ fn cut(mesh: &symbios_avatar::PolyMesh, height: f32) -> Vec<(f32, f32)> {
     points
 }
 
-/// The narrowest half-width anywhere in the column, in millimetres.
+/// The narrowest half-width anywhere in the column, in millimetres, and the
+/// column's depth-to-width where it is narrowest.
+///
+/// **The waist is the only landmark the two columns share, which is why the
+/// second figure is here** (#131, settled in #144). Comparing the neck's depth
+/// at a fixed height under the chin is the trap #144 was closed on: our column
+/// and the reference's have different lengths, so the same millimetre offset is
+/// different anatomy on each. Both bodies have exactly one narrowest point —
+/// theirs at +10 above the chin, ours below it — and the ratio there is
+/// stature-free, anchor-free and the same question on both.
+///
+/// The reference's own waist: 66.7 mm of half-width and 221.9 mm of depth, so
+/// **D:W 1.663**.
 fn narrowest(mesh: &symbios_avatar::PolyMesh, chin: f32) -> f32 {
-    let mut least = f32::MAX;
+    let (mut least, mut depth, mut at) = (f32::MAX, 0.0f32, 0);
     for step in -80..=110 {
         let points: Vec<(f32, f32)> = cut(mesh, chin + step as f32 / 1000.0)
             .into_iter()
             .filter(|(x, _)| x.abs() < REACH)
             .collect();
-        if points.len() >= 3 {
-            least = least.min(points.iter().fold(0.0f32, |w, p| w.max(p.0.abs())));
+        if points.len() < 3 {
+            continue;
+        }
+        let half = points.iter().fold(0.0f32, |w, p| w.max(p.0.abs()));
+        if half < least {
+            let back = points.iter().fold(f32::MAX, |z, p| z.min(p.1));
+            let front = points.iter().fold(f32::MIN, |z, p| z.max(p.1));
+            (least, depth, at) = (half, front - back, step);
         }
     }
+    println!(
+        "at the column's own waist, +{at} over the chin: {:.1} deep on {:.1} across, \
+         D:W {:.3}   (reference 1.663 at +10)",
+        depth * 1000.0,
+        least * 2000.0,
+        depth / (least * 2.0)
+    );
     least * 1000.0
 }

@@ -122,8 +122,39 @@ const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
 /// it did and the mass goes behind it. Read either number alone and this looks
 /// like a neck two-thirds deeper than a neck.
 ///
-/// **This is now the LARGEST open question about the neck, because #131 widened
-/// `neck_r` by a third and this constant is expressed in neck radii.** The
+/// **SETTLED, AND THE ANSWER IS THAT THIS DOES NOT MOVE** (#144's lesson applied
+/// to #131's open question). The paragraph below records a conflict between two
+/// instruments and resolves in favour of `examples/column`; the depth figure
+/// that argued for changing this is a fixed-offset reading and is stale.
+///
+/// The two columns share exactly one landmark — each has a single narrowest
+/// point — and the ratio there is stature-free and anchor-free. Depth over width
+/// at each body's own waist:
+///
+/// ```text
+///   seed        0      3      7     13     21    reference
+///   D:W     1.648  1.645  1.733  1.712  1.707        1.663
+/// ```
+///
+/// Within 4% across the space and within 1% on the two seeds nearest neutral. So
+/// the neck's depth for its width is right and 1.32 would have made it wrong.
+/// The waist also now sits +14 to +21 above the chin against the reference's
+/// +10, where before #131 it was at −20 — eighty millimetres of anatomy out.
+/// That was #143's own unmeasured candidate and the widening closed it without
+/// being aimed at it.
+///
+/// **What the stale reading was.** `examples/neckaudit` cuts at heights below the
+/// HEAD JOINT and its 167 mm reference depth was taken at a "mid-neck" that no
+/// longer means the same anatomy, so it reported 195 against 167 and looked like
+/// a 17% overshoot. This is #144's failure exactly — a comparison anchored on one
+/// landmark is only valid where the two bodies share the anatomy between it and
+/// the reading — arriving in a second place within one session.
+///
+/// The rest of this note is kept because the arithmetic in it is still correct
+/// and it records what was built and thrown away.
+///
+/// **#131 widened `neck_r` by a third and this constant is expressed in neck
+/// radii.** The
 /// axis-free depth at mid-neck went 152 mm to 195 against the reference's 167,
 /// so a figure that used to sit 9% under it now sits 17% over. Bringing this to
 /// 1.32 lands it on 167.4 exactly and restores the old forward reach to within a
