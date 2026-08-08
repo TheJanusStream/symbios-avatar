@@ -41,6 +41,25 @@
 //!   millimetres of unchanging width, not excess width, and any fix aimed at
 //!   slimming it would have been aimed at nothing.
 //!
+//! # What it showed the second time, and the reading to be careful with (#131)
+//!
+//! The second finding above was acted on and `neck_r` went from `0.030 · girth`
+//! to `0.040 + 0.020 · (girth − 1)`. Two cautions for anyone reading the summary
+//! lines at the bottom of a run.
+//!
+//! **The narrowest half-width is not always the neck.** `narrowest` scans from
+//! 110 mm above the chin to 80 below, so once the neck is wide enough the
+//! minimum migrates up to the JAWLINE — which is where the reference's own
+//! minimum has always been, at +10. That is why widening the node stops moving
+//! this figure: on seed 7 a 53% wider node bought 5.6 mm, because the last of it
+//! was measuring a jaw.
+//!
+//! **Compare at equal stature or not at all.** The reference is one 1.829 m
+//! body. Seed 21 reads 70.4 mm against its 66.7 and looks already-wide; it is a
+//! 2.03 m body and scales to 63.4, narrow like every other seed. Every one of
+//! seeds 0, 3, 7, 13 and 21 was narrow against the reference once its own
+//! stature was divided out, which is what made a base raise defensible.
+//!
 //! And the throat differs in **rate** rather than in amount: the reference gives
 //! up 45 mm of forward reach in the ten millimetres between −10 and −20 and is
 //! then vertical, where ours spreads a slightly larger 63 mm over a fifty-
@@ -168,9 +187,19 @@ fn main() {
         "widest the reference's shoulder mass leads ours: {:.0} mm, at {} below the chin",
         widest_gap.0, widest_gap.1
     );
+    let least = narrowest(mesh, chin);
+    println!("our narrowest half-width: {least:.1} mm; the reference's: 66.7");
+
+    // The neck node's own lateral half-extent beside what the surface delivers
+    // of it. Printed because `neck_r` is the only coefficient that can move the
+    // flat run of this column, and a factor applied to it is only worth what
+    // the surface hands back — see #131.
+    let neck = avatar.rig.in_zone(Zone::Neck)[0];
+    let joint = &avatar.rig.joints[neck];
+    let reach = joint.radius * joint.scale.x * 1000.0;
     println!(
-        "our narrowest half-width: {:.1} mm; the reference's: 66.7",
-        narrowest(mesh, chin)
+        "the neck node reaches {reach:.1} mm sideways; the surface delivers {:.3} of it",
+        least / reach
     );
 }
 

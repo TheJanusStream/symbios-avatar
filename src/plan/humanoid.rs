@@ -122,6 +122,29 @@ const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
 /// it did and the mass goes behind it. Read either number alone and this looks
 /// like a neck two-thirds deeper than a neck.
 ///
+/// **This is now the LARGEST open question about the neck, because #131 widened
+/// `neck_r` by a third and this constant is expressed in neck radii.** The
+/// axis-free depth at mid-neck went 152 mm to 195 against the reference's 167,
+/// so a figure that used to sit 9% under it now sits 17% over. Bringing this to
+/// 1.32 lands it on 167.4 exactly and restores the old forward reach to within a
+/// millimetre — 48.1 mm against 48.9 — which would also give back the millimetre
+/// `tests/parts::the_underside_of_the_jaw_does_not_bulge` had to widen its bound
+/// for. It was built, measured and REVERTED, for two reasons.
+///
+/// `rig::skin`'s `the_chin_follows_the_jaw_and_not_the_skull` fails at 1.32: the
+/// throat comes back toward the neck bone, the neck wins weight under the chin,
+/// and the jaw's hold on it goes 0.392 to 0.300 against a 0.30 bound with the
+/// travel share at 33.5% against 35%.
+///
+/// And the two instruments disagree about which way this should go at all. The
+/// axis-free depth says we are 17% too deep; `examples/column`, cutting planes
+/// anchored on the chin, says the opposite — our back reached only −120.8 mm at
+/// 60 mm under the chin against the reference's −146.7 before #131 and lands on
+/// −149.6 after. Same body, same reference, opposite verdicts, because they read
+/// at different heights off different anchors. Reconciling them is a pass of its
+/// own, and picking a value that satisfies the skinning test instead would be
+/// choosing a number to fit a bound.
+///
 /// The SURFACE follows that to within a couple of millimetres rather than
 /// exactly, and the residual is not slack in the arithmetic: the limit surface
 /// at the front of the ring is an average over neighbours which all moved back,
@@ -696,11 +719,81 @@ impl BodyPlan for HumanoidParams {
         // reads as a tree trunk and, worse, swallows the jaw: the chin is shaped
         // and narrows properly, but a neck two and a half times its width leaves
         // nothing of it to see.
-        // Provenance: **tuned by render** (commit `0d7684f`). The evidence is
-        // the paragraph above — a measured 0.098 m neck against a 0.093 m head —
-        // which is the right shape of argument for a tuned number: a comparison
-        // that came out the wrong way round.
-        let neck_r = h * 0.030 * girth;
+        //
+        // **0.030 × girth → 0.040 + 0.020 × (girth − 1), and the base and the
+        // gain moved for different reasons** (#131). Both halves are measured
+        // against the CC0 reference with `examples/column`, whose plane cuts are
+        // anchored on each body's own chin.
+        //
+        // THE BASE, because the neck was a quarter narrow and nothing had ever
+        // measured it against a surface. `NECK_SECTION.x` is 1.0, so this
+        // coefficient *is* the neck's lateral half-extent, and the built surface
+        // hands back 0.87–0.95 of it. Half-width at the chin, every seed scaled
+        // to the reference's own 1.829 m stature:
+        //
+        // ```text
+        //             seed 0  seed 3  seed 7  seed 13  seed 21   (reference 71.2)
+        //   0.030       54.6    53.6    63.5     57.3     65.3
+        //   0.040/.020  65.5    64.5    70.0     67.8     71.5
+        // ```
+        //
+        // THE GAIN, because the spread that made this look already-solved on the
+        // heavy end is stature, not width. Seed 21 reads 70.4 mm at 0.030 where
+        // the reference reads 66.7, which says the widening would overshoot —
+        // and seed 21 is a 2.03 m body. Divided by its own stature it reads
+        // 63.4, narrow like every other seed. What the old multiplicative form
+        // then does is spend that headroom twice: at a flat 0.042 the light
+        // seeds land on the reference and the heavy ones sit 15% past it. The
+        // softened gain collapses the stature-normalised spread from 65–78 to
+        // 64–70 about a reference 66.7, and it is the one place in this file
+        // where a radius does not simply multiply `girth` — deliberately, and
+        // only because there is a measurement here and none on the torso.
+        //
+        // **What it buys on the graph, which is the half #131 was actually
+        // raised for.** #125 could not hang a trapezius node anywhere: off the
+        // girdle it missed by 12.7 mm, off the neck by two tenths. That was
+        // read as a coincidence waiting to break. It is not — the binding rule
+        // is [`CageError::SocketsOverlap`] and not the plane test, and the two
+        // scale differently: two sockets sit at `socket_distance × hub.radius`
+        // along their own directions, so their SEPARATION grows exactly with
+        // this coefficient, while the clearance they need is a ring radius
+        // blended toward neighbours that do not move. Measured on the default
+        // body, a probe node behind and above the girdle's crown:
+        //
+        // ```text
+        //   0.030   separation 56.8 mm   needed 75.7   —  and at every other
+        //                                                 placement tried
+        //   0.040   separation 85.9 mm   needed 88.6   —  and five placements
+        //                                                 mesh outright
+        // ```
+        //
+        // So the ring is open for the first time. The node itself is NOT
+        // shippable yet and stays on #131: every placement that meshes on the
+        // default body still fails the 1500-body sweep, and it fails on tall
+        // heavy bodies because a probe measured in GIRDLE radii outgrows a neck
+        // whose girth gain has just been softened. It wants placing in neck
+        // radii.
+        //
+        // **Bounded above, twice, and the tighter bound is not meshability.**
+        // This meshes to 0.068 across `tests/plan.rs` — the failure at 0.070 is
+        // a girdle hull with unmatched edges, not the head's neck socket — so
+        // there is more than twice the headroom anyone assumed. What actually
+        // stops it is `the_neck_is_the_length_of_a_neck`, whose 0.44 is a
+        // ratchet on the state: its shoulder line is found at 1.5× the
+        // narrowest half-width OF THE NECK, so widening the neck raises the
+        // ruler as well as the thing measured and the span grows for free.
+        // Small — seed 7 goes 0.437 to 0.443 — but the bound has 0.003 of slack
+        // and 0.042 spends it. 0.042 with a 0.018 gain is the better surface
+        // fit (a median 69.3 against 71.2) and is refused on that ground alone;
+        // raising the ratchet to buy neck width would undo three passes of
+        // bringing it down.
+        //
+        // Provenance: **derived from the reference surface** (#131), swept for
+        // meshability and bounded by the neck-length ratchet. Was **tuned by
+        // render** (commit `0d7684f`) against the argument above — a measured
+        // 0.098 m neck against a 0.093 m head — which was the right shape of
+        // argument for a tuned number and was still a quarter short of life.
+        let neck_r = h * (0.040 + 0.020 * (girth - 1.0));
         // Provenance: **unsourced**, both the 0.075 and the 0.25 gain. 0.075 of
         // stature is close to the eight-head figure's head, but the eight-head
         // figure specifies head HEIGHT and this is a node RADIUS, so the
@@ -911,6 +1004,14 @@ impl BodyPlan for HumanoidParams {
         // two effects very nearly cancel. `neck_r` from 0.030 to 0.025 is worth
         // 0.02. The neck's own LENGTH is the only term that moves it, which is
         // what the note above already said from the other direction.
+        //
+        // That `neck_r` sweep was run at a base of 0.030 and #131 has since taken
+        // it to 0.040, in the direction the sweep called cheap. It measured the
+        // same: the ratio moves 0.006 on the worst seed, and it moves for the
+        // instrument rather than for the body — the shoulder line is found at
+        // 1.5× the narrowest half-width OF THE NECK, so a wider neck raises the
+        // ruler along with the thing being measured. The 0.44 bound below has
+        // 0.003 of slack left because of it.
         //
         // So the warning above — that taking 0.072 down steepens the shoulder
         // ramp into a coat hanger — was written against a trunk measuring 13–29%

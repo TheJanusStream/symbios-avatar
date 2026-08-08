@@ -191,15 +191,63 @@ mod tests {
     fn a_body_measures_thinner_than_its_plan_asked_for() {
         // The whole point. If this ever stops holding, everything positioned
         // against a measured surface should be revisited.
-        let (mesh, rig) = body(1);
-        let surface = Surface::measure(&mesh, &rig);
-        let head = *rig.in_zone(Zone::Head).first().expect("a head");
-        assert!(
-            surface.widest(head) < rig.joints[head].radius,
-            "the skull measured {} against a node radius of {}",
-            surface.widest(head),
-            rig.joints[head].radius
-        );
+        //
+        // **Asked of the head's whole CHAIN, and over six seeds rather than
+        // one** (#131). This used to hold `widest(head)` against
+        // `joints[head].radius`, and both halves of that were wrong. A skull is
+        // two nodes — the head and a crown above it at `CROWN_HIGH` head radii —
+        // so the head BONE runs up to the crown and its surface is under no
+        // obligation to stay inside the lower node's own radius. And on one
+        // seed it did not have to: measured over these six, seeds 7 and 21 read
+        // 1.161 and 1.037 of the head node's radius while the test passed,
+        // because seed 1 was the only body it ever asked.
+        //
+        // Against what the chain actually reaches — the further of the head
+        // node's own half-extents and the crown's, measured from the head joint
+        // — the reading is the two thirds this module's own docs claim, and it
+        // is far tighter than it was:
+        //
+        // ```text
+        //   seed        0      1      3      7     13     21
+        //   before  0.556  0.522  0.591  0.701  0.573  0.627
+        //   after   0.608  0.622  0.656  0.684  0.623  0.689
+        // ```
+        //
+        // The move is #131's wider neck filling the blend under the jaw, so more
+        // of the head's own sample bins have surface in them to average. The
+        // 0.75 is a ratchet on the second row, not a target.
+        for seed in [0i64, 1, 3, 7, 13, 21] {
+            let (mesh, rig) = body(seed);
+            let surface = Surface::measure(&mesh, &rig);
+            let head = *rig.in_zone(Zone::Head).first().expect("a head");
+            let reach = head_reach(&rig, head);
+            let measured = surface.widest(head);
+            assert!(
+                measured < reach * 0.75,
+                "seed {seed}: the skull measured {measured} against a chain that \
+                 reaches {reach}, a fraction of {:.3}. It has to stay under 1.0 for \
+                 this module to mean anything; 0.75 is the ratchet.",
+                measured / reach
+            );
+        }
+    }
+
+    /// The furthest this joint's own node chain asks its surface to reach.
+    ///
+    /// The joint's half-extents, or a child in the same zone plus that child's,
+    /// whichever is further. A single node radius is not the answer for anything
+    /// built from more than one node, which the skull is.
+    fn head_reach(rig: &Rig, head: usize) -> f32 {
+        let at = rig.joints[head].position;
+        let zone = rig.in_zone(Zone::Head);
+        let own = rig.joints[head].radius * rig.joints[head].scale.max_element();
+        rig.joints
+            .iter()
+            .enumerate()
+            .filter(|(index, joint)| joint.parent == Some(head) && zone.contains(index))
+            .fold(own, |far, (_, joint)| {
+                far.max((joint.position - at).length() + joint.radius * joint.scale.max_element())
+            })
     }
 
     #[test]
