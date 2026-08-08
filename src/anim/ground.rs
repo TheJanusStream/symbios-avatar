@@ -35,6 +35,7 @@ use glam::{Quat, Vec3};
 
 use super::ik::two_bone;
 use super::pose::Pose;
+use super::pose_clip::PoseClip;
 use crate::plan::{Limb, Zone};
 use crate::rig::Rig;
 
@@ -111,6 +112,146 @@ impl Footing {
     pub fn is_settled(&self) -> bool {
         self.straining.is_empty() && !self.planted.is_empty()
     }
+}
+
+/// How near the lowest point of a body a foot must be to count as standing on
+/// it, in metres.
+///
+/// A hand's breadth. Loose enough that a walk's trailing foot still counts while
+/// its heel is peeling, tight enough that a foot in flight does not: measured
+/// over the shipped clip set, `Jog` alternates one contact and two, and `Sprint`
+/// spends most of its cycle on one.
+pub const CONTACT_SLACK: f32 = 0.1;
+
+/// Which of a body's feet are on the ground **in this pose**.
+///
+/// **Not the same question as [`Rig::ground_contacts`].** That one asks which
+/// limbs a body of this shape stands on — a fact about the rig, true of a biped
+/// whatever it is doing. This asks which of them are down *now*, which is a
+/// fact about the pose. Handing every contact to [`plant_feet_of`] drags a foot
+/// that is in the air down onto the floor, which is the failure a run makes
+/// obvious and a walk hides.
+///
+/// A foot counts if any of its extremity joints is within [`CONTACT_SLACK`] of
+/// the lowest joint on the body. Measured against the body itself rather than
+/// against a ground plane, because the caller may not have one yet — this is
+/// what it passes to [`plant_feet_of`] to *find* the ground.
+///
+/// **What it does NOT do, recorded because the first version of this claimed
+/// it.** It does not detect that a body is lying down or sitting. Measured on
+/// the shipped artifact, `Sleeping` reports both feet and `Sitting_Idle` reports
+/// both — correctly, because a body on its back has its heels on the floor
+/// beside its back, and a body on a chair has its feet on the floor. The rule is
+/// about height and nothing else, and a foot near the bottom of a lying body
+/// really is near the ground.
+///
+/// A gait knows better and should say so: [`Steps::stance`] names the feet that
+/// are carrying the body this instant, and passing those is strictly more
+/// accurate than inferring them here. This is for motion that arrives without
+/// that answer attached, which is every clip.
+///
+/// [`Steps::stance`]: super::gait::Steps::stance
+#[must_use]
+pub fn contacts_in(rig: &Rig, pose: &Pose) -> Vec<Limb> {
+    if !pose.fits(rig) {
+        return Vec::new();
+    }
+    let posed = pose.forward(rig);
+    let floor = posed
+        .positions
+        .iter()
+        .fold(f32::MAX, |low, at| low.min(at.y));
+    rig.ground_contacts()
+        .into_iter()
+        .filter(|&limb| {
+            rig.extremity_joints(limb)
+                .iter()
+                .any(|&joint| posed.positions[joint].y - floor < CONTACT_SLACK)
+        })
+        .collect()
+}
+
+/// How fast a foot may be moving, as a share of the fastest foot's speed, and
+/// still count as planted.
+///
+/// Measured on the reference's own `Walk` at #139: the slowest frame-to-frame
+/// step of a toe is 2.7 mm against a quickest of 97, a separation of thirty-six
+/// times. A third leaves room for a foot that is peeling or settling without
+/// letting a swinging one through.
+pub const CONTACT_SPEED: f32 = 0.35;
+
+/// Which of a body's feet are planted at one moment of a **clip**.
+///
+/// [`contacts_in`] asks only how low a foot is, and on a walk that is not enough:
+/// a walking foot lifts about 150 mm at its highest, so for much of its swing it
+/// is within [`CONTACT_SLACK`] of the floor and gets planted — which drags it
+/// down and ruins the very motion the solve was meant to settle. This adds the
+/// question that actually separates them: **a planted foot is not moving.**
+///
+/// **Speed is measured with the clip's root motion in, and that is not optional.**
+/// A foot planted on the ground is stationary in the world while the body travels
+/// over it. Play the same clip in place — root translation zeroed, which is what
+/// a viewer does to compare it against a gait that stays put — and that same
+/// foot slides backwards at exactly walking pace, so nothing about the in-place
+/// pose can tell a plant from a skate. The answer has to be taken from the
+/// travelling version and applied to whichever one is being drawn.
+///
+/// A foot must pass both tests: near the floor, and slower than
+/// [`CONTACT_SPEED`] of the fastest foot. Sampled one frame of the clip's own
+/// rate either side, so it is a property of the clip rather than of how fast
+/// anything is playing it — a scrubbed clip gives the same answer as a running
+/// one.
+#[must_use]
+pub fn contacts_during(rig: &Rig, clip: &PoseClip, time: f32) -> Vec<Limb> {
+    let near = contacts_in(rig, &clip.pose(rig, time));
+    if near.len() < 2 {
+        return near;
+    }
+    let step = if clip.rate > 0.0 {
+        1.0 / clip.rate
+    } else {
+        return near;
+    };
+
+    // With root motion, deliberately — see above. `PoseClip::pose` carries it.
+    let at = |when: f32| {
+        let when = if clip.looping {
+            when.rem_euclid(clip.duration().max(f32::EPSILON))
+        } else {
+            when.clamp(0.0, clip.duration())
+        };
+        let pose = clip.pose(rig, when);
+        let travel = pose.translation;
+        // `Posed::positions` are relative to the body's own root, so the clip's
+        // travel is added back: the question is where a foot is in the world the
+        // body is moving through.
+        pose.forward(rig)
+            .positions
+            .iter()
+            .map(|at| *at + travel)
+            .collect::<Vec<_>>()
+    };
+    let before = at(time - step);
+    let after = at(time + step);
+
+    let speed = |limb: Limb| -> f32 {
+        rig.extremity_joints(limb)
+            .iter()
+            .map(|&joint| before[joint].distance(after[joint]))
+            .fold(0.0f32, f32::max)
+    };
+    let speeds: Vec<(Limb, f32)> = near.iter().map(|&limb| (limb, speed(limb))).collect();
+    let fastest = rig
+        .ground_contacts()
+        .into_iter()
+        .map(speed)
+        .fold(0.0f32, f32::max);
+
+    speeds
+        .into_iter()
+        .filter(|(_, moving)| *moving <= fastest * CONTACT_SPEED)
+        .map(|(limb, _)| limb)
+        .collect()
 }
 
 /// Solves a body's ground contacts onto the surface beneath them.
@@ -330,6 +471,42 @@ pub(crate) fn solve_contact(rig: &Rig, pose: &mut Pose, limb: Limb, target: Vec3
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_lifted_foot_is_not_a_contact_and_the_other_one_still_is() {
+        // **What the pose-level question buys over the rig-level one.**
+        // `Rig::ground_contacts` answers about the SHAPE and says both feet
+        // whatever the body is doing, so handing it to `plant_feet_of` drags a
+        // foot that is in the air down onto the floor.
+        let rig = biped();
+        let standing = Pose::rest(&rig);
+        assert_eq!(
+            contacts_in(&rig, &standing),
+            rig.ground_contacts(),
+            "a body at rest is standing on every foot it has"
+        );
+
+        // One leg swung well clear at the hip. Which limb is irrelevant — what
+        // matters is that the answer is per foot rather than all or nothing.
+        let lifted = Limb::HindLeft;
+        let hip = rig
+            .in_zone(Zone::UpperLimb(lifted))
+            .first()
+            .copied()
+            .expect("a leg");
+        let mut raised = Pose::rest(&rig);
+        raised.rotations[hip] = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+
+        let down = contacts_in(&rig, &raised);
+        assert!(
+            !down.contains(&lifted),
+            "a foot swung up to hip height was still called a contact"
+        );
+        assert!(
+            down.contains(&lifted.mirrored()),
+            "the foot still on the floor stopped being a contact"
+        );
+    }
     use super::*;
     use crate::plan::{BodyPlan, HumanoidParams, QuadrupedParams};
 

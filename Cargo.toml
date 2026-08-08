@@ -10,6 +10,17 @@ repository = "https://github.com/TheJanusStream/symbios-avatar"
 keywords = ["avatar", "procedural", "character", "mesh", "generative"]
 categories = ["simulation", "game-development", "graphics"]
 
+[features]
+default = []
+# Embeds `assets/clips.bin` in the binary and turns on `ClipLibrary::builtin`.
+#
+# **Off by default, and that is the whole reason it is a feature.** The artifact
+# is 200 KiB and a consumer that only builds bodies should not carry it — least
+# of all a wasm one, where every byte of the library is a byte of the download.
+# A consumer that wants the clips says so; one that would rather fetch the file
+# at run time reads it with `ClipLibrary::read` and pays nothing here.
+builtin-clips = []
+
 [dependencies]
 glam = { version = "0.30.10", features = ["serde"] }
 # Skin detail must be sampled in *body* space, not atlas space, or every chart

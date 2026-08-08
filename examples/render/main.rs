@@ -61,7 +61,8 @@ use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, EyeParams, FaceParams,
     FootingConfig, Gait, GazeConfig, Ground, HairParams, Influence, Limb, MAX_INFLUENCES, MeshKind,
     PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
-    anim::gait, anim::gaze, anim::plant_feet_of, face::Skull, gltf::Gltf, retarget,
+    anim::contacts_in, anim::gait, anim::gaze, anim::plant_feet_of, face::Skull, gltf::Gltf,
+    retarget,
 };
 
 /// Where the CC0 reference animations sit, relative to this checkout.
@@ -564,26 +565,17 @@ fn clip_sheets(
         let time = baked.duration() * frame as f32 / count as f32;
         let closure = blink.advance(baked.duration() / count as f32);
         let mut pose = baked.pose(rig, time);
-        // **Only the feet this frame already has on the ground.** A library of
-        // 162 clips is not 162 standing bodies — it sits, kneels, lies down and
-        // sleeps — and planting a foot on a body whose torso is lower than its
-        // ankles drags the whole pose through the floor. So a foot is a contact
-        // here only if it is within a hand's breadth of the lowest thing on the
-        // body, which a lying body's feet are not.
-        let posed = pose.forward(rig);
-        let floor = posed
-            .positions
-            .iter()
-            .fold(f32::MAX, |low, at| low.min(at.y));
-        let stance: Vec<Limb> = rig
-            .ground_contacts()
-            .into_iter()
-            .filter(|&limb| {
-                rig.extremity_joints(limb)
-                    .iter()
-                    .any(|&joint| posed.positions[joint].y - floor < 0.1)
-            })
-            .collect();
+        // **Only the feet this frame already has on the ground.** Handing
+        // `ground_contacts` straight to the solve plants both feet whatever the
+        // body is doing, which drags a foot that is in the air down onto the
+        // floor — obvious in a run, hidden in a walk. `contacts_in` asks the
+        // pose rather than the rig.
+        //
+        // It does NOT detect a lying or sitting body, and the first version of
+        // this comment claimed it did. Measured on the shipped clips, Sleeping
+        // and Sitting_Idle both report two contacts, correctly: a body on its
+        // back has its heels on the floor beside its back.
+        let stance = contacts_in(rig, &pose);
         plant_feet_of(
             rig,
             &mut pose,

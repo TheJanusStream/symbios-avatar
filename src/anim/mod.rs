@@ -68,7 +68,10 @@ pub use blend::Inertializer;
 pub use clip::{Clip, Key, Target, Track};
 pub use gait::{Gait, Phase, Steps, Stride};
 pub use gaze::{Gaze, GazeConfig, look_at};
-pub use ground::{Footing, FootingConfig, Ground, level_feet, plant_feet, plant_feet_of};
+pub use ground::{
+    CONTACT_SLACK, CONTACT_SPEED, Footing, FootingConfig, Ground, contacts_during, contacts_in,
+    level_feet, plant_feet, plant_feet_of,
+};
 pub use ik::{FabrikConfig, fabrik, two_bone};
 pub use library::{ClipLibrary, LibraryError};
 pub use pose::{Pose, Posed};

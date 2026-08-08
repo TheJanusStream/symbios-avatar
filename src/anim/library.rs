@@ -82,6 +82,14 @@ const MAGIC: &[u8; 8] = b"SYMBCLIP";
 /// The layout this build writes, and the only one it reads.
 const VERSION: u16 = 1;
 
+/// The checked-in artifact, embedded.
+///
+/// Bytes rather than a parsed library, because parsing costs a few hundred
+/// microseconds and a consumer that wants the bytes — to hand to an asset
+/// system, or to hash — should not have to re-serialise them to get them back.
+#[cfg(feature = "builtin-clips")]
+pub const BUILTIN: &[u8] = include_bytes!("../../assets/clips.bin");
+
 /// Why a clip file could not be read.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum LibraryError {
@@ -131,6 +139,25 @@ impl ClipLibrary {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The twelve clips this crate carries, read from the embedded artifact.
+    ///
+    /// **Behind the `builtin-clips` feature, which is off.** The artifact is
+    /// 200 KiB and a consumer that only builds bodies should not carry it —
+    /// least of all a wasm one, where every byte of the library is a byte of
+    /// the download. A consumer that would rather fetch `assets/clips.bin` at
+    /// run time reads it with [`Self::read`] and pays nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError`] if the embedded artifact does not parse, which
+    /// would mean this build's reader and the checked-in file have gone out of
+    /// step — `tests/clips.rs` exists to make that a test failure rather than a
+    /// run-time one.
+    #[cfg(feature = "builtin-clips")]
+    pub fn builtin() -> Result<Self, LibraryError> {
+        Self::read(BUILTIN)
     }
 
     /// How many clips it holds.
@@ -459,6 +486,25 @@ mod tests {
         assert!(empty.is_empty());
         assert_eq!(empty.bytes(), 12);
         assert_eq!(ClipLibrary::read(&empty.write()).expect("reads"), empty);
+    }
+
+    #[cfg(feature = "builtin-clips")]
+    #[test]
+    fn the_embedded_artifact_is_the_one_on_disk() {
+        // `include_bytes!` is resolved at compile time, so a stale build could
+        // carry an artifact that no longer matches the file `bakeclips` wrote.
+        // This is the only place that can notice.
+        let on_disk = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/clips.bin"))
+            .expect("assets/clips.bin is checked in");
+        assert_eq!(
+            BUILTIN,
+            on_disk.as_slice(),
+            "the embedded artifact is stale"
+        );
+
+        let library = ClipLibrary::builtin().expect("the embedded artifact parses");
+        assert_eq!(library.len(), 12);
+        assert!(library.get("Walk").is_some());
     }
 
     #[test]
