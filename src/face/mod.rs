@@ -29,7 +29,7 @@ pub use skull::{Skull, refine_face, shape as shape_skull};
 /// Shared by [`skull`] and [`relief`] rather than written twice: both fade terms
 /// against a normalised distance, and two copies of one curve is two things to
 /// keep in step for no gain.
-fn smooth(at: f32) -> f32 {
+pub(crate) fn smooth(at: f32) -> f32 {
     let at = at.clamp(0.0, 1.0);
     at * at * (3.0 - 2.0 * at)
 }

@@ -157,6 +157,13 @@ pub struct Joint {
     pub zone: Zone,
     /// What the joint is for, and so what may bind to it.
     pub role: Role,
+    /// Whether the skeleton node behind this joint was a marker — a joint the
+    /// cage never meshed (#134). The generic falloff must not bind the body to
+    /// one: the jaw's pivot and tip get their skin from the mandible REGION
+    /// instead (#152), and a marker that also falloff-bound would hold the
+    /// same skin twice. Distinct from [`Role`], because a marker still
+    /// deforms — its held skin must follow it when it is posed.
+    pub marker: bool,
 }
 
 /// Errors raised while rooting a skeleton.
@@ -250,6 +257,16 @@ impl Rig {
                 scale: source.scale,
                 zone: source.zone,
                 role: Role::Deform,
+                // Carried through so the binding can treat marker joints
+                // specially without needing the skeleton back: since #152 the
+                // jaw's pivot and tip take their skin from
+                // `face::skull::mandible_hold`, written into the weights
+                // directly, and the generic falloff must not also bind them.
+                // They stay [`Role::Deform`] because the deform path composes
+                // only deforming joints — a role change here was measured to
+                // leave their skin behind entirely (0.09 mm of lip travel on a
+                // 20-degree open).
+                marker: source.marker,
             });
             let here = joints.len() - 1;
             for neighbor in skeleton.neighbors(node) {
@@ -298,6 +315,7 @@ impl Rig {
             scale: Vec2::ONE,
             zone,
             role,
+            marker: false,
         });
         Some(self.joints.len() - 1)
     }

@@ -1234,6 +1234,56 @@ fn jaw(height: f32, facing: f32, side: f32) -> f32 {
     JAW_DEPTH * window * smooth(under / JAW_RISE) * smooth((1.0 - along) / JAW_RELEASE)
 }
 
+/// Where the lower-jaw region lets go of the throat, as a fraction of the
+/// head's reach below its own joint — the owner's "about the adam's apple".
+///
+/// **Derived, not modelled** (#152): there is no larynx in the geometry, so the
+/// line is where the throat's forward reach goes vertical below the submental
+/// corner — measured on the default body at −140 mm below the head joint on a
+/// 166 mm below-joint span, and expressed in that span's own fractions because
+/// they are the one ruler that holds across bodies: the chin measures 0.60 of
+/// it on every body (`JAW_TIP`, `owner_of`, twice each), the head's floor 0.90.
+pub(crate) const LARYNX: f32 = 0.84;
+
+/// Where the skull stops owning the nape, in the same fractions.
+///
+/// Named for the boundary rather than the bone, because [`OCCIPUT`] is already
+/// the cranium's swell profile: the back of the head is a rigid occiput and
+/// the column below it is neck. The gonion maps to 0.35 of the below-joint
+/// span and the occiput's underside arrives at the same height, which is what
+/// a jawline meeting the ear means.
+pub(crate) const NAPE: f32 = 0.35;
+
+/// How strongly a point belongs to the lower-jaw region, 0..1 (#152).
+///
+/// **The owner's contract, verbatim: "the lower jaw should include the lower
+/// lip, to the chin, under the chin, to about the adam's apple", along the
+/// jawline to the gonion, with the ear as the hinge.** This field is that
+/// region written down once, where the jaw's other landmarks already live, so
+/// the carve and the binding read the same lines — the contradiction #151
+/// measured was three fragments of this region each implemented alone.
+///
+/// `below` is the fraction of the head's below-joint span (0 at the joint, 1
+/// at the neck joint); `facing`/`side` are the azimuth cosine/sine
+/// [`reshape_to`] already uses. Three windows multiplied:
+///
+/// - **Top**: rises below the mouth line — 0.39 of the span on the midline,
+///   easing to the gonion's 0.35 at the side, so the lower lip is inside and
+///   the upper lip is out. The blend is 0.06 wide; the bind-time smoothing
+///   pass softens it further.
+/// - **Bottom**: fades to nothing at [`LARYNX`] over 0.10 of the span.
+/// - **Round**: dies behind the ear with the same curve [`jaw`]'s hollow uses,
+///   so the region and the cosmetic border agree about where the face ends.
+///   No release toward the gonion: the hinge sits at the ear, so skin near it
+///   sweeps a small arc however fully it is held.
+pub(crate) fn mandible_hold(below: f32, facing: f32, side: f32) -> f32 {
+    let top = 0.39 - 0.04 * side.abs();
+    let risen = smooth((below - top) / 0.06);
+    let fade = smooth((LARYNX - below) / 0.10);
+    let round = smooth((facing + 0.30) / 0.30);
+    risen * fade * round
+}
+
 /// The slope of the straight line between two neighbouring knots.
 fn secant(profile: &[(f32, f32)], segment: usize) -> f32 {
     let (upper, above) = profile[segment];

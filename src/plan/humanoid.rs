@@ -450,10 +450,14 @@ const JAW_TIP: Vec2 = Vec2::new(0.603, 0.92);
 
 /// The marker radii of the jaw's two nodes, in head radii: `(pivot, tip)`.
 ///
-/// A marker meshes nothing, so these are BINDING reaches, not sizes: the
-/// falloff that decides which skin follows the mandible scales with them. The
-/// tip's reach is the chin and the lower lip's neighbourhood; the pivot's is
-/// the jaw's angle below the ear.
+/// **Retired as a binding mechanism by #152 and kept as the record of why.**
+/// These were BINDING reaches — the falloff that decided which skin follows
+/// the mandible scaled with them — and the sweep below is the measurement that
+/// eventually killed that mechanism: its own conclusion is that no reach can
+/// hold the chin's flank while releasing the upper lip. The mandible's skin is
+/// now the REGION `face::skull::mandible_hold` describes (the owner's
+/// lip-to-larynx contract), `rig::skin::bind` skips marker bones in its
+/// falloff entirely, and these radii mesh nothing and bind nothing.
 /// **Sourced by sweep against a posed jaw** (#135), which is the only thing
 /// that can source it: dual quaternion blending deforms a bad reach and a good
 /// one identically at rest AND under a head turn, so every suite in the crate

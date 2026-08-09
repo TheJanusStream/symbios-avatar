@@ -47,6 +47,7 @@ use glam::Vec3;
 use std::collections::BTreeSet;
 
 use super::Rig;
+use crate::face::skull;
 use crate::mesh::PolyMesh;
 use crate::plan::Zone;
 
@@ -229,6 +230,27 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
         return SkinWeights::default();
     }
 
+    // The jaw chain, if this rig carries one: `(pivot, head, neck)`. The two
+    // markers are excluded from the falloff loop below; their skin is the
+    // REGION `face::skull::mandible_hold` describes — the owner's contract,
+    // lower lip to larynx, gonion to ear — written into the weights directly.
+    // A distance falloff was measured unable to say that (#135: the chin's
+    // flank and the upper lip sit 27.4 and 28.5 mm from the bone, and nothing
+    // keyed to distance can hold one and release the other).
+    let jaw = (0..joints)
+        .find(|&tip| {
+            rig.joints[tip].marker
+                && rig.joints[tip]
+                    .parent
+                    .is_some_and(|pivot| rig.joints[pivot].marker)
+        })
+        .and_then(|tip| {
+            let pivot = rig.joints[tip].parent?;
+            let head = rig.joints[pivot].parent?;
+            let neck = rig.joints[head].parent?;
+            Some((pivot, head, neck))
+        });
+
     let mut dense = vec![0.0f32; vertices * joints];
     for (vertex, &position) in mesh.positions.iter().enumerate() {
         let row = &mut dense[vertex * joints..(vertex + 1) * joints];
@@ -242,14 +264,14 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
         // module docs: `rig.bone(segment)` runs `parent → segment`, and it is
         // the parent's rotation that turns it.
         for segment in 0..joints {
-            if !rig.joints[segment].role.deforms() {
+            if !rig.joints[segment].role.deforms() || rig.joints[segment].marker {
                 continue;
             }
             let (start, end) = rig.bone(segment);
             let (start_radius, end_radius) = rig.bone_radii(segment);
             let (distance, along) = distance_to_segment(position, start, end);
             let radius = start_radius + (end_radius - start_radius) * along;
-            let owner = owner_of(rig, segment, mine, along, start.distance(end));
+            let owner = owner_of(rig, segment, mine, along, start.distance(end), position);
             if !rig.joints[owner].role.deforms() {
                 continue;
             }
@@ -271,6 +293,33 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
         // A vertex beyond every bone's reach still has to belong somewhere.
         if row.iter().all(|w| *w <= 0.0) {
             row[nearest.1] = 1.0;
+        }
+
+        // The lower-jaw region (#152): the mandible takes its share of the
+        // head's and the neck's hold, and only theirs — the field is defined
+        // against the neck→head bone's own span, the ruler `owner_of` already
+        // measures the chin and the throat with.
+        if let Some((pivot, head, neck)) = jaw {
+            let (foot, crest) = (rig.joints[neck].position, rig.joints[head].position);
+            // Pure HEIGHT, not a projection onto the bone: the neck→head bone
+            // leans — its foot sits astern — so projecting onto it folds a
+            // vertex's forward reach into its height, and the one place that
+            // matters is exactly the place this field is for. Measured before
+            // this was fixed: the lip and chin front at z +95 mm read 0.09
+            // below-joint units high, landing above the mouth line, and the
+            // lower lip came out held 0.997 by the skull.
+            let drop = (crest.y - position.y) / (crest.y - foot.y).max(f32::EPSILON);
+            let across = Vec3::new(position.x - crest.x, 0.0, position.z - crest.z);
+            let reach = across.length();
+            if reach > f32::EPSILON {
+                let hold = skull::mandible_hold(drop, across.z / reach, across.x / reach);
+                if hold > 0.0 {
+                    let taken = hold * (row[head] + row[neck]);
+                    row[head] *= 1.0 - hold;
+                    row[neck] *= 1.0 - hold;
+                    row[pivot] += taken;
+                }
+            }
         }
         normalize(row);
     }
@@ -321,7 +370,7 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
 /// still follows the neck and rotating the neck still deforms something —
 /// giving the whole bone to the head would have left the neck joint owning
 /// nothing at all.
-fn owner_of(rig: &Rig, segment: usize, on: Zone, along: f32, length: f32) -> usize {
+fn owner_of(rig: &Rig, segment: usize, on: Zone, along: f32, length: f32, position: Vec3) -> usize {
     let parent = rig.joints[segment].parent.unwrap_or(segment);
     if on != Zone::Head
         || rig.joints[segment].zone != Zone::Head
@@ -356,15 +405,35 @@ fn owner_of(rig: &Rig, segment: usize, on: Zone, along: f32, length: f32) -> usi
     // `smooth` blended neck weight onto the chin and
     // `the_whole_face_turns_with_the_head` left a chin vertex 8 mm behind.
     //
-    // A constant is right here precisely because the two landmarks it separates
-    // are constants. `along` is a projection onto the bone, which is vertical —
-    // that the chin also stands 1.34 radii FORWARD does not enter into it, and
-    // is why a plain distance to the node cannot make this call.
-    const COVERED: f32 = 0.75;
+    // A constant was right here while the boundary had one landmark pair to
+    // separate, and #152 gave it two. `along` is a projection onto the bone,
+    // which is vertical — that the chin also stands 1.34 radii FORWARD does
+    // not enter into it, and is why a plain distance to the node cannot make
+    // this call. But how far DOWN the head's claim should run is not one
+    // number round the column: on the FRONT the lower-jaw region needs a
+    // head-family base under it all the way to the larynx line, and on the
+    // BACK the skull is rigid only to the occiput — the flat 0.75 (which is
+    // [`skull::LARYNX`] minus a smoothing margin, halfway between the chin at
+    // 0.40-along and the throat floor at 0.10) gave the head the nape too, so
+    // a head turn sheared the whole column as one piece (#151's second
+    // finding). The boundary now swings with azimuth between the two measured
+    // landmarks: [`skull::LARYNX`] dead ahead, [`skull::NAPE`] behind, the
+    // same constants the mandible field and the carve read.
     if length <= f32::EPSILON {
         return segment;
     }
-    if along >= 1.0 - COVERED {
+    // The swing uses the mandible field's own azimuth release, not a bare
+    // cosine: the head's claim has to stay at full depth for the whole face
+    // AND its sides — the under-ear jawline is the region's base, and a
+    // boundary that fell toward the nape at 90° was measured handing it to
+    // the neck, which the field then split 0.7/0.3 and a head turn left the
+    // neck's share 5.9 mm behind. Only past the ear does the column begin.
+    let crest = rig.joints[segment].position;
+    let across = Vec3::new(position.x - crest.x, 0.0, position.z - crest.z);
+    let facing = across.z / across.length().max(f32::EPSILON);
+    let round = crate::face::smooth((facing + 0.30) / 0.30);
+    let covered = skull::NAPE + (skull::LARYNX - skull::NAPE) * round;
+    if along >= 1.0 - covered {
         segment
     } else {
         parent
@@ -818,8 +887,16 @@ mod tests {
             // effect is the neck's rear blend. The mouth was judged open on a
             // `--jaw 20` render before the bound moved; if this figure falls
             // again, suspect the jaw's own binding, not the margin.
+            //
+            // **7.5 → 10.0, a ratchet UP for the first time** (#152). The
+            // mandible became a region — `skull::mandible_hold`, the owner's
+            // lip-to-larynx contract — and the lower lip now travels 11.2 mm
+            // on the default face and 10.4 on the short one, against the 7.95
+            // the old throat-wedge binding delivered. The floor rises onto the
+            // new state so the region cannot silently degrade back into the
+            // wedge; the upper lip's own bounds held at 1.000/0.00 unchanged.
             assert!(
-                lower.3 > 7.5,
+                lower.3 > 10.0,
                 "{what}: the lower lip travelled only {:.2} mm — the jaw is not carrying the mouth",
                 lower.3,
             );

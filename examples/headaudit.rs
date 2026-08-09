@@ -483,10 +483,120 @@ fn main() {
     }
 
     chin_blade(&plain, &carved, centre, chin, canon.nose_base());
+    held_by(&avatar, centre, radius);
 }
 
 /// The chin's own section, and whether it is a point or a blade (#128).
 ///
+/// The binding's territories, read from the weights that ship (#151/#152).
+///
+/// Each cell is the nearest vertex to a bisected surface point: its strongest
+/// joint and that hold, with the jaw pivot's hold in brackets wherever it is
+/// not the strongest. The tint renders drew the suspicion; this is the table
+/// to argue from.
+fn held_by(avatar: &Avatar, centre: Vec3, radius: f32) {
+    let body = &avatar.parts.body;
+    let rig = &avatar.rig;
+    let head = *rig.in_zone(Zone::Head).first().expect("a head");
+    let reach = |mesh: &PolyMesh, y: f32, degrees: f32| -> Option<f32> {
+        let from = Vec3::new(centre.x, centre.y + y, centre.z);
+        if !mesh.contains(from) {
+            return None;
+        }
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        let along = Vec3::new(sin, 0.0, cos);
+        let (mut near, mut out) = (0.0f32, 0.30f32);
+        for _ in 0..40 {
+            let mid = 0.5 * (near + out);
+            if mesh.contains(from + along * mid) {
+                near = mid;
+            } else {
+                out = mid;
+            }
+        }
+        Some(near)
+    };
+    let _ = radius;
+    // ---- Who holds the skin ------------------------------------------------
+    //
+    println!("\n## Who holds the skin, by height\n");
+    println!("| mm | front | 45° | side | back |\n|---|---|---|---|---|");
+    let weights = &avatar.parts.weights;
+    let neck = rig.joints[head].parent.unwrap_or(head);
+    let girdle = rig.joints[neck].parent.unwrap_or(neck);
+    let pivot = (0..rig.len())
+        .find(|&j| rig.joints[j].parent == Some(head) && rig.joints[j].position.y < centre.y);
+    let tip = pivot.and_then(|p| (0..rig.len()).find(|&j| rig.joints[j].parent == Some(p)));
+    let crown = (0..rig.len())
+        .find(|&j| rig.joints[j].parent == Some(head) && rig.joints[j].position.y > centre.y);
+    let label = |joint: usize| -> String {
+        if joint == head {
+            "head".into()
+        } else if Some(joint) == pivot {
+            "jawP".into()
+        } else if Some(joint) == tip {
+            "jawT".into()
+        } else if Some(joint) == crown {
+            "crown".into()
+        } else if joint == neck {
+            "neck".into()
+        } else if joint == girdle {
+            "girdle".into()
+        } else if rig.joints[girdle].parent == Some(joint) {
+            "chest".into()
+        } else {
+            format!("j{joint}")
+        }
+    };
+    for step in 0..=15 {
+        let y = 0.04 - 0.02 * step as f32;
+        let mut cells: Vec<String> = Vec::with_capacity(4);
+        for degrees in [0.0f32, 45.0, 90.0, 180.0] {
+            let Some(out) = reach(body, y, degrees) else {
+                cells.push("—".into());
+                continue;
+            };
+            let (sin, cos) = degrees.to_radians().sin_cos();
+            let at = Vec3::new(centre.x, centre.y + y, centre.z)
+                + Vec3::new(sin, 0.0, cos) * (out - 0.001);
+            let vertex = body
+                .positions
+                .iter()
+                .enumerate()
+                .min_by(|a, b| {
+                    a.1.distance_squared(at)
+                        .total_cmp(&b.1.distance_squared(at))
+                })
+                .map(|(index, _)| index)
+                .expect("a body has vertices");
+            let row = &weights.vertices[vertex];
+            let strongest = row[0];
+            let jaw_hold: f32 = row
+                .iter()
+                .filter(|i| Some(i.joint as usize) == pivot)
+                .map(|i| i.weight)
+                .sum();
+            let mut cell = format!(
+                "{} {:.2}",
+                label(strongest.joint as usize),
+                strongest.weight
+            );
+            if jaw_hold > 0.005 && Some(strongest.joint as usize) != pivot {
+                cell.push_str(&format!(" (jawP {jaw_hold:.2})"));
+            }
+            cells.push(cell);
+        }
+        println!(
+            "| {:+.0} | {} | {} | {} | {} |",
+            y * 1000.0,
+            cells[0],
+            cells[1],
+            cells[2],
+            cells[3]
+        );
+    }
+}
+
 /// The owner reported a second nose hanging off the chin in front view and a
 /// flab from chin to mid-neck on the diagonal — one shape from two angles. What
 /// it is, measured, is a midline that runs a long way ahead of the surface
