@@ -406,6 +406,8 @@ pub struct ShadowMap {
     side: usize,
     depth: Vec<f32>,
     view: Mat4,
+    /// World size of one shadow texel, for normal-offset sampling.
+    texel: f32,
 }
 
 impl ShadowMap {
@@ -440,6 +442,7 @@ impl ShadowMap {
             side,
             depth: vec![f32::MAX; side * side],
             view,
+            texel: reach / side as f32,
         };
         let mut buffer = GBuffer::new(side, side);
         let frame = Frame {
@@ -458,8 +461,22 @@ impl ShadowMap {
     ///
     /// Filtered over a small neighbourhood: a single comparison gives a hard
     /// stair-stepped edge that reads worse than no shadow at all.
-    pub fn lit(&self, point: Vec3, slope: f32) -> f32 {
-        let clip = self.view.transform_point3(point);
+    ///
+    /// `normal` is the surface normal at the point, for **normal-offset
+    /// sampling**: the depth comparison happens one shadow texel off the
+    /// surface, so a texel whose stored depth straddles its own surface cannot
+    /// shadow it. A depth bias alone cannot do this — the bias needed where
+    /// the surface runs steeply across the map grows without bound, and the
+    /// slope-scaled 0.006 shipped here still striped every grazing surface
+    /// with diagonal acne. The stripes drew as a woven, dirty crumple over the
+    /// jaw flank, the neck and the temple in every lit render, and were
+    /// chased as skin, texture and geometry before `--pass shadow` put them in
+    /// this map (#158) — the twenty-first instrument caught reporting its own
+    /// artifact as the body's.
+    pub fn lit(&self, point: Vec3, normal: Vec3, slope: f32) -> f32 {
+        let clip = self
+            .view
+            .transform_point3(point + normal * (self.texel * 1.5));
         let x = (clip.x * 0.5 + 0.5) * self.side as f32;
         let y = (0.5 - clip.y * 0.5) * self.side as f32;
         if !(0.0..self.side as f32).contains(&x) || !(0.0..self.side as f32).contains(&y) {

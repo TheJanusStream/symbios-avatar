@@ -120,6 +120,30 @@ const UNDERTONE_DEGREES: f32 = 15.0;
 /// every knuckle salmon-pink.
 const SUBDERMAL_TINT: Vec3 = Vec3::new(0.30, -0.10, -0.13);
 
+/// How much of a measured fold the painter is allowed to ink.
+///
+/// [`crate::mesh::PolyMesh::crease`] saturates on anything tighter than 9 mm,
+/// and at full strength every saturated fold paints as ink: −35% albedo, −70%
+/// baked occlusion and +80% blush, stacked. On a face that is most of what a
+/// viewer sees — the lip grooves, the jaw hollow, and every resolution
+/// boundary's curvature row painted as a ladder of dark bars between the mouth
+/// and the chin, with a dark line across the whole throat where the refinement
+/// passes end at the head zone's edge (#158). The upper skull stayed clean
+/// only because its forms are broader than the crease measure's floor, which
+/// is why the lower face read a class below it.
+///
+/// Zeroing the response cleaned the whole lower face in one move and cost the
+/// body almost nothing — the occlusion pass was already near-white everywhere
+/// but the artifacts — but it also erased the parting's own shadow, and a
+/// mouth needs its line. So the response is *compressed*, not removed: fold
+/// shading survives at this fraction, which keeps the parting, the nostrils
+/// and the eye sockets readable while a saturated artifact row can no longer
+/// paint darker than a deliberate groove.
+///
+/// Provenance: **tuned by render** (#158), closed and open profile shots
+/// against the untouched upper skull.
+const CREASE_INK: f32 = 0.30;
+
 /// What a body's skin looks like.
 ///
 /// Axes run `0..=1`, and every combination is a usable complexion — there is no
@@ -290,7 +314,7 @@ pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> T
         // read as a full crease everywhere, darkening every one of them by up
         // to 35% (#63).
         let hit = rig.nearest_bone(p);
-        let crease = texel.crease;
+        let crease = texel.crease * CREASE_INK;
         let thinness = (1.0 - hit.radius / stoutest).clamp(0.0, 1.0).powf(0.7);
         // Melanin sits above the blood and absorbs what would have shown
         // through it, so the same blush axis has to mean less on deeper skin —
@@ -356,7 +380,40 @@ pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> T
 
         // Micro-relief. Skin detail is mostly specular, so it belongs in the
         // normal and roughness maps rather than the albedo.
-        let pore = noise3(&pores, p, 400.0);
+        //
+        // **Faded by what the atlas can resolve.** Pores at 400 cycles per
+        // metre have a 2.5 mm period, and most charts carry 3–5 mm of body
+        // per texel — past Nyquist, so the sampled field was per-texel random.
+        // Turned into normals that drew as a structured herringbone of wrong
+        // directions across every grazing-lit surface, worst on the jaw flank
+        // whose region packs finely-meshed skin into few texels (#158). The
+        // frequency cannot vary per texel — `noise3` scales the domain, so a
+        // varying frequency warps the field and rebuilds the same noise — but
+        // the amplitude can: scale by the share of the pore period the local
+        // texel spacing resolves, the same fade a mip chain applies. Spacing
+        // is the widest step to a neighbouring texel, which sees through a
+        // dilated texel's zero-distance clones to the real interior spacing.
+        let spacing = {
+            let x = (index as u32) % geometry.width;
+            let y = (index as u32) / geometry.width;
+            let mut widest = 0.0f32;
+            for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                let (nx, ny) = (i64::from(x) + dx, i64::from(y) + dy);
+                if nx < 0 || ny < 0 {
+                    continue;
+                }
+                if let Some(near) = geometry.get(nx as u32, ny as u32) {
+                    widest = widest.max((near.position - p).length());
+                }
+            }
+            widest
+        };
+        let resolvable = if spacing > f32::EPSILON {
+            (1.0 / (2.0 * spacing * 400.0)).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let pore = noise3(&pores, p, 400.0) * resolvable;
         heights[index] = f64::from(pore) * 0.35 + f64::from(stubble) * f64::from(grain_bias(pore));
 
         // Roughness: an oily face against calloused hands, plus creases holding

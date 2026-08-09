@@ -312,6 +312,22 @@ enum Kind {
     Planar,
 }
 
+/// How far round its zone's axis a face's corners must reach before the face
+/// is a cap, in radians.
+///
+/// The cap criterion is the cylindrical failure mode measured directly: a face
+/// at the pole has corners at every angle round the axis at once, so
+/// cylindrical projection smears it across the whole chart. A pole face spans
+/// π or more; a face standing off the axis — however axis-aligned its normal —
+/// spans only its own width over its radius, well under a radian for anything
+/// off the pole. The threshold sits between the two regimes, and its exact
+/// value moves almost nothing: on the default body the spans cluster under
+/// 0.5 rad off the pole and above 2 off it.
+///
+/// Provenance: **derived** from the two regimes above; see #158 for the
+/// confetti charts the orientation-only test produced.
+const CAP_SPAN: f32 = 1.0;
+
 /// A connected run of faces sharing one zone and one projection.
 struct Group {
     zone: Zone,
@@ -326,12 +342,56 @@ struct Group {
 /// other.
 fn connected_groups(mesh: &PolyMesh, rig: &Rig, face_zones: &[Zone]) -> Vec<Group> {
     let mut axis_of: HashMap<Zone, Vec3> = HashMap::new();
+    // Where each zone's material stands, for asking whether a face is AT the
+    // axis or merely oriented along it. The mean of the zone's face centroids
+    // is off the true axis line by a little on an asymmetric zone, which is
+    // fine: the question below is a coarse classification, not a projection.
+    let mut centre_of: HashMap<Zone, (Vec3, f32)> = HashMap::new();
+    for (index, _) in mesh.faces.iter().enumerate() {
+        let entry = centre_of
+            .entry(face_zones[index])
+            .or_insert((Vec3::ZERO, 0.0));
+        entry.0 += mesh.face_centroid(index);
+        entry.1 += 1.0;
+    }
     let face_kinds: Vec<Kind> = (0..mesh.faces.len())
         .map(|face| {
             let axis = *axis_of
                 .entry(face_zones[face])
                 .or_insert_with(|| zone_axis(rig, face_zones[face]));
-            if face_normal(mesh, face).dot(axis).abs() > 0.85 {
+            if face_normal(mesh, face).dot(axis).abs() <= 0.85 {
+                return Kind::Cylindrical;
+            }
+            // Oriented along the axis — but a cap is at the POLE: its corners
+            // stand at every angle round the axis at once, which is the one
+            // thing cylindrical projection cannot flatten. A face that merely
+            // FACES along the axis while standing off it — the underside of a
+            // jaw, the submental plane, a brow's shelf — wraps fine, and
+            // classifying those as caps is what shredded the lower face into
+            // confetti charts: each downward-facing island became its own
+            // few-texel chart, whose rasterised texels then drowned in the
+            // neighbouring charts' dilation (#158). So the cap test is the
+            // failure mode itself, measured: the circular span of the face's
+            // corners about the axis.
+            let (centre, count) = centre_of[&face_zones[face]];
+            let origin = centre / count.max(1.0);
+            let (tangent, binormal) = frame(axis);
+            let corners = &mesh.faces[face];
+            let mut turns: Vec<f32> = corners
+                .iter()
+                .map(|&v| {
+                    let offset = mesh.positions[v as usize] - origin;
+                    let flat = offset - axis * offset.dot(axis);
+                    flat.dot(binormal).atan2(flat.dot(tangent))
+                })
+                .collect();
+            turns.sort_unstable_by(f32::total_cmp);
+            let widest_gap = turns.windows(2).map(|pair| pair[1] - pair[0]).fold(
+                std::f32::consts::TAU - (turns[turns.len() - 1] - turns[0]),
+                f32::max,
+            );
+            let span = std::f32::consts::TAU - widest_gap;
+            if span > CAP_SPAN {
                 Kind::Planar
             } else {
                 Kind::Cylindrical
@@ -411,6 +471,10 @@ struct Projection {
     area: f32,
     /// Importance of the zone this chart covers.
     zone: Zone,
+    /// Monotone remaps of the chart's normalized `u` and `v`, following the
+    /// mesh's own vertex density. See [`density_warp`].
+    u_warp: Vec<f32>,
+    v_warp: Vec<f32>,
 }
 
 impl Projection {
@@ -418,7 +482,10 @@ impl Projection {
     fn unit_uv(&self, vertex: u32, shift: u8) -> Vec2 {
         let u = self.angle[&vertex] + f32::from(shift);
         let v = self.along[&vertex];
-        Vec2::new(normalize(u, self.u_range), normalize(v, self.v_range))
+        Vec2::new(
+            warp(normalize(u, self.u_range), &self.u_warp),
+            warp(normalize(v, self.v_range), &self.v_warp),
+        )
     }
 
     /// The chart's requested size, in units that keep texel density honest.
@@ -526,6 +593,30 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group) -> Projection {
             (acc.0.min(v), acc.1.max(v))
         });
 
+    // Every corner's normalized coordinates, for the density warp: corners
+    // rather than vertices so a vertex shared by six fine faces counts as the
+    // detail it carries.
+    let mut u_samples = Vec::new();
+    let mut v_samples = Vec::new();
+    for (&face_index, corner_shifts) in group.faces.iter().zip(&shifts) {
+        let face = &mesh.faces[face_index as usize];
+        for (corner, &shift) in face.iter().zip(corner_shifts) {
+            u_samples.push(normalize(angle[corner] + f32::from(shift), u_range));
+            v_samples.push(normalize(along[corner], v_range));
+        }
+    }
+    // Head only: `refine_face` is the one thing in the pipeline that makes a
+    // region's vertex density mean "detail lives here". Elsewhere clustering
+    // is a tessellation artifact — a tapering tail keeps its ring count while
+    // its radius vanishes, so its tip reads dense while carrying nothing, and
+    // warping toward it re-stretched the faces `tests/uv.rs` already names as
+    // the worst on the body.
+    let (u_warp, v_warp) = if group.zone == Zone::Head {
+        (density_warp(&u_samples), density_warp(&v_samples))
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     Projection {
         kind: group.kind,
         angle,
@@ -540,7 +631,88 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group) -> Projection {
             .map(|&face| face_area(mesh, face as usize))
             .sum(),
         zone: group.zone,
+        u_warp,
+        v_warp,
     }
+}
+
+/// How many bins a chart's density warp is built over.
+const WARP_BINS: usize = 32;
+
+/// How far a chart's texels follow its vertices, `0` uniform, `1` fully.
+///
+/// At `1.0` texel rows are allotted purely by vertex count, which starves any
+/// span of surface the mesh crosses in a few big faces — bilinear samples
+/// there would cross the whole span inside one texel. Halfway keeps every
+/// region at least half its uniform share while the dense regions roughly
+/// double theirs.
+///
+/// Provenance: **tuned by render** (#158), against the lower face.
+const WARP_FOLLOW: f32 = 0.5;
+
+/// A monotone remap of a chart axis toward the mesh's own vertex density.
+///
+/// A chart's texels used to be spread uniformly over its extent, but a chart's
+/// DETAIL is not: the head chart spends four refinement passes on the mouth
+/// band, so the lower face carries most of the chart's faces in a tenth of its
+/// height — and got a tenth of its texels. Painted at that density the jaw
+/// flank came out as magnified single-texel rectangles (#158). The atlas is
+/// per-texel positional — every painter is a function of `texel.position` — so
+/// warping where the texels go changes only how finely each region is
+/// sampled, never what is painted there.
+///
+/// Returns piecewise-linear knots mapping normalized `[0, 1]` onto itself:
+/// the corner-count CDF blended [`WARP_FOLLOW`] of the way from identity.
+/// Charts with fewer corners than fill its bins keep the identity — a CDF
+/// built from a handful of samples is noise, and the charts that small are
+/// exactly the ones a warp cannot help.
+fn density_warp(samples: &[f32]) -> Vec<f32> {
+    if samples.len() < WARP_BINS * 4 {
+        return Vec::new();
+    }
+    let mut counts = [0.0f32; WARP_BINS];
+    for &at in samples {
+        let bin = ((at * WARP_BINS as f32) as usize).min(WARP_BINS - 1);
+        counts[bin] += 1.0;
+    }
+    // Bound how far any one bin can depart from the uniform share before the
+    // blend, so a single spike — a pole, a seam pile-up — cannot starve the
+    // rest of the chart or blow a face past the stretch guard.
+    let uniform_share = samples.len() as f32 / WARP_BINS as f32;
+    for count in &mut counts {
+        *count = count.clamp(uniform_share / WARP_SLOPE, uniform_share * WARP_SLOPE);
+    }
+    let total: f32 = counts.iter().sum();
+    let mut knots = Vec::with_capacity(WARP_BINS + 1);
+    let mut running = 0.0;
+    knots.push(0.0);
+    for (bin, &count) in counts.iter().enumerate() {
+        running += count / total;
+        let uniform = (bin + 1) as f32 / WARP_BINS as f32;
+        knots.push(uniform + (running - uniform) * WARP_FOLLOW);
+    }
+    knots
+}
+
+/// How far a bin's texel share may depart from uniform, either way.
+///
+/// See [`density_warp`]; the clamp runs before [`WARP_FOLLOW`]'s blend, so the
+/// final per-axis stretch is bounded by `1 + (WARP_SLOPE - 1) * WARP_FOLLOW`.
+///
+/// Provenance: **derived** from `tests/uv.rs`'s 11.5x stretch guard and the
+/// 5.3x worst face outside a tail it records.
+const WARP_SLOPE: f32 = 2.5;
+
+/// Evaluates a [`density_warp`] table at `at`; an empty table is the identity.
+fn warp(at: f32, knots: &[f32]) -> f32 {
+    if knots.is_empty() {
+        return at;
+    }
+    let clamped = at.clamp(0.0, 1.0);
+    let scaled = clamped * (knots.len() - 1) as f32;
+    let low = (scaled as usize).min(knots.len() - 2);
+    let between = scaled - low as f32;
+    knots[low] + (knots[low + 1] - knots[low]) * between
 }
 
 /// The axis a zone unwraps about: the bone entering it.

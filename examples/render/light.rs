@@ -178,6 +178,7 @@ pub fn shade(buffer: &GBuffer, ao: &[f32], frame: &Frame, shadow: &ShadowMap) ->
             + 0.86
                 * shadow.lit(
                     buffer.world[pixel],
+                    normal,
                     (1.0 - normal.dot(key).abs()).clamp(0.0, 1.0),
                 );
         for (direction, colour, occludes, shadowing) in [
@@ -251,6 +252,7 @@ pub fn inspect(
             "shadow" => Vec3::splat(if covered {
                 shadow.lit(
                     buffer.world[pixel],
+                    buffer.normal[pixel],
                     (1.0 - buffer.normal[pixel].dot(key).abs()).clamp(0.0, 1.0),
                 )
             } else {
