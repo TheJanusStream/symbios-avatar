@@ -341,7 +341,13 @@ pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> T
                 let t = ((texel.mouth - edge) / width).clamp(0.0, 1.0);
                 t * t * (3.0 - 2.0 * t)
             };
-            let cavity = toward(0.6, 0.35);
+            // The cavity's onset sits just past the teeth's own 0.5 and
+            // rises steeply: the stretch membrane behind the ridge — the one
+            // face of a split-territory pocket that must stretch — runs 0.5
+            // to 1.0 across its height, and with a lazy onset it painted as a
+            // light wall filling the open mouth (#156). A throat is dark from
+            // the first centimetre.
+            let cavity = toward(0.55, 0.18);
             let ridge = toward(0.15, 0.2) * (1.0 - cavity);
             let dark = Vec3::new(0.23, 0.08, 0.07);
             let ivory = Vec3::new(0.87, 0.84, 0.74);

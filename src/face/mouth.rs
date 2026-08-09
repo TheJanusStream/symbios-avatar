@@ -36,6 +36,7 @@ use super::features::FaceParams;
 use crate::mesh::PolyMesh;
 use crate::plan::Zone;
 use crate::rig::Rig;
+use crate::uv::{Rect, UvUnwrap};
 
 /// How deep the pocket reaches, in head radii.
 ///
@@ -62,12 +63,41 @@ pub struct Mouth {
     /// Its lower edge, held by the jaw; `lower[i]` starts coincident with
     /// `upper[i]`.
     pub lower: Vec<u32>,
-    /// Pocket roof and the back wall's top: the skull's.
+    /// The pocket's roof — the inner upper lip: the skull's.
     pub roof: Vec<u32>,
     /// The teeth ridge hanging from the roof: the skull's, painted apart.
     pub teeth: Vec<u32>,
-    /// Pocket floor and the back wall's bottom: the jaw's.
+    /// Pocket floor and the whole back wall: the jaw's.
+    ///
+    /// The back wall's TOP was the skull's first, and the owner caught what
+    /// that means from outside (#156): open the jaw and the wall stands still
+    /// while everything around it drops — a stationary sheet of mouth exactly
+    /// where the inner lower lip should be, reading as the lip stuck on the
+    /// skull. A mouth's floor and inner gum ride the mandible; the stretch a
+    /// split territory needs happens in the one row hidden BEHIND the teeth
+    /// ridge, where nobody has ever seen the inside of a mouth.
     pub floor: Vec<u32>,
+    /// The outer skin of the lower lip, below the parting: the jaw's
+    /// outright (#155, deepened by #157).
+    ///
+    /// The mandible field's blend has no business here: inside the slit there
+    /// is no continuous skin across the parting any more, so the ramp that
+    /// eases a cheek eased the lip tip instead — the seam's own edge moved
+    /// with the jaw while the skin a millimetre below it hung on the skull,
+    /// which the owner saw as the lower lip stuck mid-word. And the band is
+    /// DEEP, because the field's top edge is a span-fraction constant while
+    /// the cut follows each body's own canon: on seed 1 the two disagree by
+    /// six millimetres, and the skin between them hung half-held across a
+    /// wide-open mouth as a stretched sheet (#157). Where the field is
+    /// already 1.0 the override changes nothing, so depth is cheap; the cut
+    /// line is the one authority.
+    pub lip: Vec<u32>,
+    /// The outer skin just above the parting: the skull's outright (#157).
+    ///
+    /// The same seed-mismatch mirrored: a body whose parting sits below the
+    /// field's top would have upper-lip skin claimed for the jaw. Skin above
+    /// the cut is the skull's by definition, whatever the field says.
+    pub overlip: Vec<u32>,
     /// The two corner vertices where the seams meet, left then right.
     ///
     /// Deliberately in neither camp: they keep the blended weights the field
@@ -227,6 +257,15 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
         cycle
     };
     let mut divided: Vec<Vec<u32>> = Vec::new();
+    // The faces that lie below the parting, recorded AT the division — where
+    // each half's side is a fact of the walk — rather than re-derived from
+    // positions afterwards. A positional test was built first and
+    // misclassified at the corners, where the curve dips and a lower half's
+    // far vertices sit above it: the half kept the upper seam, the hole never
+    // opened there, and the skin hung off the moving lip as a stretched
+    // spike.
+    let split_base = body.positions.len() - chain.len();
+    let mut below_faces: Vec<usize> = Vec::new();
     for (index, mine) in on_face.iter().rev() {
         let cycle = cut(&body.faces[*index]);
         if mine.len() == 1 {
@@ -251,6 +290,21 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
         // switch, and the wrap-around edge belongs to the side the walk began
         // and ended on. Traced for a start above the parting and a start
         // below; both land whole.
+        //
+        // Which arc is the lower one is read off the arc's own original
+        // vertices: an arc's originals are all on one side of the parting by
+        // construction of the walk.
+        let lower_side = |arc: &[u32]| -> bool {
+            arc.iter()
+                .find(|&&vertex| (vertex as usize) < split_base)
+                .is_some_and(|&vertex| above(body.positions[vertex as usize]) < 0.0)
+        };
+        if lower_side(&sides[0]) {
+            below_faces.push(*index);
+        }
+        if lower_side(&sides[1]) {
+            below_faces.push(body.faces.len() + divided.len());
+        }
         body.faces[*index] = sides[0].clone();
         divided.push(sides[1].clone());
     }
@@ -281,24 +335,82 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
         })
         .collect();
     let twin: HashMap<u32, u32> = upper.iter().copied().zip(lower.iter().copied()).collect();
-    let faces = body.faces.len();
-    for index in 0..faces {
-        let below = body.faces[index].iter().any(|&v| {
-            !twin.contains_key(&v)
-                && !welds.contains(&v)
-                && (v as usize) < body.positions.len()
-                && above(body.positions[v as usize]) < 0.0
-                && eligible_or_near(body.positions[v as usize], centre, reach, mouth_y, radius)
-        });
-        let touches = body.faces[index].iter().any(|v| twin.contains_key(v));
-        if touches && below {
-            for vertex in &mut body.faces[index] {
-                if let Some(&copy) = twin.get(vertex) {
-                    *vertex = copy;
-                }
+    for &index in &below_faces {
+        for vertex in &mut body.faces[index] {
+            if let Some(&copy) = twin.get(vertex) {
+                *vertex = copy;
             }
         }
     }
+
+    // ---- The lip tip band ------------------------------------------------
+    //
+    // The outer skin of the lower lip within a few millimetres of the
+    // parting. **Walked from the lower seam, not selected by position**: the
+    // parting curve dips toward the corners and the upper lip's carved bulge
+    // dips with it, so a positional band caught upper-lip vertices sitting
+    // locally below the curve — overridden to the jaw, they hung off the
+    // opening as stretched spikes when it moved. The seam is a topological
+    // fact: skin reachable from the lower edge without passing a weld is
+    // lower lip, whatever its millimetres say. Collected here, after the seam
+    // is doubled and before the pocket exists, so the walk sees exactly the
+    // original skin.
+    let flood = |seeds: &[u32], blocked: &[u32], banded: &dyn Fn(u32) -> bool| -> Vec<u32> {
+        let mut adjacent: HashMap<u32, Vec<u32>> = HashMap::new();
+        for face in &body.faces {
+            for at in 0..face.len() {
+                let (a, b) = (face[at], face[(at + 1) % face.len()]);
+                if banded(a) || banded(b) {
+                    adjacent.entry(a).or_default().push(b);
+                    adjacent.entry(b).or_default().push(a);
+                }
+            }
+        }
+        let barrier: std::collections::HashSet<u32> = blocked.iter().copied().collect();
+        let mut seen: std::collections::HashSet<u32> = seeds.iter().copied().collect();
+        let mut queue: Vec<u32> = seeds.to_vec();
+        let mut band = Vec::new();
+        while let Some(here) = queue.pop() {
+            let Some(next) = adjacent.get(&here) else {
+                continue;
+            };
+            for &vertex in next {
+                if seen.contains(&vertex) || barrier.contains(&vertex) || !banded(vertex) {
+                    continue;
+                }
+                seen.insert(vertex);
+                band.push(vertex);
+                queue.push(vertex);
+            }
+        }
+        band
+    };
+    // Deep on the lower side, because the mandible field's top edge is a
+    // span-fraction constant while this cut follows the body's own canon:
+    // on seed 1 the two disagree by six millimetres, and the skin between
+    // them hung half-held across a wide-open mouth as a stretched sheet
+    // (#157). Where the field already answers 1.0 the override is a no-op,
+    // so depth costs nothing; the cut line is the one authority. The upper
+    // side is the same mismatch mirrored: skin above the cut is the skull's
+    // by definition, whatever the field says.
+    let above_seam: Vec<u32> = upper.iter().chain(&welds).copied().collect();
+    let below_seam: Vec<u32> = lower.iter().chain(&welds).copied().collect();
+    let lip = flood(&lower, &above_seam, &|vertex: u32| {
+        let p = body.positions[vertex as usize];
+        let under = -above(p);
+        (p.x - centre.x).abs() <= reach + 0.02 * radius
+            && p.z > centre.z
+            && under > -0.002 * radius
+            && under < 0.10 * radius
+    });
+    let overlip = flood(&above_seam, &below_seam, &|vertex: u32| {
+        let p = body.positions[vertex as usize];
+        let over = above(p);
+        (p.x - centre.x).abs() <= reach + 0.02 * radius
+            && p.z > centre.z
+            && over > -0.002 * radius
+            && over < 0.05 * radius
+    });
 
     // ---- Sew the pocket --------------------------------------------------
     //
@@ -418,9 +530,9 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
     let mut floor = Vec::new();
     for ring in &ring_of {
         roof.push(ring[0]);
-        roof.push(ring[3]);
         teeth.push(ring[1]);
         teeth.push(ring[2]);
+        floor.push(ring[3]);
         floor.push(ring[4]);
         floor.push(ring[5]);
     }
@@ -431,17 +543,89 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
         roof,
         teeth,
         floor,
+        lip,
+        overlip,
         welds,
     })
 }
-
-/// Whether a vertex is close enough to the slit for its face to change sides.
+/// Moves the pocket's charts into `rect`, out from under the face's.
 ///
-/// Looser than the cut's own eligibility on purpose: a face straddling the
-/// corner has vertices just outside the slit's width, and it still has to take
-/// the lower copies if it lies below the parting.
-fn eligible_or_near(p: Vec3, centre: Vec3, reach: f32, mouth_y: f32, radius: f32) -> bool {
-    (p.x - centre.x).abs() <= reach + radius * 0.10
-        && p.z > centre.z
-        && (p.y - mouth_y).abs() < radius * 0.35
+/// The unwrap charts by zone and connectivity, and the pocket is Head-zone
+/// skin connected to the face through its own seams — so it landed in the
+/// face's chart, where a projection that flattens a face cannot also flatten
+/// a fold hidden behind it: the cavity's texels rasterised over the lip's and
+/// the paint ran down the chin as dark drips (#155). The interior gets the
+/// same treatment as an attached part instead: one reserved rectangle,
+/// asked from the packer like an ear's, with the faces re-charted into it on
+/// their own duplicated vertices so the seam's texels stay the lip's.
+///
+/// The layout inside the rectangle is by construction rather than by
+/// projection: `u` is the position across the mouth, `v` the ring station —
+/// seam edge to roof to teeth to back wall to floor — which cannot fold
+/// because the stations are ordered by the sewing itself.
+pub(crate) fn chart_interior(charts: &mut UvUnwrap, mouth: &Mouth, mesh: &PolyMesh, rect: Rect) {
+    let mut station: HashMap<u32, f32> = HashMap::new();
+    for &vertex in mouth.upper.iter().chain(&mouth.welds) {
+        station.insert(vertex, 0.0);
+    }
+    // The classes hold their rings' vertices in pushed order: the roof is the
+    // inner-lip roll alone, teeth the ridge's outer and hanging edge in
+    // pairs, the floor the back wall's top and bottom and the floor's front
+    // in threes. Position within the class tells the stations apart.
+    for &vertex in &mouth.roof {
+        station.insert(vertex, 0.22);
+    }
+    for (at, &vertex) in mouth.teeth.iter().enumerate() {
+        station.insert(vertex, if at % 2 == 0 { 0.34 } else { 0.45 });
+    }
+    for (at, &vertex) in mouth.floor.iter().enumerate() {
+        station.insert(
+            vertex,
+            match at % 3 {
+                0 => 0.58,
+                1 => 0.70,
+                _ => 0.85,
+            },
+        );
+    }
+    for &vertex in &mouth.lower {
+        station.insert(vertex, 1.0);
+    }
+
+    let interior: std::collections::HashSet<u32> = mouth
+        .roof
+        .iter()
+        .chain(&mouth.teeth)
+        .chain(&mouth.floor)
+        .copied()
+        .collect();
+    let (mut left, mut right) = (f32::MAX, f32::MIN);
+    for &vertex in station.keys() {
+        let x = mesh.positions[vertex as usize].x;
+        left = left.min(x);
+        right = right.max(x);
+    }
+    let span = (right - left).max(f32::EPSILON);
+
+    for index in 0..charts.faces.len() {
+        let pocket = charts.faces[index]
+            .iter()
+            .any(|&corner| interior.contains(&charts.source[corner as usize]));
+        if !pocket {
+            continue;
+        }
+        let face = charts.faces[index].clone();
+        let mut recharted = Vec::with_capacity(face.len());
+        for corner in face {
+            let source = charts.source[corner as usize];
+            let p = mesh.positions[source as usize];
+            let across = (p.x - left) / span;
+            let ring = station.get(&source).copied().unwrap_or(0.5);
+            let uv = rect.min + (rect.max - rect.min) * glam::Vec2::new(across, ring);
+            charts.source.push(source);
+            charts.uvs.push(uv);
+            recharted.push(charts.source.len() as u32 - 1);
+        }
+        charts.faces[index] = recharted;
+    }
 }

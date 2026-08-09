@@ -307,10 +307,16 @@ impl Avatar {
                     };
                     held
                 };
-                for &vertex in mouth.upper.iter().chain(&mouth.roof).chain(&mouth.teeth) {
+                for &vertex in mouth
+                    .upper
+                    .iter()
+                    .chain(&mouth.roof)
+                    .chain(&mouth.teeth)
+                    .chain(&mouth.overlip)
+                {
                     weights.vertices[vertex as usize] = solely(head);
                 }
-                for &vertex in mouth.lower.iter().chain(&mouth.floor) {
+                for &vertex in mouth.lower.iter().chain(&mouth.floor).chain(&mouth.lip) {
                     weights.vertices[vertex as usize] = solely(pivot);
                 }
             }
@@ -348,10 +354,23 @@ impl Avatar {
         // afterwards for whatever the body did not want. The parts are the half
         // that needs the texels — a face is judged on its nose, its mouth and
         // its ears, and none of those is part of the body mesh.
-        let wanted: Vec<Vec2> = attached_meshes(&features, &extremities)
+        let mut wanted: Vec<Vec2> = attached_meshes(&features, &extremities)
             .map(|(mesh, zone)| chart_request(mesh, zone, &config.uv))
             .collect();
-        let (charts, reserved) = unwrap_with(&body, &rig, &zones, &config.uv, &wanted);
+        // One more region when there is a mouth: its pocket cannot share the
+        // face's chart — a projection that flattens a face cannot also
+        // flatten a fold hidden behind it — so the interior is packed like an
+        // attached part and re-charted below (#155).
+        if mouth.is_some() {
+            wanted.push(Vec2::new(0.06, 0.04));
+        }
+        let (mut charts, mut reserved) = unwrap_with(&body, &rig, &zones, &config.uv, &wanted);
+        if let Some(mouth) = &mouth
+            && let Some(rect) = reserved.pop()
+        {
+            face::mouth::chart_interior(&mut charts, mouth, &body, rect);
+        }
+        let charts = charts;
         place_charts(&mut features, &mut extremities, &reserved);
 
         // Cut from the body, so charted where the body is charted.
@@ -790,6 +809,21 @@ mod tests {
                 "seed {seed}: a 20-degree open parts the seam by only {:.1} mm — the mouth \
                  is still one sheet",
                 widest * 1000.0
+            );
+            // The owner's #155 report, pinned: the lower lip's OUTER skin
+            // travels with the jaw, not only the seam's own edge. The field's
+            // blend has no business below the parting, and this is what holds
+            // that.
+            let tip = mouth
+                .lip
+                .iter()
+                .map(|&v| moved[v as usize].distance(body.positions[v as usize]))
+                .sum::<f32>()
+                / mouth.lip.len().max(1) as f32;
+            assert!(
+                tip > 0.006,
+                "seed {seed}: the lower lip's tip travelled {:.1} mm mean under a                  20-degree open — the lip is stuck on the skull again",
+                tip * 1000.0
             );
             let welds = mouth.welds;
             let corner = moved[welds[0] as usize].distance(moved[welds[1] as usize]);
