@@ -143,6 +143,82 @@ impl Rolls {
         use rand::Rng;
         self.stream(axis).random_bool(probability)
     }
+
+    /// A shape axis drawn as a person first and an extreme rarely (#160).
+    ///
+    /// Replaces the uniform-inside-a-fence draw the shape axes used to make.
+    /// That fence was a judgement — "a re-roll that reaches the bounds makes
+    /// every third seed a caricature" — and this keeps the judgement while
+    /// removing the wall: the bulk is a Gaussian centred on the axis's own
+    /// **default** with `sigma` half the old fence's width, so a typical draw
+    /// lands where it always did, and the tail is a `WILDCARD` chance of a
+    /// uniform draw over the whole exploration `range`, because a clamped
+    /// Gaussian at four sigma never lands and "rare" must not mean "never".
+    ///
+    /// Out-of-range bulk draws are **reflected** at the bounds rather than
+    /// clamped. An axis whose default sits on its own range edge — `muscle`
+    /// defaults to `0.0` at the bottom of `0..` — would otherwise put half its
+    /// mass in an atom exactly on the edge; folding the distribution keeps the
+    /// mass near the default without the spike.
+    ///
+    /// All draws come from the axis's own named stream, in a fixed order, so
+    /// the independence contract [`Rolls`] documents survives: adding an axis
+    /// moves no other axis on any seed. The *distribution* change is what
+    /// `GENERATOR_VERSION` moves for.
+    #[must_use]
+    pub fn shape(&self, axis: &str, default: f32, sigma: f32, range: (f32, f32)) -> f32 {
+        use rand::Rng;
+        let mut stream = self.stream(axis);
+        if stream.random_bool(WILDCARD) {
+            return stream.random_range(range.0..=range.1);
+        }
+        // Box–Muller from two uniforms: exact, allocation-free, and stable —
+        // this pair of draws is the wire contract for every stored seed.
+        let (a, b): (f32, f32) = (
+            stream.random_range(f32::EPSILON..=1.0),
+            stream.random_range(0.0..1.0),
+        );
+        let normal = (-2.0 * a.ln()).sqrt() * (std::f32::consts::TAU * b).cos();
+        let mut value = default + sigma * normal;
+        if value < range.0 {
+            value = range.0 + (range.0 - value);
+        }
+        if value > range.1 {
+            value = range.1 - (value - range.1);
+        }
+        value.clamp(range.0, range.1)
+    }
+}
+
+/// How often [`Rolls::shape`] ignores the Gaussian and draws anywhere.
+///
+/// With about twenty shape axes on a body, one in thirty per axis means most
+/// bodies carry no wild axis and every third or so carries one — exploration
+/// without every seed being a caricature.
+/// Provenance: **tuned by render** (#160), over reroll contact sheets.
+const WILDCARD: f64 = 1.0 / 30.0;
+
+/// How far past its conservative range an axis may be pushed, as a factor on
+/// each bound's distance from the axis's own default.
+///
+/// The conservative ranges were chosen so no slider could distort a body; the
+/// owner's call (#160) is that *exploration* should not be so limited, and the
+/// records already carry the values (scaled i64, no format ceiling at ±1).
+/// The stored unit's MEANING does not change — a stored `0.7` nose is the nose
+/// it always was — the envelope just continues past the old ends. Extremes are
+/// bounded by the one contract that cannot bend: a sanitised record must
+/// always mesh, so any axis whose tripled end breaks the cage is pulled in at
+/// its own `sanitize`, with the wall recorded beside it.
+pub const EXPLORE: f32 = 3.0;
+
+/// The exploration envelope of an axis: its conservative range, stretched
+/// [`EXPLORE`]× about the axis's own default.
+#[must_use]
+pub fn explore_range(default: f32, conservative: (f32, f32)) -> (f32, f32) {
+    (
+        default + EXPLORE * (conservative.0 - default),
+        default + EXPLORE * (conservative.1 - default),
+    )
 }
 
 /// Behaviour every body plan provides.
@@ -178,6 +254,17 @@ pub trait BodyPlan: Sized {
     ///
     /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
+
+    /// Reads parameters from a **version-3** share code (#160).
+    ///
+    /// Version 4 widened each byte's span to the exploration envelope; the
+    /// old codes map ±1 and `0..1` and must go on meaning the body they named
+    /// when they were written down.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
+    fn decode_legacy(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
 }
 
 /// Why a body plan could not be read from a share code.
@@ -396,6 +483,23 @@ impl Archetype {
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }
+
+    /// Reads an archetype from a **version-3** share code payload (#160).
+    ///
+    /// See [`BodyPlan::decode_legacy`]: same layout, narrower byte spans.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError`] if the tag is unknown or the payload is short.
+    pub fn decode_legacy(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        let (&tag, rest) = bytes.split_first().ok_or(PlanDecodeError::Truncated)?;
+        *bytes = rest;
+        match tag {
+            1 => Ok(Archetype::Humanoid(HumanoidParams::decode_legacy(bytes)?)),
+            2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_legacy(bytes)?)),
+            other => Err(PlanDecodeError::UnknownArchetype(other)),
+        }
+    }
 }
 
 /// Serialises axes as scaled integers.
@@ -501,6 +605,26 @@ pub(crate) mod scaled {
 pub(crate) fn sanitize_axis(value: f32, fallback: f32, range: (f32, f32)) -> f32 {
     let value = if value.is_finite() { value } else { fallback };
     scaled::quantize(value.clamp(range.0, range.1))
+}
+
+/// Quantises an axis to one byte over an explicit span (#160).
+///
+/// The share code's byte has always mapped a fixed range; with the
+/// exploration envelope the range is per-axis, so the span is a parameter and
+/// the same constants `sanitize` clamps with are the ones the code writes
+/// with — one authority, two consumers. Codes are deliberately lossy and a
+/// wider span is coarser per step: a ±3 axis moves in ~0.024 steps against
+/// the old ±1's 0.008, which is still below what a slider shows.
+pub(crate) fn put_span(out: &mut Vec<u8>, value: f32, span: (f32, f32)) {
+    let width = (span.1 - span.0).max(f32::EPSILON);
+    let unit = ((value - span.0) / width).clamp(0.0, 1.0);
+    out.push((unit * 255.0).round() as u8);
+}
+
+/// Reads a one-byte axis back over the same span it was written with.
+pub(crate) fn take_span(bytes: &mut &[u8], span: (f32, f32)) -> Result<f32, PlanDecodeError> {
+    let unit = f32::from(take_byte(bytes)?) / 255.0;
+    Ok(span.0 + unit * (span.1 - span.0))
 }
 
 /// Quantises a `-1..=1` axis to one byte.

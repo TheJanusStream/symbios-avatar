@@ -11,79 +11,79 @@
       "properties": {
         "height": {
           "type": "integer",
-          "description": "Standing height in millimetres. Extreme builds may exceed this slightly, since a body that cannot be constructed is worse than one a little off its nominal stature.",
-          "minimum": 1200,
-          "maximum": 2200,
+          "description": "Standing height in millimetres. Extreme builds may exceed this slightly, since a body that cannot be constructed is worse than one a little off its nominal stature. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": 100,
+          "maximum": 3100,
           "default": 1750
         },
         "build": {
           "type": "integer",
-          "description": "Overall mass, from slight to heavy. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Overall mass, from slight to heavy. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "muscle": {
           "type": "integer",
-          "description": "Musculature. Thousandths, 0 to 1000.",
+          "description": "Musculature. Thousandths, 0 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
           "minimum": 0,
-          "maximum": 1000,
+          "maximum": 3000,
           "default": 0
         },
         "shoulderWidth": {
           "type": "integer",
-          "description": "Width of the shoulder girdle. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Width of the shoulder girdle. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "hipWidth": {
           "type": "integer",
-          "description": "Width of the pelvis. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Width of the pelvis. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "limbLength": {
           "type": "integer",
-          "description": "Limb length relative to the torso. Longer limbs raise the pelvis and so shorten the torso at a fixed stature. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Limb length relative to the torso. Longer limbs raise the pelvis and so shorten the torso at a fixed stature. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "neckLength": {
           "type": "integer",
-          "description": "Neck length. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Neck length. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "headSize": {
           "type": "integer",
-          "description": "Head size. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Head size. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "headBreadth": {
           "type": "integer",
-          "description": "How broad the skull is across, at a fixed head size: negative is a narrow head, positive a broad one. It scales the head's lateral half-extent only, so a broad skull is broad from the parietal down through the angle of the jaw while staying exactly as deep and as tall. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "How broad the skull is across, at a fixed head size: negative is a narrow head, positive a broad one. It scales the head's lateral half-extent only, so a broad skull is broad from the parietal down through the angle of the jaw while staying exactly as deep and as tall. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "faceLength": {
           "type": "integer",
-          "description": "How long the face is below the eyes, at a fixed head size: negative is a short face, positive a long one. It moves the head's joint up its own neck, so what changes is how much of the skull sits below it - the jaw, the chin and the whole feature stack - while the cranium above is untouched. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "How long the face is below the eyes, at a fixed head size: negative is a short face, positive a long one. It moves the head's joint up its own neck, so what changes is how much of the skull sits below it - the jaw, the chin and the whole feature stack - while the cranium above is untouched. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "extremitySize": {
           "type": "integer",
-          "description": "Hand and foot size. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Hand and foot size. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         }
       }
@@ -97,58 +97,58 @@
       "properties": {
         "height": {
           "type": "integer",
-          "description": "Height of the back line in millimetres.",
-          "minimum": 250,
-          "maximum": 1800,
+          "description": "Height of the back line in millimetres. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": 50,
+          "maximum": 4240,
           "default": 580
         },
         "bodyLength": {
           "type": "integer",
-          "description": "Body length from shoulder to hip. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Body length from shoulder to hip. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "build": {
           "type": "integer",
-          "description": "Overall mass, from slight to heavy. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Overall mass, from slight to heavy. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "muscle": {
           "type": "integer",
-          "description": "Musculature. Thousandths, 0 to 1000.",
+          "description": "Musculature. Thousandths, 0 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
           "minimum": 0,
-          "maximum": 1000,
+          "maximum": 3000,
           "default": 0
         },
         "legLength": {
           "type": "integer",
-          "description": "Legginess. Longer legs slim the body at a fixed back height. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Legginess. Longer legs slim the body at a fixed back height. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "neckLength": {
           "type": "integer",
-          "description": "Neck length. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Neck length. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "headSize": {
           "type": "integer",
-          "description": "Head size. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Head size. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "tailLength": {
           "type": "integer",
-          "description": "Tail length. Thousandths, -1000 to 1000.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "Tail length. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         }
       }
@@ -200,30 +200,30 @@
       "properties": {
         "size": {
           "type": "integer",
-          "description": "Eye size, as a fraction of the head's radius. Thousandths, 0 to 1000.",
-          "minimum": 0,
-          "maximum": 1000,
+          "description": "Eye size, as a fraction of the head's radius. Thousandths, -1000 to 2000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -1000,
+          "maximum": 2000,
           "default": 500
         },
         "spacing": {
           "type": "integer",
-          "description": "How far apart the eyes are set: -1000 close, +1000 wide.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "How far apart the eyes are set: -1000 close, +1000 wide. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "depth": {
           "type": "integer",
-          "description": "How deeply the eyes are set: -1000 protruding, +1000 sunken.",
-          "minimum": -1000,
-          "maximum": 1000,
+          "description": "How deeply the eyes are set: -1000 protruding, +1000 sunken. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
           "default": 0
         },
         "aperture": {
           "type": "integer",
-          "description": "How far open the lids rest: 0 shut, 1000 wide.",
-          "minimum": 0,
-          "maximum": 1000,
+          "description": "How far open the lids rest: 0 shut, 1000 wide. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -1600,
+          "maximum": 1400,
           "default": 800
         }
       }
@@ -350,44 +350,44 @@
       "properties": {
         "nose": {
           "type": "integer",
-          "description": "How far the nose stands out: 0 flat, 1000 prominent. Thousandths.",
-          "minimum": 0,
-          "maximum": 1000,
+          "description": "How far the nose stands out: 0 flat, 1000 prominent. Thousandths. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -1000,
+          "maximum": 2000,
           "default": 500
         },
         "noseWidth": {
           "type": "integer",
-          "description": "How wide the nose is across the wings: 0 narrow, 1000 broad. Independent of how far it stands out. Thousandths.",
-          "minimum": 0,
-          "maximum": 1000,
+          "description": "How wide the nose is across the wings: 0 narrow, 1000 broad. Independent of how far it stands out. Thousandths. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -1000,
+          "maximum": 2000,
           "default": 500
         },
         "brow": {
           "type": "integer",
-          "description": "How heavy the brow ridge is. Thousandths, 0 to 1000.",
-          "minimum": 0,
-          "maximum": 1000,
+          "description": "How heavy the brow ridge is. Thousandths, -1000 to 2000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -1000,
+          "maximum": 2000,
           "default": 500
         },
         "mouth": {
           "type": "integer",
-          "description": "How full the lips are. Thousandths, 0 to 1000.",
-          "minimum": 0,
-          "maximum": 1000,
+          "description": "How full the lips are. Thousandths, -1000 to 2000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -1000,
+          "maximum": 2000,
           "default": 500
         },
         "mouthWidth": {
           "type": "integer",
-          "description": "How wide the mouth is, corner to corner. Independent of how full the lips are. Thousandths, 0 to 1000.",
-          "minimum": 0,
-          "maximum": 1000,
+          "description": "How wide the mouth is, corner to corner. Independent of how full the lips are. Thousandths, -1000 to 2000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -1000,
+          "maximum": 2000,
           "default": 500
         },
         "ears": {
           "type": "integer",
-          "description": "How far the ears stand out from the head. Thousandths, 0 to 1000.",
-          "minimum": 0,
-          "maximum": 1000,
+          "description": "How far the ears stand out from the head. Thousandths, -1000 to 2000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -1000,
+          "maximum": 2000,
           "default": 500
         }
       }

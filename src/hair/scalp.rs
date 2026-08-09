@@ -481,8 +481,16 @@ mod tests {
         // would be standing exactly on its own ring, and subdivision does not
         // do that.
         //
+        // **1.10, up from 0.95, and it is the exploration range** (#160):
+        // generator 2 rolls `head_breadth` past ±1, and the breadth profile in
+        // `face::skull` multiplies the surface laterally AFTER the ring was
+        // swept, so an extreme-broad skull honestly stands past its own ring
+        // (seed 9 reads 1.045 under generator 2). Hair does not care — roots
+        // seat against the MEASURED surface, which is this module's whole
+        // argument — so the ceiling is a sanity bound on the instrument, not
+        // on the hair, and it moves with the range the bodies draw from.
         assert!(
-            worst.1 < 0.95,
+            worst.1 < 1.10,
             "seed {}: the skull measured {} of what its own ring swept across",
             worst.0,
             worst.1

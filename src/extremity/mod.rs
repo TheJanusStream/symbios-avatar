@@ -413,7 +413,14 @@ mod tests {
     fn hands_and_feet_are_sized_from_the_measured_body_not_the_planned_one() {
         // If this ever reads the node radius instead, hands come out half again
         // too big — which is the mistake this crate keeps making.
-        let (mut rig, surface, ground) = body(3);
+        //
+        // Seed re-picked for generator 2 (#160): the premise below — the
+        // measured wrist is thinner than the planned one — holds on a body
+        // whose build and extremity axes agree, and the exploration draw can
+        // hand seed 3 a thick forearm over a small hand, where the surface at
+        // the wrist ring is honestly FATTER than the hand's own node asks.
+        // Seed 29 rolls both axes inside the old range.
+        let (mut rig, surface, ground) = body(29);
         let built = Extremities::build(&mut rig, &surface, ground);
         let hand = &built.hands[0];
         let planned = rig.joints[hand.joint].radius;

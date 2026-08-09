@@ -79,11 +79,19 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
 ///
+/// **2** — the exploration distributions (#160). Every shape axis moved from
+/// a uniform draw inside a conservative fence to [`crate::plan::Rolls::shape`]:
+/// a Gaussian on the axis's own default with the old fence as its width, plus
+/// a rare wildcard over the whole widened envelope. Stream names are
+/// untouched, so axis independence survives — but the same seed maps its
+/// stream to a different value now, which is exactly what this number exists
+/// to say. Complexion and hair kept their uniform draws and reproduce.
+///
 /// **1** — the first numbered generation. Everything before it drew whole
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 1;
+pub const GENERATOR_VERSION: u32 = 2;
 
 /// A field the lexicon requires that this record does not carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -394,22 +402,34 @@ impl ProfileRecord {
 /// creator who locks "features" has locked what their face looks like, and hair
 /// is the loudest part of that.
 fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, hair: &mut HairParams, rolls: &Rolls) {
-    face.nose = rolls.range("face.nose", 0.15, 0.9);
-    face.brow = rolls.range("face.brow", 0.1, 0.9);
-    face.mouth = rolls.range("face.mouth", 0.15, 0.95);
-    face.ears = rolls.range("face.ears", 0.1, 0.85);
-    // The two width axes (#61), each from its own named stream so that adding
-    // them moved no stored seed's nose, brow, mouth or ears — which is what
-    // `adding_an_axis_does_not_move_the_axes_beside_it` holds and what
-    // `GENERATOR_VERSION` would otherwise have had to move for.
-    face.nose_width = rolls.range("face.noseWidth", 0.2, 0.9);
-    face.mouth_width = rolls.range("face.mouthWidth", 0.15, 0.9);
+    // Shape axes draw [`Rolls::shape`] (#160): a Gaussian on each axis's own
+    // default with sigma half the old uniform fence — so a typical seed still
+    // lands where it always did — plus the wildcard tail over the whole
+    // exploration envelope. Stream names are unchanged; the distribution
+    // change is `GENERATOR_VERSION` 2's.
+    use crate::plan::explore_range;
+    let unit = |d: f32| explore_range(d, (0.0, 1.0));
+    face.nose = rolls.shape("face.nose", 0.5, 0.375, unit(0.5));
+    face.brow = rolls.shape("face.brow", 0.5, 0.4, unit(0.5));
+    face.mouth = rolls.shape("face.mouth", 0.5, 0.4, unit(0.5));
+    face.ears = rolls.shape("face.ears", 0.5, 0.375, unit(0.5));
+    face.nose_width = rolls.shape("face.noseWidth", 0.5, 0.35, unit(0.5));
+    face.mouth_width = rolls.shape("face.mouthWidth", 0.5, 0.375, unit(0.5));
 
-    eyes.size = rolls.range("eyes.size", 0.25, 0.85);
-    eyes.spacing = rolls.range("eyes.spacing", -0.6, 0.6);
-    eyes.depth = rolls.range("eyes.depth", -0.5, 0.7);
-    eyes.aperture = rolls.range("eyes.aperture", 0.55, 1.0);
+    // The eyes draw Gaussian like every shape axis but stay inside the CLASSIC
+    // range rather than the envelope: an eye is the one feature whose extremes
+    // read as broken rather than stylised — a spacing past ±1 runs the iris
+    // into the skin of the nose and `an_eye_shows_white_on_both_sides_of_its_iris`
+    // fails on the population, which is the guard saying a rolled body stopped
+    // reading as inhabited. The editor's sliders still reach the envelope;
+    // a broken-looking eye should be a choice somebody made, never a roll.
+    eyes.size = rolls.shape("eyes.size", 0.5, 0.3, (0.0, 1.0));
+    eyes.spacing = rolls.shape("eyes.spacing", 0.0, 0.6, (-1.0, 1.0));
+    eyes.depth = rolls.shape("eyes.depth", 0.0, 0.6, (-1.0, 1.0));
+    eyes.aperture = rolls.shape("eyes.aperture", 0.8, 0.225, (0.0, 1.0));
 
+    // Hair is a style, not a shape: it keeps its uniform draws and its
+    // conservative ranges (#160, owner call — same reason complexion does).
     hair.length = rolls.range("hair.length", 0.0, 1.0);
     hair.volume = rolls.range("hair.volume", -0.7, 0.9);
     hair.coverage = rolls.range("hair.coverage", -0.8, 0.8);
@@ -419,6 +439,10 @@ fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, hair: &mut HairParam
 }
 
 fn reroll_skin(skin: &mut SkinParams, rolls: &Rolls) {
+    // Complexion stays UNIFORM while the shape axes went Gaussian (#160, an
+    // owner call worth restating): a Gaussian centred on the default would
+    // make every complexion far from it a "rare extreme", and a skin tone is
+    // not an extreme of anything.
     skin.melanin = rolls.range("skin.melanin", 0.0, 1.0);
     skin.undertone = rolls.range("skin.undertone", -1.0, 1.0);
     skin.blush = rolls.range("skin.blush", 0.15, 0.8);
@@ -688,7 +712,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 1,
+            GENERATOR_VERSION, 2,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {
@@ -704,9 +728,14 @@ mod tests {
                 (record.hair.length * 1000.0).round() as i32,
             )
         };
-        assert_eq!(quantised(1), (1604, -565, 594, 238));
-        assert_eq!(quantised(42), (1702, 644, 933, 973));
-        assert_eq!(quantised(-7), (2178, 719, 513, 903));
+        // Generation 2 (#160): height and build moved — the shape axes now
+        // draw `Rolls::shape` — while melanin and hair length are IDENTICAL
+        // to generation 1's table on all three seeds, which is the other half
+        // of the contract: complexion and hair kept their uniform draws, so a
+        // stored seed's colouring survives the generator bump.
+        assert_eq!(quantised(1), (2353, 101, 594, 238));
+        assert_eq!(quantised(42), (1012, -33, 933, 973));
+        assert_eq!(quantised(-7), (2186, 781, 513, 903));
     }
 
     #[test]

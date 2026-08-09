@@ -217,15 +217,29 @@ fn an_eye_is_seated_in_the_face_rather_than_resting_on_it() {
         let body = &avatar.parts.body;
         let centre = avatar.rig.joints[eyes.head].position;
 
+        // The life band judges bodies whose head axes are inside the classic
+        // range it was derived over. Generator 2 (#160) deliberately rolls
+        // rare extremes past it, and a face at `headSize` +1.8 is *meant* to
+        // look unusual — what it still may not do is fail as engineering, so
+        // a wild head answers to a loose band instead: the globe is seated in
+        // skin, neither buried nor resting on the surface like a marble.
+        let classic = {
+            let Archetype::Humanoid(p) = &record.archetype else {
+                panic!("archetype changed")
+            };
+            p.head_size.abs() <= 1.0 && p.head_breadth.abs() <= 1.0 && p.face_length.abs() <= 1.0
+        };
+        let band = if classic { EYE_SHOWS } else { (0.01, 0.60) };
+
         for (side, eye) in [("left", &eyes.left), ("right", &eyes.right)] {
             let shows = exposed(body, &eye.globe, centre);
             assert!(
-                (EYE_SHOWS.0..=EYE_SHOWS.1).contains(&shows),
+                (band.0..=band.1).contains(&shows),
                 "seed {seed}: the {side} eye has {:.0}% of its surface outside the face, \
-                 against the {:.0}–{:.0}% a seated eye shows",
+                 against the {:.0}–{:.0}% this body's band allows",
                 shows * 100.0,
-                EYE_SHOWS.0 * 100.0,
-                EYE_SHOWS.1 * 100.0
+                band.0 * 100.0,
+                band.1 * 100.0
             );
 
             // How far the globe's front pole stands past the skin on its own

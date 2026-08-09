@@ -238,9 +238,12 @@ fn axes_are_written_as_integers_because_atproto_has_no_float_type() {
 #[test]
 fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
     let defs = lexicon("defs");
+    // The range the crate ENFORCES is the exploration envelope (#160), which
+    // is what `sanitize` clamps to — the conservative `*_height_range()`
+    // constants still exist but are the envelope's inputs, not its bounds.
     for (fragment, range) in [
-        ("humanoid", symbios_avatar::plan::humanoid_height_range()),
-        ("quadruped", symbios_avatar::plan::quadruped_height_range()),
+        ("humanoid", symbios_avatar::HumanoidParams::height_envelope()),
+        ("quadruped", symbios_avatar::QuadrupedParams::height_envelope()),
     ] {
         let height = &defs["defs"][fragment]["properties"]["height"];
         assert_eq!(

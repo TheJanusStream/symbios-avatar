@@ -13,8 +13,8 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_signed, put_unit, take_length,
-    take_signed, take_unit,
+    BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
+    take_span, take_unit,
 };
 use super::{Limb, Zone};
 use crate::skeleton::{Node, Skeleton};
@@ -80,6 +80,28 @@ fn default_height() -> f32 {
     0.58
 }
 
+/// The stature envelope: [`HEIGHT_RANGE`] stretched about the default (#160).
+///
+/// The raw stretch runs to −0.41 m — the conservative floor sits closer to
+/// the default than the ceiling does, and tripling the short side crosses
+/// zero. Every dimension of the plan scales with height, so any positive
+/// value meshes (the sweep bisected the wall to +0.001); the floor is five
+/// centimetres because a creature is a thing in a world, not a float.
+fn height_envelope() -> (f32, f32) {
+    let raw = super::explore_range(default_height(), HEIGHT_RANGE);
+    (raw.0.max(0.05), raw.1)
+}
+
+/// The envelope every signed axis clamps and encodes against (#160).
+fn signed_envelope() -> (f32, f32) {
+    super::explore_range(0.0, (-1.0, 1.0))
+}
+
+/// The `muscle` envelope; its default sits at the bottom of its range (#160).
+fn muscle_envelope() -> (f32, f32) {
+    super::explore_range(0.0, (0.0, 1.0))
+}
+
 impl Default for QuadrupedParams {
     fn default() -> Self {
         Self {
@@ -96,9 +118,23 @@ impl Default for QuadrupedParams {
 }
 
 impl QuadrupedParams {
+    /// The stature envelope `sanitize` clamps to, in metres (#160).
+    ///
+    /// Public so an editor's slider and the clamp cannot disagree about
+    /// where the axis ends.
+    #[must_use]
+    pub fn height_envelope() -> (f32, f32) {
+        height_envelope()
+    }
+
     /// How much thicker than neutral this body is.
     fn girth(&self) -> f32 {
-        (1.0 + 0.28 * self.build + 0.15 * self.muscle) * (1.0 - 0.18 * self.leg_length)
+        // Saturated for the exploration range (#160), like the humanoid's:
+        // radii scale with this while the plan's lengths do not, and the pair
+        // sweep failed exactly at `build` −3 compounded by leg length. The
+        // old range spans 0.59..1.69 and is untouched.
+        ((1.0 + 0.28 * self.build + 0.15 * self.muscle) * (1.0 - 0.18 * self.leg_length))
+            .clamp(0.50, 1.80)
     }
 }
 
@@ -107,8 +143,8 @@ impl BodyPlan for QuadrupedParams {
         // See [`super::humanoid::HumanoidParams::sanitize`]: same shape, same
         // reason, and it carried the same bug (#55).
         let default = Self::default();
-        self.height = super::sanitize_axis(self.height, default.height, HEIGHT_RANGE);
-        self.muscle = super::sanitize_axis(self.muscle, default.muscle, (0.0, 1.0));
+        self.height = super::sanitize_axis(self.height, default.height, height_envelope());
+        self.muscle = super::sanitize_axis(self.muscle, default.muscle, muscle_envelope());
         for (axis, fallback) in [
             (&mut self.body_length, default.body_length),
             (&mut self.build, default.build),
@@ -117,7 +153,7 @@ impl BodyPlan for QuadrupedParams {
             (&mut self.head_size, default.head_size),
             (&mut self.tail_length, default.tail_length),
         ] {
-            *axis = super::sanitize_axis(*axis, fallback, (-1.0, 1.0));
+            *axis = super::sanitize_axis(*axis, fallback, signed_envelope());
         }
     }
 
@@ -272,40 +308,66 @@ impl BodyPlan for QuadrupedParams {
     }
 
     fn reroll(&mut self, category: Category, rolls: &Rolls) {
+        // See [`super::humanoid::HumanoidParams::reroll`]: same shape draws,
+        // same reasons, same stream names as before (#160).
+        let signed = signed_envelope();
         match category {
             Category::Stature => {
-                self.height = rolls.range("quadruped.height", HEIGHT_RANGE.0, HEIGHT_RANGE.1);
+                self.height = rolls.shape(
+                    "quadruped.height",
+                    default_height(),
+                    (HEIGHT_RANGE.1 - HEIGHT_RANGE.0) * 0.5,
+                    height_envelope(),
+                );
             }
             Category::Build => {
-                self.build = rolls.range("quadruped.build", -1.0, 1.0);
-                self.muscle = rolls.range("quadruped.muscle", 0.0, 1.0);
+                self.build = rolls.shape("quadruped.build", 0.0, 1.0, signed);
+                self.muscle = rolls.shape("quadruped.muscle", 0.0, 0.5, muscle_envelope());
             }
             Category::Frame => {
-                self.body_length = rolls.range("quadruped.bodyLength", -1.0, 1.0);
+                self.body_length = rolls.shape("quadruped.bodyLength", 0.0, 1.0, signed);
             }
             Category::Proportions => {
-                self.leg_length = rolls.range("quadruped.legLength", -1.0, 1.0);
-                self.neck_length = rolls.range("quadruped.neckLength", -1.0, 1.0);
-                self.tail_length = rolls.range("quadruped.tailLength", -1.0, 1.0);
+                self.leg_length = rolls.shape("quadruped.legLength", 0.0, 1.0, signed);
+                self.neck_length = rolls.shape("quadruped.neckLength", 0.0, 1.0, signed);
+                self.tail_length = rolls.shape("quadruped.tailLength", 0.0, 1.0, signed);
             }
             Category::Features => {
-                self.head_size = rolls.range("quadruped.headSize", -1.0, 1.0);
+                self.head_size = rolls.shape("quadruped.headSize", 0.0, 1.0, signed);
             }
         }
     }
 
     fn encode(&self, out: &mut Vec<u8>) {
+        // Version-4 bytes span the exploration envelope; see
+        // [`super::humanoid::HumanoidParams::encode`] (#160).
         put_length(out, self.height);
-        put_signed(out, self.body_length);
-        put_signed(out, self.build);
-        put_unit(out, self.muscle);
-        put_signed(out, self.leg_length);
-        put_signed(out, self.neck_length);
-        put_signed(out, self.head_size);
-        put_signed(out, self.tail_length);
+        put_span(out, self.body_length, signed_envelope());
+        put_span(out, self.build, signed_envelope());
+        put_span(out, self.muscle, muscle_envelope());
+        put_span(out, self.leg_length, signed_envelope());
+        put_span(out, self.neck_length, signed_envelope());
+        put_span(out, self.head_size, signed_envelope());
+        put_span(out, self.tail_length, signed_envelope());
     }
 
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        let mut params = Self {
+            height: take_length(bytes)?,
+            body_length: take_span(bytes, signed_envelope())?,
+            build: take_span(bytes, signed_envelope())?,
+            muscle: take_span(bytes, muscle_envelope())?,
+            leg_length: take_span(bytes, signed_envelope())?,
+            neck_length: take_span(bytes, signed_envelope())?,
+            head_size: take_span(bytes, signed_envelope())?,
+            tail_length: take_span(bytes, signed_envelope())?,
+        };
+        params.sanitize();
+        Ok(params)
+    }
+
+    fn decode_legacy(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // The version-3 byte layout, kept exactly as it was (#160).
         let mut params = Self {
             height: take_length(bytes)?,
             body_length: take_signed(bytes)?,
@@ -384,9 +446,10 @@ mod tests {
             ..Default::default()
         };
         params.sanitize();
-        assert_eq!(params.height, HEIGHT_RANGE.0);
+        // Bounds are the exploration envelope (#160).
+        assert_eq!(params.height, height_envelope().0);
         assert_eq!(params.tail_length, 0.0);
-        assert_eq!(params.muscle, 1.0);
+        assert_eq!(params.muscle, 3.0);
 
         let once = params;
         params.sanitize();

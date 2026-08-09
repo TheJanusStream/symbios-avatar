@@ -130,8 +130,15 @@ impl FaceParams {
             (&mut self.ears, default.ears),
         ] {
             // Quantised as well as clamped, so a record equals itself after a
-            // round trip through the thousandths the wire carries.
-            *axis = crate::plan::sanitize_axis(*axis, fallback, (0.0, 1.0));
+            // round trip through the thousandths the wire carries. The range
+            // is the exploration envelope (#160): the conservative `0..1`
+            // stretched about each axis's own default, so a stored value
+            // keeps its meaning and a slider can go on past the old ends.
+            *axis = crate::plan::sanitize_axis(
+                *axis,
+                fallback,
+                crate::plan::explore_range(fallback, (0.0, 1.0)),
+            );
         }
     }
 }
@@ -520,10 +527,12 @@ mod tests {
             ears: 3.0,
         };
         params.sanitize();
-        assert_eq!(params.nose, 1.0);
-        assert_eq!(params.nose_width, 0.0);
-        assert_eq!(params.brow, 0.0);
-        assert_eq!(params.ears, 1.0);
+        // Bounds are the exploration envelope (#160): `0..1` stretched about
+        // the 0.5 default reaches -1..2.
+        assert_eq!(params.nose, 2.0);
+        assert_eq!(params.nose_width, -0.5);
+        assert_eq!(params.brow, -1.0);
+        assert_eq!(params.ears, 2.0);
         // **A non-finite value takes the DEFAULT, not the near bound**, and this
         // file used to do the second for infinities and the first for `NaN`
         // alone. A slider cannot produce an infinity; an arithmetic accident

@@ -35,8 +35,8 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_signed, put_unit, take_length,
-    take_signed, take_unit,
+    BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
+    take_span, take_unit,
 };
 use super::{Limb, Zone};
 use crate::cage::limb::HALF_SEGMENT;
@@ -426,6 +426,22 @@ const SKULL_SLENDER: f32 = 0.897;
 /// the down component is a stand-in for condylar translation, not the TMJ.
 const JAW_PIVOT: Vec2 = Vec2::new(0.45, 0.10);
 
+/// The stature envelope: [`HEIGHT_RANGE`] stretched about the default (#160).
+fn height_envelope() -> (f32, f32) {
+    super::explore_range(default_height(), HEIGHT_RANGE)
+}
+
+/// The envelope every signed axis clamps and encodes against (#160).
+fn signed_envelope() -> (f32, f32) {
+    super::explore_range(0.0, (-1.0, 1.0))
+}
+
+/// The `muscle` envelope: its default sits at the bottom of its range, so the
+/// exploration stretch runs upward only (#160).
+fn muscle_envelope() -> (f32, f32) {
+    super::explore_range(0.0, (0.0, 1.0))
+}
+
 /// Where the jaw bone ends: `(down as a share of the head's reach BELOW ITS
 /// JOINT, forward in head radii)`.
 ///
@@ -702,6 +718,15 @@ impl Default for HumanoidParams {
 }
 
 impl HumanoidParams {
+    /// The stature envelope `sanitize` clamps to, in metres (#160).
+    ///
+    /// Public so an editor's slider and the clamp cannot disagree about
+    /// where the axis ends.
+    #[must_use]
+    pub fn height_envelope() -> (f32, f32) {
+        height_envelope()
+    }
+
     /// How much thicker than neutral this body is.
     ///
     /// Mass and musculature both add girth, and girth feeds every torso and
@@ -714,7 +739,15 @@ impl HumanoidParams {
     /// it spans. Nothing has ever measured whether a heavy body is 28% thicker
     /// than a neutral one.
     fn girth(&self) -> f32 {
-        1.0 + 0.28 * self.build + 0.15 * self.muscle
+        // Saturated for the exploration range (#160): every radius on the
+        // body scales with this factor while the plan's lengths do not, so at
+        // the envelope's far ends the ratio between them leaves what the
+        // mesher can hull — the pair sweep failed exactly and only at
+        // `build` ±3 against another extreme. The old ±1 range spans
+        // 0.72..1.43 (with muscle, to 1.58) and is untouched; past the clamp
+        // a body stops getting slighter or heavier rather than stops
+        // building.
+        (1.0 + 0.28 * self.build + 0.15 * self.muscle).clamp(0.50, 1.72)
     }
 }
 
@@ -723,9 +756,12 @@ impl BodyPlan for HumanoidParams {
         // Fallbacks come from `Default` rather than being written out again, so
         // they cannot drift from the documented defaults. See
         // [`super::sanitize_axis`] for why the guard has to precede the clamp.
+        // Ranges are the exploration envelope — the conservative spans
+        // stretched [`super::EXPLORE`]× about each default (#160); the stored
+        // unit's meaning is unchanged, the clamp just stops sooner refusing.
         let default = Self::default();
-        self.height = super::sanitize_axis(self.height, default.height, HEIGHT_RANGE);
-        self.muscle = super::sanitize_axis(self.muscle, default.muscle, (0.0, 1.0));
+        self.height = super::sanitize_axis(self.height, default.height, height_envelope());
+        self.muscle = super::sanitize_axis(self.muscle, default.muscle, muscle_envelope());
         for (axis, fallback) in [
             (&mut self.build, default.build),
             (&mut self.shoulder_width, default.shoulder_width),
@@ -737,7 +773,7 @@ impl BodyPlan for HumanoidParams {
             (&mut self.face_length, default.face_length),
             (&mut self.extremity_size, default.extremity_size),
         ] {
-            *axis = super::sanitize_axis(*axis, fallback, (-1.0, 1.0));
+            *axis = super::sanitize_axis(*axis, fallback, signed_envelope());
         }
     }
 
@@ -1287,7 +1323,13 @@ impl BodyPlan for HumanoidParams {
         // conditions, both written out above, both confirmed against
         // `tests/plan.rs`. Which of them binds depends on the hip radius, so
         // neither can be dropped from the record.
-        let hip_x = pelvis_r * (0.64 + 0.10 * self.hip_width);
+        // Saturated at the floor its own derivation states (#160): past
+        // `hip_x = hip_r / 1.64` the two hip sockets interpenetrate, so an
+        // exploration-range `hip_width` below about −1.1 narrows the stance no
+        // further — the slider is unlimited, the geometry stops at what can be
+        // built. 0.532 is the 0.516 floor plus the same ~3% margin the axis's
+        // old end carried; inside the old ±1 range the clamp never binds.
+        let hip_x = pelvis_r * (0.64 + 0.10 * self.hip_width).max(0.532);
         let hip_y = pelvis_y - hip_drop;
 
         // Where the knee sits between hip and ankle, and so how the leg's length
@@ -1596,7 +1638,13 @@ impl BodyPlan for HumanoidParams {
         // invites, and because `hip_x` gets away with the same reasoning only by
         // accident — a hip socket's siblings blend toward the *waist*, which is
         // no wider than the pelvis.
-        let clavicle_x = girdle_r * (1.42 + 0.08 * self.shoulder_width);
+        // Saturated for the exploration range (#160): the envelope sweep put
+        // the single-axis meshing wall at `shoulder_width` −2.08 (coefficient
+        // 1.253 — the girdle's third socket, toward the neck, runs out of
+        // bone), and rolled bodies hit it earlier when build and limb length
+        // are co-extreme. 1.30 is that wall plus ~4% for the interactions the
+        // seed sweep found; inside the old ±1 range the clamp never binds.
+        let clavicle_x = girdle_r * (1.42 + 0.08 * self.shoulder_width).max(1.30);
         // How high the shoulder mass arrives — and **raising it does not
         // shorten the visible neck, which was measured and is worth not
         // repeating** (#129).
@@ -1708,7 +1756,15 @@ impl BodyPlan for HumanoidParams {
         let wrist_at = elbow_at + arm * forearm;
         let hand_at = wrist_at + arm * hand_len;
 
-        let extremity = 1.0 + 0.3 * self.extremity_size;
+        // Saturated for the exploration range (#160): the foot is a chain of
+        // small nodes on a stature-fixed length, and the envelope sweep put
+        // its meshing wall at `extremity_size` +1.41 (multiplier 1.42 — the
+        // heel's sockets overlap) with rolled bodies failing from about +1.5
+        // when the limbs are short; the small end fails only in combination,
+        // where a heavy build meets near-zero foot radii. The clamp binds
+        // outside the old ±1 range only (0.7..1.3 untouched); past it, hands
+        // and feet stop growing rather than stop building.
+        let extremity = (1.0 + 0.3 * self.extremity_size).clamp(0.55, 1.36);
 
         // The limb radius ladder, **measured at last** (#104).
         //
@@ -2037,56 +2093,86 @@ impl BodyPlan for HumanoidParams {
     }
 
     fn reroll(&mut self, category: Category, rolls: &Rolls) {
+        // Every axis is a [`Rolls::shape`] draw (#160): a Gaussian on the
+        // axis's own default whose sigma is half the OLD uniform fence — so a
+        // typical seed still lands where it always did — with the wildcard
+        // tail reaching the whole exploration envelope. The old fences
+        // survive as sigmas: the "every third seed a caricature" judgement
+        // that narrowed `headBreadth` and `faceLength` to ±0.7 now simply
+        // gives them a tighter sigma than their neighbours.
+        //
+        // Stream names are unchanged, so axis independence holds on every
+        // stored seed; the distribution change is `GENERATOR_VERSION` 2's.
+        let signed = signed_envelope();
         match category {
             Category::Stature => {
-                self.height = rolls.range("humanoid.height", HEIGHT_RANGE.0, HEIGHT_RANGE.1);
+                self.height = rolls.shape(
+                    "humanoid.height",
+                    default_height(),
+                    (HEIGHT_RANGE.1 - HEIGHT_RANGE.0) * 0.5,
+                    height_envelope(),
+                );
             }
             Category::Build => {
-                self.build = rolls.range("humanoid.build", -1.0, 1.0);
-                self.muscle = rolls.range("humanoid.muscle", 0.0, 1.0);
+                self.build = rolls.shape("humanoid.build", 0.0, 1.0, signed);
+                self.muscle = rolls.shape("humanoid.muscle", 0.0, 0.5, muscle_envelope());
             }
             Category::Frame => {
-                self.shoulder_width = rolls.range("humanoid.shoulderWidth", -1.0, 1.0);
-                self.hip_width = rolls.range("humanoid.hipWidth", -1.0, 1.0);
+                self.shoulder_width = rolls.shape("humanoid.shoulderWidth", 0.0, 1.0, signed);
+                self.hip_width = rolls.shape("humanoid.hipWidth", 0.0, 1.0, signed);
             }
             Category::Proportions => {
-                self.limb_length = rolls.range("humanoid.limbLength", -1.0, 1.0);
-                self.neck_length = rolls.range("humanoid.neckLength", -1.0, 1.0);
+                self.limb_length = rolls.shape("humanoid.limbLength", 0.0, 1.0, signed);
+                self.neck_length = rolls.shape("humanoid.neckLength", 0.0, 1.0, signed);
             }
             Category::Features => {
-                self.head_size = rolls.range("humanoid.headSize", -1.0, 1.0);
-                // Drawn from their own named streams, so adding them cannot move
-                // `headSize` or `extremitySize` on any stored seed — which is
-                // what `a_seed_reproduces_the_same_person` holds and what
-                // `GENERATOR_VERSION` would otherwise have to move for (#57).
-                //
-                // **Not the full range, and that is a judgement.** These two are
-                // the loudest axes on a face, so a re-roll that reaches their
-                // bounds makes every third seed a caricature; a look drawn at
-                // random should be a person, and a slider taken to its end is a
-                // choice somebody made.
-                self.head_breadth = rolls.range("humanoid.headBreadth", -0.7, 0.7);
-                self.face_length = rolls.range("humanoid.faceLength", -0.7, 0.7);
-                self.extremity_size = rolls.range("humanoid.extremitySize", -1.0, 1.0);
+                self.head_size = rolls.shape("humanoid.headSize", 0.0, 1.0, signed);
+                self.head_breadth = rolls.shape("humanoid.headBreadth", 0.0, 0.7, signed);
+                self.face_length = rolls.shape("humanoid.faceLength", 0.0, 0.7, signed);
+                self.extremity_size = rolls.shape("humanoid.extremitySize", 0.0, 1.0, signed);
             }
         }
     }
 
     fn encode(&self, out: &mut Vec<u8>) {
+        // Version-4 bytes span each axis's exploration envelope — the same
+        // constants `sanitize` clamps with, so the code and the clamp cannot
+        // disagree (#160). Height stays in millimetres, which already covers
+        // the envelope.
         put_length(out, self.height);
-        put_signed(out, self.build);
-        put_unit(out, self.muscle);
-        put_signed(out, self.shoulder_width);
-        put_signed(out, self.hip_width);
-        put_signed(out, self.limb_length);
-        put_signed(out, self.neck_length);
-        put_signed(out, self.head_size);
-        put_signed(out, self.head_breadth);
-        put_signed(out, self.face_length);
-        put_signed(out, self.extremity_size);
+        put_span(out, self.build, signed_envelope());
+        put_span(out, self.muscle, muscle_envelope());
+        put_span(out, self.shoulder_width, signed_envelope());
+        put_span(out, self.hip_width, signed_envelope());
+        put_span(out, self.limb_length, signed_envelope());
+        put_span(out, self.neck_length, signed_envelope());
+        put_span(out, self.head_size, signed_envelope());
+        put_span(out, self.head_breadth, signed_envelope());
+        put_span(out, self.face_length, signed_envelope());
+        put_span(out, self.extremity_size, signed_envelope());
     }
 
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        let mut params = Self {
+            height: take_length(bytes)?,
+            build: take_span(bytes, signed_envelope())?,
+            muscle: take_span(bytes, muscle_envelope())?,
+            shoulder_width: take_span(bytes, signed_envelope())?,
+            hip_width: take_span(bytes, signed_envelope())?,
+            limb_length: take_span(bytes, signed_envelope())?,
+            neck_length: take_span(bytes, signed_envelope())?,
+            head_size: take_span(bytes, signed_envelope())?,
+            head_breadth: take_span(bytes, signed_envelope())?,
+            face_length: take_span(bytes, signed_envelope())?,
+            extremity_size: take_span(bytes, signed_envelope())?,
+        };
+        params.sanitize();
+        Ok(params)
+    }
+
+    fn decode_legacy(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // The version-3 byte layout, whose bytes map ±1 and 0..1. Kept exactly
+        // as it was so an old code decodes to the body it always named (#160).
         let mut params = Self {
             height: take_length(bytes)?,
             build: take_signed(bytes)?,
@@ -2177,8 +2263,14 @@ mod tests {
             ..Default::default()
         };
         params.sanitize();
-        assert_eq!(params.height, HEIGHT_RANGE.1);
-        assert_eq!(params.build, 1.0);
+        // Bounds are the exploration envelope (#160): the conservative range
+        // stretched EXPLORE-fold about each default, through the same
+        // thousandths quantisation every sanitised value takes.
+        assert_eq!(
+            params.height,
+            crate::plan::scaled::quantize(height_envelope().1)
+        );
+        assert_eq!(params.build, 3.0);
         assert_eq!(params.muscle, 0.0);
         assert_eq!(params.head_size, 0.0);
 

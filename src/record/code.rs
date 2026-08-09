@@ -20,6 +20,13 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
+/// **4** — the exploration envelope (#160): each plan byte now spans its
+/// axis's widened range rather than ±1, so a code can carry the extremes the
+/// record can. The byte LAYOUT is version 3's, only the spans moved, which is
+/// why 3 is not a refusal: `decode` reads a version-3 payload through the
+/// old spans and an old code goes on meaning the body it named when it was
+/// written down.
+///
 /// **3** — the humanoid plan gained `headBreadth` and `faceLength` (#61), which
 /// are two more bytes in the middle of its payload. A version 2 code read as a
 /// version 3 one would take a head's breadth from what used to be the extremity
@@ -27,7 +34,10 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 3;
+pub const SHARE_CODE_VERSION: u8 = 4;
+
+/// The last format whose codes still decode, through their own spans.
+const LEGACY_VERSION: u8 = 3;
 
 /// Crockford base32 digits.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -94,13 +104,17 @@ pub fn decode(code: &str) -> Result<(Archetype, SkinParams), ShareCodeError> {
     }
 
     let (&version, mut payload) = body.split_first().ok_or(ShareCodeError::TooShort)?;
-    if version != SHARE_CODE_VERSION {
+    if version != SHARE_CODE_VERSION && version != LEGACY_VERSION {
         return Err(ShareCodeError::UnsupportedVersion(version));
     }
 
     use crate::plan::{take_signed, take_unit};
 
-    let archetype = Archetype::decode(&mut payload)?;
+    let archetype = if version == LEGACY_VERSION {
+        Archetype::decode_legacy(&mut payload)?
+    } else {
+        Archetype::decode(&mut payload)?
+    };
     let mut skin = SkinParams {
         melanin: take_unit(&mut payload)?,
         undertone: take_signed(&mut payload)?,
@@ -265,6 +279,61 @@ mod tests {
         let wrong: String = wrong.into_iter().collect();
 
         assert_eq!(decode(&wrong), Err(ShareCodeError::Checksum));
+    }
+
+    #[test]
+    fn a_version_3_code_still_names_the_body_it_named() {
+        // A version-3 payload assembled with the byte spans that version used
+        // — ±1 per signed byte, 0..1 per unit byte — exactly as an old code in
+        // someone's notes was written. Version 4 widened the spans (#160);
+        // this is the contract that the old code goes on meaning the same
+        // body.
+        use crate::plan::{put_signed, put_unit};
+        let mut payload = vec![3u8, 1]; // version 3, humanoid tag
+        crate::plan::put_length(&mut payload, 1.83);
+        put_signed(&mut payload, 0.5); // build
+        put_unit(&mut payload, 0.75); // muscle
+        for axis in [-0.25, 0.1, 0.3, -0.4, 0.2, 0.6, -0.7, 0.15] {
+            put_signed(&mut payload, axis);
+        }
+        put_unit(&mut payload, 0.35); // melanin
+        put_signed(&mut payload, 0.0); // undertone
+        put_unit(&mut payload, 0.45); // blush
+        put_unit(&mut payload, 0.0); // freckles
+        put_unit(&mut payload, 0.0); // stubble
+        payload.push(checksum(&payload));
+        let code = group(&base32_encode(&payload));
+
+        let (Archetype::Humanoid(back), skin) = decode(&code).expect("a v3 code decodes") else {
+            panic!("archetype changed");
+        };
+        assert!((back.height - 1.83).abs() < 0.002);
+        assert!((back.build - 0.5).abs() < 0.01);
+        assert!((back.muscle - 0.75).abs() < 0.01);
+        assert!((back.shoulder_width + 0.25).abs() < 0.01);
+        assert!((back.face_length + 0.7).abs() < 0.01);
+        assert!((skin.melanin - 0.35).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_version_4_code_carries_the_envelope() {
+        // The point of the version bump: an extreme the record can hold
+        // survives the code. Coarser per step than v3 — a ±3 axis moves in
+        // ~0.024 — which is documented at `put_span` and below what a slider
+        // shows.
+        let original = Archetype::Humanoid(HumanoidParams {
+            build: 2.5,
+            shoulder_width: 2.0,
+            face_length: -2.2,
+            ..Default::default()
+        });
+        let code = encode(&original, &SkinParams::default());
+        let (Archetype::Humanoid(back), _) = decode(&code).expect("decodes") else {
+            panic!("archetype changed");
+        };
+        assert!((back.build - 2.5).abs() < 0.03);
+        assert!((back.shoulder_width - 2.0).abs() < 0.03);
+        assert!((back.face_length + 2.2).abs() < 0.03);
     }
 
     #[test]

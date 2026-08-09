@@ -62,17 +62,15 @@ impl Default for EyeParams {
 impl EyeParams {
     /// Clamps every axis into range. Idempotent.
     pub fn sanitize(&mut self) {
-        use crate::plan::scaled::quantize;
-        self.size = quantize(finite(self.size, 0.5).clamp(0.0, 1.0));
-        self.aperture = quantize(finite(self.aperture, 0.8).clamp(0.0, 1.0));
-        self.spacing = quantize(finite(self.spacing, 0.0).clamp(-1.0, 1.0));
-        self.depth = quantize(finite(self.depth, 0.0).clamp(-1.0, 1.0));
+        // Ranges are the exploration envelope (#160): the conservative range
+        // stretched about each axis's own default. `sanitize_axis` rather than
+        // clamp-by-hand, for #55's reason: the guard must precede the clamp.
+        use crate::plan::{explore_range, sanitize_axis};
+        self.size = sanitize_axis(self.size, 0.5, explore_range(0.5, (0.0, 1.0)));
+        self.aperture = sanitize_axis(self.aperture, 0.8, explore_range(0.8, (0.0, 1.0)));
+        self.spacing = sanitize_axis(self.spacing, 0.0, explore_range(0.0, (-1.0, 1.0)));
+        self.depth = sanitize_axis(self.depth, 0.0, explore_range(0.0, (-1.0, 1.0)));
     }
-}
-
-/// Substitutes `fallback` for a non-finite value.
-fn finite(value: f32, fallback: f32) -> f32 {
-    if value.is_finite() { value } else { fallback }
 }
 
 /// One eye's parts, in head-local space.
@@ -367,7 +365,16 @@ impl Eyes {
     #[must_use]
     pub fn build(rig: &Rig, mesh: &PolyMesh, canon: &Canon, params: &EyeParams) -> Self {
         let centre = rig.joints[canon.head].position;
-        let radius = globe_radius(mesh, params);
+        // The anatomical globe, CAPPED by the head that has to hold it (#160).
+        // An eyeball is the one facial dimension that does not scale with the
+        // face — which is anatomy on any head a person has, and a broken
+        // invariant on the exploration range's: at `headSize` −2.8 the head is
+        // a third of its neutral radius, the un-capped globe reaches 0.39 of
+        // it, and the iris runs into the skin of the nose on every rolled body
+        // that deep. The neutral proportion is 0.12 of the head's radius; the
+        // cap at 0.16 never binds inside the old ±1 range and holds an
+        // extreme-small head's eyes at eye-like proportion instead.
+        let radius = globe_radius(mesh, params).min(0.16 * rig.joints[canon.head].radius);
         let proud = PROUD - PROUD_RANGE * params.depth.clamp(-1.0, 1.0);
 
         // The eye's own column, not the midline: the face has curved away by
@@ -1152,9 +1159,10 @@ mod tests {
             aperture: f32::INFINITY,
         };
         params.sanitize();
-        assert_eq!(params.size, 1.0);
+        // Bounds are the exploration envelope (#160).
+        assert_eq!(params.size, 2.0);
         assert_eq!(params.spacing, 0.0);
-        assert_eq!(params.depth, -1.0);
+        assert_eq!(params.depth, -3.0);
         assert_eq!(params.aperture, 0.8);
 
         let once = params;
