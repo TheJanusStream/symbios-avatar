@@ -415,12 +415,19 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// **bounded by a sweep** against the lip (#128); the peak's height is
 /// **derived** from where the surface crests and **bounded by a sweep** against
 /// the neck and the chin landmark (#94).
+/// **The tail steepened for the submental corner** (#150). `examples/column`
+/// against the reference, front reach below each body's own chin: at the chin
+/// the two agree (102.2 against 98.6), and by 20 mm under it the reference has
+/// cut to 53.6 while the old tail — `(-0.62, 0.128)`, still half the peak a
+/// centimetre below the crest — held us at 73.5. The reference gives up 45 mm
+/// of forward reach in ten millimetres and is near-vertical after; ours spread
+/// 60 mm over fifty. A corner against a slope, and the tail knot is the slope.
 const CHIN: [(f32, f32); 6] = [
     (0.05, 0.0),
     (-0.24, 0.060),
     (-0.42, 0.158),
     (-0.53, 0.255),
-    (-0.62, 0.128),
+    (-0.60, 0.065),
     (JUNCTION, 0.0),
 ];
 
@@ -1116,11 +1123,22 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
         * (1.0 + ELONGATION)
         * (1.0 + knot(&OCCIPUT, height) * behind * behind);
 
-    // The chin is a narrow central prominence, so its push falls off much faster
+    // The chin is a central prominence, so its push falls off much faster
     // round the jaw than the other terms do. Spread evenly across the front — an
     // `ahead` squared, as the brow uses — it carries the whole lower face
     // forward and reads as a muzzle rather than as a chin.
-    let point = ahead * ahead * ahead * ahead;
+    //
+    // **`ahead⁴` → a plateau, and the difference is the chin's PLAN VIEW**
+    // (#150). A cosine power is at its steepest exactly where a chin is at its
+    // roundest: the midline. At `ahead⁴` the flank 30° out kept only 0.56 of
+    // the push and the section at the chin's height solved as an ellipse five
+    // times deeper than wide — the owner read it as a second nose (#128), and
+    // rounding it means holding the push near full ACROSS the chin and then
+    // letting go, not sliding from the first degree. The smoothstep holds 0.87
+    // at 30°, crosses `ahead⁴` near 40° and is dead by 60° — where `ahead²`
+    // still carries a quarter, which is the muzzle the paragraph above
+    // rejects. Judged on the top-down and frontal renders across seeds.
+    let point = smooth((facing - 0.42) / 0.58);
     let ledge = knot(&BROW, height) * ahead * ahead;
     let hollow = knot(&TEMPLE, height) * (local.x / reach) * (local.x / reach);
 
@@ -1286,8 +1304,9 @@ fn tangent(profile: &[(f32, f32)], at: usize) -> f32 {
 ///
 /// *Monotone*, because an ordinary interpolating spline overshoots, and there is
 /// one segment here where overshoot is a shipped defect rather than a wobble:
-/// [`CHIN`] runs `(-0.62, 0.26) -> (JUNCTION, 0.0)`, and a natural or
-/// Catmull-Rom spline dips **below zero** across it, which stands the head's
+/// [`CHIN`]'s tail into [`JUNCTION`] — `(-0.62, 0.26)` when this landed, a
+/// steeper `(-0.60, 0.065)` since #150 — where a natural or
+/// Catmull-Rom spline dips **below zero**, which stands the head's
 /// lowest band behind the throat it has to meet — the #47 seam, returning.
 /// Fritsch–Carlson's limiter forbids that by construction: where a segment is
 /// monotone the interpolant is monotone, so no profile can leave the interval
