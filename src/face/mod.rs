@@ -15,6 +15,7 @@ pub mod eye;
 pub mod features;
 pub mod relief;
 pub mod skull;
+pub mod talk;
 
 pub use blink::Blink;
 pub use canon::Canon;
@@ -22,6 +23,7 @@ pub use eye::{Aperture, Eye, EyeParams, Eyes};
 pub use features::{FaceParams, Features};
 pub use relief::carve as carve_face;
 pub use skull::{Skull, refine_face, shape as shape_skull};
+pub use talk::{Talk, TalkConfig};
 
 /// Smoothstep, clamped, for fading a field in and out without leaving a crease
 /// where it starts or ends.

@@ -118,7 +118,8 @@ pub use cage::{CageConfig, CageError, build_cage};
 pub use dress::{Garment, GarmentCut, Leg, Outfit, OutfitParams, Sleeve};
 pub use extremity::{Attached, Extremities, Foot, Hand};
 pub use face::{
-    Aperture, Blink, Canon, EyeParams, Eyes, FaceParams, Features, refine_face, shape_skull,
+    Aperture, Blink, Canon, EyeParams, Eyes, FaceParams, Features, Talk, TalkConfig, refine_face,
+    shape_skull,
 };
 pub use hair::{Hair, HairParams, Scalp, Strand};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
