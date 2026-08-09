@@ -402,15 +402,29 @@ const SKULL_SLENDER: f32 = 0.897;
 /// skull stage's business — see `face::skull`'s submental construction, which
 /// is the other half of #134.
 ///
-/// The hinge sits at the ear: the temporomandibular joint is at the ear canal,
-/// which is where #126 measured our head joint already sitting (the joint is
-/// 5.8 mm above the ear centre), and is why a nod and a bite share a centre in
-/// life. Slightly below the head joint so the bone has length, slightly
-/// forward because the condyle is.
-/// Provenance: **looked up** (#134) — TMJ at the ear canal, on the anthropometry
-/// every head instrument here quotes; the exact fractions are anatomy read off
-/// `face::skull::Canon`'s ear placement rather than swept.
-const JAW_PIVOT: Vec2 = Vec2::new(0.06, 0.10);
+/// **The hinge sits well BELOW the ear, and the anatomical TMJ was measured
+/// and rejected for it** (#159). The temporomandibular joint is at the ear
+/// canal — the first cut put the pivot there (down 0.06, #134, looked up) —
+/// but a real jaw does not rotate about its condyle alone: the condyle
+/// translates forward along the articular eminence as the mouth opens, and
+/// the instantaneous centre of a wide opening migrates down the ramus toward
+/// the mandibular foramen. A static pivot has to stand for that whole path.
+/// At the ear it cannot: the chin sits 0.91 head radii below and 0.82 forward
+/// of it, and rotation moves the chin backward by its depth below the pivot
+/// per radian against downward by its forward offset — a back-to-down ratio
+/// of 1.11, so a wide-open chin retreated faster than it fell and the owner
+/// read it as the chin being pulled into the throat.
+///
+/// Lowering the pivot spends depth-below-the-pivot directly: swept at down
+/// 0.06 / 0.25 / 0.45 / 0.60 (ratios 1.11 / 0.87 / 0.61 / 0.42) and judged on
+/// the wide-open profile, 0.45 is where the chin reads as dropping rather
+/// than folding while the two costs of going lower stay small: skin behind a
+/// lowered pivot counter-rotates (the throat lifts on open, first visible at
+/// 0.60), and the mouth-corner shear band grows with the arc. The rest pose
+/// is untouched by construction — the pivot only matters posed.
+/// Provenance: **tuned by render** (#159), against that four-point sweep;
+/// the down component is a stand-in for condylar translation, not the TMJ.
+const JAW_PIVOT: Vec2 = Vec2::new(0.45, 0.10);
 
 /// Where the jaw bone ends: `(down as a share of the head's reach BELOW ITS
 /// JOINT, forward in head radii)`.
