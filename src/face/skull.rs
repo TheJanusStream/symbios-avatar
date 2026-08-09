@@ -1278,7 +1278,14 @@ pub(crate) const NAPE: f32 = 0.35;
 ///   sweeps a small arc however fully it is held.
 pub(crate) fn mandible_hold(below: f32, facing: f32, side: f32) -> f32 {
     let top = 0.39 - 0.04 * side.abs();
-    let risen = smooth((below - top) / 0.06);
+    // The top blend narrows where the mouth's slit is (#154): the parting is a
+    // real seam there, its lower edge wholly the jaw's, and skin blending over
+    // 0.06 of the span two millimetres under a seam that moves outright is a
+    // shear band across one mesh cell. Ahead of the mouth's corners — the
+    // slit's own azimuth range — the blend tightens to 0.015; past them the
+    // cheek keeps the soft edge, which is what a cheek wants.
+    let width = 0.06 - 0.045 * smooth((facing - 0.80) / 0.12);
+    let risen = smooth((below - top) / width);
     let fade = smooth((LARYNX - below) / 0.10);
     let round = smooth((facing + 0.30) / 0.30);
     risen * fade * round

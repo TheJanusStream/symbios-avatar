@@ -331,6 +331,23 @@ pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> T
             colour = colour.lerp(shade, stubble * grain * 0.8);
         }
 
+        // The mouth's interior (#154), keyed by the surgery's own channel
+        // rather than by anything inferred: the cavity goes to a deep warm
+        // shadow — a mouth is blood over darkness — and the teeth ridge to an
+        // ivory that no complexion axis touches. The two ends of one scalar,
+        // so a texel between them blends gum-ward rather than banding.
+        if texel.mouth > 0.05 {
+            let toward = |edge: f32, width: f32| -> f32 {
+                let t = ((texel.mouth - edge) / width).clamp(0.0, 1.0);
+                t * t * (3.0 - 2.0 * t)
+            };
+            let cavity = toward(0.6, 0.35);
+            let ridge = toward(0.15, 0.2) * (1.0 - cavity);
+            let dark = Vec3::new(0.23, 0.08, 0.07);
+            let ivory = Vec3::new(0.87, 0.84, 0.74);
+            colour = colour.lerp(dark, cavity).lerp(ivory, ridge * 0.85);
+        }
+
         // Micro-relief. Skin detail is mostly specular, so it belongs in the
         // normal and roughness maps rather than the albedo.
         let pore = noise3(&pores, p, 400.0);
@@ -761,6 +778,7 @@ mod tests {
                 position: at,
                 normal: Vec3::Z,
                 crease,
+                mouth: 0.0,
                 zone: Zone::Chest,
             });
         }

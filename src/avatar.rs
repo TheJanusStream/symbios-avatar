@@ -188,6 +188,8 @@ pub struct Parts {
     ///
     /// See [`Avatar::build`] for why that is the question asked.
     pub handed: bool,
+    /// The openable mouth's seam and pocket vertices, if one was cut (#154).
+    pub mouth: Option<face::Mouth>,
 }
 
 /// A record, built.
@@ -271,12 +273,49 @@ impl Avatar {
         if let Some(canon) = &canon {
             face::carve_face(&mut body, &rig, canon, &record.face);
         }
+        // The mouth is cut AFTER the carve — the parting follows the carved
+        // groove — and before anything measures, binds or charts the surface,
+        // so the pocket is simply more body to all of them (#154). A rig with
+        // no jaw markers gets no cut and no change.
+        let mouth = canon
+            .as_ref()
+            .and_then(|canon| face::mouth::open(&mut body, &rig, canon, &record.face));
         let body = body;
         let eyes = canon
             .as_ref()
             .map(|canon| Eyes::build(&rig, &body, canon, &record.eyes));
 
-        let weights = skin::bind(&body, &rig, &config.skin);
+        let mut weights = skin::bind(&body, &rig, &config.skin);
+        // The seam's own vertices leave the field's blend: the parting's two
+        // edges are coincident at rest, so the field hands them identical
+        // weights and they would never part. The upper edge and the pocket's
+        // roof are the skull's outright; the lower edge and the floor are the
+        // jaw's; the welds keep their blend, which is what lets a mouth corner
+        // stretch (#154).
+        if let Some(mouth) = &mouth {
+            let jaw = (0..rig.len()).find_map(|tip| {
+                let pivot = rig.joints[tip].parent?;
+                (rig.joints[tip].marker && rig.joints[pivot].marker).then_some(pivot)
+            });
+            let head = rig.in_zone(Zone::Head).first().copied();
+            if let (Some(pivot), Some(head)) = (jaw, head) {
+                let solely = |joint: usize| {
+                    let mut held = [crate::rig::Influence::default(); crate::rig::MAX_INFLUENCES];
+                    held[0] = crate::rig::Influence {
+                        joint: joint as u16,
+                        weight: 1.0,
+                    };
+                    held
+                };
+                for &vertex in mouth.upper.iter().chain(&mouth.roof).chain(&mouth.teeth) {
+                    weights.vertices[vertex as usize] = solely(head);
+                }
+                for &vertex in mouth.lower.iter().chain(&mouth.floor) {
+                    weights.vertices[vertex as usize] = solely(pivot);
+                }
+            }
+        }
+        let weights = weights;
         let zones = weights.zone_map(&body, &rig);
         let surface = Surface::measure(&body, &rig);
 
@@ -331,7 +370,23 @@ impl Avatar {
         let placed = attached_in_body(&rig, &features, &extremities);
         let borrowed: Vec<(&PolyMesh, Zone)> =
             placed.iter().map(|(mesh, zone)| (mesh, *zone)).collect();
-        let geometry = texture::bake(&body, &charts, &borrowed, config.atlas);
+        // The mouth's interior, as a per-vertex scalar the painter can read:
+        // nothing derivable from a position can tell the inside of a closed
+        // fold from the lip a millimetre outside it, so the surgery's own
+        // classes are the channel (#154).
+        let inside = {
+            let mut inside = vec![0.0f32; body.vertex_count()];
+            if let Some(mouth) = &mouth {
+                for &vertex in mouth.roof.iter().chain(&mouth.floor) {
+                    inside[vertex as usize] = 1.0;
+                }
+                for &vertex in &mouth.teeth {
+                    inside[vertex as usize] = 0.5;
+                }
+            }
+            inside
+        };
+        let geometry = texture::bake(&body, &charts, &borrowed, &inside, config.atlas);
         let painted =
             texture::paint_skin(&geometry, &rig, &config.complexion.unwrap_or(record.skin));
 
@@ -349,6 +404,7 @@ impl Avatar {
             surface,
             unwrap: charts,
             body,
+            mouth,
         };
 
         let mut avatar = Self {
@@ -668,6 +724,85 @@ mod tests {
     fn quadruped() -> Avatar {
         let record = AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
         Avatar::build(&record).expect("a quadruped builds")
+    }
+
+    #[test]
+    fn the_mouth_is_cut_shut_at_rest_and_parts_when_the_jaw_opens() {
+        // #154's whole contract in one assertion chain: the surgery ran, the
+        // seam is invisible at rest, the body stayed one closed solid, and a
+        // jaw open separates the two edges rather than stretching one sheet.
+        // Swept over seeds because a cut that only lands on the default body
+        // is a cut that will decline silently on the first re-roll.
+        use crate::anim::Pose;
+        use glam::Quat;
+
+        for seed in [1i64, 3, 7, 21, 33] {
+            let avatar = biped(seed);
+            let mouth = avatar
+                .parts
+                .mouth
+                .as_ref()
+                .unwrap_or_else(|| panic!("seed {seed}: no mouth was cut"));
+            assert!(
+                mouth.upper.len() >= 4 && mouth.upper.len() == mouth.lower.len(),
+                "seed {seed}: a seam of {} over {}",
+                mouth.upper.len(),
+                mouth.lower.len()
+            );
+            let body = &avatar.parts.body;
+            assert!(
+                body.is_closed_manifold(),
+                "seed {seed}: the cut opened the solid: {:?}",
+                body.manifold_report()
+            );
+            for (&u, &l) in mouth.upper.iter().zip(&mouth.lower) {
+                let apart = body.positions[u as usize].distance(body.positions[l as usize]);
+                assert!(
+                    apart < 0.0012,
+                    "seed {seed}: the resting seam gapes {:.2} mm — the mouth reads open",
+                    apart * 1000.0
+                );
+            }
+
+            let rig = &avatar.rig;
+            let tip = (0..rig.len())
+                .find(|&tip| {
+                    rig.joints[tip].marker
+                        && rig.joints[tip]
+                            .parent
+                            .is_some_and(|pivot| rig.joints[pivot].marker)
+                })
+                .expect("a humanoid has a jaw");
+            let pivot = rig.joints[tip].parent.expect("the tip hangs off the pivot");
+            let mut pose = Pose::rest(rig);
+            pose.rotations[pivot] = Quat::from_rotation_x(20f32.to_radians());
+            let moved = pose
+                .forward(rig)
+                .deform(rig, &body.positions, &avatar.parts.weights);
+            let widest = mouth
+                .upper
+                .iter()
+                .zip(&mouth.lower)
+                .map(|(&u, &l)| moved[u as usize].distance(moved[l as usize]))
+                .fold(0.0f32, f32::max);
+            assert!(
+                widest > 0.008,
+                "seed {seed}: a 20-degree open parts the seam by only {:.1} mm — the mouth \
+                 is still one sheet",
+                widest * 1000.0
+            );
+            let welds = mouth.welds;
+            let corner = moved[welds[0] as usize].distance(moved[welds[1] as usize]);
+            let rest =
+                body.positions[welds[0] as usize].distance(body.positions[welds[1] as usize]);
+            assert!(
+                (corner - rest).abs() < rest * 0.25,
+                "seed {seed}: the mouth's width went {:.1} to {:.1} mm under a jaw open — a \
+                 corner should stretch, not fly",
+                rest * 1000.0,
+                corner * 1000.0
+            );
+        }
     }
 
     #[test]

@@ -30,6 +30,11 @@ pub struct Texel {
     /// by the painter, because the mesh is the only thing that knows: see
     /// [`PolyMesh::crease`].
     pub crease: f32,
+    /// Whether this texel is inside the mouth (#154): `0` on skin, near `0.5`
+    /// on the teeth ridge, `1` in the cavity. Carried per vertex from the
+    /// surgery's own classes, because nothing derivable from position can
+    /// tell the inside of a closed fold from the lip a millimetre outside it.
+    pub mouth: f32,
     /// Which part of the body it belongs to.
     pub zone: Zone,
 }
@@ -84,7 +89,7 @@ pub const DILATION: u32 = 8;
 /// which is every avatar with a face.
 #[must_use]
 pub fn bake_geometry(mesh: &PolyMesh, uv: &UvUnwrap, size: u32) -> AtlasGeometry {
-    bake(mesh, uv, &[], size)
+    bake(mesh, uv, &[], &[], size)
 }
 
 /// Rasterises a body **and its attached parts** into one geometry buffer.
@@ -103,6 +108,7 @@ pub fn bake(
     mesh: &PolyMesh,
     uv: &UvUnwrap,
     parts: &[(&PolyMesh, Zone)],
+    mouth: &[f32],
     size: u32,
 ) -> AtlasGeometry {
     if size == 0 || (uv.faces.is_empty() && parts.is_empty()) {
@@ -121,6 +127,11 @@ pub fn bake(
         // Measured on the body before it was split at its seams, so a crease
         // that runs across a chart boundary is the same depth on both sides.
         let creases = uv.gather(&mesh.crease());
+        let mouths = if mouth.len() == mesh.vertex_count() {
+            uv.gather(mouth)
+        } else {
+            vec![0.0; uv.uvs.len()]
+        };
         for (index, face) in uv.faces.iter().enumerate() {
             let zone = uv.charts[uv.chart_of_face[index] as usize].zone;
             // Fan-triangulate: a quad from a subdivided body is planar enough
@@ -134,6 +145,7 @@ pub fn bake(
                     triangle.map(|v| positions[v as usize]),
                     triangle.map(|v| normals[v as usize]),
                     triangle.map(|v| creases[v as usize]),
+                    triangle.map(|v| mouths[v as usize]),
                 );
             }
         }
@@ -164,6 +176,7 @@ fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone) {
                 triangle.map(|v| part.positions[v as usize]),
                 triangle.map(|v| normals[v as usize]),
                 triangle.map(|v| creases[v as usize]),
+                [0.0; 3],
             );
         }
     }
@@ -177,6 +190,7 @@ fn rasterize(
     positions: [Vec3; 3],
     normals: [Vec3; 3],
     creases: [f32; 3],
+    mouths: [f32; 3],
 ) {
     let scale = Vec2::new(geometry.width as f32, geometry.height as f32);
     let pixels = uvs.map(|uv| uv * scale);
@@ -221,6 +235,7 @@ fn rasterize(
                 normal: (normals[0] * weights.x + normals[1] * weights.y + normals[2] * weights.z)
                     .normalize_or(Vec3::Y),
                 crease: creases[0] * weights.x + creases[1] * weights.y + creases[2] * weights.z,
+                mouth: mouths[0] * weights.x + mouths[1] * weights.y + mouths[2] * weights.z,
                 zone,
             });
         }
@@ -360,6 +375,7 @@ mod tests {
                     triangle.map(|v| uv.uvs[v as usize]),
                     triangle.map(|v| positions[v as usize]),
                     triangle.map(|v| normals[v as usize]),
+                    [0.0; 3],
                     [0.0; 3],
                 );
             }

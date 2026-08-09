@@ -390,6 +390,25 @@ fn containment_is_exact_on_a_closed_body() {
         .positions
         .iter()
         .enumerate()
+        // **The mouth's interior is sealed by anatomy, not by defect** (#154).
+        // The escape premise — an outward normal leaves its own flesh quickly —
+        // is false on the inside of a CLOSED pocket: at rest the cavity is a
+        // sliver, so every seam and pocket vertex is buried exactly the way
+        // the inside of a closed pair of lips is. Those vertices are excused
+        // by name, not by count, and their real guard is
+        // `the_mouth_is_cut_shut_at_rest_and_parts_when_the_jaw_opens`, which
+        // asserts the pocket is a functioning cavity rather than a knot.
+        .filter(|(vertex, _)| {
+            avatar.parts.mouth.as_ref().is_none_or(|mouth| {
+                let vertex = *vertex as u32;
+                !mouth.upper.contains(&vertex)
+                    && !mouth.lower.contains(&vertex)
+                    && !mouth.roof.contains(&vertex)
+                    && !mouth.teeth.contains(&vertex)
+                    && !mouth.floor.contains(&vertex)
+                    && !mouth.welds.contains(&vertex)
+            })
+        })
         .filter(|(vertex, point)| {
             !(1..=10).any(|out| !body.contains(**point + normals[*vertex] * step * out as f32))
         })
@@ -487,8 +506,8 @@ fn the_painter_covers_the_parts_as_well_as_the_body() {
         placed.iter().map(|(mesh, zone)| (mesh, *zone)).collect();
 
     // The same charts either way, so the only difference is the parts.
-    let bare = texture::bake(&parts.body, &parts.unwrap, &[], 256);
-    let whole = texture::bake(&parts.body, &parts.unwrap, &borrowed, 256);
+    let bare = texture::bake(&parts.body, &parts.unwrap, &[], &[], 256);
+    let whole = texture::bake(&parts.body, &parts.unwrap, &borrowed, &[], 256);
     assert!(
         whole.covered() > bare.covered(),
         "baking {} parts covered no new texels: {} against {}",
