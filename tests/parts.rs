@@ -97,7 +97,23 @@ const MUST_SHOW: f32 = 0.25;
 /// that hair further out belongs to the rest of #164 — the girth that grew the
 /// girdle and lifted the trunk under the head — and wants finding on a body
 /// this test can hold still.
-const EYE_SHOWS: (f32, f32) = (0.03, 0.255);
+///
+/// **0.255 → 0.285, and this one is the head getting rounder rather than a
+/// ruler drifting** (#158). `refine_face` now splits with
+/// `PolyMesh::refine_curved`, so the sixteen-sided tube the head arrives as is
+/// filled in to its own arc instead of being subdivided along its chords. The
+/// surface gains up to a facet's sagitta — about 2 mm on an 84 mm head, most of
+/// it midway between the coarse rows — and the worst classic body's exposure
+/// goes 0.2515 to 0.2808 with seed 3 following it to 0.2564.
+///
+/// **What moved is the DIFFERENCE this measure is made of, not the seat.** The
+/// globe is bisected onto the skin at its own column, so it travels with the
+/// surface; what changed is how much fuller the surface got around the socket
+/// than at the column the globe is seated from. Judged on the render at the
+/// worst seed, closed and open: the eye is seated in skin at both, and the
+/// facet planes that ran from the temple to the jaw either side of it are gone.
+/// That is the trade, and it is the reason this is a re-base and not a defect.
+const EYE_SHOWS: (f32, f32) = (0.03, 0.285);
 
 /// How far an eye may stand proud of the face around it, in metres.
 ///

@@ -941,6 +941,33 @@ impl Dimorphism {
 /// softer there than the 33–57° jawline is; that is measured, it is the reason
 /// this band and not the guard is where the next resolution comes from, and it
 /// is the one thing #80 did not finish.
+///
+/// **There is no ninth region for the chin, and that is now a measured decision
+/// rather than an open one** (#158). The chin's crest measures −0.498 to −0.522
+/// profile heights across seeds 7, 0, 21 and 3, so it falls BELOW the nose-base
+/// pair's floor of −0.443 and the comment on that pair has been true of no body
+/// this crate builds: the most projecting feature of the lower face gets three
+/// passes where the mouth above it gets six, and its whole descent falls between
+/// two consecutive vertex rows. A narrow band at the crest —
+/// `(0.85, 1.0, -0.580, -0.443)`, or `(0.92, ...)` at the lip line's own
+/// azimuth — does exactly what it says it will: rows at the crest go from 4.2 mm
+/// apart to 2.5, and the descent spreads over four of them instead of one.
+///
+/// It has now been built, costed and judged TWICE, and it does not show either
+/// time. At 0.85 it costs 326 triangles on the default and 712 at the dearest
+/// corner of `tests/budget.rs`'s sweep, landing at 29,778 against the 29,900
+/// ceiling; at 0.92, 246 and 504, landing at 29,570. Against that, side by side
+/// at the same seed and light — and the second time with [`refine_face`]'s
+/// curved split already in, which is what made re-judging it worth doing, since
+/// the first verdict blamed the flank for drowning it out — the chin is
+/// marginally rounder in the lit render and indistinguishable in the normal
+/// buffer, where a geometric change of any size has nowhere to hide. The bars
+/// the eye reads across the lower face are the mouth's own forms, in a band
+/// that already has six passes.
+///
+/// So the crest stays at three passes. What would justify the ninth is a chin
+/// whose SHAPE needs the rows — a curve authored to turn inside that 4 mm — and
+/// not the rows on their own.
 const FACE_PASSES: [(f32, f32, f32, f32); 8] = [
     // **The broadest pass, and it is here because the body's subdivision level
     // halved** (#107). Eight-point cage rings buy the body a smooth surface at
@@ -1000,6 +1027,29 @@ const FACE_PASSES: [(f32, f32, f32, f32); 8] = [
 /// adds are placed on the sphere and then mapped onto the skull by [`reshape`]
 /// along with every other one — which samples the skull more finely, rather than
 /// subdividing the facets of an already-shaped one.
+///
+/// **And it splits with [`PolyMesh::refine_curved`], because sampling the field
+/// more finely is only half of what a face needs** (#158). [`reshape_to`] is an
+/// anisotropic SCALING of the section it is handed — `x` by one factor, `z` by
+/// another, both slow functions of azimuth — so a flat chord in maps to a flat
+/// chord out. The head arrives as a sixteen-sided tube, every plain midpoint
+/// sits on one of those chords, and every pass below therefore bought the base
+/// skull no curvature whatsoever: measured round the built head with
+/// `examples/chinprofile --ring`, the section turned 0.0° through four
+/// consecutive samples and then 19 to 23° in one, at every multiple of 22.5°.
+/// The additive terms — `CHIN`'s push, the brow's ledge, the mouth's relief —
+/// are what the extra samples were ever buying, and the eye was reading the
+/// sixteen-gon underneath them as flat planes meeting at a hard edge from the
+/// zygomatic down to the jaw. A curved split costs no triangles and is the
+/// whole of that defect.
+///
+/// **A wider band is not the alternative, and it was costed rather than
+/// argued** (#158). Extending the jaw flank's annulus up to the zygomatic —
+/// `(-0.15, 0.55, -0.571, 0.20)`, a ninth pass with `FACE_REFINEMENT`
+/// moved with it — costs 5,428 triangles on the default body and lands the
+/// dearest corner of `tests/budget.rs`'s own sweep at 33,966 against a 29,900
+/// ceiling. Four times through it, for a region whose fields carry nothing
+/// finer than the cells already there.
 ///
 /// Does nothing to a body with no head, or to one that walks on four legs: this
 /// is a human skull's geometry and a creature's head is its own shape.
@@ -1064,7 +1114,7 @@ pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
                 span > f32::EPSILON && across.z / span > near && across.z / span <= far
             })
             .collect();
-        refined = refined.refine(&selected);
+        refined = refined.refine_curved(&selected);
     }
     refined
 }
@@ -3081,8 +3131,28 @@ mod tests {
                     // profile is measuring the wrong span, and fixing that is
                     // #74's re-binning rather than a number here. 17.0 is the
                     // state plus 0.2 mm.
+                    //
+                    // **17.0 → 18.8, and it is the fifth time, this one for a
+                    // head that got rounder** (#158). `refine_face` splits with
+                    // `PolyMesh::refine_curved` now, so the sixteen-sided tube
+                    // the head arrives as is filled in to its own arc instead
+                    // of being subdivided along its chords; the surface gains
+                    // up to a facet's sagitta, about 2 mm, most of it midway
+                    // between the coarse rows. Seed 2's worst off-midline
+                    // reading goes 16.4 to 18.6 and the spread's other end
+                    // barely moves, −3.7 to −3.1. What this ruler is reporting
+                    // is that the bins have not moved with the surface, which
+                    // is #74 again.
+                    //
+                    // **And it caught something real on the way**, which is the
+                    // argument for keeping it however badly it bins: seed 3
+                    // came back at −88.6 mm, and that was not a ruler at all.
+                    // One cell of `Skull::measure`'s `front` table had no face
+                    // sample in it and was left holding the back of the skull,
+                    // so `depth_across` answered 21 mm BEHIND the head joint at
+                    // the eye's own column. Fixed where it was, in `measure`.
                     assert!(
-                        (-5.0..17.0).contains(&error),
+                        (-5.0..18.8).contains(&error),
                         "seed {seed} at {height:.3}: the depth off the midline is {error:.1} mm out"
                     );
                 }
@@ -3484,9 +3554,26 @@ impl Skull {
         let mut side = [[f32::MIN; DEPTHS]; BANDS];
         for point in &mine {
             for band in window(height(point), BANDS) {
-                let lateral = lateral(across[band], point.x.abs());
-                for column in window(lateral, COLUMNS) {
-                    front[band][column] = front[band][column].max(point.z);
+                // **A forward reach is measured from the front of the head, and
+                // only samples that are in front of the joint can be one**
+                // (#158). This is a maximum over whatever landed in the cell,
+                // and a lateral column that the FACE happens not to sample —
+                // the front is refined and the occiput is not, so the back's
+                // samples are spread far apart across the same axis — was left
+                // holding the back of the skull. Measured on seed 3 the day
+                // `refine_curved` moved the vertices a couple of millimetres:
+                // one cell of one band read −69.2 mm between neighbours of
+                // +68.5 and +64.3, and `depth_across` interpolated a face that
+                // stood 21 mm BEHIND its own head joint at the eye's own
+                // column. The joint is inside the skull on every body, so a
+                // sample behind it is never the front, and a cell with no front
+                // sample in it is empty rather than backwards — which is what
+                // `spread` below already exists to answer.
+                if point.z > 0.0 {
+                    let lateral = lateral(across[band], point.x.abs());
+                    for column in window(lateral, COLUMNS) {
+                        front[band][column] = front[band][column].max(point.z);
+                    }
                 }
                 let fore = fore(behind[band], ahead[band], point.z);
                 for column in window(fore, DEPTHS) {

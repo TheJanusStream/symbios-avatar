@@ -367,6 +367,19 @@ mod tests {
         // bodies whose neck is set by its own length term, where a change to
         // the floor is arithmetically incapable of moving anything. Each says
         // so at its own site now.
+        //
+        // **And it went the other way for once** (#158). Rounding the head's
+        // refinement — `PolyMesh::refine_curved`, which fills the sixteen-sided
+        // tube in to its own arc instead of subdividing along its chords —
+        // takes the spread from 0.249–0.296 to 0.252–0.294 and the ratio from
+        // 1.189 to 1.168, so the slack under this bound goes from 0.011 to
+        // 0.032. It is the same mechanism as every re-base above, read
+        // backwards: the sagitta a facet was hiding is worth more where the
+        // head's own curvature is highest, which is the narrow end of this
+        // spread, so filling it in pulls the two ends together. Left at 1.20
+        // rather than tightened onto the new state, because what earns a
+        // tighter bound is a body that cannot go back, and this is one change's
+        // worth of room.
         assert!(
             spread.1 / spread.0 < 1.20,
             "the width ruler runs {:.3} to {:.3} of the frame across sixteen bodies, \

@@ -62,6 +62,36 @@ fn edge_key(a: u32, b: u32) -> (u32, u32) {
 /// means nothing here reads a hard edge as a cavity by accident.
 const CREASE_FOLD: f32 = 0.035;
 
+/// How much of the tangent-plane correction a curved refinement takes, and it
+/// is the fraction that turns a chord back into an arc.
+///
+/// [`PolyMesh::refine_curved`] places a new vertex by projecting the plain
+/// midpoint onto the tangent plane of each corner it comes from and averaging;
+/// taken whole that overshoots, because a tangent plane leaves the surface
+/// faster than the surface does. The fraction that lands exactly on a circle
+/// falls out of the arithmetic and does not have to be tuned.
+///
+/// For an edge whose two corners sit at ±φ on a circle of radius `r`, the
+/// midpoint is at `r·cos φ` and the averaged correction is `r·cos φ·sin²φ`, so
+/// the fraction that restores `r` is `(1 − cos φ) / (cos φ·sin²φ)`. For a quad
+/// centroid on a sphere the same sum gives `1 / (cos²φ·(1 + cos²φ))`. Both are
+/// one half as the facets get small, and both are within three percent of it at
+/// the 22.5° facets the head arrives with:
+///
+/// ```text
+///   facet     edge rule   centroid rule
+///   22.5°       0.515         0.530
+///   11.25°      0.504         0.507
+///    5.6°       0.501         0.502
+/// ```
+///
+/// So one half, for both, and a surface refined twice is within a part in a
+/// thousand of round. Overshoot is the failure mode that matters — a lift past
+/// the arc puts a bulge in the middle of every facet, which is the faceting
+/// back again with its phase inverted — and one half is under the exact figure
+/// at every scale rather than over it.
+const ROUND: f32 = 0.5;
+
 /// A vertex's bone influences, strongest first — one entry of [`PolyMesh::skin`].
 pub type VertexSkin = [Influence; MAX_INFLUENCES];
 
@@ -502,6 +532,14 @@ impl PolyMesh {
     /// changing the shape. That separation is the point: refining and reshaping
     /// in one step makes it impossible to tell which of them moved a silhouette.
     ///
+    /// **And what the separation costs is a whole class of defect** (#158). A
+    /// midpoint on a chord is still on the chord, so this cannot round anything:
+    /// on a surface that is already a polygon it hands every facet three more
+    /// vertices sharing one normal and compresses all of the curvature into the
+    /// coarse rows, which shades FLATTER the more of it you buy. Reach for
+    /// [`PolyMesh::refine_curved`] wherever the surface being split is meant to
+    /// be round, and for this one where a shape has to be held exactly.
+    ///
     /// **No T-junctions.** An unselected face that borders a selected one takes
     /// the new edge midpoints into its own corner list and becomes an n-gon,
     /// rather than being left with a vertex hanging in the middle of one of its
@@ -512,12 +550,72 @@ impl PolyMesh {
     /// vertex that does not exist yet cannot have been given a weight or a
     /// texel. `selected` is indexed by face; a shorter slice refines nothing
     /// past its end.
+    ///
+    /// Use [`PolyMesh::refine_curved`] where the surface being split is meant
+    /// to be round; the paragraph on linearity above is what that one exists
+    /// to undo.
     #[must_use]
     pub fn refine(&self, selected: &[bool]) -> PolyMesh {
+        self.refined(selected, 0.0)
+    }
+
+    /// The same split, with the new vertices placed on the surface's own
+    /// curvature instead of on the chord.
+    ///
+    /// **A linear split adds sampling and no shape, and on a surface that is
+    /// already a polygon that makes the faceting worse rather than better**
+    /// (#158). The head arrives from the cage as a sixteen-sided tube. Every
+    /// midpoint [`PolyMesh::refine`] adds sits ON one of those sixteen chords,
+    /// and `face::skull`'s shaping is an anisotropic scaling of the section it
+    /// is handed — so the chord maps to a chord and stays flat. Measured round
+    /// the built head with `examples/chinprofile --ring`, a section turned 0.0°
+    /// through four consecutive samples and then 19 to 23° in one, at every
+    /// multiple of 22.5°: eight refinement passes bought the lower face no
+    /// curvature at all, only more vertices sharing each facet's single normal.
+    /// That is exactly what the eye reported as flat planes meeting at a hard
+    /// edge from the zygomatic down to the jaw, and it got worse with each pass
+    /// because a coarse polygon at least varies its normal every corner.
+    ///
+    /// So a new vertex is lifted onto the tangent planes of the corners it
+    /// comes from — the surface's own normals are what say how it curves — and
+    /// no existing vertex moves, so the split still interpolates and the mesh
+    /// still cannot crack.
+    ///
+    /// `ROUND` is derived rather than tuned: half the tangent-plane
+    /// correction reproduces a circular arc, on both the edge midpoints and the
+    /// face centroids. See its own docstring for the arithmetic.
+    #[must_use]
+    pub fn refine_curved(&self, selected: &[bool]) -> PolyMesh {
+        self.refined(selected, ROUND)
+    }
+
+    /// Both of the above: `round` is how much of the tangent-plane correction
+    /// each new vertex takes, and zero is a plain midpoint.
+    fn refined(&self, selected: &[bool], round: f32) -> PolyMesh {
         let chosen = |face: usize| selected.get(face).copied().unwrap_or(false);
         if !(0..self.faces.len()).any(chosen) {
             return self.clone();
         }
+        // Measured on the mesh that arrives, once: the corners a new vertex is
+        // lifted from are all original ones, and none of them moves.
+        let normals = if round == 0.0 {
+            Vec::new()
+        } else {
+            self.vertex_normals()
+        };
+        let lifted = |at: Vec3, corners: &[u32]| {
+            if normals.is_empty() {
+                return at;
+            }
+            let pull: Vec3 = corners
+                .iter()
+                .map(|&corner| {
+                    let normal = normals[corner as usize];
+                    -(at - self.positions[corner as usize]).dot(normal) * normal
+                })
+                .sum();
+            at + pull * (round / corners.len() as f32)
+        };
 
         let mut refined = PolyMesh::new();
         refined.positions.clone_from(&self.positions);
@@ -537,7 +635,7 @@ impl PolyMesh {
                     midpoints.entry(edge_key(a, b))
                 {
                     let at = (self.positions[a as usize] + self.positions[b as usize]) * 0.5;
-                    slot.insert(refined.push_vertex(at));
+                    slot.insert(refined.push_vertex(lifted(at, &[a, b])));
                 }
             }
         }
@@ -547,7 +645,7 @@ impl PolyMesh {
                 continue;
             }
             if chosen(index) {
-                let centre = refined.push_vertex(self.face_centroid(index));
+                let centre = refined.push_vertex(lifted(self.face_centroid(index), face));
                 for corner in 0..face.len() {
                     let previous = (corner + face.len() - 1) % face.len();
                     let next = (corner + 1) % face.len();
@@ -1056,6 +1154,73 @@ mod tests {
             lo.abs_diff_eq(was_lo, 1e-6) && hi.abs_diff_eq(was_hi, 1e-6),
             "refinement changed the silhouette: {lo:?}..{hi:?} against {was_lo:?}..{was_hi:?}"
         );
+    }
+
+    #[test]
+    fn a_curved_refinement_puts_its_new_vertices_on_the_curve() {
+        // The whole of #158 in one measurement. A plain split leaves every new
+        // vertex on the chord, so the surface keeps exactly the curvature the
+        // coarse mesh had and each facet gains three vertices that share one
+        // normal — which is what made the head read as flat planes meeting at
+        // an edge, and made it read WORSE the more it was refined.
+        //
+        // Measured against a quarter-circle strip of known radius, as the mean
+        // radial error of the vertices the split adds:
+        //
+        // ```text
+        //   cells   facet     plain     curved
+        //     4     22.5°    0.0136     0.0037
+        //     6     15.0°    0.0062     0.0011
+        //     8     11.25°   0.0035     0.0005
+        // ```
+        //
+        // Four cells is the head's own facet, and the curved split takes it
+        // inside what six plain ones reach. The gap widens as the facets
+        // shrink, which is the interpolating scheme converging on the arc while
+        // the linear one converges on the polygon it was handed.
+        for (cells, ceiling) in [(4usize, 0.0040f32), (6, 0.0012), (8, 0.0006)] {
+            let strip = arc(cells, 0.5, false);
+            let all = vec![true; strip.face_count()];
+            let error = |refined: &PolyMesh| {
+                let added = &refined.positions[strip.positions.len()..];
+                added
+                    .iter()
+                    .map(|p| p.y.hypot(p.z) / 0.5 - 1.0)
+                    .sum::<f32>()
+                    / added.len() as f32
+            };
+            let plain = error(&strip.refine(&all)).abs();
+            let curved = strip.refine_curved(&all);
+            assert!(
+                error(&curved).abs() < ceiling,
+                "{cells} cells: the curved split sits {:.4} off the arc, against {ceiling}",
+                error(&curved).abs()
+            );
+            assert!(
+                error(&curved).abs() * 3.0 < plain,
+                "{cells} cells: the curved split is no better than the plain one"
+            );
+            // **Never past the arc**, which is the failure mode `ROUND` is
+            // chosen under: a lift that overshoots puts a bulge in the middle
+            // of every facet, and that is the faceting back with its phase
+            // inverted. Every added vertex is inside the circle or on it.
+            let over = curved.positions[strip.positions.len()..]
+                .iter()
+                .map(|p| p.y.hypot(p.z) / 0.5 - 1.0)
+                .fold(f32::MIN, f32::max);
+            assert!(
+                over <= 1e-6,
+                "{cells} cells: a new vertex stands {over:.5} past the arc"
+            );
+            // And it still interpolates: the coarse mesh's own vertices are
+            // where they were, which is what keeps a partly-refined mesh from
+            // cracking along the boundary.
+            assert_eq!(
+                &curved.positions[..strip.positions.len()],
+                &strip.positions[..],
+                "the curved split moved a vertex that already existed"
+            );
+        }
     }
 
     #[test]
