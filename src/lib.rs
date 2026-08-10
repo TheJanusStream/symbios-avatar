@@ -259,6 +259,11 @@ pub fn build_body(
         // and the face is sampled finely rather than subdivided after the fact.
         mesh = face::refine_face(&mesh, &rig, FACE_REFINEMENT);
         face::shape_skull(&mut mesh, &rig, dimorphism);
+        // And then the column under it, which spans the junction the skull's
+        // own shaping stops at. Second because it measures the surface the
+        // skull left: see `face::neck`, whose whole argument is that the neck's
+        // width has to be the head's business rather than the cage's.
+        face::shape_neck(&mut mesh, &rig, dimorphism);
     }
     Ok(mesh)
 }

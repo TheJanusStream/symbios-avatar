@@ -15,7 +15,7 @@ use symbios_avatar::face::Skull;
 use symbios_avatar::plan::{DEFAULT_AGE, DEFAULT_BODY_FAT};
 use symbios_avatar::{
     Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, Composites, HumanoidParams,
-    Limb, QuadrupedParams, Rig, Skeleton, Zone, build_body, build_cage,
+    Limb, QuadrupedParams, Rig, Skeleton, Vec3, Zone, build_body, build_cage,
 };
 
 /// Builds a body and asserts it is watertight, reporting the parameters if not.
@@ -729,6 +729,120 @@ fn a_trunk_is_not_a_surface_of_revolution() {
         "a four-legged trunk measured {across:.4} across and {tall:.4} deep — ratio {:.2}",
         tall / across
     );
+}
+
+#[test]
+fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
+    // **The guard that makes #175 hold, and the reason it is a RATIO.** A neck
+    // and the skull on it used to be sized by expressions sharing only stature:
+    // `neck_r` is a fraction of it times girth times the frame axis, `head_r` a
+    // fraction of it times `head_size`. So the two could disagree by a whole
+    // axis, and measured over this grid before `face::neck` existed the built
+    // column ran from 0.65 of the skull's own width to 1.21 of it — at
+    // `head_size` −1 the neck was WIDER than the head it carried, which is what
+    // the owner was looking at when they asked for the throat stump to go.
+    //
+    // Asserting the absolute width instead would pass on every body in that
+    // sweep, because the absolute width was never the defect: it barely moved
+    // at all (54–71 mm) while the skull ran 54–90. Only the ratio can see it.
+    //
+    // The band is one-sided on purpose. `face::neck` narrows and never widens —
+    // inflating a slender column to meet a target would be that module causing
+    // the defect it exists to remove — so a body whose cage already gave it a
+    // thin neck stays thin, and the floor here is what that leaves: 0.643 at
+    // `head_size` +1 with `femininity` +1, the leanest corner of the grid.
+    for &head_size in &[-1.0f32, 0.0, 1.0] {
+        for &(mass, femininity) in &[(0.0f32, 0.0f32), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)] {
+            let mut record = AvatarRecord::new("Column", Archetype::default());
+            if let Archetype::Humanoid(ref mut params) = record.archetype {
+                params.head_size = head_size;
+            }
+            record.composites.mass = mass;
+            record.composites.femininity = femininity;
+            record.composites.sanitize();
+            record.sanitize();
+            let skeleton = record.skeleton();
+            let body = build_body(
+                &skeleton,
+                &CageConfig::default(),
+                BODY_SUBDIVISIONS,
+                &Default::default(),
+            )
+            .expect("the body meshes");
+            let rig = Rig::from_skeleton(&skeleton).expect("the body rigs");
+            let Some(skull) = Skull::measure(&body, &rig) else {
+                continue;
+            };
+            let head = *rig.in_zone(Zone::Head).first().expect("a head");
+            let at = rig.joints[head].position;
+            let (_, crown) = skull.throat_and_crown();
+
+            // The widest chord of the section, swept over its own depth. A ray
+            // fired sideways from the axis crosses an off-centre section on a
+            // CHORD and reads it narrower the further the mass leans back,
+            // which is the trap `examples/neckaudit` already records paying
+            // for once.
+            let widest = |y: f32| -> f32 {
+                // Eighteen halvings of 0.40 m is 1.5 microns and this is
+                // asserted to three decimal places of a ratio, so the cost of
+                // the extra fourteen is a slower debug suite and nothing else.
+                let bisect = |from: Vec3, along: Vec3| -> f32 {
+                    let (mut inside, mut outside) = (0.0f32, 0.40f32);
+                    for _ in 0..18 {
+                        let middle = 0.5 * (inside + outside);
+                        if body.contains(from + along * middle) {
+                            inside = middle;
+                        } else {
+                            outside = middle;
+                        }
+                    }
+                    inside
+                };
+                let axis = Vec3::new(at.x, y, at.z);
+                let (ahead, behind) = (bisect(axis, Vec3::Z), bisect(axis, -Vec3::Z));
+                (0..=8)
+                    .map(|slice| {
+                        let z = at.z - behind + (ahead + behind) * slice as f32 / 8.0;
+                        bisect(Vec3::new(at.x, y, z), Vec3::X)
+                    })
+                    .fold(0.0f32, f32::max)
+            };
+
+            // The column is hunted from the CHIN rather than from the head's
+            // floor: the waist sits well above where the head's surface stops —
+            // 80 mm under the joint against a floor at 135 on the default body
+            // — so a search starting at the floor starts below the neck and
+            // measures the shoulders.
+            let neck = *rig.in_zone(Zone::Neck).first().expect("a neck");
+            let girdle = rig.joints[neck].parent.expect("a neck sits on a girdle");
+            let chin = at.y + skull.chin();
+            let bottom = rig.joints[girdle].position.y + rig.joints[girdle].radius;
+
+            // A 5 mm ladder, which is finer than the rings the cage puts in
+            // this region and coarse enough that the whole grid costs seconds
+            // rather than minutes in a debug build.
+            let mut skull_wide = 0.0f32;
+            let mut y = chin;
+            while y < at.y + crown {
+                skull_wide = skull_wide.max(widest(y));
+                y += 0.005;
+            }
+            let mut column = f32::MAX;
+            let mut y = chin;
+            while y > bottom {
+                column = column.min(widest(y));
+                y -= 0.005;
+            }
+            let ratio = column / skull_wide.max(f32::EPSILON);
+            assert!(
+                (0.60..0.82).contains(&ratio),
+                "head_size {head_size:+.1}, mass {mass:+.1}, femininity {femininity:+.1}: \
+                 the column is {:.1} mm against a skull of {:.1}, a ratio of {ratio:.3}",
+                column * 1000.0,
+                skull_wide * 1000.0
+            );
+        }
+    }
 }
 
 #[test]

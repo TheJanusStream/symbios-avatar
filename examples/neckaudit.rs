@@ -166,7 +166,7 @@ fn main() {
 fn ratio() {
     println!();
     println!("neck against skull, over the axes that move them apart (#175)");
-    println!("  head_size  mass  fem    skull    neck   ratio");
+    println!("  head_size  mass  fem    skull    neck   ratio     node  skull/node");
 
     for &head_size in &[-1.0f32, 0.0, 1.0] {
         for &(mass, femininity) in &[(0.0f32, 0.0f32), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)] {
@@ -223,11 +223,23 @@ fn ratio() {
                     .fold(0.0f32, f32::max)
             };
 
-            // The skull's widest is taken above the chin and the column's
-            // narrowest below the head's own floor, so neither can be the
-            // other: between them is the jaw, which belongs to neither.
+            // **The narrowest is hunted from the CHIN, not from the head's
+            // floor** (#175). The floor is where the head's SURFACE stops, and
+            // the column's waist is well above it: measured on the default
+            // body the waist sits 80 mm under the head joint and the floor at
+            // 135, so a search that starts at the floor starts below the neck
+            // and reports the shoulders. That is not a bad ruler for the region
+            // it names — it is a ruler pointed at the wrong region, and it read
+            // a carve that had moved the waist by 20 mm as having done nothing.
+            //
+            // From the chin down to the girdle's crown is what an eye calls the
+            // neck, and the jaw between them is wider than both, so a minimum
+            // over the whole run finds the waist without needing a landmark to
+            // separate them.
             let chin = at.y + skull.chin();
-            let floor = at.y + throat;
+            let neck = *rig.in_zone(Zone::Neck).first().expect("a neck");
+            let girdle = rig.joints[neck].parent.expect("a neck sits on a girdle");
+            let crown_of_girdle = rig.joints[girdle].position.y + rig.joints[girdle].radius;
             let mut widest_skull = 0.0f32;
             let mut y = chin;
             while y < at.y + crown {
@@ -235,16 +247,20 @@ fn ratio() {
                 y += 0.002;
             }
             let mut narrowest = f32::MAX;
-            let mut y = floor;
-            while y > floor - 0.12 {
+            let mut y = chin;
+            while y > crown_of_girdle {
                 narrowest = narrowest.min(widest(y));
                 y -= 0.002;
             }
+            let _ = throat;
+            let node = rig.joints[head].radius * rig.joints[head].scale.x;
             println!(
-                "  {head_size:+.1}      {mass:+.1}  {femininity:+.1}   {:6.1}  {:6.1}   {:.3}",
+                "  {head_size:+.1}      {mass:+.1}  {femininity:+.1}   {:6.1}  {:6.1}   {:.3}   {:6.1}  {:.3}",
                 widest_skull * 1000.0,
                 narrowest * 1000.0,
-                narrowest / widest_skull.max(f32::EPSILON)
+                narrowest / widest_skull.max(f32::EPSILON),
+                node * 1000.0,
+                widest_skull / node.max(f32::EPSILON)
             );
         }
     }

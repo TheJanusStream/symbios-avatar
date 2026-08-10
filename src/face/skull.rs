@@ -3781,6 +3781,32 @@ fn floor(rig: &Rig, head: usize) -> f32 {
     -SETTLED * (joint.position.y - rig.joints[parent].position.y).abs() / joint.radius
 }
 
+/// Where the mandible's lower border sits at the angle of the jaw, in metres
+/// below the head joint.
+///
+/// [`GONION`] in the unit the rest of the body is measured in, so that
+/// `face::neck` can be bounded by the same landmark this file carves to without
+/// re-deriving the floor remap — which is the arithmetic that has walked out
+/// from under this file twice (#78, #107).
+pub(crate) fn border(rig: &Rig, head: usize, dimorphism: &Dimorphism, raise: f32) -> f32 {
+    let radius = rig.joints[head].radius;
+    if radius <= f32::EPSILON {
+        return 0.0;
+    }
+    // **The border MIGRATES, and a flat one tears a chin off** (#175). This is
+    // [`jaw`]'s own line — [`MENTON`] on the midline, [`Dimorphism::gonion`] out
+    // at the angle — and `face::neck` first used the gonion's height at every
+    // azimuth, which put the ceiling 20 mm above the chin's own tip on the
+    // midline. The column's carve then took the chin and the submental
+    // construction with it and drew them into the throat, which rendered as the
+    // jaw shattering. `raise` is 0 dead ahead and 1 at the side or behind.
+    //
+    // The same remap `reshape_to` applies: a profile height is a fraction of
+    // the way down THIS head, so it reaches the same anatomy on every body.
+    let profile = MENTON + (dimorphism.gonion - MENTON) * raise.clamp(0.0, 1.0);
+    profile * ((floor(rig, head) * SETTLE) / JUNCTION) * radius
+}
+
 /// Where the chin is on a built head, in metres above the head joint.
 ///
 /// **One definition, used twice, which is the whole point of it.**
