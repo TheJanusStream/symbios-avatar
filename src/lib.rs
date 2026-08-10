@@ -258,6 +258,7 @@ pub fn build_body(
         // moves none, so `shape_skull` maps all of them onto the skull together
         // and the face is sampled finely rather than subdivided after the fact.
         mesh = face::refine_face(&mesh, &rig, FACE_REFINEMENT);
+        mesh = face::refine_neck(&mesh, &rig, dimorphism);
         face::shape_skull(&mut mesh, &rig, dimorphism);
         // And then the column under it, which spans the junction the skull's
         // own shaping stops at. Second because it measures the surface the

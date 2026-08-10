@@ -749,8 +749,19 @@ fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
     // The band is one-sided on purpose. `face::neck` narrows and never widens —
     // inflating a slender column to meet a target would be that module causing
     // the defect it exists to remove — so a body whose cage already gave it a
-    // thin neck stays thin, and the floor here is what that leaves: 0.643 at
+    // thin neck stays thin, and the floor here is what that leaves: 0.644 at
     // `head_size` +1 with `femininity` +1, the leanest corner of the grid.
+    //
+    // **0.82 → 0.83, and it is a cost rather than a drift** (#176). The carve
+    // used to set the width from a twenty-four band envelope of the column,
+    // which hit the target closely and was NOISE — a maximum over a band of a
+    // coarse quad tube reports where the rings fall, so adjacent bands read 52,
+    // 60, 43, 57 mm and the surface stepped wherever they did. It sets the
+    // width from one windowed reading at the waist now, which is smooth in
+    // height by construction, and the ceiling of the spread went 0.777 to
+    // 0.815 with it. That is the whole of the trade: a tenth of a point of
+    // width accuracy for a column that is not stepped, on a ruler whose spread
+    // was 1.86x before any of this existed and is 1.27x now.
     for &head_size in &[-1.0f32, 0.0, 1.0] {
         for &(mass, femininity) in &[(0.0f32, 0.0f32), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)] {
             let mut record = AvatarRecord::new("Column", Archetype::default());
@@ -835,7 +846,7 @@ fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
             }
             let ratio = column / skull_wide.max(f32::EPSILON);
             assert!(
-                (0.60..0.82).contains(&ratio),
+                (0.60..0.83).contains(&ratio),
                 "head_size {head_size:+.1}, mass {mass:+.1}, femininity {femininity:+.1}: \
                  the column is {:.1} mm against a skull of {:.1}, a ratio of {ratio:.3}",
                 column * 1000.0,

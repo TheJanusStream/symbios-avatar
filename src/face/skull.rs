@@ -3789,10 +3789,6 @@ fn floor(rig: &Rig, head: usize) -> f32 {
 /// re-deriving the floor remap — which is the arithmetic that has walked out
 /// from under this file twice (#78, #107).
 pub(crate) fn border(rig: &Rig, head: usize, dimorphism: &Dimorphism, raise: f32) -> f32 {
-    let radius = rig.joints[head].radius;
-    if radius <= f32::EPSILON {
-        return 0.0;
-    }
     // **The border MIGRATES, and a flat one tears a chin off** (#175). This is
     // [`jaw`]'s own line — [`MENTON`] on the midline, [`Dimorphism::gonion`] out
     // at the angle — and `face::neck` first used the gonion's height at every
@@ -3803,7 +3799,24 @@ pub(crate) fn border(rig: &Rig, head: usize, dimorphism: &Dimorphism, raise: f32
     //
     // The same remap `reshape_to` applies: a profile height is a fraction of
     // the way down THIS head, so it reaches the same anatomy on every body.
-    let profile = MENTON + (dimorphism.gonion - MENTON) * raise.clamp(0.0, 1.0);
+    at_profile(
+        rig,
+        head,
+        MENTON + (dimorphism.gonion - MENTON) * raise.clamp(0.0, 1.0),
+    )
+}
+
+/// A profile height in metres below the head joint, on this head.
+///
+/// The remap [`reshape_to`] applies, in one place, so anything outside this
+/// file that needs to reach an anatomy the profiles name does not re-derive it
+/// — which is the arithmetic that has walked out from under this file twice
+/// (#78, #107).
+pub(crate) fn at_profile(rig: &Rig, head: usize, profile: f32) -> f32 {
+    let radius = rig.joints[head].radius;
+    if radius <= f32::EPSILON {
+        return 0.0;
+    }
     profile * ((floor(rig, head) * SETTLE) / JUNCTION) * radius
 }
 

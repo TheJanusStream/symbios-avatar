@@ -48,7 +48,9 @@ use symbios_avatar::{
 /// the mouth line at −0.25, the mandible's border between −0.31 and −0.53, and
 /// the jaw's hollow below that. Under −0.60 a section is mostly submental and
 /// the neck is inside it.
-const RINGS: [f32; 6] = [0.10, 0.00, -0.15, -0.30, -0.45, -0.60];
+const RINGS: [f32; 10] = [
+    0.10, 0.00, -0.15, -0.30, -0.45, -0.60, -0.90, -1.20, -1.60, -2.00,
+];
 
 /// Degrees between samples round a section, and the turn a circle reads.
 const SWEEP: f32 = 3.0;
@@ -147,7 +149,7 @@ fn main() {
         let step = 0.01f32;
         let mut rows: Vec<(f32, f32)> = Vec::new();
         let mut at = 0.30f32;
-        while at > -1.30 {
+        while at > -2.60 {
             if let Some(z) = reach(at * radius) {
                 rows.push((at, z / radius));
             }
@@ -161,11 +163,33 @@ fn main() {
             let (a, b, c) = (window[0], window[1], window[2]);
             let first = (b.1 - a.1).atan2(b.0 - a.0);
             let second = (c.1 - b.1).atan2(c.0 - b.0);
-            let turn = (second - first).to_degrees();
+            let turn = wrapped(second - first);
             let flag = if turn.abs() > 6.0 { "  <<<" } else { "" };
             println!("  {:+.3}   {:.4}   {turn:+6.1}{flag}", b.0, b.1);
         }
     }
+}
+
+/// A difference of two `atan2` angles, in degrees, brought into (−180, 180].
+///
+/// **Without this a smooth minimum reads as a catastrophic corner** (#176). The
+/// two branch directions straddle `atan2`'s cut wherever a profile turns
+/// around, which is exactly where a chin crests and where a throat stops coming
+/// in — so the two most interesting rows this instrument has ever printed were
+/// the two it reported worst. The −304.2 at the chin's crest in #158 is +55.8,
+/// the +352.0 in the throat is −8.0, and every reading between −180 and 180 was
+/// always right. Nothing that was acted on turns out to have been wrong, but
+/// that is luck rather than method: the sign of the two chin readings was
+/// inverted, and a curve is judged by its sign.
+fn wrapped(radians: f32) -> f32 {
+    let mut turn = radians.to_degrees() % 360.0;
+    if turn > 180.0 {
+        turn -= 360.0;
+    }
+    if turn <= -180.0 {
+        turn += 360.0;
+    }
+    turn
 }
 
 /// Horizontal sections through the lower face, by azimuth from dead ahead.
@@ -216,7 +240,7 @@ fn ring(body: &PolyMesh, rig: &Rig, centre: Vec3, radius: f32) {
             let (a, b, c) = (point(window[0]), point(window[1]), point(window[2]));
             let first = (b.1 - a.1).atan2(b.0 - a.0);
             let second = (c.1 - b.1).atan2(c.0 - b.0);
-            let turn = -(second - first).to_degrees();
+            let turn = -wrapped(second - first);
             let flag = if turn > SWEEP * 2.5 {
                 "  <<< corner"
             } else if turn < SWEEP * 0.34 {

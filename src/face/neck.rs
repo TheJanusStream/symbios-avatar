@@ -143,14 +143,122 @@ const NAPE_CUT: f32 = 0.14;
 /// Provenance: **tuned by render** (#175).
 const NAPE_FADE: f32 = 0.55;
 
-/// How many bands the built column is measured in before it is carved.
+/// Where the column is measured, as a fraction of the way from the mandible's
+/// border down to the girdle's crown.
 ///
-/// The carve sets a WIDTH, so it needs the width the sweep actually produced,
-/// and that is cheaper to measure than to predict: one pass over the vertices
-/// against a Catmull-Clark surface whose shrink nobody has an expression for.
-/// Twenty-four bands over a column about 150 mm long is a band every 6 mm,
-/// which is finer than the rings the cage puts there.
-const BANDS: usize = 24;
+/// The waist: far enough below the border that the jaw's own mass is out of the
+/// section, and well above the shoulders. [`RAMP`] has the carve at full
+/// strength by here, so this is the height whose width the carve actually sets
+/// and the honest place to read what it has to work with.
+///
+/// Provenance: **measured on the built column** (#175) — the narrowest section
+/// sat 80 mm below the head joint against a border at 55 and a girdle crown at
+/// 210, which is about a sixth of the way down.
+const WAIST: f32 = 0.18;
+
+/// How far either side of the waist a vertex still counts, in the same
+/// fractions.
+///
+/// Wide enough that a ring always lands inside it, which is the whole lesson of
+/// the band table this replaced: the column's rings are about 8 mm apart before
+/// refinement and a window narrower than that reports the tessellation. A tenth
+/// of a run about 90 mm long is 9 mm either side.
+const WINDOW: f32 = 0.10;
+
+/// How many times the column's own faces are split before anything shapes it.
+///
+/// **The neck had never been refined at all, and a carve cannot draw a curve
+/// on a surface with no rows to hold it** (#176, and it is #158's lesson at the
+/// other end of the same body). `refine_face` rejects every face whose nearest
+/// bone is not the head's, so the column arrived at the base subdivision: the
+/// midline throat measured as a POLYLINE with runs of exactly zero turn eleven
+/// millimetres long, and the waist and the nape this module authors were being
+/// drawn between rows that far apart. The owner read it as the sides of the
+/// neck and the throat not being smooth, which is what it was.
+///
+/// Runs BEFORE the carve and before `shape_skull`, for the reason `refine_face`
+/// runs before shaping: splitting first samples the shape finely, and splitting
+/// after subdivides the facets of a shape already drawn.
+const REFINEMENT: usize = 1;
+
+/// How far past the column's own span the refinement reaches, as a share of it.
+///
+/// A resolution boundary is a curvature spike wherever the surface is curved
+/// (#158), so the split has to finish somewhere the carve is not working.
+/// Below, that is inside the shoulder, where the release has already returned
+/// the surface to the cage's own; above, it is inside the head, whose faces are
+/// refined eight times over by `refine_face` and cannot notice one more.
+const MARGIN: f32 = 0.05;
+
+/// Gives the column enough surface to carry the shape [`shape`] draws on it.
+///
+/// Does nothing to a body with no head or no neck, or to one that walks on four
+/// legs — the same three cases the carve itself declines.
+#[must_use]
+pub fn refine(mesh: &PolyMesh, rig: &Rig, dimorphism: &Dimorphism) -> PolyMesh {
+    let Some(bounds) = span(rig, dimorphism) else {
+        return mesh.clone();
+    };
+    let (top, bottom, joint, radius) = bounds;
+    let reach = (bottom - top) * MARGIN;
+    let mut refined = mesh.clone();
+    for _ in 0..REFINEMENT {
+        let selected: Vec<bool> = (0..refined.face_count())
+            .map(|face| {
+                let at = refined.face_centroid(face);
+                // **By DEPTH and not by zone, because the carve spans the
+                // junction and a split that stopped at it would leave half the
+                // curve unsupported** (#176). The first version took
+                // `Zone::Neck` faces only, on the argument that the head above
+                // is `refine_face`'s business — and the throat directly under
+                // the jaw is head-owned, so it kept exactly the eleven
+                // millimetre facets this exists to remove. It is not
+                // double-paying either: that band falls below `FACE_PASSES`'
+                // third region, whose floor is −0.714 profile heights, so the
+                // throat gets two of the face's eight passes and nothing else
+                // reaches it.
+                //
+                // The chest is excluded because the shoulder's own mass is the
+                // girdle's business, and the head is excluded ABOVE the depth
+                // its own passes reach — dropping that test entirely was
+                // measured and it takes the default body from 27,182 triangles
+                // to 59,916, because one more pass over a face already split
+                // eight times is most of a body.
+                let depth = (joint - at.y) / radius;
+                match rig.joints[rig.nearest_bone(at).joint].zone {
+                    Zone::Chest | Zone::Head => return false,
+                    _ => {}
+                }
+                depth > top - reach && depth < bottom + reach
+            })
+            .collect();
+        refined = refined.refine_curved(&selected);
+    }
+    refined
+}
+
+/// The column's span, its head joint's height and the head's radius.
+///
+/// One definition, read by both [`refine`] and [`shape`], because a split that
+/// covered a different run from the carve would put a resolution boundary in
+/// the middle of the carve's own curvature — which is the one place #158 says
+/// it must not go.
+fn span(rig: &Rig, dimorphism: &Dimorphism) -> Option<(f32, f32, f32, f32)> {
+    if rig.ground_contacts().len() > 2 {
+        return None;
+    }
+    let &head = rig.in_zone(Zone::Head).first()?;
+    let &neck = rig.in_zone(Zone::Neck).first()?;
+    let parent = rig.joints[neck].parent?;
+    let radius = rig.joints[head].radius;
+    if radius <= f32::EPSILON {
+        return None;
+    }
+    let joint = rig.joints[head].position.y;
+    let top = -border(rig, head, dimorphism, 1.0) / radius;
+    let bottom = (joint - rig.joints[parent].position.y - rig.joints[parent].radius) / radius;
+    (bottom - top > f32::EPSILON).then_some((top, bottom, joint, radius))
+}
 
 /// Narrows the column between the jaw and the shoulders, in place.
 ///
@@ -226,28 +334,42 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig, dimorphism: &Dimorphism) {
     // right statistic for an envelope and the wrong one for a profile — see
     // `Skull::measure`, which bins the same way and says so — and the carve
     // wants the envelope.
-    let band_of = |at: f32| {
-        let along = ((at - top) / (bottom - top)).clamp(0.0, 1.0);
-        ((along * (BANDS - 1) as f32).round() as usize).min(BANDS - 1)
-    };
     let mine = owned(mesh, rig);
-    let mut have = [0.0f32; BANDS];
-    for (point, mine) in mesh.positions.iter().zip(&mine) {
-        if !*mine {
-            continue;
-        }
-        let at = depth(*point);
-        if at < top || at > bottom {
-            continue;
-        }
-        have[band_of(at)] = have[band_of(at)].max((point.x - axis.x).abs());
-    }
-    // A band no vertex reached takes its neighbour's, so a sparse ring never
-    // reports a column pinching to nothing and the carve never divides by it.
-    carry(&mut have);
-
     let want = NECK_SKULL * SKULL_OF_NODE * radius;
     let run = bottom - top;
+
+    // **How much this column has to come in, as ONE number** (#176). The first
+    // version measured a band table — the widest lateral offset in each of
+    // twenty-four slices — and scaled every height toward the target by its own
+    // band. It read as noise, because a maximum over a band of a coarse quad
+    // tube reports where the RINGS fall and not where the surface is: measured
+    // on the default body, adjacent 3.7 mm bands came back 52, 60, 43, 53, 57,
+    // 59 mm and two of the twenty-four held no vertex at all. `Skull::measure`
+    // and `examples/headaudit` both carry the same warning in their own words,
+    // and this divided by it, so every one of those swings became a step in the
+    // surface.
+    //
+    // One window, one number, no table. The column's width varies slowly enough
+    // over the waist that a single reading describes it, and a factor built
+    // from one number is smooth in height by construction rather than by being
+    // filtered afterwards.
+    let waist = top + run * WAIST;
+    let at_waist = mesh
+        .positions
+        .iter()
+        .zip(&mine)
+        .filter(|(point, mine)| **mine && (depth(**point) - waist).abs() < run * WINDOW)
+        .fold(0.0f32, |wide, (point, _)| {
+            wide.max((point.x - axis.x).abs())
+        });
+    // Only ever narrower. A column already inside the target is a small head on
+    // a slender neck, and inflating it to meet a ratio would be this module
+    // causing the defect it exists to remove.
+    let narrow = 1.0 - (want / at_waist.max(f32::EPSILON)).min(1.0);
+    if narrow <= 0.0 {
+        return;
+    }
+
     for (point, mine) in mesh.positions.iter_mut().zip(&mine) {
         if !*mine {
             continue;
@@ -267,15 +389,14 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig, dimorphism: &Dimorphism) {
                 joint.y + border(rig, head, dimorphism, side.max(behind)),
                 0.0,
             ));
+        // In below its own border, held through the waist, and out again into
+        // the shoulders. Both edges are smoothsteps, so the carve arrives and
+        // leaves with zero slope and puts no curvature spike at either end.
         let hold = smooth(under / (run * RAMP)) * smooth((bottom - at) / (run * (1.0 - RELEASE)));
         if hold <= 0.0 {
             continue;
         }
-        let here = have[band_of(at)].max(f32::EPSILON);
-        // Only ever narrower. A column already inside the target is a small
-        // head on a slender neck, and inflating it to meet a ratio would be
-        // this module causing the defect it exists to remove.
-        let factor = 1.0 + hold * ((want / here).min(1.0) - 1.0);
+        let factor = 1.0 - narrow * hold;
 
         // **The narrowing is LATERAL, and the throat is nearly held** (#175).
         // Scaling the whole section about the column's axis drew the throat
@@ -296,7 +417,7 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig, dimorphism: &Dimorphism) {
         let cut = NAPE_CUT
             * behind
             * behind
-            * hold
+            * smooth(under / (run * RAMP))
             * smooth((run * NAPE_FADE - under) / (run * NAPE_FADE));
         point.x = axis.x + across * factor * (1.0 - cut);
         // Fore and aft the carve is held back by how far forward the point is,
@@ -324,19 +445,4 @@ fn owned(mesh: &PolyMesh, rig: &Rig) -> Vec<bool> {
             )
         })
         .collect()
-}
-
-/// Replaces bands no vertex reached with the nearest one that was.
-fn carry(bands: &mut [f32; BANDS]) {
-    let Some(first) = bands.iter().position(|&width| width > 0.0) else {
-        return;
-    };
-    for band in 0..first {
-        bands[band] = bands[first];
-    }
-    for band in first + 1..BANDS {
-        if bands[band] <= 0.0 {
-            bands[band] = bands[band - 1];
-        }
-    }
 }
