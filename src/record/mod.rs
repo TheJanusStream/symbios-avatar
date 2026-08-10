@@ -526,7 +526,10 @@ mod tests {
         };
 
         assert_eq!(second.height, first.height, "locked stature is preserved");
-        assert_ne!(second.build, first.build, "unlocked build changed");
+        assert_ne!(
+            second.shoulder_width, first.shoulder_width,
+            "an unlocked shape axis changed"
+        );
     }
 
     #[test]
@@ -545,7 +548,7 @@ mod tests {
         else {
             panic!("archetype changed");
         };
-        assert_eq!(free.build, locked.build);
+        assert_eq!(free.shoulder_width, locked.shoulder_width);
         assert_eq!(free.head_size, locked.head_size);
         assert_ne!(free.height, locked.height, "only stature differed");
     }
@@ -600,7 +603,10 @@ mod tests {
             panic!("archetype changed");
         };
         assert_eq!(params.height, 2.0);
-        assert_eq!(params.build, 0.0, "unspecified axes take their defaults");
+        assert_eq!(
+            params.shoulder_width, 0.0,
+            "unspecified axes take their defaults"
+        );
     }
 
     #[test]
@@ -891,7 +897,7 @@ mod tests {
             };
             (
                 (params.height * 1000.0).round() as i32,
-                (params.build * 1000.0).round() as i32,
+                (params.shoulder_width * 1000.0).round() as i32,
                 (record.skin.melanin * 1000.0).round() as i32,
                 (record.hair.length * 1000.0).round() as i32,
             )
@@ -901,9 +907,17 @@ mod tests {
         // to generation 1's table on all three seeds, which is the other half
         // of the contract: complexion and hair kept their uniform draws, so a
         // stored seed's colouring survives the generator bump.
-        assert_eq!(quantised(1), (2353, 101, 594, 238));
-        assert_eq!(quantised(42), (1012, -33, 933, 973));
-        assert_eq!(quantised(-7), (2186, 781, 513, 903));
+        //
+        // **The second column reads `shoulder_width` now, not `build`** (#164),
+        // which retired. The DRAW is untouched and the table proves it: a
+        // stream is keyed by its axis's name, so dropping `humanoid.build` and
+        // `humanoid.muscle` cannot move what any other axis rolls, and the
+        // other three columns are unchanged to the digit. `GENERATOR_VERSION`
+        // therefore stays at 2 here; the bump that retires the two names for
+        // good belongs to CM8 (#169), with every other rename batched into it.
+        assert_eq!(quantised(1), (2353, -40, 594, 238));
+        assert_eq!(quantised(42), (1012, 147, 933, 973));
+        assert_eq!(quantised(-7), (2186, 258, 513, 903));
     }
 
     #[test]

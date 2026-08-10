@@ -124,8 +124,6 @@ fn extreme_bodies_unwrap_soundly() {
     for sample in 0..25 {
         let mut params = HumanoidParams {
             height: rng.random_range(1.2..=2.2),
-            build: rng.random_range(-1.0..=1.0),
-            muscle: rng.random_range(0.0..=1.0),
             shoulder_width: rng.random_range(-1.0..=1.0),
             hip_width: rng.random_range(-1.0..=1.0),
             limb_length: rng.random_range(-1.0..=1.0),

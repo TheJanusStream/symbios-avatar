@@ -44,12 +44,6 @@ fn signed_envelope() -> (f32, f32) {
     super::explore_range(0.0, (-1.0, 1.0))
 }
 
-/// The `muscle` envelope: its default sits at the bottom of its range, so the
-/// exploration stretch runs upward only (#160).
-fn muscle_envelope() -> (f32, f32) {
-    super::explore_range(0.0, (0.0, 1.0))
-}
-
 /// Parameters describing one biped.
 ///
 /// Axes run `-1..=1` unless noted, with `0` the neutral middle.
@@ -59,12 +53,6 @@ pub struct HumanoidParams {
     /// Standing height in metres, within [`super::humanoid_height_range`].
     #[serde(with = "super::scaled")]
     pub height: f32,
-    /// Overall mass, from slight to heavy.
-    #[serde(with = "super::scaled")]
-    pub build: f32,
-    /// Musculature, `0..=1`.
-    #[serde(with = "super::scaled")]
-    pub muscle: f32,
     /// Width of the shoulder girdle.
     #[serde(with = "super::scaled")]
     pub shoulder_width: f32,
@@ -124,8 +112,6 @@ impl Default for HumanoidParams {
     fn default() -> Self {
         Self {
             height: default_height(),
-            build: 0.0,
-            muscle: 0.0,
             shoulder_width: 0.0,
             hip_width: 0.0,
             limb_length: 0.0,
@@ -159,9 +145,7 @@ impl BodyPlan for HumanoidParams {
         // unit's meaning is unchanged, the clamp just stops sooner refusing.
         let default = Self::default();
         self.height = super::sanitize_axis(self.height, default.height, height_envelope());
-        self.muscle = super::sanitize_axis(self.muscle, default.muscle, muscle_envelope());
         for (axis, fallback) in [
-            (&mut self.build, default.build),
             (&mut self.shoulder_width, default.shoulder_width),
             (&mut self.hip_width, default.hip_width),
             (&mut self.limb_length, default.limb_length),
@@ -421,10 +405,7 @@ impl BodyPlan for HumanoidParams {
                     height_envelope(),
                 );
             }
-            Category::Build => {
-                self.build = rolls.shape("humanoid.build", 0.0, 1.0, signed);
-                self.muscle = rolls.shape("humanoid.muscle", 0.0, 0.5, muscle_envelope());
-            }
+            Category::Build => {}
             Category::Frame => {
                 self.shoulder_width = rolls.shape("humanoid.shoulderWidth", 0.0, 1.0, signed);
                 self.hip_width = rolls.shape("humanoid.hipWidth", 0.0, 1.0, signed);
@@ -453,8 +434,13 @@ impl BodyPlan for HumanoidParams {
         // disagree (#160). Height stays in millimetres, which already covers
         // the envelope.
         put_length(out, self.height);
-        put_span(out, self.build, signed_envelope());
-        put_span(out, self.muscle, muscle_envelope());
+        // **Two reserved bytes where `build` and `muscle` used to be** (#164).
+        // The axes retired into `mass` and `bodyFat`; the LAYOUT does not move
+        // until CM8 (#169) collects every rename and removal into one version
+        // bump, so a code minted before this still decodes to the body it names
+        // instead of reading every axis after these two at the wrong offset.
+        put_span(out, 0.0, signed_envelope());
+        put_span(out, 0.0, signed_envelope());
         put_span(out, self.shoulder_width, signed_envelope());
         put_span(out, self.hip_width, signed_envelope());
         put_span(out, self.limb_length, signed_envelope());
@@ -466,10 +452,12 @@ impl BodyPlan for HumanoidParams {
     }
 
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // The two reserved bytes: consumed and discarded. See `encode`.
+        let height = take_length(bytes)?;
+        let _retired_build = take_span(bytes, signed_envelope())?;
+        let _retired_muscle = take_span(bytes, signed_envelope())?;
         let mut params = Self {
-            height: take_length(bytes)?,
-            build: take_span(bytes, signed_envelope())?,
-            muscle: take_span(bytes, muscle_envelope())?,
+            height,
             shoulder_width: take_span(bytes, signed_envelope())?,
             hip_width: take_span(bytes, signed_envelope())?,
             limb_length: take_span(bytes, signed_envelope())?,
@@ -486,10 +474,15 @@ impl BodyPlan for HumanoidParams {
     fn decode_legacy(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
         // The version-3 byte layout, whose bytes map ±1 and 0..1. Kept exactly
         // as it was so an old code decodes to the body it always named (#160).
+        // The two retired axes still have to be CONSUMED here, discarded
+        // rather than skipped: a version-3 code is a byte stream and every
+        // axis after these two reads at the wrong offset if they are not
+        // taken off it (#164).
+        let height = take_length(bytes)?;
+        let _retired_build = take_signed(bytes)?;
+        let _retired_muscle = take_unit(bytes)?;
         let mut params = Self {
-            height: take_length(bytes)?,
-            build: take_signed(bytes)?,
-            muscle: take_unit(bytes)?,
+            height,
             shoulder_width: take_signed(bytes)?,
             hip_width: take_signed(bytes)?,
             limb_length: take_signed(bytes)?,
@@ -570,8 +563,6 @@ mod tests {
     fn sanitize_clamps_and_is_idempotent() {
         let mut params = HumanoidParams {
             height: 99.0,
-            build: 5.0,
-            muscle: -3.0,
             head_size: f32::NAN,
             ..Default::default()
         };
@@ -583,8 +574,6 @@ mod tests {
             params.height,
             crate::plan::scaled::quantize(height_envelope().1)
         );
-        assert_eq!(params.build, 3.0);
-        assert_eq!(params.muscle, 0.0);
         assert_eq!(params.head_size, 0.0);
 
         let once = params;
@@ -593,20 +582,23 @@ mod tests {
     }
 
     #[test]
-    fn build_thickens_torso_and_limbs_together() {
-        let slight = HumanoidParams {
-            build: -1.0,
-            ..Default::default()
-        }
-        .skeleton(&crate::Composites::default());
-        let heavy = HumanoidParams {
-            build: 1.0,
-            ..Default::default()
-        }
-        .skeleton(&crate::Composites::default());
-        // The torso and a limb both answer to the one axis. Found by zone
-        // rather than by index, so adding a node does not silently retarget the
-        // assertion at some other part of the body.
+    fn mass_thickens_the_torso_and_the_limbs_together() {
+        // **What `build` used to guard, asked of the axis that replaced it**
+        // (#164). The old assertion was that one factor reached both the torso
+        // and a limb, which is exactly what `build` did and exactly what was
+        // wrong with it — every radius moved by the same 28%. `mass` still has
+        // to reach both, and the test that it does is worth keeping; what it no
+        // longer asserts is that they move by the SAME amount, because they do
+        // not and should not.
+        let body = |mass: f32| {
+            HumanoidParams::default().skeleton(&crate::Composites {
+                mass,
+                ..crate::Composites::default()
+            })
+        };
+        let (slight, heavy) = (body(-1.0), body(1.0));
+        // Found by zone rather than by index, so adding a node does not
+        // silently retarget the assertion at some other part of the body.
         let radius_in = |skeleton: &Skeleton, zone: Zone| {
             skeleton
                 .nodes
@@ -618,8 +610,39 @@ mod tests {
         for zone in [Zone::Chest, Zone::UpperLimb(Limb::ForeLeft)] {
             assert!(
                 radius_in(&heavy, zone) > radius_in(&slight, zone) * 1.4,
-                "{zone:?} should thicken with build"
+                "{zone:?} should thicken with mass"
             );
         }
+    }
+
+    #[test]
+    fn the_allometry_is_not_a_uniform_scale() {
+        // The whole point of #164, as one assertion: a heavier body is heavier
+        // in the places a heavier body is heavier. The waist has to outgrow the
+        // wrist by a wide margin, where the axis this replaced moved the two by
+        // the same 28% and could not do otherwise.
+        let body = |mass: f32| {
+            HumanoidParams::default().skeleton(&crate::Composites {
+                mass,
+                ..crate::Composites::default()
+            })
+        };
+        let (slight, heavy) = (body(-1.0), body(1.0));
+        let radius_in = |skeleton: &Skeleton, zone: Zone| {
+            skeleton
+                .nodes
+                .iter()
+                .find(|node| node.zone == zone)
+                .expect("zone exists")
+                .radius
+        };
+        let waist = radius_in(&heavy, Zone::Abdomen) / radius_in(&slight, Zone::Abdomen);
+        let wrist = radius_in(&heavy, Zone::Extremity(Limb::ForeLeft))
+            / radius_in(&slight, Zone::Extremity(Limb::ForeLeft));
+        assert!(
+            waist > wrist * 1.5,
+            "the waist grows {waist:.2}x over the axis and the wrist {wrist:.2}x, which is \
+             close enough to a uniform scale that the allometry is not reaching the cage"
+        );
     }
 }

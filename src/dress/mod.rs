@@ -342,6 +342,13 @@ mod tests {
         }
     }
 
+    /// A seed whose shorts pinch, which is what the guard below needs.
+    ///
+    /// Named rather than inlined because it has had to move twice — see that
+    /// test. Any body whose waist ring touches itself will do; twenty of the
+    /// first forty seeds did when this was last swept.
+    const PINCHING: i64 = 1;
+
     #[test]
     fn a_pinched_hem_is_cut_into_separate_columns() {
         // The mechanism behind the test above, asserted directly so that one
@@ -358,12 +365,18 @@ mod tests {
         // femininity that narrows its waist, and the pinch is a waist ring
         // touching itself. Nothing about the split changed.
         //
+        // **And moved again for #164**, which retired `build` and rebuilt every
+        // girth from the allometry, so the population moved under it a second
+        // time. That is twice in two issues, which is the argument for the
+        // constant below: the seed is named once, at the top, so the next body
+        // change is a one-line edit rather than a hunt.
+        //
         // Moved to seed 0 rather than re-tuned, and the population is the
         // reason that is safe: twenty of the first forty seeds pinch here, so
         // this guard is easy to satisfy and hard to lose by accident. What it
         // is NOT is a guard tied to one body — which is what it was, and what
         // made a change three subsystems away read as a regression here.
-        let (mesh, weights, zones) = body(0);
+        let (mesh, weights, zones) = body(PINCHING);
         let params = OutfitParams {
             sleeve: Sleeve::Bare,
             leg: Leg::Shorts,

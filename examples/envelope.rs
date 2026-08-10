@@ -41,13 +41,6 @@ fn main() {
             explore_range(1.75, (1.2, 2.2)),
             body(|p, v| p.height = v),
         ),
-        ("build", 0.0, signed, body(|p, v| p.build = v)),
-        (
-            "muscle",
-            0.0,
-            explore_range(0.0, (0.0, 1.0)),
-            body(|p, v| p.muscle = v),
-        ),
         (
             "shoulderWidth",
             0.0,
@@ -263,10 +256,8 @@ fn main() {
                 continue;
             };
             println!(
-                "  seed {seed}: {stage}\n    h {:+.2} build {:+.2} muscle {:+.2} sh {:+.2} hip {:+.2} limb {:+.2} neck {:+.2} head {:+.2} breadth {:+.2} face {:+.2} ext {:+.2}",
+                "  seed {seed}: {stage}\n    h {:+.2} sh {:+.2} hip {:+.2} limb {:+.2} neck {:+.2} head {:+.2} breadth {:+.2} face {:+.2} ext {:+.2}",
                 p.height,
-                p.build,
-                p.muscle,
                 p.shoulder_width,
                 p.hip_width,
                 p.limb_length,

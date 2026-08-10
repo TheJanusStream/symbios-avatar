@@ -239,8 +239,6 @@ mod tests {
     fn a_look_round_trips() {
         let original = Archetype::Humanoid(HumanoidParams {
             height: 1.83,
-            build: 0.5,
-            muscle: 0.75,
             shoulder_width: -0.25,
             ..Default::default()
         });
@@ -250,8 +248,6 @@ mod tests {
         };
 
         assert!((back.height - 1.83).abs() < 0.002);
-        assert!((back.build - 0.5).abs() < 0.01);
-        assert!((back.muscle - 0.75).abs() < 0.01);
         assert!((back.shoulder_width + 0.25).abs() < 0.01);
     }
 
@@ -348,8 +344,6 @@ mod tests {
             panic!("archetype changed");
         };
         assert!((back.height - 1.83).abs() < 0.002);
-        assert!((back.build - 0.5).abs() < 0.01);
-        assert!((back.muscle - 0.75).abs() < 0.01);
         assert!((back.shoulder_width + 0.25).abs() < 0.01);
         assert!((back.face_length + 0.7).abs() < 0.01);
         assert!((skin.melanin - 0.35).abs() < 0.01);
@@ -393,7 +387,6 @@ mod tests {
             panic!("archetype changed");
         };
         assert!((back.height - 1.72).abs() < 0.002);
-        assert!((back.build - 0.5).abs() < 0.03);
         assert_eq!(composites, Composites::default());
         assert!(
             (skin.melanin - 0.62).abs() < 0.01,
@@ -425,7 +418,6 @@ mod tests {
         // ~0.024 — which is documented at `put_span` and below what a slider
         // shows.
         let original = Archetype::Humanoid(HumanoidParams {
-            build: 2.5,
             shoulder_width: 2.0,
             face_length: -2.2,
             ..Default::default()
@@ -434,7 +426,6 @@ mod tests {
         let (Archetype::Humanoid(back), _, _) = decode(&code).expect("decodes") else {
             panic!("archetype changed");
         };
-        assert!((back.build - 2.5).abs() < 0.03);
         assert!((back.shoulder_width - 2.0).abs() < 0.03);
         assert!((back.face_length + 2.2).abs() < 0.03);
     }

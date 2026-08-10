@@ -13,7 +13,7 @@
 
 use glam::{Vec2, Vec3};
 
-use crate::plan::{Composites, HumanoidParams};
+use crate::plan::{Composites, DEFAULT_BODY_FAT, HumanoidParams};
 
 /// Cross-sections of the torso, as `(lateral, fore-and-aft)` multiples of the
 /// node's radius.
@@ -781,17 +781,133 @@ pub(crate) struct Dimensions {
     pub toe_r: f32,
 }
 
-/// How much thicker than neutral this body is.
+/// How much more body there is than neutral, and how much of it is fat.
 ///
-/// Mass and musculature both add girth, and girth feeds every torso and
-/// limb radius — that single correlation is most of what makes `build` read
-/// as one coherent slider rather than a dozen independent ones.
+/// **The single most important thing here is that this is two numbers and not
+/// one.** The axis it replaces was `1 + 0.28 · build + 0.15 · muscle`, one
+/// factor on every radius from the wrist to the waist, which is a body that
+/// inflates like a balloon: the only heavy body it could draw was a neutral one
+/// scaled up and the only slight one was the same body scaled down. Nothing
+/// about it could say that a heavy person's waist grows four times as much as
+/// their wrist, or that a muscular one's shoulders grow while their waist does
+/// not. Both of those are measured facts, and they are the two axes here:
+/// [`Composites::mass`] sets how much body there is and
+/// [`Composites::body_fat`] decides how it is spent.
 ///
-/// Provenance: **unsourced**, both gains, from the initial body plan. What
-/// is defensible here is the *structure* — one girth factor feeding every
-/// radius, so the axes cannot drift apart — rather than the ±28% and +15%
-/// it spans. Nothing has ever measured whether a heavy body is 28% thicker
-/// than a neutral one.
+/// ## The exponents are the measurement
+///
+/// A circumference tracks body size neither linearly nor uniformly. Heymsfield
+/// et al. (2008) fitted circumference against volume-over-height across five
+/// sites and found the powers spread over nearly a factor of two — and,
+/// usefully here, found them to differ by sex in exactly the pattern the
+/// android/gynoid story predicts:
+///
+/// ```text
+///            male   female
+///   arm      0.61    0.62
+///   waist    0.62    0.61
+///   hip      0.42    0.49
+///   thigh    0.50    0.54
+///   calf     0.38    0.33
+/// ```
+///
+/// "Males enlarging at a greater rate around the waist and calf and females
+/// around the hips, thighs" is that paper's own summary, and it is the whole of
+/// the flagship cross-composite formula this was raised for (#164): the
+/// android/gynoid blend is not authored, it is [`between`] applied to a
+/// measured pair. See [`Girth::at`].
+///
+/// At a fixed height a body that grows only sideways has radius ∝ volume^0.5,
+/// so **0.5 is the neutral exponent here and not 0.333**: the waist and the arm
+/// sit above it, the hip and the calf below. Nevill et al. (2004) reach the
+/// same conclusion from body mass across 478 subjects — fleshy sites gain
+/// faster than geometric similarity and bony ones slower, with head girth
+/// "almost constant, irrespective of subjects' body size/mass". That is where
+/// the wrist and ankle figures come from, and why the head carries no factor at
+/// all.
+///
+/// Provenance: **looked up** for the five measured sites and for the
+/// bony-and-invariant pattern; **interpolated** for the chest, girdle, forearm
+/// and neck, which neither paper measures and which are placed between the
+/// sites that bracket them. Every pair is written at its own use site rather
+/// than in a table here, so the two figures a reader wants — which exponents,
+/// and how much of the site is fat — sit beside the radius they set.
+///
+/// Sources, added to `docs/research/research-02-parametric-bodies.md`:
+/// Heymsfield et al., *Body circumferences: clinical implications emerging from
+/// a new geometric model*, Nutr Metab 2008 (PMC2569934); Nevill et al., *Are
+/// adult physiques geometrically similar? The dangers of allometric scaling
+/// using body mass power laws*, Am J Phys Anthropol 2004 (PMID 15160370).
+#[derive(Clone, Copy, Debug)]
+struct Girth {
+    /// Lean volume per unit height, relative to the neutral body.
+    lean: f32,
+    /// Fat volume per unit height, relative to the neutral body.
+    fat: f32,
+    /// Where this body sits on the frame axis, which splits several exponents.
+    femininity: f32,
+}
+
+impl Girth {
+    /// Reads the two composites into a lean budget and a fat one.
+    ///
+    /// `mass` is a slider and not a weight, so it spans a *ratio* of volume per
+    /// height rather than an interval of it: a body twice as heavy is twice as
+    /// heavy whichever end you start from, and a linear span would make the
+    /// slight end of the axis do more than the heavy end. `MASS_SPAN` is chosen
+    /// so the waist at the top of the axis lands where the old `build` put
+    /// EVERY radius at its top — `1.49^0.615` is 1.28 and the retired
+    /// coefficient was 0.28. That is the one calibration in here, and it is
+    /// deliberately against the thing being replaced rather than a fresh guess.
+    fn of(composites: &Composites, femininity: f32) -> Self {
+        /// Volume per unit height at `mass` +1, relative to neutral.
+        const MASS_SPAN: f32 = 1.49;
+        let bulk = MASS_SPAN.powf(composites.mass);
+        // Fat and lean are shares of ONE budget, so raising the fraction at a
+        // fixed mass takes volume out of the lean sites and puts it in the fat
+        // ones. That is what makes `body_fat` a recomposition axis rather than
+        // a second size axis: low fat with high mass is muscular, high fat with
+        // high mass is heavy, and the waist and the deltoid are what disagree
+        // about which is which.
+        // **Fat is added to the frame rather than taken out of it**, which is
+        // the difference between an axis that describes weight gain and one
+        // that describes recomposition at a fixed volume. A body that puts on
+        // fat gets bigger; it does not trade its shoulders for its belly. So
+        // `mass` sets how much frame there is and this rides on top of it.
+        //
+        // `SOFT` is the tissue at a site that is not going anywhere. Without it
+        // the fat budget spans a factor of twenty across the axis — 3% to 60%
+        // of body fat really is that ratio — and any power of twenty takes a
+        // lean body's waist to a third of its neutral one. What a very lean
+        // person has is not an absent waist, it is a waist with the variable
+        // layer gone, so the ratio is taken over `fat + SOFT` and the lean end
+        // lands at about −24% instead of −42%.
+        const SOFT: f32 = 0.08;
+        let fat = composites.body_fat.clamp(0.0, 0.95);
+        Self {
+            lean: bulk,
+            fat: bulk * (fat + SOFT) / (DEFAULT_BODY_FAT + SOFT),
+            femininity,
+        }
+    }
+
+    /// The factor at one site.
+    ///
+    /// `male` and `female` are that site's measured exponents and `fat_share`
+    /// is how much of its growth is fat rather than lean — `0` for bone, `1`
+    /// for a pure depot. At the neutral body every input is one and this
+    /// returns exactly one, which is the identity the epic requires of a
+    /// neutral composite.
+    ///
+    /// At a fixed body-fat fraction the two budgets are equal and this
+    /// collapses to `bulk^p`, the published relation unmodified. The split only
+    /// does something when the fraction moves, which is the point of it.
+    fn at(&self, male: f32, female: f32, fat_share: f32) -> f32 {
+        let power = between(self.femininity, male, female);
+        self.lean.powf(power * (1.0 - fat_share)) * self.fat.powf(power * fat_share)
+    }
+}
+
 /// The factor that carries one quantity between the two measured references.
 ///
 /// **Every use of this names the two figures it interpolates**, rather than a
@@ -815,30 +931,18 @@ pub(crate) struct Dimensions {
 /// onto the reference midpoint would have quietly re-litigated that decision on
 /// the way past.
 fn frame(femininity: f32, male: f32, female: f32) -> f32 {
-    1.0 + femininity * (female - male) / (female + male)
+    between(femininity, male, female) / ((male + female) * 0.5)
 }
 
-fn girth(params: &HumanoidParams) -> f32 {
-    // Saturated for the exploration range (#160): every radius on the
-    // body scales with this factor while the plan's lengths do not, so at
-    // the envelope's far ends the ratio between them leaves what the
-    // mesher can hull — the pair sweep failed exactly and only at
-    // `build` ±3 against another extreme. The old ±1 range spans
-    // 0.72..1.43 (with muscle, to 1.58) and is untouched; past the clamp
-    // a body stops getting slighter or heavier rather than stops
-    // building.
-    //
-    // **Audited and both ends kept, but only one of them is a wall** (#163).
-    // Walked against the 400-roll envelope gate with each end opened in turn:
-    // the top fails at 1.82, so 1.72 is a real saturation with 5.5% of margin.
-    // The bottom fails nowhere — the gate still holds with this end opened to
-    // 0.10, and the lowest girth the roller can even reach is 0.16, at `build`
-    // −3 with `muscle` at zero. So 0.50 is an editorial floor on how slight a
-    // body may get and not a mesher wall, and listing it beside the other four
-    // as though it were one is what the crate docs mean about a comment made
-    // false by a number somewhere else. It stays because a body thinner than
-    // half is a caricature, not because anything breaks.
-    (1.0 + 0.28 * params.build + 0.15 * params.muscle).clamp(0.50, 1.72)
+/// The value itself, rather than the factor: a plain interpolation whose ends
+/// are the two references and whose middle is their midpoint.
+///
+/// [`frame`] is this divided by that midpoint. Both exist because a quantity
+/// the plan already has an opinion about wants the factor — it keeps the plan's
+/// own value as the anchor — and a quantity that IS the measurement, like an
+/// allometric exponent, wants the value.
+fn between(femininity: f32, male: f32, female: f32) -> f32 {
+    (male + female) * 0.5 + femininity * (female - male) * 0.5
 }
 
 impl Dimensions {
@@ -850,7 +954,6 @@ impl Dimensions {
     /// wall they are standing against.
     pub(crate) fn of(params: &HumanoidParams, composites: &Composites) -> Self {
         let h = params.height;
-        let girth = girth(params);
         // The frame axis: where this body sits between the two measured
         // references (#100). Every quantity below that carries it names its own
         // pair of anchors at the site — see [`frame`] — because the axis is not
@@ -897,6 +1000,7 @@ impl Dimensions {
         // squeeze as the waist widening, and a clamp on either one alone pays
         // for half of it at full price.
         let femininity = composites.femininity.clamp(-1.25, 2.85);
+        let girth = Girth::of(composites, femininity);
         let shoulder_frame = frame(femininity, 0.0911, 0.0702);
         // **Two things fall out of that factor that nobody asked for, and both
         // are worth having written down before they get discovered as bugs.**
@@ -968,10 +1072,56 @@ impl Dimensions {
         // female reference's pelvis sits at 0.5179 and the male's at 0.5013, so
         // a fixed band holds her pelvis against his abdomen and reports the
         // difference between two heights as a difference between two bodies.
-        let pelvis_r = h * 0.079 * girth * frame(femininity, 0.0910, 0.1019);
-        let waist_r = h * 0.074 * girth * frame(femininity, 0.0706, 0.0618);
-        let chest_r = h * 0.086 * girth * (1.0 + 0.08 * params.shoulder_width) * shoulder_frame;
-        let girdle_r = h * 0.062 * girth * (1.0 + 0.06 * params.shoulder_width) * shoulder_frame;
+        let pelvis_r = h * 0.079 * girth.at(0.42, 0.49, 0.60) * frame(femininity, 0.0910, 0.1019);
+        // **The waist has almost no lateral headroom and a great deal of
+        // fore-and-aft, so the belly goes where a belly goes.** #106 swept this
+        // node's ceiling at 0.088 of stature against a base of 0.074 — 17% —
+        // because the pelvis's spine socket blends toward it and the two hip
+        // sockets have to clear the result. A body-fat axis that put a full
+        // waist into that 17% would spend its whole range before reaching a
+        // fat person.
+        //
+        // The clearance a socket demands is its LARGEST half-extent, which on
+        // this node is the lateral one: [`WAIST_SECTION`] is 0.76 deep against
+        // 1.0 across, so depth is free until it catches up. That is also the
+        // anatomy — an abdomen projects forward far more than it spreads
+        // sideways — so the lateral term takes a reduced share of the fat and
+        // the section below takes the rest.
+        let waist_r = (h * 0.074 * girth.at(0.62, 0.61, 0.45) * frame(femininity, 0.0706, 0.0618))
+            .min(pelvis_r * 1.05);
+        // The belly, as depth rather than width. Capped at 1.0 — a round waist
+        // — because past there depth becomes the largest half-extent and starts
+        // costing the same clearance the width was avoiding.
+        let waist_section = Vec2::new(
+            WAIST_SECTION.x,
+            (WAIST_SECTION.y * girth.at(0.62, 0.61, 0.75)).min(1.0),
+        );
+        // **The chest and the girdle take ONE factor and the same clamp**, for
+        // the reason #100 records: `clavicle_x`'s floor is a weighted sum of
+        // the two, so anything that moves them apart moves the shoulder
+        // relative to its own floor and eventually onto it. Giving the ribcage
+        // a fat share and the shoulder shelf a lean one was tried first and
+        // failed at `body_fat` 0.40 on the DEFAULT body, at exactly that
+        // socket.
+        //
+        // The ceiling is the girdle's other constraint: its neck socket has to
+        // clear its siblings, which `neck_y`'s floor pays for in bone at 1.02
+        // girdle radii. Let the complex grow without limit and a heavy body
+        // either fails to mesh — measured at `mass` +2.29 — or, if that floor
+        // is raised to cover it, grows a longer NECK, because 1.12 radii is
+        // more bone than the neck's own length term asks for at neutral. A
+        // heavy person has a thicker neck, not a longer one, so the cap goes
+        // here rather than there.
+        let ribcage = girth.at(0.55, 0.55, 0.25);
+        // The girdle is bone where the ribcage is not, so it grows far less —
+        // and it has to, because `neck_y`'s floor buys this node's socket
+        // clearance in NECK BONE at 1.02 girdle radii. A girdle that inflated
+        // with the ribcage would lengthen the neck by a quarter on an ordinary
+        // heavy body, which is measurably what happened when it did: the
+        // shoulder-line ratio in `the_neck_is_the_length_of_a_neck` went from
+        // 0.48 to 0.64. A heavy person has a thicker neck, not a longer one.
+        let chest_r = h * 0.086 * ribcage * (1.0 + 0.08 * params.shoulder_width) * shoulder_frame;
+        let girdle_r = h * 0.062 * ribcage * (1.0 + 0.06 * params.shoulder_width) * shoulder_frame;
         // A neck is a good deal narrower than the skull above it. At the old
         // figure it measured WIDER than the head — 0.098 m against 0.093 — which
         // reads as a tree trunk and, worse, swallows the jaw: the chin is shaped
@@ -1051,7 +1201,7 @@ impl Dimensions {
         // render** (commit `0d7684f`) against the argument above — a measured
         // 0.098 m neck against a 0.093 m head — which was the right shape of
         // argument for a tuned number and was still a quarter short of life.
-        let neck_r = h * (0.040 + 0.020 * (girth - 1.0));
+        let neck_r = h * (0.040 + 0.020 * (girth.at(0.30, 0.30, 0.25) - 1.0));
         // Provenance: **unsourced**, both the 0.075 and the 0.25 gain. 0.075 of
         // stature is close to the eight-head figure's head, but the eight-head
         // figure specifies head HEIGHT and this is a node RADIUS, so the
@@ -1282,7 +1432,32 @@ impl Dimensions {
         // for the cage in #107), bounded below by socket clearance — 1.32, 1.15,
         // 1.02 and 1.00 all mesh across `tests/plan.rs`'s 1500 random bodies and
         // its corners; 0.85 does not.
-        let neck_y = girdle_y + (h * 0.064 * (1.0 + 0.3 * params.neck_length)).max(girdle_r * 1.02);
+        // **1.02 → 1.12, and it is a debt rather than a tuning** (#164, #174).
+        // This floor buys the girdle's neck-socket clearance in neck BONE, and
+        // the allometric girth grows the girdle enough that 1.02 stopped
+        // clearing: five of four hundred rolled records failed to mesh at this
+        // socket, which breaks the crate's one invariant. 1.12 is where the
+        // gate goes green.
+        //
+        // What it costs is measured and is not small. 1.12 girdle radii exceeds
+        // the neck's own length term at neutral, so this binds on EVERY body
+        // rather than on heavy ones: the default body's rendered height went
+        // 1.724 m to 1.733, the shoulder-line ratio in
+        // `the_neck_is_the_length_of_a_neck` moved its classic population from
+        // 0.46–0.56 to 0.46–0.64, and two face rulers had to be re-based
+        // because the skull's `throat..crown` span is what every head
+        // measurement in this crate is taken over.
+        //
+        // Everything cheaper was tried and measured. Capping the ribcage makes
+        // it WORSE — 1.30 takes the failures from 5 to 20, because the trunk
+        // stops growing while the waist and pelvis do not. Clamping `mass`
+        // barely moves it, 5 to 3, because the failing bodies are femininity ×
+        // body-fat interactions rather than heavy ones. Shallowing the girdle
+        // back toward its pre-#100 depth takes 5 to 1 and gives up that issue's
+        // upper-trunk depth to do it. #174 owns the real fix, which is that
+        // every bone in this trunk is a multiple of `girdle_r` and so the trunk
+        // cannot thicken without lengthening.
+        let neck_y = girdle_y + (h * 0.064 * (1.0 + 0.3 * params.neck_length)).max(girdle_r * 1.12);
         // How far the head reaches below its own joint, and it is a HEAD measure
         // rather than a stature one. This was `(h * 0.052).max(head_r * 0.45)`,
         // where the second term can never bind — 0.45 of a head radius is at most
@@ -2035,19 +2210,19 @@ impl Dimensions {
         // table `examples/reference` prints.
         let arm_upper = frame(femininity, 0.0369, 0.0304);
         let arm_lower = frame(femininity, 0.0263, 0.0238);
-        let clavicle_r = h * 0.040 * girth * arm_upper;
-        let shoulder_r = h * 0.041 * girth * arm_upper;
-        let elbow_r = h * 0.026 * girth * arm_lower;
-        let wrist_r = h * 0.018 * girth * frame(femininity, 0.0181, 0.0167);
-        let hip_r = h * 0.054 * girth;
+        let clavicle_r = h * 0.040 * girth.at(0.61, 0.62, 0.35) * arm_upper;
+        let shoulder_r = h * 0.041 * girth.at(0.61, 0.62, 0.35) * arm_upper;
+        let elbow_r = h * 0.026 * girth.at(0.45, 0.45, 0.20) * arm_lower;
+        let wrist_r = h * 0.018 * girth.at(0.12, 0.12, 0.00) * frame(femininity, 0.0181, 0.0167);
+        let hip_r = h * 0.054 * girth.at(0.50, 0.54, 0.55);
         // The knee sits between the thigh's distal station and the shank's
         // proximal one, which disagree — the thigh barely moves, the calf
         // thickens 6.7% — so it takes the calf's, which is the mass the eye
         // reads there. The ankle takes the shank's distal station, where the
         // two references agree to within half a percent and this is very nearly
         // a no-op kept for completeness.
-        let knee_r = h * 0.028 * girth * frame(femininity, 0.0250, 0.0286);
-        let ankle_r = h * 0.019 * girth * frame(femininity, 0.0183, 0.0184);
+        let knee_r = h * 0.028 * girth.at(0.38, 0.33, 0.25) * frame(femininity, 0.0250, 0.0286);
+        let ankle_r = h * 0.019 * girth.at(0.12, 0.12, 0.00) * frame(femininity, 0.0183, 0.0184);
         // Slim: this is the base of the hand, not a stand-in for one. While the
         // limbs ended in these nodes they were fattened to read as a fist and a
         // boot, and now that real hands and feet hang off them a blob only pokes
@@ -2075,7 +2250,7 @@ impl Dimensions {
             pelvis_section: PELVIS_SECTION,
             waist_y,
             waist_r,
-            waist_section: WAIST_SECTION,
+            waist_section,
             chest_y,
             chest_r,
             chest_section: CHEST_SECTION,

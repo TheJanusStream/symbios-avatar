@@ -33,6 +33,7 @@
 //! cargo run --example bodyaudit -- --seed 7
 //! cargo run --example bodyaudit -- --classic 2000   # averaged over plausible rolls
 //! cargo run --example bodyaudit -- --femininity 1     # the frame axis, at equal stature
+//! cargo run --example bodyaudit -- --mass 1 --fat 0.10  # heavy and lean, at equal stature
 //! cargo run --example bodyaudit -- --reach 1.4 --smooth 1
 //! ```
 
@@ -107,6 +108,14 @@ fn main() {
     // height either way.
     if let Some(femininity) = number("--femininity") {
         record.composites.femininity = femininity;
+        record.composites.sanitize();
+    }
+    if let Some(mass) = number("--mass") {
+        record.composites.mass = mass;
+        record.composites.sanitize();
+    }
+    if let Some(fat) = number("--fat") {
+        record.composites.body_fat = fat;
         record.composites.sanitize();
     }
     let Some((rig, mesh, weights, height, floor)) = build(&record, &config) else {
@@ -600,8 +609,6 @@ fn population(count: usize, config: &SkinConfig) {
         };
         let classic = (short..=tall).contains(&params.height)
             && [
-                params.build,
-                params.muscle,
                 params.shoulder_width,
                 params.hip_width,
                 params.limb_length,

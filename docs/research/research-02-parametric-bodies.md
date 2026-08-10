@@ -138,3 +138,42 @@ Parameters define a node graph of spheres (position, radius, optional ellipse ra
 **Ranking**: C > A > B. Ship A first (C minus micro layer + correlation-rich macros), grow into C. Use B's implicit math for joint-fairing and optional fused anatomy. Adopt the Spore goal-space animation model from day one — retrofitting it later would invalidate authored clips.
 
 **Licensing bottom line**: SMPL/SMPL-X/STAR/SUPR/SMAL = MPI non-commercial (commercial only via Meshcapade) — reference only. GHUM = request-gated. RigNet = GPLv3 + dataset-tainted — avoid. MakeHuman assets = CC0 (legally shippable, architecturally rejected). Spore/B-Mesh/Pinocchio/sphere-meshes/implicit-skinning *techniques* are published papers — freely implementable (Marching Cubes patent long expired).
+
+## Allometry — how a circumference tracks body size (#164)
+
+Two sources, both used directly by `plan::derive::humanoid::Girth`, whose
+docstring carries the numbers at the sites that read them.
+
+**Heymsfield et al., *Body circumferences: clinical implications emerging from a
+new geometric model*, Nutrition & Metabolism 2008
+([PMC2569934](https://pmc.ncbi.nlm.nih.gov/articles/PMC2569934/)).** Fits five
+circumferences against volume-over-height and reports the powers by sex:
+
+```text
+           male   female
+  arm      0.61    0.62
+  waist    0.62    0.61
+  hip      0.42    0.49
+  thigh    0.50    0.54
+  calf     0.38    0.33
+```
+
+Its own summary of the sex split — "males 'enlarging' at a greater rate around
+the waist and calf and females around the hips, thighs" — is the android/gynoid
+distribution as a measurement rather than an authored blend, and is what the
+`femininity` composite interpolates between. At a fixed height a body that grows
+only sideways has radius ∝ volume^0.5, so **0.5 is geometric similarity here**,
+not the 0.333 that applies when height varies too.
+
+**Nevill et al., *Are adult physiques geometrically similar? The dangers of
+allometric scaling using body mass power laws*, Am J Phys Anthropol 2004
+([PMID 15160370](https://pubmed.ncbi.nlm.nih.gov/15160370/)).** 478 subjects,
+thirteen girths against body mass. Fleshy sites containing both muscle and fat
+(upper arms, legs) develop faster than geometric similarity and bony ones (head,
+wrists, ankles) slower, with head girths "almost constant, irrespective of
+subjects' body size/mass". Thigh muscle girth scales as M^0.439 in athletes and
+M^0.377 in controls. This is the source for the wrist and ankle exponents and
+for the head carrying no girth factor at all.
+
+**What neither measures**, and what the plan therefore interpolates and labels as
+such: the chest, the shoulder girdle, the forearm and the neck.

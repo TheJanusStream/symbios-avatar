@@ -358,6 +358,13 @@ mod tests {
     fn sectioned_body(seed: i64) -> (PolyMesh, Rig, f32) {
         let mut record = AvatarRecord::new("Scalped", Archetype::default());
         record.reroll(seed);
+        // **The composites are held neutral, for the reason `face::skull`'s
+        // own helper holds them** (#164). Nothing here reads them — the head
+        // carries no girth factor, which is Nevill's finding that head girth is
+        // almost invariant with body size — but they move the girdle under the
+        // neck, and this measurement is taken over the skull's own swept span.
+        // Seed 9 crossed the ceiling by 0.008 on that alone.
+        record.composites = crate::Composites::default();
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("the body should mesh");
         let rig = Rig::from_skeleton(&skeleton).expect("the body should rig");

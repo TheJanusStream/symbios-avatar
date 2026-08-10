@@ -46,6 +46,7 @@
 //! cargo run --release --example render -- --face 1,0.5,1,1,0.5,0.5 # nose,noseWidth,brow,mouth,mouthWidth,ears
 //! cargo run --release --example render -- --skull -1,1            # headBreadth,faceLength
 //! cargo run --release --example render -- --femininity 1  # the frame axis, -1 .. +1
+//! cargo run --release --example render -- --mass 1 --fat 0.10  # heavy and lean: muscular
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --budget    # what one avatar costs
@@ -218,6 +219,21 @@ fn main() {
         && let Ok(femininity) = spec.parse::<f32>()
     {
         record.composites.femininity = femininity;
+        record.composites.sanitize();
+    }
+    // The two axes of #164, so a body can be looked at across the grid the
+    // acceptance asks for: mass sets how much body there is, bodyFat how it is
+    // spent. Low fat with high mass is muscular; high with high is heavy.
+    if let Some(spec) = value("--mass")
+        && let Ok(mass) = spec.parse::<f32>()
+    {
+        record.composites.mass = mass;
+        record.composites.sanitize();
+    }
+    if let Some(spec) = value("--fat")
+        && let Ok(fat) = spec.parse::<f32>()
+    {
+        record.composites.body_fat = fat;
         record.composites.sanitize();
     }
     if let Some(spec) = value("--skull") {
