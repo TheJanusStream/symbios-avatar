@@ -33,7 +33,7 @@
 //! cargo run --release --example render -- --close hand # or head, hand, foot
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
-//! cargo run --release --example render -- --bare      # no hair, to see the face
+//! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
 //! cargo run --release --example render -- --junction  # tint the skin by which bone deforms it
 //! cargo run --release --example render -- --jawbind   # tint the skin by how the JAW bone holds it
 //! cargo run --release --example render -- --jaw 20    # open the mouth this many degrees
@@ -858,7 +858,10 @@ impl Subject {
         let bare = |built: Vec<AvatarMesh>| {
             built
                 .into_iter()
-                .filter(|drawn| !self.show.bare || drawn.kind != MeshKind::Hair)
+                .filter(|drawn| {
+                    !self.show.bare
+                        || (drawn.kind != MeshKind::Hair && drawn.kind != MeshKind::Cloth)
+                })
                 .collect()
         };
         if !self.show.linear {

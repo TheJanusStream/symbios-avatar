@@ -449,30 +449,35 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 ///
 /// See [`the_plan_builds_the_bodies_it_was_last_judged_on`] for what to do when
 /// one of these moves.
+///
+/// **Re-based 2026-08-10 for #106**, the shoulder girdle's widening: 15 of the
+/// 24 moved and all nine quadrupeds held, which is what a humanoid-only change
+/// should do. Judged on `--bare` renders of the default body and seeds 3 and 21
+/// before the paste, per the note on the test below.
 const FINGERPRINTS: [(&str, u64); 24] = [
-    ("humanoid default", 0x1c53bfb4b091eff5),
+    ("humanoid default", 0xa4409953adde3c58),
     ("quadruped default", 0x2aabd8cffd3320f0),
-    ("humanoid corner h=1.2 all=-1", 0xd0de148830cd092b),
-    ("humanoid corner h=2.2 all=-1", 0x99a18fab0aa47749),
-    ("humanoid corner h=1.2 all=0", 0x7c07cce2d97e39f9),
-    ("humanoid corner h=2.2 all=0", 0xa1ad3605484f03eb),
-    ("humanoid corner h=1.2 all=1", 0x736941db88100e5a),
-    ("humanoid corner h=2.2 all=1", 0xa78da12e3f1bbe14),
-    ("humanoid seed 0", 0xf60480e1726b8e82),
+    ("humanoid corner h=1.2 all=-1", 0xd9858d6ed96fcb82),
+    ("humanoid corner h=2.2 all=-1", 0x315f3119e782fa02),
+    ("humanoid corner h=1.2 all=0", 0x3ac7e61821ffd7a4),
+    ("humanoid corner h=2.2 all=0", 0x8f9291d4a7a5f24e),
+    ("humanoid corner h=1.2 all=1", 0xe61f4a3e033c069d),
+    ("humanoid corner h=2.2 all=1", 0x2b548d3a80416b25),
+    ("humanoid seed 0", 0xa3c2646f86bab88f),
     ("quadruped seed 0", 0x181d22a61a29e06b),
-    ("humanoid seed 1", 0x219e064a52d79bae),
+    ("humanoid seed 1", 0x7fbb19fa6f6d9693),
     ("quadruped seed 1", 0x66b32cdababaf760),
-    ("humanoid seed 2", 0xcce562f7812fdedb),
+    ("humanoid seed 2", 0x3eaf75bcede7c8f0),
     ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
-    ("humanoid seed 3", 0x63fa8de809b015b8),
+    ("humanoid seed 3", 0xcaf5a2c9909c819d),
     ("quadruped seed 3", 0x5fe315cd16d9b52b),
-    ("humanoid seed 4", 0x87df4e0777ffd919),
+    ("humanoid seed 4", 0x6f153f222cfb080c),
     ("quadruped seed 4", 0x050364ec7b8118ea),
-    ("humanoid seed 5", 0xc460ed0ab18cbdd8),
+    ("humanoid seed 5", 0x5568282bd4f40475),
     ("quadruped seed 5", 0x2d22051939b73f20),
-    ("humanoid seed 6", 0xda121df38ba9dbbf),
+    ("humanoid seed 6", 0x0d78d95a2cb09b4a),
     ("quadruped seed 6", 0x94b5b20cbe08a43a),
-    ("humanoid seed 7", 0xe45aacdfd81f8cdf),
+    ("humanoid seed 7", 0x8aafdab1afa373f4),
     ("quadruped seed 7", 0xc6b4259ae378e3bb),
 ];
 

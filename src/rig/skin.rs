@@ -1030,23 +1030,33 @@ mod tests {
         let centre = rig.joints[head].position;
 
         // The forward-most vertex at the head's own floor: the throat.
+        //
+        // **Along the midline first and down second, which is not the order
+        // this was written in** (#106). Taking the zone's own lowest vertex
+        // and then asking for one near the midline finds nothing: the lowest
+        // head-zone vertices are a symmetric pair 45% of a head radius out to
+        // each side, the throat sits 8 mm above them, and a 3%-of-a-radius
+        // window is 3 mm. It passed for as long as it did because a midline
+        // vertex happened to be the lowest, and it stopped the day the girdle
+        // widened — a body-plan change three joints away, with nothing between
+        // it and this test but the mesh. Same shape of failure the file's other
+        // docstrings record; the fix is to measure the quantity the comment
+        // names rather than one that usually coincides with it.
+        let midline = |at: &Vec3| (at.x - centre.x).abs() < rig.joints[head].radius * 0.05;
         let floor = avatar
             .parts
             .body
             .positions
             .iter()
-            .filter(|p| rig.joints[rig.nearest_bone(**p).joint].zone == Zone::Head)
-            .fold(f32::MAX, |low, p| low.min(p.y));
+            .filter(|at| midline(at) && rig.joints[rig.nearest_bone(**at).joint].zone == Zone::Head)
+            .fold(f32::MAX, |low, at| low.min(at.y));
         let throat = avatar
             .parts
             .body
             .positions
             .iter()
             .enumerate()
-            .filter(|(_, p)| {
-                (p.y - floor).abs() < rig.joints[head].radius * 0.03
-                    && (p.x - centre.x).abs() < rig.joints[head].radius * 0.05
-            })
+            .filter(|(_, at)| midline(at) && (at.y - floor).abs() < rig.joints[head].radius * 0.03)
             .max_by(|a, b| a.1.z.total_cmp(&b.1.z))
             .map(|(vertex, _)| vertex)
             .expect("a body has a throat");

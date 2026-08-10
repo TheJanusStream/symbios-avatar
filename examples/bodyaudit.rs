@@ -31,6 +31,7 @@
 //! ```text
 //! cargo run --example bodyaudit
 //! cargo run --example bodyaudit -- --seed 7
+//! cargo run --example bodyaudit -- --classic 2000   # averaged over plausible rolls
 //! cargo run --example bodyaudit -- --reach 1.4 --smooth 1
 //! ```
 
@@ -70,21 +71,6 @@ fn main() {
         .and_then(|at| args.get(at + 1))
         .and_then(|value| value.parse::<i64>().ok());
 
-    let mut record = AvatarRecord::new("Audited", Archetype::default());
-    if let Some(seed) = seed {
-        record.reroll(seed);
-    }
-
-    let skeleton = record.skeleton();
-    let Ok(cage) = build_cage(&skeleton, &CageConfig::default()) else {
-        eprintln!("the body would not mesh");
-        std::process::exit(1);
-    };
-    let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
-    let Ok(rig) = Rig::from_skeleton(&skeleton) else {
-        eprintln!("the body would not rig");
-        std::process::exit(1);
-    };
     let number = |flag: &str| {
         args.iter()
             .position(|arg| arg == flag)
@@ -99,10 +85,25 @@ fn main() {
             .map_or(default.smoothing_iterations, |value| value as usize),
         smoothing_strength: number("--strength").unwrap_or(default.smoothing_strength),
     };
-    let weights = skin::bind(&mesh, &rig, &config);
+    if let Some(count) = args
+        .iter()
+        .position(|arg| arg == "--classic")
+        .and_then(|at| args.get(at + 1))
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        population(count, &config);
+        return;
+    }
 
-    let (low, high) = mesh.bounds();
-    let height = (high.y - low.y).max(1e-3);
+    let mut record = AvatarRecord::new("Audited", Archetype::default());
+    if let Some(seed) = seed {
+        record.reroll(seed);
+    }
+    let Some((rig, mesh, weights, height, floor)) = build(&record, &config) else {
+        eprintln!("the body would not build");
+        std::process::exit(1);
+    };
+
     println!("rendered height {height:.3} m");
     println!("reference: Quaternius male 1.830 m, female 1.806 m (CC0, via mesh2motion)");
     println!(
@@ -124,8 +125,8 @@ fn main() {
         slim * 100.0
     );
 
-    proportions(&rig, height, low.y);
-    silhouette(&rig, &mesh, &weights, height, low.y);
+    proportions(&rig, height, floor);
+    silhouette(&Trunk::measure(&rig, &mesh, &weights, height, floor));
     thickness(&rig, &mesh, &weights, height);
     prebend(&rig, height);
     locality(&rig, &mesh, &weights, height);
@@ -318,71 +319,354 @@ fn proportions(rig: &Rig, height: f32, floor: f32) {
     row("hip joints", root_span(Limb::HindLeft), 0.0973, 0.0986);
 }
 
-/// The trunk's silhouette, band by band, with the arms taken off.
+/// `(band start, reference half-width, reference half-depth)`, all of H.
 ///
-/// The one comparison that survives two rigs disagreeing about what a bone is
-/// called. Both columns are measured the same way — every vertex the arms do
-/// not hold, bucketed by height, reporting the half-width and half-depth of
-/// what is left — so a torso can be judged without either skeleton being
-/// consulted. The reference column is the Quaternius male, measured off the GLB
-/// with its own skin weights used to drop the T-posed arms out of the shoulder
-/// bands, which is the step that makes the figure a torso rather than a
-/// wingspan.
-fn silhouette(rig: &Rig, mesh: &PolyMesh, weights: &SkinWeights, height: f32, floor: f32) {
-    /// `(band start, reference half-width, reference half-depth)`, all of H.
-    const REFERENCE: [(f32, f32, f32); 9] = [
-        (0.45, 0.0717, 0.0504),
-        (0.48, 0.0910, 0.0551),
-        (0.51, 0.0878, 0.0614),
-        (0.54, 0.0779, 0.0616),
-        (0.57, 0.0734, 0.0592),
-        (0.60, 0.0706, 0.0558),
-        (0.63, 0.0678, 0.0571),
-        (0.66, 0.0799, 0.0643),
-        (0.69, 0.0911, 0.0663),
-    ];
+/// The Quaternius male, measured off the GLB with its own skin weights used to
+/// drop the T-posed arms out of the shoulder bands — which is the step that
+/// makes the figure a torso rather than a wingspan.
+const TRUNK: [(f32, f32, f32); 9] = [
+    (0.45, 0.0717, 0.0504),
+    (0.48, 0.0910, 0.0551),
+    (0.51, 0.0878, 0.0614),
+    (0.54, 0.0779, 0.0616),
+    (0.57, 0.0734, 0.0592),
+    (0.60, 0.0706, 0.0558),
+    (0.63, 0.0678, 0.0571),
+    (0.66, 0.0799, 0.0643),
+    (0.69, 0.0911, 0.0663),
+];
 
-    let arm: Vec<bool> = (0..rig.len())
-        .map(|joint| match rig.joints[joint].zone {
-            Zone::UpperLimb(limb) | Zone::LowerLimb(limb) | Zone::Extremity(limb) => limb.is_fore(),
-            _ => false,
-        })
-        .collect();
+/// The two [`TRUNK`] bands the coat-hanger ratio used to be quoted at.
+///
+/// Kept because this issue's history is written in them — `0.66..0.69` is where
+/// the reference reads 2.38 — and printed under the girdle-anchored figure
+/// rather than instead of it. See [`Trunk::hanger_at_girdle`] for why a fixed
+/// band is the weaker instrument of the two.
+const HANGER: [usize; 2] = [7, 8];
 
+/// The reference's coat-hanger ratio: its shoulder span over its own trunk
+/// half-width where its shoulder mass sits, `0.1899 / 0.0911`.
+const HANGER_REFERENCE: f32 = 0.1899 / 0.0911;
+
+/// One body's trunk, in the form an average over a population needs.
+///
+/// Everything here is a fraction of the body's own **rendered** height, which
+/// is the whole reason this is a struct rather than a print: rendered height
+/// moves whenever the head or the neck does, so a band figure from one build
+/// cannot be compared with a band figure from another unless both say what they
+/// are a fraction of. #106 carried a stale table for four days on exactly that.
+#[derive(Clone, Copy)]
+struct Trunk {
+    /// Rendered height, in metres.
+    height: f32,
+    /// Half-width of each [`TRUNK`] band, arms removed.
+    width: [f32; 9],
+    /// Half-depth of each [`TRUNK`] band, arms removed.
+    depth: [f32; 9],
+    /// Distance between the two shoulder joints — where the arm chain begins.
+    shoulder_span: f32,
+    /// Distance between the two hip joints.
+    hip_span: f32,
+    /// Height of the shoulder girdle's own node.
+    girdle_at: f32,
+    /// Half-width of the trunk in a band centred on the girdle.
+    girdle_width: f32,
+}
+
+impl Trunk {
+    /// Measures one built body.
+    ///
+    /// The one comparison that survives two rigs disagreeing about what a bone
+    /// is called. Both columns are measured the same way — every vertex the arms
+    /// do not hold, bucketed by height, reporting the half-width and half-depth
+    /// of what is left — so a torso can be judged without either skeleton being
+    /// consulted. A band the mesh does not populate comes back `NaN` rather than
+    /// zero, so an average can drop it instead of averaging it in.
+    fn measure(rig: &Rig, mesh: &PolyMesh, weights: &SkinWeights, height: f32, floor: f32) -> Self {
+        let arm: Vec<bool> = (0..rig.len())
+            .map(|joint| match rig.joints[joint].zone {
+                Zone::UpperLimb(limb) | Zone::LowerLimb(limb) | Zone::Extremity(limb) => {
+                    limb.is_fore()
+                }
+                _ => false,
+            })
+            .collect();
+
+        let band = |low: f32| {
+            let mut span = (f32::MAX, f32::MIN);
+            let mut deep = (f32::MAX, f32::MIN);
+            let mut count = 0usize;
+            for (vertex, &at) in mesh.positions.iter().enumerate() {
+                let up = (at.y - floor) / height;
+                if up < low || up >= low + 0.03 {
+                    continue;
+                }
+                let held: f32 = weights.vertices[vertex]
+                    .iter()
+                    .filter(|influence| arm[influence.joint as usize])
+                    .map(|influence| influence.weight)
+                    .sum();
+                if held > 0.25 {
+                    continue;
+                }
+                span = (span.0.min(at.x), span.1.max(at.x));
+                deep = (deep.0.min(at.z), deep.1.max(at.z));
+                count += 1;
+            }
+            if count >= 8 {
+                (
+                    (span.1 - span.0) * 0.5 / height,
+                    (deep.1 - deep.0) * 0.5 / height,
+                )
+            } else {
+                (f32::NAN, f32::NAN)
+            }
+        };
+
+        let mut width = [f32::NAN; 9];
+        let mut depth = [f32::NAN; 9];
+        for (slot, &(low, _, _)) in TRUNK.iter().enumerate() {
+            (width[slot], depth[slot]) = band(low);
+        }
+
+        // The girdle stands above every band in the table — 0.773 of stature on
+        // the default body, against a table that stops at 0.72 — so the ratio
+        // #106 is judged by has to go and find it rather than assume a band. It
+        // is the highest joint of the chest zone standing on the midline: the
+        // node both clavicles hang off.
+        let girdle_at = rig
+            .in_zone(Zone::Chest)
+            .iter()
+            .filter(|&&joint| rig.joints[joint].position.x.abs() < 1e-4)
+            .map(|&joint| (rig.joints[joint].position.y - floor) / height)
+            .fold(f32::NAN, f32::max);
+        let (girdle_width, _) = band(girdle_at - 0.015);
+
+        let root_span = |limb: Limb| {
+            rig.limb_chain(limb).map_or(f32::NAN, |chain| {
+                rig.joints[chain[0]].position.x.abs() * 2.0
+            }) / height
+        };
+        Self {
+            height,
+            width,
+            depth,
+            shoulder_span: root_span(Limb::ForeLeft),
+            hip_span: root_span(Limb::HindLeft),
+            girdle_at,
+            girdle_width,
+        }
+    }
+
+    /// The coat-hanger ratio at one [`TRUNK`] band.
+    fn hanger(&self, band: usize) -> f32 {
+        self.shoulder_span / self.width[band]
+    }
+
+    /// The coat-hanger ratio at the girdle, which is the one to judge by.
+    ///
+    /// **The number that separates the two failures this axis sits between.** A
+    /// span that grows because the body under it grew is a trunk; a span that
+    /// grows on its own is a coat hanger, and both read as "wider shoulders" in
+    /// a span figure alone. #106's decision is bought only if this comes DOWN
+    /// while [`Self::shoulder_span`] goes up.
+    ///
+    /// Taken at each body's own girdle height rather than at a fixed band,
+    /// because the two bodies do not carry their shoulders at the same fraction
+    /// of stature — ours at 0.773, against a reference whose shoulder mass fills
+    /// its 0.69–0.72 band — and a fixed band compares a ribcage against a
+    /// trapezius. That mismatch is most of why the top band of the table reads
+    /// as a pinch. The figure it prints against is [`HANGER_REFERENCE`].
+    fn hanger_at_girdle(&self) -> f32 {
+        self.shoulder_span / self.girdle_width
+    }
+}
+
+/// The trunk's silhouette, band by band, with the arms taken off.
+fn silhouette(trunk: &Trunk) {
     println!("\ntrunk silhouette with the arms removed, fractions of H");
     println!(
-        "{:>11} {:>8} {:>8} {:>8} {:>8} {:>7}",
-        "band", "width", "ref", "depth", "ref", "n"
+        "{:>11} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+        "band", "width", "ref", "off", "depth", "ref", "off"
     );
-    for (low, want_wide, want_deep) in REFERENCE {
-        let mut span = (f32::MAX, f32::MIN);
-        let mut deep = (f32::MAX, f32::MIN);
-        let mut count = 0usize;
-        for (vertex, &at) in mesh.positions.iter().enumerate() {
-            let up = (at.y - floor) / height;
-            if up < low || up >= low + 0.03 {
-                continue;
-            }
-            let held: f32 = weights.vertices[vertex]
-                .iter()
-                .filter(|influence| arm[influence.joint as usize])
-                .map(|influence| influence.weight)
-                .sum();
-            if held > 0.25 {
-                continue;
-            }
-            span = (span.0.min(at.x), span.1.max(at.x));
-            deep = (deep.0.min(at.z), deep.1.max(at.z));
-            count += 1;
-        }
-        if count < 8 {
+    for (slot, (low, want_wide, want_deep)) in TRUNK.into_iter().enumerate() {
+        if trunk.width[slot].is_nan() {
             continue;
         }
-        let wide = (span.1 - span.0) * 0.5 / height;
-        let thick = (deep.1 - deep.0) * 0.5 / height;
         println!(
-            "{low:>7.2}-{:.2} {wide:>8.4} {want_wide:>8.4} {thick:>8.4} {want_deep:>8.4} {count:>7}",
-            low + 0.03
+            "{low:>7.2}-{:.2} {:>8.4} {want_wide:>8.4} {:>+7.1}% {:>8.4} {want_deep:>8.4} {:>+7.1}%",
+            low + 0.03,
+            trunk.width[slot],
+            (trunk.width[slot] / want_wide - 1.0) * 100.0,
+            trunk.depth[slot],
+            (trunk.depth[slot] / want_deep - 1.0) * 100.0,
+        );
+    }
+
+    println!("\ncoat hanger: shoulder span over the trunk's own half-width there");
+    println!(
+        "{:>11} {:>8} {:>8} {:>8} {:>8}",
+        "band", "span", "half-w", "ratio", "ref"
+    );
+    println!(
+        "{:>5.3}girdle {:>7.4} {:>8.4} {:>8.3} {HANGER_REFERENCE:>8.3}",
+        trunk.girdle_at,
+        trunk.shoulder_span,
+        trunk.girdle_width,
+        trunk.hanger_at_girdle(),
+    );
+    for slot in HANGER {
+        let (low, want_wide, _) = TRUNK[slot];
+        println!(
+            "{low:>7.2}-{:.2} {:>8.4} {:>8.4} {:>8.3} {:>8.3}",
+            low + 0.03,
+            trunk.shoulder_span,
+            trunk.width[slot],
+            trunk.hanger(slot),
+            0.1899 / want_wide,
+        );
+    }
+}
+
+/// Builds one record into everything the tables are measured off.
+///
+/// Returns the rig, the subdivided mesh, its binding, the rendered height and
+/// the floor the bands are counted from, or `None` if the body does not build.
+fn build(
+    record: &AvatarRecord,
+    config: &SkinConfig,
+) -> Option<(Rig, PolyMesh, SkinWeights, f32, f32)> {
+    let skeleton = record.skeleton();
+    let cage = build_cage(&skeleton, &CageConfig::default()).ok()?;
+    let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
+    let rig = Rig::from_skeleton(&skeleton).ok()?;
+    let weights = skin::bind(&mesh, &rig, config);
+    let (low, high) = mesh.bounds();
+    Some((rig, mesh, weights, (high.y - low.y).max(1e-3), low.y))
+}
+
+/// The trunk averaged over the rolled bodies that are plausible bodies.
+///
+/// **A rolled seed is no longer a sample of a person** (#171). Generator 2's
+/// wildcard tail reaches the whole exploration envelope by design, so seed 13
+/// renders at 0.49 m and seed 7 at 2.35 m, and averaging a proportion across raw
+/// seeds averages in caricatures. This filters first, the way
+/// `the_neck_is_the_length_of_a_neck` already does: **every axis this ruler
+/// reads has to be inside ±1**, and for the trunk that is not only the axes that
+/// set its width. `neck_length` and `head_size` are in the list because every
+/// figure here is a fraction of RENDERED height and those two move it — the trap
+/// that made #106 carry a stale table for four days. Stature is in it too, by
+/// its own rule: it is a length rather than a sigma, so what it has to be inside
+/// is `humanoid_height_range`.
+///
+/// The kept sample's own height spread is printed with it, because an average
+/// over bodies of very different statures is still an average of ratios and the
+/// reader is entitled to see how wide that was.
+fn population(count: usize, config: &SkinConfig) {
+    let (short, tall) = symbios_avatar::plan::humanoid_height_range();
+    let mut kept = Vec::new();
+    let mut wild = 0usize;
+    let mut failed = 0usize;
+    for seed in 0..count as i64 {
+        let mut record = AvatarRecord::new("Audited", Archetype::default());
+        record.reroll(seed);
+        let Archetype::Humanoid(params) = &record.archetype else {
+            continue;
+        };
+        let classic = (short..=tall).contains(&params.height)
+            && [
+                params.build,
+                params.muscle,
+                params.shoulder_width,
+                params.hip_width,
+                params.limb_length,
+                params.neck_length,
+                params.head_size,
+            ]
+            .iter()
+            .all(|axis| axis.abs() <= 1.0);
+        if !classic {
+            wild += 1;
+            continue;
+        }
+        match build(&record, config) {
+            Some((rig, mesh, weights, height, floor)) => {
+                kept.push(Trunk::measure(&rig, &mesh, &weights, height, floor));
+            }
+            None => failed += 1,
+        }
+    }
+
+    println!(
+        "classic sweep: {count} seeds rolled, {wild} wild, {failed} would not build, {} kept",
+        kept.len()
+    );
+    if kept.is_empty() {
+        return;
+    }
+    let mean = |of: &dyn Fn(&Trunk) -> f32| {
+        let taken: Vec<f32> = kept
+            .iter()
+            .map(of)
+            .filter(|value| value.is_finite())
+            .collect();
+        (
+            taken.iter().sum::<f32>() / taken.len().max(1) as f32,
+            taken.len(),
+        )
+    };
+    let (height, _) = mean(&|trunk: &Trunk| trunk.height);
+    let low = kept
+        .iter()
+        .map(|trunk| trunk.height)
+        .fold(f32::MAX, f32::min);
+    let high = kept
+        .iter()
+        .map(|trunk| trunk.height)
+        .fold(f32::MIN, f32::max);
+    println!("rendered height mean {height:.3} m, spread {low:.3}..{high:.3} m");
+
+    println!("\ntrunk silhouette, mean over the kept bodies, fractions of each body's own H");
+    println!(
+        "{:>11} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>5}",
+        "band", "width", "ref", "off", "depth", "ref", "off", "n"
+    );
+    for (slot, (start, want_wide, want_deep)) in TRUNK.into_iter().enumerate() {
+        let (wide, seen) = mean(&|trunk: &Trunk| trunk.width[slot]);
+        let (deep, _) = mean(&|trunk: &Trunk| trunk.depth[slot]);
+        if seen == 0 {
+            continue;
+        }
+        println!(
+            "{start:>7.2}-{:.2} {wide:>8.4} {want_wide:>8.4} {:>+7.1}% {deep:>8.4} {want_deep:>8.4} {:>+7.1}% {seen:>5}",
+            start + 0.03,
+            (wide / want_wide - 1.0) * 100.0,
+            (deep / want_deep - 1.0) * 100.0,
+        );
+    }
+
+    let (shoulder, _) = mean(&|trunk: &Trunk| trunk.shoulder_span);
+    let (hip, _) = mean(&|trunk: &Trunk| trunk.hip_span);
+    println!(
+        "\nshoulder joints {shoulder:.4} against male 0.1899 ({:+.1}%)",
+        (shoulder / 0.1899 - 1.0) * 100.0
+    );
+    println!(
+        "hip joints      {hip:.4} against male 0.0973 ({:+.1}%)",
+        (hip / 0.0973 - 1.0) * 100.0
+    );
+    println!("\ncoat hanger: shoulder span over the trunk's own half-width there");
+    println!("{:>11} {:>8} {:>8}", "band", "ratio", "ref");
+    let (girdle, _) = mean(&Trunk::hanger_at_girdle);
+    let (at, _) = mean(&|trunk: &Trunk| trunk.girdle_at);
+    println!("{at:>5.3}girdle {girdle:>17.3} {HANGER_REFERENCE:>8.3}");
+    for slot in HANGER {
+        let (start, want_wide, _) = TRUNK[slot];
+        let (ratio, _) = mean(&|trunk: &Trunk| trunk.hanger(slot));
+        println!(
+            "{start:>7.2}-{:.2} {ratio:>17.3} {:>8.3}",
+            start + 0.03,
+            0.1899 / want_wide
         );
     }
 }

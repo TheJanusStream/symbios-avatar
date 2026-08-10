@@ -8,7 +8,8 @@
 //! **Four of the walls in this crate are here**: `girth`'s two ends, `hip_x`'s
 //! floor and `clavicle_x`'s, plus `extremity`'s pair. They are listed together
 //! on [`Dimensions`] and derived individually beside the expressions that meet
-//! them.
+//! them — and two of those six ends turned out under audit not to be walls at
+//! all, which the table on [`Dimensions`] now says (#163).
 
 use glam::{Vec2, Vec3};
 
@@ -80,7 +81,54 @@ const CHEST_SECTION: Vec2 = Vec2::new(1.0, 0.74);
 /// the width had to leave this node before it could leave `clavicle_x`. The
 /// shoulder silhouette is carried by the clavicle and shoulder nodes outboard
 /// of it, and the ribcage below by [`CHEST_SECTION`], which is untouched.
-const GIRDLE_SECTION: Vec2 = Vec2::new(0.55, 0.80);
+///
+/// **0.55 → 0.75 and 0.80 → 1.10, on the owner's decision to accept wider
+/// shoulders** (#106, option d). The narrowing to 0.55 was #98 buying shoulder
+/// width by starving the trunk above the ribcage, and what it cost was visible:
+/// the top band of the silhouette table pinched where the reference carries its
+/// trapezius, because the taper out of the chest is aimed at this node. Putting
+/// the width back re-widens the shoulders through `clavicle_x`'s floor, which
+/// is what the decision agrees to stop fighting.
+///
+/// **The two axes are not the same trade and it is worth keeping them apart.**
+///
+/// ```text
+///   .y  0.80 → 1.10   free: same clavicle floor, same saturation, same span,
+///                     and it pays for most of the depth shortfall
+///   .x  0.55 → 0.75   costs shoulder span at about 3.5 mm of span per mm of
+///                     trunk half-width, because the floor under `clavicle_x`
+///                     carries 0.31 of this constant
+/// ```
+///
+/// Depth was the cheaper half and nobody had tried it: `.y` does not appear in
+/// the clavicle floor at all, so it buys upper-trunk depth outright. Its own
+/// wall is between 1.10 and 1.15, where the 400-roll envelope stops meshing.
+///
+/// **What the widening bought, mean over the classic-filtered roll** (2000
+/// seeds, 114 bodies inside ±1 — `bodyaudit --classic`):
+///
+/// ```text
+///   band 0.69–0.72   width  −10.6% → −6.6%   depth  −11.3% → −5.9%
+///   coat hanger at the girdle   2.395 → 2.347   (reference 2.085)
+///   shoulder joints             +9.3% → +15.6% over the male reference
+/// ```
+///
+/// **The coat-hanger ratio answers differently depending on where it is
+/// anchored, and #106 quotes both without saying so.** Taken at the girdle —
+/// the trunk's own half-width where the shoulders actually are — it falls,
+/// 2.468 to 2.250 on the default body, which is the trade working. Taken at a
+/// fixed band down on the ribcage it rises, 2.564 to 2.695, and no setting of
+/// this constant brings it down: the span outruns the ribcage at every width,
+/// because the floor under the shoulders is `0.69 · chest_r` and the girdle is
+/// only 0.31 of it. Anyone re-opening this should read that as "the ribcage
+/// ratio is not reachable from here" rather than as a failed widening.
+///
+/// Provenance: **swept, then judged by render** (#106). The pair above was
+/// chosen off a sweep of `.x` at 0.55, 0.65, 0.75, 0.85, 0.95 and 1.05, each
+/// with `clavicle_x` re-floored against it; the ratio at the girdle is flat
+/// from 0.65 up, so past 0.75 the extra span buys almost nothing the eye can
+/// see. Renders of the default body and seeds 3 and 21 carried the choice.
+const GIRDLE_SECTION: Vec2 = Vec2::new(0.75, 1.10);
 /// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite — and it
 /// is not centred on its own joint either, which is what the depth here is for.
 ///
@@ -600,13 +648,24 @@ const A_POSE: f32 = 0.70;
 ///
 /// ```text
 ///   girth        0.50 .. 1.72   radii scale with it and lengths do not, so
-///                               the far ends leave what a hull can close
-///   hip_x       >= 0.532 · pelvis_r   below it the two hip sockets overlap
-///   clavicle_x  >= 1.30  · girdle_r   below it the girdle's neck socket runs
-///                                     out of bone
+///                               the top end leaves what a hull can close
+///                               (wall 1.82); the bottom is editorial, no
+///                               wall exists above the reachable 0.16
+///   hip_x       >= 0.49  · pelvis_r   below it the two hip sockets overlap
+///                                     (wall 0.468); does not bind inside ±1
+///   clavicle_x  >= 1.41  · girdle_r   below it the girdle's neck socket runs
+///                                     out of bone (wall 1.36)
 ///   extremity    0.55 .. 1.36   the foot is a chain of small nodes on a
-///                               stature-fixed length
+///                               stature-fixed length (walls 0.41 and 1.42);
+///                               the bottom end is editorial too
 /// ```
+///
+/// **Every figure in that table was re-measured in #163's audit rather than
+/// carried forward**, each against the gate it actually stands on: a
+/// coefficient against the 1500 random bodies and the corners, a saturation
+/// against the 400 rerolled records. Two moved, two were confirmed, and two of
+/// the six ends turned out not to be mesher walls at all. Each is derived
+/// beside its own expression.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Dimensions {
     /// Height of the pelvis node above the ground plane.
@@ -742,6 +801,17 @@ fn girth(params: &HumanoidParams) -> f32 {
     // 0.72..1.43 (with muscle, to 1.58) and is untouched; past the clamp
     // a body stops getting slighter or heavier rather than stops
     // building.
+    //
+    // **Audited and both ends kept, but only one of them is a wall** (#163).
+    // Walked against the 400-roll envelope gate with each end opened in turn:
+    // the top fails at 1.82, so 1.72 is a real saturation with 5.5% of margin.
+    // The bottom fails nowhere — the gate still holds with this end opened to
+    // 0.10, and the lowest girth the roller can even reach is 0.16, at `build`
+    // −3 with `muscle` at zero. So 0.50 is an editorial floor on how slight a
+    // body may get and not a mesher wall, and listing it beside the other four
+    // as though it were one is what the crate docs mean about a comment made
+    // false by a number somewhere else. It stays because a body thinner than
+    // half is a caricature, not because anything breaks.
     (1.0 + 0.28 * params.build + 0.15 * params.muscle).clamp(0.50, 1.72)
 }
 
@@ -1304,7 +1374,23 @@ impl Dimensions {
         // further — the slider is unlimited, the geometry stops at what can be
         // built. 0.532 is the 0.516 floor plus the same ~3% margin the axis's
         // old end carried; inside the old ±1 range the clamp never binds.
-        let hip_x = pelvis_r * (0.64 + 0.10 * params.hip_width).max(0.532);
+        //
+        // **0.532 → 0.49, measured rather than derived** (#163). The closed form
+        // above puts the wall at 0.516 and the sweep puts it at 0.468 — the 400
+        // rerolled records mesh down to there and fail below it — so the shipped
+        // figure was carrying 13.7% of margin while claiming 3%. The formula
+        // over-predicts, which #106 already found once and recorded as "a rule
+        // of thumb, not a formula"; this is the same finding with a number on
+        // it. 0.49 is the measured wall plus 4.7%.
+        //
+        // **Inside ±1 this floor does not bind at all**, and #163 calls it the
+        // thing blocking #100 from narrowing the hips, so the distinction is
+        // worth having: the coefficient bottoms out at 0.54 at `hip_width` −1,
+        // which is already above the old floor, so nothing inside the
+        // conservative range ever met it. What the floor really bounds is how
+        // far the 0.64 above may come down before a narrower body stops
+        // building — and that headroom just went from nothing to 8%.
+        let hip_x = pelvis_r * (0.64 + 0.10 * params.hip_width).max(0.49);
         let hip_y = pelvis_y - hip_drop;
 
         // Where the knee sits between hip and ankle, and so how the leg's length
@@ -1619,7 +1705,7 @@ impl Dimensions {
         // bone), and rolled bodies hit it earlier when build and limb length
         // are co-extreme. 1.30 is that wall plus ~4% for the interactions the
         // seed sweep found; inside the old ±1 range the clamp never binds.
-        let clavicle_x = girdle_r * (1.42 + 0.08 * params.shoulder_width).max(1.30);
+        let clavicle_x = girdle_r * (1.51 + 0.08 * params.shoulder_width).max(1.41);
         // How high the shoulder mass arrives — and **raising it does not
         // shorten the visible neck, which was measured and is worth not
         // repeating** (#129).
@@ -1739,6 +1825,17 @@ impl Dimensions {
         // where a heavy build meets near-zero foot radii. The clamp binds
         // outside the old ±1 range only (0.7..1.3 untouched); past it, hands
         // and feet stop growing rather than stop building.
+        //
+        // **Audited and both ends kept** (#163). Re-walked against the same
+        // 400-roll envelope gate at the wider girdle, which reaches nothing
+        // down here and did not move either end: the top fails at 1.42, which
+        // is the figure recorded above measured a second way, so 1.36 carries
+        // 4.2% of margin and is a real wall. The bottom fails at 0.41, so 0.55
+        // carries 34% — far more than a wall needs, and like `girth`'s low end
+        // it is holding a judgement about how small a foot may get rather than
+        // a meshability limit. Both stay: nothing wants the extra room, and the
+        // pair is documented here so the next axis that fans in through this
+        // clamp knows which end will actually stop it.
         let extremity = (1.0 + 0.3 * params.extremity_size).clamp(0.55, 1.36);
 
         // The limb radius ladder, **measured at last** (#104).
