@@ -242,8 +242,14 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
     // is what `sanitize` clamps to — the conservative `*_height_range()`
     // constants still exist but are the envelope's inputs, not its bounds.
     for (fragment, range) in [
-        ("humanoid", symbios_avatar::HumanoidParams::height_envelope()),
-        ("quadruped", symbios_avatar::QuadrupedParams::height_envelope()),
+        (
+            "humanoid",
+            symbios_avatar::HumanoidParams::height_envelope(),
+        ),
+        (
+            "quadruped",
+            symbios_avatar::QuadrupedParams::height_envelope(),
+        ),
     ] {
         let height = &defs["defs"][fragment]["properties"]["height"];
         assert_eq!(

@@ -22,6 +22,7 @@
 //! multiples of the joint radius they must clear. The parameter sweep in
 //! `tests/plan.rs` walks the whole space and asserts every combination meshes.
 
+mod derive;
 mod humanoid;
 mod quadruped;
 mod zone;

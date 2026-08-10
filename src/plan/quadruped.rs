@@ -4,41 +4,23 @@
 //! four-way joint carrying a spine segment in each direction plus two legs. The
 //! same radius-relative floors apply, and for the same reason.
 //!
-//! One correlation is worth calling out. `leg_length` reduces girth rather than
-//! changing the back height: at a given height a leggy animal is a slender one,
-//! and a squat animal is a barrel. Letting the two axes move independently
-//! produces bodies that read as mistakes.
+//! **What is left in this file is the graph, not the geometry.** The axes, how
+//! they are clamped, rolled and encoded are here; every number a node is built
+//! from comes out of [`Dimensions`], including the correlation this plan is
+//! most worth reading for — legginess slims the barrel rather than changing the
+//! back height, because at a given height a leggy animal is a slender one and a
+//! squat animal is a barrel.
 
-use glam::{Vec2, Vec3};
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+use super::derive::quadruped::Dimensions;
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
     take_span, take_unit,
 };
 use super::{Limb, Zone};
 use crate::skeleton::{Node, Skeleton};
-
-/// Cross-sections of the trunk, as `(lateral, vertical)` multiples of the node's
-/// radius.
-///
-/// The same idea as the humanoid's, and the axes come out the other way round
-/// for a reason worth stating. The ring frame is transported from a world-up
-/// reference, so `x` is lateral on any body; but a quadruped's spine runs
-/// fore-and-aft rather than vertically, which leaves `y` pointing *up* instead
-/// of forward. A galloping animal's ribcage is narrow and deep — the opposite
-/// proportion to a person's, in the same two numbers.
-///
-/// As on the humanoid, every axis that moves moves *downward*: a socket's
-/// clearance demand is its largest half-extent, so shrinking is free and growing
-/// costs a joint its room. Both girdles here carry four sockets each.
-const HIPS_SECTION: Vec2 = Vec2::new(0.86, 1.0);
-/// See [`HIPS_SECTION`]. The deepest point of the barrel.
-const SPINE_SECTION: Vec2 = Vec2::new(0.80, 1.0);
-/// See [`HIPS_SECTION`].
-const WITHERS_SECTION: Vec2 = Vec2::new(0.84, 1.0);
-/// See [`HIPS_SECTION`]. A neck is rounder than the body it leaves.
-const NECK_SECTION: Vec2 = Vec2::new(0.92, 1.0);
 
 /// Smallest and largest back height this plan accepts, in metres.
 pub const HEIGHT_RANGE: (f32, f32) = (0.25, 1.8);
@@ -126,16 +108,6 @@ impl QuadrupedParams {
     pub fn height_envelope() -> (f32, f32) {
         height_envelope()
     }
-
-    /// How much thicker than neutral this body is.
-    fn girth(&self) -> f32 {
-        // Saturated for the exploration range (#160), like the humanoid's:
-        // radii scale with this while the plan's lengths do not, and the pair
-        // sweep failed exactly at `build` −3 compounded by leg length. The
-        // old range spans 0.59..1.69 and is untouched.
-        ((1.0 + 0.28 * self.build + 0.15 * self.muscle) * (1.0 - 0.18 * self.leg_length))
-            .clamp(0.50, 1.80)
-    }
 }
 
 impl BodyPlan for QuadrupedParams {
@@ -158,81 +130,36 @@ impl BodyPlan for QuadrupedParams {
     }
 
     fn skeleton(&self) -> Skeleton {
-        let h = self.height;
-        let girth = self.girth();
-
-        let girdle_r = h * 0.181 * girth;
-        let withers_r = h * 0.190 * girth;
-        let spine_r = h * 0.198 * girth;
-        let neck_r = h * 0.103 * girth;
-
-        // Spine segments are floored at a multiple of the girdles they join, so
-        // a short-bodied heavy animal stretches rather than folding its girdles
-        // into each other.
-        let stretch = 1.0 + 0.25 * self.body_length;
-        let segment_floor = 2.5 * girdle_r.max(withers_r).max(spine_r);
-
-        let withers_z = h * 0.345 * stretch;
-        let spine_z = withers_z - (h * 0.483 * stretch).max(segment_floor);
-        let hips_z = spine_z - (h * 0.448 * stretch).max(segment_floor);
-
-        let neck_z = withers_z + (h * 0.379 * (1.0 + 0.3 * self.neck_length)).max(withers_r * 2.4);
-        let head_z = neck_z + (h * 0.276).max(neck_r * 2.2);
-
-        let tail_reach = h * 0.45 * (1.0 + 0.6 * self.tail_length);
-        let tail_z = hips_z - tail_reach.max(girdle_r * 2.7);
-        let tail_r = h * 0.055 * girth;
-        let tip_z = tail_z - tail_reach.max(tail_r * 2.5);
-
-        // Each girdle spreads its legs far enough that the two sockets separate,
-        // and drops far enough that the bone can carry them there.
-        let rear_x = girdle_r * 1.55;
-        let front_x = withers_r * 1.55;
-        let rear_leg_y = h * 0.966 - girdle_r * 1.95;
-        let front_leg_y = h - withers_r * 1.95;
-        let foot_y = h * 0.086;
+        let d = Dimensions::of(self);
 
         let mut skeleton = Skeleton::new();
         let hips = skeleton.add_node(
-            Node::new(Vec3::new(0.0, h * 0.966, hips_z), girdle_r)
-                .with_scale(HIPS_SECTION)
+            Node::new(d.hips_at, d.hips_r)
+                .with_scale(d.hips_section)
                 .in_zone(Zone::Pelvis),
         );
         let spine = skeleton.extend_from(
             hips,
-            Node::new(Vec3::new(0.0, h, spine_z), spine_r)
-                .with_scale(SPINE_SECTION)
+            Node::new(d.spine_at, d.spine_r)
+                .with_scale(d.spine_section)
                 .in_zone(Zone::Abdomen),
         );
         let withers = skeleton.extend_from(
             spine,
-            Node::new(Vec3::new(0.0, h, withers_z), withers_r)
-                .with_scale(WITHERS_SECTION)
+            Node::new(d.withers_at, d.withers_r)
+                .with_scale(d.withers_section)
                 .in_zone(Zone::Chest),
         );
         let neck = skeleton.extend_from(
             withers,
-            Node::new(Vec3::new(0.0, h * 1.086, neck_z), neck_r)
-                .with_scale(NECK_SECTION)
+            Node::new(d.neck_at, d.neck_r)
+                .with_scale(d.neck_section)
                 .in_zone(Zone::Neck),
         );
-        skeleton.extend_from(
-            neck,
-            Node::new(
-                Vec3::new(0.0, h * 1.069, head_z),
-                h * 0.129 * (1.0 + 0.25 * self.head_size),
-            )
-            .in_zone(Zone::Head),
-        );
+        skeleton.extend_from(neck, Node::new(d.head_at, d.head_r).in_zone(Zone::Head));
 
-        let tail = skeleton.extend_from(
-            hips,
-            Node::new(Vec3::new(0.0, h * 0.862, tail_z), tail_r).in_zone(Zone::Tail),
-        );
-        skeleton.extend_from(
-            tail,
-            Node::new(Vec3::new(0.0, h * 0.724, tip_z), h * 0.031 * girth).in_zone(Zone::Tail),
-        );
+        let tail = skeleton.extend_from(hips, Node::new(d.tail_at, d.tail_r).in_zone(Zone::Tail));
+        skeleton.extend_from(tail, Node::new(d.tip_at, d.tip_r).in_zone(Zone::Tail));
 
         // Left is `+X`, as it is on every plan — see `plan::humanoid` for the
         // convention and for why the `−X` side is built first. This body faces
@@ -241,66 +168,34 @@ impl BodyPlan for QuadrupedParams {
             (-1.0f32, Limb::ForeRight, Limb::HindRight),
             (1.0, Limb::ForeLeft, Limb::HindLeft),
         ] {
+            // [`Dimensions`] gives every leg on the `+X` side; this is the
+            // mirror, and it is the only place a side is decided.
+            let at = |node: Vec3| Vec3::new(side * node.x, node.y, node.z);
+
             let stifle = skeleton.extend_from(
                 hips,
-                Node::new(
-                    Vec3::new(side * rear_x, rear_leg_y, hips_z - h * 0.017),
-                    h * 0.078 * girth,
-                )
-                .in_zone(Zone::UpperLimb(hind)),
+                Node::new(at(d.stifle_at), d.stifle_r).in_zone(Zone::UpperLimb(hind)),
             );
             let hock = skeleton.extend_from(
                 stifle,
-                Node::new(
-                    Vec3::new(
-                        side * rear_x,
-                        foot_y + (rear_leg_y - foot_y) * 0.36,
-                        hips_z + h * 0.052,
-                    ),
-                    h * 0.055 * girth,
-                )
-                .in_zone(Zone::LowerLimb(hind)),
+                Node::new(at(d.hock_at), d.hock_r).in_zone(Zone::LowerLimb(hind)),
             );
             skeleton.extend_from(
                 hock,
-                Node::new(
-                    Vec3::new(side * rear_x, foot_y, hips_z + h * 0.121),
-                    h * 0.062 * girth,
-                )
-                .in_zone(Zone::Extremity(hind)),
+                Node::new(at(d.hind_foot_at), d.hind_foot_r).in_zone(Zone::Extremity(hind)),
             );
 
-            // Set slightly behind the withers, as a real shoulder is. Attaching
-            // it at exactly the girdle's depth would leave the leg's socket ring
-            // tied with the spine axis, and a hull cannot resolve four points on
-            // a knife edge.
             let knee = skeleton.extend_from(
                 withers,
-                Node::new(
-                    Vec3::new(side * front_x, front_leg_y, withers_z - h * 0.014),
-                    h * 0.078 * girth,
-                )
-                .in_zone(Zone::UpperLimb(fore)),
+                Node::new(at(d.knee_at), d.knee_r).in_zone(Zone::UpperLimb(fore)),
             );
             let fetlock = skeleton.extend_from(
                 knee,
-                Node::new(
-                    Vec3::new(
-                        side * front_x,
-                        foot_y + (front_leg_y - foot_y) * 0.36,
-                        withers_z + h * 0.017,
-                    ),
-                    h * 0.055 * girth,
-                )
-                .in_zone(Zone::LowerLimb(fore)),
+                Node::new(at(d.fetlock_at), d.fetlock_r).in_zone(Zone::LowerLimb(fore)),
             );
             skeleton.extend_from(
                 fetlock,
-                Node::new(
-                    Vec3::new(side * front_x, foot_y, withers_z + h * 0.086),
-                    h * 0.062 * girth,
-                )
-                .in_zone(Zone::Extremity(fore)),
+                Node::new(at(d.fore_foot_at), d.fore_foot_r).in_zone(Zone::Extremity(fore)),
             );
         }
 

@@ -14,7 +14,7 @@ use rand_pcg::Pcg64Mcg;
 use symbios_avatar::face::Skull;
 use symbios_avatar::{
     Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, HumanoidParams, Limb,
-    QuadrupedParams, Rig, Zone, build_body, build_cage,
+    QuadrupedParams, Rig, Skeleton, Zone, build_body, build_cage,
 };
 
 /// Builds a body and asserts it is watertight, reporting the parameters if not.
@@ -350,6 +350,181 @@ fn a_look_survives_a_share_code_and_still_meshes() {
         // Quantisation moves the axes slightly; the result must still be a body.
         assert_meshable(&copy.archetype, &format!("share-code copy of seed {seed}"));
     }
+}
+
+/// FNV-1a over every bit a skeleton carries.
+///
+/// Raw bits rather than a tolerance, because the question this answers is
+/// whether the arithmetic produced *the same* floats, not similar ones. Zones go
+/// in through `Debug`, which is the name they carry in the source, so retagging
+/// a node moves the fingerprint even when no coordinate does.
+fn digest(skeleton: &Skeleton) -> u64 {
+    fn eat(hash: &mut u64, bytes: &[u8]) {
+        for byte in bytes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for node in &skeleton.nodes {
+        for value in [
+            node.position.x,
+            node.position.y,
+            node.position.z,
+            node.radius,
+            node.scale.x,
+            node.scale.y,
+            node.roll,
+            node.offset.x,
+            node.offset.y,
+        ] {
+            eat(&mut hash, &value.to_bits().to_le_bytes());
+        }
+        eat(&mut hash, &[u8::from(node.marker)]);
+        eat(&mut hash, format!("{:?}", node.zone).as_bytes());
+    }
+    for [a, b] in &skeleton.bones {
+        eat(&mut hash, &a.to_le_bytes());
+        eat(&mut hash, &b.to_le_bytes());
+    }
+    hash
+}
+
+/// The bodies the fingerprint below is taken over: both plans at their defaults,
+/// the corners of the humanoid space, and the first rolls of each plan.
+///
+/// Corners and rolls both, because they fail differently: a corner catches a
+/// coefficient that only matters at an extreme, and a roll catches one that only
+/// matters in combination with another axis.
+fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
+    let mut bodies = vec![
+        ("humanoid default".to_string(), Archetype::default()),
+        (
+            "quadruped default".to_string(),
+            Archetype::Quadruped(QuadrupedParams::default()),
+        ),
+    ];
+
+    for value in EXTREMES {
+        for height in [1.2f32, 2.2] {
+            let mut params = HumanoidParams {
+                height,
+                build: value,
+                muscle: value.max(0.0),
+                shoulder_width: value,
+                hip_width: value,
+                limb_length: value,
+                neck_length: value,
+                head_size: value,
+                head_breadth: value,
+                face_length: value,
+                extremity_size: value,
+            };
+            params.sanitize();
+            bodies.push((
+                format!("humanoid corner h={height} all={value}"),
+                Archetype::Humanoid(params),
+            ));
+        }
+    }
+
+    for seed in 0..8i64 {
+        let mut biped = AvatarRecord::new("Roll", Archetype::default());
+        biped.reroll(seed);
+        bodies.push((format!("humanoid seed {seed}"), biped.archetype));
+
+        let mut beast = AvatarRecord::new("Roll", Archetype::Quadruped(QuadrupedParams::default()));
+        beast.reroll(seed);
+        bodies.push((format!("quadruped seed {seed}"), beast.archetype));
+    }
+
+    bodies
+        .into_iter()
+        .map(|(name, archetype)| (name, archetype.skeleton()))
+        .collect()
+}
+
+/// What each body in [`fingerprinted_bodies`] hashed to when it was last judged.
+///
+/// See [`the_plan_builds_the_bodies_it_was_last_judged_on`] for what to do when
+/// one of these moves.
+const FINGERPRINTS: [(&str, u64); 24] = [
+    ("humanoid default", 0x1c53bfb4b091eff5),
+    ("quadruped default", 0x2aabd8cffd3320f0),
+    ("humanoid corner h=1.2 all=-1", 0xd0de148830cd092b),
+    ("humanoid corner h=2.2 all=-1", 0x99a18fab0aa47749),
+    ("humanoid corner h=1.2 all=0", 0x7c07cce2d97e39f9),
+    ("humanoid corner h=2.2 all=0", 0xa1ad3605484f03eb),
+    ("humanoid corner h=1.2 all=1", 0x736941db88100e5a),
+    ("humanoid corner h=2.2 all=1", 0xa78da12e3f1bbe14),
+    ("humanoid seed 0", 0xf60480e1726b8e82),
+    ("quadruped seed 0", 0x181d22a61a29e06b),
+    ("humanoid seed 1", 0x219e064a52d79bae),
+    ("quadruped seed 1", 0x66b32cdababaf760),
+    ("humanoid seed 2", 0xcce562f7812fdedb),
+    ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
+    ("humanoid seed 3", 0x63fa8de809b015b8),
+    ("quadruped seed 3", 0x5fe315cd16d9b52b),
+    ("humanoid seed 4", 0x87df4e0777ffd919),
+    ("quadruped seed 4", 0x050364ec7b8118ea),
+    ("humanoid seed 5", 0xc460ed0ab18cbdd8),
+    ("quadruped seed 5", 0x2d22051939b73f20),
+    ("humanoid seed 6", 0xda121df38ba9dbbf),
+    ("quadruped seed 6", 0x94b5b20cbe08a43a),
+    ("humanoid seed 7", 0xe45aacdfd81f8cdf),
+    ("quadruped seed 7", 0xc6b4259ae378e3bb),
+];
+
+/// Every number the two body plans produce, pinned.
+///
+/// **This test cannot tell a good change from a bad one and is not trying to.**
+/// Every other test in this file asks whether a body meshes or whether one
+/// measurement lands in a range, and a plan can be rewritten under all of them
+/// while quietly moving every coordinate it produces. This one asks the
+/// remaining question — *did anything move at all* — which is the only question
+/// a refactor has to answer, and the one the file's own docstrings say keeps
+/// being answered wrong: `clavicle_x` records a comment that was made false by a
+/// change in another file that never touched this one, and `HEAD_BELOW_JOINT`
+/// records that the head, the neck and the shoulders are one measurement chain
+/// where any change re-tunes the face in silence.
+///
+/// So a failure here means the geometry moved. That is fine when it was meant
+/// to: **judge the new bodies by render** — `cargo run --release --example
+/// render` — and paste the table this prints into [`FINGERPRINTS`], noting the
+/// issue that moved them. It is not fine when the change was supposed to be a
+/// refactor, and that is what this was added for (#163).
+#[test]
+fn the_plan_builds_the_bodies_it_was_last_judged_on() {
+    let bodies = fingerprinted_bodies();
+    assert_eq!(
+        bodies.len(),
+        FINGERPRINTS.len(),
+        "the fingerprint table has to name every body the sweep builds"
+    );
+
+    let mut moved = Vec::new();
+    for ((name, skeleton), (expected_name, expected)) in bodies.iter().zip(FINGERPRINTS) {
+        assert_eq!(name, expected_name, "the table is out of order");
+        let actual = digest(skeleton);
+        if actual != expected {
+            moved.push(format!("{name}: {expected:#018x} -> {actual:#018x}"));
+        }
+    }
+
+    assert!(
+        moved.is_empty(),
+        "{} of {} bodies changed shape:\n  {}\n\nIf that was intended, judge the \
+         new bodies by render and paste this table into FINGERPRINTS:\n{}",
+        moved.len(),
+        bodies.len(),
+        moved.join("\n  "),
+        bodies
+            .iter()
+            .map(|(name, skeleton)| format!("    (\"{name}\", {:#018x}),", digest(skeleton)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }
 
 /// Extent of one zone's surface along each axis, in metres.
