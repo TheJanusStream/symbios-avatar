@@ -110,6 +110,39 @@ impl Default for FaceParams {
 }
 
 impl FaceParams {
+    /// The face this record asks for on this body, with the frame axis folded in.
+    ///
+    /// **The record's axes are OFFSETS on a derived default, which is the
+    /// architecture #61 asked for and #166 is the first thing to need** (#166).
+    /// Lip fullness is dimorphic, and a record that stored it as an absolute
+    /// would make a masculine body and a feminine one with the same stored 0.5
+    /// come out with the same lips — so the axis would be saying something the
+    /// frame had already said differently, and one of the two would have to
+    /// win. Read as an offset instead, 0.5 means "whatever is neutral for THIS
+    /// face" and the slider still spans its whole range from there.
+    ///
+    /// **Only the lips ride this way, and the brow deliberately does not.**
+    /// `Dimorphism::brow` scales the skull's own BROW profile, which is the bony
+    /// ledge `super::skull::reshape_to` carves; [`Self::brow`] drives a relief
+    /// field laid over it. Those are two stacked layers of one face rather than
+    /// two drivers of one number — the ledge is there whatever the record says,
+    /// and the ridge sits on it — so folding the frame into this axis as well
+    /// would spend the same dimorphism twice.
+    ///
+    /// Clamped to the same envelope [`Self::sanitize`] uses, because a stored
+    /// axis already at its end plus a derived default is the one combination
+    /// that can leave it.
+    #[must_use]
+    pub fn on(&self, dimorphism: &super::skull::Dimorphism) -> Self {
+        let mut face = *self;
+        face.mouth = crate::plan::sanitize_axis(
+            face.mouth + dimorphism.lips,
+            Self::default().mouth,
+            crate::plan::explore_range(Self::default().mouth, (0.0, 1.0)),
+        );
+        face
+    }
+
     /// Clamps every axis into range. Idempotent.
     ///
     /// **Through `crate::plan::sanitize_axis` rather than a second copy of the
@@ -350,6 +383,64 @@ fn taper(mesh: &PolyMesh, base: f32) -> PolyMesh {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_face_axis_is_an_offset_on_what_the_frame_already_derived() {
+        use crate::face::skull::Dimorphism;
+        use crate::plan::Composites;
+
+        let record = FaceParams::default();
+        // The identity that keeps every neutral body where it was: a neutral
+        // frame composes to the record's own axes, unchanged.
+        assert_eq!(
+            record.on(&Dimorphism::default()),
+            record,
+            "the neutral frame moved a face axis"
+        );
+        assert_eq!(record.on(&Dimorphism::of(&Composites::default())), record);
+
+        let framed = |femininity: f32| {
+            record.on(&Dimorphism::of(&Composites {
+                femininity,
+                ..Composites::default()
+            }))
+        };
+        assert!(
+            framed(1.0).mouth > framed(0.0).mouth && framed(0.0).mouth > framed(-1.0).mouth,
+            "lips read {:.4}, {:.4}, {:.4} across the axis and have to fill all the way",
+            framed(-1.0).mouth,
+            framed(0.0).mouth,
+            framed(1.0).mouth
+        );
+
+        // **Only the lips ride the frame.** The brow is the one that looks like
+        // it should and must not: `Dimorphism::brow` already scales the skull's
+        // own ledge under this axis's relief, and folding it in here as well
+        // would spend one dimorphism twice.
+        assert_eq!(
+            framed(1.0).brow,
+            record.brow,
+            "the brow axis took the frame as well as the skull profile did"
+        );
+
+        // A record already at the end of its envelope, plus a derived default,
+        // is the one combination that can leave the range the wire carries.
+        let mut extreme = FaceParams {
+            mouth: 99.0,
+            ..FaceParams::default()
+        };
+        extreme.sanitize();
+        let composed = extreme.on(&Dimorphism::of(&Composites {
+            femininity: 3.0,
+            ..Composites::default()
+        }));
+        let mut settled = composed;
+        settled.sanitize();
+        assert_eq!(
+            composed, settled,
+            "composing left the envelope: {composed:?} sanitises to {settled:?}"
+        );
+    }
     use super::*;
     use crate::face::EyeParams;
     use crate::rig::Rig;

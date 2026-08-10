@@ -775,6 +775,37 @@ mod tests {
     }
 
     #[test]
+    fn the_frame_axis_reaches_the_lips() {
+        // One layer below the mesh and one above the record, which is where
+        // this is worth asserting: `plump` is the quantity the lip field is
+        // actually built from, so a composition that got as far as `FaceParams`
+        // and no further would pass the test beside it and change no face.
+        use crate::face::skull::Dimorphism;
+        use crate::plan::Composites;
+
+        let record = crate::AvatarRecord::new("Lips", crate::Archetype::default());
+        let (_, _, canon) = measured(&record);
+        let plump = |femininity: f32| {
+            let dimorphism = Dimorphism::of(&Composites {
+                femininity,
+                ..Composites::default()
+            });
+            Face::new(&canon, &record.face.on(&dimorphism)).plump
+        };
+        let (thin, neutral, full) = (plump(-1.0), plump(0.0), plump(1.0));
+        assert!(
+            full > neutral && neutral > thin,
+            "the lips stand {:.2}, {:.2} and {:.2} mm off the face across the axis and have \
+             to fill all the way",
+            thin * 1000.0,
+            neutral * 1000.0,
+            full * 1000.0
+        );
+        // The neutral frame builds the lip this crate already shipped.
+        assert_eq!(neutral, Face::new(&canon, &record.face).plump);
+    }
+
+    #[test]
     fn the_mouth_is_wider_than_the_mesh_under_it() {
         // A RATIO, not a millimetre figure. The cell size moves with
         // FACE_REFINEMENT and with the size of the head, so a constant here

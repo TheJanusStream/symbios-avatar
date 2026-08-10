@@ -696,6 +696,34 @@ pub struct Dimorphism {
     /// Provenance: **sign and window derived from the references, magnitude
     /// tuned by render** (#166).
     pub frontal: f32,
+    /// How much fuller the lips are than the record asks for, as an offset on
+    /// `super::features::FaceParams::mouth`.
+    ///
+    /// **An offset rather than a factor**, alone among these fields, because
+    /// what it modifies is a record axis rather than a coefficient — see
+    /// `FaceParams::on`, which is where the offsets-on-derived-defaults
+    /// architecture #61 asked for actually lands.
+    ///
+    /// Feminine lips are fuller, and this is the one item in #166's dimorphism
+    /// set the two mannequins cannot speak to at all: at 328 and 388 head
+    /// triangles neither of them has a mouth to measure. So it is looked up.
+    ///
+    /// **What it delivers, measured rather than assumed, because the axis it
+    /// offsets turns out to be a narrow one.** `relief::Face::plump` — the lip
+    /// band's half-height, which is what the field is actually built from — runs
+    /// 11.96 to 15.33 mm over the WHOLE record axis on the default body, so that
+    /// slider is a ±12% control end to end. ±0.12 on it moves the lips 13.24 to
+    /// 14.05 mm, about ±0.4 mm, which is roughly half of the sex difference in
+    /// vermilion height that anthropometry reports. Half rather than all,
+    /// because there is no measurement here to spend and the record's own axis
+    /// is not wide enough to carry a whole one on top of the user's range.
+    ///
+    /// Anyone widening this should widen `plump`'s own gain first, in #61, and
+    /// re-derive this from it — the ceiling is that axis's range and not this
+    /// coefficient.
+    ///
+    /// Provenance: **looked up, sized against the axis it offsets** (#166).
+    pub lips: f32,
     /// Multiplier on the whole `OCCIPUT` profile.
     ///
     /// **One factor for both of its lobes, because the references move them
@@ -745,6 +773,7 @@ impl Default for Dimorphism {
             chin: 1.0,
             brow: 1.0,
             occiput: 1.0,
+            lips: 0.0,
             frontal: 0.0,
             gonion: GONION,
         }
@@ -772,6 +801,7 @@ impl Dimorphism {
             brow: 1.0 + 0.25 * -femininity,
             // A quarter of the 1.6 the references ask for; see the field.
             occiput: 1.0 + 0.25 * femininity,
+            lips: 0.12 * femininity,
             // In skull radii, against a `BROW` whose own peak is 0.042.
             frontal: 0.014 * femininity,
             // The 22–28° mandibular plane read at its ends. `GONION`'s

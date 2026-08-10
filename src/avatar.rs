@@ -255,6 +255,11 @@ impl Avatar {
         // holding a skeleton and no record — every test and probe in this crate
         // — is entitled to the neutral head without inventing composites.
         let dimorphism = face::Dimorphism::of(&record.composites);
+        // The record's face axes are offsets on what the frame axis already
+        // derives, so everything downstream reads this and not `record.face` —
+        // the carve, the mouth cut and the built features all have to agree
+        // about one mouth. See `FaceParams::on`.
+        let face_params = record.face.on(&dimorphism);
         let mut body =
             crate::build_body(&skeleton, &config.cage, config.subdivisions, &dimorphism).ok()?;
         let mut rig = Rig::from_skeleton(&skeleton).ok()?;
@@ -277,7 +282,7 @@ impl Avatar {
         let canon =
             Skull::measure(&body, &rig).map(|skull| Canon::measure(&rig, &skull, &record.eyes));
         if let Some(canon) = &canon {
-            face::carve_face(&mut body, &rig, canon, &record.face);
+            face::carve_face(&mut body, &rig, canon, &face_params);
         }
         // The mouth is cut AFTER the carve — the parting follows the carved
         // groove — and before anything measures, binds or charts the surface,
@@ -285,7 +290,7 @@ impl Avatar {
         // no jaw markers gets no cut and no change.
         let mouth = canon
             .as_ref()
-            .and_then(|canon| face::mouth::open(&mut body, &rig, canon, &record.face));
+            .and_then(|canon| face::mouth::open(&mut body, &rig, canon, &face_params));
         let body = body;
         let eyes = canon
             .as_ref()
@@ -346,7 +351,7 @@ impl Avatar {
             .then(|| {
                 let canon = canon.as_ref()?;
                 let skull = skull.as_ref()?;
-                Some(Features::build(canon, skull, &record.face))
+                Some(Features::build(canon, skull, &face_params))
             })
             .flatten();
         // `&mut rig`: a hand brings its own bones, and they have to
