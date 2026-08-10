@@ -39,7 +39,7 @@
           },
           "locks": {
             "type": "integer",
-            "description": "Bitmask of parameter categories a re-roll must leave alone. Bit 0 stature, 1 build, 2 frame, 3 proportions, 4 features. Unknown bits must be preserved on write so a newer client's locks survive an older one editing the record.",
+            "description": "Bitmask of parameter categories a re-roll must leave alone. Bit 0 stature, 1 build, 2 frame, 3 proportions, 4 head, 5 colouring, 6 hair, 7 age. Bit 4 formerly meant every feature at once — head shape, complexion, hair and extremity size together — and was narrowed to head shape alone, with colouring, hair and age given bits of their own and extremity size moved into proportions; a lock set written before that change holds less than it meant to. Unknown bits must be preserved on write so a newer client's locks survive an older one editing the record.",
             "minimum": 0
           },
           "generator": {

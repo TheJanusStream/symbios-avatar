@@ -432,13 +432,18 @@ impl BodyPlan for HumanoidParams {
             Category::Proportions => {
                 self.limb_length = rolls.shape("humanoid.limbLength", 0.0, 1.0, signed);
                 self.neck_length = rolls.shape("humanoid.neckLength", 0.0, 1.0, signed);
+                // Joined the proportions from `Features` in #53. The stream
+                // name is unchanged, so which VALUE a seed gives this axis has
+                // not moved — only which lock holds it.
+                self.extremity_size = rolls.shape("humanoid.extremitySize", 0.0, 1.0, signed);
             }
-            Category::Features => {
+            Category::Head => {
                 self.head_size = rolls.shape("humanoid.headSize", 0.0, 1.0, signed);
                 self.head_breadth = rolls.shape("humanoid.headBreadth", 0.0, 0.7, signed);
                 self.face_length = rolls.shape("humanoid.faceLength", 0.0, 0.7, signed);
-                self.extremity_size = rolls.shape("humanoid.extremitySize", 0.0, 1.0, signed);
             }
+            // Nothing on the body plan is a colour, a hair or an age.
+            Category::Colouring | Category::Hair | Category::Age => {}
         }
     }
 

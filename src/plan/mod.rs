@@ -57,29 +57,78 @@ pub fn quadruped_height_range() -> (f32, f32) {
 /// `Category::Build` locked keeps the body's mass while everything else
 /// changes. Each category draws from its own seed stream, so locking one group
 /// never reshuffles another.
+///
+/// ## What a category is for
+///
+/// **A lock answers "what do I want to keep while I roll again", and the
+/// grouping is only right if it can answer that** (#53). The set below was four
+/// body groups and one called `Features` that meant head size, extremity size,
+/// skull breadth, face length, skin, eyes, face and hair all at once — eight
+/// kinds of thing, including the two that most decide whether two seeds read as
+/// two people. Somebody who had found a skull they liked and wanted a different
+/// complexion could not say so.
+///
+/// So `Features` is split into [`Category::Head`], [`Category::Colouring`] and
+/// [`Category::Hair`], extremity size joins the proportions it belongs with,
+/// and the composite that fits nowhere else gets its own bit. The line drawn:
+/// **a category is a thing a creator would keep on purpose**, which is why
+/// colouring and hair are separate from the shape they sit on, and why one
+/// axis on its own can still earn a bit if nothing else is like it.
+///
+/// ## This renumbered nothing, and narrowed one bit
+///
+/// Bits 0 to 3 mean exactly what they meant. Bit 4 was `Features` and is now
+/// the narrower [`Category::Head`]; bits 5, 6 and 7 are new. A stored lock set
+/// that set bit 4 meant to hold its complexion and hair as well, and against
+/// this build it will not — **the one break here, taken while the lexicon is
+/// unpublished and deliberately, which is what "before the bitmask has a
+/// reader" meant.** Unknown bits still round-trip untouched, so the reverse
+/// direction — a newer client's locks surviving an older one — holds as it did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Category {
     /// Overall size — how tall or long the body is.
     Stature,
-    /// Mass and musculature.
+    /// Mass and how it is carried: the `mass` and `bodyFat` composites, and the
+    /// `build` and `muscle` axes they are replacing.
     Build,
-    /// Skeletal frame: shoulder and hip width.
+    /// Skeletal frame: the `femininity` composite, shoulder and hip width.
     Frame,
-    /// Relative lengths of limbs, neck, and tail.
+    /// Relative lengths of limbs, neck and tail, and the size of hands and feet.
+    ///
+    /// Extremity size joined this from `Features` (#53): a hand is a
+    /// proportion of the arm it ends, and nobody locks a face to hold a hand.
     Proportions,
-    /// Head and extremity sizes.
-    Features,
+    /// The shape of the head: its size, breadth and face length, the eyes, and
+    /// the nose, brow, mouth and ears carved into it.
+    ///
+    /// Shape only. What colour any of it is belongs to [`Category::Colouring`],
+    /// and what grows on top belongs to [`Category::Hair`] — the split this
+    /// category exists for.
+    Head,
+    /// Complexion: tone, undertone, blush, freckles and stubble.
+    Colouring,
+    /// Hair: its length, volume, hairline, part, wave, curl and shade.
+    Hair,
+    /// How old the body is.
+    ///
+    /// Its own bit because it belongs to no other group and reaches all of
+    /// them — age moves the body, the skull and the skin together — so folding
+    /// it into any one of them would make that lock a lie about the other two.
+    Age,
 }
 
 impl Category {
     /// Every category, in creator-panel order.
-    pub const ALL: [Category; 5] = [
+    pub const ALL: [Category; 8] = [
         Category::Stature,
         Category::Build,
         Category::Frame,
         Category::Proportions,
-        Category::Features,
+        Category::Head,
+        Category::Colouring,
+        Category::Hair,
+        Category::Age,
     ];
 
     /// The bit this category occupies in a lock set.

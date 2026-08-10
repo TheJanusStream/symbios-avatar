@@ -70,11 +70,11 @@ mod tests {
 
     #[test]
     fn locks_are_independent() {
-        let locks = LockSet::NONE.with(Category::Build).with(Category::Features);
+        let locks = LockSet::NONE.with(Category::Build).with(Category::Head);
         assert!(locks.is_locked(Category::Build));
-        assert!(locks.is_locked(Category::Features));
+        assert!(locks.is_locked(Category::Head));
         assert!(!locks.is_locked(Category::Stature));
-        assert_eq!(locks.locked(), vec![Category::Build, Category::Features]);
+        assert_eq!(locks.locked(), vec![Category::Build, Category::Head]);
     }
 
     #[test]

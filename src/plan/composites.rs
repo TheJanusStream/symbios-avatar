@@ -186,12 +186,10 @@ impl Composites {
 
     /// Draws fresh values for the composites belonging to `category`.
     ///
-    /// The categories are the ones a creator's locks already act on, and these
-    /// axes join the group they belong to rather than getting one of their own:
-    /// mass and body fat are what `Build` has always meant, and the frame axis
-    /// is what `Frame` has always meant. Age has no good home and rides with
-    /// `Features`, which is the grab-bag #53 exists to break up — when that
-    /// lands, age is the axis to give a category of its own.
+    /// Mass and body fat are what [`Category::Build`] has always meant and the
+    /// frame axis is what [`Category::Frame`] has always meant, so those two
+    /// join the group they belong to. Age has its own bit, because it belongs
+    /// to no other group and reaches all of them (#53).
     ///
     /// **These roll but do not yet reach any geometry.** The derivation that
     /// reads them is #164's and #166's; until then a rolled composite is stored
@@ -208,7 +206,7 @@ impl Composites {
             Category::Frame => {
                 self.femininity = rolls.shape("composites.femininity", 0.0, 1.0, signed_envelope());
             }
-            Category::Features => {
+            Category::Age => {
                 let years = rolls.shape(
                     "composites.age",
                     DEFAULT_AGE as f32,
@@ -217,7 +215,11 @@ impl Composites {
                 );
                 self.age = years.round() as u32;
             }
-            Category::Stature | Category::Proportions => {}
+            Category::Stature
+            | Category::Proportions
+            | Category::Head
+            | Category::Colouring
+            | Category::Hair => {}
         }
     }
 

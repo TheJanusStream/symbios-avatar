@@ -227,9 +227,11 @@ impl BodyPlan for QuadrupedParams {
                 self.neck_length = rolls.shape("quadruped.neckLength", 0.0, 1.0, signed);
                 self.tail_length = rolls.shape("quadruped.tailLength", 0.0, 1.0, signed);
             }
-            Category::Features => {
+            Category::Head => {
                 self.head_size = rolls.shape("quadruped.headSize", 0.0, 1.0, signed);
             }
+            // Nothing on this plan is a colour, a hair or an age (#53).
+            Category::Colouring | Category::Hair | Category::Age => {}
         }
     }
 

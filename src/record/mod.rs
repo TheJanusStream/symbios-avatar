@@ -253,9 +253,15 @@ impl AvatarRecord {
             }
             self.archetype.reroll(category, &rolls);
             self.composites.reroll(category, &rolls);
-            if category == Category::Features {
-                reroll_skin(&mut self.skin, &rolls);
-                reroll_face(&mut self.eyes, &mut self.face, &mut self.hair, &rolls);
+            // The three groups #53 split out of the old `Features` bit. Each
+            // draws from the streams it always drew from, so no seed names a
+            // different person for this; what changed is that a creator who
+            // has found a face can now roll a complexion without losing it.
+            match category {
+                Category::Head => reroll_face(&mut self.eyes, &mut self.face, &rolls),
+                Category::Colouring => reroll_skin(&mut self.skin, &rolls),
+                Category::Hair => reroll_hair(&mut self.hair, &rolls),
+                _ => {}
             }
         }
         self.sanitize();
@@ -406,17 +412,15 @@ impl ProfileRecord {
     }
 }
 
-/// Draws a fresh complexion.
+/// Draws a new face: the eyes, and what is carved around them.
 ///
-/// Skin rides along with `Features` rather than getting a category of its own:
-/// it is the same kind of choice as head and hand size, and a creator with one
-/// lock per slider ends up with more locks than anyone reads.
-/// Draws a new face: eyes, and the hair over them.
-///
-/// Hair rides with features rather than owning a lock category of its own. A
-/// creator who locks "features" has locked what their face looks like, and hair
-/// is the loudest part of that.
-fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, hair: &mut HairParams, rolls: &Rolls) {
+/// **Shape only.** This used to draw the complexion and the hair as well,
+/// because all three rode the one `Features` lock; #53 gave each its own, and
+/// the argument that grouped them — "a creator with one lock per slider ends up
+/// with more locks than anyone reads" — turned out to be answering the wrong
+/// question. The right one is what somebody would keep on purpose, and a face
+/// is kept while its colouring is rolled all the time.
+fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, rolls: &Rolls) {
     // Shape axes draw [`Rolls::shape`] (#160): a Gaussian on each axis's own
     // default with sigma half the old uniform fence — so a typical seed still
     // lands where it always did — plus the wildcard tail over the whole
@@ -442,7 +446,14 @@ fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, hair: &mut HairParam
     eyes.spacing = rolls.shape("eyes.spacing", 0.0, 0.6, (-1.0, 1.0));
     eyes.depth = rolls.shape("eyes.depth", 0.0, 0.6, (-1.0, 1.0));
     eyes.aperture = rolls.shape("eyes.aperture", 0.8, 0.225, (0.0, 1.0));
+}
 
+/// Draws a fresh head of hair.
+///
+/// Its own category since #53. Hair is the loudest thing about a head and the
+/// one most often kept while everything under it changes, which is the whole
+/// argument for a lock of its own.
+fn reroll_hair(hair: &mut HairParams, rolls: &Rolls) {
     // Hair is a style, not a shape: it keeps its uniform draws and its
     // conservative ranges (#160, owner call — same reason complexion does).
     hair.length = rolls.range("hair.length", 0.0, 1.0);
@@ -637,6 +648,92 @@ mod tests {
 
         let absent: AvatarRecord = serde_json::from_str(r#"{"name":"Old"}"#).expect("deserialises");
         assert_eq!(absent.composites, Composites::default());
+    }
+
+    #[test]
+    fn a_face_can_be_kept_while_its_colouring_is_rolled() {
+        // The whole of #53 in one assertion. Under the old single `Features`
+        // bit this was impossible: keeping a skull meant keeping the
+        // complexion, the hair, the hands and the eyes with it, and the axes
+        // people most want to hold separately were the ones fused together.
+        let mut record = AvatarRecord::new("Kept", Archetype::default());
+        record.reroll(31);
+        let face = record.face;
+        let eyes = record.eyes;
+        let Archetype::Humanoid(before) = record.archetype else {
+            panic!("archetype changed");
+        };
+
+        record.locks = LockSet::NONE.with(Category::Head);
+        record.reroll(32);
+        let Archetype::Humanoid(after) = record.archetype else {
+            panic!("archetype changed");
+        };
+
+        assert_eq!(
+            record.face, face,
+            "a locked head keeps what is carved on it"
+        );
+        assert_eq!(record.eyes, eyes, "and keeps its eyes");
+        assert_eq!(after.head_size, before.head_size);
+        assert_eq!(after.head_breadth, before.head_breadth);
+        assert_eq!(after.face_length, before.face_length);
+        assert_ne!(
+            record.skin.melanin, 0.0,
+            "the complexion rolled, which is the point"
+        );
+    }
+
+    #[test]
+    fn colouring_and_hair_lock_apart_from_each_other() {
+        let mut record = AvatarRecord::new("Apart", Archetype::default());
+        record.reroll(41);
+        let hair = record.hair;
+        let skin = record.skin;
+
+        record.locks = LockSet::NONE.with(Category::Hair);
+        record.reroll(42);
+        assert_eq!(record.hair, hair, "locked hair survives");
+        assert_ne!(record.skin, skin, "unlocked colouring does not");
+
+        record.locks = LockSet::NONE.with(Category::Colouring);
+        let held = record.skin;
+        record.reroll(43);
+        assert_eq!(record.skin, held, "and the reverse holds too");
+    }
+
+    #[test]
+    fn extremity_size_is_held_by_the_proportions_it_belongs_with() {
+        // Moved out of `Features` in #53: a hand is a proportion of the arm it
+        // ends, and nobody locks a face to hold a hand.
+        let mut record = AvatarRecord::new("Hands", Archetype::default());
+        record.reroll(51);
+        let Archetype::Humanoid(before) = record.archetype else {
+            panic!("archetype changed");
+        };
+
+        record.locks = LockSet::NONE.with(Category::Proportions);
+        record.reroll(52);
+        let Archetype::Humanoid(after) = record.archetype else {
+            panic!("archetype changed");
+        };
+        assert_eq!(after.extremity_size, before.extremity_size);
+        assert_eq!(after.limb_length, before.limb_length);
+    }
+
+    #[test]
+    fn age_locks_on_its_own() {
+        let mut record = AvatarRecord::new("Aged", Archetype::default());
+        record.reroll(61);
+        let age = record.composites.age;
+
+        record.locks = LockSet::NONE.with(Category::Age);
+        record.reroll(62);
+        assert_eq!(record.composites.age, age, "a locked age is kept");
+        assert_ne!(
+            record.composites.mass, 0.0,
+            "and holding it does not hold the body"
+        );
     }
 
     #[test]
