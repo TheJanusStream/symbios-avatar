@@ -81,7 +81,23 @@ const MUST_SHOW: f32 = 0.25;
 /// span and that span grew. Holding the composites neutral in the sweep below
 /// does not recover it, because the floor binds on every body rather than on
 /// heavy ones. It comes back down with #174.
-const EYE_SHOWS: (f32, f32) = (0.03, 0.27);
+///
+/// **0.27 → 0.255, which is a tightening and not the recovery that promised**
+/// (#174). The last sentence above is the mistake. The floor does bind on most
+/// bodies; it does not bind on THIS one. Seed 12 at neutral composites takes
+/// its neck bone from its own length term, 0.1479 m against a floor of 0.1114
+/// under #164 and 0.0984 under #174, so the floor has never been what places
+/// its eye. Measured both ways round to make sure: the worst exposure
+/// bisects to 0.2515 under the old floor and to 0.2515 under the new one, the
+/// same body reading the same number.
+///
+/// So 0.25 was never coming back from a neck fix, and 0.27 was a fifth of a
+/// point of slack bought for a cause that was not the cause. What is left is a
+/// ratchet on the state with 0.0035 under it. Whatever seated seed 12's eye
+/// that hair further out belongs to the rest of #164 — the girth that grew the
+/// girdle and lifted the trunk under the head — and wants finding on a body
+/// this test can hold still.
+const EYE_SHOWS: (f32, f32) = (0.03, 0.255);
 
 /// How far an eye may stand proud of the face around it, in metres.
 ///

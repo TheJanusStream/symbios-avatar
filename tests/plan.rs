@@ -569,15 +569,28 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// asks for — slight, neutral, muscular (`--mass 1 --fat 0.08`) and heavy
 /// (`--mass 1 --fat 0.45`) — where what to look for is that the last two are
 /// different bodies rather than one body at two sizes.
+///
+/// **Re-based a fourth time for #174**, the neck floor, and this one moved
+/// exactly eight: the default body, `femininity` −1, four of the six corners,
+/// and rolled seeds 3 and 5. Those eight are the bodies whose neck bone came
+/// from the floor rather than from its own length term, which is the whole
+/// population the change can reach — the other eighteen are bit-identical, and
+/// that is the check that the fix went where it was aimed. Nothing but
+/// `neck_y` and what hangs above it moved: the girdle node reads 1.32125 on the
+/// default body before and after, so the trunk under it is untouched and the
+/// rendered stature goes 1.7330 m back to 1.7235, which is where #164 found it.
+/// Judged on `--bare` renders of the same grid, plus `--head --bare` on the
+/// heavy body, where the neck sits deeper into the shoulders with the nape and
+/// throat clean.
 const FINGERPRINTS: [(&str, u64); 26] = [
-    ("humanoid default", 0x841d381a41352c68),
+    ("humanoid default", 0xa4409953adde3c58),
     ("quadruped default", 0x2aabd8cffd3320f0),
-    ("humanoid femininity -1", 0xe6538c6839d40566),
+    ("humanoid femininity -1", 0x1673f2106f71180e),
     ("humanoid femininity +1", 0xfb5437e221ffb17a),
-    ("humanoid corner h=1.2 all=-1", 0xae89b36d1b8bb8f9),
-    ("humanoid corner h=2.2 all=-1", 0x06f7395e94f12ccf),
-    ("humanoid corner h=1.2 all=0", 0xcaffa3ec8b062bd6),
-    ("humanoid corner h=2.2 all=0", 0xda2439bea42412ca),
+    ("humanoid corner h=1.2 all=-1", 0x6a9e05246c9e7acb),
+    ("humanoid corner h=2.2 all=-1", 0xf2c916e94ca043f4),
+    ("humanoid corner h=1.2 all=0", 0x3ac7e61821ffd7a4),
+    ("humanoid corner h=2.2 all=0", 0x8f9291d4a7a5f24e),
     ("humanoid corner h=1.2 all=1", 0xef1d9b0df29fdba4),
     ("humanoid corner h=2.2 all=1", 0xc9766775e866de06),
     ("humanoid seed 0", 0x58b766ab201cbc54),
@@ -586,11 +599,11 @@ const FINGERPRINTS: [(&str, u64); 26] = [
     ("quadruped seed 1", 0x66b32cdababaf760),
     ("humanoid seed 2", 0xad06f394b69b06f8),
     ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
-    ("humanoid seed 3", 0xb9aba0fc621177f4),
+    ("humanoid seed 3", 0xdc39978af0c6cdf1),
     ("quadruped seed 3", 0x5fe315cd16d9b52b),
     ("humanoid seed 4", 0xe9e231a9e398faa4),
     ("quadruped seed 4", 0x050364ec7b8118ea),
-    ("humanoid seed 5", 0x802566c4eaeea46d),
+    ("humanoid seed 5", 0x504fe3b0932e1f0c),
     ("quadruped seed 5", 0x2d22051939b73f20),
     ("humanoid seed 6", 0x899e5d4ea1f25b7d),
     ("quadruped seed 6", 0x94b5b20cbe08a43a),
@@ -858,6 +871,27 @@ fn the_neck_is_the_length_of_a_neck() {
         // chest gap, the neck floor — so the trunk cannot thicken without
         // lengthening, and no coefficient in this file can separate them.
         //
+        // **0.66 to 0.645, which is a tightening onto the state and NOT the
+        // repayment the paragraph above promised** (#174). The neck floor is
+        // fixed: it is a computed clearance now instead of a blanket 1.12
+        // girdle radii, it no longer binds on the default body, and over the
+        // 400 rolled records it binds on 172 rather than 234. **It moves this
+        // ruler by nothing, because it never bound on the body this ruler
+        // reads.** Seed 21 is the only classic body among the five swept here,
+        // and its neck bone is its own length term — 0.1391 m against a floor
+        // of 0.1201 under #164 and 0.1098 under #174 — so `max` picked the
+        // length term before and picks it now. The ratio reads 0.637 either
+        // way.
+        //
+        // So the paragraph above misattributed its own regression, and the
+        // arithmetic to catch it was one subtraction: a floor cannot move a
+        // body it does not bind on. What is left to own it is the rest of
+        // #164 — the girth that grew `girdle_r` itself, which lifts
+        // `girdle_y` through `torso_min` and the chest gap, and the retired
+        // `build`/`muscle` axes, which changed which body seed 21 even is.
+        // Neither is a debt this issue can pay, and 0.645 is the state plus
+        // the same few thousandths of slack every re-base above carries.
+        //
         // The previous re-base, kept because its lesson is the opposite one:
         //
         // **0.475 to 0.535, and it is the POPULATION that moved, not the
@@ -868,7 +902,7 @@ fn the_neck_is_the_length_of_a_neck() {
         // the default body reads as it did — so this is a re-base onto the
         // new population, same instrument, same slack, still the state and
         // still not the 0.33 target.
-        let bound = if classic { 0.66 } else { 1.0 };
+        let bound = if classic { 0.645 } else { 1.0 };
         let ratio = (chin - y) / (crown - chin);
         assert!(
             ratio < bound,

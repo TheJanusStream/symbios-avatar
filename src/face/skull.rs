@@ -2629,7 +2629,37 @@ mod tests {
                     // failure mode twice — at #125 for the neck's section and
                     // at #100 for the frame axis — and it is the third time a
                     // body-side change has reported itself as a profile
-                    // regression here. The bound comes back down with #174.
+                    // regression here.
+                    //
+                    // **17.0 STAYS, and it is the fourth time** (#174). The
+                    // neck floor was fixed — a computed socket clearance
+                    // instead of a blanket 1.12 girdle radii — and this ruler
+                    // did not come back. Two separate reasons, and they pull
+                    // opposite ways:
+                    //
+                    // Seed 2, the body the paragraph above blames, does not
+                    // read the floor at all. At neutral composites its neck
+                    // bone is its own length term, 0.1693 m against a floor of
+                    // 0.1136 under #164 and 0.1070 under #174, so `max` picked
+                    // the length term throughout and 16.4 is 16.4 under both.
+                    // A floor cannot move a body it does not bind on, and that
+                    // subtraction is all it would ever have taken to check.
+                    //
+                    // Seed 5 does read it, and the worst reading is now its:
+                    // its floor DID bind, #174 shortens its neck bone 12%
+                    // (0.1412 m to 0.1236), the span moves again, and the
+                    // off-midline error goes 16.4 to 16.8. So the sweep's worst
+                    // rose four tenths of a millimetre for a change that made
+                    // the body better, on a seed the earlier note never named.
+                    //
+                    // That is the whole lesson of the three citations above,
+                    // arriving a fourth time and now in the other direction:
+                    // this bound moves whenever the neck moves, either way,
+                    // because the span it bins into is anchored on the throat.
+                    // A ruler that cannot tell a shorter neck from a worse
+                    // profile is measuring the wrong span, and fixing that is
+                    // #74's re-binning rather than a number here. 17.0 is the
+                    // state plus 0.2 mm.
                     assert!(
                         (-5.0..17.0).contains(&error),
                         "seed {seed} at {height:.3}: the depth off the midline is {error:.1} mm out"

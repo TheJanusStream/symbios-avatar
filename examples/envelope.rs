@@ -16,6 +16,13 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord, HumanoidParams, plan::expl
 /// How finely the boundary is bisected, in halvings of the span.
 const BISECTIONS: usize = 12;
 
+/// How many rolled seeds the run at the end walks.
+///
+/// The same 400 `tests/plan.rs`'s `every_rerolled_record_meshes` gates on, and
+/// it has to stay that way: this example exists to say *which* of the gate's
+/// bodies fail and why, which it cannot do over a different population.
+const ROLLS: i64 = 400;
+
 /// How a sweep writes one axis into a record.
 type Setter = Box<dyn Fn(&mut AvatarRecord, f32)>;
 
@@ -238,9 +245,16 @@ fn main() {
         println!("{failed} failing quadruped pair corners");
     }
 
+    // **200 → `ROLLS`, so this sweep and the gate read the same population**
+    // (#174). `tests/plan.rs`'s `every_rerolled_record_meshes` rolls 400 and
+    // stops at the first failure; this rolls the same 400 and reports all of
+    // them, which is the pairing every session that has moved a meshing floor
+    // has wanted and three of them have rewritten as a throwaway example. A
+    // sweep that covered half the gate's seeds could go green while the gate
+    // stayed red.
     println!("\nrolled seeds that fail to build:");
     let mut broken = 0;
-    for seed in 0..200i64 {
+    for seed in 0..ROLLS {
         let mut record = AvatarRecord::new("Sweep", Archetype::default());
         record.reroll(seed);
         if Avatar::build(&record).is_none() {
@@ -269,5 +283,5 @@ fn main() {
             );
         }
     }
-    println!("{broken} of 200 seeds fail; {walled} axis ends walled");
+    println!("{broken} of {ROLLS} seeds fail; {walled} axis ends walled");
 }

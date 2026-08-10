@@ -340,8 +340,25 @@ mod tests {
         // the skull's own span. The spread went 0.248–0.302 to 0.249–0.313, so
         // the LOW end is where it was and the high end is the necks that grew.
         // The bound comes back down with #174.
+        //
+        // **And it did: 1.30 back to 1.20** (#174). This sweep holds every
+        // composite neutral and walks the head axes about the default body,
+        // which is precisely the body #164's floor bound on and #174's
+        // computed clearance does not — 1.12 girdle radii of bone against a
+        // length term that asks for 0.998 of them. The spread reads 0.249–0.296
+        // for a ratio of 1.189, so the bound is where it was with 0.011 of
+        // slack under it.
+        //
+        // **This is the only one of #164's four re-bases that the neck floor
+        // actually owned**, and the reason is worth keeping: it is the only
+        // one that sweeps the DEFAULT body. The three that read rolled seeds —
+        // the ratchet in `tests/plan.rs`, `EYE_SHOWS` in `tests/parts.rs` and
+        // the off-midline ceiling in [`crate::face::skull`] — all landed on
+        // bodies whose neck is set by its own length term, where a change to
+        // the floor is arithmetically incapable of moving anything. Each says
+        // so at its own site now.
         assert!(
-            spread.1 / spread.0 < 1.30,
+            spread.1 / spread.0 < 1.20,
             "the width ruler runs {:.3} to {:.3} of the frame across sixteen bodies, \
              a {:.0}% spread — a face is being sized by something that is not its head",
             spread.0,

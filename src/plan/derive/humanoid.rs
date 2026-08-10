@@ -129,6 +129,38 @@ const CHEST_SECTION: Vec2 = Vec2::new(1.0, 0.74);
 /// from 0.65 up, so past 0.75 the extra span buys almost nothing the eye can
 /// see. Renders of the default body and seeds 3 and 21 carried the choice.
 const GIRDLE_SECTION: Vec2 = Vec2::new(0.75, 1.10);
+/// How far the girdle's clavicle socket has slid toward the clavicle node by
+/// the time its ring clears the joint, as a fraction of that bone.
+///
+/// A socket ring is not the size of its own joint: [`Socket::set_dist`] lerps it
+/// from the joint's half-extents toward the *neighbour's* as it slides out, and
+/// where it stops is a fixed point over all four of the girdle's sockets. This
+/// is that fixed point, measured rather than solved — see the neck floor in
+/// [`Dimensions::of`], which is the only thing that reads it.
+///
+/// Provenance: **measured against the mesher** (#174). The neck bone was
+/// bisected on each of `tests/plan.rs`'s 400 rolled records to find the shortest
+/// one that still meshes, and this blend is what makes
+/// `(1 − b) · GIRDLE_SECTION.y · girdle_r + b · clavicle_r` an upper bound on 397
+/// of those 400 demands. At 0.62 the tightest body has 5.3% of margin and the
+/// median body 9.7%; at 0.70 the margin is 0.6% and the formula is no longer a
+/// bound anyone should trust. Bodies whose neck floor lands on a *different*
+/// socket are excluded and named at the site.
+///
+/// [`Socket::set_dist`]: crate::cage::Socket::set_dist
+const CLAVICLE_RING_BLEND: f32 = 0.62;
+/// [`CageConfig::max_socket_fraction`](crate::CageConfig::max_socket_fraction),
+/// mirrored so the plan can floor a bone against what the mesher will let a
+/// socket spend of it.
+///
+/// A socket may travel this fraction of its own bone and no further, so a
+/// clearance of `d` needs `d / MAX_SOCKET_FRACTION` of bone to be reachable.
+/// Mirroring a config default into the plan is the same bargain
+/// [`CLAVICLE_RING_BLEND`] takes and carries the same risk: nothing checks the
+/// two agree. The plan derives no cage config and is handed none, so the
+/// alternative is a magic 0.82 with the dependency unrecorded, which is exactly
+/// the defect #174 was raised for.
+const MAX_SOCKET_FRACTION: f32 = 0.82;
 /// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite — and it
 /// is not centred on its own joint either, which is what the depth here is for.
 ///
@@ -1311,6 +1343,12 @@ impl Dimensions {
         let waist_y = (pelvis_y + (chest_y - pelvis_y) * 0.5)
             .clamp(pelvis_y + pelvis_gap, chest_y - h * 0.02);
 
+        // Hoisted out of the limb ladder below, because the neck's floor is a
+        // clearance against the clavicle's socket and cannot be computed without
+        // it. See [`Dimensions::clavicle_r`] for what the pair mean.
+        let arm_upper = frame(femininity, 0.0369, 0.0304);
+        let clavicle_r = h * 0.040 * girth.at(0.61, 0.62, 0.35) * arm_upper;
+
         // The girdle is a joint, so its neck socket has to clear the clavicles'.
         // The neck above it is a plain connector and constrains nothing — an
         // earlier floor here was invented rather than required, and it alone
@@ -1457,7 +1495,81 @@ impl Dimensions {
         // upper-trunk depth to do it. #174 owns the real fix, which is that
         // every bone in this trunk is a multiple of `girdle_r` and so the trunk
         // cannot thicken without lengthening.
-        let neck_y = girdle_y + (h * 0.064 * (1.0 + 0.3 * params.neck_length)).max(girdle_r * 1.12);
+        //
+        // **1.12 girdle radii → the clearance itself, and the bone #164 borrowed
+        // comes back from the bodies it was taken from** (#174). Everything
+        // above is kept because the mechanism it describes is real; what was
+        // wrong was the UNIT.
+        //
+        // The socket this floor buys room for is the girdle's, pointing at the
+        // neck, and what it has to clear is the pair of CLAVICLE sockets beside
+        // it. Their reach along the neck's own axis is one number — the vertical
+        // half-extent of a clavicle socket's ring — and that ring is neither the
+        // girdle's section nor the clavicle's but a blend of the two, because
+        // [`Socket::set_dist`] lerps a ring toward its neighbour as it slides
+        // out. So the demand is `(1 − b) · girdle depth + b · clavicle_r`, over
+        // [`MAX_SOCKET_FRACTION`] because that is all of the bone a socket may
+        // spend.
+        //
+        // **Two things in that were being missed by a bare multiple of
+        // `girdle_r`, and they are different mistakes.**
+        //
+        // The girdle's own term is its DEPTH and not its radius. A lateral bone's
+        // ring frame is transported from world up, so on the clavicle sockets
+        // [`GIRDLE_SECTION`]`.y` — the fore-and-aft figure everywhere else in
+        // this file — lands VERTICALLY, which is the one direction the neck
+        // socket cannot afford. #100 took that constant 0.80 → 1.10 and recorded
+        // that `.y` "does not appear in the clavicle floor at all, so it buys
+        // upper-trunk depth outright". True of the clavicle's LATERAL floor and
+        // false here, and the 37% it grew by is most of why 1.02 stopped
+        // clearing. Naming the constant in the expression is what stops the two
+        // drifting apart again.
+        //
+        // The clavicle's own term is not a multiple of the girdle at all — it is
+        // `h · 0.040 · girth.at(0.61, 0.62, 0.35) · arm_upper` against the
+        // girdle's `h · 0.062 · girth.at(0.55, 0.55, 0.25) · …`, a different
+        // girth exponent and a different frame factor. Over the 400 rolled
+        // records `clavicle_r / girdle_r` runs 0.53 to 0.88, and the clavicle is
+        // 62% of the ring. That spread is the whole defect: a floor priced in
+        // girdle radii has to cover the body with the fattest shoulder for its
+        // girdle, and then every other body pays it.
+        //
+        // **What the population actually demands, bisected per body** — the neck
+        // bone driven directly, with the length term below overridden so it
+        // cannot hide the wall. That probe was a throwaway; what is kept is
+        // `examples/envelope`, which walks the same 400 seeds this gates on and
+        // names every one that fails to build:
+        //
+        // ```text
+        //   demanded bone, in girdle radii   0.79  …  1.08  (397 of 400)
+        //   this expression delivers         0.91  …  1.18
+        //   the default body demanded        0.909, and was given 1.12
+        // ```
+        //
+        // So the constant was not merely too high, it was the wrong shape: it
+        // over-served the median body by a fifth and still had to be raised to
+        // cover the tail. Priced properly the default body's floor lands at
+        // 0.998 girdle radii — under the 1.032 crossover this file's earlier note
+        // computes — so it does not bind on an ordinary body at all, and the
+        // neck goes back to being the length its own term asks for.
+        //
+        // **Three of the 400 are excluded from that fit and are not this
+        // socket.** Seeds 0, 46 and 125 refuse a short neck at the girdle's
+        // CLAVICLE socket rather than its neck socket — shortening the bone
+        // pulls the neck socket in toward the girdle, where its ring is wider,
+        // and the clavicle's plane has to clear that. They demand 1.31–1.76
+        // girdle radii and are covered anyway, because their own length term is
+        // longer than either figure. A body that ever fails there wants
+        // `clavicle_x`, not this.
+        //
+        // Provenance: **derived from the mesher, then bounded by bisection**
+        // (#174). See [`CLAVICLE_RING_BLEND`] for the blend and its margin.
+        //
+        // [`Socket::set_dist`]: crate::cage::Socket::set_dist
+        let neck_clearance = (GIRDLE_SECTION.y * girdle_r * (1.0 - CLAVICLE_RING_BLEND)
+            + clavicle_r * CLAVICLE_RING_BLEND)
+            / MAX_SOCKET_FRACTION;
+        let neck_y = girdle_y + (h * 0.064 * (1.0 + 0.3 * params.neck_length)).max(neck_clearance);
         // How far the head reaches below its own joint, and it is a HEAD measure
         // rather than a stature one. This was `(h * 0.052).max(head_r * 0.45)`,
         // where the second term can never bind — 0.45 of a head radius is at most
@@ -2208,9 +2320,11 @@ impl Dimensions {
         // and the calf thickens. Each radius takes the reference station
         // nearest it — proximal for a proximal node — from the limb-thickness
         // table `examples/reference` prints.
-        let arm_upper = frame(femininity, 0.0369, 0.0304);
+        //
+        // `arm_upper` and `clavicle_r` are derived up with the trunk instead of
+        // here, because the neck's floor clears the clavicle's socket and so has
+        // to know how fat that node is before it can place the neck.
         let arm_lower = frame(femininity, 0.0263, 0.0238);
-        let clavicle_r = h * 0.040 * girth.at(0.61, 0.62, 0.35) * arm_upper;
         let shoulder_r = h * 0.041 * girth.at(0.61, 0.62, 0.35) * arm_upper;
         let elbow_r = h * 0.026 * girth.at(0.45, 0.45, 0.20) * arm_lower;
         let wrist_r = h * 0.018 * girth.at(0.12, 0.12, 0.00) * frame(femininity, 0.0181, 0.0167);
