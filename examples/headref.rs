@@ -100,6 +100,10 @@ impl Head {
     fn fore(&self, height: f32) -> Option<f32> {
         self.reach(height, Vec3::Z)
     }
+
+    fn aft(&self, height: f32) -> Option<f32> {
+        self.reach(height, -Vec3::Z)
+    }
 }
 
 /// Möller–Trumbore, returning the ray parameter.
@@ -124,13 +128,19 @@ fn hit(from: Vec3, dir: Vec3, face: &[Vec3; 3]) -> Option<f32> {
     Some(f * e2.dot(q))
 }
 
-/// The neck's half-width at mid-neck, as a fraction of stature.
+/// The neck's SECTION at mid-neck, as fractions of stature.
 ///
-/// The one body quantity #166 asks for that `examples/reference` does not
-/// already print. Taken as a radius rather than a circumference because that is
-/// what `neck_r` is, and at the middle of the bone so neither the jaw above nor
-/// the trapezius below is in the reading.
-fn neck(path: &str) -> (f32, f32) {
+/// **A mean radius about the neck's own axis, not a half-width across it**
+/// (#166). The first version of this measured `max |x|` in a band and reported
+/// the feminine mannequin's neck as 14% the thicker of the two, which is the
+/// opposite of what neck circumference does in life. A neck is not round, and
+/// one axis of an ellipse is not its size: the lateral reading alone cannot
+/// tell a wider neck from a flatter one. Rays at every azimuth can, and they
+/// answer the question `neck_r` actually asks, which is a radius.
+///
+/// Returns `(mean radius, lateral half-width, fore-aft half-depth)`, each over
+/// stature.
+fn neck(path: &str) -> (f32, f32, f32) {
     let bytes = std::fs::read(path).expect("the mannequin");
     let file = Gltf::read(&bytes).expect("it parses");
     let mesh = file
@@ -140,43 +150,73 @@ fn neck(path: &str) -> (f32, f32) {
         .next()
         .expect("one");
     let skin = file.skin(mesh.skin.expect("skinned")).expect("a skin");
-    let neck: Vec<bool> = skin.names.iter().map(|n| n == "neck_01").collect();
-    let mine: Vec<usize> = (0..mesh.positions.len())
-        .filter(|&v| mesh.held_by(v, |j| neck[j]) > 0.5)
+    let bone: Vec<bool> = skin.names.iter().map(|n| n == "neck_01").collect();
+    let mine: Vec<bool> = (0..mesh.positions.len())
+        .map(|v| mesh.held_by(v, |j| bone[j]) > 0.5)
         .collect();
-    let (low, high) = mine.iter().fold((f32::MAX, f32::MIN), |(l, h), &v| {
-        (l.min(mesh.positions[v].y), h.max(mesh.positions[v].y))
-    });
+    let owned: Vec<Vec3> = (0..mesh.positions.len())
+        .filter(|&v| mine[v])
+        .map(|v| mesh.positions[v])
+        .collect();
+
+    let (low, high) = owned
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, h), p| (l.min(p.y), h.max(p.y)));
+    let bounds = |f: fn(&Vec3) -> f32| {
+        owned
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(l, h), p| (l.min(f(p)), h.max(f(p))))
+    };
+    let (x0, x1) = bounds(|p| p.x);
+    let (z0, z1) = bounds(|p| p.z);
+    let axis = Vec3::new(0.5 * (x0 + x1), 0.5 * (low + high), 0.5 * (z0 + z1));
+
+    // The whole mesh's triangles, not the neck's own: a section cut at mid-neck
+    // has to hit whatever surface is there, and a triangle straddling the
+    // weight boundary belongs to the neck for half its area. Restricting the
+    // set to fully-neck-owned triangles opens gaps for a ray to escape through.
+    let faces: Vec<[Vec3; 3]> = mesh
+        .triangles
+        .iter()
+        .filter(|t| t.iter().any(|&v| mine[v as usize]))
+        .map(|t| t.map(|v| mesh.positions[v as usize]))
+        .collect();
+
     let (whole_low, whole_high) = mesh.bounds();
     let stature = whole_high.y - whole_low.y;
-    let mid = 0.5 * (low + high);
-    let band = 0.15 * (high - low);
-    let mid_x = 0.5
-        * mine
-            .iter()
-            .fold((f32::MAX, f32::MIN), |(l, h), &v| {
-                (l.min(mesh.positions[v].x), h.max(mesh.positions[v].x))
-            })
-            .0
-        + 0.5
-            * mine
-                .iter()
-                .fold((f32::MAX, f32::MIN), |(l, h), &v| {
-                    (l.min(mesh.positions[v].x), h.max(mesh.positions[v].x))
-                })
-                .1;
-    let mut wide = 0.0f32;
-    for &v in &mine {
-        let at = mesh.positions[v];
-        if (at.y - mid).abs() <= band {
-            wide = wide.max((at.x - mid_x).abs());
+    let spokes = 72;
+    let mut sum = 0.0f32;
+    let mut seen = 0;
+    let (mut across, mut through) = (0.0f32, 0.0f32);
+    for spoke in 0..spokes {
+        let angle = std::f32::consts::TAU * spoke as f32 / spokes as f32;
+        let dir = Vec3::new(angle.cos(), 0.0, angle.sin());
+        // **The NEAREST crossing, where the head above takes the farthest.**
+        // A head is measured against a closed-ish patch and the outer surface
+        // is the last thing a ray meets; a neck's triangle set includes every
+        // triangle that straddles the weight boundary, so it reaches down into
+        // the shoulders, and a ray taking the farthest hit sails out of the
+        // neck and lands on a trapezius. Taking the farthest read the male's
+        // silhouette 32% wider than a vertex count of the same band did, which
+        // is what exposed it.
+        let mut best = f32::MAX;
+        for face in &faces {
+            if let Some(t) = hit(axis, dir, face)
+                && t > 1e-4
+                && t < best
+            {
+                best = t;
+            }
+        }
+        if best < f32::MAX {
+            sum += best;
+            seen += 1;
+            across = across.max(best * dir.x.abs());
+            through = through.max(best * dir.z.abs());
         }
     }
-    // The two selections have to cover the same fraction of stature or the
-    // reading below is comparing two different pieces of anatomy. They do —
-    // 0.789..0.868 against 0.793..0.877 — which is what makes the surprise in
-    // the result a fact about the mannequins rather than about this probe.
-    (wide / stature, stature)
+    let mean = if seen > 0 { sum / seen as f32 } else { 0.0 };
+    (mean / stature, across / stature, through / stature)
 }
 
 fn main() {
@@ -190,8 +230,12 @@ fn main() {
             "../mesh2motion-app/static/models-variation/human-female.glb",
         ),
     ] {
-        let (r, stature) = neck(path);
-        println!("{label:>7}: neck half-width {r:.5} of a {stature:.4} m stature");
+        let (mean, across, through) = neck(path);
+        println!(
+            "{label:>7}: neck mean radius {mean:.5} of stature, {across:.5} across, \
+             {through:.5} through  (flatness {:.3})",
+            through / across
+        );
     }
 
     let male = Head::read("../mesh2motion-app/static/models-variation/human-male.glb");
@@ -233,8 +277,14 @@ fn main() {
     let (md, _) = peak(&male, Head::fore);
     let (fd, _) = peak(&female, Head::fore);
     println!("\n  each column is that head's own peak = 1.000, so this is shape alone");
-    println!("  height   ---- half-width ----      ---- forward reach ----");
-    println!("           male  female  female/male   male  female  female/male");
+    let (ma, _) = peak(&male, Head::aft);
+    let (fa, _) = peak(&female, Head::aft);
+    println!(
+        "  height   ---- half-width ----      ---- forward reach ----     ---- aft reach ----"
+    );
+    println!(
+        "           male  female  female/male   male  female  female/male   male  female  f/m"
+    );
     for step in 0..=20 {
         let height = step as f32 / 20.0;
         let row = |a: Option<f32>, pa: f32, b: Option<f32>, pb: f32| match (a, b) {
@@ -249,9 +299,10 @@ fn main() {
             _ => "  -     -        -   ".to_string(),
         };
         println!(
-            "  {height:.2}     {}    {}",
+            "  {height:.2}     {}    {}    {}",
             row(male.across(height), mw, female.across(height), fw),
-            row(male.fore(height), md, female.fore(height), fd)
+            row(male.fore(height), md, female.fore(height), fd),
+            row(male.aft(height), ma, female.aft(height), fa)
         );
     }
 }

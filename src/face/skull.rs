@@ -696,6 +696,31 @@ pub struct Dimorphism {
     /// Provenance: **sign and window derived from the references, magnitude
     /// tuned by render** (#166).
     pub frontal: f32,
+    /// Multiplier on the whole `OCCIPUT` profile.
+    ///
+    /// **One factor for both of its lobes, because the references move them
+    /// together.** Measured as aft reach from each head's own axis over that
+    /// head's own peak aft reach, the feminine cranium stands 5–7% FURTHER back
+    /// through 0.40 to 0.60 of the head's span — the occipital curve proper,
+    /// which is 0.03 to 0.39 in the profile heights here and is exactly
+    /// `OCCIPUT`'s positive lobe — and 16–21% LESS far back at 0.25 to 0.30,
+    /// which is where that profile's negative tail cuts the hollow in under the
+    /// ear. A rounder, fuller occiput above a deeper hollow, against a flatter
+    /// one above a fuller nuchal region: the textbook pair, and scaling the
+    /// table says both at once, since a factor above one makes the positive
+    /// knots more positive and the negative ones more negative.
+    ///
+    /// **Sized well under what the references ask for.** Matching their 6% of
+    /// reach needs a factor near 1.6, because `OCCIPUT` is a fractional swell on
+    /// top of `deep` and a small change in the profile is a much smaller change
+    /// in the silhouette. The low band that asks for more than that is also the
+    /// least trustworthy reading in the set — it sits where the head-owned
+    /// selection meets the neck. So this takes the direction and a quarter of
+    /// the size, as the chin does.
+    ///
+    /// Provenance: **sign and window derived from the references, magnitude
+    /// tuned by render** (#166).
+    pub occiput: f32,
     /// Replaces `GONION` — where the mandible's lower border sits at the
     /// angle of the jaw.
     ///
@@ -719,6 +744,7 @@ impl Default for Dimorphism {
             jaw_breadth: 1.0,
             chin: 1.0,
             brow: 1.0,
+            occiput: 1.0,
             frontal: 0.0,
             gonion: GONION,
         }
@@ -744,6 +770,8 @@ impl Dimorphism {
             // ±25%, which is the largest factor here and still reads as a
             // shading difference rather than as a ledge appearing.
             brow: 1.0 + 0.25 * -femininity,
+            // A quarter of the 1.6 the references ask for; see the field.
+            occiput: 1.0 + 0.25 * femininity,
             // In skull radii, against a `BROW` whose own peak is 0.042.
             frontal: 0.014 * femininity,
             // The 22–28° mandibular plane read at its ends. `GONION`'s
@@ -1302,7 +1330,7 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32, dimorphism: &Dimorphism)
     let wide = 1.0 - (1.0 - knot(&BREADTH, height)) * frontal;
     let deep = knot(&DEPTH, height)
         * (1.0 + ELONGATION)
-        * (1.0 + knot(&OCCIPUT, height) * behind * behind);
+        * (1.0 + knot(&OCCIPUT, height) * dimorphism.occiput * behind * behind);
 
     // The chin is a central prominence, so its push falls off much faster
     // round the jaw than the other terms do. Spread evenly across the front — an
@@ -1800,6 +1828,19 @@ mod tests {
             // dividing out the head reports head size. The upper forehead over
             // the brow's own reach is elongation-free and is what "upright"
             // means.
+            // The occipital curve against the hollow under the ear behind it,
+            // which is the pair `Dimorphism::occiput` scales together. A ratio
+            // for the same reason the forehead is one: the absolute reach
+            // behind a head is mostly how long the head is.
+            let behind = |index: usize| at(index, 0.21, -Vec3::Z) / at(index, -0.15, -Vec3::Z);
+            let (occiput_m, occiput_f) = (behind(0), behind(2));
+            assert!(
+                occiput_f > occiput_m,
+                "seed {seed}: the cranium stands {occiput_f:.4} of the hollow behind the jaw at \
+                 the feminine end against {occiput_m:.4} at the masculine one, and the feminine \
+                 occiput is the fuller one"
+            );
+
             let slope = |index: usize| ahead(index, 0.94) / ahead(index, 0.48);
             let (slope_m, slope_f) = (slope(0), slope(2));
             assert!(

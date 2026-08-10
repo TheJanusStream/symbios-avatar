@@ -1233,7 +1233,46 @@ impl Dimensions {
         // render** (commit `0d7684f`) against the argument above — a measured
         // 0.098 m neck against a 0.093 m head — which was the right shape of
         // argument for a tuned number and was still a quarter short of life.
-        let neck_r = h * (0.040 + 0.020 * (girth.at(0.30, 0.30, 0.25) - 1.0));
+        //
+        // **And it takes the frame axis, which is the last of #166's set to land
+        // and the one that needed the instrument fixed first** (#166). A neck is
+        // one of the more dimorphic parts of a body and this coefficient could
+        // not say so. Measured on the two mannequins by `examples/headref`, as
+        // the mean radius of the section at mid-neck over stature: masculine
+        // 0.05387, feminine 0.04411.
+        //
+        // **The first measurement said the opposite and the instrument was the
+        // reason**, which is worth the space because this file has a dozen
+        // coefficients that could be read the same wrong way. Taking `max |x|`
+        // over the neck's VERTICES in a band read the feminine neck as 14% the
+        // thicker of the two. Two faults at once: a neck is not round, so one
+        // axis of an ellipse is not its size — the two mannequins' necks are
+        // within 3% ACROSS and 23% apart THROUGH, and the feminine one is
+        // simply flatter, 0.642 deep for its width against 0.762 — and the male
+        // mesh carries 89 neck vertices against the female's 237, so a band
+        // statistic on him missed his widest ring outright and under-read him
+        // by a third. Rays at every azimuth from the neck's own axis have
+        // neither fault. Checked before it was believed: taking the nearest
+        // crossing rather than the farthest changes nothing, so no ray was
+        // escaping into the shoulder.
+        //
+        // **The pair is used at its measured ratio and that is a judgement**,
+        // not an oversight. It is 22% end to end where life's neck
+        // circumferences put the same dimorphism nearer 8%, so these two
+        // mannequins exaggerate it about as much as they exaggerate the chin —
+        // which #166 refused to spend in full. The chin is taken at a third and
+        // this at all of it, because they are different kinds of measurement: a
+        // chin projection is one sculpting decision about one landmark, and a
+        // section's mean radius is bulk. This coefficient is also already
+        // calibrated against these same surfaces (#131 above), so the ratio and
+        // the base are in the same units; tempering one and not the other would
+        // put the axis's ends somewhere neither source describes.
+        //
+        // Provenance: **derived from the reference mannequins** (#166), on top
+        // of the derivation above.
+        let neck_r = h
+            * (0.040 + 0.020 * (girth.at(0.30, 0.30, 0.25) - 1.0))
+            * frame(femininity, 0.05387, 0.04411);
         // Provenance: **unsourced**, both the 0.075 and the 0.25 gain. 0.075 of
         // stature is close to the eight-head figure's head, but the eight-head
         // figure specifies head HEIGHT and this is a node RADIUS, so the

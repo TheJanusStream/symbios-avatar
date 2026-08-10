@@ -587,32 +587,42 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// Judged on `--bare` renders of the same grid, plus `--head --bare` on the
 /// heavy body, where the neck sits deeper into the shoulders with the nape and
 /// throat clean.
+///
+/// **Re-based a fifth time for #166's neck**, and this one names its own
+/// population: the two `femininity` bodies and the eight rolled humanoids, which
+/// are every body here that carries a non-neutral frame. The default body, all
+/// six corners and every quadruped are bit-identical, because the corners hold
+/// the composites neutral and `frame` is one at neutral. That split is the check
+/// — a frame term that moved a neutral body would be a bug in the anchor pair,
+/// not a new shape. Judged on `--bare` renders at `--femininity` −1 and +1,
+/// where the masculine neck reads as a column into broad shoulders and the
+/// feminine one as slimmer and longer without reading as a stalk.
 const FINGERPRINTS: [(&str, u64); 26] = [
     ("humanoid default", 0xa4409953adde3c58),
     ("quadruped default", 0x2aabd8cffd3320f0),
-    ("humanoid femininity -1", 0x1673f2106f71180e),
-    ("humanoid femininity +1", 0xfb5437e221ffb17a),
+    ("humanoid femininity -1", 0x4be35eca959f61bf),
+    ("humanoid femininity +1", 0x53c9b142d969f642),
     ("humanoid corner h=1.2 all=-1", 0x6a9e05246c9e7acb),
     ("humanoid corner h=2.2 all=-1", 0xf2c916e94ca043f4),
     ("humanoid corner h=1.2 all=0", 0x3ac7e61821ffd7a4),
     ("humanoid corner h=2.2 all=0", 0x8f9291d4a7a5f24e),
     ("humanoid corner h=1.2 all=1", 0xef1d9b0df29fdba4),
     ("humanoid corner h=2.2 all=1", 0xc9766775e866de06),
-    ("humanoid seed 0", 0x58b766ab201cbc54),
+    ("humanoid seed 0", 0xa0595c74067c933d),
     ("quadruped seed 0", 0x181d22a61a29e06b),
-    ("humanoid seed 1", 0xb01a01e62291ef40),
+    ("humanoid seed 1", 0xfa75b04629f8d056),
     ("quadruped seed 1", 0x66b32cdababaf760),
-    ("humanoid seed 2", 0xad06f394b69b06f8),
+    ("humanoid seed 2", 0x4caf440468491466),
     ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
-    ("humanoid seed 3", 0xdc39978af0c6cdf1),
+    ("humanoid seed 3", 0xc8255cf85161ab16),
     ("quadruped seed 3", 0x5fe315cd16d9b52b),
-    ("humanoid seed 4", 0xe9e231a9e398faa4),
+    ("humanoid seed 4", 0xc3a4105c8cf66985),
     ("quadruped seed 4", 0x050364ec7b8118ea),
-    ("humanoid seed 5", 0x504fe3b0932e1f0c),
+    ("humanoid seed 5", 0xd9a805ac31be0f9b),
     ("quadruped seed 5", 0x2d22051939b73f20),
-    ("humanoid seed 6", 0x899e5d4ea1f25b7d),
+    ("humanoid seed 6", 0x271650f71ca43f6a),
     ("quadruped seed 6", 0x94b5b20cbe08a43a),
-    ("humanoid seed 7", 0x8fa8276884fd32dc),
+    ("humanoid seed 7", 0x190d42dfb03ea4a7),
     ("quadruped seed 7", 0xc6b4259ae378e3bb),
 ];
 
