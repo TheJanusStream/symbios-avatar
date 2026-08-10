@@ -24,7 +24,7 @@ pub use eye::{Aperture, Eye, EyeParams, Eyes};
 pub use features::{FaceParams, Features};
 pub use mouth::Mouth;
 pub use relief::carve as carve_face;
-pub use skull::{Skull, refine_face, shape as shape_skull};
+pub use skull::{Dimorphism, Skull, refine_face, shape as shape_skull};
 pub use talk::{Talk, TalkConfig};
 
 /// Smoothstep, clamped, for fading a field in and out without leaving a crease

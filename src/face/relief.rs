@@ -676,8 +676,17 @@ mod tests {
     /// A body's uncarved head, its canon, and the rig that built it.
     fn measured(record: &crate::AvatarRecord) -> (PolyMesh, Rig, Canon) {
         let skeleton = record.skeleton();
-        let plain = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
-            .expect("meshes");
+        // This helper is handed a whole record, so it builds the head that
+        // record asks for rather than a neutral one (#166). A test fixture that
+        // quietly built a different head from the shipped path is how a carve
+        // and the face under it drift apart.
+        let plain = crate::build_body(
+            &skeleton,
+            &CageConfig::default(),
+            crate::BODY_SUBDIVISIONS,
+            &crate::face::Dimorphism::of(&record.composites),
+        )
+        .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let skull = Skull::measure(&plain, &rig).expect("a skull");
         let canon = Canon::measure(&rig, &skull, &record.eyes);

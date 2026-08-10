@@ -962,7 +962,7 @@ impl Girth {
 /// 10.8% over the male reference and stays there (#106), and snapping the axis
 /// onto the reference midpoint would have quietly re-litigated that decision on
 /// the way past.
-fn frame(femininity: f32, male: f32, female: f32) -> f32 {
+pub(crate) fn frame(femininity: f32, male: f32, female: f32) -> f32 {
     between(femininity, male, female) / ((male + female) * 0.5)
 }
 
@@ -973,7 +973,7 @@ fn frame(femininity: f32, male: f32, female: f32) -> f32 {
 /// the plan already has an opinion about wants the factor — it keeps the plan's
 /// own value as the anchor — and a quantity that IS the measurement, like an
 /// allometric exponent, wants the value.
-fn between(femininity: f32, male: f32, female: f32) -> f32 {
+pub(crate) fn between(femininity: f32, male: f32, female: f32) -> f32 {
     (male + female) * 0.5 + femininity * (female - male) * 0.5
 }
 

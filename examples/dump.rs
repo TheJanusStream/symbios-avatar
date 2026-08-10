@@ -129,6 +129,7 @@ fn mesh_report(dir: &std::path::Path, name: &str, skeleton: &Skeleton) -> usize 
         skeleton,
         &CageConfig::default(),
         symbios_avatar::BODY_SUBDIVISIONS,
+        &Default::default(),
     )
     .unwrap_or_default();
 

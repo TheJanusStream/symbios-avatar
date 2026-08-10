@@ -370,6 +370,7 @@ mod tests {
             &skeleton,
             &crate::CageConfig::default(),
             crate::BODY_SUBDIVISIONS,
+            &Default::default(),
         )
         .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");

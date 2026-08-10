@@ -92,6 +92,7 @@ fn main() {
         &skeleton,
         &symbios_avatar::CageConfig::default(),
         symbios_avatar::BODY_SUBDIVISIONS,
+        &Default::default(),
     )
     .expect("a body builds");
     let shaped = Skull::measure(&plain, rig).expect("a skull");
@@ -1096,6 +1097,7 @@ impl Features {
             &skeleton,
             &symbios_avatar::CageConfig::default(),
             symbios_avatar::BODY_SUBDIVISIONS,
+            &Default::default(),
         ) else {
             return Self {
                 nose: f32::NAN,

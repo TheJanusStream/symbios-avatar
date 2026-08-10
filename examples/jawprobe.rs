@@ -70,7 +70,12 @@ fn main() {
             continue;
         };
         let plain = face::refine_face(&catmull_clark(&cage, BODY_SUBDIVISIONS), &rig, REFINEMENT);
-        let Ok(shaped) = build_body(&skeleton, &CageConfig::default(), BODY_SUBDIVISIONS) else {
+        let Ok(shaped) = build_body(
+            &skeleton,
+            &CageConfig::default(),
+            BODY_SUBDIVISIONS,
+            &Default::default(),
+        ) else {
             continue;
         };
         let mut carved = shaped.clone();

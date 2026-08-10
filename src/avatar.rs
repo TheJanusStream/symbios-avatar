@@ -250,7 +250,13 @@ impl Avatar {
     #[must_use]
     pub fn build_with(record: &AvatarRecord, config: &AvatarConfig) -> Option<Self> {
         let skeleton = record.skeleton();
-        let mut body = crate::build_body(&skeleton, &config.cage, config.subdivisions).ok()?;
+        // The head reads the frame axis from here on (#166). Derived at the
+        // top of the build rather than inside `build_body`, because a caller
+        // holding a skeleton and no record — every test and probe in this crate
+        // — is entitled to the neutral head without inventing composites.
+        let dimorphism = face::Dimorphism::of(&record.composites);
+        let mut body =
+            crate::build_body(&skeleton, &config.cage, config.subdivisions, &dimorphism).ok()?;
         let mut rig = Rig::from_skeleton(&skeleton).ok()?;
 
         // The face is carved into the body's own surface, so it has to happen

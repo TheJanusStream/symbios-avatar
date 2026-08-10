@@ -118,8 +118,8 @@ pub use cage::{CageConfig, CageError, build_cage};
 pub use dress::{Garment, GarmentCut, Leg, Outfit, OutfitParams, Sleeve};
 pub use extremity::{Attached, Extremities, Foot, Hand};
 pub use face::{
-    Aperture, Blink, Canon, EyeParams, Eyes, FaceParams, Features, Talk, TalkConfig, refine_face,
-    shape_skull,
+    Aperture, Blink, Canon, Dimorphism, EyeParams, Eyes, FaceParams, Features, Talk, TalkConfig,
+    refine_face, shape_skull,
 };
 pub use hair::{Hair, HairParams, Scalp, Strand};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
@@ -249,6 +249,7 @@ pub fn build_body(
     skeleton: &Skeleton,
     config: &CageConfig,
     subdivisions: usize,
+    dimorphism: &face::Dimorphism,
 ) -> Result<PolyMesh, CageError> {
     let cage = build_cage(skeleton, config)?;
     let mut mesh = catmull_clark(&cage, subdivisions);
@@ -257,7 +258,7 @@ pub fn build_body(
         // moves none, so `shape_skull` maps all of them onto the skull together
         // and the face is sampled finely rather than subdivided after the fact.
         mesh = face::refine_face(&mesh, &rig, FACE_REFINEMENT);
-        face::shape_skull(&mut mesh, &rig);
+        face::shape_skull(&mut mesh, &rig, dimorphism);
     }
     Ok(mesh)
 }

@@ -225,8 +225,13 @@ mod tests {
         // head reads no composite, but they move the girdle under the neck and
         // every ruler here is taken over the skull's own span (#164).
         let skeleton = record.archetype.skeleton(&crate::Composites::default());
-        let mesh = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
-            .expect("meshes");
+        let mesh = crate::build_body(
+            &skeleton,
+            &CageConfig::default(),
+            crate::BODY_SUBDIVISIONS,
+            &Default::default(),
+        )
+        .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let skull = Skull::measure(&mesh, &rig).expect("a skull");
         (Canon::measure(&rig, &skull, &record.eyes), skull)
@@ -235,8 +240,13 @@ mod tests {
     #[test]
     fn the_rulers_come_off_the_surface_rather_than_off_the_plan() {
         let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
-        let mesh = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
-            .expect("meshes");
+        let mesh = crate::build_body(
+            &skeleton,
+            &CageConfig::default(),
+            crate::BODY_SUBDIVISIONS,
+            &Default::default(),
+        )
+        .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let skull = Skull::measure(&mesh, &rig).expect("a skull");
         let canon = Canon::measure(&rig, &skull, &EyeParams::default());

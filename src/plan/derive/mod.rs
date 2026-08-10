@@ -46,5 +46,5 @@
 //! unsourced guesses from the first commit. See the crate docs (#52) for what
 //! the four provenance tags mean.
 
-pub(super) mod humanoid;
+pub(crate) mod humanoid;
 pub(super) mod quadruped;

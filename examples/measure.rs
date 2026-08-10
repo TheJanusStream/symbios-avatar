@@ -176,7 +176,7 @@ fn cells(skeleton: &symbios_avatar::Skeleton) {
     );
     for levels in 0..=3 {
         let mut mesh = refine_face(&catmull_clark(&cage, BODY_SUBDIVISIONS), &rig, levels);
-        shape_skull(&mut mesh, &rig);
+        shape_skull(&mut mesh, &rig, &Default::default());
 
         let (lo, hi) = mesh
             .positions

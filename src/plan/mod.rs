@@ -23,7 +23,7 @@
 //! `tests/plan.rs` walks the whole space and asserts every combination meshes.
 
 mod composites;
-mod derive;
+pub(crate) mod derive;
 mod humanoid;
 mod quadruped;
 mod zone;

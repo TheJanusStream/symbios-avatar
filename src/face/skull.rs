@@ -32,7 +32,8 @@ use glam::Vec3;
 
 use super::smooth;
 use crate::mesh::PolyMesh;
-use crate::plan::Zone;
+use crate::plan::derive::humanoid::frame;
+use crate::plan::{Composites, Zone};
 use crate::rig::Rig;
 
 /// How much longer a head is than it is wide, before anything else runs.
@@ -585,6 +586,186 @@ const SETTLE: f32 = 0.92;
 /// the four-point cage and called it stable, which is the same measurement
 /// one cage earlier.
 const SETTLED: f32 = 0.91;
+/// How far up the forehead the frontal fullness reaches, and how much of it
+/// each height takes.
+///
+/// A companion to [`BROW`] rather than part of it: the brow ridge is the bone
+/// over the eye and this is the vault above it, and the frame axis moves the
+/// two in OPPOSITE directions — a heavy brow sits under a forehead that slopes
+/// away, and a light one under a forehead that stands up. One profile scaled
+/// two ways could not say that.
+///
+/// Zero at the brow's own crest so the two do not fight over the same
+/// millimetre, and zero again at the crown where a ray grazes and no
+/// measurement is trustworthy.
+///
+/// Provenance: **derived** from the two CC0 mannequins (#166). Their foreheads
+/// are where they most disagree: measured by ray from each head's own axis and
+/// normalised by that head's own peak forward reach, the female's falls away 9%
+/// less steeply from 0.65 to 0.90 of the head's span, which is 0.48 to 0.94 in
+/// the profile heights here. The knots are that window.
+const FOREHEAD: [(f32, f32); 4] = [(1.00, 0.0), (0.80, 1.0), (0.58, 0.55), (0.45, 0.0)];
+
+/// How a head reads the frame axis.
+///
+/// **The first record parameter the profiles in this file have ever taken**
+/// (#166). Every other head variation is cage-side — `head_size` is a node
+/// radius, `head_breadth` a node section, `face_length` a joint placement — and
+/// `crate::plan::derive::humanoid`'s `HEAD_BREADTH_SPAN` records why: a
+/// breadth-like quantity moved here rather than on the cage opens the head/neck
+/// seam, because [`shape`] moves head-owned vertices and leaves the neck's
+/// alone. What belongs here is the carve — the shapes a capsule cannot say —
+/// and facial dimorphism is almost entirely carve.
+///
+/// **Every field is a factor about ONE, and the neutral head is the identity.**
+/// `femininity` zero is the midpoint of the two measured references, which is
+/// the head this crate already built, so `Dimorphism::of(&Composites::default())`
+/// has to be [`Dimorphism::default`] to four decimals or the epic's neutral
+/// anchor has moved. `the_neutral_head_is_the_head_that_was_already_built`
+/// asserts it.
+///
+/// **What is measured and what is looked up**, because the two references carry
+/// some of this set and not all of it. Their vaults agree to within 1% in width
+/// and 2% in depth from 0.25 to 0.80 of the head's span — which is what makes
+/// the three places they disagree worth reading — but neither mannequin has a
+/// brow ridge to speak of, and the gonial angle needs a border detector that
+/// measuring a silhouette does not give. So [`Self::jaw_breadth`] and
+/// the elongation term are derived from the references, [`Self::chin`] and
+/// [`Self::frontal`] take their SIGN from the references and their size from a
+/// render, and [`Self::brow`] and [`Self::gonion`] are looked up. Each says so.
+///
+/// **`ELONGATION` is measurably dimorphic and is deliberately NOT here**, and
+/// the reason is the one that retired `build` and `muscle` (#164). The two
+/// mannequins' head length-to-breadth reads 1.566 masculine against 1.522
+/// feminine, so the axis has a real claim on it — but `head_breadth` is already
+/// a record axis and it sets that same ratio from the cage's own section. A
+/// second, hidden driver of one quantity is two axes that can contradict each
+/// other, which is what this epic exists to stop. It is also not a carve: the
+/// split this file's header describes puts breadth-like quantities on the cage.
+/// Anyone who wants the axis to reach it should move `head_breadth`'s DEFAULT,
+/// not add a term here.
+///
+/// It was tried first, and what it cost is worth recording: a longer head
+/// reaches further forward everywhere, so the elongation term swamped
+/// [`Self::frontal`] three to two at the forehead and inverted the one
+/// measurement the forehead window was derived from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Dimorphism {
+    /// Multiplier on the horizontal radius through the lower face.
+    ///
+    /// Bigonial breadth, and the strongest signal the references carry. Measured
+    /// as each head's half-width at 0.15 of its own span over its own peak
+    /// half-width: male 0.708, female 0.594, so the male's jaw is 19% wider
+    /// relative to his own vault. The effect is 7.5% at 0.20 of span and gone by
+    /// 0.25, which is why `Dimorphism::breadth_at` tapers it out over exactly
+    /// that run rather than applying it to the whole lower face.
+    ///
+    /// Provenance: **derived from the reference mannequins** (#166).
+    pub jaw_breadth: f32,
+    /// Multiplier on `CHIN`'s forward push.
+    ///
+    /// **Sign measured, size not.** The references agree that the male chin
+    /// projects further — axis-free, as chin reach minus brow reach so the axis
+    /// cancels, his stands 13.3 mm behind his own brow against her 29.4 — but
+    /// 16 mm of difference between two mannequins is a stylisation and not
+    /// anthropometry: life puts chin-behind-brow in the 5–15 mm band on both
+    /// sexes and the difference between them at a few millimetres. Taking the
+    /// measured figure would have given a factor of 1 ± 0.34 and very nearly
+    /// deleted the feminine chin.
+    ///
+    /// Provenance: **sign derived from the references, magnitude tuned by
+    /// render** (#166).
+    pub chin: f32,
+    /// Multiplier on `BROW`'s ledge.
+    ///
+    /// The supraorbital ridge, heavier on a masculine skull, and one of the
+    /// first things a forensic determination reads. Neither mannequin has one
+    /// to measure — their foreheads agree to 2% right through the brow's own
+    /// band — so this is the looked-up direction at a size the render carries.
+    ///
+    /// Provenance: **looked up, sized by render** (#166).
+    pub brow: f32,
+    /// How far the forehead above the brow stands proud, in skull radii, over
+    /// the `FOREHEAD` window.
+    ///
+    /// **Zero at neutral, and signed**, unlike every other field here: the
+    /// neutral head is the one this crate already built and it gains nothing, so
+    /// a masculine forehead slopes away from it and a feminine one stands up.
+    /// See `FOREHEAD` for the measurement that sets the window.
+    ///
+    /// Provenance: **sign and window derived from the references, magnitude
+    /// tuned by render** (#166).
+    pub frontal: f32,
+    /// Replaces `GONION` — where the mandible's lower border sits at the
+    /// angle of the jaw.
+    ///
+    /// The gonial angle, as the border's height rather than as a degree: with
+    /// `MENTON` fixed at the chin, raising this steepens the mandibular plane
+    /// and lowering it flattens the jaw into a square one. The looked-up plane
+    /// is 22–28° below the horizontal, and the sexes sit at the two ends of it —
+    /// a masculine mandible is the flatter, more everted one. `GONION`'s own
+    /// docstring derives −0.31 from the middle of that band, so the ends of the
+    /// band are the ends of this axis and no new source is needed.
+    ///
+    /// Provenance: **derived from `GONION`'s own looked-up 22–28° plane**,
+    /// read at its ends instead of its middle (#166).
+    pub gonion: f32,
+}
+
+impl Default for Dimorphism {
+    /// The head this crate built before the axis existed.
+    fn default() -> Self {
+        Self {
+            jaw_breadth: 1.0,
+            chin: 1.0,
+            brow: 1.0,
+            frontal: 0.0,
+            gonion: GONION,
+        }
+    }
+}
+
+impl Dimorphism {
+    /// Resolves the profiles' parameters for one body.
+    #[must_use]
+    pub fn of(composites: &Composites) -> Self {
+        // Saturated for the head's own reasons and not for the body's. The
+        // frame axis is stretched past ±1 by generator 2, and a face is where
+        // that reads soonest: the terms here are carve rather than size, so a
+        // femininity of +2.9 does not make a larger-eyed face, it deletes a
+        // chin. #164 clamps the same axis at (−1.25, 2.85) for the BODY, at a
+        // wall it measured; this is a judgement about faces and is tighter.
+        let femininity = composites.femininity.clamp(-1.5, 1.5);
+        Self {
+            jaw_breadth: frame(femininity, 0.708, 0.594),
+            // ±12% about the neutral chin, against the ±34% the references
+            // themselves asked for. See the field.
+            chin: 1.0 + 0.12 * -femininity,
+            // ±25%, which is the largest factor here and still reads as a
+            // shading difference rather than as a ledge appearing.
+            brow: 1.0 + 0.25 * -femininity,
+            // In skull radii, against a `BROW` whose own peak is 0.042.
+            frontal: 0.014 * femininity,
+            // The 22–28° mandibular plane read at its ends. `GONION`'s
+            // derivation turns a degree into a height: the plane's rise over an
+            // 85 mm gonion-to-menton run, as a fraction of the head's radius and
+            // then through the floor remap. Rerunning it at 22° and 28° puts the
+            // border 0.036 profile heights either side of the middle.
+            gonion: GONION + 0.036 * femininity,
+        }
+    }
+
+    /// How much wider or narrower the lower face is at `height`.
+    ///
+    /// One at [`Self::jaw_breadth`]'s upper edge and above, full at the angle of
+    /// the jaw and below. The window is the references' own: their half-widths
+    /// disagree by 16% at 0.15 of the head's span, 7.5% at 0.20 and nothing at
+    /// 0.25, which is −0.43, −0.34 and −0.25 in the profile heights here.
+    fn breadth_at(&self, height: f32) -> f32 {
+        let weight = ((-0.25 - height) / 0.18).clamp(0.0, 1.0);
+        1.0 + (self.jaw_breadth - 1.0) * weight
+    }
+}
 
 /// The region each refinement pass covers: how far round the head it reaches as
 /// a cosine of the angle from dead ahead, then its lowest and highest point.
@@ -835,7 +1016,7 @@ pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
 /// Does nothing to a body with no head. Idempotent only in the sense that it is
 /// a function of the rest positions — call it once, on the rest mesh, before
 /// binding or unwrapping.
-pub fn shape(mesh: &mut PolyMesh, rig: &Rig) {
+pub fn shape(mesh: &mut PolyMesh, rig: &Rig, dimorphism: &Dimorphism) {
     // These are a HUMAN skull's proportions — a chin, a brow ridge, cheekbones
     // widest. On something that walks on all fours they are simply wrong, in the
     // same way that giving its front legs fingers was wrong. A creature's head
@@ -869,7 +1050,7 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig) {
         if !mine {
             continue;
         }
-        *point = centre + reshape_to(*point - centre, radius, floor);
+        *point = centre + reshape_to(*point - centre, radius, floor, dimorphism);
     }
 
     if std::env::var_os("SKIP_SUBMENTAL").is_none() {
@@ -1045,8 +1226,8 @@ fn construct_submental(mesh: &mut PolyMesh, owned: &[bool], centre: Vec3, radius
 ///
 /// Takes and returns a position relative to the head joint, in metres.
 #[must_use]
-pub fn reshape(local: Vec3, radius: f32) -> Vec3 {
-    reshape_to(local, radius, JUNCTION)
+pub fn reshape(local: Vec3, radius: f32, dimorphism: &Dimorphism) -> Vec3 {
+    reshape_to(local, radius, JUNCTION, dimorphism)
 }
 
 /// The same, on a head whose surface is known to run out at `floor`.
@@ -1058,7 +1239,7 @@ pub fn reshape(local: Vec3, radius: f32) -> Vec3 {
 /// the eyes sit at `+0.05` radii and every feature is placed from [`Skull`],
 /// which measures the built surface rather than predicting it.
 #[must_use]
-pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
+pub fn reshape_to(local: Vec3, radius: f32, floor: f32, dimorphism: &Dimorphism) -> Vec3 {
     if radius <= f32::EPSILON {
         return local;
     }
@@ -1139,7 +1320,12 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
     // still carries a quarter, which is the muzzle the paragraph above
     // rejects. Judged on the top-down and frontal renders across seeds.
     let point = smooth((facing - 0.42) / 0.58);
-    let ledge = knot(&BROW, height) * ahead * ahead;
+    // The brow ridge and the vault above it, which the frame axis moves in
+    // opposite directions — see [`Dimorphism::frontal`] and [`FOREHEAD`].
+    let ledge = (knot(&BROW, height) * dimorphism.brow
+        + knot(&FOREHEAD, height) * dimorphism.frontal)
+        * ahead
+        * ahead;
     let hollow = knot(&TEMPLE, height) * (local.x / reach) * (local.x / reach);
 
     // The jaw draws the whole horizontal radius in rather than the width alone:
@@ -1147,12 +1333,13 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
     // narrowing across without retreating at the same time gives a slab. The
     // chin and the brow are added after it, so neither is scaled by a hollow
     // that has no business with either.
-    let mandible = 1.0 - jaw(height, facing, local.x / reach);
+    let mandible = 1.0 - jaw(height, facing, local.x / reach, dimorphism);
 
     Vec3::new(
-        local.x * (wide - hollow) * mandible,
+        local.x * (wide - hollow) * mandible * dimorphism.breadth_at(height),
         local.y,
-        local.z * deep * mandible + (knot(&CHIN, height) * point * stretch + ledge) * radius,
+        local.z * deep * mandible
+            + (knot(&CHIN, height) * dimorphism.chin * point * stretch + ledge) * radius,
     )
 }
 
@@ -1192,7 +1379,7 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32) -> Vec3 {
 ///
 /// `facing` is the cosine of the azimuth from dead ahead and `side` its sine,
 /// both as [`reshape_to`] already has them; `height` is after the floor remap.
-fn jaw(height: f32, facing: f32, side: f32) -> f32 {
+fn jaw(height: f32, facing: f32, side: f32, dimorphism: &Dimorphism) -> f32 {
     let side = side.abs();
     // Nothing on the midline, where the chin already rules and where a hollow
     // would carve a groove either side of it; full from about 53° out; and dead
@@ -1224,7 +1411,7 @@ fn jaw(height: f32, facing: f32, side: f32) -> f32 {
         return 0.0;
     }
 
-    let border = MENTON + (GONION - MENTON) * side;
+    let border = MENTON + (dimorphism.gonion - MENTON) * side;
     let under = border - height;
     if under <= 0.0 {
         return 0.0;
@@ -1424,6 +1611,41 @@ mod tests {
     use super::*;
     use crate::{Archetype, AvatarRecord, CageConfig, build_cage, catmull_clark};
 
+    /// The same head at a chosen point on the frame axis, with its joint.
+    ///
+    /// **The ruler here is the head JOINT and not the skull's own span**, and
+    /// that is deliberate. Every measurement in this file is normally binned
+    /// over `throat..crown`, and this file records four separate occasions on
+    /// which a change that moved the neck was reported as a face regression
+    /// because the span moved under the ruler. The frame axis is the fifth
+    /// candidate — but the cage does not read it for the head, so the head
+    /// node's position and radius are bit-identical across the whole sweep, and
+    /// a height in radii above that joint means the same thing at both ends.
+    fn framed(seed: i64, femininity: f32) -> (PolyMesh, Vec3, f32, f32) {
+        let mut record = AvatarRecord::new("Framed", Archetype::default());
+        record.reroll(seed);
+        record.composites = Composites {
+            femininity,
+            ..Composites::default()
+        };
+        let skeleton = record.skeleton();
+        let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+        let mut mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        shape(&mut mesh, &rig, &Dimorphism::of(&record.composites));
+        let joint = *rig.in_zone(Zone::Head).first().expect("a head");
+        // The remap `reshape_to` applies, so a test can ask for a PROFILE
+        // height — the coordinate every table in this file is authored in — and
+        // get the radii above the joint that it lands at on this head.
+        let stretch = floor(&rig, joint) * SETTLE / JUNCTION;
+        (
+            mesh,
+            rig.joints[joint].position,
+            rig.joints[joint].radius,
+            stretch,
+        )
+    }
+
     fn head(seed: i64) -> (PolyMesh, PolyMesh, Rig, Vec3, f32) {
         let mut record = AvatarRecord::new("Skulled", Archetype::default());
         record.reroll(seed);
@@ -1432,7 +1654,7 @@ mod tests {
         let plain = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let mut shaped = plain.clone();
-        shape(&mut shaped, &rig);
+        shape(&mut shaped, &rig, &Default::default());
         let joint = *rig.in_zone(Zone::Head).first().expect("a head");
         let (centre, radius) = (rig.joints[joint].position, rig.joints[joint].radius);
         (plain, shaped, rig, centre, radius)
@@ -1482,6 +1704,111 @@ mod tests {
             deep = deep.max((point.z - centre.z).abs());
         }
         (wide / radius, deep / radius)
+    }
+
+    #[test]
+    fn the_neutral_head_is_the_head_that_was_already_built() {
+        // The epic's identity anchor (#161, #166): `femininity` zero is the
+        // midpoint of the two measured references, which is the head this crate
+        // built before the axis existed. Every field of [`Dimorphism`] is a
+        // factor about one for exactly this reason, and a pair of anchors whose
+        // midpoint is not today's value would move every neutral body in the
+        // crate without a single test naming the axis.
+        assert_eq!(
+            Dimorphism::of(&Composites::default()),
+            Dimorphism::default(),
+            "the neutral frame no longer builds the head this crate shipped"
+        );
+    }
+
+    #[test]
+    fn the_frame_axis_moves_the_face_and_leaves_the_vault_alone() {
+        // **What the two CC0 mannequins actually disagree about** (#166). Their
+        // vaults match to within 1% in width and 2% in depth from 0.25 to 0.80
+        // of the head's span, and they part company in three places: the jaw is
+        // wider on the masculine head, the chin projects further, and the
+        // feminine forehead stands more upright. This asserts that shape and
+        // asserts the agreement too — a dimorphism that also swelled the
+        // parietal would be `head_size` wearing a second name, and this crate
+        // already has that axis on the cage.
+        //
+        // Heights are radii above the head JOINT rather than fractions of the
+        // skull's span; see [`framed`] for why that distinction is load-bearing
+        // here and has been got wrong four times elsewhere in this file.
+        for seed in [0i64, 3, 7, 21] {
+            let ends: Vec<(PolyMesh, Vec3, f32, f32)> = [-1.0f32, 0.0, 1.0]
+                .iter()
+                .map(|&f| framed(seed, f))
+                .collect();
+            // Heights are asked for as profile heights and put through each
+            // head's own remap, because that is the coordinate `BREADTH` and
+            // `CHIN` are authored in — a raw radius means a different part of
+            // the face on every body, and at the jaw it means a fifth of the
+            // dimorphism.
+            let at = |index: usize, height: f32, along: Vec3| {
+                let (mesh, centre, radius, stretch) = &ends[index];
+                let up = if height < 0.0 {
+                    height * stretch
+                } else {
+                    height
+                };
+                bisect(mesh, *centre + Vec3::Y * up * radius, along)
+                    .expect("the midline is inside the head")
+                    / radius
+            };
+            let across = |index: usize, height: f32| at(index, height, Vec3::X);
+            let ahead = |index: usize, height: f32| at(index, height, Vec3::Z);
+
+            // The jaw, at the angle where `BREADTH` calls the profile widest
+            // below the cheek. Masculine is wider and the axis is monotone.
+            let (jaw_m, jaw_n, jaw_f) = (across(0, -0.46), across(1, -0.46), across(2, -0.46));
+            assert!(
+                jaw_m > jaw_n && jaw_n > jaw_f,
+                "seed {seed}: the jaw reads {jaw_m:.4}, {jaw_n:.4}, {jaw_f:.4} across the axis \
+                 and has to narrow all the way"
+            );
+            assert!(
+                jaw_m / jaw_f > 1.04,
+                "seed {seed}: the jaw is only {:.1}% wider at the masculine end, which is less \
+                 than the references' own 19% by more than the taper can explain",
+                100.0 * (jaw_m / jaw_f - 1.0)
+            );
+
+            // The parietal, where the two references agree and this axis must
+            // not invent a difference.
+            let (vault_m, vault_f) = (across(0, 0.42), across(2, 0.42));
+            assert!(
+                (vault_m / vault_f - 1.0).abs() < 0.02,
+                "seed {seed}: the axis moved the parietal by {:.1}%, which is head SIZE and \
+                 belongs on the cage",
+                100.0 * (vault_m / vault_f - 1.0)
+            );
+
+            // The chin projects further on the masculine head, and the forehead
+            // above the brow stands further forward on the feminine one. Two
+            // rays from the same joint at two heights, so nothing here depends
+            // on where the skull's span begins.
+            let (chin_m, chin_f) = (ahead(0, -0.50), ahead(2, -0.50));
+            assert!(
+                chin_m > chin_f,
+                "seed {seed}: the chin reaches {chin_m:.4} masculine against {chin_f:.4} feminine"
+            );
+            // **As a SLOPE and not as a reach**, which is the same
+            // normalisation lesson the references themselves taught: measured
+            // as absolute forward reach the answer is dominated by how long the
+            // head is, and every quantity in this file that is read without
+            // dividing out the head reports head size. The upper forehead over
+            // the brow's own reach is elongation-free and is what "upright"
+            // means.
+            let slope = |index: usize| ahead(index, 0.94) / ahead(index, 0.48);
+            let (slope_m, slope_f) = (slope(0), slope(2));
+            assert!(
+                slope_f > slope_m,
+                "seed {seed}: the forehead keeps {slope_f:.4} of its brow's reach at the \
+                 feminine end against {slope_m:.4} at the masculine one, and the feminine \
+                 forehead is the upright one"
+            );
+        }
     }
 
     #[test]
@@ -1936,9 +2263,13 @@ mod tests {
             let mut record = AvatarRecord::new("Skulled", Archetype::default());
             record.reroll(seed);
             let skeleton = record.skeleton();
-            let mesh =
-                crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
-                    .expect("a body builds");
+            let mesh = crate::build_body(
+                &skeleton,
+                &CageConfig::default(),
+                crate::BODY_SUBDIVISIONS,
+                &Default::default(),
+            )
+            .expect("a body builds");
             let rig = Rig::from_skeleton(&skeleton).expect("rigs");
             let skull = Skull::measure(&mesh, &rig).expect("a skull");
             let centre = rig.joints[skull.head].position;
@@ -2014,8 +2345,13 @@ mod tests {
                 let mut record = AvatarRecord::new("Skulled", Archetype::default());
                 record.reroll(seed);
                 let skeleton = record.skeleton();
-                let mut mesh = crate::build_body(&skeleton, &CageConfig::default(), levels)
-                    .expect("a body builds");
+                let mut mesh = crate::build_body(
+                    &skeleton,
+                    &CageConfig::default(),
+                    levels,
+                    &Default::default(),
+                )
+                .expect("a body builds");
                 let rig = Rig::from_skeleton(&skeleton).expect("rigs");
                 let skull = Skull::measure(&mesh, &rig).expect("a skull");
                 let canon = crate::face::Canon::measure(&rig, &skull, &Default::default());
@@ -2047,8 +2383,13 @@ mod tests {
         // taken. Now it is the exception, which means nothing else exercises it.
         use crate::plan::{BodyPlan, QuadrupedParams};
         let skeleton = QuadrupedParams::default().skeleton(&crate::Composites::default());
-        let mesh = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
-            .expect("a creature builds");
+        let mesh = crate::build_body(
+            &skeleton,
+            &CageConfig::default(),
+            crate::BODY_SUBDIVISIONS,
+            &Default::default(),
+        )
+        .expect("a creature builds");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let skull = Skull::measure(&mesh, &rig).expect("a creature has a head to measure");
         assert_eq!(
@@ -2113,9 +2454,13 @@ mod tests {
             let mut record = AvatarRecord::new("Skulled", Archetype::default());
             record.reroll(seed);
             let skeleton = record.skeleton();
-            let mut mesh =
-                crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
-                    .expect("a body builds");
+            let mut mesh = crate::build_body(
+                &skeleton,
+                &CageConfig::default(),
+                crate::BODY_SUBDIVISIONS,
+                &Default::default(),
+            )
+            .expect("a body builds");
             let rig = Rig::from_skeleton(&skeleton).expect("rigs");
             let skull = Skull::measure(&mesh, &rig).expect("a skull");
             let canon = crate::face::Canon::measure(&rig, &skull, &Default::default());
@@ -2218,8 +2563,13 @@ mod tests {
                 let mut record = AvatarRecord::new("Skulled", Archetype::default());
                 record.reroll(seed);
                 let skeleton = record.skeleton();
-                let mesh = crate::build_body(&skeleton, &CageConfig::default(), levels)
-                    .expect("a body builds");
+                let mesh = crate::build_body(
+                    &skeleton,
+                    &CageConfig::default(),
+                    levels,
+                    &Default::default(),
+                )
+                .expect("a body builds");
                 let rig = Rig::from_skeleton(&skeleton).expect("rigs");
                 let skull = Skull::measure(&mesh, &rig).expect("a skull");
                 let centre = rig.joints[skull.head].position;
@@ -2400,7 +2750,7 @@ mod tests {
         // the shaping. It belongs exactly once in the build.
         let (plain, shaped, rig, ..) = head(9);
         let mut twice = shaped.clone();
-        shape(&mut twice, &rig);
+        shape(&mut twice, &rig, &Default::default());
         assert_ne!(twice.positions, shaped.positions);
         assert_eq!(twice.vertex_count(), plain.vertex_count());
     }
@@ -2414,7 +2764,7 @@ mod tests {
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
 
         let mut shaped = plain.clone();
-        shape(&mut shaped, &rig);
+        shape(&mut shaped, &rig, &Default::default());
         assert_eq!(
             plain.positions, shaped.positions,
             "a quadruped was given a human chin and brow"
@@ -2491,7 +2841,7 @@ mod tests {
             &rig,
             levels,
         );
-        shape(&mut mesh, &rig);
+        shape(&mut mesh, &rig, &Default::default());
         let measured = Skull::measure(&mesh, &rig).expect("a humanoid has a skull");
         let joint = &rig.joints[measured.head];
         (mesh, measured, joint.position, joint.radius)

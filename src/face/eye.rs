@@ -696,6 +696,7 @@ mod tests {
             skeleton,
             &crate::CageConfig::default(),
             crate::BODY_SUBDIVISIONS,
+            &Default::default(),
         )
         .expect("mesh");
         let skull = Skull::measure(&mesh, &rig).expect("a skull");
@@ -1080,6 +1081,7 @@ mod tests {
             &bare,
             &crate::CageConfig::default(),
             crate::BODY_SUBDIVISIONS,
+            &Default::default(),
         )
         .expect("mesh");
         assert_eq!(Skull::measure(&mesh, &rig), None);
@@ -1126,6 +1128,7 @@ mod tests {
                 &skeleton,
                 &crate::CageConfig::default(),
                 crate::BODY_SUBDIVISIONS,
+                &Default::default(),
             )
             .expect("mesh");
             let skull = Skull::measure(&mesh, &rig).expect("a skull");
