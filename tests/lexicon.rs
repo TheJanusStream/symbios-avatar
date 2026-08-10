@@ -264,6 +264,46 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
         );
     }
 
+    // The composites (#162), whose two kinds of axis are bounded two different
+    // ways and so are the easiest place in the schema for a bound to drift. The
+    // shape pair carry the exploration envelope like every other shape axis;
+    // `bodyFat` and `age` carry their own hard ranges, because a tripled body
+    // fat fraction is negative and a tripled age is not a person.
+    let composites = &defs["defs"]["composites"]["properties"];
+    let signed = symbios_avatar::Composites::signed_envelope();
+    for axis in ["femininity", "mass"] {
+        assert_eq!(
+            composites[axis]["minimum"].as_i64(),
+            Some((signed.0 * 1000.0).round() as i64),
+            "the declared floor on {axis} disagrees with the crate"
+        );
+        assert_eq!(
+            composites[axis]["maximum"].as_i64(),
+            Some((signed.1 * 1000.0).round() as i64),
+            "the declared ceiling on {axis} disagrees with the crate"
+        );
+    }
+    assert_eq!(
+        composites["bodyFat"]["minimum"].as_i64(),
+        Some((symbios_avatar::plan::BODY_FAT_RANGE.0 * 1000.0).round() as i64),
+        "the declared floor on bodyFat disagrees with the crate"
+    );
+    assert_eq!(
+        composites["bodyFat"]["maximum"].as_i64(),
+        Some((symbios_avatar::plan::BODY_FAT_RANGE.1 * 1000.0).round() as i64),
+        "the declared ceiling on bodyFat disagrees with the crate"
+    );
+    assert_eq!(
+        composites["age"]["minimum"].as_u64(),
+        Some(u64::from(symbios_avatar::plan::AGE_RANGE.0)),
+        "the declared floor on age disagrees with the crate"
+    );
+    assert_eq!(
+        composites["age"]["maximum"].as_u64(),
+        Some(u64::from(symbios_avatar::plan::AGE_RANGE.1)),
+        "the declared ceiling on age disagrees with the crate"
+    );
+
     // How many locks the rim of the hair breaks into. This used to be `groups`,
     // the count of strand groups, and it was the one axis a record could spend
     // the whole avatar's triangle budget through. The mass is a shell now and
@@ -297,7 +337,16 @@ fn declared_defaults_match_the_values_the_crate_writes() {
     // VALUE, and the two definitions carrying the most axes were exempt from it.
     // A default that drifts is invisible to every reader who omits the field and
     // to nobody else, which is the hardest kind of schema defect to notice.
-    let cases: [(&str, Value); 5] = [
+    let cases: [(&str, Value); 6] = [
+        (
+            // The identity anchor of the whole composite overhaul (#161): the
+            // formulas are written so that THIS description reproduces the body
+            // the plan built before composites existed. A default that drifts
+            // here moves the anchor and silently invalidates every coefficient
+            // tuned against it.
+            "composites",
+            serde_json::to_value(symbios_avatar::Composites::default()).expect("serialises"),
+        ),
         (
             "skin",
             serde_json::to_value(symbios_avatar::SkinParams::default()).expect("serialises"),

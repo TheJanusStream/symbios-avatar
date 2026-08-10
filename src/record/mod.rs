@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use crate::dress::OutfitParams;
 use crate::face::{EyeParams, FaceParams};
 use crate::hair::HairParams;
-use crate::plan::{Archetype, Category, Rolls};
+use crate::plan::{Archetype, Category, Composites, Rolls};
 use crate::skeleton::Skeleton;
 use crate::texture::SkinParams;
 
@@ -117,6 +117,16 @@ pub struct AvatarRecord {
     /// The body this avatar describes.
     #[serde(default)]
     pub archetype: Archetype,
+    /// How the body is described at the level a person is described at.
+    ///
+    /// The high tier of the two-tier parameterisation (#161): these fan out
+    /// through formulas to many quantities at once, and the per-region axes on
+    /// [`Self::archetype`] and the face blocks apply as offsets on top. Kept
+    /// here rather than inside the archetype because the cage, the skull and
+    /// the skin all read them, and none of those should have to know which body
+    /// plan is in use to do it.
+    #[serde(default)]
+    pub composites: Composites,
     /// The complexion painted onto it.
     #[serde(default)]
     pub skin: SkinParams,
@@ -172,6 +182,7 @@ impl Default for AvatarRecord {
         Self {
             name: String::from("Unnamed"),
             archetype: Archetype::default(),
+            composites: Composites::default(),
             skin: SkinParams::default(),
             eyes: EyeParams::default(),
             face: FaceParams::default(),
@@ -210,6 +221,7 @@ impl AvatarRecord {
         }
         self.name = self.name.trim().to_string();
         self.archetype.sanitize();
+        self.composites.sanitize();
         self.skin.sanitize();
         self.eyes.sanitize();
         self.face.sanitize();
@@ -240,6 +252,7 @@ impl AvatarRecord {
                 continue;
             }
             self.archetype.reroll(category, &rolls);
+            self.composites.reroll(category, &rolls);
             if category == Category::Features {
                 reroll_skin(&mut self.skin, &rolls);
                 reroll_face(&mut self.eyes, &mut self.face, &mut self.hair, &rolls);
@@ -291,7 +304,7 @@ impl AvatarRecord {
     /// Renders this avatar's look as a compact share code.
     #[must_use]
     pub fn share_code(&self) -> String {
-        code::encode(&self.archetype, &self.skin)
+        code::encode(&self.archetype, &self.composites, &self.skin)
     }
 
     /// Replaces this avatar's body with the look a share code describes,
@@ -301,8 +314,9 @@ impl AvatarRecord {
     ///
     /// Returns [`ShareCodeError`] if the code is malformed or unsupported.
     pub fn apply_share_code(&mut self, share_code: &str) -> Result<(), ShareCodeError> {
-        let (archetype, skin) = code::decode(share_code)?;
+        let (archetype, composites, skin) = code::decode(share_code)?;
         self.archetype = archetype;
+        self.composites = composites;
         self.skin = skin;
         self.sanitize();
         Ok(())
@@ -317,8 +331,9 @@ impl AvatarRecord {
         name: impl Into<String>,
         share_code: &str,
     ) -> Result<Self, ShareCodeError> {
-        let (archetype, skin) = code::decode(share_code)?;
+        let (archetype, composites, skin) = code::decode(share_code)?;
         let mut record = Self::new(name, archetype);
+        record.composites = composites;
         record.skin = skin;
         record.sanitize();
         Ok(record)
@@ -471,9 +486,17 @@ mod tests {
         let record = AvatarRecord::new("Ari", Archetype::default());
         assert_eq!(record.name, "Ari");
         assert!(record.fits_budget());
+        // The bound is a ratchet on a record that should stay small, not a
+        // budget — [`RECORD_BUDGET_BYTES`] is that, and it is a hundred and
+        // thirty times further away. Raised 700 -> 800 when the composites
+        // block landed (#162), which is the first time it has moved: measured,
+        // a fresh record went 683 -> 745 bytes, so the four axes cost 62.
+        // Report the size when it fires, because the question a reader has is
+        // "by how much".
+        let size = record.serialized_size().expect("serialises");
         assert!(
-            record.serialized_size().expect("serialises") < 700,
-            "a body is a few hundred bytes, not kilobytes"
+            size < 800,
+            "a fresh record is {size} bytes; a body is a few hundred, not kilobytes"
         );
     }
 
@@ -589,6 +612,54 @@ mod tests {
         assert_eq!(record.eyes.size, 0.7);
         assert_eq!(record.eyes.aperture, EyeParams::default().aperture);
         assert_eq!(record.hair.locks, HairParams::default().locks);
+    }
+
+    #[test]
+    fn a_record_written_before_composites_existed_reads_as_the_neutral_body() {
+        // Every avatar already stored was written without this block, and the
+        // whole two-tier design rests on those records still meaning what they
+        // meant: the composites default to the description whose formulas
+        // reproduce the body the archetype builds on its own (#161, #162).
+        //
+        // This is also the axis pair that would have caught the #19-25 defect
+        // on its own. `bodyFat` and `age` have NON-ZERO defaults, so a
+        // field-level default here would give a record a bodyless 0.0 fraction
+        // and a newborn's age rather than the neutral adult.
+        let json = r#"{"name":"Older","composites":{"femininity":250}}"#;
+        let record: AvatarRecord = serde_json::from_str(json).expect("deserialises");
+        assert_eq!(record.composites.femininity, 0.25, "the stated axis holds");
+        assert_eq!(
+            record.composites.body_fat,
+            Composites::default().body_fat,
+            "an omitted composite keeps its default, not zero"
+        );
+        assert_eq!(record.composites.age, Composites::default().age);
+
+        let absent: AvatarRecord = serde_json::from_str(r#"{"name":"Old"}"#).expect("deserialises");
+        assert_eq!(absent.composites, Composites::default());
+    }
+
+    #[test]
+    fn locks_reach_the_composites_they_own() {
+        // A lock is a promise about what stays, and it would be a lie if it
+        // held the archetype's `build` while re-rolling the `mass` that is
+        // going to replace it (#164). Mass and body fat belong to Build, the
+        // frame axis to Frame.
+        let mut record = AvatarRecord::new("Locked", Archetype::default());
+        record.reroll(11);
+        let first = record.composites;
+
+        record.locks = LockSet::NONE.with(Category::Build);
+        record.reroll(12);
+        assert_eq!(record.composites.mass, first.mass, "locked mass is kept");
+        assert_eq!(
+            record.composites.body_fat, first.body_fat,
+            "locked body fat is kept"
+        );
+        assert_ne!(
+            record.composites.femininity, first.femininity,
+            "an unlocked composite still moves"
+        );
     }
 
     #[test]
@@ -773,6 +844,14 @@ mod tests {
             "the look moves, the identity does not"
         );
         assert_eq!(target.locks, LockSet::NONE.with(Category::Build));
+
+        // The composites travel with the look, and this is the assertion that
+        // says why the code went to version 5 the moment they existed (#162):
+        // a description that stays behind is a look that changes when it is
+        // passed between people, which is the one thing a code is for.
+        assert!((target.composites.femininity - source.composites.femininity).abs() < 0.03);
+        assert!((target.composites.body_fat - source.composites.body_fat).abs() < 0.01);
+        assert!(target.composites.age.abs_diff(source.composites.age) <= 1);
 
         let (Archetype::Humanoid(from), Archetype::Humanoid(to)) =
             (source.archetype, target.archetype)

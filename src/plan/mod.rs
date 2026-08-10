@@ -22,6 +22,7 @@
 //! multiples of the joint radius they must clear. The parameter sweep in
 //! `tests/plan.rs` walks the whole space and asserts every combination meshes.
 
+mod composites;
 mod derive;
 mod humanoid;
 mod quadruped;
@@ -33,6 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::skeleton::Skeleton;
 
+pub use composites::{AGE_RANGE, BODY_FAT_RANGE, Composites, DEFAULT_AGE, DEFAULT_BODY_FAT};
 pub use humanoid::HumanoidParams;
 pub use quadruped::QuadrupedParams;
 pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};

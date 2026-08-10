@@ -15,10 +15,18 @@
 
 use thiserror::Error;
 
-use crate::plan::{Archetype, PlanDecodeError};
+use crate::plan::{Archetype, Composites, PlanDecodeError};
 use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
+///
+/// **5** — the composites block (#162): four bytes for the high-level axes,
+/// written after the archetype and before the complexion. Added here rather
+/// than left for the epic's versioning pass, because a record field that
+/// silently drops out of a share code is a look that changes when it is passed
+/// between people — the one thing a code exists not to do. Version 4 stays
+/// readable and decodes to the neutral composites, which is what a code written
+/// before the axes existed meant.
 ///
 /// **4** — the exploration envelope (#160): each plan byte now spans its
 /// axis's widened range rather than ±1, so a code can carry the extremes the
@@ -34,10 +42,20 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 4;
+pub const SHARE_CODE_VERSION: u8 = 5;
 
-/// The last format whose codes still decode, through their own spans.
-const LEGACY_VERSION: u8 = 3;
+/// The oldest format whose codes still decode.
+const OLDEST_VERSION: u8 = 3;
+
+/// The last format written before the composites block existed (#162).
+///
+/// Codes at or below it carry no composites and decode to the neutral ones,
+/// which is exactly what they meant when they were written down.
+const PRE_COMPOSITES_VERSION: u8 = 4;
+
+/// The last format whose plan bytes span ±1 rather than the exploration
+/// envelope (#160).
+const NARROW_SPAN_VERSION: u8 = 3;
 
 /// Crockford base32 digits.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -67,11 +85,12 @@ pub enum ShareCodeError {
 
 /// Renders a body and complexion as a share code.
 #[must_use]
-pub fn encode(archetype: &Archetype, skin: &SkinParams) -> String {
+pub fn encode(archetype: &Archetype, composites: &Composites, skin: &SkinParams) -> String {
     use crate::plan::{put_signed, put_unit};
 
     let mut payload = vec![SHARE_CODE_VERSION];
     archetype.encode(&mut payload);
+    composites.encode(&mut payload);
     put_unit(&mut payload, skin.melanin);
     put_signed(&mut payload, skin.undertone);
     put_unit(&mut payload, skin.blush);
@@ -89,7 +108,7 @@ pub fn encode(archetype: &Archetype, skin: &SkinParams) -> String {
 ///
 /// Returns [`ShareCodeError`] if the code contains an unknown character, is
 /// truncated, fails its checksum, or was written by a newer format.
-pub fn decode(code: &str) -> Result<(Archetype, SkinParams), ShareCodeError> {
+pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCodeError> {
     let bytes = base32_decode(code)?;
     // Version, archetype tag, at least one axis, checksum.
     if bytes.len() < 4 {
@@ -104,16 +123,23 @@ pub fn decode(code: &str) -> Result<(Archetype, SkinParams), ShareCodeError> {
     }
 
     let (&version, mut payload) = body.split_first().ok_or(ShareCodeError::TooShort)?;
-    if version != SHARE_CODE_VERSION && version != LEGACY_VERSION {
+    if !(OLDEST_VERSION..=SHARE_CODE_VERSION).contains(&version) {
         return Err(ShareCodeError::UnsupportedVersion(version));
     }
 
     use crate::plan::{take_signed, take_unit};
 
-    let archetype = if version == LEGACY_VERSION {
+    let archetype = if version <= NARROW_SPAN_VERSION {
         Archetype::decode_legacy(&mut payload)?
     } else {
         Archetype::decode(&mut payload)?
+    };
+    // A code older than the composites block described a body that had none,
+    // so the neutral ones are what it meant — not a gap to be guessed at.
+    let composites = if version <= PRE_COMPOSITES_VERSION {
+        Composites::default()
+    } else {
+        Composites::decode(&mut payload)?
     };
     let mut skin = SkinParams {
         melanin: take_unit(&mut payload)?,
@@ -123,7 +149,7 @@ pub fn decode(code: &str) -> Result<(Archetype, SkinParams), ShareCodeError> {
         stubble: take_unit(&mut payload)?,
     };
     skin.sanitize();
-    Ok((archetype, skin))
+    Ok((archetype, composites, skin))
 }
 
 /// Position-weighted sum, enough to catch a mistyped or transposed character.
@@ -218,8 +244,8 @@ mod tests {
             shoulder_width: -0.25,
             ..Default::default()
         });
-        let code = encode(&original, &SkinParams::default());
-        let (Archetype::Humanoid(back), _) = decode(&code).expect("decodes") else {
+        let code = encode(&original, &Composites::default(), &SkinParams::default());
+        let (Archetype::Humanoid(back), _, _) = decode(&code).expect("decodes") else {
             panic!("archetype changed");
         };
 
@@ -237,8 +263,8 @@ mod tests {
             leg_length: -0.5,
             ..Default::default()
         });
-        let code = encode(&original, &SkinParams::default());
-        let (Archetype::Quadruped(back), _) = decode(&code).expect("decodes") else {
+        let code = encode(&original, &Composites::default(), &SkinParams::default());
+        let (Archetype::Quadruped(back), _, _) = decode(&code).expect("decodes") else {
             panic!("archetype changed");
         };
         assert!((back.height - 0.9).abs() < 0.002);
@@ -248,7 +274,11 @@ mod tests {
 
     #[test]
     fn codes_stay_short_and_grouped() {
-        let code = encode(&Archetype::default(), &SkinParams::default());
+        let code = encode(
+            &Archetype::default(),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
         // Short enough to read aloud or fit a QR code comfortably. Body plus
         // complexion is about a dozen bytes; the ceiling leaves room to grow.
         assert!(code.len() <= 48, "code is {} chars: {code}", code.len());
@@ -257,7 +287,11 @@ mod tests {
 
     #[test]
     fn codes_survive_being_written_down() {
-        let code = encode(&Archetype::default(), &SkinParams::default());
+        let code = encode(
+            &Archetype::default(),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
         // Lower case, look-alike letters, stray spaces, missing hyphens.
         let mangled = code
             .to_lowercase()
@@ -269,7 +303,11 @@ mod tests {
 
     #[test]
     fn a_mistyped_character_is_caught() {
-        let code = encode(&Archetype::default(), &SkinParams::default());
+        let code = encode(
+            &Archetype::default(),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
         let digits: String = code.chars().filter(|c| *c != '-').collect();
 
         // Swap one digit for a different one; the checksum must notice.
@@ -304,7 +342,9 @@ mod tests {
         payload.push(checksum(&payload));
         let code = group(&base32_encode(&payload));
 
-        let (Archetype::Humanoid(back), skin) = decode(&code).expect("a v3 code decodes") else {
+        let (Archetype::Humanoid(back), composites, skin) =
+            decode(&code).expect("a v3 code decodes")
+        else {
             panic!("archetype changed");
         };
         assert!((back.height - 1.83).abs() < 0.002);
@@ -313,6 +353,69 @@ mod tests {
         assert!((back.shoulder_width + 0.25).abs() < 0.01);
         assert!((back.face_length + 0.7).abs() < 0.01);
         assert!((skin.melanin - 0.35).abs() < 0.01);
+        assert_eq!(
+            composites,
+            Composites::default(),
+            "a code written before composites existed described a body with the neutral ones"
+        );
+    }
+
+    #[test]
+    fn a_version_4_code_reads_without_composites_and_does_not_eat_the_complexion() {
+        // The bug this guards is the one a mid-payload insertion invites: read a
+        // v4 code as though it carried composites and the four bytes taken come
+        // out of the COMPLEXION, so the body decodes fine and the skin is
+        // nonsense. Assembled as a v4 writer would have written it.
+        use crate::plan::{put_signed, put_span, put_unit};
+        let mut payload = vec![4u8, 1]; // version 4, humanoid tag
+        crate::plan::put_length(&mut payload, 1.72);
+        let signed = crate::plan::explore_range(0.0, (-1.0, 1.0));
+        put_span(&mut payload, 0.5, signed); // build
+        put_span(
+            &mut payload,
+            0.75,
+            crate::plan::explore_range(0.0, (0.0, 1.0)),
+        ); // muscle
+        for axis in [-0.25, 0.1, 0.3, -0.4, 0.2, 0.6, -0.7, 0.15] {
+            put_span(&mut payload, axis, signed);
+        }
+        put_unit(&mut payload, 0.62); // melanin
+        put_signed(&mut payload, -0.3); // undertone
+        put_unit(&mut payload, 0.45); // blush
+        put_unit(&mut payload, 0.0); // freckles
+        put_unit(&mut payload, 0.0); // stubble
+        payload.push(checksum(&payload));
+        let code = group(&base32_encode(&payload));
+
+        let (Archetype::Humanoid(back), composites, skin) =
+            decode(&code).expect("a v4 code decodes")
+        else {
+            panic!("archetype changed");
+        };
+        assert!((back.height - 1.72).abs() < 0.002);
+        assert!((back.build - 0.5).abs() < 0.03);
+        assert_eq!(composites, Composites::default());
+        assert!(
+            (skin.melanin - 0.62).abs() < 0.01,
+            "the complexion must not be read out of the composites' bytes"
+        );
+        assert!((skin.undertone + 0.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_version_5_code_carries_the_composites() {
+        let composites = Composites {
+            femininity: 0.8,
+            mass: -0.6,
+            body_fat: 0.34,
+            age: 61,
+        };
+        let code = encode(&Archetype::default(), &composites, &SkinParams::default());
+        let (_, back, _) = decode(&code).expect("decodes");
+        assert!((back.femininity - 0.8).abs() < 0.03);
+        assert!((back.mass + 0.6).abs() < 0.03);
+        assert!((back.body_fat - 0.34).abs() < 0.01);
+        assert!(back.age.abs_diff(61) <= 1);
     }
 
     #[test]
@@ -327,8 +430,8 @@ mod tests {
             face_length: -2.2,
             ..Default::default()
         });
-        let code = encode(&original, &SkinParams::default());
-        let (Archetype::Humanoid(back), _) = decode(&code).expect("decodes") else {
+        let code = encode(&original, &Composites::default(), &SkinParams::default());
+        let (Archetype::Humanoid(back), _, _) = decode(&code).expect("decodes") else {
             panic!("archetype changed");
         };
         assert!((back.build - 2.5).abs() < 0.03);

@@ -153,6 +153,40 @@
         }
       }
     },
+    "composites": {
+      "type": "object",
+      "description": "The high-level description of a body: axes named for something about a person rather than about a body part, each fanning out through formulas to many quantities at once. The per-region axes on an archetype apply as offsets on top of what these derive. Kept beside the archetype rather than inside it because the body, the skull and the skin all read them. Shape axes are thousandths as elsewhere; bodyFat is thousandths of a fraction and age is whole years, not thousandths.",
+      "properties": {
+        "femininity": {
+          "type": "integer",
+          "description": "Where the body sits between the masculine and feminine references: -1000 fully masculine, +1000 fully feminine, 0 the midpoint of the two. Read by the frame, the fat distribution and the skull together, so a body cannot disagree with itself about it.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "mass": {
+          "type": "integer",
+          "description": "How much body there is, from slight to heavy. Thousandths, -3000 to 3000. Sets the girth budget; bodyFat decides how it is spent and where. A heavier body carries it in the fleshy sites and barely at all in the bony ones.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "bodyFat": {
+          "type": "integer",
+          "description": "What share of the body is fat, in thousandths of a fraction: 30 is about the essential fat of a very lean athlete and 600 is past where a silhouette keeps changing. Not stretched past its ends the way a shape axis is, because a negative fraction is not a leaner person but an absence of one.",
+          "minimum": 30,
+          "maximum": 600,
+          "default": 220
+        },
+        "age": {
+          "type": "integer",
+          "description": "How old the body is, in WHOLE YEARS rather than thousandths. Adults only: child proportions are a different envelope and a separate decision, not the bottom of this slider.",
+          "minimum": 18,
+          "maximum": 80,
+          "default": 28
+        }
+      }
+    },
     "skin": {
       "type": "object",
       "description": "A body's complexion. Axes are thousandths, as elsewhere: the AT Protocol data model has no floating-point type. Every combination is a usable complexion.",

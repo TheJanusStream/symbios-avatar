@@ -28,6 +28,11 @@
               "network.symbios.avatar.defs#quadruped"
             ]
           },
+          "composites": {
+            "type": "ref",
+            "ref": "network.symbios.avatar.defs#composites",
+            "description": "How the body is described at the level a person is described at: femininity, mass, body fat and age, which fan out through formulas to many quantities at once. The archetype's own axes apply as offsets on top. Absent means the neutral description, which is the body an archetype builds on its own."
+          },
           "seed": {
             "type": "integer",
             "description": "Seed of the last re-roll, kept so a look can be reproduced."

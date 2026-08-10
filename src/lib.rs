@@ -125,7 +125,7 @@ pub use hair::{Hair, HairParams, Scalp, Strand};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
 pub use plan::{
-    Archetype, BodyPlan, Category, HumanoidParams, Limb, QuadrupedParams, Zone, ZoneSet,
+    Archetype, BodyPlan, Category, Composites, HumanoidParams, Limb, QuadrupedParams, Zone, ZoneSet,
 };
 pub use record::{AvatarRecord, LockSet, ProfileRecord, ShareCodeError};
 pub use rig::{

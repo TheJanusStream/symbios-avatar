@@ -137,8 +137,15 @@ fn painting_does_not_bloat_the_record() {
     let mut record = AvatarRecord::default();
     record.reroll(3);
     assert!(record.fits_budget());
+    // A ratchet on a record that should stay small rather than a budget —
+    // `RECORD_BUDGET_BYTES` is that, and it is over a hundred times further
+    // off. Raised 800 -> 900 for the composites block (#162): measured, a
+    // rolled avatar went 738 -> 800 bytes, the same 62 the fresh record pays.
+    // Report the size, because "by how much" is the only useful thing to know
+    // when a ratchet fires.
+    let size = record.serialized_size().expect("serialises");
     assert!(
-        record.serialized_size().expect("serialises") < 800,
-        "a whole avatar is still under a kilobyte"
+        size < 900,
+        "a whole avatar is {size} bytes, and should still be under a kilobyte"
     );
 }
