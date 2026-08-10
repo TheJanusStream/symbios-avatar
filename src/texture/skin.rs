@@ -513,7 +513,7 @@ mod tests {
     use crate::uv::{UvConfig, unwrap};
 
     fn painted(params: &SkinParams) -> (AtlasGeometry, Rig, TextureMap) {
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let mesh = catmull_clark(&cage, 2);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
@@ -846,7 +846,9 @@ mod tests {
             });
         }
 
-        let rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let rig =
+            Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         let map = paint_skin(&geometry, &rig, &SkinParams::default());
 
         assert!(

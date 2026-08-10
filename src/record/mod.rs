@@ -235,7 +235,7 @@ impl AvatarRecord {
     /// produces a skeleton [`crate::cage::build_cage`] can mesh.
     #[must_use]
     pub fn skeleton(&self) -> Skeleton {
-        self.archetype.skeleton()
+        self.archetype.skeleton(&self.composites)
     }
 
     /// Draws new values for every unlocked category.

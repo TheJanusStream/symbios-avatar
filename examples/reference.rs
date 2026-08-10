@@ -122,6 +122,34 @@ impl Body {
         (self.at(bone).y - self.floor) / self.height
     }
 
+    /// The trunk's half-width, half-depth and vertex count in one band.
+    ///
+    /// `low` is a fraction of stature; the band is [`BAND`] tall. Arms are
+    /// dropped by weight rather than by geometry, which is the step that makes
+    /// the figure a torso rather than a wingspan.
+    fn band(&self, arm: &[bool], low: f32) -> (f32, f32, usize) {
+        let mut span = (f32::MAX, f32::MIN);
+        let mut deep = (f32::MAX, f32::MIN);
+        let mut count = 0usize;
+        for (vertex, &at) in self.mesh.positions.iter().enumerate() {
+            let up = (at.y - self.floor) / self.height;
+            if up < low || up >= low + BAND.1 {
+                continue;
+            }
+            if self.mesh.held_by(vertex, |joint| arm[joint]) > 0.25 {
+                continue;
+            }
+            span = (span.0.min(at.x), span.1.max(at.x));
+            deep = (deep.0.min(at.z), deep.1.max(at.z));
+            count += 1;
+        }
+        (
+            (span.1 - span.0) * 0.5 / self.height,
+            (deep.1 - deep.0) * 0.5 / self.height,
+            count,
+        )
+    }
+
     /// Whether each joint is part of an arm, by walking down from the shoulder.
     ///
     /// The arms come off at `upperarm`, not at `clavicle`: the clavicle carries
@@ -178,6 +206,7 @@ fn main() {
     }
 
     heights(&bodies);
+    girths(&bodies);
     segments(&bodies);
     spans(&bodies);
     silhouette(&bodies);
@@ -199,6 +228,37 @@ fn heights(bodies: &[(&str, Body)]) {
     row("landmark", std::iter::empty());
     for (name, bone) in LANDMARKS {
         row(name, bodies.iter().map(|(_, body)| body.up(bone)));
+    }
+}
+
+/// The trunk's width and depth at each body's own landmarks.
+///
+/// **The band table below compares the two mannequins at the same fraction of
+/// stature, which is not the same anatomy.** The female's pelvis sits at 0.5179
+/// and the male's at 0.5013, so a band that holds her pelvis holds his lower
+/// abdomen, and the difference between two bodies gets mixed with the
+/// difference between two heights. Every figure here is taken in a band centred
+/// on that body's own bone, so the columns are like for like — which is what a
+/// frame axis has to be tuned against (#100).
+fn girths(bodies: &[(&str, Body)]) {
+    println!("\ntrunk at each body's OWN landmark, half-width and half-depth of stature");
+    println!(
+        "{:<14} {:>9} {:>9} {:>5}   {:>9} {:>9} {:>5}",
+        "landmark", "male w", "male d", "n", "female w", "female d", "n"
+    );
+    let measured: Vec<(Vec<bool>, &Body)> =
+        bodies.iter().map(|(_, body)| (body.arms(), body)).collect();
+    for (name, bone) in LANDMARKS {
+        print!("{name:<14}");
+        for (arm, body) in &measured {
+            let (wide, deep, count) = body.band(arm, body.up(bone) - BAND.1 * 0.5);
+            if count < 8 {
+                print!(" {:>9} {:>9} {count:>5}  ", "--", "--");
+            } else {
+                print!(" {wide:>9.4} {deep:>9.4} {count:>5}  ");
+            }
+        }
+        println!();
     }
 }
 
@@ -261,30 +321,12 @@ fn silhouette(bodies: &[(&str, Body)]) {
         let low = BAND.0 + band as f32 * BAND.1;
         print!("{:>7.2}-{:.2} ", low, low + BAND.1);
         for (arm, body) in &measured {
-            let mut span = (f32::MAX, f32::MIN);
-            let mut deep = (f32::MAX, f32::MIN);
-            let mut count = 0usize;
-            for (vertex, &at) in body.mesh.positions.iter().enumerate() {
-                let up = (at.y - body.floor) / body.height;
-                if up < low || up >= low + BAND.1 {
-                    continue;
-                }
-                if body.mesh.held_by(vertex, |joint| arm[joint]) > 0.25 {
-                    continue;
-                }
-                span = (span.0.min(at.x), span.1.max(at.x));
-                deep = (deep.0.min(at.z), deep.1.max(at.z));
-                count += 1;
-            }
+            let (wide, deep, count) = body.band(arm, low);
             if count < 8 {
                 print!(" {:>9} {:>8} {count:>5}", "--", "--");
                 continue;
             }
-            print!(
-                " {:>9.4} {:>8.4} {count:>5}",
-                (span.1 - span.0) * 0.5 / body.height,
-                (deep.1 - deep.0) * 0.5 / body.height
-            );
+            print!(" {wide:>9.4} {deep:>8.4} {count:>5}");
         }
         println!();
     }

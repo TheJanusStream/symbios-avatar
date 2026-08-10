@@ -221,7 +221,7 @@ mod tests {
     use crate::plan::{BodyPlan, HumanoidParams, QuadrupedParams};
 
     fn biped() -> Landmarks {
-        Rig::from_skeleton(&HumanoidParams::default().skeleton())
+        Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
             .expect("rigs")
             .landmarks()
     }
@@ -305,9 +305,10 @@ mod tests {
 
     #[test]
     fn a_quadruped_reports_a_tail_and_four_limbs() {
-        let marks = Rig::from_skeleton(&QuadrupedParams::default().skeleton())
-            .expect("rigs")
-            .landmarks();
+        let marks =
+            Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs")
+                .landmarks();
 
         assert!(marks.has(Landmark::TailBase));
         assert!(marks.has(Landmark::Crown));
@@ -328,7 +329,7 @@ mod tests {
                 height: 1.3,
                 ..Default::default()
             }
-            .skeleton(),
+            .skeleton(&crate::Composites::default()),
         )
         .expect("rigs")
         .landmarks();
@@ -337,7 +338,7 @@ mod tests {
                 height: 2.1,
                 ..Default::default()
             }
-            .skeleton(),
+            .skeleton(&crate::Composites::default()),
         )
         .expect("rigs")
         .landmarks();

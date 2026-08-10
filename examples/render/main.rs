@@ -45,6 +45,7 @@
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
 //! cargo run --release --example render -- --face 1,0.5,1,1,0.5,0.5 # nose,noseWidth,brow,mouth,mouthWidth,ears
 //! cargo run --release --example render -- --skull -1,1            # headBreadth,faceLength
+//! cargo run --release --example render -- --femininity 1  # the frame axis, -1 .. +1
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --budget    # what one avatar costs
@@ -210,6 +211,15 @@ fn main() {
     // eyes. They are the pair the owner called for in #61 and the pair whose
     // default has to be chosen by looking at both ends of the range, so the
     // instrument that looks needs a way to ask for an end.
+    // The frame axis (#100), which is the only way to look at both ends of it
+    // on the same body: rolling seeds to find a feminine one moves five other
+    // axes at once, and the question is what THIS axis does.
+    if let Some(spec) = value("--femininity")
+        && let Ok(femininity) = spec.parse::<f32>()
+    {
+        record.composites.femininity = femininity;
+        record.composites.sanitize();
+    }
     if let Some(spec) = value("--skull") {
         let given: Vec<f32> = spec
             .split(',')

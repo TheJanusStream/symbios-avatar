@@ -308,7 +308,9 @@ mod tests {
     /// A humanoid with a four-link chain hanging off the head, of the kind a
     /// lock of hair or a long ear would want.
     fn sprung() -> (Rig, Vec<usize>) {
-        let mut rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let mut rig =
+            Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         let head = *rig.in_zone(Zone::Head).first().expect("a head");
         let mut chain = Vec::new();
         let mut parent = head;
@@ -339,8 +341,13 @@ mod tests {
             "the anchor leads the chain and is not itself simulated"
         );
         assert!(
-            Springs::of(&Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs"))
-                .is_empty(),
+            Springs::of(
+                &Rig::from_skeleton(
+                    &HumanoidParams::default().skeleton(&crate::Composites::default())
+                )
+                .expect("rigs")
+            )
+            .is_empty(),
             "a body with nothing dangling has no chains"
         );
     }

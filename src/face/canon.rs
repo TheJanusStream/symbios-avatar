@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn the_rulers_come_off_the_surface_rather_than_off_the_plan() {
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let mesh = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
             .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");

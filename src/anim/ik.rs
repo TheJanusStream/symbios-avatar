@@ -236,7 +236,8 @@ mod tests {
     use crate::rig::Rig;
 
     fn rig() -> Rig {
-        Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs")
+        Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
     }
 
     /// The shoulder, elbow, and wrist of one arm.
@@ -425,7 +426,7 @@ mod tests {
                     height,
                     ..Default::default()
                 }
-                .skeleton(),
+                .skeleton(&crate::Composites::default()),
             )
             .expect("rigs");
             let chain = arm(&rig, Limb::ForeLeft);

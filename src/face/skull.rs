@@ -2046,7 +2046,7 @@ mod tests {
         // and because it used to be a clamp on an estimate that was always
         // taken. Now it is the exception, which means nothing else exercises it.
         use crate::plan::{BodyPlan, QuadrupedParams};
-        let skeleton = QuadrupedParams::default().skeleton();
+        let skeleton = QuadrupedParams::default().skeleton(&crate::Composites::default());
         let mesh = crate::build_body(&skeleton, &CageConfig::default(), crate::BODY_SUBDIVISIONS)
             .expect("a creature builds");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
@@ -2408,7 +2408,7 @@ mod tests {
     #[test]
     fn a_body_that_walks_on_all_fours_keeps_its_own_head() {
         use crate::plan::{BodyPlan, QuadrupedParams};
-        let skeleton = QuadrupedParams::default().skeleton();
+        let skeleton = QuadrupedParams::default().skeleton(&crate::Composites::default());
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let plain = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
@@ -2461,6 +2461,20 @@ mod tests {
     fn skull_of(seed: i64, levels: usize, breadth: Option<f32>) -> (PolyMesh, Skull, Vec3, f32) {
         let mut record = AvatarRecord::new("Skulled", Archetype::default());
         record.reroll(seed);
+        // **The frame axis is held neutral here for the same reason `breadth`
+        // is** (#100). It reaches the body and not the skull — the head's own
+        // nodes do not read it — but it does move the girdle under the neck,
+        // and every measurement in this file is taken over `throat..crown`, so
+        // a rolled `femininity` moves the SPAN these errors are binned into
+        // without moving the geometry they measure. Seed 2 crossed the
+        // off-midline ceiling by 3 mm on exactly that, and the file already
+        // records the same thing happening to seeds 0 and 3 when the neck was
+        // given a section (#125): a body-side change reading as a profile
+        // regression because the ruler moved.
+        //
+        // When the skull does read this axis (#166) the sweep wants it back,
+        // deliberately and at both ends, rather than one value per seed.
+        record.composites.femininity = 0.0;
         if let (Some(breadth), Archetype::Humanoid(params)) = (breadth, &mut record.archetype) {
             params.head_breadth = breadth;
             params.face_length = 0.0;

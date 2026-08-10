@@ -260,7 +260,8 @@ mod tests {
     use crate::rig::Rig;
 
     fn rig() -> Rig {
-        Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs")
+        Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
     }
 
     /// A pose with one joint turned by `angle` about Z.

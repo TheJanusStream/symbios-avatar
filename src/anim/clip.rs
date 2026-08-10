@@ -241,11 +241,13 @@ mod tests {
     use crate::plan::{BodyPlan, HumanoidParams, QuadrupedParams};
 
     fn biped() -> Rig {
-        Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs")
+        Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
     }
 
     fn quadruped() -> Rig {
-        Rig::from_skeleton(&QuadrupedParams::default().skeleton()).expect("rigs")
+        Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
     }
 
     /// A hand raised and lowered.
@@ -292,7 +294,7 @@ mod tests {
                     height,
                     ..Default::default()
                 }
-                .skeleton(),
+                .skeleton(&crate::Composites::default()),
             )
             .expect("rigs");
             let joint = rig.in_zone(Zone::Extremity(Limb::ForeLeft))[0];

@@ -365,7 +365,7 @@ mod tests {
     /// Built, not planned: the whole point of these parts is that they are
     /// placed against the head the body actually grew.
     fn built() -> (Canon, PolyMesh, Skull) {
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let mesh = crate::build_body(
             &skeleton,
             &crate::CageConfig::default(),

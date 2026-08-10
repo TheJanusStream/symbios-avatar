@@ -32,6 +32,7 @@
 //! cargo run --example bodyaudit
 //! cargo run --example bodyaudit -- --seed 7
 //! cargo run --example bodyaudit -- --classic 2000   # averaged over plausible rolls
+//! cargo run --example bodyaudit -- --femininity 1     # the frame axis, at equal stature
 //! cargo run --example bodyaudit -- --reach 1.4 --smooth 1
 //! ```
 
@@ -98,6 +99,15 @@ fn main() {
     let mut record = AvatarRecord::new("Audited", Archetype::default());
     if let Some(seed) = seed {
         record.reroll(seed);
+    }
+    // The frame axis, so a body can be measured at each end of it against the
+    // reference it was anchored on (#100). Compared at EQUAL STATURE, which is
+    // what the flag is for: rolling a seed to find a feminine body moves five
+    // other axes at the same time, and the table is fractions of rendered
+    // height either way.
+    if let Some(femininity) = number("--femininity") {
+        record.composites.femininity = femininity;
+        record.composites.sanitize();
     }
     let Some((rig, mesh, weights, height, floor)) = build(&record, &config) else {
         eprintln!("the body would not build");

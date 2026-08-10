@@ -516,11 +516,13 @@ mod tests {
     use crate::plan::{BodyPlan, HumanoidParams, QuadrupedParams, Zone};
 
     fn biped() -> Rig {
-        Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs")
+        Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
     }
 
     fn quadruped() -> Rig {
-        Rig::from_skeleton(&QuadrupedParams::default().skeleton()).expect("rigs")
+        Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
     }
 
     /// The world height of one contact in the given pose.
@@ -679,7 +681,7 @@ mod tests {
                     height: 1.3,
                     ..Default::default()
                 }
-                .skeleton(),
+                .skeleton(&crate::Composites::default()),
             )
             .expect("rigs"),
             1.0,
@@ -690,7 +692,7 @@ mod tests {
                     height: 2.1,
                     ..Default::default()
                 }
-                .skeleton(),
+                .skeleton(&crate::Composites::default()),
             )
             .expect("rigs"),
             1.0,

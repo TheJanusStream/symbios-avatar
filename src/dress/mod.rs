@@ -352,9 +352,18 @@ mod tests {
         // undone and `every_garment_is_a_closed_solid` is passing on a body that
         // happens not to pinch.
         //
-        // Seed 7's shorts are the case #105 was filed on: six pinch vertices in
-        // the abdomen, all on one cage ring at the waist.
-        let (mesh, weights, zones) = body(7);
+        // Seed 7's shorts were the case #105 was filed on: six pinch vertices in
+        // the abdomen, all on one cage ring at the waist. **Seed 7 stopped
+        // pinching when the frame axis reached the trunk** (#100) — it rolls a
+        // femininity that narrows its waist, and the pinch is a waist ring
+        // touching itself. Nothing about the split changed.
+        //
+        // Moved to seed 0 rather than re-tuned, and the population is the
+        // reason that is safe: twenty of the first forty seeds pinch here, so
+        // this guard is easy to satisfy and hard to lose by accident. What it
+        // is NOT is a guard tied to one body — which is what it was, and what
+        // made a change three subsystems away read as a regression here.
+        let (mesh, weights, zones) = body(0);
         let params = OutfitParams {
             sleeve: Sleeve::Bare,
             leg: Leg::Shorts,

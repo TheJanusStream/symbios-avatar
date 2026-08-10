@@ -12,15 +12,16 @@
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use symbios_avatar::face::Skull;
+use symbios_avatar::plan::{DEFAULT_AGE, DEFAULT_BODY_FAT};
 use symbios_avatar::{
-    Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, HumanoidParams, Limb,
-    QuadrupedParams, Rig, Skeleton, Zone, build_body, build_cage,
+    Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, Composites, HumanoidParams,
+    Limb, QuadrupedParams, Rig, Skeleton, Zone, build_body, build_cage,
 };
 
 /// Builds a body and asserts it is watertight, reporting the parameters if not.
 #[track_caller]
-fn assert_meshable(archetype: &Archetype, what: &str) {
-    let skeleton = archetype.skeleton();
+fn assert_meshable(archetype: &Archetype, composites: &Composites, what: &str) {
+    let skeleton = archetype.skeleton(composites);
     skeleton
         .validate()
         .unwrap_or_else(|error| panic!("{what}: invalid skeleton: {error}"));
@@ -30,6 +31,15 @@ fn assert_meshable(archetype: &Archetype, what: &str) {
     let report = cage.manifold_report();
     assert!(report.is_clean(), "{what}: not watertight: {report:?}");
 }
+
+/// Composites that say nothing about the body, which is what a sweep of the
+/// per-region axes wants: it is testing those axes, not this one.
+const NEUTRAL: Composites = Composites {
+    femininity: 0.0,
+    mass: 0.0,
+    body_fat: DEFAULT_BODY_FAT,
+    age: DEFAULT_AGE,
+};
 
 /// The extreme and neutral value of each signed axis.
 const EXTREMES: [f32; 3] = [-1.0, 0.0, 1.0];
@@ -72,7 +82,7 @@ where
                 read(&default),
                 "{plan} {name}={label} should sanitize to its documented default"
             );
-            assert_meshable(&wrap(params), &format!("{plan} {name}={label}"));
+            assert_meshable(&wrap(params), &NEUTRAL, &format!("{plan} {name}={label}"));
         }
     }
 }
@@ -150,6 +160,7 @@ fn every_humanoid_axis_meshes_at_its_extremes() {
                 params.sanitize();
                 assert_meshable(
                     &Archetype::Humanoid(params),
+                    &NEUTRAL,
                     &format!("humanoid h={height} {name}={value}"),
                 );
             }
@@ -179,6 +190,7 @@ fn the_humanoid_corners_of_the_space_mesh() {
             params.sanitize();
             assert_meshable(
                 &Archetype::Humanoid(params),
+                &NEUTRAL,
                 &format!("humanoid corner h={height} all={value}"),
             );
         }
@@ -203,10 +215,63 @@ fn random_humanoids_always_mesh() {
             extremity_size: rng.random_range(-1.0..=1.0),
         };
         params.sanitize();
+        // **The composites are rolled here too, and that is the epic's rule
+        // rather than an extra** (#161): a quantity is `formula(composites)`
+        // then an offset, so a sweep that holds the composites neutral tests
+        // half of every formula. `femininity` reaches the trunk, the hips and
+        // both limb ladders (#100), and it met a wall the first time it was
+        // swept — the pelvis's spine socket, at −1.30.
+        let mut composites = Composites {
+            femininity: rng.random_range(-3.0..=3.0),
+            ..NEUTRAL
+        };
+        composites.sanitize();
         assert_meshable(
             &Archetype::Humanoid(params),
-            &format!("random humanoid #{sample}: {params:?}"),
+            &composites,
+            &format!("random humanoid #{sample}: {params:?} {composites:?}"),
         );
+    }
+}
+
+#[test]
+fn the_frame_axis_meshes_against_every_corner_of_the_body() {
+    // The composite corner product (#161's rule, #100's axis). Each end of the
+    // frame axis against each corner of the per-region space, at both ends of
+    // stature: the axis narrows a chest while `shoulder_width` widens it, and
+    // widens a pelvis while `hip_width` narrows it, so the interesting bodies
+    // are the ones where the two tiers disagree.
+    //
+    // The envelope ends are swept, not just ±1, because a rolled record reaches
+    // them: `femininity` is a shape axis and carries the #160 stretch.
+    for femininity in [-3.0f32, -1.0, 0.0, 1.0, 3.0] {
+        let composites = Composites {
+            femininity,
+            ..NEUTRAL
+        };
+        for value in EXTREMES {
+            for height in [1.2f32, 2.2] {
+                let mut params = HumanoidParams {
+                    height,
+                    build: value,
+                    muscle: value.max(0.0),
+                    shoulder_width: value,
+                    hip_width: -value,
+                    limb_length: value,
+                    neck_length: value,
+                    head_size: value,
+                    head_breadth: value,
+                    face_length: value,
+                    extremity_size: value,
+                };
+                params.sanitize();
+                assert_meshable(
+                    &Archetype::Humanoid(params),
+                    &composites,
+                    &format!("humanoid h={height} all={value} femininity={femininity}"),
+                );
+            }
+        }
     }
 }
 
@@ -236,7 +301,7 @@ fn the_default_body_stands_near_the_proportion_canon() {
     // node moved it. The hips now sit at 0.098, inside the reference pair, and
     // the coefficient is 0.60.
     let params = HumanoidParams::default();
-    let skeleton = params.skeleton();
+    let skeleton = params.skeleton(&symbios_avatar::Composites::default());
     let body = build_body(&skeleton, &CageConfig::default(), BODY_SUBDIVISIONS)
         .expect("the default body meshes");
     let (lo, hi) = body.bounds();
@@ -293,6 +358,7 @@ fn every_quadruped_axis_meshes_at_its_extremes() {
                 params.sanitize();
                 assert_meshable(
                     &Archetype::Quadruped(params),
+                    &NEUTRAL,
                     &format!("quadruped h={height} {name}={value}"),
                 );
             }
@@ -317,6 +383,7 @@ fn random_quadrupeds_always_mesh() {
         params.sanitize();
         assert_meshable(
             &Archetype::Quadruped(params),
+            &NEUTRAL,
             &format!("random quadruped #{sample}: {params:?}"),
         );
     }
@@ -328,12 +395,20 @@ fn every_rerolled_record_meshes() {
     for seed in 0..400i64 {
         let mut record = AvatarRecord::new("Roll", Archetype::default());
         record.reroll(seed);
-        assert_meshable(&record.archetype, &format!("rerolled humanoid seed {seed}"));
+        assert_meshable(
+            &record.archetype,
+            &record.composites,
+            &format!("rerolled humanoid seed {seed}"),
+        );
 
         let mut beast =
             AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
         beast.reroll(seed);
-        assert_meshable(&beast.archetype, &format!("rerolled quadruped seed {seed}"));
+        assert_meshable(
+            &beast.archetype,
+            &beast.composites,
+            &format!("rerolled quadruped seed {seed}"),
+        );
     }
 }
 
@@ -348,7 +423,11 @@ fn a_look_survives_a_share_code_and_still_meshes() {
             .unwrap_or_else(|error| panic!("seed {seed}: {code} did not decode: {error}"));
 
         // Quantisation moves the axes slightly; the result must still be a body.
-        assert_meshable(&copy.archetype, &format!("share-code copy of seed {seed}"));
+        assert_meshable(
+            &copy.archetype,
+            &copy.composites,
+            &format!("share-code copy of seed {seed}"),
+        );
     }
 }
 
@@ -399,12 +478,32 @@ fn digest(skeleton: &Skeleton) -> u64 {
 /// matters in combination with another axis.
 fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
     let mut bodies = vec![
-        ("humanoid default".to_string(), Archetype::default()),
+        (
+            "humanoid default".to_string(),
+            Archetype::default(),
+            NEUTRAL,
+        ),
         (
             "quadruped default".to_string(),
             Archetype::Quadruped(QuadrupedParams::default()),
+            NEUTRAL,
         ),
     ];
+
+    // **The composites are part of a body now** (#100), so they are part of
+    // what this ratchet holds. Without these rows the table would have gone on
+    // passing while the frame axis moved every quantity it touches, which is
+    // the one thing it exists to notice.
+    for femininity in [-1.0f32, 1.0] {
+        bodies.push((
+            format!("humanoid femininity {femininity:+}"),
+            Archetype::default(),
+            Composites {
+                femininity,
+                ..NEUTRAL
+            },
+        ));
+    }
 
     for value in EXTREMES {
         for height in [1.2f32, 2.2] {
@@ -425,6 +524,7 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
             bodies.push((
                 format!("humanoid corner h={height} all={value}"),
                 Archetype::Humanoid(params),
+                NEUTRAL,
             ));
         }
     }
@@ -432,16 +532,24 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
     for seed in 0..8i64 {
         let mut biped = AvatarRecord::new("Roll", Archetype::default());
         biped.reroll(seed);
-        bodies.push((format!("humanoid seed {seed}"), biped.archetype));
+        bodies.push((
+            format!("humanoid seed {seed}"),
+            biped.archetype,
+            biped.composites,
+        ));
 
         let mut beast = AvatarRecord::new("Roll", Archetype::Quadruped(QuadrupedParams::default()));
         beast.reroll(seed);
-        bodies.push((format!("quadruped seed {seed}"), beast.archetype));
+        bodies.push((
+            format!("quadruped seed {seed}"),
+            beast.archetype,
+            beast.composites,
+        ));
     }
 
     bodies
         .into_iter()
-        .map(|(name, archetype)| (name, archetype.skeleton()))
+        .map(|(name, archetype, composites)| (name, archetype.skeleton(&composites)))
         .collect()
 }
 
@@ -454,30 +562,42 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// 24 moved and all nine quadrupeds held, which is what a humanoid-only change
 /// should do. Judged on `--bare` renders of the default body and seeds 3 and 21
 /// before the paste, per the note on the test below.
-const FINGERPRINTS: [(&str, u64); 24] = [
+///
+/// **Re-based again the same day for #100**, the frame axis, and this time the
+/// table GREW: the two `femininity` rows are new, because a body is its
+/// composites as well as its archetype now and a ratchet that fingerprinted
+/// only the archetype would have gone on passing while the axis moved every
+/// quantity it touches. Ten of the 26 moved — those two, and the eight rolled
+/// humanoids, which carry a rolled `femininity` that used to reach nothing. The
+/// default body and all six corners are unmoved, which is the identity the
+/// epic requires of a neutral composite. Judged on `--bare` renders at
+/// `--femininity` −1, 0 and +1 before the paste.
+const FINGERPRINTS: [(&str, u64); 26] = [
     ("humanoid default", 0xa4409953adde3c58),
     ("quadruped default", 0x2aabd8cffd3320f0),
+    ("humanoid femininity -1", 0xf7a910428791d354),
+    ("humanoid femininity +1", 0x7698f9510eaa03fa),
     ("humanoid corner h=1.2 all=-1", 0xd9858d6ed96fcb82),
     ("humanoid corner h=2.2 all=-1", 0x315f3119e782fa02),
     ("humanoid corner h=1.2 all=0", 0x3ac7e61821ffd7a4),
     ("humanoid corner h=2.2 all=0", 0x8f9291d4a7a5f24e),
     ("humanoid corner h=1.2 all=1", 0xe61f4a3e033c069d),
     ("humanoid corner h=2.2 all=1", 0x2b548d3a80416b25),
-    ("humanoid seed 0", 0xa3c2646f86bab88f),
+    ("humanoid seed 0", 0xb905db564b52ae0d),
     ("quadruped seed 0", 0x181d22a61a29e06b),
-    ("humanoid seed 1", 0x7fbb19fa6f6d9693),
+    ("humanoid seed 1", 0xb5f376731f25008f),
     ("quadruped seed 1", 0x66b32cdababaf760),
-    ("humanoid seed 2", 0x3eaf75bcede7c8f0),
+    ("humanoid seed 2", 0xd43a27a1f3315a08),
     ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
-    ("humanoid seed 3", 0xcaf5a2c9909c819d),
+    ("humanoid seed 3", 0x6aeaf5588dc5e0b1),
     ("quadruped seed 3", 0x5fe315cd16d9b52b),
-    ("humanoid seed 4", 0x6f153f222cfb080c),
+    ("humanoid seed 4", 0xb71a588b3a5f6d90),
     ("quadruped seed 4", 0x050364ec7b8118ea),
-    ("humanoid seed 5", 0x5568282bd4f40475),
+    ("humanoid seed 5", 0xd90527f0580d6b90),
     ("quadruped seed 5", 0x2d22051939b73f20),
-    ("humanoid seed 6", 0x0d78d95a2cb09b4a),
+    ("humanoid seed 6", 0x3974c66a6557019b),
     ("quadruped seed 6", 0x94b5b20cbe08a43a),
-    ("humanoid seed 7", 0x8aafdab1afa373f4),
+    ("humanoid seed 7", 0x2e7242520fb7fa1c),
     ("quadruped seed 7", 0xc6b4259ae378e3bb),
 ];
 

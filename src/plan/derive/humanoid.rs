@@ -13,7 +13,7 @@
 
 use glam::{Vec2, Vec3};
 
-use crate::plan::HumanoidParams;
+use crate::plan::{Composites, HumanoidParams};
 
 /// Cross-sections of the torso, as `(lateral, fore-and-aft)` multiples of the
 /// node's radius.
@@ -792,6 +792,32 @@ pub(crate) struct Dimensions {
 /// radius, so the axes cannot drift apart — rather than the ±28% and +15%
 /// it spans. Nothing has ever measured whether a heavy body is 28% thicker
 /// than a neutral one.
+/// The factor that carries one quantity between the two measured references.
+///
+/// **Every use of this names the two figures it interpolates**, rather than a
+/// coefficient derived from them, so the anchors are readable at the site and a
+/// re-measurement is a one-line edit. `examples/reference` prints them all off
+/// the CC0 mannequins; `male` and `female` here are always fractions of that
+/// body's own stature, which is the only form two bodies of different heights
+/// can be compared in.
+///
+/// **It multiplies rather than replaces, and at neutral it is exactly one.**
+/// The plan's own value stays the anchor and this moves it by the *ratio* the
+/// references differ by:
+///
+/// ```text
+///   frame(f) = 1 + f · (female − male) / (female + male)
+/// ```
+///
+/// so `frame(+1) / frame(−1) = female / male` exactly, whatever the plan builds
+/// at zero. That matters here more than it looks: this body's shoulder span is
+/// 10.8% over the male reference and stays there (#106), and snapping the axis
+/// onto the reference midpoint would have quietly re-litigated that decision on
+/// the way past.
+fn frame(femininity: f32, male: f32, female: f32) -> f32 {
+    1.0 + femininity * (female - male) / (female + male)
+}
+
 fn girth(params: &HumanoidParams) -> f32 {
     // Saturated for the exploration range (#160): every radius on the
     // body scales with this factor while the plan's lengths do not, so at
@@ -822,9 +848,75 @@ impl Dimensions {
     /// then the heights that hang off the trunk, then the limbs. Each
     /// coefficient carries its own provenance, and the ones that clamp say what
     /// wall they are standing against.
-    pub(crate) fn of(params: &HumanoidParams) -> Self {
+    pub(crate) fn of(params: &HumanoidParams, composites: &Composites) -> Self {
         let h = params.height;
         let girth = girth(params);
+        // The frame axis: where this body sits between the two measured
+        // references (#100). Every quantity below that carries it names its own
+        // pair of anchors at the site — see [`frame`] — because the axis is not
+        // one gain, it is a dozen measurements that happen to move together.
+        //
+        // **The shoulder complex moves as ONE factor, taken from the chest.**
+        // The clavicle's floor is `(0.31 · GIRDLE_SECTION.x · girdle_r + 0.69 ·
+        // chest_r) / 0.805`, so the three are inseparable: scale them by
+        // different factors and the ratio between `clavicle_x` and its own
+        // floor moves, and at the masculine end it lands on it — measured at
+        // 1.468 against a floor of 1.47, inside ±1, which is the exact defect
+        // #100 was raised to fix. Scaling all three together leaves that ratio
+        // invariant at every value of the axis, including out in the envelope.
+        //
+        // The chest is the one of the three to take the factor FROM, because it
+        // is the one this body already sits on: the chest node measures 0.0912
+        // of stature across against the male reference's 0.0911, where the
+        // shoulder span is 10.8% over its own. Scaling by the shoulder's own
+        // ratio would move a figure that is already wrong; scaling by the
+        // chest's moves one that is right, and the shoulders ride it.
+        //
+        // Saturated for the exploration range, on the masculine side only. The
+        // wall is the pelvis's spine socket: a masculine frame widens the waist
+        // and narrows the pelvis at the same time, and the socket that has to
+        // clear both runs out of hull at `femininity` −1.30 against the 1500
+        // random bodies, with rolled ones failing from −1.409 when build and
+        // limb length are co-extreme. −1.25 is that wall plus ~4%, the same
+        // margin the other saturations in this file carry.
+        //
+        // **Clamped here rather than on the axis**, because this is the axis's
+        // BODY reading and the skull (#166) and the fat distribution (#164)
+        // read the same stored value without meeting this wall. A composite
+        // saturated at its source would take a limit that belongs to one
+        // consumer and impose it on the others.
+        //
+        // Swept the other way too, and the feminine side does not wall: the
+        // gate holds to +2.95, so +2.85 is a margin rather than a limit. It is
+        // written down so that a later term that does bite up there has
+        // somewhere obvious to say so.
+        //
+        // The waist alone was tried first and is not enough. Clamping its own
+        // factor to 1.06 moved the wall from −1.30 to only −1.75 and bound
+        // inside ±1 while doing it — the pelvis narrowing is as much of the
+        // squeeze as the waist widening, and a clamp on either one alone pays
+        // for half of it at full price.
+        let femininity = composites.femininity.clamp(-1.25, 2.85);
+        let shoulder_frame = frame(femininity, 0.0911, 0.0702);
+        // **Two things fall out of that factor that nobody asked for, and both
+        // are worth having written down before they get discovered as bugs.**
+        //
+        // `chest_gap` is 1.3 girdle radii, so scaling `girdle_r` moves the
+        // chest NODE as well as widening it: the chest landmark runs 0.6759,
+        // 0.6916, 0.7022 of stature across the axis, against references at
+        // 0.7007 male and 0.7187 female. The direction is right and the two
+        // ends sit about equally under their own anchors — but the axis moves
+        // the landmark by 0.026 of stature where the references differ by
+        // 0.018, so it OVERSHOOTS by about half again. Correcting it means
+        // taking the frame out of `chest_gap` alone, which changes the girdle's
+        // socket geometry rather than its size, and #106's second comment is a
+        // long record of why that is not a small edit.
+        //
+        // The masculine end also renders about 0.75% taller (1.737 m against
+        // 1.724), because a wider girdle lengthens `torso_min` and `girdle_y`
+        // takes its floor from it. `height` is supposed to own stature, so that
+        // is a wart rather than a feature; it is under a centimetre and it is
+        // in the noise of what `limb_length` already does to the same floor.
 
         // The torso carries a separate shoulder girdle above the ribcage. That
         // is not decoration: a single node carrying spine, neck, and both arms
@@ -870,10 +962,16 @@ impl Dimensions {
         // again as far out as the ribcage it clears. Escaping it means changing
         // where the arm attaches, which is a change to the body. Left at 0.088
         // pending that decision.
-        let pelvis_r = h * 0.079 * girth;
-        let waist_r = h * 0.074 * girth;
-        let chest_r = h * 0.086 * girth * (1.0 + 0.08 * params.shoulder_width);
-        let girdle_r = h * 0.062 * girth * (1.0 + 0.06 * params.shoulder_width);
+        // The pelvis flares and the waist comes in, which between them are most
+        // of what the axis reads as. Both anchors are taken in a band centred on
+        // that body's OWN bone rather than at a fixed fraction of stature: the
+        // female reference's pelvis sits at 0.5179 and the male's at 0.5013, so
+        // a fixed band holds her pelvis against his abdomen and reports the
+        // difference between two heights as a difference between two bodies.
+        let pelvis_r = h * 0.079 * girth * frame(femininity, 0.0910, 0.1019);
+        let waist_r = h * 0.074 * girth * frame(femininity, 0.0706, 0.0618);
+        let chest_r = h * 0.086 * girth * (1.0 + 0.08 * params.shoulder_width) * shoulder_frame;
+        let girdle_r = h * 0.062 * girth * (1.0 + 0.06 * params.shoulder_width) * shoulder_frame;
         // A neck is a good deal narrower than the skull above it. At the old
         // figure it measured WIDER than the head — 0.098 m against 0.093 — which
         // reads as a tree trunk and, worse, swallows the jaw: the chin is shaped
@@ -1390,7 +1488,19 @@ impl Dimensions {
         // conservative range ever met it. What the floor really bounds is how
         // far the 0.64 above may come down before a narrower body stops
         // building — and that headroom just went from nothing to 8%.
-        let hip_x = pelvis_r * (0.64 + 0.10 * params.hip_width).max(0.49);
+        //
+        // **Divided back out of `pelvis_r`, and the division is the anatomy.**
+        // The pelvis above flares 5.7% on a feminine frame while the hip JOINTS
+        // move 1.3% — measured, both — so a hip position that simply rode the
+        // pelvis radius would separate the femoral heads four times as much as
+        // either reference does. What widens is the iliac crest, not the
+        // distance between the trochanters, and the two are different bones
+        // doing different jobs. So this takes its own pair of anchors and
+        // cancels the pelvis's.
+        let hip_x = pelvis_r
+            * (0.64 + 0.10 * params.hip_width).max(0.49)
+            * frame(femininity, 0.0973, 0.0986)
+            / frame(femininity, 0.0910, 0.1019);
         let hip_y = pelvis_y - hip_drop;
 
         // Where the knee sits between hip and ankle, and so how the leg's length
@@ -1413,7 +1523,13 @@ impl Dimensions {
         // measured segment lengths, which is the one form of derivation this
         // file can do without a sweep, because it moves no socket.
         const THIGH_FRACTION: f32 = 0.487;
-        let knee_y = ankle_y + (hip_y - ankle_y) * (1.0 - THIGH_FRACTION);
+        // Where the knee sits is dimorphic too, and only just: the male
+        // reference splits its leg 0.2223 to 0.2368 of stature and the female
+        // 0.2366 to 0.2398, which is a thigh fraction of 0.4842 against 0.4967.
+        // Small, kept because it is measured and free, and because a knee that
+        // did not move at all while the pelvis rose would drift the shank.
+        let thigh_fraction = THIGH_FRACTION * frame(femininity, 0.4842, 0.4967);
+        let knee_y = ankle_y + (hip_y - ankle_y) * (1.0 - thigh_fraction);
         // How far forward of the hip-to-ankle line the knee stands.
         //
         // A leg built dead straight has no opinion about which way it folds, and
@@ -1806,8 +1922,13 @@ impl Dimensions {
         // The `limb_length` gains are left where they were. They are unsourced
         // either way, and scaling them with the bases would be a second change
         // wearing the first one's evidence.
-        let upper_arm = h * (0.1404 + 0.025 * params.limb_length);
-        let forearm = h * (0.1484 + 0.025 * params.limb_length);
+        // **The upper arm is where the two references disagree most in the whole
+        // body**, 0.1621 against 0.1293 of stature — a fifth — while their
+        // forearms agree to 1%. The note above predicted that this one
+        // coefficient would carry most of the axis's travel, and it does.
+        let upper_arm =
+            h * (0.1404 + 0.025 * params.limb_length) * frame(femininity, 0.1621, 0.1293);
+        let forearm = h * (0.1484 + 0.025 * params.limb_length) * frame(femininity, 0.1529, 0.1549);
         // Provenance: **unsourced**, and note it feeds arm span through
         // `hand_at` below — so the extremity axis moves a figure that `#66`
         // tuned, and nothing connects the two.
@@ -1907,13 +2028,26 @@ impl Dimensions {
         // by `tests/plan.rs`. Not covered: the clavicle at 0.040 and the hand
         // and foot at 0.020 and 0.019, which are stubs inside attached geometry
         // and have no surface of their own to measure.
-        let clavicle_r = h * 0.040 * girth;
-        let shoulder_r = h * 0.041 * girth;
-        let elbow_r = h * 0.026 * girth;
-        let wrist_r = h * 0.018 * girth;
+        // The limb ladder is dimorphic in both directions at once, which is why
+        // it is four pairs and not one gain: the arm thins on a feminine frame
+        // and the calf thickens. Each radius takes the reference station
+        // nearest it — proximal for a proximal node — from the limb-thickness
+        // table `examples/reference` prints.
+        let arm_upper = frame(femininity, 0.0369, 0.0304);
+        let arm_lower = frame(femininity, 0.0263, 0.0238);
+        let clavicle_r = h * 0.040 * girth * arm_upper;
+        let shoulder_r = h * 0.041 * girth * arm_upper;
+        let elbow_r = h * 0.026 * girth * arm_lower;
+        let wrist_r = h * 0.018 * girth * frame(femininity, 0.0181, 0.0167);
         let hip_r = h * 0.054 * girth;
-        let knee_r = h * 0.028 * girth;
-        let ankle_r = h * 0.019 * girth;
+        // The knee sits between the thigh's distal station and the shank's
+        // proximal one, which disagree — the thigh barely moves, the calf
+        // thickens 6.7% — so it takes the calf's, which is the mass the eye
+        // reads there. The ankle takes the shank's distal station, where the
+        // two references agree to within half a percent and this is very nearly
+        // a no-op kept for completeness.
+        let knee_r = h * 0.028 * girth * frame(femininity, 0.0250, 0.0286);
+        let ankle_r = h * 0.019 * girth * frame(femininity, 0.0183, 0.0184);
         // Slim: this is the base of the hand, not a stand-in for one. While the
         // limbs ended in these nodes they were fattened to read as a fist and a
         // boot, and now that real hands and feet hang off them a blob only pokes

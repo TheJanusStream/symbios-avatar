@@ -157,7 +157,8 @@ mod tests {
     use crate::plan::{BodyPlan, HumanoidParams, QuadrupedParams};
 
     fn biped() -> Rig {
-        Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs")
+        Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
     }
 
     /// Where the head is pointing in the given pose.
@@ -263,7 +264,9 @@ mod tests {
 
     #[test]
     fn a_creature_without_a_full_chain_still_looks() {
-        let rig = Rig::from_skeleton(&QuadrupedParams::default().skeleton()).expect("rigs");
+        let rig =
+            Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         let mut pose = Pose::rest(&rig);
         let target = head_at(&rig, &pose) + Vec3::new(1.0, 0.5, 1.0);
 

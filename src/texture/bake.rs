@@ -296,7 +296,7 @@ mod tests {
     use crate::uv::{UvConfig, unwrap};
 
     fn baked(size: u32) -> (PolyMesh, UvUnwrap, AtlasGeometry) {
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");

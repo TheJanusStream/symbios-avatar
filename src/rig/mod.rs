@@ -604,7 +604,9 @@ mod tests {
 
     #[test]
     fn joints_come_out_parent_before_child() {
-        let rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let rig =
+            Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         for (index, joint) in rig.joints.iter().enumerate() {
             if let Some(parent) = joint.parent {
                 assert!(parent < index, "joint {index} precedes its parent {parent}");
@@ -620,7 +622,8 @@ mod tests {
             Archetype::Humanoid(HumanoidParams::default()),
             Archetype::Quadruped(QuadrupedParams::default()),
         ] {
-            let rig = Rig::from_skeleton(&archetype.skeleton()).expect("rigs");
+            let rig = Rig::from_skeleton(&archetype.skeleton(&crate::Composites::default()))
+                .expect("rigs");
             assert_eq!(
                 rig.joints[0].zone,
                 Zone::Pelvis,
@@ -632,7 +635,7 @@ mod tests {
 
     #[test]
     fn every_node_becomes_exactly_one_joint() {
-        let skeleton = QuadrupedParams::default().skeleton();
+        let skeleton = QuadrupedParams::default().skeleton(&crate::Composites::default());
         let rig = Rig::rooted_at(&skeleton, 0).expect("rigs");
         assert_eq!(rig.len(), skeleton.nodes.len());
 
@@ -649,7 +652,9 @@ mod tests {
     /// A rig with a three-link spring chain hanging off the head, of the kind
     /// hair or an ear would want, and the head joint it hangs from.
     fn with_a_spring_chain() -> (Rig, usize, Vec<usize>) {
-        let mut rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let mut rig =
+            Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         let head = *rig.in_zone(Zone::Head).first().expect("a head");
         let mut chain = Vec::new();
         let mut parent = head;
@@ -692,7 +697,7 @@ mod tests {
         use crate::rig::skin;
         use crate::subdiv::catmull_clark;
 
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let mesh = catmull_clark(
             &build_cage(&skeleton, &CageConfig::default()).expect("meshes"),
             1,
@@ -789,7 +794,9 @@ mod tests {
             );
         }
         // And the answer is the one it was before the chain was hung there.
-        let plain = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let plain =
+            Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         let probe = rig.joints[head].position + Vec3::new(0.04, -0.02, 0.0);
         assert_eq!(
             rig.nearest_bone(probe).joint,
@@ -824,7 +831,9 @@ mod tests {
 
     #[test]
     fn semantic_queries_find_limbs_without_naming_bones() {
-        let rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let rig =
+            Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
 
         // Asked as LIMBS, not as nodes. A hind extremity is a chain now — ball
         // and toe — so counting nodes counts the foot's own joints and answers
@@ -853,7 +862,9 @@ mod tests {
 
     #[test]
     fn a_quadruped_stands_on_four_feet() {
-        let rig = Rig::from_skeleton(&QuadrupedParams::default().skeleton()).expect("rigs");
+        let rig =
+            Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         let contacts = rig.query(|zone| matches!(zone, Zone::Extremity(_)));
         assert_eq!(contacts.len(), 4);
         assert_eq!(rig.in_zone(Zone::Tail).len(), 2);
@@ -861,7 +872,9 @@ mod tests {
 
     #[test]
     fn bones_run_from_parent_to_child() {
-        let rig = Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs");
+        let rig =
+            Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         let (start, end) = rig.bone(0);
         assert_eq!(start, end, "the root has no bone, only a position");
 
@@ -873,7 +886,7 @@ mod tests {
 
     #[test]
     fn a_bad_root_is_reported() {
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         assert!(matches!(
             Rig::rooted_at(&skeleton, 999),
             Err(RigError::RootOutOfRange { root: 999, .. })
@@ -884,7 +897,7 @@ mod tests {
     fn a_detached_island_is_reported() {
         use crate::skeleton::Node;
 
-        let mut skeleton = HumanoidParams::default().skeleton();
+        let mut skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let a = skeleton.add_node(Node::new(Vec3::new(9.0, 9.0, 9.0), 0.1));
         let b = skeleton.add_node(Node::new(Vec3::new(9.0, 9.5, 9.0), 0.1));
         skeleton.connect(a, b);

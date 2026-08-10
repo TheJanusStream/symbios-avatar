@@ -511,7 +511,8 @@ mod tests {
     use crate::plan::{BodyPlan, HumanoidParams, QuadrupedParams};
 
     fn biped() -> Rig {
-        Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs")
+        Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
     }
 
     /// Level ground at a fixed height.
@@ -538,7 +539,9 @@ mod tests {
     #[test]
     fn a_biped_stands_on_two_feet_and_a_quadruped_on_four() {
         assert_eq!(biped().ground_contacts().len(), 2);
-        let beast = Rig::from_skeleton(&QuadrupedParams::default().skeleton()).expect("rigs");
+        let beast =
+            Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         assert_eq!(beast.ground_contacts().len(), 4);
     }
 
@@ -755,7 +758,9 @@ mod tests {
 
     #[test]
     fn a_quadruped_plants_all_four() {
-        let rig = Rig::from_skeleton(&QuadrupedParams::default().skeleton()).expect("rigs");
+        let rig =
+            Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
         let mut pose = Pose::rest(&rig);
         let start = foot_of(&rig, &pose, Limb::HindLeft).y;
 

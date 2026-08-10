@@ -705,7 +705,10 @@ mod tests {
     }
 
     fn eyes(params: &EyeParams) -> Eyes {
-        seated(&HumanoidParams::default().skeleton(), params)
+        seated(
+            &HumanoidParams::default().skeleton(&crate::Composites::default()),
+            params,
+        )
     }
 
     #[test]
@@ -805,7 +808,7 @@ mod tests {
                 head_size,
                 ..Default::default()
             }
-            .skeleton();
+            .skeleton(&crate::Composites::default());
             let rig = Rig::from_skeleton(&skeleton).expect("rigs");
             let pair = seated(&skeleton, &EyeParams::default());
             (pair.left.radius, rig.joints[pair.head].radius)
@@ -1091,7 +1094,7 @@ mod tests {
         // Bisecting the built surface asks the head in hand instead, whatever
         // shape it came out.
         let pair = seated(
-            &QuadrupedParams::default().skeleton(),
+            &QuadrupedParams::default().skeleton(&crate::Composites::default()),
             &EyeParams::default(),
         );
         assert!(pair.left.radius > 0.0);

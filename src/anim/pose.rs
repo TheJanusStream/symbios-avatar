@@ -256,7 +256,8 @@ mod tests {
     use crate::plan::{BodyPlan, HumanoidParams, Limb, Zone};
 
     fn rig() -> Rig {
-        Rig::from_skeleton(&HumanoidParams::default().skeleton()).expect("rigs")
+        Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
     }
 
     #[test]
@@ -316,7 +317,7 @@ mod tests {
         use crate::rig::{SkinConfig, skin};
         use crate::subdiv::catmull_clark;
 
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let mesh = catmull_clark(
             &build_cage(&skeleton, &CageConfig::default()).expect("meshes"),
             1,

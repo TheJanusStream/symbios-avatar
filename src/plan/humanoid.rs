@@ -27,7 +27,7 @@ use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
     take_span, take_unit,
 };
-use super::{Limb, Zone};
+use super::{Composites, Limb, Zone};
 use crate::cage::limb::HALF_SEGMENT;
 use crate::skeleton::{Node, Skeleton};
 
@@ -175,8 +175,8 @@ impl BodyPlan for HumanoidParams {
         }
     }
 
-    fn skeleton(&self) -> Skeleton {
-        let d = Dimensions::of(self);
+    fn skeleton(&self, composites: &Composites) -> Skeleton {
+        let d = Dimensions::of(self, composites);
 
         let mut skeleton = Skeleton::new();
         let pelvis = skeleton.add_node(
@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn the_neutral_body_has_the_expected_topology() {
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         skeleton.validate().expect("valid skeleton");
 
         // The pelvis carries the spine and two legs; the shoulder girdle carries
@@ -556,12 +556,12 @@ mod tests {
             height: 1.3,
             ..Default::default()
         }
-        .skeleton();
+        .skeleton(&crate::Composites::default());
         let tall = HumanoidParams {
             height: 2.1,
             ..Default::default()
         }
-        .skeleton();
+        .skeleton(&crate::Composites::default());
         let head_of = |s: &Skeleton| s.nodes[4].position.y;
         assert!(head_of(&tall) > head_of(&short) * 1.5);
     }
@@ -598,12 +598,12 @@ mod tests {
             build: -1.0,
             ..Default::default()
         }
-        .skeleton();
+        .skeleton(&crate::Composites::default());
         let heavy = HumanoidParams {
             build: 1.0,
             ..Default::default()
         }
-        .skeleton();
+        .skeleton(&crate::Composites::default());
         // The torso and a limb both answer to the one axis. Found by zone
         // rather than by index, so adding a node does not silently retarget the
         // assertion at some other part of the body.

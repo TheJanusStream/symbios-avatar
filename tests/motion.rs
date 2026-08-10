@@ -390,7 +390,8 @@ fn swinging_arms_leaves_the_limbs_the_body_stands_on_alone() {
             Archetype::Quadruped(QuadrupedParams::default()),
         ),
     ] {
-        let rig = Rig::from_skeleton(&archetype.skeleton()).expect("rigs");
+        let rig = Rig::from_skeleton(&archetype.skeleton(&symbios_avatar::Composites::default()))
+            .expect("rigs");
         let gait = Gait::natural(&rig);
         let stride = Stride::for_body(&rig, 1.0);
         let carries = rig.ground_contacts();
@@ -463,7 +464,8 @@ fn a_limb_folds_the_way_its_own_plan_says_it_folds() {
             Archetype::Quadruped(QuadrupedParams::default()),
         ),
     ] {
-        let rig = Rig::from_skeleton(&archetype.skeleton()).expect("rigs");
+        let rig = Rig::from_skeleton(&archetype.skeleton(&symbios_avatar::Composites::default()))
+            .expect("rigs");
         for limb in Limb::ALL {
             let Some(chain) = rig.limb_chain(limb) else {
                 continue;
@@ -502,8 +504,11 @@ fn a_plan_that_states_its_own_bend_is_believed_over_the_fallback() {
     // this fails the moment the measurement stops being consulted.
     use symbios_avatar::Limb;
 
-    let rig = Rig::from_skeleton(&Archetype::Quadruped(QuadrupedParams::default()).skeleton())
-        .expect("rigs");
+    let rig = Rig::from_skeleton(
+        &Archetype::Quadruped(QuadrupedParams::default())
+            .skeleton(&symbios_avatar::Composites::default()),
+    )
+    .expect("rigs");
     for limb in [Limb::HindLeft, Limb::HindRight] {
         let chain = rig.limb_chain(limb).expect("a hind limb solves");
         let root = rig.joints[chain[0]].position;

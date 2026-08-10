@@ -389,7 +389,7 @@ mod tests {
         // Read from which end of the body a limb is on, a quadruped's front
         // legs come out as a pair of human hands, on the ground.
         use crate::plan::{BodyPlan, QuadrupedParams};
-        let skeleton = QuadrupedParams::default().skeleton();
+        let skeleton = QuadrupedParams::default().skeleton(&crate::Composites::default());
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let mut rig = Rig::from_skeleton(&skeleton).expect("rigs");

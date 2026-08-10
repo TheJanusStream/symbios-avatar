@@ -289,7 +289,7 @@ pub trait BodyPlan: Sized {
     ///
     /// The result is always meshable by [`crate::cage::build_cage`] for any
     /// sanitised parameters.
-    fn skeleton(&self) -> Skeleton;
+    fn skeleton(&self, composites: &Composites) -> Skeleton;
 
     /// Draws fresh values for the axes belonging to `category`.
     ///
@@ -491,11 +491,11 @@ impl Archetype {
     /// showing the stand-in *and* saying it is one is the honest behaviour;
     /// showing it silently is the substitution the lexicon warns against.
     #[must_use]
-    pub fn skeleton(&self) -> Skeleton {
+    pub fn skeleton(&self, composites: &Composites) -> Skeleton {
         match self {
-            Archetype::Humanoid(params) => params.skeleton(),
-            Archetype::Quadruped(params) => params.skeleton(),
-            Archetype::Unknown { .. } => HumanoidParams::default().skeleton(),
+            Archetype::Humanoid(params) => params.skeleton(composites),
+            Archetype::Quadruped(params) => params.skeleton(composites),
+            Archetype::Unknown { .. } => HumanoidParams::default().skeleton(composites),
         }
     }
 
@@ -769,7 +769,8 @@ mod tests {
 
     #[test]
     fn a_humanoid_faces_forward_and_puts_its_left_at_positive_x() {
-        let skeleton = Archetype::Humanoid(HumanoidParams::default()).skeleton();
+        let skeleton =
+            Archetype::Humanoid(HumanoidParams::default()).skeleton(&crate::Composites::default());
 
         // Facing, measured off the feet exactly as #139 measured it: a foot
         // reaches much further ahead of its ankle than behind it, so the sign of
@@ -788,7 +789,8 @@ mod tests {
 
     #[test]
     fn a_quadruped_faces_forward_and_puts_its_left_at_positive_x() {
-        let skeleton = Archetype::Quadruped(QuadrupedParams::default()).skeleton();
+        let skeleton = Archetype::Quadruped(QuadrupedParams::default())
+            .skeleton(&crate::Composites::default());
 
         // No foot to measure on this plan — its extremities are single nodes —
         // so facing is read off the two ends of the body instead: a head is

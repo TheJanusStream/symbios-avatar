@@ -810,7 +810,7 @@ mod tests {
     use crate::subdiv::catmull_clark;
 
     fn unwrapped() -> (PolyMesh, UvUnwrap) {
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let mesh = catmull_clark(&cage, 2);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
@@ -980,7 +980,7 @@ mod tests {
     #[test]
     fn a_mismatched_zone_map_is_refused_rather_than_guessed() {
         let (mesh, _) = unwrapped();
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let uv = unwrap(&mesh, &rig, &[Zone::Head], &UvConfig::default());
         assert_eq!(uv, UvUnwrap::default());

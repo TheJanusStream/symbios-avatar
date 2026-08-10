@@ -19,7 +19,7 @@ use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
     take_span, take_unit,
 };
-use super::{Limb, Zone};
+use super::{Composites, Limb, Zone};
 use crate::skeleton::{Node, Skeleton};
 
 /// Smallest and largest back height this plan accepts, in metres.
@@ -129,8 +129,10 @@ impl BodyPlan for QuadrupedParams {
         }
     }
 
-    fn skeleton(&self) -> Skeleton {
-        let d = Dimensions::of(self);
+    fn skeleton(&self, composites: &Composites) -> Skeleton {
+        // Passed through: see `derive::quadruped::Dimensions::of` for why a beast
+        // does not read the frame axis.
+        let d = Dimensions::of(self, composites);
 
         let mut skeleton = Skeleton::new();
         let hips = skeleton.add_node(
@@ -287,7 +289,7 @@ mod tests {
 
     #[test]
     fn the_neutral_body_has_two_four_way_girdles() {
-        let skeleton = QuadrupedParams::default().skeleton();
+        let skeleton = QuadrupedParams::default().skeleton(&crate::Composites::default());
         skeleton.validate().expect("valid skeleton");
         assert_eq!(skeleton.degree(0), 4, "hips: spine, tail, two legs");
         assert_eq!(skeleton.degree(2), 4, "withers: spine, neck, two legs");
@@ -310,7 +312,8 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            leggy.skeleton().nodes[1].radius < squat.skeleton().nodes[1].radius,
+            leggy.skeleton(&crate::Composites::default()).nodes[1].radius
+                < squat.skeleton(&crate::Composites::default()).nodes[1].radius,
             "a leggy animal is a slender one at the same back height"
         );
     }
@@ -324,7 +327,7 @@ mod tests {
             leg_length: -1.0,
             ..Default::default()
         };
-        let skeleton = params.skeleton();
+        let skeleton = params.skeleton(&crate::Composites::default());
         let hips = skeleton.nodes[0].position.z;
         let spine = skeleton.nodes[1].position.z;
         let girdle = skeleton.nodes[0].radius;

@@ -12,7 +12,7 @@
 
 use glam::{Vec2, Vec3};
 
-use crate::plan::QuadrupedParams;
+use crate::plan::{Composites, QuadrupedParams};
 
 /// Cross-sections of the trunk, as `(lateral, vertical)` multiples of the node's
 /// radius.
@@ -130,7 +130,15 @@ fn girth(params: &QuadrupedParams) -> f32 {
 
 impl Dimensions {
     /// Derives every dimension of one quadruped from its record's axes.
-    pub(crate) fn of(params: &QuadrupedParams) -> Self {
+    /// The composites are taken and not yet read.
+    ///
+    /// **The frame axis is a humanoid one** (#100): it is anchored on a
+    /// measured male and female mannequin, and there is no such pair for a
+    /// beast — a quadruped's dimorphism is a species question before it is a
+    /// body question. The parameter is in the signature so the two plans keep
+    /// one shape and so whatever reaches a beast first, most likely #164's
+    /// mass, has somewhere to land rather than a signature change to make.
+    pub(crate) fn of(params: &QuadrupedParams, _composites: &Composites) -> Self {
         let h = params.height;
         let girth = girth(params);
 

@@ -547,7 +547,7 @@ mod tests {
     use crate::subdiv::catmull_clark;
 
     fn humanoid() -> (PolyMesh, Rig) {
-        let skeleton = HumanoidParams::default().skeleton();
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         (catmull_clark(&cage, crate::BODY_SUBDIVISIONS), rig)
