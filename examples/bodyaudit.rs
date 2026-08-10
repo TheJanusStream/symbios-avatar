@@ -291,12 +291,12 @@ fn proportions(rig: &Rig, height: f32, floor: f32) {
         );
     };
     if let Some([shoulder, elbow, wrist]) = arm {
-        row("upper arm", length(shoulder, elbow), 0.1621, 0.1290);
+        row("upper arm", length(shoulder, elbow), 0.1621, 0.1293);
         row("forearm", length(elbow, wrist), 0.1529, 0.1549);
     }
     if let Some([hip, knee, ankle]) = leg {
-        row("thigh", length(hip, knee), 0.2220, 0.2364);
-        row("shank", length(knee, ankle), 0.2339, 0.2369);
+        row("thigh", length(hip, knee), 0.2223, 0.2366);
+        row("shank", length(knee, ankle), 0.2368, 0.2398);
     }
 
     // Spans are compared by *where the arm leaves the body*, not by bone name.
@@ -324,6 +324,21 @@ fn proportions(rig: &Rig, height: f32, floor: f32) {
 /// The Quaternius male, measured off the GLB with its own skin weights used to
 /// drop the T-posed arms out of the shoulder bands — which is the step that
 /// makes the figure a torso rather than a wingspan.
+///
+/// **Re-derived by `examples/reference` and one figure was wrong** (#173).
+/// These were measured once by hand and written down, and nothing could
+/// reproduce them until that example existed. Reading them off the GLB a second
+/// way agrees on all nine widths and on eight of the nine depths; the last
+/// band's depth was 0.0663 and measures 0.0715, which is 7.8% and is the
+/// difference between our top band reading 9% shallow and 15%. The same pass
+/// corrected the thigh, the shank and the female upper arm by smaller amounts.
+///
+/// **The table stops below the reference's own widest trunk band, and that is
+/// worth knowing before quoting the top row.** Run out to the crown, the male
+/// keeps widening past 0.72 to 0.0965 at 0.75–0.78 — its shoulder shelf, which
+/// sits where ours does — so this last row is a climb read as a peak. Widening
+/// the table is #100's, since it is the female column that makes it worth
+/// having.
 const TRUNK: [(f32, f32, f32); 9] = [
     (0.45, 0.0717, 0.0504),
     (0.48, 0.0910, 0.0551),
@@ -333,7 +348,7 @@ const TRUNK: [(f32, f32, f32); 9] = [
     (0.60, 0.0706, 0.0558),
     (0.63, 0.0678, 0.0571),
     (0.66, 0.0799, 0.0643),
-    (0.69, 0.0911, 0.0663),
+    (0.69, 0.0911, 0.0715),
 ];
 
 /// The two [`TRUNK`] bands the coat-hanger ratio used to be quoted at.

@@ -1,12 +1,24 @@
-//! Reading a glTF binary far enough to sample a skinned animation, and no
-//! further.
+//! Reading a glTF binary far enough to sample a skinned animation and to
+//! measure a body, and no further.
 //!
-//! This exists for one question, and the question is the whole specification:
-//! **where is each of a skin's joints, at time `t` of animation `n`?** Nothing
-//! here reads a material, a mesh, an image or a camera, because nothing that
-//! consumes this wants one — the motion library it was written for
+//! This began with one question, and the question was most of the
+//! specification: **where is each of a skin's joints, at time `t` of animation
+//! `n`?** The motion library it was written for
 //! ([#102](https://github.com/TheJanusStream/symbios-avatar/issues/102)) is
-//! 162 clips of skeletal animation and a skeleton to hang them on.
+//! 162 clips of skeletal animation and a skeleton to hang them on, and nothing
+//! else in those files was wanted.
+//!
+//! It now answers a second: **what shape is the body those joints are in?**
+//! Every reference figure in this crate — the landmark heights, the segment
+//! lengths, the spans, the trunk silhouette, the limb-thickness ladder — is a
+//! measurement of the two CC0 mannequins, and until [`Gltf::rest_meshes`]
+//! existed each one was a number somebody wrote down once, with nothing able to
+//! reproduce it and so nothing able to notice it was wrong. One was
+//! ([#173](https://github.com/TheJanusStream/symbios-avatar/issues/173)). See
+//! `examples/reference`, which prints the tables, and the mannequin test below,
+//! which is the ratchet under them.
+//!
+//! Still nothing here reads a material, an image or a camera.
 //!
 //! # Why a reader rather than a crate
 //!
@@ -28,6 +40,21 @@
 //!   no sparse accessors, no normalized accessors, no bufferView byteStride
 //!   nodes carry translation/rotation/scale — none carries a matrix
 //! ```
+//!
+//! The two mannequin GLBs are a wider file than the animation library, and the
+//! mesh side of this reader is measured off them the same way:
+//!
+//! ```text
+//!   one mesh of one TRIANGLES primitive, skinned to the same 66-joint skin
+//!   POSITION as FLOAT VEC3, indices as UNSIGNED_SHORT
+//!   JOINTS_0 as UNSIGNED_BYTE, WEIGHTS_0 as normalized UNSIGNED_SHORT
+//!   inverseBindMatrices present, as FLOAT MAT4
+//!   7399 vertices on the male, 24037 on the female, both about 14k triangles
+//! ```
+//!
+//! Which is why integers and the `normalized` flag are read now and were not
+//! before: an animation accessor is FLOAT and a vertex attribute is very often
+//! not.
 //!
 //! Everything on that list that is *absent* is refused loudly rather than
 //! ignored: a file with a `matrix` node, a `CUBICSPLINE` sampler, an external
@@ -72,8 +99,29 @@ const MAGIC: &[u8; 4] = b"glTF";
 /// The only container version this reads.
 const VERSION: u32 = 2;
 
-/// `FLOAT`, the only component type any animation accessor here uses.
+/// `FLOAT`, the only component type any animation accessor uses.
 const FLOAT: u32 = 5126;
+
+/// `UNSIGNED_BYTE`. A small skin's `JOINTS_0`, and normalised `WEIGHTS_0`.
+const UNSIGNED_BYTE: u32 = 5121;
+
+/// `UNSIGNED_SHORT`. A large skin's `JOINTS_0`, and most index buffers.
+const UNSIGNED_SHORT: u32 = 5123;
+
+/// `UNSIGNED_INT`. An index buffer past 65535 vertices.
+const UNSIGNED_INT: u32 = 5125;
+
+/// How many bytes one component of each type this reads occupies.
+fn width_of(component_type: u32) -> Result<usize, GltfError> {
+    match component_type {
+        UNSIGNED_BYTE => Ok(1),
+        UNSIGNED_SHORT => Ok(2),
+        UNSIGNED_INT | FLOAT => Ok(4),
+        other => Err(GltfError::Unsupported(format!(
+            "component type {other}; this reads unsigned byte, short, int and float"
+        ))),
+    }
+}
 
 /// Errors raised while reading a glTF binary.
 ///
@@ -204,6 +252,67 @@ impl Skin {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+}
+
+/// One mesh of a file, in that file's own rest pose and in world space.
+///
+/// **Skinned into rest rather than handed over in mesh space.** For an
+/// unskinned mesh the two differ by the node's transform; for a skinned one
+/// they differ by whatever the bind pose was, and an exporter is not obliged to
+/// make those agree. Measuring the mesh-space positions of a rig whose bind
+/// pose is not its rest pose reports a body nobody has ever seen, and it does
+/// it silently — so this applies `world · inverseBind` per joint and hands back
+/// what the file actually draws.
+#[derive(Clone, Debug, Default)]
+pub struct RestMesh {
+    /// What the mesh is called in the file, or empty.
+    pub name: String,
+    /// Every vertex, world space, at rest.
+    pub positions: Vec<Vec3>,
+    /// Every triangle, as indices into [`Self::positions`].
+    pub triangles: Vec<[u32; 3]>,
+    /// Which skin deforms it, as an index into the document's skins.
+    pub skin: Option<usize>,
+    /// What holds each vertex: `(joint, weight)` pairs indexed the way
+    /// [`Skin::nodes`] is, with zero-weight influences dropped.
+    ///
+    /// Empty for an unskinned mesh, and empty for a vertex the file gives no
+    /// weights — which is a vertex nailed to the model's origin, not one held
+    /// by everything.
+    pub influences: Vec<Vec<(usize, f32)>>,
+}
+
+impl RestMesh {
+    /// The axis-aligned bounds of the whole mesh.
+    ///
+    /// Returns `(MAX, MIN)` for an empty mesh, so a caller that folds over
+    /// several meshes gets the identity of the fold rather than a box at the
+    /// origin.
+    #[must_use]
+    pub fn bounds(&self) -> (Vec3, Vec3) {
+        self.positions.iter().fold(
+            (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+            |(low, high), &at| (low.min(at), high.max(at)),
+        )
+    }
+
+    /// How much of a vertex is held by joints `wanted` accepts.
+    ///
+    /// The measurement every reference column is taken with: it is what lets a
+    /// T-posed arm be dropped out of a shoulder band without either skeleton
+    /// being consulted by name.
+    #[must_use]
+    pub fn held_by(&self, vertex: usize, wanted: impl Fn(usize) -> bool) -> f32 {
+        self.influences
+            .get(vertex)
+            .map(|held| {
+                held.iter()
+                    .filter(|(joint, _)| wanted(*joint))
+                    .map(|(_, weight)| weight)
+                    .sum()
+            })
+            .unwrap_or(0.0)
     }
 }
 
@@ -350,6 +459,188 @@ impl Gltf {
                 .collect(),
             nodes: skin.joints.clone(),
         })
+    }
+
+    /// Every mesh the file draws, in its own rest pose.
+    ///
+    /// One [`RestMesh`] per node that carries a mesh, with that mesh's
+    /// primitives concatenated: a measurement wants the whole body, and which
+    /// primitive a vertex came from is a fact about materials.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GltfError`] if a primitive is not a triangle list, if it has
+    /// no `POSITION`, if it names a skin or accessor that is not there, or if
+    /// an accessor is a shape this does not read.
+    pub fn rest_meshes(&self) -> Result<Vec<RestMesh>, GltfError> {
+        let world = self.rest()?;
+        let mut out = Vec::new();
+        for (index, node) in self.document.nodes.iter().enumerate() {
+            let Some(mesh) = node.mesh else {
+                continue;
+            };
+            let entry = self.document.meshes.get(mesh).ok_or(GltfError::Missing {
+                what: "mesh",
+                index: mesh,
+            })?;
+
+            // A skinned mesh ignores its own node transform by the
+            // specification — the joints carry it — so the two branches here
+            // are not a special case of one another.
+            let joints = match node.skin {
+                Some(skin) => Some(self.skin_matrices(skin, &world)?),
+                None => None,
+            };
+            let place = world[index];
+
+            let mut built = RestMesh {
+                name: entry.name.clone().unwrap_or_default(),
+                skin: node.skin,
+                ..RestMesh::default()
+            };
+            for (at, primitive) in entry.primitives.iter().enumerate() {
+                if primitive.mode != triangles() {
+                    return Err(GltfError::Unsupported(format!(
+                        "mesh {mesh} primitive {at} has mode {}; this reads triangle lists",
+                        primitive.mode
+                    )));
+                }
+                let base = built.positions.len() as u32;
+                let local =
+                    self.vec3s(*primitive.attributes.get("POSITION").ok_or_else(|| {
+                        GltfError::Unsupported(format!(
+                            "mesh {mesh} primitive {at} has no POSITION"
+                        ))
+                    })?)?;
+                let held = self.primitive_influences(primitive, joints.as_ref().map(Vec::len))?;
+
+                for (vertex, &at) in local.iter().enumerate() {
+                    let placed = match (&joints, held.get(vertex)) {
+                        (Some(joints), Some(held)) if !held.is_empty() => held
+                            .iter()
+                            .map(|&(joint, weight)| weight * joints[joint].transform_point3(at))
+                            .fold(Vec3::ZERO, |sum, part| sum + part),
+                        _ => place.transform_point3(at),
+                    };
+                    built.positions.push(placed);
+                }
+                built.influences.extend(held);
+
+                match primitive.indices {
+                    Some(indices) => {
+                        let read = self.integers(indices, 1)?;
+                        built.triangles.extend(
+                            read.chunks_exact(3)
+                                .map(|face| [base + face[0], base + face[1], base + face[2]]),
+                        );
+                    }
+                    // No index buffer means the vertices are the triangles, in
+                    // order, which is legal and which the reference files do
+                    // not do.
+                    None => {
+                        built
+                            .triangles
+                            .extend((0..local.len() as u32 / 3).map(|face| {
+                                [base + face * 3, base + face * 3 + 1, base + face * 3 + 2]
+                            }))
+                    }
+                }
+            }
+            out.push(built);
+        }
+        Ok(out)
+    }
+
+    /// What each joint of a skin does to a vertex at rest: `world · inverseBind`.
+    fn skin_matrices(&self, skin: usize, world: &[Mat4]) -> Result<Vec<Mat4>, GltfError> {
+        let entry = self.document.skins.get(skin).ok_or(GltfError::Missing {
+            what: "skin",
+            index: skin,
+        })?;
+        let inverse = match entry.inverse_bind_matrices {
+            Some(accessor) => self
+                .floats(accessor, 16)?
+                .chunks_exact(16)
+                .map(Mat4::from_cols_slice)
+                .collect(),
+            None => vec![Mat4::IDENTITY; entry.joints.len()],
+        };
+        if inverse.len() != entry.joints.len() {
+            return Err(GltfError::Unsupported(format!(
+                "skin {skin} has {} joints and {} inverse bind matrices",
+                entry.joints.len(),
+                inverse.len()
+            )));
+        }
+        entry
+            .joints
+            .iter()
+            .zip(inverse)
+            .map(|(&node, inverse)| {
+                world
+                    .get(node)
+                    .map(|place| *place * inverse)
+                    .ok_or(GltfError::Missing {
+                        what: "node",
+                        index: node,
+                    })
+            })
+            .collect()
+    }
+
+    /// One primitive's per-vertex influences, or an empty list if it has none.
+    ///
+    /// glTF allows several `JOINTS_n`/`WEIGHTS_n` sets, four influences each.
+    /// All of them are read: a body bound to five bones somewhere would
+    /// otherwise come back holding four, with the missing weight silently
+    /// dropped rather than named.
+    fn primitive_influences(
+        &self,
+        primitive: &Primitive,
+        joints: Option<usize>,
+    ) -> Result<Vec<Vec<(usize, f32)>>, GltfError> {
+        let Some(count) = joints else {
+            return Ok(Vec::new());
+        };
+        let mut out: Vec<Vec<(usize, f32)>> = Vec::new();
+        for set in 0.. {
+            let (Some(&which), Some(&how_much)) = (
+                primitive.attributes.get(&format!("JOINTS_{set}")),
+                primitive.attributes.get(&format!("WEIGHTS_{set}")),
+            ) else {
+                break;
+            };
+            let which = self.integers(which, 4)?;
+            let how_much = self.unit_floats(how_much, 4)?;
+            if which.len() != how_much.len() {
+                return Err(GltfError::Unsupported(format!(
+                    "JOINTS_{set} has {} entries and WEIGHTS_{set} has {}",
+                    which.len(),
+                    how_much.len()
+                )));
+            }
+            out.resize(out.len().max(which.len() / 4), Vec::new());
+            for (vertex, (which, how_much)) in which
+                .chunks_exact(4)
+                .zip(how_much.chunks_exact(4))
+                .enumerate()
+            {
+                for slot in 0..4 {
+                    if how_much[slot] <= 0.0 {
+                        continue;
+                    }
+                    let joint = which[slot] as usize;
+                    if joint >= count {
+                        return Err(GltfError::Missing {
+                            what: "skin joint",
+                            index: joint,
+                        });
+                    }
+                    out[vertex].push((joint, how_much[slot]));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Every node's world transform at `time` of an animation.
@@ -517,6 +808,78 @@ impl Gltf {
 
     /// An accessor's floats, as many per element as its type says.
     fn floats(&self, accessor: usize, components: usize) -> Result<Vec<f32>, GltfError> {
+        let component_type = self.accessor(accessor)?.component_type;
+        if component_type != FLOAT {
+            return Err(GltfError::Unsupported(format!(
+                "accessor {accessor} has component type {component_type}, and this reads it as \
+                 FLOAT only"
+            )));
+        }
+        self.walk(accessor, components, |_, bytes| {
+            f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        })
+    }
+
+    /// An accessor read as unsigned integers — joint indices and triangle
+    /// indices.
+    ///
+    /// Widened to `u32` whatever the file stores, because the caller cares
+    /// which vertex or which joint and not how many bytes it took to say so.
+    fn integers(&self, accessor: usize, components: usize) -> Result<Vec<u32>, GltfError> {
+        let component_type = self.accessor(accessor)?.component_type;
+        if !matches!(
+            component_type,
+            UNSIGNED_BYTE | UNSIGNED_SHORT | UNSIGNED_INT
+        ) {
+            return Err(GltfError::Unsupported(format!(
+                "accessor {accessor} has component type {component_type} where an unsigned \
+                 integer was wanted"
+            )));
+        }
+        self.walk(
+            accessor,
+            components,
+            |component_type, bytes| match component_type {
+                UNSIGNED_BYTE => u32::from(bytes[0]),
+                UNSIGNED_SHORT => u32::from(u16::from_le_bytes([bytes[0], bytes[1]])),
+                _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            },
+        )
+    }
+
+    /// An accessor read as a `0..=1` quantity — skin weights.
+    ///
+    /// **Normalisation is the accessor's `normalized` flag and not a guess from
+    /// the component type**, because an unsigned short is a joint index in one
+    /// attribute and 1/65535ths of a weight in the next. A file that stores
+    /// weights as integers without saying they are normalised is refused rather
+    /// than divided by a number nobody wrote down.
+    fn unit_floats(&self, accessor: usize, components: usize) -> Result<Vec<f32>, GltfError> {
+        let read = self.accessor(accessor)?;
+        let (component_type, normalized) = (read.component_type, read.normalized);
+        if component_type != FLOAT && !normalized {
+            return Err(GltfError::Unsupported(format!(
+                "accessor {accessor} stores a weight as component type {component_type} without \
+                 the normalized flag, so its scale is unknown"
+            )));
+        }
+        self.walk(
+            accessor,
+            components,
+            |component_type, bytes| match component_type {
+                UNSIGNED_BYTE => f32::from(bytes[0]) / 255.0,
+                UNSIGNED_SHORT => f32::from(u16::from_le_bytes([bytes[0], bytes[1]])) / 65535.0,
+                UNSIGNED_INT => {
+                    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32
+                        / 4_294_967_295.0
+                }
+                _ => f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            },
+        )
+    }
+
+    /// One accessor, looked up and refused if it is a shape this cannot read.
+    fn accessor(&self, accessor: usize) -> Result<&Accessor, GltfError> {
         let read = self
             .document
             .accessors
@@ -530,12 +893,21 @@ impl Gltf {
                 "accessor {accessor} is sparse"
             )));
         }
-        if read.component_type != FLOAT {
-            return Err(GltfError::Unsupported(format!(
-                "accessor {accessor} has component type {}, and animation is read as FLOAT only",
-                read.component_type
-            )));
-        }
+        Ok(read)
+    }
+
+    /// Walks an accessor's elements, handing each component's bytes to `parse`.
+    ///
+    /// The one place in this file that knows about buffer views, strides and
+    /// bounds, so every attribute reader above gets the same refusals rather
+    /// than three copies of them that drift.
+    fn walk<T>(
+        &self,
+        accessor: usize,
+        components: usize,
+        parse: impl Fn(u32, &[u8]) -> T,
+    ) -> Result<Vec<T>, GltfError> {
+        let read = self.accessor(accessor)?;
         let wanted = components_of(&read.kind)?;
         if wanted != components {
             return Err(GltfError::Unsupported(format!(
@@ -545,7 +917,7 @@ impl Gltf {
         }
         let Some(view) = read.buffer_view else {
             // A view-less accessor is all zeroes by the specification. Nothing
-            // in an animation has any business being one.
+            // this reads has any business being one.
             return Err(GltfError::Unsupported(format!(
                 "accessor {accessor} has no bufferView"
             )));
@@ -559,7 +931,8 @@ impl Gltf {
                 index: view,
             })?;
 
-        let element = components * 4;
+        let width = width_of(read.component_type)?;
+        let element = components * width;
         let stride = view.byte_stride.unwrap_or(element);
         if stride < element {
             return Err(GltfError::Unsupported(format!(
@@ -576,13 +949,8 @@ impl Gltf {
                 return Err(GltfError::OutOfBounds { accessor });
             }
             for component in 0..components {
-                let from = at + component * 4;
-                out.push(f32::from_le_bytes([
-                    self.binary[from],
-                    self.binary[from + 1],
-                    self.binary[from + 2],
-                    self.binary[from + 3],
-                ]));
+                let from = at + component * width;
+                out.push(parse(read.component_type, &self.binary[from..from + width]));
             }
         }
         Ok(out)
@@ -667,6 +1035,7 @@ fn components_of(kind: &str) -> Result<usize, GltfError> {
         "VEC2" => Ok(2),
         "VEC3" => Ok(3),
         "VEC4" => Ok(4),
+        "MAT4" => Ok(16),
         other => Err(GltfError::Unsupported(format!("accessor type {other}"))),
     }
 }
@@ -686,6 +1055,8 @@ struct Document {
     #[serde(default)]
     nodes: Vec<Node>,
     #[serde(default)]
+    meshes: Vec<MeshEntry>,
+    #[serde(default)]
     skins: Vec<SkinEntry>,
     #[serde(default)]
     animations: Vec<Animation>,
@@ -703,6 +1074,10 @@ struct Node {
     name: Option<String>,
     #[serde(default)]
     children: Vec<usize>,
+    /// Which mesh this node draws, if any.
+    mesh: Option<usize>,
+    /// Which skin deforms that mesh, if it is skinned.
+    skin: Option<usize>,
     translation: Option<[f32; 3]>,
     rotation: Option<[f32; 4]>,
     scale: Option<[f32; 3]>,
@@ -733,9 +1108,40 @@ impl Node {
 
 /// A skin, as the document lists it.
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SkinEntry {
     #[serde(default)]
     joints: Vec<usize>,
+    /// One matrix per joint, taking a vertex from mesh space into that joint's
+    /// space. Absent means every joint's is the identity, which the
+    /// specification allows and which no rigged export actually does.
+    inverse_bind_matrices: Option<usize>,
+}
+
+/// One mesh, as the document lists it.
+#[derive(Clone, Debug, Default, Deserialize)]
+struct MeshEntry {
+    name: Option<String>,
+    #[serde(default)]
+    primitives: Vec<Primitive>,
+}
+
+/// One drawable piece of a mesh.
+#[derive(Clone, Debug, Default, Deserialize)]
+struct Primitive {
+    #[serde(default)]
+    attributes: HashMap<String, usize>,
+    indices: Option<usize>,
+    /// glTF's default is 4, `TRIANGLES`. Anything else is refused: a strip or
+    /// a fan measured as if it were a triangle list reports a shape that is not
+    /// in the file.
+    #[serde(default = "triangles")]
+    mode: u32,
+}
+
+/// glTF's default primitive mode, `TRIANGLES`.
+fn triangles() -> u32 {
+    4
 }
 
 /// One animation.
@@ -788,6 +1194,11 @@ struct Accessor {
     count: usize,
     #[serde(rename = "type")]
     kind: String,
+    /// Whether an integer component is a fraction of its own maximum.
+    ///
+    /// glTF's own default is false, which is what an index buffer wants.
+    #[serde(default)]
+    normalized: bool,
     /// Refused rather than read, and named in the error.
     sparse: Option<serde_json::Value>,
 }
@@ -820,6 +1231,290 @@ pub(crate) mod tests {
     /// a second thing that can be wrong about the container.
     pub(crate) fn a_two_joint_glb() -> Vec<u8> {
         arm("LINEAR")
+    }
+
+    /// A skinned quad on the two-joint arm, in the shapes a real export uses.
+    ///
+    /// Deliberately awkward where the reference files are awkward: `JOINTS_0`
+    /// is unsigned bytes, `WEIGHTS_0` is normalised unsigned shorts, the
+    /// indices are unsigned shorts, and the skin carries real inverse bind
+    /// matrices — so the test exercises every path `floats()` used to refuse.
+    /// The mesh node also carries a translation that a skinned mesh must
+    /// IGNORE, which is the one part of this nobody would notice being wrong.
+    fn a_skinned_quad() -> Vec<u8> {
+        let mut binary = Vec::new();
+        // Four vertices, a metre apart up Y, in mesh space.
+        for at in [
+            [0.0f32, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 1.0, 1.0],
+        ] {
+            for component in at {
+                binary.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+        let positions = 0..binary.len();
+        // Two triangles.
+        for index in [0u16, 1, 2, 2, 1, 3] {
+            binary.extend_from_slice(&index.to_le_bytes());
+        }
+        let indices = positions.end..binary.len();
+        // The lower pair on the root, the upper pair on the tip.
+        for joints in [[0u8, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]] {
+            binary.extend_from_slice(&joints);
+        }
+        let joints = indices.end..binary.len();
+        for _ in 0..4 {
+            for weight in [u16::MAX, 0, 0, 0] {
+                binary.extend_from_slice(&weight.to_le_bytes());
+            }
+        }
+        let weights = joints.end..binary.len();
+        // Inverse binds: the root at the origin, the tip a metre up.
+        for inverse in [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0)),
+        ] {
+            for component in inverse.to_cols_array() {
+                binary.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+        let inverses = weights.end..binary.len();
+
+        let view = |range: &std::ops::Range<usize>| {
+            serde_json::json!({
+                "buffer": 0,
+                "byteOffset": range.start,
+                "byteLength": range.len(),
+            })
+        };
+        let document = serde_json::json!({
+            "asset": { "version": "2.0" },
+            "nodes": [
+                { "name": "root", "children": [1] },
+                { "name": "tip", "translation": [0.0, 1.0, 0.0] },
+                { "name": "body", "mesh": 0, "skin": 0, "translation": [9.0, 9.0, 9.0] },
+            ],
+            "skins": [{ "joints": [0, 1], "inverseBindMatrices": 4 }],
+            "meshes": [{
+                "name": "Quad",
+                "primitives": [{
+                    "attributes": { "POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3 },
+                    "indices": 1,
+                }],
+            }],
+            "buffers": [{ "byteLength": binary.len() }],
+            "bufferViews": [
+                view(&positions),
+                view(&indices),
+                view(&joints),
+                view(&weights),
+                view(&inverses),
+            ],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3" },
+                { "bufferView": 1, "componentType": 5123, "count": 6, "type": "SCALAR" },
+                { "bufferView": 2, "componentType": 5121, "count": 4, "type": "VEC4" },
+                {
+                    "bufferView": 3, "componentType": 5123, "count": 4,
+                    "type": "VEC4", "normalized": true,
+                },
+                { "bufferView": 4, "componentType": 5126, "count": 2, "type": "MAT4" },
+            ],
+        });
+        glb(&document, &binary)
+    }
+
+    #[test]
+    fn a_skinned_mesh_reads_into_its_own_rest_pose() {
+        let file = Gltf::read(&a_skinned_quad()).expect("a GLB");
+        let meshes = file.rest_meshes().expect("meshes");
+        assert_eq!(meshes.len(), 1, "one node carries a mesh");
+        let mesh = &meshes[0];
+        assert_eq!(mesh.name, "Quad");
+        assert_eq!(mesh.skin, Some(0));
+        assert_eq!(mesh.triangles, vec![[0, 1, 2], [2, 1, 3]]);
+
+        // The rest pose puts every vertex back where mesh space had it: the
+        // tip's world transform and its inverse bind cancel. The node's own
+        // (9, 9, 9) is ignored, which is what a skinned mesh means.
+        for (vertex, want) in [
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 1.0, 1.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(
+                mesh.positions[vertex].distance(want) < 1e-5,
+                "vertex {vertex} rests at {:?}, wanted {want:?}",
+                mesh.positions[vertex]
+            );
+        }
+
+        // Normalised unsigned shorts come back as a full weight, not as 65535.
+        assert_eq!(mesh.influences[0], vec![(0, 1.0)]);
+        assert_eq!(mesh.influences[3], vec![(1, 1.0)]);
+        assert!((mesh.held_by(3, |joint| joint == 1) - 1.0).abs() < 1e-6);
+        assert_eq!(mesh.held_by(3, |joint| joint == 0), 0.0);
+    }
+
+    #[test]
+    fn a_weight_stored_as_integers_without_the_flag_is_refused() {
+        // The trap this exists for: an unsigned short is a joint index in one
+        // attribute and 1/65535th of a weight in the next, so reading the
+        // component type alone would divide an index by 65535 and hand back a
+        // body held together by nothing.
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&json_of(&a_skinned_quad())).expect("the document parses");
+        document["accessors"][3]
+            .as_object_mut()
+            .expect("an accessor")
+            .remove("normalized");
+        let rebuilt = glb(&document, &binary_of(&a_skinned_quad()));
+        let error = Gltf::read(&rebuilt)
+            .expect("a GLB")
+            .rest_meshes()
+            .expect_err("an unmarked integer weight is refused");
+        assert!(
+            matches!(&error, GltfError::Unsupported(what) if what.contains("normalized")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_primitive_that_is_not_a_triangle_list_is_refused() {
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&json_of(&a_skinned_quad())).expect("the document parses");
+        document["meshes"][0]["primitives"][0]["mode"] = serde_json::json!(5);
+        let rebuilt = glb(&document, &binary_of(&a_skinned_quad()));
+        let error = Gltf::read(&rebuilt)
+            .expect("a GLB")
+            .rest_meshes()
+            .expect_err("a triangle strip is refused rather than measured");
+        assert!(
+            matches!(&error, GltfError::Unsupported(what) if what.contains("mode 5")),
+            "{error}"
+        );
+    }
+
+    /// The two mannequins every reference column in this crate is taken off.
+    const MANNEQUINS: [(&str, &str); 2] = [
+        (
+            "male",
+            "../mesh2motion-app/static/models-variation/human-male.glb",
+        ),
+        (
+            "female",
+            "../mesh2motion-app/static/models-variation/human-female.glb",
+        ),
+    ];
+
+    #[test]
+    fn the_reference_mannequins_measure_as_the_published_tables_say() {
+        // **The ratchet under every reference figure in the crate** (#173).
+        // Those figures were measured by hand once and written into
+        // `examples/bodyaudit` as constants, where nothing could reproduce them
+        // and so nothing could notice one being wrong — and re-deriving them
+        // found one that was. This asserts a handful of the load-bearing ones
+        // against the files themselves, so the next time a mannequin is
+        // re-exported, or this reader's rest-pose skinning drifts, the tables
+        // stop being quietly wrong and start being loudly wrong.
+        //
+        // Skips when the sibling checkout is absent, like the library test
+        // above and for the same reason.
+        for (who, path) in MANNEQUINS {
+            let Ok(bytes) = std::fs::read(path) else {
+                eprintln!("skipping: {path} is not checked out beside this repository");
+                return;
+            };
+            let file = Gltf::read(&bytes).expect("a mannequin reads");
+            let mesh = file
+                .rest_meshes()
+                .expect("its mesh reads")
+                .into_iter()
+                .next()
+                .expect("it has one");
+            let skin = file
+                .skin(mesh.skin.expect("it is skinned"))
+                .expect("a skin");
+            let world = file.rest().expect("a rest pose");
+            let at = |bone: &str| {
+                let joint = skin
+                    .names
+                    .iter()
+                    .position(|name| name == bone)
+                    .unwrap_or_else(|| panic!("{who} has a bone called {bone}"));
+                world[skin.nodes[joint]].w_axis.truncate()
+            };
+
+            let (low, high) = mesh.bounds();
+            let height = high.y - low.y;
+            let (stature, shoulder, hip, pelvis) = match who {
+                "male" => (1.830, 0.1899, 0.0973, 0.5013),
+                _ => (1.806, 0.1560, 0.0986, 0.5179),
+            };
+            assert!(
+                (height - stature).abs() < 0.002,
+                "{who} renders {height:.3} m against a published {stature:.3}"
+            );
+
+            let span = |left: &str, right: &str| (at(left).x - at(right).x).abs() / height;
+            assert!(
+                (span("upperarm_l", "upperarm_r") - shoulder).abs() < 0.0005,
+                "{who} shoulder span {:.4} against a published {shoulder:.4}",
+                span("upperarm_l", "upperarm_r")
+            );
+            assert!(
+                (span("thigh_l", "thigh_r") - hip).abs() < 0.0005,
+                "{who} hip span {:.4} against a published {hip:.4}",
+                span("thigh_l", "thigh_r")
+            );
+            let up = (at("pelvis").y - low.y) / height;
+            assert!(
+                (up - pelvis).abs() < 0.0005,
+                "{who} pelvis at {up:.4} against a published {pelvis:.4}"
+            );
+
+            // Every vertex weighted, and every weight summing to one: a mesh
+            // read with the wrong accessor width comes back holding nothing,
+            // and would still measure a plausible height.
+            let loose = (0..mesh.positions.len())
+                .filter(|&vertex| (mesh.held_by(vertex, |_| true) - 1.0).abs() > 0.01)
+                .count();
+            assert_eq!(
+                loose, 0,
+                "{who} has {loose} vertices whose weights do not sum to one"
+            );
+        }
+    }
+
+    /// The JSON chunk of a GLB this module built.
+    fn json_of(glb: &[u8]) -> Vec<u8> {
+        chunk(glb, b"JSON")
+    }
+
+    /// The BIN chunk of a GLB this module built.
+    fn binary_of(glb: &[u8]) -> Vec<u8> {
+        chunk(glb, b"BIN\0")
+    }
+
+    /// One named chunk of a GLB.
+    fn chunk(glb: &[u8], want: &[u8; 4]) -> Vec<u8> {
+        let mut at = 12usize;
+        while at + 8 <= glb.len() {
+            let length =
+                u32::from_le_bytes([glb[at], glb[at + 1], glb[at + 2], glb[at + 3]]) as usize;
+            let kind = [glb[at + 4], glb[at + 5], glb[at + 6], glb[at + 7]];
+            if &kind == want {
+                return glb[at + 8..at + 8 + length].to_vec();
+            }
+            at = at + 8 + length;
+        }
+        Vec::new()
     }
 
     /// Where the CC0 reference animations sit, relative to this checkout.
