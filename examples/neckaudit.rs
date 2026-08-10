@@ -143,6 +143,111 @@ fn main() {
     );
 
     visible_neck();
+    ratio();
+}
+
+/// What a neck is worth against the skull it carries, across the axes that move
+/// the two independently (#175).
+///
+/// **The one number the stump is a symptom of.** `neck_r` is a fraction of
+/// stature times girth times the frame axis; `head_r` is a fraction of stature
+/// times `head_size`. They share stature and nothing else, so the column and the
+/// skull can disagree by a whole axis and no constant anywhere says what they
+/// ought to be worth to each other. This walks the grid and prints the spread.
+///
+/// Both figures are bisected against the built surface and both are the widest
+/// chord of their own section, so they are the same measurement asked at two
+/// heights: the skull's widest anywhere above the jaw, and the column's
+/// narrowest below it.
+///
+/// **The reference pair cannot source a target for this** — four instruments
+/// were built against the CC0 mannequins and thrown away, and the reasons are
+/// written up on #175. The anchor is the neutral body's own reading.
+fn ratio() {
+    println!();
+    println!("neck against skull, over the axes that move them apart (#175)");
+    println!("  head_size  mass  fem    skull    neck   ratio");
+
+    for &head_size in &[-1.0f32, 0.0, 1.0] {
+        for &(mass, femininity) in &[(0.0f32, 0.0f32), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)] {
+            let mut record = AvatarRecord::new("Ratio", Archetype::default());
+            if let Archetype::Humanoid(ref mut params) = record.archetype {
+                params.head_size = head_size;
+            }
+            record.composites.mass = mass;
+            record.composites.femininity = femininity;
+            record.composites.sanitize();
+            record.sanitize();
+            let Some(avatar) = Avatar::build(&record) else {
+                continue;
+            };
+            let (mesh, rig) = (&avatar.parts.body, &avatar.rig);
+            let Some(skull) = Skull::measure(mesh, rig) else {
+                continue;
+            };
+            let head = *rig.in_zone(Zone::Head).first().expect("a head");
+            let at = rig.joints[head].position;
+            let (throat, crown) = skull.throat_and_crown();
+
+            // The widest chord of the section at `y`, swept over its own depth:
+            // a ray fired sideways from the axis crosses an off-centre section
+            // on a chord, which is the trap the ladder above already records.
+            let widest = |y: f32| -> f32 {
+                let deep = |dir: Vec3| -> f32 {
+                    let (mut inside, mut outside) = (0.0f32, 0.40f32);
+                    for _ in 0..32 {
+                        let middle = 0.5 * (inside + outside);
+                        if mesh.contains(Vec3::new(at.x, y, at.z) + dir * middle) {
+                            inside = middle;
+                        } else {
+                            outside = middle;
+                        }
+                    }
+                    inside
+                };
+                let (ahead, behind) = (deep(Vec3::Z), deep(-Vec3::Z));
+                (0..=20)
+                    .map(|slice| {
+                        let z = at.z - behind + (ahead + behind) * slice as f32 / 20.0;
+                        let (mut inside, mut outside) = (0.0f32, 0.40f32);
+                        for _ in 0..32 {
+                            let middle = 0.5 * (inside + outside);
+                            if mesh.contains(Vec3::new(at.x + middle, y, z)) {
+                                inside = middle;
+                            } else {
+                                outside = middle;
+                            }
+                        }
+                        inside
+                    })
+                    .fold(0.0f32, f32::max)
+            };
+
+            // The skull's widest is taken above the chin and the column's
+            // narrowest below the head's own floor, so neither can be the
+            // other: between them is the jaw, which belongs to neither.
+            let chin = at.y + skull.chin();
+            let floor = at.y + throat;
+            let mut widest_skull = 0.0f32;
+            let mut y = chin;
+            while y < at.y + crown {
+                widest_skull = widest_skull.max(widest(y));
+                y += 0.002;
+            }
+            let mut narrowest = f32::MAX;
+            let mut y = floor;
+            while y > floor - 0.12 {
+                narrowest = narrowest.min(widest(y));
+                y -= 0.002;
+            }
+            println!(
+                "  {head_size:+.1}      {mass:+.1}  {femininity:+.1}   {:6.1}  {:6.1}   {:.3}",
+                widest_skull * 1000.0,
+                narrowest * 1000.0,
+                narrowest / widest_skull.max(f32::EPSILON)
+            );
+        }
+    }
 }
 
 /// How much neck an eye actually sees: the chin down to the shoulder line.
