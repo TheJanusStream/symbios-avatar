@@ -115,11 +115,21 @@ pub struct PolyMesh {
     pub normals: Vec<Vec3>,
     /// Bone influences per vertex, or empty when the mesh is not skinned.
     pub skin: Vec<VertexSkin>,
-    /// Linear-space colour per vertex, or empty when the mesh is untinted.
+    /// **sRGB** colour per vertex, or empty when the mesh is untinted.
     ///
     /// This is what lets parts of one material merge into a single draw and
     /// still differ: every lock of hair is its own shade, and drawn as one solid
     /// in one colour a head of hair reads as a helmet.
+    ///
+    /// **sRGB, and this line used to say linear.** It is the same space
+    /// everything else on a body is authored in — [`crate::texture::skin`] says
+    /// so for the melanin ramp, [`crate::HairParams::colour`] picks its ramp by
+    /// eye, [`crate::dress::dye`] mixes by eye, and `examples/render` decodes
+    /// with `to_linear` before it lights anything. A renderer that hands these
+    /// to a linear channel unchanged draws them two to four times too bright in
+    /// the midtones, which is bevy_symbios_avatar#14: it turned a mid-blue iris
+    /// into a pale bead and dark hair into milk chocolate, in one instrument
+    /// only, on the word of this doc comment.
     pub colours: Vec<Vec3>,
 }
 

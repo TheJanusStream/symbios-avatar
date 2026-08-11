@@ -587,7 +587,7 @@ impl Face {
             let outside = (across - 1.0).abs();
             let held =
                 smooth(((along - 0.68) / 0.20).min(1.0)) * smooth(((1.0 - along) / 0.14).min(1.0));
-            -0.16 * (1.0 - (outside / 0.45).min(1.0)).powi(2) * held
+            -ALAR_CREASE * (1.0 - (outside / 0.45).min(1.0)).powi(2) * held
         } else {
             0.0
         };
@@ -595,6 +595,34 @@ impl Face {
         reach * (height * section + wing)
     }
 }
+
+/// How deep the crease at the wing of the nose is cut, as a share of the nose's
+/// own reach.
+///
+/// **Measured, and it was 0.16** (#180). `examples/facesection` cuts the nose
+/// across at the alae and reports how far the surface falls UNDER the same head
+/// uncarved just outside the feature's shoulder, which is what an alar-facial
+/// groove is. At 0.16 that delivered 1.09 mm on the default face and 0.73 to
+/// 1.55 mm across the nose axis, against a life groove of 1.5 to 3 mm — under
+/// half of life at the bottom of the axis and barely reaching it at the top.
+///
+/// **And it is not a resolution defect, which is what makes it worth changing.**
+/// The same instrument prints the mesh cell beside the feature: at the alae
+/// there are thirteen cells between the midline and the shoulder, so the
+/// surface delivers what the field asks for to within a tenth of a millimetre.
+/// A crease that shallow on a mesh that fine is a crease authored shallow. The
+/// nose's BRIDGE is the opposite case — one to two cells across, where nothing
+/// authored can be drawn — and this constant deliberately does not try to fix
+/// that one.
+///
+/// Provenance: **derived** from a life alar-facial groove of 1.5 to 3 mm,
+/// against the delivered depth `facesection` measures. 0.28 puts the default
+/// face at 1.97 mm and the top of the nose axis at 2.47; the BOTTOM of the axis
+/// reads 1.37, a shade under the life floor, and is left there rather than
+/// lifted by a term of its own — a small nose has a shallower groove, and the
+/// alternative is a constant that varies with an axis to satisfy a bound at one
+/// end of it.
+const ALAR_CREASE: f32 = 0.28;
 
 /// Where the nose's section stops being a power and becomes a quadratic.
 ///

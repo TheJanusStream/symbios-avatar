@@ -1111,11 +1111,21 @@ impl Features {
         radius: f32,
     ) -> Self {
         let skeleton = record.skeleton();
+        // **The record's own traits, and its face axes AS OFFSETS ON THEM.**
+        // This built a head from `Default::default()` and carved it with
+        // `record.face` raw, which is a body no shipped path produces: the
+        // frame and age composites reach the head (#166), and `FaceParams::on`
+        // is what the carve, the mouth cut and the built features all read so
+        // that they agree about one mouth. On a near-neutral record the
+        // difference is small and on the wildcard seeds this instrument sweeps
+        // it is not — which is #179's finding, arriving here a second time.
+        let traits = face::HeadTraits::of(&record.composites);
+        let params = record.face.on(&traits);
         let Ok(plain) = symbios_avatar::build_body(
             &skeleton,
             &symbios_avatar::CageConfig::default(),
             symbios_avatar::BODY_SUBDIVISIONS,
-            &Default::default(),
+            &traits,
         ) else {
             return Self {
                 nose: f32::NAN,
@@ -1123,7 +1133,7 @@ impl Features {
             };
         };
         let mut carved = plain.clone();
-        face::carve_face(&mut carved, rig, canon, &record.face);
+        face::carve_face(&mut carved, rig, canon, &params);
 
         let width = |height: f32, outward: bool| -> f32 {
             // Every vertex within half a millimetre of the height asked for,

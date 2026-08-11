@@ -19,7 +19,15 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord};
 const TRIANGLE_TARGET: usize = 30_000;
 
 /// Draw calls a WebGL2-tier avatar may cost.
-const MESH_TARGET: usize = 3;
+///
+/// **Four, by the owner's decision of 2026-08-02, and it was three.** Three
+/// would mean folding the eye globes into the skin material and giving up the
+/// specular eye at exactly the framing a face is judged from — a quality loss
+/// taken to satisfy a number. So the bar is four draws with each one justified
+/// by a material the others cannot provide: skin takes the atlas, hair is
+/// alpha-tested, cloth has its own roughness, an eye is glossy. See #6, whose
+/// criterion 1 this is.
+const MESH_TARGET: usize = 4;
 
 /// Triangles the crate currently draws, across the whole parameter space.
 ///
@@ -84,9 +92,12 @@ const TRIANGLE_CEILING: usize = 29_900;
 /// Five: skin, hair, cloth, eye globes, lids. The comment here used to blame a
 /// third of the excess on attached parts having no atlas region; charting them
 /// (#58) absorbed that draw and the count stayed at five, so it was never the
-/// third. Both of the two over target are the eyes — globes want a glossy
-/// material of their own, and the lids are geometry rather than a pose because
-/// nothing rigs a lid. Which of those survives is #35's to decide.
+/// third.
+///
+/// **The one over the target of four is the LIDS, and only the lids.** The eye
+/// globes keep a draw of their own by decision — see [`MESH_TARGET`] — and the
+/// lids are geometry rather than a pose only because nothing rigs a lid yet.
+/// #118 retires them into a slice of the skin and takes this to four.
 const MESH_CEILING: usize = 5;
 
 fn built(seed: Option<i64>) -> Avatar {
@@ -341,11 +352,13 @@ fn the_budget_holds_for_a_record_that_asks_for_the_most_expensive_hair() {
 }
 
 #[test]
-#[ignore = "the target, not the state: eye globes need a glossy material and lids move without a joint (#35)"]
+#[ignore = "the target, not the state: the lids are geometry because nothing rigs a lid (#118)"]
 fn a_default_avatar_fits_the_webgl2_draw_budget() {
     // The triangle half of the WebGL2 target passes; this half does not, and
-    // will not until the eyes stop needing draws of their own. Turn it on — and
-    // delete MESH_CEILING — when it does.
+    // will not until #118 turns the lid shells into a slice of the skin. It is
+    // one draw short, not two: the eye globes are not a defect to be fixed but
+    // a material the other three cannot provide. Turn it on — and delete
+    // MESH_CEILING — when the lids go.
     let avatar = built(None);
     assert!(
         avatar.budget.meshes <= MESH_TARGET,
