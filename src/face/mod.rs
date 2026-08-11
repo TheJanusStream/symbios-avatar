@@ -27,7 +27,7 @@ pub use features::{FaceParams, Features};
 pub use mouth::Mouth;
 pub use neck::{refine as refine_neck, shape as shape_neck};
 pub use relief::carve as carve_face;
-pub use skull::{HeadTraits, Skull, refine_face, shape as shape_skull};
+pub use skull::{HeadTraits, Skull, band_at, refine_face, shape as shape_skull};
 pub use talk::{Talk, TalkConfig};
 
 /// Smoothstep, clamped, for fading a field in and out without leaving a crease

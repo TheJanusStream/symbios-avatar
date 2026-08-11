@@ -974,6 +974,26 @@ impl HeadTraits {
 /// #61 they were raw radii in both directions.** That was a latent defect and it
 /// became a blocking one the moment face length became a record axis.
 ///
+/// **That kink at the joint is the only thing standing between a band and the
+/// landmarks it is aimed at, and it is what [`band_at`] is for** (#185). The
+/// height axis itself is shared: [`reshape_to`] returns `local.y` untouched, so
+/// a face that sits at a given height on the mesh [`refine_face`] selects from
+/// sits at exactly that height on the shaped head — asserted by
+/// `shaping_the_skull_does_not_move_a_vertex_up_or_down`. What a band cannot be
+/// handed is a landmark straight out of [`super::Canon`], because those are
+/// metres above the joint and these are two different normalisations of them
+/// either side of zero. [`band_at`] does that conversion, and
+/// `every_refinement_band_still_contains_its_own_feature` is the guard that the
+/// bands below still cover what they exist for — which nothing checked before,
+/// and which is the other half of what #185 reported.
+///
+/// #185 also reported that a band aimed from the built body's landmarks lands
+/// somewhere else entirely, and **that part was the instrument** rather than
+/// this unit: `examples/refinecost` reported one median over a face that is 2:1,
+/// so a band that halved every edge at the nose's dorsum read as no change at
+/// all. The costed dorsum bands on #181 and #115 did land where they said. See
+/// that example's own note.
+///
 /// A head reaches anywhere from −1.07 to −1.16 radii below its joint on the
 /// bodies that ship today and would run −0.89 to −1.36 across the new axis, so a
 /// band edge in raw radii is the mouth on one body and the chin on another. The
@@ -1109,7 +1129,38 @@ impl HeadTraits {
 /// So the crest stays at three passes. What would justify the ninth is a chin
 /// whose SHAPE needs the rows — a curve authored to turn inside that 4 mm — and
 /// not the rows on their own.
-const FACE_PASSES: [(f32, f32, f32, f32); 8] = [
+///
+/// **The seventh region is the NOSE'S DORSUM — the ninth pass the note above
+/// could not justify for the chin, spent somewhere it shows — and it is the
+/// first band here aimed by arithmetic rather than by iteration** (#181, #185).
+/// Everything from the nose base pair's ceiling up to the root of the nose was
+/// left at the third pass's cell — 3.42 mm across and 7.23 mm down on the default body,
+/// against 0.76 and 2.25 immediately below it — because the five passes after
+/// the third all stop at or under −0.171 profile heights. Nothing went near the
+/// bridge, and the bridge is where a nose is a tent: `examples/facesection`
+/// counts one to two post-carve facets between the midline and the shoulder over
+/// the top half of it, and the render shows a hard crease down the ridge.
+///
+/// The band is [`band_at`] applied to the nose's own two ends, which is the
+/// whole of what #185 bought. Its floor is the nose base pair's ceiling exactly,
+/// so the two are contiguous and no strip of the nose is left between them. Its
+/// ceiling is the root — `level + frame * 0.1237`, where [`super::relief`]'s
+/// nose begins — measured at 0.150 to 0.196 radii across the corners of
+/// `tests/budget.rs`'s sweep, so 0.20 clears the highest of them. That spread is
+/// the kink this table has at the joint made visible: the root is ABOVE the
+/// joint, so it is a raw radius and drifts by 4.7 mm as the frame moves under
+/// it, where the base below the joint holds to within 0.018 profile heights.
+///
+/// **The azimuth is 0.97 and that is where the cost is.** The nose's shoulder
+/// subtends about 7° on the unsectioned head at this height, so a cosine of 0.97
+/// — 14° — is twice the reach the feature needs and leaves the resolution
+/// boundary off the shape entirely. The same band at 0.92 costs 30,154 at the
+/// dearest corner of the sweep and at 0.55, which is what #181 tried first,
+/// 6,196 triangles on the default body alone. At 0.97 it is **382 on the default
+/// and 548 at the dearest**, landing that corner at 29,818 against a 29,900
+/// ceiling — which is the whole of the room there was, and is why the two ends
+/// were measured rather than guessed at.
+const FACE_PASSES: [(f32, f32, f32, f32); 9] = [
     // **The broadest pass, and it is here because the body's subdivision level
     // halved** (#107). Eight-point cage rings buy the body a smooth surface at
     // one Catmull-Clark pass instead of two, which is where the triangle budget
@@ -1153,8 +1204,45 @@ const FACE_PASSES: [(f32, f32, f32, f32); 8] = [
     // refined once per pass that names it, and this one wants two.
     (0.55, 1.0, -0.443, -0.171),
     (0.55, 1.0, -0.443, -0.171),
+    // The dorsum of the nose, from the nose base pair's own ceiling up to the
+    // root. Narrow, because a bridge is: see the note above for what the
+    // azimuth costs.
+    (0.97, 1.0, -0.171, 0.20),
     (0.92, 1.0, -0.360, -0.255),
 ];
+
+/// The `FACE_PASSES` band edge that selects a given height on the built face.
+///
+/// Takes a height in metres above the head joint — which is what
+/// [`super::Canon`] and [`Skull`] speak, so `band_at(rig, canon.nose_base())` is
+/// the number to write in a band that wants to reach the base of the nose — and
+/// returns it in the unit [`refine_face`]'s own table is written in.
+///
+/// **The conversion exists because the unit has a kink at the joint and the
+/// height axis does not** (#185). Nothing about the shaping moves a vertex up or
+/// down: [`reshape_to`] scales `x` and `z` and hands `y` back as it found it, so
+/// a landmark measured on the finished surface is at the same height on the
+/// unshaped one that [`refine_face`] runs against, and this is a change of units
+/// rather than of coordinates. Below the joint that unit is a profile height, so
+/// a band follows the length of the face it is aimed at; above the joint it is a
+/// raw skull radius, because what is above the brow is a vault the frame does
+/// not stretch and a ceiling there is margin past a crown (#79).
+///
+/// Returns `None` for a body with no head, or one whose head has no radius.
+#[must_use]
+pub fn band_at(rig: &Rig, height: f32) -> Option<f32> {
+    let &head = rig.in_zone(Zone::Head).first()?;
+    let radius = rig.joints[head].radius;
+    if radius <= f32::EPSILON {
+        return None;
+    }
+    let radii = height / radius;
+    if radii >= 0.0 {
+        return Some(radii);
+    }
+    let stretch = floor(rig, head) * SETTLE / JUNCTION;
+    (stretch > f32::EPSILON).then(|| radii / stretch)
+}
 
 /// Gives the face enough surface to carry features, before anything shapes it.
 ///
@@ -1839,6 +1927,7 @@ fn knot(profile: &[(f32, f32)], height: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::face::Canon;
     use crate::{Archetype, AvatarRecord, CageConfig, build_cage, catmull_clark};
 
     /// The same head at a chosen point on the frame axis, with its joint.
@@ -1874,6 +1963,120 @@ mod tests {
             rig.joints[joint].radius,
             stretch,
         )
+    }
+
+    /// A body's head, refined and shaped the way the crate ships it, with the
+    /// canon read off the surface that came out.
+    ///
+    /// The two head axes are corners rather than seeds for the reason
+    /// `tests/budget.rs` sweeps them: a re-roll draws them timidly and the
+    /// bands have to hold anywhere a record can reach.
+    fn faced(seed: i64, breadth: f32, length: f32) -> (Rig, Canon) {
+        let mut record = AvatarRecord::new("Banded", Archetype::default());
+        record.reroll(seed);
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            params.head_breadth = breadth;
+            params.face_length = length;
+        }
+        let skeleton = record.skeleton();
+        let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let traits = HeadTraits::of(&record.composites);
+        let mut mesh = refine_face(
+            &catmull_clark(&cage, crate::BODY_SUBDIVISIONS),
+            &rig,
+            FACE_PASSES.len(),
+        );
+        shape(&mut mesh, &rig, &traits);
+        let skull = Skull::measure(&mesh, &rig).expect("a head measures");
+        let canon = Canon::measure(&rig, &skull, &record.eyes);
+        (rig, canon)
+    }
+
+    #[test]
+    fn shaping_the_skull_does_not_move_a_vertex_up_or_down() {
+        // **The fact that makes a band aimable at a landmark** (#185), and it
+        // was assumed in one direction and reported the other way round in
+        // another. [`refine_face`] selects on the unshaped mesh and every
+        // feature is authored against a landmark measured on the shaped one, so
+        // the two agree only if the shaping leaves the height axis alone. It
+        // does: [`reshape_to`] scales `x` and `z` and returns `local.y`, and
+        // `construct_submental` only ever pushes `z` back. Asserted rather than
+        // read off the source, because a term added to that `y` would break
+        // every band on the face silently and no other test looks at it.
+        for seed in [7, 23, 42] {
+            let (plain, shaped, ..) = head(seed);
+            assert_eq!(
+                plain.positions.len(),
+                shaped.positions.len(),
+                "seed {seed} changed vertex count under shaping"
+            );
+            for (index, (before, after)) in
+                plain.positions.iter().zip(&shaped.positions).enumerate()
+            {
+                assert!(
+                    (before.y - after.y).abs() <= f32::EPSILON,
+                    "seed {seed} vertex {index} moved from {} to {} vertically",
+                    before.y,
+                    after.y
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_refinement_band_still_contains_its_own_feature() {
+        // **What #185 found nothing to catch.** The bands were tuned by
+        // iteration against the built result, and #115 recorded the unease
+        // about that in as many words — they land on their features, but
+        // nothing said so, so a change to the feature stack could slide them
+        // off one at a time in silence. #78 did exactly that once already, and
+        // the lip line walked out of its own refinement at both ends.
+        //
+        // Each pair below is a landmark [`Canon`] measures on the built face
+        // and the pass that exists for it, in that pass's own units through
+        // [`band_at`]. The brow is checked at both ends of its own ridge; the
+        // rest are single heights, because what a band must not do is lose the
+        // landmark its feature is hung from.
+        // **How far past its own band a landmark may sit, in profile heights.**
+        // Not slack for its own sake: the base of the nose is measured at
+        // −0.168 to −0.186 across the corners below, and the pass pair that
+        // exists for it stops at −0.171 — so on seed 29's short broad head the
+        // subnasale sits 0.003 above the seam, which is 0.6 mm on a surface
+        // whose cells there are 1.5. Closing it was costed rather than argued:
+        // that pair reaches round to a cosine of 0.55, so lifting its ceiling to
+        // −0.166 or −0.160 costs 950 and 852 triangles against the 82 the
+        // dearest corner of `tests/budget.rs` has left, and the two are not even
+        // in cost order — the band edge lands on a ring of faces either way.
+        //
+        // What makes it affordable to leave is that the seam is no longer an
+        // edge of the refinement: the dorsum band starts at exactly that ceiling
+        // now, so what meets there is one pass against two rather than a refined
+        // band against a raw one. A tenth of a cell of tolerance still catches
+        // any real slide — #78's was a third of a band wide.
+        const SEAM: f32 = 0.005;
+        for seed in [1, 7, 23, 29, 42, 99] {
+            for (breadth, length) in [(0.0, 0.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0)] {
+                let (rig, canon) = faced(seed, breadth, length);
+                let at = |height: f32| band_at(&rig, height).expect("a head has a band");
+                let where_ = format!("seed {seed} breadth {breadth} length {length}");
+                for (name, height, pass) in [
+                    ("the eye line", canon.level, 2),
+                    ("the brow ridge", canon.level + canon.frame * 0.22, 2),
+                    ("the nose base", canon.nose_base(), 5),
+                    ("the nose root", canon.level + canon.frame * 0.1237, 7),
+                    ("the mouth line", canon.mouth_line(), 8),
+                    ("the chin", canon.chin(), 3),
+                ] {
+                    let (_, _, low, high) = FACE_PASSES[pass];
+                    let edge = at(height);
+                    assert!(
+                        edge >= low - SEAM && edge <= high + SEAM,
+                        "{where_}: {name} is at {edge:.3} and pass {pass} covers {low} to {high}"
+                    );
+                }
+            }
+        }
     }
 
     fn head(seed: i64) -> (PolyMesh, PolyMesh, Rig, Vec3, f32) {

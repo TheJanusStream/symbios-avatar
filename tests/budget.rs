@@ -85,6 +85,14 @@ const MESH_TARGET: usize = 4;
 /// a long broad skull at 29,886, where six seeds as rolled reach only 29,352.
 /// The high-water mark rose because the space being measured grew, not because
 /// a body got dearer.
+///
+/// **What is left of it, measured 2026-08-11 rather than quoted: 82.** The
+/// dearest corner is still seed 42 long broad and it stands at 29,818, of which
+/// #181's dorsum band is the last 548 — the figure on this constant's own
+/// docstring was 29,886 and the one on #115 was 29,092, and neither was within
+/// two hundred of the truth by the time it was next needed. The test below
+/// prints it now instead of computing it and throwing it away, so the next
+/// proposal can start from a number rather than from a docstring.
 const TRIANGLE_CEILING: usize = 29_900;
 
 /// Draw calls the crate currently costs.
@@ -109,6 +117,10 @@ fn built(seed: Option<i64>) -> Avatar {
 #[test]
 fn the_default_avatar_does_not_get_more_expensive() {
     let avatar = built(None);
+    // Said out loud for the same reason the sweep's dearest corner is (#185):
+    // the default body's own figure is quoted in half the docstrings in this
+    // crate and every one of them goes stale silently.
+    println!("the default body: {} triangles", avatar.budget.tris);
     assert!(
         avatar.budget.tris <= TRIANGLE_CEILING,
         "the default body grew to {} triangles, past the {TRIANGLE_CEILING} it had reached",
@@ -161,17 +173,30 @@ fn the_ceiling_holds_across_the_parameter_space() {
                 worst = (at.clone(), avatar.budget.tris);
             }
             assert!(
-                avatar.budget.tris <= TRIANGLE_CEILING,
-                "{at} costs {} triangles",
-                avatar.budget.tris
-            );
-            assert!(
                 avatar.budget.meshes <= MESH_CEILING,
                 "{at} costs {} draws",
                 avatar.budget.meshes
             );
         }
     }
+    // **The triangle assertion is made AFTER the sweep, and printed either way,
+    // because computing the dearest corner and then throwing it away is what
+    // this test did until #185.** Every proposal that spends triangles on the
+    // face has to be argued against the dearest body rather than the default
+    // one — the default is 27,788 and the corner it does not visit runs two
+    // thousand past it — and the last figure on record was five days and
+    // three body changes stale before anyone noticed, because the only way to
+    // get the number was to make this test fail. Asserting inside the loop also
+    // reported the FIRST corner over the line rather than the dearest, which is
+    // a different body on most changes. `cargo test --release --test budget --
+    // --nocapture` now says it whether it passes or not.
+    println!("dearest corner: {} at {}", worst.1, worst.0);
+    assert!(
+        worst.1 <= TRIANGLE_CEILING,
+        "{} costs {} triangles",
+        worst.0,
+        worst.1
+    );
     let worst = worst.1;
     // And the spread really is as narrow as the constant's note claims. If a
     // parameter ever does buy real geometry, this is where that shows up.

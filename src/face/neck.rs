@@ -215,7 +215,7 @@ pub fn refine(mesh: &PolyMesh, rig: &Rig, traits: &HeadTraits) -> PolyMesh {
                 // millimetre facets this exists to remove. It is not
                 // double-paying either: that band falls below `FACE_PASSES`'
                 // third region, whose floor is −0.714 profile heights, so the
-                // throat gets two of the face's eight passes and nothing else
+                // throat gets two of the face's nine passes and nothing else
                 // reaches it.
                 //
                 // The chest is excluded because the shoulder's own mass is the

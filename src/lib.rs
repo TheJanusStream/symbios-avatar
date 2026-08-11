@@ -197,6 +197,18 @@ pub use symbios_texture::generator::TextureMap;
 /// take the strip alone: they cost 652 triangles between them and quarter the
 /// cells they cover (#80).
 ///
+/// **The ninth is the NOSE'S DORSUM, and it is the first one aimed rather than
+/// tuned** (#181, #185). The bridge was the last part of the face still at the
+/// third pass's cell — 3.42 mm across on the default body against 0.76 under the
+/// nose — because every pass after the third stops below the nose base, and a
+/// nose sampled once between its ridge and its shoulder is a tent with a crease
+/// down it. It reaches from the nose base pair's own ceiling to the root of the
+/// nose, at a cosine of 0.97 which is twice the reach the feature needs, and
+/// costs 382 triangles on the default body and 548 at the dearest corner of
+/// `tests/budget.rs`'s sweep. The two costed attempts before it spent 6,196 and
+/// 2,456 on a forehead; what changed is [`face::band_at`] and an instrument that
+/// reports the two directions of a 2:1 face separately.
+///
 /// It is affordable because the same stretch made the face refinement CHEAPER:
 /// the bands are fixed heights in head radii, so a taller head puts less of
 /// itself inside them. The body went 23,182 triangles to 20,668 on the stretch
@@ -211,7 +223,7 @@ pub use symbios_texture::generator::TextureMap;
 /// the second pass moved the profile the ears are placed from, and one seed's
 /// ear fell to 18% visible against a 25% floor. That was a defect in the
 /// measurement rather than in the refinement, and it is fixed (#67).
-const FACE_REFINEMENT: usize = 8;
+const FACE_REFINEMENT: usize = 9;
 
 /// How many Catmull-Clark passes a body's cage gets.
 ///
