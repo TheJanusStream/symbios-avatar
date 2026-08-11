@@ -87,19 +87,51 @@ fn main() {
         println!("seed {seed}: the bone is {:.1} mm long", bone * 1000.0);
         for (name, mesh) in [("cage ", &plain), ("shape", &shaped), ("carve", &carved)] {
             match run(mesh, rig.joints[head].position, top, bottom) {
-                Some((worst, shape)) => println!("  {name}: worst {worst:+6.1} mm | {shape}"),
+                Some((worst, hollow, shelf, shape)) => println!(
+                    "  {name}: bulge {worst:+6.1} hollow {hollow:+7.1} shelf {shelf:.3} | {shape}"
+                ),
                 None => println!("  {name}: the midline is not inside this surface"),
             }
         }
     }
 }
 
-/// The forward deviation from the chord joining the two heights, sampled down it.
+/// What share of the submental drop has happened a fifth of the way down.
+///
+/// The figure that discriminates, where the chord's worst does not.
+///
+/// **The hollow is not the defect, and this file said it was** (#94, #134). A
+/// chord from the chin's tip to the throat cuts straight across a jaw, so ANY
+/// real jaw is deeply hollow against it — measured off `examples/column`, the
+/// CC0 reference reads −21.7 mm at −20 below its own chin on exactly this
+/// ruler, and our body reads −23.2 there. Within a millimetre and a half of the
+/// reference at every height below −20, and the same at −30 and −40. There was
+/// never anything wrong with the hollow.
+///
+/// What differs is the first ten millimetres. The reference holds its forward
+/// reach under the chin and then cuts away hard — 98.6 to 89.0 to 53.6 — a
+/// shelf and then a cliff. Ours gives up twice as much immediately and then
+/// less: 102.5 to 82.8 to 54.7, and the same on every seed measured. So the
+/// figure worth watching is how much of the total drop has happened by a fifth
+/// of the way down: **0.165 on the reference, about 0.32 on ours**.
+///
+/// **The reference target for it lives in `examples/column` and not here**, and
+/// the two are not interchangeable: this file's chord runs between two FIXED
+/// heights, deliberately, so that a change to the profiles cannot move the
+/// ruler under it, while `column` measures each body from its own chin so two
+/// statures compare at the same anatomy. A share taken over one span is not the
+/// same number as a share over the other, and quoting the reference's 0.165
+/// beside this column would be comparing them. What this one is for is
+/// ATTRIBUTION — the cage row against the shape row against the carve row — and
+/// for that it only has to be the same ruler three times.
+///
+/// Reports the forward deviation from the chord joining the two heights, sampled
+/// down it, as `(worst bulge, worst hollow, shelf share, the profile)`.
 ///
 /// Bisected against `PolyMesh::contains`, never binned — binning the
 /// furthest-forward vertex per band reports millimetres of ripple that are not
 /// in the mesh, which is the note `examples/headaudit` opens with.
-fn run(mesh: &PolyMesh, at: Vec3, top: f32, bottom: f32) -> Option<(f32, String)> {
+fn run(mesh: &PolyMesh, at: Vec3, top: f32, bottom: f32) -> Option<(f32, f32, f32, String)> {
     let reach = |y: f32| -> Option<f32> {
         if !mesh.contains(Vec3::new(at.x, y, at.z)) {
             return None;
@@ -117,6 +149,8 @@ fn run(mesh: &PolyMesh, at: Vec3, top: f32, bottom: f32) -> Option<(f32, String)
     };
     let (top_z, bottom_z) = (reach(top)?, reach(bottom)?);
     let mut worst = f32::MIN;
+    let mut hollow = f32::MAX;
+    let mut shelf = None;
     let mut shape = String::new();
     for step in 1..20 {
         let t = step as f32 / 20.0;
@@ -126,6 +160,12 @@ fn run(mesh: &PolyMesh, at: Vec3, top: f32, bottom: f32) -> Option<(f32, String)
         let out = (z - (top_z + (bottom_z - top_z) * t)) * 1000.0;
         shape.push_str(&format!("{out:+.1} "));
         worst = worst.max(out);
+        hollow = hollow.min(out);
+        // The share of the whole submental drop that has already happened a
+        // fifth of the way down. See [`SHELF`].
+        if step == 4 {
+            shelf = Some((top_z - z) / (top_z - bottom_z).max(f32::EPSILON));
+        }
     }
-    (worst > f32::MIN).then_some((worst, shape))
+    (worst > f32::MIN).then_some((worst, hollow, shelf.unwrap_or(0.0), shape))
 }
