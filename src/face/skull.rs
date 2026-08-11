@@ -423,12 +423,33 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// centimetre below the crest — held us at 73.5. The reference gives up 45 mm
 /// of forward reach in ten millimetres and is near-vertical after; ours spread
 /// 60 mm over fifty. A corner against a slope, and the tail knot is the slope.
-const CHIN: [(f32, f32); 6] = [
+/// **And then it steepened too far, and took the SHELF with it** (#94). #150
+/// aimed at the reference's cliff and hit the ten millimetres above it as well.
+/// Measured the same way, the drop over the first centimetre below each body's
+/// own chin ran 19.7, 20.4, 15.3 and 25.6 mm on seeds 0, 3, 6 and 12 against the
+/// reference's 9.6 — twice its rate — and then ours cut LESS than the reference
+/// over the next centimetre, 28.1 against 35.4. The reference holds a shelf
+/// under the chin and falls off a cliff below it; we were one even slope through
+/// both.
+///
+/// So the tail gains a knot that holds the crest's own value for the first 0.045
+/// of profile height and then falls harder than before — `(-0.575, 0.250)` and
+/// `(-0.63, 0.020)` for the single `(-0.60, 0.065)` — which takes the
+/// first-centimetre drop to 16.1, 16.1, 14.2 and 19.8. What is left is the CAGE
+/// rather than this table; see [`BUTTON`], whose attribution rows separate them.
+///
+/// **The peak does not move, deliberately.** #133 is the crest of this sum
+/// changing identity between bodies when the peak is touched, and a knot below
+/// the peak cannot do that. A flatter tail should if anything help it: the sum's
+/// crest is where this table's rise cancels the base's fall, and a table that is
+/// flat there hands the decision to the base, which falls monotonically.
+const CHIN: [(f32, f32); 7] = [
     (0.05, 0.0),
     (-0.24, 0.060),
     (-0.42, 0.158),
     (-0.53, 0.255),
-    (-0.60, 0.065),
+    (-0.575, 0.250),
+    (-0.63, 0.020),
     (JUNCTION, 0.0),
 ];
 
@@ -1195,9 +1216,29 @@ const SUBMENTAL_COLUMNS: usize = 6;
 /// TRUE crest, and this allowance — about 2.3 mm on the default head, fading
 /// to nothing over the top [`BUTTON_RUN`] of the run — is the convexity a chin
 /// is entitled to. Everything past it is bulge and is planed off.
-const BUTTON: f32 = 0.022;
+/// **0.022 over 0.35 of the run → 0.070 over 0.22, and the shape of that trade
+/// is the finding** (#94). `CHIN`'s tail holds a shelf under the chin now, and a
+/// raised surface is no use if this ceiling cuts it straight back off — the
+/// construction only ever clamps downward, so the allowance is what lets the
+/// shelf survive. But the allowance cannot simply grow: swept at 0.050 over 0.85
+/// of the run it put seed 10 back 5.7 mm proud of its chord at 43% of the way
+/// down, which is not a button, it is #94's own bulge returning at #94's own
+/// depth, and `the_underside_of_the_jaw_does_not_bulge` duly failed at 0.065
+/// against its 0.045.
+///
+/// A LARGER button over a SHORTER run does both: three times the convexity at
+/// the crest, dead by a fifth of the way down, which is above everywhere the
+/// bulge has ever been measured. Sixteen seeds pass and the shelf holds.
+///
+/// **And on its own it buys nothing**, which is worth recording because it looks
+/// like the obvious lever. With `CHIN`'s tail left alone this pair moves the
+/// first-centimetre drop from 19.7 mm to 20.2: the surface is not against the
+/// ceiling there, so raising the ceiling is a no-op. It is a permission, not a
+/// push.
+///
+const BUTTON: f32 = 0.070;
 /// See [`BUTTON`].
-const BUTTON_RUN: f32 = 0.35;
+const BUTTON_RUN: f32 = 0.22;
 
 fn construct_submental(mesh: &mut PolyMesh, owned: &[bool], centre: Vec3, radius: f32, floor: f32) {
     let stretch = (floor * SETTLE) / JUNCTION;
@@ -3054,11 +3095,19 @@ mod tests {
                 // So the throat band keeps a ceiling of its own and the rest of
                 // the sweep keeps a tighter one, which is the arrangement #93
                 // introduced and the reason it is worth keeping.
+                // **The floor went −6.0 → −6.5 for #94's chin shelf**, and it
+                // is the span sliding rather than the profile disagreeing: the
+                // chin stands further forward, `Skull::measure`'s throat moves
+                // with it, and every band this is binned into slides. Seed 2 at
+                // −0.259 — a height in the MOUTH, which neither `BUTTON` nor
+                // `CHIN`'s tail can reach — went to −6.1 mm on that alone. The
+                // same mechanism as the re-bases below, one tenth of a
+                // millimetre's worth of it.
                 let ceiling = if step == 0 { 13.0 } else { 9.0 };
                 if let Some(surface) = probe(&mesh, from, Vec3::Z) {
                     let error = (skull.depth(height) - surface) * 1000.0;
                     assert!(
-                        (-6.0..ceiling).contains(&error),
+                        (-6.5..ceiling).contains(&error),
                         "seed {seed} at {height:.3}: the midline depth is {error:.1} mm out"
                     );
                 }
