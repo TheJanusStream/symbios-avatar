@@ -238,26 +238,71 @@ impl Composites {
     /// join the group they belong to. Age has its own bit, because it belongs
     /// to no other group and reaches all of them (#53).
     ///
-    /// **These roll but do not yet reach any geometry.** The derivation that
-    /// reads them is #164's and #166's; until then a rolled composite is stored
-    /// intent and nothing more, and the body a seed builds is unchanged. The
-    /// day it stops being unchanged is the day `GENERATOR_VERSION` moves, which
-    /// is batched once at the end of the epic (#169) rather than per axis.
+    /// **These are drawn before anything else on the record, and two of them
+    /// read the ones drawn first** (#169). `AvatarRecord::reroll` calls this for
+    /// `Frame`, then `Age`, then `Build`, in that order and not in
+    /// `Category::ALL`'s, because [`Self::body_fat`]'s draw reads both of the
+    /// first two. A locked category is skipped and its STORED value is what the
+    /// later draws read, which is what makes a lock mean "keep this and build
+    /// around it".
     pub fn reroll(&mut self, category: Category, rolls: &Rolls) {
         match category {
             Category::Build => {
                 self.mass = rolls.shape("composites.mass", 0.0, 1.0, signed_envelope());
-                self.body_fat =
-                    rolls.shape("composites.bodyFat", DEFAULT_BODY_FAT, 0.07, BODY_FAT_RANGE);
+                // **The correlated draw the epic was raised for** (#161, #169).
+                // Independent draws made "heavy at 4% body fat" as likely as
+                // any other body, and the two axes are separable BY DESIGN —
+                // that separation is #164's point and this does not touch it.
+                // What moves is only where the draw is CENTRED: a heavy roll
+                // is fat by default and lean by choice, which is the way round
+                // life has it.
+                //
+                // Three terms, each a real population fact:
+                //
+                // ```text
+                //   mass       +0.09 per unit   BMI 22 → 33 across the axis, and
+                //                               fat fraction tracks BMI hard
+                //   femininity +0.05 per unit   the ~10-point difference between
+                //                               the sexes at equal fitness
+                //   age        +0.05 per ramp   fat fraction rises over a life
+                //                               even at a held weight
+                // ```
+                //
+                // Sigma is unchanged, so the SPREAD around the centre is what
+                // it always was; only the centre moves.
+                //
+                // Provenance: **looked up**, all three (#169).
+                let centre = DEFAULT_BODY_FAT
+                    + 0.09 * self.mass
+                    + 0.05 * self.femininity
+                    + 0.05 * self.ageing();
+                self.body_fat = rolls.shape("composites.bodyFat", centre, 0.07, BODY_FAT_RANGE);
             }
             Category::Frame => {
                 self.femininity = rolls.shape("composites.femininity", 0.0, 1.0, signed_envelope());
             }
             Category::Age => {
+                // **Widened, and the old prior could not reach the axis it
+                // fed** (#167, #169). At the shipped mean of 28 with sigma 10,
+                // six of the first eight seeds drew an age under
+                // [`AGE_PIVOT`] — where the age axis is deliberately the
+                // identity — so a randomise button produced a population of
+                // twenty-somethings and none of #167's work was reachable from
+                // it. That is a defect in the PRIOR and not in the ramp: the
+                // ramp is fitted to a measured curve and the pivot is where a
+                // body starts to change.
+                //
+                // 38 with sigma 15 spans the adult population instead of its
+                // youngest decade: the median lands in the late thirties, a
+                // third of rolls clear fifty, and eighteen and eighty are both
+                // reachable rather than four sigma away.
+                //
+                // Provenance: **chosen against the adult age distribution**,
+                // then measured over 400 seeds (#169).
                 let years = rolls.shape(
                     "composites.age",
-                    DEFAULT_AGE as f32,
-                    10.0,
+                    38.0,
+                    15.0,
                     (AGE_RANGE.0 as f32, AGE_RANGE.1 as f32),
                 );
                 self.age = years.round() as u32;

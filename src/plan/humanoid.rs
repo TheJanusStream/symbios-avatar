@@ -22,7 +22,7 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use super::derive::humanoid::Dimensions;
+use super::derive::humanoid::{Dimensions, frame};
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
     take_span, take_unit,
@@ -38,6 +38,52 @@ pub const HEIGHT_RANGE: (f32, f32) = (1.2, 2.2);
 fn height_envelope() -> (f32, f32) {
     super::explore_range(default_height(), HEIGHT_RANGE)
 }
+
+/// How much of its old width a per-region axis draws at, now that it is an
+/// offset on a composite rather than the thing that shapes the body.
+///
+/// **A third, and the number is bounded from both sides** (#169). Too wide and
+/// the offset out-swings the composite it is correcting, which is the incoherence
+/// generation 3 exists to remove; too narrow and a rolled population is one body
+/// at several sizes, with every seed's shoulders exactly where `femininity` and
+/// `mass` put them. At a third, `shoulder_width`'s typical draw moves the
+/// shoulders about 2.7% where the two composites move them 13% and 20% at their
+/// own ±1 — a correction that can be seen and cannot take over.
+///
+/// The WILDCARD tail is deliberately not scaled: one seed in thirty still draws
+/// uniformly over the whole exploration envelope, so an extreme offset stays
+/// reachable by a roll. Rarely being a caricature was #160's decision and this
+/// does not revisit it.
+///
+/// Provenance: **judged by render** (#169), on reroll contact sheets against
+/// the same seeds at full width.
+const OFFSET_SIGMA: f32 = 1.0 / 3.0;
+
+/// How far a rolled stature strays from its centre, in metres.
+///
+/// **This narrows #160's stature draw and it is the one judgement in
+/// generation 3 that is not forced** (#169), so it is written down where it can
+/// be reversed with one number.
+///
+/// #160 gave every shape axis a sigma of its old fence's half-width. On the
+/// signed axes that is ±1, a sane typical draw. On stature the fence was
+/// `HEIGHT_RANGE`, so the same rule gave **0.5 m**: a one-sigma body was 1.25 m
+/// or 2.25 m, and measured over 400 seeds the rolled statures had a standard
+/// deviation of 0.537 m. That is not a population, and it is what made the
+/// frame axis's own claim on stature invisible — the correlation this
+/// generation adds moves the centre by 0.068 m, which against 0.537 m of noise
+/// is a correlation coefficient of −0.16, a real term drowned by an accident of
+/// a rule written for a different kind of axis.
+///
+/// 0.12 m is about 1.7× the adult within-sex standard deviation, so two sigma
+/// spans roughly 1.51 to 1.99 m and a rolled crowd reads as a crowd. **The
+/// exploration that the wide sigma was standing in for is not lost**: the
+/// wildcard tail is untouched, so one seed in thirty still draws uniformly over
+/// the whole 0.5–3.1 m envelope and giants remain a roll away.
+///
+/// Provenance: **judged against the population it draws** (#169) — the
+/// measurement above, then reroll contact sheets.
+const STATURE_SIGMA: f32 = 0.12;
 
 /// The envelope every signed axis clamps and encodes against (#160).
 fn signed_envelope() -> (f32, f32) {
@@ -384,44 +430,69 @@ impl BodyPlan for HumanoidParams {
         skeleton
     }
 
-    fn reroll(&mut self, category: Category, rolls: &Rolls) {
+    fn reroll(&mut self, category: Category, rolls: &Rolls, composites: &Composites) {
         // Every axis is a [`Rolls::shape`] draw (#160): a Gaussian on the
-        // axis's own default whose sigma is half the OLD uniform fence — so a
-        // typical seed still lands where it always did — with the wildcard
-        // tail reaching the whole exploration envelope. The old fences
-        // survive as sigmas: the "every third seed a caricature" judgement
-        // that narrowed `headBreadth` and `faceLength` to ±0.7 now simply
+        // axis's own default whose sigma was half the OLD uniform fence, with
+        // a wildcard tail reaching the whole exploration envelope. The old
+        // fences survive as sigmas: the "every third seed a caricature"
+        // judgement that narrowed `headBreadth` and `faceLength` now simply
         // gives them a tighter sigma than their neighbours.
         //
+        // **Every sigma here is `OFFSET_SIGMA` of what it was, and the axes are
+        // offsets now rather than the body** (#169, generation 3). Under the
+        // two-tier model a quantity is `formula(composites)` and then this
+        // applied on top, so a body's shoulders should come from `femininity`
+        // and `mass` — which move them 13% and 20% at their own ±1 — and this
+        // axis should say what those two got wrong, which is a few percent.
+        // Drawn at the old width it was the reverse: the offset out-swung the
+        // composite and produced the tall-heavy-gaunt incoherence this
+        // generation exists to fix.
+        //
         // Stream names are unchanged, so axis independence holds on every
-        // stored seed; the distribution change is `GENERATOR_VERSION` 2's.
+        // stored seed; the DISTRIBUTION change is what `GENERATOR_VERSION` 3
+        // is for.
         let signed = signed_envelope();
+        let offset = |axis: &str, sigma: f32| rolls.shape(axis, 0.0, sigma * OFFSET_SIGMA, signed);
         match category {
             Category::Stature => {
-                self.height = rolls.shape(
-                    "humanoid.height",
-                    default_height(),
-                    (HEIGHT_RANGE.1 - HEIGHT_RANGE.0) * 0.5,
-                    height_envelope(),
-                );
+                // **The one correlation on this plan, and it is the loudest
+                // one a body has** (#169). Stature is dimorphic — the adult
+                // means run about 1.75 m against 1.62 — and until now the
+                // frame axis and the height axis were drawn in ignorance of
+                // each other, so a seed was as likely to be a 1.9 m body with
+                // a fully feminine frame as anything else.
+                //
+                // **A ratio on the plan's own default, never a replacement of
+                // it**, which is `derive::humanoid::frame`'s bargain and is
+                // taken here for the same reason: `default_height` is 1.75 and
+                // whether that is the right neutral stature is not this
+                // issue's question. So the neutral body still rolls about
+                // 1.75, and the two ends of the frame axis sit at 1.818 and
+                // 1.683 — a ratio of 1.080, exactly the ratio of the means.
+                //
+                // Provenance: **looked up** for the pair of means, applied
+                // through the crate's own `frame` idiom (#169).
+                let stature = default_height() * frame(composites.femininity, 1.75, 1.62);
+                self.height =
+                    rolls.shape("humanoid.height", stature, STATURE_SIGMA, height_envelope());
             }
             Category::Build => {}
             Category::Frame => {
-                self.shoulder_width = rolls.shape("humanoid.shoulderWidth", 0.0, 1.0, signed);
-                self.hip_width = rolls.shape("humanoid.hipWidth", 0.0, 1.0, signed);
+                self.shoulder_width = offset("humanoid.shoulderWidth", 1.0);
+                self.hip_width = offset("humanoid.hipWidth", 1.0);
             }
             Category::Proportions => {
-                self.limb_length = rolls.shape("humanoid.limbLength", 0.0, 1.0, signed);
-                self.neck_length = rolls.shape("humanoid.neckLength", 0.0, 1.0, signed);
+                self.limb_length = offset("humanoid.limbLength", 1.0);
+                self.neck_length = offset("humanoid.neckLength", 1.0);
                 // Joined the proportions from `Features` in #53. The stream
-                // name is unchanged, so which VALUE a seed gives this axis has
-                // not moved — only which lock holds it.
-                self.extremity_size = rolls.shape("humanoid.extremitySize", 0.0, 1.0, signed);
+                // name is unchanged, so which stream this axis draws from has
+                // not moved — only which lock holds it, and now how wide.
+                self.extremity_size = offset("humanoid.extremitySize", 1.0);
             }
             Category::Head => {
-                self.head_size = rolls.shape("humanoid.headSize", 0.0, 1.0, signed);
-                self.head_breadth = rolls.shape("humanoid.headBreadth", 0.0, 0.7, signed);
-                self.face_length = rolls.shape("humanoid.faceLength", 0.0, 0.7, signed);
+                self.head_size = offset("humanoid.headSize", 1.0);
+                self.head_breadth = offset("humanoid.headBreadth", 0.7);
+                self.face_length = offset("humanoid.faceLength", 0.7);
             }
             // Nothing on the body plan is a colour, a hair or an age.
             Category::Colouring | Category::Hair | Category::Age => {}
@@ -433,14 +504,14 @@ impl BodyPlan for HumanoidParams {
         // constants `sanitize` clamps with, so the code and the clamp cannot
         // disagree (#160). Height stays in millimetres, which already covers
         // the envelope.
+        //
+        // **The two reserved bytes are gone, which is what makes this version
+        // 6** (#169). #164 retired `build` and `muscle` into `mass` and
+        // `bodyFat` and held their slots so codes minted before the retirement
+        // kept decoding at the right offsets; this is the versioning pass that
+        // collects that removal, so the slots go and `decode_reserved` reads
+        // the layout that had them.
         put_length(out, self.height);
-        // **Two reserved bytes where `build` and `muscle` used to be** (#164).
-        // The axes retired into `mass` and `bodyFat`; the LAYOUT does not move
-        // until CM8 (#169) collects every rename and removal into one version
-        // bump, so a code minted before this still decodes to the body it names
-        // instead of reading every axis after these two at the wrong offset.
-        put_span(out, 0.0, signed_envelope());
-        put_span(out, 0.0, signed_envelope());
         put_span(out, self.shoulder_width, signed_envelope());
         put_span(out, self.hip_width, signed_envelope());
         put_span(out, self.limb_length, signed_envelope());
@@ -452,7 +523,26 @@ impl BodyPlan for HumanoidParams {
     }
 
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
-        // The two reserved bytes: consumed and discarded. See `encode`.
+        let mut params = Self {
+            height: take_length(bytes)?,
+            shoulder_width: take_span(bytes, signed_envelope())?,
+            hip_width: take_span(bytes, signed_envelope())?,
+            limb_length: take_span(bytes, signed_envelope())?,
+            neck_length: take_span(bytes, signed_envelope())?,
+            head_size: take_span(bytes, signed_envelope())?,
+            head_breadth: take_span(bytes, signed_envelope())?,
+            face_length: take_span(bytes, signed_envelope())?,
+            extremity_size: take_span(bytes, signed_envelope())?,
+        };
+        params.sanitize();
+        Ok(params)
+    }
+
+    fn decode_reserved(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // Versions 4 and 5: today's spans, with `build` and `muscle`'s slots
+        // still on the wire. They are CONSUMED and discarded rather than
+        // skipped — a payload is a byte stream, and every axis after them reads
+        // at the wrong offset if they are not taken off it (#164, #169).
         let height = take_length(bytes)?;
         let _retired_build = take_span(bytes, signed_envelope())?;
         let _retired_muscle = take_span(bytes, signed_envelope())?;

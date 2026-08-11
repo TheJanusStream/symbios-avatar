@@ -79,6 +79,28 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
 ///
+/// **3** — the two-tier draw (#169), and the one bump the composite epic
+/// batched every rename and removal into. Three things moved at once and each
+/// would have moved every seed on its own:
+///
+/// - the order. Composites are drawn first and everything else is drawn
+///   against them, so a body can be coherent — stature follows the frame axis,
+///   and `bodyFat`'s centre follows `mass`, `femininity` and age.
+/// - the width. Every per-region axis is an OFFSET on what a composite derives
+///   now, so it draws at a third of its old sigma. Drawn at the old width the
+///   offset out-swung the composite it was correcting, which is the
+///   tall-heavy-gaunt incoherence this generation exists to remove.
+/// - the priors. Age was centred at 28 with sigma 10, which put six of the
+///   first eight seeds under `plan::AGE_PIVOT` where the age axis does nothing
+///   at all; it is 38 with sigma 15. The hairline's window follows age and the
+///   frame axis.
+///
+/// `humanoid.build` and `humanoid.muscle` are gone for good with it — retired
+/// in #164, their share-code slots removed in the version-6 payload — and
+/// `face::HeadTraits` is what `face::Dimorphism` was called. Stream NAMES are
+/// otherwise untouched, so axis independence survives the bump exactly as it
+/// did the last one.
+///
 /// **2** — the exploration distributions (#160). Every shape axis moved from
 /// a uniform draw inside a conservative fence to [`crate::plan::Rolls::shape`]:
 /// a Gaussian on the axis's own default with the old fence as its width, plus
@@ -91,7 +113,7 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 2;
+pub const GENERATOR_VERSION: u32 = 3;
 
 /// A field the lexicon requires that this record does not carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -243,16 +265,43 @@ impl AvatarRecord {
     /// Each category draws from its own stream derived from `seed`, so locking
     /// one category never reshuffles another — a lock is a promise about what
     /// stays, and it would be broken if unlocking changed unrelated axes.
+    ///
+    /// **Two passes since generation 3, and the order is the design** (#169).
+    /// The composites are drawn first, in full, and everything else is drawn
+    /// afterwards against the result — which is what lets a body be coherent:
+    /// stature can follow the frame axis, the offsets can be small because the
+    /// composites carry the shape, and no draw has to guess at a value that
+    /// another draw is about to make.
+    ///
+    /// **A locked composite still shapes what the second pass draws**, which
+    /// falls out of reading `self.composites` rather than the pass-one result:
+    /// a creator who locks a feminine frame and re-rolls gets bodies drawn
+    /// around that frame rather than around a neutral one. That is what a lock
+    /// should mean and it is the reason the two passes read the record instead
+    /// of passing values between themselves.
     pub fn reroll(&mut self, seed: i64) {
         self.seed = seed;
         self.generator = GENERATOR_VERSION;
         let rolls = Rolls::new(seed);
+
+        // Pass one: the composites, in an order of their own. `Category::ALL`
+        // puts `Build` before `Frame`, and `body_fat`'s draw reads the frame
+        // axis — the same fraction is a different body on a masculine and a
+        // feminine frame — so the dependency is written out here rather than
+        // left to the order a bitmask happens to declare its variants in.
+        for category in [Category::Frame, Category::Build, Category::Age] {
+            if self.locks.is_locked(category) {
+                continue;
+            }
+            self.composites.reroll(category, &rolls);
+        }
+
+        // Pass two: everything that reads them.
         for category in Category::ALL {
             if self.locks.is_locked(category) {
                 continue;
             }
-            self.archetype.reroll(category, &rolls);
-            self.composites.reroll(category, &rolls);
+            self.archetype.reroll(category, &rolls, &self.composites);
             // The three groups #53 split out of the old `Features` bit. Each
             // draws from the streams it always drew from, so no seed names a
             // different person for this; what changed is that a creator who
@@ -260,7 +309,7 @@ impl AvatarRecord {
             match category {
                 Category::Head => reroll_face(&mut self.eyes, &mut self.face, &rolls),
                 Category::Colouring => reroll_skin(&mut self.skin, &rolls),
-                Category::Hair => reroll_hair(&mut self.hair, &rolls),
+                Category::Hair => reroll_hair(&mut self.hair, &rolls, &self.composites),
                 _ => {}
             }
         }
@@ -453,14 +502,36 @@ fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, rolls: &Rolls) {
 /// Its own category since #53. Hair is the loudest thing about a head and the
 /// one most often kept while everything under it changes, which is the whole
 /// argument for a lock of its own.
-fn reroll_hair(hair: &mut HairParams, rolls: &Rolls) {
+fn reroll_hair(hair: &mut HairParams, rolls: &Rolls, composites: &crate::Composites) {
     // Hair is a style, not a shape: it keeps its uniform draws and its
     // conservative ranges (#160, owner call — same reason complexion does).
     hair.length = rolls.range("hair.length", 0.0, 1.0);
     hair.volume = rolls.range("hair.volume", -0.7, 0.9);
-    hair.coverage = rolls.range("hair.coverage", -0.8, 0.8);
+    // **The hairline is the one thing on a head that age and the frame axis
+    // both have a claim on** (#169). Recession is age-related and strongly
+    // masculine, and this axis already says exactly that — `-1` receding,
+    // `+1` low on the brow — so the composites shift where the uniform window
+    // SITS rather than adding a term anywhere. At the top of the age ramp on a
+    // fully masculine frame the window is 0.55 lower than at neutral; on a
+    // fully feminine one age moves it a third as far, which is the direction
+    // and the ratio the pattern-baldness literature reports rather than a
+    // measured pair.
+    //
+    // Provenance: **looked up for the direction and the sex ratio, sized to
+    // the axis** (#169).
+    let recession = composites.ageing() * (0.4 - 0.15 * composites.femininity.clamp(-1.0, 1.0));
+    hair.coverage = rolls.range("hair.coverage", -0.8 - recession, 0.8 - recession);
     hair.part = rolls.range("hair.part", -1.0, 1.0);
     hair.wave = rolls.range("hair.wave", 0.0, 1.0);
+    // **AGE DOES NOT SHIFT THIS PRIOR, and #167 left the question open rather
+    // than settled** (#169). Greying is the obvious correlation to want and
+    // this axis cannot carry it: `shade` is a MELANIN ramp whose light end is
+    // `rgb(0.820, 0.660, 0.350)`, a warm blonde at about 0.57 saturation.
+    // Shifting an old body's prior toward it does not grey anyone, it makes
+    // pensioners blonde. Grey is a desaturation of whatever colour the hair
+    // was, which is a term this ramp has nowhere to put — so it wants either a
+    // second axis or a desaturation on the existing one, and both are a
+    // decision about the hair rather than about the composites.
     hair.shade = rolls.range("hair.shade", 0.0, 1.0);
 }
 
@@ -886,7 +957,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 2,
+            GENERATOR_VERSION, 3,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {
@@ -902,22 +973,32 @@ mod tests {
                 (record.hair.length * 1000.0).round() as i32,
             )
         };
-        // Generation 2 (#160): height and build moved — the shape axes now
-        // draw `Rolls::shape` — while melanin and hair length are IDENTICAL
-        // to generation 1's table on all three seeds, which is the other half
-        // of the contract: complexion and hair kept their uniform draws, so a
-        // stored seed's colouring survives the generator bump.
+        // Generation 3 (#169): the two-tier draw. Both body columns moved and
+        // both moved for a reason this table can show.
         //
-        // **The second column reads `shoulder_width` now, not `build`** (#164),
-        // which retired. The DRAW is untouched and the table proves it: a
-        // stream is keyed by its axis's name, so dropping `humanoid.build` and
-        // `humanoid.muscle` cannot move what any other axis rolls, and the
-        // other three columns are unchanged to the digit. `GENERATOR_VERSION`
-        // therefore stays at 2 here; the bump that retires the two names for
-        // good belongs to CM8 (#169), with every other rename batched into it.
-        assert_eq!(quantised(1), (2353, -40, 594, 238));
-        assert_eq!(quantised(42), (1012, 147, 933, 973));
-        assert_eq!(quantised(-7), (2186, 258, 513, 903));
+        // `height` came in on all three seeds — 2353 → 1799, 1012 → 1482,
+        // 2186 → 1902 — and both halves of that are generation 3: the centre
+        // follows the frame axis now rather than sitting on a bare 1.75, and
+        // `STATURE_SIGMA` narrowed the draw from half a metre to 0.12, which
+        // is why all three land inside a human range where two of them were
+        // 2.35 m and 1.01 m. `shoulder_width` came in much harder,
+        // −40 → −13 and 147 → 49 and 258 → 86, which is very nearly the third
+        // `OFFSET_SIGMA` names: the axis is an offset on what `femininity` and
+        // `mass` derive, and it is drawn as one.
+        //
+        // **Melanin and hair length are IDENTICAL to generation 2's table on
+        // all three seeds, which is the other half of the contract** and is
+        // the third generation running that it has held: a stream is keyed by
+        // its axis's name, so re-ordering the draw, re-centring it, and
+        // retiring `humanoid.build` and `humanoid.muscle` for good cannot
+        // move what an unrelated axis rolls. Colouring and hair keep their
+        // uniform draws and reproduce across the bump.
+        //
+        // Generation 2 (#160) was the exploration distributions; generation 1
+        // the first numbered draw.
+        assert_eq!(quantised(1), (1799, -13, 594, 238));
+        assert_eq!(quantised(42), (1482, 49, 933, 973));
+        assert_eq!(quantised(-7), (1902, 86, 513, 903));
     }
 
     #[test]

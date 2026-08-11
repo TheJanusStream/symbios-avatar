@@ -29,7 +29,7 @@ use crate::mesh::PolyMesh;
 use crate::rig::Rig;
 use crate::{Vec3, Zone};
 
-use super::skull::{Dimorphism, border};
+use super::skull::{HeadTraits, border};
 use super::smooth;
 
 /// What a neck is worth against the skull it carries, as a fraction of the
@@ -37,7 +37,7 @@ use super::smooth;
 ///
 /// **Sourced from one mannequin and corroborated from outside it, and the
 /// caveat travels with the number** (#175). The obvious derivation — measure
-/// both CC0 references, as `Dimorphism`'s whole set is measured — does not
+/// both CC0 references, as `HeadTraits`'s whole set is measured — does not
 /// work here, and four instruments were built and thrown away proving it: the
 /// male is 7,399 vertices so a fine band holds one ring or none; a ray from the
 /// skull's axis is not a half-width once it leaves the skull, because a neck
@@ -195,8 +195,8 @@ const MARGIN: f32 = 0.05;
 /// Does nothing to a body with no head or no neck, or to one that walks on four
 /// legs — the same three cases the carve itself declines.
 #[must_use]
-pub fn refine(mesh: &PolyMesh, rig: &Rig, dimorphism: &Dimorphism) -> PolyMesh {
-    let Some(bounds) = span(rig, dimorphism) else {
+pub fn refine(mesh: &PolyMesh, rig: &Rig, traits: &HeadTraits) -> PolyMesh {
+    let Some(bounds) = span(rig, traits) else {
         return mesh.clone();
     };
     let (top, bottom, joint, radius) = bounds;
@@ -243,7 +243,7 @@ pub fn refine(mesh: &PolyMesh, rig: &Rig, dimorphism: &Dimorphism) -> PolyMesh {
 /// covered a different run from the carve would put a resolution boundary in
 /// the middle of the carve's own curvature — which is the one place #158 says
 /// it must not go.
-fn span(rig: &Rig, dimorphism: &Dimorphism) -> Option<(f32, f32, f32, f32)> {
+fn span(rig: &Rig, traits: &HeadTraits) -> Option<(f32, f32, f32, f32)> {
     if rig.ground_contacts().len() > 2 {
         return None;
     }
@@ -255,7 +255,7 @@ fn span(rig: &Rig, dimorphism: &Dimorphism) -> Option<(f32, f32, f32, f32)> {
         return None;
     }
     let joint = rig.joints[head].position.y;
-    let top = -border(rig, head, dimorphism, 1.0) / radius;
+    let top = -border(rig, head, traits, 1.0) / radius;
     let bottom = (joint - rig.joints[parent].position.y - rig.joints[parent].radius) / radius;
     (bottom - top > f32::EPSILON).then_some((top, bottom, joint, radius))
 }
@@ -266,7 +266,7 @@ fn span(rig: &Rig, dimorphism: &Dimorphism) -> Option<(f32, f32, f32, f32)> {
 /// body with no head or no neck — or to one that walks on four legs, for the
 /// reason the skull's own shaping bails: this is a human column and a creature's
 /// is its own shape.
-pub fn shape(mesh: &mut PolyMesh, rig: &Rig, dimorphism: &Dimorphism) {
+pub fn shape(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
     if rig.ground_contacts().len() > 2 {
         return;
     }
@@ -308,7 +308,7 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig, dimorphism: &Dimorphism) {
     // azimuth, so the band table can start here.
     let top = depth(Vec3::new(
         0.0,
-        joint.y + border(rig, head, dimorphism, 1.0),
+        joint.y + border(rig, head, traits, 1.0),
         0.0,
     ));
     if bottom - top <= f32::EPSILON {
@@ -386,7 +386,7 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig, dimorphism: &Dimorphism) {
         let under = at
             - depth(Vec3::new(
                 0.0,
-                joint.y + border(rig, head, dimorphism, side.max(behind)),
+                joint.y + border(rig, head, traits, side.max(behind)),
                 0.0,
             ));
         // In below its own border, held through the waist, and out again into

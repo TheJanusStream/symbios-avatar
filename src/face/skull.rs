@@ -473,7 +473,7 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// `examples/jawprobe`'s cage row against the reference's 0.165 — a share over a
 /// bone-relative span quoted against a share over chin-to-throat, which is the
 /// comparison that file's docstring exists to forbid. Measured chin-relatively
-/// instead, on the shipped body with `Dimorphism::chin` at zero, the cage spends
+/// instead, on the shipped body with `HeadTraits::chin` at zero, the cage spends
 /// 0.0250 of the face over that centimetre against the reference's 0.0369: it is
 /// two thirds as steep, not steeper. And the first centimetre was not the defect
 /// either — read as REACH rather than as a drop, at each face's own share of
@@ -673,10 +673,13 @@ const FOREHEAD: [(f32, f32); 4] = [(1.00, 0.0), (0.80, 1.0), (0.58, 0.55), (0.45
 
 /// How a head reads the composites.
 ///
-/// **The name is now narrower than the type.** It was the frame axis alone when
-/// #166 wrote it and it carries age as well since #167 — three of the fields
-/// below take a term from each. The rename belongs in the epic's single
-/// versioning batch (#169) with everything else it renames, not here.
+/// **Named `Dimorphism` until #169.** It was the frame axis alone when #166
+/// wrote it and it carried age as well from #167, at which point the name was
+/// narrower than the type; the rename waited for the epic's single versioning
+/// batch rather than landing on its own. Nothing about the seed moved with it —
+/// a type name is not a PRNG stream key, which is what that batching rule is
+/// actually about — but a reader who greps for the old name should find this
+/// sentence.
 ///
 /// **The first record parameter the profiles in this file have ever taken**
 /// (#166). Every other head variation is cage-side — `head_size` is a node
@@ -689,8 +692,8 @@ const FOREHEAD: [(f32, f32); 4] = [(1.00, 0.0), (0.80, 1.0), (0.58, 0.55), (0.45
 ///
 /// **Every field is a factor about ONE, and the neutral head is the identity.**
 /// `femininity` zero is the midpoint of the two measured references, which is
-/// the head this crate already built, so `Dimorphism::of(&Composites::default())`
-/// has to be [`Dimorphism::default`] to four decimals or the epic's neutral
+/// the head this crate already built, so `HeadTraits::of(&Composites::default())`
+/// has to be [`HeadTraits::default`] to four decimals or the epic's neutral
 /// anchor has moved. `the_neutral_head_is_the_head_that_was_already_built`
 /// asserts it.
 ///
@@ -720,21 +723,21 @@ const FOREHEAD: [(f32, f32); 4] = [(1.00, 0.0), (0.80, 1.0), (0.58, 0.55), (0.45
 /// [`Self::frontal`] three to two at the forehead and inverted the one
 /// measurement the forehead window was derived from.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Dimorphism {
+pub struct HeadTraits {
     /// Multiplier on the horizontal radius through the lower face.
     ///
     /// Bigonial breadth, and the strongest signal the references carry. Measured
     /// as each head's half-width at 0.15 of its own span over its own peak
     /// half-width: male 0.708, female 0.594, so the male's jaw is 19% wider
     /// relative to his own vault. The effect is 7.5% at 0.20 of span and gone by
-    /// 0.25, which is why `Dimorphism::breadth_at` tapers it out over exactly
+    /// 0.25, which is why `HeadTraits::breadth_at` tapers it out over exactly
     /// that run rather than applying it to the whole lower face.
     ///
     /// **And it is where age shows in a lower face**, as jowling: the soft
     /// tissue over the mandible descends and the jawline widens where it used
     /// to run straight. That is tissue rather than bone, and this crate has one
     /// surface for both, so it lands on the same multiplier — see
-    /// [`Dimorphism::of`] for the size and why it is smaller than the sex term
+    /// [`HeadTraits::of`] for the size and why it is smaller than the sex term
     /// beside it.
     ///
     /// What it delivers, on `headaudit --axis age` over its eight sweep seeds:
@@ -885,7 +888,7 @@ pub struct Dimorphism {
     pub gonion: f32,
 }
 
-impl Default for Dimorphism {
+impl Default for HeadTraits {
     /// The head this crate built before the axis existed.
     fn default() -> Self {
         Self {
@@ -900,7 +903,7 @@ impl Default for Dimorphism {
     }
 }
 
-impl Dimorphism {
+impl HeadTraits {
     /// Resolves the profiles' parameters for one body.
     #[must_use]
     pub fn of(composites: &Composites) -> Self {
@@ -1262,7 +1265,7 @@ pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
 /// Does nothing to a body with no head. Idempotent only in the sense that it is
 /// a function of the rest positions — call it once, on the rest mesh, before
 /// binding or unwrapping.
-pub fn shape(mesh: &mut PolyMesh, rig: &Rig, dimorphism: &Dimorphism) {
+pub fn shape(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
     // These are a HUMAN skull's proportions — a chin, a brow ridge, cheekbones
     // widest. On something that walks on all fours they are simply wrong, in the
     // same way that giving its front legs fingers was wrong. A creature's head
@@ -1296,7 +1299,7 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig, dimorphism: &Dimorphism) {
         if !mine {
             continue;
         }
-        *point = centre + reshape_to(*point - centre, radius, floor, dimorphism);
+        *point = centre + reshape_to(*point - centre, radius, floor, traits);
     }
 
     if std::env::var_os("SKIP_SUBMENTAL").is_none() {
@@ -1564,8 +1567,8 @@ fn construct_submental(mesh: &mut PolyMesh, owned: &[bool], centre: Vec3, radius
 ///
 /// Takes and returns a position relative to the head joint, in metres.
 #[must_use]
-pub fn reshape(local: Vec3, radius: f32, dimorphism: &Dimorphism) -> Vec3 {
-    reshape_to(local, radius, JUNCTION, dimorphism)
+pub fn reshape(local: Vec3, radius: f32, traits: &HeadTraits) -> Vec3 {
+    reshape_to(local, radius, JUNCTION, traits)
 }
 
 /// The same, on a head whose surface is known to run out at `floor`.
@@ -1577,7 +1580,7 @@ pub fn reshape(local: Vec3, radius: f32, dimorphism: &Dimorphism) -> Vec3 {
 /// the eyes sit at `+0.05` radii and every feature is placed from [`Skull`],
 /// which measures the built surface rather than predicting it.
 #[must_use]
-pub fn reshape_to(local: Vec3, radius: f32, floor: f32, dimorphism: &Dimorphism) -> Vec3 {
+pub fn reshape_to(local: Vec3, radius: f32, floor: f32, traits: &HeadTraits) -> Vec3 {
     if radius <= f32::EPSILON {
         return local;
     }
@@ -1640,7 +1643,7 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32, dimorphism: &Dimorphism)
     let wide = 1.0 - (1.0 - knot(&BREADTH, height)) * frontal;
     let deep = knot(&DEPTH, height)
         * (1.0 + ELONGATION)
-        * (1.0 + knot(&OCCIPUT, height) * dimorphism.occiput * behind * behind);
+        * (1.0 + knot(&OCCIPUT, height) * traits.occiput * behind * behind);
 
     // The chin is a central prominence, so its push falls off much faster
     // round the jaw than the other terms do. Spread evenly across the front — an
@@ -1659,9 +1662,8 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32, dimorphism: &Dimorphism)
     // rejects. Judged on the top-down and frontal renders across seeds.
     let point = smooth((facing - 0.42) / 0.58);
     // The brow ridge and the vault above it, which the frame axis moves in
-    // opposite directions — see [`Dimorphism::frontal`] and [`FOREHEAD`].
-    let ledge = (knot(&BROW, height) * dimorphism.brow
-        + knot(&FOREHEAD, height) * dimorphism.frontal)
+    // opposite directions — see [`HeadTraits::frontal`] and [`FOREHEAD`].
+    let ledge = (knot(&BROW, height) * traits.brow + knot(&FOREHEAD, height) * traits.frontal)
         * ahead
         * ahead;
     let hollow = knot(&TEMPLE, height) * (local.x / reach) * (local.x / reach);
@@ -1671,13 +1673,13 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32, dimorphism: &Dimorphism)
     // narrowing across without retreating at the same time gives a slab. The
     // chin and the brow are added after it, so neither is scaled by a hollow
     // that has no business with either.
-    let mandible = 1.0 - jaw(height, facing, local.x / reach, dimorphism);
+    let mandible = 1.0 - jaw(height, facing, local.x / reach, traits);
 
     Vec3::new(
-        local.x * (wide - hollow) * mandible * dimorphism.breadth_at(height),
+        local.x * (wide - hollow) * mandible * traits.breadth_at(height),
         local.y,
         local.z * deep * mandible
-            + (knot(&CHIN, height) * dimorphism.chin * point * stretch + ledge) * radius,
+            + (knot(&CHIN, height) * traits.chin * point * stretch + ledge) * radius,
     )
 }
 
@@ -1717,7 +1719,7 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32, dimorphism: &Dimorphism)
 ///
 /// `facing` is the cosine of the azimuth from dead ahead and `side` its sine,
 /// both as [`reshape_to`] already has them; `height` is after the floor remap.
-fn jaw(height: f32, facing: f32, side: f32, dimorphism: &Dimorphism) -> f32 {
+fn jaw(height: f32, facing: f32, side: f32, traits: &HeadTraits) -> f32 {
     let side = side.abs();
     // Nothing on the midline, where the chin already rules and where a hollow
     // would carve a groove either side of it; full from about 53° out; and dead
@@ -1749,7 +1751,7 @@ fn jaw(height: f32, facing: f32, side: f32, dimorphism: &Dimorphism) -> f32 {
         return 0.0;
     }
 
-    let border = MENTON + (dimorphism.gonion - MENTON) * side;
+    let border = MENTON + (traits.gonion - MENTON) * side;
     let under = border - height;
     if under <= 0.0 {
         return 0.0;
@@ -1860,7 +1862,7 @@ mod tests {
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let mut mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-        shape(&mut mesh, &rig, &Dimorphism::of(&record.composites));
+        shape(&mut mesh, &rig, &HeadTraits::of(&record.composites));
         let joint = *rig.in_zone(Zone::Head).first().expect("a head");
         // The remap `reshape_to` applies, so a test can ask for a PROFILE
         // height — the coordinate every table in this file is authored in — and
@@ -1938,13 +1940,13 @@ mod tests {
     fn the_neutral_head_is_the_head_that_was_already_built() {
         // The epic's identity anchor (#161, #166): `femininity` zero is the
         // midpoint of the two measured references, which is the head this crate
-        // built before the axis existed. Every field of [`Dimorphism`] is a
+        // built before the axis existed. Every field of [`HeadTraits`] is a
         // factor about one for exactly this reason, and a pair of anchors whose
         // midpoint is not today's value would move every neutral body in the
         // crate without a single test naming the axis.
         assert_eq!(
-            Dimorphism::of(&Composites::default()),
-            Dimorphism::default(),
+            HeadTraits::of(&Composites::default()),
+            HeadTraits::default(),
             "the neutral frame no longer builds the head this crate shipped"
         );
     }
@@ -2029,7 +2031,7 @@ mod tests {
             // the brow's own reach is elongation-free and is what "upright"
             // means.
             // The occipital curve against the hollow under the ear behind it,
-            // which is the pair `Dimorphism::occiput` scales together. A ratio
+            // which is the pair `HeadTraits::occiput` scales together. A ratio
             // for the same reason the forehead is one: the absolute reach
             // behind a head is mostly how long the head is.
             let behind = |index: usize| at(index, 0.21, -Vec3::Z) / at(index, -0.15, -Vec3::Z);
@@ -4006,9 +4008,9 @@ fn floor(rig: &Rig, head: usize) -> f32 {
 /// `face::neck` can be bounded by the same landmark this file carves to without
 /// re-deriving the floor remap — which is the arithmetic that has walked out
 /// from under this file twice (#78, #107).
-pub(crate) fn border(rig: &Rig, head: usize, dimorphism: &Dimorphism, raise: f32) -> f32 {
+pub(crate) fn border(rig: &Rig, head: usize, traits: &HeadTraits, raise: f32) -> f32 {
     // **The border MIGRATES, and a flat one tears a chin off** (#175). This is
-    // [`jaw`]'s own line — [`MENTON`] on the midline, [`Dimorphism::gonion`] out
+    // [`jaw`]'s own line — [`MENTON`] on the midline, [`HeadTraits::gonion`] out
     // at the angle — and `face::neck` first used the gonion's height at every
     // azimuth, which put the ceiling 20 mm above the chin's own tip on the
     // midline. The column's carve then took the chin and the submental
@@ -4020,7 +4022,7 @@ pub(crate) fn border(rig: &Rig, head: usize, dimorphism: &Dimorphism, raise: f32
     at_profile(
         rig,
         head,
-        MENTON + (dimorphism.gonion - MENTON) * raise.clamp(0.0, 1.0),
+        MENTON + (traits.gonion - MENTON) * raise.clamp(0.0, 1.0),
     )
 }
 

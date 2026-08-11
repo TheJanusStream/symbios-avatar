@@ -20,6 +20,14 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
+/// **6** — the humanoid payload loses the two dead bytes `build` and `muscle`
+/// left behind when #164 retired them (#169). Their slots were held rather than
+/// removed so that codes already in circulation kept decoding at the right
+/// offsets, and this is the pass that was going to collect the removal. Version
+/// 5 and 4 stay readable through `Archetype::decode_reserved`, which is the
+/// same spans with the two slots still on the wire; the quadruped's payload is
+/// unchanged, because its own `build` and `muscle` never retired.
+///
 /// **5** — the composites block (#162): four bytes for the high-level axes,
 /// written after the archetype and before the complexion. Added here rather
 /// than left for the epic's versioning pass, because a record field that
@@ -42,7 +50,7 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 5;
+pub const SHARE_CODE_VERSION: u8 = 6;
 
 /// The oldest format whose codes still decode.
 const OLDEST_VERSION: u8 = 3;
@@ -56,6 +64,9 @@ const PRE_COMPOSITES_VERSION: u8 = 4;
 /// The last format whose plan bytes span ±1 rather than the exploration
 /// envelope (#160).
 const NARROW_SPAN_VERSION: u8 = 3;
+
+/// The last format that carried the retired `build` and `muscle` slots (#169).
+const RESERVED_SLOTS_VERSION: u8 = 5;
 
 /// Crockford base32 digits.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -129,8 +140,13 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
 
     use crate::plan::{take_signed, take_unit};
 
+    // Three plan layouts are readable and the order of these arms is the
+    // order they arrived in: version 3's narrow spans, versions 4 and 5's
+    // envelope spans with the retired slots still on the wire, and today's.
     let archetype = if version <= NARROW_SPAN_VERSION {
         Archetype::decode_legacy(&mut payload)?
+    } else if version <= RESERVED_SLOTS_VERSION {
+        Archetype::decode_reserved(&mut payload)?
     } else {
         Archetype::decode(&mut payload)?
     };
@@ -396,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn a_version_5_code_carries_the_composites() {
+    fn a_code_carries_the_composites() {
         let composites = Composites {
             femininity: 0.8,
             mass: -0.6,
@@ -409,6 +425,59 @@ mod tests {
         assert!((back.mass + 0.6).abs() < 0.03);
         assert!((back.body_fat - 0.34).abs() < 0.01);
         assert!(back.age.abs_diff(61) <= 1);
+    }
+
+    #[test]
+    fn a_version_5_code_still_names_the_body_it_named() {
+        // The guard on version 6's removal (#169), and the same shape of bug
+        // the v4 test above guards: a v5 payload carries two dead bytes where
+        // `build` and `muscle` were, and reading it with today's layout takes
+        // the shoulders from one of them and runs every later axis — and then
+        // the composites, and then the complexion — one span short. Assembled
+        // as a v5 writer would have written it.
+        use crate::plan::{put_signed, put_span, put_unit};
+        let mut payload = vec![5u8, 1]; // version 5, humanoid tag
+        crate::plan::put_length(&mut payload, 1.68);
+        let signed = crate::plan::explore_range(0.0, (-1.0, 1.0));
+        put_span(&mut payload, 0.0, signed); // the retired build slot
+        put_span(&mut payload, 0.0, signed); // the retired muscle slot
+        for axis in [-0.25, 0.1, 0.3, -0.4, 0.2, 0.6, -0.7, 0.15] {
+            put_span(&mut payload, axis, signed);
+        }
+        // The composites block, which version 5 was the first to carry.
+        Composites {
+            femininity: 0.5,
+            mass: 0.25,
+            body_fat: 0.30,
+            age: 55,
+        }
+        .encode(&mut payload);
+        put_unit(&mut payload, 0.62); // melanin
+        put_signed(&mut payload, -0.3); // undertone
+        put_unit(&mut payload, 0.45); // blush
+        put_unit(&mut payload, 0.0); // freckles
+        put_unit(&mut payload, 0.0); // stubble
+        payload.push(checksum(&payload));
+        let code = group(&base32_encode(&payload));
+
+        let (Archetype::Humanoid(back), composites, skin) =
+            decode(&code).expect("a v5 code decodes")
+        else {
+            panic!("archetype changed");
+        };
+        assert!((back.height - 1.68).abs() < 0.002);
+        assert!(
+            (back.shoulder_width + 0.25).abs() < 0.03,
+            "the first axis after the dead slots is where a mis-read starts: {}",
+            back.shoulder_width
+        );
+        assert!((back.extremity_size - 0.15).abs() < 0.03);
+        assert!((composites.femininity - 0.5).abs() < 0.03);
+        assert!(composites.age.abs_diff(55) <= 1);
+        assert!(
+            (skin.melanin - 0.62).abs() < 0.01,
+            "the complexion must not be read out of the retired slots"
+        );
     }
 
     #[test]

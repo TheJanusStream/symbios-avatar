@@ -3,7 +3,7 @@
 //! The sibling of `examples/reference`, which measures the same two files for
 //! the body. Kept for the reason that one is kept: every reference column in
 //! this crate has to be re-derivable rather than remembered (#173), and
-//! [`crate::face::Dimorphism`]'s anchors are reference columns.
+//! [`crate::face::HeadTraits`]'s anchors are reference columns.
 //!
 //! Measured by RAY CASTING rather than by binning vertices: the male head is 200
 //! vertices against the female's 632, so any band statistic reports the

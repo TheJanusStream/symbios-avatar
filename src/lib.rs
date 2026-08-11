@@ -118,7 +118,7 @@ pub use cage::{CageConfig, CageError, build_cage};
 pub use dress::{Garment, GarmentCut, Leg, Outfit, OutfitParams, Sleeve};
 pub use extremity::{Attached, Extremities, Foot, Hand};
 pub use face::{
-    Aperture, Blink, Canon, Dimorphism, EyeParams, Eyes, FaceParams, Features, Talk, TalkConfig,
+    Aperture, Blink, Canon, EyeParams, Eyes, FaceParams, Features, HeadTraits, Talk, TalkConfig,
     refine_face, shape_skull,
 };
 pub use hair::{Hair, HairParams, Scalp, Strand};
@@ -127,7 +127,7 @@ pub use mesh::{ManifoldReport, PolyMesh};
 pub use plan::{
     Archetype, BodyPlan, Category, Composites, HumanoidParams, Limb, QuadrupedParams, Zone, ZoneSet,
 };
-pub use record::{AvatarRecord, LockSet, ProfileRecord, ShareCodeError};
+pub use record::{AvatarRecord, GENERATOR_VERSION, LockSet, ProfileRecord, ShareCodeError};
 pub use rig::{
     Anchor, Footprint, Influence, Joint, Landmark, Landmarks, MAX_INFLUENCES, Patch, Rig, RigError,
     Role, SkinConfig, SkinWeights, Surface,
@@ -249,7 +249,7 @@ pub fn build_body(
     skeleton: &Skeleton,
     config: &CageConfig,
     subdivisions: usize,
-    dimorphism: &face::Dimorphism,
+    traits: &face::HeadTraits,
 ) -> Result<PolyMesh, CageError> {
     let cage = build_cage(skeleton, config)?;
     let mut mesh = catmull_clark(&cage, subdivisions);
@@ -258,13 +258,13 @@ pub fn build_body(
         // moves none, so `shape_skull` maps all of them onto the skull together
         // and the face is sampled finely rather than subdivided after the fact.
         mesh = face::refine_face(&mesh, &rig, FACE_REFINEMENT);
-        mesh = face::refine_neck(&mesh, &rig, dimorphism);
-        face::shape_skull(&mut mesh, &rig, dimorphism);
+        mesh = face::refine_neck(&mesh, &rig, traits);
+        face::shape_skull(&mut mesh, &rig, traits);
         // And then the column under it, which spans the junction the skull's
         // own shaping stops at. Second because it measures the surface the
         // skull left: see `face::neck`, whose whole argument is that the neck's
         // width has to be the head's business rather than the cage's.
-        face::shape_neck(&mut mesh, &rig, dimorphism);
+        face::shape_neck(&mut mesh, &rig, traits);
     }
     Ok(mesh)
 }

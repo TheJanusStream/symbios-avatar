@@ -266,7 +266,7 @@ fn clamp_unit(value: f32, fallback: f32) -> f32 {
 ///
 /// **The composites reach the painter through this and not directly** (#165).
 /// Every other consumer of the record's high-level axes has a derived read of
-/// its own — the cage has `plan::derive`, the skull has `face::Dimorphism` —
+/// its own — the cage has `plan::derive`, the skull has `face::HeadTraits` —
 /// and the skin wants the same thing for the same reason: what a painter needs
 /// is not a body-fat fraction, it is whether the muscle under this texel shows,
 /// and the two are not the same question on a masculine and a feminine frame.
@@ -338,7 +338,7 @@ impl Default for Condition {
 ///
 /// **This one IS visible to the render**, unlike the two relief constants
 /// below it: a crease multiplies the colour as well as the occlusion, so the
-/// ink lands in the albedo the contact sheet samples (#177).
+/// ink lands in the albedo the contact sheet samples (#45).
 ///
 /// Provenance: **tuned by render** (#165), against the lean end of the body-fat
 /// sweep at a fixed light.
@@ -348,7 +348,7 @@ const DEFINITION_INK: f32 = 0.55;
 /// Small: skin is skin, and this is the difference between a highlight that
 /// finds an edge and one that does not.
 ///
-/// **NOT judged by render, and it cannot be** (#177): `examples/render` samples
+/// **NOT judged by render, and it cannot be** (#45): `examples/render` samples
 /// the albedo of this atlas and nothing else, so every roughness term in this
 /// file — including `roughness_bias`, which has shipped for months — has never
 /// been drawn. Sized instead against the span of the roughness axis it moves,
@@ -366,7 +366,7 @@ const DEFINITION_SHEEN: f32 = 0.05;
 /// fade is what keeps it from becoming per-texel noise on the finely-packed
 /// charts (#158).
 ///
-/// **NOT judged by render** (#177): this rides the height field, which becomes
+/// **NOT judged by render** (#45): this rides the height field, which becomes
 /// the normal map, and the contact sheet reads only the albedo. Sized instead
 /// against the field it sits beside — at a typical body chart the pore term
 /// lands near 0.31 of the height range after its own resolvability fade, and
@@ -394,7 +394,7 @@ const AGE_INK: f32 = 0.85;
 /// roughness axis in this painter spans 0.25 to 0.85, so this is about a
 /// twelfth of it end to end.
 ///
-/// **NOT judged by render** — see [`DEFINITION_SHEEN`] and #177.
+/// **NOT judged by render** — see [`DEFINITION_SHEEN`] and #45.
 ///
 /// Provenance: **looked up for the direction, sized against the axis it
 /// moves** (#167).
@@ -407,7 +407,7 @@ const AGE_DRY: f32 = 0.05;
 /// and the backs of the hands carry them decades before covered skin does, and
 /// a body-wide wrinkle field reads as dirt rather than as age.
 ///
-/// **NOT judged by render** (#177), for the reason [`STRIATION`] gives. Sized
+/// **NOT judged by render** (#45), for the reason [`STRIATION`] gives. Sized
 /// the same way: about three times the pore relief on a finely-charted face,
 /// where the wrinkle's 6.7 mm period is inside what the atlas resolves and the
 /// pore's 2.5 mm one is not.

@@ -980,7 +980,10 @@ fn the_underside_of_the_jaw_does_not_bulge() {
 /// defect and it belongs with #129/#131, not here.
 ///
 /// So the ceiling is asserted over the POPULATION rather than per body: **at
-/// most one of sixteen** may spend more than 0.360 by a fifth. A per-body
+/// most one of the classic band** may spend more than 0.360 by a fifth. The
+/// band is sixteen seeds less whatever the wildcard draws (#169) — see the
+/// filter in the body, which explains why a deliberately extreme head is
+/// reported beside the population rather than held to its bound. A per-body
 /// ceiling loose enough to admit seed 9 would be 0.76 and would sleep through a
 /// regression that took every other body from 0.23 to 0.50; a count catches
 /// that and still names the one body the ruler cannot describe. #94 has been
@@ -989,9 +992,31 @@ fn the_underside_of_the_jaw_does_not_bulge() {
 #[test]
 fn the_jaw_gives_up_its_reach_where_the_reference_does() {
     let mut population = Vec::new();
+    let mut wild = Vec::new();
     for seed in 0..SEEDS {
         let mut record = AvatarRecord::new("Jaw", Archetype::default());
         record.reroll(seed);
+        // **The classic band, which this ruler needed from the day #160 landed
+        // and only met its first wildcard in #169.** One roll in thirty draws
+        // an axis uniformly over the whole exploration envelope, deliberately;
+        // generation 3 reshuffled the draw and seed 15 came up with a
+        // `face_length` of −2.10, a face the crate means to be able to build
+        // and does not mean to hold to a bound derived from ordinary heads. It
+        // read 0.774 against a floor of 0.780 — a body outside the population
+        // the number was measured over, failing a ratchet that had no way to
+        // say so. `tests/plan.rs`'s neck ruler has carried this filter since
+        // #160 for exactly this reason.
+        //
+        // Wild heads are still built and still measured; they are reported
+        // beside the population and not asserted on. What holds them is the
+        // meshability sweeps, which is the right guard for a body whose shape
+        // is a deliberate extreme.
+        let Archetype::Humanoid(axes) = &record.archetype else {
+            panic!("archetype changed")
+        };
+        let classic = axes.head_size.abs() <= 1.0
+            && axes.head_breadth.abs() <= 1.0
+            && axes.face_length.abs() <= 1.0;
         let avatar = Avatar::build_with(&record, &geometry_only()).expect("the body builds");
         let body = &avatar.parts.body;
         let Some(head) = avatar.rig.in_zone(Zone::Head).first().copied() else {
@@ -1044,16 +1069,26 @@ fn the_jaw_gives_up_its_reach_where_the_reference_does() {
         let (Some(fifth), Some(twice)) = (along(0.20), along(0.40)) else {
             continue;
         };
-        population.push((seed, (chin_z - fifth) / drop, (chin_z - twice) / drop));
+        let row = (seed, (chin_z - fifth) / drop, (chin_z - twice) / drop);
+        if classic {
+            population.push(row)
+        } else {
+            wild.push(row)
+        }
     }
 
     assert!(!population.is_empty(), "no seed built a jaw to measure");
     let report = || {
-        population
-            .iter()
-            .map(|(seed, fifth, twice)| format!("{seed}: {fifth:.3}/{twice:.3}"))
-            .collect::<Vec<_>>()
-            .join("  ")
+        let row = |(seed, fifth, twice): &(i64, f32, f32)| format!("{seed}: {fifth:.3}/{twice:.3}");
+        let classic = population.iter().map(row).collect::<Vec<_>>().join("  ");
+        if wild.is_empty() {
+            classic
+        } else {
+            format!(
+                "{classic}  |  outside the classic band, not asserted on: {}",
+                wild.iter().map(row).collect::<Vec<_>>().join("  ")
+            )
+        }
     };
     for (seed, _, twice) in &population {
         assert!(

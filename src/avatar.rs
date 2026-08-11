@@ -254,14 +254,14 @@ impl Avatar {
         // top of the build rather than inside `build_body`, because a caller
         // holding a skeleton and no record — every test and probe in this crate
         // — is entitled to the neutral head without inventing composites.
-        let dimorphism = face::Dimorphism::of(&record.composites);
+        let traits = face::HeadTraits::of(&record.composites);
         // The record's face axes are offsets on what the frame axis already
         // derives, so everything downstream reads this and not `record.face` —
         // the carve, the mouth cut and the built features all have to agree
         // about one mouth. See `FaceParams::on`.
-        let face_params = record.face.on(&dimorphism);
+        let face_params = record.face.on(&traits);
         let mut body =
-            crate::build_body(&skeleton, &config.cage, config.subdivisions, &dimorphism).ok()?;
+            crate::build_body(&skeleton, &config.cage, config.subdivisions, &traits).ok()?;
         let mut rig = Rig::from_skeleton(&skeleton).ok()?;
 
         // The face is carved into the body's own surface, so it has to happen
@@ -421,7 +421,7 @@ impl Avatar {
         // that plumbing arrived: until then the skin knew a complexion and
         // nothing about the body wearing it, so a lean body and a heavy one
         // were painted identically. `Condition` is the skin's derived read of
-        // the composites, the way `Dimorphism` is the skull's.
+        // the composites, the way `HeadTraits` is the skull's.
         let painted = texture::paint_skin(
             &geometry,
             &rig,

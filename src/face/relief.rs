@@ -756,7 +756,7 @@ mod tests {
             &skeleton,
             &CageConfig::default(),
             crate::BODY_SUBDIVISIONS,
-            &crate::face::Dimorphism::of(&record.composites),
+            &crate::face::HeadTraits::of(&record.composites),
         )
         .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
@@ -946,17 +946,17 @@ mod tests {
         // this is worth asserting: `plump` is the quantity the lip field is
         // actually built from, so a composition that got as far as `FaceParams`
         // and no further would pass the test beside it and change no face.
-        use crate::face::skull::Dimorphism;
+        use crate::face::skull::HeadTraits;
         use crate::plan::Composites;
 
         let record = crate::AvatarRecord::new("Lips", crate::Archetype::default());
         let (_, _, canon) = measured(&record);
         let plump = |femininity: f32| {
-            let dimorphism = Dimorphism::of(&Composites {
+            let traits = HeadTraits::of(&Composites {
                 femininity,
                 ..Composites::default()
             });
-            Face::new(&canon, &record.face.on(&dimorphism)).plump
+            Face::new(&canon, &record.face.on(&traits)).plump
         };
         let (thin, neutral, full) = (plump(-1.0), plump(0.0), plump(1.0));
         assert!(
@@ -978,17 +978,17 @@ mod tests {
         // it thins HERE — the offset is applied in `FaceParams::on` and the
         // quantity the mesh is built from is `plump`, and #166 records that the
         // two can be several steps apart.
-        use crate::face::skull::Dimorphism;
+        use crate::face::skull::HeadTraits;
         use crate::plan::{AGE_PIVOT, AGE_RANGE, Composites};
 
         let record = crate::AvatarRecord::new("Lips", crate::Archetype::default());
         let (_, _, canon) = measured(&record);
         let plump = |age: u32| {
-            let dimorphism = Dimorphism::of(&Composites {
+            let traits = HeadTraits::of(&Composites {
                 age,
                 ..Composites::default()
             });
-            Face::new(&canon, &record.face.on(&dimorphism)).plump
+            Face::new(&canon, &record.face.on(&traits)).plump
         };
 
         // Identity under the pivot, which is the whole epic's anchor and is

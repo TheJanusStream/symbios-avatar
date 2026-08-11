@@ -297,7 +297,16 @@ pub trait BodyPlan: Sized {
     ///
     /// Each axis draws from its own named stream — see [`Rolls`] — so adding one
     /// never changes what the others produce for a given seed.
-    fn reroll(&mut self, category: Category, rolls: &Rolls);
+    ///
+    /// **`composites` are already drawn when this is called, and that ordering
+    /// is the whole of reroll v3** (#169). A plan's axes are OFFSETS on what
+    /// the composites derive, so they are drawn second and drawn small; a plan
+    /// that wants to correlate — stature with the frame axis, say — reads them
+    /// here rather than rolling a quantity the composites have already decided.
+    /// What may NOT move is which stream an axis draws from: correlation shifts
+    /// a draw's mean and width, never its stream, so adding an axis still
+    /// disturbs nothing.
+    fn reroll(&mut self, category: Category, rolls: &Rolls, composites: &Composites);
 
     /// Appends this plan's quantised parameters to a share code.
     fn encode(&self, out: &mut Vec<u8>);
@@ -319,6 +328,25 @@ pub trait BodyPlan: Sized {
     ///
     /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
     fn decode_legacy(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
+
+    /// Reads parameters from a **version-4 or version-5** share code (#169).
+    ///
+    /// Between them, those two versions carried a humanoid payload with two
+    /// dead bytes in the middle of it: `build` and `muscle` retired into `mass`
+    /// and `bodyFat` in #164, and their slots were held rather than removed so
+    /// that codes minted before the retirement went on decoding at the right
+    /// offsets. Version 6 removes the slots, so the older layout needs a path
+    /// of its own — this one.
+    ///
+    /// **Identical to [`Self::decode`] on every plan whose axes did not
+    /// retire**, which is why it is a plain method rather than a flag: the
+    /// quadruped's `build` and `muscle` are live axes and its two layouts are
+    /// the same bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
+    fn decode_reserved(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
 }
 
 /// Why a body plan could not be read from a share code.
@@ -505,10 +533,10 @@ impl Archetype {
     ///
     /// An unknown body is left alone: re-rolling axes whose meaning is unknown
     /// would be inventing a body, not re-rolling one.
-    pub fn reroll(&mut self, category: Category, rolls: &Rolls) {
+    pub fn reroll(&mut self, category: Category, rolls: &Rolls, composites: &Composites) {
         match self {
-            Archetype::Humanoid(params) => params.reroll(category, rolls),
-            Archetype::Quadruped(params) => params.reroll(category, rolls),
+            Archetype::Humanoid(params) => params.reroll(category, rolls, composites),
+            Archetype::Quadruped(params) => params.reroll(category, rolls, composites),
             Archetype::Unknown { .. } => {}
         }
     }
@@ -551,6 +579,26 @@ impl Archetype {
         match tag {
             1 => Ok(Archetype::Humanoid(HumanoidParams::decode_legacy(bytes)?)),
             2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_legacy(bytes)?)),
+            other => Err(PlanDecodeError::UnknownArchetype(other)),
+        }
+    }
+
+    /// Reads an archetype from a **version-4 or version-5** payload (#169).
+    ///
+    /// See [`BodyPlan::decode_reserved`]: the same spans, with the two slots
+    /// `build` and `muscle` left behind them still on the wire.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError`] if the tag is unknown or the payload is short.
+    pub fn decode_reserved(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        let (&tag, rest) = bytes.split_first().ok_or(PlanDecodeError::Truncated)?;
+        *bytes = rest;
+        match tag {
+            1 => Ok(Archetype::Humanoid(HumanoidParams::decode_reserved(bytes)?)),
+            2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_reserved(
+                bytes,
+            )?)),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }

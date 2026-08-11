@@ -204,7 +204,15 @@ impl BodyPlan for QuadrupedParams {
         skeleton
     }
 
-    fn reroll(&mut self, category: Category, rolls: &Rolls) {
+    /// **The composites reach no quadruped and this signature is the only
+    /// place that shows it** (#169). Wave 1 of the composite overhaul is the
+    /// humanoid: `plan::derive::quadruped` reads none of the four axes, so a
+    /// beast's `build` and `muscle` are still its own girth axes and are NOT
+    /// retired here — the humanoid's were retired because `mass` and `bodyFat`
+    /// took over what they said, and nothing has taken over here. Wiring the
+    /// composites into this plan is its own piece of work; until then this
+    /// parameter is deliberately unread.
+    fn reroll(&mut self, category: Category, rolls: &Rolls, _composites: &Composites) {
         // See [`super::humanoid::HumanoidParams::reroll`]: same shape draws,
         // same reasons, same stream names as before (#160).
         let signed = signed_envelope();
@@ -263,6 +271,15 @@ impl BodyPlan for QuadrupedParams {
         };
         params.sanitize();
         Ok(params)
+    }
+
+    fn decode_reserved(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // Identical to `decode`, and that is the fact worth writing down: the
+        // slots version 6 removes are the HUMANOID's retired `build` and
+        // `muscle`. This plan's two axes of the same name never retired —
+        // nothing on a quadruped reads the composites — so its payload has not
+        // moved since version 4 (#169).
+        Self::decode(bytes)
     }
 
     fn decode_legacy(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {

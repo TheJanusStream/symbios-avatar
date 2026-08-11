@@ -80,12 +80,12 @@ fn main() {
         }
         record.composites.femininity = femininity;
         let skeleton = record.skeleton();
-        let dimorphism = symbios_avatar::face::Dimorphism::of(&record.composites);
+        let traits = symbios_avatar::face::HeadTraits::of(&record.composites);
         let body = build_body(
             &skeleton,
             &CageConfig::default(),
             BODY_SUBDIVISIONS,
-            &dimorphism,
+            &traits,
         )
         .expect("meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");

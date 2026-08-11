@@ -65,7 +65,7 @@
 //! then vertical, where ours spreads a slightly larger 63 mm over a fifty-
 //! millimetre ramp. A corner against a slope.
 
-use symbios_avatar::face::{Canon, Dimorphism, Skull, carve_face};
+use symbios_avatar::face::{Canon, HeadTraits, Skull, carve_face};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarRecord, PolyMesh, Rig, Zone, build_body,
 };
@@ -424,7 +424,7 @@ fn face_length(mesh: &PolyMesh, chin: f32) -> f32 {
 /// **Both bodies go through this**, rather than one through here and one
 /// through [`Avatar::build`]: the shelf below is a difference of two numbers
 /// and it is only worth reading if exactly one thing differs between the
-/// surfaces they come off. `Dimorphism::chin` is the only multiplier on `CHIN`
+/// surfaces they come off. `HeadTraits::chin` is the only multiplier on `CHIN`
 /// anywhere in the crate, and `FaceParams::on` reads `lips` rather than `chin`,
 /// so the params are the record's own on both.
 ///
@@ -432,13 +432,13 @@ fn face_length(mesh: &PolyMesh, chin: f32) -> f32 {
 /// after the carve and none of them is on the midline under the chin.
 fn built(record: &AvatarRecord, chin: Option<f32>) -> Option<(PolyMesh, Rig)> {
     let skeleton = record.skeleton();
-    let mut dimorphism = Dimorphism::of(&record.composites);
-    let params = record.face.on(&dimorphism);
+    let mut traits = HeadTraits::of(&record.composites);
+    let params = record.face.on(&traits);
     if let Some(chin) = chin {
-        dimorphism.chin = chin;
+        traits.chin = chin;
     }
     let config = AvatarConfig::default();
-    let mut body = build_body(&skeleton, &config.cage, config.subdivisions, &dimorphism).ok()?;
+    let mut body = build_body(&skeleton, &config.cage, config.subdivisions, &traits).ok()?;
     let rig = Rig::from_skeleton(&skeleton).ok()?;
     if let Some(skull) = Skull::measure(&body, &rig) {
         let canon = Canon::measure(&rig, &skull, &record.eyes);
@@ -462,7 +462,7 @@ fn built(record: &AvatarRecord, chin: Option<f32>) -> Option<(PolyMesh, Rig)> {
 /// own docstring exists to forbid. Nobody had measured the cage chin-relatively,
 /// because the cage has no chin to measure from.
 ///
-/// So the surface below is the shipped one with `Dimorphism::chin` at ZERO, and
+/// So the surface below is the shipped one with `HeadTraits::chin` at ZERO, and
 /// the height it is read from is the shipped body's own measured chin. The span
 /// is located by a real landmark on a real body and the term under test is not
 /// in the surface. It is a decision rather than a computation and this is the

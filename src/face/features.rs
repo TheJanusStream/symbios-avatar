@@ -122,7 +122,7 @@ impl FaceParams {
     /// face" and the slider still spans its whole range from there.
     ///
     /// **Only the lips ride this way, and the brow deliberately does not.**
-    /// `Dimorphism::brow` scales the skull's own BROW profile, which is the bony
+    /// `HeadTraits::brow` scales the skull's own BROW profile, which is the bony
     /// ledge `super::skull::reshape_to` carves; [`Self::brow`] drives a relief
     /// field laid over it. Those are two stacked layers of one face rather than
     /// two drivers of one number — the ledge is there whatever the record says,
@@ -133,10 +133,10 @@ impl FaceParams {
     /// axis already at its end plus a derived default is the one combination
     /// that can leave it.
     #[must_use]
-    pub fn on(&self, dimorphism: &super::skull::Dimorphism) -> Self {
+    pub fn on(&self, traits: &super::skull::HeadTraits) -> Self {
         let mut face = *self;
         face.mouth = crate::plan::sanitize_axis(
-            face.mouth + dimorphism.lips,
+            face.mouth + traits.lips,
             Self::default().mouth,
             crate::plan::explore_range(Self::default().mouth, (0.0, 1.0)),
         );
@@ -386,21 +386,21 @@ mod tests {
 
     #[test]
     fn a_face_axis_is_an_offset_on_what_the_frame_already_derived() {
-        use crate::face::skull::Dimorphism;
+        use crate::face::skull::HeadTraits;
         use crate::plan::Composites;
 
         let record = FaceParams::default();
         // The identity that keeps every neutral body where it was: a neutral
         // frame composes to the record's own axes, unchanged.
         assert_eq!(
-            record.on(&Dimorphism::default()),
+            record.on(&HeadTraits::default()),
             record,
             "the neutral frame moved a face axis"
         );
-        assert_eq!(record.on(&Dimorphism::of(&Composites::default())), record);
+        assert_eq!(record.on(&HeadTraits::of(&Composites::default())), record);
 
         let framed = |femininity: f32| {
-            record.on(&Dimorphism::of(&Composites {
+            record.on(&HeadTraits::of(&Composites {
                 femininity,
                 ..Composites::default()
             }))
@@ -414,7 +414,7 @@ mod tests {
         );
 
         // **Only the lips ride the frame.** The brow is the one that looks like
-        // it should and must not: `Dimorphism::brow` already scales the skull's
+        // it should and must not: `HeadTraits::brow` already scales the skull's
         // own ledge under this axis's relief, and folding it in here as well
         // would spend one dimorphism twice.
         assert_eq!(
@@ -430,7 +430,7 @@ mod tests {
             ..FaceParams::default()
         };
         extreme.sanitize();
-        let composed = extreme.on(&Dimorphism::of(&Composites {
+        let composed = extreme.on(&HeadTraits::of(&Composites {
             femininity: 3.0,
             ..Composites::default()
         }));
