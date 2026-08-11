@@ -136,14 +136,45 @@ const ELONGATION: f32 = 0.11;
 /// stature. The parietal
 /// knot at 0.42 has never scaled and must not — eurion is quoted against the
 /// pupil line, which does not move with a crown.
+///
+/// **THE FACE KNOTS SAT BELOW THE LANDMARKS THEY ARE NAMED FOR, and that was
+/// the whole of #79's last open item** (#79). The knot commented "the angle of
+/// the jaw" was at −0.46 while [`GONION`] — the crate's own derived landmark of
+/// that name, and where [`Skull::gonion`] answers — is at −0.31. So the
+/// narrowing meant for the gonion was being spent a sixth of a profile height
+/// below it, and at the gonion itself this table still read 0.750, most of the
+/// way back to the cheekbone's 0.825.
+///
+/// Measured on `the_face_narrows_from_cheekbone_to_chin`'s own ruler with the
+/// breadth axis held neutral, bigonial over bizygomatic ran 0.858, 0.866, 0.870
+/// and 0.816 against a life 0.73–0.76 — every body outside it, and three of the
+/// four had drifted FURTHER out since the figures in that test were recorded.
+///
+/// **The amplitudes did not move. Only the heights did**, which is why this is a
+/// re-base and not another round of tuning: −0.46 → −0.31 puts 0.646 on the
+/// gonion, and −0.28 → −0.18 follows it to the midpoint between the cheekbone
+/// and the gonion, which is the one knot here with no landmark of its own. The
+/// chin knot at −0.60 is untouched. Measured after, on the same four: **0.752,
+/// 0.760, 0.763 and 0.715**, and over the eight seeds of `examples/headaudit
+/// --sweep` with each body's own axis rolled, 0.678 to 0.865 against 0.771 to
+/// 0.986 before.
+///
+/// What it cost, recorded rather than absorbed: the off-midline bound in
+/// `the_profile_agrees_with_the_surface_it_was_measured_from` went 18.8 mm to
+/// 20.0. A narrower lower face is harder for a fixed number of lateral columns
+/// to describe, and that ruler reports it — the sample heights are identical
+/// before and after, so this is the binning of #74 and not a span that slid.
+///
+/// The alternative was tried and measured worse: raising the gonion knot to
+/// 0.660 centres the population on life but takes that same bound to 24.4.
 const BREADTH: [(f32, f32); 9] = [
     (1.12, 0.58),     // crown
     (0.80, 0.88),     // upper cranium
     (0.42, 0.94),     // the parietal, where a head is actually widest
     (0.20, 0.885),    // above the temple
     (-0.05, 0.825),   // the cheekbones, a plane change and not the widest point
-    (-0.28, 0.771),   // below the cheek
-    (-0.46, 0.646),   // the angle of the jaw
+    (-0.18, 0.771),   // below the cheek, midway to the gonion
+    (-0.31, 0.646),   // the angle of the jaw, which is `GONION`
     (-0.60, 0.547),   // the chin
     (JUNCTION, 1.00), // the throat, which is the neck's width and not this one's
 ];
@@ -2250,6 +2281,20 @@ mod tests {
         // three times the cone's and well under the shape's, so neither a
         // regression to a taper nor a routine re-tuning of [`JAW_DEPTH`] can
         // slip past it.
+        //
+        // **Re-measured 2026-08-11: 40.7 / 44.2 / 43.1 / 36.8, and the figures
+        // above are three populations stale** (#79). They have been quoted since
+        // as 22.2 / 20.2 / 21.3 / 27.3 and as a 23.4-to-30.4 range, and neither
+        // describes this tree either. Against a gonial angle of 122–128° in
+        // life — a turn of 52 to 58° — the jawline is at 70 to 80 percent of a
+        // mandible's, where #79's own close-out recorded it turning "half what a
+        // mandible turns". That item resolved without being worked on, in the
+        // head passes since.
+        //
+        // Re-basing BREADTH's face knots onto their landmarks costs 0.6 to 1.8°
+        // of it — 40.1 / 42.4 / 42.4 / 35.1 — because a jaw that is already
+        // narrower at the gonion has less left to turn through. The bound is
+        // untouched: this is a fifth of the margin over it.
         let turns: Vec<(i64, f32)> = [7, 23, 29, 42]
             .into_iter()
             .map(|seed| (seed, jaw_turn(seed)))
@@ -2325,19 +2370,37 @@ mod tests {
             let cheek = width(-0.05 * radius).expect("a cheekbone");
             let angle = width(measured.gonion()).expect("an angle of the jaw");
             let chin = width(measured.chin()).expect("a menton");
-            // **0.90, where this asked 0.85 of one seed.** It is not a
-            // relaxation: the old bound was met by seed 23 alone, and read on
-            // the face rather than on the neck the four seeds measure 0.84,
-            // 0.77, 0.80 and 0.89. That spread is root cause 4 of #73 — the
-            // built head is 0.77 to 0.89 as wide at the angle of the jaw as at
-            // the cheekbone where life is 0.73 to 0.76 — and it is BREADTH's
-            // shape, so it is #79's to close, not something [`jaw`] touches:
-            // the angle of the jaw sits above the border and this term does not
-            // reach it. Four seeds at 0.90 catches more than one seed at 0.85
-            // did.
+            // **0.90 → a BAND of 0.70 to 0.78, and the ceiling is met by
+            // shape rather than by slack now** (#79). The comment this replaces
+            // recorded 0.84, 0.77, 0.80 and 0.89 and called that spread root
+            // cause 4 of #73: the head was 0.77 to 0.89 as wide at the angle of
+            // the jaw as at the cheekbone where life is 0.73 to 0.76, and it was
+            // BREADTH's shape to fix. By the time it was re-measured the
+            // population had drifted to 0.858, 0.866, 0.870 and 0.816 — every
+            // body outside life, three of four worse, and 0.030 of margin left
+            // under a bound nobody had tightened.
+            //
+            // BREADTH's face knots sit on the landmarks they are named for now;
+            // read that table for the change and for what it cost. These four
+            // measure 0.752, 0.760, 0.763 and 0.715, which straddles life from
+            // below.
+            //
+            // **Two-sided, because this can overshoot now.** A single ceiling
+            // was safe while every body was above life and the only way to move
+            // was down. A jaw a third narrower than its own cheekbone is a
+            // defect in its own right and nothing here would have said so —
+            // which is the shape of every guard this crate has caught sleeping.
+            // Both bounds are the state, 0.78 a hair over the widest and 0.70 a
+            // hair under the narrowest, and the target between them is life's
+            // 0.73 to 0.76.
             assert!(
-                angle < cheek * 0.90,
+                angle < cheek * 0.78,
                 "seed {seed}: the jaw did not narrow: {angle} of {cheek}"
+            );
+            assert!(
+                angle > cheek * 0.70,
+                "seed {seed}: the jaw narrowed past a jaw: {angle} of {cheek}, \
+                 where life is 0.73 to 0.76 of the cheekbone"
             );
             assert!(
                 chin < angle * 0.80,
@@ -2360,10 +2423,28 @@ mod tests {
         // dolichocephalic skull has a narrow jaw to match. So the question is
         // not whether the artefact exists — it does, and the mechanism is the
         // throat, which cannot move — but whether it is small against the axis
-        // it rides on. Measured on two seeds over the full range: the cheekbone
-        // moves 82.3 to 118.2 mm on seed 42 and 112.9 to 165.9 on seed 23, a
-        // factor of 1.44 and 1.47, while the ratio moves 0.932 to 0.848 and
-        // 0.781 to 0.737 — a tenth as far, and monotone.
+        // it rides on.
+        //
+        // Measured on two seeds over the full range: the cheekbone runs 49.2 to
+        // 70.7 mm on seed 42 and 88.3 to 125.9 on seed 23, a factor of 1.44 and
+        // 1.43, while the ratio runs 0.906 to 0.814 and 0.953 to 0.848 — a tenth
+        // as far, and monotone.
+        //
+        // **Re-measured when BREADTH's face knots moved onto their landmarks,
+        // and the artefact got SMALLER** (#79): 0.794 to 0.715 and 0.834 to
+        // 0.744, so the swing goes 0.092 to 0.079 on seed 42 and 0.106 to 0.091
+        // on seed 23. The quantity this asserts on falls with it, 1.113 to 1.110
+        // and 1.124 to 1.121. Narrowing the jaw where the profile means to
+        // narrow it leaves less of the gonion's width owed to the throat, which
+        // is the mechanism the paragraph above names.
+        //
+        // **The figures this replaces were three body-shapes stale**, and worth
+        // a line because they nearly went into a write-up as a before: they read
+        // 82.3 to 118.2 mm and 112.9 to 165.9 with ratios 0.932 to 0.848 and
+        // 0.781 to 0.737, against a tree that measures 49.2 to 70.7 and 88.3 to
+        // 125.9 with the code they described unchanged. #107's cage and #79's
+        // own narrowing had both landed since. A recorded number is a
+        // measurement of the day it was taken.
         //
         // Bounded at a fifth because that is comfortably above what the throat
         // can be worth and far below the 1.44 the axis itself delivers. If this
@@ -3306,6 +3387,18 @@ mod tests {
                     // is that the bins have not moved with the surface, which
                     // is #74 again.
                     //
+                    // **18.8 → 20.0, and it is the sixth time — but not for
+                    // the span this time** (#79). BREADTH's face knots moved
+                    // onto the landmarks they are named for, which narrows the
+                    // lower face by up to a fifth at the angle of the jaw. This
+                    // probe stands at `half_width(height) * 0.5`, so a narrower
+                    // head moves the SAMPLE as well as the surface: seed 2's
+                    // worst went 18.8 to 19.9 with its `across` falling from
+                    // 0.0455 m to 0.0428. Every sample height is identical
+                    // before and after, checked rather than assumed, so nothing
+                    // slid — a fixed number of lateral columns simply describes
+                    // a faster-turning face worse. #74's re-binning again.
+                    //
                     // **And it caught something real on the way**, which is the
                     // argument for keeping it however badly it bins: seed 3
                     // came back at −88.6 mm, and that was not a ruler at all.
@@ -3314,7 +3407,7 @@ mod tests {
                     // so `depth_across` answered 21 mm BEHIND the head joint at
                     // the eye's own column. Fixed where it was, in `measure`.
                     assert!(
-                        (-5.0..18.8).contains(&error),
+                        (-5.0..20.0).contains(&error),
                         "seed {seed} at {height:.3}: the depth off the midline is {error:.1} mm out"
                     );
                 }

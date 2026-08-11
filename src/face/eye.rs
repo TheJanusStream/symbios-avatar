@@ -713,7 +713,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "the target, not the state: the skin still cuts the aperture medially (#88)"]
     fn the_eye_opens_on_the_gaze_rather_than_where_the_skin_falls_away() {
         // **The question this whole part turns on, and it is about WHERE the eye
         // opens rather than how much of it shows.** A head here has no socket:
@@ -726,20 +725,41 @@ mod tests {
         // to the nasal side.
         //
         // The lid margin took the lateral edge, and the orbital hollow (#88)
-        // took most of the medial one. Measured after both, the centre of the
-        // bare set on the seeds below: +13.1 / +11.8 / +8.6 / +1.3 degrees,
-        // against +35 to +40 before either. Five degrees is the ask, and one
-        // seed in four meets it.
+        // took most of the medial one. Measured after both: +13.1 / +11.8 /
+        // +8.6 / +1.3 degrees on the seeds below, against +35 to +40 before
+        // either. Five degrees was the ask and one seed in four met it, so this
+        // was written as an IGNORED TARGET carrying its own failure numbers.
         //
-        // **Slow, and that is why it is a target rather than a ratchet.** Each
-        // seed builds a whole avatar and then asks `contains` of the body and
-        // both lids at every degree of the globe: about half a minute a seed.
+        // **IT IS THE STATE NOW, AND NOTHING WAS AIMED AT IT** (#88, promoted
+        // 2026-08-11). Re-measured: **+0.30 / −0.02 / +0.09 / −3.75 degrees**.
+        // Three of the four sit within a third of a degree of the gaze and the
+        // fourth has 1.25 degrees of margin; `examples/headaudit`'s sweep reads
+        // the same column within 5 degrees on all eight of its seeds. The last
+        // change made FOR this was #91's `MEDIAL` 0.28 → 0.14; everything since
+        // was head work — the eight-point cage, the narrowed and lengthened
+        // skull of #79, the neck of #125/#129/#131 — and #91's warning on this
+        // issue was that the orbit is a place where any head change costs
+        // something. It has now paid instead, which is a thing worth recording
+        // because the reverse is what this issue expected.
         //
-        // The residual is not the eye's and not the lids': it is how far the
-        // skin beside the NOSE reaches across the globe, and it varies with the
-        // head rather than with the eye — the medial edge lands anywhere from
-        // −27° to −48° across these four while the lateral edge is +59 on every
-        // one of them, because that edge is authored and this one is not.
+        // Un-ignored deliberately: an acceptance criterion that is met and still
+        // skipped is a guard that rots silently, which is the failure this crate
+        // keeps finding in its own tests. **The cost is recorded rather than
+        // absorbed, and the figure to record is the SUITE's and not this
+        // test's**: each seed builds a whole avatar and then asks `contains` of
+        // the body and both lids at every degree of the globe, which is 8.2
+        // seconds for the four in release and 195 run alone in debug — but the
+        // debug lib suite goes 291.5 s to 298.0, because 504 other tests hold
+        // the other threads and this one overlaps them. Six and a half seconds,
+        // not three minutes. Quoting a test's own wall clock as what it costs a
+        // parallel suite over-reads it thirtyfold; if the cost ever does matter
+        // the lever is the seed count and not `APERTURE_STEP`, which
+        // `examples/headaudit` shares.
+        //
+        // The residual it leaves is not the eye's and not the lids': it is how
+        // far the skin beside the NOSE reaches across the globe, and it varies
+        // with the head rather than with the eye, because the lateral edge is
+        // authored and the medial one is not. Seed 42 is where that still shows.
         let mut worst: Vec<(i64, f32)> = Vec::new();
         for seed in [1i64, 7, 23, 42] {
             let mut record = crate::AvatarRecord::new("Opened", crate::Archetype::default());
