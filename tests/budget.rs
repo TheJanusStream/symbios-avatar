@@ -89,16 +89,14 @@ const TRIANGLE_CEILING: usize = 29_900;
 
 /// Draw calls the crate currently costs.
 ///
-/// Five: skin, hair, cloth, eye globes, lids. The comment here used to blame a
-/// third of the excess on attached parts having no atlas region; charting them
-/// (#58) absorbed that draw and the count stayed at five, so it was never the
-/// third.
-///
-/// **The one over the target of four is the LIDS, and only the lids.** The eye
-/// globes keep a draw of their own by decision — see [`MESH_TARGET`] — and the
-/// lids are geometry rather than a pose only because nothing rigs a lid yet.
-/// #118 retires them into a slice of the skin and takes this to four.
-const MESH_CEILING: usize = 5;
+/// **Four, which is [`MESH_TARGET`], so this constant no longer has a job.** It
+/// was five — skin, hair, cloth, eye globes, lids — and #118 gave the four lids
+/// joints on the rig and folded their shells into the skin's own mesh, so a
+/// blink is a pose rather than a rebuild and the draw went with it. It is kept
+/// only so that the ratchet below still names a number of its own; the test
+/// that matters is now `a_default_avatar_fits_the_webgl2_draw_budget`, which is
+/// no longer ignored.
+const MESH_CEILING: usize = 4;
 
 fn built(seed: Option<i64>) -> Avatar {
     let mut record = AvatarRecord::new("Budget", Archetype::default());
@@ -352,13 +350,14 @@ fn the_budget_holds_for_a_record_that_asks_for_the_most_expensive_hair() {
 }
 
 #[test]
-#[ignore = "the target, not the state: the lids are geometry because nothing rigs a lid (#118)"]
 fn a_default_avatar_fits_the_webgl2_draw_budget() {
-    // The triangle half of the WebGL2 target passes; this half does not, and
-    // will not until #118 turns the lid shells into a slice of the skin. It is
-    // one draw short, not two: the eye globes are not a defect to be fixed but
-    // a material the other three cannot provide. Turn it on — and delete
-    // MESH_CEILING — when the lids go.
+    // **No longer ignored, as of #118.** This was written as the target rather
+    // than the state, against a body that drew five, and it stayed ignored for
+    // nine days on one draw: the lid shells, which moved without a joint to move
+    // them. They have joints now. The four that remain are the four the owner's
+    // 2026-08-02 decision named, each justified by a material the others cannot
+    // provide — skin takes the atlas, hair is alpha-tested, cloth has its own
+    // roughness, an eye is glossy.
     let avatar = built(None);
     assert!(
         avatar.budget.meshes <= MESH_TARGET,

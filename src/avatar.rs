@@ -292,7 +292,7 @@ impl Avatar {
             .as_ref()
             .and_then(|canon| face::mouth::open(&mut body, &rig, canon, &face_params));
         let body = body;
-        let eyes = canon
+        let mut eyes = canon
             .as_ref()
             .map(|canon| Eyes::build(&rig, &body, canon, &record.eyes));
 
@@ -359,13 +359,24 @@ impl Avatar {
         // is already done above and is unaffected — digit joints are
         // `Role::Digit`, which `skin::bind` and `nearest_bone` both skip.
         let mut extremities = Extremities::build(&mut rig, &surface, config.ground);
+        // And the lids get joints, which is what turns a blink from a rebuild
+        // into a pose and retires the draw the shells used to cost (#118).
+        //
+        // **Here and not earlier**: `skin::bind` above has already run, and a
+        // joint inside the skull offered to its falloff would take cheek and
+        // brow vertices with it every time the eye shut (#136). `Surface` is
+        // measured above for the same reason from the other side — it asks what
+        // lies under a point, and a lid joint stands for no surface at all.
+        if let Some(eyes) = &mut eyes {
+            eyes.rig(&mut rig);
+        }
 
         // The attached parts exist BEFORE the body is unwrapped, so the packer
         // can reserve them regions of the same atlas rather than being asked
         // afterwards for whatever the body did not want. The parts are the half
         // that needs the texels — a face is judged on its nose, its mouth and
         // its ears, and none of those is part of the body mesh.
-        let mut wanted: Vec<Vec2> = attached_meshes(&features, &extremities)
+        let mut wanted: Vec<Vec2> = attached_meshes(&features, &extremities, &eyes)
             .map(|(mesh, zone)| chart_request(mesh, zone, &config.uv))
             .collect();
         // One more region when there is a mouth: its pocket cannot share the
@@ -382,7 +393,7 @@ impl Avatar {
             face::mouth::chart_interior(&mut charts, mouth, &body, rect);
         }
         let charts = charts;
-        place_charts(&mut features, &mut extremities, &reserved);
+        place_charts(&mut features, &mut extremities, &mut eyes, &reserved);
 
         // Cut from the body, so charted where the body is charted.
         let mut outfit = if handed {
@@ -397,7 +408,7 @@ impl Avatar {
 
         // Baked in body space, which is where a painter wants them: a nose is
         // then painted by the same complexion arithmetic as the cheek beside it.
-        let placed = attached_in_body(&rig, &features, &extremities);
+        let placed = attached_in_body(&rig, &features, &extremities, &eyes);
         let borrowed: Vec<(&PolyMesh, Zone)> =
             placed.iter().map(|(mesh, zone)| (mesh, *zone)).collect();
         // The mouth's interior, as a per-vertex scalar the painter can read:
@@ -468,13 +479,18 @@ impl Avatar {
         drawn
     }
 
-    /// The eyes, at a given closure.
+    /// The eye globes.
     ///
-    /// Rebuilt rather than posed: a lid swings about the eye's pivot and no
-    /// joint drives it, so until the face has a rig of its own (#35) a blink is
-    /// a change of geometry. Globes and lids come back separately because they
-    /// are made of different stuff — drawn in one colour, a shut eye is
-    /// invisible, which is how a working blink first looked broken.
+    /// **The lids are no longer here** (#118). They used to be rebuilt beside
+    /// the globes on every blink, because a lid swings about its eye's pivot and
+    /// no joint drove it; they are now four joints on the rig and part of the
+    /// skin's own draw, so a blink is [`Eyes::blink`] writing a pose and this
+    /// returns the same geometry whatever it is passed.
+    ///
+    /// `closure` is kept in the signature and ignored, so that a caller which
+    /// hands over a blink phase still compiles and still gets the right picture
+    /// — and so that the one thing that still varies with closure, should
+    /// anything ever be added back, has somewhere to arrive.
     #[must_use]
     pub fn eyes_at(&self, closure: f32) -> Vec<AvatarMesh> {
         let Some(eyes) = &self.parts.eyes else {
@@ -483,8 +499,8 @@ impl Avatar {
         let to_body = Mat4::from_translation(self.rig.joints[eyes.head].position);
         let joint = eyes.head as u16;
 
+        let _ = closure;
         let mut globes = PolyMesh::new();
-        let mut lids = PolyMesh::new();
         for eye in [&eyes.left, &eyes.right] {
             // Baked per vertex rather than evaluated per pixel: an iris is a
             // property of the geometry here, and carrying it as colour is what
@@ -500,36 +516,40 @@ impl Avatar {
                     .collect(),
             );
             globes.append(&globe);
-            lids.append(&eye.upper_lid.transformed(eye.lid_transform(closure, true)));
-            lids.append(&eye.lower_lid.transformed(eye.lid_transform(closure, false)));
         }
 
-        let mut built = Vec::with_capacity(2);
-        for (kind, mut mesh) in [(MeshKind::Eye, globes), (MeshKind::Skin, lids)] {
-            if mesh.faces.is_empty() {
-                continue;
-            }
-            if kind == MeshKind::Skin {
-                // Lids take the complexion of the face they sit in.
-                mesh = self.charted(&mesh, Zone::Head);
-                mesh.paint(Vec3::ONE);
-            }
-            mesh.set_normals(mesh.vertex_normals());
-            let mut placed = mesh.transformed(to_body);
-            placed.bind_rigidly(joint);
-            built.push(AvatarMesh {
-                kind,
-                mesh: placed.split_uv_seams(),
-            });
+        if globes.faces.is_empty() {
+            return Vec::new();
         }
-        built
+        globes.set_normals(globes.vertex_normals());
+        let mut placed = globes.transformed(to_body);
+        placed.bind_rigidly(joint);
+        vec![AvatarMesh {
+            kind: MeshKind::Eye,
+            mesh: placed.split_uv_seams(),
+        }]
     }
 
     /// The body posed, with every mesh deformed to match.
     ///
     /// The one call an integration needs per frame once the geometry is up.
+    ///
+    /// **`closure` reaches the lids through the POSE now** (#118), rather than
+    /// through a rebuild of their geometry. The blink is written onto a copy of
+    /// what the caller handed over, so a caller's own pose is not edited behind
+    /// its back and a pose that already carries a walk keeps it — the four lid
+    /// joints are the only ones touched.
     #[must_use]
     pub fn posed(&self, pose: &Pose, closure: f32) -> Vec<AvatarMesh> {
+        let mut blinking;
+        let pose = match &self.parts.eyes {
+            Some(eyes) => {
+                blinking = pose.clone();
+                eyes.blink(&mut blinking, closure);
+                &blinking
+            }
+            None => pose,
+        };
         let posed = pose.forward(&self.rig);
         self.drawn(closure)
             .into_iter()
@@ -567,6 +587,22 @@ impl Avatar {
             ));
             placed.bind_rigidly(features.head as u16);
             skin.append(&placed.split_uv_seams());
+        }
+
+        if let Some(eyes) = &self.parts.eyes {
+            // The lids, into the same draw as the face they sit in — which is
+            // the whole of #118's first numeric win. Bound rigidly to their own
+            // joints rather than to the head's, so a blink is those four joints
+            // rotating and nothing else moves.
+            let to_body = Mat4::from_translation(self.rig.joints[eyes.head].position);
+            for (lid, joint) in eyes.lids() {
+                let mut mesh = lid.clone();
+                mesh.set_normals(mesh.vertex_normals());
+                mesh.paint(Vec3::ONE);
+                let mut placed = mesh.transformed(to_body);
+                placed.bind_rigidly(joint as u16);
+                skin.append(&placed.split_uv_seams());
+            }
         }
 
         let mut merged = vec![AvatarMesh {
@@ -632,27 +668,6 @@ impl Avatar {
         mesh
     }
 
-    /// Maps a part's own coordinates onto one texel of the chart covering `zone`.
-    ///
-    /// A degenerate region, and deliberately the last one left. Eyelids are the
-    /// only attached geometry that does not exist at build time — they are
-    /// rebuilt per blink, because nothing rigs a lid yet (#35) — so there is
-    /// nothing to reserve a region *for* when the atlas is packed. A lid takes
-    /// the complexion of the face it sits in, which at a lid's size is all it
-    /// needs; when the face has a rig, a lid becomes ordinary geometry and gets
-    /// an ordinary chart.
-    fn charted(&self, mesh: &PolyMesh, zone: Zone) -> PolyMesh {
-        let middle = self
-            .parts
-            .unwrap
-            .charts
-            .iter()
-            .find(|chart| chart.zone == zone)
-            .map(|chart| chart.rect.lerp(Vec2::splat(0.5)))
-            .unwrap_or(Vec2::splat(0.5));
-        mesh.uvs_within(middle, Vec2::ZERO)
-    }
-
     /// Counts what the built avatar costs.
     fn measure(&self) -> Budget {
         let drawn = self.drawn(0.0);
@@ -679,6 +694,7 @@ impl Avatar {
 fn attached_meshes<'a>(
     features: &'a Option<Features>,
     extremities: &'a Extremities,
+    eyes: &'a Option<Eyes>,
 ) -> impl Iterator<Item = (&'a PolyMesh, Zone)> {
     features
         .iter()
@@ -687,6 +703,14 @@ fn attached_meshes<'a>(
             extremities
                 .all()
                 .map(|part| (&part.mesh, Zone::Extremity(part.limb))),
+        )
+        // The lids LAST, so adding them left every region that was already
+        // being handed out where it was. They are ordinary attached geometry
+        // now that a joint carries them, which is what the old `charted`
+        // degenerate mapping said would happen when the face got a rig.
+        .chain(
+            eyes.iter()
+                .flat_map(|eyes| eyes.lids().map(|(mesh, _)| (mesh, Zone::Head))),
         )
 }
 
@@ -709,11 +733,17 @@ fn chart_request(mesh: &PolyMesh, zone: Zone, config: &UvConfig) -> Vec2 {
 }
 
 /// Moves each part's own coordinates into the region reserved for it.
-fn place_charts(features: &mut Option<Features>, extremities: &mut Extremities, reserved: &[Rect]) {
+fn place_charts(
+    features: &mut Option<Features>,
+    extremities: &mut Extremities,
+    eyes: &mut Option<Eyes>,
+    reserved: &[Rect],
+) {
     let meshes = features
         .iter_mut()
         .flat_map(|face| face.meshes_mut())
-        .chain(extremities.all_mut().map(|part| &mut part.mesh));
+        .chain(extremities.all_mut().map(|part| &mut part.mesh))
+        .chain(eyes.iter_mut().flat_map(Eyes::lids_mut));
     for (mesh, rect) in meshes.zip(reserved) {
         *mesh = mesh.uvs_within(rect.min, rect.size());
     }
@@ -728,11 +758,22 @@ fn attached_in_body(
     rig: &Rig,
     features: &Option<Features>,
     extremities: &Extremities,
+    eyes: &Option<Eyes>,
 ) -> Vec<(PolyMesh, Zone)> {
     let mut placed = Vec::new();
     if let Some(face) = features {
         let to_body = Mat4::from_translation(rig.joints[face.head].position);
         for mesh in face.meshes() {
+            placed.push((mesh.transformed(to_body), Zone::Head));
+        }
+    }
+    if let Some(eyes) = eyes {
+        // Head-local, like a feature and unlike an extremity, so the head's own
+        // joint is what carries them into body space. The lid JOINT is not the
+        // right transform here: a texel has to say where on the body it sits,
+        // and at rest a lid joint and the head agree about that anyway.
+        let to_body = Mat4::from_translation(rig.joints[eyes.head].position);
+        for (mesh, _) in eyes.lids() {
             placed.push((mesh.transformed(to_body), Zone::Head));
         }
     }
@@ -924,9 +965,12 @@ mod tests {
         let all = kinds.len();
         kinds.sort_unstable();
         kinds.dedup();
-        // Skin appears twice — the body and the lids — because a lid moves and
-        // nothing rigs it yet. Everything else is exactly one draw.
-        assert_eq!(all - kinds.len(), 1, "{kinds:?} out of {all} draws");
+        // **One draw per material, with no exception left.** Skin used to appear
+        // twice — the body and the lids — because a lid moved and nothing
+        // rigged it; #118 gave the four lids joints and folded their shells into
+        // the skin's own mesh, so this is now a plain equality and the gate's
+        // criterion 1 is the thing that holds it (`tests/budget.rs`).
+        assert_eq!(all, kinds.len(), "{kinds:?} out of {all} draws");
         assert!(kinds.contains(&MeshKind::Hair));
         assert!(kinds.contains(&MeshKind::Cloth));
         assert!(kinds.contains(&MeshKind::Eye));
@@ -984,20 +1028,111 @@ mod tests {
 
     #[test]
     fn a_blink_moves_the_lids_and_leaves_the_globes_alone() {
+        // Through `posed` rather than `eyes_at`, because a blink is a POSE now
+        // (#118) and `eyes_at` returns the globes whatever it is passed. The
+        // lids are inside the skin's own draw, so the mesh this reads for them
+        // is the one the face is in.
         let avatar = biped(5);
-        let eyes = |closure: f32| {
+        let at = |closure: f32| {
+            let pose = Pose::rest(&avatar.rig);
             avatar
-                .eyes_at(closure)
+                .posed(&pose, closure)
                 .into_iter()
                 .map(|m| (m.kind, m.mesh))
                 .collect::<Vec<_>>()
         };
-        let open = eyes(0.0);
-        let shut = eyes(1.0);
-        assert_eq!(open.len(), 2);
-        assert_eq!(open[0].0, MeshKind::Eye);
-        assert_eq!(open[0].1, shut[0].1, "the globes moved during a blink");
-        assert_ne!(open[1].1, shut[1].1, "the lids did not move");
+        let open = at(0.0);
+        let shut = at(1.0);
+        assert_eq!(open.len(), 4, "the lids are still a draw of their own");
+        let globes = open.iter().position(|(kind, _)| *kind == MeshKind::Eye);
+        let globes = globes.expect("a biped has eye globes");
+        assert_eq!(
+            open[globes].1, shut[globes].1,
+            "the globes moved during a blink"
+        );
+        let skin = open
+            .iter()
+            .position(|(kind, _)| *kind == MeshKind::Skin)
+            .expect("a body has skin");
+        assert_ne!(open[skin].1, shut[skin].1, "the lids did not move");
+    }
+
+    #[test]
+    fn a_posed_lid_lands_where_the_rebuilt_one_did() {
+        // **The equivalence #118's lid slice rests on.** A joint sitting exactly
+        // on its eye's pivot skins by `T(p) · R · T(−p)`, which is what
+        // `Eye::lid_transform` computes — so binding a shell to that joint and
+        // rotating it by `Eye::lid_rotation` has to reproduce, vertex for
+        // vertex, the geometry the old rebuild handed over. If that ever stops
+        // being true the lids will still draw and will simply be in the wrong
+        // place, which is exactly the kind of defect a render flatters.
+        //
+        // Asserted against the transform rather than against remembered
+        // positions: the shells' own shape is free to change.
+        let avatar = biped(5);
+        let eyes = avatar.parts.eyes.as_ref().expect("a biped has eyes");
+        let origin = avatar.rig.joints[eyes.head].position;
+        for closure in [0.0, 0.35, 1.0] {
+            let mut pose = Pose::rest(&avatar.rig);
+            eyes.blink(&mut pose, closure);
+            let posed = pose.forward(&avatar.rig);
+            for (eye, upper) in [
+                (&eyes.left, true),
+                (&eyes.left, false),
+                (&eyes.right, true),
+                (&eyes.right, false),
+            ] {
+                let (lid, joint) = if upper {
+                    (&eye.upper_lid, eye.upper_joint)
+                } else {
+                    (&eye.lower_lid, eye.lower_joint)
+                };
+                let joint = joint.expect("a built pair is rigged");
+                let rebuilt = lid.transformed(eye.lid_transform(closure, upper));
+                let skinning =
+                    Mat4::from_rotation_translation(posed.rotations[joint], posed.positions[joint])
+                        * Mat4::from_translation(-avatar.rig.joints[joint].position);
+                for (source, expected) in lid.positions.iter().zip(&rebuilt.positions) {
+                    let drawn = skinning.transform_point3(*source + origin);
+                    assert!(
+                        (drawn - (*expected + origin)).length() < 1e-5,
+                        "at closure {closure} a posed lid vertex landed {:.4} mm from the \
+                         rebuilt one",
+                        (drawn - (*expected + origin)).length() * 1000.0
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_lid_joint_is_a_marker_and_holds_no_body_skin() {
+        // #136's contract, which #118's own comment predicted every new skull
+        // joint would erode. A lid joint stands for no surface — it is a hinge
+        // inside the head — so nothing asking what lies under a point may find
+        // one, and `skin::bind` must never have offered it a cheek.
+        let avatar = biped(5);
+        let eyes = avatar.parts.eyes.as_ref().expect("a biped has eyes");
+        let lids: Vec<usize> = eyes.lids().map(|(_, joint)| joint).collect();
+        assert_eq!(lids.len(), 4, "a pair of eyes has four lids");
+        for &joint in &lids {
+            assert!(
+                avatar.rig.joints[joint].marker,
+                "lid joint {joint} is not a marker"
+            );
+            assert!(
+                !avatar.rig.surfaced().any(|surfaced| surfaced == joint),
+                "lid joint {joint} answers a surface query"
+            );
+        }
+        for (vertex, influences) in avatar.parts.weights.vertices.iter().enumerate() {
+            for influence in influences {
+                assert!(
+                    !lids.contains(&(influence.joint as usize)) || influence.weight == 0.0,
+                    "body vertex {vertex} is held by a lid joint"
+                );
+            }
+        }
     }
 
     #[test]

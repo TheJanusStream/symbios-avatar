@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::mesh::PolyMesh;
 use crate::prim;
-use crate::rig::{Rig, landmark};
+use crate::rig::{Rig, Role, landmark};
 
 use super::canon::Canon;
 
@@ -84,6 +84,14 @@ pub struct Eye {
     pub lower_lid: PolyMesh,
     /// Where the eye turns about, in head-local space.
     pub pivot: Vec3,
+    /// The joint the upper lid rotates on, once [`Eyes::rig`] has run.
+    ///
+    /// `None` on an eye that has been built and not yet rigged, which is every
+    /// eye for the moment between [`Eyes::build`] and the rig being handed the
+    /// pair. A creature's head has no eyes at all and never reaches either.
+    pub upper_joint: Option<usize>,
+    /// The joint the lower lid rotates on. See [`Eye::upper_joint`].
+    pub lower_joint: Option<usize>,
     /// Radius of the globe.
     pub radius: f32,
     /// The sign of this eye's `x`, so `+1` for the body's left eye and `-1` for
@@ -417,6 +425,112 @@ impl Eyes {
         mesh.append(&self.right.assembled(closure));
         mesh
     }
+
+    /// Hangs a joint under each of the four lids, so a blink becomes a pose.
+    ///
+    /// **A lid joint sits exactly on its eye's pivot, and that is the whole
+    /// trick.** A joint's skinning matrix for a rotation `R` about a joint at
+    /// `p` is `T(p) · R · T(−p)`, which is [`Eye::lid_transform`] written out —
+    /// so a shell bound rigidly here and posed by [`Eye::lid_rotation`] lands on
+    /// the same vertices the rebuilt geometry did, to the float. That
+    /// equivalence is asserted rather than asserted-by-comment: see
+    /// `a_posed_lid_lands_where_the_rebuilt_one_did`.
+    ///
+    /// **Call it AFTER the body has been bound and never before** (#136). These
+    /// are joints inside the skull, and `skin::bind`'s falloff would hand them
+    /// cheek and brow vertices that would then follow a blink. They are markers
+    /// for the same reason the mandible's are — the surface binds to them and is
+    /// not made of them — so `Rig::surfaced` skips them and nothing measuring
+    /// what lies under a point can find one.
+    ///
+    /// Idempotent in the sense that matters: a second call would attach four
+    /// more joints, so it returns early once the pair is rigged.
+    pub fn rig(&mut self, rig: &mut Rig) {
+        if self.left.upper_joint.is_some() {
+            return;
+        }
+        let Some(head) = rig.joints.get(self.head) else {
+            return;
+        };
+        let origin = head.position;
+        let mut hang = |pivot: Vec3| -> Option<usize> {
+            let at = rig.attach(self.head, origin + pivot, Role::Deform)?;
+            rig.joints[at].marker = true;
+            Some(at)
+        };
+        // Upper before lower on each eye, and the left eye before the right, in
+        // the order `Eyes::lids` walks them. Two lists that must agree, so the
+        // one that hands out atlas regions and the one that binds geometry are
+        // the same walk (see `Eyes::lids`).
+        let (left_upper, left_lower) = (hang(self.left.pivot), hang(self.left.pivot));
+        let (right_upper, right_lower) = (hang(self.right.pivot), hang(self.right.pivot));
+        self.left.upper_joint = left_upper;
+        self.left.lower_joint = left_lower;
+        self.right.upper_joint = right_upper;
+        self.right.lower_joint = right_lower;
+    }
+
+    /// The four lid shells with the joint each rotates on, in one fixed order.
+    ///
+    /// **One walk, used three times** — to size the atlas regions, to hand them
+    /// out, and to bind the geometry — for the same reason `attached_meshes` is
+    /// one walk: two hand-written lists in the same order agree until the first
+    /// time somebody adds a lid to one of them.
+    ///
+    /// Yields nothing until [`Eyes::rig`] has run, because a lid with no joint
+    /// is not geometry anybody can draw as part of the skin.
+    pub fn lids(&self) -> impl Iterator<Item = (&PolyMesh, usize)> {
+        [
+            (&self.left.upper_lid, self.left.upper_joint),
+            (&self.left.lower_lid, self.left.lower_joint),
+            (&self.right.upper_lid, self.right.upper_joint),
+            (&self.right.lower_lid, self.right.lower_joint),
+        ]
+        .into_iter()
+        .filter_map(|(mesh, joint)| joint.map(|joint| (mesh, joint)))
+    }
+
+    /// The same walk, for editing the shells in place.
+    ///
+    /// Used to hand each lid the atlas region the packer reserved for it.
+    pub fn lids_mut(&mut self) -> impl Iterator<Item = &mut PolyMesh> {
+        [
+            &mut self.left.upper_lid,
+            &mut self.left.lower_lid,
+            &mut self.right.upper_lid,
+            &mut self.right.lower_lid,
+        ]
+        .into_iter()
+    }
+
+    /// Writes a blink onto a pose.
+    ///
+    /// `closure` runs `0` for open to `1` for shut, and only the four lid joints
+    /// are touched — everything else the pose carries is left exactly as it was,
+    /// so a blink layers over a walk the way [`crate::anim::gaze`] layers a head
+    /// turn over one.
+    ///
+    /// Does nothing to a pose that is not this rig's, and nothing before
+    /// [`Eyes::rig`].
+    pub fn blink(&self, pose: &mut crate::anim::Pose, closure: f32) {
+        for (eye, upper) in [
+            (&self.left, true),
+            (&self.left, false),
+            (&self.right, true),
+            (&self.right, false),
+        ] {
+            let joint = if upper {
+                eye.upper_joint
+            } else {
+                eye.lower_joint
+            };
+            if let Some(joint) = joint
+                && let Some(rotation) = pose.rotations.get_mut(joint)
+            {
+                *rotation = eye.lid_rotation(closure, upper);
+            }
+        }
+    }
 }
 
 /// How large this body's eyeball is, in metres.
@@ -665,6 +779,8 @@ fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
         upper_lid: lid(true),
         lower_lid: lid(false),
         pivot,
+        upper_joint: None,
+        lower_joint: None,
         radius,
         side,
     }
