@@ -66,9 +66,30 @@ use super::features::FaceParams;
 /// rounded end instead of two lips meeting at a point.
 /// Provenance: **tuned by render** (#82), against a bisected profile — the
 /// 5.34 mm dead-flat measurement above is what condemned the previous table.
+///
+/// **The vermilion lobes were 0.46 and 0.44 and are 0.38 and 0.36** (#182). At
+/// the old widths the two of them had not died by the time they reached the
+/// mouth line: measured at `up = 0` the lower still contributed +0.161 of reach
+/// and the upper +0.144, against the groove's −0.44 — so the field's own value
+/// between the lips was −0.135, which is −0.72 mm, and `examples/facesection`
+/// found the built surface delivering −0.71. **The line was not being lost to
+/// the mesh, it was being cancelled by its own neighbours**, on a band whose
+/// cell is 0.82 mm and which therefore had resolution to spare. Narrowed, the
+/// tails come to +0.073 and +0.061 and the line reads −1.63 mm.
+///
+/// It buys an edge as well as a depth, which is the other half of what #182
+/// found: a Gaussian's steepest point scales as its amplitude over its width, so
+/// the vermilion's outer flank steepens by a fifth in the same change. The lips'
+/// own peaks do not move — the weights are untouched — and the vermilion's
+/// half-height span comes in from 9.9 mm to 8.2, against a life upper vermilion
+/// of 8 to 10.
+///
+/// The groove is still the narrowest term here and so still the one
+/// `the_mouth_is_wider_than_the_mesh_under_it` measures; these two were never
+/// what that bound was about.
 const LIPS: [(f32, f32, f32, Across); 4] = [
-    (0.88, -0.60, 0.46, Across::Lens), // the lower lip
-    (0.82, 0.58, 0.44, Across::Lens),  // the upper lip
+    (0.88, -0.60, 0.38, Across::Lens), // the lower lip
+    (0.82, 0.58, 0.36, Across::Lens),  // the upper lip
     // The line between them, the narrowest thing on a face.
     (-0.44, 0.00, 0.26, Across::Groove),
     (-0.24, -1.32, 0.34, Across::Lens), // the crease under the lower lip

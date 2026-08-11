@@ -72,6 +72,13 @@ const ALONG: [f32; 7] = [0.15, 0.35, 0.55, 0.70, 0.80, 0.92, 0.98];
 /// sits at the flank, and a section that stops at the flank cannot show it.
 const OUT: f32 = 2.0;
 
+/// Millimetres between samples down the mouth's own column.
+///
+/// Finer than [`STEP`] because the mouth is the finest thing on the face: the
+/// cell at the lip line is 0.82 mm, so a 1.5 mm step reads one sample per two
+/// cells and cannot resolve an edge from a slope.
+const MOUTH_STEP: f32 = 0.5;
+
 /// Millimetres between samples across a section.
 ///
 /// Finer than any cell on the face, because the point is to read the polygon
@@ -338,24 +345,44 @@ fn mouth_profile(section: &Section, canon: &Canon, params: &FaceParams, cells: &
         "\n## The mouth down the midline, lip line at {:+.1} mm\n",
         line * 1000.0
     );
-    println!("| mm up | from line | midline | 8 mm out | 16 mm out |");
-    println!("|---|---|---|---|---|");
+    println!("| mm up | from line | midline | slope | 8 mm out | 16 mm out |");
+    println!("|---|---|---|---|---|---|");
     let mut samples: Vec<(f32, f32)> = Vec::new();
     let mut up = top;
+    let mut previous: Option<(f32, f32)> = None;
     while up >= bottom {
         let mid = section.delivered(0.0, up);
         if let Some(mid) = mid {
             samples.push((up, mid));
         }
+        // **The column a border shows in, and relief alone cannot show it.** A
+        // vermilion is an edge: on a person the lip rises out of the skin at a
+        // definite line rather than fading into it, and an edge is a SLOPE and
+        // not a height. A lobe that is a plain Gaussian has its steepest point
+        // in the middle of its own flank and nothing anywhere that reads as a
+        // boundary, so a mouth drawn out of two of them is two swellings with a
+        // line between — which is what #180 reported as an incision. Millimetres
+        // of relief per millimetre of face, so it is dimensionless and can be
+        // compared between bodies of different sizes.
+        let slope = match (previous, mid) {
+            (Some((was_up, was)), Some(now)) => {
+                Some((now - was) / (up - was_up).abs().max(f32::EPSILON))
+            }
+            _ => None,
+        };
+        if let Some(mid) = mid {
+            previous = Some((up, mid));
+        }
         println!(
-            "| {:+6.1} | {:+6.1} | {} | {} | {} |",
+            "| {:+6.1} | {:+6.1} | {} | {} | {} | {} |",
             up * 1000.0,
             (up - line) * 1000.0,
             millimetres(mid),
+            slope.map_or_else(|| "     —".into(), |slope| format!("{slope:+6.2}")),
             millimetres(section.delivered(0.008, up)),
             millimetres(section.delivered(0.016, up)),
         );
-        up -= 0.0015;
+        up -= MOUTH_STEP / 1000.0;
     }
 
     // The three numbers the issue turns on, off the midline column: how far the
