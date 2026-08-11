@@ -25,7 +25,14 @@ fn painted(
     let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);
     let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
     let geometry = texture::bake_geometry(&mesh, &uv, size);
-    let map = texture::paint_skin(&geometry, &rig, &record.skin);
+    // The record's composites travel with its complexion, so this sweep
+    // covers the body-composition half of the painter too (#165).
+    let map = texture::paint_skin(
+        &geometry,
+        &rig,
+        &record.skin,
+        &texture::Condition::of(&record.composites),
+    );
     (geometry, map)
 }
 

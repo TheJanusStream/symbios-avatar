@@ -876,6 +876,25 @@ struct Girth {
     lean: f32,
     /// Fat volume per unit height, relative to the neutral body.
     fat: f32,
+    /// What is left of the APPENDICULAR lean budget — the arms and the legs —
+    /// after age has taken its share of it. One at and under
+    /// [`crate::plan::AGE_PIVOT`].
+    ///
+    /// **A second lean budget rather than a smaller one**, because the wasting
+    /// of age is not the thinning of a slight body: it is regional. The
+    /// clinical measure of sarcopenia is *appendicular* lean mass over height
+    /// squared, which is a definition that says where the loss is — the limbs,
+    /// while the trunk's own musculature and the ribcage under it hold. So
+    /// [`Self::at`] spends the budget above and [`Self::limb`] spends this one,
+    /// and the two are the same number until a body is thirty (#167).
+    wasting: f32,
+    /// How far into the changes of age this body is, straight off
+    /// [`Composites::ageing`].
+    ///
+    /// Carried here because two of the three things age does to a body are
+    /// girth: the wasting above, and the abdomen's own gain, which is not a
+    /// budget at all and is written at the waist where it applies.
+    ageing: f32,
     /// Where this body sits on the frame axis, which splits several exponents.
     femininity: f32,
 }
@@ -916,9 +935,34 @@ impl Girth {
         // lands at about −24% instead of −42%.
         const SOFT: f32 = 0.08;
         let fat = composites.body_fat.clamp(0.0, 0.95);
+        // What age takes out of the limbs by eighty, as a share of the
+        // appendicular lean volume. Sarcopenia runs at roughly a percent a year
+        // once it starts, and the cumulative figures for appendicular lean mass
+        // between thirty and eighty land around a fifth to a quarter of it.
+        //
+        // **It is spent through the same exponents as everything else here,
+        // which is what keeps it from reading as a body scaled down.** At the
+        // top of the axis the upper arm comes in 9.5%, the thigh 5.7% and the
+        // wrist 2.9% — a limb losing its muscle around a bone that is still
+        // there, which is the shape of an old arm. A flat factor on the limbs
+        // would have taken the wrist with it.
+        //
+        // **The shoulder narrowing #167 asks for arrives here rather than at
+        // the girdle, and that is a correction to the issue.** The girdle is
+        // bone: biacromial breadth barely moves in a life, and this plan builds
+        // the shoulder JOINT off `girdle_r`, so aging it would have narrowed a
+        // span that does not narrow. What narrows is the deltoid on top of it,
+        // which is `shoulder_r` and is appendicular.
+        //
+        // Provenance: **looked up** (#167) — the appendicular-lean-mass
+        // literature the sarcopenia definitions are written against.
+        const WASTING_SPAN: f32 = 0.22;
+        let ageing = composites.ageing();
         Self {
             lean: bulk,
             fat: bulk * (fat + SOFT) / (DEFAULT_BODY_FAT + SOFT),
+            wasting: bulk * (1.0 - WASTING_SPAN * ageing),
+            ageing,
             femininity,
         }
     }
@@ -935,8 +979,23 @@ impl Girth {
     /// collapses to `bulk^p`, the published relation unmodified. The split only
     /// does something when the fraction moves, which is the point of it.
     fn at(&self, male: f32, female: f32, fat_share: f32) -> f32 {
+        self.spent(self.lean, male, female, fat_share)
+    }
+
+    /// The factor at one site of an arm or a leg.
+    ///
+    /// [`Self::at`] with the appendicular budget in place of the whole-body
+    /// one — see [`Self::wasting`] for why age needs two of them and
+    /// [`Self::spent`] for what the exponents do with either. Identical to
+    /// [`Self::at`] on any body under [`crate::plan::AGE_PIVOT`].
+    fn limb(&self, male: f32, female: f32, fat_share: f32) -> f32 {
+        self.spent(self.wasting, male, female, fat_share)
+    }
+
+    /// One site's factor, given which lean budget it spends.
+    fn spent(&self, lean: f32, male: f32, female: f32, fat_share: f32) -> f32 {
         let power = between(self.femininity, male, female);
-        self.lean.powf(power * (1.0 - fat_share)) * self.fat.powf(power * fat_share)
+        lean.powf(power * (1.0 - fat_share)) * self.fat.powf(power * fat_share)
     }
 }
 
@@ -1119,14 +1178,47 @@ impl Dimensions {
         // anatomy — an abdomen projects forward far more than it spreads
         // sideways — so the lateral term takes a reduced share of the fat and
         // the section below takes the rest.
-        let waist_r = (h * 0.074 * girth.at(0.62, 0.61, 0.45) * frame(femininity, 0.0706, 0.0618))
-            .min(pelvis_r * 1.05);
+        //
+        // **The one place age adds body rather than taking it away** (#167).
+        // Everything else the axis does is a subtraction — the limbs waste, the
+        // trunk settles — but the abdomen is the one site that grows in a life
+        // at a fixed weight, because the fat that leaves the limbs' subcutaneous
+        // depots arrives here as visceral fat. Waist circumference rises around
+        // 5 to 8 cm between thirty and eighty at a held weight, which on a waist
+        // near 90 cm is 6–9%.
+        //
+        // **Split the way the section above it is split, and for the same
+        // reason.** A belly projects; it does not spread. The lateral term takes
+        // the smaller share both because that is the anatomy and because it is
+        // the term with no headroom — 17% of it, against a cap on the depth that
+        // is 31% away. The depth compounds, because the section is a multiple of
+        // the radius the width has just grown.
+        //
+        // What the pair deliver on the default body between eighteen and
+        // eighty, measured rather than intended: the waist's half-width 0.1295
+        // → 0.1373 and its half-depth 0.0984 → 0.1127, which is +6% and +14%,
+        // and +9% of the ellipse's circumference. That is the top of the band
+        // above, taken there because the depth is what reads as a belly and the
+        // width is what has nowhere to go.
+        //
+        // Provenance: **looked up** for the waist-at-fixed-weight figure, then
+        // **split by the argument this site already makes** for width against
+        // depth (#167).
+        const VISCERAL_WIDTH: f32 = 0.06;
+        const VISCERAL_DEPTH: f32 = 0.08;
+        let waist_r = (h
+            * 0.074
+            * girth.at(0.62, 0.61, 0.45)
+            * (1.0 + VISCERAL_WIDTH * girth.ageing)
+            * frame(femininity, 0.0706, 0.0618))
+        .min(pelvis_r * 1.05);
         // The belly, as depth rather than width. Capped at 1.0 — a round waist
         // — because past there depth becomes the largest half-extent and starts
         // costing the same clearance the width was avoiding.
         let waist_section = Vec2::new(
             WAIST_SECTION.x,
-            (WAIST_SECTION.y * girth.at(0.62, 0.61, 0.75)).min(1.0),
+            (WAIST_SECTION.y * girth.at(0.62, 0.61, 0.75) * (1.0 + VISCERAL_DEPTH * girth.ageing))
+                .min(1.0),
         );
         // **The chest and the girdle take ONE factor and the same clamp**, for
         // the reason #100 records: `clavicle_x`'s floor is a weighted sum of
@@ -1342,15 +1434,75 @@ impl Dimensions {
         // than solved for. Whether each is the tightest value that meshes is
         // unknown; `hip_x` and `clavicle_x` below are the two that were actually
         // swept, and both turned out to be sitting well above their floors.
+        // **The settle of age, and it is taken out of the trunk because that is
+        // where a life takes it** (#167). Height loss is spinal: discs thin,
+        // vertebrae compress and the curve of the back deepens. The legs do not
+        // shorten, so scaling `h` — which is what "stature settle" sounds like
+        // it means — would have been the one implementation that is certainly
+        // wrong.
+        //
+        // Reported cumulative loss from thirty is about 5 cm in men and 8 cm in
+        // women by eighty, which over each reference's own stature is the pair
+        // interpolated here. `Composites::ageing` carries the curve and its
+        // docstring holds the fit.
+        //
+        // **This is subtracted from the free spine segment and from the girdle's
+        // nominal height at once, and the pair is what makes it a settle rather
+        // than a shrink.** `pelvis_y` is `nominal_girdle − torso_min` on almost
+        // every body — the note below works that out — so taking the same
+        // length out of both leaves that difference untouched: the pelvis and
+        // everything under it stand exactly where they stood, the girdle and
+        // everything over it come down, and the body loses the length out of
+        // its back. Taking it out of either alone moves the legs instead.
+        //
+        // **Only the part of that loss which is LENGTH is taken here, and the
+        // rest is named rather than faked.** A life loses height two ways: discs
+        // and vertebral bodies lose their own height, and the back gains a
+        // curve. The first is a length and belongs in this segment; the second
+        // is kyphosis, and #167 forbids inventing the spine-curve quantity that
+        // would be needed to say it — rightly, because a curve put into disc
+        // height is a shorter back rather than a bent one, and the two do not
+        // look alike from the side. `AXIAL_SHARE` is what is left after that
+        // split, so the axis delivers about 4 cm of the reported 6.5 at eighty
+        // on a neutral frame and says out loud that the missing 2.5 is a shape
+        // this plan cannot draw. Anyone adding a spine curve later should take
+        // this share up as they do.
+        //
+        // **Bounded by the spine segment it spends, and the bound is a backstop
+        // rather than a limit.** The two gaps either side of that segment are
+        // socket clearances and are not age's to spend, so the settle stops at
+        // `SETTLE_HEADROOM` of the free run between them.
+        //
+        // The wall it stands off is NOT the mesher: swept across the corner
+        // product of `femininity`, `mass`, `body_fat` and age against every
+        // corner of the per-region space, plus 1500 random bodies, nothing
+        // fails to mesh at any headroom up to 0.66. What fails is `waist_y`'s
+        // own clamp two dozen lines below, which needs `h · 0.02` of spine left
+        // under the chest and PANICS rather than saturating when it is not
+        // there — `min > max` out of `f32::clamp`. That puts the arithmetic
+        // ceiling at 0.667 of this segment; 0.64 is that less the ~4% margin
+        // the other saturations in this file carry. With `AXIAL_SHARE` applied
+        // the shipped axis asks for at most 0.038 of stature at the far
+        // feminine end of the clamped frame, so this never binds on a body the
+        // record can hold.
+        //
+        // Provenance: **derived from a looked-up curve** (#167), split by what
+        // the plan can express and bounded by a sweep — see
+        // [`Composites::ageing`] for the longitudinal source.
+        const AXIAL_SHARE: f32 = 0.6;
+        const SETTLE_HEADROOM: f32 = 0.64;
+        const SPINE_GAP: f32 = 0.06;
+        let settle = (h * between(femininity, 0.029, 0.049) * AXIAL_SHARE * girth.ageing)
+            .min(h * SPINE_GAP * SETTLE_HEADROOM);
         let pelvis_gap = pelvis_r * 1.5;
         let chest_gap = girdle_r * 1.3;
-        let torso_min = pelvis_gap + h * 0.06 + chest_gap;
+        let torso_min = pelvis_gap + (h * SPINE_GAP - settle) + chest_gap;
 
         // Provenance: **unsourced**. Nearest canon landmark is the chest at
         // 0.720 of height (`examples/measure`), which this is not: the girdle
         // built from it measures 0.675, and the two are different points on the
         // body, so the 0.045 gap printed there is not evidence of an error.
-        let nominal_girdle = h * 0.755;
+        let nominal_girdle = h * 0.755 - settle;
         // Provenance: **unsourced** (the 0.5, the 0.03 gain and the 0.10 floor).
         // The canon puts the pelvis at 0.545 of height and the built one lands
         // at 0.492, but do not read that as this coefficient being 0.045 low:
@@ -2363,19 +2515,28 @@ impl Dimensions {
         // `arm_upper` and `clavicle_r` are derived up with the trunk instead of
         // here, because the neck's floor clears the clavicle's socket and so has
         // to know how fat that node is before it can place the neck.
+        //
+        // **Every radius in this block spends [`Girth::limb`] and no radius
+        // outside it does**, which is the whole of age's wasting term: the
+        // arms and the legs are what sarcopenia is measured over, and the
+        // ribcage, the girdle and the waist above them hold. `clavicle_r` is
+        // the one node in the ladder that stays on the trunk budget, and it is
+        // a stub inside attached geometry rather than a muscle — aging it would
+        // move the neck's floor and take stature out of a body that #167's
+        // settle has already taken it out of.
         let arm_lower = frame(femininity, 0.0263, 0.0238);
-        let shoulder_r = h * 0.041 * girth.at(0.61, 0.62, 0.35) * arm_upper;
-        let elbow_r = h * 0.026 * girth.at(0.45, 0.45, 0.20) * arm_lower;
-        let wrist_r = h * 0.018 * girth.at(0.12, 0.12, 0.00) * frame(femininity, 0.0181, 0.0167);
-        let hip_r = h * 0.054 * girth.at(0.50, 0.54, 0.55);
+        let shoulder_r = h * 0.041 * girth.limb(0.61, 0.62, 0.35) * arm_upper;
+        let elbow_r = h * 0.026 * girth.limb(0.45, 0.45, 0.20) * arm_lower;
+        let wrist_r = h * 0.018 * girth.limb(0.12, 0.12, 0.00) * frame(femininity, 0.0181, 0.0167);
+        let hip_r = h * 0.054 * girth.limb(0.50, 0.54, 0.55);
         // The knee sits between the thigh's distal station and the shank's
         // proximal one, which disagree — the thigh barely moves, the calf
         // thickens 6.7% — so it takes the calf's, which is the mass the eye
         // reads there. The ankle takes the shank's distal station, where the
         // two references agree to within half a percent and this is very nearly
         // a no-op kept for completeness.
-        let knee_r = h * 0.028 * girth.at(0.38, 0.33, 0.25) * frame(femininity, 0.0250, 0.0286);
-        let ankle_r = h * 0.019 * girth.at(0.12, 0.12, 0.00) * frame(femininity, 0.0183, 0.0184);
+        let knee_r = h * 0.028 * girth.limb(0.38, 0.33, 0.25) * frame(femininity, 0.0250, 0.0286);
+        let ankle_r = h * 0.019 * girth.limb(0.12, 0.12, 0.00) * frame(femininity, 0.0183, 0.0184);
         // Slim: this is the base of the hand, not a stand-in for one. While the
         // limbs ended in these nodes they were fattened to read as a fist and a
         // boot, and now that real hands and feet hang off them a blob only pokes

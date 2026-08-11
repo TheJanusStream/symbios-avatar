@@ -972,6 +972,40 @@ mod tests {
     }
 
     #[test]
+    fn age_thins_the_lips_it_reaches() {
+        // The same layer as the test above, for the second composite to reach
+        // this axis (#167). A lip thins over a life; what this asserts is that
+        // it thins HERE — the offset is applied in `FaceParams::on` and the
+        // quantity the mesh is built from is `plump`, and #166 records that the
+        // two can be several steps apart.
+        use crate::face::skull::Dimorphism;
+        use crate::plan::{AGE_PIVOT, AGE_RANGE, Composites};
+
+        let record = crate::AvatarRecord::new("Lips", crate::Archetype::default());
+        let (_, _, canon) = measured(&record);
+        let plump = |age: u32| {
+            let dimorphism = Dimorphism::of(&Composites {
+                age,
+                ..Composites::default()
+            });
+            Face::new(&canon, &record.face.on(&dimorphism)).plump
+        };
+
+        // Identity under the pivot, which is the whole epic's anchor and is
+        // cheaper to assert here than to discover in a fingerprint later.
+        assert_eq!(plump(AGE_RANGE.0), plump(AGE_PIVOT));
+        assert_eq!(plump(AGE_PIVOT), Face::new(&canon, &record.face).plump);
+
+        let (young, old) = (plump(AGE_PIVOT), plump(AGE_RANGE.1));
+        assert!(
+            old < young,
+            "the lip stands {:.2} mm off the face at thirty and {:.2} at eighty, and has to              thin",
+            young * 1000.0,
+            old * 1000.0
+        );
+    }
+
+    #[test]
     fn the_mouth_is_wider_than_the_mesh_under_it() {
         // A RATIO, not a millimetre figure. The cell size moves with
         // FACE_REFINEMENT and with the size of the head, so a constant here

@@ -27,7 +27,7 @@ use symbios_texture::generator::TextureMap;
 use symbios_texture::normal::{BoundaryMode, height_to_normal};
 
 use super::bake::AtlasGeometry;
-use crate::plan::Zone;
+use crate::plan::{Composites, Zone};
 use crate::rig::Rig;
 
 /// The melanin ramp, palest to deepest, in sRGB.
@@ -262,6 +262,188 @@ fn clamp_unit(value: f32, fallback: f32) -> f32 {
     }
 }
 
+/// What the body under the skin is made of.
+///
+/// **The composites reach the painter through this and not directly** (#165).
+/// Every other consumer of the record's high-level axes has a derived read of
+/// its own — the cage has `plan::derive`, the skull has `face::Dimorphism` —
+/// and the skin wants the same thing for the same reason: what a painter needs
+/// is not a body-fat fraction, it is whether the muscle under this texel shows,
+/// and the two are not the same question on a masculine and a feminine frame.
+///
+/// Everything here is derived. No axis was added to the record for it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Condition {
+    /// How sharply the muscle under the skin reads, `0` where a body carries
+    /// enough fat to hide it and `1` at the leanest a record can describe.
+    ///
+    /// **The threshold it is measured from is dimorphic, and that is the whole
+    /// derivation** (#165). `plan::BODY_FAT_RANGE` already records the bands
+    /// this comes from: visible definition below about 10% of body fat on men
+    /// and about 18% on women. Those are not two opinions about one number,
+    /// they are essential fat differing by sex — so the same 0.16 fraction is a
+    /// lean woman and a soft man, and a definition signal that read the
+    /// fraction alone would have painted them the same.
+    ///
+    /// Provenance: **derived** from `BODY_FAT_RANGE`'s own looked-up bands
+    /// (#165), interpolated by `femininity` the way every other cross-composite
+    /// term in the crate is.
+    pub definition: f32,
+    /// How far into the changes of age this body is, straight off
+    /// [`Composites::ageing`].
+    ///
+    /// The skin's share of #167: an old skin creases where a young one does
+    /// not, and it is drier.
+    pub ageing: f32,
+}
+
+impl Condition {
+    /// Reads the composites into what the painter needs.
+    #[must_use]
+    pub fn of(composites: &Composites) -> Self {
+        use crate::plan::derive::humanoid::between;
+
+        // The lean end of the axis, which is where definition is total: a body
+        // cannot be leaner than the record allows, so the ramp is measured from
+        // the threshold down to that floor rather than down to zero fat.
+        let floor = crate::plan::BODY_FAT_RANGE.0;
+        let shows = between(composites.femininity.clamp(-1.5, 1.5), 0.10, 0.18);
+        let definition = ((shows - composites.body_fat) / (shows - floor)).clamp(0.0, 1.0);
+        Self {
+            definition,
+            ageing: composites.ageing(),
+        }
+    }
+}
+
+impl Default for Condition {
+    /// The body the painter drew before it could read a composite: a middling
+    /// adult at the default fat fraction, which is well above every definition
+    /// threshold, and under the age pivot.
+    fn default() -> Self {
+        Self::of(&Composites::default())
+    }
+}
+
+/// How much of the crease ink definition may add, at the middle of the fold
+/// measure.
+///
+/// **A gain on a BAND rather than on the signal** (#165, #158). `CREASE_INK`
+/// was cut to 0.30 because saturated folds painted as ink ladders, and the
+/// obvious way to make a lean body read — raising the ink — is the exact change
+/// that was reverted. So this multiplies a hump that is zero at both ends of
+/// the fold measure and one in the middle: a saturated artifact row cannot be
+/// made darker by any body composition, and a shallow fold that a lean body
+/// would actually show gets the whole of it.
+///
+/// **This one IS visible to the render**, unlike the two relief constants
+/// below it: a crease multiplies the colour as well as the occlusion, so the
+/// ink lands in the albedo the contact sheet samples (#177).
+///
+/// Provenance: **tuned by render** (#165), against the lean end of the body-fat
+/// sweep at a fixed light.
+const DEFINITION_INK: f32 = 0.55;
+/// How much less rough taut skin over a muscle belly is.
+///
+/// Small: skin is skin, and this is the difference between a highlight that
+/// finds an edge and one that does not.
+///
+/// **NOT judged by render, and it cannot be** (#177): `examples/render` samples
+/// the albedo of this atlas and nothing else, so every roughness term in this
+/// file — including `roughness_bias`, which has shipped for months — has never
+/// been drawn. Sized instead against the span of the roughness axis it moves,
+/// which is 0.25 to 0.85, and left deliberately at a sixteenth of it until an
+/// instrument exists to look.
+///
+/// Provenance: **sized against the axis it moves** (#165).
+const DEFINITION_SHEEN: f32 = 0.05;
+/// Relief the striation grain adds over a muscle group at full definition, as a
+/// share of what the pores add.
+///
+/// **Gated to the muscle zones and to the same resolvability fade the pores
+/// take.** A striation is a 15 mm feature and most charts carry 3–5 mm of body
+/// per texel, so it is inside what the atlas can hold — but only just, and the
+/// fade is what keeps it from becoming per-texel noise on the finely-packed
+/// charts (#158).
+///
+/// **NOT judged by render** (#177): this rides the height field, which becomes
+/// the normal map, and the contact sheet reads only the albedo. Sized instead
+/// against the field it sits beside — at a typical body chart the pore term
+/// lands near 0.31 of the height range after its own resolvability fade, and
+/// this is 0.45 at full definition, so a defined muscle carries about half
+/// again the relief of the skin over it and no more.
+///
+/// Provenance: **sized against the pore field's own amplitude** (#165).
+const STRIATION: f32 = 0.45;
+/// How much of the crease ink age may add, on the same band as
+/// [`DEFINITION_INK`].
+///
+/// Larger than the definition gain, because a fold is what age does to skin
+/// most directly, and taken on the same hump for the same reason.
+///
+/// Visible to the render for the reason [`DEFINITION_INK`] gives.
+///
+/// Provenance: **tuned by render** (#167), on `--head --bare` at `--age` 18
+/// against 80, where the change it carries is a low-contrast field over the
+/// cheek and jaw — 5.3 grey levels mean over the quarter of the sheet it
+/// touches — rather than a drawn line.
+const AGE_INK: f32 = 0.85;
+/// How much rougher old skin is.
+///
+/// Sebum production falls over a life and the surface loses its sheen. The
+/// roughness axis in this painter spans 0.25 to 0.85, so this is about a
+/// twelfth of it end to end.
+///
+/// **NOT judged by render** — see [`DEFINITION_SHEEN`] and #177.
+///
+/// Provenance: **looked up for the direction, sized against the axis it
+/// moves** (#167).
+const AGE_DRY: f32 = 0.05;
+/// Relief the wrinkle grain adds at the top of the age ramp, as a share of what
+/// the pores add.
+///
+/// **Where a face wrinkles, not everywhere.** Wrinkles are a photo-ageing and
+/// expression phenomenon before they are a whole-body one: the face, the neck
+/// and the backs of the hands carry them decades before covered skin does, and
+/// a body-wide wrinkle field reads as dirt rather than as age.
+///
+/// **NOT judged by render** (#177), for the reason [`STRIATION`] gives. Sized
+/// the same way: about three times the pore relief on a finely-charted face,
+/// where the wrinkle's 6.7 mm period is inside what the atlas resolves and the
+/// pore's 2.5 mm one is not.
+///
+/// Provenance: **looked up for where, sized against the pore field for how
+/// much** (#167).
+const WRINKLE: f32 = 0.9;
+
+/// The share of a composite's crease gain a fold of this depth may take.
+///
+/// Zero at a flat texel, zero at a saturated one and one in the middle. The
+/// second of those is the load-bearing end: `CREASE_INK` exists because
+/// saturated folds painted as ink ladders (#158), so no body composition may
+/// darken one.
+fn crease_band(crease: f32) -> f32 {
+    4.0 * crease * (1.0 - crease)
+}
+
+/// Whether a zone is one whose muscle can show through at low body fat.
+///
+/// The limbs and the chest. The abdomen is deliberately out: it is where the
+/// last of the fat leaves, so a defined belly is a body-fat statement the
+/// definition ramp is already making at the waist's own girth, and painting
+/// striations onto it reads as a drawn-on six-pack.
+fn defined(zone: Zone) -> bool {
+    matches!(zone, Zone::Chest | Zone::UpperLimb(_) | Zone::LowerLimb(_))
+}
+
+/// Whether a zone wrinkles with age.
+///
+/// See [`WRINKLE`]: the exposed skin, which is the face, the neck and the
+/// hands and feet.
+fn wrinkled(zone: Zone) -> bool {
+    matches!(zone, Zone::Head | Zone::Neck | Zone::Extremity(_))
+}
+
 /// Paints skin over a baked body.
 ///
 /// Returns a [`TextureMap`] — the same container every other symbios generator
@@ -273,7 +455,12 @@ fn clamp_unit(value: f32, fallback: f32) -> f32 {
 /// [`symbios_texture::generator::TextureGenerator`]: that trait promises to
 /// generate at any requested size, and a baked atlas cannot honour it.
 #[must_use]
-pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> TextureMap {
+pub fn paint_skin(
+    geometry: &AtlasGeometry,
+    rig: &Rig,
+    params: &SkinParams,
+    condition: &Condition,
+) -> TextureMap {
     let count = geometry.texels.len();
     let mut albedo = vec![0u8; count * 4];
     let mut orm = vec![0u8; count * 4];
@@ -292,6 +479,17 @@ pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> T
     let pores = Simplex::new(23);
     let freckle_field = Simplex::new(37);
     let stubble_field = Simplex::new(53);
+    // Two more fields with seeds of their own, for the same reason the four
+    // above have them: a grain that lines up with the pores is one grain at
+    // twice the amplitude.
+    let striation_field = Simplex::new(71);
+    let wrinkle_field = Simplex::new(89);
+    // How much of a fold's ink the body's own composition adds, at the middle
+    // of the fold measure. One number for both terms, because they are the
+    // same physical claim — this skin holds a crease the neutral body does not
+    // — and they are additive rather than multiplicative so a lean eighty-year
+    // -old is not creased twice.
+    let ink_gain = DEFINITION_INK * condition.definition + AGE_INK * condition.ageing;
 
     for (index, sample) in geometry.texels.iter().enumerate() {
         let Some(texel) = sample else { continue };
@@ -314,7 +512,12 @@ pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> T
         // read as a full crease everywhere, darkening every one of them by up
         // to 35% (#63).
         let hit = rig.nearest_bone(p);
-        let crease = texel.crease * CREASE_INK;
+        // **The band, and it is the whole of #158's caution honoured** — see
+        // [`DEFINITION_INK`]. `4c(1−c)` is zero at a flat texel and zero at a
+        // saturated fold, so nothing a composite can do reaches the rows that
+        // painted as ladders, and a half-strength fold gets the full gain.
+        let band = crease_band(texel.crease);
+        let crease = texel.crease * CREASE_INK * (1.0 + ink_gain * band);
         let thinness = (1.0 - hit.radius / stoutest).clamp(0.0, 1.0).powf(0.7);
         // Melanin sits above the blood and absorbs what would have shown
         // through it, so the same blush axis has to mean less on deeper skin —
@@ -408,18 +611,41 @@ pub fn paint_skin(geometry: &AtlasGeometry, rig: &Rig, params: &SkinParams) -> T
             }
             widest
         };
-        let resolvable = if spacing > f32::EPSILON {
-            (1.0 / (2.0 * spacing * 400.0)).clamp(0.0, 1.0)
-        } else {
-            1.0
+        // Hoisted into a closure by #165, which adds two more fields at two
+        // more frequencies. The pore case is unchanged: `resolvable(400.0)` is
+        // the expression that stood here.
+        let resolvable = |cycles: f32| -> f32 {
+            if spacing > f32::EPSILON {
+                (1.0 / (2.0 * spacing * cycles)).clamp(0.0, 1.0)
+            } else {
+                1.0
+            }
         };
-        let pore = noise3(&pores, p, 400.0) * resolvable;
-        heights[index] = f64::from(pore) * 0.35 + f64::from(stubble) * f64::from(grain_bias(pore));
+        let pore = noise3(&pores, p, 400.0) * resolvable(400.0);
+        // A muscle belly's own grain, on the zones that have one, and a life's
+        // creasing on the skin that shows it. Both ride in the height map
+        // rather than the albedo, because both are relief: what makes a lean
+        // arm read is the light finding an edge, not a darker arm.
+        let striation = if condition.definition > 0.0 && defined(texel.zone) {
+            noise3(&striation_field, p, 65.0) * resolvable(65.0) * condition.definition * STRIATION
+        } else {
+            0.0
+        };
+        let wrinkle = if condition.ageing > 0.0 && wrinkled(texel.zone) {
+            noise3(&wrinkle_field, p, 150.0) * resolvable(150.0) * condition.ageing * WRINKLE
+        } else {
+            0.0
+        };
+        heights[index] = f64::from(pore) * 0.35
+            + f64::from(striation + wrinkle) * 0.35
+            + f64::from(stubble) * f64::from(grain_bias(pore));
 
         // Roughness: an oily face against calloused hands, plus creases holding
         // moisture. Metallic is zero — skin is a dielectric.
         let roughness = (0.52 + roughness_bias(texel.zone) - blood * 0.12 + stubble * 0.15
-            - crease * 0.05)
+            - crease * 0.05
+            - DEFINITION_SHEEN * condition.definition * f32::from(defined(texel.zone))
+            + AGE_DRY * condition.ageing)
             .clamp(0.25, 0.85);
 
         let at = index * 4;
@@ -520,7 +746,7 @@ mod tests {
         let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);
         let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
         let geometry = bake_geometry(&mesh, &uv, 128);
-        let map = paint_skin(&geometry, &rig, params);
+        let map = paint_skin(&geometry, &rig, params, &Condition::default());
         (geometry, rig, map)
     }
 
@@ -849,7 +1075,12 @@ mod tests {
         let rig =
             Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
                 .expect("rigs");
-        let map = paint_skin(&geometry, &rig, &SkinParams::default());
+        let map = paint_skin(
+            &geometry,
+            &rig,
+            &SkinParams::default(),
+            &Condition::default(),
+        );
 
         assert!(
             map.albedo[4] < map.albedo[0],
@@ -918,7 +1149,7 @@ mod tests {
                     });
             let Some(twin) = twin else { continue };
 
-            let map = paint_skin(&geometry, &rig, &params);
+            let map = paint_skin(&geometry, &rig, &params, &Condition::default());
             assert_eq!(
                 map.albedo[index * 4],
                 map.albedo[twin * 4],
@@ -953,10 +1184,120 @@ mod tests {
     }
 
     #[test]
+    fn no_body_composition_can_darken_a_saturated_fold() {
+        // The #158 revert, held as arithmetic. `CREASE_INK` was cut because a
+        // saturated fold painted as an ink ladder, and #165 wants MORE ink on a
+        // lean body — so the gain rides a band that is zero exactly where the
+        // ladders were.
+        assert_eq!(crease_band(0.0), 0.0);
+        assert_eq!(crease_band(1.0), 0.0);
+        assert!((crease_band(0.5) - 1.0).abs() < 1e-6);
+        assert!(crease_band(0.25) < crease_band(0.5));
+    }
+
+    #[test]
+    fn definition_is_read_against_a_dimorphic_threshold() {
+        use crate::plan::{BODY_FAT_RANGE, Composites, DEFAULT_BODY_FAT};
+
+        // The default body is well above every threshold: nothing shows.
+        assert_eq!(Condition::default().definition, 0.0);
+        assert_eq!(Condition::of(&Composites::default()).definition, 0.0);
+
+        // The leanest a record can be is total definition on any frame.
+        for femininity in [-1.0f32, 0.0, 1.0] {
+            let leanest = Condition::of(&Composites {
+                femininity,
+                body_fat: BODY_FAT_RANGE.0,
+                ..Composites::default()
+            });
+            assert_eq!(leanest.definition, 1.0, "femininity {femininity}");
+        }
+
+        // **The point of the type.** 0.14 of body fat is a lean woman and a
+        // soft man, and a signal that read the fraction alone would paint them
+        // the same.
+        let at = |femininity: f32| {
+            Condition::of(&Composites {
+                femininity,
+                body_fat: 0.14,
+                ..Composites::default()
+            })
+            .definition
+        };
+        assert_eq!(at(-1.0), 0.0, "a masculine body at 0.14 shows nothing");
+        assert!(
+            at(1.0) > 0.25,
+            "a feminine body at 0.14 is a quarter of the way into the ramp, not off it: {}",
+            at(1.0)
+        );
+        // 0.14 is exactly the neutral frame's own threshold — the midpoint of
+        // 0.10 and 0.18 — so the middle of the axis sits on the edge of the
+        // ramp here by arithmetic rather than by coincidence, and a body a
+        // point leaner is on it.
+        assert_eq!(at(0.0), 0.0);
+        assert!(
+            Condition::of(&Composites {
+                body_fat: 0.13,
+                ..Composites::default()
+            })
+            .definition
+                > 0.0
+        );
+
+        // Monotone in the fraction, which is the direction the whole term is
+        // for.
+        let leaner = |fat| {
+            Condition::of(&Composites {
+                body_fat: fat,
+                ..Composites::default()
+            })
+            .definition
+        };
+        assert!(leaner(0.08) > leaner(0.12));
+        assert_eq!(leaner(DEFAULT_BODY_FAT), 0.0);
+    }
+
+    #[test]
+    fn the_body_under_the_skin_reaches_the_paint() {
+        // The plumbing #165 was raised for, end to end: the same complexion on
+        // two bodies of different composition has to paint differently, and the
+        // neutral body has to paint what it painted before the axis existed.
+        use crate::plan::{AGE_RANGE, BODY_FAT_RANGE, Composites};
+
+        let params = SkinParams::default();
+        let (geometry, rig, neutral) = painted(&params);
+        let paint = |composites: Composites| {
+            paint_skin(&geometry, &rig, &params, &Condition::of(&composites))
+        };
+
+        assert_eq!(
+            neutral.roughness,
+            paint(Composites::default()).roughness,
+            "the neutral composites must paint the body that was already painted"
+        );
+
+        let lean = paint(Composites {
+            body_fat: BODY_FAT_RANGE.0,
+            ..Composites::default()
+        });
+        assert_ne!(
+            lean.roughness, neutral.roughness,
+            "definition reaches the skin"
+        );
+
+        let old = paint(Composites {
+            age: AGE_RANGE.1,
+            ..Composites::default()
+        });
+        assert_ne!(old.roughness, neutral.roughness, "age reaches the skin");
+        assert_ne!(old.normal, neutral.normal, "age reaches the relief");
+    }
+
+    #[test]
     fn painting_is_deterministic() {
         let params = SkinParams::default();
         let (geometry, rig, first) = painted(&params);
-        let second = paint_skin(&geometry, &rig, &params);
+        let second = paint_skin(&geometry, &rig, &params, &Condition::default());
         assert_eq!(first.albedo, second.albedo);
         assert_eq!(first.roughness, second.roughness);
     }

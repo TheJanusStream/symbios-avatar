@@ -24,7 +24,10 @@
 //! let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
 //!
 //! let geometry = texture::bake_geometry(&mesh, &uv, 512);
-//! let map = texture::paint_skin(&geometry, &rig, &record.skin);
+//! // What the skin is painted ON: the record's composites, read into the two
+//! // things a painter needs from them (#165).
+//! let condition = texture::Condition::of(&record.composites);
+//! let map = texture::paint_skin(&geometry, &rig, &record.skin, &condition);
 //! assert_eq!(map.width, 512);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -33,4 +36,4 @@ pub mod bake;
 pub mod skin;
 
 pub use bake::{AtlasGeometry, DILATION, Texel, bake, bake_geometry};
-pub use skin::{SkinParams, paint_skin};
+pub use skin::{Condition, SkinParams, paint_skin};

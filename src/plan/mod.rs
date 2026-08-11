@@ -34,7 +34,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::skeleton::Skeleton;
 
-pub use composites::{AGE_RANGE, BODY_FAT_RANGE, Composites, DEFAULT_AGE, DEFAULT_BODY_FAT};
+pub use composites::{
+    AGE_PIVOT, AGE_RANGE, BODY_FAT_RANGE, Composites, DEFAULT_AGE, DEFAULT_BODY_FAT,
+};
 pub use humanoid::HumanoidParams;
 pub use quadruped::QuadrupedParams;
 pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};
@@ -568,6 +570,29 @@ pub(crate) mod scaled {
 
     /// Writes a float as its scaled integer.
     ///
+    /// **This used to narrow to `i16` first, and that was a silent ceiling of
+    /// 32.767 IN AXIS UNITS** (#170). Nothing about the wire format asked for
+    /// it: the value is emitted as an `i32` and read back as an `i64`, and
+    /// [`deserialize`] says in as many words why it reads wide — an
+    /// out-of-range value is bad data for `sanitize` to clamp, never a reason
+    /// to lose a record. A writer that quietly truncates is the same defect
+    /// from the other end, and it is worse, because the truncation is what
+    /// gets stored.
+    ///
+    /// No shipped axis met it — every shape axis is inside the ±3 exploration
+    /// envelope and every length is a stature in metres — but #162 walked
+    /// straight into it: the composites wanted an age in whole years, and forty
+    /// years through this encoder is 40000 thousandths, which would have stored
+    /// a forty-year-old as 32.767. That axis is a count instead, which is the
+    /// honest representation anyway, so the trap was avoided rather than met
+    /// and the next physical quantity would have met it silently.
+    ///
+    /// What bounds it now is the `as` cast, which saturates: an axis would have
+    /// to reach 2_147_483 in its own units to lose anything here, and a value
+    /// that large is a caller that never sanitized. The narrowing is gone; the
+    /// principle — read wide, write wide, clamp in `sanitize` — is the module's
+    /// throughout.
+    ///
     /// # Errors
     ///
     /// Propagates the serialiser's own failure.
@@ -577,7 +602,7 @@ pub(crate) mod scaled {
         } else {
             0.0
         };
-        serializer.serialize_i32(scaled.clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i32)
+        serializer.serialize_i32(scaled as i32)
     }
 
     /// Reads a scaled integer back into a float.
@@ -723,6 +748,32 @@ fn take_byte(bytes: &mut &[u8]) -> Result<u8, PlanDecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_axis_with_a_large_natural_unit_survives_the_thousandths_encoder() {
+        // #170, and the reason it is a test rather than a comment: `scaled`
+        // used to narrow to `i16` before writing, which is a ceiling of 32.767
+        // in AXIS UNITS and fires on nothing this crate ships. An axis whose
+        // natural unit is large — a duration in seconds, a mass in kilograms,
+        // the age in years #162 nearly stored — walked into it and was
+        // truncated in silence rather than refused.
+        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+        struct Big {
+            #[serde(with = "super::scaled")]
+            axis: f32,
+        }
+
+        for value in [40.0f32, 1_000.0, -1_000.0] {
+            let json = serde_json::to_string(&Big { axis: value }).expect("serialises");
+            let thousandths = (value * 1000.0) as i64;
+            assert!(
+                json.contains(&thousandths.to_string()),
+                "{value} was written as {json}, which is not {thousandths} thousandths"
+            );
+            let back: Big = serde_json::from_str(&json).expect("reads back");
+            assert_eq!(back.axis, value);
+        }
+    }
 
     /// How far a zone's nodes reach along an axis, least and greatest.
     fn span(skeleton: &Skeleton, zone: Zone, axis: fn(glam::Vec3) -> f32) -> (f32, f32) {

@@ -417,8 +417,17 @@ impl Avatar {
             inside
         };
         let geometry = texture::bake(&body, &charts, &borrowed, &inside, config.atlas);
-        let painted =
-            texture::paint_skin(&geometry, &rig, &config.complexion.unwrap_or(record.skin));
+        // The body's composition reaches the painter here, and #165 is where
+        // that plumbing arrived: until then the skin knew a complexion and
+        // nothing about the body wearing it, so a lean body and a heavy one
+        // were painted identically. `Condition` is the skin's derived read of
+        // the composites, the way `Dimorphism` is the skull's.
+        let painted = texture::paint_skin(
+            &geometry,
+            &rig,
+            &config.complexion.unwrap_or(record.skin),
+            &texture::Condition::of(&record.composites),
+        );
 
         let parts = Parts {
             hair: handed

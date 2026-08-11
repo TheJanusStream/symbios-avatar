@@ -47,6 +47,7 @@
 //! cargo run --release --example render -- --skull -1,1            # headBreadth,faceLength
 //! cargo run --release --example render -- --femininity 1  # the frame axis, -1 .. +1
 //! cargo run --release --example render -- --mass 1 --fat 0.10  # heavy and lean: muscular
+//! cargo run --release --example render -- --age 80  # the age axis, 18 .. 80 years
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --budget    # what one avatar costs
@@ -234,6 +235,16 @@ fn main() {
         && let Ok(fat) = spec.parse::<f32>()
     {
         record.composites.body_fat = fat;
+        record.composites.sanitize();
+    }
+    // The age axis (#167), in whole years. Everything it does is sub-centimetre
+    // on the body sheet — a settle of about 4 cm of stature end to end, a
+    // deltoid 9% thinner — so it is meant to be looked at as a sweep of the
+    // same seed rather than as one body, and the face terms want `--head`.
+    if let Some(spec) = value("--age")
+        && let Ok(age) = spec.parse::<u32>()
+    {
+        record.composites.age = age;
         record.composites.sanitize();
     }
     if let Some(spec) = value("--skull") {

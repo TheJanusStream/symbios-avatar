@@ -12,7 +12,7 @@
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use symbios_avatar::face::Skull;
-use symbios_avatar::plan::{DEFAULT_AGE, DEFAULT_BODY_FAT};
+use symbios_avatar::plan::{AGE_RANGE, DEFAULT_AGE, DEFAULT_BODY_FAT};
 use symbios_avatar::{
     Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, Composites, HumanoidParams,
     Limb, QuadrupedParams, Rig, Skeleton, Vec3, Zone, build_body, build_cage,
@@ -213,8 +213,13 @@ fn random_humanoids_always_mesh() {
         // half of every formula. `femininity` reaches the trunk, the hips and
         // both limb ladders (#100), and it met a wall the first time it was
         // swept — the pelvis's spine socket, at −1.30.
+        // Age joins it in #167: it is the second composite to reach the cage,
+        // and the one that spends a length the mesher's clearances are also
+        // spending — the trunk's free spine run, which the settle takes out of
+        // and two socket gaps sit either side of.
         let mut composites = Composites {
             femininity: rng.random_range(-3.0..=3.0),
+            age: rng.random_range(AGE_RANGE.0..=AGE_RANGE.1),
             ..NEUTRAL
         };
         composites.sanitize();
@@ -260,6 +265,52 @@ fn the_frame_axis_meshes_against_every_corner_of_the_body() {
                     &composites,
                     &format!("humanoid h={height} all={value} femininity={femininity}"),
                 );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_age_axis_meshes_against_every_corner_of_the_body() {
+    // The same composite corner product as the frame axis above, for the axis
+    // #167 added. Age is the one composite that spends a LENGTH rather than a
+    // girth — the settle comes out of the trunk's free spine run, with a socket
+    // clearance either side of it — so the bodies to worry about are the ones
+    // whose trunk is already short: a small body at a long limb length, where
+    // the girdle's floor and the pelvis's are closest together.
+    //
+    // Both ends of the frame axis are swept with it, because the settle is
+    // interpolated between the two references' own height losses and so is
+    // largest exactly where the frame is most feminine.
+    for age in [AGE_RANGE.0, 50, AGE_RANGE.1] {
+        for femininity in [-1.25f32, 0.0, 2.85] {
+            let composites = Composites {
+                age,
+                femininity,
+                ..NEUTRAL
+            };
+            for value in EXTREMES {
+                for height in [1.2f32, 2.2] {
+                    let mut params = HumanoidParams {
+                        height,
+                        shoulder_width: value,
+                        hip_width: -value,
+                        limb_length: value,
+                        neck_length: value,
+                        head_size: value,
+                        head_breadth: value,
+                        face_length: value,
+                        extremity_size: value,
+                    };
+                    params.sanitize();
+                    assert_meshable(
+                        &Archetype::Humanoid(params),
+                        &composites,
+                        &format!(
+                            "humanoid h={height} all={value} age={age} femininity={femininity}"
+                        ),
+                    );
+                }
             }
         }
     }
@@ -502,6 +553,20 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
         ));
     }
 
+    // **And the composites include age now** (#167), for the same reason: the
+    // axis reaches the trunk's own length, both limb ladders and the waist, and
+    // the rolled bodies below cannot be trusted to carry it — six of those eight
+    // seeds roll an age under the pivot, where the axis is deliberately the
+    // identity. Without these two rows a change to the settle would move nothing
+    // this table can see.
+    for age in [55u32, AGE_RANGE.1] {
+        bodies.push((
+            format!("humanoid age {age}"),
+            Archetype::default(),
+            Composites { age, ..NEUTRAL },
+        ));
+    }
+
     for value in EXTREMES {
         for height in [1.2f32, 2.2] {
             let mut params = HumanoidParams {
@@ -588,6 +653,29 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// heavy body, where the neck sits deeper into the shoulders with the nape and
 /// throat clean.
 ///
+/// **Re-based a sixth time for #167**, the age composite, and this one names
+/// its own population twice over. The table GREW by two rows — `age 55` and
+/// `age 80`, added for the reason the `femininity` pair were: six of the eight
+/// rolled seeds draw an age under `plan::AGE_PIVOT`, where this axis is
+/// deliberately the identity, so a ratchet without them would have gone on
+/// passing while the settle moved every body over thirty.
+///
+/// Of the 26 rows that already existed, exactly TWO moved: rolled humanoid
+/// seeds 0 and 4. Those are the only two of the eight that roll an age past the
+/// pivot — 43 and 37 years, for an `ageing` of 0.068 and 0.020 — and every
+/// other body here holds age at its default, which is under the pivot. So the
+/// default body, both `femininity` rows, all six corners and all eight
+/// quadrupeds are bit-identical, and that is the acceptance #167 asks for
+/// stated as a hash: neutral age is the body that was already built.
+///
+/// Judged on `--bare` renders at `--age` 18, 50 and 80, where the arms visibly
+/// thin and the abdomen fills while the trunk holds, and on the numbers behind
+/// them, because the sheet cannot see the rest: stature 1.7235 → 1.6826 m
+/// (−4.1 cm, and the camera frames to the body's own height so a render can
+/// never show it), the deltoid −9.4%, the wrist −3.0%, the waist +6% across and
+/// +14% deep. The head terms were judged on `headaudit --axis age` rather than
+/// on the head sheet, at 0.86 mm per pixel against a 3 mm change.
+///
 /// **Re-based a fifth time for #166's neck**, and this one names its own
 /// population: the two `femininity` bodies and the eight rolled humanoids, which
 /// are every body here that carries a non-neutral frame. The default body, all
@@ -597,18 +685,20 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// not a new shape. Judged on `--bare` renders at `--femininity` −1 and +1,
 /// where the masculine neck reads as a column into broad shoulders and the
 /// feminine one as slimmer and longer without reading as a stalk.
-const FINGERPRINTS: [(&str, u64); 26] = [
+const FINGERPRINTS: [(&str, u64); 28] = [
     ("humanoid default", 0xa4409953adde3c58),
     ("quadruped default", 0x2aabd8cffd3320f0),
     ("humanoid femininity -1", 0x4be35eca959f61bf),
     ("humanoid femininity +1", 0x53c9b142d969f642),
+    ("humanoid age 55", 0x3e59557f23336ea1),
+    ("humanoid age 80", 0x0b9f5241f4d9cdf8),
     ("humanoid corner h=1.2 all=-1", 0x6a9e05246c9e7acb),
     ("humanoid corner h=2.2 all=-1", 0xf2c916e94ca043f4),
     ("humanoid corner h=1.2 all=0", 0x3ac7e61821ffd7a4),
     ("humanoid corner h=2.2 all=0", 0x8f9291d4a7a5f24e),
     ("humanoid corner h=1.2 all=1", 0xef1d9b0df29fdba4),
     ("humanoid corner h=2.2 all=1", 0xc9766775e866de06),
-    ("humanoid seed 0", 0xa0595c74067c933d),
+    ("humanoid seed 0", 0xd5ea3b435fbdc851),
     ("quadruped seed 0", 0x181d22a61a29e06b),
     ("humanoid seed 1", 0xfa75b04629f8d056),
     ("quadruped seed 1", 0x66b32cdababaf760),
@@ -616,7 +706,7 @@ const FINGERPRINTS: [(&str, u64); 26] = [
     ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
     ("humanoid seed 3", 0xc8255cf85161ab16),
     ("quadruped seed 3", 0x5fe315cd16d9b52b),
-    ("humanoid seed 4", 0xc3a4105c8cf66985),
+    ("humanoid seed 4", 0x0708e31ccd146660),
     ("quadruped seed 4", 0x050364ec7b8118ea),
     ("humanoid seed 5", 0xd9a805ac31be0f9b),
     ("quadruped seed 5", 0x2d22051939b73f20),

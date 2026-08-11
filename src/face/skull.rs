@@ -671,7 +671,12 @@ const SETTLED: f32 = 0.91;
 /// the profile heights here. The knots are that window.
 const FOREHEAD: [(f32, f32); 4] = [(1.00, 0.0), (0.80, 1.0), (0.58, 0.55), (0.45, 0.0)];
 
-/// How a head reads the frame axis.
+/// How a head reads the composites.
+///
+/// **The name is now narrower than the type.** It was the frame axis alone when
+/// #166 wrote it and it carries age as well since #167 — three of the fields
+/// below take a term from each. The rename belongs in the epic's single
+/// versioning batch (#169) with everything else it renames, not here.
 ///
 /// **The first record parameter the profiles in this file have ever taken**
 /// (#166). Every other head variation is cage-side — `head_size` is a node
@@ -725,7 +730,21 @@ pub struct Dimorphism {
     /// 0.25, which is why `Dimorphism::breadth_at` tapers it out over exactly
     /// that run rather than applying it to the whole lower face.
     ///
-    /// Provenance: **derived from the reference mannequins** (#166).
+    /// **And it is where age shows in a lower face**, as jowling: the soft
+    /// tissue over the mandible descends and the jawline widens where it used
+    /// to run straight. That is tissue rather than bone, and this crate has one
+    /// surface for both, so it lands on the same multiplier — see
+    /// [`Dimorphism::of`] for the size and why it is smaller than the sex term
+    /// beside it.
+    ///
+    /// What it delivers, on `headaudit --axis age` over its eight sweep seeds:
+    /// the bigonial-to-bizygomatic ratio rises 0.8% to 1.2% between eighteen
+    /// and eighty, on every seed and monotonically. A fifth of what the frame
+    /// axis does to the same ratio, which is the intended size — an old jaw
+    /// loses its straight line without becoming a masculine one.
+    ///
+    /// Provenance: **derived from the reference mannequins** (#166); the age
+    /// term **looked up, sized by render** (#167).
     pub jaw_breadth: f32,
     /// Multiplier on `CHIN`'s forward push.
     ///
@@ -787,7 +806,17 @@ pub struct Dimorphism {
     /// re-derive this from it — the ceiling is that axis's range and not this
     /// coefficient.
     ///
-    /// Provenance: **looked up, sized against the axis it offsets** (#166).
+    /// **Age takes the same axis the other way and takes more of it** (#167).
+    /// A lip thins over a life — the vermilion loses height, the philtrum
+    /// lengthens and the upper lip rolls under — and unlike the sex difference
+    /// this one is not subtle. It is still bounded by the same narrow axis:
+    /// measured through `relief::Face::plump` on the default face, thirty to
+    /// eighty runs 13.60 mm to 13.09 mm, so the whole of the age term is 0.5 mm
+    /// of the 3.4 mm that slider spans end to end. That is less than life and
+    /// it is all there is to give until `plump`'s own gain widens in #61.
+    ///
+    /// Provenance: **looked up, sized against the axis it offsets** (#166), and
+    /// the age term the same way (#167).
     pub lips: f32,
     /// Multiplier on the whole `OCCIPUT` profile.
     ///
@@ -825,6 +854,32 @@ pub struct Dimorphism {
     /// docstring derives −0.31 from the middle of that band, so the ends of the
     /// band are the ends of this axis and no new source is needed.
     ///
+    /// **Age was given a term here and it was taken back out, with the
+    /// numbers** (#167). The gonial angle does grow more obtuse over a life —
+    /// the alveolar bone resorbs, the ramus shortens — so the axis has a claim
+    /// on this field, and a term of `+0.018 · ageing`, half the sex term, was
+    /// written and then measured on `headaudit --axis age`. It does not behave
+    /// like half of anything:
+    ///
+    /// ```text
+    ///   bigonial : bizygomatic, age 18 → 80
+    ///   seed        7      23      29      42       1       3       6      12
+    ///   with     +0.9%   +0.8%  −11.5%   −3.0%   −6.5%   +0.9%   +1.1%   +1.0%
+    ///   without  +1.1%   +1.0%   +1.2%   +0.9%   +1.1%   +0.9%   +1.1%   +1.0%
+    /// ```
+    ///
+    /// Three of eight seeds went the wrong way and one of them by an order of
+    /// magnitude more than the term should be able to move, while the jowl term
+    /// beside it is uniform across all eight. That is the signature of a
+    /// LANDMARK moving rather than a shape changing: this field sets where the
+    /// mandible's lower border sits, `bigonial` is measured AT that border, and
+    /// on a jaw whose taper the border can jump across, the instrument reads
+    /// its own input. Which of the two it is — a real reshaping or a
+    /// measurement artefact — is not answerable with a width taken at a moving
+    /// point, and the term was the least-supported of the three age terms
+    /// anyway, so it is not shipped. Reopening it wants an instrument that
+    /// reads the mandibular plane ANGLE directly.
+    ///
     /// Provenance: **derived from `GONION`'s own looked-up 22–28° plane**,
     /// read at its ends instead of its middle (#166).
     pub gonion: f32,
@@ -856,8 +911,20 @@ impl Dimorphism {
         // chin. #164 clamps the same axis at (−1.25, 2.85) for the BODY, at a
         // wall it measured; this is a judgement about faces and is tighter.
         let femininity = composites.femininity.clamp(-1.5, 1.5);
+        // Age needs no clamp of its own: the ramp is zero under
+        // `crate::plan::AGE_PIVOT` and one at the top of the record's range,
+        // and the record's range is the adult band rather than a stretched
+        // shape axis. So the head's age terms are bounded by construction and
+        // the neutral head is still the head that was already built.
+        let ageing = composites.ageing();
         Self {
-            jaw_breadth: frame(femininity, 0.708, 0.594),
+            // Jowling, at rather less than the sex difference beside it. The
+            // frame term spans ±9% about one and this adds 4% at eighty:
+            // enough to lose the straight line of a young jaw, not enough to
+            // read as the wide masculine mandible it shares a multiplier with.
+            // Sized by render, because there is nothing to measure it against —
+            // neither mannequin is old.
+            jaw_breadth: frame(femininity, 0.708, 0.594) + 0.04 * ageing,
             // ±12% about the neutral chin, against the ±34% the references
             // themselves asked for. See the field.
             chin: 1.0 + 0.12 * -femininity,
@@ -866,7 +933,11 @@ impl Dimorphism {
             brow: 1.0 + 0.25 * -femininity,
             // A quarter of the 1.6 the references ask for; see the field.
             occiput: 1.0 + 0.25 * femininity,
-            lips: 0.12 * femininity,
+            // The sex difference is ±0.12 of this axis and age takes 0.15 of
+            // it, which is the one place in this set where age outruns the
+            // frame — see the field for what that is in millimetres and why it
+            // is still short of life.
+            lips: 0.12 * femininity - 0.15 * ageing,
             // In skull radii, against a `BROW` whose own peak is 0.042.
             frontal: 0.014 * femininity,
             // The 22–28° mandibular plane read at its ends. `GONION`'s
@@ -874,6 +945,8 @@ impl Dimorphism {
             // 85 mm gonion-to-menton run, as a fraction of the head's radius and
             // then through the floor remap. Rerunning it at 22° and 28° puts the
             // border 0.036 profile heights either side of the middle.
+            // No age term, and the field records the measurement that took it
+            // back out.
             gonion: GONION + 0.036 * femininity,
         }
     }

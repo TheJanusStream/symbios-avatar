@@ -83,6 +83,17 @@ pub const AGE_RANGE: (u32, u32) = (18, 80);
 /// Age of a body no one has said anything about, in years.
 pub const DEFAULT_AGE: u32 = 28;
 
+/// The age past which a body starts to change, in years.
+///
+/// **Below this the axis does nothing at all, deliberately.** An eighteen- and
+/// a twenty-eight-year-old differ in almost nothing this crate can draw: peak
+/// bone mass, peak muscle mass and peak stature are all reached inside that
+/// band, so the honest formula over it is the identity. That also happens to be
+/// what the epic's anchor needs — [`DEFAULT_AGE`] is under this pivot, so a
+/// body no one has aged is bit-identical to the body the plan built before this
+/// axis existed (#161, #167).
+pub const AGE_PIVOT: u32 = 30;
+
 /// The exploration envelope of the two signed composites (#160).
 fn signed_envelope() -> (f32, f32) {
     explore_range(0.0, (-1.0, 1.0))
@@ -169,6 +180,42 @@ impl Composites {
     #[must_use]
     pub fn signed_envelope() -> (f32, f32) {
         signed_envelope()
+    }
+
+    /// How far into the changes of age this body is: `0` at [`AGE_PIVOT`] and
+    /// below, `1` at the top of [`AGE_RANGE`].
+    ///
+    /// **One ramp for the whole crate**, read by the body plan, by the skull
+    /// and by the skin, so the trunk that settles, the lip that thins and the
+    /// crease that deepens are all the same body getting older rather than
+    /// three timetables that can disagree.
+    ///
+    /// **The square is fitted rather than chosen for smoothness.** Nothing age
+    /// does to a body is linear in years — stature holds through the thirties
+    /// and then falls away, muscle goes at about a percent a year only after
+    /// sixty — so a linear ramp would age a forty-five-year-old about twice as
+    /// much as life does. Squaring it fits the one curve here that is measured
+    /// end to end. Against the cumulative height loss the Baltimore
+    /// Longitudinal Study reports for men, and a settle sized to its 5 cm at
+    /// eighty:
+    ///
+    /// ```text
+    ///   age    this ramp   settle    reported
+    ///    40      0.04       0.2 cm     ~0.2
+    ///    55      0.25       1.3 cm     ~1.5
+    ///    70      0.64       3.2 cm      3.0
+    ///    80      1.00       5.0 cm      5.0
+    /// ```
+    ///
+    /// Provenance: **derived from a looked-up curve** (#167) — Sorkin, Muller
+    /// and Andres, *Longitudinal change in height of men and women*, Am J
+    /// Epidemiol 1999, whose cumulative losses are the right-hand column.
+    #[must_use]
+    pub fn ageing(&self) -> f32 {
+        let past = self.age.saturating_sub(AGE_PIVOT) as f32;
+        let span = (AGE_RANGE.1 - AGE_PIVOT) as f32;
+        let t = (past / span).clamp(0.0, 1.0);
+        t * t
     }
 
     /// Clamps every axis into range.
@@ -270,6 +317,39 @@ mod tests {
         assert_eq!(neutral.mass, 0.0);
         assert_eq!(neutral.body_fat, DEFAULT_BODY_FAT);
         assert_eq!(neutral.age, DEFAULT_AGE);
+    }
+
+    #[test]
+    fn the_ramp_of_age_is_flat_under_its_pivot_and_full_at_the_top() {
+        // The identity anchor: the default body is under the pivot, so every
+        // formula that reads this one gets zero and reproduces the body the
+        // plan built before the axis existed (#161).
+        for age in AGE_RANGE.0..=AGE_PIVOT {
+            let composites = Composites {
+                age,
+                ..Default::default()
+            };
+            assert_eq!(composites.ageing(), 0.0, "age {age} must move nothing");
+        }
+
+        let oldest = Composites {
+            age: AGE_RANGE.1,
+            ..Default::default()
+        };
+        assert_eq!(oldest.ageing(), 1.0);
+
+        // Monotone, and the fitted square rather than a line — the table on
+        // `ageing` is what these two figures come from.
+        let at = |age| {
+            Composites {
+                age,
+                ..Default::default()
+            }
+            .ageing()
+        };
+        assert!(at(55) < at(70) && at(70) < at(80));
+        assert!((at(55) - 0.25).abs() < 1e-3, "{}", at(55));
+        assert!((at(70) - 0.64).abs() < 1e-3, "{}", at(70));
     }
 
     #[test]

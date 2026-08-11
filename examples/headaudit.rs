@@ -18,10 +18,15 @@
 //! cargo run --release --example headaudit -- --axis breadth  # one axis, end to end
 //! ```
 //!
-//! `--axis` takes `breadth`, `length`, `nose` or `mouth` and walks it from one
-//! end to the other on every sweep seed, which is what #61 needs before it can
-//! choose where a default sits: an axis is not an axis until somebody has looked
-//! at both of its ends on more than one body.
+//! `--axis` takes `breadth`, `length`, `nose`, `mouth` or `age` and walks it
+//! from one end to the other on every sweep seed, which is what #61 needs before
+//! it can choose where a default sits: an axis is not an axis until somebody has
+//! looked at both of its ends on more than one body.
+//!
+//! **`age` is a composite and the columns read it unevenly.** Its lower-face
+//! term is jowling, which lands squarely in `bigon/bizyg`; its lip term moves
+//! the lip band's HEIGHT and this table's `mouth` column is the carve's width,
+//! so that one does not appear here at all and wants the viewer (#167).
 
 use symbios_avatar::face::{Canon, Eyes, Skull};
 use symbios_avatar::{Archetype, Avatar, AvatarConfig, AvatarRecord, PolyMesh, Vec3, Zone, face};
@@ -946,6 +951,9 @@ struct Axes {
     length: Option<f32>,
     nose: Option<f32>,
     mouth: Option<f32>,
+    /// In whole years, and a composite rather than a per-region axis — the
+    /// first one this instrument can walk (#167).
+    age: Option<u32>,
 }
 
 impl Axes {
@@ -957,6 +965,7 @@ impl Axes {
         }
         record.face.nose_width = self.nose.unwrap_or(record.face.nose_width);
         record.face.mouth_width = self.mouth.unwrap_or(record.face.mouth_width);
+        record.composites.age = self.age.unwrap_or(record.composites.age);
         record.sanitize();
     }
 }
@@ -971,6 +980,11 @@ impl Axes {
 fn walk(axis: &str) {
     let values: [f32; 5] = match axis {
         "nose" | "mouth" => [0.0, 0.25, 0.5, 0.75, 1.0],
+        // Years, and the first two are both under `plan::AGE_PIVOT` on purpose:
+        // the age axis is the identity below its pivot, so two rows that have
+        // to come out bit-identical are the cheapest check that this
+        // instrument is reading the axis at all (#167).
+        "age" => [18.0, 30.0, 55.0, 70.0, 80.0],
         _ => [-1.0, -0.5, 0.0, 0.5, 1.0],
     };
     for value in values {
@@ -989,6 +1003,10 @@ fn walk(axis: &str) {
             },
             "mouth" => Axes {
                 mouth: Some(value),
+                ..Axes::default()
+            },
+            "age" => Axes {
+                age: Some(value as u32),
                 ..Axes::default()
             },
             other => {

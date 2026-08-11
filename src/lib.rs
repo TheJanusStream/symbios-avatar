@@ -268,7 +268,7 @@ pub fn build_body(
     }
     Ok(mesh)
 }
-pub use texture::{AtlasGeometry, SkinParams, bake_geometry, paint_skin};
+pub use texture::{AtlasGeometry, Condition, SkinParams, bake_geometry, paint_skin};
 pub use uv::{Chart, UvConfig, UvUnwrap, unwrap};
 
 /// The vector and rotation types every public signature here is written in.
