@@ -65,8 +65,10 @@
 //! then vertical, where ours spreads a slightly larger 63 mm over a fifty-
 //! millimetre ramp. A corner against a slope.
 
-use symbios_avatar::face::Skull;
-use symbios_avatar::{Archetype, Avatar, AvatarRecord, Zone};
+use symbios_avatar::face::{Canon, Dimorphism, Skull, carve_face};
+use symbios_avatar::{
+    Archetype, Avatar, AvatarConfig, AvatarRecord, PolyMesh, Rig, Zone, build_body,
+};
 
 /// The CC0 reference body's own column, measured with this same plane cut.
 ///
@@ -211,6 +213,8 @@ fn main() {
     );
     vault(mesh, chin);
 
+    shelf(&record, mesh, chin, avatar.rig.joints[head].position);
+
     let least = narrowest(mesh, chin);
     println!("our narrowest half-width: {least:.1} mm; the reference's: 66.7");
 
@@ -340,4 +344,281 @@ fn narrowest(mesh: &symbios_avatar::PolyMesh, chin: f32) -> f32 {
         depth / (least * 2.0)
     );
     least * 1000.0
+}
+
+/// How far the CC0 reference's crown stands over its own chin, in millimetres.
+///
+/// The top row of [`REFERENCE`] plus the ten it stops short of; `vault` prints
+/// the same quantity for our bodies. It is here so the shelf below can be read
+/// at the same ANATOMY on two heads of different size rather than at the same
+/// millimetre.
+const REFERENCE_FACE: f32 = 260.0;
+
+/// The reference's forward reach at any height below its chin, in millimetres,
+/// interpolated between the rows of [`REFERENCE`].
+fn reference_front(at: f32) -> f32 {
+    let rows = REFERENCE.windows(2).find(|pair| {
+        let (high, low) = (pair[0].0 as f32, pair[1].0 as f32);
+        at <= high && at >= low
+    });
+    let Some(pair) = rows else {
+        return REFERENCE.last().map_or(0.0, |row| row.3);
+    };
+    let (high, low) = (pair[0].0 as f32, pair[1].0 as f32);
+    let along = (high - at) / (high - low).max(f32::EPSILON);
+    pair[0].3 * (1.0 - along) + pair[1].3 * along
+}
+
+/// How far the MIDLINE reaches forward at a height, in millimetres, bisected
+/// against the surface.
+///
+/// **Beside [`front`] because a section's forward-most point is not always on
+/// the midline** — the jaw's flank beside the chin can stand ahead of the chin
+/// itself, which is the blade #128 measured and #134 reopened once by planing
+/// radially. The two rows agreeing says the run under the chin is the chin's;
+/// the two rows parting says the next question is about the flank and not about
+/// a profile. `REFERENCE` is a section maximum, so [`front`] is what may be held
+/// against it and this may not.
+fn midline(mesh: &PolyMesh, head: symbios_avatar::Vec3, height: f32) -> Option<f32> {
+    use symbios_avatar::Vec3;
+    let from = Vec3::new(head.x, height, head.z);
+    if !mesh.contains(from) {
+        return None;
+    }
+    let (mut inside, mut outside) = (0.0f32, 0.40f32);
+    for _ in 0..32 {
+        let middle = 0.5 * (inside + outside);
+        if mesh.contains(from + Vec3::Z * middle) {
+            inside = middle;
+        } else {
+            outside = middle;
+        }
+    }
+    Some((head.z + inside) * 1000.0)
+}
+
+/// The forward-most point of a plane cut at `height`, in millimetres, or `None`
+/// where the section is too thin to be a section.
+fn front(mesh: &PolyMesh, height: f32) -> Option<f32> {
+    let points: Vec<(f32, f32)> = cut(mesh, height)
+        .into_iter()
+        .filter(|(x, _)| x.abs() < REACH)
+        .collect();
+    (points.len() >= 3).then(|| points.iter().fold(f32::MIN, |z, p| z.max(p.1)) * 1000.0)
+}
+
+/// How far this body's crown stands over its own chin, in millimetres.
+///
+/// The same plane-cut scan `vault` runs, factored out because the shelf is read
+/// per face length and not per millimetre.
+fn face_length(mesh: &PolyMesh, chin: f32) -> f32 {
+    (0..=320)
+        .filter(|step| front(mesh, chin + *step as f32 / 1000.0).is_some())
+        .max()
+        .map_or(0.0, |step| step as f32)
+}
+
+/// The body this seed builds, optionally with `CHIN`'s push multiplied by
+/// something other than what the record's own axis derives.
+///
+/// **Both bodies go through this**, rather than one through here and one
+/// through [`Avatar::build`]: the shelf below is a difference of two numbers
+/// and it is only worth reading if exactly one thing differs between the
+/// surfaces they come off. `Dimorphism::chin` is the only multiplier on `CHIN`
+/// anywhere in the crate, and `FaceParams::on` reads `lips` rather than `chin`,
+/// so the params are the record's own on both.
+///
+/// The mouth cut, the eyes and everything attached are left off — they are
+/// after the carve and none of them is on the midline under the chin.
+fn built(record: &AvatarRecord, chin: Option<f32>) -> Option<(PolyMesh, Rig)> {
+    let skeleton = record.skeleton();
+    let mut dimorphism = Dimorphism::of(&record.composites);
+    let params = record.face.on(&dimorphism);
+    if let Some(chin) = chin {
+        dimorphism.chin = chin;
+    }
+    let config = AvatarConfig::default();
+    let mut body = build_body(&skeleton, &config.cage, config.subdivisions, &dimorphism).ok()?;
+    let rig = Rig::from_skeleton(&skeleton).ok()?;
+    if let Some(skull) = Skull::measure(&body, &rig) {
+        let canon = Canon::measure(&rig, &skull, &record.eyes);
+        carve_face(&mut body, &rig, &canon, &params);
+    }
+    Some((body, rig))
+}
+
+/// The run under the chin, ours against the reference's, and what `CHIN` owns
+/// of it.
+///
+/// # What this was built to settle
+///
+/// #94 spent a week on the drop over the first centimetre below the chin — the
+/// reference gives up 9.6 mm there and holds a shelf, ours gave up 16.1 — and
+/// closed its last session pointing at the CAGE, on the grounds that
+/// `examples/jawprobe`'s cage row is a constant 0.207–0.225 against a reference
+/// that is "well under that". **That comparison is not legal.** jawprobe's shelf
+/// is a share over a BONE-relative span and the reference's 0.165 is a share
+/// over chin-to-throat; quoting one against the other is the error jawprobe's
+/// own docstring exists to forbid. Nobody had measured the cage chin-relatively,
+/// because the cage has no chin to measure from.
+///
+/// So the surface below is the shipped one with `Dimorphism::chin` at ZERO, and
+/// the height it is read from is the shipped body's own measured chin. The span
+/// is located by a real landmark on a real body and the term under test is not
+/// in the surface. It is a decision rather than a computation and this is the
+/// least dishonest version of it.
+///
+/// # Two things it found, and both re-point the issue
+///
+/// **The cage is innocent.** With `CHIN` zeroed the surface gives up 0.0250,
+/// 0.0235, 0.0241 and 0.0272 of its own face length over the first centimetre
+/// on seeds 0, 3, 6 and 12, against the reference's 0.0369. It is not steeper
+/// than the reference under the jaw; it is barely two thirds as steep. And
+/// below −20 it sits on the reference's own throat line to within a few
+/// millimetres — 43.5 against 53.6, 41.2 against 44.0, 42.0 against 42.2 on
+/// seed 0. The swept-capsule surface is not what is left, and #96/#131 are not
+/// where this goes next.
+///
+/// **The first centimetre was never the defect either — the ruler was.** Read
+/// as REACH rather than as a drop, at the same share of each face, ours lands
+/// on the reference at −10 on every seed: 89.5, 89.3, 90.8 and 81.4 against
+/// 89.0. The drop reads large only because our chin starts a few millimetres
+/// prouder, and the absolute-millimetre version of it reads larger still
+/// because it takes ten millimetres off a 181 mm face and calls that the same
+/// question as ten off a 260 mm one. `column`'s standing caution — compare at
+/// equal stature or not at all — was never applied to this row.
+///
+/// What was left was ONE row, and it was the second centimetre: at −20 we stood
+/// 19.9, 18.7, 23.7 and 10.3 mm proud of the reference. The reference spends
+/// 35.4 mm of forward reach in that one centimetre and we spent 16. It had a
+/// cliff and we had a ramp.
+///
+/// # And the ramp was the submental CEILING, not `CHIN`'s tail
+///
+/// Which this instrument also settled, by running with `SKIP_SUBMENTAL` set:
+/// seed 0 reads 82.7 mm at −20 unclamped and 73.5 shipped, so the construction
+/// is removing 9.2 mm there and the surface is AGAINST its chord. Lowering
+/// `CHIN` underneath a ceiling it is already touching moves nothing, which is
+/// why the same tail knot moved seed 0's −20 row by 2.7 mm and seed 12's by
+/// 22.9. `face::skull::SUBMENTAL_SPEND` gives that chord the reference's own shape, and
+/// the row now reads +9.5, +6.9, +3.0 and −5.8.
+///
+/// # The calibration, said out loud
+///
+/// Our zero is a measured crest and the reference's is its `head` joint, which
+/// #126 puts at the chin. The reference's own front reach falls monotonically
+/// from the nose to that row, so its chin cannot be ABOVE it — and every
+/// recalibration downward makes the −20 excess larger rather than smaller. The
+/// finding is robust to the one thing about this comparison that is not
+/// measured.
+fn shelf(record: &AvatarRecord, shipped: &PolyMesh, chin: f32, avatar_head: symbios_avatar::Vec3) {
+    let Some((ours, _)) = built(record, None) else {
+        return;
+    };
+    let Some((bare, _)) = built(record, Some(0.0)) else {
+        return;
+    };
+    let face = face_length(shipped, chin);
+    if face <= 0.0 {
+        return;
+    }
+    // Heights are the reference's own millimetres scaled onto this face, so two
+    // heads are cut at the same anatomy rather than at the same millimetre.
+    let at = |depth: f32| chin + depth * face / REFERENCE_FACE / 1000.0;
+
+    println!("\nthe run under the chin, at this face's own share of each height");
+    println!(
+        "  {face:.0} mm chin to crown against the reference's {REFERENCE_FACE:.0}, so ten of \
+         its millimetres are {:.1} of ours",
+        10.0 * face / REFERENCE_FACE
+    );
+    println!(
+        "\n{:>22}{:>8}{:>8}{:>8}{:>8}{:>8}",
+        "forward reach, mm", "0", "-10", "-20", "-30", "-40"
+    );
+    let depths = [0.0f32, -10.0, -20.0, -30.0, -40.0];
+    let mut mine = [None; 5];
+    for (name, mesh) in [("ours", &ours), ("ours, CHIN zeroed", &bare)] {
+        print!("{name:>22}");
+        for (slot, depth) in depths.iter().enumerate() {
+            let reach = front(mesh, at(*depth));
+            match reach {
+                Some(z) => print!("{z:>8.1}"),
+                None => print!("{:>8}", "-"),
+            }
+            if name == "ours" {
+                mine[slot] = reach;
+            }
+        }
+        println!();
+    }
+    print!("{:>22}", "ours, midline only");
+    for depth in depths {
+        match midline(&ours, avatar_head, at(depth)) {
+            Some(z) => print!("{z:>8.1}"),
+            None => print!("{:>8}", "-"),
+        }
+    }
+    println!();
+    print!("{:>22}", "the reference");
+    for depth in depths {
+        print!("{:>8.1}", reference_front(depth));
+    }
+    println!();
+    print!("{:>22}", "ours, proud by");
+    for (slot, depth) in depths.iter().enumerate() {
+        match mine[slot] {
+            Some(z) => print!("{:>+8.1}", z - reference_front(*depth)),
+            None => print!("{:>8}", "-"),
+        }
+    }
+    println!();
+
+    // And the drop over the first centimetre, which is the figure #94 has been
+    // quoting all week — kept so the two rulers can be read against each other,
+    // and so the absolute column can be seen to be the one that misleads.
+    println!(
+        "\n{:>22}  {:>17}  {:>17}",
+        "drop over the first cm", "10 mm", "the same share"
+    );
+    println!(
+        "{:>22}  {:>8}{:>9}  {:>8}{:>9}",
+        "", "mm", "/face", "mm", "/face"
+    );
+    let mut spent = Vec::new();
+    for (name, mesh) in [("ours", &ours), ("ours, CHIN zeroed", &bare)] {
+        let (Some(crest), Some(ten), Some(share)) = (
+            front(mesh, chin),
+            front(mesh, chin - 0.010),
+            front(mesh, at(-10.0)),
+        ) else {
+            println!("{name:>22}: no section under the chin");
+            continue;
+        };
+        spent.push((crest - share) / face);
+        println!(
+            "{name:>22}  {:>8.1}{:>9.4}  {:>8.1}{:>9.4}",
+            crest - ten,
+            (crest - ten) / face,
+            crest - share,
+            (crest - share) / face
+        );
+    }
+    let theirs = 98.6 - reference_front(-10.0);
+    println!(
+        "{:>22}  {:>8.1}{:>9.4}  {:>8.1}{:>9.4}",
+        "the reference",
+        theirs,
+        theirs / REFERENCE_FACE,
+        theirs,
+        theirs / REFERENCE_FACE
+    );
+    if let (Some(ours), Some(bare)) = (spent.first(), spent.get(1)) {
+        println!(
+            "  everything but `CHIN` spends {bare:.4} of the face here and `CHIN` adds \
+             {:+.4}, against the reference's {:.4}",
+            ours - bare,
+            theirs / REFERENCE_FACE
+        );
+    }
 }

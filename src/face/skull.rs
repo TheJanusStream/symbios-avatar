@@ -435,8 +435,21 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// So the tail gains a knot that holds the crest's own value for the first 0.045
 /// of profile height and then falls harder than before — `(-0.575, 0.250)` and
 /// `(-0.63, 0.020)` for the single `(-0.60, 0.065)` — which takes the
-/// first-centimetre drop to 16.1, 16.1, 14.2 and 19.8. What is left is the CAGE
-/// rather than this table; see [`BUTTON`], whose attribution rows separate them.
+/// first-centimetre drop to 16.1, 16.1, 14.2 and 19.8.
+///
+/// **AND THEN NEITHER THIS TABLE NOR THE CAGE WAS WHAT WAS LEFT** (#94). The
+/// sentence that stood here said the remainder belonged to the cage, on
+/// `examples/jawprobe`'s cage row against the reference's 0.165 — a share over a
+/// bone-relative span quoted against a share over chin-to-throat, which is the
+/// comparison that file's docstring exists to forbid. Measured chin-relatively
+/// instead, on the shipped body with `Dimorphism::chin` at zero, the cage spends
+/// 0.0250 of the face over that centimetre against the reference's 0.0369: it is
+/// two thirds as steep, not steeper. And the first centimetre was not the defect
+/// either — read as REACH rather than as a drop, at each face's own share of
+/// each height, ours lands on the reference at −10 on every seed. The
+/// millimetre figures above compare ten millimetres of a 181 mm face with ten of
+/// a 260 mm one. What was left was the second centimetre, and it belonged to the
+/// straight chord in [`SUBMENTAL_SPEND`].
 ///
 /// **The peak does not move, deliberately.** #133 is the crest of this sum
 /// changing identity between bodies when the peak is touched, and a knot below
@@ -1240,6 +1253,77 @@ const BUTTON: f32 = 0.070;
 /// See [`BUTTON`].
 const BUTTON_RUN: f32 = 0.22;
 
+/// How much of the crest-to-throat drop the submental ceiling has spent, at
+/// each share of the run from the crest down to [`JUNCTION`].
+///
+/// **The chord this replaces was STRAIGHT, and a straight chord is not what a
+/// jaw does** (#94). `construct_submental` planed the underside onto the line
+/// joining each column's crest to its throat; life falls off a cliff and then
+/// runs flat. Measured against the CC0 reference with `examples/column`, at each
+/// face's own share of each height, ours stood 19.9, 18.7, 23.7 and 10.3 mm
+/// PROUD of it two centimetres under the chin on seeds 0, 3, 6 and 12 — and
+/// within a few millimetres of it at every other height on the run. One row,
+/// and it is the row a straight line puts in the wrong place.
+///
+/// # Why this and not [`CHIN`]'s tail, which is where #94 went twice
+///
+/// Because on half the population the tail cannot reach it. With
+/// `SKIP_SUBMENTAL` set, seed 0 reads 82.7 mm at −20 and the shipped body reads
+/// 73.5: the ceiling is removing 9.2 mm there, so the surface is AGAINST it and
+/// lowering `CHIN` underneath only reduces what gets planed off. Swept, moving
+/// the tail knot from −0.63 to −0.60 moved seed 0's −20 row by 2.7 mm and seed
+/// 12's by 22.9 — the same knot, an order of magnitude apart, because seed 12's
+/// surface is clear of the ceiling and seed 0's is not. A ceiling binds on
+/// whichever bodies are against it and lowering it moves all of them.
+///
+/// # What it is shaped from
+///
+/// The reference's own run, on the ruler `examples/column` reads it with: 0.16
+/// of its chin-to-throat drop spent a sixth of the way down, 0.76 a third of
+/// the way, 0.92 by half. The knots below are that shape re-fitted against
+/// measurement rather than transcribed, because this run is the crest to
+/// `JUNCTION` and the reference's is its chin to its throat, and a share over
+/// one span is not a share over the other — the mistake this issue's own
+/// write-up made once already.
+///
+/// Measured after, ours proud of the reference at 0, −10, −20, −30 and −40:
+///
+/// ```text
+///   seed  0   +3.7  +2.5   +9.5  +1.0  +0.8      was  +3.7  +0.5  +19.9  +5.7
+///   seed  3   +1.4  +1.5   +6.9  -7.0  -7.4      was  +1.1  +0.3  +18.7  +5.2
+///   seed  6   +5.0  +4.2   +3.0  +4.8  +5.2      was  +5.0  +1.8  +23.7  +5.0
+///   seed 12   -4.9  -5.5   -5.8  -6.0  -4.2      was  -4.9  -7.6  +10.3  -6.0
+/// ```
+///
+/// and `tests/parts::the_jaw_gives_up_its_reach_where_the_reference_does`, which
+/// is the guard for this, went from 0.578–0.751 of the drop spent two fifths of
+/// the way down to 0.791–0.905 against the reference's 0.823.
+///
+/// # The top third is deliberately left straight, and seed 9 is why
+///
+/// The first cut of this curve started falling at 0.15 of the run and AMPUTATED
+/// a chin: seed 9's went from 73.3 mm of forward reach to 52.7, `Skull::chin`
+/// migrated 15 mm up the head, and the whole submental run inverted — its reach
+/// increased downward. That is #134's crest-anchored failure returning, and the
+/// body it returns on is the one whose head the column has all but swallowed,
+/// where this run is only a few millimetres long and a fifth of it is under one.
+/// So `spend` is the identity down to 0.30 — the surface above that is exactly
+/// what shipped before — and the cliff lives entirely below it, where a chin's
+/// dome does not reach. [`BUTTON`]'s allowance is unchanged and still fades out
+/// by 0.22, which is inside the straight part.
+///
+/// Provenance: **shape derived from the reference, knots tuned by sweep against
+/// it and by render** (#94).
+#[rustfmt::skip]
+const SUBMENTAL_SPEND: [(f32, f32); 6] = [
+    (1.00, 1.00),
+    (0.60, 0.95),
+    (0.45, 0.85),
+    (0.35, 0.45),
+    (0.30, 0.30),
+    (0.00, 0.00),
+];
+
 fn construct_submental(mesh: &mut PolyMesh, owned: &[bool], centre: Vec3, radius: f32, floor: f32) {
     let stretch = (floor * SETTLE) / JUNCTION;
     if !stretch.is_finite() || stretch <= 0.0 {
@@ -1350,7 +1434,8 @@ fn construct_submental(mesh: &mut PolyMesh, owned: &[bool], centre: Vec3, radius
         // allowance is what lets one construction keep seed 21's soft dome and
         // plane off seed 0's bulge — the two differ by magnitude, not height.
         let allowed = BUTTON * radius * smooth((BUTTON_RUN - t) / BUTTON_RUN);
-        let ceiling = crest * (1.0 - t) + throat * t + allowed;
+        let spent = knot(&SUBMENTAL_SPEND, t);
+        let ceiling = crest * (1.0 - spent) + throat * spent + allowed;
         let excess = local.z - ceiling;
         if excess <= 0.0 {
             continue;
@@ -3040,14 +3125,35 @@ mod tests {
                 let height = lo + (hi - lo) * (0.08 + 0.82 * step as f32 / 12.0);
                 let from = centre + Vec3::Y * height;
 
-                // **The lowest sample gets its own ceiling, and only it.**
-                // Step 0 sits at 0.08 of the span, BELOW the chin at 0.13 — it
-                // is in the throat band, where the head's surface is running
-                // into the neck's and where `the_profile_agrees_over_its_whole_span`
-                // already records and tolerates 13.3 mm. Measured across all six
-                // seeds, every midline error over 7 mm is at step 0 and the
-                // worst is 9.7; the band above it is unaffected, which is why
-                // this is a second ceiling rather than a wider one (#93).
+                // **The band under the chin gets its own bounds, and the
+                // discriminator is the CHIN rather than the step index** (#94).
+                // It was `step == 0` for six issues, on the reading that step 0
+                // sits at 0.08 of the span and the chin at 0.13. That is true of
+                // the SPAN and not of any particular body: measured over these
+                // six seeds, step 0 lands between 15.3 and 64.8 mm below the
+                // chin and step 1 lands anywhere from 0.2 mm ABOVE it (seed 0)
+                // to 38.8 below (seed 1). So the loose bound was being handed
+                // out by index to whichever anatomy happened to fall under it.
+                //
+                // Split by the landmark instead, the population separates
+                // cleanly: over these six seeds every midline error outside
+                // ±3.1 mm is at a height BELOW the chin, and every height above
+                // it reads within 0.1 mm of the surface except the crown cap,
+                // which is +6.8 at worst. Under the chin the head's surface is
+                // running into the neck's — where
+                // `the_profile_agrees_over_its_whole_span` already records and
+                // tolerates 13.3 mm — and since #94 it is also running over a
+                // constructed cliff, which a band MAXIMUM describes badly by
+                // construction: `SUBMENTAL_SPEND` drops the surface 35 mm in one
+                // centimetre and a band spanning that reports its top.
+                //
+                // **So the floor above the chin goes back to −6.0, where it was
+                // before #94's last session moved it** (#94). That re-base was
+                // attributed to the span sliding at "a height in the MOUTH";
+                // the height was −0.259 in head-local METRES and seed 2's chin
+                // is at −0.257, so it was 2.1 mm UNDER the chin and inside the
+                // submental construction's own reach. Below the chin, −7.0
+                // against a measured −6.8 and 13.0 against a measured 12.1.
                 //
                 // It was raised from 9.0 to take #93's shorter neck, which drops
                 // the whole head about 18 mm and so lands its lowest band where
@@ -3103,11 +3209,18 @@ mod tests {
                 // `CHIN`'s tail can reach — went to −6.1 mm on that alone. The
                 // same mechanism as the re-bases below, one tenth of a
                 // millimetre's worth of it.
-                let ceiling = if step == 0 { 13.0 } else { 9.0 };
+                // Judged by render at seeds 0, 3, 6 and 12, bare and close:
+                // the jaw's underside runs cleaner into the throat on 6 and
+                // nothing else in the face moved.
+                let (floor, ceiling) = if height < skull.chin() {
+                    (-7.0, 13.0)
+                } else {
+                    (-6.0, 9.0)
+                };
                 if let Some(surface) = probe(&mesh, from, Vec3::Z) {
                     let error = (skull.depth(height) - surface) * 1000.0;
                     assert!(
-                        (-6.5..ceiling).contains(&error),
+                        (floor..ceiling).contains(&error),
                         "seed {seed} at {height:.3}: the midline depth is {error:.1} mm out"
                     );
                 }

@@ -829,6 +829,35 @@ fn the_underside_of_the_jaw_does_not_bulge() {
     // of our column 40 mm under the chin goes 36.1 mm to 41.9 against its 42.2.
     // What it worsens is the band just under the jaw, which is #74 and #128's
     // rate finding rather than this one.
+    //
+    // **0.045 → 0.050, and this bound is no longer the one to drive** (#94).
+    // `face::skull`'s submental ceiling is shaped now rather than straight — see
+    // `SUBMENTAL_SPEND` — and A SHELF NECESSARILY STANDS PROUD OF A CHORD THAT CUTS THE
+    // CORNER UNDER IT. That is what a jaw is: the reference holds its forward
+    // reach for a centimetre and then gives up 35 mm in the next one, and no
+    // straight line through the two ends of that describes it.
+    //
+    // Measured over the sixteen, before and after, worst deviation as a share of
+    // the chord:
+    //
+    // ```text
+    //   seed      0     3     5     6     8    10    11    12    14    15
+    //   before  .000  .009  .000  .000  .000  .042  .002  .000  .043  .004
+    //   after   .011  .013  .014  .004  .002  .049  .012  .002  .048  .018
+    // ```
+    //
+    // The two that set the bound did not move to a new place — seed 10's worst
+    // is at −115.1 mm before and after and seed 14's at −113.5 — they are the
+    // same feature half a millimetre prouder on an 87 mm chord. Rendered bare
+    // and close at both: no lump, and the jaw line reads crisper than it did.
+    //
+    // What this test still catches is a lump, which is what it was built for and
+    // what #94's original report was. What it CANNOT catch is the shape of the
+    // run — it is a maximum over signed deviations initialised at `0.0`, so it
+    // reports bulges and is blind to hollows, shelves and ramps. That is
+    // `the_jaw_gives_up_its_reach_where_the_reference_does` below, and the
+    // sentence at the top of this comment — that tightening this IS the fix — has
+    // not been true since #134 constructed the underside.
     for seed in 0..SEEDS {
         let mut record = AvatarRecord::new("Jaw", Archetype::default());
         record.reroll(seed);
@@ -881,7 +910,7 @@ fn the_underside_of_the_jaw_does_not_bulge() {
         }
         let chord = (chin_y - throat_y).hypot(chin_z - throat_z) * 1000.0;
         assert!(
-            chord > f32::EPSILON && worst / chord < 0.045,
+            chord > f32::EPSILON && worst / chord < 0.050,
             "seed {seed}: the underside of the jaw stands {worst:.1} mm forward of the \
              chord from the chin to the throat, at {worst_at:.1} mm — {:.3} of a chord \
              {chord:.1} mm long. A jawline should be straight to hollow, so the target \
@@ -889,4 +918,163 @@ fn the_underside_of_the_jaw_does_not_bulge() {
             worst / chord
         );
     }
+}
+
+/// The reference gives up its forward reach in a step and we have to as well.
+///
+/// **This is the direction `the_underside_of_the_jaw_does_not_bulge` cannot
+/// see** (#94). That guard's `worst` is a maximum over signed deviations
+/// initialised at `0.0`, so it reports bulges and is structurally incapable of
+/// failing on a hollow, on a shelf, or on a ramp — it was green for a week over
+/// a body that was 25 mm scooped, and it will pass every wrong answer this
+/// issue can produce. The bound below fails in the direction the body is
+/// actually wrong.
+///
+/// # What it measures, and why on this span
+///
+/// The forward reach down the midline from the measured chin to the measured
+/// throat, as the SHARE of the whole chin-to-throat drop that has been spent by
+/// a fifth and by two fifths of the way down. Both ends are `Skull`'s own
+/// landmarks, so the span is head-sized on every body and the two figures are
+/// stature-free — which the millimetre rulers this issue has been quoting are
+/// not. Ten millimetres is 3.8% of the reference's face and 5.5% of seed 12's,
+/// and #94 spent a week reading those two as the same question.
+///
+/// # Where the numbers come from
+///
+/// `examples/column`'s reference table, on this same ruler. Its chin sits at 0
+/// and its forward reach stops falling at −60, so the span is 60 mm and the
+/// drop 59.3: 98.6 → 81.9 at a fifth of the way down and → 49.8 at two fifths.
+/// **0.282 spent by a fifth, 0.823 by two fifths** — a shelf and then a cliff.
+///
+/// Ours when this test was written: 0.191–0.294 by a fifth, which sits at or
+/// under the reference, and 0.578–0.751 by two fifths, which did not reach it on
+/// any body. We held the shelf and then RAMPED where the reference steps —
+/// measured chin-relatively in `examples/column`, 10 to 24 mm proud of the
+/// reference two centimetres under the chin and within a few millimetres of it
+/// everywhere else.
+///
+/// **And ours today, with `face::skull`'s submental ceiling given the
+/// reference's own shape**: 0.154–0.343 by a fifth and **0.791–0.905 by two
+/// fifths**, which straddles the reference on both. See `SUBMENTAL_SPEND` for what moved
+/// and for why `CHIN`'s tail could not do it — on half these bodies the surface
+/// is already against the ceiling, so lowering the profile under it changes
+/// nothing.
+///
+/// **Both bounds are the state and the targets are the reference's.** The floor
+/// is a hair under the worst of the sixteen; the ceiling is what stops the cliff
+/// being bought by wrecking the shelf, because the two failure modes are
+/// opposite and one bound cannot hold both. The first cut of `SUBMENTAL_SPEND` bought
+/// exactly that trade — 0.82 by two fifths and 0.40–0.51 by a fifth — and this
+/// is the assertion that caught it.
+///
+/// # Seed 9, which is not a jaw
+///
+/// It reads 0.746 and 1.000 — the whole excursion spent in the top two fifths —
+/// and it is the body the bulge guard's own history calls the low-set skull.
+/// `examples/column` says what it actually is: 101 mm from chin to crown against
+/// 181–233 on every other seed here, a narrowest half-width of 9.8 mm, and a
+/// neck node whose surface delivers 0.075 of its own sideways reach. The column
+/// has all but swallowed the head, so the run this measures is a few
+/// millimetres long and a fifth of it is under one. That is a head-emergence
+/// defect and it belongs with #129/#131, not here.
+///
+/// So the ceiling is asserted over the POPULATION rather than per body: **at
+/// most one of sixteen** may spend more than 0.360 by a fifth. A per-body
+/// ceiling loose enough to admit seed 9 would be 0.76 and would sleep through a
+/// regression that took every other body from 0.23 to 0.50; a count catches
+/// that and still names the one body the ruler cannot describe. #94 has been
+/// caught twice by a four-seed sample missing the tail of a population, which
+/// is why the whole sixteen are listed in every failure.
+#[test]
+fn the_jaw_gives_up_its_reach_where_the_reference_does() {
+    let mut population = Vec::new();
+    for seed in 0..SEEDS {
+        let mut record = AvatarRecord::new("Jaw", Archetype::default());
+        record.reroll(seed);
+        let avatar = Avatar::build_with(&record, &geometry_only()).expect("the body builds");
+        let body = &avatar.parts.body;
+        let Some(head) = avatar.rig.in_zone(Zone::Head).first().copied() else {
+            continue;
+        };
+        let at = avatar.rig.joints[head].position;
+        let Some(skull) = Skull::measure(body, &avatar.rig) else {
+            continue;
+        };
+
+        // Bisected against the surface, never binned, for the reason
+        // `examples/headaudit` opens with.
+        let reach = |y: f32| -> Option<f32> {
+            if !body.contains(Vec3::new(at.x, y, at.z)) {
+                return None;
+            }
+            let (mut inside, mut outside) = (at.z, at.z + 0.40);
+            for _ in 0..32 {
+                let mid = 0.5 * (inside + outside);
+                if body.contains(Vec3::new(at.x, y, mid)) {
+                    inside = mid;
+                } else {
+                    outside = mid;
+                }
+            }
+            Some(inside)
+        };
+
+        let chin_y = at.y + skull.chin();
+        let throat_y = at.y + skull.throat_and_crown().0;
+        let (Some(chin_z), Some(throat_z)) = (reach(chin_y), reach(throat_y)) else {
+            continue;
+        };
+        // Normalised by the deepest the reach gets ANYWHERE on the span rather
+        // than by the throat's own. On the reference the two are the same
+        // number — its reach falls monotonically to the throat — but seed 9's
+        // does not: its surface dips and comes forward again below, so the
+        // throat's reach is not the run's minimum, and the endpoint version read
+        // 1.547 and 2.074, shares of a drop smaller than the excursion that
+        // produced them. A share of the whole excursion cannot exceed one and
+        // needs no landmark to locate it.
+        let along = |share: f32| reach(chin_y + (throat_y - chin_y) * share);
+        let deepest = (0..=20)
+            .filter_map(|step| along(step as f32 / 20.0))
+            .fold(throat_z, f32::min);
+        let drop = chin_z - deepest;
+        if drop <= f32::EPSILON {
+            continue;
+        }
+        let (Some(fifth), Some(twice)) = (along(0.20), along(0.40)) else {
+            continue;
+        };
+        population.push((seed, (chin_z - fifth) / drop, (chin_z - twice) / drop));
+    }
+
+    assert!(!population.is_empty(), "no seed built a jaw to measure");
+    let report = || {
+        population
+            .iter()
+            .map(|(seed, fifth, twice)| format!("{seed}: {fifth:.3}/{twice:.3}"))
+            .collect::<Vec<_>>()
+            .join("  ")
+    };
+    for (seed, _, twice) in &population {
+        assert!(
+            *twice > 0.780,
+            "seed {seed}: only {twice:.3} of the chin-to-throat drop has been spent two \
+             fifths of the way down, against the reference's 0.823. The reference falls \
+             off a cliff there and this jaw is still ramping. All sixteen, spent by a \
+             fifth and by two fifths: {}",
+            report()
+        );
+    }
+    let abrupt = population
+        .iter()
+        .filter(|(_, fifth, _)| *fifth > 0.360)
+        .count();
+    assert!(
+        abrupt <= 1,
+        "{abrupt} bodies spend more than 0.360 of the chin-to-throat drop in the first \
+         fifth of it, against the reference's 0.282 — the shelf under the chin has been \
+         traded away for the cliff below it. One is seed 9, whose head the column has \
+         swallowed; a second is a regression. All sixteen: {}",
+        report()
+    );
 }
