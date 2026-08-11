@@ -329,6 +329,28 @@ impl Rig {
             .map(|(index, _)| index)
     }
 
+    /// The joints the body's surface is actually made OF, in hierarchy order.
+    ///
+    /// [`Self::deforming`] less the markers. **The two are different questions
+    /// and [`Role`] answers only one of them** (#136): a marker is a joint the
+    /// surface BINDS to and is not made of — the mandible's pivot and tip hold
+    /// skin so that skin follows a jaw when it opens, but the cage never meshed
+    /// them and there is no surface under them to measure. Binding wants
+    /// `deforming`; anything asking what lies beneath a point wants this.
+    ///
+    /// `Role` cannot carry that distinction as it stands, because `Deform` is
+    /// both the only role that binds and the role a surface query trusts. #136
+    /// records the open question of whether it should have been a role rather
+    /// than a bit; the bit is what the skeleton already carries, so the bit is
+    /// what this reads.
+    pub fn surfaced(&self) -> impl Iterator<Item = usize> + '_ {
+        self.joints
+            .iter()
+            .enumerate()
+            .filter(|(_, joint)| joint.role.deforms() && !joint.marker)
+            .map(|(index, _)| index)
+    }
+
     /// How many joints the rig has.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -371,15 +393,32 @@ impl Rig {
     /// joint with no geometry behind it has no answer to give. A face rig would
     /// otherwise put a dozen bones inside the skull and win every one of those
     /// queries.
+    ///
+    /// **That paragraph was a statement of intent for six weeks and is a
+    /// filter now** (#136). The condition it describes arrived the moment
+    /// #134's jaw markers did: a marker has to be [`Role::Deform`] or the skin
+    /// could not be bound to it, so this loop saw it, and the mandible runs
+    /// diagonally through the middle of the skull where it is nearer to most of
+    /// the face than any bone the head is actually made of. Measured on the
+    /// shipped body, the two markers won **6,425 of 8,965 body vertices** —
+    /// essentially the whole head, since `refine_face` puts most of the mesh
+    /// there.
+    ///
+    /// Nothing that reads only the hit's ZONE could see it, which is why it
+    /// went unnoticed: a marker's zone is `Head`, and so is the head's.
+    /// [`crate::texture::paint_skin`] and [`Surface::measure`] read more than
+    /// the zone — the first takes `radius` as a thinness and the second credits
+    /// `distance` to `joint` — so those two were quietly being answered by a
+    /// bone with no surface of its own.
     #[must_use]
     pub fn nearest_bone(&self, point: Vec3) -> BoneHit {
         let mut best = BoneHit {
-            joint: self.deforming().next().unwrap_or(0),
+            joint: self.surfaced().next().unwrap_or(0),
             distance: f32::INFINITY,
             radius: 1.0,
             closest: point,
         };
-        for joint in self.deforming() {
+        for joint in self.surfaced() {
             let (start, end) = self.bone(joint);
             let (start_radius, end_radius) = self.bone_radii(joint);
             let axis = end - start;
@@ -614,6 +653,43 @@ mod tests {
         }
         assert_eq!(rig.joints[0].parent, None, "exactly one root, first");
         assert_eq!(rig.joints.iter().filter(|j| j.parent.is_none()).count(), 1);
+    }
+
+    #[test]
+    fn no_marker_bone_answers_a_surface_query() {
+        // The contract `nearest_bone`'s own docstring states, held as a test
+        // for the first time (#136). It was true by luck until #134 added the
+        // jaw's markers, and then false for six weeks over 6,425 of 8,965 body
+        // vertices — with nothing to notice, because the two callers that read
+        // more than the hit's zone assert nothing. Every joint the face rig
+        // adds inside the skull (#118: brows, lids, mouth corners) is another
+        // chance to break it the same way, which is why the guard goes in now
+        // rather than after.
+        //
+        // Sampled at the CAGE's nodes rather than at a built mesh's vertices:
+        // this module knows nothing about meshing, and the failure is a bone
+        // winning points near the skull, which the cage's own head nodes sit
+        // among.
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        assert!(
+            rig.joints.iter().any(|joint| joint.marker),
+            "this body has no markers, so the test would pass vacuously"
+        );
+        for node in &skeleton.nodes {
+            for offset in [
+                Vec3::ZERO,
+                Vec3::new(node.radius, 0.0, 0.0),
+                Vec3::new(0.0, 0.0, node.radius),
+            ] {
+                let hit = rig.nearest_bone(node.position + offset);
+                assert!(
+                    !rig.joints[hit.joint].marker,
+                    "a marker bone answered for a point at {:?}: it has no surface to answer with",
+                    node.position + offset
+                );
+            }
+        }
     }
 
     #[test]

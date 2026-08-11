@@ -296,9 +296,21 @@ fn visible_neck() {
     println!("           that floor to the neck joint, the neck joint to the");
     println!("           girdle's crown, and the crown down to the shoulder line");
 
-    for seed in GUARDED {
+    // **The default body leads the table, and its absence was a hole** (#6).
+    // Every other instrument in this crate reads the shipped body first; this
+    // one read only the guard's five rolled seeds, so the body the project
+    // judges most often had no row in the one table that says how long a neck
+    // reads. It was found by the #6 re-judgement asking the question and having
+    // to answer it with a rolled seed.
+    for seed in std::iter::once(None).chain(GUARDED.map(Some)) {
         let mut record = AvatarRecord::new("Necked", Archetype::default());
-        record.reroll(seed);
+        let seed = match seed {
+            Some(seed) => {
+                record.reroll(seed);
+                seed.to_string()
+            }
+            None => "def".to_string(),
+        };
         let avatar = Avatar::build(&record).expect("a biped builds");
         let (mesh, rig) = (&avatar.parts.body, &avatar.rig);
         let Some(skull) = Skull::measure(mesh, rig) else {

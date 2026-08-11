@@ -11,7 +11,7 @@
 
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
-use symbios_avatar::face::Skull;
+use symbios_avatar::face::{HeadTraits, Skull};
 use symbios_avatar::plan::{AGE_RANGE, DEFAULT_AGE, DEFAULT_BODY_FAT};
 use symbios_avatar::{
     Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, Composites, HumanoidParams,
@@ -879,11 +879,18 @@ fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
             record.composites.sanitize();
             record.sanitize();
             let skeleton = record.skeleton();
+            // **The head's own read of the composites, not the neutral one**
+            // (#179). This test sets `femininity` two lines up and then built a
+            // head that had never heard of it: `HeadTraits` is what carries the
+            // frame axis and age into the carve, and `Default::default()` is
+            // the head the crate built before either existed. So the ruler was
+            // measuring a body no shipped path produces — the cage carrying the
+            // composites under a face that does not.
             let body = build_body(
                 &skeleton,
                 &CageConfig::default(),
                 BODY_SUBDIVISIONS,
-                &Default::default(),
+                &HeadTraits::of(&record.composites),
             )
             .expect("the body meshes");
             let rig = Rig::from_skeleton(&skeleton).expect("the body rigs");
@@ -975,15 +982,55 @@ fn the_neck_is_the_length_of_a_neck() {
     // joint sits about 95 mm lower, under the trapezius, so reading the span off
     // the rig predicts 190 mm where the surface gives 103 — an 85% error, and
     // the reason a body checked against canon repeatedly still had this in it.
-    for seed in [0i64, 3, 7, 13, 21] {
+    // **The seeds are found rather than written down** (#179). This walked a
+    // fixed five, and generation 3 turned three of them wild — the composites
+    // carry the exploration draw now, so a fixed list is a list that goes on
+    // meaning something different at every bump and leaves the ratchet judging
+    // whatever it happens to catch. Rolling a record is free and only building
+    // one is not, so the band is tested on the record and the first
+    // `CLASSIC_BODIES` that pass it are what gets built. Any generation gets
+    // the same-sized classic sample without anybody re-picking seeds.
+    const CLASSIC_BODIES: usize = 6;
+    let mut built = 0;
+    let mut skipped = Vec::new();
+    for seed in 0i64.. {
+        if built >= CLASSIC_BODIES {
+            break;
+        }
         let mut record = AvatarRecord::new("Neck", Archetype::default());
         record.reroll(seed);
+        let Archetype::Humanoid(params) = &record.archetype else {
+            panic!("archetype changed")
+        };
+        // **The classic band, read off the record before anything is built,
+        // and it reads the COMPOSITES as well as the offsets** (#179). The
+        // three per-region axes were the axes that shaped a body when this
+        // filter was written. They stopped being it in #100, which put the
+        // frame axis into `girdle_r`, `neck_r` and the neck's own clearance
+        // floor, and #169 finished the job by making the composites the place
+        // the extremes live and shrinking the offsets to a third of their old
+        // width. A band that read only the offsets called a body classic
+        // because its `neck_length` was +0.01 while its `mass` was −2.48, and
+        // those bodies are what dragged this bound from 0.44 to 0.655 over six
+        // re-bases against a canon of 0.33 that never moved.
+        let classic = params.neck_length.abs() <= 1.0
+            && params.head_size.abs() <= 1.0
+            && params.shoulder_width.abs() <= 1.0
+            && record.composites.femininity.abs() <= 1.0
+            && record.composites.mass.abs() <= 1.0;
+        if !classic {
+            skipped.push(seed);
+            continue;
+        }
+        built += 1;
         let skeleton = record.skeleton();
+        // The head this record actually builds — see the note at the width
+        // ruler above, which had the same defect (#179).
         let body = build_body(
             &skeleton,
             &CageConfig::default(),
             BODY_SUBDIVISIONS,
-            &Default::default(),
+            &HeadTraits::of(&record.composites),
         )
         .expect("the body meshes");
         let rig = Rig::from_skeleton(&skeleton).expect("the body rigs");
@@ -1092,17 +1139,6 @@ fn the_neck_is_the_length_of_a_neck() {
         // and a `neck_length` of +2 is MEANT to read as an unusually long
         // neck — the wild band only refuses a neck longer than the head that
         // tops it, which is where unusual ends and detached begins.
-        let Archetype::Humanoid(params) = &record.archetype else {
-            panic!("archetype changed")
-        };
-        // Classic means every axis the RULER reads is inside ±1: the neck and
-        // head own the span's top, and the shoulder line at its bottom is
-        // where the flare is, which `shoulder_width` and `build` place. Under
-        // generator 2 that thins this sweep's classic sample; the default
-        // body and any classic roll still hold the ratchet.
-        let classic = params.neck_length.abs() <= 1.0
-            && params.head_size.abs() <= 1.0
-            && params.shoulder_width.abs() <= 1.0;
         // **0.535 to 0.66, and this time the NECK moved** (#164). Measured over
         // the first twenty-four seeds, the six classic bodies now read 0.462,
         // 0.480, 0.503, 0.564, 0.623 and 0.637 where the bound was 0.535, and
@@ -1153,26 +1189,44 @@ fn the_neck_is_the_length_of_a_neck() {
         // the default body reads as it did — so this is a re-base onto the
         // new population, same instrument, same slack, still the state and
         // still not the 0.33 target.
-        // **0.645 to 0.655, and it is the POPULATION that moved again** (#169).
-        // Generation 3 draws the per-region axes at a third of their old sigma,
-        // so all five of these seeds are inside the classic band now where
-        // three of them used to be, and the five read 0.413, 0.445, 0.555,
-        // 0.566 and 0.650 — the worst of them 0.005 over the old bound. No
-        // geometry changed in that generation: the default body's fingerprint
-        // is bit-identical across the bump, which is the check that this is a
-        // different crowd rather than a different neck. Re-based onto the state
-        // with the same few thousandths of slack every re-base above carries.
+        // **0.655 DOWN to 0.525, and it is the first time this bound has ever
+        // come down** (#179). Two corrections did it, and both are the ruler
+        // rather than the neck. The band now reads the composites, so the wild
+        // bodies that were dragging it — `mass` −2.48, `femininity` −2.28 —
+        // are outside it where they always belonged; and the sample is the
+        // first six classic bodies rather than five fixed seeds, so it is a
+        // population again instead of whatever the last bump left behind.
         //
-        // **THE TREND IS WORTH SOMEBODY'S ATTENTION AND THIS COMMENT IS THE
-        // ONLY PLACE IT IS VISIBLE.** Read the re-bases in order — 0.44, 0.475,
-        // 0.535, 0.66, 0.645, 0.655 — against a target of 0.33 that has not
-        // moved. Every one of them was justified on its own terms and three of
-        // them were the instrument or the population rather than the body, but
-        // the ratchet only ratchets one way and it is now twice its target. The
-        // breakdown above says why no coefficient in the neck reaches it: most
-        // of this span is head-owned surface below the chin. Closing it is a
-        // cage question and it does not have an issue.
-        let bound = if classic { 0.655 } else { 1.0 };
+        // Those six are seeds 4, 5, 6, 11, 12 and 13, and they read 0.4147,
+        // 0.4175, 0.4182, 0.4383, 0.4448 and 0.5191. The bound is the worst of
+        // them plus the few thousandths of slack every re-base carries.
+        //
+        // **The trend this comment used to warn about was mostly the band.**
+        // Read the re-bases in order — 0.44, 0.475, 0.535, 0.66, 0.645, 0.655 —
+        // against a canon of 0.33 that never moved; #169 added the last of
+        // those and was wrong to, loosening a bound because a wild body had
+        // walked into a filter that could not see it. Three of the earlier ones
+        // were the instrument or the population rather than the body. What is
+        // left after the correction is a classic population at 0.41 to 0.52
+        // against a canon of 0.33 — a real shortfall, and a much smaller one
+        // than 0.655 suggested.
+        //
+        // **`examples/neckaudit` reads the same bodies about 2.5% lower** —
+        // seed 21 at 0.552 against this ruler's 0.566 — and the difference is
+        // the FACE. It builds through `Avatar::build`, which carves features
+        // and relief into the head; this builds through `build_body`, which
+        // stops after the skull shaping. `Skull::chin` is a crest on the
+        // midline profile and the carve moves it, which is #133. Neither
+        // number is wrong; they are two bodies, and the one with a face is the
+        // one anybody looks at.
+        //
+        // The breakdown in `examples/neckaudit` says why no coefficient in the
+        // neck reaches the canon: most of this span is head-owned surface below
+        // the chin, and on the two wild bodies it is the neck JOINT floating up
+        // to 60 mm above the girdle's crown, which is the clearance floor
+        // scaling with a girdle their composites shrank. Closing either is a
+        // cage question.
+        let bound = 0.525;
         let ratio = (chin - y) / (crown - chin);
         assert!(
             ratio < bound,
