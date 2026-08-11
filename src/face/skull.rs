@@ -1743,132 +1743,22 @@ pub(crate) fn mandible_hold(below: f32, facing: f32, side: f32) -> f32 {
     risen * fade * round
 }
 
-/// The slope of the straight line between two neighbouring knots.
-fn secant(profile: &[(f32, f32)], segment: usize) -> f32 {
-    let (upper, above) = profile[segment];
-    let (lower, below) = profile[segment + 1];
-    (below - above) / (lower - upper)
-}
-
-/// The tangent to take at a knot: the average of the slopes either side, held
-/// inside the range that keeps the curve monotone.
-///
-/// **Limited here, at the knot, and not inside [`knot`] per segment.** The
-/// textbook Fritsch–Carlson presentation rescales a segment's two tangents
-/// together, which means a tangent shared by two segments can be pulled back by
-/// one of them and left alone by the other — and then the curve arrives at that
-/// knot with two different slopes. That is a corner, reintroduced by the very
-/// step meant to tame the curve. [`DEPTH`]'s knot at 0.55 had exactly it: the
-/// segment above finished at −0.537 and the one below started at −0.514,
-/// leaving a 0.023 break that survived halving the sample step.
-///
-/// Limiting each tangent once, against BOTH its neighbours, gives one slope per
-/// knot — so the result is C1 by construction — and holding it to three times
-/// the shorter adjacent secant is the classical sufficient condition for the
-/// cubic to stay monotone across both segments.
-///
-/// **Zero wherever the profile turns around.** At a knot where it stops falling
-/// and starts rising, any non-zero tangent carries the curve past the knot's own
-/// value before it comes back. [`BREADTH`] turns at its chin knot — the secants
-/// either side are +1.0 and −3.4 — and averaging them dipped the profile 0.0007
-/// below the 0.66 it is authored to reach.
-fn tangent(profile: &[(f32, f32)], at: usize) -> f32 {
-    if profile.len() < 2 {
-        return 0.0;
-    }
-    match at {
-        0 => secant(profile, 0),
-        at if at + 1 == profile.len() => secant(profile, at - 1),
-        at => {
-            let (before, after) = (secant(profile, at - 1), secant(profile, at));
-            if before * after <= 0.0 {
-                return 0.0;
-            }
-            let average = 0.5 * (before + after);
-            let room = 3.0 * before.abs().min(after.abs());
-            average.signum() * average.abs().min(room)
-        }
-    }
-}
-
 /// Reads a profile, which is given from the crown downward.
 ///
-/// **Monotone cubic Hermite (Fritsch–Carlson), and both halves of that name are
-/// load-bearing.**
+/// **The interpolant lives in [`super::curve`] now and this is the skull's name
+/// for it** (#82). It was Fritsch–Carlson here and piecewise-linear in
+/// [`super::relief`], whose own note explained that the two readers were kept
+/// apart because they run in opposite directions. When the relief's ramps needed
+/// the same C1 treatment these profiles got in #83, that argument stopped
+/// paying: a lerp is cheap to keep twice and a monotone limiter is not. One
+/// reader, direction taken from the knots.
 ///
-/// *Cubic*, because this was piecewise linear and a piecewise-linear profile has
-/// a slope that jumps at every knot. The union of the six profiles' knot heights
-/// is 27 values over a 212 mm span — a tangent discontinuity every 7.9 mm — and
-/// [`BREADTH`] and [`DEPTH`] carry no azimuthal window, so each of theirs runs
-/// the whole way round the head. That is the signature the owner reported as a
-/// terraced lower face, and it is visible as full-width horizontal bands in the
-/// renderer's normal pass (#83).
-///
-/// **Finer sampling makes a C0 break worse, not better**, which is why three
-/// refinement passes made the face look worse: a slope jump spread across a
-/// 24 mm quad is hidden by Gouraud interpolation, and the same jump resolved at
-/// 3.6 mm is a ledge. Refining onto the limit surface was tried first and
-/// measured: it moves the head 0.059 mm and changes the banding not at all
-/// (#75). The interpolant was always the cause.
-///
-/// *Monotone*, because an ordinary interpolating spline overshoots, and there is
-/// one segment here where overshoot is a shipped defect rather than a wobble:
-/// [`CHIN`]'s tail into [`JUNCTION`] — `(-0.62, 0.26)` when this landed, a
-/// steeper `(-0.60, 0.065)` since #150 — where a natural or
-/// Catmull-Rom spline dips **below zero**, which stands the head's
-/// lowest band behind the throat it has to meet — the #47 seam, returning.
-/// Fritsch–Carlson's limiter forbids that by construction: where a segment is
-/// monotone the interpolant is monotone, so no profile can leave the interval
-/// its own knots span.
-///
-/// The knot values are unchanged from the linear version. Changing the values
-/// and the interpolant in one step would make it impossible to say which of
-/// them moved a silhouette, which is the same discipline
-/// [`crate::mesh::PolyMesh::refine`] keeps for shape and resolution.
+/// Everything about WHY it is monotone and cubic — the 7.9 mm terracing this
+/// replaced, and [`CHIN`]'s tail into [`JUNCTION`], where an ordinary spline
+/// dips below zero and stands the head's lowest band behind its own throat — is
+/// written at [`super::curve::monotone`], with the profiles named.
 fn knot(profile: &[(f32, f32)], height: f32) -> f32 {
-    let Some(&(top, first)) = profile.first() else {
-        return 0.0;
-    };
-    if height >= top || profile.len() < 2 {
-        return first;
-    }
-    let Some(&(bottom, last)) = profile.last() else {
-        return first;
-    };
-    if height <= bottom {
-        return last;
-    }
-
-    // The segment this height falls in. Heights descend down the profile.
-    let segment = (0..profile.len() - 1)
-        .find(|&at| height >= profile[at + 1].0)
-        .unwrap_or(profile.len() - 2);
-    let (upper, above) = profile[segment];
-    let (lower, below) = profile[segment + 1];
-
-    let run = lower - upper;
-    if run.abs() <= f32::EPSILON {
-        return above;
-    }
-    let slope = (below - above) / run;
-    let (mut start, mut end) = (tangent(profile, segment), tangent(profile, segment + 1));
-
-    // A flat segment must stay flat: a cubic through two equal values bulges
-    // between them unless both its tangents are zero. Everything else is
-    // already held in range by `tangent`, which limits each knot ONCE so that
-    // both segments meeting there agree — see its documentation for why doing
-    // it per segment leaves a corner behind.
-    if slope.abs() <= f32::EPSILON {
-        start = 0.0;
-        end = 0.0;
-    }
-
-    let along = (height - upper) / run;
-    let (square, cube) = (along * along, along * along * along);
-    (2.0 * cube - 3.0 * square + 1.0) * above
-        + (cube - 2.0 * square + along) * run * start
-        + (-2.0 * cube + 3.0 * square) * below
-        + (cube - square) * run * end
+    super::curve::monotone(profile, height)
 }
 
 #[cfg(test)]

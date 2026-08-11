@@ -11,6 +11,7 @@
 
 pub mod blink;
 pub mod canon;
+mod curve;
 pub mod eye;
 pub mod features;
 pub mod mouth;

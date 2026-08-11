@@ -424,16 +424,7 @@ impl Face {
         }
         // The arch, which is what stops two brows reading as one bar: highest
         // just outside the pupil and falling at both ends, the outer end lower.
-        let arch = ramp(
-            &[
-                (-1.15, 0.62),
-                (-0.40, 0.94),
-                (0.15, 1.00),
-                (0.70, 0.84),
-                (1.15, 0.52),
-            ],
-            side,
-        );
+        let arch = ramp(&BROW_ARCH, side);
 
         // Up the face through the ridge: the socket below, the crest, and back
         // to the forehead above.
@@ -557,17 +548,7 @@ impl Face {
         // Down the midline: nothing at the brow, deepening through the bridge,
         // fullest just above the base, and gone under it. Both ends are zero so
         // the nose begins and ends rather than stepping.
-        let height = ramp(
-            &[
-                (0.00, 0.00),
-                (0.22, 0.34),
-                (0.55, 0.62),
-                (0.80, 1.00),
-                (0.92, 0.86),
-                (1.00, 0.00),
-            ],
-            along,
-        );
+        let height = ramp(&NOSE_RISE, along);
         // Across: a narrow bridge opening into the wings, about one eye-width
         // at the nostrils, per the canon of fifths.
         //
@@ -587,23 +568,10 @@ impl Face {
         // to is written down.
         let wings = NOSE_WIDTH_NEUTRAL + NOSE_WIDTH_SPAN * (self.params.nose_width - 0.5) * 2.0;
         let broad = 1.0 + (wings - 1.0) * (0.5 + 0.5 * along);
-        let half = broad
-            * unit
-            * ramp(
-                &[
-                    (0.00, 0.2227),
-                    (0.35, 0.1930),
-                    (0.75, 0.2969),
-                    (0.92, 0.3860),
-                ],
-                along,
-            );
+        let half = broad * unit * ramp(&NOSE_SPREAD, along);
 
         let across = local.x.abs() / half;
-        // A rounded ridge rather than a blade. Squared and subtracted gives a
-        // parabola whose sides fall away too fast to read as a nose from the
-        // front; the exponent puts the shoulder back on it.
-        let section = (1.0 - across * across).max(0.0).powf(0.65);
+        let section = nose_section(across);
 
         // The crease where a wing meets the cheek. Narrow, negative, and only
         // down at the wings, which is the whole of what makes a nostril read as
@@ -628,40 +596,144 @@ impl Face {
     }
 }
 
-/// Reads a piecewise-linear curve given from low to high.
+/// Where the nose's section stops being a power and becomes a quadratic.
 ///
-/// The mirror of [`super::skull`]'s profile reader, which runs the other way
-/// because a skull is described from its crown down and a feature from its own
-/// top down. Kept separate rather than shared and flipped: two readers that
-/// disagree about which end they start from is exactly the kind of thing that
-/// looks correct in both files.
+/// See [`nose_section`]. Far enough out that the shoulder the exponent exists to
+/// draw is entirely inside it, close enough in that the patch has room to turn.
+const NOSE_FLANK: f32 = 0.88;
+
+/// The nose's cross-section, one at the ridge and zero at the flank.
+///
+/// A rounded ridge rather than a blade: squared and subtracted gives a parabola
+/// whose sides fall away too fast to read as a nose from the front, and the
+/// 0.65 exponent puts the shoulder back on it.
+///
+/// **And that exponent was the worst thing in the whole relief field** (#82).
+/// `(1 − a²)^0.65` has an INFINITE derivative where it reaches zero, because
+/// 0.65 is under one — so the flank meets the cheek at a cusp.
+/// `the_relief_field_has_no_cliffs_in_it` has been reporting it by name since it
+/// was written: that test halves its sample step and reads the ratio, a cliff
+/// gives 1.00 and a smooth feature 0.50, and this gave **0.623 — which is
+/// 2^−0.68**, the exponent's own signature. It is continuous, so it is not a
+/// step; it aliases, because no sampling can resolve an infinite slope.
+///
+/// **Patched rather than replaced, and the arithmetic is why.** The obvious
+/// fixes are all shape changes: `1 − a³` has a finite edge slope but runs 13% of
+/// the nose's reach thinner at the wings, about 2.4 mm, and a plain parabola is
+/// the blade the shoulder exists to prevent. So the power is kept out to
+/// [`NOSE_FLANK`] and the last twelfth is the unique quadratic that matches its
+/// value and its slope there and still reaches zero at the flank. Measured, that
+/// leaves the section identical to 0.88 and at most 0.02 of reach — 0.36 mm —
+/// thinner beyond it, with a finite slope of −4.4 where it was infinite.
+fn nose_section(across: f32) -> f32 {
+    let across = across.min(1.0);
+    if across <= NOSE_FLANK {
+        return (1.0 - across * across).max(0.0).powf(0.65);
+    }
+    // Value and slope of the power at the flank, and the quadratic through them
+    // that still lands on zero at `across == 1`. Three constraints on three
+    // coefficients, so there is nothing to choose here.
+    let inside = 1.0 - NOSE_FLANK * NOSE_FLANK;
+    let value = inside.powf(0.65);
+    let slope = -1.3 * NOSE_FLANK * inside.powf(-0.35);
+    let tail = 1.0 - NOSE_FLANK;
+    let bend = -(value + slope * tail) / (tail * tail);
+    let along = across - NOSE_FLANK;
+    (value + slope * along + bend * along * along).max(0.0)
+}
+
+/// How high the brow's crest rides across the face, as a share of its own rise.
+///
+/// Highest just outside the pupil and falling at both ends with the outer end
+/// lower, which is what stops two brows reading as one bar. `side` is zero over
+/// the pupil and ±1.15 at the gate.
+///
+/// Provenance: **tuned by render** (#59), and the heights are shares so the axis
+/// scales them.
+const BROW_ARCH: [(f32, f32); 5] = [
+    (-1.15, 0.62),
+    (-0.40, 0.94),
+    (0.15, 1.00),
+    (0.70, 0.84),
+    (1.15, 0.52),
+];
+
+/// How far the nose stands off the face, down its own length.
+///
+/// `along` is zero at the root and one under the base. It rises to the tip at
+/// 0.80 and falls away under it — the only curve in this file that turns
+/// around, which is why [`super::curve::monotone`]'s zero-tangent rule at an
+/// extremum is load-bearing here and nowhere else.
+///
+/// **The two knots below the tip are 5.9 and 3.9 mm apart on the default face**
+/// (#82), against 1.6 mm cells at the nose base. Piecewise-linear that is a
+/// slope break every two to four cells while the value swings 1.00 → 0.86 →
+/// 0.00, which is the same arithmetic that made the skull terrace at a break
+/// every 7.9 mm (#83).
+///
+/// Provenance: **tuned by render**.
+const NOSE_RISE: [(f32, f32); 6] = [
+    (0.00, 0.00),
+    (0.22, 0.34),
+    (0.55, 0.62),
+    (0.80, 1.00),
+    (0.92, 0.86),
+    (1.00, 0.00),
+];
+
+/// How wide the nose is, down its own length, in proportion units.
+///
+/// A narrow bridge opening into the wings, about one eye-width at the nostrils,
+/// per the canon of fifths. Pinched at 0.35 — the nasal root is narrower than
+/// the glabella above it — and widest at the alae.
+///
+/// Provenance: **tuned by render**, against the canon of fifths.
+const NOSE_SPREAD: [(f32, f32); 4] = [
+    (0.00, 0.2227),
+    (0.35, 0.1930),
+    (0.75, 0.2969),
+    (0.92, 0.3860),
+];
+
+/// Reads a curve given from low to high.
+///
+/// The face's own name for [`super::curve::monotone`], which [`super::skull`]
+/// calls `knot` and gives its profiles to from the crown down.
+///
+/// **This was piecewise-linear until #82, and the note that kept it that way was
+/// half right.** It read: *the mirror of the skull's profile reader, which runs
+/// the other way — kept separate rather than shared and flipped, because two
+/// readers that disagree about which end they start from is exactly the kind of
+/// thing that looks correct in both files.* The worry was sound and the cure
+/// was the wrong one. A lerp is cheap to keep twice; a Fritsch–Carlson limiter
+/// is not, and #83 gave one to the skull and left this reader with a slope that
+/// jumps at every knot. So there is one reader now and it takes its direction
+/// from the knots rather than from which file is calling.
+///
+/// The knot values did not change. See [`NOSE_RISE`] for the segment that made
+/// this worth doing and [`super::curve::monotone`] for why monotone.
 fn ramp(curve: &[(f32, f32)], at: f32) -> f32 {
-    let Some(&(first, low)) = curve.first() else {
-        return 0.0;
-    };
-    if at <= first {
-        return low;
-    }
-    for pair in curve.windows(2) {
-        let ((before, under), (after, over)) = (pair[0], pair[1]);
-        if at <= after {
-            let along = (at - before) / (after - before).max(f32::EPSILON);
-            return under + (over - under) * along;
-        }
-    }
-    curve.last().map_or(0.0, |&(_, high)| high)
+    super::curve::monotone(curve, at)
 }
 
 /// A smooth bump, one at `centre` and falling away over `width`.
 ///
-/// **Why the profiles here are not all piecewise-linear like the skull's.**
-/// [`ramp`] has a slope that jumps at every knot. That is invisible where a span
-/// holds several cells and unmissable where it holds one, and a mouth is the
-/// second case: both lips, the line between them and the crease below span about
-/// 25 mm on a surface with 3.4 mm cells, so the knots land roughly a cell apart
-/// and each slope change lands on its own row of quads. The mouth came out as a
-/// stack of horizontal bars. Re-authoring the knots did not help and could not
-/// have — a Gaussian has no knots to alias.
+/// **Why the mouth is drawn with these and not with knots.** [`ramp`] used to
+/// have a slope that jumps at every knot. That is invisible where a span holds
+/// several cells and unmissable where it holds one, and the mouth was the second
+/// case: both lips, the line between them and the crease below span about 25 mm,
+/// so the knots landed roughly a cell apart and each slope change landed on its
+/// own row of quads. The mouth came out as a stack of horizontal bars.
+/// Re-authoring the knots did not help and could not have — a Gaussian has no
+/// knots to alias.
+///
+/// **The cell figure that argument rested on was 3.4 mm and it is 0.82 now**
+/// (#82). Measured as the median edge length over the faces whose centroids sit
+/// within a lip's span of the mouth line: 0.82 mm at the mouth and 1.62 at the
+/// nose base, after #85 refined the mouth band, #107 added a subdivision and
+/// #158 split with `refine_curved`. The conclusion stands — a Gaussian is still
+/// the right shape for a lip — but nothing in this file may any longer argue
+/// that a millimetre is too small to show. It is four cells wide.
 fn bump(at: f32, centre: f32, width: f32) -> f32 {
     let along = (at - centre) / width.max(f32::EPSILON);
     (-along * along).exp()
@@ -703,6 +775,93 @@ mod tests {
         (plain, carved, rig, centre)
     }
 
+    /// Every ramp in this file, for the checks that must hold of all of them.
+    const RAMPS: [(&str, &[(f32, f32)]); 3] = [
+        ("BROW_ARCH", &BROW_ARCH),
+        ("NOSE_RISE", &NOSE_RISE),
+        ("NOSE_SPREAD", &NOSE_SPREAD),
+    ];
+
+    /// A ramp may not leave the range its own knots span.
+    ///
+    /// The interval property [`super::super::curve::monotone`]'s limiter exists
+    /// to guarantee, asked of the relief's curves the way `skull`'s
+    /// `a_profile_reads_between_its_knots` asks it of the head's (#82). These had
+    /// no such test because a lerp cannot overshoot and needed none; a cubic can,
+    /// and [`NOSE_RISE`] turns around at its tip, which is the one shape in this
+    /// file where an ordinary spline would.
+    #[test]
+    fn a_ramp_reads_between_its_knots() {
+        for (name, ramp_curve) in RAMPS {
+            let end = ramp_curve.len() - 1;
+            assert_eq!(
+                ramp(ramp_curve, ramp_curve[0].0 - 1.0),
+                ramp_curve[0].1,
+                "{name}"
+            );
+            assert_eq!(
+                ramp(ramp_curve, ramp_curve[end].0 + 1.0),
+                ramp_curve[end].1,
+                "{name}"
+            );
+            for step in 0..=2000 {
+                let at =
+                    ramp_curve[0].0 + (ramp_curve[end].0 - ramp_curve[0].0) * step as f32 / 2000.0;
+                let value = ramp(ramp_curve, at);
+                let segment = (0..end)
+                    .find(|&index| at <= ramp_curve[index + 1].0)
+                    .unwrap_or(end - 1);
+                let (low, high) = (
+                    ramp_curve[segment].1.min(ramp_curve[segment + 1].1),
+                    ramp_curve[segment].1.max(ramp_curve[segment + 1].1),
+                );
+                assert!(
+                    value >= low - 1e-4 && value <= high + 1e-4,
+                    "{name} at {at:.4} reads {value:.4}, outside the {low:.4}..{high:.4} \
+                     its own knots span"
+                );
+            }
+        }
+    }
+
+    /// A ramp has no corners in it.
+    ///
+    /// **Asked by halving the step, not by a threshold**, for the reason
+    /// `skull`'s `a_profile_has_no_corners_in_it` gives: a threshold cannot tell
+    /// a corner from a tight curve, but a genuine tangent discontinuity gives
+    /// the same slope jump however finely it is sampled while smooth curvature
+    /// gives a jump proportional to the step. So the discriminator is the RATIO.
+    ///
+    /// Measured with the piecewise-linear reader this replaced, the ratio is
+    /// 1.00 on all three — the corner does not care about the step. With the
+    /// monotone cubic the worst is 0.51.
+    #[test]
+    fn a_ramp_has_no_corners_in_it() {
+        for (name, ramp_curve) in RAMPS {
+            let end = ramp_curve.len() - 1;
+            let (lo, hi) = (ramp_curve[0].0, ramp_curve[end].0);
+            let worst = |step: f32| {
+                let mut jump = 0.0f32;
+                let mut at = lo + step;
+                while at + step <= hi {
+                    let slope =
+                        |from: f32| (ramp(ramp_curve, from + step) - ramp(ramp_curve, from)) / step;
+                    jump = jump.max((slope(at) - slope(at - step)).abs());
+                    at += step;
+                }
+                jump
+            };
+            let span = hi - lo;
+            let (coarse, fine) = (worst(span / 2000.0), worst(span / 4000.0));
+            assert!(
+                coarse > f32::EPSILON && fine / coarse < 0.75,
+                "{name}'s worst slope jump is {coarse:.5} sampled coarsely and {fine:.5} \
+                 twice as finely — a ratio of {:.2}, and a corner gives 1.00",
+                fine / coarse
+            );
+        }
+    }
+
     #[test]
     fn the_relief_field_has_no_cliffs_in_it() {
         // One assertion for every gated term in the file, present and future,
@@ -733,13 +892,20 @@ mod tests {
         //
         // The measured ratios say exactly what the field is made of. A gate
         // gives 1.00 — both gates did, before this issue. A smooth feature
-        // gives 0.50. What is left here gives **0.65 at the nose's flank**, and
-        // that figure is not arbitrary: it is 2^-0.65, the signature of the
+        // gives 0.50. What was left here gave **0.623 at the nose's flank**, and
+        // that figure was not arbitrary: 2^-0.68, the signature of the
         // `powf(0.65)` shoulder that rounds the nose's section. So the worst
-        // remaining thing in the field is a cusp with an infinite derivative
+        // remaining thing in the field was a cusp with an infinite derivative
         // rather than a step — continuous, and it is where a nose wing meets a
-        // cheek, which on a face is a crease. It will still alias against a
-        // 3.6 mm cell, and that half of the problem is #82's, not this one's.
+        // cheek, which on a face is a crease.
+        //
+        // **0.75 → 0.55, and the field is all smooth features now** (#82). The
+        // cusp is patched — see [`nose_section`] — and this reads **0.500**, the
+        // textbook value, with its worst jump moved off the nose's flank
+        // entirely: (-13.7, -31.4) mm to (-0.2, -40.8), and 0.795 mm to 0.591.
+        // The bound is the state plus a tenth, and it is a real ratchet rather
+        // than a formality: at 0.55 a single new gate, or one more exponent
+        // under one, cannot be added to this file without failing here.
         let unit = canon.unit;
         let (top, bottom) = (face.level + unit * 1.2, canon.chin() - unit * 0.4);
         let worst_jump = |step: f32| {
@@ -762,7 +928,7 @@ mod tests {
         let coarse = worst_jump(0.0002).0;
         let (fine, at) = worst_jump(0.0001);
         assert!(
-            coarse > f32::EPSILON && fine / coarse < 0.75,
+            coarse > f32::EPSILON && fine / coarse < 0.55,
             "the relief field's worst step is {:.3} mm sampled coarsely and {:.3} mm \
              sampled twice as finely, at ({:.1}, {:.1}) mm — a ratio of {:.2}. A steep \
              slope halves; a cliff does not care.",
