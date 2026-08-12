@@ -301,7 +301,10 @@ UV charting, procedural skin, and motion (pose, IK, foot placement,
 inertialization, gait, goal-space clips, gaze) are in place and tested.
 
 Eyes and hair, outfits, and glTF/VRM export are still ahead — see
-[`docs/plan.md`](docs/plan.md).
+[`docs/plan.md`](docs/plan.md). [`docs/budget.md`](docs/budget.md) is the
+triangle economy and how to measure a proposal against it;
+[`docs/instruments.md`](docs/instruments.md) is the measurement fleet and the
+rules for trusting an instrument.
 
 ## Licence
 
