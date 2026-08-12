@@ -125,7 +125,7 @@ pub(super) fn loft(
         }
         .normalize_or(root.out);
         let squared = named - tangent * named.dot(tangent);
-        let side = squared.normalize_or(
+        let mut side = squared.normalize_or(
             root.out
                 .cross(tangent)
                 .normalize_or(tangent.cross(Vec3::Y).normalize_or(Vec3::X)),
@@ -133,7 +133,26 @@ pub(super) fn loft(
         let half = shape.width_at(root, *along).max(0.0);
         // The card's own face, which is what catches the light: perpendicular to
         // both the spine and the width.
-        let out = side.cross(tangent).normalize_or(root.out);
+        let mut out = side.cross(tangent).normalize_or(root.out);
+        // **And turned to face the way the skin does, here rather than in the
+        // style** (#206). [`Shape::across`] names an AXIS — which way the width
+        // lies — and an axis has two directions; which of them a style happens
+        // to write decides which way the card's face ends up pointing, and every
+        // one of the three catalogues that overrides it wrote the one that
+        // points INTO the head. Measured on a built body: 100% of the scalp's
+        // cards, 100% of the brows' and 100% of the moustache's, lit from behind
+        // on a two-sided rasteriser, which is why hair that should have been
+        // brown rendered as black slabs and why a brow read as a dark dash
+        // however it was tuned.
+        //
+        // A style cannot reasonably be asked to get this right — it is a
+        // cross-product's handedness, not a fact about hair — so it is not asked.
+        // The width axis is flipped with the face so the quad's winding still
+        // agrees with its normal.
+        if out.dot(root.out) < 0.0 {
+            out = -out;
+            side = -side;
+        }
         // The gradient, by travel rather than by height: hair that falls and then
         // curls back up is still older at its tip, and a colour taken from height
         // would run backwards over the curl. And by how far along the curve a

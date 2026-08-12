@@ -91,17 +91,77 @@ const UNDER_NOSE: f32 = 0.05;
 /// Provenance: **tuned by render** (#199).
 const FRONT: f32 = 0.45;
 
+/// The patch of lip a moustache grows on, as one object.
+///
+/// **Handed out to the styles rather than kept inside the mask** (#206,
+/// following #205's [`Ridge`](super::brows::Ridge)). A moustache's whole shape
+/// is these four numbers: how far down it may reach is the vermilion, how far up
+/// is the nostrils, how far out is the half-width, and the band between them is
+/// what a hair runs along. If the style carried its own copy of any of them the
+/// grown moustache could sit somewhere the painted one does not, and the one
+/// boundary that cannot be got wrong — the mouth — would have two opinions
+/// about where it is.
+///
+/// It is also what makes the clearance a CONSTRUCTION rather than a check. A
+/// clump knows the floor its own root stands above, so it can give up a share of
+/// that room and never reach it; see `moustache::Whisker` in the style
+/// catalogue.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lip {
+    /// The vermilion's top edge, in head-local metres: the floor.
+    ///
+    /// Hair grows on skin and stops at it. Below this is lip, and a hair drawn
+    /// past it is a hair in somebody's mouth — which is also where the mouth's
+    /// own parting is cut, a little lower still and curving lower toward the
+    /// corners, so anything above this line clears the cut on every head.
+    pub vermilion: f32,
+    /// The nostril line, likewise: the ceiling.
+    pub nostrils: f32,
+    /// Half the patch's width, likewise.
+    ///
+    /// Wider than the mouth on every head the record can ask for: this is
+    /// `unit` × 0.95 at neutral against the mouth's own half of at most
+    /// `unit` × 0.9205, which is what makes "past the corners" a thing a style
+    /// can say by reaching past this.
+    pub half: f32,
+    /// The edge's width, likewise.
+    pub fade: f32,
+}
+
+impl Lip {
+    /// How deep the band is, from the vermilion to the nostrils.
+    ///
+    /// Floored for the reason [`Ridge::span`](super::brows::Ridge::span) is: a
+    /// record may put the two edges together and every caller divides by this.
+    #[must_use]
+    pub fn span(&self) -> f32 {
+        (self.nostrils - self.vermilion).max(super::MINIMUM_SPAN)
+    }
+
+    /// The height a share of the way up the band, `0` at the vermilion and `1`
+    /// at the nostrils.
+    #[must_use]
+    pub fn height(&self, up: f32) -> f32 {
+        self.vermilion + self.span() * up
+    }
+
+    /// How far out along the lip a point sits: `0` on the midline, `1` at the
+    /// outer edge, and more past it.
+    ///
+    /// Takes a signed offset and answers for whichever side it belongs to, the
+    /// two being mirror images — the same convention [`Ridge::along`](super::brows::Ridge::along) keeps, and
+    /// for the same reason: every caller has the signed number to hand.
+    #[must_use]
+    pub fn along(&self, across: f32) -> f32 {
+        across.abs() / self.half.max(super::MINIMUM_SPAN)
+    }
+}
+
 /// The upper lip, cut from one head's landmarks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Moustache {
-    /// The vermilion's top edge, in head-local metres.
-    lo: f32,
-    /// The nostril line, likewise.
-    hi: f32,
-    /// Half the patch's width, likewise.
-    half: f32,
-    /// The edge's width, likewise.
-    fade: f32,
+    /// The patch, which the styles grow on and this masks.
+    lip: Lip,
 }
 
 impl Moustache {
@@ -114,20 +174,28 @@ impl Moustache {
         let vermilion = mouth + (nose - mouth) * (VERMILION - params.drop * DROP_RANGE);
         let nostrils = nose - (nose - mouth) * UNDER_NOSE;
         Self {
-            lo: vermilion,
-            // Ordered for the same reason the brow's ends are: the two edges
-            // move on different axes and a record may cross them.
-            hi: nostrils.max(vermilion + canon.frame * 0.02),
-            half: canon.unit * (HALF + params.width * WIDTH_RANGE),
-            fade: FADE * canon.frame,
+            lip: Lip {
+                vermilion,
+                // Ordered for the same reason the brow's ends are: the two edges
+                // move on different axes and a record may cross them.
+                nostrils: nostrils.max(vermilion + canon.frame * 0.02),
+                half: canon.unit * (HALF + params.width * WIDTH_RANGE),
+                fade: FADE * canon.frame,
+            },
         }
+    }
+
+    /// The patch this mask is cut around.
+    #[must_use]
+    pub(super) fn lip(&self) -> Lip {
+        self.lip
     }
 }
 
 impl Region for Moustache {
     fn weight(&self, at: &At) -> f32 {
-        band(at.height, self.lo, self.hi, self.fade)
-            * crate::face::smooth((self.half - at.across.abs()) / self.fade)
+        band(at.height, self.lip.vermilion, self.lip.nostrils, self.lip.fade)
+            * crate::face::smooth((self.lip.half - at.across.abs()) / self.lip.fade)
             * crate::face::smooth((at.forward - FRONT) / 0.30)
     }
 }

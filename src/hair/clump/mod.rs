@@ -474,6 +474,66 @@ mod tests {
     }
 
     #[test]
+    fn every_card_faces_out_of_the_skin_it_grew_on() {
+        // **A card lit from behind is a black card, and three of the five
+        // regions were** (#206). [`Shape::across`] names an AXIS, and an axis
+        // has two directions; the one a style happens to write decides which way
+        // the card's face points, and the scalp, the brows and the moustache
+        // each wrote the one that points into the head. Measured before it was
+        // fixed: 100% of every one of those three regions' vertices, on a
+        // two-sided rasteriser that drew them anyway — which is why hair the
+        // record said was brown rendered as black slabs, and why a brow read as
+        // a dark dash however it was tuned.
+        //
+        // Asserted per REGION rather than over the whole head, because the
+        // failure is per style and an average over five regions hides three of
+        // them. And per clump against its own root's normal rather than against
+        // any outward proxy, so a lock hanging past the head — where "outward"
+        // means nothing — is still measured against the skin it grew from.
+        let grounds = bed(0);
+        let mut record = AvatarRecord::new("Facing", Archetype::default());
+        record.hair.moustache.style = crate::hair::MoustacheStyle::Chevron;
+        record.hair.chin.style = crate::hair::ChinStyle::Full;
+        record.hair.flanks.style = crate::hair::FlankStyle::Full;
+        for follicle in Follicle::ALL {
+            let Some(sown) = record.hair.sowing(follicle, &grounds.follicles) else {
+                panic!("{} grew nothing to face anywhere", follicle.name());
+            };
+            let roots = scatter::scatter(
+                &grounds.body,
+                &grounds.rig,
+                &grounds.follicles,
+                follicle,
+                sown.clumps,
+                &mut stream(),
+            );
+            let (mut total, mut away, mut vertices) = (0.0f32, 0usize, 0usize);
+            for root in &roots {
+                let mut one = PolyMesh::new();
+                if loft::loft(&mut one, root, sown.shape.as_ref(), Vec3::ONE, Vec3::ONE) == 0 {
+                    continue;
+                }
+                for normal in &one.normals {
+                    let facing = normal.dot(root.out);
+                    total += facing;
+                    away += usize::from(facing < 0.0);
+                    vertices += 1;
+                }
+            }
+            assert!(vertices > 0, "{} lofted no cards at all", follicle.name());
+            let mean = total / vertices as f32;
+            let share = away as f32 / vertices as f32;
+            assert!(
+                mean > 0.0 && share < 0.05,
+                "{}'s cards face {mean:+.2} against the skin they grew on, {:.0}% of them turned \
+                 away from it",
+                follicle.name(),
+                share * 100.0
+            );
+        }
+    }
+
+    #[test]
     fn density_follows_the_mask_rather_than_the_mesh() {
         // `refine_face` splits the front of the face ten times and leaves the
         // vault at base subdivision. Scattering per vertex — the obvious way —

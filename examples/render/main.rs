@@ -34,6 +34,7 @@
 //! cargo run --release --example render -- --close brows # or any follicle region
 //! cargo run --release --example render -- --brow thick  # or natural, none
 //! cargo run --release --example render -- --scalp bob 0.8 # crop, bob, long, tied, curly
+//! cargo run --release --example render -- --moustache handlebar 0.9 # chevron, handlebar, pencil
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
@@ -223,6 +224,32 @@ fn main() {
             }
         }
     });
+    // Which moustache style to wear, and the axis its own variant carries — the
+    // same shape as `--scalp`, since two of the three carry one (#206). The
+    // painted layer comes on with it: a grown moustache over a bare lip is a
+    // shot of the geometry rather than of the moustache, and the two layers are
+    // judged together.
+    let moustache = value("--moustache").map(|name| {
+        let axis = args
+            .iter()
+            .position(|arg| arg == "--moustache")
+            .and_then(|at| args.get(at + 2))
+            .and_then(|it| it.parse::<f32>().ok())
+            .unwrap_or(0.6);
+        match name.as_str() {
+            "none" => symbios_avatar::hair::MoustacheStyle::None,
+            "chevron" => symbios_avatar::hair::MoustacheStyle::Chevron,
+            "handlebar" => symbios_avatar::hair::MoustacheStyle::Handlebar { sweep: axis },
+            "pencil" => symbios_avatar::hair::MoustacheStyle::Pencil { ride: axis },
+            other => {
+                eprintln!(
+                    "unknown --moustache style {other}: expected none, chevron, handlebar or \
+                     pencil"
+                );
+                std::process::exit(1);
+            }
+        }
+    });
     let overridden: Vec<f32> = value("--hair")
         .map(|spec| {
             spec.split(',')
@@ -342,7 +369,11 @@ fn main() {
     // The record carries its own hair; the flag only replaces the axes it names.
     let axis = |at: usize, fallback: f32| overridden.get(at).copied().unwrap_or(fallback);
     let config = AvatarConfig {
-        hair: (!overridden.is_empty() || brow.is_some() || scalp.is_some()).then(|| {
+        hair: (!overridden.is_empty()
+            || brow.is_some()
+            || scalp.is_some()
+            || moustache.is_some())
+        .then(|| {
             // The scalp's own four axes, in the order `Cut` declares them, plus
             // a fifth that silences every region — which is what `--mane 0` on
             // the viewer does and what a bald judgement shot wants.
@@ -372,6 +403,20 @@ fn main() {
             }
             if let Some(style) = scalp {
                 hair.scalp.style = style;
+            }
+            if let Some(style) = moustache {
+                hair.moustache.style = style;
+                // The record's default is a shaved lip — no geometry and no
+                // paint — so a flag asking for a moustache has to turn the skin
+                // layer on under it as well.
+                if !matches!(style, symbios_avatar::hair::MoustacheStyle::None) {
+                    hair.moustache.skin = symbios_avatar::hair::Paint {
+                        density: 0.85,
+                        colour: hair.scalp.roots,
+                    };
+                    hair.moustache.roots = hair.scalp.roots;
+                    hair.moustache.tips = hair.scalp.roots;
+                }
             }
             hair
         }),

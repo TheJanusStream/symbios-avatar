@@ -28,9 +28,11 @@ use super::follicle::{Follicle, FollicleParams, Follicles};
 use super::painted::Paint;
 
 pub mod brows;
+pub mod moustache;
 pub mod scalp;
 
 pub use brows::BrowStyle;
+pub use moustache::MoustacheStyle;
 pub use scalp::ScalpStyle;
 
 /// How the clumps of one region are cut.
@@ -193,7 +195,7 @@ pub trait Style: Copy + Default {
 ///
 /// Provenance: **derived** from the triangle budget and the measured cost of a
 /// card.
-const FULL: [usize; 5] = [104, 40, 34, 56, 80];
+const FULL: [usize; 5] = [104, 40, 78, 56, 80];
 
 /// How many clumps one region grows at a given density.
 ///
@@ -216,11 +218,14 @@ fn clumps_for(cut: &Cut, follicle: Follicle) -> usize {
 /// Ordered as [`Follicle::ALL`]. A scalp's is what makes the difference between
 /// a crop and a curtain; the rest are near enough fixed by anatomy.
 ///
-/// The brows' entry is what a brow would be if it fell, and nothing shipped
-/// reads it: [`brows::BrowStyle`] combs along the ridge instead and takes its
-/// length from that measured span (#205). It stays because this array is indexed
-/// by [`Follicle::ALL`]'s own order and a hole in it would be a worse thing to
-/// maintain than an entry the catalogue has outgrown.
+/// Three of the five entries are now what that region would be if it fell, and
+/// nothing shipped reads them: the scalp walks a measured profile (#204), the
+/// brows comb along a measured ridge (#205), and the moustache runs along a
+/// measured lip (#206), each taking its length from the thing it was fitted to.
+/// They stay because this array is indexed by [`Follicle::ALL`]'s own order and
+/// a hole in it would be a worse thing to maintain than an entry the catalogue
+/// has outgrown — and because the chin and the flanks still read theirs until
+/// #207 and #208.
 ///
 /// Provenance: **tuned by render** (#202).
 const REACH: [f32; 5] = [0.090, 0.012, 0.014, 0.030, 0.022];
@@ -295,10 +300,11 @@ pub fn melanin(shade: f32) -> [f32; 3] {
 /// into implementing [`Style`] differently by accident.
 ///
 /// **It shrinks by one with each catalogue issue and is meant to.** The brows
-/// left at #205 — two styles that comb along a measured ridge are not a `Fall`
-/// with different numbers — and the scalp, moustache, chin and flanks follow at
-/// #204 and #206-#208, each into its own file beside [`brows`]. What is left
-/// here is the regions whose base style genuinely is the shared fall.
+/// left at #205, the scalp at #204 and the moustache at #206 — three regions
+/// whose styles comb along something measured rather than falling downhill —
+/// each into its own file beside [`brows`]. The chin and the flanks follow at
+/// #207 and #208, and this macro goes with the last of them. What is left here
+/// is the regions whose base style genuinely is the shared fall.
 macro_rules! styles {
     ($($(#[$doc:meta])* $name:ident { $(#[$grown_doc:meta])* $grown:ident }),* $(,)?) => {
         $(
@@ -342,12 +348,6 @@ macro_rules! styles {
 }
 
 styles! {
-    /// The base styles of the upper lip.
-    MoustacheStyle {
-        /// A full moustache over the lip. #206 adds the handlebar and the
-        /// pencil.
-        Chevron
-    },
     /// The base styles of the chin.
     ChinStyle {
         /// A beard over the chin and under it. #207 adds the goatee and the
@@ -665,16 +665,26 @@ mod tests {
             .filter_map(|follicle| record.sowing(follicle, &head))
             .map(|sown| sown.clumps)
             .sum();
-        // **The floor came DOWN with #204 and that is the point.** A scalp of
-        // sheets is 60 cards where a scalp of strings was 150, and the sheets
-        // cover a head the strings left bare: coverage came from width, which is
-        // free, rather than from count, which is 14 to 45 triangles a time. So the
-        // band this asserts is lower than it was, and a future style that needs to
-        // put it back up owes the budget an explanation.
+        // **The band moved twice, and the second time the CURRENCY changed.**
+        // It came down at #204 because a scalp of sheets is 60 cards where a
+        // scalp of strings was 150 and the sheets covered a head the strings left
+        // bare: coverage came from width, which is free, rather than from count,
+        // which was then 14 to 45 triangles a time.
+        //
+        // It goes back up at #206, and the explanation the comment above asked
+        // for is that a clump is no longer 14 triangles — it is FOUR, being one
+        // flat card at the sampler's floor, and up to about twenty where it
+        // curves. A moustache drawn with the count a swept tube could afford is
+        // twenty-five tiles as tall as the lip they sit on, which is what the
+        // sheet showed; drawn with three times as many it is hair, for 228
+        // triangles instead of 96. So this is stated in the triangles it is
+        // really about rather than in a count whose price has changed under it,
+        // and `tests/budget.rs` remains the gate that actually holds the line.
+        let floor = total * crate::hair::clump::LEAST.saturating_sub(1) * 2;
         assert!(
-            (120..=350).contains(&total),
-            "a full head is {total} clumps, which at 14 to 45 triangles each is not a budget \
-             the body leaves room for"
+            (120..=520).contains(&total) && floor < 2_500,
+            "a full head is {total} clumps and {floor} triangles at the card's own floor, which \
+             is not a budget the body leaves room for"
         );
     }
 }

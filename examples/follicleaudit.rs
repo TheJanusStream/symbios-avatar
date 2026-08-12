@@ -39,7 +39,7 @@ use rand_pcg::Pcg64Mcg;
 use symbios_avatar::face::{Canon, Skull};
 use symbios_avatar::hair::clump::scatter::scatter;
 use symbios_avatar::hair::clump::{Bed, Sowing};
-use symbios_avatar::hair::{Follicle, FollicleParams, Follicles, Growth, ScalpStyle};
+use symbios_avatar::hair::{BrowStyle, Follicle, FollicleParams, Follicles, Growth, ScalpStyle};
 use symbios_avatar::{Archetype, Avatar, AvatarRecord, PolyMesh, Rig, Vec3, Zone};
 
 /// The seeds `--sweep` reports, which are `tests/budget.rs`'s own.
@@ -52,19 +52,20 @@ fn main() {
         return;
     }
     if let Some(slot) = args.iter().position(|arg| arg == "--cards") {
-        let style = args.get(slot + 1).map(String::as_str).unwrap_or("crop");
+        let region = args.get(slot + 1).map(String::as_str).unwrap_or("scalp");
+        let style = args.get(slot + 2).map(String::as_str).unwrap_or("");
         let axis = args
-            .get(slot + 2)
+            .get(slot + 3)
             .and_then(|arg| arg.parse::<f32>().ok())
             .unwrap_or(0.6);
-        cards(style, axis);
+        cards(region, style, axis);
         return;
     }
     let seed = args.first().and_then(|arg| arg.parse::<i64>().ok());
     report(seed);
 }
 
-/// Every scalp card of one style, one row each (#210).
+/// Every card of one region and style, one row each (#210, generalised at #206).
 ///
 /// **The instrument a defect gets when four guesses from a contact sheet have
 /// already been wrong.** Two blocky slabs stood off the back-top of the head in
@@ -75,15 +76,23 @@ fn main() {
 /// every card's own numbers and the outlier names the cause.
 ///
 /// ```text
-/// cargo run --release --example follicleaudit -- --cards crop
-/// cargo run --release --example follicleaudit -- --cards bob 0.8
+/// cargo run --release --example follicleaudit -- --cards scalp crop
+/// cargo run --release --example follicleaudit -- --cards scalp bob 0.8
+/// cargo run --release --example follicleaudit -- --cards moustache handlebar 0.9
 /// ```
-fn cards(style: &str, axis: f32) {
-    let Some(style) = named(style, axis) else {
+fn cards(region: &str, style: &str, axis: f32) {
+    let Some(follicle) = Follicle::ALL
+        .into_iter()
+        .find(|other| other.name() == region)
+    else {
+        println!("unknown region {region}: expected one of scalp, brows, moustache, chin, flanks");
         return;
     };
     let mut record = AvatarRecord::new("Cards", Archetype::default());
-    record.hair.scalp.style = style;
+    let named = match wear(&mut record, follicle, style, axis) {
+        Some(named) => named,
+        None => return,
+    };
     let Some(avatar) = Avatar::build(&record) else {
         println!("this body has no head to grow hair on");
         return;
@@ -94,24 +103,35 @@ fn cards(style: &str, axis: f32) {
     };
     let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
     let follicles = Follicles::of(&avatar.rig, &skull, &canon, &FollicleParams::default());
-    let Some(sown) = record.hair.sowing(Follicle::Scalp, &follicles) else {
-        println!("this record grows no scalp hair");
+    let Some(sown) = record.hair.sowing(follicle, &follicles) else {
+        println!("this record grows no {region} hair");
         return;
     };
-    // The shipped roots: one stream from the record's own seed, in
-    // `Follicle::ALL` order, which is what `Avatar::build` draws (see `grow`).
-    // The scalp is first, so nothing has to be drawn before it.
+    // The shipped roots: one stream from the record's own seed, drawn in
+    // `Follicle::ALL` order, which is what `Avatar::build` does — so the regions
+    // before this one have to be drawn even though nothing reads them, or these
+    // are a second sample from the same distribution rather than the roots that
+    // shipped (#89's lesson, in the form `grow` below takes it).
     let mut stream = Pcg64Mcg::seed_from_u64(record.seed as u64);
-    let roots = scatter(
-        &avatar.parts.body,
-        &avatar.rig,
-        &follicles,
-        Follicle::Scalp,
-        sown.clumps,
-        &mut stream,
-    );
+    let mut roots = Vec::new();
+    for other in Follicle::ALL {
+        let Some(sown) = record.hair.sowing(other, &follicles) else {
+            continue;
+        };
+        let drawn = scatter(
+            &avatar.parts.body,
+            &avatar.rig,
+            &follicles,
+            other,
+            sown.clumps,
+            &mut stream,
+        );
+        if other == follicle {
+            roots = drawn;
+        }
+    }
     let (throat, crown) = skull.throat_and_crown();
-    println!("{sown_style:?} — {} roots asked for", roots.len(), sown_style = style);
+    println!("{region} — {named}, {} roots asked for", roots.len());
     println!("  crown {:+.1} mm, throat {:+.1} mm", crown * 1000.0, throat * 1000.0);
     println!();
     println!(
@@ -120,7 +140,17 @@ fn cards(style: &str, axis: f32) {
     );
     let mut rows: Vec<Card> = roots
         .iter()
-        .filter_map(|root| card(sown.shape.as_ref(), root, &follicles, &skull, throat, crown))
+        .filter_map(|root| {
+            card(
+                sown.shape.as_ref(),
+                root,
+                &follicles,
+                follicle,
+                &skull,
+                throat,
+                crown,
+            )
+        })
         .collect();
     let trace = std::env::args().any(|arg| arg == "--trace");
     // Worst standoff first, because the question this answers is which cards are
@@ -168,7 +198,7 @@ fn cards(style: &str, axis: f32) {
                     ((at.x * at.x + at.z * at.z).sqrt()
                         - (profile.x * profile.x + profile.z * profile.z).sqrt())
                         * 1000.0,
-                    follicles.weight(Follicle::Scalp, at),
+                    follicles.weight(follicle, at),
                 );
             }
         }
@@ -187,19 +217,56 @@ fn cards(style: &str, axis: f32) {
     );
 }
 
-/// One scalp style, named on the command line.
-fn named(style: &str, axis: f32) -> Option<ScalpStyle> {
-    match style {
-        "crop" => Some(ScalpStyle::Crop),
-        "bob" => Some(ScalpStyle::Bob { fringe: axis }),
-        "long" => Some(ScalpStyle::Long { weight: axis }),
-        "tied" => Some(ScalpStyle::TiedBack { tail: axis }),
-        "curly" => Some(ScalpStyle::Curly { curl: axis }),
-        other => {
-            println!("unknown style {other}: expected crop, bob, long, tied or curly");
-            None
+/// Dresses one record's region in one named style, and says what it wore.
+///
+/// The empty name leaves whatever the record already asks for, which for the
+/// regions whose catalogue is one style is the only thing to say.
+fn wear(record: &mut AvatarRecord, follicle: Follicle, style: &str, axis: f32) -> Option<String> {
+    use symbios_avatar::hair::{ChinStyle, FlankStyle, MoustacheStyle};
+    match follicle {
+        Follicle::Scalp => {
+            record.hair.scalp.style = match style {
+                "" | "crop" => ScalpStyle::Crop,
+                "bob" => ScalpStyle::Bob { fringe: axis },
+                "long" => ScalpStyle::Long { weight: axis },
+                "tied" => ScalpStyle::TiedBack { tail: axis },
+                "curly" => ScalpStyle::Curly { curl: axis },
+                other => return unknown(other, "crop, bob, long, tied or curly"),
+            };
+            Some(format!("{:?}", record.hair.scalp.style))
+        }
+        Follicle::Brows => {
+            record.hair.brows.style = match style {
+                "" | "natural" => BrowStyle::Natural,
+                "thick" => BrowStyle::Thick,
+                other => return unknown(other, "natural or thick"),
+            };
+            Some(format!("{:?}", record.hair.brows.style))
+        }
+        Follicle::Moustache => {
+            record.hair.moustache.style = match style {
+                "" | "chevron" => MoustacheStyle::Chevron,
+                "handlebar" => MoustacheStyle::Handlebar { sweep: axis },
+                "pencil" => MoustacheStyle::Pencil { ride: axis },
+                other => return unknown(other, "chevron, handlebar or pencil"),
+            };
+            Some(format!("{:?}", record.hair.moustache.style))
+        }
+        Follicle::Chin => {
+            record.hair.chin.style = ChinStyle::Full;
+            Some("Full".into())
+        }
+        Follicle::Flanks => {
+            record.hair.flanks.style = FlankStyle::Full;
+            Some("Full".into())
         }
     }
+}
+
+/// Says what was expected, and grows nothing.
+fn unknown(style: &str, expected: &str) -> Option<String> {
+    println!("unknown style {style}: expected {expected}");
+    None
 }
 
 /// What one card is, measured off the shape the record asked for.
@@ -225,6 +292,7 @@ fn card(
     shape: &dyn symbios_avatar::hair::Shape,
     root: &symbios_avatar::hair::Root,
     follicles: &Follicles,
+    follicle: Follicle,
     skull: &Skull,
     throat: f32,
     crown: f32,
@@ -244,7 +312,7 @@ fn card(
     for station in 0..=STATIONS {
         let along = station as f32 / STATIONS as f32;
         let at = shape.at(root, along);
-        let on = follicles.weight(Follicle::Scalp, at) >= 0.35;
+        let on = follicles.weight(follicle, at) >= 0.35;
         if on {
             on_head += 1;
         }

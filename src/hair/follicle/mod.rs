@@ -286,6 +286,19 @@ impl Follicles {
         self.brows.ridge()
     }
 
+    /// The patch of lip a moustache grows on, on this head.
+    ///
+    /// **The same discipline as [`Self::brow_ridge`]** (#206): the styles take
+    /// their floor, their ceiling and their outer end from the object the mask
+    /// was cut around, so a record moving the patch moves the paint and the
+    /// geometry together. The moustache is the region where that matters most —
+    /// its floor is the mouth, and a grown hair that disagrees with the mask by a
+    /// millimetre disagrees with it INTO somebody's lip.
+    #[must_use]
+    pub fn lip(&self) -> moustache::Lip {
+        self.moustache.lip()
+    }
+
     /// How much of `follicle` may grow at a head-local point, `0` to `1`.
     #[must_use]
     pub fn weight(&self, follicle: Follicle, local: Vec3) -> f32 {
