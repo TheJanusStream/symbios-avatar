@@ -37,6 +37,7 @@
 //! Everything is built in head-local space, as the eyes are, so a renderer
 //! parents it to the head joint and the hair follows the body for free.
 
+pub mod follicle;
 pub mod scalp;
 pub mod shell;
 pub mod strand;
@@ -49,6 +50,7 @@ use serde::{Deserialize, Serialize};
 use crate::mesh::PolyMesh;
 use crate::rig::{Rig, Surface};
 
+pub use follicle::{Follicle, FollicleParams, Follicles};
 pub use scalp::Scalp;
 pub use shell::Shell;
 pub use strand::Strand;

@@ -36,6 +36,7 @@
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
 //! cargo run --release --example render -- --junction  # tint the skin by which bone deforms it
 //! cargo run --release --example render -- --jawbind   # tint the skin by how the JAW bone holds it
+//! cargo run --release --example render -- --follicles # tint the skin by where hair may grow
 //! cargo run --release --example render -- --jaw 20    # open the mouth this many degrees
 //! cargo run --release --example render -- --jawsweep # tune the jaw's binding reach by measurement
 //! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
@@ -65,6 +66,7 @@ use symbios_avatar::{
     FootingConfig, Gait, GazeConfig, Ground, HairParams, Influence, Limb, MAX_INFLUENCES, MeshKind,
     PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
     anim::contacts_in, anim::gait, anim::gaze, anim::plant_feet_of, face::Skull, gltf::Gltf,
+    hair::{Follicle, FollicleParams, Follicles},
     retarget,
 };
 
@@ -140,6 +142,9 @@ fn main() {
     // The same question asked of the mandible instead: which skin does the
     // condyle-to-chin bone hold, and how strongly. See [`jaw_tint`].
     let jawbind = args.iter().any(|arg| arg == "--jawbind");
+    // Where each of the five kinds of hair is allowed to grow. See
+    // [`follicle_tint`], and `follicleaudit` for the same regions as numbers.
+    let follicles = args.iter().any(|arg| arg == "--follicles");
     // Which stage to show instead of the finished picture.
     let pass = value("--pass").cloned();
     // Six numbers, in the order the axes are declared: length, volume,
@@ -325,6 +330,12 @@ fn main() {
         fist,
         junction,
         jawbind,
+        follicles,
+        // Carried rather than defaulted, because the brow region's two ends are
+        // placed in `Canon::apart` and that is the one landmark eye spacing
+        // moves. Two other call sites in this file read a default `EyeParams`
+        // and are right to — neither of them measures anything the eye touches.
+        eyes: record.eyes,
         pass,
         gaze,
         jaw,
@@ -504,6 +515,12 @@ struct Show {
     /// Whether to tint the skin by which bone deforms it, through the junction
     /// between the head and the body. See [`junction_tint`].
     junction: bool,
+    /// Whether to tint the skin by which hair region owns it. See
+    /// [`follicle_tint`].
+    follicles: bool,
+    /// The record's own eye axes, which the follicle overlay needs to place a
+    /// brow. See where this is set.
+    eyes: EyeParams,
     /// Whether to tint the skin by the mandible's hold on it. See [`jaw_tint`].
     jawbind: bool,
     pass: Option<String>,
@@ -840,6 +857,9 @@ impl Subject {
                 match (self.show.junction, self.show.jawbind, self.jaw) {
                     (true, _, _) => Some(junction_tint(&drawn.mesh, &self.avatar.rig, &mut span)),
                     (_, true, Some(jaw)) => Some(jaw_tint(&drawn.mesh, jaw)),
+                    _ if self.show.follicles => {
+                        Some(follicle_tint(&drawn.mesh, &self.avatar, &self.show.eyes))
+                    }
                     _ => None,
                 }
             })
@@ -1150,6 +1170,56 @@ fn jaw_tint(mesh: &PolyMesh, jaw: JawBone) -> Vec<Vec3> {
             } else {
                 AMBER.lerp(RED, (hold - 0.5) * 2.0)
             }
+        })
+        .collect()
+}
+
+/// Which hair region owns each vertex of the skin, as a colour to tint it by.
+///
+/// **The visual half of #199's pair**: `follicleaudit` says how much of the
+/// head each region holds and how wide its edges are, and this says WHERE — the
+/// one thing a table cannot, and the thing a mask is most often wrong about.
+///
+/// Tinted rather than substituted, for the reason [`scene::Item::tint`] gives:
+/// a flat false colour throws away the shading that says what shape the surface
+/// is, which on a head is most of how a boundary is judged. Each region's own
+/// [`Follicle::colour`] is used, so this sheet and any other instrument showing
+/// the five agree about which is which.
+///
+/// **The hue is the regions' weighted mean and the strength is their SUM, and
+/// the first cut of this had it the other way round** (#199). Showing only the
+/// strongest region drew the chin-to-flank seam as a pale wedge — each of the
+/// two holds about 0.4 there while their sum is 0.8, so the one place both
+/// layers will composite read as a bald patch in the very picture meant to rule
+/// one out. Coverage is the question this instrument answers, so coverage is
+/// what its strength has to mean; the seam shows as a blend of the two hues,
+/// which is what a seam is.
+fn follicle_tint(mesh: &PolyMesh, avatar: &Avatar, eyes: &EyeParams) -> Vec<Vec3> {
+    let Some(follicles) = Skull::measure(&avatar.parts.body, &avatar.rig).map(|skull| {
+        let canon = Canon::measure(&avatar.rig, &skull, eyes);
+        Follicles::of(&avatar.rig, &skull, &canon, &FollicleParams::default())
+    }) else {
+        return vec![Vec3::ONE; mesh.positions.len()];
+    };
+    mesh.positions
+        .iter()
+        .map(|point| {
+            let weights = follicles.weights(*point - follicles.origin());
+            let total: f32 = weights.iter().sum();
+            if total <= f32::EPSILON {
+                return Vec3::ONE;
+            }
+            let hue = Follicle::ALL
+                .into_iter()
+                .zip(weights)
+                .fold(Vec3::ZERO, |sum, (follicle, weight)| {
+                    sum + follicle.colour() * weight
+                })
+                / total;
+            // Held back from the full colour so the shading underneath still
+            // reads: a region at full weight is unmistakably its own hue, and
+            // its fade is visibly a fade.
+            Vec3::ONE.lerp(hue, total.min(1.0) * 0.85)
         })
         .collect()
 }
