@@ -13,6 +13,19 @@
 //! cargo run --release --example follicleaudit -- --sweep # the population
 //! ```
 //!
+//! **It measures the GROWN layer against the mask as well** (#205). The epic's
+//! own invariant is that the two layers agree about where hair is, and until this
+//! nothing measured whether they did — the sheet showed a brow whose clumps might
+//! or might not have been sitting under their own paint, and no amount of
+//! squinting settled it. So each region now reports what it grew, the heights the
+//! geometry actually occupies against the heights the mask allows, and the share
+//! of the hair that is outside its own region altogether.
+//!
+//! The last of those is only a defect where hair is meant to LIE on the skin — a
+//! brow, a stubbled jaw. Hair that hangs free leaves its region by design: a
+//! scalp lock's tip is not on the scalp, and reading that column as an error
+//! would be reading the instrument rather than the hair.
+//!
 //! **Every share here is an AREA share, and the reason is worth carrying**
 //! (#199). `refine_face` splits the front of the face ten times and leaves the
 //! vault at the base subdivision, so a head carries thousands of vertices on a
@@ -21,9 +34,12 @@
 //! chin as 25%. That is a measurement of the refinement schedule wearing a
 //! mask's name.
 
+use rand::SeedableRng;
+use rand_pcg::Pcg64Mcg;
 use symbios_avatar::face::{Canon, Skull};
-use symbios_avatar::hair::{Follicle, FollicleParams, Follicles};
-use symbios_avatar::{Archetype, Avatar, AvatarRecord, PolyMesh, Vec3, Zone};
+use symbios_avatar::hair::clump::{Bed, Sowing};
+use symbios_avatar::hair::{Follicle, FollicleParams, Follicles, Growth};
+use symbios_avatar::{Archetype, Avatar, AvatarRecord, PolyMesh, Rig, Vec3, Zone};
 
 /// The seeds `--sweep` reports, which are `tests/budget.rs`'s own.
 const SWEEP_SEEDS: [i64; 8] = [0, 3, 7, 13, 23, 42, 11, 15];
@@ -74,6 +90,63 @@ fn report(seed: Option<i64>) {
             held.edge * 1000.0,
         );
     }
+    println!();
+    let ridge = head.follicles.brow_ridge();
+    println!(
+        "  the brow ridge runs {:.1} mm to {:.1} mm out from the midline — a span of {:.1} — at \
+         {:+.1} mm, arching {:.1}",
+        ridge.inner * 1000.0,
+        ridge.outer * 1000.0,
+        ridge.span() * 1000.0,
+        ridge.level * 1000.0,
+        ridge.arch * 1000.0,
+    );
+    println!();
+    println!("  region      clumps    tris  per   grown band, mm     off-mask");
+    for follicle in Follicle::ALL {
+        let Some(grown) = &head.grown[slot_of(follicle)] else {
+            println!("  {:10}      — nothing grown", follicle.name());
+            continue;
+        };
+        println!(
+            "  {:10} {:5}  {:6}  {:3}   {:+6.1} to {:+6.1}     {:5.1}%",
+            follicle.name(),
+            grown.clumps,
+            grown.tris,
+            grown.tris / grown.clumps.max(1),
+            grown.lo * 1000.0,
+            grown.hi * 1000.0,
+            grown.outside * 100.0,
+        );
+    }
+    println!();
+    // **The brow's own line, because that is the invariant #205 could not read
+    // off a render.** The general column beside it cannot separate hair standing
+    // off its line from hair reaching past the tail, and only one of those is a
+    // defect: the mask's lateral fade is exactly where a brow's last hairs
+    // belong. The ridge is a public line, so for this region the two can be
+    // asked separately, and the answer is a distance rather than a share.
+    if let Some(off) = off_the_ridge(&head) {
+        println!(
+            "  brow hair stands {:.1} mm off the ridge on average and {:.1} mm at worst, \
+             against a band {:.1} mm deep — {:.1}% of it outside that",
+            off.mean * 1000.0,
+            off.worst * 1000.0,
+            ridge.thick * 1000.0,
+            off.beyond * 100.0,
+        );
+        println!();
+    }
+    println!(
+        "  per        — triangles a clump, whose floor is 14: a straight one, capped both ends\n  \
+         grown band — the heights the GEOMETRY occupies. NOT to be read against the mask band\n  \
+         {:15}above it: that one is the >0.5 core measured over the surface's own faces, and\n  \
+         {:15}comparing the two says a brow has left its region when it has not\n  \
+         off-mask   — share of the hair standing where its region's weight is under 0.1. Hair\n  \
+         {:15}that hangs free is expected to leave — a scalp lock's tip is not on the\n  \
+         {:15}scalp — and so is the last hair past a brow's tail",
+        "", "", "", "",
+    );
     println!();
     println!(
         "  area   — share of the head's own surface the region fully holds (weight over a half)\n  \
@@ -138,6 +211,11 @@ fn sweep() {
 
 /// A built head, its regions, and the surface they are measured over.
 struct Head {
+    /// What each region grew, in [`Follicle::ALL`] order, or `None` for a region
+    /// this record asks for no geometry in.
+    grown: [Option<Grown>; 5],
+    /// The brow geometry's own vertices, head-local, for the ridge measurement.
+    brows: Option<Vec<Vec3>>,
     follicles: Follicles,
     skull: Skull,
     /// Head-local centroid and area, per head-owned face.
@@ -150,6 +228,60 @@ struct Head {
     nose: f32,
     ear: f32,
     crown: f32,
+}
+
+/// What one region actually grew.
+struct Grown {
+    clumps: usize,
+    tris: usize,
+    /// The heights its geometry occupies, in head-local metres.
+    lo: f32,
+    hi: f32,
+    /// Share of its vertices standing where the region's own weight is under 0.1.
+    outside: f32,
+}
+
+/// How far the grown brows stand off the ridge their paint is centred on.
+struct OffRidge {
+    /// Mean distance from the line, in metres.
+    mean: f32,
+    /// The worst any vertex is.
+    worst: f32,
+    /// Share of vertices further off it than the band is deep.
+    beyond: f32,
+}
+
+/// Measures the grown brows against the ridge, or `None` if none are grown.
+fn off_the_ridge(head: &Head) -> Option<OffRidge> {
+    let ridge = head.follicles.brow_ridge();
+    let hair = head.brows.as_ref()?;
+    if hair.is_empty() {
+        return None;
+    }
+    let mut total = 0.0f32;
+    let mut worst = 0.0f32;
+    let mut beyond = 0usize;
+    for at in hair {
+        let off = (at.y - ridge.height(ridge.along(at.x))).abs();
+        total += off;
+        worst = worst.max(off);
+        if off > ridge.thick {
+            beyond += 1;
+        }
+    }
+    Some(OffRidge {
+        mean: total / hair.len() as f32,
+        worst,
+        beyond: beyond as f32 / hair.len() as f32,
+    })
+}
+
+/// Where one region sits in [`Follicle::ALL`].
+fn slot_of(follicle: Follicle) -> usize {
+    Follicle::ALL
+        .iter()
+        .position(|other| *other == follicle)
+        .unwrap_or(0)
 }
 
 /// What one region holds on one head.
@@ -179,7 +311,10 @@ fn measure(seed: Option<i64>) -> Option<Head> {
     let surface = surface_of(&avatar.parts.body, &avatar.rig, origin);
     let area = surface.iter().map(|(_, area)| area).sum();
     let (_, crown) = skull.throat_and_crown();
+    let (grown, brows) = grow(&record, &avatar.parts.body, &avatar.rig, &follicles);
     Some(Head {
+        grown,
+        brows,
         frame: canon.frame,
         level: canon.level,
         chin: skull.chin(),
@@ -192,6 +327,74 @@ fn measure(seed: Option<i64>) -> Option<Head> {
         surface,
         area,
     })
+}
+
+/// Grows the record's own hair, one region at a time.
+///
+/// **Region by region, and from one stream in [`Follicle::ALL`]'s order**, which
+/// is exactly what `Avatar::build` does — so the roots measured here are the roots
+/// that shipped, not a second sample from the same distribution. A fresh stream
+/// per region would draw different hair and this would be measuring an instrument
+/// (#89's lesson, in the form it takes here).
+fn grow(
+    record: &AvatarRecord,
+    body: &PolyMesh,
+    rig: &Rig,
+    follicles: &Follicles,
+) -> ([Option<Grown>; 5], Option<Vec<Vec3>>) {
+    let bed = Bed {
+        body,
+        rig,
+        follicles,
+    };
+    let mut stream = Pcg64Mcg::seed_from_u64(record.seed as u64);
+    let mut grown = [None, None, None, None, None];
+    let mut brows = None;
+    for follicle in Follicle::ALL {
+        let Some(sown) = record.hair.sowing(follicle, follicles) else {
+            continue;
+        };
+        let mut growth = Growth::on(follicles.head);
+        growth.grow(
+            &bed,
+            &Sowing {
+                follicle,
+                count: sown.clumps,
+                shape: sown.shape.as_ref(),
+                roots: Vec3::from_array(sown.roots),
+                tips: Vec3::from_array(sown.tips),
+            },
+            &mut stream,
+        );
+        let Some(ledger) = growth.grown.first() else {
+            continue;
+        };
+        let (lo, hi) = growth
+            .mesh
+            .positions
+            .iter()
+            .fold((f32::MAX, f32::MIN), |span, at| {
+                (span.0.min(at.y), span.1.max(at.y))
+            });
+        let outside = growth
+            .mesh
+            .positions
+            .iter()
+            .filter(|at| follicles.weight(follicle, **at) < 0.1)
+            .count() as f32
+            / growth.mesh.positions.len().max(1) as f32;
+        grown[slot_of(follicle)] = Some(Grown {
+            clumps: ledger.clumps,
+            tris: ledger.tris,
+            lo,
+            hi,
+            outside,
+        });
+        if follicle == Follicle::Brows {
+            brows = Some(growth.mesh.positions.clone());
+        }
+    }
+    (grown, brows)
 }
 
 /// Every head-owned face, as a head-local centroid and an area.

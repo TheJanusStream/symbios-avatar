@@ -73,7 +73,7 @@ pub(super) fn loft(
     if length <= f32::EPSILON {
         return 0;
     }
-    let path = sample(root, shape);
+    let (fractions, path) = sample(root, shape);
     let stations = path.len();
     // A path that doubled back on itself or collapsed would sweep an inside-out
     // tube; a style that does that is a bug in the style, and the sweep is not
@@ -82,30 +82,60 @@ pub(super) fn loft(
         return 0;
     }
 
-    let (base, tip) = shape.section(root);
+    // **A clump's width comes and goes, and a lock is the case that proves it**
+    // (#205). `prim::ribbon` can only run one section into another, which draws a
+    // wedge: full width at the root, a point at the tip. Overlapping wedges read
+    // as a row of separate objects, because every one of them ends in a blunt
+    // squared-off face where it began. A section asked for per station lets a
+    // style be a leaf instead — thin, full, thin — so that where two clumps
+    // overlap neither has an end.
+    //
+    // It costs nothing: the same stations, the same sides, the same triangles.
+    // `prim::sweep` has taken a section per station since a foot needed one.
+    let sections: Vec<Vec2> = fractions
+        .iter()
+        .map(|along| shape.section_at(root, *along))
+        .collect();
     // **The wide axis is handed in rather than derived, and hair is the case
     // that proves it** (`prim::ribbon`'s own note). A frame derived from a
     // near-vertical path snaps to a world axis and the ribbon turns edge-on,
-    // which is what turned a sheet of hair into separate strings. Across the
-    // fall and tangent to the head is what a lock's width lies along.
-    let across = root
-        .out
-        .cross(Vec3::Y)
-        .normalize_or(root.out.cross(Vec3::X).normalize_or(Vec3::X));
+    // which is what turned a sheet of hair into separate strings.
+    //
+    // **And it is the STYLE that hands it in, not this file** (#205). Across the
+    // fall is what a hanging lock's width lies along, and it is
+    // [`Shape::across`]'s default; a brow's clumps run sideways and want their
+    // width across that instead. The one thing a style may not do is name an
+    // axis parallel to its own spine, so the parallel case is caught here rather
+    // than left to the sweep's silent fallback.
+    let tangent = (path[1] - path[0]).normalize_or(root.out);
+    let named = shape.across(root).normalize_or(Vec3::ZERO);
+    let squared = named - tangent * named.dot(tangent);
+    let across = squared.normalize_or(
+        root.out
+            .cross(tangent)
+            .normalize_or(tangent.cross(Vec3::Y).normalize_or(Vec3::X)),
+    );
     let first = into.positions.len();
     let sides = shape.sides();
-    let clump = prim::ribbon(&path, base, tip, sides, across);
+    let clump = prim::sweep(&path, &sections, sides, across);
     into.append(&clump);
 
-    // The gradient, by station rather than by height: hair that falls and then
+    // The gradient, by travel rather than by height: hair that falls and then
     // curls back up is still older at its tip, and a colour taken from height
     // would run backwards over the curl.
+    //
+    // **By how far along the curve a station is, not by its index** (#205).
+    // Adaptive sampling puts stations where a clump bends, so an index is not a
+    // share of the way down the hair: on a curl the colour ran fast through the
+    // bend and slowly over the straight, which is not what "root to tip" means
+    // and is not what this comment used to claim it did. Identical on a straight
+    // clump, where the two agree.
     let added = into.positions.len() - first;
     into.colours.resize(first, roots_colour);
     for vertex in 0..added {
-        let station = vertex / sides.max(1);
-        let along = station as f32 / (stations.max(2) - 1) as f32;
-        into.colours.push(shade(roots_colour, tips_colour, along));
+        let station = (vertex / sides.max(1)).min(fractions.len().saturating_sub(1));
+        into.colours
+            .push(shade(roots_colour, tips_colour, fractions[station]));
     }
     stations
 }
@@ -117,7 +147,11 @@ pub(super) fn loft(
 /// straight clump keeps the two ends it started with; a curl earns its stations
 /// where it actually turns rather than spreading them evenly over a shape that
 /// is flat for half its length.
-fn sample(root: &Root, shape: &dyn Shape) -> Vec<Vec3> {
+///
+/// Answers the fractions as well as the points, because the sections and the
+/// gradient are both functions of how far along the curve a station is and the
+/// index is not that (see the two call sites).
+fn sample(root: &Root, shape: &dyn Shape) -> (Vec<f32>, Vec<Vec3>) {
     let mut fractions: Vec<f32> = (0..LEAST)
         .map(|station| station as f32 / (LEAST - 1) as f32)
         .collect();
@@ -142,7 +176,7 @@ fn sample(root: &Root, shape: &dyn Shape) -> Vec<Vec3> {
         fractions.insert(gap + 1, middle);
         points.insert(gap + 1, shape.at(root, middle));
     }
-    points
+    (fractions, points)
 }
 
 /// The colour a share of the way from root to tip.

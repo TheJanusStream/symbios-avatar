@@ -31,6 +31,8 @@
 //! cargo run --release --example render -- --walk 8     # a walk, one sheet per frame
 //! cargo run --release --example render -- --head       # close up on face and hair
 //! cargo run --release --example render -- --close hand # or head, hand, foot
+//! cargo run --release --example render -- --close brows # or any follicle region
+//! cargo run --release --example render -- --brow thick  # or natural, none
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
@@ -107,6 +109,18 @@ enum Focus {
     Head,
     Hand,
     Foot,
+    /// One follicle region, framed on the mask itself.
+    ///
+    /// **A head shot is not close enough to judge a brow** (#205). A brow is
+    /// eight millimetres of the head's own height, so at the head close-up's
+    /// framing the whole region is thirty pixels and every defect in it is one:
+    /// the shipped brow was combed the wrong way for two issues and the sheet
+    /// showed it as a smudge.
+    ///
+    /// Framed on whichever vertices the region actually claims, so it follows
+    /// the mask rather than a hand-picked box, and every region of the milestone
+    /// gets its own shot for free.
+    Region(Follicle),
 }
 
 fn main() {
@@ -131,10 +145,16 @@ fn main() {
         Some("head") => Some(Focus::Head),
         Some("hand") => Some(Focus::Hand),
         Some("foot") => Some(Focus::Foot),
-        Some(other) => {
-            eprintln!("unknown --close target {other}: expected head, hand or foot");
-            std::process::exit(1);
-        }
+        Some(other) => match Follicle::ALL.into_iter().find(|it| it.name() == other) {
+            Some(follicle) => Some(Focus::Region(follicle)),
+            None => {
+                eprintln!(
+                    "unknown --close target {other}: expected head, hand, foot or one of {}",
+                    Follicle::ALL.map(Follicle::name).join(", ")
+                );
+                std::process::exit(1);
+            }
+        },
         None => args
             .iter()
             .any(|arg| arg == "--head")
@@ -164,6 +184,19 @@ fn main() {
     // For walking the parameter space by eye, which is the only way any of it
     // got tuned — including the group count, which is where the helmet the
     // module docs warn about would show.
+    // Which brow style to wear, by name, since a style is not a number and the
+    // two of them are what #205 is judged on. Named rather than indexed because
+    // a sheet is compared against another sheet and `--brow thick` says which
+    // one this is where `--brow 1` does not.
+    let brow = value("--brow").map(|name| match name.as_str() {
+        "none" => symbios_avatar::hair::BrowStyle::None,
+        "natural" => symbios_avatar::hair::BrowStyle::Natural,
+        "thick" => symbios_avatar::hair::BrowStyle::Thick,
+        other => {
+            eprintln!("unknown --brow style {other}: expected none, natural or thick");
+            std::process::exit(1);
+        }
+    });
     let overridden: Vec<f32> = value("--hair")
         .map(|spec| {
             spec.split(',')
@@ -283,7 +316,7 @@ fn main() {
     // The record carries its own hair; the flag only replaces the axes it names.
     let axis = |at: usize, fallback: f32| overridden.get(at).copied().unwrap_or(fallback);
     let config = AvatarConfig {
-        hair: (!overridden.is_empty()).then(|| {
+        hair: (!overridden.is_empty() || brow.is_some()).then(|| {
             // The scalp's own four axes, in the order `Cut` declares them, plus
             // a fifth that silences every region — which is what `--mane 0` on
             // the viewer does and what a bald judgement shot wants.
@@ -307,6 +340,9 @@ fn main() {
                 ] {
                     paint.density = 0.0;
                 }
+            }
+            if let Some(style) = brow {
+                hair.brows.style = style;
             }
             hair
         }),
@@ -395,6 +431,7 @@ fn main() {
         Some(Focus::Head) => "render_head",
         Some(Focus::Hand) => "render_hand",
         Some(Focus::Foot) => "render_foot",
+        Some(Focus::Region(follicle)) => &format!("render_{}", follicle.name()),
         None => "render",
     };
 
@@ -831,6 +868,20 @@ impl Subject {
                 let limb = Limb::HindLeft;
                 for (vertex, zone) in parts.zones.iter().enumerate() {
                     if matches!(zone, Zone::Extremity(at) | Zone::LowerLimb(at) if *at == limb) {
+                        hold(deformed[vertex]);
+                    }
+                }
+            }
+            // Every vertex the region has a real claim on, which is the mask
+            // deciding the frame. Held above a quarter rather than above zero: a
+            // fade's outer tail reaches a long way for very little weight, and
+            // framing on that zooms back out to the head.
+            Focus::Region(follicle) => {
+                let follicles = regions_of(&self.avatar, &self.show.eyes)?;
+                let deformed =
+                    posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+                for (vertex, point) in parts.body.positions.iter().enumerate() {
+                    if follicles.weight_in_body(follicle, *point) > 0.25 {
                         hold(deformed[vertex]);
                     }
                 }
@@ -1340,10 +1391,7 @@ fn grow_clumps(avatar: &mut Avatar, record: &AvatarRecord) {
 /// what its strength has to mean; the seam shows as a blend of the two hues,
 /// which is what a seam is.
 fn follicle_tint(mesh: &PolyMesh, avatar: &Avatar, eyes: &EyeParams) -> Vec<Vec3> {
-    let Some(follicles) = Skull::measure(&avatar.parts.body, &avatar.rig).map(|skull| {
-        let canon = Canon::measure(&avatar.rig, &skull, eyes);
-        Follicles::of(&avatar.rig, &skull, &canon, &FollicleParams::default())
-    }) else {
+    let Some(follicles) = regions_of(avatar, eyes) else {
         return vec![Vec3::ONE; mesh.positions.len()];
     };
     mesh.positions
@@ -1367,6 +1415,24 @@ fn follicle_tint(mesh: &PolyMesh, avatar: &Avatar, eyes: &EyeParams) -> Vec<Vec3
             Vec3::ONE.lerp(hue, total.min(1.0) * 0.85)
         })
         .collect()
+}
+
+/// The five follicle regions of a built body, measured the way the pipeline does.
+///
+/// **A renderer measuring its own head is a second implementation of the
+/// recipe**, which this file's header is on record about — so this is the one
+/// place it happens, shared by the false-colour overlay and the region close-up.
+/// It answers `None` for a body with no head, which is a quadruped and not an
+/// error.
+fn regions_of(avatar: &Avatar, eyes: &EyeParams) -> Option<Follicles> {
+    let skull = Skull::measure(&avatar.parts.body, &avatar.rig)?;
+    let canon = Canon::measure(&avatar.rig, &skull, eyes);
+    Some(Follicles::of(
+        &avatar.rig,
+        &skull,
+        &canon,
+        &FollicleParams::default(),
+    ))
 }
 
 /// How strongly one joint holds one vertex.

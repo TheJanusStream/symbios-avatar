@@ -24,8 +24,12 @@
 use serde::{Deserialize, Serialize};
 
 use super::clump::{Fall, Shape};
-use super::follicle::{Follicle, FollicleParams};
+use super::follicle::{Follicle, FollicleParams, Follicles};
 use super::painted::Paint;
+
+pub mod brows;
+
+pub use brows::BrowStyle;
 
 /// How the clumps of one region are cut.
 ///
@@ -112,8 +116,8 @@ impl<S: Style> Tress<S> {
 
     /// The clump shape this tress grows, if it grows any.
     #[must_use]
-    pub fn shape(&self, follicle: Follicle) -> Option<Box<dyn Shape>> {
-        self.style.shape(&self.cut, follicle)
+    pub fn shape(&self, follicle: Follicle, head: &Follicles) -> Option<Box<dyn Shape>> {
+        self.style.shape(&self.cut, follicle, head)
     }
 
     /// How many clumps to root, given how much surface the region has.
@@ -140,7 +144,7 @@ pub trait Style: Copy + Default {
     fn grows(&self) -> bool;
 
     /// The clump shape it grows, or `None` if it grows none.
-    fn shape(&self, cut: &Cut, follicle: Follicle) -> Option<Box<dyn Shape>>;
+    fn shape(&self, cut: &Cut, follicle: Follicle, head: &Follicles) -> Option<Box<dyn Shape>>;
 
     /// How many clumps it wants at this cut.
     fn clumps(&self, cut: &Cut, follicle: Follicle) -> usize;
@@ -189,6 +193,12 @@ fn clumps_for(cut: &Cut, follicle: Follicle) -> usize {
 ///
 /// Ordered as [`Follicle::ALL`]. A scalp's is what makes the difference between
 /// a crop and a curtain; the rest are near enough fixed by anatomy.
+///
+/// The brows' entry is what a brow would be if it fell, and nothing shipped
+/// reads it: [`brows::BrowStyle`] combs along the ridge instead and takes its
+/// length from that measured span (#205). It stays because this array is indexed
+/// by [`Follicle::ALL`]'s own order and a hole in it would be a worse thing to
+/// maintain than an entry the catalogue has outgrown.
 ///
 /// Provenance: **tuned by render** (#202).
 const REACH: [f32; 5] = [0.090, 0.012, 0.014, 0.030, 0.022];
@@ -258,10 +268,16 @@ pub fn melanin(shade: f32) -> [f32; 3] {
 
 /// Declares a region's style enum, its `None` variant and its one base style.
 ///
-/// The five are identical in shape and differ only in what they are called,
-/// which is the whole argument for writing them once: a macro that expands to
-/// five enums cannot let one of them drift into implementing [`Style`]
-/// differently by accident.
+/// The regions that still have exactly one style are identical in shape and
+/// differ only in what they are called, which is the whole argument for writing
+/// them once: a macro that expands to several enums cannot let one of them drift
+/// into implementing [`Style`] differently by accident.
+///
+/// **It shrinks by one with each catalogue issue and is meant to.** The brows
+/// left at #205 — two styles that comb along a measured ridge are not a `Fall`
+/// with different numbers — and the scalp, moustache, chin and flanks follow at
+/// #204 and #206-#208, each into its own file beside [`brows`]. What is left
+/// here is the regions whose base style genuinely is the shared fall.
 macro_rules! styles {
     ($($(#[$doc:meta])* $name:ident { $(#[$grown_doc:meta])* $grown:ident }),* $(,)?) => {
         $(
@@ -281,7 +297,12 @@ macro_rules! styles {
                     !matches!(self, Self::None)
                 }
 
-                fn shape(&self, cut: &Cut, follicle: Follicle) -> Option<Box<dyn Shape>> {
+                fn shape(
+                    &self,
+                    cut: &Cut,
+                    follicle: Follicle,
+                    _head: &Follicles,
+                ) -> Option<Box<dyn Shape>> {
                     match self {
                         Self::None => None,
                         Self::$grown => Some(Box::new(fall_for(cut, follicle))),
@@ -306,11 +327,6 @@ styles! {
         /// buzz to a mop. #204 adds the bob, the long, the tied-back and the
         /// curly beside it.
         Crop
-    },
-    /// The base styles of the eyebrows.
-    BrowStyle {
-        /// A brow following the ridge. #205 adds the thick one.
-        Natural
     },
     /// The base styles of the upper lip.
     MoustacheStyle {
@@ -388,7 +404,19 @@ impl Default for HairRecord {
         Self {
             regions: FollicleParams::default(),
             scalp: hair(ScalpStyle::Crop),
-            brows: hair(BrowStyle::Natural),
+            // **A full brow rather than a shared default one** (#205). `Cut`'s own
+            // default density is six tenths, which is a reasonable haircut and a
+            // thin brow: measured, thirteen clumps over BOTH brows where the
+            // budget allows eighteen. Nobody's brows are at 60% and the region is
+            // the cheapest on the head — five clumps is seventy triangles — so the
+            // default record wears the full one it can afford.
+            brows: Tress {
+                cut: Cut {
+                    density: 1.0,
+                    ..Cut::default()
+                },
+                ..hair(BrowStyle::Natural)
+            },
             moustache: Tress::default(),
             chin: Tress::default(),
             flanks: Tress::default(),
@@ -443,35 +471,42 @@ impl HairRecord {
     ///
     /// `None` where the region grows no geometry, which is what a painted-only
     /// region answers and what the builder skips on.
+    ///
+    /// Takes the head's own regions, because a style may need to be fitted to
+    /// the face it grows on rather than only to the cut it was asked for: a brow
+    /// combs along the ridge the mask was centred on, and #204's curtain will
+    /// want the same measured head. The one every caller already holds — the
+    /// masks the roots are about to be scattered through — rather than a second
+    /// measurement of it.
     #[must_use]
-    pub fn sowing(&self, follicle: Follicle) -> Option<Sown> {
+    pub fn sowing(&self, follicle: Follicle, head: &Follicles) -> Option<Sown> {
         let (shape, clumps, roots, tips) = match follicle {
             Follicle::Scalp => (
-                self.scalp.shape(follicle),
+                self.scalp.shape(follicle, head),
                 self.scalp.clumps(follicle),
                 self.scalp.roots,
                 self.scalp.tips,
             ),
             Follicle::Brows => (
-                self.brows.shape(follicle),
+                self.brows.shape(follicle, head),
                 self.brows.clumps(follicle),
                 self.brows.roots,
                 self.brows.tips,
             ),
             Follicle::Moustache => (
-                self.moustache.shape(follicle),
+                self.moustache.shape(follicle, head),
                 self.moustache.clumps(follicle),
                 self.moustache.roots,
                 self.moustache.tips,
             ),
             Follicle::Chin => (
-                self.chin.shape(follicle),
+                self.chin.shape(follicle, head),
                 self.chin.clumps(follicle),
                 self.chin.roots,
                 self.chin.tips,
             ),
             Follicle::Flanks => (
-                self.flanks.shape(follicle),
+                self.flanks.shape(follicle, head),
                 self.flanks.clumps(follicle),
                 self.flanks.roots,
                 self.flanks.tips,
@@ -506,6 +541,22 @@ pub struct Sown {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::face::{Canon, Skull};
+    use crate::{Archetype, Avatar, AvatarRecord};
+
+    /// The regions of one built head, which a style is fitted against.
+    ///
+    /// Built rather than faked, because a brow style takes its length from the
+    /// ridge the mask measured and a hand-made [`Follicles`] would be a second
+    /// opinion about where a brow is. The catalogue's own numbers are unit-tested
+    /// in each style's file; this is what a record asks for on a real face.
+    fn head() -> Follicles {
+        let record = AvatarRecord::new("Styles", Archetype::default());
+        let avatar = Avatar::build(&record).expect("a biped builds");
+        let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
+        let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+        Follicles::of(&avatar.rig, &skull, &canon, &FollicleParams::default())
+    }
 
     #[test]
     fn sanitize_clamps_and_is_idempotent() {
@@ -543,10 +594,11 @@ mod tests {
         // The `None` variants are how a record asks for a painted region and no
         // geometry — a shaved jaw, a drawn-on brow — and every reader downstream
         // keys off this rather than off a zero count, which a thin cut also has.
+        let head = head();
         let bare = HairRecord::bald();
         for follicle in Follicle::ALL {
             assert!(
-                bare.sowing(follicle).is_none(),
+                bare.sowing(follicle, &head).is_none(),
                 "a bald record grows {} it was never asked for",
                 follicle.name()
             );
@@ -554,9 +606,9 @@ mod tests {
         // And the default is a person rather than a mannequin: hair on the head
         // and brows, no beard.
         let usual = HairRecord::default();
-        assert!(usual.sowing(Follicle::Scalp).is_some());
-        assert!(usual.sowing(Follicle::Brows).is_some());
-        assert!(usual.sowing(Follicle::Chin).is_none());
+        assert!(usual.sowing(Follicle::Scalp, &head).is_some());
+        assert!(usual.sowing(Follicle::Brows, &head).is_some());
+        assert!(usual.sowing(Follicle::Chin, &head).is_none());
     }
 
     #[test]
@@ -567,7 +619,7 @@ mod tests {
         let mut record = HairRecord::default();
         record.scalp.cut.density = 0.0;
         let sown = record
-            .sowing(Follicle::Scalp)
+            .sowing(Follicle::Scalp, &head())
             .expect("a crop at zero density is still a crop");
         assert!(sown.clumps > 0, "a thin crop grew no clumps at all");
     }
@@ -593,9 +645,10 @@ mod tests {
         ] {
             tress.density = 1.0;
         }
+        let head = head();
         let total: usize = Follicle::ALL
             .into_iter()
-            .filter_map(|follicle| record.sowing(follicle))
+            .filter_map(|follicle| record.sowing(follicle, &head))
             .map(|sown| sown.clumps)
             .sum();
         assert!(

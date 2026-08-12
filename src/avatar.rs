@@ -486,7 +486,7 @@ impl Avatar {
             let mut stream = Pcg64Mcg::seed_from_u64(record.seed as u64);
             let mut growth = Growth::on(follicles.head);
             for follicle in crate::hair::Follicle::ALL {
-                let Some(sown) = hair_record.sowing(follicle) else {
+                let Some(sown) = hair_record.sowing(follicle, follicles) else {
                     continue;
                 };
                 growth.grow(
@@ -1226,31 +1226,63 @@ mod tests {
     fn hair_keeps_a_shade_per_lock_through_the_merge() {
         // Merging is only free if nothing is lost by it. One solid in one colour
         // reads as a helmet, so the walk over brightness has to survive.
-        let avatar = biped(3);
+        let mut record = AvatarRecord::new("Built", Archetype::default());
+        record.reroll(3);
+        let avatar = Avatar::build(&record).expect("a biped builds");
         let hair = avatar
             .drawn(0.0)
             .into_iter()
             .find(|m| m.kind == MeshKind::Hair)
             .expect("a biped has hair");
-        let mut tones: Vec<[u32; 3]> = hair
+        // **Measured as the SPREAD between the record's two colours, not as a
+        // count of distinct ones** (#205). Counting quantised tones read
+        // whatever set of station fractions the sampler happened to produce:
+        // index-based sampling gave a clump of N stations the fractions
+        // `k/(N-1)`, so a head with clumps of four, five and six stations
+        // carried a wide assortment of values and the count was comfortably
+        // over eight. Sampling by travel makes those fractions dyadic — 0, ½,
+        // ¼, ¾ — which is CORRECT (a station a quarter of the way down the hair
+        // should be a quarter of the way down the gradient) and which drops the
+        // count to exactly eight without changing anything about whether hair
+        // reads as one solid.
+        //
+        // So it asks the question the name asks: does the merged mesh still walk
+        // from the roots' colour to the tips'? A helmet would be one point on
+        // that line; hair is spread along it.
+        let (roots, tips) = (
+            Vec3::from_array(record.hair.scalp.roots),
+            Vec3::from_array(record.hair.scalp.tips),
+        );
+        let span = tips - roots;
+        assert!(
+            span.length() > 1e-3,
+            "this seed rolled one colour for both ends, so there is no gradient to lose"
+        );
+        let alongs: Vec<f32> = hair
             .mesh
             .colours
             .iter()
-            .map(|c| {
-                [
-                    (c.x * 4096.0) as u32,
-                    (c.y * 4096.0) as u32,
-                    (c.z * 4096.0) as u32,
-                ]
-            })
+            .map(|colour| (*colour - roots).dot(span) / span.length_squared())
             .collect();
-        tones.sort_unstable();
-        tones.dedup();
+        let (low, high) = alongs
+            .iter()
+            .fold((f32::MAX, f32::MIN), |span, at| (span.0.min(*at), span.1.max(*at)));
         assert!(
-            tones.len() > 8,
-            "{} locks came out in {} shades",
-            avatar.parts.hair.map_or(0, |h| h.clumps()),
-            tones.len()
+            high - low > 0.8,
+            "{} locks span only {:.2} of the way from the roots' colour to the tips', so the \
+             merge has flattened the gradient",
+            avatar.parts.hair.as_ref().map_or(0, Growth::clumps),
+            high - low
+        );
+        let between = alongs
+            .iter()
+            .filter(|along| (0.1..=0.9).contains(*along))
+            .count();
+        assert!(
+            between * 4 > alongs.len(),
+            "only {between} of {} hair vertices are anywhere between the two colours: the \
+             gradient is two flat ends rather than a walk",
+            alongs.len()
         );
     }
 

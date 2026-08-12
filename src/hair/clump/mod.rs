@@ -77,6 +77,48 @@ pub trait Shape {
     /// The clump's half-extents at root and tip, wide by thick, in metres.
     fn section(&self, root: &Root) -> (Vec2, Vec2);
 
+    /// The clump's half-extents a share of the way along it.
+    ///
+    /// **Because a lock's width comes and goes, and only the tapered case can be
+    /// written as two ends** (#205). The default is [`Self::section`]'s two ends
+    /// run into each other, which is a wedge: full at the root, a point at the
+    /// tip, and a blunt squared-off face where it began. That is right for a
+    /// hanging lock, whose root is hidden in the hair above it, and wrong for
+    /// anything that has to overlap its neighbours — a row of wedges reads as a
+    /// row of objects because every one of them visibly ends.
+    ///
+    /// A style that overrides this can be a leaf instead: thin, full, thin. It
+    /// costs nothing — the same stations, the same sides, the same triangles.
+    ///
+    /// Asked at the same fractions [`Self::at`] is, so a section follows the
+    /// curve rather than the sampling.
+    fn section_at(&self, root: &Root, along: f32) -> Vec2 {
+        let (base, tip) = self.section(root);
+        base.lerp(tip, along.clamp(0.0, 1.0))
+    }
+
+    /// Which way the clump's wide axis lies, in head-local space.
+    ///
+    /// **A lock is a ribbon, so which way round the ribbon faces is half of
+    /// whether it reads as hair** — and only the style knows, because the answer
+    /// is "across the way this clump runs" and the engine does not know which way
+    /// that is. The default is across a clump that falls: tangent to the head and
+    /// level, which is the sheet a hanging lock lies in.
+    ///
+    /// A brow is what proves it has to be asked (#205). Its clumps run sideways
+    /// along the ridge, and the falling default is parallel to that — a ribbon
+    /// whose width lies along its own spine has no width at all, and
+    /// [`crate::prim::sweep_outline`] quietly substitutes an arbitrary frame,
+    /// which is the edge-on strand the ribbon note warns about.
+    ///
+    /// Need not be perpendicular to the spine: the sweep squares it against the
+    /// path's own direction. It must not be parallel to it.
+    fn across(&self, root: &Root) -> Vec3 {
+        root.out
+            .cross(Vec3::Y)
+            .normalize_or(root.out.cross(Vec3::X).normalize_or(Vec3::X))
+    }
+
     /// How many corners the cross-section has.
     ///
     /// Three is a prism and reads as a lock of hair at the distances a game is
@@ -599,6 +641,139 @@ mod tests {
             straight <= floor,
             "{clumps} straight clumps cost {straight} triangles against a floor of {floor}, so \
              they are being subdivided for a curve they do not have"
+        );
+    }
+
+    #[test]
+    fn a_section_asked_for_per_station_costs_what_a_tapered_one_does() {
+        // The contract of [`Shape::section_at`] (#205): a style may be a leaf
+        // rather than a wedge, and it pays nothing for it. Asserted as the
+        // triangle count against the same style with the default two-ended
+        // taper — the same clumps, the same stations, the same cost — and as the
+        // meshes differing, since a profile that changed nothing would pass the
+        // first half on its own.
+        //
+        // A leaf is what makes a row of overlapping clumps read as one mass: a
+        // wedge ends in a blunt face at the root and the eye finds every one of
+        // them.
+        struct Leaf(Fall);
+
+        impl Shape for Leaf {
+            fn length(&self, root: &Root) -> f32 {
+                self.0.length(root)
+            }
+            fn at(&self, root: &Root, along: f32) -> Vec3 {
+                self.0.at(root, along)
+            }
+            fn section(&self, root: &Root) -> (Vec2, Vec2) {
+                self.0.section(root)
+            }
+            fn section_at(&self, root: &Root, along: f32) -> Vec2 {
+                let (base, _) = self.section(root);
+                // Thin at both ends, fullest in the middle.
+                base * (0.3 + 0.7 * (1.0 - (along * 2.0 - 1.0).abs()))
+            }
+        }
+
+        let bed = bed(0);
+        let grow = |shape: &dyn Shape| {
+            let mut growth = Growth::default();
+            let mut stream = stream();
+            growth.grow(
+                &bed.bed(),
+                &Sowing {
+                    follicle: Follicle::Brows,
+                    count: 30,
+                    shape,
+                    roots: Vec3::ZERO,
+                    tips: Vec3::ONE,
+                },
+                &mut stream,
+            );
+            growth
+        };
+        let (wedge, leaf) = (grow(&Fall::default()), grow(&Leaf(Fall::default())));
+        assert_eq!(
+            wedge.tris(),
+            leaf.tris(),
+            "a section asked for per station changed what the clump cost"
+        );
+        assert_eq!(
+            wedge.mesh.positions.len(),
+            leaf.mesh.positions.len(),
+            "and it changed how many vertices there are"
+        );
+        assert_ne!(
+            wedge.mesh.positions, leaf.mesh.positions,
+            "the leaf profile drew the same geometry as the wedge, so nothing was asked of it"
+        );
+        // And the default really is the wedge: widest at the root, narrowest at
+        // the tip, which is what every style that does not override this gets.
+        let root = Root {
+            at: Vec3::new(0.0, 0.0, 0.1),
+            out: Vec3::Z,
+            weight: 1.0,
+        };
+        let fall = Fall::default();
+        let (base, tip) = fall.section(&root);
+        assert!(fall.section_at(&root, 0.0).abs_diff_eq(base, 1e-6));
+        assert!(fall.section_at(&root, 1.0).abs_diff_eq(tip, 1e-6));
+        assert!(fall.section_at(&root, 0.5).x < base.x && fall.section_at(&root, 0.5).x > tip.x);
+    }
+
+    #[test]
+    fn a_style_may_not_lay_its_width_along_its_own_spine() {
+        // What [`Shape::across`] is for, guarded at the engine rather than in one
+        // style: a ribbon whose wide axis is parallel to its spine has no width,
+        // and `prim::sweep_outline` does not complain — it substitutes an
+        // arbitrary frame, and the clump turns edge-on. A style that names such
+        // an axis must still get a ribbon.
+        struct Parallel;
+
+        impl Shape for Parallel {
+            fn length(&self, _root: &Root) -> f32 {
+                0.02
+            }
+            fn at(&self, root: &Root, along: f32) -> Vec3 {
+                root.at + Vec3::X * (0.02 * along)
+            }
+            fn section(&self, _root: &Root) -> (Vec2, Vec2) {
+                (Vec2::splat(0.002), Vec2::splat(0.001))
+            }
+            fn across(&self, _root: &Root) -> Vec3 {
+                // Straight along the spine, which is the one thing forbidden.
+                Vec3::X
+            }
+        }
+
+        let bed = bed(0);
+        let mut growth = Growth::default();
+        let mut stream = stream();
+        growth.grow(
+            &bed.bed(),
+            &Sowing {
+                follicle: Follicle::Brows,
+                count: 12,
+                shape: &Parallel,
+                roots: Vec3::ZERO,
+                tips: Vec3::ONE,
+            },
+            &mut stream,
+        );
+        assert!(growth.clumps() > 0, "no clump survived a degenerate wide axis");
+        // Measured as the clumps having real volume: a collapsed frame draws a
+        // sliver, and the widest span across the spine is what says so.
+        let (lo, hi) = growth
+            .mesh
+            .positions
+            .iter()
+            .fold((f32::MAX, f32::MIN), |span, at| {
+                (span.0.min(at.y), span.1.max(at.y))
+            });
+        assert!(
+            hi - lo > 0.001,
+            "the clumps are {:.3} mm tall, so the ribbon collapsed edge-on",
+            (hi - lo) * 1000.0
         );
     }
 

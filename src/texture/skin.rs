@@ -579,6 +579,38 @@ pub fn paint_skin(
             }
         }
 
+        // How much of a field's own frequency this texel can carry, which every
+        // grain in this painter is faded by.
+        //
+        // **Hoisted above the painted layer by #205**, which found the one grain
+        // that was not faded: the painted hair's. Read the reasoning at
+        // [`Grain::cells`] and at the micro-relief below — it is one argument and
+        // #158 paid for it. Spacing is the widest step to a neighbouring texel,
+        // which sees through a dilated texel's zero-distance clones to the real
+        // interior spacing.
+        let spacing = {
+            let x = (index as u32) % geometry.width;
+            let y = (index as u32) / geometry.width;
+            let mut widest = 0.0f32;
+            for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                let (nx, ny) = (i64::from(x) + dx, i64::from(y) + dy);
+                if nx < 0 || ny < 0 {
+                    continue;
+                }
+                if let Some(near) = geometry.get(nx as u32, ny as u32) {
+                    widest = widest.max((near.position - p).length());
+                }
+            }
+            widest
+        };
+        let resolvable = |cycles: f32| -> f32 {
+            if spacing > f32::EPSILON {
+                (1.0 / (2.0 * spacing * cycles)).clamp(0.0, 1.0)
+            } else {
+                1.0
+            }
+        };
+
         // **Painted hair, region by region** (#200). What used to be one
         // stubble scalar over a hand-drawn window — the lower half of the head,
         // weighted forward — is now the same five masks the grown layer roots
@@ -591,7 +623,10 @@ pub fn paint_skin(
         let mut painted = 0.0f32;
         if let Some(hair) = hair.filter(|_| texel.zone == Zone::Head) {
             let local = p - hair.follicles.origin();
-            let grain = noise3(&stubble_field, p, 260.0) * 0.5 + 0.5;
+            // The coarsest grain any region asked for, for the coverage figure
+            // the relief and roughness take: they want one number for hair
+            // standing out of skin, whichever region it belongs to.
+            let mut coarsest = 1.0f32;
             for follicle in Follicle::ALL {
                 let paint = hair.painted.of(follicle);
                 if !paint.shows() {
@@ -601,16 +636,24 @@ pub fn paint_skin(
                 if held <= 0.0 {
                     continue;
                 }
+                // **The grain is the region's own, not one shared number**
+                // (#205). A brow is dense hair and a jaw is a shave, and the
+                // stubble grain drawn over a twelve-millimetre brow was three
+                // cells of checkerboard. See [`Grain`].
+                let grain = crate::hair::painted::Grain::of(follicle);
+                let speckle = noise3(&stubble_field, p, grain.cells) * 0.5 + 0.5;
+                let broken = grain.at(speckle, resolvable(grain.cells));
                 // Toward the hair's own colour, darkened by the skin under it
                 // rather than replacing it: a hair painted on skin is a hair
                 // seen end-on through the skin around it, so the complexion
                 // still shows and a pale face keeps its own tone between the
-                // hairs. GRAIN is what makes that read as hairs rather than as
-                // a wash.
-                colour = colour.lerp(paint.tone(), held * grain * PAINTED);
+                // hairs. The grain is what makes that read as hairs rather than
+                // as a wash.
+                colour = colour.lerp(paint.tone(), held * broken * PAINTED);
                 painted = (painted + held).min(1.0);
+                coarsest = coarsest.min(broken);
             }
-            painted *= grain;
+            painted *= coarsest;
         }
 
         // The mouth's interior (#154), keyed by the surgery's own channel
@@ -651,31 +694,9 @@ pub fn paint_skin(
         // texel spacing resolves, the same fade a mip chain applies. Spacing
         // is the widest step to a neighbouring texel, which sees through a
         // dilated texel's zero-distance clones to the real interior spacing.
-        let spacing = {
-            let x = (index as u32) % geometry.width;
-            let y = (index as u32) / geometry.width;
-            let mut widest = 0.0f32;
-            for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
-                let (nx, ny) = (i64::from(x) + dx, i64::from(y) + dy);
-                if nx < 0 || ny < 0 {
-                    continue;
-                }
-                if let Some(near) = geometry.get(nx as u32, ny as u32) {
-                    widest = widest.max((near.position - p).length());
-                }
-            }
-            widest
-        };
         // Hoisted into a closure by #165, which adds two more fields at two
         // more frequencies. The pore case is unchanged: `resolvable(400.0)` is
         // the expression that stood here.
-        let resolvable = |cycles: f32| -> f32 {
-            if spacing > f32::EPSILON {
-                (1.0 / (2.0 * spacing * cycles)).clamp(0.0, 1.0)
-            } else {
-                1.0
-            }
-        };
         let pore = noise3(&pores, p, 400.0) * resolvable(400.0);
         // A muscle belly's own grain, on the zones that have one, and a life's
         // creasing on the skin that shows it. Both ride in the height map

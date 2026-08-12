@@ -257,6 +257,19 @@ impl Follicles {
         self.origin
     }
 
+    /// The line one brow follows on this head.
+    ///
+    /// **Handed out rather than copied, because a style has to comb along the
+    /// very curve the mask is centred on** (#205). Both brow styles take their
+    /// direction, their rise and their fall from this, so a change to the ridge
+    /// moves the paint and the geometry together and there is no second arc to
+    /// keep in step. It is the same discipline the private `border` here follows:
+    /// the beard's lower edge is not a copy of the jawline, it is the jawline.
+    #[must_use]
+    pub fn brow_ridge(&self) -> brows::Ridge {
+        self.brows.ridge()
+    }
+
     /// How much of `follicle` may grow at a head-local point, `0` to `1`.
     #[must_use]
     pub fn weight(&self, follicle: Follicle, local: Vec3) -> f32 {
