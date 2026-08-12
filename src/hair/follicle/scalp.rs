@@ -49,9 +49,10 @@ impl Default for Params {
 impl Params {
     /// Clamps each axis to the range its docstring promises.
     pub fn sanitize(&mut self) {
-        self.line = self.line.clamp(-1.0, 1.0);
-        self.temples = self.temples.clamp(0.0, 1.0);
-        self.nape = self.nape.clamp(-1.0, 1.0);
+        use crate::plan::scaled::quantize;
+        self.line = quantize(self.line.clamp(-1.0, 1.0));
+        self.temples = quantize(self.temples.clamp(0.0, 1.0));
+        self.nape = quantize(self.nape.clamp(-1.0, 1.0));
     }
 }
 

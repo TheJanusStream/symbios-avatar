@@ -29,9 +29,10 @@ pub struct Params {
 impl Params {
     /// Clamps each axis to the range its docstring promises.
     pub fn sanitize(&mut self) {
-        self.rise = self.rise.clamp(-1.0, 1.0);
-        self.apart = self.apart.clamp(-1.0, 1.0);
-        self.reach = self.reach.clamp(-1.0, 1.0);
+        use crate::plan::scaled::quantize;
+        self.rise = quantize(self.rise.clamp(-1.0, 1.0));
+        self.apart = quantize(self.apart.clamp(-1.0, 1.0));
+        self.reach = quantize(self.reach.clamp(-1.0, 1.0));
     }
 }
 

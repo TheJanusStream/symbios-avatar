@@ -53,7 +53,10 @@ use crate::cage::CageConfig;
 use crate::dress::Outfit;
 use crate::extremity::Extremities;
 use crate::face::{self, Canon, Eyes, Features, Skull};
-use crate::hair::{Hair, HairParams};
+use rand::SeedableRng;
+use rand_pcg::Pcg64Mcg;
+
+use crate::hair::{Growth, HairRecord};
 use crate::mesh::PolyMesh;
 use crate::plan::{Limb, Zone};
 use crate::record::AvatarRecord;
@@ -134,7 +137,7 @@ pub struct AvatarConfig {
     /// The plane the body stands on.
     pub ground: f32,
     /// Hair parameters replacing the record's, for walking the axes by eye.
-    pub hair: Option<HairParams>,
+    pub hair: Option<HairRecord>,
     /// Complexion replacing the record's, for the same reason. Named apart from
     /// `skin` above, which is how the mesh is bound rather than what colour it
     /// is. A complexion is judged by looking at it under light, not by reading a
@@ -190,7 +193,8 @@ pub struct Parts {
     /// Its face, if it is the kind of body that wears one.
     pub features: Option<Features>,
     /// Its hair, likewise.
-    pub hair: Option<Hair>,
+    /// Its hair, grown in its head joint's own space.
+    pub hair: Option<Growth>,
     /// Its hands and feet.
     pub extremities: Extremities,
     /// What it is wearing.
@@ -356,7 +360,7 @@ impl Avatar {
         // A limb the body does not stand on is a hand, and a body with hands is
         // the kind that wears things. See the note above.
         let handed = rig.ground_contacts().len() < Limb::ALL.len();
-        let hair_params = config.hair.unwrap_or(record.hair);
+        let hair_record = config.hair.unwrap_or(record.hair);
 
         // Measured from the body that was built, not from the plan that asked
         // for it: the two differ by about a third at the head, and by a
@@ -453,17 +457,10 @@ impl Avatar {
         // Where hair may grow, which the painted layer needs and the grown one
         // will take over from the old shell at #209.
         let follicles = skull.as_ref().zip(canon.as_ref()).map(|(skull, canon)| {
-            crate::hair::Follicles::of(&rig, skull, canon, &crate::hair::FollicleParams::default())
+            crate::hair::Follicles::of(&rig, skull, canon, &hair_record.regions)
         });
-        // **The painted layer's own axes arrive with the record at #202; until
-        // then it is driven from the stubble scalar it replaces.** Which is a
-        // strict improvement rather than a placeholder: the same amount of
-        // stubble, painted through the beard's real masks — ending on the
-        // jawline the face is carved to — instead of through a window that was
-        // the lower half of the head weighted forward.
         let complexion = config.complexion.unwrap_or(record.skin);
-        let painted_hair =
-            crate::hair::PaintedHair::beard(complexion.stubble, Vec3::from_array(hair_params.colour()));
+        let painted_hair = hair_record.painted();
         let layer = follicles.as_ref().map(|follicles| texture::PaintedLayer {
             follicles,
             painted: &painted_hair,
@@ -476,10 +473,44 @@ impl Avatar {
             layer.as_ref(),
         );
 
+        // **Grown from the record, region by region** (#202). A body with no
+        // hands is not the kind of body that wears a haircut — the same rule
+        // the shell era used — and one with no measured head has nowhere to
+        // put one.
+        let hair = follicles.as_ref().filter(|_| handed).map(|follicles| {
+            let bed = crate::hair::clump::Bed {
+                body: &body,
+                rig: &rig,
+                follicles,
+            };
+            let mut stream = Pcg64Mcg::seed_from_u64(record.seed as u64);
+            let mut growth = Growth::on(follicles.head);
+            for follicle in crate::hair::Follicle::ALL {
+                let Some(sown) = hair_record.sowing(follicle) else {
+                    continue;
+                };
+                growth.grow(
+                    &bed,
+                    &crate::hair::clump::Sowing {
+                        follicle,
+                        count: sown.clumps,
+                        shape: sown.shape.as_ref(),
+                        roots: Vec3::from_array(sown.roots),
+                        tips: Vec3::from_array(sown.tips),
+                    },
+                    &mut stream,
+                );
+            }
+            growth
+        });
+        // A region that grew nothing leaves no part behind. The merge keys off
+        // this, and a `Some` holding an empty mesh would be a part whose draw
+        // call went missing — the half-removal `a_hair_length_of_zero_grows_no_hair_at_all`
+        // exists to catch.
+        let hair = hair.filter(|growth| growth.mesh.face_count() > 0);
+
         let parts = Parts {
-            hair: handed
-                .then(|| Hair::build(&body, &rig, &hair_params))
-                .flatten(),
+            hair,
             features,
             extremities,
             outfit,
@@ -646,24 +677,19 @@ impl Avatar {
             mesh: skin,
         }];
 
-        if let Some(hair) = &self.parts.hair {
-            let to_body = Mat4::from_translation(self.rig.joints[hair.head].position);
-            let tone = Vec3::from_array(hair.colour);
-            // The sculpted mass first, then the locks that break its edge.
-            let mut locks = hair.shell.painted(tone);
-            locks.set_normals(locks.vertex_normals());
-            for (index, group) in hair.groups.iter().enumerate() {
-                let mut lock = group.mesh();
-                lock.set_normals(lock.vertex_normals());
-                // A walk over brightness, lock by lock. As one solid in one
-                // colour a head of hair reads as a helmet at close range, and
-                // carrying the walk per vertex is what lets it be one draw.
-                let step = (index as f32 * 0.618_034).fract();
-                lock.paint(tone * (0.74 + 0.5 * step));
-                locks.append(&lock.split_uv_seams());
-            }
-            let mut placed = locks.transformed(to_body);
-            placed.bind_rigidly(hair.head as u16);
+        // One mesh for every region of hair, carrying its own colours per
+        // vertex — so the walk over brightness the shell needed to stop reading
+        // as a helmet is now the root-to-tip fade a record asked for.
+        if let Some(growth) = self
+            .parts
+            .hair
+            .as_ref()
+            .filter(|growth| growth.mesh.face_count() > 0)
+        {
+            let to_body = Mat4::from_translation(self.rig.joints[growth.head].position);
+            let mut placed = growth.mesh.transformed(to_body);
+            placed.set_normals(placed.vertex_normals());
+            placed.bind_rigidly(growth.head as u16);
             merged.push(AvatarMesh {
                 kind: MeshKind::Hair,
                 mesh: placed,
@@ -1223,7 +1249,7 @@ mod tests {
         assert!(
             tones.len() > 8,
             "{} locks came out in {} shades",
-            avatar.parts.hair.map_or(0, |h| h.groups.len()),
+            avatar.parts.hair.map_or(0, |h| h.clumps()),
             tones.len()
         );
     }
@@ -1378,15 +1404,36 @@ mod tests {
         }
     }
 
+    /// A body whose every region is styled `None`: the record's way of saying
+    /// bald, and the thing #124's cliff was standing in for.
+    fn bald() -> Avatar {
+        let record = AvatarRecord::new("Bald", Archetype::default());
+        Avatar::build_with(
+            &record,
+            &AvatarConfig {
+                hair: Some(HairRecord::bald()),
+                ..Default::default()
+            },
+        )
+        .expect("builds")
+    }
+
     /// Grows a body with one hair length and nothing else changed.
     fn at_length(length: f32) -> Avatar {
         let record = AvatarRecord::new("Built", Archetype::default());
         Avatar::build_with(
             &record,
             &AvatarConfig {
-                hair: Some(HairParams {
-                    length,
-                    ..HairParams::default()
+                hair: Some(HairRecord {
+                    scalp: crate::hair::Tress {
+                        style: crate::hair::ScalpStyle::Crop,
+                        cut: crate::hair::Cut {
+                            length,
+                            ..crate::hair::Cut::default()
+                        },
+                        ..Default::default()
+                    },
+                    ..HairRecord::default()
                 }),
                 ..Default::default()
             },
@@ -1400,26 +1447,49 @@ mod tests {
         // (#124). This test is about the override path, not about the bottom of
         // the axis, and it was asserting on a value that now grows nothing —
         // which would have failed at `.expect("hair")` rather than saying so.
+        //
+        // Measured as how far the hair reaches below the head joint rather than
+        // as a `drop` the shell used to report: the clump engine has no such
+        // number, and the thing the override is supposed to change is how long
+        // the hair is.
+        let reach = |avatar: &Avatar| {
+            let hair = avatar.parts.hair.as_ref().expect("hair");
+            hair.mesh
+                .positions
+                .iter()
+                .map(|point| -point.y)
+                .fold(f32::MIN, f32::max)
+        };
         let cropped = at_length(0.1);
         let long = at_length(1.0);
         assert!(
-            long.parts.hair.expect("hair").drop() > cropped.parts.hair.expect("hair").drop() * 2.0
+            reach(&long) > reach(&cropped) * 1.5,
+            "a long crop reaches {:.1} mm below the head joint against a short one\'s {:.1}",
+            reach(&long) * 1000.0,
+            reach(&cropped) * 1000.0
         );
     }
 
     #[test]
-    fn a_hair_length_of_zero_grows_no_hair_at_all() {
+    fn a_record_that_asks_for_no_hair_grows_none() {
         // **The whole set, not a shorter one** (#124). The fall is only part of
-        // what a head of hair costs here — the mass is a sculpted shell — so a
+        // what a head of hair costs here — the mass was a sculpted shell — so a
         // length of zero used to build a bucket hat: 3,656 triangles and a draw
         // call, on a record asking for none.
+        //
+        // **And "no hair" is a style rather than a length now** (#202). #124
+        // had to make the bottom of the length axis a cliff — `0.001` a full
+        // hood and `0.000` nothing — because there was no other way for a
+        // record to say bald, and its own docstring called that out as the
+        // price of the arrangement. Every region has a `None` style now, so the
+        // cliff is gone: a length of zero is short hair, and none is none.
         //
         // Asserted three ways because "no hair" has three meanings and the
         // cheap one would pass on its own: nothing in `parts`, nothing drawn,
         // and a draw call fewer than the same body with hair. A part that is
         // `None` while its mesh is still in the merge is exactly the sort of
         // half-removal this crate has caught before.
-        let bald = at_length(0.0);
+        let bald = bald();
         assert!(
             bald.parts.hair.is_none(),
             "a record asked for no hair and got some"

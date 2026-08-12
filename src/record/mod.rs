@@ -47,7 +47,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dress::OutfitParams;
 use crate::face::{EyeParams, FaceParams};
-use crate::hair::HairParams;
+use crate::hair::{HairRecord, ScalpStyle};
 use crate::plan::{Archetype, Category, Composites, Rolls};
 use crate::skeleton::Skeleton;
 use crate::texture::SkinParams;
@@ -113,7 +113,25 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 3;
+pub const GENERATOR_VERSION: u32 = 4;
+
+/// The generation whose hair a record has to be re-rolled to reach.
+///
+/// **The hair rewrite is the only migration this crate has ever needed, and it
+/// needed one because the old axes cannot be mapped** (#202). The shell era
+/// described one object — a sculpted mass with locks cut into its rim, at one
+/// length, one volume and one colour — and the record now describes five
+/// regions in two layers with a style and two colours each. There is no
+/// function from the first to the second: a body with `length` 0.4 has no
+/// answer for whether it has a beard.
+///
+/// So a record older than this has its hair **re-drawn from its own seed**,
+/// which is the owner's own call over mapping to a nearest look. It is
+/// deterministic, it is what the same seed would produce today, and it is
+/// honest about the break rather than inventing a beard nobody chose. Every
+/// other axis is untouched: hair draws from streams named for itself, so the
+/// rest of the body a seed describes is bit-identical across the bump.
+const HAIR_GENERATION: u32 = 4;
 
 /// A field the lexicon requires that this record does not carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -160,7 +178,7 @@ pub struct AvatarRecord {
     pub face: FaceParams,
     /// The hair grown on its head.
     #[serde(default)]
-    pub hair: HairParams,
+    pub hair: HairRecord,
     /// What it is wearing.
     #[serde(default)]
     pub outfit: OutfitParams,
@@ -208,7 +226,7 @@ impl Default for AvatarRecord {
             skin: SkinParams::default(),
             eyes: EyeParams::default(),
             face: FaceParams::default(),
-            hair: HairParams::default(),
+            hair: HairRecord::default(),
             outfit: OutfitParams::default(),
             seed: 0,
             locks: LockSet::NONE,
@@ -249,6 +267,36 @@ impl AvatarRecord {
         self.face.sanitize();
         self.hair.sanitize();
         self.outfit.sanitize();
+        self.migrate();
+    }
+
+    /// Brings a record forward from an older generation of the generator.
+    ///
+    /// **Run from [`Self::sanitize`], which is the one thing every path that
+    /// takes a record from outside already calls.** A migration a caller has to
+    /// remember is a migration that gets forgotten, and the failure would be
+    /// silent: a record whose hair fields did not parse deserialises to a
+    /// default head of hair rather than to an error.
+    ///
+    /// Idempotent, because it stamps the generation it brought the record to
+    /// and does nothing when there is nothing to do.
+    ///
+    /// Stamping [`GENERATOR_VERSION`] afterwards is exact rather than
+    /// approximate: generation 4 changed how hair is drawn and nothing else, so
+    /// a generation-3 record with its hair re-drawn by 4 is what 4 would have
+    /// drawn from that seed.
+    fn migrate(&mut self) {
+        if self.generator >= HAIR_GENERATION {
+            return;
+        }
+        // Deliberately ignores the hair lock. A lock is a promise that a
+        // category will not change, and this crate cannot keep it here: the
+        // hair the lock was protecting is not representable any more. Breaking
+        // it loudly in one place beats keeping a default head of hair that
+        // nobody chose and calling it the locked one.
+        reroll_hair(&mut self.hair, &Rolls::new(self.seed), &self.composites);
+        self.hair.sanitize();
+        self.generator = GENERATOR_VERSION;
     }
 
     /// Builds the capsule graph for this avatar's body.
@@ -502,37 +550,117 @@ fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, rolls: &Rolls) {
 /// Its own category since #53. Hair is the loudest thing about a head and the
 /// one most often kept while everything under it changes, which is the whole
 /// argument for a lock of its own.
-fn reroll_hair(hair: &mut HairParams, rolls: &Rolls, composites: &crate::Composites) {
+///
+/// **Five regions since #202**, drawn from the streams their own names give
+/// them. The composites keep their say — a beard is strongly sexed and a
+/// hairline recedes with age — and #203 is where the colour gamut and the rest
+/// of the priors are fitted; what is here is the coupling the shell era already
+/// had, carried over rather than dropped on the floor during the rewrite.
+fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composites) {
     // Hair is a style, not a shape: it keeps its uniform draws and its
     // conservative ranges (#160, owner call — same reason complexion does).
-    hair.length = rolls.range("hair.length", 0.0, 1.0);
-    hair.volume = rolls.range("hair.volume", -0.7, 0.9);
+    let masculinity = -composites.femininity.clamp(-1.0, 1.0);
+    let ageing = composites.ageing();
+
     // **The hairline is the one thing on a head that age and the frame axis
     // both have a claim on** (#169). Recession is age-related and strongly
-    // masculine, and this axis already says exactly that — `-1` receding,
-    // `+1` low on the brow — so the composites shift where the uniform window
-    // SITS rather than adding a term anywhere. At the top of the age ramp on a
-    // fully masculine frame the window is 0.55 lower than at neutral; on a
-    // fully feminine one age moves it a third as far, which is the direction
-    // and the ratio the pattern-baldness literature reports rather than a
-    // measured pair.
+    // masculine, so the composites shift where the uniform window SITS rather
+    // than adding a term anywhere. At the top of the age ramp on a fully
+    // masculine frame the window is 0.55 lower than at neutral; on a fully
+    // feminine one age moves it a third as far, which is the direction and the
+    // ratio the pattern-baldness literature reports rather than a measured
+    // pair.
     //
     // Provenance: **looked up for the direction and the sex ratio, sized to
     // the axis** (#169).
-    let recession = composites.ageing() * (0.4 - 0.15 * composites.femininity.clamp(-1.0, 1.0));
-    hair.coverage = rolls.range("hair.coverage", -0.8 - recession, 0.8 - recession);
-    hair.part = rolls.range("hair.part", -1.0, 1.0);
-    hair.wave = rolls.range("hair.wave", 0.0, 1.0);
-    // **AGE DOES NOT SHIFT THIS PRIOR, and #167 left the question open rather
-    // than settled** (#169). Greying is the obvious correlation to want and
-    // this axis cannot carry it: `shade` is a MELANIN ramp whose light end is
-    // `rgb(0.820, 0.660, 0.350)`, a warm blonde at about 0.57 saturation.
-    // Shifting an old body's prior toward it does not grey anyone, it makes
-    // pensioners blonde. Grey is a desaturation of whatever colour the hair
-    // was, which is a term this ramp has nowhere to put — so it wants either a
-    // second axis or a desaturation on the existing one, and both are a
-    // decision about the hair rather than about the composites.
-    hair.shade = rolls.range("hair.shade", 0.0, 1.0);
+    let recession = ageing * (0.4 + 0.15 * masculinity);
+    hair.regions.scalp.line = rolls.range("hair.line", -0.8 - recession, 0.8 - recession);
+    // The temples go back on their own, which is what recession IS — see the
+    // axis's own docstring for why one number cannot draw both.
+    hair.regions.scalp.temples = (rolls.range("hair.temples", 0.0, 0.5) + recession).clamp(0.0, 1.0);
+    hair.regions.scalp.nape = rolls.range("hair.nape", -1.0, 1.0);
+
+    // One colour for the whole head, drawn once: hair that is one colour on a
+    // scalp and another on a chin is a dye job, not a body, and the record can
+    // still say so by hand. #203 fits the gamut this draws from; today it is
+    // the melanin ramp the shell era used, which is at least a real one.
+    let shade = rolls.range("hair.shade", 0.0, 1.0);
+    let roots = crate::hair::style::melanin(shade);
+    // Tips are the same hair further from the scalp: lighter, never a different
+    // colour. A random second colour reads as costume.
+    let tips = crate::hair::style::melanin((shade + 0.18).min(1.0));
+
+    hair.scalp.style = ScalpStyle::Crop;
+    hair.scalp.cut.length = rolls.range("hair.length", 0.0, 1.0);
+    hair.scalp.cut.density = rolls.range("hair.density", 0.35, 1.0);
+    hair.scalp.cut.thickness = rolls.range("hair.thickness", 0.2, 0.9);
+    hair.scalp.cut.droop = rolls.range("hair.droop", 0.3, 0.9);
+    hair.scalp.roots = roots;
+    hair.scalp.tips = tips;
+    // Painted under the grown layer, always: it is what stops a thin crop
+    // reading as a bald head, and it costs nothing.
+    hair.scalp.skin = crate::hair::Paint {
+        density: 0.85,
+        colour: roots,
+    };
+
+    // Brows are near-universal and nearly always grown, so they are drawn as a
+    // shape rather than as a coin.
+    hair.brows.style = crate::hair::BrowStyle::Natural;
+    hair.brows.cut.density = rolls.range("brow.density", 0.5, 1.0);
+    hair.brows.cut.thickness = rolls.range("brow.thickness", 0.3, 1.0);
+    hair.brows.cut.length = rolls.range("brow.length", 0.4, 0.9);
+    hair.brows.roots = roots;
+    hair.brows.tips = roots;
+    hair.brows.skin = crate::hair::Paint {
+        density: 0.9,
+        colour: roots,
+    };
+
+    // **Facial hair is gated on the composites, as the stubble coin was**
+    // (#169's reading of it, carried to three regions). The coin and the amount
+    // draw from separate streams, so changing how full a beard is cannot change
+    // who has one.
+    let bearded = 0.05 + 0.45 * masculinity.max(0.0);
+    let grows = rolls.chance("beard.grows", f64::from(bearded));
+    let full = rolls.range("beard.full", 0.0, 1.0);
+    let coarse = rolls.range("beard.thickness", 0.3, 0.9);
+    for cut in [
+        &mut hair.moustache.cut,
+        &mut hair.chin.cut,
+        &mut hair.flanks.cut,
+    ] {
+        cut.density = full;
+        cut.length = full;
+        cut.thickness = coarse;
+    }
+    let beard = crate::hair::Paint {
+        // Painted even where nothing is grown: that is what a shaved jaw is.
+        density: (0.25 + 0.75 * full) * f32::from(u8::from(masculinity > -0.4)),
+        colour: roots,
+    };
+    for tress in [&mut hair.moustache.skin, &mut hair.chin.skin, &mut hair.flanks.skin] {
+        *tress = beard;
+    }
+    for (start, end) in [
+        (&mut hair.moustache.roots, &mut hair.moustache.tips),
+        (&mut hair.chin.roots, &mut hair.chin.tips),
+        (&mut hair.flanks.roots, &mut hair.flanks.tips),
+    ] {
+        // A beard is short enough that its tips are the same age as its roots,
+        // so it takes one colour rather than a fade.
+        *start = roots;
+        *end = roots;
+    }
+    if grows && full > 0.25 {
+        hair.moustache.style = crate::hair::MoustacheStyle::Chevron;
+        hair.chin.style = crate::hair::ChinStyle::Full;
+        hair.flanks.style = crate::hair::FlankStyle::Full;
+    } else {
+        hair.moustache.style = crate::hair::MoustacheStyle::None;
+        hair.chin.style = crate::hair::ChinStyle::None;
+        hair.flanks.style = crate::hair::FlankStyle::None;
+    }
 }
 
 fn reroll_skin(skin: &mut SkinParams, rolls: &Rolls) {
@@ -569,16 +697,24 @@ mod tests {
         assert_eq!(record.name, "Ari");
         assert!(record.fits_budget());
         // The bound is a ratchet on a record that should stay small, not a
-        // budget — [`RECORD_BUDGET_BYTES`] is that, and it is a hundred and
-        // thirty times further away. Raised 700 -> 800 when the composites
-        // block landed (#162), which is the first time it has moved: measured,
-        // a fresh record went 683 -> 745 bytes, so the four axes cost 62.
+        // budget — [`RECORD_BUDGET_BYTES`] is that, and it is still sixty times
+        // further away. Raised 700 -> 800 when the composites block landed
+        // (#162), and 800 -> 1900 when hair became five regions in two layers
+        // (#202): measured, a fresh record went 745 -> 1720 bytes.
+        //
+        // **That is the largest single jump this record has taken, and it is
+        // what the owner's model costs.** Five regions each carry a style, four
+        // cut axes, two sRGB colours and a painted colour and density — about
+        // 190 bytes apiece — against eight scalars and one colour for the whole
+        // head before. The alternative was fewer colours, which is the one
+        // thing the model is for.
+        //
         // Report the size when it fires, because the question a reader has is
         // "by how much".
         let size = record.serialized_size().expect("serialises");
         assert!(
-            size < 800,
-            "a fresh record is {size} bytes; a body is a few hundred, not kilobytes"
+            size < 1900,
+            "a fresh record is {size} bytes; a body is a couple of kilobytes, not tens"
         );
     }
 
@@ -699,7 +835,9 @@ mod tests {
         );
         assert_eq!(record.eyes.size, 0.7);
         assert_eq!(record.eyes.aperture, EyeParams::default().aperture);
-        assert_eq!(record.hair.locks, HairParams::default().locks);
+        // The hair record's own default survives a partial read the same way,
+        // now that it is five regions rather than eight scalars.
+        assert_eq!(record.hair.scalp.cut.density, HairRecord::default().scalp.cut.density);
     }
 
     #[test]
@@ -840,11 +978,16 @@ mod tests {
     fn an_out_of_range_number_is_clamped_rather_than_failing_the_parse() {
         // Sanitising cannot run on a record that would not load, so the reader
         // has to be wide enough to accept the value first.
-        let json = r#"{"name":"Wide","skin":{"melanin":3000000000},"hair":{"locks":4000000000}}"#;
+        // **Carries a current `generator`, and has to.** A record without one
+        // predates every generation, so `sanitize` re-draws its hair from its
+        // own seed (see `AvatarRecord::migrate`) — which would replace the wild
+        // value this test exists to watch being clamped.
+        let json = r#"{"name":"Wide","generator":4,"skin":{"melanin":3000000000},
+            "hair":{"scalp":{"cut":{"length":4000000000}}}}"#;
         let mut record: AvatarRecord = serde_json::from_str(json).expect("loads a wild value");
         record.sanitize();
         assert_eq!(record.skin.melanin, 1.0);
-        assert_eq!(record.hair.locks, crate::hair::MAX_LOCKS);
+        assert_eq!(record.hair.scalp.cut.length, 1.0);
     }
 
     #[test]
@@ -957,7 +1100,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 3,
+            GENERATOR_VERSION, 4,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {
@@ -970,7 +1113,7 @@ mod tests {
                 (params.height * 1000.0).round() as i32,
                 (params.shoulder_width * 1000.0).round() as i32,
                 (record.skin.melanin * 1000.0).round() as i32,
-                (record.hair.length * 1000.0).round() as i32,
+                (record.hair.scalp.cut.length * 1000.0).round() as i32,
             )
         };
         // Generation 3 (#169): the two-tier draw. Both body columns moved and

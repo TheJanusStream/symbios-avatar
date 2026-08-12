@@ -34,6 +34,7 @@ pub struct Paint {
     ///
     /// Stored as three scaled ints like every other colour a record carries, so
     /// the wire format has no floats in it.
+    #[serde(with = "crate::plan::scaled::triple")]
     pub colour: [f32; 3],
 }
 

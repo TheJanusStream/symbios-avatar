@@ -146,14 +146,17 @@ fn painting_does_not_bloat_the_record() {
     record.reroll(3);
     assert!(record.fits_budget());
     // A ratchet on a record that should stay small rather than a budget —
-    // `RECORD_BUDGET_BYTES` is that, and it is over a hundred times further
-    // off. Raised 800 -> 900 for the composites block (#162): measured, a
-    // rolled avatar went 738 -> 800 bytes, the same 62 the fresh record pays.
+    // `RECORD_BUDGET_BYTES` is that, and it is still sixty times further off.
+    // Raised 800 -> 900 for the composites block (#162), and 900 -> 1900 when
+    // hair became five regions in two layers (#202): measured, a rolled avatar
+    // went 800 -> 1760 bytes. Five regions carrying a style, four cut axes and
+    // three sRGB colours apiece is what the owner's two-colour model costs, and
+    // the alternative was fewer colours.
     // Report the size, because "by how much" is the only useful thing to know
     // when a ratchet fires.
     let size = record.serialized_size().expect("serialises");
     assert!(
-        size < 900,
-        "a whole avatar is {size} bytes, and should still be under a kilobyte"
+        size < 1900,
+        "a whole avatar is {size} bytes, and should still be a couple of kilobytes"
     );
 }

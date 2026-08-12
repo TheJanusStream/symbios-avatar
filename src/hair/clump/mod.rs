@@ -109,6 +109,12 @@ pub struct Growth {
     pub mesh: PolyMesh,
     /// What each region contributed.
     pub grown: Vec<Grown>,
+    /// The joint whose space the mesh is in, and which it binds to.
+    ///
+    /// Carried here rather than beside it, because a mesh in one joint's space
+    /// and a joint index passed separately are two things a caller can get out
+    /// of step — and the symptom is hair growing out of a shoulder.
+    pub head: usize,
 }
 
 /// The head one crop of hair is grown on.
@@ -151,6 +157,15 @@ pub struct Sowing<'a> {
 }
 
 impl Growth {
+    /// An empty head of hair, to be grown in one joint's space.
+    #[must_use]
+    pub fn on(head: usize) -> Self {
+        Self {
+            head,
+            ..Self::default()
+        }
+    }
+
     /// What the whole head of hair costs, in triangles.
     #[must_use]
     pub fn tris(&self) -> usize {

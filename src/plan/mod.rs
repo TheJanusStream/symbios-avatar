@@ -645,12 +645,7 @@ pub(crate) mod scaled {
     ///
     /// Propagates the serialiser's own failure.
     pub fn serialize<S: Serializer>(value: &f32, serializer: S) -> Result<S::Ok, S::Error> {
-        let scaled = if value.is_finite() {
-            (value * SCALE).round()
-        } else {
-            0.0
-        };
-        serializer.serialize_i32(scaled as i32)
+        serializer.serialize_i32(scale(*value))
     }
 
     /// Reads a scaled integer back into a float.
@@ -665,7 +660,7 @@ pub(crate) mod scaled {
     ///
     /// Propagates the deserialiser's own failure.
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
-        Ok(i64::deserialize(deserializer)? as f32 / SCALE)
+        Ok(unscale(i64::deserialize(deserializer)?))
     }
 
     /// Reads a count that must survive being out of range.
@@ -694,6 +689,61 @@ pub(crate) mod scaled {
     /// Sanitising applies this so a record in memory is exactly the record that
     /// will be written: without it, a value round-trips to something slightly
     /// different and nothing downstream can be compared for equality.
+    /// The same encoding for a colour, which is three of them.
+    ///
+    /// **Colours are axes too, and #202 is where that bit.** A record grew two
+    /// sRGB triples per hair region and they went onto the wire as plain
+    /// floats, because `#[serde(with = "scaled")]` is written for one value and
+    /// says nothing about an array of them — so the guard that exists for
+    /// exactly this (`axes_are_written_as_integers_because_atproto_has_no_float_type`)
+    /// caught fifteen of them in one run. The AT Protocol data model omits
+    /// floats deliberately, so a record carrying one is a record other software
+    /// on the network cannot represent.
+    pub mod triple {
+        use serde::{Deserialize, Deserializer, Serializer, ser::SerializeSeq};
+
+        /// Writes three floats as their scaled integers.
+        pub fn serialize<S: Serializer>(
+            value: &[f32; 3],
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            let mut seq = serializer.serialize_seq(Some(value.len()))?;
+            for channel in value {
+                seq.serialize_element(&super::scale(*channel))?;
+            }
+            seq.end()
+        }
+
+        /// Reads them back, wide for the same reason the single value is: an
+        /// out-of-range channel is bad data for `sanitize` to clamp, never a
+        /// reason to lose a record.
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<[f32; 3], D::Error> {
+            let raw = <[i64; 3]>::deserialize(deserializer)?;
+            Ok(raw.map(super::unscale))
+        }
+    }
+
+    /// One channel or axis, as the integer that goes on the wire.
+    ///
+    /// Shared by [`serialize`] and [`triple::serialize`] so the two encodings
+    /// cannot drift: a colour that round-trips differently from an axis is a
+    /// record whose two halves were written by different rules.
+    fn scale(value: f32) -> i32 {
+        let scaled = if value.is_finite() {
+            (value * SCALE).round()
+        } else {
+            0.0
+        };
+        scaled as i32
+    }
+
+    /// And back again.
+    fn unscale(raw: i64) -> f32 {
+        raw as f32 / SCALE
+    }
+
     #[must_use]
     pub fn quantize(value: f32) -> f32 {
         if value.is_finite() {

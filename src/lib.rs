@@ -121,7 +121,10 @@ pub use face::{
     Aperture, Blink, Canon, EyeParams, Eyes, FaceParams, Features, HeadTraits, Talk, TalkConfig,
     refine_face, shape_skull,
 };
-pub use hair::{Hair, HairParams, Scalp, Strand};
+pub use hair::{
+    BrowStyle, ChinStyle, Cut, FlankStyle, Follicle, FollicleParams, Follicles, Growth, Hair,
+    HairParams, HairRecord, MoustacheStyle, Paint, PaintedHair, ScalpStyle, Tress,
+};
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
 pub use plan::{

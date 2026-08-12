@@ -45,6 +45,8 @@
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
+//! cargo run --release --example render -- --hair 1 0.5 1 0.5   # scalp length,thickness,density,droop
+//! cargo run --release --example render -- --hair 0 0 0 0 0     # a fifth zero shaves every region
 //! cargo run --release --example render -- --face 1,0.5,1,1,0.5,0.5 # nose,noseWidth,brow,mouth,mouthWidth,ears
 //! cargo run --release --example render -- --skull -1,1            # headBreadth,faceLength
 //! cargo run --release --example render -- --femininity 1  # the frame axis, -1 .. +1
@@ -66,7 +68,7 @@ use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, EyeParams, FaceParams,
-    FootingConfig, Gait, GazeConfig, Ground, HairParams, Influence, Limb, MAX_INFLUENCES, MeshKind,
+    FootingConfig, Gait, GazeConfig, Ground, Influence, Limb, MAX_INFLUENCES, MeshKind,
     PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
     anim::contacts_in, anim::gait, anim::gaze, anim::plant_feet_of, face::Skull, gltf::Gltf,
     hair::{
@@ -281,15 +283,32 @@ fn main() {
     // The record carries its own hair; the flag only replaces the axes it names.
     let axis = |at: usize, fallback: f32| overridden.get(at).copied().unwrap_or(fallback);
     let config = AvatarConfig {
-        hair: (!overridden.is_empty()).then(|| HairParams {
-            length: axis(0, record.hair.length),
-            volume: axis(1, record.hair.volume),
-            coverage: axis(2, record.hair.coverage),
-            part: axis(3, record.hair.part),
-            wave: axis(4, record.hair.wave),
-            shade: axis(5, record.hair.shade),
-            locks: axis(6, record.hair.locks as f32) as u32,
-            curl: axis(7, record.hair.curl),
+        hair: (!overridden.is_empty()).then(|| {
+            // The scalp's own four axes, in the order `Cut` declares them, plus
+            // a fifth that silences every region — which is what `--mane 0` on
+            // the viewer does and what a bald judgement shot wants.
+            let mut hair = record.hair;
+            hair.scalp.cut.length = axis(0, hair.scalp.cut.length);
+            hair.scalp.cut.thickness = axis(1, hair.scalp.cut.thickness);
+            hair.scalp.cut.density = axis(2, hair.scalp.cut.density);
+            hair.scalp.cut.droop = axis(3, hair.scalp.cut.droop);
+            if axis(4, 1.0) <= 0.0 {
+                hair.scalp.style = symbios_avatar::hair::ScalpStyle::None;
+                hair.brows.style = symbios_avatar::hair::BrowStyle::None;
+                hair.moustache.style = symbios_avatar::hair::MoustacheStyle::None;
+                hair.chin.style = symbios_avatar::hair::ChinStyle::None;
+                hair.flanks.style = symbios_avatar::hair::FlankStyle::None;
+                for paint in [
+                    &mut hair.scalp.skin,
+                    &mut hair.brows.skin,
+                    &mut hair.moustache.skin,
+                    &mut hair.chin.skin,
+                    &mut hair.flanks.skin,
+                ] {
+                    paint.density = 0.0;
+                }
+            }
+            hair
         }),
         complexion: (!complexion.is_empty()).then(|| {
             let axis = |at: usize, fallback: f32| complexion.get(at).copied().unwrap_or(fallback);

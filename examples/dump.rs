@@ -218,13 +218,21 @@ fn avatar_report(dir: &std::path::Path, name: &str, record: &AvatarRecord) -> us
     }
     if let Some(hair) = &parts.hair {
         println!(
-            "{name:<16} {:<7} {:>6} groups  skull {:.3}m measured vs {:.3}m planned  drop {:.3}m",
+            "{name:<16} {:<7} {:>4} clumps in {} regions, {:>6} triangles  skull {:.3}m measured \
+             vs {:.3}m planned",
             "hair",
-            hair.groups.len(),
+            hair.clumps(),
+            hair.grown.len(),
+            hair.tris(),
             parts.surface.widest(hair.head),
             avatar.rig.joints[hair.head].radius,
-            hair.drop(),
         );
+        for grown in &hair.grown {
+            println!(
+                "{:<16} {:<7} {:>4} clumps, {:>6} triangles",
+                "", grown.follicle.name(), grown.clumps, grown.tris
+            );
+        }
     }
     // Cuts follow the body's zones, so a hem goes where the zone ends rather
     // than where its name suggests — worth printing, because that is how two of

@@ -40,6 +40,7 @@
 pub mod clump;
 pub mod follicle;
 pub mod painted;
+pub mod style;
 pub mod scalp;
 pub mod shell;
 pub mod strand;
@@ -55,6 +56,9 @@ use crate::rig::{Rig, Surface};
 pub use clump::{Growth, Grown, Root, Shape};
 pub use follicle::{Follicle, FollicleParams, Follicles};
 pub use painted::{Paint, PaintedHair};
+pub use style::{
+    BrowStyle, ChinStyle, Cut, FlankStyle, HairRecord, MoustacheStyle, ScalpStyle, Style, Tress,
+};
 pub use scalp::Scalp;
 pub use shell::Shell;
 pub use strand::Strand;
