@@ -18,9 +18,10 @@ use rand::Rng;
 use rand_pcg::Pcg64Mcg;
 
 use super::super::follicle::{Follicle, Follicles};
-use crate::mesh::PolyMesh;
+use crate::mesh::{PolyMesh, VertexSkin};
 use crate::plan::Zone;
 use crate::rig::Rig;
+use crate::rig::skin::SkinWeights;
 
 /// One clump's footing on the head.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,6 +42,20 @@ pub struct Root {
     /// rooted in the middle of the scalp, and that is what makes an edge read
     /// as hair thinning out rather than as hair stopping.
     pub weight: f32,
+    /// Which joints hold the skin this root grew out of, and how strongly.
+    ///
+    /// **Hair is bound like the skin it grows from, not like the head it is
+    /// near** (#207). The whole crop used to bind rigidly to the head joint,
+    /// which is right for a scalp and wrong for a face: measured with the jaw
+    /// twenty-five degrees open, the chin's own skin moves 44.7 mm and hair
+    /// bound to the head moves NOTHING — so a beard stays where the closed
+    /// mouth was while the chin it grows on drops away from underneath it.
+    ///
+    /// Copied whole from the corner of the face the seat landed nearest, rather
+    /// than reduced to one joint: the jaw's hold on the skin fades across the
+    /// jawline, and a beard whose flank hairs snapped from all-skull to all-jaw
+    /// would tear along the same line the flank mask is drawn on.
+    pub skin: VertexSkin,
 }
 
 /// How thoroughly one region's surface is walked when scattering.
@@ -77,6 +92,7 @@ const RETRIES: usize = 4;
 pub fn scatter(
     mesh: &PolyMesh,
     rig: &Rig,
+    weights: &SkinWeights,
     follicles: &Follicles,
     follicle: Follicle,
     count: usize,
@@ -139,13 +155,13 @@ pub fn scatter(
         // to its own weight makes the density follow the mask WITHIN a face as
         // well as between faces, which is what makes a soft edge thin out
         // smoothly rather than in steps of one face.
-        let mut seat = inside(mesh, &normals, face, stream);
+        let mut seat = inside(mesh, &normals, weights, face, stream);
         let mut weight = follicles.weight(follicle, seat.0 - origin);
         for _ in 0..RETRIES {
             if weight > stream.random_range(0.0..1.0) {
                 break;
             }
-            seat = inside(mesh, &normals, face, stream);
+            seat = inside(mesh, &normals, weights, face, stream);
             weight = follicles.weight(follicle, seat.0 - origin);
         }
         if weight <= f32::EPSILON {
@@ -155,6 +171,7 @@ pub fn scatter(
             at: seat.0 - origin,
             out: seat.1,
             weight,
+            skin: seat.2,
         });
     }
     roots
@@ -165,7 +182,13 @@ pub fn scatter(
 /// Fanned from the first corner and drawn over the fan by area, so a face that
 /// subdivision left as a long thin quad is sampled evenly rather than favouring
 /// whichever triangle came first.
-fn inside(mesh: &PolyMesh, normals: &[Vec3], face: usize, stream: &mut Pcg64Mcg) -> (Vec3, Vec3) {
+fn inside(
+    mesh: &PolyMesh,
+    normals: &[Vec3],
+    weights: &SkinWeights,
+    face: usize,
+    stream: &mut Pcg64Mcg,
+) -> (Vec3, Vec3, VertexSkin) {
     let corners = &mesh.faces[face];
     let fan = corners.len() - 2;
     let areas: Vec<f32> = (0..fan)
@@ -195,7 +218,22 @@ fn inside(mesh: &PolyMesh, normals: &[Vec3], face: usize, stream: &mut Pcg64Mcg)
     let (u, v, w) = (1.0 - a, a * (1.0 - b), a * b);
     let at = mesh.positions[one] * u + mesh.positions[two] * v + mesh.positions[three] * w;
     let out = (normals[one] * u + normals[two] * v + normals[three] * w).normalize_or(Vec3::Y);
-    (at, out)
+    // **The nearest corner's binding, taken whole rather than blended** (#207).
+    // Two influence lists cannot be averaged entry by entry — they are sorted by
+    // strength and index different joints, so entry `k` of one is a different
+    // bone from entry `k` of the other, and the mean of the two is a joint list
+    // nobody wrote. A clump is a few millimetres across on a face whose own
+    // faces are larger than that, so the corner it sits nearest is the honest
+    // answer and the blend it would have wanted is already in that corner's own
+    // four weights.
+    let nearest = if u >= v && u >= w {
+        one
+    } else if v >= w {
+        two
+    } else {
+        three
+    };
+    (at, out, weights.vertices[nearest])
 }
 
 /// One triangle of a face's fan, by area.

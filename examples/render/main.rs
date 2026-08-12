@@ -35,6 +35,7 @@
 //! cargo run --release --example render -- --brow thick  # or natural, none
 //! cargo run --release --example render -- --scalp bob 0.8 # crop, bob, long, tied, curly
 //! cargo run --release --example render -- --moustache handlebar 0.9 # chevron, handlebar, pencil
+//! cargo run --release --example render -- --chin braided 0.8 # goatee, full, braided
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
@@ -250,6 +251,25 @@ fn main() {
             }
         }
     });
+    // Which chin beard to wear, and the axis its own variant carries.
+    let chin = value("--chin").map(|name| {
+        let axis = args
+            .iter()
+            .position(|arg| arg == "--chin")
+            .and_then(|at| args.get(at + 2))
+            .and_then(|it| it.parse::<f32>().ok())
+            .unwrap_or(0.6);
+        match name.as_str() {
+            "none" => symbios_avatar::hair::ChinStyle::None,
+            "goatee" => symbios_avatar::hair::ChinStyle::Goatee { point: axis },
+            "full" => symbios_avatar::hair::ChinStyle::Full,
+            "braided" => symbios_avatar::hair::ChinStyle::Braided { twist: axis },
+            other => {
+                eprintln!("unknown --chin style {other}: expected none, goatee, full or braided");
+                std::process::exit(1);
+            }
+        }
+    });
     let overridden: Vec<f32> = value("--hair")
         .map(|spec| {
             spec.split(',')
@@ -372,7 +392,8 @@ fn main() {
         hair: (!overridden.is_empty()
             || brow.is_some()
             || scalp.is_some()
-            || moustache.is_some())
+            || moustache.is_some()
+            || chin.is_some())
         .then(|| {
             // The scalp's own four axes, in the order `Cut` declares them, plus
             // a fifth that silences every region — which is what `--mane 0` on
@@ -403,6 +424,17 @@ fn main() {
             }
             if let Some(style) = scalp {
                 hair.scalp.style = style;
+            }
+            if let Some(style) = chin {
+                hair.chin.style = style;
+                if !matches!(style, symbios_avatar::hair::ChinStyle::None) {
+                    hair.chin.skin = symbios_avatar::hair::Paint {
+                        density: 0.85,
+                        colour: hair.scalp.roots,
+                    };
+                    hair.chin.roots = hair.scalp.roots;
+                    hair.chin.tips = hair.scalp.roots;
+                }
             }
             if let Some(style) = moustache {
                 hair.moustache.style = style;
@@ -1393,6 +1425,7 @@ fn grow_clumps(avatar: &mut Avatar, record: &AvatarRecord) {
     let bed = Bed {
         body: &avatar.parts.body,
         rig: &avatar.rig,
+        weights: &avatar.parts.weights,
         follicles: &follicles,
     };
     for (follicle, count, length, roots, tips) in plan {

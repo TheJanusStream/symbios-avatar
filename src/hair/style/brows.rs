@@ -410,6 +410,7 @@ mod tests {
             at: Vec3::new(across, ridge.height(along), 0.09),
             out: Vec3::new(0.15, 0.25, 0.96).normalize(),
             weight: 1.0,
+            skin: Default::default(),
         }
     }
 

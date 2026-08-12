@@ -28,10 +28,12 @@ use super::follicle::{Follicle, FollicleParams, Follicles};
 use super::painted::Paint;
 
 pub mod brows;
+pub mod chin;
 pub mod moustache;
 pub mod scalp;
 
 pub use brows::BrowStyle;
+pub use chin::ChinStyle;
 pub use moustache::MoustacheStyle;
 pub use scalp::ScalpStyle;
 
@@ -189,13 +191,20 @@ pub trait Style: Copy + Default {
 ///   same walk and 4 for a brow. The counts that the budget had been starving
 ///   could simply be paid for, and coverage stopped being a fight.
 ///
+/// **The two facial-hair entries went back UP as their catalogues landed**
+/// (#206, #207), and the reason is the same both times: the numbers here were
+/// set when a clump was 14 to 45 triangles, and a card is four. A moustache
+/// drawn with 34 clumps is twenty-five tiles as tall as the lip they sit on; a
+/// beard drawn with 56 is a fringe of separate blades. Both read as hair at
+/// roughly twice the count, and both cost about what one swept lock used to.
+///
 /// The sparseness these buy is still what the painted layer is for: skin the
 /// colour of hair between the cards reads as hair, and bare skin between them
 /// reads as balding.
 ///
 /// Provenance: **derived** from the triangle budget and the measured cost of a
 /// card.
-const FULL: [usize; 5] = [104, 40, 78, 56, 80];
+const FULL: [usize; 5] = [104, 40, 78, 84, 80];
 
 /// How many clumps one region grows at a given density.
 ///
@@ -348,12 +357,6 @@ macro_rules! styles {
 }
 
 styles! {
-    /// The base styles of the chin.
-    ChinStyle {
-        /// A beard over the chin and under it. #207 adds the goatee and the
-        /// braided one.
-        Full
-    },
     /// The base styles of the jaw's flanks.
     FlankStyle {
         /// Cheek and jaw grown together. #208 adds the sideburns-only cut and

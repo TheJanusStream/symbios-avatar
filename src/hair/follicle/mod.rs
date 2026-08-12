@@ -299,6 +299,17 @@ impl Follicles {
         self.moustache.lip()
     }
 
+    /// The patch of chin a beard grows on, on this head.
+    ///
+    /// The third of the handed-out landmarks, and the one whose styles need it
+    /// most: a chin beard is the only hair on a face that leaves the face, so a
+    /// style has to know where the chin STOPS as well as where the patch is
+    /// (#207). See [`chin::Pad::hangs_from`].
+    #[must_use]
+    pub fn pad(&self) -> chin::Pad {
+        self.chin.pad()
+    }
+
     /// How much of `follicle` may grow at a head-local point, `0` to `1`.
     #[must_use]
     pub fn weight(&self, follicle: Follicle, local: Vec3) -> f32 {

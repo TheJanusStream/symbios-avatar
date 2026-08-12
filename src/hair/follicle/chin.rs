@@ -90,17 +90,69 @@ const FADE: f32 = 0.045;
 /// Provenance: **tuned by render** (#199).
 const FRONT: f32 = -0.35;
 
+/// The patch of chin a beard grows on, as one object.
+///
+/// **Handed out to the styles, the same discipline as
+/// [`Ridge`](super::brows::Ridge) and [`Lip`](super::moustache::Lip)** (#207).
+/// A beard's shape is these numbers: how high it climbs is the lower lip, how
+/// far back under the jaw it reaches is the submental edge, and where it hangs
+/// FROM is the menton — which no mask needs and every chin style does, because
+/// this is the one region whose hair leaves the head entirely.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pad {
+    /// The lower lip's foot, in head-local metres: the ceiling.
+    pub lip: f32,
+    /// How far under the menton the patch reaches, likewise: the back edge.
+    pub under: f32,
+    /// The chin's own tip, likewise.
+    ///
+    /// **Not the middle of the patch and not either of its edges.** It is where
+    /// the face stops and the throat begins, so it is what a hanging beard
+    /// hangs from and what says which side of the neck it has to fall on.
+    pub menton: f32,
+    /// How far forward the chin reaches at that height, likewise.
+    pub front: f32,
+    /// Half the patch's width, likewise.
+    pub half: f32,
+    /// The edge's width, likewise.
+    pub fade: f32,
+}
+
+impl Pad {
+    /// How deep the patch is, from the submental edge to the lip.
+    ///
+    /// Floored for the reason every span in this module is: a record may put
+    /// the two edges together and callers divide by it.
+    #[must_use]
+    pub fn span(&self) -> f32 {
+        (self.lip - self.under).max(super::MINIMUM_SPAN)
+    }
+
+    /// How far out along the patch a point sits: `0` on the midline, `1` at the
+    /// outer edge.
+    #[must_use]
+    pub fn along(&self, across: f32) -> f32 {
+        across.abs() / self.half.max(super::MINIMUM_SPAN)
+    }
+
+    /// Where a beard grown on this hangs from, in head-local metres.
+    ///
+    /// Under the chin's own tip: hair falling off a jaw gathers to the front of
+    /// it, which is why a beard comes to a point below the menton and not below
+    /// the throat. **It is also the whole of the throat clearance** — a clump
+    /// pulled toward this line as it falls is a clump moving away from the neck,
+    /// whichever part of the submental plane it started on.
+    #[must_use]
+    pub fn hangs_from(&self) -> glam::Vec3 {
+        glam::Vec3::new(0.0, self.menton, self.front)
+    }
+}
+
 /// The chin, cut from one head's landmarks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Chin {
-    /// The lower lip's foot, in head-local metres.
-    hi: f32,
-    /// How far under the menton the patch reaches, likewise.
-    lo: f32,
-    /// Half the patch's width, likewise.
-    half: f32,
-    /// The edge's width, likewise.
-    fade: f32,
+    /// The patch, which the styles grow on and this masks.
+    pad: Pad,
 }
 
 impl Chin {
@@ -112,11 +164,21 @@ impl Chin {
         // Up toward the lip as `rise` rises.
         let lip = chin + (mouth - chin) * (VERMILION + params.rise * RISE_RANGE);
         Self {
-            hi: lip,
-            lo: chin - (UNDER + params.under * UNDER_RANGE) * canon.frame,
-            half: canon.unit * (HALF + params.width * WIDTH_RANGE),
-            fade: FADE * canon.frame,
+            pad: Pad {
+                lip,
+                under: chin - (UNDER + params.under * UNDER_RANGE) * canon.frame,
+                menton: chin,
+                front: skull.surface_at(chin, 0.0).z,
+                half: canon.unit * (HALF + params.width * WIDTH_RANGE),
+                fade: FADE * canon.frame,
+            },
         }
+    }
+
+    /// The patch this mask is cut around.
+    #[must_use]
+    pub(super) fn pad(&self) -> Pad {
+        self.pad
     }
 }
 
@@ -125,8 +187,8 @@ impl Region for Chin {
         // The width is taken in metres from the midline rather than as a share
         // of the skull's half-width, because under the chin that half-width is
         // the JAW's and the patch would spread to the gonions with it.
-        band(at.height, self.lo, self.hi, self.fade)
-            * crate::face::smooth((self.half - at.across.abs()) / self.fade)
+        band(at.height, self.pad.under, self.pad.lip, self.pad.fade)
+            * crate::face::smooth((self.pad.half - at.across.abs()) / self.pad.fade)
             * crate::face::smooth((at.forward - FRONT) / 0.30)
     }
 }

@@ -168,6 +168,12 @@ pub struct Bed<'a> {
     pub body: &'a PolyMesh,
     /// The rig it was built against.
     pub rig: &'a Rig,
+    /// How that rig holds each of the body's own vertices.
+    ///
+    /// **Carried so that hair can be bound like the skin it grows out of**
+    /// (#207): a root takes the binding of the seat it landed on, and every
+    /// vertex of its clump takes the root's. See [`scatter::Root::skin`].
+    pub weights: &'a crate::rig::SkinWeights,
     /// Where each kind of hair may grow on it.
     pub follicles: &'a Follicles,
 }
@@ -226,6 +232,7 @@ impl Growth {
         let roots = scatter::scatter(
             bed.body,
             bed.rig,
+            bed.weights,
             bed.follicles,
             sowing.follicle,
             sowing.count,
@@ -238,6 +245,7 @@ impl Growth {
                 &mut self.mesh,
                 root,
                 sowing.shape,
+                self.head as u16,
                 sowing.roots,
                 sowing.tips,
             ) > 0
@@ -383,6 +391,7 @@ mod tests {
     struct Grounds {
         body: PolyMesh,
         rig: Rig,
+        weights: crate::rig::SkinWeights,
         follicles: Follicles,
     }
 
@@ -391,6 +400,7 @@ mod tests {
             Bed {
                 body: &self.body,
                 rig: &self.rig,
+                weights: &self.weights,
                 follicles: &self.follicles,
             }
         }
@@ -406,6 +416,7 @@ mod tests {
         Grounds {
             body: avatar.parts.body.clone(),
             rig: avatar.rig.clone(),
+            weights: avatar.parts.weights.clone(),
             follicles,
         }
     }
@@ -432,7 +443,15 @@ mod tests {
         let mut stream = stream();
         for follicle in Follicle::ALL {
             let roots =
-                scatter::scatter(&bed.body, &bed.rig, &bed.follicles, follicle, 40, &mut stream);
+                scatter::scatter(
+                    &bed.body,
+                    &bed.rig,
+                    &bed.weights,
+                    &bed.follicles,
+                    follicle,
+                    40,
+                    &mut stream,
+                );
             assert!(
                 !roots.is_empty(),
                 "the {} region scattered no roots at all",
@@ -502,6 +521,7 @@ mod tests {
             let roots = scatter::scatter(
                 &grounds.body,
                 &grounds.rig,
+                &grounds.weights,
                 &grounds.follicles,
                 follicle,
                 sown.clumps,
@@ -510,7 +530,15 @@ mod tests {
             let (mut total, mut away, mut vertices) = (0.0f32, 0usize, 0usize);
             for root in &roots {
                 let mut one = PolyMesh::new();
-                if loft::loft(&mut one, root, sown.shape.as_ref(), Vec3::ONE, Vec3::ONE) == 0 {
+                if loft::loft(
+                    &mut one,
+                    root,
+                    sown.shape.as_ref(),
+                    grounds.follicles.head as u16,
+                    Vec3::ONE,
+                    Vec3::ONE,
+                ) == 0
+                {
                     continue;
                 }
                 for normal in &one.normals {
@@ -546,6 +574,7 @@ mod tests {
         let roots = scatter::scatter(
             &bed.body,
             &bed.rig,
+            &bed.weights,
             &bed.follicles,
             Follicle::Scalp,
             400,
@@ -775,6 +804,7 @@ mod tests {
             at: Vec3::new(0.0, 0.0, 0.1),
             out: Vec3::Z,
             weight: 1.0,
+            skin: Default::default(),
         };
         let fall = Fall::default();
         let (base, tip) = fall.width(&root);

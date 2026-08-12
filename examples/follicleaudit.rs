@@ -121,6 +121,7 @@ fn cards(region: &str, style: &str, axis: f32) {
         let drawn = scatter(
             &avatar.parts.body,
             &avatar.rig,
+            &avatar.parts.weights,
             &follicles,
             other,
             sown.clumps,
@@ -253,8 +254,13 @@ fn wear(record: &mut AvatarRecord, follicle: Follicle, style: &str, axis: f32) -
             Some(format!("{:?}", record.hair.moustache.style))
         }
         Follicle::Chin => {
-            record.hair.chin.style = ChinStyle::Full;
-            Some("Full".into())
+            record.hair.chin.style = match style {
+                "" | "full" => ChinStyle::Full,
+                "goatee" => ChinStyle::Goatee { point: axis },
+                "braided" => ChinStyle::Braided { twist: axis },
+                other => return unknown(other, "goatee, full or braided"),
+            };
+            Some(format!("{:?}", record.hair.chin.style))
         }
         Follicle::Flanks => {
             record.hair.flanks.style = FlankStyle::Full;
@@ -604,7 +610,13 @@ fn measure(seed: Option<i64>) -> Option<Head> {
     let surface = surface_of(&avatar.parts.body, &avatar.rig, origin);
     let area = surface.iter().map(|(_, area)| area).sum();
     let (_, crown) = skull.throat_and_crown();
-    let (grown, brows) = grow(&record, &avatar.parts.body, &avatar.rig, &follicles);
+    let (grown, brows) = grow(
+        &record,
+        &avatar.parts.body,
+        &avatar.rig,
+        &avatar.parts.weights,
+        &follicles,
+    );
     Some(Head {
         grown,
         brows,
@@ -633,11 +645,13 @@ fn grow(
     record: &AvatarRecord,
     body: &PolyMesh,
     rig: &Rig,
+    weights: &symbios_avatar::SkinWeights,
     follicles: &Follicles,
 ) -> ([Option<Grown>; 5], Option<Vec<Vec3>>) {
     let bed = Bed {
         body,
         rig,
+        weights,
         follicles,
     };
     let mut stream = Pcg64Mcg::seed_from_u64(record.seed as u64);

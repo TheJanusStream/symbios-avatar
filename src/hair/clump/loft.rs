@@ -31,7 +31,7 @@ use glam::{Vec2, Vec3};
 
 use super::Shape;
 use super::scatter::Root;
-use crate::mesh::PolyMesh;
+use crate::mesh::{PolyMesh, VertexSkin};
 
 /// How far a clump's drawn spine may stray from the curve it stands for, in
 /// metres.
@@ -79,6 +79,7 @@ pub(super) fn loft(
     into: &mut PolyMesh,
     root: &Root,
     shape: &dyn Shape,
+    head: u16,
     roots_colour: Vec3,
     tips_colour: Vec3,
 ) -> usize {
@@ -164,6 +165,25 @@ pub(super) fn loft(
             into.normals.push(out);
             into.uvs.push(Vec2::new((edge + 1.0) * 0.5, walked / length.max(f32::EPSILON)));
             into.colours.push(shade);
+            // **Bound like the skin it grew out of at the root, and like the
+            // head at the tip** (#207). The whole crop used to bind rigidly to
+            // the head joint, which is right for a scalp and wrong for a face:
+            // with the jaw open, the chin's own skin moves 44.7 mm and hair on
+            // the head moves nothing at all, so a beard stays where the closed
+            // mouth was.
+            //
+            // And the other way round is wrong too. Bound entirely by its root,
+            // a beard is rigid to the mandible — which swings DOWN AND BACK
+            // about the condyle, so the hanging part of it goes into the neck as
+            // soon as somebody speaks. What a beard does instead is hang: the
+            // hair leaves the chin and then belongs to nothing in particular,
+            // which is what this says. The patch owns the root and lets go over
+            // the free length.
+            //
+            // It is a no-op wherever the skin is already the head's, which is
+            // the scalp, the brows and the upper lip — three of the five regions
+            // move not at all.
+            into.skin.push(handed_over(root.skin, head, *along));
         }
     }
     // One quad a segment, which the mesh counts as the two triangles it is.
@@ -212,6 +232,62 @@ fn sample(root: &Root, shape: &dyn Shape) -> (Vec<f32>, Vec<Vec3>) {
         points.insert(gap + 1, shape.at(root, middle));
     }
     (fractions, points)
+}
+
+/// One clump's binding a share of the way along it.
+///
+/// The root's own binding, handed over to `head` as the clump leaves the skin.
+/// See the call site for why a hanging clump stops belonging to the patch it
+/// grew on.
+///
+/// **The hand-over is a REPLACEMENT and not an average of two influence lists.**
+/// Those are sorted by strength and index different joints, so entry `k` of one
+/// is a different bone from entry `k` of the other and averaging them entry by
+/// entry produces a binding nobody wrote (#207). This scales what is there and
+/// adds the head's share to the head's own entry, which is the same arithmetic
+/// a skinning weight has everywhere else.
+fn handed_over(mut skin: VertexSkin, head: u16, along: f32) -> VertexSkin {
+    let over = crate::face::smooth(along.clamp(0.0, 1.0));
+    if over <= 0.0 {
+        return skin;
+    }
+    if let Some(mine) = skin.iter_mut().find(|influence| influence.joint == head) {
+        // Already there: the hand-over is a move along the one axis that
+        // separates the patch's hold from the head's.
+        let held = mine.weight;
+        for influence in &mut skin {
+            influence.weight *= 1.0 - over;
+        }
+        if let Some(mine) = skin.iter_mut().find(|influence| influence.joint == head) {
+            mine.weight = held * (1.0 - over) + over;
+        }
+        return normalised(skin);
+    }
+    // The head is not in the list, so it takes the weakest entry's place: at
+    // most four joints may hold a vertex, and the one being handed over to is by
+    // construction stronger than whatever is being dropped.
+    let weakest = (0..skin.len())
+        .min_by(|one, two| skin[*one].weight.total_cmp(&skin[*two].weight))
+        .unwrap_or(0);
+    for influence in &mut skin {
+        influence.weight *= 1.0 - over;
+    }
+    skin[weakest] = crate::rig::Influence {
+        joint: head,
+        weight: over,
+    };
+    normalised(skin)
+}
+
+/// The same binding, summing to one.
+fn normalised(mut skin: VertexSkin) -> VertexSkin {
+    let total: f32 = skin.iter().map(|influence| influence.weight).sum();
+    if total > f32::EPSILON {
+        for influence in &mut skin {
+            influence.weight /= total;
+        }
+    }
+    skin
 }
 
 /// The colour a share of the way from root to tip.

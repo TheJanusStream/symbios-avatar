@@ -813,6 +813,7 @@ mod tests {
             at,
             out: Vec3::new(at.x, 0.0, at.z).normalize_or(Vec3::Y),
             weight: 1.0,
+            skin: Default::default(),
         }
     }
 

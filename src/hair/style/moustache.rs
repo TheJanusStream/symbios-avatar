@@ -552,6 +552,7 @@ mod tests {
             at: Vec3::new(lip.half * out, lip.height(up), 0.09),
             out: Vec3::new(0.0, tilt, 1.0).normalize(),
             weight: 1.0,
+            skin: Default::default(),
         }
     }
 
@@ -735,6 +736,7 @@ mod tests {
         let bed = Bed {
             body: &avatar.parts.body,
             rig: &avatar.rig,
+            weights: &avatar.parts.weights,
             follicles,
         };
         let mut stream = rand_pcg::Pcg64Mcg::seed_from_u64(record.seed as u64);

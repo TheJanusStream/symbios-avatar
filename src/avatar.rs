@@ -479,6 +479,7 @@ impl Avatar {
         // put one.
         let hair = follicles.as_ref().filter(|_| handed).map(|follicles| {
             let bed = crate::hair::clump::Bed {
+                weights: &weights,
                 body: &body,
                 rig: &rig,
                 follicles,
@@ -689,7 +690,13 @@ impl Avatar {
             let to_body = Mat4::from_translation(self.rig.joints[growth.head].position);
             let mut placed = growth.mesh.transformed(to_body);
             placed.set_normals(placed.vertex_normals());
-            placed.bind_rigidly(growth.head as u16);
+            // **Not bound rigidly to the head, which is what it used to be**
+            // (#207). Every clump already carries the binding of the skin it
+            // grew out of, so a moustache rides the upper lip, a chin beard
+            // rides the JAW, and a flank hair crossing the jawline blends across
+            // it the way the skin under it does. Rigid to the head, a beard
+            // stayed where the closed mouth was while the chin dropped 44.7 mm
+            // out from under it.
             merged.push(AvatarMesh {
                 kind: MeshKind::Hair,
                 mesh: placed,
