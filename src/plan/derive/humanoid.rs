@@ -10,6 +10,45 @@
 //! on [`Dimensions`] and derived individually beside the expressions that meet
 //! them — and two of those six ends turned out under audit not to be walls at
 //! all, which the table on [`Dimensions`] now says (#163).
+//!
+//! **Why this body has no trapezius, and what would give it one** (#131,
+//! closed 2026-08-12 as a body-plan constraint after six constructions).
+//!
+//! `examples/neckaudit` splits the chin-to-shoulder span four ways, and the
+//! last term — the girdle's crown down to where the body reads as shoulder — is
+//! a fifth to a quarter of the visible neck. Nothing reaches it, and the reason
+//! is one relation between two numbers on this page:
+//!
+//! ```text
+//!   the girdle's own CROWN            girdle_y + girdle_r          1.0 girdle radii
+//!   the lowest a CHILD of it may sit  measured against the hull    1.2 girdle radii
+//! ```
+//!
+//! The mesher will not put a socket on the girdle's hull closer than about 1.2
+//! radii — `available` is the child's own bone length through
+//! [`MAX_SOCKET_FRACTION`], and `needed` is set by the hull the clavicle and
+//! chest sockets already inflate. **So every node that meshes at all already
+//! sits above the girdle's crown**, the neck it would carry is pushed above the
+//! crown with it, and the visible neck grows by at least as much as the shoulder
+//! mass buys. Measured on the default body, a yoke between the girdle and the
+//! neck takes `neckaudit`'s ratio from 0.409 to between 0.502 and 0.785 against
+//! an eight-head canon of 0.33 — worse at every height, every width and every
+//! gap, and worse across seeds. A yoke can exist; it cannot help.
+//!
+//! It is a fact about TODAY's body rather than about the idea. The same
+//! construction worked in August, when the floor was 0.9 radii — below the
+//! crown — so it added mass without lifting anything; #164's allometric girth
+//! re-priced `girdle_r` against `clavicle_r` and took that away.
+//!
+//! **What would reopen it is a fall of about 20% in `needed`, and it is not a
+//! coefficient here.** [`GIRDLE_SECTION`]'s depth moves it — 0.0331 at 1.10,
+//! 0.0300 at 0.75 — but only reaches a floor of about 1.05 radii, and would
+//! need roughly 0.45 to clear the crown, which is below the 0.80 that predates
+//! #106 and undoes that issue's depth work. The lever is the cage's own socket
+//! clearance, not the plan's. Six constructions are refuted and recorded on
+//! #131: a trapezius pair on the neck, a fifth and sixth socket on the girdle, a
+//! third on the clavicle, an in-chain yoke at two different walls, and a leaf
+//! yoke off the girdle.
 
 use glam::{Vec2, Vec3};
 
