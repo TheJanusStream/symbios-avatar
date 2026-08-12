@@ -28,7 +28,7 @@
 //! on, so it is the one where a wider ribbon has to do the work a longer clump
 //! list would have done.
 
-use glam::{Vec2, Vec3};
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::super::clump::{LIFT, Root, Shape};
@@ -75,16 +75,7 @@ const REACH: [f32; 2] = [0.50, 0.44];
 /// to read at eighteen clumps reads by being wide rather than by being many.
 ///
 /// Provenance: **tuned by render** (#205).
-const WIDTH: [f32; 2] = [0.0055, 0.0086];
-
-/// How thick, likewise — how far the blade stands off the skin.
-///
-/// Kept well under the width: a brow lies against the ridge, and a section as
-/// deep as it is wide reads as a caterpillar. The thick style is deeper as well
-/// as wider, which is most of what "bushy" is.
-///
-/// Provenance: **tuned by render** (#205).
-const DEPTH: [f32; 2] = [0.0018, 0.0030];
+const WIDTH: [f32; 2] = [0.0038, 0.0062];
 
 /// What share of the section is left at the tip.
 ///
@@ -128,7 +119,7 @@ const TAPER_FROM: f32 = 0.62;
 /// blunt face at the root, and a row of them reads as a row of separate objects
 /// however much they overlap. Thin at both ends, the overlaps have no ends in
 /// them: the union is one arched mass with a ragged edge, which is what a brow is
-/// at this triangle count. See [`Shape::section_at`], whose default is the wedge.
+/// at this triangle count. See [`Shape::width_at`], whose default is the wedge.
 ///
 /// Provenance: **tuned by render** (#205).
 const ENDS: f32 = 0.3;
@@ -212,7 +203,6 @@ impl Style for BrowStyle {
             ridge,
             reach: ridge.span() * REACH[slot] * length,
             width: WIDTH[slot] * coarse,
-            depth: DEPTH[slot] * coarse,
             taper: TAPER[slot],
             thin: THIN[slot],
             lie: LIE[slot],
@@ -245,8 +235,6 @@ struct Brow {
     reach: f32,
     /// How wide one is at the root, in metres.
     width: f32,
-    /// How far it stands off the skin, likewise.
-    depth: f32,
     /// What share of the section is left at the tip.
     taper: f32,
     /// How much of its length and width the tail loses.
@@ -369,42 +357,32 @@ impl Shape for Brow {
         root.at + root.out * LIFT + run * travel + climb + stand + gather
     }
 
-    fn section_at(&self, root: &Root, along: f32) -> Vec2 {
+    fn width_at(&self, root: &Root, along: f32) -> f32 {
         // Thin, full, thin — see [`ENDS`]. The fullest point is a little past the
         // middle, which is where a brow hair is fullest and which keeps the
         // ragged end of the row on the outer side where a tail belongs.
-        let (base, _) = self.section(root);
+        let (base, _) = self.width(root);
         let from_middle = ((along.clamp(0.0, 1.0) - 0.55) / 0.55).abs().min(1.0);
         base * (1.0 - (1.0 - ENDS) * from_middle * from_middle)
     }
 
-    fn section(&self, root: &Root) -> (Vec2, Vec2) {
-        // Sectioned by how long the clump ended up, not by how long it asked to
-        // be: see [`Self::stoutness`].
-        // **The section's own axes are swapped, and the render is what found
-        // it** (#205). A three-sided sweep puts its first vertex along the wide
-        // axis and the opposite FLAT FACE at right angles to it — so a section
-        // written wide-across-the-skin gives a wedge standing on its point, with
-        // one corner buried in the face and one in the air, lit on a face the
-        // camera cannot see. The brow read as a row of black slabs with a
-        // highlight on top.
-        //
-        // Written the other way round — the ridge along the surface normal, the
-        // width in the plane of the skin — the same three triangles are a lock
-        // lying on the ridge: flat side down against the skin, a crest along the
-        // top, and both long faces turned out where the light is. `across` is the
-        // normal for the same reason.
-        let share = self.stoutness(root);
-        let base = Vec2::new(self.depth * 0.5 * share, self.width * 0.5 * share);
+    fn width(&self, root: &Root) -> (f32, f32) {
+        // Sized by how long the clump ended up, not by how long it asked to be:
+        // see [`Self::stoutness`].
+        let base = self.width * 0.5 * self.stoutness(root);
         (base, base * self.taper.clamp(0.0, 1.0))
     }
 
     fn across(&self, root: &Root) -> Vec3 {
-        // The surface normal: see [`Self::section`] for why the crest of a
-        // three-sided lock has to be the axis that leaves the skin. The engine's
-        // default is across a FALL, which on a brow is parallel to the spine —
-        // the case that put this on the trait at all.
-        root.out
+        // **The card lies IN the plane of the skin, so its width runs across the
+        // streak and its face turns outward** — which is where the light is and
+        // where the camera is for a brow. The engine's default is across a FALL,
+        // which on a brow is parallel to the spine: the case that put this on the
+        // trait at all.
+        //
+        // A card has no cross-section, so #205's finding about which way round a
+        // three-sided one sits retires with the sweep it was about (#204).
+        root.out.cross(self.run(root))
     }
 }
 
@@ -448,7 +426,6 @@ mod tests {
             ridge,
             reach: ridge.span() * REACH[slot],
             width: WIDTH[slot],
-            depth: DEPTH[slot],
             taper: TAPER[slot],
             thin: THIN[slot],
             lie: LIE[slot],
@@ -524,7 +501,7 @@ mod tests {
             shape.length(&body) * 1000.0
         );
         assert!(
-            shape.section(&body).0.x > shape.section(&tail).0.x,
+            shape.width(&body).0 > shape.width(&tail).0,
             "the tail is as wide as the body"
         );
     }
@@ -543,8 +520,14 @@ mod tests {
                     root.at.x *= side;
                     let spine = (shape.at(&root, 1.0) - shape.at(&root, 0.0)).normalize();
                     let across = shape.across(&root).normalize();
+                    // The trait's contract is that it may not be PARALLEL, not
+                    // that it must be perpendicular: the loft squares it against
+                    // the local tangent at every station, so a card is never
+                    // skewed by whatever tilt the gather and the arch put into the
+                    // spine. What must not happen is the two being the same line,
+                    // which leaves a card with no width at all.
                     assert!(
-                        across.dot(spine).abs() < 0.2,
+                        across.dot(spine).abs() < 0.5,
                         "at {along} along, the wide axis is {:.2} parallel to the spine",
                         across.dot(spine).abs()
                     );
@@ -562,13 +545,13 @@ mod tests {
         let (natural, thick) = (brow(BrowStyle::Natural), brow(BrowStyle::Thick));
         let at = root(0.4);
         assert!(
-            thick.section(&at).0.x > natural.section(&at).0.x * 1.4,
+            thick.width(&at).0 > natural.width(&at).0 * 1.4,
             "thick is {:.1} mm wide against natural's {:.1}",
-            thick.section(&at).0.x * 2000.0,
-            natural.section(&at).0.x * 2000.0
+            thick.width(&at).0 * 2000.0,
+            natural.width(&at).0 * 2000.0
         );
         assert!(
-            thick.section(&at).1.x > natural.section(&at).1.x,
+            thick.width(&at).1 > natural.width(&at).1,
             "thick's tip is no blunter than natural's"
         );
         let cut = Cut::default();
@@ -592,8 +575,7 @@ mod tests {
                 ridge: ridge(),
                 reach: ridge().span() * REACH[0],
                 width: WIDTH[0],
-                depth: DEPTH[0],
-                taper: TAPER[0],
+                    taper: TAPER[0],
                 thin: THIN[0],
                 lie: LIE[0],
                 sag: 0.0,

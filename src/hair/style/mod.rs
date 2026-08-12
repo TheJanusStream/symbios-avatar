@@ -28,8 +28,10 @@ use super::follicle::{Follicle, FollicleParams, Follicles};
 use super::painted::Paint;
 
 pub mod brows;
+pub mod scalp;
 
 pub use brows::BrowStyle;
+pub use scalp::ScalpStyle;
 
 /// How the clumps of one region are cut.
 ///
@@ -107,6 +109,7 @@ impl<S: Style> Tress<S> {
     /// Clamps and quantises everything. Idempotent.
     pub fn sanitize(&mut self) {
         use crate::plan::scaled::quantize;
+        self.style.sanitize();
         self.cut.sanitize();
         for channel in self.roots.iter_mut().chain(self.tips.iter_mut()) {
             *channel = quantize(channel.clamp(0.0, 1.0));
@@ -148,6 +151,15 @@ pub trait Style: Copy + Default {
 
     /// How many clumps it wants at this cut.
     fn clumps(&self, cut: &Cut, follicle: Follicle) -> usize;
+
+    /// Clamps and quantises whatever axes the style itself carries. Idempotent.
+    ///
+    /// **Because a variant may carry its own axis**, which is how a tail height
+    /// exists without every other style having one (#204). Most styles carry
+    /// none, so this does nothing by default — but a record off the network can
+    /// put anything in the ones that do, and every other number in a record is
+    /// clamped and snapped to the wire's precision before it is used.
+    fn sanitize(&mut self) {}
 }
 
 /// How many clumps a region gets at full density.
@@ -161,17 +173,27 @@ pub trait Style: Copy + Default {
 ///
 /// Ordered as [`Follicle::ALL`].
 ///
-/// **Set by the budget test rather than by eye, and cut once already** (#202).
-/// At 220 scalp clumps the greediest legal record — every region at full length
-/// and full density — brought the default body to 31,892 triangles against the
-/// 30,000 target. Measured: a bald body is 24,360, so the greedy hair was 7,532
-/// and had about 5,600 to live in. These counts are that, and the sparseness
-/// they buy is what the painted layer is for: skin the colour of hair between
-/// the clumps reads as hair, and bare skin between them reads as balding.
+/// **Set by the budget test rather than by eye, and re-set three times** (#202,
+/// #204). The history is the argument for what an element should be:
 ///
-/// Provenance: **derived** from the triangle budget and #201's measured cost
-/// per clump.
-const FULL: [usize; 5] = [150, 18, 18, 30, 44];
+/// - 220 when a clump was a swept tube, which put the greediest record at 31,892
+///   against the 30,000 target.
+/// - 150 when the budget cut it, which is where the scalp read STRINGY: a hundred
+///   and fifty bristles standing off a bare scalp.
+/// - 44 when a clump became a wide card that walks the skull — better coverage for
+///   fewer elements, and still 59 triangles each because a swept volume pays
+///   `sides x 2` a segment plus two caps.
+/// - These, once an element became ONE FLAT CARD (owner call): 19 triangles for the
+///   same walk and 4 for a brow. The counts that the budget had been starving
+///   could simply be paid for, and coverage stopped being a fight.
+///
+/// The sparseness these buy is still what the painted layer is for: skin the
+/// colour of hair between the cards reads as hair, and bare skin between them
+/// reads as balding.
+///
+/// Provenance: **derived** from the triangle budget and the measured cost of a
+/// card.
+const FULL: [usize; 5] = [104, 40, 34, 56, 80];
 
 /// How many clumps one region grows at a given density.
 ///
@@ -222,7 +244,6 @@ fn fall_for(cut: &Cut, follicle: Follicle) -> Fall {
     Fall {
         length,
         width,
-        thickness: width * 0.5,
         taper: 0.35,
         droop: cut.droop.clamp(0.0, 1.0) * 1.2,
         // Hair leaves skin at a shallow angle; see [`Fall::lie`] for the render
@@ -321,13 +342,6 @@ macro_rules! styles {
 }
 
 styles! {
-    /// The base styles of the hair of the head.
-    ScalpStyle {
-        /// Short hair lying along the skull, the length taking it from a
-        /// buzz to a mop. #204 adds the bob, the long, the tied-back and the
-        /// curly beside it.
-        Crop
-    },
     /// The base styles of the upper lip.
     MoustacheStyle {
         /// A full moustache over the lip. #206 adds the handlebar and the
@@ -651,8 +665,14 @@ mod tests {
             .filter_map(|follicle| record.sowing(follicle, &head))
             .map(|sown| sown.clumps)
             .sum();
+        // **The floor came DOWN with #204 and that is the point.** A scalp of
+        // sheets is 60 cards where a scalp of strings was 150, and the sheets
+        // cover a head the strings left bare: coverage came from width, which is
+        // free, rather than from count, which is 14 to 45 triangles a time. So the
+        // band this asserts is lower than it was, and a future style that needs to
+        // put it back up owes the budget an explanation.
         assert!(
-            (200..=500).contains(&total),
+            (120..=350).contains(&total),
             "a full head is {total} clumps, which at 14 to 45 triangles each is not a budget \
              the body leaves room for"
         );

@@ -257,6 +257,22 @@ impl Follicles {
         self.origin
     }
 
+    /// The head this was cut from, as it was measured.
+    ///
+    /// **Handed out because a style has to be able to walk the surface it grows
+    /// on** (#204). A scalp lock is supported by the skull for the first half of
+    /// its travel and hangs only once the head has fallen away beneath it, and a
+    /// lock that cannot ask where the skull is leaves the tangent plane at its
+    /// root and hangs in the air — which is most of why a hundred and fifty of
+    /// them read as strings over a bare scalp rather than as hair.
+    ///
+    /// The one the pipeline already measured, never a second: `Skull::measure` is
+    /// 61% of a geometry build (#89).
+    #[must_use]
+    pub fn skull(&self) -> &Skull {
+        &self.skull
+    }
+
     /// The line one brow follows on this head.
     ///
     /// **Handed out rather than copied, because a style has to comb along the

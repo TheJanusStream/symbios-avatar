@@ -456,12 +456,12 @@ fn held(head: &Head, follicle: Follicle) -> Held {
 /// boundary reads tighter here than it is.
 fn edge_of(head: &Head, follicle: Follicle) -> f32 {
     let (throat, crown) = head.skull.throat_and_crown();
-    let point = |angle: f32, height: f32| {
-        let half = head.skull.half_width(height).max(0.001);
-        let across = half * angle.sin();
-        let depth = head.skull.depth_across(height, across.abs());
-        Vec3::new(across, height, depth * angle.cos())
-    };
+    // **The library's own surface, not a second copy of it** (#204). This was
+    // four lines assembling the two profile tables by hand — the same four lines
+    // `Skull::surface_at` is, except that it used the FORWARD reach for the back of
+    // the head, which reads the occiput as inside itself. Two copies of one
+    // formula is how one of them stays wrong.
+    let point = |angle: f32, height: f32| head.skull.surface_at(height, angle);
     let mut steepest: f32 = 0.0;
     for step in 0..300 {
         let height = throat + (crown - throat) * step as f32 / 299.0;

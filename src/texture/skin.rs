@@ -45,16 +45,6 @@ pub struct PaintedLayer<'a> {
     pub painted: &'a PaintedHair,
 }
 
-/// How strongly painted hair reaches its own colour at full density.
-///
-/// Not the whole way: skin shows between hairs at any density a person would
-/// call stubble, and a painted region that reaches its colour exactly reads as
-/// a decal. Eight tenths is what the old stubble term used, and it was the one
-/// part of it worth keeping.
-///
-/// Provenance: **carried** from the stubble term this replaces (#200).
-const PAINTED: f32 = 0.8;
-
 /// The melanin ramp, palest to deepest, in sRGB.
 ///
 /// Fitted to the ten shades of the **Monk Skin Tone Scale** — Ellis Monk's open
@@ -649,7 +639,7 @@ pub fn paint_skin(
                 // still shows and a pale face keeps its own tone between the
                 // hairs. The grain is what makes that read as hairs rather than
                 // as a wash.
-                colour = colour.lerp(paint.tone(), held * broken * PAINTED);
+                colour = colour.lerp(paint.tone(), held * broken * grain.reach);
                 painted = (painted + held).min(1.0);
                 coarsest = coarsest.min(broken);
             }

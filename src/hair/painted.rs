@@ -81,6 +81,17 @@ pub struct Grain {
     /// Its mean is half of this, so a region at `1` reaches half its own colour
     /// on average, which is what the one carried stubble term did.
     pub shows: f32,
+    /// How close to its own colour the paint gets where the mask is full and the
+    /// density is `1`.
+    ///
+    /// **Not all the way, and how far is the region's business** (#204). Eight
+    /// tenths is what the stubble term used and it is right for stubble: a shaved
+    /// jaw is mostly skin with hair through it, and paint that reaches its colour
+    /// exactly reads as a decal. A SCALP under a head of hair is the opposite — the
+    /// skin between the locks is in shadow under hair, not showing between
+    /// bristles — and at eight tenths of a dark brown from a pale complexion it
+    /// rendered as a tan disc at the crown that read as a bald spot.
+    pub reach: f32,
     /// How many cells of it there are per metre.
     ///
     /// **A wish rather than a promise**, because most charts carry three to five
@@ -98,10 +109,11 @@ impl Grain {
     /// The grain one region's painted hair has.
     ///
     /// Provenance: the stubble regions are **carried** from #200 — one shows
-    /// bare skin at its thinnest and its cells are the 260 per metre the stubble
-    /// term used, so a beard's painted mean is unchanged to the bit. The brows
-    /// and the scalp are **derived** from what they are (dense hair rather than
-    /// a shave) and **tuned by render** (#205).
+    /// bare skin at its thinnest, its reach is the 0.8 the stubble term used and
+    /// its cells are that term's 260 per metre, so a beard's painted colour is
+    /// unchanged to the bit. The brows and the scalp are **derived** from what
+    /// they are (dense hair rather than a shave) and **tuned by render** (#205,
+    /// #204).
     #[must_use]
     pub fn of(follicle: Follicle) -> Self {
         match follicle {
@@ -110,7 +122,8 @@ impl Grain {
             // show skin, and the whole reason this layer exists is that it reads
             // as hair anyway.
             Follicle::Scalp => Self {
-                shows: 0.55,
+                shows: 0.40,
+                reach: 0.95,
                 cells: 420.0,
             },
             // Dense, small, and the fallback a face wears when no brow is grown
@@ -118,11 +131,13 @@ impl Grain {
             // mannequin.
             Follicle::Brows => Self {
                 shows: 0.35,
+                reach: 0.90,
                 cells: 700.0,
             },
             // Stubble, all three of them, at the term this replaced.
             Follicle::Moustache | Follicle::Chin | Follicle::Flanks => Self {
                 shows: 1.0,
+                reach: 0.8,
                 cells: 260.0,
             },
         }

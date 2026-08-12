@@ -1492,10 +1492,17 @@ mod tests {
                 .map(|point| -point.y)
                 .fold(f32::MIN, f32::max)
         };
+        // **A length axis moves what HANGS, not what the card covers** (#204).
+        // A scalp card runs from the crown to the hairline whatever the record
+        // asks for — that is what covers a head — and the axis is how far it
+        // carries on past it. So the ratio between a short crop and a long one is
+        // no longer the ratio of their axes: measured, 46.1 mm against 64.9, where
+        // this asked for half again. Asserted as a real difference in millimetres
+        // instead, which is what the override is for.
         let cropped = at_length(0.1);
         let long = at_length(1.0);
         assert!(
-            reach(&long) > reach(&cropped) * 1.5,
+            reach(&long) > reach(&cropped) + 0.010,
             "a long crop reaches {:.1} mm below the head joint against a short one\'s {:.1}",
             reach(&long) * 1000.0,
             reach(&cropped) * 1000.0

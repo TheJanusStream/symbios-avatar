@@ -3953,6 +3953,119 @@ impl Skull {
         })
     }
 
+    /// How far the skull reaches BACKWARD at `height`, in head-local metres.
+    ///
+    /// The mirror of [`Self::depth`], and a head needs both: an occiput reaches
+    /// further behind the joint than a brow does in front of it, so anything
+    /// treating the head as symmetric fore-and-aft puts the back of it inside
+    /// itself. Measured on the midline.
+    ///
+    /// **Signed, so it is NEGATIVE**, like the coordinate it is: this is the `z`
+    /// the back of the head reaches, which is what the profile's own tables hold
+    /// and what `fore` maps a depth against. The first cut of this negated it into
+    /// a distance and [`Self::surface_at`] then took a semi-axis of about nothing
+    /// for the whole back hemisphere — the head's radius behind the ear read as
+    /// 6.4 mm rather than 90, so a lock combed round to the nape dived for the
+    /// axis. It survived a test because the test compared the lock's radius
+    /// against the same broken formula on both sides; only a style that crossed
+    /// from the front hemisphere into the back one showed it (#204).
+    #[must_use]
+    pub fn depth_behind(&self, height: f32) -> f32 {
+        self.sample(&self.behind, height)
+    }
+
+    /// Where the surface sits at one height and one azimuth, in head-local
+    /// metres.
+    ///
+    /// **The measured head as a shape something can be walked over**, which is
+    /// what hair needs and nothing here offered: [`Self::half_width`] and
+    /// [`Self::depth_across`] are the two halves of one ellipse per height, and
+    /// every caller that wanted a point on the surface was assembling them
+    /// itself. Two already were — `hair::follicle`'s own edge instrument and
+    /// #204's scalp styles — and a third copy is how they drift.
+    ///
+    /// `azimuth` is measured from dead ahead, turning toward the body's right,
+    /// so its cosine is [`crate::hair::follicle`]'s `facing` and zero is the
+    /// middle of the face.
+    ///
+    /// It is the profile's own ellipse and not the built mesh, so it is smooth
+    /// where a mesh has facets — which is what anything sliding over a head
+    /// wants — and it knows nothing about a nose. Anything that must be ON the
+    /// surface rather than near it belongs on the faces themselves; see
+    /// `hair::clump::scatter`.
+    ///
+    /// **The ellipse is asymmetric fore-and-aft, and the first cut of this was
+    /// not** (#204). Written as the forward reach times the azimuth's cosine, it
+    /// used the brow's depth for the occiput and read the back of the head as 5 mm
+    /// inside itself — which a scalp lock walking the surface turned into hair
+    /// sunk into the skull behind the ear.
+    ///
+    /// **And an ellipse through the three extremes is an outer BOUND rather than
+    /// the surface**, which was the second cut and the worse mistake: a head is
+    /// flatter at the back and narrower at the temples than any ellipse through
+    /// its own widest points, so hair walking that ellipse floated a centimetre
+    /// off the head at the diagonals and the sheet showed cards standing proud of
+    /// the scalp with light under them. The two-dimensional tables say where the
+    /// outline actually is — [`Self::width_across`] is the half-width at a depth
+    /// and [`Self::depth_across`] the depth at a half-width — so the ellipse is
+    /// only a first guess and two fixed-point steps land on the measured outline.
+    /// Whichever table is inverted is chosen by the direction, since dividing by a
+    /// sine near zero is dividing by nothing.
+    #[must_use]
+    pub fn surface_at(&self, height: f32, azimuth: f32) -> glam::Vec3 {
+        let (sin, cos) = azimuth.sin_cos();
+        let side = self.half_width(height).max(MINIMUM_REACH);
+        let fore = if cos >= 0.0 {
+            self.depth(height)
+        } else {
+            -self.depth_behind(height)
+        }
+        .max(MINIMUM_REACH);
+        // The ellipse through the measured extremes, as a first guess.
+        let guess = 1.0 / ((sin / side).powi(2) + (cos / fore).powi(2)).sqrt();
+        let mut radius = guess;
+        for _ in 0..OUTLINE_STEPS {
+            let solved = if sin.abs() > LATERAL_ENOUGH {
+                self.width_across(height, radius * cos) / sin.abs()
+            } else if cos >= 0.0 {
+                self.depth_across(height, (radius * sin).abs()) / cos.abs().max(MINIMUM_REACH)
+            } else {
+                // Nearly straight back, where the only measurement is the
+                // midline's own reach: there is no table of half-widths behind
+                // the joint to invert.
+                -self.depth_behind(height) / cos.abs().max(MINIMUM_REACH)
+            };
+            // **Taken only if it is credible, and otherwise DROPPED** (#204).
+            // Solving `r = w(r cos) / sin` is a fixed point only where the outline
+            // is not near-tangent to the ray; where it is, one step multiplies a
+            // 75 mm half-width by three and the answer is a radius off the side of
+            // the head. The sheet showed it as single locks flying horizontally
+            // out of the skull.
+            //
+            // Clamping to the edge of the trusted band was the first repair and it
+            // was the wrong one: it turns a divergence into a confident 25% error,
+            // which is 19 mm on a temple and still reads as hair floating beside
+            // the head. The ellipse through the measured extremes is never more
+            // than a centimetre out, so where the correction cannot be trusted the
+            // guess is the better answer.
+            if (solved - guess).abs() <= guess * OUTLINE_TRUST {
+                radius = solved;
+            }
+        }
+        // **The topmost band is a band and not a pole, so the crown is closed
+        // with a cap** (#204). Every profile here is sampled into bands of about
+        // eleven millimetres, and the highest one carries the head's width over
+        // its whole span — 55 mm at the top of a default head. Asked at the crown
+        // it therefore answers 55 mm rather than nothing, so anything walking the
+        // surface from the crown outward starts 55 mm out and leaves a bare disc
+        // where the whorl is. A quarter-circle over the last band closes it to a
+        // point, which is the one thing a dome's own geometry says for certain.
+        let band = (self.hi - self.lo) / (BANDS - 1) as f32;
+        let into = ((height - (self.hi - band)) / band.max(MINIMUM_REACH)).clamp(0.0, 1.0);
+        let radius = (radius * (1.0 - into * into).max(0.0).sqrt()).max(MINIMUM_REACH);
+        glam::Vec3::new(radius * sin, height, radius * cos)
+    }
+
     /// The throat and the crown — the lowest and highest the measured profile
     /// reaches, in head-local metres.
     ///
@@ -4059,6 +4172,43 @@ impl Skull {
         profile[band] + (profile[band + 1] - profile[band]) * blend
     }
 }
+
+/// How many fixed-point steps [`Skull::surface_at`] takes onto the outline.
+///
+/// Two. The ellipse through the measured extremes is within a centimetre of the
+/// outline everywhere, the tables are smooth, and each step roughly squares the
+/// error — a third step moved the answer by under a hundredth of a millimetre on
+/// every band of every head in the sweep.
+///
+/// Provenance: **derived** from the convergence, measured.
+const OUTLINE_STEPS: usize = 2;
+
+/// How far from the ellipse's own guess a correction step may move, as a share.
+///
+/// A quarter: the ellipse through the measured extremes is within a centimetre of
+/// the outline on a 90 mm head, so a correction larger than this is the iteration
+/// diverging rather than converging.
+///
+/// Provenance: **derived** from how wrong the guess can be.
+const OUTLINE_TRUST: f32 = 0.25;
+
+/// How lateral a direction has to be before the side table is the one to invert.
+///
+/// The sine of about twenty degrees. Below it the point is nearly straight ahead
+/// or straight behind, and solving for a half-width means dividing by a sine
+/// close to zero.
+///
+/// Provenance: **derived** from the conditioning.
+const LATERAL_ENOUGH: f32 = 0.35;
+
+/// The smallest semi-axis [`Skull::surface_at`] will divide by, in metres.
+///
+/// A millimetre, for the reason `hair::follicle`'s own floor exists: a band that
+/// measured nothing would otherwise turn a radius into an infinity, and no real
+/// band of a head is clamped by this.
+///
+/// Provenance: **derived** from the failure it prevents.
+const MINIMUM_REACH: f32 = 0.001;
 
 /// How far the head's own surface reaches below its joint, in skull radii.
 ///

@@ -1,7 +1,21 @@
 //! One clump of hair, turned into triangles.
 //!
-//! A clump is a spine and a cross-section swept down it. Everything expensive
-//! about hair is decided here, so two things are worth stating up front:
+//! A clump is a spine and a width: one flat **card**, two triangles a segment.
+//! Everything expensive about hair is decided here, so three things are worth
+//! stating up front:
+//!
+//! - **A clump is ONE low-poly construction, not a volume built out of parts**
+//!   (owner call, #204). It was a cross-section swept down the spine — a closed
+//!   tube of rings, `sides x 2` triangles a segment plus two caps, which is
+//!   fourteen at the floor and fifty-nine for a card that walks a skull. A card
+//!   is four at the floor and twenty for the same walk, so the avatar's 30,000
+//!   stops being the thing every other decision is squeezed against.
+//!
+//!   It is also what hair IS at this budget: a lock is a sheet, and a swept tube
+//!   spent two thirds of its triangles closing a volume nobody sees the inside
+//!   of. Cards are single-sided, which the contact sheet's rasteriser handles
+//!   because it is two-sided by construction, and which a consuming engine
+//!   handles with a double-sided hair material — the standard for cards.
 //!
 //! - **A clump is sampled by how much it BENDS**, not by how far it travels and
 //!   not by a fixed count. #40's lesson was the second of those — a fringe a
@@ -18,7 +32,6 @@ use glam::{Vec2, Vec3};
 use super::Shape;
 use super::scatter::Root;
 use crate::mesh::PolyMesh;
-use crate::prim;
 
 /// How far a clump's drawn spine may stray from the curve it stands for, in
 /// metres.
@@ -82,60 +95,63 @@ pub(super) fn loft(
         return 0;
     }
 
-    // **A clump's width comes and goes, and a lock is the case that proves it**
-    // (#205). `prim::ribbon` can only run one section into another, which draws a
-    // wedge: full width at the root, a point at the tip. Overlapping wedges read
-    // as a row of separate objects, because every one of them ends in a blunt
-    // squared-off face where it began. A section asked for per station lets a
-    // style be a leaf instead — thin, full, thin — so that where two clumps
-    // overlap neither has an end.
-    //
-    // It costs nothing: the same stations, the same sides, the same triangles.
-    // `prim::sweep` has taken a section per station since a foot needed one.
-    let sections: Vec<Vec2> = fractions
-        .iter()
-        .map(|along| shape.section_at(root, *along))
-        .collect();
     // **The wide axis is handed in rather than derived, and hair is the case
-    // that proves it** (`prim::ribbon`'s own note). A frame derived from a
-    // near-vertical path snaps to a world axis and the ribbon turns edge-on,
-    // which is what turned a sheet of hair into separate strings.
+    // that proves it.** A frame derived from a near-vertical path snaps to a
+    // world axis and the card turns edge-on, which is what turned a sheet of hair
+    // into separate strings.
     //
     // **And it is the STYLE that hands it in, not this file** (#205). Across the
     // fall is what a hanging lock's width lies along, and it is
     // [`Shape::across`]'s default; a brow's clumps run sideways and want their
-    // width across that instead. The one thing a style may not do is name an
-    // axis parallel to its own spine, so the parallel case is caught here rather
-    // than left to the sweep's silent fallback.
-    let tangent = (path[1] - path[0]).normalize_or(root.out);
-    let named = shape.across(root).normalize_or(Vec3::ZERO);
-    let squared = named - tangent * named.dot(tangent);
-    let across = squared.normalize_or(
-        root.out
-            .cross(tangent)
-            .normalize_or(tangent.cross(Vec3::Y).normalize_or(Vec3::X)),
-    );
-    let first = into.positions.len();
-    let sides = shape.sides();
-    let clump = prim::sweep(&path, &sections, sides, across);
-    into.append(&clump);
-
-    // The gradient, by travel rather than by height: hair that falls and then
-    // curls back up is still older at its tip, and a colour taken from height
-    // would run backwards over the curl.
+    // width across that instead. The one thing a style may not do is name an axis
+    // parallel to its own spine, so the parallel case is caught here rather than
+    // silently substituted.
     //
-    // **By how far along the curve a station is, not by its index** (#205).
-    // Adaptive sampling puts stations where a clump bends, so an index is not a
-    // share of the way down the hair: on a curl the colour ran fast through the
-    // bend and slowly over the straight, which is not what "root to tip" means
-    // and is not what this comment used to claim it did. Identical on a straight
-    // clump, where the two agree.
-    let added = into.positions.len() - first;
-    into.colours.resize(first, roots_colour);
-    for vertex in 0..added {
-        let station = (vertex / sides.max(1)).min(fractions.len().saturating_sub(1));
-        into.colours
-            .push(shade(roots_colour, tips_colour, fractions[station]));
+    // Squared against the LOCAL tangent at every station rather than transported
+    // from the first: a card whose width stayed in one plane would twist wherever
+    // its spine turned, and re-squaring costs a dot product. It also cannot drift,
+    // which a transported frame can over a curl.
+    let named = shape.across(root).normalize_or(Vec3::ZERO);
+    let first = into.positions.len() as u32;
+    let mut walked = 0.0;
+    for (station, (at, along)) in path.iter().zip(&fractions).enumerate() {
+        if station > 0 {
+            walked += path[station].distance(path[station - 1]);
+        }
+        let tangent = if station + 1 < path.len() {
+            path[station + 1] - *at
+        } else {
+            *at - path[station - 1]
+        }
+        .normalize_or(root.out);
+        let squared = named - tangent * named.dot(tangent);
+        let side = squared.normalize_or(
+            root.out
+                .cross(tangent)
+                .normalize_or(tangent.cross(Vec3::Y).normalize_or(Vec3::X)),
+        );
+        let half = shape.width_at(root, *along).max(0.0);
+        // The card's own face, which is what catches the light: perpendicular to
+        // both the spine and the width.
+        let out = side.cross(tangent).normalize_or(root.out);
+        // The gradient, by travel rather than by height: hair that falls and then
+        // curls back up is still older at its tip, and a colour taken from height
+        // would run backwards over the curl. And by how far along the curve a
+        // station is, not by its index (#205) — adaptive sampling puts stations
+        // where a clump bends, so an index is not a share of the way down a hair.
+        let shade = shade(roots_colour, tips_colour, *along);
+        for edge in [-1.0f32, 1.0] {
+            into.positions.push(*at + side * (half * edge));
+            into.normals.push(out);
+            into.uvs.push(Vec2::new((edge + 1.0) * 0.5, walked / length.max(f32::EPSILON)));
+            into.colours.push(shade);
+        }
+    }
+    // One quad a segment, which the mesh counts as the two triangles it is.
+    for segment in 0..stations.saturating_sub(1) {
+        let step = first + segment as u32 * 2;
+        into.faces
+            .push(vec![step, step + 1, step + 3, step + 2]);
     }
     stations
 }
@@ -191,12 +207,3 @@ fn shade(roots: Vec3, tips: Vec3, along: f32) -> Vec3 {
     roots.lerp(tips, along.clamp(0.0, 1.0))
 }
 
-/// The cross-section of a clump at its root and its tip, as half-extents.
-///
-/// A helper for styles: a lock is a ribbon rather than a rope — wider across
-/// than it is thick — and this is that shape from one width and one thickness.
-#[must_use]
-pub fn ribbon_section(width: f32, thickness: f32, taper: f32) -> (Vec2, Vec2) {
-    let base = Vec2::new(width * 0.5, thickness * 0.5);
-    (base, base * taper.clamp(0.0, 1.0))
-}

@@ -35,7 +35,7 @@
 pub mod loft;
 pub mod scatter;
 
-use glam::{Vec2, Vec3};
+use glam::Vec3;
 use rand_pcg::Pcg64Mcg;
 
 use super::follicle::{Follicle, Follicles};
@@ -43,7 +43,7 @@ use crate::mesh::PolyMesh;
 use crate::plan::Zone;
 use crate::rig::Rig;
 
-pub use loft::{LEAST, ribbon_section};
+pub use loft::LEAST;
 pub use scatter::Root;
 
 /// What one style has to be able to say about one clump.
@@ -74,27 +74,32 @@ pub trait Shape {
     /// dear, which is the right way round.
     fn at(&self, root: &Root, along: f32) -> Vec3;
 
-    /// The clump's half-extents at root and tip, wide by thick, in metres.
-    fn section(&self, root: &Root) -> (Vec2, Vec2);
+    /// Half the clump's width at its root and at its tip, in metres.
+    ///
+    /// **A width and not a section, because a clump is one flat card** (owner
+    /// call, #204). There is no thickness to give: a swept volume spent two
+    /// thirds of its triangles closing a shape nobody sees the inside of, and a
+    /// lock at this budget is a sheet.
+    fn width(&self, root: &Root) -> (f32, f32);
 
-    /// The clump's half-extents a share of the way along it.
+    /// Half its width a share of the way along it.
     ///
     /// **Because a lock's width comes and goes, and only the tapered case can be
-    /// written as two ends** (#205). The default is [`Self::section`]'s two ends
-    /// run into each other, which is a wedge: full at the root, a point at the
-    /// tip, and a blunt squared-off face where it began. That is right for a
-    /// hanging lock, whose root is hidden in the hair above it, and wrong for
-    /// anything that has to overlap its neighbours — a row of wedges reads as a
-    /// row of objects because every one of them visibly ends.
+    /// written as two ends** (#205). The default runs [`Self::width`]'s two ends
+    /// into each other, which is a wedge: full at the root, a point at the tip,
+    /// and a blunt squared-off end where it began. That is right for a hanging
+    /// lock, whose root is hidden in the hair above it, and wrong for anything
+    /// that has to overlap its neighbours — a row of wedges reads as a row of
+    /// objects because every one of them visibly ends.
     ///
     /// A style that overrides this can be a leaf instead: thin, full, thin. It
-    /// costs nothing — the same stations, the same sides, the same triangles.
+    /// costs nothing — the same stations, the same triangles.
     ///
-    /// Asked at the same fractions [`Self::at`] is, so a section follows the
-    /// curve rather than the sampling.
-    fn section_at(&self, root: &Root, along: f32) -> Vec2 {
-        let (base, tip) = self.section(root);
-        base.lerp(tip, along.clamp(0.0, 1.0))
+    /// Asked at the same fractions [`Self::at`] is, so a width follows the curve
+    /// rather than the sampling.
+    fn width_at(&self, root: &Root, along: f32) -> f32 {
+        let (base, tip) = self.width(root);
+        base + (tip - base) * along.clamp(0.0, 1.0)
     }
 
     /// Which way the clump's wide axis lies, in head-local space.
@@ -111,22 +116,14 @@ pub trait Shape {
     /// [`crate::prim::sweep_outline`] quietly substitutes an arbitrary frame,
     /// which is the edge-on strand the ribbon note warns about.
     ///
-    /// Need not be perpendicular to the spine: the sweep squares it against the
-    /// path's own direction. It must not be parallel to it.
+    /// Need not be perpendicular to the spine: the loft squares it against the
+    /// path's own direction at every station. It must not be parallel to it.
     fn across(&self, root: &Root) -> Vec3 {
         root.out
             .cross(Vec3::Y)
             .normalize_or(root.out.cross(Vec3::X).normalize_or(Vec3::X))
     }
 
-    /// How many corners the cross-section has.
-    ///
-    /// Three is a prism and reads as a lock of hair at the distances a game is
-    /// played from; more is rarely worth what it costs, this being the number
-    /// every triangle in the mesh is multiplied by.
-    fn sides(&self) -> usize {
-        3
-    }
 }
 
 /// One region's hair, grown.
@@ -267,13 +264,22 @@ impl Growth {
 
 /// How far a clump stands its root off the skin, in metres.
 ///
-/// Hair grows out of skin, so a clump whose spine starts exactly on the surface
-/// has half its cross-section buried — which reads as clumps sunk into the
-/// scalp wherever the surface curves away. Half a millimetre is under the
-/// thinnest section any style asks for.
+/// Hair grows out of skin, so a clump lying exactly on the surface is partly
+/// buried in it — which reads as hair sunk into the scalp wherever the surface
+/// curves away.
 ///
-/// Provenance: **derived** from the cross-sections the styles use.
-pub const LIFT: f32 = 0.0005;
+/// **Sized by the SAMPLER, not by the geometry, and that changed with the card**
+/// (#204). It was half a millimetre, which was under the thinnest cross-section
+/// any style asked for — a rationale that retired with the swept volume. A card
+/// is a polyline of chords, and a chord may sag [`loft`]'s own flatness tolerance
+/// below the curve it stands for: a whole millimetre. At half of that the cards
+/// crossing the crown dipped under the scalp between their stations and the
+/// contact sheet showed a bare star-shaped hole at the whorl — the one part of a
+/// head no other card covers.
+///
+/// Provenance: **derived** from the loft's flatness tolerance, which is what a
+/// chord can sag.
+pub const LIFT: f32 = 0.0015;
 
 /// A clump that lies along the surface and falls away from it.
 ///
@@ -294,9 +300,6 @@ pub struct Fall {
     pub length: f32,
     /// How wide one is at the root, in metres.
     pub width: f32,
-    /// How thick one is at the root, in metres — less than its width, a lock
-    /// being a ribbon rather than a rope.
-    pub thickness: f32,
     /// What share of that is left at the tip.
     pub taper: f32,
     /// How far the clump bends toward the ground over its length, `0` straight
@@ -317,7 +320,6 @@ impl Default for Fall {
         Self {
             length: 0.02,
             width: 0.006,
-            thickness: 0.003,
             taper: 0.35,
             droop: 0.5,
             // Mostly lying down: hair leaves skin at a shallow angle, and the
@@ -352,10 +354,10 @@ impl Shape for Fall {
         root.at + root.out * LIFT + heading * (length * along)
     }
 
-    fn section(&self, root: &Root) -> (Vec2, Vec2) {
+    fn width(&self, root: &Root) -> (f32, f32) {
         let thin = root.weight.clamp(0.0, 1.0).sqrt();
-        let (base, tip) = ribbon_section(self.width * thin, self.thickness * thin, self.taper);
-        (base, tip)
+        let base = self.width * 0.5 * thin;
+        (base, base * self.taper.clamp(0.0, 1.0))
     }
 }
 
@@ -630,13 +632,13 @@ mod tests {
         // And a straight one is at the floor, whatever its length: the fewest
         // stations allowed, and nothing spent subdividing a line.
         //
-        // **The floor counts the CAPS, and the first cut of it did not**: a
-        // swept tube is closed at both ends, so a three-station three-sided
-        // clump is fourteen triangles rather than twelve. Measured, not
-        // assumed — the straight run came to 280 against a predicted 240 and
-        // the missing 40 was two triangles a clump.
-        let sides = Fall::default().sides();
-        let floor = clumps * ((LEAST - 1) * sides * 2 + 2 * (sides - 2));
+        // **The floor is a CARD, which is two triangles a segment and no caps**
+        // (owner call, #204). It was a swept tube closed at both ends — a
+        // three-station three-sided clump being fourteen triangles rather than
+        // twelve, measured when a predicted 240 came to 280 — and a card of the
+        // same three stations is four. That is the whole reason a scalp can afford
+        // to walk a skull.
+        let floor = clumps * (LEAST - 1) * 2;
         assert!(
             straight <= floor,
             "{clumps} straight clumps cost {straight} triangles against a floor of {floor}, so \
@@ -665,11 +667,11 @@ mod tests {
             fn at(&self, root: &Root, along: f32) -> Vec3 {
                 self.0.at(root, along)
             }
-            fn section(&self, root: &Root) -> (Vec2, Vec2) {
-                self.0.section(root)
+            fn width(&self, root: &Root) -> (f32, f32) {
+                self.0.width(root)
             }
-            fn section_at(&self, root: &Root, along: f32) -> Vec2 {
-                let (base, _) = self.section(root);
+            fn width_at(&self, root: &Root, along: f32) -> f32 {
+                let (base, _) = self.width(root);
                 // Thin at both ends, fullest in the middle.
                 base * (0.3 + 0.7 * (1.0 - (along * 2.0 - 1.0).abs()))
             }
@@ -715,10 +717,10 @@ mod tests {
             weight: 1.0,
         };
         let fall = Fall::default();
-        let (base, tip) = fall.section(&root);
-        assert!(fall.section_at(&root, 0.0).abs_diff_eq(base, 1e-6));
-        assert!(fall.section_at(&root, 1.0).abs_diff_eq(tip, 1e-6));
-        assert!(fall.section_at(&root, 0.5).x < base.x && fall.section_at(&root, 0.5).x > tip.x);
+        let (base, tip) = fall.width(&root);
+        assert!((fall.width_at(&root, 0.0) - base).abs() < 1e-6);
+        assert!((fall.width_at(&root, 1.0) - tip).abs() < 1e-6);
+        assert!(fall.width_at(&root, 0.5) < base && fall.width_at(&root, 0.5) > tip);
     }
 
     #[test]
@@ -737,8 +739,8 @@ mod tests {
             fn at(&self, root: &Root, along: f32) -> Vec3 {
                 root.at + Vec3::X * (0.02 * along)
             }
-            fn section(&self, _root: &Root) -> (Vec2, Vec2) {
-                (Vec2::splat(0.002), Vec2::splat(0.001))
+            fn width(&self, _root: &Root) -> (f32, f32) {
+                (0.002, 0.001)
             }
             fn across(&self, _root: &Root) -> Vec3 {
                 // Straight along the spine, which is the one thing forbidden.

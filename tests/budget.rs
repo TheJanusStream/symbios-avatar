@@ -115,7 +115,7 @@ const MESH_TARGET: usize = 4;
 /// pass has not been given back — it is still in every one of these figures —
 /// it is simply no longer sitting on top of the dearest hair the old system
 /// could grow.
-const TRIANGLE_CEILING: usize = 28_900;
+const TRIANGLE_CEILING: usize = 28_000;
 
 /// Draw calls the crate currently costs.
 ///
@@ -351,15 +351,21 @@ fn no_one_part_of_a_body_dominates_its_budget() {
         }
     }
     let share = largest.1 as f32 / avatar.budget.tris as f32;
-    // **0.75 -> 0.80 because the OTHER parts got cheaper** (#202), which is the
-    // one way a share can move that says nothing about the part it names. Skin
-    // is 20,384 triangles here and was 20,384 before the hair rewrite, bit for
-    // bit; what changed is that the shell and its locks left, taking about
-    // 3,000 with them, so the denominator shrank and skin's share rose from 73%
-    // to 77% while skin did not move at all. A ratio test that fires on an
-    // improvement elsewhere is measuring something other than its own name.
+    // **0.75 -> 0.80 -> 0.84 because the OTHER parts got cheaper, twice** (#202,
+    // #204), which is the one way a share can move that says nothing about the
+    // part it names. Skin is 20,384 triangles here and was 20,384 before either
+    // hair rewrite, bit for bit. What changed both times is the denominator: the
+    // shell and its locks left and took about 3,000 with them, and then a hair
+    // element stopped being a swept volume and became one flat card, which took
+    // most of what was left — the whole hair layer is now about 1,600 triangles on
+    // this body against 2,500 for a scalp of cards and 3,000 for the shell era.
+    //
+    // So skin's share has risen from 73% to 82% while skin has not moved at all. A
+    // ratio test that fires on an improvement elsewhere is measuring something
+    // other than its own name. What it still says is worth keeping: if one part
+    // ever reaches this share by GROWING, that is where the next cut goes.
     assert!(
-        share < 0.80,
+        share < 0.84,
         "{} is {:.0}% of the budget, and a body that is mostly one thing is \
          where the next cut goes: {by_kind:?}",
         largest.0,
@@ -443,16 +449,26 @@ fn the_budget_holds_for_a_record_that_asks_for_the_most_expensive_hair() {
 }
 
 #[test]
-#[ignore = "the 30,000 WebGL2 target is missed by 1,994 at this one corner: greedy hair on \
-the dearest head reads 31,994 (#202, was 31,482 under the shell). Every other budget test \
-passes now — the default body is 26,470 and the dearest sweep corner 28,722 — so what is \
-left is the product of two worst cases: a head whose refinement bands catch the most, wearing \
-the fullest hair a record can legally ask for. Candidate givebacks, in the order they are \
-worth trying: cap the greediest legal cut (a record asking for a full mop AND a full beard \
-at full length is nobody's haircut), trim the tenth FACE_PASSES band, or thin clumps on heads \
-whose regions measure largest. The file's own design says a target is ignored until it can \
-pass rather than deleted or quietly raised."]
 fn the_budget_holds_for_the_dearest_hair_on_the_dearest_head() {
+    // **NO LONGER IGNORED, as of #204**, which is what this whole hair makeover
+    // was for: the epic said it would end with this test un-ignored and passing.
+    // The history, since a target that was ignored for four issues is worth being
+    // able to read:
+    //
+    // - 31,482 under the shell era, when hair was a sculpted mass plus locks.
+    // - 31,994 at #202, when hair became clumps — worse, and honestly so: the
+    //   clumps cost less than the shell and the ratchet came down 2,600, but this
+    //   corner is a PRODUCT of two worst cases and it moved the other way.
+    // - 31,952 at #205, then 30,512 and 30,028 as a scalp clump became a wide card
+    //   that walks the skull rather than a bristle standing off it.
+    // - 29,268 here, once an element stopped being a swept volume and became ONE
+    //   FLAT CARD (owner call). A swept tube pays `sides x 2` triangles a segment
+    //   plus two caps; a card pays two. That is the whole of the last 800.
+    //
+    // The jaw pass has not been given back, and none of the three givebacks this
+    // reason used to name were needed: not the greedy cut's cap, not the tenth
+    // FACE_PASSES band, not thinner clumps on the dearest heads.
+    //
     // **The corner neither of the two tests above visits, and it was 1,050
     // triangles over target the whole time** (#187). One pins the head's axes
     // at their dearest and rolls whatever hair a seed gives it; the other pins

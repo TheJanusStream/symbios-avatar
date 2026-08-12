@@ -33,6 +33,7 @@
 //! cargo run --release --example render -- --close hand # or head, hand, foot
 //! cargo run --release --example render -- --close brows # or any follicle region
 //! cargo run --release --example render -- --brow thick  # or natural, none
+//! cargo run --release --example render -- --scalp bob 0.8 # crop, bob, long, tied, curly
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
@@ -197,6 +198,31 @@ fn main() {
             std::process::exit(1);
         }
     });
+    // Which scalp style to wear, and the axis its own variant carries. `--scalp
+    // bob` takes the variant's default; `--scalp bob 0.9` sets its axis, which is
+    // the only way to walk an axis that exists on one style and not the others.
+    let scalp = value("--scalp").map(|name| {
+        let axis = args
+            .iter()
+            .position(|arg| arg == "--scalp")
+            .and_then(|at| args.get(at + 2))
+            .and_then(|it| it.parse::<f32>().ok())
+            .unwrap_or(0.6);
+        match name.as_str() {
+            "none" => symbios_avatar::hair::ScalpStyle::None,
+            "crop" => symbios_avatar::hair::ScalpStyle::Crop,
+            "bob" => symbios_avatar::hair::ScalpStyle::Bob { fringe: axis },
+            "long" => symbios_avatar::hair::ScalpStyle::Long { weight: axis },
+            "tied" => symbios_avatar::hair::ScalpStyle::TiedBack { tail: axis },
+            "curly" => symbios_avatar::hair::ScalpStyle::Curly { curl: axis },
+            other => {
+                eprintln!(
+                    "unknown --scalp style {other}: expected none, crop, bob, long, tied or curly"
+                );
+                std::process::exit(1);
+            }
+        }
+    });
     let overridden: Vec<f32> = value("--hair")
         .map(|spec| {
             spec.split(',')
@@ -316,7 +342,7 @@ fn main() {
     // The record carries its own hair; the flag only replaces the axes it names.
     let axis = |at: usize, fallback: f32| overridden.get(at).copied().unwrap_or(fallback);
     let config = AvatarConfig {
-        hair: (!overridden.is_empty() || brow.is_some()).then(|| {
+        hair: (!overridden.is_empty() || brow.is_some() || scalp.is_some()).then(|| {
             // The scalp's own four axes, in the order `Cut` declares them, plus
             // a fifth that silences every region — which is what `--mane 0` on
             // the viewer does and what a bald judgement shot wants.
@@ -343,6 +369,9 @@ fn main() {
             }
             if let Some(style) = brow {
                 hair.brows.style = style;
+            }
+            if let Some(style) = scalp {
+                hair.scalp.style = style;
             }
             hair
         }),
