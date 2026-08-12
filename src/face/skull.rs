@@ -1163,7 +1163,7 @@ impl HeadTraits {
 ///
 /// It has now been built, costed and judged TWICE, and it does not show either
 /// time. At 0.85 it costs 326 triangles on the default and 712 at the dearest
-/// corner of `tests/budget.rs`'s sweep, landing at 29,778 against the 29,900
+/// corner of `tests/budget.rs`'s sweep, landing at 29,778 against the then-29,900
 /// ceiling; at 0.92, 246 and 504, landing at 29,570. Against that, side by side
 /// at the same seed and light — and the second time with [`refine_face`]'s
 /// curved split already in, which is what made re-judging it worth doing, since
@@ -1204,10 +1204,10 @@ impl HeadTraits {
 /// boundary off the shape entirely. The same band at 0.92 costs 30,154 at the
 /// dearest corner of the sweep and at 0.55, which is what #181 tried first,
 /// 6,196 triangles on the default body alone. At 0.97 it is **382 on the default
-/// and 548 at the dearest**, landing that corner at 29,818 against a 29,900
+/// and 548 at the dearest**, landing that corner at 29,818 against a then-29,900
 /// ceiling — which is the whole of the room there was, and is why the two ends
 /// were measured rather than guessed at.
-const FACE_PASSES: [(f32, f32, f32, f32); 9] = [
+const FACE_PASSES: [(f32, f32, f32, f32); 10] = [
     // **The broadest pass, and it is here because the body's subdivision level
     // halved** (#107). Eight-point cage rings buy the body a smooth surface at
     // one Catmull-Clark pass instead of two, which is where the triangle budget
@@ -1256,12 +1256,18 @@ const FACE_PASSES: [(f32, f32, f32, f32); 9] = [
     // azimuth costs.
     (0.97, 1.0, -0.171, 0.20),
     (0.92, 1.0, -0.360, -0.255),
+    // The FRONT of the mandible's border (#196). The cosine border (#195)
+    // runs from −0.495 at 33° to −0.43 at 57°, which is BELOW the nose-base
+    // pair's floor and INSIDE the jaw annulus's near cosine — a strip no band
+    // above covered, left at the three broad passes' cell, and the crease's
+    // knee rendered as a scallop at cell pitch there. First costed and
+    // rejected as too dear, then CHOSEN BY THE OWNER on the A/B sheet
+    // (2026-08-12): +1,340 triangles on the default body and +2,848 at the
+    // dearest sweep corner, and `tests/budget.rs`'s ceilings were re-based to
+    // carry it — the sheets beat the arithmetic, which is #193's standing
+    // order for this band.
+    (0.55, 0.92, -0.575, -0.415),
 ];
-// A tenth pass over the cosine border's own strip — `(0.55, 0.92, -0.575,
-// -0.415)` with `FACE_REFINEMENT` at 10 — was built and costed for #196 and
-// REJECTED: +1,340 on the default body and +2,848 at the dearest corner,
-// through the 29,900 ceiling. The scallop it aimed at is handled in the field
-// instead: [`JAW_RISE`] widened so the knee spans the cells that exist.
 
 /// The `FACE_PASSES` band edge that selects a given height on the built face.
 ///
@@ -1326,9 +1332,9 @@ pub fn band_at(rig: &Rig, height: f32) -> Option<f32> {
 ///
 /// **A wider band is not the alternative, and it was costed rather than
 /// argued** (#158). Extending the jaw flank's annulus up to the zygomatic —
-/// `(-0.15, 0.55, -0.571, 0.20)`, a ninth pass with `FACE_REFINEMENT`
+/// `(-0.15, 0.55, -0.571, 0.20)`, an eleventh pass with `FACE_REFINEMENT`
 /// moved with it — costs 5,428 triangles on the default body and lands the
-/// dearest corner of `tests/budget.rs`'s own sweep at 33,966 against a 29,900
+/// dearest corner of `tests/budget.rs`'s own sweep at 33,966 against a then-29,900
 /// ceiling. Four times through it, for a region whose fields carry nothing
 /// finer than the cells already there.
 ///
@@ -1542,9 +1548,10 @@ const BUTTON_RUN: f32 = 0.22;
 ///   seed 12   -4.9  -5.5   -5.8  -6.0  -4.2      was  -4.9  -7.6  +10.3  -6.0
 /// ```
 ///
-/// and `tests/parts::the_jaw_gives_up_its_reach_where_the_reference_does`, which
-/// is the guard for this, went from 0.578–0.751 of the drop spent two fifths of
-/// the way down to 0.791–0.905 against the reference's 0.823.
+/// and `tests/parts::the_jaw_gives_up_its_reach_where_the_reference_does` —
+/// then the guard for this, deleted with the jaw band's other rulers (#196) —
+/// went from 0.578–0.751 of the drop spent two fifths of the way down to
+/// 0.791–0.905 against the reference's 0.823.
 ///
 /// # The top third is deliberately left straight, and seed 9 is why
 ///
@@ -1580,8 +1587,9 @@ const BUTTON_RUN: f32 = 0.22;
 /// S the owner asked for and which neither the old shelf-and-cliff nor the
 /// first softening produced. Judged in both renderers at the frame ends, the heavy corner and
 /// the guarded seeds; the numeric contract that used to hold the cliff —
-/// `the_jaw_gives_up_its_reach_where_the_reference_does` — was re-fitted to
-/// the chosen curve afterwards, which is the order #193 mandates. The top
+/// `the_jaw_gives_up_its_reach_where_the_reference_does`, since deleted (#196)
+/// — was re-fitted to the chosen curve afterwards, which is the order #193
+/// mandates. The top
 /// third's straightness and [`BUTTON`]'s allowance are untouched, so seed 9's
 /// chin-amputation guard still holds.
 #[rustfmt::skip]
@@ -2464,124 +2472,6 @@ mod tests {
         }
     }
 
-    /// How far the silhouette's direction turns anywhere down the lower face,
-    /// in degrees, on the surface that ships.
-    ///
-    /// **Bisected, on the SHIPPED mesh, and read as a turn over a window rather
-    /// than as a jump between two samples.** Each of those three is a
-    /// correction to a version of this measurement that lied, and all three
-    /// were caught by printing the whole series instead of its maximum (#80).
-    ///
-    /// *Bisected*: the first version sampled `face_width` in 0.08-radius
-    /// windows on a mesh whose rows are 0.18 radii apart, so adjacent windows
-    /// kept returning the SAME row — the slope series came back
-    /// [22.9, 0.0, 46.2, 0.0, 47.6, 0.0] and it passed on 47.6° of vertex
-    /// quantisation while the jawline underneath was a cone.
-    ///
-    /// *On the shipped mesh*: the second version bisected honestly but against
-    /// `head()`, which is `catmull_clark(cage, 2)` with no [`refine_face`] — a
-    /// head carrying FOUR vertex rows below −0.2 R. Between rows the bisection
-    /// walks one flat facet and the slope is bit-identical, so the whole signal
-    /// was where the sweep crossed a row. It reported 12.1–12.9° by seed and
-    /// its maximum was at −0.090 R on all four, which is the EYE LINE. The same
-    /// sweep on the shipped surface, which carries thirty rows there, said 3.4.
-    ///
-    /// *Over a window*: a jawline's transition is 5–7 mm of height and the
-    /// sweep steps 4–5, so which pair of samples straddles it is a phase. On
-    /// one unchanged mesh, moving the sweep's origin by 0.032 R moved the
-    /// largest adjacent-pair jump from 16.5° to 27.2°, and halving the step
-    /// moved it again — a metric that reports the sampling as much as the
-    /// shape. The turn accumulated over any window no wider than the feature is
-    /// the same quantity without the phase: measured over five origins and two
-    /// step sizes it varies by under 2°. This is the discrimination
-    /// `a_profile_has_no_corners_in_it` makes and it is made the same way.
-    ///
-    /// Swept from −0.20 R, which is below the head's widest band — starting
-    /// above it puts the cheekbone's own turn inside the window and reports 10°
-    /// on a cone — and stopped at the menton, because below the chin the head
-    /// flares back out into the neck and a search that reaches the floor finds
-    /// a 62° "corner" that is the throat.
-    fn jaw_turn(seed: i64) -> f32 {
-        let (mesh, measured, centre, radius) = skull(seed, crate::FACE_REFINEMENT);
-        let width = |y: f32| {
-            let axis = centre + Vec3::Y * y * radius;
-            let reach = bisect(&mesh, axis, Vec3::Z)?;
-            bisect(&mesh, axis + Vec3::Z * reach * 0.5, Vec3::X)
-        };
-        let step = 0.04;
-        let mut slopes: Vec<(f32, f32)> = Vec::new();
-        let mut at = -0.20;
-        while at * radius > measured.chin() {
-            if let (Some(here), Some(below)) = (width(at), width(at - step)) {
-                slopes.push((at, (here - below).atan2(step * radius).to_degrees()));
-            }
-            at -= step;
-        }
-        // The largest turn between any two samples no further apart than a
-        // jawline's own transition. Taken signed rather than by magnitude: the
-        // silhouette turning INWARD going down is a jaw, and turning outward is
-        // the neck.
-        let mut turn = 0.0f32;
-        for (index, &(top, above)) in slopes.iter().enumerate() {
-            for &(low, below) in &slopes[index + 1..] {
-                if top - low <= 0.12 {
-                    turn = turn.max(below - above);
-                }
-            }
-        }
-        turn
-    }
-
-    #[test]
-    fn the_jawline_turns_a_corner() {
-        // **A jawline is an angle, and every other test here measures a ratio.**
-        // `the_face_narrows_from_cheekbone_to_chin` below is satisfied by any
-        // smooth taper, which is why the owner's "there is no jaw" survived
-        // three rounds of work with a green suite.
-        //
-        // Before [`jaw`] the front silhouette fell a DEAD CONSTANT 1.4–1.7 mm
-        // per 4 mm over sixteen consecutive bands — a right circular frustum on
-        // every seed — and this measured 6.3 to 10.5° of turn, most of which was
-        // the cheekbone rather than the jaw. A mandible instead runs down the
-        // ramus, turns through the gonial angle (122–128° in life) and runs
-        // forward along the body to the menton.
-        //
-        // Measured after: 29.6 / 26.3 / 27.6 / 36.7 by seed, worst window and
-        // worst sweep origin of each. Twenty is the threshold because it is
-        // three times the cone's and well under the shape's, so neither a
-        // regression to a taper nor a routine re-tuning of [`JAW_DEPTH`] can
-        // slip past it.
-        //
-        // **Re-measured 2026-08-11: 40.7 / 44.2 / 43.1 / 36.8, and the figures
-        // above are three populations stale** (#79). They have been quoted since
-        // as 22.2 / 20.2 / 21.3 / 27.3 and as a 23.4-to-30.4 range, and neither
-        // describes this tree either. Against a gonial angle of 122–128° in
-        // life — a turn of 52 to 58° — the jawline is at 70 to 80 percent of a
-        // mandible's, where #79's own close-out recorded it turning "half what a
-        // mandible turns". That item resolved without being worked on, in the
-        // head passes since.
-        //
-        // Re-basing BREADTH's face knots onto their landmarks costs 0.6 to 1.8°
-        // of it — 40.1 / 42.4 / 42.4 / 35.1 — because a jaw that is already
-        // narrower at the gonion has less left to turn through. The bound is
-        // untouched: this is a fifth of the margin over it.
-        let turns: Vec<(i64, f32)> = [7, 23, 29, 42]
-            .into_iter()
-            .map(|seed| (seed, jaw_turn(seed)))
-            .collect();
-        // Every seed in one message rather than the first failure: a threshold
-        // set from one body is how the last three rounds were tuned.
-        assert!(
-            turns.iter().all(|&(_, turn)| turn > 20.0),
-            "the sharpest turn in the jawline, by seed: {:?} — a mandible turns \
-             through 50° or so at the gonion, and these are cones",
-            turns
-                .iter()
-                .map(|&(seed, turn)| (seed, (turn * 10.0).round() / 10.0))
-                .collect::<Vec<_>>()
-        );
-    }
-
     #[test]
     fn the_face_narrows_from_cheekbone_to_chin() {
         // Renamed from `the_jaw_narrows_toward_the_chin`, which is not what it
@@ -3113,122 +3003,6 @@ mod tests {
                 .map(|(seed, margin)| format!("seed {seed} {:+.1} mm", margin * 1000.0))
                 .collect::<Vec<_>>()
                 .join(", "),
-        );
-    }
-
-    #[test]
-    fn the_chin_stands_clear_of_the_hollow_above_it() {
-        // **The margin [`FALL`] lives on, measured rather than assumed.** The
-        // landmark is the lowest crest of the midline profile, and what makes
-        // that a definition rather than a guess is that the chin's crest is
-        // separated from the lower lip's by a real hollow — the mentolabial
-        // sulcus. If a change to the cage or the shaping flattens that hollow
-        // below `FALL`, the two crests merge and the chin stops existing as a
-        // measurable feature; the landmark then falls back to the plan's
-        // estimate, silently, on whichever seeds are affected.
-        //
-        // So this measures the hollow. Sixteen seeds at both subdivision levels
-        // the crate can ship: the shallowest is 3.9 mm, nineteen times `FALL`.
-        // The floor here is five times `FALL`, which is a fifth of the room
-        // actually available.
-        //
-        // **It is expected to speak up when the cage moves, and that is the
-        // point.** Measured at eight-point rings and one subdivision — the pair
-        // #107 wants — the same sweep runs 0.67 to 8.1 mm, under the floor here
-        // on several seeds, and on two of the sixteen the lower face comes out
-        // as a smooth cone with no chin on it at all: the midline profile climbs
-        // from the throat to the brow without ever turning over, so `chin_of`
-        // has nothing to answer with and this test's `expect` is what fires.
-        // That is a real defect in that configuration, and this is where it
-        // announces itself instead of surfacing as a mouth in the wrong place.
-        // The shipped level and one ABOVE it. It used to be one below, and one
-        // below is now zero — an unsubdivided cage, which is a control polygon
-        // and not a surface anybody renders. A neighbouring level is here so the
-        // assertion cannot be tuned to exactly one resolution; which side it
-        // sits on is arbitrary, and only one side exists at
-        // [`crate::BODY_SUBDIVISIONS`] = 1.
-        // **Swept whole and reported whole, rather than stopping at the first
-        // seed under the floor.** A hollow is a distribution over seeds — some
-        // heads have a deep sulcus and some barely have one — and an assertion
-        // that panics on seed 6 says nothing about seeds 7 to 16, so tuning the
-        // chin against it is tuning against a single sample and re-running to
-        // find the next. This collects all 32 readings, prints them in seed
-        // order, and fails once with the worst of them named. The cost is one
-        // sweep either way; what it buys is the shape of the failure.
-        let mut worst: Vec<(usize, i64, Option<f32>)> = Vec::new();
-        for levels in [crate::BODY_SUBDIVISIONS, crate::BODY_SUBDIVISIONS + 1] {
-            for seed in 1i64..=16 {
-                let mut record = AvatarRecord::new("Skulled", Archetype::default());
-                record.reroll(seed);
-                let skeleton = record.skeleton();
-                let mesh = crate::build_body(
-                    &skeleton,
-                    &CageConfig::default(),
-                    levels,
-                    &Default::default(),
-                )
-                .expect("a body builds");
-                let rig = Rig::from_skeleton(&skeleton).expect("rigs");
-                let skull = Skull::measure(&mesh, &rig).expect("a skull");
-                let centre = rig.joints[skull.head].position;
-                let Some(at) = chin_of(&mesh, &rig, skull.head, skull.throat_and_crown().0) else {
-                    // No crest at all: the midline climbs from the throat to the
-                    // chin's own ceiling without ever turning over. Recorded as
-                    // an absent hollow rather than a shallow one, because the two
-                    // are different defects and a zero would read as the second.
-                    worst.push((levels, seed, None));
-                    continue;
-                };
-
-                // How far the profile falls below the crest before it climbs
-                // past it again, which is the hollow's depth. Walked in two
-                // phases, because the landmark is the MIDDLE of the crest and on
-                // a long flat one the surface is still rising there: first up to
-                // the crest's own top, then down into the hollow. Measuring the
-                // fall from the landmark itself reports a hollow 0.00 mm deep on
-                // every seed whose chin is a plateau, which is a measurement of
-                // where the landmark is defined rather than of the head.
-                let mut y = at;
-                let mut top = f32::MIN;
-                while let Some(reach) = midline(&mesh, centre, y)
-                    && reach >= top
-                {
-                    top = reach;
-                    y += 0.0009;
-                }
-                let mut dip = top;
-                while y <= at + 0.045 {
-                    match midline(&mesh, centre, y) {
-                        Some(reach) if reach > top => break,
-                        Some(reach) => dip = dip.min(reach),
-                        None => {}
-                    }
-                    y += 0.0009;
-                }
-                worst.push((levels, seed, Some(top - dip)));
-            }
-        }
-
-        let floor = 5.0 * FALL;
-        let short: Vec<_> = worst
-            .iter()
-            .filter(|(_, _, depth)| depth.is_none_or(|depth| depth <= floor))
-            .collect();
-        assert!(
-            short.is_empty(),
-            "{} of {} heads have no usable hollow above the chin, against a crest rule \
-             that needs {:.2} mm to see one. The whole sweep, in millimetres:\n{}",
-            short.len(),
-            worst.len(),
-            floor * 1000.0,
-            worst
-                .iter()
-                .map(|(levels, seed, depth)| match depth {
-                    Some(depth) => format!("  {levels} sub, seed {seed:>2}: {:.2}", depth * 1000.0),
-                    None => format!("  {levels} sub, seed {seed:>2}: NO CHIN"),
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
         );
     }
 

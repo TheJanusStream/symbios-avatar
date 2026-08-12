@@ -209,6 +209,14 @@ pub use symbios_texture::generator::TextureMap;
 /// 2,456 on a forehead; what changed is [`face::band_at`] and an instrument that
 /// reports the two directions of a 2:1 face separately.
 ///
+/// **The tenth is the FRONT of the mandible's border, and it is the first pass
+/// bought by the owner on an A/B sheet against its own arithmetic** (#196).
+/// The cosine border (#195) crosses a strip between 33° and 57° that no other
+/// band covers, and the crease's knee scalloped at cell pitch there. It is the
+/// dearest pass in the table — 1,340 on the default body, 2,848 at the dearest
+/// sweep corner — and `tests/budget.rs`'s ratchet moved to carry it, with the
+/// 30,000 target test ignored until the cost is won back elsewhere.
+///
 /// It is affordable because the same stretch made the face refinement CHEAPER:
 /// the bands are fixed heights in head radii, so a taller head puts less of
 /// itself inside them. The body went 23,182 triangles to 20,668 on the stretch
@@ -223,7 +231,7 @@ pub use symbios_texture::generator::TextureMap;
 /// the second pass moved the profile the ears are placed from, and one seed's
 /// ear fell to 18% visible against a 25% floor. That was a defect in the
 /// measurement rather than in the refinement, and it is fixed (#67).
-const FACE_REFINEMENT: usize = 9;
+const FACE_REFINEMENT: usize = 10;
 
 /// How many Catmull-Clark passes a body's cage gets.
 ///

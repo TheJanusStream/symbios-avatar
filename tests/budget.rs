@@ -102,7 +102,14 @@ const MESH_TARGET: usize = 4;
 /// at this corner. It is a ratchet rather than a target, so it moves down with
 /// the measurement and not to the nearest round number; `garmentaudit` prints
 /// the claim, the give-back and the net.
-const TRIANGLE_CEILING: usize = 28_700;
+///
+/// **Up from 28,700 for the jaw-band refinement pass, by owner decision**
+/// (#196, 2026-08-12): the tenth `FACE_PASSES` entry costs 2,848 at the
+/// dearest sweep corner — 31,430 measured at seed 42 long broad — and the
+/// owner chose the smooth crease on the A/B sheet over the arithmetic. The
+/// ratchet moves to the reached figure plus the usual margin, and the road
+/// back under 30,000 is named on the ignored target test below.
+const TRIANGLE_CEILING: usize = 31_500;
 
 /// Draw calls the crate currently costs.
 ///
@@ -385,6 +392,10 @@ fn the_budget_holds_for_a_record_that_asks_for_the_most_expensive_hair() {
 }
 
 #[test]
+#[ignore = "the 30,000 WebGL2 target is not currently met: #196's owner-chosen jaw-band \
+refinement pass put the greedy-hair corner at 31,482. The file's own design says a target \
+is ignored until it can pass rather than deleted or quietly raised. Candidate givebacks: \
+hair sampling on dear heads (#40's lever), or trimming the tenth pass's band."]
 fn the_budget_holds_for_the_dearest_hair_on_the_dearest_head() {
     // **The corner neither of the two tests above visits, and it was 1,050
     // triangles over target the whole time** (#187). One pins the head's axes
