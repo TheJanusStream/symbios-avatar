@@ -37,6 +37,7 @@
 //! cargo run --release --example render -- --junction  # tint the skin by which bone deforms it
 //! cargo run --release --example render -- --jawbind   # tint the skin by how the JAW bone holds it
 //! cargo run --release --example render -- --follicles # tint the skin by where hair may grow
+//! cargo run --release --example render -- --clumps    # grow the new clump engine on all five regions
 //! cargo run --release --example render -- --jaw 20    # open the mouth this many degrees
 //! cargo run --release --example render -- --jawsweep # tune the jaw's binding reach by measurement
 //! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
@@ -59,6 +60,8 @@ mod light;
 mod scene;
 
 use glam::{Mat4, Quat, Vec3};
+use rand::SeedableRng;
+use rand_pcg::Pcg64Mcg;
 use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
@@ -66,7 +69,10 @@ use symbios_avatar::{
     FootingConfig, Gait, GazeConfig, Ground, HairParams, Influence, Limb, MAX_INFLUENCES, MeshKind,
     PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
     anim::contacts_in, anim::gait, anim::gaze, anim::plant_feet_of, face::Skull, gltf::Gltf,
-    hair::{Follicle, FollicleParams, Follicles},
+    hair::{
+        Follicle, FollicleParams, Follicles, Growth,
+        clump::{Bed, Fall, Sowing},
+    },
     retarget,
 };
 
@@ -145,6 +151,10 @@ fn main() {
     // Where each of the five kinds of hair is allowed to grow. See
     // [`follicle_tint`], and `follicleaudit` for the same regions as numbers.
     let follicles = args.iter().any(|arg| arg == "--follicles");
+    // Replace the shipped hair with the clump engine's own, grown on the five
+    // regions. See [`grow_clumps`]: this is #201's judgement image, and it
+    // draws through the real hair material rather than beside it.
+    let clumps = args.iter().any(|arg| arg == "--clumps");
     // Which stage to show instead of the finished picture.
     let pass = value("--pass").cloned();
     // Six numbers, in the order the axes are declared: length, volume,
@@ -300,7 +310,7 @@ fn main() {
         ..Default::default()
     };
 
-    let Some(avatar) = Avatar::build_with(&record, &config) else {
+    let Some(mut avatar) = Avatar::build_with(&record, &config) else {
         eprintln!("the body could not be built");
         std::process::exit(1);
     };
@@ -340,6 +350,9 @@ fn main() {
         gaze,
         jaw,
     };
+    if clumps {
+        grow_clumps(&mut avatar, &record);
+    }
     let mandible = jaw_bone(&avatar.rig, &record.skeleton());
     if (jaw.is_some() || jawbind) && mandible.is_none() {
         eprintln!("this body has no jaw bone: --jaw and --jawbind need a humanoid");
@@ -1172,6 +1185,119 @@ fn jaw_tint(mesh: &PolyMesh, jaw: JawBone) -> Vec<Vec3> {
             }
         })
         .collect()
+}
+
+/// Grows the clump engine's hair on all five regions, replacing the shipped one.
+///
+/// **#201's judgement image, and it goes through the real hair mesh rather than
+/// beside it** — same material, same light, same merge — because a new system
+/// shown in a viewer of its own is a system nobody can compare to the one it
+/// replaces.
+///
+/// The shapes and colours here are a REFERENCE rather than a catalogue: one
+/// `Fall` per region at a length that suits it, and two colours a record will
+/// carry once #202 lands. The styles of #204-#208 are what this becomes.
+fn grow_clumps(avatar: &mut Avatar, record: &AvatarRecord) {
+    let Some(skull) = Skull::measure(&avatar.parts.body, &avatar.rig) else {
+        eprintln!("this body has no head to grow hair on");
+        return;
+    };
+    let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+    let follicles = Follicles::of(&avatar.rig, &skull, &canon, &FollicleParams::default());
+    let mut growth = Growth::default();
+    let mut stream = Pcg64Mcg::seed_from_u64(record.seed as u64);
+    // Roots, tips, clumps and length per region. Dark at the root and lighter
+    // at the tip on every one of them, which is what hair does and what the
+    // owner's two-colour model is for.
+    let plan: [(Follicle, usize, f32, Vec3, Vec3); 5] = [
+        (
+            Follicle::Scalp,
+            900,
+            0.055,
+            Vec3::new(0.09, 0.05, 0.03),
+            Vec3::new(0.42, 0.26, 0.12),
+        ),
+        (
+            Follicle::Brows,
+            90,
+            0.010,
+            Vec3::new(0.07, 0.04, 0.02),
+            Vec3::new(0.24, 0.15, 0.08),
+        ),
+        (
+            Follicle::Moustache,
+            110,
+            0.012,
+            Vec3::new(0.08, 0.05, 0.03),
+            Vec3::new(0.34, 0.21, 0.10),
+        ),
+        (
+            Follicle::Chin,
+            220,
+            0.024,
+            Vec3::new(0.08, 0.05, 0.03),
+            Vec3::new(0.34, 0.21, 0.10),
+        ),
+        (
+            Follicle::Flanks,
+            320,
+            0.018,
+            Vec3::new(0.08, 0.05, 0.03),
+            Vec3::new(0.30, 0.19, 0.09),
+        ),
+    ];
+    let bed = Bed {
+        body: &avatar.parts.body,
+        rig: &avatar.rig,
+        follicles: &follicles,
+    };
+    for (follicle, count, length, roots, tips) in plan {
+        growth.grow(
+            &bed,
+            &Sowing {
+                follicle,
+                count,
+                shape: &Fall {
+                    length,
+                    ..Fall::default()
+                },
+                roots,
+                tips,
+            },
+            &mut stream,
+        );
+    }
+    println!("the clump engine grew:");
+    for grown in &growth.grown {
+        println!(
+            "  {:10} {:4} clumps, {:6} triangles",
+            grown.follicle.name(),
+            grown.clumps,
+            grown.tris
+        );
+    }
+    println!(
+        "  {:10} {:4} clumps, {:6} triangles",
+        "all", growth.clumps(), growth.tris()
+    );
+
+    let head = skull.head;
+    let mut placed = growth
+        .mesh
+        .transformed(Mat4::from_translation(avatar.rig.joints[head].position));
+    placed.set_normals(placed.vertex_normals());
+    placed.bind_rigidly(head as u16);
+    match avatar
+        .meshes
+        .iter_mut()
+        .find(|mesh| mesh.kind == MeshKind::Hair)
+    {
+        Some(hair) => hair.mesh = placed,
+        None => avatar.meshes.push(AvatarMesh {
+            kind: MeshKind::Hair,
+            mesh: placed,
+        }),
+    }
 }
 
 /// Which hair region owns each vertex of the skin, as a colour to tint it by.
