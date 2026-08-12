@@ -290,8 +290,14 @@ impl Avatar {
         // actually be seen against. `half_width` at the eye line and `chin` are
         // bit-identical before and after the carve on every body measured, so
         // reading the canon from the uncarved head costs nothing.
-        let canon =
-            Skull::measure(&body, &rig).map(|skull| Canon::measure(&rig, &skull, &record.eyes));
+        // The skull is kept rather than consumed: the follicle regions are cut
+        // from it too, and `Skull::measure` is 61% of a geometry build (#89) —
+        // so measuring a second one for the hair would be the single most
+        // expensive line in this function.
+        let skull = Skull::measure(&body, &rig);
+        let canon = skull
+            .as_ref()
+            .map(|skull| Canon::measure(&rig, skull, &record.eyes));
         if let Some(canon) = &canon {
             face::carve_face(&mut body, &rig, canon, &face_params);
         }
@@ -444,11 +450,30 @@ impl Avatar {
         // nothing about the body wearing it, so a lean body and a heavy one
         // were painted identically. `Condition` is the skin's derived read of
         // the composites, the way `HeadTraits` is the skull's.
+        // Where hair may grow, which the painted layer needs and the grown one
+        // will take over from the old shell at #209.
+        let follicles = skull.as_ref().zip(canon.as_ref()).map(|(skull, canon)| {
+            crate::hair::Follicles::of(&rig, skull, canon, &crate::hair::FollicleParams::default())
+        });
+        // **The painted layer's own axes arrive with the record at #202; until
+        // then it is driven from the stubble scalar it replaces.** Which is a
+        // strict improvement rather than a placeholder: the same amount of
+        // stubble, painted through the beard's real masks — ending on the
+        // jawline the face is carved to — instead of through a window that was
+        // the lower half of the head weighted forward.
+        let complexion = config.complexion.unwrap_or(record.skin);
+        let painted_hair =
+            crate::hair::PaintedHair::beard(complexion.stubble, Vec3::from_array(hair_params.colour()));
+        let layer = follicles.as_ref().map(|follicles| texture::PaintedLayer {
+            follicles,
+            painted: &painted_hair,
+        });
         let painted = texture::paint_skin(
             &geometry,
             &rig,
-            &config.complexion.unwrap_or(record.skin),
+            &complexion,
             &texture::Condition::of(&record.composites),
+            layer.as_ref(),
         );
 
         let parts = Parts {

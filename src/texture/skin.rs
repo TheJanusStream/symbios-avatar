@@ -9,7 +9,8 @@
 //!    knuckles, knees. Overwatch shipped a dedicated "blood map" for exactly
 //!    this, and it does more for skin reading as skin than any lighting model;
 //! 3. cavity shading, darkening and reddening creases;
-//! 4. freckles and stubble as masked high-frequency detail.
+//! 4. freckles as masked high-frequency detail, and hair painted through the
+//!    follicle regions the grown layer shares (#200).
 //!
 //! Every layer samples noise in **body space, never atlas space**. Atlas space
 //! is discontinuous across chart boundaries, so a freckle field sampled there
@@ -27,8 +28,32 @@ use symbios_texture::generator::TextureMap;
 use symbios_texture::normal::{BoundaryMode, height_to_normal};
 
 use super::bake::AtlasGeometry;
+use crate::hair::follicle::{Follicle, Follicles};
+use crate::hair::painted::PaintedHair;
 use crate::plan::{Composites, Zone};
 use crate::rig::Rig;
+
+/// The painted hair layer, and the regions it is painted through.
+///
+/// Bundled because the two are useless apart: a colour with no mask paints the
+/// whole head and a mask with no colour paints nothing.
+#[derive(Clone, Copy, Debug)]
+pub struct PaintedLayer<'a> {
+    /// Where each kind of hair may grow on this head.
+    pub follicles: &'a Follicles,
+    /// What to paint in each of those regions.
+    pub painted: &'a PaintedHair,
+}
+
+/// How strongly painted hair reaches its own colour at full density.
+///
+/// Not the whole way: skin shows between hairs at any density a person would
+/// call stubble, and a painted region that reaches its colour exactly reads as
+/// a decal. Eight tenths is what the old stubble term used, and it was the one
+/// part of it worth keeping.
+///
+/// Provenance: **carried** from the stubble term this replaces (#200).
+const PAINTED: f32 = 0.8;
 
 /// The melanin ramp, palest to deepest, in sRGB.
 ///
@@ -163,7 +188,14 @@ pub struct SkinParams {
     /// Freckle density.
     #[serde(with = "crate::plan::scaled")]
     pub freckles: f32,
-    /// Stubble across the lower face.
+    /// Stubble across the beard's three regions.
+    ///
+    /// **On its way out** (#200, #202). The painted hair layer it drives has
+    /// five regions and a colour of its own now; this is the one axis a record
+    /// still carries for it, mapped onto the beard by
+    /// [`crate::hair::PaintedHair::beard`] until the record grows the per-region
+    /// entries. It stays here rather than being deleted early so no record in
+    /// the wild loses its stubble in the meantime.
     #[serde(with = "crate::plan::scaled")]
     pub stubble: f32,
 }
@@ -460,6 +492,7 @@ pub fn paint_skin(
     rig: &Rig,
     params: &SkinParams,
     condition: &Condition,
+    hair: Option<&PaintedLayer>,
 ) -> TextureMap {
     let count = geometry.texels.len();
     let mut albedo = vec![0u8; count * 4];
@@ -546,16 +579,38 @@ pub fn paint_skin(
             }
         }
 
-        // Stubble sits on the lower face only, and darkens without reddening.
-        let stubble = if params.stubble > 0.0 {
-            stubble_mask(rig, texel.zone, p) * params.stubble
-        } else {
-            0.0
-        };
-        if stubble > 0.0 {
+        // **Painted hair, region by region** (#200). What used to be one
+        // stubble scalar over a hand-drawn window — the lower half of the head,
+        // weighted forward — is now the same five masks the grown layer roots
+        // in, so a beard's painted edge and its grown edge are the same line
+        // and a shaved jaw ends where the jaw does.
+        // How much painted hair covers this texel, over every region at once.
+        // Kept because the relief and the roughness want it: hair standing out
+        // of skin catches light differently from skin, whichever region it
+        // belongs to, and that is one property rather than five.
+        let mut painted = 0.0f32;
+        if let Some(hair) = hair.filter(|_| texel.zone == Zone::Head) {
+            let local = p - hair.follicles.origin();
             let grain = noise3(&stubble_field, p, 260.0) * 0.5 + 0.5;
-            let shade = colour * Vec3::new(0.55, 0.55, 0.60);
-            colour = colour.lerp(shade, stubble * grain * 0.8);
+            for follicle in Follicle::ALL {
+                let paint = hair.painted.of(follicle);
+                if !paint.shows() {
+                    continue;
+                }
+                let held = hair.follicles.weight(follicle, local) * paint.density;
+                if held <= 0.0 {
+                    continue;
+                }
+                // Toward the hair's own colour, darkened by the skin under it
+                // rather than replacing it: a hair painted on skin is a hair
+                // seen end-on through the skin around it, so the complexion
+                // still shows and a pale face keeps its own tone between the
+                // hairs. GRAIN is what makes that read as hairs rather than as
+                // a wash.
+                colour = colour.lerp(paint.tone(), held * grain * PAINTED);
+                painted = (painted + held).min(1.0);
+            }
+            painted *= grain;
         }
 
         // The mouth's interior (#154), keyed by the surgery's own channel
@@ -638,11 +693,11 @@ pub fn paint_skin(
         };
         heights[index] = f64::from(pore) * 0.35
             + f64::from(striation + wrinkle) * 0.35
-            + f64::from(stubble) * f64::from(grain_bias(pore));
+            + f64::from(painted) * f64::from(grain_bias(pore));
 
         // Roughness: an oily face against calloused hands, plus creases holding
         // moisture. Metallic is zero — skin is a dielectric.
-        let roughness = (0.52 + roughness_bias(texel.zone) - blood * 0.12 + stubble * 0.15
+        let roughness = (0.52 + roughness_bias(texel.zone) - blood * 0.12 + painted * 0.15
             - crease * 0.05
             - DEFINITION_SHEEN * condition.definition * f32::from(defined(texel.zone))
             + AGE_DRY * condition.ageing)
@@ -709,20 +764,6 @@ fn roughness_bias(zone: Zone) -> f32 {
     }
 }
 
-/// Stubble coverage at a point: the lower half of the head, and only in front.
-fn stubble_mask(rig: &Rig, zone: Zone, point: Vec3) -> f32 {
-    if zone != Zone::Head {
-        return 0.0;
-    }
-    let Some(&head) = rig.in_zone(Zone::Head).first() else {
-        return 0.0;
-    };
-    let joint = rig.joints[head];
-    let below = ((joint.position.y - point.y) / joint.radius.max(1e-4)).clamp(0.0, 1.0);
-    let front = ((point.z - joint.position.z) / joint.radius.max(1e-4)).clamp(0.0, 1.0);
-    (below * 1.3).min(1.0) * (0.35 + 0.65 * front)
-}
-
 /// Extra relief stubble adds, beyond the skin's own pores.
 fn grain_bias(pore: f32) -> f32 {
     0.6 + 0.4 * pore.abs()
@@ -746,7 +787,7 @@ mod tests {
         let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);
         let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
         let geometry = bake_geometry(&mesh, &uv, 128);
-        let map = paint_skin(&geometry, &rig, params, &Condition::default());
+        let map = paint_skin(&geometry, &rig, params, &Condition::default(), None);
         (geometry, rig, map)
     }
 
@@ -1080,6 +1121,7 @@ mod tests {
             &rig,
             &SkinParams::default(),
             &Condition::default(),
+            None,
         );
 
         assert!(
@@ -1149,7 +1191,7 @@ mod tests {
                     });
             let Some(twin) = twin else { continue };
 
-            let map = paint_skin(&geometry, &rig, &params, &Condition::default());
+            let map = paint_skin(&geometry, &rig, &params, &Condition::default(), None);
             assert_eq!(
                 map.albedo[index * 4],
                 map.albedo[twin * 4],
@@ -1267,7 +1309,7 @@ mod tests {
         let params = SkinParams::default();
         let (geometry, rig, neutral) = painted(&params);
         let paint = |composites: Composites| {
-            paint_skin(&geometry, &rig, &params, &Condition::of(&composites))
+            paint_skin(&geometry, &rig, &params, &Condition::of(&composites), None)
         };
 
         assert_eq!(
@@ -1297,7 +1339,7 @@ mod tests {
     fn painting_is_deterministic() {
         let params = SkinParams::default();
         let (geometry, rig, first) = painted(&params);
-        let second = paint_skin(&geometry, &rig, &params, &Condition::default());
+        let second = paint_skin(&geometry, &rig, &params, &Condition::default(), None);
         assert_eq!(first.albedo, second.albedo);
         assert_eq!(first.roughness, second.roughness);
     }

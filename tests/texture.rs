@@ -32,6 +32,7 @@ fn painted(
         &rig,
         &record.skin,
         &texture::Condition::of(&record.composites),
+        None,
     );
     (geometry, map)
 }
