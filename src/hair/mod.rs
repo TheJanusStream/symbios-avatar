@@ -244,7 +244,26 @@ pub const MAX_LOCKS: u32 = 24;
 /// is. 6,000 leaves the default head of hair (3,416) untiered with most of a
 /// thousand to spare, and tiers the dearest one down by lock count, which is
 /// the axis that costs geometry.
-pub const MAX_TRIANGLES: usize = 6_000;
+///
+/// **Down again to 4,900, and this time the staleness was found by measuring
+/// the corner nothing had ever visited** (#187). "What is left over" was being
+/// computed on the DEFAULT body, and a seeded head with a long broad skull
+/// carries eight hundred more triangles of everything-that-is-not-hair than
+/// that one does. Measured over the six seeds and two head-axis corners
+/// `tests/budget.rs` sweeps, with the greediest legal hair on each, the room
+/// for hair runs 4,942 to 5,756 — so at 6,000 the ceiling stood above the room
+/// on EVERY body in the sweep, and the product of the two dearest axes came in
+/// at 31,050 against a 30,000 target. Both budget tests passed throughout: one
+/// pins the head axes and rolls default hair, the other pins the hair and
+/// builds a default head, and the corner where both are dear is the one neither
+/// visits. `the_budget_holds_for_the_dearest_hair_on_the_dearest_head` visits
+/// it now.
+///
+/// 4,900 is the smallest of those leftovers rounded down, which is what "what
+/// is left over" has always meant. It leaves the default head of hair — 3,560 —
+/// untiered, as every figure in this docstring's history has, and takes the
+/// dearest corner from 31,050 to 29,870.
+pub const MAX_TRIANGLES: usize = 4_900;
 
 impl HairParams {
     /// Clamps every axis into range. Idempotent.

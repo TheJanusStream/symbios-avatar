@@ -367,10 +367,63 @@ fn the_budget_holds_for_a_record_that_asks_for_the_most_expensive_hair() {
     };
     record.sanitize();
     let avatar = Avatar::build(&record).expect("a biped builds");
+    println!("the greedy-hair body: {} triangles", avatar.budget.tris);
     assert!(
         avatar.budget.tris <= TRIANGLE_TARGET,
         "the dearest legal hair brought the body to {} triangles",
         avatar.budget.tris
+    );
+}
+
+#[test]
+fn the_budget_holds_for_the_dearest_hair_on_the_dearest_head() {
+    // **The corner neither of the two tests above visits, and it was 1,050
+    // triangles over target the whole time** (#187). One pins the head's axes
+    // at their dearest and rolls whatever hair a seed gives it; the other pins
+    // the hair at the dearest a record may legally ask for and builds a DEFAULT
+    // head under it. A record off the network is under no obligation to pick
+    // one. Measured, every seed in the sweep was over 30,000 with greedy hair
+    // on it and the worst was seed 42 long broad at 31,050 — while both tests
+    // passed, because a body is not the maximum of its parts.
+    //
+    // It is a product and it is written as one: the same head axes, the same
+    // hair, and the two together. What it caught is that
+    // `hair::MAX_TRIANGLES` is defined as what is left over and had been
+    // computed on the default body, where the leftover is eight hundred
+    // triangles larger than on a long broad seeded one.
+    let mut worst = (String::new(), 0);
+    for seed in [1, 7, 23, 29, 42, 99] {
+        for (name, breadth, length) in [
+            ("as rolled", None, None),
+            ("long broad", Some(1.0f32), Some(1.0f32)),
+        ] {
+            let mut record = AvatarRecord::new("Greedy", Archetype::default());
+            record.reroll(seed);
+            if let Archetype::Humanoid(params) = &mut record.archetype {
+                params.head_breadth = breadth.unwrap_or(params.head_breadth);
+                params.face_length = length.unwrap_or(params.face_length);
+            }
+            record.hair = symbios_avatar::HairParams {
+                length: 1.0,
+                wave: 1.0,
+                volume: 1.0,
+                locks: u32::MAX,
+                curl: 1.0,
+                ..record.hair
+            };
+            record.sanitize();
+            let avatar = Avatar::build(&record).expect("a biped builds");
+            if avatar.budget.tris > worst.1 {
+                worst = (format!("seed {seed} {name}"), avatar.budget.tris);
+            }
+        }
+    }
+    println!("dearest product corner: {} at {}", worst.1, worst.0);
+    assert!(
+        worst.1 <= TRIANGLE_TARGET,
+        "{} costs {} triangles with the greediest legal hair on it",
+        worst.0,
+        worst.1
     );
 }
 
