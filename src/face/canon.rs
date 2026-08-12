@@ -199,6 +199,21 @@ impl Canon {
         self.down(super::features::NOSE_BASE)
     }
 
+    /// Where the nose's relief has finished, below its base.
+    ///
+    /// **A landmark rather than a constant, because three files were reading
+    /// it** (#182). `relief::nose` runs its ramp from the root to seven
+    /// millimetres UNDER the base — a term has to reach zero somewhere — and
+    /// `examples/facesection` carried its own copy of that offset to report the
+    /// nose's span. Anything measuring the upper lip needs the same number from
+    /// the other side: it is the ceiling of the cutaneous lip, and a window that
+    /// reaches past it reads the NOSE's rise as the lip's own. Reading it here
+    /// is what stops the three drifting apart.
+    #[must_use]
+    pub fn nose_foot(&self) -> f32 {
+        self.nose_base() - self.frame * 0.0674
+    }
+
     /// Where the lips meet.
     #[must_use]
     pub fn mouth_line(&self) -> f32 {

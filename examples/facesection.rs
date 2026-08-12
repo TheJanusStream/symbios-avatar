@@ -211,7 +211,7 @@ fn nose_sections(section: &Section, canon: &Canon, cells: &Cells) {
     // means the same thing in both. Any other anchor is a landmark the carve
     // moves (#133).
     let root = canon.level + canon.frame * 0.1237;
-    let under = canon.nose_base() - canon.frame * 0.0674;
+    let under = canon.nose_foot();
     // **Two lengths, and only one of them is comparable to life.** The field's
     // span runs from the root to seven millimetres UNDER the base, because a
     // term has to reach zero somewhere and `relief::nose` gates on that span;
@@ -338,9 +338,22 @@ fn authored(section: &Section, up: f32, cell: f32) -> f32 {
 /// The mouth, sectioned down the midline through the lip band.
 fn mouth_profile(section: &Section, canon: &Canon, params: &FaceParams, cells: &Cells) {
     let line = canon.mouth_line();
+    // The lip stack's own half-height, which is the ruler `relief::mouth`
+    // authors every lobe in — so the band below is stated in it rather than in
+    // a fraction of the frame.
+    let plump = canon.frame * (0.1142 + 0.0322 * params.mouth);
     // A band that reaches the base of the nose above and well under the lower
     // lip below, so the philtrum and the sub-lip crease are both inside it.
-    let (top, bottom) = (canon.nose_base(), line - canon.frame * 0.12);
+    //
+    // **It did not, and said it did** (#182). The bottom was `frame * 0.12`,
+    // which is 12.5 mm below the line on the default head, and the crease under
+    // the lower lip is authored at 1.32 plumps — 18.0 mm. The instrument stopped
+    // 5.5 mm short of the feature its own comment named, so every reading of the
+    // lower lip's outer flank ever taken here was of the flank alone with
+    // nothing beyond it. 1.9 plumps clears the crease's centre and its far
+    // shoulder both, on every seed, because it is measured in the same unit the
+    // crease is placed in (`docs/instruments.md` rules 3 and 4).
+    let (top, bottom) = (canon.nose_base(), line - plump * 1.9);
     println!(
         "\n## The mouth down the midline, lip line at {:+.1} mm\n",
         line * 1000.0
@@ -348,12 +361,23 @@ fn mouth_profile(section: &Section, canon: &Canon, params: &FaceParams, cells: &
     println!("| mm up | from line | midline | slope | 8 mm out | 16 mm out |");
     println!("|---|---|---|---|---|---|");
     let mut samples: Vec<(f32, f32)> = Vec::new();
+    // **A second column, because the upper border cannot be judged on the
+    // midline** (#182). The philtrum is a groove centred a plump above the line,
+    // so above the upper vermilion the midline surface keeps falling whatever
+    // the border does — there is no roll there to find, and on a face there is
+    // none either: the roll is the philtral column, which is beside the dimple
+    // and not in it. Eight millimetres out clears the philtrum, whose own half
+    // width is 5.2 mm on the default head.
+    let mut beside: Vec<(f32, f32)> = Vec::new();
     let mut up = top;
     let mut previous: Option<(f32, f32)> = None;
     while up >= bottom {
         let mid = section.delivered(0.0, up);
         if let Some(mid) = mid {
             samples.push((up, mid));
+        }
+        if let Some(out) = section.delivered(0.008, up) {
+            beside.push((up, out));
         }
         // **The column a border shows in, and relief alone cannot show it.** A
         // vermilion is an edge: on a person the lip rises out of the skin at a
@@ -389,11 +413,6 @@ fn mouth_profile(section: &Section, canon: &Canon, params: &FaceParams, cells: &
     // vermilion stands proud above and below the line, and how deep the line
     // between them is cut. A mouth is two lips with a line; an incision is the
     // line on its own.
-    // The lip stack's own half-height, which is the ruler `relief::mouth`
-    // measures the lobes in. Recomputed here rather than guessed at a fraction
-    // of the frame: the lobes sit at 0.58 and 0.60 of it, so a window picked by
-    // eye misses both peaks and reports the tails.
-    let plump = canon.frame * (0.1142 + 0.0322 * params.mouth);
     let peak_between = |lo: f32, hi: f32| -> (f32, f32, f32) {
         samples
             .iter()
@@ -428,6 +447,147 @@ fn mouth_profile(section: &Section, canon: &Canon, params: &FaceParams, cells: &
         plump * 1000.0,
         cell * 1000.0
     );
+
+    // **Where each lip STOPS, which is a different question from how proud it
+    // stands** (#182). A vermilion border is a crease: walking outward from the
+    // vermilion's peak the surface falls, turns back up at the junction, and
+    // rises to the roll outside it. A lobe that is a plain Gaussian never turns
+    // — it falls to nothing and stays there — so a mouth built out of two of
+    // them has no line at which a lip stops being a lip, whatever it stands off
+    // the face. This reports the turn, or says there is none.
+    //
+    // **Windowed in plumps, and the window is most of what makes it honest.**
+    // Unbounded, the walk out of the upper vermilion runs all the way up the
+    // philtrum and calls the NOSE a roll — it reported a 13 mm border on the
+    // first run — and the walk down out of the lower vermilion finds the sulcus
+    // at 1.32 plumps, which is a real crease and not this one. A vermilion
+    // border sits 8 to 12 mm off the line on a life-sized mouth, so the window
+    // is 0.5 to 1.2 plumps and everything outside it is another feature.
+    //
+    // The window alone is not enough, because the nose's own flank reaches
+    // INSIDE it — bounded to 1.2 plumps the walk still called the nose base a
+    // roll, 4.55 mm proud at +16.1. So a turn is also rejected when the roll
+    // stands higher than half the vermilion it walked out of: a border's roll
+    // is a ridge on the cutaneous lip, and anything half a lip tall is a
+    // different feature no matter where it sits.
+    // Each lip's flank in one number: where its fall breaks, and what the fall
+    // has RECOVERED to there. Negative is still falling — a shoulder — and
+    // positive is a turn, which is a crease with a roll outside it. Reported
+    // this way because the obvious reading, walk out until the surface rises
+    // and call the top of the rise a roll, cannot tell a border's roll from the
+    // NOSE: on the default head it called the nose base a 13 mm border, and
+    // bounding it to a window and to half a vermilion's height still let seed
+    // 23's nose flank in at 1.90 mm. A slope recovery needs no roll and so has
+    // nothing to confuse.
+    for (name, from, way, column) in [
+        ("upper", upper_at, 1.0f32, &beside),
+        ("lower", lower_at, -1.0f32, &samples),
+    ] {
+        // Up to the NOSE'S FOOT above, which is where the cutaneous lip ends
+        // and the nose's own relief begins. A window picked as a fraction of the
+        // lip stack reaches past it: at 1.2 plumps this reported a turn of +1.90
+        // on the default head with the border lobes set to ZERO, all of it the
+        // nose (#182). `Canon::nose_foot` is the same landmark `relief::nose`
+        // ends its ramp at.
+        let window = if way > 0.0 {
+            (line + plump * 0.5, canon.nose_foot())
+        } else {
+            (line - plump * 1.2, line - plump * 0.5)
+        };
+        let at2 = if way > 0.0 { ", 8 mm out" } else { "" };
+        match flank_break(column, from, way, window) {
+            Some((at, fall, recovery, stopped)) => println!(
+                "  the {name} lip's flank falls at {fall:.2} and bottoms out {:+.1} mm off the \
+                 line{at2}, rising at {recovery:+.2} past it — {}.",
+                (at - line) * 1000.0,
+                if stopped {
+                    "a crease, so the lip stops there"
+                } else {
+                    "the end of the span, so it never stops"
+                }
+            ),
+            None => println!("  the {name} lip's flank could not be read{at2}."),
+        }
+    }
+    // The one crease this face already carries, measured the same way so the
+    // two readings above have something of their own kind to be judged against.
+    // It is the labiomental sulcus and NOT a vermilion border — authored at
+    // 1.32 plumps, outside the window above.
+    match flank_break(
+        &samples,
+        lower_at,
+        -1.0,
+        (line - plump * 1.9, line - plump * 1.15),
+    ) {
+        Some((at, fall, recovery, _)) => println!(
+            "  for scale, the sulcus under the lower lip — the only crease this face had — \
+             falls at {fall:.2}, bottoms out at {:+.1} and rises at {recovery:+.2} past it.",
+            (at - line) * 1000.0
+        ),
+        None => println!("  and the sulcus under the lower lip could not be read."),
+    }
+}
+
+/// Where a lip's outer flank bottoms out, walking away from the vermilion peak.
+///
+/// Returns `(at, fall, recovery, stopped)`: the lowest point of the flank
+/// inside `window`, how fast it was falling at its steepest on the way there,
+/// the slope over the single step just past it, and whether that lowest point
+/// lies strictly inside the window rather than at its far end. A flank that
+/// bottoms out strictly inside has a crease on it — the surface stops falling
+/// and comes back up, which is what a vermilion border is. One that bottoms out
+/// at the far end never stopped.
+///
+/// **The lowest point, and the recovery read one step past it — not a roll**
+/// (#182). Reading the border as a minimum followed by a maximum needs a
+/// maximum, and above the upper lip the next maximum is the NOSE: unbounded it
+/// called the nose base a 13 mm border on the default head, and with a window
+/// and a height ceiling on top of it, it still read seed 99's nose flank as a
+/// recovery of 5.67 millimetres of relief per millimetre of face. A single step
+/// is 0.5 mm and the nose's rise is two millimetres further out.
+fn flank_break(
+    samples: &[(f32, f32)],
+    from: f32,
+    way: f32,
+    window: (f32, f32),
+) -> Option<(f32, f32, f32, bool)> {
+    let mut walk: Vec<(f32, f32)> = samples
+        .iter()
+        .copied()
+        .filter(|&(up, _)| (up - from) * way > 0.0 && up >= window.0 && up <= window.1)
+        .collect();
+    walk.sort_by(|a, b| ((a.0 - from) * way).total_cmp(&((b.0 - from) * way)));
+    if walk.len() < 3 {
+        return None;
+    }
+
+    let low = walk
+        .iter()
+        .enumerate()
+        .fold((0usize, f32::MAX), |(at, low), (index, &(_, relief))| {
+            if relief < low {
+                (index, relief)
+            } else {
+                (at, low)
+            }
+        })
+        .0;
+    // Signed along the walk, so a falling flank is negative on either lip.
+    let slope = |a: usize, b: usize| (walk[b].1 - walk[a].1) / ((walk[b].0 - walk[a].0) * way);
+    let fall = (0..low)
+        .map(|step| slope(step, step + 1))
+        .fold(0.0f32, f32::min);
+    let recovery = if low + 1 < walk.len() {
+        slope(low, low + 1)
+    } else {
+        0.0
+    };
+    Some((
+        walk[low].0,
+        -fall,
+        recovery,
+        low > 0 && low + 1 < walk.len(),
+    ))
 }
 
 /// A metres figure as millimetres, or a dash where there was no reading.
