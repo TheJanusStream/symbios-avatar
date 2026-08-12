@@ -175,7 +175,7 @@ const BREADTH: [(f32, f32); 9] = [
     (-0.05, 0.825),   // the cheekbones, a plane change and not the widest point
     (-0.18, 0.771),   // below the cheek, midway to the gonion
     (-0.31, 0.646),   // the angle of the jaw, which is `GONION`
-    (-0.60, 0.547),   // the chin
+    (-0.60, 0.575),   // the chin — 0.547 → 0.575, wider with #197's rounder point
     (JUNCTION, 1.00), // the throat, which is the neck's width and not this one's
 ];
 
@@ -492,12 +492,23 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// the peak cannot do that. A flatter tail should if anything help it: the sum's
 /// crest is where this table's rise cancels the base's fall, and a table that is
 /// flat there hands the decision to the base, which falls monotonically.
+/// **The peak and its shelf came down together, 0.255/0.250 → 0.235/0.230**
+/// (#197, owner: the chin stands out too much to the front). Scaled as a pair
+/// so the crest keeps its identity — the #133 trap is the peak and the shelf
+/// swapping winner, not the amplitude itself — and the heights are untouched,
+/// so [`MENTON`]'s identity with the peak knot holds. A deeper cut to
+/// 0.225/0.220 was built and rendered first: on the default body it read
+/// well, and on seed 15 — the weakest rolled chin in the sweep — it erased
+/// the chin outright (`the_chin_stands_clear_of_the_hollow_above_it` read NO
+/// CHIN at one subdivision and 0.61 mm at the other, and the render agreed).
+/// A flat amplitude cut lands hardest on the bodies with the least to give;
+/// the rounder plan view is `point`'s widened window's job, not this one's.
 const CHIN: [(f32, f32); 7] = [
     (0.05, 0.0),
     (-0.24, 0.060),
     (-0.42, 0.158),
-    (-0.53, 0.255),
-    (-0.575, 0.250),
+    (-0.53, 0.235),
+    (-0.575, 0.230),
     (-0.63, 0.020),
     (JUNCTION, 0.0),
 ];
@@ -551,7 +562,16 @@ const MENTON: f32 = -0.53;
 /// Provenance: **derived** from the mesh, not from a face: it is the #85
 /// floor for a feature that must read as a shape rather than a bar, given
 /// the cell sizes quoted above.
-const JAW_RISE: f32 = 0.035;
+///
+/// **0.035 → 0.060 when the border moved to the cosine** (#196). The cosine
+/// border (#195) crosses cells the sine one never visited, and at 5 mm the
+/// knee fit inside one of them: vertex rows caught the cut alternately and the
+/// crease's upper edge rendered as a scallop at exactly cell pitch — masked
+/// until then by the fairing ramp that #196's re-aim stopped from smoothing
+/// across the crease. 0.060 is ~8.5 mm on the default body, 1.5–2 cells over
+/// the refined strip, which is the same #85 floor re-applied to where the
+/// border actually runs now.
+const JAW_RISE: f32 = 0.060;
 
 /// How deep the hollow under the jaw cuts, as a fraction of the horizontal
 /// radius at its peak.
@@ -1237,6 +1257,11 @@ const FACE_PASSES: [(f32, f32, f32, f32); 9] = [
     (0.97, 1.0, -0.171, 0.20),
     (0.92, 1.0, -0.360, -0.255),
 ];
+// A tenth pass over the cosine border's own strip — `(0.55, 0.92, -0.575,
+// -0.415)` with `FACE_REFINEMENT` at 10 — was built and costed for #196 and
+// REJECTED: +1,340 on the default body and +2,848 at the dearest corner,
+// through the 29,900 ceiling. The scallop it aimed at is handled in the field
+// instead: [`JAW_RISE`] widened so the knee spans the cells that exist.
 
 /// The `FACE_PASSES` band edge that selects a given height on the built face.
 ///
@@ -1798,6 +1823,12 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32, traits: &HeadTraits) -> 
     // at 30°, crosses `ahead⁴` near 40° and is dead by 60° — where `ahead²`
     // still carries a quarter, which is the muzzle the paragraph above
     // rejects. Judged on the top-down and frontal renders across seeds.
+    // Widening this window was tried for #197's rounder chin and REVERTED:
+    // `point` multiplies the whole [`CHIN`] profile, which still reads ~0.09
+    // up at the lip band, so a wider window pushed the upper lip's own flank
+    // forward and `the_upper_lip_stops_being_a_lip` failed on five seeds. The
+    // rounder point is [`BREADTH`]'s chin knot's job — lateral, and zero
+    // anywhere but the heights it names.
     let point = smooth((facing - 0.42) / 0.58);
     // The brow ridge and the vault above it, which the frame axis moves in
     // opposite directions — see [`HeadTraits::frontal`] and [`FOREHEAD`].
@@ -1907,10 +1938,10 @@ fn jaw(height: f32, facing: f32, side: f32, traits: &HeadTraits) -> f32 {
     // height within the first 30° and the visible crease terminated on the
     // cheek above the chin; in the cosine it holds near the menton across the
     // front and passes BELOW the chin into the submental plane. Behind 90° the
-    // cosine's sign would carry the border on above the gonion, and the clamp
-    // holds it there instead — past the ear is the window's fade, not the
-    // border's business.
-    let border = MENTON + (traits.gonion - MENTON) * (1.0 - facing.max(0.0));
+    // cosine's sign would carry the border on above the gonion, and
+    // [`border_raise`] holds it there instead — past the ear is the window's
+    // fade, not the border's business.
+    let border = MENTON + (traits.gonion - MENTON) * border_raise(facing);
     let under = border - height;
     if under <= 0.0 {
         return 0.0;
@@ -4275,13 +4306,31 @@ fn floor(rig: &Rig, head: usize) -> f32 {
     -SETTLED * (joint.position.y - rig.joints[parent].position.y).abs() / joint.radius
 }
 
+/// How far up its run the mandible's border stands at one azimuth: 0 at the
+/// menton dead ahead, 1 at the gonion, held there behind the ear.
+///
+/// **The one conversion from an azimuth to [`border`]'s `raise`, and it exists
+/// because the two halves of it forked once** (#196). #195 moved [`jaw`]'s
+/// border from the sine of the azimuth to the cosine — straight in side view,
+/// as a mandible is — and `face::neck`'s three call sites kept feeding
+/// [`border`] the sine. The sine is the LARGER number everywhere between dead
+/// ahead and the side, so the fairing's ramp began above the real crease and
+/// ran partial-weight smoothing straight across it, which rendered as a band
+/// along the jawline rougher than the head above or the throat below it.
+/// `facing` is the cosine of the azimuth from dead ahead, exactly as
+/// [`reshape_to`] has it; feed it a point's own `across.z / reach`.
+pub(crate) fn border_raise(facing: f32) -> f32 {
+    (1.0 - facing.max(0.0)).clamp(0.0, 1.0)
+}
+
 /// Where the mandible's lower border sits at the angle of the jaw, in metres
 /// below the head joint.
 ///
 /// [`GONION`] in the unit the rest of the body is measured in, so that
 /// `face::neck` can be bounded by the same landmark this file carves to without
 /// re-deriving the floor remap — which is the arithmetic that has walked out
-/// from under this file twice (#78, #107).
+/// from under this file twice (#78, #107). `raise` comes from [`border_raise`]
+/// on a point's own azimuth, or is 1.0 for "the highest the border ever gets".
 pub(crate) fn border(rig: &Rig, head: usize, traits: &HeadTraits, raise: f32) -> f32 {
     // **The border MIGRATES, and a flat one tears a chin off** (#175). This is
     // [`jaw`]'s own line — [`MENTON`] on the midline, [`HeadTraits::gonion`] out

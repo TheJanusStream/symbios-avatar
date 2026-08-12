@@ -37,7 +37,7 @@ use crate::mesh::PolyMesh;
 use crate::rig::Rig;
 use crate::{Vec3, Zone};
 
-use super::skull::{HeadTraits, border};
+use super::skull::{HeadTraits, border, border_raise};
 use super::smooth;
 
 /// What a neck is worth against the skull it carries, as a fraction of the
@@ -386,7 +386,7 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         if at < top || at > bottom {
             continue;
         }
-        let (facing, side, behind) = round(*point);
+        let (facing, _, behind) = round(*point);
         // Below this point's OWN border, and nothing above it moves. The ramp
         // is a share of the whole run rather than a fixed depth, so a long neck
         // eases in over a longer distance and a short one does not have the
@@ -394,7 +394,7 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         let under = at
             - depth(Vec3::new(
                 0.0,
-                joint.y + border(rig, head, traits, side.max(behind)),
+                joint.y + border(rig, head, traits, border_raise(facing)),
                 0.0,
             ));
         // In below its own border, held through the waist, and out again into
@@ -587,15 +587,17 @@ pub fn fair(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
             }
             let across = Vec3::new(point.x - axis.x, 0.0, point.z - axis.z);
             let reach = across.length();
-            let (side, behind) = if reach <= f32::EPSILON {
-                (0.0, 0.0)
+            // Dead-on-axis counts as dead ahead: a raise of 0 keeps the ramp
+            // anchored at the menton there, exactly as `side.max(behind)` did.
+            let facing = if reach <= f32::EPSILON {
+                1.0
             } else {
-                ((across.x / reach).abs(), (-across.z / reach).max(0.0))
+                across.z / reach
             };
             let under = at
                 - depth(Vec3::new(
                     0.0,
-                    joint.y + border(rig, head, traits, side.max(behind)),
+                    joint.y + border(rig, head, traits, border_raise(facing)),
                     0.0,
                 ));
             // The ramp starts a little ABOVE each point's own border, because
@@ -692,11 +694,10 @@ pub fn fair(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
                 return 0.0;
             }
             let ahead = (across.z / reach).max(0.0);
-            let side = (across.x / reach).abs();
             let under = at
                 - depth(Vec3::new(
                     0.0,
-                    joint.y + border(rig, head, traits, side),
+                    joint.y + border(rig, head, traits, border_raise(ahead)),
                     0.0,
                 ));
             ahead
