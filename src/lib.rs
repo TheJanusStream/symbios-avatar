@@ -276,6 +276,16 @@ pub fn build_body(
         // own shaping stops at. Second because it measures the surface the
         // skull left: see `face::neck`, whose whole argument is that the neck's
         // width has to be the head's business rather than the cage's.
+        // The fairing over everything the systems above drew, which is where
+        // the mandible-to-throat band stops being their seams (#193) — and it
+        // runs BEFORE the column's own narrowing, not after. Fairing is
+        // curvature removal and a waist IS curvature: run last, it relaxed the
+        // waist `shape_neck` had just cut by 3.3 mm at the small-head corner
+        // and took that body's neck-to-skull ratio from 0.803 to 0.864, which
+        // is the knob-on-a-post `face::neck`'s whole module docstring is about.
+        // Faired first, the narrowing measures the smooth column and cuts its
+        // waist into a surface that has no seams left to sharpen.
+        face::fair_neck(&mut mesh, &rig, traits);
         face::shape_neck(&mut mesh, &rig, traits);
     }
     Ok(mesh)

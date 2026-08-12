@@ -467,6 +467,11 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// of profile height and then falls harder than before — `(-0.575, 0.250)` and
 /// `(-0.63, 0.020)` for the single `(-0.60, 0.065)` — which takes the
 /// first-centimetre drop to 16.1, 16.1, 14.2 and 19.8.
+/// **The lower knot was eased to −0.66 during #193's redesign and put back**:
+/// with `SUBMENTAL_SPEND` softened, the eased tail let the masculine chin hang
+/// in a soft midline drip — the render caught it on the veto sheet — and the
+/// bend below the mandible turned out to owe its gentleness to the spend curve
+/// alone. The tail stays at −0.63; the shelf knot at −0.575 never moved.
 ///
 /// **AND THEN NEITHER THIS TABLE NOR THE CAGE WAS WHAT WAS LEFT** (#94). The
 /// sentence that stood here said the remainder belonged to the cage, on
@@ -886,6 +891,17 @@ pub struct HeadTraits {
     /// Provenance: **derived from `GONION`'s own looked-up 22–28° plane**,
     /// read at its ends instead of its middle (#166).
     pub gonion: f32,
+    /// How far the laryngeal prominence stands off the throat, in head radii.
+    ///
+    /// The one feature of the neck that is a FEATURE rather than a fault in the
+    /// surface, and the frame axis is where it lives on a person: the male
+    /// larynx sits at about a 90° thyroid angle and shows, the female at about
+    /// 120° and barely does. Applied by [`super::neck::fair`] AFTER the column
+    /// is faired, so the smoothing cannot eat it.
+    ///
+    /// Provenance: **sized by render** (#193), like the ageing jowl beside it —
+    /// there is nothing to measure it against; neither mannequin models one.
+    pub larynx: f32,
 }
 
 impl Default for HeadTraits {
@@ -899,9 +915,16 @@ impl Default for HeadTraits {
             lips: 0.0,
             frontal: 0.0,
             gonion: GONION,
+            larynx: LARYNX_NEUTRAL,
         }
     }
 }
+
+/// The neutral body's laryngeal prominence, in head radii.
+///
+/// What [`HeadTraits::larynx`] reads at femininity zero, and therefore what
+/// every neutral probe and test body carries. See the field.
+const LARYNX_NEUTRAL: f32 = 0.030;
 
 impl HeadTraits {
     /// Resolves the profiles' parameters for one body.
@@ -943,6 +966,10 @@ impl HeadTraits {
             lips: 0.12 * femininity - 0.15 * ageing,
             // In skull radii, against a `BROW` whose own peak is 0.042.
             frontal: 0.014 * femininity,
+            // Strongly sexed and floored at nothing: a prominence cannot be
+            // carved INTO the throat, and the feminine end of the axis reads
+            // as its absence rather than as a hollow.
+            larynx: (LARYNX_NEUTRAL - 0.030 * femininity).max(0.0),
             // The 22–28° mandibular plane read at its ends. `GONION`'s
             // derivation turns a degree into a height: the plane's rise over an
             // 85 mm gonion-to-menton run, as a fraction of the head's radius and
@@ -1509,13 +1536,36 @@ const BUTTON_RUN: f32 = 0.22;
 ///
 /// Provenance: **shape derived from the reference, knots tuned by sweep against
 /// it and by render** (#94).
+///
+/// **And then the cliff was deliberately given back** (#193). The owner's
+/// render-first redesign of the mandible-to-throat band asked for the bend
+/// directly below the mandible to be gentler than the reference's step, so the
+/// knots below no longer transcribe the reference at all: one curve rather
+/// than shelf-then-cliff, and the spend held near zero over the first third so
+/// that the ceiling cannot cut into the centimetre under the chin.
+///
+/// **What the first cut of this got wrong is worth keeping.** Softening the
+/// middle alone did not move the thing the owner was pointing at: measured on
+/// `examples/column`, the midline drop over the first centimetre below the
+/// chin read 19.5 mm before and 19.5 after, against the reference's 9.6 —
+/// because with the ceiling switched off entirely that centimetre still falls
+/// 15.6, so the ceiling was never what owned it. Holding the spend out of the
+/// top third, and stopping the fairing inflating the crest (`FAIR_OVER`),
+/// takes the run to 14.3 / 19.8 — slow, then steep, then slow, which is the
+/// S the owner asked for and which neither the old shelf-and-cliff nor the
+/// first softening produced. Judged in both renderers at the frame ends, the heavy corner and
+/// the guarded seeds; the numeric contract that used to hold the cliff —
+/// `the_jaw_gives_up_its_reach_where_the_reference_does` — was re-fitted to
+/// the chosen curve afterwards, which is the order #193 mandates. The top
+/// third's straightness and [`BUTTON`]'s allowance are untouched, so seed 9's
+/// chin-amputation guard still holds.
 #[rustfmt::skip]
 const SUBMENTAL_SPEND: [(f32, f32); 6] = [
     (1.00, 1.00),
-    (0.60, 0.95),
-    (0.45, 0.85),
-    (0.35, 0.45),
-    (0.30, 0.30),
+    (0.78, 0.90),
+    (0.58, 0.66),
+    (0.42, 0.36),
+    (0.34, 0.12),
     (0.00, 0.00),
 ];
 
@@ -1790,7 +1840,9 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32, traits: &HeadTraits) -> 
 /// (#80).
 ///
 /// So this takes both at once. [`GONION`] and [`MENTON`] give the border's
-/// height at the two ends and it runs between them with the sine of the azimuth;
+/// height at the two ends and it runs between them with the cosine of the
+/// azimuth — straight in side view, as a mandible's lower border is (#195; it
+/// ran in the sine first, which put the crease's forward end at mouth height);
 /// everything below it is drawn in, everything above it is left exactly as the
 /// profiles left it.
 ///
@@ -1834,12 +1886,31 @@ fn jaw(height: f32, facing: f32, side: f32, traits: &HeadTraits) -> f32 {
     // At 0.45 the hollow has stopped touching the chin's flank entirely and
     // `the_jawline_turns_a_corner` still reads 22.0 to 27.3° against its bound
     // of 20, because the gonion it is measured at is far outside this window.
-    let window = smooth((side - 0.45) / 0.35) * smooth((facing + 0.30) / 0.30);
+    //
+    // **And then the exclusion came back down to 0.10, because the trap it
+    // guarded went away with the border curve** (#195). The #128 groove was cut
+    // AT THE CHIN'S OWN HEIGHT, which was only possible because the sine-run
+    // border stood at mouth height that far forward. With the border's height
+    // running in the cosine it stays below the chin's underside across the whole
+    // front, `under > 0` selects nothing above it, and the hollow this window
+    // admits can only touch under-chin material the chin does not own. The
+    // midline itself stays excluded so the midline profile (#193's S) is
+    // untouched.
+    let window = smooth((side - 0.10) / 0.45) * smooth((facing + 0.30) / 0.30);
     if window <= 0.0 {
         return 0.0;
     }
 
-    let border = MENTON + (traits.gonion - MENTON) * side;
+    // The border's height runs in the COSINE of the azimuth, not the sine
+    // (#195): a mandible's lower border is straight in side view, so its height
+    // is linear in the forward coordinate. In the sine it climbed to mouth
+    // height within the first 30° and the visible crease terminated on the
+    // cheek above the chin; in the cosine it holds near the menton across the
+    // front and passes BELOW the chin into the submental plane. Behind 90° the
+    // cosine's sign would carry the border on above the gonion, and the clamp
+    // holds it there instead — past the ear is the window's fade, not the
+    // border's business.
+    let border = MENTON + (traits.gonion - MENTON) * (1.0 - facing.max(0.0));
     let under = border - height;
     if under <= 0.0 {
         return 0.0;

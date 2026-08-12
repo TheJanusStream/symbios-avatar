@@ -24,6 +24,14 @@
 //! This one is bounded by two landmarks instead — the mandible's border above
 //! and the girdle's crown below — and reaches identity at both, so it composes
 //! with the skull's profiles rather than fighting them.
+//!
+//! **And then the whole band is faired** ([`fair`], #193). Three systems share
+//! the mandible-to-throat skin — `CHIN`'s tail, `construct_submental`'s chords
+//! and [`shape`]'s narrowing — and their seams rendered as a hanging tab, a
+//! crevasse and shelf-breaks. The owner's direction was to shape this region by
+//! render and re-fit the instruments after, and the shape that survived that
+//! judgement is: every seam smoothed out of the finished surface, one
+//! femininity-scaled laryngeal prominence raised on the result.
 
 use crate::mesh::PolyMesh;
 use crate::rig::Rig;
@@ -425,6 +433,310 @@ pub fn shape(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         // nearly stays. `THROAT_HOLD` is what is left of it dead ahead.
         let keep = 1.0 - (1.0 - THROAT_HOLD) * ahead * ahead;
         point.z = axis.z + fore * (1.0 + (factor * (1.0 - cut) - 1.0) * keep);
+    }
+}
+
+/// How many fairing sweeps the column gets, and the pair each sweep is.
+///
+/// Taubin's smooth-then-unshrink pair, the same one `dress::garment` fairs a
+/// hem with: the positive pass pulls each vertex toward its neighbours' mean
+/// and the larger negative one restores the low frequencies, so what dies is
+/// the crease and not the column's own girth.
+const FAIR_PASSES: usize = 48;
+const FAIR_SMOOTH: f32 = 0.5;
+const FAIR_UNSHRINK: f32 = -0.53;
+
+/// How much of the run the fairing takes to arrive below the border, and to
+/// leave above the girdle, as shares of the whole column.
+///
+/// Tighter above than the carve's own [`RAMP`], because the fairing must not
+/// reach the chin: the border is the boundary of the FACE's identity, and a
+/// fairing weight that is still nonzero there planes the chin button the way
+/// #134's first chord did.
+const FAIR_IN: f32 = 0.14;
+
+/// How far ABOVE its own border a point may still be faired, as a share of the
+/// run — see the weight's comment: the border is a seam between two shaping
+/// systems, and the seam is the thing being removed.
+///
+/// **A fiftieth, and the difference between a fiftieth and a twentieth is a
+/// POINTED CHIN** (#193). At 0.05 the fairing's unshrinking pass reaches the
+/// chin's own crest and pushes it forward: measured on `examples/column`, the
+/// midline crest stood 105.3 mm against the untouched body's 102.3, and the
+/// owner read the render as the chin getting too pointy. At 0.02 the crest is
+/// 102.3 again — bit for bit the shape the crate shipped — and the jawline
+/// streaks this constant exists to remove stay gone, which is the whole reason
+/// it survives at all rather than going to zero.
+const FAIR_OVER: f32 = 0.02;
+
+/// [`FAIR_IN`], dead ahead of the column — see the weight's comment: under the
+/// chin there is no edge for a gentle ramp to protect, and the gentleness is
+/// what let the wattle's drip survive.
+const FAIR_IN_AHEAD: f32 = 0.03;
+
+/// How far BELOW the girdle's crown the fairing still holds, dead ahead, as a
+/// share of the run — see the weight's comment: the crown is a height, the
+/// shoulder mass it protects is at the sides, and the drip hung under it.
+const FAIR_BELOW: f32 = 0.30;
+
+/// The wattle pocket's shrinking passes, and how far below the border the
+/// pocket reaches — see the melt's comment: a smooth prow sits inside Taubin's
+/// pass-band, and only a pass that shrinks can take it down.
+const MELT_PASSES: usize = 10;
+const MELT_REACH: f32 = 0.30;
+
+/// How far ABOVE the menton the melt still reaches, dead ahead, as a share of
+/// the run. The chin's underside comes to a midline point — visible as a drip
+/// once the wattle around it was faired away, and present under the wattle all
+/// along — and the point's tip is the few millimetres of surface just above
+/// the border. The chin's forward crest sits two to three centimetres higher
+/// and the melt's weight is long dead there, which is what keeps this from
+/// being a chin re-shape in disguise; the render across the sweep and the
+/// chin's own test battery both hold it to that.
+const MELT_OVER: f32 = 0.03;
+const FAIR_OUT: f32 = 0.20;
+
+/// Where the laryngeal prominence sits, as a fraction of the border-to-girdle
+/// run, and how far it spreads in the same fractions.
+///
+/// Provenance: **tuned by render** (#193) — the thyroid notch has no landmark
+/// on this rig to derive from.
+const LARYNX_AT: f32 = 0.36;
+const LARYNX_SPREAD: f32 = 0.12;
+
+/// How far across the throat the prominence reaches, in head radii.
+const LARYNX_WIDTH: f32 = 0.09;
+
+/// Fairs the column into one smooth surface, then raises the larynx on it.
+///
+/// **This is where the mandible-to-throat skin gets its shape, and it is a
+/// fairing rather than another term, by the owner's direction** (#193). Three
+/// systems share this band — `CHIN`'s tail, `construct_submental`'s six
+/// column-chords and [`shape`]'s lateral narrowing — and each is individually
+/// defensible while their seams are not: rendered before this existed, the
+/// region carried a hanging tab under the chin, a crevasse up one side of the
+/// throat and shelf-breaks in profile, every one of them a boundary between two
+/// of those systems. Rather than tune three systems into agreement knot by
+/// knot — which is what #94 tried, four times, each fix moving the seam rather
+/// than closing it — the seams are faired out of the finished surface, which
+/// is the operation "smooth, nicely curved" actually names.
+///
+/// The larynx is raised AFTER the fairing, on the faired surface, so the
+/// smoothing cannot eat it — the same ordering reason the hem smooths before
+/// the rim is built. Its amplitude is [`HeadTraits::larynx`], the frame axis's:
+/// prominent at the masculine end, absent at the feminine.
+///
+/// Runs after [`shape`], does nothing to the bodies [`shape`] declines, and
+/// moves vertices without adding any — the budget cannot see it.
+pub fn fair(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
+    if rig.ground_contacts().len() > 2 {
+        return;
+    }
+    let Some(&head) = rig.in_zone(Zone::Head).first() else {
+        return;
+    };
+    let Some(&neck) = rig.in_zone(Zone::Neck).first() else {
+        return;
+    };
+    let Some(parent) = rig.joints[neck].parent else {
+        return;
+    };
+    let radius = rig.joints[head].radius;
+    if radius <= f32::EPSILON {
+        return;
+    }
+    let joint = rig.joints[head].position;
+    let axis = rig.joints[neck].position;
+    let depth = |point: Vec3| (joint.y - point.y) / radius;
+    let bottom = depth(Vec3::new(
+        0.0,
+        rig.joints[parent].position.y + rig.joints[parent].radius,
+        0.0,
+    ));
+    let top = depth(Vec3::new(
+        0.0,
+        joint.y + border(rig, head, traits, 1.0),
+        0.0,
+    ));
+    let run = bottom - top;
+    if run <= f32::EPSILON {
+        return;
+    }
+
+    // Each vertex's weight: zero at its own border and at the girdle, one
+    // through the column. Computed once — the weights are a property of where
+    // a vertex STARTED, and re-deriving them from positions the fairing is
+    // itself moving would let the band creep.
+    let mine = owned(mesh, rig);
+    let weight: Vec<f32> = mesh
+        .positions
+        .iter()
+        .zip(&mine)
+        .map(|(&point, &mine)| {
+            if !mine {
+                return 0.0;
+            }
+            let at = depth(point);
+            // The clip matches the widened window below, not the raw span — a
+            // clip at `bottom` silently zeroed everything the front's lowered
+            // release was written to reach, which is exactly where the drip
+            // hung (the probe read the smoothsteps at 1.000 and the stored
+            // weight at 0.000, and this line was the difference).
+            if at < top - run * FAIR_OVER || at > bottom + run * FAIR_BELOW {
+                return 0.0;
+            }
+            let across = Vec3::new(point.x - axis.x, 0.0, point.z - axis.z);
+            let reach = across.length();
+            let (side, behind) = if reach <= f32::EPSILON {
+                (0.0, 0.0)
+            } else {
+                ((across.x / reach).abs(), (-across.z / reach).max(0.0))
+            };
+            let under = at
+                - depth(Vec3::new(
+                    0.0,
+                    joint.y + border(rig, head, traits, side.max(behind)),
+                    0.0,
+                ));
+            // The ramp starts a little ABOVE each point's own border, because
+            // the border itself is a seam: `shape_skull` owns the surface up
+            // to it and this band below, and a weight that is exactly zero
+            // there preserves every artefact the two systems disagree by,
+            // which rendered as streaks along the jawline. The head above the
+            // ramp's start is untouched, and the weight where the chin's own
+            // curvature lives is a few percent — shading noise dies, the
+            // jawline's large-scale shape cannot.
+            //
+            // **And it arrives fastest dead ahead.** The gentle ramp exists to
+            // protect an edge — the mandible line the profile view is judged
+            // by — and dead ahead under the chin there is no edge to protect:
+            // the chin's crest is above the border, and what lives just below
+            // it on the midline was the hanging wattle's last remnant, a
+            // pointed drip that survived every pass at ramp-zone weight. The
+            // ahead cosine collapses the ramp there and leaves it whole at the
+            // sides.
+            let ahead = if reach <= f32::EPSILON {
+                0.0
+            } else {
+                (across.z / reach).max(0.0)
+            };
+            let arrive = FAIR_IN - (FAIR_IN - FAIR_IN_AHEAD) * ahead * ahead;
+            // And the release lets go LOWER dead ahead, for the mirrored
+            // reason: the release protects the girdle's own mass, which is the
+            // shoulders — at the sides. Dead ahead at the crown's height there
+            // is only the pit of the throat, and the wattle's drip hung BELOW
+            // the crown on a short masculine neck, which put it in this fade's
+            // dead zone: probed at weight 0.000 while every knob above it read
+            // 0.3 to 0.8, which is why it survived forty-eight passes intact.
+            let release = bottom + run * FAIR_BELOW * ahead * ahead;
+            smooth((under + run * FAIR_OVER) / (run * (arrive + FAIR_OVER)))
+                * smooth((release - at) / (run * FAIR_OUT))
+        })
+        .collect();
+    if weight.iter().all(|&w| w <= 0.0) {
+        return;
+    }
+
+    // The neighbour graph, from the faces. Vertices outside the band take part
+    // as anchors — a mean over neighbours that ignored the fixed chin above
+    // would let the band's top edge drift away from the surface it must meet.
+    let mut around: Vec<Vec<u32>> = vec![Vec::new(); mesh.vertex_count()];
+    for face in &mesh.faces {
+        for at in 0..face.len() {
+            let (a, b) = (face[at], face[(at + 1) % face.len()]);
+            around[a as usize].push(b);
+            around[b as usize].push(a);
+        }
+    }
+
+    for _ in 0..FAIR_PASSES {
+        for step in [FAIR_SMOOTH, FAIR_UNSHRINK] {
+            let was = mesh.positions.clone();
+            for (vertex, point) in mesh.positions.iter_mut().enumerate() {
+                let w = weight[vertex];
+                if w <= 0.0 || around[vertex].is_empty() {
+                    continue;
+                }
+                let mean = around[vertex]
+                    .iter()
+                    .fold(Vec3::ZERO, |sum, &other| sum + was[other as usize])
+                    / around[vertex].len() as f32;
+                *point += (mean - *point) * (step * w);
+            }
+        }
+    }
+
+    // **The wattle's pocket, melted rather than faired** — and the distinction
+    // is the whole finding. The drip under the chin survived forty-eight
+    // Taubin passes AT FULL WEIGHT (probed: weight 0.998–1.000 on its own
+    // vertices), because it is not a crease: it is a smooth rounded prow, and
+    // smooth-then-unshrink preserves smooth shapes by construction — that is
+    // its pass-band, and the reason it is safe to run over the whole column.
+    // Removing a smooth protrusion needs the shrinking Laplacian that Taubin
+    // exists to avoid, so the pocket dead ahead and just below the border gets
+    // a few passes of it, confined by the same azimuth logic as everything
+    // else here: `ahead²` keeps it off the jawline, the ramp keeps it off the
+    // chin above and the throat below.
+    let pocket: Vec<f32> = mesh
+        .positions
+        .iter()
+        .zip(&mine)
+        .map(|(&point, &mine)| {
+            if !mine {
+                return 0.0;
+            }
+            let at = depth(point);
+            let across = Vec3::new(point.x - axis.x, 0.0, point.z - axis.z);
+            let reach = across.length();
+            if reach <= f32::EPSILON {
+                return 0.0;
+            }
+            let ahead = (across.z / reach).max(0.0);
+            let side = (across.x / reach).abs();
+            let under = at
+                - depth(Vec3::new(
+                    0.0,
+                    joint.y + border(rig, head, traits, side),
+                    0.0,
+                ));
+            ahead
+                * ahead
+                * smooth((under + run * MELT_OVER) / (run * (0.04 + MELT_OVER)))
+                * smooth((run * MELT_REACH - under) / (run * 0.12))
+        })
+        .collect();
+    if pocket.iter().any(|&w| w > 0.0) {
+        for _ in 0..MELT_PASSES {
+            let was = mesh.positions.clone();
+            for (vertex, point) in mesh.positions.iter_mut().enumerate() {
+                let w = pocket[vertex];
+                if w <= 0.0 || around[vertex].is_empty() {
+                    continue;
+                }
+                let mean = around[vertex]
+                    .iter()
+                    .fold(Vec3::ZERO, |sum, &other| sum + was[other as usize])
+                    / around[vertex].len() as f32;
+                *point += (mean - *point) * (FAIR_SMOOTH * w);
+            }
+        }
+    }
+
+    // The larynx, on the faired surface. A bump in height and in breadth,
+    // pushed dead forward: the throat's own normal leans with the column and
+    // pushing along it would smear the prominence up the underside of the jaw.
+    let stand = traits.larynx * radius;
+    if stand <= 0.0 {
+        return;
+    }
+    for (vertex, point) in mesh.positions.iter_mut().enumerate() {
+        if weight[vertex] <= 0.0 || point.z <= axis.z {
+            continue;
+        }
+        let at = (depth(*point) - top) / run;
+        let tall = ((at - LARYNX_AT) / LARYNX_SPREAD).powi(2);
+        let wide = ((point.x - axis.x) / (LARYNX_WIDTH * radius)).powi(2);
+        point.z += stand * (-(tall + wide)).exp();
     }
 }
 
