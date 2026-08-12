@@ -3460,6 +3460,97 @@ mod tests {
     }
 
     #[test]
+    fn the_measured_surface_is_smooth_in_height_at_every_azimuth() {
+        // **The instrument the outline solve never had** (#210). Nothing
+        // measured `surface_at` at all, so a profile that jumped forty
+        // millimetres between two heights six apart was reported by no test on
+        // this crate — and the one test that walks it,
+        // `a_lock_stays_on_the_head_while_the_head_is_holding_it_up`, compares a
+        // lock against the SAME profile and stopped measuring the moment the
+        // profile had been wider anywhere above, which noise makes true
+        // immediately. Two blocky slabs stood off the back of every head of hair
+        // for an issue and a half because of that pair.
+        //
+        // A head is a smooth thing, so the claim is simply that: the radius may
+        // not move faster than the surface of a head does, in either direction.
+        // The failure it catches is not a bad radius — one of those is a
+        // millimetre here and there — but a DISCONTINUOUS one, which is what a
+        // diverging solve and a seam between two models both make, and what
+        // anything walking the surface latches onto.
+        //
+        // **Both directions, because the two defects were one each.** In height,
+        // the fixed-point substitution oscillated on the back diagonals and the
+        // trust band admitted whichever iterate landed inside it. In azimuth,
+        // the near-astern case answered with the midline's own reach over the
+        // cosine — a flat plane across the back of a round head — and the seam
+        // where that took over from the tables was a 15 mm step at 160°.
+        //
+        // The two are measured differently and on purpose. A rise is millimetres
+        // of radius per millimetre of height, which is already dimensionless. A
+        // turn is millimetres per RADIAN over the radius there, because a head is
+        // a scale as well as a shape: seed 2's is twice the default's, and an
+        // absolute bound on how fast a radius may move round it reads that head's
+        // size as a defect.
+        //
+        // Measured before they were asserted, and both fail on the solve they
+        // replace. Over these six seeds it rises 26.8 to 33.9 and turns 73.1 to
+        // 75.5; bisected onto the same tables, with the seam behind the head
+        // gone and the one at the front blended, it rises 5.8 to 7.3 — the jaw's
+        // own step down to the neck, around 125° — and turns 1.8 to 3.1.
+        for seed in 0..6 {
+            let (_, skull, _, _) = skull(seed, 1);
+            let (throat, crown) = skull.throat_and_crown();
+            // **Below the crown's own cap band**, which is not noise: the top
+            // band is closed with a quarter-circle to a point (#204) and a
+            // dome's tangent is vertical at its pole, so the radius there moves
+            // arbitrarily fast by construction.
+            let top = crown - skull.crown_band();
+            let radius = |height: f32, azimuth: f32| {
+                let at = skull.surface_at(height, azimuth);
+                (at.x * at.x + at.z * at.z).sqrt()
+            };
+            let mut rise = (0.0f32, 0.0f32, 0.0f32);
+            let mut turn = (0.0f32, 0.0f32, 0.0f32);
+            for degree in 0..720 {
+                let azimuth = (degree as f32 * 0.5).to_radians();
+                let next = ((degree + 1) as f32 * 0.5).to_radians();
+                for step in 0..200 {
+                    let one = top - (top - throat) * step as f32 / 200.0;
+                    let two = top - (top - throat) * (step + 1) as f32 / 200.0;
+                    let up = (radius(one, azimuth) - radius(two, azimuth)).abs() / (one - two);
+                    if up > rise.0 {
+                        rise = (up, azimuth.to_degrees(), one);
+                    }
+                    let here = radius(one, azimuth);
+                    let round = (here - radius(one, next)).abs()
+                        / (here.max(MINIMUM_REACH) * (next - azimuth));
+                    if round > turn.0 {
+                        turn = (round, azimuth.to_degrees(), one);
+                    }
+                }
+            }
+            assert!(
+                rise.0 < 12.0,
+                "seed {seed}: the surface's radius moves {:.1} mm per mm of height at {:.0} deg, \
+                 {:+.1} mm — a head does not, so the outline solve is jumping rather than \
+                 following the tables",
+                rise.0,
+                rise.1,
+                rise.2 * 1000.0
+            );
+            assert!(
+                turn.0 < 5.0,
+                "seed {seed}: the surface's radius turns {:.2} of its own radius per radian of \
+                 azimuth at {:.0} deg, {:+.1} mm — a head does not, so there is a seam between \
+                 two models of it",
+                turn.0,
+                turn.1,
+                turn.2 * 1000.0
+            );
+        }
+    }
+
+    #[test]
     #[ignore = "the target, not the state: the profile's end bins are 13 mm out at the throat (#74)"]
     fn the_profile_agrees_over_its_whole_span() {
         // The contract above covers 0.08–0.90 of the span. This is the same
@@ -4008,9 +4099,31 @@ impl Skull {
     /// the scalp with light under them. The two-dimensional tables say where the
     /// outline actually is — [`Self::width_across`] is the half-width at a depth
     /// and [`Self::depth_across`] the depth at a half-width — so the ellipse is
-    /// only a first guess and two fixed-point steps land on the measured outline.
-    /// Whichever table is inverted is chosen by the direction, since dividing by a
-    /// sine near zero is dividing by nothing.
+    /// only a first guess and the measured outline is found from it.
+    ///
+    /// **It is found by BISECTING a monotone residual rather than by iterating
+    /// the table** (#210), and that is not a refinement of the third cut but a
+    /// repair of it. Solving `r = w(r cos) / sin` by substitution is a fixed
+    /// point only where `|w'(z) cos / sin| < 1`; on the back diagonals of a head
+    /// the outline turns fast and the ray is shallow, so the iteration DIVERGES
+    /// by oscillating — measured at 157°, one step answered 70 mm and the next
+    /// 132 about a true 85. Dropping a step that strays too far from the guess
+    /// (which is what the third cut did) does not repair that, because a
+    /// diverging iterate lands inside the trust band by luck about half the
+    /// time: the accepted radius then flickered between 66 mm and 109 as the
+    /// height moved by six millimetres, and a walk that keeps the widest radius
+    /// it has passed latches the highest flicker and hangs there. That is what
+    /// put two blocky slabs off the back-top of every head of hair.
+    ///
+    /// The residual — how far inside the tables' own surface a radius is —
+    /// falls monotonically along any ray from the joint, because the head
+    /// narrows in whichever direction the ray is going. So it has exactly one
+    /// crossing, bisection cannot diverge whatever the outline does, and the
+    /// answer moves smoothly with the height because the tables do. No trust
+    /// band, and nothing to tune.
+    ///
+    /// Whichever table is inverted is still chosen by the direction, since
+    /// dividing by a sine near zero is dividing by nothing.
     #[must_use]
     pub fn surface_at(&self, height: f32, azimuth: f32) -> glam::Vec3 {
         let (sin, cos) = azimuth.sin_cos();
@@ -4021,37 +4134,63 @@ impl Skull {
             -self.depth_behind(height)
         }
         .max(MINIMUM_REACH);
-        // The ellipse through the measured extremes, as a first guess.
+        // The ellipse through the measured extremes, which brackets the outline
+        // rather than standing in for it: a head is flatter at the back and
+        // narrower at the temples than any ellipse through its own widest
+        // points, so the measured surface is INSIDE this everywhere.
         let guess = 1.0 / ((sin / side).powi(2) + (cos / fore).powi(2)).sqrt();
-        let mut radius = guess;
-        for _ in 0..OUTLINE_STEPS {
-            let solved = if sin.abs() > LATERAL_ENOUGH {
-                self.width_across(height, radius * cos) / sin.abs()
-            } else if cos >= 0.0 {
-                self.depth_across(height, (radius * sin).abs()) / cos.abs().max(MINIMUM_REACH)
-            } else {
-                // Nearly straight back, where the only measurement is the
-                // midline's own reach: there is no table of half-widths behind
-                // the joint to invert.
-                -self.depth_behind(height) / cos.abs().max(MINIMUM_REACH)
-            };
-            // **Taken only if it is credible, and otherwise DROPPED** (#204).
-            // Solving `r = w(r cos) / sin` is a fixed point only where the outline
-            // is not near-tangent to the ray; where it is, one step multiplies a
-            // 75 mm half-width by three and the answer is a radius off the side of
-            // the head. The sheet showed it as single locks flying horizontally
-            // out of the skull.
+        // **The box the tables themselves measured**, which is how far along this
+        // ray the outline could possibly be: the head reaches `side` sideways at
+        // this height and `fore` the way this ray is pointing, so a radius past
+        // either is outside the head whatever a table says about it.
+        //
+        // It is a bound on the SEARCH and not a nicety (#210). Both tables are
+        // read by a column that clamps at its own end — the honest answer for a
+        // feature seated wider than the band it sits on — so asked about a point
+        // well behind the head they answer the back of the band rather than
+        // nothing, and a residual that should have gone negative never does. At
+        // 157° below the jaw that put the surface 102 mm out where the head
+        // reaches 59.
+        let reach = (side / sin.abs().max(MINIMUM_REACH)).min(fore / cos.abs().max(MINIMUM_REACH));
+        // How much of the answer the half-widths get, the depths taking the
+        // rest. **A blend and not a choice** (#210): the two tables are two
+        // independent measurements of one outline, so they do not agree to the
+        // millimetre, and switching between them at a threshold puts that
+        // disagreement into the surface as a step — 4.8 mm across half a degree
+        // at 20°, which is a seam a walking card latches exactly as it latched
+        // the diverging solve. Each still has the whole say where it is the
+        // sharper measurement; only the band between them is shared.
+        let lateral = smooth((sin.abs() - LATERAL_ENOUGH + LATERAL_BLEND) / (2.0 * LATERAL_BLEND));
+        let across = |radius: f32| self.width_across(height, radius * cos) - radius * sin.abs();
+        let along = |radius: f32| self.depth_across(height, (radius * sin).abs()) - radius * cos.abs();
+        let radius = if cos < 0.0 || lateral >= 1.0 {
+            // The half-widths: how far the head reaches sideways at the depth
+            // this radius would put the point at, less the sideways distance it
+            // has gone. Behind the joint this is the only measurement there is,
+            // whatever the direction, so the blend does not apply there.
             //
-            // Clamping to the edge of the trusted band was the first repair and it
-            // was the wrong one: it turns a divergence into a confident 25% error,
-            // which is 19 mm on a temple and still reads as hair floating beside
-            // the head. The ellipse through the measured extremes is never more
-            // than a centimetre out, so where the correction cannot be trusted the
-            // guess is the better answer.
-            if (solved - guess).abs() <= guess * OUTLINE_TRUST {
-                radius = solved;
-            }
-        }
+            // **Including straight back, which used to be its own case** (#210).
+            // There is no table of half-widths behind the joint to INVERT, so
+            // the near-astern ray was answered with the midline's own reach over
+            // the cosine — which is a flat plane across the back of the head,
+            // and 15 mm outside the occiput at the twenty degrees either side of
+            // it where the head is roundest. The join showed as a step in the
+            // surface: 87.8 mm at 159.5° and 102.8 at 160.0, which a walking
+            // card latched exactly as it latched the diverging solve.
+            //
+            // Nothing needs inverting here. The residual has no division in it
+            // at all, so a sine near zero is not a problem to be avoided but a
+            // case that answers itself: the sideways term vanishes, no radius
+            // inside the head can drive the residual negative, and the search
+            // returns the box — which behind the head IS the midline's reach.
+            // The old fallback's answer, arrived at continuously.
+            outline(guess.min(reach), reach, across)
+        } else if lateral <= 0.0 {
+            outline(guess.min(reach), reach, along)
+        } else {
+            let one = outline(guess.min(reach), reach, along);
+            one + (outline(guess.min(reach), reach, across) - one) * lateral
+        };
         // **The topmost band is a band and not a pole, so the crown is closed
         // with a cap** (#204). Every profile here is sampled into bands of about
         // eleven millimetres, and the highest one carries the head's width over
@@ -4064,6 +4203,25 @@ impl Skull {
         let into = ((height - (self.hi - band)) / band.max(MINIMUM_REACH)).clamp(0.0, 1.0);
         let radius = (radius * (1.0 - into * into).max(0.0).sqrt()).max(MINIMUM_REACH);
         glam::Vec3::new(radius * sin, height, radius * cos)
+    }
+
+    /// How far below the crown the profile's own cap runs, in head-local metres.
+    ///
+    /// **The one part of this surface that is geometry rather than
+    /// measurement.** The topmost band carries the head's width over its whole
+    /// span, so asked at the crown it answers a radius rather than nothing;
+    /// [`Self::surface_at`] closes it with a quarter-circle over that band (see
+    /// there for the bald disc it left when it did not). This is how deep that
+    /// band is, and anything walking the surface down from the crown needs it:
+    /// the radius goes from nothing to the head's full width inside it, and a
+    /// walk stepping uniformly in height crosses the whole turn in two steps.
+    ///
+    /// Answered rather than re-derived, because deriving it means knowing
+    /// `BANDS`, and a second copy of that number is one that stays behind when
+    /// the profile is resampled (#210).
+    #[must_use]
+    pub fn crown_band(&self) -> f32 {
+        (self.hi - self.lo) / (BANDS - 1) as f32
     }
 
     /// The throat and the crown — the lowest and highest the measured profile
@@ -4173,33 +4331,85 @@ impl Skull {
     }
 }
 
-/// How many fixed-point steps [`Skull::surface_at`] takes onto the outline.
+/// Where on a ray from the head joint the measured outline is.
 ///
-/// Two. The ellipse through the measured extremes is within a centimetre of the
-/// outline everywhere, the tables are smooth, and each step roughly squares the
-/// error — a third step moved the answer by under a hundredth of a millimetre on
-/// every band of every head in the sweep.
+/// `residual` says how far INSIDE the tables' own surface a radius is: positive
+/// short of the outline, negative past it. It falls monotonically along the ray
+/// — the head narrows in whichever direction the ray is going — so it has one
+/// crossing, and bisecting onto it converges whatever the outline does.
 ///
-/// Provenance: **derived** from the convergence, measured.
-const OUTLINE_STEPS: usize = 2;
+/// `reach` is how far along the ray the measured extremes themselves allow, and
+/// the search is closed at it: see [`Skull::surface_at`] for the reading past
+/// the end of a table that makes that necessary.
+///
+/// **A bisection and not a substitution, and the difference is the whole of
+/// #210.** Rearranging the same equation into `r = w(r cos) / sin` and iterating
+/// it converges only where `|w'(z) cos / sin| < 1`, which the back diagonals of
+/// a head are not: there the iteration oscillates, and no test on how far one
+/// step moved can tell an oscillating iterate from a converging one. See
+/// [`Skull::surface_at`].
+fn outline(guess: f32, reach: f32, residual: impl Fn(f32) -> f32) -> f32 {
+    // The ellipse through the measured extremes is an outer bound on the
+    // outline, so it brackets it — but only where the tables answer honestly.
+    // Past the end of a table's own columns the reading clamps rather than
+    // falling away, so the bracket is closed at the box the tables measured and
+    // a residual still positive there means the ray has left the head: the box
+    // is then the answer, and the last honest one there is.
+    let mut lo = 0.0;
+    let mut hi = guess.max(MINIMUM_REACH).min(reach);
+    if residual(hi) > 0.0 {
+        hi = reach;
+        if residual(hi) > 0.0 {
+            return hi;
+        }
+    }
+    for _ in 0..OUTLINE_STEPS {
+        let middle = 0.5 * (lo + hi);
+        if residual(middle) > 0.0 {
+            lo = middle;
+        } else {
+            hi = middle;
+        }
+    }
+    0.5 * (lo + hi)
+}
 
-/// How far from the ellipse's own guess a correction step may move, as a share.
+/// How many times [`outline`] halves that bracket.
 ///
-/// A quarter: the ellipse through the measured extremes is within a centimetre of
-/// the outline on a 90 mm head, so a correction larger than this is the iteration
-/// diverging rather than converging.
+/// Twelve, which is a head's own radius over four thousand — a fortieth of a
+/// millimetre, well under the tenth of one the profile tables themselves are
+/// quantised to by [`BANDS`]. More steps would be measuring the bilinear
+/// interpolation rather than the head.
 ///
-/// Provenance: **derived** from how wrong the guess can be.
-const OUTLINE_TRUST: f32 = 0.25;
+/// Provenance: **derived** from the tables' own precision.
+const OUTLINE_STEPS: usize = 12;
 
-/// How lateral a direction has to be before the side table is the one to invert.
+/// How lateral a direction has to be before the side table is the one to read.
 ///
-/// The sine of about twenty degrees. Below it the point is nearly straight ahead
-/// or straight behind, and solving for a half-width means dividing by a sine
-/// close to zero.
+/// The sine of about twenty degrees. Below it, and in front of the joint, the
+/// depths are the measurement that actually varies along the ray: a residual
+/// built from the half-widths is nearly flat there, so where its root is says
+/// more about the table's own interpolation than about the head.
+///
+/// **It is no longer about dividing by a sine near zero** (#210). That was the
+/// old substitution's problem, and it is what put a third case behind the head
+/// where there is no table to divide; the residual this now chooses between has
+/// no division in it. What is left is which of two measurements is the sharper
+/// one to read, and behind the head there is only one.
 ///
 /// Provenance: **derived** from the conditioning.
 const LATERAL_ENOUGH: f32 = 0.35;
+
+/// How wide a band either side of that the two tables share, in the same sine.
+///
+/// A tenth, which is about six degrees either side of twenty. Wide enough that
+/// the millimetre or two the two measurements disagree by is spread into a slope
+/// no steeper than the head's own, and narrow enough that each table still has
+/// the whole say over the directions it measures well.
+///
+/// Provenance: **derived** from the disagreement, measured
+/// (`the_measured_surface_is_smooth_in_height_at_every_azimuth`).
+const LATERAL_BLEND: f32 = 0.10;
 
 /// The smallest semi-axis [`Skull::surface_at`] will divide by, in metres.
 ///

@@ -37,8 +37,9 @@
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use symbios_avatar::face::{Canon, Skull};
+use symbios_avatar::hair::clump::scatter::scatter;
 use symbios_avatar::hair::clump::{Bed, Sowing};
-use symbios_avatar::hair::{Follicle, FollicleParams, Follicles, Growth};
+use symbios_avatar::hair::{Follicle, FollicleParams, Follicles, Growth, ScalpStyle};
 use symbios_avatar::{Archetype, Avatar, AvatarRecord, PolyMesh, Rig, Vec3, Zone};
 
 /// The seeds `--sweep` reports, which are `tests/budget.rs`'s own.
@@ -50,8 +51,232 @@ fn main() {
         sweep();
         return;
     }
+    if let Some(slot) = args.iter().position(|arg| arg == "--cards") {
+        let style = args.get(slot + 1).map(String::as_str).unwrap_or("crop");
+        let axis = args
+            .get(slot + 2)
+            .and_then(|arg| arg.parse::<f32>().ok())
+            .unwrap_or(0.6);
+        cards(style, axis);
+        return;
+    }
     let seed = args.first().and_then(|arg| arg.parse::<i64>().ok());
     report(seed);
+}
+
+/// Every scalp card of one style, one row each (#210).
+///
+/// **The instrument a defect gets when four guesses from a contact sheet have
+/// already been wrong.** Two blocky slabs stood off the back-top of the head in
+/// every overhead view, and the four hypotheses a sheet can suggest — a walk
+/// straying, a meridian that grows nothing, an outline solve diverging, the
+/// crown pole — had each been ruled out by a measurement of its own. What a
+/// sheet cannot show is which of seventy-five cards they ARE, so this prints
+/// every card's own numbers and the outlier names the cause.
+///
+/// ```text
+/// cargo run --release --example follicleaudit -- --cards crop
+/// cargo run --release --example follicleaudit -- --cards bob 0.8
+/// ```
+fn cards(style: &str, axis: f32) {
+    let Some(style) = named(style, axis) else {
+        return;
+    };
+    let mut record = AvatarRecord::new("Cards", Archetype::default());
+    record.hair.scalp.style = style;
+    let Some(avatar) = Avatar::build(&record) else {
+        println!("this body has no head to grow hair on");
+        return;
+    };
+    let Some(skull) = Skull::measure(&avatar.parts.body, &avatar.rig) else {
+        println!("this body has no head to measure");
+        return;
+    };
+    let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+    let follicles = Follicles::of(&avatar.rig, &skull, &canon, &FollicleParams::default());
+    let Some(sown) = record.hair.sowing(Follicle::Scalp, &follicles) else {
+        println!("this record grows no scalp hair");
+        return;
+    };
+    // The shipped roots: one stream from the record's own seed, in
+    // `Follicle::ALL` order, which is what `Avatar::build` draws (see `grow`).
+    // The scalp is first, so nothing has to be drawn before it.
+    let mut stream = Pcg64Mcg::seed_from_u64(record.seed as u64);
+    let roots = scatter(
+        &avatar.parts.body,
+        &avatar.rig,
+        &follicles,
+        Follicle::Scalp,
+        sown.clumps,
+        &mut stream,
+    );
+    let (throat, crown) = skull.throat_and_crown();
+    println!("{sown_style:?} — {} roots asked for", roots.len(), sown_style = style);
+    println!("  crown {:+.1} mm, throat {:+.1} mm", crown * 1000.0, throat * 1000.0);
+    println!();
+    println!(
+        "    #  azimuth  root mm  weight   len mm  on head   w@.02  w@.25  w@.60  w@1.0  \
+         stands off   at mm"
+    );
+    let mut rows: Vec<Card> = roots
+        .iter()
+        .filter_map(|root| card(sown.shape.as_ref(), root, &follicles, &skull, throat, crown))
+        .collect();
+    let trace = std::env::args().any(|arg| arg == "--trace");
+    // Worst standoff first, because the question this answers is which cards are
+    // the outliers and a row order of scatter order buries them.
+    rows.sort_by(|one, two| two.stands.total_cmp(&one.stands));
+    for (index, row) in rows.iter().enumerate() {
+        println!(
+            "  {:3}  {:+7.0}  {:+7.1}   {:5.3}  {:7.1}   {:5.1}%  {:6.1} {:6.1} {:6.1} {:6.1}  \
+             {:8.1}  {:+7.1}",
+            index,
+            row.azimuth.to_degrees(),
+            row.height * 1000.0,
+            row.weight,
+            row.length * 1000.0,
+            row.on_head * 100.0,
+            row.widths[0] * 1000.0,
+            row.widths[1] * 1000.0,
+            row.widths[2] * 1000.0,
+            row.widths[3] * 1000.0,
+            row.stands * 1000.0,
+            row.stands_at * 1000.0,
+        );
+    }
+    if trace {
+        for row in rows.iter().take(2) {
+            println!();
+            println!(
+                "  the walk of the card rooted at {:+.0} deg, {:+.1} mm:",
+                row.azimuth.to_degrees(),
+                row.height * 1000.0
+            );
+            println!("    along   height   azimuth   radius  profile   stands off   mask");
+            for station in 0..=32 {
+                let along = station as f32 / 32.0;
+                let at = sown.shape.at(&row.root, along);
+                let azimuth = at.x.atan2(at.z);
+                let profile = skull.surface_at(at.y.clamp(throat, crown), azimuth);
+                println!(
+                    "    {:5.2}  {:+7.1}  {:+8.0}  {:7.1}  {:7.1}     {:+8.1}  {:5.3}",
+                    along,
+                    at.y * 1000.0,
+                    azimuth.to_degrees(),
+                    (at.x * at.x + at.z * at.z).sqrt() * 1000.0,
+                    (profile.x * profile.x + profile.z * profile.z).sqrt() * 1000.0,
+                    ((at.x * at.x + at.z * at.z).sqrt()
+                        - (profile.x * profile.x + profile.z * profile.z).sqrt())
+                        * 1000.0,
+                    follicles.weight(Follicle::Scalp, at),
+                );
+            }
+        }
+    }
+    println!();
+    println!(
+        "  on head    — share of the card's own stations standing where the scalp mask is over\n  \
+         {:12}a third, which is what the walk calls its cap\n  \
+         w@         — half-width a share of the way along it, in mm. A card fans out from the\n  \
+         {:12}crown, so a low first column and a high last one is the healthy shape; a\n  \
+         {:12}card at full width from its first station is the slab shape\n  \
+         stands off — the furthest any station STILL ON THE MASK sits outside the measured\n  \
+         {:12}profile at its own azimuth, and the height it does it at. Hair past the\n  \
+         {:12}hairline is draping, and owes the profile nothing",
+        "", "", "", "", "",
+    );
+}
+
+/// One scalp style, named on the command line.
+fn named(style: &str, axis: f32) -> Option<ScalpStyle> {
+    match style {
+        "crop" => Some(ScalpStyle::Crop),
+        "bob" => Some(ScalpStyle::Bob { fringe: axis }),
+        "long" => Some(ScalpStyle::Long { weight: axis }),
+        "tied" => Some(ScalpStyle::TiedBack { tail: axis }),
+        "curly" => Some(ScalpStyle::Curly { curl: axis }),
+        other => {
+            println!("unknown style {other}: expected crop, bob, long, tied or curly");
+            None
+        }
+    }
+}
+
+/// What one card is, measured off the shape the record asked for.
+struct Card {
+    /// The root it grew from, so a trace can re-walk it.
+    root: symbios_avatar::hair::Root,
+    azimuth: f32,
+    height: f32,
+    weight: f32,
+    length: f32,
+    /// Share of its stations still on the scalp mask.
+    on_head: f32,
+    /// Half-width at four shares of the way along it, in metres.
+    widths: [f32; 4],
+    /// The furthest any station stands outside the profile, in metres.
+    stands: f32,
+    /// The height it does that at.
+    stands_at: f32,
+}
+
+/// Measures one card, or `None` if the style declined this root.
+fn card(
+    shape: &dyn symbios_avatar::hair::Shape,
+    root: &symbios_avatar::hair::Root,
+    follicles: &Follicles,
+    skull: &Skull,
+    throat: f32,
+    crown: f32,
+) -> Option<Card> {
+    let length = shape.length(root);
+    if length <= f32::EPSILON {
+        return None;
+    }
+    // Evenly, and finely: this is not the loft's adaptive sampling and is not
+    // meant to be. A card that stands off the head does it somewhere along its
+    // own curve, and an even walk cannot miss the place the way a sampler that
+    // spends its stations on curvature can.
+    const STATIONS: usize = 128;
+    let mut on_head = 0usize;
+    let mut stands = f32::MIN;
+    let mut stands_at = 0.0;
+    for station in 0..=STATIONS {
+        let along = station as f32 / STATIONS as f32;
+        let at = shape.at(root, along);
+        let on = follicles.weight(Follicle::Scalp, at) >= 0.35;
+        if on {
+            on_head += 1;
+        }
+        // **Only over the part of the card that is still meant to be LYING on
+        // the scalp**, which is the difference between the defect and the
+        // design. A card keeps the widest radius it has passed once the head
+        // starts coming back in — that is hair draping, and it stands 20 mm off
+        // a nape by intention. Measuring the whole card would report every
+        // healthy crop as the worst offender on the head.
+        if !on || at.y < throat {
+            continue;
+        }
+        let azimuth = at.x.atan2(at.z);
+        let profile = skull.surface_at(at.y.clamp(throat, crown), azimuth);
+        let out = (at.x * at.x + at.z * at.z).sqrt() - (profile.x * profile.x + profile.z * profile.z).sqrt();
+        if out > stands {
+            stands = out;
+            stands_at = at.y;
+        }
+    }
+    let widths = [0.02, 0.25, 0.60, 1.0].map(|along| shape.width_at(root, along));
+    Some(Card {
+        root: *root,
+        azimuth: root.at.x.atan2(root.at.z),
+        height: root.at.y,
+        weight: root.weight,
+        length,
+        on_head: on_head as f32 / (STATIONS + 1) as f32,
+        widths,
+        stands: if stands == f32::MIN { 0.0 } else { stands },
+        stands_at,
+    })
 }
 
 /// One head, in full.

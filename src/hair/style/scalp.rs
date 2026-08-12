@@ -362,6 +362,26 @@ const TURNS: [f32; 16] = [
 /// the walk (`a_lock_stays_on_the_head_while_the_head_is_holding_it_up`).
 const STEPS: usize = 64;
 
+/// How many of those steps are spent crossing the crown's own cap.
+///
+/// Twelve of the sixty-four, which puts about a millimetre of height between
+/// them over a band the radius crosses its whole range in. Fewer and the chord
+/// cuts into the scalp at the whorl; more and the descent below the cap goes
+/// coarse for a part of the head that is barely turning.
+///
+/// Provenance: **derived** from the cap's own curvature, measured against
+/// `a_lock_stays_on_the_head_while_the_head_is_holding_it_up`.
+const CROWN_STEPS: usize = 12;
+
+/// How many steps the walk spends below the head, hanging.
+///
+/// Four. Past the hairline the card hangs from where it left at the radius it
+/// left with — a straight vertical line, whatever its length — so this is not a
+/// resolution but a handful of points to draw one with.
+///
+/// Provenance: **derived** from what a straight line needs.
+const HANG: usize = 4;
+
 /// A lock the skull holds up, and which hangs once it does not.
 ///
 /// The one shape all five styles compile to, differing in its numbers. See the
@@ -510,9 +530,39 @@ impl Sheet {
         // The root then says which MERIDIAN this card takes and how much of it
         // there is — its mask weight is the hairline's own thinning — which is
         // still the scatter following the mask, one dimension of it instead of two.
-        let step = (crown - (throat - self.reach)) / STEPS as f32;
         // Every card starts at the crown, which is the top of the profile.
         let top = crown;
+        // **The steps are not uniform in height, and the crown is why** (#210).
+        // The profile's topmost band is closed with a quarter-circle to a point,
+        // so the surface's radius goes from nothing to the head's full width
+        // inside eleven millimetres there and then covers the other quarter of a
+        // metre at a few millimetres a centimetre. Stepping uniformly spent two
+        // and a half steps of sixty-four on the part that is actually turning,
+        // and the chord across them cut 6.1 mm INSIDE the scalp — a card buried
+        // in the head at the whorl, which is the one place every card converges.
+        //
+        // So the walk is in three parts, and each is sampled for what it is:
+        // the cap, the descent down the head, and the free hang below it.
+        //
+        // **Splitting the hang off is what keeps the descent's pitch fixed.**
+        // The walk runs a style's whole reach past the throat so that a fall has
+        // somewhere to go, and dividing one count over that span made the step
+        // depend on the haircut: a crop stepped 4.5 mm down the head and a bob
+        // 7.3 over the same skull, so the same head strayed 5.4 mm under one
+        // style and nothing under the other. Below the hairline the card hangs
+        // at a frozen radius down a straight line, which needs no resolution at
+        // all.
+        let cap = skull.crown_band();
+        let descent = (top - cap - throat) / (STEPS - CROWN_STEPS) as f32;
+        let height_of = |index: usize| {
+            if index < CROWN_STEPS {
+                top - cap * (index + 1) as f32 / CROWN_STEPS as f32
+            } else if index < STEPS {
+                top - cap - descent * (index + 1 - CROWN_STEPS) as f32
+            } else {
+                throat - self.reach * (index + 1 - STEPS) as f32 / HANG as f32
+            }
+        };
         let mut at = skull.surface_at(top, from);
         let mut gone = 0.0;
         let mut free = 0.0;
@@ -541,8 +591,8 @@ impl Sheet {
         // azimuth the lock has reached, which is the same claim measured in the
         // right place.
         let mut crest = top;
-        for index in 0..STEPS {
-            let height = top - step * (index + 1) as f32;
+        for index in 0..STEPS + HANG {
+            let height = height_of(index);
             // **Turned by how far the lock has TRAVELLED, not by which step this
             // is.** A step is a slice of the descent, and a lock that is combed
             // round the head spends most of its length going sideways — so a comb
@@ -825,6 +875,7 @@ mod tests {
             // plates: whatever a walk does at the crown, where the head's own
             // radius is smallest and its profile tables are coarsest, nothing was
             // measuring it.
+            let mut probed = 0usize;
             for turn in TURNS {
                 for high in [0.02f32, 0.12, 0.30] {
                 let root = root(&head, turn, crown - (crown - throat) * high);
@@ -845,11 +896,34 @@ mod tests {
                     // Measured at the lock's own azimuth, since a combed lock is
                     // not where it started: still supported means the profile is
                     // no narrower here than anywhere it has come from.
+                    // **And only while it is still ON the scalp**, which is the
+                    // other half of what holds a card out and is not the same
+                    // claim (#210). A fringe leaves the mask at the hairline and
+                    // hangs from the radius it left with, while the head under
+                    // it goes on WIDENING all the way down the brow — so a bob
+                    // read as 5.2 mm of stray for doing exactly what a fringe
+                    // does. The head being wider above is drape; the mask ending
+                    // is a hairline.
+                    if head.weight(Follicle::Scalp, at) < EDGE {
+                        break;
+                    }
                     let azimuth = at.x.atan2(at.z);
                     let here = radius(head.skull().surface_at(at.y, azimuth));
+                    // **From the CROWN, which is where the card started, and not
+                    // from its root** (#210). Every card starts at the crown
+                    // whatever its root, and the crown is a point: the cap over
+                    // the topmost band closes the radius to nothing there. So a
+                    // scan from the root read the head as having been wider
+                    // above the very first station of every card, broke out of
+                    // the loop before measuring anything, and this test asserted
+                    // NOTHING AT ALL for five styles across sixteen azimuths —
+                    // measured, zero stations of 1,008. It is the seventh
+                    // instrument this milestone to have been measuring its own
+                    // parameterisation rather than the hair, and the only one so
+                    // far to have been measuring none of it.
                     let widest = (0..40)
                         .map(|band| {
-                            let height = at.y + (root.at.y - at.y) * band as f32 / 39.0;
+                            let height = at.y + (crown - at.y) * band as f32 / 39.0;
                             radius(head.skull().surface_at(height, azimuth))
                         })
                         .fold(0.0f32, f32::max);
@@ -864,6 +938,7 @@ mod tests {
                     // this milestone that an instrument has measured its own
                     // parameterisation rather than the hair.
                     worst = worst.max((radius(at) - here).abs());
+                    probed += 1;
                 }
                 assert!(
                     worst < 0.004 + swung,
@@ -875,6 +950,23 @@ mod tests {
                 );
                 }
             }
+            // **And that it measured anything at all** (#210). Every card starts
+            // at the crown and the crown is a point, so the supported test above
+            // read the head as having been wider above the very first station of
+            // every card and broke out before measuring one of them: this
+            // assertion held for five styles over sixteen azimuths and three root
+            // heights by measuring NOTHING, for as long as #204 was open. An
+            // instrument that has stopped looking passes every bound there is.
+            //
+            // Measured now: 420 stations of 1,008 on the style that leaves the
+            // mask soonest, and all 1,008 on the tied-back, which never leaves it
+            // before its gather.
+            assert!(
+                probed > 250,
+                "a {style:?} was checked against the skull at only {probed} stations of {} — the \
+                 claim above is not being made about anything",
+                TURNS.len() * 3 * 21
+            );
         }
     }
 
