@@ -93,7 +93,16 @@ const MESH_TARGET: usize = 4;
 /// two hundred of the truth by the time it was next needed. The test below
 /// prints it now instead of computing it and throwing it away, so the next
 /// proposal can start from a number rather than from a docstring.
-const TRIANGLE_CEILING: usize = 29_900;
+///
+/// **Down 1,200 because a dressed body stopped drawing the skin under its
+/// clothes** (#46/#117). The saving is the whole claim of both garments less
+/// the row of faces their hems run through, which has to stay drawn now that
+/// the hems are smoothed off the face boundaries they were cut along: 1,490
+/// triangles claimed, 274 given back, 1,216 net on the default body and 1,236
+/// at this corner. It is a ratchet rather than a target, so it moves down with
+/// the measurement and not to the nearest round number; `garmentaudit` prints
+/// the claim, the give-back and the net.
+const TRIANGLE_CEILING: usize = 28_700;
 
 /// Draw calls the crate currently costs.
 ///

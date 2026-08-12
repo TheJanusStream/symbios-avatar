@@ -152,8 +152,12 @@ impl SkinWeights {
     /// Which body zone each vertex belongs to.
     ///
     /// This is what lets a garment suppress the skin beneath it: the body knows,
-    /// per vertex, which zone it is in, so covered geometry is never emitted in
-    /// the first place.
+    /// per vertex, which zone it is in, a garment claims whole faces all of
+    /// whose corners are in its zones, and the claimed faces are then never
+    /// emitted — poke-through avoided by deleting the geometry rather than by
+    /// hiding it. The claim is [`Garment::claim`](crate::Garment::claim) and
+    /// the deletion is `Avatar::charted_body`; it is worth about 1,500
+    /// triangles on a clothed body (#46/#117).
     ///
     /// A vertex takes the zone of the **nearer end** of the bone holding it, not
     /// the bone's own joint. A bone spans two nodes that may sit in different

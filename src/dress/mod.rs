@@ -229,6 +229,31 @@ impl Outfit {
         mesh
     }
 
+    /// Which body faces the outfit hides, one flag per face of the body.
+    ///
+    /// The union of every garment's [`hidden`](Garment::hidden), and the reason
+    /// a dressed body draws less skin than a bare one: cloth stands over those
+    /// faces in every pose, so emitting them is paying for geometry no camera
+    /// can reach. `faces` is the body's face count, because an outfit knows
+    /// what it claimed and not how big the body was.
+    ///
+    /// `hidden` rather than [`claim`](Garment::claim), and the difference is
+    /// the row of faces the hem itself runs through: the hem is smoothed off
+    /// the face boundaries it was cut along, so a face it crosses may end up
+    /// half-seen and has to be drawn. About a sixth of the claim (#117).
+    #[must_use]
+    pub fn covered(&self, faces: usize) -> Vec<bool> {
+        let mut hidden = vec![false; faces];
+        for garment in &self.garments {
+            for &face in &garment.hidden {
+                if let Some(flag) = hidden.get_mut(face as usize) {
+                    *flag = true;
+                }
+            }
+        }
+        hidden
+    }
+
     /// How many pieces are being worn.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -307,6 +332,158 @@ mod tests {
         assert_eq!(outfit.len(), 2, "a top and trousers");
         assert!(!outfit.is_empty());
         assert!(outfit.mesh().face_count() > 100);
+    }
+
+    /// Whether any triangle of `cloth` stands over `from` within `reach`.
+    ///
+    /// Möller–Trumbore, once per triangle, with the triangle list built by the
+    /// caller — `PolyMesh::triangulated` allocates, and a ray cast that
+    /// re-triangulates the garment for every face it asks about measures the
+    /// allocator.
+    fn under_cloth(cloth: &[[Vec3; 3]], from: Vec3, along: Vec3, reach: f32) -> bool {
+        cloth.iter().any(|&[a, b, c]| {
+            let (e1, e2) = (b - a, c - a);
+            let across = along.cross(e2);
+            let det = e1.dot(across);
+            if det.abs() < 1e-12 {
+                return false;
+            }
+            let inv = 1.0 / det;
+            let to = from - a;
+            let u = to.dot(across) * inv;
+            if !(-1e-6..=1.000_001).contains(&u) {
+                return false;
+            }
+            let up = to.cross(e1);
+            let v = along.dot(up) * inv;
+            if v < -1e-6 || u + v > 1.000_001 {
+                return false;
+            }
+            let at = e2.dot(up) * inv;
+            at > 1e-5 && at <= reach
+        })
+    }
+
+    #[test]
+    fn every_scrap_of_suppressed_skin_has_cloth_standing_over_it() {
+        // The safety argument for not drawing the skin under a garment, asked
+        // rather than reasoned about: a ray leaving each suppressed face along
+        // its own normal — the direction the skin faces, and so the direction
+        // anything seeing it would have to come from — must hit the garment.
+        //
+        // **Not `contains`, and that is a measured correction rather than a
+        // preference.** The obvious test is that every corner of every hidden
+        // face lies inside the garment solid, and it fails on 24 to 40 corners
+        // per body, all of them in the crotch: an inward offset of 1.5 mm in a
+        // concavity that tight self-intersects, so the solid is tangled there
+        // and `contains` reports points that are 1.5 mm from cloth as outside
+        // it. The skin is not visible — it is under both the cloth and the far
+        // thigh — and a test that says otherwise is measuring the offset's
+        // degeneracy, not the garment's coverage (`docs/instruments.md` rule 1).
+        for seed in [1i64, 9] {
+            let (mesh, weights, zones) = body(seed);
+            let normals = mesh.vertex_normals();
+            for (sleeve, leg) in [(Sleeve::Bare, Leg::Shorts), (Sleeve::Forearm, Leg::Ankle)] {
+                let params = OutfitParams {
+                    sleeve,
+                    leg,
+                    ..Default::default()
+                };
+                let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
+                assert!(
+                    outfit
+                        .covered(mesh.face_count())
+                        .iter()
+                        .any(|&hidden| hidden),
+                    "seed {seed}: a dressed body hid nothing at all"
+                );
+                for garment in &outfit.garments {
+                    // A garment always has a hem, so it always gives its row
+                    // back — and a garment can give back ALL of it: a pair of
+                    // shorts is two rings of faces wide, every one of them is
+                    // on a hem, so it hides nothing and its hem cannot move.
+                    // That is the clamp working, not a failure.
+                    assert!(garment.hidden.len() < garment.claim.len());
+                    let cloth: Vec<[Vec3; 3]> = garment
+                        .mesh
+                        .triangulated()
+                        .iter()
+                        .map(|corners| corners.map(|c| garment.mesh.positions[c as usize]))
+                        .collect();
+                    for &face in &garment.hidden {
+                        let out = mesh.faces[face as usize]
+                            .iter()
+                            .map(|&corner| normals[corner as usize])
+                            .fold(Vec3::ZERO, |sum, normal| sum + normal)
+                            .normalize();
+                        let from = mesh.face_centroid(face as usize) + out * 1e-4;
+                        assert!(
+                            under_cloth(&cloth, from, out, 0.05),
+                            "seed {seed}: face {face} is not drawn and nothing covers it"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_waist_seam_stays_shut_when_the_hems_are_smoothed() {
+        // The one thing sliding a hem could break that nothing else guards. The
+        // top's lower hem and the trousers' upper one are the SAME ring of body
+        // edges, and each garment smooths its own copy of it without consulting
+        // the other; if the two copies land anywhere different, a sliver of skin
+        // opens between two garments that used to meet exactly.
+        //
+        // They agree because the operator is a function of the ring alone — the
+        // same vertices in the same order, walked the other way, which a
+        // symmetric filter and a symmetric clamp cannot tell apart. That is an
+        // argument, and this is the measurement.
+        for seed in [1i64, 5, 9] {
+            let (mesh, weights, zones) = body(seed);
+            let outfit = Outfit::wear(&mesh, &weights, &zones, &OutfitParams::default());
+            let hems: Vec<std::collections::HashMap<u32, Vec<Vec3>>> = outfit
+                .garments
+                .iter()
+                .map(|garment| {
+                    let mut at: std::collections::HashMap<u32, Vec<Vec3>> =
+                        std::collections::HashMap::new();
+                    for ring in &garment.hem {
+                        for &vertex in ring {
+                            at.entry(garment.source[vertex as usize])
+                                .or_default()
+                                .push(garment.mesh.positions[vertex as usize]);
+                        }
+                    }
+                    at
+                })
+                .collect();
+
+            let mut shared = 0;
+            let mut worst = 0.0f32;
+            for (from, here) in &hems[0] {
+                let Some(there) = hems[1].get(from) else {
+                    continue;
+                };
+                shared += 1;
+                for point in here {
+                    let apart = there
+                        .iter()
+                        .map(|other| other.distance(*point))
+                        .fold(f32::MAX, f32::min);
+                    worst = worst.max(apart);
+                }
+            }
+            assert!(
+                shared > 8,
+                "seed {seed}: the two garments shared {shared} hem vertices, so this proved nothing"
+            );
+            assert!(
+                worst < 1e-5,
+                "seed {seed}: {shared} shared hem vertices, worst {} mm apart",
+                worst * 1000.0
+            );
+        }
     }
 
     #[test]

@@ -286,6 +286,12 @@ fn main() {
                 stubble: axis(4, record.skin.stubble),
             }
         }),
+        // **Undressed at build time, not by dropping the cloth draw** (#117).
+        // A dressed body does not emit the skin its clothes cover, so filtering
+        // the cloth mesh out of the merge leaves a torso with its middle
+        // missing — which is what this flag did until the body it was pointed
+        // at stopped drawing that skin.
+        dressed: !bare,
         ..Default::default()
     };
 
@@ -892,13 +898,12 @@ impl Subject {
     /// [`Avatar::posed`], because comparing the two skinning methods is the
     /// point of it.
     fn deformed(&self, pose: &Pose, closure: f32) -> Vec<AvatarMesh> {
+        // Hair only: the clothes are gone before this, because a body built
+        // dressed has no skin under them to show (see `dressed` above).
         let bare = |built: Vec<AvatarMesh>| {
             built
                 .into_iter()
-                .filter(|drawn| {
-                    !self.show.bare
-                        || (drawn.kind != MeshKind::Hair && drawn.kind != MeshKind::Cloth)
-                })
+                .filter(|drawn| !self.show.bare || drawn.kind != MeshKind::Hair)
                 .collect()
         };
         if !self.show.linear {

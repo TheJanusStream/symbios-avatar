@@ -140,6 +140,16 @@ pub struct AvatarConfig {
     /// is. A complexion is judged by looking at it under light, not by reading a
     /// triple of numbers, and a body is the only place to do that.
     pub complexion: Option<SkinParams>,
+    /// Whether the body wears the outfit its record asks for.
+    ///
+    /// **The only way to see a body undressed, and it has to be asked for at
+    /// BUILD time** (#117). A dressed body no longer emits the skin under its
+    /// clothes, so dropping the cloth draw afterwards does not undress it — it
+    /// opens a hole where the clothes were. `examples/render`'s `--bare` did
+    /// exactly that and came back as a torso with its middle missing, which is
+    /// the cost of suppression stated as plainly as it can be: what a garment
+    /// covers stops existing, and only a body built without the garment has it.
+    pub dressed: bool,
 }
 
 impl Default for AvatarConfig {
@@ -153,6 +163,7 @@ impl Default for AvatarConfig {
             ground: 0.0,
             hair: None,
             complexion: None,
+            dressed: true,
         }
     }
 }
@@ -396,7 +407,7 @@ impl Avatar {
         place_charts(&mut features, &mut extremities, &mut eyes, &reserved);
 
         // Cut from the body, so charted where the body is charted.
-        let mut outfit = if handed {
+        let mut outfit = if handed && config.dressed {
             Outfit::wear(&body, &weights, &zones, &record.outfit)
         } else {
             Outfit::default()
@@ -651,19 +662,82 @@ impl Avatar {
     }
 
     /// The body, unwrapped into the atlas and ready to draw.
+    ///
+    /// **Minus the skin under the clothes** (#46, #117). A garment is the body
+    /// pushed outward, so it stands over every face it was cut from — outer
+    /// shell above, inner shell below, rim across the hem — and cloth deforms
+    /// with the skin beneath it, so it stands there in every pose too. That
+    /// skin is dropped here rather than hidden at draw time, which is what
+    /// `plan.md` specified and what `plan::zone` and `SkinWeights::zones` have
+    /// always claimed: poke-through is avoided by not emitting the geometry.
+    ///
+    /// Not the whole claim — [`Garment::hidden`](crate::Garment::hidden), which
+    /// gives back the row of faces the hem runs through, since a smoothed hem
+    /// no longer follows their edges. Measured with `cargo run --release
+    /// --example garmentaudit`: 1,216 triangles on the default body and 1,236
+    /// at the dearest, from 360 in the barest cut (bare sleeves and shorts) to
+    /// 1,344 in the fullest. The whole avatar's headroom under
+    /// `TRIANGLE_CEILING` was 82 before this.
+    ///
+    /// Only `parts.body` is cut; `Parts` keeps the whole surface, because
+    /// everything that measures a body — a hem, a chin, a foot's contact — needs
+    /// the skin that is there whether or not it is drawn.
     fn charted_body(&self) -> PolyMesh {
         let charts = &self.parts.unwrap;
         // Normals over the body's own topology, then gathered through the
         // unwrap. Derived from the unwrapped copy they would split every seam.
         let normals = self.parts.body.vertex_normals();
+        let hidden = self.parts.outfit.covered(self.parts.body.face_count());
+        let faces: Vec<Vec<u32>> = charts
+            .faces
+            .iter()
+            .zip(&charts.source_face)
+            .filter(|&(_, &from)| !hidden.get(from as usize).copied().unwrap_or(false))
+            .map(|(face, _)| face.clone())
+            .collect();
+
+        // The vertices the surviving faces still use, renumbered in place. A
+        // dropped face leaves its corners behind, and an unwrapped body vertex
+        // is carried four ways — position, chart coordinate, normal, four
+        // influences — so leaving them would keep most of the cost of the
+        // geometry that was just deleted.
+        let mut used = vec![false; charts.vertex_count()];
+        for face in &faces {
+            for &corner in face {
+                used[corner as usize] = true;
+            }
+        }
+        let mut renumbered = vec![0u32; charts.vertex_count()];
+        let mut kept = 0u32;
+        for (vertex, &used) in used.iter().enumerate() {
+            renumbered[vertex] = kept;
+            kept += u32::from(used);
+        }
+        /// Drops the entries of a per-vertex channel whose vertex went with a
+        /// face. A closure cannot do this: it is used at four different types.
+        fn keep<T>(attribute: Vec<T>, used: &[bool]) -> Vec<T> {
+            attribute
+                .into_iter()
+                .zip(used)
+                .filter_map(|(value, &used)| used.then_some(value))
+                .collect()
+        }
+
         let mut mesh = PolyMesh {
-            positions: charts.gather(&self.parts.body.positions),
-            faces: charts.faces.clone(),
+            positions: keep(charts.gather(&self.parts.body.positions), &used),
+            faces: faces
+                .into_iter()
+                .map(|face| {
+                    face.into_iter()
+                        .map(|corner| renumbered[corner as usize])
+                        .collect()
+                })
+                .collect(),
             ..Default::default()
         };
-        mesh.set_uvs(charts.uvs.clone());
-        mesh.set_normals(charts.gather(&normals));
-        mesh.set_skin(charts.gather(&self.parts.weights.vertices));
+        mesh.set_uvs(keep(charts.uvs.clone(), &used));
+        mesh.set_normals(keep(charts.gather(&normals), &used));
+        mesh.set_skin(keep(charts.gather(&self.parts.weights.vertices), &used));
         mesh.paint(Vec3::ONE);
         mesh
     }
@@ -956,6 +1030,127 @@ mod tests {
         assert!(person.parts.hair.is_some());
         assert!(person.parts.features.is_some());
         assert_eq!(person.parts.outfit.len(), 2);
+    }
+
+    #[test]
+    fn a_dressed_body_does_not_draw_the_skin_under_its_clothes() {
+        // #46, and the sentence `plan::zone` and `SkinWeights::zones` had been
+        // making for months before it was true. The saving is asserted as an
+        // exact identity rather than as a threshold: every claimed face, and
+        // only those, and nothing else in the merge moved.
+        for seed in [1i64, 7, 42] {
+            let dressed = biped(seed);
+            let hidden = dressed
+                .parts
+                .outfit
+                .covered(dressed.parts.body.face_count());
+            let owed: usize = hidden
+                .iter()
+                .enumerate()
+                .filter(|&(_, &hidden)| hidden)
+                .map(|(face, _)| dressed.parts.body.faces[face].len().saturating_sub(2))
+                .sum();
+            assert!(
+                owed > 500,
+                "seed {seed}: only {owed} triangles were covered"
+            );
+
+            let mut bare = AvatarRecord::new("Built", Archetype::default());
+            bare.reroll(seed);
+            bare.outfit.sleeve = crate::dress::Sleeve::Bare;
+            let undressed = Avatar::build(&bare).expect("a biped builds");
+            let skin = |avatar: &Avatar| {
+                avatar
+                    .drawn(0.0)
+                    .into_iter()
+                    .filter(|mesh| mesh.kind == MeshKind::Skin)
+                    .map(|mesh| mesh.mesh.triangulated().len())
+                    .sum::<usize>()
+            };
+            // Bare sleeves claim less, so the same body draws MORE skin: the
+            // difference is the two sleeves, and it is only a difference of
+            // suppression because everything else about the two bodies is one
+            // record apart.
+            assert!(
+                skin(&undressed) > skin(&dressed),
+                "seed {seed}: bare sleeves drew {} skin triangles against {}",
+                skin(&undressed),
+                skin(&dressed)
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_built_undressed_keeps_every_face_of_its_skin() {
+        // What `AvatarConfig::dressed` is for, and the guard on the trap it was
+        // added for: once a dressed body stops emitting the skin under its
+        // clothes, dropping the cloth draw does not undress it, it holes it.
+        // `examples/render --bare` was doing exactly that.
+        let mut record = AvatarRecord::new("Built", Archetype::default());
+        record.reroll(4);
+        let dressed = Avatar::build(&record).expect("a biped builds");
+        let undressed = Avatar::build_with(
+            &record,
+            &AvatarConfig {
+                dressed: false,
+                ..Default::default()
+            },
+        )
+        .expect("a biped builds");
+
+        assert!(undressed.parts.outfit.is_empty());
+        assert!(!dressed.parts.outfit.is_empty());
+        let skin = |avatar: &Avatar| {
+            avatar
+                .drawn(0.0)
+                .into_iter()
+                .find(|mesh| mesh.kind == MeshKind::Skin)
+                .expect("a body draws skin")
+                .mesh
+                .clone()
+        };
+        // Whole: every face the unwrap made, and the attached parts on top.
+        assert!(skin(&undressed).face_count() > undressed.parts.unwrap.faces.len());
+        assert!(
+            skin(&undressed).triangulated().len() > skin(&dressed).triangulated().len() + 1_000,
+            "undressed drew {} skin triangles against a dressed {}",
+            skin(&undressed).triangulated().len(),
+            skin(&dressed).triangulated().len()
+        );
+        assert!(
+            !undressed
+                .drawn(0.0)
+                .iter()
+                .any(|mesh| mesh.kind == MeshKind::Cloth)
+        );
+    }
+
+    #[test]
+    fn suppressing_the_covered_skin_leaves_no_vertex_behind() {
+        // A dropped face leaves its corners in the list, and an unwrapped body
+        // vertex carries a position, a chart coordinate, a normal and four
+        // influences. Keeping them would keep most of the cost of the geometry
+        // that was just deleted, and would ship a mesh most of whose points no
+        // triangle refers to.
+        let avatar = biped(7);
+        let skin = avatar
+            .drawn(0.0)
+            .into_iter()
+            .find(|mesh| mesh.kind == MeshKind::Skin)
+            .expect("a body draws skin");
+        assert!(skin.mesh.channels_are_consistent());
+        let mut used = vec![false; skin.mesh.vertex_count()];
+        for face in &skin.mesh.faces {
+            for &corner in face {
+                used[corner as usize] = true;
+            }
+        }
+        assert!(
+            used.iter().all(|&used| used),
+            "{} of {} skin vertices are used by no face",
+            used.iter().filter(|&&used| !used).count(),
+            used.len()
+        );
     }
 
     #[test]

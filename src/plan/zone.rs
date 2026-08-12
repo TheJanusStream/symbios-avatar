@@ -3,9 +3,11 @@
 //! Every skeleton node carries a [`Zone`] saying what part of the body it is.
 //! That one tag does a surprising amount of work downstream:
 //!
-//! * **Garments** declare the zones they cover, and the body suppresses those
-//!   zones underneath — poke-through is avoided by not emitting the geometry
-//!   rather than by hiding it.
+//! * **Garments** declare the zones they cover, and the body suppresses the
+//!   faces underneath — poke-through is avoided by not emitting the geometry
+//!   rather than by hiding it. Whole faces, since the cut takes whole faces —
+//!   the hem row included, because the garment's rim closes over the hem edge
+//!   exactly (`Outfit::covered`, #46/#117).
 //! * **Landmarks** are found by zone rather than by node index, so hats and
 //!   belts fit any body without the fitting code knowing which plan built it.
 //! * **Animation** can pose semantic queries — every ground contact, every

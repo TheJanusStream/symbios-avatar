@@ -19,6 +19,7 @@ All under `examples/`, all release-built (`cargo run --release --example …`).
 | `facesection` | nose and mouth in CROSS-SECTION off the built surface — delivered relief, slopes, cells; the instrument for "does this feature exist on the polygons" |
 | `refinecost` | what each face-refinement pass costs and the cell it buys per feature band, across/down |
 | `chinprofile` | where the surface turns (`--ring`): curvature per azimuth, the flat-facet detector |
+| `garmentaudit` | what the clothes cover and what the body stops drawing for it; the hem as cut against the hem as worn — step, turn, and distance from a smooth ring |
 | `bodyaudit`, `footaudit`, `walkaudit`, `neckaudit`, `column`, `jawprobe`, `envelope` | body regions: proportions, sole contact, gait excursions, neck spans, midline profiles, jaw shelf, exploration-range envelopes |
 | `locomotion` | procedural gait vs baked clips: feet-to-ground across body scales and grades |
 | `measure`, `dump`, `headref`, `reference`, `retargetaudit`, `bakeclips` | scalar dumps, mesh export, reference comparisons, clip retarget checks, artifact baking |

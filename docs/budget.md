@@ -12,18 +12,21 @@ is a museum of budget figures that were true on the day and wrong within a week.
 | constant | value | where |
 | --- | --- | --- |
 | `TRIANGLE_TARGET` | 30,000 | `tests/budget.rs` — the number the engine is judged by (WebGL2 tier) |
-| `TRIANGLE_CEILING` | 29,900 | `tests/budget.rs` — the ratchet: today's high-water mark, not a goal |
+| `TRIANGLE_CEILING` | 28,700 | `tests/budget.rs` — the ratchet: today's high-water mark, not a goal |
 | `MESH_TARGET` / `MESH_CEILING` | 4 draws | `tests/budget.rs` — skin, hair, cloth, eye; each justified by a material the others cannot provide |
 | `hair::MAX_TRIANGLES` | 4,900 | `src/hair/mod.rs` — what is left for hair once everything else is paid for, measured at the *dearest* body, not the default (#187) |
 
-Measured on 2026-08-11/12 (stale the moment anything lands — re-run):
+Measured on 2026-08-12 after #117 (stale the moment anything lands — re-run):
 
-- default body: **27,788**
-- dearest head-axis corner: **29,818** (seed 42, long broad)
-- dearest *product* corner — greediest legal hair on the dearest head: **29,870**
+- default body: **26,572**
+- dearest head-axis corner: **28,582** (seed 42, long broad)
+- dearest *product* corner — greediest legal hair on the dearest head: **28,634**
 
-So the working headroom is roughly a hundred triangles. Anything that spends
-geometry must name what pays for it.
+So the working headroom is about 1,370 against the target and 66 against the
+ratchet. It was roughly a hundred against both until a dressed body stopped
+drawing the skin under its clothes: 27,788 / 29,818 / 29,870 were the same three
+numbers that morning. Anything that spends geometry must still name what pays
+for it.
 
 ## How to measure
 
@@ -31,6 +34,11 @@ geometry must name what pays for it.
 cargo test --release --test budget -- --nocapture
     prints: the default body, the dearest sweep corner, the greedy-hair body,
     and the dearest product corner — the four numbers any proposal is argued against.
+
+cargo run --release --example garmentaudit [-- SEEDS] [--cuts]
+    what the clothes cover and what the body therefore stops drawing: the claim,
+    the row given back along the hem, and the net — beside the hem's own
+    coarseness, which is what that give-back buys.
 
 cargo run --release --example refinecost [-- SEEDS]
     per-pass cost of face refinement beside the cell it buys in each feature
@@ -69,6 +77,14 @@ bit-identical under a displacement-only change, but the hair's scalp is
 measured off the *built* skull — a deeper nose resampled hair at +40 triangles
 on the default and +96 on the greedy record (#183/#187).
 
+**A garment is paid for twice unless the body stops drawing what it covers**
+(#46/#117). Cloth is about 3,200 triangles on a default outfit and the skin
+beneath it was another 1,490 that no camera could reach. Suppression is whole
+faces — the cut takes whole faces — less the row the hem runs through, which has
+to stay because the hem is smoothed off the boundaries it was cut along. The
+saving follows the cut: 664 claimed for bare sleeves and shorts, 1,618 for
+wrists and ankles, so the *dearest* outfit is also the one that gives most back.
+
 **Where the levers are** (as of 2026-08-12, in order of size):
 
 1. **Anisotropic refinement** — #189. The face's quads are 2:1 tall and the
@@ -78,6 +94,9 @@ on the default and +96 on the greedy record (#183/#187).
    a render judgement, not a number.
 3. The hair replacement (owner decision, 2026-08-12) will redraw the whole
    map; re-measure everything when it lands.
+
+Spent, and listed so it is not proposed again: **the skin under the clothes**,
+1,216 net on the default body (#117, 2026-08-12).
 
 ## History in one paragraph
 

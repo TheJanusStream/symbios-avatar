@@ -73,6 +73,36 @@ pub struct Garment {
     /// garment texture coordinates: it was made of body, so it is charted where
     /// the body is charted, and nothing has to unwrap it separately.
     pub source: Vec<u32>,
+    /// The body faces this garment was cut from, in ascending order.
+    ///
+    /// The other half of [`source`](Self::source): that one says which body
+    /// *vertex* each garment vertex came from, this one which body *faces* the
+    /// garment stands over. It is what lets the body stop emitting the skin
+    /// underneath — a claimed face is enclosed by this solid on every side, the
+    /// rim included, so nothing can ever see it (`Avatar::charted_body`).
+    pub claim: Vec<u32>,
+    /// The body faces this garment hides, a subset of [`claim`](Self::claim).
+    ///
+    /// The claim minus the row of faces the hem runs through, and the
+    /// difference is `smooth_hem`'s bill. A hem free to leave the face
+    /// boundaries it was cut along may retreat inside the face it crosses, and
+    /// the skin there then has to be drawn; only the faces further in are
+    /// covered whatever the hem does. Measured at about 274 triangles of the
+    /// 1,490 a default outfit covers (`examples/garmentaudit`).
+    ///
+    /// This is the set [`Outfit::covered`](crate::Outfit::covered) unions, and
+    /// therefore the set the body does not emit.
+    pub hidden: Vec<u32>,
+    /// Its hem, as closed loops of its own outer-shell vertices.
+    ///
+    /// The cut edge as delivered — after `smooth_hem` has moved it — which is
+    /// the only place it can be measured. The claim's boundary on the body says
+    /// where the hem was *cut*, and the two differ by up to half a face, which
+    /// is the whole of what that pass does. The rim quads run along these loops.
+    ///
+    /// Outer-shell vertices; the inner shell's twin of a column is that column
+    /// plus half the vertex count.
+    pub hem: Vec<Vec<u32>>,
     /// The colour it should be shaded.
     pub colour: [f32; 3],
 }
@@ -234,17 +264,33 @@ impl Garment {
             corner_at.push(row);
         }
 
+        let hem = hem_edges(&covered);
+
+        // Where each column stands, before the hem is smoothed. Held as its own
+        // list rather than read out of the body twice, because the hem's
+        // columns are about to stop standing over the vertex they were cut
+        // from.
+        let mut at: Vec<Vec3> = source
+            .iter()
+            .map(|&from| mesh.positions[from as usize])
+            .collect();
+        let rings: Vec<Vec<u32>> = hem_walk(&covered, &fan, &hem)
+            .iter()
+            .map(|ring| {
+                ring.iter()
+                    .map(|&(face, corner)| corner_at[face][corner])
+                    .collect()
+            })
+            .collect();
+        smooth_hem(mesh, &rings, &source, &mut at);
+
         let mut garment = PolyMesh::new();
-        for &from in &source {
-            let at = mesh.positions[from as usize];
-            let out = normals[from as usize];
-            garment.push_vertex(at + out * cut.thickness);
+        for (column, &from) in source.iter().enumerate() {
+            garment.push_vertex(at[column] + normals[from as usize] * cut.thickness);
         }
         let inner_base = garment.vertex_count() as u32;
-        for &from in &source {
-            let at = mesh.positions[from as usize];
-            let out = normals[from as usize];
-            garment.push_vertex(at - out * cut.bite);
+        for (column, &from) in source.iter().enumerate() {
+            garment.push_vertex(at[column] - normals[from as usize] * cut.bite);
         }
 
         for row in &corner_at {
@@ -255,7 +301,7 @@ impl Garment {
             garment.push_face(inner);
         }
 
-        for (face, at) in hem_edges(&covered) {
+        for &(face, at) in &hem {
             let row = &corner_at[face];
             let (a, b) = (row[at], row[(at + 1) % row.len()]);
             // Reversed against the outer shell's use of the same edge. Every
@@ -264,6 +310,27 @@ impl Garment {
             // run against both of them.
             garment.push_face([b, a, a + inner_base, b + inner_base]);
         }
+
+        let claim: Vec<u32> = (0..mesh.faces.len() as u32)
+            .filter(|&face| mine.get(face as usize).copied().unwrap_or(false))
+            .collect();
+        // What the garment hides: the claim, less the row of faces its hem runs
+        // through, because the hem no longer runs along their edges.
+        let mut on_hem = vec![false; mesh.vertex_count()];
+        for ring in &rings {
+            for &column in ring {
+                on_hem[source[column as usize] as usize] = true;
+            }
+        }
+        let hidden: Vec<u32> = claim
+            .iter()
+            .copied()
+            .filter(|&face| {
+                !mesh.faces[face as usize]
+                    .iter()
+                    .any(|&corner| on_hem[corner as usize])
+            })
+            .collect();
 
         // Weights come straight from the body vertex each point was made from,
         // which is the whole reason a garment cut this way needs no rigging.
@@ -280,6 +347,9 @@ impl Garment {
         Some(Self {
             mesh: garment,
             source: cut_from,
+            claim,
+            hidden,
+            hem: rings,
             colour,
         })
     }
@@ -352,6 +422,271 @@ fn hem_edges(covered: &[&Vec<u32>]) -> Vec<(usize, usize)> {
     // garment's face list is compared between runs by `tests/record.rs`.
     hem.sort_unstable();
     hem
+}
+
+/// The cut edges of a claim, as closed loops of body vertices.
+///
+/// The hem itself, in the order it is walked, which is what anything wanting to
+/// *measure* or *reshape* a hem needs and what the rim is built along. A garment
+/// solid has no boundary edges to read this off afterwards, so it is offered
+/// here from the claim.
+///
+/// Successors are found per fan rather than per vertex, for the reason `fans`
+/// gives: where the boundary touches itself, one body vertex carries two
+/// outgoing hem edges and only the fan says which loop each continues. A vertex
+/// at such a pinch therefore appears in the returned loops twice, once for each
+/// loop passing through it — the loops are sequences of body vertices, not sets.
+///
+/// Each loop runs in its faces' winding, so a loop is traversed with the claim
+/// on one consistent side.
+#[must_use]
+pub fn hem_loops(mesh: &PolyMesh, mine: &[bool]) -> Vec<Vec<u32>> {
+    let covered: Vec<&Vec<u32>> = mesh
+        .faces
+        .iter()
+        .enumerate()
+        .filter(|&(index, _)| mine.get(index).copied().unwrap_or(false))
+        .map(|(_, face)| face)
+        .collect();
+    let fan = fans(&covered);
+    let hem = hem_edges(&covered);
+    hem_walk(&covered, &fan, &hem)
+        .iter()
+        .map(|ring| ring.iter().map(|&(face, at)| covered[face][at]).collect())
+        .collect()
+}
+
+/// The hem's edges chained into loops, as corners of `covered`.
+///
+/// Corners rather than vertices, because [`Garment::sew`] needs the columns and
+/// only the corner names one: at a pinch the same body vertex carries two.
+/// [`hem_loops`] is this walk read out as body vertices.
+fn hem_walk(covered: &[&Vec<u32>], fan: &Fans, hem: &[(usize, usize)]) -> Vec<Vec<(usize, usize)>> {
+    // Where each hem edge starts, keyed by the fan it starts in. Within one fan
+    // a vertex has exactly one outgoing hem edge and one incoming, which is what
+    // makes this a lookup rather than a search.
+    let mut leaving: HashMap<(u32, usize), usize> = HashMap::new();
+    for (index, &(face, at)) in hem.iter().enumerate() {
+        leaving.insert((covered[face][at], fan.root(face, at)), index);
+    }
+
+    let mut walked = vec![false; hem.len()];
+    let mut loops = Vec::new();
+    for start in 0..hem.len() {
+        if walked[start] {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut here = start;
+        while !walked[here] {
+            walked[here] = true;
+            let (face, at) = hem[here];
+            path.push((face, at));
+            let onward = (at + 1) % covered[face].len();
+            // A body already non-manifold along this edge is the only way out
+            // of this walk, and it is the body's defect rather than the hem's.
+            let Some(&next) = leaving.get(&(covered[face][onward], fan.root(face, onward))) else {
+                break;
+            };
+            here = next;
+        }
+        loops.push(path);
+    }
+    loops
+}
+
+/// How far a hem column may slide, as a share of the way to the nearest body
+/// vertex that is not itself on the hem.
+///
+/// **Under a half, and that is the whole safety argument for suppressing the
+/// skin underneath** (#117). A face whose corners are all off the hem is
+/// separated from the hem by a whole face, so a hem that cannot travel even
+/// half a face can never uncover one. Above a half the smoothing would have to
+/// re-decide which faces are covered as it went, and [`Garment::hidden`] could
+/// no longer be a plain subset of the claim.
+const HEM_SLIDE: f32 = 0.45;
+
+/// How many smoothing passes the hem gets.
+const HEM_PASSES: usize = 8;
+
+/// The pass that smooths, and the pass that undoes its shrinkage.
+///
+/// Taubin's pair. Smoothing alone drags a hem loop toward its own chords, and
+/// a collar that shrinks is a collar that ends up inside the neck; the second,
+/// larger, negative pass restores the low frequencies while leaving the
+/// zigzag — which is what is being removed — where the first pass put it.
+const HEM_SMOOTH: f32 = 0.5;
+const HEM_UNSHRINK: f32 = -0.53;
+
+/// The point of a triangle closest to `point`, by region.
+///
+/// Ericson's Voronoi-region form: the six cases are the three corners, the
+/// three edges, and the interior, and testing them in this order is what makes
+/// it branch-only arithmetic with no square roots.
+fn nearest_on_triangle(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    let (ab, ac, ap) = (b - a, c - a, point - a);
+    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return a;
+    }
+    let bp = point - b;
+    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
+    if d3 >= 0.0 && d4 <= d3 {
+        return b;
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        return a + ab * (d1 / (d1 - d3));
+    }
+    let cp = point - c;
+    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
+    if d6 >= 0.0 && d5 <= d6 {
+        return c;
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        return a + ac * (d2 / (d2 - d6));
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    }
+    let denom = 1.0 / (va + vb + vc);
+    a + ab * (vb * denom) + ac * (vc * denom)
+}
+
+/// The nearest point of `faces` to `point`, as a point of the body's surface.
+///
+/// Only the faces around the vertex a hem column was cut from are offered,
+/// which is both the fast answer and the right one: [`HEM_SLIDE`] keeps the
+/// slide inside that ring, and a global search could snap a collar onto the
+/// shoulder it happens to be nearest in space.
+fn onto_surface(mesh: &PolyMesh, faces: &[usize], point: Vec3) -> Vec3 {
+    let mut nearest = point;
+    let mut best = f32::MAX;
+    for &face in faces {
+        let corners = &mesh.faces[face];
+        for at in 1..corners.len().saturating_sub(1) {
+            let (a, b, c) = (
+                mesh.positions[corners[0] as usize],
+                mesh.positions[corners[at] as usize],
+                mesh.positions[corners[at + 1] as usize],
+            );
+            let candidate = nearest_on_triangle(point, a, b, c);
+            let span = candidate.distance(point);
+            if span < best {
+                best = span;
+                nearest = candidate;
+            }
+        }
+    }
+    nearest
+}
+
+/// Slides each hem column along the surface onto a smooth curve, in place.
+///
+/// The cut takes whole faces, so a hem can only ever be a staircase of them:
+/// measured on the delivered body its steps are about 24 mm, a quarter of the
+/// corners turn by more than 45 degrees, and it stands 2 to 4 mm RMS — up to 20
+/// mm — off the smooth ring it is trying to be (`examples/garmentaudit`). None
+/// of that is a tuning problem; the boundary is a nearest-bone classification
+/// and it wanders vertex by vertex.
+///
+/// What is *not* done here is re-cutting the faces. A garment vertex is charted
+/// and weighted by the body vertex it was cut from ([`Garment::source`]), so
+/// splitting a face on the boundary invents points with no chart, no weights and
+/// no fan; sliding the columns that already exist invents nothing, costs no
+/// triangles, and removes the amplitude rather than the step count. A hem of
+/// fourteen straight segments around a neck reads as a curve; a hem that dips a
+/// whole face at the throat does not.
+///
+/// The slide is tangential only in the sense that it stays on the loop's own
+/// smooth form: the column keeps the normal of the body vertex it came from, so
+/// the shell still stands off the skin, and the loop sinks toward its chords by
+/// about a millimetre — second order in the step, and an order under the eight
+/// the garment stands out.
+///
+/// Every column is clamped to [`HEM_SLIDE`] of the way to the nearest body
+/// vertex that is not itself on the hem — plus the millimetre the projection
+/// back onto the surface takes — which is what keeps a hem inside the row of
+/// faces it was cut along and lets [`Garment::hidden`] stay a subset of the
+/// claim. A column with no such neighbour cannot be bounded and does not move,
+/// which is why a two-ring band like a pair of shorts keeps its staircase
+/// (#191): every one of its vertices is on a hem.
+fn smooth_hem(mesh: &PolyMesh, rings: &[Vec<u32>], source: &[u32], at: &mut [Vec3]) {
+    let mut on_hem = vec![false; mesh.vertex_count()];
+    for ring in rings {
+        for &column in ring {
+            on_hem[source[column as usize] as usize] = true;
+        }
+    }
+    // How far each hem body vertex may travel: it must not reach a vertex that
+    // is off the hem, because that is the vertex holding the first face this
+    // garment expects to hide.
+    let mut room: HashMap<u32, f32> = HashMap::new();
+    for face in &mesh.faces {
+        for at in 0..face.len() {
+            let here = face[at];
+            if !on_hem[here as usize] {
+                continue;
+            }
+            for &other in face {
+                if other == here || on_hem[other as usize] {
+                    continue;
+                }
+                let span = mesh.positions[here as usize].distance(mesh.positions[other as usize]);
+                let reach = room.entry(here).or_insert(f32::MAX);
+                *reach = reach.min(span);
+            }
+        }
+    }
+
+    // The faces around each hem vertex, which are the ones a slid column can
+    // land on.
+    let mut around: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (index, face) in mesh.faces.iter().enumerate() {
+        for &corner in face {
+            if on_hem[corner as usize] {
+                around.entry(corner).or_default().push(index);
+            }
+        }
+    }
+
+    for ring in rings {
+        if ring.len() < 4 {
+            continue;
+        }
+        let mut smoothed: Vec<Vec3> = ring.iter().map(|&column| at[column as usize]).collect();
+        for _ in 0..HEM_PASSES {
+            for step in [HEM_SMOOTH, HEM_UNSHRINK] {
+                let was = smoothed.clone();
+                for index in 0..was.len() {
+                    let last = was[(index + was.len() - 1) % was.len()];
+                    let next = was[(index + 1) % was.len()];
+                    smoothed[index] = was[index] + ((last + next) * 0.5 - was[index]) * step;
+                }
+            }
+        }
+        for (index, &column) in ring.iter().enumerate() {
+            let from = at[column as usize];
+            let limit = room.get(&source[column as usize]).copied().unwrap_or(0.0) * HEM_SLIDE;
+            let moved = smoothed[index] - from;
+            let slid = if moved.length() > limit {
+                from + moved.normalize_or_zero() * limit
+            } else {
+                smoothed[index]
+            };
+            // Back onto the skin. A smoothed ring cuts its own corners and the
+            // unshrinking pass overshoots them, both by about a millimetre on a
+            // 24 mm step — an eighth of the standoff the garment is built with,
+            // and enough to read as the garment standing off the body by more
+            // than its own thickness. The column is a point OF the body, and
+            // this is what keeps that true after it moves.
+            at[column as usize] = around
+                .get(&source[column as usize])
+                .map_or(slid, |faces| onto_surface(mesh, faces, slid));
+        }
+    }
 }
 
 /// Runs of covered faces that meet edge to edge, one class per corner.
@@ -533,6 +868,94 @@ mod tests {
     }
 
     #[test]
+    fn the_hem_walks_as_closed_loops() {
+        // What the rim is built along, and what anything reshaping a hem has to
+        // read. Two claims: every cut edge is walked exactly once, and every
+        // loop closes — a walk that runs off the end of a chain would report a
+        // hem shorter than the one that exists and quietly hide the rest.
+        let (mesh, _, zones) = body();
+        let cut = GarmentCut {
+            zones: torso(),
+            ..Default::default()
+        };
+        let mut mine = claimed(&mesh, &zones, &cut);
+        close(&mesh, &mut mine, &[]);
+        let covered: Vec<&Vec<u32>> = mesh
+            .faces
+            .iter()
+            .enumerate()
+            .filter(|&(index, _)| mine[index])
+            .map(|(_, face)| face)
+            .collect();
+        let loops = hem_loops(&mesh, &mine);
+        assert!(!loops.is_empty(), "a torso has a neck and a waist at least");
+        assert_eq!(
+            loops.iter().map(Vec::len).sum::<usize>(),
+            hem_edges(&covered).len(),
+            "the walk visited a different number of edges than the hem has"
+        );
+        for ring in &loops {
+            assert!(ring.len() >= 3, "a loop of {} vertices", ring.len());
+            // Each step of a loop is an edge of the body, which is what makes
+            // it a walk over the surface rather than a list of vertices that
+            // happen to be on the boundary.
+            for at in 0..ring.len() {
+                let (here, next) = (ring[at], ring[(at + 1) % ring.len()]);
+                assert!(
+                    mesh.faces.iter().any(|face| {
+                        (0..face.len())
+                            .any(|c| face[c] == here && face[(c + 1) % face.len()] == next)
+                    }),
+                    "{here} to {next} is not an edge of the body"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_garment_knows_the_faces_it_was_cut_from() {
+        // The claim is what lets the body stop emitting the skin underneath, so
+        // it has to name the faces the garment actually stands over — not the
+        // raw zone claim it started from, which `close` has since grown.
+        let (mesh, weights, zones) = body();
+        let cut = GarmentCut {
+            zones: torso(),
+            ..Default::default()
+        };
+        let mut mine = claimed(&mesh, &zones, &cut);
+        let raw = mine.iter().filter(|&&mine| mine).count();
+        close(&mesh, &mut mine, &[]);
+        let garment = Garment::sew(&mesh, &weights, &mine, &cut, [0.5; 3]).expect("a torso");
+        assert_eq!(
+            garment.claim.len(),
+            mine.iter().filter(|&&mine| mine).count()
+        );
+        assert!(garment.claim.len() >= raw, "the claim shrank under close");
+        assert!(garment.claim.windows(2).all(|pair| pair[0] < pair[1]));
+        for &face in &garment.claim {
+            assert!(mine[face as usize]);
+        }
+    }
+
+    /// How far a point lies off the surface of a mesh, in metres.
+    ///
+    /// **The surface, not the nearest vertex** (`docs/instruments.md` rule 2).
+    /// Both of the tests below used to ask for the nearest body VERTEX, which
+    /// was exact only for as long as every garment column stood over one. The
+    /// hem's columns no longer do — [`smooth_hem`] slides them along the
+    /// surface, up to 7 mm on the bodies here — and the vertex proxy read that
+    /// slide as the garment standing off the skin by twice its own thickness.
+    fn off_the_surface(mesh: &PolyMesh, point: Vec3) -> f32 {
+        mesh.triangulated()
+            .iter()
+            .map(|corners| {
+                let [a, b, c] = corners.map(|corner| mesh.positions[corner as usize]);
+                super::nearest_on_triangle(point, a, b, c).distance(point)
+            })
+            .fold(f32::MAX, f32::min)
+    }
+
+    #[test]
     fn a_garment_stands_off_the_skin_it_was_cut_from() {
         let (mesh, weights, zones) = body();
         let cut = GarmentCut {
@@ -545,17 +968,22 @@ mod tests {
 
         // Every garment point is within a hair of the body, and the outer half
         // is outside it: it hugs, and it cannot be inside.
-        let nearest = |point: Vec3| {
-            mesh.positions
-                .iter()
-                .map(|body| body.distance(point))
-                .fold(f32::MAX, f32::min)
-        };
         for point in &garment.mesh.positions {
+            let off = off_the_surface(&mesh, *point);
             assert!(
-                nearest(*point) <= 0.011,
-                "a garment point sat {} from the body",
-                nearest(*point)
+                off <= 0.011,
+                "a garment point sat {off} from the body's surface"
+            );
+        }
+        let half = garment.vertex_count() / 2;
+        for (index, point) in garment.mesh.positions.iter().enumerate() {
+            let inside = mesh.contains(*point);
+            assert_eq!(
+                inside,
+                index >= half,
+                "garment point {index} of {} was {}side the body",
+                garment.vertex_count(),
+                if inside { "in" } else { "out" }
             );
         }
     }
@@ -645,16 +1073,9 @@ mod tests {
                 ..Default::default()
             };
             let garment = Garment::cut(&mesh, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
-            garment
-                .mesh
-                .positions
+            garment.mesh.positions[..garment.vertex_count() / 2]
                 .iter()
-                .map(|point| {
-                    mesh.positions
-                        .iter()
-                        .map(|body| body.distance(*point))
-                        .fold(f32::MAX, f32::min)
-                })
+                .map(|point| off_the_surface(&mesh, *point))
                 .fold(0.0f32, f32::max)
         };
         for thickness in [0.004f32, 0.012, 0.02] {
