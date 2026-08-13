@@ -61,7 +61,7 @@
 //! cargo run --release --example render -- --femininity 1  # the frame axis, -1 .. +1
 //! cargo run --release --example render -- --mass 1 --fat 0.10  # heavy and lean: muscular
 //! cargo run --release --example render -- --age 80  # the age axis, 18 .. 80 years
-//! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow
+//! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow, roughness
 //! cargo run --release --example render -- --quadruped
 //! cargo run --release --example render -- --budget    # what one avatar costs
 //! cargo run --release --example render -- --cost      # and what it costs to build
@@ -660,6 +660,11 @@ fn main() {
         Some(Focus::Region(follicle)) => &format!("render_{}", follicle.name()),
         None => "render",
     };
+
+    if let Some(mode) = value("--golden") {
+        golden(&subject, mode);
+        return;
+    }
 
     if let Some(wanted) = &clip {
         match clip_sheets(&subject, wanted, clip_frames, &shoot) {
@@ -1282,6 +1287,8 @@ impl Subject {
                 &built,
                 &wall,
                 self.avatar.skin.albedo.as_slice(),
+                self.avatar.skin.roughness.as_slice(),
+                self.avatar.skin.normal.as_slice(),
                 self.atlas(),
                 &tints,
             );
@@ -2251,6 +2258,8 @@ fn items<'a>(
     built: &'a [AvatarMesh],
     wall: &'a PolyMesh,
     albedo: &'a [u8],
+    orm: &'a [u8],
+    relief: &'a [u8],
     atlas: u32,
     tints: &'a [Option<Vec<Vec3>>],
 ) -> Vec<Item<'a>> {
@@ -2282,6 +2291,8 @@ fn items<'a>(
             MeshKind::Skin => Paint::Atlas {
                 uvs: &drawn.mesh.uvs,
                 pixels: albedo,
+                orm: Some(orm),
+                normals: Some(relief),
                 side: atlas,
             },
             _ => Paint::Vertex(&drawn.mesh.colours),
@@ -2323,6 +2334,129 @@ fn backdrop(frame: &Frame) -> PolyMesh {
     }
     mesh.push_face([0, 1, 2, 3]);
     mesh
+}
+
+/// A golden pixel may drift this far per channel before it counts as changed.
+///
+/// Two steps of sRGB, which is below anything an eye can be asked to judge and
+/// above the float wobble two machines can disagree by. Zero would make the
+/// golden a hash and fail on the first FMA contraction; more would let a real
+/// shading change hide inside it.
+const GOLDEN_CHANNEL_TOLERANCE: i16 = 2;
+
+/// Share of pixels allowed past the channel tolerance before a check fails.
+const GOLDEN_PIXEL_SHARE: f32 = 0.005;
+
+/// Blesses or checks the golden images the instrument is held to (#45, #224).
+///
+/// The instrument every judgement in this crate rests on had zero tests of its
+/// own, having twice produced a false diagnosis. A golden is the cheap
+/// insurance: two fixed questions — the DEFAULT record's standing sheet and its
+/// head close-up — rendered through the very code path every other run uses,
+/// resolved down one factor so the repository carries half a megabyte rather
+/// than two.
+///
+/// Run it bare: `--golden` composes with no other flag, because a golden that
+/// moves with the flag set is not a fixture. `bless` writes `tests/golden/`;
+/// `check` compares against it and exits nonzero on drift, naming the worst
+/// channel and the share of pixels past tolerance. A missing golden fails
+/// loudly — a check that silently skips is not a check.
+fn golden(subject: &Subject, mode: &str) {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+    let standing = subject.standing();
+    let Some(head) = subject.close_up(&standing, 0.0, Focus::Head) else {
+        eprintln!("the golden head close-up would not frame");
+        std::process::exit(1);
+    };
+    let shots = [
+        ("body", light::resolve(&subject.sheet(&standing, 0.0), 2)),
+        ("head", light::resolve(&head, 2)),
+    ];
+
+    match mode {
+        "bless" => {
+            if let Err(error) = std::fs::create_dir_all(&dir) {
+                eprintln!("cannot create {}: {error}", dir.display());
+                std::process::exit(1);
+            }
+            for (name, image) in &shots {
+                write(&dir, name, image);
+            }
+            println!(
+                "blessed {} golden images into {}",
+                shots.len(),
+                dir.display()
+            );
+        }
+        "check" => {
+            let mut failed = false;
+            for (name, image) in &shots {
+                let path = dir.join(format!("{name}.png"));
+                let golden = match image::open(&path) {
+                    Ok(golden) => golden.to_rgba8(),
+                    Err(error) => {
+                        eprintln!(
+                            "no golden at {}: {error}\nrun `--golden bless` once and commit it",
+                            path.display()
+                        );
+                        std::process::exit(1);
+                    }
+                };
+                let ours = image.bytes();
+                if (golden.width() as usize, golden.height() as usize)
+                    != (image.width, image.height)
+                {
+                    eprintln!(
+                        "{name}: golden is {}x{}, render is {}x{}",
+                        golden.width(),
+                        golden.height(),
+                        image.width,
+                        image.height
+                    );
+                    failed = true;
+                    continue;
+                }
+
+                let mut worst = 0i16;
+                let mut past = 0usize;
+                for (theirs, ours) in golden.as_raw().chunks_exact(4).zip(ours.chunks_exact(4)) {
+                    let delta = theirs
+                        .iter()
+                        .zip(ours)
+                        .map(|(&a, &b)| (i16::from(a) - i16::from(b)).abs())
+                        .max()
+                        .unwrap_or(0);
+                    worst = worst.max(delta);
+                    if delta > GOLDEN_CHANNEL_TOLERANCE {
+                        past += 1;
+                    }
+                }
+                let share = past as f32 / (image.width * image.height) as f32;
+                let verdict = if share > GOLDEN_PIXEL_SHARE {
+                    failed = true;
+                    "DRIFTED"
+                } else {
+                    "matches"
+                };
+                println!(
+                    "{name}: {verdict} — worst channel delta {worst}, {past} pixels \
+                     ({:.2}%) past tolerance {GOLDEN_CHANNEL_TOLERANCE}",
+                    share * 100.0
+                );
+            }
+            if failed {
+                eprintln!(
+                    "the render has drifted from its goldens; if the change is deliberate, \
+                     eyeball the sheets and re-bless with `--golden bless`"
+                );
+                std::process::exit(1);
+            }
+        }
+        other => {
+            eprintln!("--golden takes `bless` or `check`, not `{other}`");
+            std::process::exit(2);
+        }
+    }
 }
 
 /// Saves a sheet.

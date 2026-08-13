@@ -88,6 +88,19 @@ pub enum Paint<'a> {
         uvs: &'a [Vec2],
         /// RGBA bytes.
         pixels: &'a [u8],
+        /// ORM bytes beside them — occlusion, roughness, metallic — when the
+        /// atlas carries a finish of its own. The G channel replaces the
+        /// material's constant roughness per texel; R and B are deliberately
+        /// not consumed (this renderer casts its own occlusion, and nothing on
+        /// a body is metal), which is recorded here so their silence reads as
+        /// a decision rather than an oversight (#45).
+        orm: Option<&'a [u8]>,
+        /// Tangent-space normal bytes beside them, when the atlas carries a
+        /// relief of its own. Linear data, decoded `*2-1` with no sRGB pass;
+        /// carried into world through a per-triangle `∂P/∂u, ∂P/∂v` frame
+        /// measured from these very UVs, so the map's axis convention is
+        /// honoured by construction rather than by a handedness guess (#45).
+        normals: Option<&'a [u8]>,
         /// Pixels per side.
         side: u32,
     },
@@ -257,6 +270,21 @@ impl GBuffer {
             item.material.wrap,
         );
 
+        // The tangent frame this triangle's relief lives in, measured from its
+        // own UVs. `None` off the atlas — and on a UV-degenerate triangle,
+        // where the honest answer is the smooth normal rather than a frame
+        // divided by nothing.
+        let relief = match &item.paint {
+            Paint::Atlas {
+                uvs,
+                normals: Some(map),
+                side,
+                ..
+            } => tangent_frame(world, tri.map(|at| uvs[at as usize]))
+                .map(|frame| (frame, *map, *side)),
+            _ => None,
+        };
+
         for y in (lo.y as usize)..(hi.y as usize).min(self.height) {
             for x in (lo.x as usize)..(hi.x as usize).min(self.width) {
                 let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
@@ -283,22 +311,38 @@ impl GBuffer {
                 }
 
                 let point = world[0] * bary.x + world[1] * bary.y + world[2] * bary.z;
-                let albedo = match &item.paint {
-                    Paint::Flat => item.material.albedo,
-                    Paint::Vertex(colours) => tri
-                        .iter()
-                        .zip(bary.to_array())
-                        .fold(Vec3::ZERO, |sum, (&index, weight)| {
-                            sum + colours[index as usize] * weight
-                        }),
-                    Paint::Atlas { uvs, pixels, side } => {
+                let (albedo, rough, uv) = match &item.paint {
+                    Paint::Flat => (item.material.albedo, None, None),
+                    Paint::Vertex(colours) => (
+                        tri.iter()
+                            .zip(bary.to_array())
+                            .fold(Vec3::ZERO, |sum, (&index, weight)| {
+                                sum + colours[index as usize] * weight
+                            }),
+                        None,
+                        None,
+                    ),
+                    Paint::Atlas {
+                        uvs,
+                        pixels,
+                        orm,
+                        side,
+                        ..
+                    } => {
                         let uv = tri
                             .iter()
                             .zip(bary.to_array())
                             .fold(Vec2::ZERO, |sum, (&index, weight)| {
                                 sum + uvs[index as usize] * weight
                             });
-                        sample(uv, pixels, *side)
+                        // ORM is linear data: the `.y` IS the roughness, with
+                        // no sRGB decode — only the albedo goes through
+                        // `to_linear` below.
+                        (
+                            sample(uv, pixels, *side),
+                            orm.map(|orm| sample(uv, orm, *side).y),
+                            Some(uv),
+                        )
                     }
                 };
                 let albedo = match item.tint {
@@ -315,16 +359,30 @@ impl GBuffer {
                 };
 
                 self.depth[pixel] = depth;
+                // A per-texel finish overrides only the channel the atlas
+                // carries; specular and wrap stay the material's.
+                self.finish[pixel] = match rough {
+                    Some(rough) => Vec3::new(rough, finish.y, finish.z),
+                    None => finish,
+                };
                 self.albedo[pixel] = to_linear(albedo);
-                self.normal[pixel] = tri
+                let smooth = tri
                     .iter()
                     .zip(bary.to_array())
                     .fold(Vec3::ZERO, |sum, (&index, weight)| {
                         sum + normals[index as usize] * weight
                     })
                     .normalize_or(Vec3::Y);
+                self.normal[pixel] = match (&relief, uv) {
+                    (Some(((tangent, bitangent), map, side)), Some(uv)) => {
+                        // Linear bytes to a signed vector; the Z stays along
+                        // the smooth normal, so a flat texel changes nothing.
+                        let n = sample(uv, map, *side) * 2.0 - Vec3::ONE;
+                        (*tangent * n.x + *bitangent * n.y + smooth * n.z).normalize_or(smooth)
+                    }
+                    _ => smooth,
+                };
                 self.world[pixel] = point;
-                self.finish[pixel] = finish;
                 self.covered[pixel] = true;
             }
         }
@@ -531,6 +589,36 @@ pub fn smooth_normals(positions: &[Vec3], faces: &[Vec<u32>]) -> Vec<Vec3> {
         *normal = normal.normalize_or(Vec3::Y);
     }
     normals
+}
+
+/// The tangent frame of one triangle, from its positions and UVs.
+///
+/// This is the frame a tangent-space normal map's X and Y mean: the map was
+/// baked against the atlas's own axes, so measuring both derivatives — rather
+/// than measuring one and crossing for the other — carries its convention
+/// whole, handedness included. `None` where the UVs span no area, which is a
+/// triangle the atlas cannot say anything about.
+///
+/// **Directions measured, magnitudes discarded.** `∂P/∂u` carries the chart's
+/// texel density — metres per unit of UV — and the map's slopes were baked
+/// against UNIT axes. Passed through un-normalised, every chart's relief is
+/// amplified by its own density: measured on the first render, the pore field
+/// drew as tree bark.
+fn tangent_frame(points: [Vec3; 3], uvs: [Vec2; 3]) -> Option<(Vec3, Vec3)> {
+    let edge1 = points[1] - points[0];
+    let edge2 = points[2] - points[0];
+    let delta1 = uvs[1] - uvs[0];
+    let delta2 = uvs[2] - uvs[0];
+    let det = delta1.x * delta2.y - delta1.y * delta2.x;
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let tangent = (edge1 * delta2.y - edge2 * delta1.y) / det;
+    let bitangent = (edge2 * delta1.x - edge1 * delta2.x) / det;
+    match (tangent.try_normalize(), bitangent.try_normalize()) {
+        (Some(tangent), Some(bitangent)) => Some((tangent, bitangent)),
+        _ => None,
+    }
 }
 
 /// Reads one texel.

@@ -249,6 +249,10 @@ pub fn inspect(
                     Vec3::ZERO
                 }
             }
+            // The finish's roughness channel, which was one flat grey for the
+            // whole life of the tool: the material constant. Per-texel since
+            // #45, and this view is what makes that claim checkable.
+            "roughness" => Vec3::splat(if covered { buffer.finish[pixel].x } else { 0.0 }),
             "shadow" => Vec3::splat(if covered {
                 shadow.lit(
                     buffer.world[pixel],
