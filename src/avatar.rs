@@ -337,16 +337,51 @@ impl Avatar {
                     };
                     held
                 };
-                for &vertex in mouth
-                    .upper
-                    .iter()
-                    .chain(&mouth.roof)
-                    .chain(&mouth.teeth)
-                    .chain(&mouth.overlip)
-                {
+                // The slit's outer edges give the mouth CORNERS back their
+                // share (#216). This overwrite runs after `skin::bind`, so
+                // without it the corner field would be wiped exactly at the
+                // lip's free edge — the patch around the seam would smile
+                // while the seam stayed, which is a tear. Blended, the two
+                // edges still differ (head against jaw, so the mouth still
+                // parts) and both converge to corner-held at the commissure,
+                // so a smile carries the seam's endpoint as one thing. The
+                // pocket — teeth, roof, floor — stays solely held: a corner
+                // field that caught interior vertices would make the teeth
+                // smile, and nothing about a tooth does.
+                let corners = crate::rig::skin::mouth_corners(&rig);
+                let held_with_corner = |base: usize, position: Vec3| {
+                    let mut held = solely(base);
+                    if let Some((share, corner)) = corners
+                        .iter()
+                        .map(|&corner| {
+                            (
+                                crate::rig::skin::corner_hold_at(&rig, corner, position),
+                                corner.0,
+                            )
+                        })
+                        .max_by(|a, b| a.0.total_cmp(&b.0))
+                        .filter(|&(share, _)| share > 0.0)
+                    {
+                        held[0].weight = 1.0 - share;
+                        held[1] = crate::rig::Influence {
+                            joint: corner as u16,
+                            weight: share,
+                        };
+                    }
+                    held
+                };
+                for &vertex in mouth.upper.iter().chain(&mouth.overlip) {
+                    weights.vertices[vertex as usize] =
+                        held_with_corner(head, body.positions[vertex as usize]);
+                }
+                for &vertex in mouth.roof.iter().chain(&mouth.teeth) {
                     weights.vertices[vertex as usize] = solely(head);
                 }
-                for &vertex in mouth.lower.iter().chain(&mouth.floor).chain(&mouth.lip) {
+                for &vertex in mouth.lower.iter().chain(&mouth.lip) {
+                    weights.vertices[vertex as usize] =
+                        held_with_corner(pivot, body.positions[vertex as usize]);
+                }
+                for &vertex in &mouth.floor {
                     weights.vertices[vertex as usize] = solely(pivot);
                 }
             }

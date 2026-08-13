@@ -212,6 +212,64 @@ impl SkinWeights {
     }
 }
 
+/// The mouth-corner joints a rig carries, each `(corner, side sign, head)` —
+/// empty when it carries none.
+///
+/// A corner is a skeleton-backed lone marker leaf off a non-marker parent,
+/// off the midline and BELOW its parent joint — above it is a brow, and the
+/// jaw is the marker chain. Shared by [`bind`] and the mouth cut's seam
+/// assignment (`Avatar::build`), so the two cannot disagree about what a
+/// corner is: the seam assignment overwrites the slit's own edge vertices
+/// after the bind, and it has to hand back exactly the share this field
+/// would have given them or a smile tears at the lip's free edge.
+pub(crate) fn mouth_corners(rig: &Rig) -> Vec<(usize, f32, usize)> {
+    let joints = rig.len();
+    (0..joints)
+        .filter(|&joint| {
+            rig.joints[joint].marker
+                && rig.joints[joint].node.is_some()
+                && rig.joints[joint]
+                    .parent
+                    .is_some_and(|parent| !rig.joints[parent].marker)
+                && !(0..joints).any(|child| {
+                    rig.joints[child].marker && rig.joints[child].parent == Some(joint)
+                })
+                && rig.joints[joint].position.x != 0.0
+                && rig.joints[joint].parent.is_some_and(|parent| {
+                    rig.joints[joint].position.y < rig.joints[parent].position.y
+                })
+        })
+        .filter_map(|joint| {
+            Some((
+                joint,
+                rig.joints[joint].position.x.signum(),
+                rig.joints[joint].parent?,
+            ))
+        })
+        .collect()
+}
+
+/// [`face::skull::corner_hold`](crate::face::skull) at `position`, for one
+/// entry of [`mouth_corners`].
+///
+/// The ruler arithmetic lives here once — the below-joint drop off the
+/// neck→head pair, the azimuth cosines, the side sign — because two call
+/// sites computing it independently is how a seam and a field drift apart.
+pub(crate) fn corner_hold_at(rig: &Rig, corner: (usize, f32, usize), position: Vec3) -> f32 {
+    let (_, sign, head) = corner;
+    let Some(neck) = rig.joints[head].parent else {
+        return 0.0;
+    };
+    let (crest, foot) = (rig.joints[head].position, rig.joints[neck].position);
+    let drop = (crest.y - position.y) / (crest.y - foot.y).max(f32::EPSILON);
+    let across = Vec3::new(position.x - crest.x, 0.0, position.z - crest.z);
+    let reach = across.length();
+    if reach <= f32::EPSILON {
+        return 0.0;
+    }
+    skull::corner_hold(drop, across.z / reach, across.x / reach * sign)
+}
+
 /// Computes skin weights binding `mesh` to `rig`.
 ///
 /// Every vertex ends up with at most [`MAX_INFLUENCES`] joints whose weights sum
@@ -271,18 +329,30 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
     // crown's, whose bone begins to win across the field's upper fade; a share
     // taken from the head alone would leave a crown-held stripe standing still
     // inside a moving patch. Each entry is `(brow, side sign, head, crown)`.
+    //
+    // A brow sits ABOVE its parent joint and a mouth corner BELOW it, and that
+    // height test is the whole of how the two lone-leaf families are told
+    // apart (#216): parenting the corners to the jaw pivot instead would make
+    // them indistinguishable from the jaw's TIP, which is the other marker
+    // child of a marker. A brow below the head joint would be anatomical
+    // nonsense, so the test is spent on structure rather than on tolerance.
+    let leaf = |joint: usize| {
+        rig.joints[joint].marker
+            && rig.joints[joint].node.is_some()
+            && rig.joints[joint]
+                .parent
+                .is_some_and(|parent| !rig.joints[parent].marker)
+            && !(0..joints)
+                .any(|child| rig.joints[child].marker && rig.joints[child].parent == Some(joint))
+            && rig.joints[joint].position.x != 0.0
+    };
+    let above = |joint: usize| {
+        rig.joints[joint]
+            .parent
+            .is_some_and(|parent| rig.joints[joint].position.y > rig.joints[parent].position.y)
+    };
     let brows: Vec<(usize, f32, usize, Option<usize>)> = (0..joints)
-        .filter(|&joint| {
-            rig.joints[joint].marker
-                && rig.joints[joint].node.is_some()
-                && rig.joints[joint]
-                    .parent
-                    .is_some_and(|parent| !rig.joints[parent].marker)
-                && !(0..joints).any(|child| {
-                    rig.joints[child].marker && rig.joints[child].parent == Some(joint)
-                })
-                && rig.joints[joint].position.x != 0.0
-        })
+        .filter(|&joint| leaf(joint) && above(joint))
         .filter_map(|joint| {
             let head = rig.joints[joint].parent?;
             let crown = (0..joints).find(|&child| {
@@ -293,6 +363,14 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
             Some((joint, rig.joints[joint].position.x.signum(), head, crown))
         })
         .collect();
+
+    // The mouth corners (#216): the lone leaves BELOW the head joint. Their
+    // region is `face::skull::corner_hold`, a patch astride the slit — taken
+    // from the head AND the jaw, because the seam's two edges are held by
+    // different bones (the lower is wholly the jaw's, #154) and a corner that
+    // took from only one of them would tear the commissure the first time it
+    // smiled.
+    let corners = mouth_corners(rig);
 
     let mut dense = vec![0.0f32; vertices * joints];
     for (vertex, &position) in mesh.positions.iter().enumerate() {
@@ -388,6 +466,26 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
                     row[neck] *= 1.0 - hold;
                     row[pivot] += taken;
                 }
+            }
+        }
+
+        // The mouth corners (#216), AFTER the mandible on purpose: the corner
+        // takes its share from the head and from the jaw, and the jaw's share
+        // at the commissure only exists once the mandible region has taken
+        // it. Taking from both is the seam contract — the slit's edges are
+        // head-held above and jaw-held below (#154), and a corner that moved
+        // one edge without the other would tear the mouth at its own corner.
+        for &corner in &corners {
+            let hold = corner_hold_at(rig, corner, position);
+            if hold > 0.0 {
+                let (joint, _, head) = corner;
+                let mut taken = hold * row[head];
+                row[head] *= 1.0 - hold;
+                if let Some((pivot, ..)) = jaw {
+                    taken += hold * row[pivot];
+                    row[pivot] *= 1.0 - hold;
+                }
+                row[joint] += taken;
             }
         }
         normalize(row);
@@ -936,12 +1034,19 @@ mod tests {
             // held 1.000 by the head and travels 0.00 mm, the lower lip travels
             // 13.5 mm. Swept over `face_length` −1 to +1 the upper lip's travel
             // stays under 0.9 mm, which is what the margins here are for.
+            //
+            // Asserted as "not the JAW's" rather than "the head's", because
+            // #216 made the second form false on purpose: near the commissure
+            // the upper lip is corner-held, and a corner joint hangs off the
+            // head — static under a jaw open, which is all this contract ever
+            // required. The head's own share on the band measured 0.711 the
+            // day the corners landed; the jaw's, 0.049.
             assert!(
-                upper.2 > 0.90,
-                "{what}: the upper lip is held {:.3} by the head and {:.3} by the jaw — it belongs \
-                 to the skull, and a mouth whose top lip drops with its bottom one cannot open",
-                upper.2,
+                upper.1 < 0.10,
+                "{what}: the upper lip is held {:.3} by the jaw (and {:.3} by the head) — a mouth \
+                 whose top lip drops with its bottom one cannot open",
                 upper.1,
+                upper.2,
             );
             assert!(
                 upper.3 < 2.0,
@@ -1118,10 +1223,11 @@ mod tests {
         let radius = rig.joints[head].radius;
 
         // The same structural identification `bind` uses: skeleton-backed
-        // marker leaves off the midline. The lid joints are marker leaves too
-        // but carry no node, which is the whole of how the two families are
-        // told apart — if this find ever returns four joints, that
-        // distinction has broken and the forehead belongs to nobody knowable.
+        // marker leaves off the midline, ABOVE the head joint. The lid joints
+        // are marker leaves too but carry no node, and the mouth corners
+        // (#216) are the same shape of leaf below the joint — if this find
+        // ever returns more than two, one of those distinctions has broken
+        // and the forehead belongs to nobody knowable.
         let brows: Vec<usize> = (0..rig.len())
             .filter(|&joint| {
                 rig.joints[joint].marker
@@ -1133,6 +1239,9 @@ mod tests {
                         rig.joints[child].marker && rig.joints[child].parent == Some(joint)
                     })
                     && rig.joints[joint].position.x != 0.0
+                    && rig.joints[joint].parent.is_some_and(|parent| {
+                        rig.joints[joint].position.y > rig.joints[parent].position.y
+                    })
             })
             .collect();
         assert_eq!(brows.len(), 2, "a humanoid carries one brow joint per side");
@@ -1186,6 +1295,114 @@ mod tests {
             crown_travel < 0.5,
             "the crown travels {crown_travel:.2} mm under a brow raise — the fade is not \
              dying by the hairline"
+        );
+    }
+
+    #[test]
+    fn the_corners_smile_and_the_face_does_not() {
+        // #216's contract, the third of its family (#135, #215): only posing
+        // the joints says anything about the binding. A 15-degree smile, four
+        // bands in the below-joint ruler `corner_hold` is authored in:
+        // * each CORNER patch must travel — the lever from the pivot to the
+        //   commissure is ~16 mm on the default, capped at 0.72;
+        // * the PHILTRUM must not: the pose's lift is proportional to x off
+        //   the pivot, and the field dies by side 0.10, so the midline is
+        //   protected twice over — this asserts both protections survived;
+        // * the CHIN's midline must not — the field's height band ends well
+        //   above it;
+        // * the BROW band must not: a smile that raises the brows has crossed
+        //   two territories, which no field here may do.
+        use crate::anim::Pose;
+        use glam::Quat;
+
+        let record = crate::AvatarRecord::new("Smiled", crate::Archetype::default());
+        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let rig = &avatar.rig;
+        let body = &avatar.parts.body;
+        let head = *rig.in_zone(Zone::Head).first().expect("a head");
+        let crest = rig.joints[head].position;
+        let neck = rig.joints[head].parent.expect("a head sits on a neck");
+        let span = crest.y - rig.joints[neck].position.y;
+        let radius = rig.joints[head].radius;
+
+        let corners = mouth_corners(rig);
+        assert_eq!(
+            corners.len(),
+            2,
+            "a humanoid carries one mouth-corner joint per side"
+        );
+
+        let mut pose = Pose::rest(rig);
+        for &(corner, sign, _) in &corners {
+            pose.rotations[corner] = Quat::from_rotation_z(sign * 15f32.to_radians());
+        }
+        let moved = pose
+            .forward(rig)
+            .deform(rig, &body.positions, &avatar.parts.weights);
+
+        // `below` in span fractions, `out` in span fractions of |x|; frontal
+        // only. The corner band brackets the line's 0.345 and the corner's
+        // side range; the numbers are #216's probe.
+        let band = |low: f32, high: f32, out_low: f32, out_high: f32| -> (usize, f32) {
+            let (mut count, mut travel) = (0usize, 0.0f32);
+            for (vertex, &rest) in body.positions.iter().enumerate() {
+                let local = rest - crest;
+                let below = -local.y / span;
+                let out = local.x.abs() / span;
+                if below < low || below >= high || out < out_low || out >= out_high {
+                    continue;
+                }
+                if local.z <= 0.0 {
+                    continue;
+                }
+                count += 1;
+                travel += (moved[vertex] - rest).length();
+            }
+            (count, travel / count.max(1) as f32 * 1000.0)
+        };
+        let (corner_count, corner_travel) = band(0.28, 0.42, 0.10, 0.30);
+        let (philtrum_count, philtrum_travel) = band(0.24, 0.34, 0.00, 0.04);
+        let (chin_count, chin_travel) = band(0.50, 0.70, 0.00, 0.10);
+        // The brow band, in the head-radius ruler `brow_hold` uses.
+        let (mut brow_count, mut brow_travel) = (0usize, 0.0f32);
+        for (vertex, &rest) in body.positions.iter().enumerate() {
+            let local = rest - crest;
+            let rise = local.y / radius;
+            if !(0.18..0.28).contains(&rise) || local.z <= 0.0 {
+                continue;
+            }
+            brow_count += 1;
+            brow_travel += (moved[vertex] - rest).length();
+        }
+        let brow_travel = brow_travel / brow_count.max(1) as f32 * 1000.0;
+
+        println!(
+            "a 15-degree smile: the corner bands travel {corner_travel:.2} mm ({corner_count} \
+             vertices), the philtrum {philtrum_travel:.2} ({philtrum_count}), the chin \
+             {chin_travel:.2} ({chin_count}), the brows {brow_travel:.2} ({brow_count})"
+        );
+        assert!(
+            corner_count > 50 && philtrum_count > 20 && chin_count > 50 && brow_count > 50,
+            "a band is starved of vertices — the ruler moved, not the binding"
+        );
+        assert!(
+            corner_travel > 1.0,
+            "the corner bands travel {corner_travel:.2} mm at a 15-degree smile — the territory \
+             does not articulate"
+        );
+        assert!(
+            philtrum_travel < 0.6,
+            "the philtrum travels {philtrum_travel:.2} mm under a smile — the field is crossing \
+             the midline"
+        );
+        assert!(
+            chin_travel < 0.6,
+            "the chin travels {chin_travel:.2} mm under a smile — the field is reaching into the \
+             mandible's own territory"
+        );
+        assert!(
+            brow_travel < 0.3,
+            "the brows travel {brow_travel:.2} mm under a smile — two territories have crossed"
         );
     }
 

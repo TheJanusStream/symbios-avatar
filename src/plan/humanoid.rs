@@ -280,23 +280,24 @@ impl BodyPlan for HumanoidParams {
                 .as_marker()
                 .in_zone(Zone::Head),
         );
-        // The brows: one marker per side, rig-only like the jaw's pair, each a
-        // LEAF hanging straight off the head — which is also how `skin::bind`
-        // tells the families apart with no names to read: the jaw is the marker
-        // chain (a marker whose parent is a marker), a brow is a lone marker
-        // leaf, and its side is the sign of its `x`. See
-        // [`super::derive::humanoid::BROW_JOINT`] for why each sits on the
-        // skull's axis at eye height rather than on the brow it drives.
-        for side in [1.0f32, -1.0] {
-            skeleton.extend_from(
-                head,
-                Node::new(
-                    Vec3::new(d.brow_at.x * side, d.brow_at.y, d.brow_at.z),
-                    d.brow_r,
-                )
-                .as_marker()
-                .in_zone(Zone::Head),
-            );
+        // The brows and the mouth corners: one marker per side of each,
+        // rig-only like the jaw's pair, each a LEAF hanging straight off the
+        // head — which is also how `skin::bind` tells the families apart with
+        // no names to read: the jaw is the marker chain (a marker whose parent
+        // is a marker), a lone marker leaf ABOVE the head joint is a brow and
+        // one BELOW it is a mouth corner, and the side each drives is the sign
+        // of its `x`. See [`super::derive::humanoid::BROW_JOINT`] and
+        // [`super::derive::humanoid::CORNER_JOINT`] for why each sits on the
+        // skull's axis rather than on the feature it drives.
+        for (at, radius) in [(d.brow_at, d.brow_r), (d.corner_at, d.corner_r)] {
+            for side in [1.0f32, -1.0] {
+                skeleton.extend_from(
+                    head,
+                    Node::new(Vec3::new(at.x * side, at.y, at.z), radius)
+                        .as_marker()
+                        .in_zone(Zone::Head),
+                );
+            }
         }
 
         // **A body's left limbs are the ones at `+X`** (#142). This body faces

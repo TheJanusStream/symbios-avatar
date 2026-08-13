@@ -642,6 +642,35 @@ const BROW_JOINT: Vec2 = Vec2::new(0.30, 0.049);
 /// this matches the smaller of them.
 const BROW_REACH: f32 = 0.10;
 
+/// Where each mouth-corner marker sits: `(out from the midline in head radii,
+/// down from the head's joint as a share of its reach BELOW the joint)`, at
+/// `z = 0` — on the skull's axis, like [`BROW_JOINT`] and for the same reason:
+/// a smile is skin sliding over the teeth, so the joint is a deep pivot and
+/// the territory (`crate::face::skull::corner_hold`) is what selects the skin.
+///
+/// The height is the MOUTH LINE, measured in the below-joint span because
+/// that is the ruler the line is stationary in: 0.345 of it on the default
+/// and at both mouth-width ends and the full mouth (#216's probe; the same
+/// ruler argument as `JAW_TIP`'s 0.603, made once and reused).
+///
+/// The lateral component is deliberately SMALL and off the midline in each
+/// corner's own direction. Two reasons, one structural and one geometric. It
+/// must be nonzero with its sign naming the side, because a corner marker is
+/// otherwise indistinguishable from a brow marker (both are skeleton-backed
+/// lone marker leaves off the head — the corner is BELOW the parent joint
+/// where the brow is above, and `x` names which side each drives). And it
+/// must be small because the smile pose rotates about `z` through this
+/// pivot, so a vertex's lift is proportional to its `x` distance FROM the
+/// pivot: a pivot near the midline puts the zero of the motion at the
+/// philtrum and the maximum at the commissure, which is the shape of a
+/// smile. The corner itself sits at 0.21 to 0.31 of the head's horizontal
+/// reach by the mouth-width axis; 0.06 leaves 16 mm of lever on the default.
+/// Provenance: **measured** (#216) — the probe above, on built bodies.
+const CORNER_JOINT: Vec2 = Vec2::new(0.06, 0.345);
+
+/// The corner markers' radius, in head radii. See [`BROW_REACH`].
+const CORNER_REACH: f32 = 0.10;
+
 /// How far the `head_breadth` axis narrows or broadens the skull, as a share of
 /// its own lateral half-extent at each end.
 ///
@@ -832,6 +861,10 @@ pub(crate) struct Dimensions {
     pub brow_at: Vec3,
     /// Marker radius of a brow.
     pub brow_r: f32,
+    /// Where the `+X` mouth-corner's marker sits; the other is its mirror.
+    pub corner_at: Vec3,
+    /// Marker radius of a mouth corner.
+    pub corner_r: f32,
     /// How far out the clavicle sits, on the `+X` side.
     pub clavicle_x: f32,
     /// Height of the clavicle.
@@ -2674,6 +2707,12 @@ impl Dimensions {
             jaw_tip_r: head_r * JAW_REACH.y,
             brow_at: Vec3::new(head_r * BROW_JOINT.x, head_y + head_r * BROW_JOINT.y, 0.0),
             brow_r: head_r * BROW_REACH,
+            corner_at: Vec3::new(
+                head_r * CORNER_JOINT.x,
+                head_y - (head_y - neck_y) * CORNER_JOINT.y,
+                0.0,
+            ),
+            corner_r: head_r * CORNER_REACH,
             clavicle_x,
             clavicle_y,
             clavicle_r,

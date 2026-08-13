@@ -930,10 +930,11 @@ mod tests {
         assert_eq!(graspers.len(), 2, "and has two hands");
 
         // Skull and crown, which a head needs to have a dome, plus the jaw's
-        // pivot and tip (#134) and the two brow markers (#215) — rig-only
-        // markers, so they are joints here and nothing in the cage. Anything
-        // that wants THE head joint takes the first, which is the skull.
-        assert_eq!(rig.in_zone(Zone::Head).len(), 6);
+        // pivot and tip (#134), the two brow markers (#215) and the two mouth
+        // corners (#216) — rig-only markers, so they are joints here and
+        // nothing in the cage. Anything that wants THE head joint takes the
+        // first, which is the skull.
+        assert_eq!(rig.in_zone(Zone::Head).len(), 8);
         assert_eq!(rig.in_zone(Zone::UpperLimb(Limb::ForeLeft)).len(), 2);
     }
 

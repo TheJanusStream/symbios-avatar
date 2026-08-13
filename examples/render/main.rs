@@ -46,6 +46,7 @@
 //! cargo run --release --example render -- --clumps    # grow the new clump engine on all five regions
 //! cargo run --release --example render -- --jaw 20    # open the mouth this many degrees
 //! cargo run --release --example render -- --brows 8   # raise the brows this many degrees
+//! cargo run --release --example render -- --corners 12 # smile this many degrees (negative frowns)
 //! cargo run --release --example render -- --jawsweep # tune the jaw's binding reach by measurement
 //! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
 //! cargo run --release --example render -- --clip Wave --clipframes 12   # more frames of it
@@ -559,6 +560,10 @@ fn main() {
     // How far the brows are raised, in degrees; negative lowers them. Same
     // instrument-first argument as `--jaw` one slice later (#215).
     let brows = value("--brows").and_then(|degrees| degrees.parse::<f32>().ok());
+    // How far the mouth corners are raised (a smile) or, negative, dropped (a
+    // frown), in degrees. The third pose this file exists to take before any
+    // system does (#216).
+    let corners = value("--corners").and_then(|degrees| degrees.parse::<f32>().ok());
     let show = Show {
         linear,
         bare,
@@ -575,6 +580,7 @@ fn main() {
         gaze,
         jaw,
         brows,
+        corners,
     };
     if clumps {
         grow_clumps(&mut avatar, &record);
@@ -590,12 +596,17 @@ fn main() {
             None => eprintln!("this body has no jaw bone to sweep"),
         }
     }
-    let arches = brow_bones(&avatar.rig, &record.skeleton());
+    let arches = face_leaves(&avatar.rig, &record.skeleton(), true);
     if brows.is_some() && arches.is_empty() {
         eprintln!("this body has no brow joints: --brows needs a humanoid");
         std::process::exit(1);
     }
-    let subject = Subject::new(avatar, show, mandible, arches);
+    let commissures = face_leaves(&avatar.rig, &record.skeleton(), false);
+    if corners.is_some() && commissures.is_empty() {
+        eprintln!("this body has no mouth-corner joints: --corners needs a humanoid");
+        std::process::exit(1);
+    }
+    let subject = Subject::new(avatar, show, mandible, arches, commissures);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
         match focus {
@@ -778,6 +789,9 @@ struct Show {
     /// and a territory, and only rotating the joints can show whether the
     /// binding articulates — a green suite cannot (#135).
     brows: Option<f32>,
+    /// How far the mouth corners are raised (a smile) or dropped (a frown),
+    /// in degrees, if at all (#216).
+    corners: Option<f32>,
 }
 
 /// The mandible, as the rig carries it.
@@ -815,11 +829,12 @@ fn jaw_bone(rig: &Rig, skeleton: &Skeleton) -> Option<JawBone> {
     })
 }
 
-/// The brow joints, as the rig carries them: lone marker leaves off a
-/// non-marker parent, off the midline — the same structural identification
-/// `skin::bind` uses, so the instrument poses exactly the joints the binding
-/// credits (#215).
-fn brow_bones(rig: &Rig, skeleton: &Skeleton) -> Vec<usize> {
+/// The brow joints (`above` true) or the mouth corners (`above` false), as
+/// the rig carries them: lone marker leaves off a non-marker parent, off the
+/// midline, split by which side of their parent joint they sit — the same
+/// structural identification `skin::bind` uses, so the instrument poses
+/// exactly the joints the binding credits (#215, #216).
+fn face_leaves(rig: &Rig, skeleton: &Skeleton, above: bool) -> Vec<usize> {
     let marked = |joint: usize| {
         rig.joints[joint]
             .node
@@ -834,6 +849,9 @@ fn brow_bones(rig: &Rig, skeleton: &Skeleton) -> Vec<usize> {
                 && !(0..rig.len())
                     .any(|child| marked(child) && rig.joints[child].parent == Some(joint))
                 && rig.joints[joint].position.x != 0.0
+                && rig.joints[joint].parent.is_some_and(|parent| {
+                    (rig.joints[joint].position.y > rig.joints[parent].position.y) == above
+                })
         })
         .collect()
 }
@@ -929,6 +947,8 @@ struct Subject {
     jaw: Option<JawBone>,
     /// The brow joints, for `--brows`.
     brows: Vec<usize>,
+    /// The mouth-corner joints, for `--corners`.
+    corners: Vec<usize>,
     gait: Gait,
     stride: Stride,
     /// The centre of the body's rest extent.
@@ -939,7 +959,13 @@ struct Subject {
 
 impl Subject {
     /// Wraps a built avatar in what a contact sheet additionally needs.
-    fn new(avatar: Avatar, show: Show, jaw: Option<JawBone>, brows: Vec<usize>) -> Self {
+    fn new(
+        avatar: Avatar,
+        show: Show,
+        jaw: Option<JawBone>,
+        brows: Vec<usize>,
+        corners: Vec<usize>,
+    ) -> Self {
         let (lo, hi) = avatar.parts.body.bounds();
         Self {
             gait: Gait::natural(&avatar.rig),
@@ -950,6 +976,7 @@ impl Subject {
             show,
             jaw,
             brows,
+            corners,
         }
     }
 
@@ -986,6 +1013,18 @@ impl Subject {
         if let Some(degrees) = self.show.brows {
             for &brow in &self.brows {
                 pose.rotations[brow] = Quat::from_rotation_x(-degrees.to_radians());
+            }
+        }
+        // About the FORE axis at each corner's pivot near the midline: a
+        // vertex's lift under z-rotation is proportional to its x distance
+        // from the pivot, so the philtrum holds still and the commissure
+        // moves most, which is the shape of a smile (#216). The sign flips
+        // per side so both corners rise together; negative degrees is a
+        // frown.
+        if let Some(degrees) = self.show.corners {
+            for &corner in &self.corners {
+                let sign = rig.joints[corner].position.x.signum();
+                pose.rotations[corner] = Quat::from_rotation_z(sign * degrees.to_radians());
             }
         }
         // Through the real gaze system rather than a rotation dropped on the

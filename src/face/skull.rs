@@ -2016,6 +2016,47 @@ pub(crate) fn brow_hold(rise: f32, facing: f32, side: f32) -> f32 {
     risen * fade * ahead * mine
 }
 
+/// How much of the skin at a point one MOUTH CORNER carries, `0..1`.
+///
+/// The third face territory (#216): a patch astride the commissure, one side
+/// at a time. `below` is the fraction of the head's below-joint span — the
+/// mandible's own ruler, because this field lives where that one does —
+/// `facing`/`side` the usual azimuth cosines, `side` signed toward the corner
+/// being asked about like [`brow_hold`]'s.
+///
+/// The bands, measured (#216's probe):
+/// * **Height**: symmetric about the MOUTH LINE, which sits at 0.345 of the
+///   span on every body probed and dips toward the corner — the centre
+///   follows that dip. Symmetric about the line and not about a height
+///   constant, because the slit's two edges are held by different bones
+///   (head above, jaw below — the lower edge is wholly the jaw's, #154) and
+///   only a field that takes the SAME share from both sides moves the seam
+///   as one thing. Full within ±0.06 of the span, gone by ±0.10.
+/// * **Side**: the corner sits at 0.21 to 0.31 of the horizontal reach by
+///   the mouth-width axis; the field rises from 0.10, holds across that
+///   range, and dies by 0.48 — in from the cheek, out of the philtrum and
+///   the chin's midline.
+/// * **Facing**: a frontal guard only; the mouth is nearly frontal (the
+///   corner measures 0.95), so `side` is the coordinate that does the work
+///   here, the opposite division of labour from the brow's.
+///
+/// **Capped at 0.72 rather than reaching 1.0, and the cap is the jaw's.** A
+/// corner fully owned by its own joint is pinned when the mandible opens,
+/// and a mouth whose corners do not follow the jaw at all opens as a slot in
+/// a mask. At 0.72 the corner keeps about a quarter of its jaw share below
+/// the line, so an open carries the commissure part-way — the almond a real
+/// mouth opens into — while a smile still moves the corner at nearly
+/// three-quarters of the rigid arc.
+pub(crate) fn corner_hold(below: f32, facing: f32, side: f32) -> f32 {
+    let out = side.abs().min(0.31);
+    let line = 0.345 + 0.018 * (out / 0.26) * (out / 0.26);
+    let band = smooth((0.10 - (below - line).abs()) / 0.04);
+    let outward = smooth((side - 0.10) / 0.08);
+    let inward = smooth((0.48 - side) / 0.12);
+    let ahead = smooth((facing - 0.60) / 0.15);
+    0.72 * band * outward * inward * ahead
+}
+
 /// How strongly a point belongs to the lower-jaw region, 0..1 (#152).
 ///
 /// **The owner's contract, verbatim: "the lower jaw should include the lower
