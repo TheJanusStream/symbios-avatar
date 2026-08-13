@@ -28,7 +28,6 @@ pub struct Params {
     pub sideburn: f32,
 }
 
-
 impl Params {
     /// Clamps each axis to the range its docstring promises.
     pub fn sanitize(&mut self) {

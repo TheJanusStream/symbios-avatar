@@ -133,7 +133,11 @@ fn cards(region: &str, style: &str, axis: f32) {
     }
     let (throat, crown) = skull.throat_and_crown();
     println!("{region} — {named}, {} roots asked for", roots.len());
-    println!("  crown {:+.1} mm, throat {:+.1} mm", crown * 1000.0, throat * 1000.0);
+    println!(
+        "  crown {:+.1} mm, throat {:+.1} mm",
+        crown * 1000.0,
+        throat * 1000.0
+    );
     println!();
     println!(
         "    #  azimuth  root mm  weight   len mm  on head   w@.02  w@.25  w@.60  w@1.0  \
@@ -337,7 +341,8 @@ fn card(
         }
         let azimuth = at.x.atan2(at.z);
         let profile = skull.surface_at(at.y.clamp(throat, crown), azimuth);
-        let out = (at.x * at.x + at.z * at.z).sqrt() - (profile.x * profile.x + profile.z * profile.z).sqrt();
+        let out = (at.x * at.x + at.z * at.z).sqrt()
+            - (profile.x * profile.x + profile.z * profile.z).sqrt();
         if out > stands {
             stands = out;
             stands_at = at.y;
@@ -719,8 +724,8 @@ fn surface_of(body: &PolyMesh, rig: &symbios_avatar::Rig, origin: Vec3) -> Vec<(
             let corners = &body.faces[face];
             let area = (1..corners.len().saturating_sub(1))
                 .map(|step| {
-                    let one =
-                        body.positions[corners[step] as usize] - body.positions[corners[0] as usize];
+                    let one = body.positions[corners[step] as usize]
+                        - body.positions[corners[0] as usize];
                     let two = body.positions[corners[step + 1] as usize]
                         - body.positions[corners[0] as usize];
                     one.cross(two).length() * 0.5
@@ -792,5 +797,9 @@ fn edge_of(head: &Head, follicle: Follicle) -> f32 {
     // A smoothstep spends 0.1 to 0.9 over about 0.58 of its run, and its
     // steepest slope is 1.5 over that run — so the width the eye reads is this
     // rather than the reciprocal of the slope.
-    if steepest > 0.0 { 0.58 * 1.5 / steepest } else { 0.0 }
+    if steepest > 0.0 {
+        0.58 * 1.5 / steepest
+    } else {
+        0.0
+    }
 }

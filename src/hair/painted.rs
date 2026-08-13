@@ -255,7 +255,10 @@ mod tests {
         paint.sanitize();
         let once = paint;
         paint.sanitize();
-        assert_eq!(once, paint, "sanitize moved a record it had already cleaned");
+        assert_eq!(
+            once, paint,
+            "sanitize moved a record it had already cleaned"
+        );
         assert_eq!(paint.scalp.density, 1.0);
         assert_eq!(paint.scalp.colour[0], 0.0);
         assert_eq!(paint.scalp.colour[2], 1.0);
@@ -302,7 +305,12 @@ mod tests {
         // beard's painted strength exactly what #200 judged.
         for follicle in [Follicle::Moustache, Follicle::Chin, Follicle::Flanks] {
             let grain = Grain::of(follicle);
-            assert_eq!(grain.shows, 1.0, "the {} is no longer a shave", follicle.name());
+            assert_eq!(
+                grain.shows,
+                1.0,
+                "the {} is no longer a shave",
+                follicle.name()
+            );
             assert!((grain.at(0.5, 0.0) - 0.5).abs() < 1e-6);
         }
         // And a brow is dense hair rather than a shave, which is the whole point.

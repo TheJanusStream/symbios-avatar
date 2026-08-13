@@ -235,7 +235,12 @@ impl Follicles {
     /// rather than measuring its own: see the module header for what a second
     /// `Skull::measure` costs.
     #[must_use]
-    pub fn of(rig: &crate::rig::Rig, skull: &Skull, canon: &Canon, params: &FollicleParams) -> Self {
+    pub fn of(
+        rig: &crate::rig::Rig,
+        skull: &Skull,
+        canon: &Canon,
+        params: &FollicleParams,
+    ) -> Self {
         Self {
             head: skull.head,
             origin: rig.joints[skull.head].position,

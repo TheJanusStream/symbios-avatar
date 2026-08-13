@@ -163,7 +163,10 @@ pub(super) fn loft(
         for edge in [-1.0f32, 1.0] {
             into.positions.push(*at + side * (half * edge));
             into.normals.push(out);
-            into.uvs.push(Vec2::new((edge + 1.0) * 0.5, walked / length.max(f32::EPSILON)));
+            into.uvs.push(Vec2::new(
+                (edge + 1.0) * 0.5,
+                walked / length.max(f32::EPSILON),
+            ));
             into.colours.push(shade);
             // **Bound like the skin it grew out of at the root, and like the
             // head at the tip** (#207). The whole crop used to bind rigidly to
@@ -189,8 +192,7 @@ pub(super) fn loft(
     // One quad a segment, which the mesh counts as the two triangles it is.
     for segment in 0..stations.saturating_sub(1) {
         let step = first + segment as u32 * 2;
-        into.faces
-            .push(vec![step, step + 1, step + 3, step + 2]);
+        into.faces.push(vec![step, step + 1, step + 3, step + 2]);
     }
     stations
 }
@@ -301,4 +303,3 @@ fn normalised(mut skin: VertexSkin) -> VertexSkin {
 fn shade(roots: Vec3, tips: Vec3, along: f32) -> Vec3 {
     roots.lerp(tips, along.clamp(0.0, 1.0))
 }
-

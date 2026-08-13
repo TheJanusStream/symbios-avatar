@@ -230,7 +230,10 @@ fn avatar_report(dir: &std::path::Path, name: &str, record: &AvatarRecord) -> us
         for grown in &hair.grown {
             println!(
                 "{:<16} {:<7} {:>4} clumps, {:>6} triangles",
-                "", grown.follicle.name(), grown.clumps, grown.tris
+                "",
+                grown.follicle.name(),
+                grown.clumps,
+                grown.tris
             );
         }
     }

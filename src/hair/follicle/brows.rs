@@ -240,7 +240,6 @@ impl Ridge {
     pub fn height(&self, along: f32) -> f32 {
         self.level + self.arch * (hump(along.clamp(0.0, 1.0)) - ARCH_MEAN)
     }
-
 }
 
 /// The brows, cut from one head's landmarks.

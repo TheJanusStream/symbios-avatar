@@ -23,7 +23,6 @@ pub struct Params {
     pub drop: f32,
 }
 
-
 impl Params {
     /// Clamps each axis to the range its docstring promises.
     pub fn sanitize(&mut self) {
@@ -194,8 +193,12 @@ impl Moustache {
 
 impl Region for Moustache {
     fn weight(&self, at: &At) -> f32 {
-        band(at.height, self.lip.vermilion, self.lip.nostrils, self.lip.fade)
-            * crate::face::smooth((self.lip.half - at.across.abs()) / self.lip.fade)
+        band(
+            at.height,
+            self.lip.vermilion,
+            self.lip.nostrils,
+            self.lip.fade,
+        ) * crate::face::smooth((self.lip.half - at.across.abs()) / self.lip.fade)
             * crate::face::smooth((at.forward - FRONT) / 0.30)
     }
 }
