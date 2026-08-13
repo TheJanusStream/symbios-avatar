@@ -41,7 +41,7 @@ use crate::plan::scaled;
 
 /// The base styles of the chin.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "name", rename_all = "snake_case")]
 pub enum ChinStyle {
     /// Nothing is grown here: the chin is painted, or shaved.
     #[default]
@@ -389,8 +389,7 @@ impl Beard {
     /// cannot be re-entered by one.
     fn leaves(&self, root: &Root) -> Vec3 {
         let hang = self.pad.hangs_from();
-        let toward =
-            Vec3::new(hang.x - root.at.x, 0.0, hang.z - root.at.z).normalize_or(Vec3::Z);
+        let toward = Vec3::new(hang.x - root.at.x, 0.0, hang.z - root.at.z).normalize_or(Vec3::Z);
         let aim = (Vec3::NEG_Y + toward * FORWARD).normalize_or(Vec3::NEG_Y);
         let flow = (aim - root.out * aim.dot(root.out)).normalize_or(root.out);
         let leaves = root.out.lerp(flow, LIE).normalize_or(root.out);
@@ -462,8 +461,8 @@ impl Shape for Beard {
         // rooted under the jaw — already below the menton — converges from its
         // first station, which is the case the throat cares about.
         let hang = self.pad.hangs_from();
-        let below = ((self.pad.under - at.y) / (self.reach * FALLEN).max(f32::EPSILON))
-            .clamp(0.0, 1.0);
+        let below =
+            ((self.pad.under - at.y) / (self.reach * FALLEN).max(f32::EPSILON)).clamp(0.0, 1.0);
         // Squared in the descent, so nothing moves sideways until the clump is
         // well clear. A gather already scheduled below the patch's own edge
         // still had a seventh of itself applied a centimetre under it, which on
@@ -644,7 +643,9 @@ mod tests {
             let tip = (0..rig.len())
                 .find(|&tip| {
                     rig.joints[tip].marker
-                        && rig.joints[tip].parent.is_some_and(|at| rig.joints[at].marker)
+                        && rig.joints[tip]
+                            .parent
+                            .is_some_and(|at| rig.joints[at].marker)
                 })
                 .expect("a humanoid has a jaw");
             let pivot = rig.joints[tip].parent.expect("the tip hangs off the pivot");
@@ -658,8 +659,7 @@ mod tests {
             // real and named on the issue; what this asserts is the range Talk
             // actually drives.
             let mut open = Pose::rest(rig);
-            open.rotations[pivot] =
-                Quat::from_rotation_x(crate::face::TalkConfig::default().open);
+            open.rotations[pivot] = Quat::from_rotation_x(crate::face::TalkConfig::default().open);
             for (name, pose) in [("at rest", Pose::rest(rig)), ("talking", open)] {
                 let posed = pose.forward(rig);
                 // The closed solid, posed: `parts.body` is the un-charted one,
@@ -679,8 +679,7 @@ mod tests {
                 );
                 let skull = Skull::measure(&avatar.parts.body, rig).expect("a head measures");
                 let canon = Canon::measure(rig, &skull, &record.eyes);
-                let follicles =
-                    Follicles::of(rig, &skull, &canon, &record.hair.regions);
+                let follicles = Follicles::of(rig, &skull, &canon, &record.hair.regions);
                 let pad = follicles.pad();
                 let origin = rig.joints[follicles.head].position;
                 // **Buried rather than touching, and the difference is the
@@ -696,9 +695,16 @@ mod tests {
                 // somebody's neck means, and what hair grazing a jaw does not.
                 let buried = |at: Vec3| {
                     body.contains(at)
-                        && [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z]
-                            .into_iter()
-                            .all(|step| body.contains(at + step * DEEP))
+                        && [
+                            Vec3::X,
+                            Vec3::NEG_X,
+                            Vec3::Y,
+                            Vec3::NEG_Y,
+                            Vec3::Z,
+                            Vec3::NEG_Z,
+                        ]
+                        .into_iter()
+                        .all(|step| body.contains(at + step * DEEP))
                 };
                 let mut inside = 0usize;
                 let mut worst = Vec3::ZERO;

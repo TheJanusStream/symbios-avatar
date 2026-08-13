@@ -51,7 +51,7 @@ use crate::plan::scaled;
 
 /// The base styles of the upper lip.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "name", rename_all = "snake_case")]
 pub enum MoustacheStyle {
     /// Nothing is grown here: the lip is painted, or bare.
     #[default]
@@ -668,10 +668,12 @@ mod tests {
             };
             let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
             let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
-            let follicles =
-                Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
+            let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
             let hair = grown(&record, &avatar, &follicles);
-            assert!(!hair.is_empty(), "a {style:?} at a full cut grew nothing at all");
+            assert!(
+                !hair.is_empty(),
+                "a {style:?} at a full cut grew nothing at all"
+            );
             let origin = follicles.origin();
             let seam: Vec<Vec3> = mouth
                 .upper
@@ -717,9 +719,17 @@ mod tests {
                 hair.len()
             );
             let lip = follicles.lip();
-            let (lo, hi) = hair.iter().fold((f32::MAX, f32::MIN), |s, at| (s.0.min(at.y), s.1.max(at.y)));
-            println!("{style:?}: {checked} vertices, closest {:.2} mm above the cut; band {:+.1}..{:+.1}, hair {:+.1}..{:+.1}",
-                closest * 1000.0, lip.vermilion*1000.0, lip.nostrils*1000.0, lo*1000.0, hi*1000.0);
+            let (lo, hi) = hair
+                .iter()
+                .fold((f32::MAX, f32::MIN), |s, at| (s.0.min(at.y), s.1.max(at.y)));
+            println!(
+                "{style:?}: {checked} vertices, closest {:.2} mm above the cut; band {:+.1}..{:+.1}, hair {:+.1}..{:+.1}",
+                closest * 1000.0,
+                lip.vermilion * 1000.0,
+                lip.nostrils * 1000.0,
+                lo * 1000.0,
+                hi * 1000.0
+            );
         }
     }
 

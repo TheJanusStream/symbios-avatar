@@ -57,7 +57,7 @@ use crate::plan::scaled;
 /// four axes every style shares — length, coarseness, density, how far it hangs —
 /// are [`Cut`]'s, so a variant's own field is the fifth and last.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "name", rename_all = "snake_case")]
 pub enum ScalpStyle {
     /// Nothing is grown here: the scalp is painted, or bare.
     #[default]

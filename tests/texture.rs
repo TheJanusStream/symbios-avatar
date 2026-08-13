@@ -111,7 +111,6 @@ fn a_complexion_survives_a_share_code() {
             undertone: -0.6,
             blush: 0.7,
             freckles: 0.4,
-            stubble: 0.9,
         },
         ..Default::default()
     };
@@ -123,7 +122,6 @@ fn a_complexion_survives_a_share_code() {
     assert!(delta(copy.skin.undertone, source.skin.undertone) < 0.01);
     assert!(delta(copy.skin.blush, source.skin.blush) < 0.01);
     assert!(delta(copy.skin.freckles, source.skin.freckles) < 0.01);
-    assert!(delta(copy.skin.stubble, source.skin.stubble) < 0.01);
 }
 
 #[test]

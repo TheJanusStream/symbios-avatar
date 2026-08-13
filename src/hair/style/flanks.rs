@@ -33,7 +33,7 @@ use crate::plan::scaled;
 
 /// The base styles of the jaw's flanks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "name", rename_all = "snake_case")]
 pub enum FlankStyle {
     /// Nothing is grown here: the flank is painted, or shaved.
     #[default]
@@ -454,7 +454,10 @@ mod tests {
         };
         let burns = FlankStyle::Sideburns { drop: 1.0 };
         let full = FlankStyle::FullConnect { reach: 0.5 };
-        assert!(grows(burns, -0.1), "a sideburn grows nothing beside the ear");
+        assert!(
+            grows(burns, -0.1),
+            "a sideburn grows nothing beside the ear"
+        );
         assert!(
             !grows(burns, 0.75),
             "a sideburn grew onto the cheek, which makes it a full beard"

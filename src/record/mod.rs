@@ -926,16 +926,16 @@ fn reroll_skin(skin: &mut SkinParams, rolls: &Rolls) {
     skin.melanin = rolls.range("skin.melanin", 0.0, 1.0);
     skin.undertone = rolls.range("skin.undertone", -1.0, 1.0);
     skin.blush = rolls.range("skin.blush", 0.15, 0.8);
-    // Most people have neither, so both stay off more often than not. The
-    // coin and the amount draw from separate streams, so changing how much
-    // stubble a stubbled face has cannot change which faces have any.
+    // Most people have none, so it stays off more often than not. The coin and
+    // the amount draw from separate streams, so changing how many freckles a
+    // freckled face has cannot change which faces have any.
+    //
+    // **Stubble used to be drawn here too and is not a complexion axis any
+    // more** (#212). The painted hair layer replaced what it drew at #200 and
+    // the record grew a density and a colour per region at #202; the axis was
+    // left behind, still written, still rolled, and read by nothing.
     skin.freckles = if rolls.chance("skin.freckled", 0.3) {
         rolls.range("skin.freckles", 0.2, 1.0)
-    } else {
-        0.0
-    };
-    skin.stubble = if rolls.chance("skin.stubbled", 0.25) {
-        rolls.range("skin.stubble", 0.3, 1.0)
     } else {
         0.0
     };

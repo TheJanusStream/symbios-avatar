@@ -68,8 +68,9 @@
             "description": "How prominent the nose, brow, mouth and ears are. Absent means the default."
           },
           "hair": {
-            "type": "unknown",
-            "description": "The hair grown on the head: five follicle regions, each with a style, a cut, two sRGB colours and the hair painted into the skin under it. Absent means the default, which is a cropped head and full brows. UNDECLARED DELIBERATELY, and this is the one field in the record that is: a region's style is a name on its own where the style has no axis of its own ('crop', 'chevron', 'full') and a single-key object where it has one ({'bob': {'fringe': 800}}), and the lexicon data model has no way to say 'a string or one of these objects' — its unions discriminate on $type, which these do not carry. Declaring the field as one of the two shapes would describe half the records this crate writes and reject the other half, so it is declared as unknown until the representation is settled. A reader that does not understand the block must preserve it unchanged."
+            "type": "ref",
+            "ref": "network.symbios.avatar.defs#hair",
+            "description": "The hair on the head, in five follicle regions of two layers each. Absent means the default, which is a cropped head with full brows and no facial hair."
           },
           "outfit": {
             "type": "ref",

@@ -178,16 +178,6 @@ pub struct SkinParams {
     /// Freckle density.
     #[serde(with = "crate::plan::scaled")]
     pub freckles: f32,
-    /// Stubble across the beard's three regions.
-    ///
-    /// **On its way out** (#200, #202). The painted hair layer it drives has
-    /// five regions and a colour of its own now; this is the one axis a record
-    /// still carries for it, mapped onto the beard by
-    /// [`crate::hair::PaintedHair::beard`] until the record grows the per-region
-    /// entries. It stays here rather than being deleted early so no record in
-    /// the wild loses its stubble in the meantime.
-    #[serde(with = "crate::plan::scaled")]
-    pub stubble: f32,
 }
 
 impl Default for SkinParams {
@@ -197,7 +187,6 @@ impl Default for SkinParams {
             undertone: 0.0,
             blush: 0.45,
             freckles: 0.0,
-            stubble: 0.0,
         }
     }
 }
@@ -209,7 +198,6 @@ impl SkinParams {
         self.melanin = quantize(clamp_unit(self.melanin, 0.0));
         self.blush = quantize(clamp_unit(self.blush, 0.0));
         self.freckles = quantize(clamp_unit(self.freckles, 0.0));
-        self.stubble = quantize(clamp_unit(self.stubble, 0.0));
         self.undertone = quantize(if self.undertone.is_finite() {
             self.undertone.clamp(-1.0, 1.0)
         } else {
@@ -1223,13 +1211,11 @@ mod tests {
             undertone: f32::NAN,
             blush: -2.0,
             freckles: 0.5,
-            stubble: f32::INFINITY,
         };
         params.sanitize();
         assert_eq!(params.melanin, 1.0);
         assert_eq!(params.undertone, 0.0);
         assert_eq!(params.blush, 0.0);
-        assert_eq!(params.stubble, 0.0);
 
         let once = params;
         params.sanitize();

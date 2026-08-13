@@ -6,7 +6,11 @@
 //! each other here rather than trusted to stay in step.
 
 use serde_json::Value;
-use symbios_avatar::{Archetype, AvatarRecord, HumanoidParams, ProfileRecord, QuadrupedParams};
+use symbios_avatar::hair;
+use symbios_avatar::{
+    Archetype, AvatarRecord, BrowStyle, ChinStyle, FlankStyle, HumanoidParams, MoustacheStyle,
+    ProfileRecord, QuadrupedParams, ScalpStyle,
+};
 
 /// Loads one published lexicon document.
 fn lexicon(name: &str) -> Value {
@@ -320,7 +324,7 @@ fn declared_defaults_match_the_values_the_crate_writes() {
     // VALUE, and the two definitions carrying the most axes were exempt from it.
     // A default that drifts is invisible to every reader who omits the field and
     // to nobody else, which is the hardest kind of schema defect to notice.
-    let cases: [(&str, Value); 5] = [
+    let cases: [(&str, Value); 12] = [
         (
             // The identity anchor of the whole composite overhaul (#161): the
             // formulas are written so that THIS description reproduces the body
@@ -346,6 +350,42 @@ fn declared_defaults_match_the_values_the_crate_writes() {
             "humanoid",
             serde_json::to_value(HumanoidParams::default()).expect("serialises"),
         ),
+        // **The hair fragments, which is nineteen definitions arriving at once**
+        // (#211). Only the FLAT ones are here: a tress and the hair block itself
+        // are objects of refs and have no scalar default to promise. What they
+        // owe instead is `every_declared_field_is_one_the_crate_actually_writes`
+        // below, which does cover them.
+        //
+        // `hairPaint` and `hairCut` are declared once and referenced by all five
+        // regions, so a default that drifts here drifts for the whole head.
+        (
+            "hairCut",
+            serde_json::to_value(symbios_avatar::Cut::default()).expect("serialises"),
+        ),
+        (
+            "hairPaint",
+            serde_json::to_value(symbios_avatar::Paint::default()).expect("serialises"),
+        ),
+        (
+            "scalpRegion",
+            serde_json::to_value(hair::follicle::scalp::Params::default()).expect("serialises"),
+        ),
+        (
+            "browRegion",
+            serde_json::to_value(hair::follicle::brows::Params::default()).expect("serialises"),
+        ),
+        (
+            "moustacheRegion",
+            serde_json::to_value(hair::follicle::moustache::Params::default()).expect("serialises"),
+        ),
+        (
+            "chinRegion",
+            serde_json::to_value(hair::follicle::chin::Params::default()).expect("serialises"),
+        ),
+        (
+            "flankRegion",
+            serde_json::to_value(hair::follicle::flanks::Params::default()).expect("serialises"),
+        ),
     ];
 
     for (fragment, written) in cases {
@@ -364,65 +404,234 @@ fn declared_defaults_match_the_values_the_crate_writes() {
 }
 
 #[test]
-fn the_hair_block_is_the_one_field_the_lexicon_declines_to_declare() {
-    // **The shell-era `defs#hair` went with the shell** (#209). It declared
-    // eight scalars — length, volume, coverage, part, wave, shade, locks, curl —
-    // and the crate stopped writing any of them at #202. A schema that drifts
-    // from the implementation is worse than no schema, which is this file's own
-    // first line, and eight fields nobody writes is the whole of that failure.
+fn every_hair_style_the_crate_can_write_is_declared_with_its_axis() {
+    // **What `the_hair_block_is_the_one_field_the_lexicon_declines_to_declare`
+    // turned into** (#211). That test held the gap open in a form that failed
+    // the moment the representation became declarable, which is what happened:
+    // the style enums are internally tagged now, so a style is always an object
+    // with a `name` and whatever axis it carries under its own name, and the
+    // lexicon says so.
     //
-    // What replaced it is not declarable yet, and the reason is exact rather
-    // than a shrug. A region's style serialises as a bare NAME where the style
-    // carries no axis of its own and as a SINGLE-KEY OBJECT where it does —
-    // serde's external tagging — and a lexicon property is one type. Lexicon
-    // unions discriminate on `$type`, which these do not carry, so there is no
-    // way to say "a string or one of these five objects". Declaring either
-    // shape alone would describe half the records this crate writes and reject
-    // the other half.
+    // This is the check that keeps it true. A style catalogue grows an issue at
+    // a time — five of them grew one each over milestone #6 — and the way that
+    // goes wrong is silent: a variant lands in Rust, the record writes its name,
+    // and every reader on the network that validates against the schema rejects
+    // the record. So every variant the crate can construct is written out and
+    // checked against what the schema declares, name and axis both.
+    let defs = lexicon("defs");
+    let known = |fragment: &str| -> Vec<String> {
+        defs["defs"][fragment]["properties"]["name"]["knownValues"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{fragment} declares no knownValues"))
+            .iter()
+            .map(|value| value.as_str().expect("names are strings").to_string())
+            .collect()
+    };
+    let declared = |fragment: &str| property_names(&defs["defs"][fragment]);
+
+    // Every variant of every catalogue, written out rather than iterated: the
+    // enums carry no `ALL`, and a list that derived itself from the enum could
+    // not catch a variant added without a thought for the wire.
+    let styles: Vec<(&str, Vec<Value>)> = vec![
+        (
+            "scalpStyle",
+            vec![
+                json(ScalpStyle::None),
+                json(ScalpStyle::Crop),
+                json(ScalpStyle::Bob { fringe: 0.8 }),
+                json(ScalpStyle::Long { weight: 0.8 }),
+                json(ScalpStyle::TiedBack { tail: 0.8 }),
+                json(ScalpStyle::Curly { curl: 0.8 }),
+            ],
+        ),
+        (
+            "browStyle",
+            vec![
+                json(BrowStyle::None),
+                json(BrowStyle::Natural),
+                json(BrowStyle::Thick),
+            ],
+        ),
+        (
+            "moustacheStyle",
+            vec![
+                json(MoustacheStyle::None),
+                json(MoustacheStyle::Chevron),
+                json(MoustacheStyle::Handlebar { sweep: 0.8 }),
+                json(MoustacheStyle::Pencil { ride: 0.8 }),
+            ],
+        ),
+        (
+            "chinStyle",
+            vec![
+                json(ChinStyle::None),
+                json(ChinStyle::Goatee { point: 0.8 }),
+                json(ChinStyle::Full),
+                json(ChinStyle::Braided { twist: 0.8 }),
+            ],
+        ),
+        (
+            "flankStyle",
+            vec![
+                json(FlankStyle::None),
+                json(FlankStyle::Sideburns { drop: 0.8 }),
+                json(FlankStyle::FullConnect { reach: 0.8 }),
+            ],
+        ),
+    ];
+
+    for (fragment, written) in styles {
+        let names = known(fragment);
+        let properties = declared(fragment);
+        for style in written {
+            let object = style.as_object().expect("a style writes an object");
+            let name = object["name"].as_str().expect("a style writes its name");
+            assert!(
+                names.contains(&name.to_string()),
+                "the crate writes `{fragment}` style `{name}`, which the lexicon's \
+                 knownValues does not list: {names:?}"
+            );
+            for key in object.keys() {
+                assert!(
+                    properties.contains(key),
+                    "`{fragment}` style `{name}` writes `{key}`, which the lexicon \
+                     does not declare"
+                );
+            }
+        }
+        // And nothing is declared that no variant writes, which is the
+        // direction #212 was filed for.
+        assert_eq!(
+            names.len(),
+            defs["defs"][fragment]["properties"]["name"]["knownValues"]
+                .as_array()
+                .expect("knownValues")
+                .len(),
+            "{fragment} lists a name twice"
+        );
+    }
+}
+
+/// One style, as the record writes it.
+fn json(style: impl serde::Serialize) -> Value {
+    serde_json::to_value(style).expect("a style serialises")
+}
+
+#[test]
+fn every_declared_field_is_one_the_crate_actually_writes() {
+    // **The third direction, and the one that let a dead axis sit on the wire
+    // for a day without a test noticing** (#212). Every other check in this
+    // file runs written-to-declared or checks a required field is written; none
+    // of them asks whether a DECLARED field is written at all. So
+    // `defs#skin.stubble` went on being published after the painted hair layer
+    // replaced what it drew (#200) and the record grew a density and a colour
+    // per follicle region (#202), and the suite stayed green.
     //
-    // So `hair` is declared `unknown` and this test holds the reason in a form
-    // that fails. If the style representation is ever made uniform, the two
-    // assertions below stop being true and whoever made it uniform is told to
-    // go and write the schema.
-    let mut record = AvatarRecord::new("Hair", Archetype::default());
-    record.hair.scalp.style = symbios_avatar::ScalpStyle::Crop;
-    record.hair.chin.style = symbios_avatar::ChinStyle::Braided { twist: 0.4 };
-    let written = serde_json::to_value(&record).expect("serialises");
-    let hair = &written["hair"];
+    // A declared field nobody writes is not harmless. It is a promise to every
+    // reader on the network that the field means something, and the cost lands
+    // on whoever implements against it: they wire up a stubble slider, and it
+    // does nothing, and there is no way to tell from the schema that it will.
+    //
+    // Checked per fragment against the struct that owns it, because a fragment
+    // is exactly one Rust type's serialised shape and that is what makes the
+    // comparison total rather than a spot check.
+    let defs = lexicon("defs");
+    let cases: [(&str, Value); 20] = [
+        (
+            "composites",
+            serde_json::to_value(symbios_avatar::Composites::default()).expect("serialises"),
+        ),
+        (
+            "skin",
+            serde_json::to_value(symbios_avatar::SkinParams::default()).expect("serialises"),
+        ),
+        (
+            "eyes",
+            serde_json::to_value(symbios_avatar::EyeParams::default()).expect("serialises"),
+        ),
+        (
+            "face",
+            serde_json::to_value(symbios_avatar::FaceParams::default()).expect("serialises"),
+        ),
+        (
+            "humanoid",
+            serde_json::to_value(HumanoidParams::default()).expect("serialises"),
+        ),
+        (
+            "quadruped",
+            serde_json::to_value(QuadrupedParams::default()).expect("serialises"),
+        ),
+        // The hair fragments, nested ones included: `field_names` reads the keys
+        // of whatever serialises to an object, so a tress and the hair block are
+        // checked here even though they have no defaults to check above.
+        (
+            "hair",
+            serde_json::to_value(symbios_avatar::HairRecord::default()).expect("serialises"),
+        ),
+        (
+            "follicleRegions",
+            serde_json::to_value(symbios_avatar::FollicleParams::default()).expect("serialises"),
+        ),
+        (
+            "hairCut",
+            serde_json::to_value(symbios_avatar::Cut::default()).expect("serialises"),
+        ),
+        (
+            "hairPaint",
+            serde_json::to_value(symbios_avatar::Paint::default()).expect("serialises"),
+        ),
+        (
+            "scalpTress",
+            serde_json::to_value(symbios_avatar::HairRecord::default().scalp).expect("serialises"),
+        ),
+        (
+            "browTress",
+            serde_json::to_value(symbios_avatar::HairRecord::default().brows).expect("serialises"),
+        ),
+        (
+            "moustacheTress",
+            serde_json::to_value(symbios_avatar::HairRecord::default().moustache)
+                .expect("serialises"),
+        ),
+        (
+            "chinTress",
+            serde_json::to_value(symbios_avatar::HairRecord::default().chin).expect("serialises"),
+        ),
+        (
+            "flankTress",
+            serde_json::to_value(symbios_avatar::HairRecord::default().flanks).expect("serialises"),
+        ),
+        (
+            "scalpRegion",
+            serde_json::to_value(hair::follicle::scalp::Params::default()).expect("serialises"),
+        ),
+        (
+            "browRegion",
+            serde_json::to_value(hair::follicle::brows::Params::default()).expect("serialises"),
+        ),
+        (
+            "moustacheRegion",
+            serde_json::to_value(hair::follicle::moustache::Params::default()).expect("serialises"),
+        ),
+        (
+            "chinRegion",
+            serde_json::to_value(hair::follicle::chin::Params::default()).expect("serialises"),
+        ),
+        (
+            "flankRegion",
+            serde_json::to_value(hair::follicle::flanks::Params::default()).expect("serialises"),
+        ),
+    ];
 
-    assert!(
-        hair["scalp"]["style"].is_string(),
-        "a style with no axis of its own no longer writes a bare name: {}, so \
-         the hair block may now be declarable — write `defs#hair` and point the \
-         record's own `hair` field back at it",
-        hair["scalp"]["style"]
-    );
-    let axled = hair["chin"]["style"]
-        .as_object()
-        .expect("a style with an axis writes a single-key object");
-    assert_eq!(
-        axled.len(),
-        1,
-        "a style with an axis no longer writes a single-key object: {}, so the \
-         hair block may now be declarable — write `defs#hair`",
-        hair["chin"]["style"]
-    );
-
-    // And the declaration says so, rather than the field having quietly gone
-    // missing: an undeclared field the record writes is exactly what
-    // `the_avatar_record_matches_its_schema` above is meant to catch, and
-    // deleting `defs#hair` without this would have slipped past it.
-    let declared = &lexicon("avatar")["defs"]["main"]["record"]["properties"]["hair"];
-    assert_eq!(
-        declared["type"].as_str(),
-        Some("unknown"),
-        "the record's hair field is declared as {}, so either the schema was \
-         written and this test is stale, or the field lost its declaration",
-        declared["type"]
-    );
-    assert!(
-        lexicon("defs")["defs"]["hair"].is_null(),
-        "network.symbios.avatar.defs#hair is back; if it describes the five \
-         regions, point the record's `hair` field at it and delete this test"
-    );
+    for (fragment, written) in cases {
+        let written = field_names(&written);
+        for field in property_names(&defs["defs"][fragment]) {
+            assert!(
+                written.contains(&field),
+                "the lexicon declares `{fragment}#{field}` and the crate writes no such \
+                 field: either it was renamed, or it is a dead axis that should come off \
+                 the wire"
+            );
+        }
+    }
 }

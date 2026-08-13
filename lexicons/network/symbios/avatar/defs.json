@@ -16,20 +16,6 @@
           "maximum": 3100,
           "default": 1750
         },
-        "build": {
-          "type": "integer",
-          "description": "Overall mass, from slight to heavy. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
-          "minimum": -3000,
-          "maximum": 3000,
-          "default": 0
-        },
-        "muscle": {
-          "type": "integer",
-          "description": "Musculature. Thousandths, 0 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
-          "minimum": 0,
-          "maximum": 3000,
-          "default": 0
-        },
         "shoulderWidth": {
           "type": "integer",
           "description": "Width of the shoulder girdle. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
@@ -218,13 +204,6 @@
           "minimum": 0,
           "maximum": 1000,
           "default": 0
-        },
-        "stubble": {
-          "type": "integer",
-          "description": "Stubble across the lower face. Thousandths, 0 to 1000.",
-          "minimum": 0,
-          "maximum": 1000,
-          "default": 0
         }
       }
     },
@@ -361,6 +340,696 @@
           "minimum": -1000,
           "maximum": 2000,
           "default": 500
+        }
+      }
+    },
+    "hairCut": {
+      "type": "object",
+      "description": "How one region of hair is cut. Thousandths, as elsewhere: the AT Protocol data model has no floating-point type.",
+      "properties": {
+        "length": {
+          "type": "integer",
+          "description": "How far the hair runs past the region it grows from. 0 is cropped to the skin.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 350
+        },
+        "thickness": {
+          "type": "integer",
+          "description": "How wide each element of hair is. Width costs nothing to draw, so this is the axis a reader should reach for before density.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 500
+        },
+        "density": {
+          "type": "integer",
+          "description": "How many elements are grown, as a share of what the region can hold. A reader may draw fewer for distant or low-end rendering, which does not change the record.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 600
+        },
+        "droop": {
+          "type": "integer",
+          "description": "How far the hair gives up its own body and falls with the ground. 0 stands off the skin, 1000 lies flat on it.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 500
+        }
+      }
+    },
+    "hairPaint": {
+      "type": "object",
+      "description": "Hair painted into the skin's own colour, under whatever is grown on top of it. It is what stops thin hair reading as none, and it is the whole of a region a record asks for without geometry: a shaved jaw, a drawn-on brow.",
+      "properties": {
+        "density": {
+          "type": "integer",
+          "description": "How much of the skin it covers. Density rather than opacity: at 1000 the skin under the mask is that colour, and between the two the grain shows through, which is what stubble is.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0
+        },
+        "colour": {
+          "type": "array",
+          "description": "What colour, in sRGB. Three channels, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    "scalpRegion": {
+      "type": "object",
+      "description": "Where hair may grow on the scalp: the hairline, and how it recedes.",
+      "properties": {
+        "line": {
+          "type": "integer",
+          "description": "Where the hairline sits. -1000 receding, +1000 low on the brow. The whole curve moves together.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "temples": {
+          "type": "integer",
+          "description": "How deeply the hairline notches back at the temples. 0 is square across the brow and 1000 is two deep bays. Separate from the line because recession is not a raised hairline: a hairline that moved up as a whole is a high forehead, and one that kept its midline peak while the corners went back is what the word recession means.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 250
+        },
+        "nape": {
+          "type": "integer",
+          "description": "Where the hair stops at the back. -1000 shaved high up the nape, +1000 low onto the neck.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        }
+      }
+    },
+    "browRegion": {
+      "type": "object",
+      "description": "Where the eyebrows sit. These say where the brow IS, which both layers obey, rather than what is grown on it: changing a haircut does not move a brow ridge.",
+      "properties": {
+        "rise": {
+          "type": "integer",
+          "description": "How high the brow sits over the eye. -1000 low and heavy, +1000 high.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "apart": {
+          "type": "integer",
+          "description": "How far apart the two are. -1000 nearly meeting, +1000 well parted.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "reach": {
+          "type": "integer",
+          "description": "How far the tail runs past the eye's outer corner. -1000 short, +1000 long.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "arch": {
+          "type": "integer",
+          "description": "How much the brow arches. -1000 a straight bar, +1000 a high curve. Zero is the arch an ordinary brow has, not a flat one.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        }
+      }
+    },
+    "moustacheRegion": {
+      "type": "object",
+      "description": "Where hair may grow on the upper lip.",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "description": "How far past the mouth's corners it grows. -1000 narrow, +1000 wide.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "drop": {
+          "type": "integer",
+          "description": "How far down toward the vermilion it grows. -1000 shy of it, +1000 onto its border.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        }
+      }
+    },
+    "chinRegion": {
+      "type": "object",
+      "description": "Where hair may grow on the chin and the plane under it.",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "description": "How wide the patch is. -1000 a narrow tuft, +1000 the whole chin.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "under": {
+          "type": "integer",
+          "description": "How far under the jaw it reaches. -1000 the chin's front only, +1000 well back along the submental plane.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "rise": {
+          "type": "integer",
+          "description": "How far up toward the lower lip it grows. -1000 low on the chin, +1000 to the lip's own border.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        }
+      }
+    },
+    "flankRegion": {
+      "type": "object",
+      "description": "Where hair may grow on the flanks of the jaw, from the sideburn down over the jawline.",
+      "properties": {
+        "cheek": {
+          "type": "integer",
+          "description": "How high up the cheek it grows. -1000 a low beard line, +1000 high on the cheekbone.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "under": {
+          "type": "integer",
+          "description": "How far below the jawline it rides. -1000 stopping on the border, +1000 well down the neck.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        },
+        "sideburn": {
+          "type": "integer",
+          "description": "How far forward of the ear the sideburn begins. -1000 well back, +1000 onto the cheek.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "default": 0
+        }
+      }
+    },
+    "follicleRegions": {
+      "type": "object",
+      "description": "Where each of the five kinds of hair may grow on one head. Shape rather than style: these move where hair MAY be, which both layers obey, and say nothing about what is grown there. A hairline is a property of a head and stays where it is when somebody changes their haircut.",
+      "properties": {
+        "scalp": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#scalpRegion",
+          "description": "The scalp's hairline."
+        },
+        "brows": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#browRegion",
+          "description": "The brows' patch."
+        },
+        "moustache": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#moustacheRegion",
+          "description": "The upper lip's patch."
+        },
+        "chin": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#chinRegion",
+          "description": "The chin's patch."
+        },
+        "flanks": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#flankRegion",
+          "description": "The jaw flanks' patch."
+        }
+      }
+    },
+    "scalpStyle": {
+      "type": "object",
+      "description": "The hair of the head. One name, plus whatever axis that style carries; a style with no axis of its own carries none.",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "knownValues": [
+            "none",
+            "crop",
+            "bob",
+            "long",
+            "tied_back",
+            "curly"
+          ],
+          "default": "none"
+        },
+        "fringe": {
+          "type": "integer",
+          "description": "BOB only: how much shorter the front is than the sides. 0 an even curtain, 1000 a fringe well above the brow.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "weight": {
+          "type": "integer",
+          "description": "LONG only: how much longer the back is than the sides. 0 even all round, 1000 strongly back-weighted.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "tail": {
+          "type": "integer",
+          "description": "TIED_BACK only: where the tail is gathered. 0 at the nape, 1000 high on the crown.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "curl": {
+          "type": "integer",
+          "description": "CURLY only: how tight the coil is. 0 a loose wave, 1000 a tight curl.",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
+    "browStyle": {
+      "type": "object",
+      "description": "The eyebrows. Most faces should have one drawn even where none is grown: a bare brow ridge reads as a mannequin from across a room.",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "knownValues": [
+            "none",
+            "natural",
+            "thick"
+          ],
+          "default": "none"
+        }
+      }
+    },
+    "moustacheStyle": {
+      "type": "object",
+      "description": "The upper lip.",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "knownValues": [
+            "none",
+            "chevron",
+            "handlebar",
+            "pencil"
+          ],
+          "default": "none"
+        },
+        "sweep": {
+          "type": "integer",
+          "description": "HANDLEBAR only: how far the ends sweep past the mouth's corners. 0 barely past them, 1000 a full waxed curl.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "ride": {
+          "type": "integer",
+          "description": "PENCIL only: how high the line sits. 0 on the lip's own border, 1000 halfway to the nostrils.",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
+    "chinStyle": {
+      "type": "object",
+      "description": "The chin.",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "knownValues": [
+            "none",
+            "goatee",
+            "full",
+            "braided"
+          ],
+          "default": "none"
+        },
+        "point": {
+          "type": "integer",
+          "description": "GOATEE only: how the hang ends. 0 a rounded tuft, 1000 drawn to a point.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "twist": {
+          "type": "integer",
+          "description": "BRAIDED only: how tightly the rope turns. 0 a loose rope, 1000 a hard twist.",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
+    "flankStyle": {
+      "type": "object",
+      "description": "The flanks of the jaw.",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "knownValues": [
+            "none",
+            "sideburns",
+            "full_connect"
+          ],
+          "default": "none"
+        },
+        "drop": {
+          "type": "integer",
+          "description": "SIDEBURNS only: how far down the strip runs. 0 a tab beside the ear, 1000 down to the jaw's corner.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "reach": {
+          "type": "integer",
+          "description": "FULL_CONNECT only: how far below the jawline the beard rides. 0 stopping on the crease, 1000 down onto the upper neck.",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
+    "scalpTress": {
+      "type": "object",
+      "description": "The hair of the head, both layers.",
+      "properties": {
+        "style": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#scalpStyle",
+          "description": "Which base style is grown here, and its own axis if it has one. A style of 'none' grows no geometry, which is how a record asks for a region that is painted and not grown."
+        },
+        "cut": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairCut",
+          "description": "How it is cut."
+        },
+        "roots": {
+          "type": "array",
+          "description": "The colour at the roots, in sRGB. Free rather than a point on a pigment ramp, so that grey and dyed hair need no special case.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            133,
+            74,
+            43
+          ]
+        },
+        "tips": {
+          "type": "array",
+          "description": "The colour at the tips, likewise, faded to along each element as a vertex colour.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            133,
+            74,
+            43
+          ]
+        },
+        "skin": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairPaint",
+          "description": "The hair painted into the skin under this region."
+        }
+      }
+    },
+    "browTress": {
+      "type": "object",
+      "description": "The eyebrows, both layers.",
+      "properties": {
+        "style": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#browStyle",
+          "description": "Which base style is grown here, and its own axis if it has one. A style of 'none' grows no geometry, which is how a record asks for a region that is painted and not grown."
+        },
+        "cut": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairCut",
+          "description": "How it is cut."
+        },
+        "roots": {
+          "type": "array",
+          "description": "The colour at the roots, in sRGB. Free rather than a point on a pigment ramp, so that grey and dyed hair need no special case.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            133,
+            74,
+            43
+          ]
+        },
+        "tips": {
+          "type": "array",
+          "description": "The colour at the tips, likewise, faded to along each element as a vertex colour.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            133,
+            74,
+            43
+          ]
+        },
+        "skin": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairPaint",
+          "description": "The hair painted into the skin under this region."
+        }
+      }
+    },
+    "moustacheTress": {
+      "type": "object",
+      "description": "The upper lip's hair, both layers.",
+      "properties": {
+        "style": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#moustacheStyle",
+          "description": "Which base style is grown here, and its own axis if it has one. A style of 'none' grows no geometry, which is how a record asks for a region that is painted and not grown."
+        },
+        "cut": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairCut",
+          "description": "How it is cut."
+        },
+        "roots": {
+          "type": "array",
+          "description": "The colour at the roots, in sRGB. Free rather than a point on a pigment ramp, so that grey and dyed hair need no special case.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            0,
+            0,
+            0
+          ]
+        },
+        "tips": {
+          "type": "array",
+          "description": "The colour at the tips, likewise, faded to along each element as a vertex colour.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            0,
+            0,
+            0
+          ]
+        },
+        "skin": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairPaint",
+          "description": "The hair painted into the skin under this region."
+        }
+      }
+    },
+    "chinTress": {
+      "type": "object",
+      "description": "The chin's hair, both layers.",
+      "properties": {
+        "style": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#chinStyle",
+          "description": "Which base style is grown here, and its own axis if it has one. A style of 'none' grows no geometry, which is how a record asks for a region that is painted and not grown."
+        },
+        "cut": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairCut",
+          "description": "How it is cut."
+        },
+        "roots": {
+          "type": "array",
+          "description": "The colour at the roots, in sRGB. Free rather than a point on a pigment ramp, so that grey and dyed hair need no special case.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            0,
+            0,
+            0
+          ]
+        },
+        "tips": {
+          "type": "array",
+          "description": "The colour at the tips, likewise, faded to along each element as a vertex colour.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            0,
+            0,
+            0
+          ]
+        },
+        "skin": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairPaint",
+          "description": "The hair painted into the skin under this region."
+        }
+      }
+    },
+    "flankTress": {
+      "type": "object",
+      "description": "The jaw flanks' hair, both layers.",
+      "properties": {
+        "style": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#flankStyle",
+          "description": "Which base style is grown here, and its own axis if it has one. A style of 'none' grows no geometry, which is how a record asks for a region that is painted and not grown."
+        },
+        "cut": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairCut",
+          "description": "How it is cut."
+        },
+        "roots": {
+          "type": "array",
+          "description": "The colour at the roots, in sRGB. Free rather than a point on a pigment ramp, so that grey and dyed hair need no special case.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            0,
+            0,
+            0
+          ]
+        },
+        "tips": {
+          "type": "array",
+          "description": "The colour at the tips, likewise, faded to along each element as a vertex colour.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            0,
+            0,
+            0
+          ]
+        },
+        "skin": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#hairPaint",
+          "description": "The hair painted into the skin under this region."
+        }
+      }
+    },
+    "hair": {
+      "type": "object",
+      "description": "The hair on a body's head: five follicle regions, each drawn in two layers over one shared mask — hair painted into the skin, and low-poly geometry grown on top of it. Absent means the default, which is a cropped head with full brows and no facial hair. Both layers read the same mask, so a reader that draws only the painted layer still puts hair where the record says it is.",
+      "properties": {
+        "regions": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#follicleRegions",
+          "description": "Where each kind of hair may grow, which both layers obey."
+        },
+        "scalp": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#scalpTress",
+          "description": "The hair of the head."
+        },
+        "brows": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#browTress",
+          "description": "The eyebrows."
+        },
+        "moustache": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#moustacheTress",
+          "description": "The upper lip."
+        },
+        "chin": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#chinTress",
+          "description": "The chin."
+        },
+        "flanks": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#flankTress",
+          "description": "The jaw's flanks."
         }
       }
     }

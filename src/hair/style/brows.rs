@@ -37,7 +37,7 @@ use super::{Cut, Style, clumps_for};
 
 /// The base styles of the eyebrows.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "name", rename_all = "snake_case")]
 pub enum BrowStyle {
     /// Nothing is grown here: the brow is painted, or bare.
     ///
@@ -576,7 +576,7 @@ mod tests {
                 ridge: ridge(),
                 reach: ridge().span() * REACH[0],
                 width: WIDTH[0],
-                    taper: TAPER[0],
+                taper: TAPER[0],
                 thin: THIN[0],
                 lie: LIE[0],
                 sag: 0.0,

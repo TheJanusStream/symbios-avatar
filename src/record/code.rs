@@ -20,6 +20,15 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
+/// **7** — the complexion loses its `stubble` byte (#212). It followed exactly
+/// the path `build` and `muscle` took: the thing it drove was replaced — by the
+/// painted hair layer at #200, and then by a density and a colour per follicle
+/// region at #202 — and the axis was left on the wire, still written and still
+/// read by nothing. Version 6 and below stay readable through
+/// `PAINTED_STUBBLE_VERSION` (private, below), which is the same spans with the
+/// slot still present; the byte is taken off the payload and dropped, because
+/// what it said has no field left to say it into.
+///
 /// **6** — the humanoid payload loses the two dead bytes `build` and `muscle`
 /// left behind when #164 retired them (#169). Their slots were held rather than
 /// removed so that codes already in circulation kept decoding at the right
@@ -50,7 +59,7 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 6;
+pub const SHARE_CODE_VERSION: u8 = 7;
 
 /// The oldest format whose codes still decode.
 const OLDEST_VERSION: u8 = 3;
@@ -67,6 +76,13 @@ const NARROW_SPAN_VERSION: u8 = 3;
 
 /// The last format that carried the retired `build` and `muscle` slots (#169).
 const RESERVED_SLOTS_VERSION: u8 = 5;
+
+/// The last format that carried the retired `stubble` byte (#212).
+///
+/// Codes at or below it have one more unit byte after the freckles, which
+/// `decode` takes and throws away: the complexion it belonged to has no field
+/// for it, and the hair it described is on the record rather than in a code.
+const PAINTED_STUBBLE_VERSION: u8 = 6;
 
 /// Crockford base32 digits.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -92,6 +108,18 @@ pub enum ShareCodeError {
     /// The payload did not describe a body this build knows.
     #[error("share code payload is invalid: {0}")]
     Payload(#[from] PlanDecodeError),
+    /// Every field was read and there were bytes left over.
+    ///
+    /// **A layout disagreement between the writer and the reader**, and the one
+    /// failure this format could previously have without saying so (#212). The
+    /// checksum is over the bytes rather than over the fields, so a reader that
+    /// stops one field early leaves the remainder on the payload and returns a
+    /// body that decodes cleanly. It is harmless exactly until the next field is
+    /// appended, at which point every code of that version reads one position
+    /// early — which is the bug the version gate exists to prevent and could not
+    /// catch here, because the reader and the writer are the same build.
+    #[error("share code has {0} unread byte(s): its layout is not the one this build reads")]
+    Trailing(usize),
 }
 
 /// Renders a body and complexion as a share code.
@@ -106,7 +134,6 @@ pub fn encode(archetype: &Archetype, composites: &Composites, skin: &SkinParams)
     put_signed(&mut payload, skin.undertone);
     put_unit(&mut payload, skin.blush);
     put_unit(&mut payload, skin.freckles);
-    put_unit(&mut payload, skin.stubble);
     payload.push(checksum(&payload));
     group(&base32_encode(&payload))
 }
@@ -162,9 +189,18 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
         undertone: take_signed(&mut payload)?,
         blush: take_unit(&mut payload)?,
         freckles: take_unit(&mut payload)?,
-        stubble: take_unit(&mut payload)?,
     };
+    if version <= PAINTED_STUBBLE_VERSION {
+        // Taken and dropped rather than left on the payload: the checksum
+        // covers the whole body, so a byte that is not consumed is not an
+        // error — it is a trailing byte nothing notices until the next field
+        // is added after it and reads one position early.
+        take_unit(&mut payload)?;
+    }
     skin.sanitize();
+    if !payload.is_empty() {
+        return Err(ShareCodeError::Trailing(payload.len()));
+    }
     Ok((archetype, composites, skin))
 }
 
@@ -371,6 +407,52 @@ mod tests {
     }
 
     #[test]
+    fn a_version_6_code_reads_without_a_field_for_its_stubble_byte() {
+        // **A byte that has nowhere to go still has to come off the payload**
+        // (#212). The complexion lost `stubble` and a version-6 code still
+        // carries it; the checksum covers the whole body, so an unconsumed
+        // trailing byte is not an error — it is a byte that goes unnoticed until
+        // the next field is appended after the complexion and reads one position
+        // early, which is a body nobody asked for and a clean decode.
+        //
+        // Assembled as a v6 writer would have written it, with a stubble value
+        // that is deliberately NOT zero: a version that dropped the byte
+        // silently would still pass this if the byte were zero, because the
+        // fields before it would decode identically and the checksum is over the
+        // bytes rather than over the fields.
+        use crate::plan::{put_signed, put_span, put_unit};
+        let mut payload = vec![6u8, 1]; // version 6, humanoid tag
+        crate::plan::put_length(&mut payload, 1.68);
+        let signed = crate::plan::explore_range(0.0, (-1.0, 1.0));
+        for axis in [-0.25, 0.1, 0.3, -0.4, 0.2, 0.6, -0.7, 0.15] {
+            put_span(&mut payload, axis, signed);
+        }
+        Composites::default().encode(&mut payload);
+        put_unit(&mut payload, 0.62); // melanin
+        put_signed(&mut payload, -0.3); // undertone
+        put_unit(&mut payload, 0.45); // blush
+        put_unit(&mut payload, 0.20); // freckles
+        put_unit(&mut payload, 0.90); // stubble, and it is not zero on purpose
+        payload.push(checksum(&payload));
+        let code = group(&base32_encode(&payload));
+
+        let (Archetype::Humanoid(back), _, skin) = decode(&code).expect("a v6 code decodes") else {
+            panic!("archetype changed");
+        };
+        assert!((back.height - 1.68).abs() < 0.002);
+        // The complexion is the code's own and not shifted by the byte that
+        // followed it: freckles is the field a mis-read would land on.
+        assert!((skin.melanin - 0.62).abs() < 0.01);
+        assert!((skin.blush - 0.45).abs() < 0.01);
+        assert!(
+            (skin.freckles - 0.20).abs() < 0.01,
+            "freckles decoded to {}, so the stubble byte was read as something \
+             else",
+            skin.freckles
+        );
+    }
+
+    #[test]
     fn a_version_4_code_reads_without_composites_and_does_not_eat_the_complexion() {
         // The bug this guards is the one a mid-payload insertion invites: read a
         // v4 code as though it carried composites and the four bytes taken come
@@ -511,6 +593,36 @@ mod tests {
         assert_eq!(
             decode(&future),
             Err(ShareCodeError::UnsupportedVersion(SHARE_CODE_VERSION + 1))
+        );
+
+        // A well-formed code of the current version with one byte too many
+        // (#212). It checksums, its version is known and every field it
+        // declares reads back — and it is still a code this build cannot read,
+        // because whoever wrote it was writing a layout with something more in
+        // it. Silently ignoring the remainder is how a reader ends up one field
+        // out on the version after next.
+        // Re-checksummed after the spare byte is added, so a mistyped code is
+        // not what this measures — those are a different failure and must not
+        // be reported as this one.
+        let mut payload = vec![SHARE_CODE_VERSION, 1]; // humanoid tag
+        crate::plan::put_length(&mut payload, 1.7);
+        let signed = crate::plan::explore_range(0.0, (-1.0, 1.0));
+        for axis in [0.0f32; 8] {
+            crate::plan::put_span(&mut payload, axis, signed);
+        }
+        Composites::default().encode(&mut payload);
+        crate::plan::put_unit(&mut payload, 0.35); // melanin
+        crate::plan::put_signed(&mut payload, 0.0); // undertone
+        crate::plan::put_unit(&mut payload, 0.45); // blush
+        crate::plan::put_unit(&mut payload, 0.0); // freckles
+        payload.push(0); // the byte too many
+        payload.push(checksum(&payload));
+        assert!(
+            matches!(
+                decode(&base32_encode(&payload)),
+                Err(ShareCodeError::Trailing(_))
+            ),
+            "a code with a byte left over was not reported as one"
         );
     }
 }

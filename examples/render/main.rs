@@ -49,7 +49,7 @@
 //! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
 //! cargo run --release --example render -- --clip Wave --clipframes 12   # more frames of it
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
-//! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
+//! cargo run --release --example render -- --skin 0.9,-1,0.4,0  # melanin,undertone,blush,freckles
 //! cargo run --release --example render -- --hair 1 0.5 1 0.5   # scalp length,thickness,density,droop
 //! cargo run --release --example render -- --hair 0 0 0 0 0     # a fifth zero shaves every region
 //! cargo run --release --example render -- --face 1,0.5,1,1,0.5,0.5 # nose,noseWidth,brow,mouth,mouthWidth,ears
@@ -301,8 +301,11 @@ fn main() {
         })
         .unwrap_or_default();
 
-    // Five numbers, in the order the axes are declared: melanin, undertone,
-    // blush, freckles, stubble. A complexion cannot be judged from its numbers,
+    // Four numbers, in the order the axes are declared: melanin, undertone,
+    // blush, freckles. It was five and the fifth was stubble, which stopped
+    // being a complexion axis at #212 — the painted hair layer draws it now,
+    // per region, and `--moustache`/`--chin`/`--flanks` are how it is asked
+    // for. A complexion cannot be judged from its numbers,
     // and the melanin ramp is the one place in the crate where "it looks right
     // to me" is the least trustworthy test there is.
     let complexion: Vec<f32> = value("--skin")
@@ -517,7 +520,6 @@ fn main() {
                 undertone: axis(1, record.skin.undertone),
                 blush: axis(2, record.skin.blush),
                 freckles: axis(3, record.skin.freckles),
-                stubble: axis(4, record.skin.stubble),
             }
         }),
         // **Undressed at build time, not by dropping the cloth draw** (#117).
