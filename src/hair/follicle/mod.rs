@@ -17,8 +17,8 @@
 //! The regions are cut from [`Skull`] and [`Canon`], which are themselves
 //! measured from the built surface — so a boundary lands on the head that was
 //! actually meshed rather than on the sphere the body plan described. This is
-//! the lesson `hair::scalp` paid for: subdivision pulls a head well inside its
-//! node radius, and anything placed against the nominal one floats.
+//! the lesson the shell-era scalp paid for: subdivision pulls a head well inside
+//! its node radius, and anything placed against the nominal one floats.
 //!
 //! It is also why nothing here re-measures. [`Skull::measure`] is 61% of a
 //! geometry build (#89), so this takes the one the pipeline already has.

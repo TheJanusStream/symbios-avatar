@@ -14,12 +14,13 @@
 //!
 //! # Every style is real
 //!
-//! There is one base style per region here besides `None`, and each is
-//! implemented and rendered. The catalogues of #204-#208 add their siblings —
-//! bob, curly, handlebar, goatee, braided — and each arrives with its own curve
-//! rather than being declared now and mapped to something else in the meantime.
-//! A variant that exists and does not do what it says is worse than one that
-//! does not exist.
+//! Every variant in every catalogue besides `None` is implemented and rendered
+//! with a curve of its own (#204–#208): crop, bob, long, tied-back and curly on
+//! the scalp; natural and thick brows; chevron, handlebar and pencil
+//! moustaches; goatee, full and braided chins; sideburns and full-connect
+//! flanks. Nothing is declared ahead of its curve and mapped to something else
+//! in the meantime — a variant that exists and does not do what it says is
+//! worse than one that does not exist.
 
 use std::f32::consts::TAU;
 

@@ -7,7 +7,8 @@
 //! want joints written in.
 //!
 //! From there, [`skin::bind`] attaches a mesh to the rig and [`Landmarks`]
-//! extracts the named anchors that hair, hats, and garments fit against.
+//! extracts the named anchors that hats, garments and other attachments fit
+//! against.
 //!
 //! ```rust
 //! use symbios_avatar::{AvatarRecord, Landmark, Limb, Rig, Zone};
@@ -26,7 +27,7 @@
 //! let left = rig.extremity_joints(Limb::HindLeft);
 //! assert_eq!(left.len(), 5);
 //!
-//! // Named anchors for fitting hair, hats, and garments.
+//! // Named anchors for fitting hats, garments, and other attachments.
 //! let marks = rig.landmarks();
 //! let hat = marks.get(Landmark::Crown).expect("every body has a crown");
 //! let shoulders = marks.span(
@@ -615,7 +616,7 @@ impl Rig {
         (high - low).max(f32::EPSILON)
     }
 
-    /// Named anchors for fitting hair, hats, and garments.
+    /// Named anchors for fitting hats, garments, and other attachments.
     #[must_use]
     pub fn landmarks(&self) -> Landmarks {
         Landmarks::from_rig(self)

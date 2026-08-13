@@ -11,13 +11,13 @@
 //!
 //! ```rust
 //! use symbios_avatar::{
-//!     AvatarRecord, CageConfig, Rig, SkinConfig, UvConfig, build_cage, catmull_clark,
-//!     rig::skin, texture, unwrap,
+//!     AvatarRecord, BODY_SUBDIVISIONS, CageConfig, Rig, SkinConfig, UvConfig, build_cage,
+//!     catmull_clark, rig::skin, texture, unwrap,
 //! };
 //!
 //! let record = AvatarRecord::default();
 //! let skeleton = record.skeleton();
-//! let mesh = catmull_clark(&build_cage(&skeleton, &CageConfig::default())?, 2);
+//! let mesh = catmull_clark(&build_cage(&skeleton, &CageConfig::default())?, BODY_SUBDIVISIONS);
 //! let rig = Rig::from_skeleton(&skeleton)?;
 //!
 //! let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);

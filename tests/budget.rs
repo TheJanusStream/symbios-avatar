@@ -6,10 +6,11 @@
 //! costs too much cannot be made cheaper by whoever renders it.
 //!
 //! Two tests, deliberately. One is a **ratchet** at the figure the crate has
-//! actually reached, so nothing silently gets worse; the other is the **target**,
-//! ignored until it can pass. Writing only the target would leave a red test in
-//! CI and teach everyone to ignore it; writing only the ratchet would quietly
-//! bless whatever today happens to cost.
+//! actually reached, so nothing silently gets worse; the other is the
+//! **target**, which was ignored until it could pass and passes now. Writing
+//! only the target would leave a red test in CI and teach everyone to ignore
+//! it; writing only the ratchet would quietly bless whatever today happens to
+//! cost.
 
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
@@ -41,6 +42,10 @@ const MESH_TARGET: usize = 4;
 ///
 /// Not a target — a high-water mark. Lowering it is the work; raising it needs
 /// a reason written down beside the change.
+///
+/// What follows is that ledger, oldest first: each layer's figures were true
+/// when written and are corrected by the layers under it, so only the last
+/// speaks for the constant.
 ///
 /// It rose from 29,600 when the front of the head was refined (#59): the head
 /// arrives from the cage with a mean mesh edge of 24 mm and every feature a

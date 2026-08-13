@@ -6,8 +6,8 @@
 //! them. It follows the B-Mesh construction (Ji, Liu & Wang, 2010):
 //!
 //! 1. Decompose the graph into limbs and joints ([`Skeleton::limbs`]).
-//! 2. Sweep a four-sided ring along each limb, parallel-transporting the frame
-//!    so the tube never twists.
+//! 2. Sweep an eight-sided ring along each limb, parallel-transporting the
+//!    frame so the tube never twists.
 //! 3. At each joint, place one socket ring per incident limb, hull the sockets,
 //!    and delete the socket facets to leave openings the tubes plug into.
 //! 4. Cap leaf ends.
@@ -150,7 +150,7 @@ pub enum CageError {
 
 /// One limb's opening in a joint hull.
 ///
-/// The four ring vertices are shared with the limb tube, so moving a socket
+/// The ring's vertices are shared with the limb tube, so moving a socket
 /// moves both surfaces together and they stay welded.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Socket {

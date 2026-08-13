@@ -253,7 +253,7 @@ Design work happens in WS0 (#2); this is the starting shape:
 | #3 | WS1 Body engine | high — **joint-merge topology prototype first** |
 | #4 | WS2 Look (textures, eyes, hair, skin material) | |
 | #5 | WS3 Motion (IK, foot placement, inertialization, gait, goal-space) | high |
-| #6 | Vertical slice checkpoint | gate for everything after. **Rewritten as six numeric criteria** (#36); not judged since. Four are met or now measurable; criterion 5 is blocked on #59 then #61 |
+| #6 | Vertical slice checkpoint | gate for everything after. **Rewritten as six numeric criteria** (#36); not judged since. Criterion 5's blockers (#59, #61) have since closed |
 | #7 | WS4 Face | bone-driven, per #35. Blocked by #59 (the face is currently detached solids) |
 | #8 | WS5 Dress | |
 | #9 | WS6 Creatures | |
@@ -278,9 +278,9 @@ skipped because there was no app, can finally be executed.
 
 1. **B-Mesh joint-merge topology** — the hard 20% of meshing; prototyped before dependence. *Retired
    as a risk: it was built, and the review defended it.*
-2. **Goal-space encoding/reconstruction subtlety** — highest-risk subsystem; mitigated by landing IK/inertialization/springs first (they deliver feel even with a tiny pose set) and by Spore's shipped precedent. Springs are the piece still missing (#38).
+2. **Goal-space encoding/reconstruction subtlety** — highest-risk subsystem; mitigated by landing IK/inertialization/springs first (they deliver feel even with a tiny pose set) and by Spore's shipped precedent. *Springs landed (#38), completing the trio.*
 3. **Unproven Bevy quality ceiling** — no published Bevy project shows this character fidelity; nothing engine-side blocks it, but the gap is art-direction iteration. *There is now an instrument for it (#37), and the first thing it showed was a difference the software renderer alone could not have attributed.*
-4. **WebGL2 constraints** — draw-per-skinned-mesh, no SSAO/TAA; tiers degrade by omission; WebGPU improves everything later. *Triangles are inside the budget (#40); draws are not — five against three, and the excess is the eye pair, so #35 decides it.*
+4. **WebGL2 constraints** — draw-per-skinned-mesh, no SSAO/TAA; tiers degrade by omission; WebGPU improves everything later. *Both halves are now met and held by `tests/budget.rs`: triangles inside the 30,000 target (#40, re-derived at #209), and four draws against a target of four — skin, hair, cloth, eye — after #118 turned the eyelids into a pose.*
 5. **Bevy animation API churn** — thin bridge, engine-agnostic core.
 6. **A budget that only holds for the default record.** Until #40, a body's cost was nearly
    independent of its parameters, so one measurement covered the space. It is not any more: a lock

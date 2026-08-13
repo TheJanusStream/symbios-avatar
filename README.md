@@ -10,8 +10,8 @@ still generated. See [`docs/clips.md`](docs/clips.md) for which clip came from
 where.
 
 ```text
-Record  ──►  Skeleton  ──►  control cage  ──►  Catmull-Clark  ──►  render mesh
-(9 axes)     (capsules)     (quad-dominant)    (smooth, all-quad)
+Record   ──►  Skeleton  ──►  control cage  ──►  Catmull-Clark  ──►  render mesh
+(~2 KiB)      (capsules)     (quad-dominant)    (smooth, all-quad)
 ```
 
 ```rust
@@ -33,14 +33,15 @@ for drawn in avatar.drawn(0.0) {
 
 The stages are all public — `build_cage`, `catmull_clark`, `skin::bind`,
 `unwrap`, `paint_skin` — but `Avatar::build` is the one recipe, and it is what
-the examples consume. Two of them used to carry their own copy and had already
-drifted apart.
+the examples consume.
 
 ## What it does
 
-- **A body is a record, not a mesh.** Nine semantic axes for a biped, eight for a
-  quadruped, in a few hundred bytes. Geometry is derived on demand, so the avatar
-  belongs to the identity rather than to whichever app rendered it.
+- **A body is a record, not a mesh.** Nine plan axes for a biped (eight for a
+  quadruped) plus four composites — femininity, mass, body fat, age — with eyes,
+  face, skin, hair and outfit in blocks of their own, under two kilobytes of
+  JSON all told. Geometry is derived on demand, so the avatar belongs to the
+  identity rather than to whichever app rendered it.
 - **Every point of the space is a body.** Procedural character systems classically
   fail when sliders reach shapes that cannot be built. The constraints live in the
   body plans, and a sweep over 3,000 random bodies plus every axis extreme holds
@@ -60,8 +61,7 @@ Avatars live in the owner's AT Protocol repository under
 Each avatar is its own record — a wardrobe, not a single pinned identity — and
 `network.symbios.avatar.profile` names the default.
 
-Two consequences of the protocol shape the record and are worth knowing before
-adding fields:
+Three things shape the record and are worth knowing before adding fields:
 
 - **There is no float type.** The data model omits floating point so records have
   one canonical encoding, so axes are stored as thousandths and lengths as
@@ -78,17 +78,17 @@ adding fields:
   name, so adding an axis cannot shift the others, and `generator` records which
   generation of the draw produced the parameters.
 
-Re-rolling draws each category (stature, build, frame, proportions, features)
-from its own seed stream, so locking one category never reshuffles another.
-A look also renders as a short share code:
+Re-rolling draws each category — stature, build, frame, proportions, head,
+colouring, hair, age — from its own seed stream, so locking one category never
+reshuffles another. A look also renders as a short share code:
 
 ```text
-040S4-27HTV-7YXXG-AT5TY-0
+0W0Y2-1BBFX-V812W-CH1YC-A5G7P-7BPH6-R0K0
 ```
 
-Codes are deliberately lossy — quantised to a byte per axis, checksummed, and
-written in Crockford base32 so `I`/`L`/`O` survive being copied by hand. The
-record remains the source of truth.
+Codes are deliberately lossy — quantised to a byte per axis (a length gets
+two), checksummed, and written in Crockford base32 so `I`/`L`/`O` survive being
+copied by hand. The record remains the source of truth.
 
 ## How joints work
 
@@ -113,7 +113,7 @@ Two degeneracies have to be handled rather than wished away:
 ## Debug tooling
 
 ```text
-cargo run --example dump               # every demo body, cage + 2 subdivisions
+cargo run --example dump               # every demo body, cage + smoothed mesh
 cargo run --example dump -- humanoid   # just one
 cargo run --example dump -- --rolls 8  # eight rerolled avatar records
 ```
@@ -122,8 +122,8 @@ Writes OBJ files to `target/dump` (override with `SYMBIOS_AVATAR_DUMP_DIR`) and
 prints a topology audit per body:
 
 ```text
-humanoid     cage       132 verts    145 faces   79.3% quads  1.45x1.65x0.26 m  closed
-humanoid     smooth    2202 verts   2200 faces  100.0% quads  1.44x1.63x0.22 m  closed
+humanoid     cage       264 verts    279 faces   78.9% quads  1.44x1.63x0.26 m  closed
+humanoid     smooth    1084 verts   1082 faces  100.0% quads  1.44x1.63x0.24 m  closed
 ```
 
 Open the `.obj` in any DCC tool to read the edge flow. `PolyMesh::manifold_report`
@@ -150,10 +150,12 @@ use symbios_avatar::{AvatarRecord, Landmark, Limb, Rig, Zone};
 let rig = Rig::from_skeleton(&AvatarRecord::default().skeleton())?;
 
 // Semantic queries instead of bone names — the same call works on a quadruped.
+// A hind extremity is a graph of its own — heel, the stub that closes it, ball
+// and toe — so this finds every joint of both feet, four apiece.
 let feet = rig.query(|zone| matches!(zone, Zone::Extremity(limb) if !limb.is_fore()));
-assert_eq!(feet.len(), 2);
+assert_eq!(feet.len(), 8);
 
-// Named anchors for fitting hair, hats, and garments.
+// Named anchors for fitting hats, garments, and other attachments.
 let marks = rig.landmarks();
 let hat = marks.get(Landmark::Crown).expect("every body has a crown");
 let shoulders = marks.span(
@@ -176,7 +178,7 @@ one unbroken island paintable as plain 2-D maths; and chart area is weighted by
 importance, so the face and hands get more texels than an equal area of forearm.
 
 ```text
-record_biped     rig         23 joints     29 charts     568 split verts  61% atlas used
+record_biped     unwrap      38 charts    1950 split verts  64% atlas used
 ```
 
 Unwrapping duplicates vertices at chart boundaries and seams, so `UvUnwrap`
@@ -201,16 +203,17 @@ through geometry.
 
 ```rust
 use symbios_avatar::{AvatarRecord, texture};
-# use symbios_avatar::{CageConfig, Rig, SkinConfig, UvConfig, build_cage, catmull_clark, rig::skin, unwrap};
+# use symbios_avatar::{BODY_SUBDIVISIONS, CageConfig, Rig, SkinConfig, UvConfig, build_cage, catmull_clark, rig::skin, unwrap};
 
 let record = AvatarRecord::default();
 # let skeleton = record.skeleton();
-# let mesh = catmull_clark(&build_cage(&skeleton, &CageConfig::default())?, 2);
+# let mesh = catmull_clark(&build_cage(&skeleton, &CageConfig::default())?, BODY_SUBDIVISIONS);
 # let rig = Rig::from_skeleton(&skeleton)?;
 # let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);
 # let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
 let geometry = texture::bake_geometry(&mesh, &uv, 1024);
-let map = texture::paint_skin(&geometry, &rig, &record.skin);
+let condition = texture::Condition::of(&record.composites);
+let map = texture::paint_skin(&geometry, &rig, &record.skin, &condition, None);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -233,6 +236,23 @@ Two rules the layers follow, both learned the hard way:
 `cargo run --example dump` writes the albedo, normal, and ORM atlases as PNGs
 alongside the OBJs, which is the only real way to judge whether skin reads as
 skin.
+
+## Hair
+
+Hair is five regions of the head — scalp, brows, moustache, chin, and the
+flanks of the jaw — in two layers that agree about where hair may grow: a
+painted layer in the skin atlas, and low-poly card geometry standing off it.
+The follicle masks are measured from the built surface rather than the plan,
+so a beard's boundary lands on the jaw that was actually meshed.
+
+Each region wears a style from its own catalogue — crop, bob, long, tied-back
+or curly on a scalp; goatee, full or braided on a chin — with a cut (length,
+thickness, density, droop) and a root-to-tip sRGB pair faded along each card
+as vertex colour, so grey and dyed hair cost no texture and no draw. The whole
+catalogue at its greediest fits under a triangle ceiling the budget suite
+re-measures rather than quotes; a record that asks for more hair than the
+budget holds is thinned to fit, and everything under the ceiling builds bit
+for bit as asked.
 
 ## Motion
 
@@ -295,13 +315,16 @@ cargo run --example dump -- --walk 12   # a walk cycle over a slope, frame by fr
 
 ## Status
 
-Early, but a body can now be described, built, dressed in its own skin, rigged,
-and walked. Records, body plans, the mesher, rigging, skinning, zones, landmarks,
-UV charting, procedural skin, and motion (pose, IK, foot placement,
-inertialization, gait, goal-space clips, gaze) are in place and tested.
+Early, but a body can now be described, built, given a face, eyes and hair,
+dressed in its own skin and clothes, rigged, and walked. Records, body plans,
+the mesher, rigging, skinning, zones, landmarks, UV charting, procedural skin,
+hair, tight garments, and motion (pose, IK, foot placement, inertialization,
+gait, goal-space clips, baked-clip playback, blink, gaze) are in place and
+tested.
 
-Eyes and hair, outfits, and glTF/VRM export are still ahead — see
-[`docs/plan.md`](docs/plan.md). [`docs/budget.md`](docs/budget.md) is the
+Still ahead: a GLB writer (the glTF module only *reads*, for clip import), the
+bone-driven face rig, loose garments and accessories, and creature variety —
+see [`docs/plan.md`](docs/plan.md). [`docs/budget.md`](docs/budget.md) is the
 triangle economy and how to measure a proposal against it;
 [`docs/instruments.md`](docs/instruments.md) is the measurement fleet and the
 rules for trusting an instrument.

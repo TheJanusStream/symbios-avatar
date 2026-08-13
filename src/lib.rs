@@ -14,23 +14,28 @@
 //! (capsules)     (quad-dominant)    (smooth, all-quad)
 //! ```
 //!
-//! The [`Skeleton`] is a graph of key balls. [`build_cage`] sweeps four-sided
+//! The [`Skeleton`] is a graph of key balls. [`build_cage`] sweeps eight-point
 //! rings along its limbs and hulls its joints into a closed, quad-dominant
 //! control cage with edge loops that follow the body. [`catmull_clark`] then
 //! smooths that cage into the surface a character actually deforms with.
 //!
 //! Humanoids and creatures are the same machinery: only the graph differs.
 //!
+//! Every stage is public, but [`Avatar::build`] is the one recipe: it takes an
+//! [`AvatarRecord`] and returns merged skinned meshes grouped by material, a
+//! painted skin atlas, the rig they are bound to, and the bill ([`Budget`]).
+//!
 //! ## Example
 //!
 //! ```rust
-//! use symbios_avatar::{CageConfig, build_cage, catmull_clark, demo};
+//! use symbios_avatar::{BODY_SUBDIVISIONS, CageConfig, build_cage, catmull_clark, demo};
 //!
-//! // A mesher fixture with no zones — see [`demo`]. For a body with a face,
-//! // skin zones and a real UV unwrap, build one from [`HumanoidParams`].
+//! // A mesher fixture with no zones — see [`demo`]. For a finished body —
+//! // face, skin atlas, rig, hair, outfit — build an [`Avatar`] from an
+//! // [`AvatarRecord`] instead; `Avatar::build` is the one recipe.
 //! let skeleton = demo::humanoid();
 //! let cage = build_cage(&skeleton, &CageConfig::default())?;
-//! let body = catmull_clark(&cage, 2);
+//! let body = catmull_clark(&cage, BODY_SUBDIVISIONS);
 //!
 //! // The cage — and every subdivision of it — is a closed 2-manifold.
 //! assert!(cage.is_closed_manifold());
@@ -86,6 +91,12 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+/// The README's code blocks, compiled and run as doctests so they cannot
+/// drift from the API the way un-checked examples always eventually do.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
 
 pub mod anim;
 pub mod avatar;
@@ -217,8 +228,9 @@ pub use symbios_texture::generator::TextureMap;
 /// The cosine border (#195) crosses a strip between 33° and 57° that no other
 /// band covers, and the crease's knee scalloped at cell pitch there. It is the
 /// dearest pass in the table — 1,340 on the default body, 2,848 at the dearest
-/// sweep corner — and `tests/budget.rs`'s ratchet moved to carry it, with the
-/// 30,000 target test ignored until the cost is won back elsewhere.
+/// sweep corner — and `tests/budget.rs`'s ratchet moved to carry it. The
+/// 30,000 target test was ignored until the cost was won back elsewhere; the
+/// hair makeover won it back, and the target test runs and passes again.
 ///
 /// It is affordable because the same stretch made the face refinement CHEAPER:
 /// the bands are fixed heights in head radii, so a taller head puts less of
@@ -247,13 +259,14 @@ const FACE_REFINEMENT: usize = 10;
 /// underneath them. **Anything measuring the body's surface has to build it the
 /// way the body ships.**
 ///
-/// It is a constant now because it is about to move. The cage's ring size
-/// governs how far a control cage sits outside the surface it approximates, and
-/// widening it from four points to eight closes most of that gap in the cage —
-/// which makes the second subdivision pass a smoothing of something already
-/// smooth. Measured on the default body: **24,776** triangles at four points and
-/// two passes, 43,196 at eight and two, and **15,862 at eight and one**. See
-/// #107; the pair moves together or not at all.
+/// The value is one because the cage's rings are eight-pointed. Ring size
+/// governs how far a control cage sits outside the surface it approximates,
+/// and #107 widened the ring from four points to eight in the same change that
+/// dropped this from two — an eight-point cage sits close enough to its limit
+/// surface that a second pass was a smoothing of something already smooth.
+/// Measured on the default body when the pair moved: 24,776 triangles at four
+/// points and two passes, 43,196 at eight and two, and **15,862 at eight and
+/// one**. The pair moves together or not at all.
 pub const BODY_SUBDIVISIONS: usize = 1;
 
 /// Builds a body's surface from its skeleton, shaped and ready to bind.

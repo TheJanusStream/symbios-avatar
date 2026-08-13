@@ -1,9 +1,10 @@
 //! Catmull-Clark subdivision.
 //!
-//! The cage is deliberately coarse — four-sided limb rings and convex joint
+//! The cage is deliberately coarse — eight-point limb rings and convex joint
 //! patches — because subdivision is what turns it into a body. One level makes
-//! any polygon mesh all-quad; two give a smooth surface whose edge loops still
-//! follow the skeleton, which is what a deforming character needs.
+//! any polygon mesh all-quad and, over an eight-point cage, already smooth
+//! enough to ship ([`crate::BODY_SUBDIVISIONS`]); the edge loops still follow
+//! the skeleton, which is what a deforming character needs.
 //!
 //! Interior vertices use the standard rules. Boundary and corner rules are
 //! implemented too, so the subdivider is safe on open meshes even though

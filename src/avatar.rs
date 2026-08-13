@@ -4,8 +4,8 @@
 //! a pair of trousers. [`Avatar::build`] is the recipe that puts them in the
 //! right order and hands back geometry, a texture, a skeleton and a bill.
 //!
-//! It exists because the recipe is long — thirteen calls whose order matters —
-//! and a long recipe living in an example is a second implementation of the
+//! It exists because the recipe is long — a couple of dozen calls whose order
+//! matters — and a long recipe living in an example is a second implementation of the
 //! crate. Two of them already existed here and had drifted apart: one dressed a
 //! quadruped in a fringe and a pair of sleeves, because the rule about which
 //! bodies wear clothes was written in the other one.
@@ -14,7 +14,7 @@
 //!
 //! Merged, skinned [`AvatarMesh`]es, grouped by the material they need, because
 //! the WebGL2 budget is one draw per skinned mesh and a body made of ninety
-//! separate locks of hair is ninety draws. Merging costs nothing in fidelity —
+//! separate clumps of hair is ninety draws. Merging costs nothing in fidelity —
 //! [`PolyMesh::colours`] carries what used to be a colour per draw.
 //!
 //! ```rust
@@ -40,10 +40,11 @@
 //! is no difference between a nose and the cheek beside it, which is what lets
 //! one complexion cover an avatar.
 //!
-//! One thing is still degenerate: eyelids. They do not exist when the atlas is
-//! packed, because a blink is geometry rather than a pose until the face has a
-//! rig, so there is nothing to reserve a region for. A lid samples one texel of
-//! the face's chart, which at a lid's size is all it needs.
+//! One thing is still degenerate: eyelids. They are built after the atlas is
+//! packed — a blink is a pose on the four lid joints (#118), and the lid
+//! surface rides in the skin's own draw — so nothing reserves a region for
+//! them. A lid samples one texel of the face's chart, which at a lid's size is
+//! all it needs.
 
 use glam::{Mat4, Vec2, Vec3};
 use symbios_texture::generator::TextureMap;
@@ -103,10 +104,10 @@ pub struct AvatarMesh {
 
 /// What one avatar costs.
 ///
-/// Measured rather than asserted. The targets it is judged against — 1 to 3
-/// skinned meshes and 15 to 30 thousand triangles on a WebGL2 tier — live in the
-/// gate, not here, because a budget that enforces its own limits cannot be used
-/// to find out how far over them something is.
+/// Measured rather than asserted. The targets it is judged against — four
+/// skinned meshes and 30,000 triangles on a WebGL2 tier — live in
+/// `tests/budget.rs`, not here, because a budget that enforces its own limits
+/// cannot be used to find out how far over them something is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Budget {
     /// Triangles across every mesh drawn.
@@ -190,7 +191,6 @@ pub struct Parts {
     pub eyes: Option<Eyes>,
     /// Its face, if it is the kind of body that wears one.
     pub features: Option<Features>,
-    /// Its hair, likewise.
     /// Its hair, grown in its head joint's own space.
     pub hair: Option<Growth>,
     /// Its hands and feet.
@@ -216,8 +216,8 @@ pub struct Avatar {
     pub rig: Rig,
     /// Merged geometry that does not change with expression.
     ///
-    /// The eyes are not here: nothing rigs a lid yet, so a blink is geometry
-    /// rather than a pose. [`Avatar::drawn`] returns the whole list.
+    /// The eye globes are not here: they want a glossy material and a pivot of
+    /// their own. [`Avatar::drawn`] appends them and returns the whole list.
     pub meshes: Vec<AvatarMesh>,
     /// The painted skin atlas.
     pub skin: TextureMap,

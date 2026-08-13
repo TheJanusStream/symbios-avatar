@@ -1,13 +1,24 @@
 //! A body's face.
 //!
-//! Currently the parts that move: [`eye::Eyes`] and the lids that blink over
-//! them, plus [`Blink`], which decides when.
+//! The head arrives from the body plan as a smooth egg; everything a face is
+//! made of happens here, in stages that measure the built surface rather than
+//! trust the plan:
 //!
-//! Faces here are built from separate small solids parented to the head rather
-//! than deformed out of it. A head from the body plan is a smooth blob with no
-//! eyelid, brow, or lip to deform, and inventing a facial rig over geometry that
-//! has no features would be pretending. Rigid parts that rotate are both honest
-//! about what exists and — for eyes at least — very nearly what anatomy does.
+//! - [`skull`] refines the front of the head ([`refine_face`]) and maps it onto
+//!   a skull — jaw, chin, cheekbones, occiput ([`shape_skull`]) — driven by
+//!   [`HeadTraits`] resolved from the record.
+//! - [`relief`] carves the features — nose, brows, lips — as displacements of
+//!   the head's own surface ([`carve_face`]), so a face has no seams (#59).
+//! - [`mouth`] splits the skin along the parting line and sews a cavity in
+//!   behind it, so the jaw can open.
+//! - [`neck`] refines, fairs and narrows the column under the skull it carries.
+//! - [`features`] builds the one thing that cannot be a displacement: the ears,
+//!   conformed to the measured surface.
+//! - [`eye`] seats the globes against that surface, with the lids as four rig
+//!   joints; [`Blink`] and [`Talk`] decide when the lids and the jaw move, and
+//!   both write poses rather than geometry.
+//! - [`canon`] is the ruler the rest are authored against — measured landmark
+//!   spans rather than plan numbers.
 
 pub mod blink;
 pub mod canon;

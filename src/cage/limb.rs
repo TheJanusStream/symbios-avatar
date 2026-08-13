@@ -1,6 +1,6 @@
 //! Sweeping a limb chain into a quad tube.
 //!
-//! A limb is meshed as a sequence of four-sided rings. The ring frame is
+//! A limb is meshed as a sequence of [`RING`]-sided rings. The ring frame is
 //! parallel-transported from segment to segment — rotated by the minimal
 //! rotation that carries the old direction onto the new one — so the tube
 //! inherits no twist from the reference up-vector, and a socket ring at one end
@@ -48,9 +48,10 @@ pub(crate) fn ring_offsets(u: Vec3, v: Vec3, half: Vec2, roll: f32) -> [Vec3; RI
 /// rather than on a vertex.
 ///
 /// Named because it is the only value of [`crate::skeleton::Node::roll`] anything
-/// has a reason to use, and because it has to follow [`RING`] rather than be written out — at
-/// four points it is 45°, at eight 22.5°, and a literal would silently stop
-/// meaning "half a segment" the moment #107 lands.
+/// has a reason to use, and because it has to follow [`RING`] rather than be
+/// written out — at four points it is 45°, at eight 22.5°, and a literal would
+/// silently stop meaning "half a segment" whenever [`RING`] moves (as it did
+/// at #107).
 pub(crate) const HALF_SEGMENT: f32 = std::f32::consts::TAU / (2.0 * RING as f32);
 
 /// Rings of one meshed limb, ordered from start to end.
@@ -317,8 +318,8 @@ mod tests {
     fn a_section_offset_moves_the_surface_and_leaves_the_joint() {
         // **The whole reason the offset is on the section and not on the
         // position** (#125). A node's position is a joint: bones meet there,
-        // the rig rotates about it, and `face::skull` and `hair::scalp` measure
-        // the head in radii about it. Moving a node to put mass somewhere moves
+        // the rig rotates about it, and `face::skull` and `hair::follicle`
+        // measure the head in radii about it. Moving a node to put mass somewhere moves
         // the axis everything else is measured from, which is why the neck's
         // lean is bounded at a third of a radius by what it does to the head's
         // own floor rather than by anatomy.

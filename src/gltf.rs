@@ -77,8 +77,8 @@
 //! and `serde`'s derive is most of what makes that figure large — so this is an
 //! upper bound and a loose one. What settles it is a wasm consumer binary,
 //! where nothing reachable from an entry point calls `Gltf::read` and the
-//! link-time pass should strip the lot; the viewer becomes that binary at #141,
-//! and the figure gets re-taken there.
+//! link-time pass should strip the lot; the viewer (#141) is that binary's
+//! nearest stand-in, and the figure has not been re-taken since.
 //!
 //! Being in the library is what lets `cargo test` reach it, which is the reason
 //! it is not a feature today: a default-off feature is a module the shipped

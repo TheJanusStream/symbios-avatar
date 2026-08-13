@@ -58,7 +58,7 @@ pub struct Node {
     /// **The joint stays where it is and the SURFACE moves, which is the whole
     /// point of it being here rather than on [`Node::position`]** (#125). A
     /// node's position is a joint: bones meet there, the rig rotates about it,
-    /// and `face::skull` and `hair::scalp` measure the head in radii about it.
+    /// and `face::skull` and `hair::follicle` measure the head in radii about it.
     /// Moving a node to put mass somewhere therefore moves the axis everything
     /// else is measured from — which is exactly what happened when the neck was
     /// leaned back, and is why that lean is bounded at a third of a radius by

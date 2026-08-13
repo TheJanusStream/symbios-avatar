@@ -102,12 +102,12 @@ Measured by `cargo run --release --example bakeclips`:
 | smallest | `Head Nod`, 920 bytes |
 | largest | `Greeting`, 54,100 bytes |
 | hands and feet | 97,840 bytes — **48% of the artifact** |
-| as JSON instead | 639.8 KiB, 3.2× |
+| as JSON instead | 636.8 KiB, 3.2× |
 | gzipped | 117.9 KiB, 59% |
 
 **Fingers are nearly half of it, and they stay.** Including them was the owner's
 decision (2026-08-07) and the price is stated here rather than quietly taken out
-of it: a hand is twenty-one of our seventy-three joints and forty of the
+of it: a hand is twenty-one of our rig's seventy-seven joints and forty of the
 reference's sixty-six, so a clip that moves the fingers spends most of its bytes
 on them. `Greeting` is a wave with an open hand and is fifty-nine times the size
 of `Head Nod`, which moves two joints.

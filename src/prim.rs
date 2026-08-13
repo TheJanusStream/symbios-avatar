@@ -1,9 +1,9 @@
 //! Small closed shapes the body's features are built from.
 //!
 //! The cage builder grows a body from a skeleton, which is the right machinery
-//! for a torso and quite the wrong one for an eyeball. Eyes, lids, and hair
-//! strands are small, rigid, and known in advance, so they are built directly
-//! from primitives instead.
+//! for a torso and quite the wrong one for an eyeball. Eyes, lids, and the
+//! swept parts of hands and feet are small, shaped in advance, and known
+//! exactly, so they are built directly from primitives instead.
 //!
 //! Everything here comes out **closed and outward-wound**, the same contract the
 //! body meshes hold themselves to. A lid is a shell rather than a single
@@ -20,9 +20,9 @@
 //! the cut on a render-ready copy instead.
 //!
 //! The one place the mapping is knowingly poor is a sweep's end caps, which
-//! reuse their ring's vertices and so reuse its coordinates. A cap is the tip of
-//! a finger or the end of a lock of hair — a few square millimetres — and giving
-//! it an honest chart would mean splitting it off the ring it closes.
+//! reuse their ring's vertices and so reuse its coordinates. A cap is the tip
+//! of a finger or a toe — a few square millimetres — and giving it an honest
+//! chart would mean splitting it off the ring it closes.
 
 use glam::{Vec2, Vec3};
 
@@ -273,9 +273,9 @@ pub fn margin_shell(radius: f32, thickness: f32, rim: &[f32], rings: usize) -> P
 
 /// A closed tube swept along `path`, tapering from `base` to `tip` half-extents.
 ///
-/// The cross-section is a ring of `sides` vertices, parallel-transported down the
-/// path so the tube does not twist. Used for hair strands, where a ribbon rather
-/// than a circle is wanted — hence half-extents rather than a radius.
+/// The cross-section is a ring of `sides` vertices, parallel-transported down
+/// the path so the tube does not twist. Half-extents rather than a radius so
+/// the section can be a ribbon as well as a circle.
 #[must_use]
 pub fn tube(path: &[Vec3], base: Vec2, tip: Vec2, sides: usize) -> PolyMesh {
     let across = path.windows(2).next().map_or(Vec3::X, |step| {
@@ -301,10 +301,10 @@ pub fn ribbon(path: &[Vec3], base: Vec2, tip: Vec2, sides: usize, across: Vec3) 
 
 /// A tube swept with a half-extent given at every point on the path.
 ///
-/// [`ribbon`] can only run one cross-section into another, which is enough for a
-/// lock of hair and not enough for anything whose width comes and goes: a foot
-/// is narrow at the heel, widest at the ball, and narrows again at the toe, and
-/// no interpolation between two ends will say that.
+/// [`ribbon`] can only run one cross-section into another, and that is not
+/// enough for anything whose width comes and goes: a foot is narrow at the
+/// heel, widest at the ball, and narrows again at the toe, and no interpolation
+/// between two ends will say that.
 #[must_use]
 pub fn sweep(path: &[Vec3], sections: &[Vec2], sides: usize, across: Vec3) -> PolyMesh {
     let sides = sides.max(3);

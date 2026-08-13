@@ -51,9 +51,12 @@
 //! # Cost
 //!
 //! Hair was once 70% of the whole triangle budget. An element is now **one flat
-//! card**, four triangles a segment, and the per-region counts are set by the
-//! budget test rather than by eye — see `FULL` in [`style`] and the ledger
-//! `tests/budget.rs` prints. Coverage is bought with **width** before count,
+//! card**, four triangles a segment. The per-region counts (`FULL` in
+//! [`style`]) are derived from the budget and the measured cost of a card, each
+//! style's share of them is granted so that a dear style spends what a crop
+//! spends (`CROWD`, per region), and the whole catalogue at its greediest is
+//! held under [`clump::MAX_TRIANGLES`] — a ceiling `tests/budget.rs`
+//! re-measures rather than quotes. Coverage is bought with **width** before count,
 //! because width is free and a card is four triangles: the flanks hold 7.5% of
 //! a head's surface against the moustache's 0.5, and that arithmetic is what
 //! says whether a region wants bigger cards or more of them.

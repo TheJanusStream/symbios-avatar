@@ -12,7 +12,7 @@ is a museum of budget figures that were true on the day and wrong within a week.
 | constant | value | where |
 | --- | --- | --- |
 | `TRIANGLE_TARGET` | 30,000 | `tests/budget.rs` — the number the engine is judged by (WebGL2 tier) |
-| `TRIANGLE_CEILING` | 27,800 | `tests/budget.rs` — the ratchet: today's high-water mark, not a goal |
+| `TRIANGLE_CEILING` | 27,850 | `tests/budget.rs` — the ratchet: today's high-water mark, not a goal |
 | `MESH_TARGET` / `MESH_CEILING` | 4 draws | `tests/budget.rs` — skin, hair, cloth, eye; each justified by a material the others cannot provide |
 | `hair::clump::MAX_TRIANGLES` | 3,200 | `src/hair/clump/mod.rs` — what is left for hair once everything else is paid for, measured at the *dearest* body, not the default (#187). Re-measured by a test now rather than quoted (#209) |
 
@@ -20,13 +20,13 @@ Measured on 2026-08-13 after the hair makeover (stale the moment anything lands
 — re-run):
 
 - default body: **25,726**
-- dearest head-axis corner: **27,750** (seed 1, long broad)
+- dearest head-axis corner: **27,786** (seed 42, long broad)
 - dearest bald body: **26,670** (seed 42, long broad) — what the hair ceiling is
   the leftover of
 - dearest *product* corner — greediest legal hair on the dearest head: **29,856**
 
 So the working headroom is about 144 against the target at the product corner and
-50 against the ratchet at the sweep corner. The product corner is now bounded by
+64 against the ratchet at the sweep corner. The product corner is now bounded by
 construction rather than by a ratchet: the dearest bald body plus the hair
 ceiling, both of which a test re-measures. Anything that spends geometry must
 still name what pays for it.
@@ -55,8 +55,8 @@ cargo run --release --example refinecost [-- SEEDS]
 between two, and the difference is a whole row of quads — hundreds of
 triangles. Consequences: nothing may be costed by interpolation or scaling
 (#79: a band change costed 188 where the "same" change elsewhere cost 534;
-#185: moving a ceiling by 0.011 profile heights cost 852 and by 0.005 cost
-950 — not even in cost order). Build the candidate and measure it.
+and #185: moving a ceiling by 0.011 profile heights cost 852 and by 0.005
+cost 950 — not even in cost order). Build the candidate and measure it.
 
 **A band's cost lives in its azimuth.** The same dorsum band cost 6,196
 triangles at a cosine of 0.55, 884 at 0.92 and 548 at 0.97 — all landing on
@@ -72,7 +72,8 @@ written as a product; any new expensive axis needs the same treatment.
 **"What is left over" must be computed at the dearest body.** Leftover-defined
 ceilings (`hair::clump::MAX_TRIANGLES`) go stale whenever anything else moves,
 and the default body's leftover is ~800 triangles more generous than a seeded
-long-broad one's. Its docstring records three stale generations, which is why
+long-broad one's. The last leftover-defined ceiling went stale at three times
+the room that actually existed, which is why
 `the_hair_ceiling_is_what_the_budget_actually_leaves` now re-measures the
 leftover in the suite instead of anybody quoting it (#209).
 
