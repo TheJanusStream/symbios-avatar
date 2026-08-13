@@ -720,11 +720,21 @@ pub fn paint_skin(
         albedo,
         // Clamped, not wrapped: an atlas has edges, and wrapping would fold the
         // far side of the texture into the near one's gradients.
+        //
+        // The strength is RENDER-TUNED, not derived (#227). It shipped at 1.6
+        // for months, sized against the pore field's own amplitude while no
+        // renderer sampled the map; the day both did (#45), skin drew as stone
+        // in each of them. 0.15 is where a strength sweep {1.6, 0.6, 0.3,
+        // 0.15} reads as skin again in BOTH instruments — judged in the Bevy
+        // viewer, whose bilinear sampling shows relief harder than the
+        // software renderer's nearest-neighbour — while staying nonzero, so a
+        // whisper of stubble relief survives at the jaw and the map keeps
+        // carrying signal. Retune by render or not at all.
         normal: height_to_normal(
             &heights,
             geometry.width,
             geometry.height,
-            1.6,
+            0.15,
             BoundaryMode::Clamp,
         ),
         roughness: orm,
