@@ -16,7 +16,7 @@
 //! ## Why these live on the record rather than on a body plan
 //!
 //! Every other parameter struct sits with its one consumer — `SkinParams` in
-//! `texture`, `HairParams` in `hair`, `HumanoidParams` in `plan`. These have
+//! `texture`, `HairRecord` in `hair`, `HumanoidParams` in `plan`. These have
 //! three: the cage derives from them, the skull will (#166), and the skin will
 //! (#165 wants muscle definition at low body fat, #167 wants creases with age).
 //! Putting them inside an [`super::Archetype`] variant would make every one of

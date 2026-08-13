@@ -25,8 +25,10 @@
 //! both at once, and it is the difference between a jawline and a cone (#80).
 //!
 //! Heights here are in skull radii above the head joint, which is the same unit
-//! [`crate::hair::Scalp`] profiles in, and the same one the features are placed
-//! in. One unit for the head, everywhere.
+//! the features are placed in. One unit for the head, everywhere. (Hair's own
+//! regions are the exception and say so: [`crate::hair::Follicles`] resolves in
+//! head-local metres, because a mask is asked about a point that arrived from a
+//! scattered root or a texel rather than from a plan.)
 
 use glam::Vec3;
 
@@ -3806,11 +3808,11 @@ const DEPTHS: usize = 15;
 /// Half a bin, so bins share only their boundaries — a sample exactly between
 /// two centres counts for both, and nothing else does.
 ///
-/// **Wider is not safer.** [`crate::hair::Scalp`] carries three quarters of a
-/// bin, which is right there: it needs a profile that clears the head
-/// *everywhere*, so overstating is the safe direction. This one is a
-/// measurement, and a maximum taken over a wide window is not a measurement of
-/// the middle of it. Measured at three quarters, the face came back 2.2 mm too
+/// **Wider is not safer, and the widest window in the crate was right to be
+/// wide.** The shell era's scalp profile carried three quarters of a bin
+/// because it needed a curve that cleared the head *everywhere*, so overstating
+/// was the safe direction for it. This one is a measurement, and a maximum
+/// taken over a wide window is not a measurement of the middle of it. Measured at three quarters, the face came back 2.2 mm too
 /// wide and 7.9 mm too deep off the midline; at a half, 0.9 mm and 4.2 mm, with
 /// no bins left empty and the ear's visibility unchanged between refinement
 /// passes either way.
@@ -3831,8 +3833,9 @@ const WINDOW: f32 = 0.5;
 /// every seed measured; lips were buried on some bodies and proud on others,
 /// which is what a guess looks like when the thing guessed at varies.
 ///
-/// The same argument as [`crate::hair::Scalp`], and for the same reason: measure
-/// the body in hand rather than the plan that asked for it.
+/// The same argument [`crate::hair::Follicles`] makes for every hair region, and
+/// for the same reason: measure the body in hand rather than the plan that asked
+/// for it.
 ///
 /// Sampled from the **surface**, not from the vertex list. A head carries a few
 /// hundred vertices and a feature is placed to within a couple of millimetres,
@@ -4162,7 +4165,8 @@ impl Skull {
         // sharper measurement; only the band between them is shared.
         let lateral = smooth((sin.abs() - LATERAL_ENOUGH + LATERAL_BLEND) / (2.0 * LATERAL_BLEND));
         let across = |radius: f32| self.width_across(height, radius * cos) - radius * sin.abs();
-        let along = |radius: f32| self.depth_across(height, (radius * sin).abs()) - radius * cos.abs();
+        let along =
+            |radius: f32| self.depth_across(height, (radius * sin).abs()) - radius * cos.abs();
         let radius = if cos < 0.0 || lateral >= 1.0 {
             // The half-widths: how far the head reaches sideways at the depth
             // this radius would put the point at, less the sideways distance it

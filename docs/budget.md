@@ -12,21 +12,24 @@ is a museum of budget figures that were true on the day and wrong within a week.
 | constant | value | where |
 | --- | --- | --- |
 | `TRIANGLE_TARGET` | 30,000 | `tests/budget.rs` — the number the engine is judged by (WebGL2 tier) |
-| `TRIANGLE_CEILING` | 28,700 | `tests/budget.rs` — the ratchet: today's high-water mark, not a goal |
+| `TRIANGLE_CEILING` | 27,800 | `tests/budget.rs` — the ratchet: today's high-water mark, not a goal |
 | `MESH_TARGET` / `MESH_CEILING` | 4 draws | `tests/budget.rs` — skin, hair, cloth, eye; each justified by a material the others cannot provide |
-| `hair::MAX_TRIANGLES` | 4,900 | `src/hair/mod.rs` — what is left for hair once everything else is paid for, measured at the *dearest* body, not the default (#187) |
+| `hair::clump::MAX_TRIANGLES` | 3,200 | `src/hair/clump/mod.rs` — what is left for hair once everything else is paid for, measured at the *dearest* body, not the default (#187). Re-measured by a test now rather than quoted (#209) |
 
-Measured on 2026-08-12 after #117 (stale the moment anything lands — re-run):
+Measured on 2026-08-13 after the hair makeover (stale the moment anything lands
+— re-run):
 
-- default body: **26,572**
-- dearest head-axis corner: **28,582** (seed 42, long broad)
-- dearest *product* corner — greediest legal hair on the dearest head: **28,634**
+- default body: **25,726**
+- dearest head-axis corner: **27,750** (seed 1, long broad)
+- dearest bald body: **26,670** (seed 42, long broad) — what the hair ceiling is
+  the leftover of
+- dearest *product* corner — greediest legal hair on the dearest head: **29,856**
 
-So the working headroom is about 1,370 against the target and 66 against the
-ratchet. It was roughly a hundred against both until a dressed body stopped
-drawing the skin under its clothes: 27,788 / 29,818 / 29,870 were the same three
-numbers that morning. Anything that spends geometry must still name what pays
-for it.
+So the working headroom is about 144 against the target at the product corner and
+50 against the ratchet at the sweep corner. The product corner is now bounded by
+construction rather than by a ratchet: the dearest bald body plus the hair
+ceiling, both of which a test re-measures. Anything that spends geometry must
+still name what pays for it.
 
 ## How to measure
 
@@ -67,10 +70,38 @@ where both are dear was over target on *every* seed while both tests passed.
 written as a product; any new expensive axis needs the same treatment.
 
 **"What is left over" must be computed at the dearest body.** Leftover-defined
-ceilings (`hair::MAX_TRIANGLES`) go stale whenever anything else moves, and the
-default body's leftover is ~800 triangles more generous than a seeded
-long-broad one's. Its docstring records three stale generations; measure the
-sweep, take the minimum.
+ceilings (`hair::clump::MAX_TRIANGLES`) go stale whenever anything else moves,
+and the default body's leftover is ~800 triangles more generous than a seeded
+long-broad one's. Its docstring records three stale generations, which is why
+`the_hair_ceiling_is_what_the_budget_actually_leaves` now re-measures the
+leftover in the suite instead of anybody quoting it (#209).
+
+**A budget test wears ONE style out of each catalogue, and it is not the
+dearest one unless somebody made it so** (#209). Every hair region carries a
+catalogue and the styles inside one do not cost the same: measured at the
+greediest legal cut, one scalp card is 15 triangles as a crop, 42 as a tied-back
+tail and 65 as a ringlet, because both of the dear ones spend their cost on path
+and curvature rather than on count. The greedy record wore a crop — the cheapest
+of the five — so the dearest legal record was **32,448 against a 30,000 target
+while every budget test in this file passed**. The fix is that
+`the_dearest_variant_of_each_region_is_the_one_the_greedy_record_wears` costs
+every style in every catalogue on two bodies and fails naming the winner, so the
+corner is derived rather than picked. Any new catalogue anywhere owes the same.
+
+**A count is set in cards and paid for in triangles** (#206, #207, #208, #209).
+Four of the five hair regions have now had their counts re-set for exactly this
+reason, and the scalp's was the expensive one because it is the largest region:
+its counts were sized against a crop and spent by styles costing four times as
+much. `CROWD` grants each style the count that spends what a crop spends.
+
+**Coverage is area, and width is free** (#208, #209). A card is four triangles a
+segment however wide it is, so a region that reads thin wants bigger cards before
+more of them — but only where the cards TILE something. Cutting the scalp counts
+left a crop and a tail unchanged on the render, because a card that lies on the
+skull covers it several times over either way; it left a bob, a curtain and a
+coil visibly thin, because a hanging card covers nothing but itself and the count
+IS the density of the curtain. Do the arithmetic, then look at it — the
+arithmetic was right for two styles out of five.
 
 **A carve is not free just because it adds no vertices.** The skin is
 bit-identical under a displacement-only change, but the hair's scalp is
@@ -92,8 +123,9 @@ wrists and ankles, so the *dearest* outfit is also the one that gives most back.
    mouth needs without paying for the one it does not.
 2. **The jaw-flank cut** — 1,284 triangles, but it undoes #80's gonion work;
    a render judgement, not a number.
-3. The hair replacement (owner decision, 2026-08-12) will redraw the whole
-   map; re-measure everything when it lands.
+3. ~~The hair replacement~~ — landed (milestone #6). It redrew the map: hair is
+   about 1,600 triangles on a default body against the shell era's 3,000, and
+   the whole five-region catalogue at its greediest fits in 3,200.
 
 Spent, and listed so it is not proposed again: **the skin under the clothes**,
 1,216 net on the default body (#117, 2026-08-12).
@@ -102,6 +134,9 @@ Spent, and listed so it is not proposed again: **the skin under the clothes**,
 
 Hair was once 30,208 triangles of a 43,500 body (#40 cut it by sampling each
 lock by distance travelled); the sculpted shell took it to ~2,700 (#68); the
+two-layer follicle system replaced the shell with five regions of flat cards
+(milestone #6), which cost about 1,600 on a default body and are held under
+3,200 at the dearest legal record by a tier restored at #209; the
 eight-point cage halved the base body and cloth with it while the face bought
 a coarser head back with a broad first pass (#107); the face's refinement
 bands moved from raw radii to profile heights below the joint (#61), gained a

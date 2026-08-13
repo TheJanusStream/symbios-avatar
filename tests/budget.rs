@@ -11,7 +11,15 @@
 //! CI and teach everyone to ignore it; writing only the ratchet would quietly
 //! bless whatever today happens to cost.
 
-use symbios_avatar::{Archetype, Avatar, AvatarRecord};
+use rand::SeedableRng;
+use rand_pcg::Pcg64Mcg;
+use symbios_avatar::face::{Canon, Skull};
+use symbios_avatar::hair::clump::{Bed, Sowing};
+use symbios_avatar::hair::{
+    BrowStyle, ChinStyle, Cut, FlankStyle, Follicle, Growth, HairRecord, MoustacheStyle,
+    ScalpStyle, Tress,
+};
+use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3};
 
 /// Triangles a WebGL2-tier avatar may draw.
 ///
@@ -56,8 +64,10 @@ const MESH_TARGET: usize = 4;
 /// almost independent of its parameters, because every lock cost the same and
 /// the group count was fixed; now a lock's price follows its length and its
 /// wave, and a head of hair ranges over more than a factor of five. What keeps
-/// the ceiling is [`symbios_avatar::hair::MAX_TRIANGLES`], which tiers the
-/// group count down when the rest of the axes are expensive.
+/// the ceiling is [`symbios_avatar::hair::clump::MAX_TRIANGLES`], which tiers
+/// the clump counts down when the rest of the axes are expensive. (That constant
+/// went with the shell at #202 and came back at #209, for the same reason it
+/// existed: a record can ask for hair the budget does not hold.)
 ///
 /// **Up 100 while #61 moved both sides of it, which is worth writing out because
 /// the two nearly cancelled and neither is small.**
@@ -115,7 +125,21 @@ const MESH_TARGET: usize = 4;
 /// pass has not been given back — it is still in every one of these figures —
 /// it is simply no longer sitting on top of the dearest hair the old system
 /// could grow.
-const TRIANGLE_CEILING: usize = 28_000;
+///
+/// **And down again to 27,800, which is fifty over the measurement** (#209). The
+/// dearest corner this sweep reaches is 27,750 at seed 1 long broad and has been
+/// since #204; the constant was left round while the hair catalogues landed one
+/// after another, and a ratchet that is left round is a ratchet with 250
+/// triangles of drift in it. Fifty is thin on purpose — a ratchet moves down
+/// with the measurement and not to the nearest round number.
+///
+/// Note what this does NOT guard, because it is the corner that mattered at
+/// #209 and it is guarded somewhere else now: a record off the network choosing
+/// its own hair rather than rolling it. That product is bounded by
+/// construction — the dearest bald body plus `hair::clump::MAX_TRIANGLES` — and
+/// `the_hair_ceiling_is_what_the_budget_actually_leaves` re-measures both halves
+/// rather than ratcheting the product.
+const TRIANGLE_CEILING: usize = 27_800;
 
 /// Draw calls the crate currently costs.
 ///
@@ -280,7 +304,7 @@ fn no_one_part_of_a_body_dominates_its_budget() {
     // biped with no heel. The total did press the ceiling, and the prediction
     // in the paragraph above turned out to be right — the room came out of
     // hair, whose leftover-defined ceiling had gone stale at three times the
-    // room that existed (`hair::MAX_TRIANGLES`, 16,500 -> 6,000).
+    // room that existed (the shell era's `hair::MAX_TRIANGLES`, 16,500 -> 6,000).
     //
     // The room left is now cloth (6,248), and after that the face's refinement
     // passes. There is not a third raise in this number.
@@ -386,55 +410,313 @@ fn a_default_avatar_fits_the_webgl2_triangle_budget() {
     );
 }
 
+/// One body, built once, whose hair can be regrown as often as a sweep needs.
+///
+/// **Because a catalogue sweep is thirty-five haircuts and a body build is half
+/// a second** (#209). `greediest` used to hand-pick the dearest variant of each
+/// region and say so in its own comment; deriving it instead means costing every
+/// style in every catalogue, and doing that through `Avatar::build` would put
+/// twenty seconds into a test suite to answer a question about hair.
+///
+/// So the body is built once and the hair is regrown on it. That is only worth
+/// anything if the regrown hair is the hair the body ships, which is not
+/// something to assume — see `the_regrown_hair_is_the_hair_the_body_ships`,
+/// which asserts it region by region before any sweep reads a number from here.
+struct Head {
+    avatar: Avatar,
+    /// The record it was built from, hair and all.
+    ///
+    /// Kept whole rather than as a seed, because the body a sweep costs against
+    /// has to be reproducible field for field: a `Head` that remembered only its
+    /// seed could not say which skull axes were pinned on it.
+    record: AvatarRecord,
+    skull: Skull,
+    canon: Canon,
+    /// What to call this body in a report.
+    at: String,
+}
+
+impl Head {
+    /// Builds one body and measures the head hair is grown on.
+    fn of(seed: i64, skull: Option<(f32, f32)>) -> Self {
+        let mut record = AvatarRecord::new("Ledger", Archetype::default());
+        record.reroll(seed);
+        let at = match skull {
+            Some(_) => format!("seed {seed} long broad"),
+            None => format!("seed {seed} as rolled"),
+        };
+        if let (Archetype::Humanoid(params), Some((breadth, length))) =
+            (&mut record.archetype, skull)
+        {
+            params.head_breadth = breadth;
+            params.face_length = length;
+        }
+        let avatar = Avatar::build(&record).expect("a biped builds");
+        let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a biped has a head");
+        let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+        Self {
+            avatar,
+            record,
+            skull,
+            canon,
+            at,
+        }
+    }
+
+    /// Grows one head of hair on it, through the same call `Avatar::build` makes.
+    ///
+    /// `grow_head` rather than a copy of its loop: the five regions come off one
+    /// stream in `Follicle::ALL` order and are tiered together to fit the hair
+    /// ceiling, and a sweep that reproduced that by hand would be a second
+    /// opinion about the one thing that has to match (#89).
+    fn regrow(&self, hair: &HairRecord) -> Growth {
+        self.regrow_under(hair, symbios_avatar::hair::clump::MAX_TRIANGLES)
+    }
+
+    /// The same, under a ceiling of the caller's choosing.
+    ///
+    /// `usize::MAX` is what a catalogue is ranked under: the tier is a property
+    /// of the whole head, and ranking styles through it would rank them by how
+    /// much of one ceiling each happened to be granted rather than by what each
+    /// costs.
+    fn regrow_under(&self, hair: &HairRecord, ceiling: usize) -> Growth {
+        let follicles = symbios_avatar::Follicles::of(
+            &self.avatar.rig,
+            &self.skull,
+            &self.canon,
+            &hair.regions,
+        );
+        let bed = Bed {
+            body: &self.avatar.parts.body,
+            rig: &self.avatar.rig,
+            weights: &self.avatar.parts.weights,
+            follicles: &follicles,
+        };
+        let sown: Vec<_> = Follicle::ALL
+            .into_iter()
+            .filter_map(|follicle| {
+                hair.sowing(follicle, &follicles)
+                    .map(|sown| (follicle, sown))
+            })
+            .collect();
+        let sowings: Vec<_> = sown
+            .iter()
+            .map(|(follicle, sown)| Sowing {
+                follicle: *follicle,
+                count: sown.clumps,
+                shape: sown.shape.as_ref(),
+                roots: Vec3::from_array(sown.roots),
+                tips: Vec3::from_array(sown.tips),
+            })
+            .collect();
+        symbios_avatar::hair::clump::grow_head(&bed, &sowings, self.record.seed, ceiling)
+    }
+
+    /// What one region of a head of hair costs on this body.
+    ///
+    /// **Only the region asked for is lofted, and the regions before it are
+    /// scattered and thrown away** (#209). A sweep is seventy haircuts and the
+    /// scalp is by far the dearest thing on a head to grow, so costing a
+    /// moustache by growing a whole head of hair five times over put seventy-odd
+    /// seconds into this file to answer a question about a lip.
+    ///
+    /// It is exact rather than an approximation, and the reason is narrow enough
+    /// to write down: the only thing the regions share is the root stream, the
+    /// only thing that draws from it is `scatter`, and `scatter` is handed a
+    /// COUNT and a mask — never a style. So advancing the stream by scattering
+    /// the earlier regions and discarding their roots leaves this region's own
+    /// roots bit-identical, and the regions AFTER it cannot reach backward at
+    /// all. `the_cheap_way_to_cost_a_region_agrees_with_the_dear_one` holds it.
+    fn region(&self, hair: &HairRecord, follicle: Follicle) -> usize {
+        let follicles = symbios_avatar::Follicles::of(
+            &self.avatar.rig,
+            &self.skull,
+            &self.canon,
+            &hair.regions,
+        );
+        let mut stream = Pcg64Mcg::seed_from_u64(self.record.seed as u64);
+        for earlier in Follicle::ALL {
+            let Some(sown) = hair.sowing(earlier, &follicles) else {
+                continue;
+            };
+            if earlier != follicle {
+                // Discarded on purpose: the roots are not wanted, only the
+                // stream state they leave behind.
+                let _ = symbios_avatar::hair::clump::scatter::scatter(
+                    &self.avatar.parts.body,
+                    &self.avatar.rig,
+                    &self.avatar.parts.weights,
+                    &follicles,
+                    earlier,
+                    sown.clumps,
+                    &mut stream,
+                );
+                continue;
+            }
+            let bed = Bed {
+                body: &self.avatar.parts.body,
+                rig: &self.avatar.rig,
+                weights: &self.avatar.parts.weights,
+                follicles: &follicles,
+            };
+            let mut growth = Growth::on(follicles.head);
+            growth.grow(
+                &bed,
+                &Sowing {
+                    follicle,
+                    count: sown.clumps,
+                    shape: sown.shape.as_ref(),
+                    roots: Vec3::from_array(sown.roots),
+                    tips: Vec3::from_array(sown.tips),
+                },
+                &mut stream,
+            );
+            // UNTIERED, deliberately: what this answers is what a style ASKS
+            // for, which is what a catalogue is ranked by. See `regrow_under`.
+            return growth.tris();
+        }
+        0
+    }
+}
+
+/// Prints what each region of one head of hair cost.
+///
+/// **The per-zone ledger** (#209). Every figure in this file until now was a
+/// whole body, and a whole body is the wrong unit for the only part of it a
+/// record can move: when the greedy corner moved 424 triangles at #207 there was
+/// no way to read from any test which region had spent them. `Grown` has carried
+/// a per-region breakdown since #202 and nothing printed it.
+fn ledger(label: &str, growth: &Growth) {
+    println!("{label}: {} triangles of hair", growth.tris());
+    for follicle in Follicle::ALL {
+        let grown = growth.grown.iter().find(|grown| grown.follicle == follicle);
+        let (clumps, tris) = grown.map_or((0, 0), |grown| (grown.clumps, grown.tris));
+        println!(
+            "  {:<10} {clumps:>4} clumps {tris:>6} triangles",
+            follicle.name()
+        );
+    }
+}
+
+/// How far along its own axis each parametric style is costed.
+///
+/// Ends and middle. An axis does not have to be monotone in what it costs — a
+/// bob's fringe at zero is an even curtain, which is the LONGER of its two ends —
+/// so sampling one end would be picking a corner again with more steps.
+const AXES: [f32; 3] = [0.0, 0.5, 1.0];
+
+/// Every scalp style a record may ask for, costed one at a time.
+fn scalp_catalogue() -> Vec<(String, ScalpStyle)> {
+    let mut all = vec![("crop".to_string(), ScalpStyle::Crop)];
+    for axis in AXES {
+        all.push((format!("bob {axis}"), ScalpStyle::Bob { fringe: axis }));
+        all.push((format!("long {axis}"), ScalpStyle::Long { weight: axis }));
+        all.push((format!("tied {axis}"), ScalpStyle::TiedBack { tail: axis }));
+        all.push((format!("curly {axis}"), ScalpStyle::Curly { curl: axis }));
+    }
+    all
+}
+
+/// Likewise the brows, which carry no axis of their own.
+fn brow_catalogue() -> Vec<(String, BrowStyle)> {
+    vec![
+        ("natural".to_string(), BrowStyle::Natural),
+        ("thick".to_string(), BrowStyle::Thick),
+    ]
+}
+
+/// Likewise the upper lip.
+fn moustache_catalogue() -> Vec<(String, MoustacheStyle)> {
+    let mut all = vec![("chevron".to_string(), MoustacheStyle::Chevron)];
+    for axis in AXES {
+        all.push((
+            format!("handlebar {axis}"),
+            MoustacheStyle::Handlebar { sweep: axis },
+        ));
+        all.push((
+            format!("pencil {axis}"),
+            MoustacheStyle::Pencil { ride: axis },
+        ));
+    }
+    all
+}
+
+/// Likewise the chin.
+fn chin_catalogue() -> Vec<(String, ChinStyle)> {
+    let mut all = vec![("full".to_string(), ChinStyle::Full)];
+    for axis in AXES {
+        all.push((format!("goatee {axis}"), ChinStyle::Goatee { point: axis }));
+        all.push((
+            format!("braided {axis}"),
+            ChinStyle::Braided { twist: axis },
+        ));
+    }
+    all
+}
+
+/// Likewise the jaw's flanks.
+fn flank_catalogue() -> Vec<(String, FlankStyle)> {
+    let mut all = Vec::new();
+    for axis in AXES {
+        all.push((
+            format!("sideburns {axis}"),
+            FlankStyle::Sideburns { drop: axis },
+        ));
+        all.push((
+            format!("full-connect {axis}"),
+            FlankStyle::FullConnect { reach: axis },
+        ));
+    }
+    all
+}
+
+/// The cut every catalogue is costed at: the greediest a record may ask for.
+const GREEDY: Cut = Cut {
+    length: 1.0,
+    thickness: 1.0,
+    density: 1.0,
+    droop: 1.0,
+};
+
 /// The dearest hair a record can legally ask for.
 ///
 /// Every region grown, at full length and full density: the corner a record off
 /// the network can put a body in, which is what the budget has to survive
 /// rather than the default one.
-fn greediest() -> symbios_avatar::HairRecord {
-    use symbios_avatar::hair::{
-        BrowStyle, ChinStyle, Cut, FlankStyle, HairRecord, MoustacheStyle, ScalpStyle, Tress,
-    };
-    let cut = Cut {
-        length: 1.0,
-        thickness: 1.0,
-        density: 1.0,
-        droop: 1.0,
-    };
+///
+/// **The variants here are DERIVED rather than chosen** (#209), and
+/// `the_dearest_variant_of_each_region_is_the_one_the_greedy_record_wears`
+/// re-derives them by costing every style in every catalogue against this body.
+/// Every region carries a catalogue now and the styles inside one do not cost the
+/// same — a braid is a third as many clumps however many stations its twist earns
+/// — so a budget test that picked whichever variant was written first would be
+/// measuring the order of an enum. #208 hand-picked them from four measurements;
+/// this is the sweep that issue said it owed.
+fn greediest() -> HairRecord {
     HairRecord {
         scalp: Tress {
-            style: ScalpStyle::Crop,
-            cut,
+            style: ScalpStyle::Curly { curl: 1.0 },
+            cut: GREEDY,
             ..Default::default()
         },
         brows: Tress {
             style: BrowStyle::Natural,
-            cut,
+            cut: GREEDY,
             ..Default::default()
         },
-        // **The dearest variant of each catalogue, not the first one** (#208).
-        // Every region carries a catalogue now, and the styles inside one do not
-        // cost the same: measured on the greedy body, a chin beard is 26,888
-        // triangles braided and 27,168 full, because a braid is a third as many
-        // clumps however many stations its twist earns. A budget test that
-        // picked whichever variant was written first would be measuring the
-        // order of an enum.
-        //
-        // #209 re-derives this properly, as a sweep over the whole catalogue
-        // rather than a hand-picked corner.
         moustache: Tress {
             style: MoustacheStyle::Handlebar { sweep: 1.0 },
-            cut,
+            cut: GREEDY,
             ..Default::default()
         },
         chin: Tress {
             style: ChinStyle::Full,
-            cut,
+            cut: GREEDY,
             ..Default::default()
         },
         flanks: Tress {
             style: FlankStyle::FullConnect { reach: 1.0 },
-            cut,
+            cut: GREEDY,
             ..Default::default()
         },
         ..HairRecord::default()
@@ -492,7 +774,9 @@ fn the_budget_holds_for_the_dearest_hair_on_the_dearest_head() {
     // hair, and the two together. What it caught is that
     // `hair::MAX_TRIANGLES` is defined as what is left over and had been
     // computed on the default body, where the leftover is eight hundred
-    // triangles larger than on a long broad seeded one.
+    // triangles larger than on a long broad seeded one. Its replacement is
+    // measured rather than quoted, by
+    // `the_hair_ceiling_is_what_the_budget_actually_leaves` (#209).
     let mut worst = (String::new(), 0);
     for seed in [1, 7, 23, 29, 42, 99] {
         for (name, breadth, length) in [
@@ -537,4 +821,298 @@ fn a_default_avatar_fits_the_webgl2_draw_budget() {
         "{} draws against a budget of {MESH_TARGET}",
         avatar.budget.meshes
     );
+}
+
+#[test]
+fn the_regrown_hair_is_the_hair_the_body_ships() {
+    // **The instrument check the sweep below rests on, and it is not a
+    // formality** (#209). `Head::regrow` is a second copy of the loop in
+    // `Avatar::build`, written so that costing thirty-five haircuts takes one
+    // body build rather than thirty-five. A second copy of a loop is a second
+    // opinion about what the body does, and the way that goes wrong is silent:
+    // the roots come off one shared stream in `Follicle::ALL` order, so a copy
+    // that seeds its own stream per region, or visits the regions in a different
+    // order, or reads the follicle masks from `FollicleParams::default()` rather
+    // than from the record, still grows a plausible head of hair — of the wrong
+    // cost, on every row of a ledger that looks right.
+    //
+    // So it is checked against the shipped article, region by region rather than
+    // in total, on two bodies and three haircuts. A total can agree while two
+    // regions are swapped.
+    for head in [Head::of(0, None), Head::of(42, Some((1.0, 1.0)))] {
+        for (what, hair) in [
+            ("the default", HairRecord::default()),
+            ("the greediest", greediest()),
+            ("a bald head", HairRecord::bald()),
+            // **A fourth, because the three above all carry the DEFAULT
+            // regions** and a copy of the loop that read the masks from
+            // `FollicleParams::default()` instead of from the record would agree
+            // with the body on every one of them. The masks are what decide
+            // where a root may land and how many find a seat, so reading the
+            // wrong ones is the mutation this test most needs to catch and was
+            // the one it could not.
+            ("a moved hairline", {
+                let mut hair = greediest();
+                hair.regions.scalp.line = -0.8;
+                hair.regions.scalp.temples = 1.0;
+                hair.regions.flanks.cheek = 1.0;
+                hair.regions.chin.under = 1.0;
+                hair
+            }),
+        ] {
+            let mut record = head.record.clone();
+            record.hair = hair;
+            record.sanitize();
+            let shipped = Avatar::build(&record).expect("a biped builds");
+            let regrown = head.regrow(&record.hair);
+            let shipped = shipped
+                .parts
+                .hair
+                .map(|growth| growth.grown)
+                .unwrap_or_default();
+            let regrown: Vec<_> = regrown
+                .grown
+                .into_iter()
+                .filter(|grown| grown.tris > 0)
+                .collect();
+            let shipped: Vec<_> = shipped.into_iter().filter(|grown| grown.tris > 0).collect();
+            assert_eq!(
+                regrown, shipped,
+                "regrowing {what} on {} is not what the body ships",
+                head.at
+            );
+        }
+    }
+}
+
+#[test]
+fn the_dearest_variant_of_each_region_is_the_one_the_greedy_record_wears() {
+    // **The sweep #208 said it owed** (#209). Every region carries a catalogue
+    // and the styles inside one do not cost the same: a braid is a third as many
+    // clumps however many stations its twist earns, a pencil line is a fraction
+    // of a chevron, and a bob's fringe is LONGER at zero than at one. `greediest`
+    // named four of them by hand off four measurements, which is a corner picked
+    // rather than found — and the corner it picks is what both target tests are
+    // argued from.
+    //
+    // So every style in every catalogue is costed, at the greediest cut a record
+    // may legally ask for, and `greediest` has to be wearing the winner of each.
+    // On two bodies, because a region's ranking is a property of the head it
+    // grows on and the dearest body is not the default one: a long broad skull
+    // has more scalp to cover and a longer jawline to run a beard down.
+    //
+    // The failure message names the variant that beat the one in `greediest`, so
+    // the fix is to paste it in rather than to go and measure again.
+    let wearing = greediest();
+    let mut beaten: Vec<String> = Vec::new();
+    for head in [Head::of(0, None), Head::of(42, Some((1.0, 1.0)))] {
+        println!("\n=== the catalogue on {} ===", head.at);
+        let mut dearest: Vec<(Follicle, String, usize)> = Vec::new();
+
+        macro_rules! sweep {
+            ($follicle:expr, $field:ident, $catalogue:expr) => {{
+                let follicle = $follicle;
+                let mut best = (String::new(), 0usize);
+                for (name, style) in $catalogue {
+                    let mut hair = wearing;
+                    hair.$field.style = style;
+                    hair.sanitize();
+                    let tris = head.region(&hair, follicle);
+                    println!("  {:<10} {name:<16} {tris:>6} triangles", follicle.name());
+                    if tris > best.1 {
+                        best = (name, tris);
+                    }
+                }
+                dearest.push((follicle, best.0, best.1));
+            }};
+        }
+
+        sweep!(Follicle::Scalp, scalp, scalp_catalogue());
+        sweep!(Follicle::Brows, brows, brow_catalogue());
+        sweep!(Follicle::Moustache, moustache, moustache_catalogue());
+        sweep!(Follicle::Chin, chin, chin_catalogue());
+        sweep!(Follicle::Flanks, flanks, flank_catalogue());
+
+        let worn = head.regrow_under(&wearing, usize::MAX);
+        ledger(&format!("\nwhat `greediest` wears on {}", head.at), &worn);
+        for (follicle, name, tris) in dearest {
+            let wears = worn
+                .grown
+                .iter()
+                .find(|grown| grown.follicle == follicle)
+                .map_or(0, |grown| grown.tris);
+            if wears < tris {
+                beaten.push(format!(
+                    "on {} the {} catalogue's dearest style is `{name}` at {tris} triangles \
+                     and `greediest` wears one costing {wears}: put `{name}` in it",
+                    head.at,
+                    follicle.name()
+                ));
+            }
+        }
+    }
+    // Collected over both bodies and asserted at the end rather than inside the
+    // loop, for the reason `the_ceiling_holds_across_the_parameter_space` gives
+    // for the same shape: asserting as it goes reports the FIRST region that is
+    // wrong and hides every other, and the whole point of a sweep is the table.
+    assert!(beaten.is_empty(), "{}", beaten.join("\n"));
+}
+
+#[test]
+fn the_cheap_way_to_cost_a_region_agrees_with_the_dear_one() {
+    // `Head::region` grows one region and scatters the rest away, which is the
+    // whole reason the catalogue sweep finishes. It rests on a claim about the
+    // root stream — that only `scatter` draws from it, and that it is handed a
+    // count rather than a style — and a claim of that shape is exactly the kind
+    // that stays true until somebody adds a draw somewhere else.
+    //
+    // So it is checked against growing the lot, on the two bodies the sweep
+    // uses, for every region, on a record where every region is grown and the
+    // counts differ region to region.
+    for head in [Head::of(0, None), Head::of(42, Some((1.0, 1.0)))] {
+        let hair = greediest();
+        let whole = head.regrow_under(&hair, usize::MAX);
+        for follicle in Follicle::ALL {
+            let dear = whole
+                .grown
+                .iter()
+                .find(|grown| grown.follicle == follicle)
+                .map_or(0, |grown| grown.tris);
+            assert_eq!(
+                head.region(&hair, follicle),
+                dear,
+                "costing the {} alone on {} disagrees with growing the whole head",
+                follicle.name(),
+                head.at
+            );
+        }
+    }
+}
+
+#[test]
+fn the_hair_ceiling_is_what_the_budget_actually_leaves() {
+    // **A leftover-defined ceiling goes stale silently, and the last one did**
+    // (#187: `hair::MAX_TRIANGLES` was computed on the default body, where the
+    // leftover is eight hundred triangles larger than on a long broad seeded
+    // one, and nothing noticed for weeks). So the leftover is re-measured here
+    // rather than quoted, on the dearest body the sweep reaches, and the
+    // constant has to be under it.
+    //
+    // Measured as the body WITHOUT hair rather than as a subtraction from a
+    // haired one, because a tiered head of hair is not the hair the sum was
+    // taken over.
+    let mut worst = (String::new(), 0);
+    for seed in [1, 7, 23, 29, 42, 99] {
+        for (name, breadth, length) in [
+            ("as rolled", None, None),
+            ("long broad", Some(1.0f32), Some(1.0f32)),
+            ("long narrow", Some(-1.0), Some(1.0)),
+            ("short broad", Some(1.0), Some(-1.0)),
+        ] {
+            let mut record = AvatarRecord::new("Bald", Archetype::default());
+            record.reroll(seed);
+            if let Archetype::Humanoid(params) = &mut record.archetype {
+                params.head_breadth = breadth.unwrap_or(params.head_breadth);
+                params.face_length = length.unwrap_or(params.face_length);
+            }
+            record.hair = HairRecord::bald();
+            record.sanitize();
+            let avatar = Avatar::build(&record).expect("a biped builds");
+            if avatar.budget.tris > worst.1 {
+                worst = (format!("seed {seed} {name}"), avatar.budget.tris);
+            }
+        }
+    }
+    let leftover = TRIANGLE_TARGET - worst.1;
+    println!(
+        "the dearest bald body: {} at {}, leaving {leftover} for hair",
+        worst.1, worst.0
+    );
+    assert!(
+        symbios_avatar::hair::clump::MAX_TRIANGLES <= leftover,
+        "the hair ceiling is {} against a body that leaves {leftover} at {}",
+        symbios_avatar::hair::clump::MAX_TRIANGLES,
+        worst.0
+    );
+    // And it is not so far under the leftover that hair is being starved of room
+    // the body is not using. If this fires, the body got cheaper and the ceiling
+    // should follow it up — which is a decision, not an automatic one, since
+    // every triangle it takes back is one the face cannot have later.
+    assert!(
+        symbios_avatar::hair::clump::MAX_TRIANGLES * 5 >= leftover * 4,
+        "the body leaves {leftover} triangles for hair and the ceiling only \
+         spends {}",
+        symbios_avatar::hair::clump::MAX_TRIANGLES
+    );
+}
+
+#[test]
+fn the_tier_bites_only_where_a_record_asks_for_more_than_the_budget_holds() {
+    // **The whole claim the tier rests on** (#209). A ceiling that trimmed
+    // ordinary heads would be the smaller-counts answer wearing a ceiling's
+    // name: every scalp style's count and width were tuned by render at #204 and
+    // #210, and a tier that shaved a rolled body would pay for one unreachable
+    // record with every reachable one.
+    //
+    // So: nothing a re-roll can produce is trimmed, on any of the styles, at any
+    // cut a re-roll can reach. Measured as the tiered growth against the same
+    // growth with no ceiling at all — the same head, region for region — because
+    // a total that matches can still be two regions trading.
+    for head in [Head::of(0, None), Head::of(42, Some((1.0, 1.0)))] {
+        for (name, style) in scalp_catalogue() {
+            for density in [0.0, 0.5, 1.0] {
+                let mut hair = HairRecord::default();
+                hair.scalp.style = style;
+                hair.scalp.cut.density = density;
+                // Everything a re-roll can put on a face at once, so this is not
+                // a scalp on a bare head.
+                hair.moustache.style = MoustacheStyle::Chevron;
+                hair.chin.style = ChinStyle::Full;
+                hair.flanks.style = FlankStyle::FullConnect { reach: 0.5 };
+                hair.sanitize();
+                let free = head.regrow_under(&hair, usize::MAX);
+                let tiered = head.regrow(&hair);
+                assert_eq!(
+                    tiered.grown,
+                    free.grown,
+                    "the tier trimmed a `{name}` at density {density} on {}, which costs \
+                     {} against a ceiling of {}",
+                    head.at,
+                    free.tris(),
+                    symbios_avatar::hair::clump::MAX_TRIANGLES
+                );
+            }
+        }
+    }
+
+    // **And it is a backstop with nothing to reach it, which is the state it is
+    // meant to be in.** The dearest legal record costs about 3,050 triangles of
+    // hair against a 3,200 ceiling, because #209 sized the scalp's counts by
+    // what a card of each style actually costs rather than leaving a tier to
+    // clean up after them. That is the right order: a ceiling that bites in
+    // ordinary use is smaller counts wearing a ceiling's name, and it takes them
+    // out of whichever region the scaling happens to reach — a dear haircut
+    // thinning somebody's beard.
+    //
+    // So what is checked is that it still WORKS, against a ceiling set low
+    // enough to bite, and that every region shrinks together rather than one
+    // being shaved out.
+    let head = Head::of(42, Some((1.0, 1.0)));
+    let free = head.regrow_under(&greediest(), usize::MAX);
+    let squeezed = head.regrow_under(&greediest(), free.tris() / 2);
+    assert!(
+        squeezed.tris() <= free.tris() / 2,
+        "squeezed to half of {}, a head of hair still costs {}",
+        free.tris(),
+        squeezed.tris()
+    );
+    assert_eq!(
+        squeezed.grown.len(),
+        free.grown.len(),
+        "the tier shaved a whole region out of a head of hair: {:?} against {:?}",
+        squeezed.grown,
+        free.grown
+    );
+    ledger("the dearest legal hair", &free);
+    ledger("the same, squeezed to half", &squeezed);
 }

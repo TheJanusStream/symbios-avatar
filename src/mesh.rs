@@ -123,7 +123,7 @@ pub struct PolyMesh {
     ///
     /// **sRGB, and this line used to say linear.** It is the same space
     /// everything else on a body is authored in — [`crate::texture::skin`] says
-    /// so for the melanin ramp, [`crate::HairParams::colour`] picks its ramp by
+    /// so for the melanin ramp, [`crate::hair::style::melanin`] is picked by
     /// eye, [`crate::dress::dye`] mixes by eye, and `examples/render` decodes
     /// with `to_linear` before it lights anything. A renderer that hands these
     /// to a linear channel unchanged draws them two to four times too bright in

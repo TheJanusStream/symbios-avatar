@@ -121,8 +121,24 @@ const REACH: [f32; 5] = [0.022, 0.130, 0.330, 0.045, 0.120];
 /// Curly is widest, because coiled hair genuinely clumps into fewer, fatter
 /// locks — which is also what pays for its extra stations.
 ///
-/// Provenance: **tuned by render** (#204).
-const WIDTH: [f32; 5] = [0.034, 0.038, 0.040, 0.036, 0.044];
+/// **The three HANGING styles were widened when [`CROWD`] was re-sized** (#209),
+/// and the split between which styles needed it and which did not is the
+/// interesting half. Cutting the counts by measured card cost left a crop and a
+/// tail unchanged on the render — a card that lies ON the skull tiles it, so
+/// three times cover and eight times cover look the same — and left a bob, a
+/// curtain and a coil visibly thin, with scalp showing through the crown. A
+/// hanging card does not tile anything: past the hairline it is one lock in a
+/// curtain, and the count IS the density of that curtain.
+///
+/// So the count came down for the budget and the width went up for the mass,
+/// which is the flanks' own lesson in the region where it is least obvious
+/// (#208): width is free and a card is four triangles a segment. Measured, the
+/// whole catalogue still lands inside the scalp's share of the budget with these
+/// at nearly twice their old widths.
+///
+/// Provenance: **tuned by render** (#204), **widened by render against a
+/// re-sized count** (#209).
+const WIDTH: [f32; 5] = [0.034, 0.046, 0.056, 0.036, 0.070];
 
 /// What share of its width a lock keeps at its tip.
 ///
@@ -144,8 +160,38 @@ const TAPER: [f32; 5] = [0.10, 0.16, 0.14, 0.14, 0.30];
 /// hair clumps into fewer, fatter locks than straight hair does. It is also what
 /// makes a coil affordable, since a curve pays for its own stations.
 ///
-/// Provenance: **derived** from what each style is, **sized by the budget** (#204).
-const CROWD: [f32; 5] = [1.0, 1.0, 0.9, 1.0, 0.62];
+/// **Re-sized against the measured cost of each style's own card** (#209), and
+/// it is the same mistake in the same currency the facial catalogues each found:
+/// a count is set in cards and paid for in triangles. These were sized at #204
+/// against a crop, and the budget test wore a crop too — so nothing ever costed
+/// the four styles that are not one. Measured at the greediest cut a record may
+/// ask for, one card is
+///
+/// ```text
+///   crop  15.3    bob  18.3    long  24.4    tied  42.0    curly  64.9
+/// ```
+///
+/// triangles, because a tail's card walks the whole skull before it gathers and
+/// a ringlet pays a station for every millimetre its coil departs from a chord.
+/// At a flat count that is a scalp costing four times what its own budget was
+/// set to, and it is why the dearest legal record came in 2,448 triangles over
+/// the WebGL2 target with every budget test passing.
+///
+/// So each style is granted the count that spends what a crop spends. The crop
+/// itself is the anchor and does not move; nothing about a card's width, reach,
+/// taper or coil moves either, because those are what #204 and #210 tuned by
+/// render and none of them is what went wrong.
+///
+/// **Coverage was checked before the count was cut, not after** (the flanks'
+/// lesson, #208). The scalp holds 34.5% of a head's own surface — 485 cm² on the
+/// default body — and these grant it between two and three times that in card
+/// area at the default cut, against the one-and-a-half the flanks were judged
+/// to need. Width is free and a card is four triangles a segment, so a style
+/// that wants more mass takes it in [`WIDTH`], not here.
+///
+/// Provenance: **derived** from what each style is, **sized by the budget**
+/// (#204), **re-sized by the measured cost of a card** (#209).
+const CROWD: [f32; 5] = [1.0, 0.83, 0.62, 0.36, 0.24];
 
 /// How far a lock stands off the skull at no droop at all, in metres.
 ///
@@ -723,7 +769,10 @@ impl Shape for Sheet {
         // A gather that starts at the root is a chord through the skull; see
         // [`Self::combed`].
         if let Some(knot) = self.knot {
-            at = at.lerp(knot, crate::face::smooth((along - KNOT_FROM) / (1.0 - KNOT_FROM)));
+            at = at.lerp(
+                knot,
+                crate::face::smooth((along - KNOT_FROM) / (1.0 - KNOT_FROM)),
+            );
         }
         // And coiled, if it is a curl: a wave across its own fall rather than a
         // helix round it. See [`COIL`] for what the helix cost.
@@ -879,76 +928,76 @@ mod tests {
             let mut probed = 0usize;
             for turn in TURNS {
                 for high in [0.02f32, 0.12, 0.30] {
-                let root = root(&head, turn, crown - (crown - throat) * high);
-                let mut worst = 0.0f32;
-                let radius = |point: Vec3| (point.x * point.x + point.z * point.z).sqrt();
-                for step in 0..=20 {
-                    let along = step as f32 / 20.0 * until;
-                    let at = shape.at(&root, along);
-                    // **Only while the head is still holding this lock UP**, which
-                    // is what the claim says and is not a fixed share of the head's
-                    // height: below the widest band it passes, hair drapes and is
-                    // supposed to stand off a narrowing skull —
-                    // `hair_does_not_follow_the_head_back_in_under_the_widest_part`
-                    // is the test for that half. The first cut of this drew the
-                    // line at 45% of the head and then read the occiput's own
-                    // drape as 5.4 mm of stray.
-                    //
-                    // Measured at the lock's own azimuth, since a combed lock is
-                    // not where it started: still supported means the profile is
-                    // no narrower here than anywhere it has come from.
-                    // **And only while it is still ON the scalp**, which is the
-                    // other half of what holds a card out and is not the same
-                    // claim (#210). A fringe leaves the mask at the hairline and
-                    // hangs from the radius it left with, while the head under
-                    // it goes on WIDENING all the way down the brow — so a bob
-                    // read as 5.2 mm of stray for doing exactly what a fringe
-                    // does. The head being wider above is drape; the mask ending
-                    // is a hairline.
-                    if head.weight(Follicle::Scalp, at) < EDGE {
-                        break;
+                    let root = root(&head, turn, crown - (crown - throat) * high);
+                    let mut worst = 0.0f32;
+                    let radius = |point: Vec3| (point.x * point.x + point.z * point.z).sqrt();
+                    for step in 0..=20 {
+                        let along = step as f32 / 20.0 * until;
+                        let at = shape.at(&root, along);
+                        // **Only while the head is still holding this lock UP**, which
+                        // is what the claim says and is not a fixed share of the head's
+                        // height: below the widest band it passes, hair drapes and is
+                        // supposed to stand off a narrowing skull —
+                        // `hair_does_not_follow_the_head_back_in_under_the_widest_part`
+                        // is the test for that half. The first cut of this drew the
+                        // line at 45% of the head and then read the occiput's own
+                        // drape as 5.4 mm of stray.
+                        //
+                        // Measured at the lock's own azimuth, since a combed lock is
+                        // not where it started: still supported means the profile is
+                        // no narrower here than anywhere it has come from.
+                        // **And only while it is still ON the scalp**, which is the
+                        // other half of what holds a card out and is not the same
+                        // claim (#210). A fringe leaves the mask at the hairline and
+                        // hangs from the radius it left with, while the head under
+                        // it goes on WIDENING all the way down the brow — so a bob
+                        // read as 5.2 mm of stray for doing exactly what a fringe
+                        // does. The head being wider above is drape; the mask ending
+                        // is a hairline.
+                        if head.weight(Follicle::Scalp, at) < EDGE {
+                            break;
+                        }
+                        let azimuth = at.x.atan2(at.z);
+                        let here = radius(head.skull().surface_at(at.y, azimuth));
+                        // **From the CROWN, which is where the card started, and not
+                        // from its root** (#210). Every card starts at the crown
+                        // whatever its root, and the crown is a point: the cap over
+                        // the topmost band closes the radius to nothing there. So a
+                        // scan from the root read the head as having been wider
+                        // above the very first station of every card, broke out of
+                        // the loop before measuring anything, and this test asserted
+                        // NOTHING AT ALL for five styles across sixteen azimuths —
+                        // measured, zero stations of 1,008. It is the seventh
+                        // instrument this milestone to have been measuring its own
+                        // parameterisation rather than the hair, and the only one so
+                        // far to have been measuring none of it.
+                        let widest = (0..40)
+                            .map(|band| {
+                                let height = at.y + (crown - at.y) * band as f32 / 39.0;
+                                radius(head.skull().surface_at(height, azimuth))
+                            })
+                            .fold(0.0f32, f32::max);
+                        if widest > here + 0.0005 {
+                            break;
+                        }
+                        // **Against the surface where the lock IS, not where it
+                        // started.** A combed lock travels round the head, and the
+                        // head is a different width behind the ear than over the
+                        // brow — so measuring it against its root's azimuth reads a
+                        // correct walk as 12.8 mm of stray. That is the third time in
+                        // this milestone that an instrument has measured its own
+                        // parameterisation rather than the hair.
+                        worst = worst.max((radius(at) - here).abs());
+                        probed += 1;
                     }
-                    let azimuth = at.x.atan2(at.z);
-                    let here = radius(head.skull().surface_at(at.y, azimuth));
-                    // **From the CROWN, which is where the card started, and not
-                    // from its root** (#210). Every card starts at the crown
-                    // whatever its root, and the crown is a point: the cap over
-                    // the topmost band closes the radius to nothing there. So a
-                    // scan from the root read the head as having been wider
-                    // above the very first station of every card, broke out of
-                    // the loop before measuring anything, and this test asserted
-                    // NOTHING AT ALL for five styles across sixteen azimuths —
-                    // measured, zero stations of 1,008. It is the seventh
-                    // instrument this milestone to have been measuring its own
-                    // parameterisation rather than the hair, and the only one so
-                    // far to have been measuring none of it.
-                    let widest = (0..40)
-                        .map(|band| {
-                            let height = at.y + (crown - at.y) * band as f32 / 39.0;
-                            radius(head.skull().surface_at(height, azimuth))
-                        })
-                        .fold(0.0f32, f32::max);
-                    if widest > here + 0.0005 {
-                        break;
-                    }
-                    // **Against the surface where the lock IS, not where it
-                    // started.** A combed lock travels round the head, and the
-                    // head is a different width behind the ear than over the
-                    // brow — so measuring it against its root's azimuth reads a
-                    // correct walk as 12.8 mm of stray. That is the third time in
-                    // this milestone that an instrument has measured its own
-                    // parameterisation rather than the hair.
-                    worst = worst.max((radius(at) - here).abs());
-                    probed += 1;
-                }
-                assert!(
-                    worst < 0.004 + swung,
-                    "a {style:?} lock at azimuth {turn} rooted {high} of the way down strays \
+                    assert!(
+                        worst < 0.004 + swung,
+                        "a {style:?} lock at azimuth {turn} rooted {high} of the way down strays \
                      {:.1} mm from the skull while the skull is still under it, with no volume \
                      asked for and {:.1} mm of coil allowed",
-                    worst * 1000.0,
-                    swung * 1000.0
-                );
+                        worst * 1000.0,
+                        swung * 1000.0
+                    );
                 }
             }
             // **And that it measured anything at all** (#210). Every card starts
@@ -970,9 +1019,6 @@ mod tests {
             );
         }
     }
-
-
-
 
     #[test]
     fn hair_does_not_follow_the_head_back_in_under_the_widest_part() {
@@ -1116,7 +1162,10 @@ mod tests {
                 .map(|step| shape.at(&root, step as f32 / 60.0))
                 .collect();
             let walked: f32 = path.windows(2).map(|step| step[0].distance(step[1])).sum();
-            walked / path[0].distance(*path.last().expect("a path")).max(f32::EPSILON)
+            walked
+                / path[0]
+                    .distance(*path.last().expect("a path"))
+                    .max(f32::EPSILON)
         };
         // **Against its own loose setting, not against a crop** (#204). Every
         // scalp card now walks the skull, and a curved path wanders further than
@@ -1150,7 +1199,10 @@ mod tests {
             style.sanitize();
             let once = *style;
             style.sanitize();
-            assert_eq!(once, *style, "sanitize moved a style it had already cleaned");
+            assert_eq!(
+                once, *style,
+                "sanitize moved a style it had already cleaned"
+            );
         }
         assert_eq!(styles[0], ScalpStyle::Bob { fringe: 1.0 });
         assert_eq!(styles[1], ScalpStyle::Long { weight: 0.0 });
@@ -1166,5 +1218,4 @@ mod tests {
         };
         assert_eq!(curl, scaled::quantize(curl), "a curl does not round-trip");
     }
-
 }

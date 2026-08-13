@@ -36,6 +36,7 @@ pub mod loft;
 pub mod scatter;
 
 use glam::Vec3;
+use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 
 use super::follicle::{Follicle, Follicles};
@@ -123,7 +124,6 @@ pub trait Shape {
             .cross(Vec3::Y)
             .normalize_or(root.out.cross(Vec3::X).normalize_or(Vec3::X))
     }
-
 }
 
 /// One region's hair, grown.
@@ -199,6 +199,100 @@ pub struct Sowing<'a> {
     pub roots: Vec3,
     /// The colour at the tips, likewise.
     pub tips: Vec3,
+}
+
+/// What a whole head of hair may cost, in triangles.
+///
+/// **The tier the shell era had and the clump era dropped, restored because the
+/// budget test could not see the styles that needed it** (#209). `HairParams`
+/// used to hold a leftover-defined ceiling and tier the lock count down under
+/// it; that went with the shell, and nothing replaced it because the clump
+/// engine was cheap enough not to need one — measured against a CROP, which is
+/// the cheapest style in the scalp catalogue and the only one the budget test
+/// ever wore.
+///
+/// The catalogue sweep at #209 costed the rest. A tied-back tail is 42 triangles
+/// a card against a crop's 15 and a ringlet is 65, because both spend their cost
+/// on path and curvature rather than on count — so the dearest legal record was
+/// 32,448 triangles against a 30,000 target while every budget test passed. Two
+/// and a half thousand over, on a corner nothing visited.
+///
+/// A ceiling is the right answer rather than smaller counts, and the difference
+/// matters: every scalp style's count and width were tuned by render at #204 and
+/// #210, and cutting them to fit the corner would pay for one unreachable record
+/// with every reachable one. A record that asks for maximum length AND maximum
+/// thickness AND maximum density AND a tail is asking for more than the budget
+/// holds, and the crate's answer to that has always been that the count is a
+/// REQUEST. Everything under the corner is untouched, bit for bit.
+///
+/// Provenance: **derived** from the budget. The dearest body the sweep in
+/// `tests/budget.rs` reaches costs 26,670 triangles without any hair on it, and
+/// the WebGL2 target is 30,000, so this is what is left over with a little kept
+/// back — and `the_hair_ceiling_is_what_the_budget_actually_leaves` re-measures
+/// the leftover rather than trusting this docstring, which is how the last
+/// leftover-defined ceiling went stale at three times the room that existed.
+pub const MAX_TRIANGLES: usize = 3_200;
+
+/// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].
+///
+/// Scaling the counts by the ratio a measurement asks for lands close but not
+/// exactly, because a card's cost is its own path and not the average — so one
+/// pass can still come in over. Three is what the dearest corner in the
+/// catalogue needs plus one; a fourth has never changed an answer.
+const TIER_PASSES: usize = 3;
+
+/// How far under the ceiling a tier aims.
+///
+/// A ratio computed from a measurement lands ON the ceiling if it lands
+/// perfectly, and the pass after it has nothing to correct with. Aiming a couple
+/// of percent low converges from below instead of oscillating on the line.
+const TIER_AIM: f32 = 0.98;
+
+/// Grows a whole head of hair, tiered to fit [`MAX_TRIANGLES`].
+///
+/// **One place the five regions are grown**, because there were two: the loop
+/// lived in `Avatar::build` and `tests/budget.rs` kept a copy of it to cost a
+/// catalogue without building a body forty times. Two copies of a loop whose
+/// whole content is "one shared stream, in `Follicle::ALL` order" is two
+/// opinions about the one thing that has to match (#89).
+///
+/// Every region is grown from one stream seeded from the record's own seed, so a
+/// body grows the same hair every time it is built. If the result is over the
+/// ceiling, every region's count is scaled by what the measurement asks for and
+/// the lot is regrown from a fresh stream — regrown rather than trimmed, because
+/// dropping the last clumps of a scatter takes the hair off whichever part of the
+/// head the stream happened to visit last.
+#[must_use]
+pub fn grow_head(bed: &Bed, sowings: &[Sowing], seed: i64, ceiling: usize) -> Growth {
+    let mut grown = sow(bed, sowings, seed, 1.0);
+    let mut share = 1.0;
+    for _ in 0..TIER_PASSES {
+        let tris = grown.tris();
+        if tris <= ceiling || tris == 0 {
+            break;
+        }
+        share *= (ceiling as f32 / tris as f32) * TIER_AIM;
+        grown = sow(bed, sowings, seed, share);
+    }
+    grown
+}
+
+/// Grows every region once, with each region's count scaled by `share`.
+fn sow(bed: &Bed, sowings: &[Sowing], seed: i64, share: f32) -> Growth {
+    let mut stream = Pcg64Mcg::seed_from_u64(seed as u64);
+    let mut growth = Growth::on(bed.follicles.head);
+    for sowing in sowings {
+        // A region that grows keeps growing, however hard the tier bites: a
+        // ceiling that can shave a region out of existence is a second way of
+        // saying `None` that no reader of the record would see coming.
+        let count = if sowing.count == 0 {
+            0
+        } else {
+            ((sowing.count as f32) * share).round().max(1.0) as usize
+        };
+        growth.grow(bed, &Sowing { count, ..*sowing }, &mut stream);
+    }
+    growth
 }
 
 impl Growth {
@@ -353,7 +447,10 @@ impl Shape for Fall {
         // standing straight out is right.
         let down = Vec3::NEG_Y;
         let flow = (down - root.out * down.dot(root.out)).normalize_or(root.out);
-        let leaves = root.out.lerp(flow, self.lie.clamp(0.0, 1.0)).normalize_or(root.out);
+        let leaves = root
+            .out
+            .lerp(flow, self.lie.clamp(0.0, 1.0))
+            .normalize_or(root.out);
         // Then increasingly toward the ground: the bend is quadratic in the
         // distance travelled, which is what a hanging thing does and what a
         // linear blend of two directions does not.
@@ -442,16 +539,15 @@ mod tests {
         let bed = bed(0);
         let mut stream = stream();
         for follicle in Follicle::ALL {
-            let roots =
-                scatter::scatter(
-                    &bed.body,
-                    &bed.rig,
-                    &bed.weights,
-                    &bed.follicles,
-                    follicle,
-                    40,
-                    &mut stream,
-                );
+            let roots = scatter::scatter(
+                &bed.body,
+                &bed.rig,
+                &bed.weights,
+                &bed.follicles,
+                follicle,
+                40,
+                &mut stream,
+            );
             assert!(
                 !roots.is_empty(),
                 "the {} region scattered no roots at all",
@@ -475,8 +571,16 @@ mod tests {
                     "a {} root at {at:?} does not straddle the surface: a millimetre out is \
                      {} the body and a millimetre in is {} it",
                     follicle.name(),
-                    if bed.body.contains(out) { "inside" } else { "outside" },
-                    if bed.body.contains(inn) { "inside" } else { "outside" },
+                    if bed.body.contains(out) {
+                        "inside"
+                    } else {
+                        "outside"
+                    },
+                    if bed.body.contains(inn) {
+                        "inside"
+                    } else {
+                        "outside"
+                    },
                 );
                 assert!(
                     (root.out.length() - 1.0).abs() < 1e-3,
@@ -852,7 +956,10 @@ mod tests {
             },
             &mut stream,
         );
-        assert!(growth.clumps() > 0, "no clump survived a degenerate wide axis");
+        assert!(
+            growth.clumps() > 0,
+            "no clump survived a degenerate wide axis"
+        );
         // Measured as the clumps having real volume: a collapsed frame draws a
         // sliver, and the widest span across the spine is what says so.
         let (lo, hi) = growth

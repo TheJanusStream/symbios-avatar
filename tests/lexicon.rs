@@ -303,23 +303,6 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
         Some(u64::from(symbios_avatar::plan::AGE_RANGE.1)),
         "the declared ceiling on age disagrees with the crate"
     );
-
-    // How many locks the rim of the hair breaks into. This used to be `groups`,
-    // the count of strand groups, and it was the one axis a record could spend
-    // the whole avatar's triangle budget through. The mass is a shell now and
-    // costs what the head's size dictates (#68), so the bounds here are about
-    // what still reads as hair rather than about what is affordable.
-    let locks = &defs["defs"]["hair"]["properties"]["locks"];
-    assert_eq!(
-        locks["minimum"].as_u64(),
-        Some(u64::from(symbios_avatar::hair::MIN_LOCKS)),
-        "the declared floor on hair locks disagrees with the crate"
-    );
-    assert_eq!(
-        locks["maximum"].as_u64(),
-        Some(u64::from(symbios_avatar::hair::MAX_LOCKS)),
-        "the declared ceiling on hair locks disagrees with the crate"
-    );
 }
 
 #[test]
@@ -337,7 +320,7 @@ fn declared_defaults_match_the_values_the_crate_writes() {
     // VALUE, and the two definitions carrying the most axes were exempt from it.
     // A default that drifts is invisible to every reader who omits the field and
     // to nobody else, which is the hardest kind of schema defect to notice.
-    let cases: [(&str, Value); 6] = [
+    let cases: [(&str, Value); 5] = [
         (
             // The identity anchor of the whole composite overhaul (#161): the
             // formulas are written so that THIS description reproduces the body
@@ -354,10 +337,6 @@ fn declared_defaults_match_the_values_the_crate_writes() {
         (
             "eyes",
             serde_json::to_value(symbios_avatar::EyeParams::default()).expect("serialises"),
-        ),
-        (
-            "hair",
-            serde_json::to_value(symbios_avatar::HairParams::default()).expect("serialises"),
         ),
         (
             "face",
@@ -382,4 +361,68 @@ fn declared_defaults_match_the_values_the_crate_writes() {
             );
         }
     }
+}
+
+#[test]
+fn the_hair_block_is_the_one_field_the_lexicon_declines_to_declare() {
+    // **The shell-era `defs#hair` went with the shell** (#209). It declared
+    // eight scalars — length, volume, coverage, part, wave, shade, locks, curl —
+    // and the crate stopped writing any of them at #202. A schema that drifts
+    // from the implementation is worse than no schema, which is this file's own
+    // first line, and eight fields nobody writes is the whole of that failure.
+    //
+    // What replaced it is not declarable yet, and the reason is exact rather
+    // than a shrug. A region's style serialises as a bare NAME where the style
+    // carries no axis of its own and as a SINGLE-KEY OBJECT where it does —
+    // serde's external tagging — and a lexicon property is one type. Lexicon
+    // unions discriminate on `$type`, which these do not carry, so there is no
+    // way to say "a string or one of these five objects". Declaring either
+    // shape alone would describe half the records this crate writes and reject
+    // the other half.
+    //
+    // So `hair` is declared `unknown` and this test holds the reason in a form
+    // that fails. If the style representation is ever made uniform, the two
+    // assertions below stop being true and whoever made it uniform is told to
+    // go and write the schema.
+    let mut record = AvatarRecord::new("Hair", Archetype::default());
+    record.hair.scalp.style = symbios_avatar::ScalpStyle::Crop;
+    record.hair.chin.style = symbios_avatar::ChinStyle::Braided { twist: 0.4 };
+    let written = serde_json::to_value(&record).expect("serialises");
+    let hair = &written["hair"];
+
+    assert!(
+        hair["scalp"]["style"].is_string(),
+        "a style with no axis of its own no longer writes a bare name: {}, so \
+         the hair block may now be declarable — write `defs#hair` and point the \
+         record's own `hair` field back at it",
+        hair["scalp"]["style"]
+    );
+    let axled = hair["chin"]["style"]
+        .as_object()
+        .expect("a style with an axis writes a single-key object");
+    assert_eq!(
+        axled.len(),
+        1,
+        "a style with an axis no longer writes a single-key object: {}, so the \
+         hair block may now be declarable — write `defs#hair`",
+        hair["chin"]["style"]
+    );
+
+    // And the declaration says so, rather than the field having quietly gone
+    // missing: an undeclared field the record writes is exactly what
+    // `the_avatar_record_matches_its_schema` above is meant to catch, and
+    // deleting `defs#hair` without this would have slipped past it.
+    let declared = &lexicon("avatar")["defs"]["main"]["record"]["properties"]["hair"];
+    assert_eq!(
+        declared["type"].as_str(),
+        Some("unknown"),
+        "the record's hair field is declared as {}, so either the schema was \
+         written and this test is stale, or the field lost its declaration",
+        declared["type"]
+    );
+    assert!(
+        lexicon("defs")["defs"]["hair"].is_null(),
+        "network.symbios.avatar.defs#hair is back; if it describes the five \
+         regions, point the record's `hair` field at it and delete this test"
+    );
 }

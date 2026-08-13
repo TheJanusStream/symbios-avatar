@@ -262,68 +262,6 @@
         }
       }
     },
-    "hair": {
-      "type": "object",
-      "description": "The hair grown on a body's head, as strand groups swept over the scalp. Axes are thousandths, as elsewhere: the AT Protocol data model has no floating-point type. A reader that clamps out-of-range values to the stated bounds will always be able to grow hair.",
-      "properties": {
-        "length": {
-          "type": "integer",
-          "description": "How far the hair falls: 0 cropped, 1000 past the shoulder blades. The fringe over the brow is always short, whatever this says.",
-          "minimum": 0,
-          "maximum": 1000,
-          "default": 450
-        },
-        "volume": {
-          "type": "integer",
-          "description": "How far the hair stands off the scalp: -1000 flat, +1000 full.",
-          "minimum": -1000,
-          "maximum": 1000,
-          "default": 0
-        },
-        "coverage": {
-          "type": "integer",
-          "description": "Where the hairline sits: -1000 receding, +1000 low on the brow.",
-          "minimum": -1000,
-          "maximum": 1000,
-          "default": 0
-        },
-        "part": {
-          "type": "integer",
-          "description": "Where the parting runs: -1000 over the left ear, +1000 over the right.",
-          "minimum": -1000,
-          "maximum": 1000,
-          "default": 0
-        },
-        "wave": {
-          "type": "integer",
-          "description": "How much the hair waves as it falls: 0 straight, 1000 curling.",
-          "minimum": 0,
-          "maximum": 1000,
-          "default": 250
-        },
-        "shade": {
-          "type": "integer",
-          "description": "Colour along a melanin ramp: 0 black, 1000 pale blonde.",
-          "minimum": 0,
-          "maximum": 1000,
-          "default": 300
-        },
-        "locks": {
-          "type": "integer",
-          "description": "How many locks the rim of the hair breaks into. The mass of a head of hair is one sculpted shell, and a shell whose lower edge is a smooth ring reads as headgear rather than as hair; this is how many wedges that edge is cut into, and so how many points the hair ends in. A reader may draw fewer for distant or low-end rendering, which does not change the record.",
-          "minimum": 3,
-          "maximum": 24,
-          "default": 12
-        },
-        "curl": {
-          "type": "integer",
-          "description": "How curved the sides of those wedges are: 0 scallops the rim evenly, 1000 narrows each notch and bows its flanks so the hair ends in drawn-out points. Thousandths, 0 to 1000.",
-          "minimum": 0,
-          "maximum": 1000,
-          "default": 450
-        }
-      }
-    },
     "outfit": {
       "type": "object",
       "description": "What a body is wearing. Close-fitting garments are cut from the body's own surface a few millimetres outside it, so they fit any wearer without being re-cut and cannot intersect the body. Colour axes are thousandths, as elsewhere: the AT Protocol data model has no floating-point type.",

@@ -49,7 +49,6 @@
 //! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
 //! cargo run --release --example render -- --clip Wave --clipframes 12   # more frames of it
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
-//! cargo run --release --example render -- --hair 1,0,0,0.5,0.6,0.2,9,0.45  # length,volume,coverage,part,wave,shade,locks,curl
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0,0  # melanin,undertone,blush,freckles,stubble
 //! cargo run --release --example render -- --hair 1 0.5 1 0.5   # scalp length,thickness,density,droop
 //! cargo run --release --example render -- --hair 0 0 0 0 0     # a fifth zero shaves every region
@@ -68,15 +67,20 @@ mod light;
 mod scene;
 
 use glam::{Mat4, Quat, Vec3};
+use light::Image;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
-use light::Image;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, EyeParams, FaceParams,
-    FootingConfig, Gait, GazeConfig, Ground, Influence, Limb, MAX_INFLUENCES, MeshKind,
-    PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
-    anim::contacts_in, anim::gait, anim::gaze, anim::plant_feet_of, face::Skull, gltf::Gltf,
+    FootingConfig, Gait, GazeConfig, Ground, Influence, Limb, MAX_INFLUENCES, MeshKind, PolyMesh,
+    Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
+    anim::contacts_in,
+    anim::gait,
+    anim::gaze,
+    anim::plant_feet_of,
+    face::Skull,
+    gltf::Gltf,
     hair::{
         Follicle, FollicleParams, Follicles, Growth,
         clump::{Bed, Fall, Sowing},
@@ -1486,7 +1490,9 @@ fn grow_clumps(avatar: &mut Avatar, record: &AvatarRecord) {
     }
     println!(
         "  {:10} {:4} clumps, {:6} triangles",
-        "all", growth.clumps(), growth.tris()
+        "all",
+        growth.clumps(),
+        growth.tris()
     );
 
     let head = skull.head;

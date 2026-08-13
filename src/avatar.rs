@@ -53,8 +53,6 @@ use crate::cage::CageConfig;
 use crate::dress::Outfit;
 use crate::extremity::Extremities;
 use crate::face::{self, Canon, Eyes, Features, Skull};
-use rand::SeedableRng;
-use rand_pcg::Pcg64Mcg;
 
 use crate::hair::{Growth, HairRecord};
 use crate::mesh::PolyMesh;
@@ -484,25 +482,35 @@ impl Avatar {
                 rig: &rig,
                 follicles,
             };
-            let mut stream = Pcg64Mcg::seed_from_u64(record.seed as u64);
-            let mut growth = Growth::on(follicles.head);
-            for follicle in crate::hair::Follicle::ALL {
-                let Some(sown) = hair_record.sowing(follicle, follicles) else {
-                    continue;
-                };
-                growth.grow(
-                    &bed,
-                    &crate::hair::clump::Sowing {
-                        follicle,
-                        count: sown.clumps,
-                        shape: sown.shape.as_ref(),
-                        roots: Vec3::from_array(sown.roots),
-                        tips: Vec3::from_array(sown.tips),
-                    },
-                    &mut stream,
-                );
-            }
-            growth
+            // **Tiered to fit** (#209): the counts each style asks for are a
+            // request, and `grow_head` grants what the budget holds. The loop
+            // itself lives with the clump engine rather than here, because
+            // `tests/budget.rs` grows heads of hair too and a second copy of it
+            // is a second opinion about the one thing that has to match.
+            let sown: Vec<_> = crate::hair::Follicle::ALL
+                .into_iter()
+                .filter_map(|follicle| {
+                    hair_record
+                        .sowing(follicle, follicles)
+                        .map(|sown| (follicle, sown))
+                })
+                .collect();
+            let sowings: Vec<_> = sown
+                .iter()
+                .map(|(follicle, sown)| crate::hair::clump::Sowing {
+                    follicle: *follicle,
+                    count: sown.clumps,
+                    shape: sown.shape.as_ref(),
+                    roots: Vec3::from_array(sown.roots),
+                    tips: Vec3::from_array(sown.tips),
+                })
+                .collect();
+            crate::hair::clump::grow_head(
+                &bed,
+                &sowings,
+                record.seed,
+                crate::hair::clump::MAX_TRIANGLES,
+            )
         });
         // A region that grew nothing leaves no part behind. The merge keys off
         // this, and a `Some` holding an empty mesh would be a part whose draw
@@ -1271,9 +1279,9 @@ mod tests {
             .iter()
             .map(|colour| (*colour - roots).dot(span) / span.length_squared())
             .collect();
-        let (low, high) = alongs
-            .iter()
-            .fold((f32::MAX, f32::MIN), |span, at| (span.0.min(*at), span.1.max(*at)));
+        let (low, high) = alongs.iter().fold((f32::MAX, f32::MIN), |span, at| {
+            (span.0.min(*at), span.1.max(*at))
+        });
         assert!(
             high - low > 0.8,
             "{} locks span only {:.2} of the way from the roots' colour to the tips', so the \

@@ -122,8 +122,8 @@ pub use face::{
     refine_face, shape_skull,
 };
 pub use hair::{
-    BrowStyle, ChinStyle, Cut, FlankStyle, Follicle, FollicleParams, Follicles, Growth, Hair,
-    HairParams, HairRecord, MoustacheStyle, Paint, PaintedHair, ScalpStyle, Tress,
+    BrowStyle, ChinStyle, Cut, FlankStyle, Follicle, FollicleParams, Follicles, Growth, HairRecord,
+    MoustacheStyle, Paint, PaintedHair, ScalpStyle, Tress,
 };
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
