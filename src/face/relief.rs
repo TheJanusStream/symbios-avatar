@@ -110,32 +110,45 @@ use super::features::FaceParams;
 ///
 /// ```text
 /// head          upper lip                          lower lip
-/// default       falls 1.09, stops +12.6, +0.19     falls 1.03, no stop
-/// mouth 0.0     falls 0.83, stops +12.1, +0.25     falls 0.87, no stop
-/// mouth 1.0     falls 1.12, no stop                falls 1.13, no stop
-/// seed 7        falls 1.02, stops +14.0, +0.09     falls 0.80, no stop
-/// seed 23       falls 1.10, no stop                falls 1.05, no stop
-/// seed 42       falls 1.02, no stop                falls 1.15, no stop
-/// seed 99       falls 1.06, stops +12.4, +0.55     falls 1.10, no stop
+/// default       falls 1.14, stops +12.6, +0.32     falls 1.01, no stop
+/// mouth 0.0     falls 0.83, stops +12.1, +0.24     falls 0.86, no stop
+/// mouth 1.0     falls 1.19, stops +12.6, +0.13     falls 1.11, no stop
+/// seed 7        falls 1.01, stops +14.0, +0.29     falls 0.78, no stop
+/// seed 23       falls 1.08, stops +12.3, +0.10     falls 1.03, no stop
+/// seed 42       falls 0.85, no stop                falls 1.12, no stop
+/// seed 99       falls 1.12, no stop                falls 1.11, no stop
 /// ```
 ///
 /// For scale, the sulcus under the lower lip — the one crease this face carried
 /// before — recovers at +0.11 to +0.17 by the same measurement, so where the
 /// border does land it is as much of a crease as the feature it is judged
-/// against. The flank it lands on keeps the steepness it had: 1.09 against the
-/// 1.13 this issue opened with.
+/// against, and the flank it lands on is steeper than the 1.13 this issue
+/// opened with.
 ///
-/// **It lands on four of the seven heads above, and the three it misses are
-/// short of ROOM rather than of resolution.** The window a border has is the
-/// cutaneous lip, from the vermilion to `Canon::nose_foot`, and on seed 42 that
-/// is 11.5 mm with the fullest mouth in the sweep sitting in it; the flank's
-/// lowest point IS the nose's foot, with nothing left to come back up in.
-/// Seed 42's border term is 2.17 mm over a 0.96 mm cell — wider in cells than
-/// seed 7's, which does stop — so it is not being sampled away. Deepening does
-/// not reach it either: at −0.30 and −0.34 its flank still only flattens.
-/// Dropping the border to 0.86 plumps buys one more head and costs every other
-/// one a third of its flank, 1.09 down to 0.78, which is the currency this issue
-/// is denominated in; it was measured and rejected.
+/// **Five of the seven, and the seat and the width are both part of why**
+/// (#182, second pass). The window a border has is the cutaneous lip, from the
+/// vermilion to `Canon::nose_foot`, and the stack under the seat grows with the
+/// mouth axis while the foot does not move with it — so a constant seat lands
+/// outside its own window on a full mouth under a short face, which is where
+/// the misses all were. [`Face::border`] clamps the seat under the foot with
+/// [`BORDER_MARGIN`] of room; the width came in from 0.18 to 0.15 because a
+/// narrower lobe overlaps the vermilion's tail less, which buys flank and
+/// recovery at once — the default went from falls 1.09/+0.19 to 1.14/+0.32 in
+/// the same change. Still above the mesh floor everywhere: 1.9 mm over seed
+/// 42's 0.96 mm cell.
+///
+/// What was measured and rejected, so nobody prices it again: deepening to
+/// −0.30/−0.34 flattens the crowded heads without turning them and sends
+/// seed 23 past its own sulcus; dropping the seat to 0.86 plumps globally
+/// costs every stopping head a third of its flank (1.09 → 0.78) for one turn;
+/// clamping harder ([`BORDER_MARGIN`] 0.15) weakens the default's own crease
+/// to +0.04 because the recovery lands on the lobe's gentle upside. Seat,
+/// width and depth were each priced against the two heads that still miss:
+/// **seed 42's flank runs FLAT from its bottom to the foot** whatever the
+/// seat, and **seed 99's window is occupied by the sweep's most prominent
+/// nose** reaching its own relief down to the foot. Both are #192's proportion
+/// question — where the nose base sits on a short face — and not a lip term's
+/// to answer.
 ///
 /// **The lower one never turns on any head, and is kept for what it does
 /// instead.** The sulcus sits 1.32 plumps down and is wider and stronger, so the
@@ -155,9 +168,37 @@ const LIPS: [(f32, f32, f32, Across); 6] = [
     (-0.44, 0.00, 0.26, Across::Groove),
     (-0.24, -1.32, 0.34, Across::Lens), // the crease under the lower lip
     // Where each lip stops being a lip: the vermilion border, upper and lower.
-    (-0.26, 0.95, 0.18, Across::Lens),
+    // The upper one's centre is a SEAT, not a position: where the cutaneous lip
+    // is too short to hold it, [`Face::border`] slides it down under the nose's
+    // foot rather than letting it fall outside its own window.
+    (-0.26, 0.95, 0.15, Across::Lens),
     (-0.26, -0.88, 0.18, Across::Lens),
 ];
+
+/// Which entry of [`LIPS`] is the upper vermilion border — the one lobe whose
+/// centre is re-seated per head by [`Face::border`].
+const UPPER_BORDER: usize = 4;
+
+/// How much of the cutaneous lip the upper border keeps above itself, in
+/// plumps: the room its crease needs to bottom out and visibly rise before
+/// `Canon::nose_foot` ends the window.
+///
+/// Measured, not derived: across the seven-head sweep the crease's lowest
+/// point lands up to one millimetre past the lobe's centre — the vermilion's
+/// tail and, on a prominent nose, the alar crease's, both still pull down past
+/// it — and the rise needs about a millimetre of window beyond that to read.
+/// 0.10 of a plump is 1.2 to 1.5 mm; with the bottom's offset that leaves the
+/// crease ~2 mm of its window, two mesh cells.
+const BORDER_MARGIN: f32 = 0.10;
+
+/// The closest to the lip [`Face::border`] may drag the border, in plumps.
+///
+/// The upper vermilion lobe peaks at 0.58 with a width of 0.36; a border
+/// dragged below ~0.72 stops bounding the lip and starts eating it. A rolled
+/// head whose cutaneous lip is shorter than this floor allows simply has no
+/// border that turns, which is what such a face has in life: a full mouth
+/// under a short cutaneous lip hides its white roll.
+const BORDER_FLOOR: f32 = 0.72;
 
 /// How a lobe of the mouth ends at the corner.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -303,6 +344,14 @@ struct Face {
     mouth: f32,
     /// How tall the lip stack is, from the mouth line to a lobe's centre.
     plump: f32,
+    /// Where the upper vermilion border sits, in plumps above the mouth line.
+    ///
+    /// [`LIPS`]' authored seat where the cutaneous lip has room for it, and
+    /// clamped under [`Canon::nose_foot`] where it does not — see
+    /// [`Self::new`]. Per head, not per vertex: the window narrows as the
+    /// mouth line dips at the corners, so the midline is the tight spot and a
+    /// centre chosen there is conservative everywhere on the lip.
+    border: f32,
     /// How far each eye sits from the midline.
     apart: f32,
     /// How prominent each feature is.
@@ -311,6 +360,34 @@ struct Face {
 
 impl Face {
     fn new(canon: &Canon, params: &FaceParams) -> Self {
+        // A height, so counted in the frame — and that is what retires the
+        // clamp this line used to carry. Sized by the eyeball, the lip stack
+        // could reach past the chin on a large-eyed short-faced head (seed
+        // 99 put the sulcus lobe at −69.1 mm against a chin at −68.7), so it
+        // was capped at 0.20 of the frame; and the cap then BOUND on every
+        // mouth value on that seed and above 0.594 on the default, which
+        // made most of the slider dead on half the bodies. A clamp that is
+        // load-bearing is the tell that the quantity was measured in the
+        // wrong ruler. In the frame, the bound is met by construction: the
+        // lowest lobe sits 1.32 plumps below the mouth line, which is at
+        // 0.596 of the frame, so the stack stays above the tip while
+        // `plump` stays under 0.306 — and the axis tops out at 0.146.
+        //
+        // Rebased by 0.6717 with the rest of the heights when #78 lengthened
+        // the frame, holding the lip stack at 13.7 mm where life is 11 to 14.
+        // Left at its old fraction it would have grown by half.
+        let plump = canon.frame * (0.1142 + 0.0322 * params.mouth);
+        let mouth = canon.down(super::features::MOUTH_HEIGHT);
+        // How much cutaneous lip this head actually has, in plumps: the
+        // border's window runs from the vermilion to the nose's foot, and the
+        // stack grows with the mouth axis while the foot does not move with
+        // it. A seat that is a constant lands outside its own window on a full
+        // mouth under a short face — that is exactly the four-of-seven of
+        // #182, and the regression #197 bought when the chin cut moved the
+        // frame ruler under every lip band with no term the wiser. Seated
+        // against the landmark, the ruler can move and the border keeps its
+        // room.
+        let room = (canon.nose_foot() - mouth) / plump;
         Self {
             unit: canon.unit,
             frame: canon.frame,
@@ -324,24 +401,12 @@ impl Face {
             // storey too low (#72).
             base: canon.down(super::features::NOSE_BASE),
             nose_foot: canon.nose_foot(),
-            mouth: canon.down(super::features::MOUTH_HEIGHT),
-            // A height, so counted in the frame — and that is what retires the
-            // clamp this line used to carry. Sized by the eyeball, the lip stack
-            // could reach past the chin on a large-eyed short-faced head (seed
-            // 99 put the sulcus lobe at −69.1 mm against a chin at −68.7), so it
-            // was capped at 0.20 of the frame; and the cap then BOUND on every
-            // mouth value on that seed and above 0.594 on the default, which
-            // made most of the slider dead on half the bodies. A clamp that is
-            // load-bearing is the tell that the quantity was measured in the
-            // wrong ruler. In the frame, the bound is met by construction: the
-            // lowest lobe sits 1.32 plumps below the mouth line, which is at
-            // 0.596 of the frame, so the stack stays above the tip while
-            // `plump` stays under 0.306 — and the axis tops out at 0.146.
-            //
-            // Rebased by 0.6717 with the rest of the heights when #78 lengthened
-            // the frame, holding the lip stack at 13.7 mm where life is 11 to 14.
-            // Left at its old fraction it would have grown by half.
-            plump: canon.frame * (0.1142 + 0.0322 * params.mouth),
+            mouth,
+            border: LIPS[UPPER_BORDER]
+                .1
+                .min(room - BORDER_MARGIN)
+                .max(BORDER_FLOOR),
+            plump,
             apart: canon.apart,
             params: *params,
         }
@@ -578,7 +643,15 @@ impl Face {
             // reached zero, so it cuts nothing.
             let profile: f32 = LIPS
                 .iter()
-                .map(|&(weight, centre, width, across_the_face)| {
+                .enumerate()
+                .map(|(term, &(weight, centre, width, across_the_face))| {
+                    // The upper border is seated by the head, not by the
+                    // table: see [`Face::border`].
+                    let centre = if term == UPPER_BORDER {
+                        self.border
+                    } else {
+                        centre
+                    };
                     weight * bump(up, centre, width) * across_the_face.taper(across)
                 })
                 .sum();
@@ -1192,6 +1265,151 @@ mod tests {
              that narrow renders as one displaced row of vertices, which is a bar — {}",
             table.join("; ")
         );
+    }
+
+    #[test]
+    fn the_upper_lip_stops_being_a_lip() {
+        // #182's whole remaining half, as a delivered measurement rather than
+        // as a field one. A vermilion border is a CREASE: walking up the outer
+        // flank of the upper lip the surface must stop falling and come back
+        // up, and before the two border lobes in `LIPS` it never did on any
+        // head — it fell at 1.13 and slowed to 0.17 without turning, which is a
+        // swelling with a line in it rather than a mouth.
+        //
+        // Asked of the polygon surface by the same bisection
+        // `examples/facesection` uses, and read eight millimetres OFF the
+        // midline, which is not a detail: the philtrum is a groove centred a
+        // plump above the line, so on the midline the surface keeps falling
+        // above the vermilion whatever the border does — and on a face it does
+        // too. The roll is the philtral column, beside the dimple and not in it.
+        //
+        // **The first authoring of this test died with #197**: the chin cut
+        // moved `Canon`'s frame ruler, every lip band moved a fraction, and a
+        // guard whose margins were constants fitted the day before went red
+        // with the mouth visually unchanged — it was deleted rather than
+        // re-fitted, and seed 99's border then regressed from a +0.55 rise to
+        // nothing with no instrument the wiser. [`Face::border`] is the
+        // re-derivation that deletion note asked for: the seat is clamped
+        // against `Canon::nose_foot` per head, so the ruler can move and the
+        // border keeps its room — and this test's margins are the landmark's,
+        // not last Tuesday's.
+        //
+        // **Default, 7 and 23 — 42 and 99 are measured below rather than
+        // asserted.** Seed 42's cutaneous lip is too short for the crease to
+        // fit even with the seat clamped: its flank runs flat from the bottom
+        // to the foot, and seat, width and depth were all priced against it
+        // (#182, #192). Seed 99's window is occupied from the other side — the
+        // sweep's most prominent nose reaches its own relief down to the foot,
+        // so the flank falls into the NOSE's field however the lip is seated.
+        // Both are #192's proportion question, not a lip term's.
+        let mut reports = Vec::new();
+        let mut turned = Vec::new();
+        for seed in [None, Some(7), Some(23), Some(42), Some(99)] {
+            let asserted = !matches!(seed, Some(42) | Some(99));
+            let mut record = crate::AvatarRecord::new("Border", crate::Archetype::default());
+            if let Some(seed) = seed {
+                record.reroll(seed);
+            }
+            let (plain, rig, canon) = measured(&record);
+            let mut carved = plain.clone();
+            let params = record
+                .face
+                .on(&crate::face::HeadTraits::of(&record.composites));
+            carve(&mut carved, &rig, &canon, &params);
+
+            let centre = rig.joints[canon.head].position;
+            let face = Face::new(&canon, &params);
+            // Relative to the head's own joint, which is what `Canon` measures
+            // in and what the bisection below starts from.
+            let line = canon.mouth_line();
+
+            // Relief on the surface at one height, 8 mm off the midline.
+            let relief = |up: f32| -> Option<f32> {
+                let from = Vec3::new(centre.x + 0.008, centre.y + up, centre.z);
+                Some(forward(&carved, from)? - forward(&plain, from)?)
+            };
+            // Up the flank, from just above the vermilion's own centre to where
+            // the nose's foot takes over.
+            let step = 0.0005f32;
+            let mut walk: Vec<(f32, f32)> = Vec::new();
+            // Up to the NOSE'S FOOT, not to a fraction of the lip stack, and
+            // that bound is the whole difference between a guard and a
+            // decoration: at 1.2 plumps the window's top is above where the
+            // nose's own relief begins, so the flank bottoms out just under the
+            // nose and rises into it — and this test passed with the border
+            // lobes set to zero, reporting a turn of +1.90 that was the nose.
+            let mut up = line + face.plump * 0.5;
+            while up <= canon.nose_foot() {
+                if let Some(relief) = relief(up) {
+                    walk.push((up, relief));
+                }
+                up += step;
+            }
+            assert!(walk.len() > 8, "seed {seed:?}: the flank could not be read");
+
+            let low = walk
+                .iter()
+                .enumerate()
+                .fold((0usize, f32::MAX), |(at, low), (index, &(_, relief))| {
+                    if relief < low {
+                        (index, relief)
+                    } else {
+                        (at, low)
+                    }
+                })
+                .0;
+            let rise = if low + 1 < walk.len() {
+                (walk[low + 1].1 - walk[low].1) / step
+            } else {
+                0.0
+            };
+            reports.push(format!(
+                "{seed:?}: bottoms out {:+.1} mm off the line, rising at {rise:+.2}",
+                (walk[low].0 - line) * 1000.0
+            ));
+            let stops = low > 0 && low + 1 < walk.len() && rise > 0.0;
+            turned.push(stops);
+            assert!(
+                stops || !asserted,
+                "seed {seed:?}: the upper lip's flank falls the whole way from the vermilion to \
+                 the nose without stopping, so nothing on it reads as a border — {}",
+                reports.join("; ")
+            );
+        }
+        // The two that are not asserted are still not allowed to be the whole
+        // story: if the border ever stops landing on the heads it does fit, this
+        // has become a term that does nothing anywhere.
+        assert!(
+            turned.iter().filter(|&&stops| stops).count() >= 3,
+            "the upper lip stops on fewer than three of the five heads — {}",
+            reports.join("; ")
+        );
+        // Printed because the margin is the thing a re-tune needs and the
+        // numbers are small (`docs/instruments.md` rule 9). A rise of +0.00 is a
+        // head where the flank bottomed out at the nose's foot rather than at a
+        // crease of its own.
+        println!("the upper lip's border, per seed: {}", reports.join("; "));
+    }
+
+    /// How far a mesh reaches forward from `from`, in metres, or `None` when
+    /// `from` is not inside it.
+    ///
+    /// The bisection `examples/facesection` measures relief with, so that the
+    /// test above and the instrument answer with the same arithmetic.
+    fn forward(mesh: &PolyMesh, from: Vec3) -> Option<f32> {
+        if !mesh.contains(from) {
+            return None;
+        }
+        let (mut inside, mut outside) = (0.0f32, 0.30f32);
+        for _ in 0..30 {
+            let mid = 0.5 * (inside + outside);
+            if mesh.contains(from + Vec3::Z * mid) {
+                inside = mid;
+            } else {
+                outside = mid;
+            }
+        }
+        Some(inside)
     }
 
     #[test]

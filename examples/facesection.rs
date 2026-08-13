@@ -495,16 +495,23 @@ fn mouth_profile(section: &Section, canon: &Canon, params: &FaceParams, cells: &
             (line - plump * 1.2, line - plump * 0.5)
         };
         let at2 = if way > 0.0 { ", 8 mm out" } else { "" };
+        // The window's far end is printed with the reading because it is the
+        // MARGIN: a border's room is `nose_foot` minus where the flank bottoms,
+        // and #197 moved every lip band a fraction when the chin landmark moved
+        // the frame ruler — a reading without its window cannot show that the
+        // room, not the term, is what changed (`docs/instruments.md` rule 9).
+        let far = if way > 0.0 { window.1 } else { window.0 };
         match flank_break(column, from, way, window) {
             Some((at, fall, recovery, stopped)) => println!(
                 "  the {name} lip's flank falls at {fall:.2} and bottoms out {:+.1} mm off the \
-                 line{at2}, rising at {recovery:+.2} past it — {}.",
+                 line{at2}, rising at {recovery:+.2} past it — {}; the window ends at {:+.1}.",
                 (at - line) * 1000.0,
                 if stopped {
                     "a crease, so the lip stops there"
                 } else {
                     "the end of the span, so it never stops"
-                }
+                },
+                (far - line) * 1000.0
             ),
             None => println!("  the {name} lip's flank could not be read{at2}."),
         }
