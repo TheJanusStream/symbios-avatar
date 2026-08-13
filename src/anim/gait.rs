@@ -232,17 +232,38 @@ impl Stride {
     }
 }
 
-/// How far a body must sink for its stride to stay within its legs' reach.
+/// How far one limb must sink for its chain to reach a goal `toward` its rest
+/// contact, before any margin.
+///
+/// Measured to the joint the chain actually reaches, not to the contact hanging
+/// off it — the same distinction the solve makes. Solved against the limb's
+/// *actual* rest geometry rather than from stride length alone, because a
+/// limb's contact is not generally beneath its hip: a quadruped's feet already
+/// sit well forward of the joints that carry them, and assuming otherwise
+/// under-crouches every four-legged body.
+fn sink_needed(rig: &Rig, limb: Limb, toward: Vec3) -> Option<f32> {
+    let reach = rig.limb_reach(limb)?;
+    let chain = rig.limb_chain(limb)?;
+    let offset = rig.joints[chain[2]].position - rig.joints[chain[0]].position;
+    let reaching = offset + toward;
+    let horizontal = reaching.length_squared() - reaching.y * reaching.y;
+    // Sinking by `c` shortens the hip-to-goal distance by moving the hip down
+    // toward the goal's height.
+    let needed = -reaching.y - (reach * reach - horizontal).max(0.0).sqrt();
+    Some(needed.max(0.0))
+}
+
+/// The deepest a body sinks anywhere in its stride — the envelope of
+/// [`crouch_at`].
 ///
 /// A leg standing straight has no slack: swinging its foot forward by half a
 /// stride puts the goal further from the hip than the leg is long. Bodies solve
 /// this by sinking as they stride, and so does this — without it every step is
 /// out of reach and the legs merely stretch toward the ground.
 ///
-/// Solved per limb against its *actual* rest geometry rather than from stride
-/// length alone, because a limb's contact is not generally beneath its hip: a
-/// quadruped's feet already sit well forward of the joints that carry them, and
-/// assuming otherwise under-crouches every four-legged body.
+/// This is the figure to plan around — camera heights, clearances — but not the
+/// height to *hold*: a walk pinned at its own worst case rides flat, and that
+/// flatness is exactly the pelvis bob the walk used to lack.
 #[must_use]
 pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
     let half = stride.length * 0.5;
@@ -250,28 +271,41 @@ pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
     gait.limbs
         .iter()
         .filter_map(|&limb| {
-            let reach = rig.limb_reach(limb)?;
-            let chain = rig.limb_chain(limb)?;
-            // Measured to the joint the chain actually reaches, not to the
-            // contact hanging off it — the same distinction the solve makes.
-            let offset = rig.joints[chain[2]].position - rig.joints[chain[0]].position;
-
             // Both ends of the stride, since a contact may start forward of its
             // hip and only the further extreme matters.
             [half, -half]
                 .into_iter()
-                .map(|swing| {
-                    let reaching = offset + stride.direction * swing;
-                    let horizontal = reaching.length_squared() - reaching.y * reaching.y;
-                    // Sinking by `c` shortens the hip-to-goal distance by moving
-                    // the hip down toward the goal's height.
-                    let needed = -reaching.y - (reach * reach - horizontal).max(0.0).sqrt();
-                    needed.max(0.0) * CROUCH_MARGIN
-                })
+                .filter_map(|swing| sink_needed(rig, limb, stride.direction * swing))
                 .fold(f32::NEG_INFINITY, f32::max)
                 .into()
         })
         .fold(0.0f32, f32::max)
+        * CROUCH_MARGIN
+}
+
+/// How far the body sinks at this point of the cycle — which is the pelvis bob.
+///
+/// Each limb asks for the sink its *current* goal needs — a foot at the far end
+/// of its stride pulls the body down, one passing under its hip lets it rise,
+/// and a swinging foot asks for less because its goal is lifted off the ground.
+/// The body sinks by the deepest request. On a walking biped that request peaks
+/// at every heel-strike and toe-off, where the legs are split at full stride
+/// with both ends on the ground, and bottoms out as the stance foot passes
+/// under the hip — so the pelvis vaults twice a cycle, highest at each
+/// midstance, exactly the inverted pendulum a real walk rides. Nothing here is
+/// tuned: the bob's depth, its timing and its pace-scaling all fall out of the
+/// same reach geometry the stride was already solved against, and a standing
+/// body still sinks exactly zero.
+#[must_use]
+pub fn crouch_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
+    gait.limbs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &limb)| {
+            sink_needed(rig, limb, contact_offset(stride, gait.phase(index, cycle)))
+        })
+        .fold(0.0f32, f32::max)
+        * CROUCH_MARGIN
 }
 
 /// Where a contact belongs, relative to where it rests.
@@ -326,9 +360,10 @@ pub fn step(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycle: f32
         return steps;
     }
 
-    // Sink far enough that a foot at the far end of its stride is still within
-    // the leg's reach.
-    steps.crouch = crouch_for(rig, gait, stride);
+    // Sink far enough that every foot's current goal is within its leg's reach
+    // — no further. Holding the whole stride's worst case instead is what kept
+    // the pelvis riding dead flat, 47 mm down, through the entire cycle.
+    steps.crouch = crouch_at(rig, gait, stride, cycle);
     pose.translation.y -= steps.crouch;
 
     for (index, &limb) in gait.limbs.iter().enumerate() {
@@ -454,8 +489,18 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
         // one arm bent forward while the other bent back; an elbow is not
         // chiral, and folding it is the one thing about an arm that is the same
         // on both sides.
+        //
+        // **And it folds about the axis the drop has already carried away from
+        // X.** The elbow's frame hangs off the shoulder rotation above, so a
+        // plain local X sits `ARM_DROP` off the world's by the time it acts —
+        // measured at the joint, 0.64 of every degree asked arrived as bend and
+        // the rest rolled the forearm about its own length (#223). Undoing the
+        // drop in the axis puts the fold back on world X, where a fold ahead of
+        // a hanging arm is a bend and nothing else, and the constants deliver
+        // the degrees they are written in.
+        let fold = Quat::from_rotation_z(ARM_DROP * side) * Vec3::X;
         pose.rotations[elbow] *=
-            Quat::from_rotation_x(-(ELBOW_REST + ELBOW_SWING * drive.max(0.0)));
+            Quat::from_axis_angle(fold, -(ELBOW_REST + ELBOW_SWING * drive.max(0.0)));
     }
 
     // Shoulders against hips, and then the neck against the shoulders so the
@@ -840,6 +885,65 @@ mod tests {
             "the shoulders turned {turned:.1} degrees, past the {:.1} asked for",
             SHOULDER_TWIST.to_degrees()
         );
+    }
+
+    #[test]
+    fn the_pelvis_vaults_twice_a_cycle_between_its_envelope_and_its_midstances() {
+        // The bob is not tuned, so it is pinned where the geometry pins it: the
+        // sink returns to the whole-stride envelope at each heel-strike and
+        // toe-off — where the legs are split at full stride with both goals on
+        // the ground — and falls away as the stance foot passes under the hip.
+        // With offsets 0 and 0.5 and duty 0.6, the handoffs sit at cycles 0.0,
+        // 0.1, 0.5 and 0.6, and the midstances near 0.3 and 0.8.
+        let rig = biped();
+        let gait = Gait::wave(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let envelope = crouch_for(&rig, &gait, &stride);
+        assert!(envelope > 0.01, "a stride this long must sink the body");
+
+        for handoff in [0.0, 0.1, 0.5, 0.6] {
+            let sink = crouch_at(&rig, &gait, &stride, handoff);
+            assert!(
+                (sink - envelope).abs() < envelope * 0.02,
+                "at handoff {handoff} the sink was {sink:.4} against an envelope of \
+                 {envelope:.4}"
+            );
+        }
+        for midstance in [0.3, 0.8] {
+            let sink = crouch_at(&rig, &gait, &stride, midstance);
+            assert!(
+                sink < envelope * 0.25,
+                "at midstance {midstance} the body should rise: sink {sink:.4} against \
+                 {envelope:.4}"
+            );
+        }
+        // And nowhere does the phase ask for more than the envelope was built
+        // from — the envelope is the maximum of the phases, not a separate law.
+        for sample in 0..240 {
+            let sink = crouch_at(&rig, &gait, &stride, sample as f32 / 240.0);
+            assert!(
+                sink <= envelope + 1e-5,
+                "cycle {} sank {sink:.4} past the envelope {envelope:.4}",
+                sample as f32 / 240.0
+            );
+        }
+    }
+
+    #[test]
+    fn a_still_body_asks_for_no_sink_at_any_moment() {
+        // `standing_still_leaves_the_body_standing` checks one cycle point;
+        // the per-phase sink must hold the same zero at every one of them.
+        let rig = biped();
+        let gait = Gait::standing(&rig);
+        for sample in 0..40 {
+            let sink = crouch_at(&rig, &gait, &Stride::still(), sample as f32 / 40.0);
+            assert_eq!(
+                sink,
+                0.0,
+                "a still body sank at cycle {}",
+                sample as f32 / 40.0
+            );
+        }
     }
 
     #[test]
