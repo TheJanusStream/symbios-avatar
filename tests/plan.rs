@@ -701,34 +701,43 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// not a new shape. Judged on `--bare` renders at `--femininity` −1 and +1,
 /// where the masculine neck reads as a column into broad shoulders and the
 /// feminine one as slimmer and longer without reading as a stalk.
+///
+/// **Re-based a sixth time for #215's brow markers**, which move every humanoid
+/// row and no quadruped one: two nodes joined the skeleton, so the digest —
+/// which hashes every number the plan produces — moves even though the nodes
+/// mesh nothing. The built GEOMETRY is the check this time: the default body's
+/// triangle count is bit-identical at 25,726, the budget suite is untouched,
+/// and a rest-pose render diffs clean against the pre-#215 sheet. Judged on
+/// `--bare --brows 10` against rest, where the brows visibly rise and nothing
+/// below the field's floor moves.
 const FINGERPRINTS: [(&str, u64); 28] = [
-    ("humanoid default", 0xa4409953adde3c58),
+    ("humanoid default", 0x3333c6c3cc148e05),
     ("quadruped default", 0x2aabd8cffd3320f0),
-    ("humanoid femininity -1", 0x4be35eca959f61bf),
-    ("humanoid femininity +1", 0x53c9b142d969f642),
-    ("humanoid age 55", 0x3e59557f23336ea1),
-    ("humanoid age 80", 0x0b9f5241f4d9cdf8),
-    ("humanoid corner h=1.2 all=-1", 0x6a9e05246c9e7acb),
-    ("humanoid corner h=2.2 all=-1", 0xf2c916e94ca043f4),
-    ("humanoid corner h=1.2 all=0", 0x3ac7e61821ffd7a4),
-    ("humanoid corner h=2.2 all=0", 0x8f9291d4a7a5f24e),
-    ("humanoid corner h=1.2 all=1", 0xef1d9b0df29fdba4),
-    ("humanoid corner h=2.2 all=1", 0xc9766775e866de06),
-    ("humanoid seed 0", 0xb4d194cf72b4db92),
+    ("humanoid femininity -1", 0x775f4fa0fe8ec78e),
+    ("humanoid femininity +1", 0xbc35eb98a7192a9b),
+    ("humanoid age 55", 0x1822edb3aca4df7c),
+    ("humanoid age 80", 0xdf22da69f2ec77ab),
+    ("humanoid corner h=1.2 all=-1", 0x125db4bd43a99f88),
+    ("humanoid corner h=2.2 all=-1", 0xcb313038846dd645),
+    ("humanoid corner h=1.2 all=0", 0xd1e75333e2f3b0b7),
+    ("humanoid corner h=2.2 all=0", 0xbc61c78e1e44db5b),
+    ("humanoid corner h=1.2 all=1", 0xcd42f3dadc83222b),
+    ("humanoid corner h=2.2 all=1", 0xd377e4a165c5c095),
+    ("humanoid seed 0", 0xcaca9fa28ed7fac1),
     ("quadruped seed 0", 0x181d22a61a29e06b),
-    ("humanoid seed 1", 0xaf422e1e3e9ce276),
+    ("humanoid seed 1", 0x9c00fef17a1bd503),
     ("quadruped seed 1", 0x66b32cdababaf760),
-    ("humanoid seed 2", 0xf967fa1cd4aad45c),
+    ("humanoid seed 2", 0x747b031d8aa2049d),
     ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
-    ("humanoid seed 3", 0x2bc00876febef68d),
+    ("humanoid seed 3", 0x8463efa4a7998854),
     ("quadruped seed 3", 0x5fe315cd16d9b52b),
-    ("humanoid seed 4", 0x4e7a4844361dbae4),
+    ("humanoid seed 4", 0xd2aeef5ad9db6df1),
     ("quadruped seed 4", 0x050364ec7b8118ea),
-    ("humanoid seed 5", 0xefea42d03d15c0d1),
+    ("humanoid seed 5", 0x4cf6367d93a047b0),
     ("quadruped seed 5", 0x2d22051939b73f20),
-    ("humanoid seed 6", 0x27a1a360091bf5fb),
+    ("humanoid seed 6", 0x44b26707aedb2886),
     ("quadruped seed 6", 0x94b5b20cbe08a43a),
-    ("humanoid seed 7", 0x63dd05fb392bc445),
+    ("humanoid seed 7", 0xe097f77941202d64),
     ("quadruped seed 7", 0xc6b4259ae378e3bb),
 ];
 

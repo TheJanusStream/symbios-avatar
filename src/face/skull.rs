@@ -1981,6 +1981,41 @@ pub(crate) const LARYNX: f32 = 0.84;
 /// a jawline meeting the ear means.
 pub(crate) const NAPE: f32 = 0.35;
 
+/// How much of the skin at a point one BROW carries, `0..1`.
+///
+/// The sibling of [`mandible_hold`] for the second face territory (#215): the
+/// brow ridge and the forehead above it, one side at a time. `rise` is height
+/// above the head's own joint in head radii, `facing` and `side` are the same
+/// horizontal azimuth cosines the mandible uses — but `side` here is signed
+/// TOWARD the brow being asked about, so one function serves both sides and
+/// the caller flips the sign for the other.
+///
+/// The bands are measured, not styled (#215's canon probe, spread across
+/// femininity −1..+1 and brow 0..1):
+/// * the eye line sits at +0.049 head radii above the joint and the upper
+///   lid's aperture reaches to about +0.12, so the field is ZERO below +0.13
+///   and full by +0.18 — a raised brow must not drag the lids up with it,
+///   which is the boundary #136 put on this whole family of joints;
+/// * the brow's crest sits at +0.19 to +0.26 by the brow axis, inside the
+///   full band at both ends;
+/// * the fade above spans +0.35 to +0.55 — mid-forehead to the hairline —
+///   so the raise dies into the scalp the way skin over a skull does,
+///   rather than shearing at an edge (the #152 top-blend lesson, applied
+///   at filing time instead of after the render caught it).
+///
+/// Azimuth: full ahead of the temple and gone behind it — the brow's own tail
+/// measures `facing` 0.70 at the temple and the release runs 0.55 down to
+/// 0.30. Across the midline the field fades over `side` −0.05..+0.15, so the
+/// glabella between the brows follows the AVERAGE of the two at about a third
+/// of their motion, which is what the skin between two raised brows does.
+pub(crate) fn brow_hold(rise: f32, facing: f32, side: f32) -> f32 {
+    let risen = smooth((rise - 0.13) / 0.05);
+    let fade = smooth((0.55 - rise) / 0.20);
+    let ahead = smooth((facing - 0.30) / 0.25);
+    let mine = smooth((side + 0.05) / 0.20);
+    risen * fade * ahead * mine
+}
+
 /// How strongly a point belongs to the lower-jaw region, 0..1 (#152).
 ///
 /// **The owner's contract, verbatim: "the lower jaw should include the lower

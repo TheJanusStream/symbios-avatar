@@ -592,17 +592,55 @@ const JAW_TIP: Vec2 = Vec2::new(0.603, 0.92);
 /// pivot buys separation up to about 0.10 before it starts costing the upper
 /// lip more than the lower one gains.
 ///
-/// What it does NOT buy, measured and left standing: the chin follows at 37 to
-/// 44% of a rigid mandible's arc rather than at 100, and the skin under the jaw
-/// at 8 to 20%. Both are the same limit and no value of this constant moves
-/// them — the bone is a single MIDLINE segment with a spherical falloff, so the
-/// chin's flanks sit 27.4 mm from it while the upper lip sits 28.5, and nothing
-/// keyed to distance can hold one and release the other. A jaw that carries its
-/// own corners wants a pair of rami, which markers can afford (they mesh
-/// nothing) and which is #118's next slice, not this constant's business.
+/// What the sweep could NOT buy — the chin at 37 to 44% of a rigid mandible's
+/// arc, the submental at 8 to 20% — was the falloff's structural limit: a
+/// single midline segment puts the chin's flanks 27.4 mm away and the upper
+/// lip 28.5, and nothing keyed to distance holds one while releasing the
+/// other. #135 named a pair of rami as the fix; #152 dissolved the problem
+/// instead by binding the `face::skull::mandible_hold` REGION, under which the
+/// chin measures held 1.000 at 97.6% of the rigid arc (#214) and no rami are
+/// wanted.
 /// Provenance: **swept** (#135) against a 20-degree open at `face_length` −1, 0
 /// and +1; the table above is the sweep.
 const JAW_REACH: Vec2 = Vec2::new(0.10, 0.20);
+
+/// Where each brow's marker sits: `(out from the midline, up from the head's
+/// joint)`, both in head radii, at `z = 0` — on the skull's own axis, not on
+/// the surface.
+///
+/// **The axis placement is the design, not a convenience.** A brow raise is
+/// skin SLIDING over the skull, so the joint is a rotation pivot deep behind
+/// the brow: rotating about `x` through a point on the axis carries the
+/// forehead skin tangentially up the skull's curve, which is what the tissue
+/// does. A pivot at the crest itself would hinge the brow outward off the
+/// face. Because the rotation axis is the line `y = pivot, z = 0` whatever the
+/// marker's `x`, the lateral component only names which side the joint drives;
+/// ±0.30 is [`crate::face::Canon`]'s measured `apart` (0.305 head radii on the
+/// default, 0.303 to 0.306 across the frame axis), so the joint sits behind
+/// its own eye.
+///
+/// The height is the EYE LINE, not the brow's crest, and it is measured rather
+/// than styled: canon puts the eye line +0.049 head radii above the head joint
+/// (probed at femininity −1, 0, +1 and brow 0, 0.5, 1 — the spread is 0.001),
+/// and a pivot at eye height makes the crest's own motion nearly pure lift
+/// (the backward slide at +0.17 radii above the pivot is a fifth of the rise,
+/// which is the skull's curvature doing its job). The brow CREST sits +0.19 to
+/// +0.26 radii by the brow axis and is [`crate::face::skull::brow_hold`]'s
+/// business, not this marker's: the field selects the skin, the pivot only
+/// turns it, and a few millimetres of pivot error changes the slide direction
+/// imperceptibly — which is what retires the plan-vs-measured trap `JAW_TIP`
+/// fell into. Nothing here needs to sit ON a feature.
+/// Provenance: **measured** (#215) — the canon probe above, on built bodies.
+const BROW_JOINT: Vec2 = Vec2::new(0.30, 0.049);
+
+/// The brow markers' radius, in head radii.
+///
+/// Markers mesh nothing and, since #152, bind nothing through the falloff —
+/// but `nearest_bone` still answers with a marker's radius where the marker
+/// wins, and `paint_skin` and `rig::Surface` read that radius (#136's
+/// standing finding). The jaw's markers carry 0.10 and 0.20 without incident;
+/// this matches the smaller of them.
+const BROW_REACH: f32 = 0.10;
 
 /// How far the `head_breadth` axis narrows or broadens the skull, as a share of
 /// its own lateral half-extent at each end.
@@ -790,6 +828,10 @@ pub(crate) struct Dimensions {
     pub jaw_tip_at: Vec3,
     /// Marker radius of the jaw's tip.
     pub jaw_tip_r: f32,
+    /// Where the `+X` brow's marker sits; the other is its mirror.
+    pub brow_at: Vec3,
+    /// Marker radius of a brow.
+    pub brow_r: f32,
     /// How far out the clavicle sits, on the `+X` side.
     pub clavicle_x: f32,
     /// Height of the clavicle.
@@ -2630,6 +2672,8 @@ impl Dimensions {
                 head_r * JAW_TIP.y,
             ),
             jaw_tip_r: head_r * JAW_REACH.y,
+            brow_at: Vec3::new(head_r * BROW_JOINT.x, head_y + head_r * BROW_JOINT.y, 0.0),
+            brow_r: head_r * BROW_REACH,
             clavicle_x,
             clavicle_y,
             clavicle_r,

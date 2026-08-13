@@ -45,6 +45,7 @@
 //! cargo run --release --example render -- --follicles # tint the skin by where hair may grow
 //! cargo run --release --example render -- --clumps    # grow the new clump engine on all five regions
 //! cargo run --release --example render -- --jaw 20    # open the mouth this many degrees
+//! cargo run --release --example render -- --brows 8   # raise the brows this many degrees
 //! cargo run --release --example render -- --jawsweep # tune the jaw's binding reach by measurement
 //! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
 //! cargo run --release --example render -- --clip Wave --clipframes 12   # more frames of it
@@ -555,6 +556,9 @@ fn main() {
     // deform identically to a good one at rest and under a head turn — and only
     // turning the PIVOT can (#135).
     let jaw = value("--jaw").and_then(|degrees| degrees.parse::<f32>().ok());
+    // How far the brows are raised, in degrees; negative lowers them. Same
+    // instrument-first argument as `--jaw` one slice later (#215).
+    let brows = value("--brows").and_then(|degrees| degrees.parse::<f32>().ok());
     let show = Show {
         linear,
         bare,
@@ -570,6 +574,7 @@ fn main() {
         pass,
         gaze,
         jaw,
+        brows,
     };
     if clumps {
         grow_clumps(&mut avatar, &record);
@@ -585,7 +590,12 @@ fn main() {
             None => eprintln!("this body has no jaw bone to sweep"),
         }
     }
-    let subject = Subject::new(avatar, show, mandible);
+    let arches = brow_bones(&avatar.rig, &record.skeleton());
+    if brows.is_some() && arches.is_empty() {
+        eprintln!("this body has no brow joints: --brows needs a humanoid");
+        std::process::exit(1);
+    }
+    let subject = Subject::new(avatar, show, mandible, arches);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
         match focus {
@@ -763,6 +773,11 @@ struct Show {
     gaze: Option<f32>,
     /// How far the mouth is opened, in degrees, if at all.
     jaw: Option<f32>,
+    /// How far the brows are raised (or, negative, lowered), in degrees, if at
+    /// all. The same instrument argument as `jaw`: #215 gave each brow a joint
+    /// and a territory, and only rotating the joints can show whether the
+    /// binding articulates — a green suite cannot (#135).
+    brows: Option<f32>,
 }
 
 /// The mandible, as the rig carries it.
@@ -798,6 +813,29 @@ fn jaw_bone(rig: &Rig, skeleton: &Skeleton) -> Option<JawBone> {
         pivot: rig.joints[tip].parent?,
         tip,
     })
+}
+
+/// The brow joints, as the rig carries them: lone marker leaves off a
+/// non-marker parent, off the midline — the same structural identification
+/// `skin::bind` uses, so the instrument poses exactly the joints the binding
+/// credits (#215).
+fn brow_bones(rig: &Rig, skeleton: &Skeleton) -> Vec<usize> {
+    let marked = |joint: usize| {
+        rig.joints[joint]
+            .node
+            .is_some_and(|node| skeleton.nodes[node as usize].marker)
+    };
+    (0..rig.len())
+        .filter(|&joint| {
+            marked(joint)
+                && rig.joints[joint]
+                    .parent
+                    .is_some_and(|parent| !marked(parent))
+                && !(0..rig.len())
+                    .any(|child| marked(child) && rig.joints[child].parent == Some(joint))
+                && rig.joints[joint].position.x != 0.0
+        })
+        .collect()
 }
 
 /// Sheets of a body playing one CC0 clip, evenly across the clip's own length.
@@ -889,6 +927,8 @@ struct Subject {
     show: Show,
     /// The mandible, for `--jaw` and `--jawbind`.
     jaw: Option<JawBone>,
+    /// The brow joints, for `--brows`.
+    brows: Vec<usize>,
     gait: Gait,
     stride: Stride,
     /// The centre of the body's rest extent.
@@ -899,7 +939,7 @@ struct Subject {
 
 impl Subject {
     /// Wraps a built avatar in what a contact sheet additionally needs.
-    fn new(avatar: Avatar, show: Show, jaw: Option<JawBone>) -> Self {
+    fn new(avatar: Avatar, show: Show, jaw: Option<JawBone>, brows: Vec<usize>) -> Self {
         let (lo, hi) = avatar.parts.body.bounds();
         Self {
             gait: Gait::natural(&avatar.rig),
@@ -909,6 +949,7 @@ impl Subject {
             avatar,
             show,
             jaw,
+            brows,
         }
     }
 
@@ -936,6 +977,16 @@ impl Subject {
         // exist before one can be judged.
         if let (Some(degrees), Some(jaw)) = (self.show.jaw, self.jaw) {
             pose.rotations[jaw.pivot] = Quat::from_rotation_x(degrees.to_radians());
+        }
+        // About the lateral axis at each brow's pivot on the skull's own axis,
+        // NEGATIVE because positive x-rotation drops what is forward of the
+        // axis (the jaw's comment above) and a raise lifts it: the forehead
+        // skin slides tangentially up the skull's curve, which is what the
+        // tissue does (#215).
+        if let Some(degrees) = self.show.brows {
+            for &brow in &self.brows {
+                pose.rotations[brow] = Quat::from_rotation_x(-degrees.to_radians());
+            }
         }
         // Through the real gaze system rather than a rotation dropped on the
         // head joint, because the defect this exists to show is about which

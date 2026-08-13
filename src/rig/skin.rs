@@ -255,6 +255,45 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
             Some((pivot, head, neck))
         });
 
+    // The brows, if this rig carries them (#215): SKELETON-BACKED lone marker
+    // leaves hanging straight off a non-marker parent, which is how they
+    // differ structurally from the jaw's chain — no names to read, same as the
+    // jaw's own lookup. `node.is_some()` is load-bearing, not pedantry: the
+    // LID joints are also off-midline marker leaves off the head, but they are
+    // attached AFTER the first bind with no skeleton node behind them
+    // (`Rig::attach` leaves `node: None`), and a re-bind on a lidded rig —
+    // `render --jawsweep` does exactly that — would otherwise hand four lids
+    // the forehead. That is #215's prediction P1 arriving as an
+    // identification collision rather than a territory one.
+    //
+    // Their skin is the region `face::skull::brow_hold` describes, taken from
+    // the head's hold the way the mandible takes its own — and from the
+    // crown's, whose bone begins to win across the field's upper fade; a share
+    // taken from the head alone would leave a crown-held stripe standing still
+    // inside a moving patch. Each entry is `(brow, side sign, head, crown)`.
+    let brows: Vec<(usize, f32, usize, Option<usize>)> = (0..joints)
+        .filter(|&joint| {
+            rig.joints[joint].marker
+                && rig.joints[joint].node.is_some()
+                && rig.joints[joint]
+                    .parent
+                    .is_some_and(|parent| !rig.joints[parent].marker)
+                && !(0..joints).any(|child| {
+                    rig.joints[child].marker && rig.joints[child].parent == Some(joint)
+                })
+                && rig.joints[joint].position.x != 0.0
+        })
+        .filter_map(|joint| {
+            let head = rig.joints[joint].parent?;
+            let crown = (0..joints).find(|&child| {
+                rig.joints[child].parent == Some(head)
+                    && !rig.joints[child].marker
+                    && rig.joints[child].role.deforms()
+            });
+            Some((joint, rig.joints[joint].position.x.signum(), head, crown))
+        })
+        .collect();
+
     let mut dense = vec![0.0f32; vertices * joints];
     for (vertex, &position) in mesh.positions.iter().enumerate() {
         let row = &mut dense[vertex * joints..(vertex + 1) * joints];
@@ -303,6 +342,32 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
         // head's and the neck's hold, and only theirs — the field is defined
         // against the neck→head bone's own span, the ruler `owner_of` already
         // measures the chin and the throat with.
+        // The brow regions (#215). The ruler is height above the head joint in
+        // HEAD RADII: the brow bands sit above the joint where the below-joint
+        // span has no meaning, and the radius is the one measure of the skull
+        // that `face_length` does not stretch (#135's ruler lesson, applied in
+        // the direction it was learned).
+        for &(brow, sign, head, crown) in &brows {
+            let crest = rig.joints[head].position;
+            let radius = rig.joints[head].radius.max(f32::EPSILON);
+            let rise = (position.y - crest.y) / radius;
+            let across = Vec3::new(position.x - crest.x, 0.0, position.z - crest.z);
+            let reach = across.length();
+            if reach <= f32::EPSILON {
+                continue;
+            }
+            let hold = skull::brow_hold(rise, across.z / reach, across.x / reach * sign);
+            if hold > 0.0 {
+                let mut taken = hold * row[head];
+                row[head] *= 1.0 - hold;
+                if let Some(crown) = crown {
+                    taken += hold * row[crown];
+                    row[crown] *= 1.0 - hold;
+                }
+                row[brow] += taken;
+            }
+        }
+
         if let Some((pivot, head, neck)) = jaw {
             let (foot, crest) = (rig.joints[neck].position, rig.joints[head].position);
             // Pure HEIGHT, not a projection onto the bone: the neck→head bone
@@ -934,25 +999,22 @@ mod tests {
 
     #[test]
     fn the_chin_follows_the_jaw_and_not_the_skull() {
-        // The other half of the contract, kept apart because it is the half
-        // that is only PARTLY met and the reason is structural rather than a
-        // tuning slip. The chin follows at 0.39 and travels 44% of the arc a
-        // rigid mandible would carry it through — not the 1.0 and 100% a real
-        // jaw has.
+        // The other half of the contract. Under the marker-falloff binding the
+        // chin followed at 0.392 and travelled 44% of a rigid mandible's arc,
+        // and the reason was structural: a single midline bone's spherical
+        // falloff put the chin's flanks 27.4 mm from it and the upper lip
+        // 28.5, so nothing keyed to distance could hold one and release the
+        // other. #135 named a pair of rami as the fix.
         //
-        // **No value of `JAW_REACH` fixes it, and the measurement that says so
-        // is the distance pair**: the bone is a single MIDLINE segment with a
-        // spherical falloff, so the chin's own flanks sit 27.4 mm from it while
-        // the upper lip sits 28.5, and nothing keyed to distance can hold one
-        // and release the other. The midline of the chin is held 1.0; its
-        // corners are held by the skull, so the jawline's silhouette does not
-        // swing even though the mouth opens. A jaw that carries its own corners
-        // wants a pair of RAMI, which markers can afford because they mesh
-        // nothing (#134), and that is #118's next slice.
-        //
-        // The floor here is therefore what the shape can currently deliver,
-        // recorded so that a change which makes it WORSE is caught. It is not
-        // an endorsement of 0.39.
+        // **The rami were never built, because #152 dissolved the problem
+        // instead**: the mandible's skin became the REGION
+        // `face::skull::mandible_hold` describes, lip to larynx and gonion to
+        // ear hinge, and `bind` moves the head's and neck's hold onto the jaw
+        // by that field. Measured on the region binding (#214, 2026-08-13) the
+        // chin band is held 1.000 and travels 97.6% of the rigid arc — the
+        // corners are carried, and the floors below are that state's ratchet.
+        // The old floors (0.30 and 0.35) were the falloff's residual and would
+        // have passed a regression to half the delivered hold.
         use crate::anim::Pose;
         use glam::Quat;
 
@@ -1009,11 +1071,121 @@ mod tests {
             "the chin read {count} vertices — the band, not the binding"
         );
         let (held, share) = (held / count as f32, travel / rigid);
+        // Printed because the margin is what the next binding change needs to
+        // see (`docs/instruments.md` rule 9).
+        println!(
+            "the chin: held {held:.3} by the jaw, {:.1}% of a rigid mandible's arc, \
+             {count} vertices",
+            share * 100.0
+        );
         assert!(
-            held > 0.30 && share > 0.35,
+            held > 0.95 && share > 0.90,
             "the chin is held {held:.3} by the jaw and travels {:.1}% of a rigid mandible's arc, \
-             of {count} vertices read — it was 0.392 and 43.6% when this was measured",
+             of {count} vertices read — the region binding delivered 1.000 and 97.6% (#214), and \
+             this floor is that state's ratchet",
             share * 100.0,
+        );
+    }
+
+    #[test]
+    fn the_brows_rise_and_the_lids_do_not() {
+        // #215's contract, asserted the way the jaw's is: only POSING the
+        // joints says anything about this binding — dual quaternion blending
+        // deforms any territory identically at rest and under a head turn, so
+        // every other test in the crate is green whatever `brow_hold` says
+        // (the #135 lesson, third time now).
+        //
+        // Three bands in the head-radius ruler the field itself is authored
+        // in, at a 10-degree raise:
+        // * the BROW band (+0.18..+0.28 radii, frontal) must travel — the
+        //   crest sits at +0.19..+0.26 across the brow axis and the pivot's
+        //   geometry makes 10 degrees about 13 mm of lift at the crest;
+        // * the LID band (+0.02..+0.12) must not: the field is zero below
+        //   +0.13 exactly so a raise does not peel the lids open, and what
+        //   leaks below is the bind-time smoothing pass, which this bounds;
+        // * the CROWN band (above +0.70) must not: the fade dies at +0.55 and
+        //   a scalp that rides a brow raise is the shear #152's top-blend
+        //   lesson warns about, one territory later.
+        use crate::anim::Pose;
+        use glam::Quat;
+
+        let record = crate::AvatarRecord::new("Browed", crate::Archetype::default());
+        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let rig = &avatar.rig;
+        let body = &avatar.parts.body;
+        let head = *rig.in_zone(Zone::Head).first().expect("a head");
+        let crest = rig.joints[head].position;
+        let radius = rig.joints[head].radius;
+
+        // The same structural identification `bind` uses: skeleton-backed
+        // marker leaves off the midline. The lid joints are marker leaves too
+        // but carry no node, which is the whole of how the two families are
+        // told apart — if this find ever returns four joints, that
+        // distinction has broken and the forehead belongs to nobody knowable.
+        let brows: Vec<usize> = (0..rig.len())
+            .filter(|&joint| {
+                rig.joints[joint].marker
+                    && rig.joints[joint].node.is_some()
+                    && rig.joints[joint]
+                        .parent
+                        .is_some_and(|parent| !rig.joints[parent].marker)
+                    && !(0..rig.len()).any(|child| {
+                        rig.joints[child].marker && rig.joints[child].parent == Some(joint)
+                    })
+                    && rig.joints[joint].position.x != 0.0
+            })
+            .collect();
+        assert_eq!(brows.len(), 2, "a humanoid carries one brow joint per side");
+
+        let mut pose = Pose::rest(rig);
+        for &brow in &brows {
+            pose.rotations[brow] = Quat::from_rotation_x(-10f32.to_radians());
+        }
+        let moved = pose
+            .forward(rig)
+            .deform(rig, &body.positions, &avatar.parts.weights);
+
+        let band = |low: f32, high: f32| -> (usize, f32) {
+            let (mut count, mut travel) = (0usize, 0.0f32);
+            for (vertex, &rest) in body.positions.iter().enumerate() {
+                let local = rest - crest;
+                let rise = local.y / radius;
+                if rise < low || rise >= high || local.z <= 0.0 {
+                    continue;
+                }
+                count += 1;
+                travel += (moved[vertex] - rest).length();
+            }
+            (count, travel / count.max(1) as f32 * 1000.0)
+        };
+        let (brow_count, brow_travel) = band(0.18, 0.28);
+        let (lid_count, lid_travel) = band(0.02, 0.12);
+        let (crown_count, crown_travel) = band(0.70, 2.00);
+        // Printed because the margins are what the next face-bone territory
+        // needs to see (`docs/instruments.md` rule 9).
+        println!(
+            "a 10-degree raise: the brow band travels {brow_travel:.2} mm ({brow_count} \
+             vertices), the lid band {lid_travel:.2} ({lid_count}), the crown \
+             {crown_travel:.2} ({crown_count})"
+        );
+        assert!(
+            brow_count > 50 && lid_count > 50 && crown_count > 50,
+            "a band is starved of vertices — the ruler moved, not the binding"
+        );
+        assert!(
+            brow_travel > 4.0,
+            "the brow band travels {brow_travel:.2} mm at a 10-degree raise — the territory \
+             does not articulate"
+        );
+        assert!(
+            lid_travel < 1.0,
+            "the lid band travels {lid_travel:.2} mm under a brow raise — the field is \
+             reaching below its own floor and a raise will peel the eyes open"
+        );
+        assert!(
+            crown_travel < 0.5,
+            "the crown travels {crown_travel:.2} mm under a brow raise — the fade is not \
+             dying by the hairline"
         );
     }
 
