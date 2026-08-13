@@ -130,7 +130,7 @@ pub use dress::{Garment, GarmentCut, Leg, Outfit, OutfitParams, Sleeve};
 pub use extremity::{Attached, Extremities, Foot, Hand};
 pub use face::{
     Aperture, Blink, Canon, Expression, EyeParams, Eyes, FaceParams, Features, HeadTraits, Talk,
-    TalkConfig, refine_face, shape_skull,
+    TalkConfig, Viseme, refine_face, shape_skull,
 };
 pub use hair::{
     BrowStyle, ChinStyle, Cut, FlankStyle, Follicle, FollicleParams, Follicles, Growth, HairRecord,

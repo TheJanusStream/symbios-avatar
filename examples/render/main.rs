@@ -48,6 +48,7 @@
 //! cargo run --release --example render -- --brows 8   # raise the brows this many degrees
 //! cargo run --release --example render -- --corners 12 # smile this many degrees (negative frowns)
 //! cargo run --release --example render -- --expression happy # or sad, angry, surprised, neutral
+//! cargo run --release --example render -- --viseme aa # an Oculus-15 mouth shape; try SS, oh, ou
 //! cargo run --release --example render -- --jawsweep # tune the jaw's binding reach by measurement
 //! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
 //! cargo run --release --example render -- --clip Wave --clipframes 12   # more frames of it
@@ -78,7 +79,7 @@ use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, Category, Expression,
     EyeParams, FaceParams, FootingConfig, Gait, GazeConfig, Ground, Influence, Limb,
     MAX_INFLUENCES, MeshKind, PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams,
-    SkinWeights, Stride, Zone,
+    SkinWeights, Stride, Viseme, Zone,
     anim::contacts_in,
     anim::gait,
     anim::gaze,
@@ -569,6 +570,23 @@ fn main() {
     // A named preset from the expression layer (#217), applied before the
     // per-bone flags so those stay override instruments: `--expression happy
     // --brows 0` is happy with the brows pinned back to rest.
+    // A mouth shape from the lipsync vocabulary (#218), applied AFTER the
+    // expression so speech owns the mouth — the precedence the viseme module
+    // states once.
+    let viseme = match value("--viseme") {
+        Some(name) => match Viseme::named(name.as_str()) {
+            some @ Some(_) => some,
+            None => {
+                let names: Vec<&str> = Viseme::NAMES.iter().map(|(name, _)| *name).collect();
+                eprintln!(
+                    "unknown --viseme {name}: expected one of {}",
+                    names.join(", ")
+                );
+                std::process::exit(1);
+            }
+        },
+        None => None,
+    };
     let expression = match value("--expression") {
         Some(name) => match Expression::named(name.as_str()) {
             some @ Some(_) => some,
@@ -601,6 +619,7 @@ fn main() {
         brows,
         corners,
         expression,
+        viseme,
     };
     if clumps {
         grow_clumps(&mut avatar, &record);
@@ -820,6 +839,8 @@ struct Show {
     corners: Option<f32>,
     /// A named resting face from the expression layer, if any (#217).
     expression: Option<Expression>,
+    /// A mouth shape from the lipsync vocabulary, if any (#218).
+    viseme: Option<Viseme>,
 }
 
 /// The mandible, as the rig carries it.
@@ -1028,6 +1049,10 @@ impl Subject {
         // override instruments over a named resting face (#217).
         if let Some(expression) = self.show.expression {
             expression.apply(rig, &mut pose);
+        }
+        // After the expression: speech owns the mouth (#218).
+        if let Some(viseme) = self.show.viseme {
+            viseme.apply(rig, &mut pose);
         }
         // About the lateral axis, at the PIVOT. Positive drops the chin and
         // draws it back, which is the arc a mandible opens along: the condyle

@@ -31,6 +31,7 @@ pub mod neck;
 pub mod relief;
 pub mod skull;
 pub mod talk;
+pub mod viseme;
 
 pub use blink::Blink;
 pub use canon::Canon;
@@ -42,6 +43,7 @@ pub use neck::{fair as fair_neck, refine as refine_neck, shape as shape_neck};
 pub use relief::carve as carve_face;
 pub use skull::{HeadTraits, Skull, band_at, refine_face, shape as shape_skull};
 pub use talk::{Talk, TalkConfig};
+pub use viseme::Viseme;
 
 /// Smoothstep, clamped, for fading a field in and out without leaving a crease
 /// where it starts or ends.
