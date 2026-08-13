@@ -281,6 +281,31 @@ impl AvatarRecord {
         record
     }
 
+    /// The avatar a seed names: [`Self::new`] plus a full [`Self::reroll`],
+    /// in one call.
+    ///
+    /// This is the entry point for a host that has no stored record and must
+    /// invent one — hash something stable about an identity into a seed, and
+    /// every reader that does the same derives the same person. What makes
+    /// that a promise rather than a hope is the [`crate::plan::Rolls`]
+    /// contract: each axis draws from its own named stream, so the result
+    /// depends on `seed`, on this build's generation (stamped into
+    /// [`Self::generator`]), and on nothing else. The
+    /// `a_stored_seed_reproduces_its_person` test pins the draws for the
+    /// current generation; a change that moves them must bump
+    /// [`GENERATOR_VERSION`].
+    ///
+    /// The archetype is a parameter, not a draw. Which body plan an identity
+    /// gets is the host's decision — a re-roll varies a body, it does not
+    /// pick one — and drawing it here would burn that choice into every
+    /// derived default.
+    #[must_use]
+    pub fn rolled(name: impl Into<String>, archetype: Archetype, seed: i64) -> Self {
+        let mut record = Self::new(name, archetype);
+        record.reroll(seed);
+        record
+    }
+
     /// Clamps every field into range.
     ///
     /// Idempotent: sanitising a sanitised record changes nothing. Call it after
@@ -1037,6 +1062,41 @@ mod tests {
         first.reroll(42);
         second.reroll(42);
         assert_eq!(first.archetype, second.archetype);
+    }
+
+    #[test]
+    fn a_stored_seed_reproduces_its_person() {
+        // The promise behind every stored seed, pinned to concrete draws. The
+        // determinism test above proves two rolls in one process agree; this
+        // one catches the drift that test cannot see: a `rand`/`rand_pcg`
+        // upgrade or an edited distribution moves these values on every seed
+        // at once, silently, and every stored record's look with them. If
+        // this fails and the change was deliberate, bump `GENERATOR_VERSION`
+        // and re-pin; if it was not, the dependency or edit that moved it is
+        // the bug.
+        //
+        // Pinned axes only, never the whole record: the independence contract
+        // means adding an axis moves none of these, so growth does not pay a
+        // re-pinning tax here.
+        let record = AvatarRecord::rolled("Pinned", Archetype::default(), 42);
+        assert_eq!(record.generator, GENERATOR_VERSION);
+        assert_eq!(record.seed, 42);
+        let Archetype::Humanoid(params) = &record.archetype else {
+            panic!("archetype changed");
+        };
+        let drawn = format!(
+            "femininity {:.6} mass {:.6} fat {:.6} age {} height {:.6} melanin {:.6}",
+            record.composites.femininity,
+            record.composites.mass,
+            record.composites.body_fat,
+            record.composites.age,
+            params.height,
+            record.skin.melanin,
+        );
+        assert_eq!(
+            drawn,
+            "femininity 1.340000 mass -0.298000 fat 0.212000 age 30 height 1.482000 melanin 0.933000"
+        );
     }
 
     #[test]
