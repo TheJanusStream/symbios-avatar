@@ -41,6 +41,7 @@
 pub mod landmark;
 pub mod patch;
 pub mod skin;
+pub mod socket;
 pub mod surface;
 
 use glam::{Vec2, Vec3};
@@ -53,6 +54,7 @@ use crate::skeleton::{Skeleton, SkeletonError};
 pub use landmark::{Anchor, Landmark, Landmarks};
 pub use patch::{Footprint, Patch};
 pub use skin::{Influence, MAX_INFLUENCES, SkinConfig, SkinWeights};
+pub use socket::Socket;
 pub use surface::Surface;
 
 /// Where the body's skeleton lies beneath a point on its surface.
