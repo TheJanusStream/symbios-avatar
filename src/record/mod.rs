@@ -655,7 +655,7 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
     if grows && full > 0.25 {
         hair.moustache.style = crate::hair::MoustacheStyle::Chevron;
         hair.chin.style = crate::hair::ChinStyle::Full;
-        hair.flanks.style = crate::hair::FlankStyle::Full;
+        hair.flanks.style = crate::hair::FlankStyle::FullConnect { reach: 0.5 };
     } else {
         hair.moustache.style = crate::hair::MoustacheStyle::None;
         hair.chin.style = crate::hair::ChinStyle::None;

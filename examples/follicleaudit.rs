@@ -263,8 +263,12 @@ fn wear(record: &mut AvatarRecord, follicle: Follicle, style: &str, axis: f32) -
             Some(format!("{:?}", record.hair.chin.style))
         }
         Follicle::Flanks => {
-            record.hair.flanks.style = FlankStyle::Full;
-            Some("Full".into())
+            record.hair.flanks.style = match style {
+                "" | "full" => FlankStyle::FullConnect { reach: axis },
+                "sideburns" => FlankStyle::Sideburns { drop: axis },
+                other => return unknown(other, "sideburns or full"),
+            };
+            Some(format!("{:?}", record.hair.flanks.style))
         }
     }
 }

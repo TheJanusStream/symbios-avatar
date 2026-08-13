@@ -36,6 +36,7 @@
 //! cargo run --release --example render -- --scalp bob 0.8 # crop, bob, long, tied, curly
 //! cargo run --release --example render -- --moustache handlebar 0.9 # chevron, handlebar, pencil
 //! cargo run --release --example render -- --chin braided 0.8 # goatee, full, braided
+//! cargo run --release --example render -- --flanks full 0.7 # sideburns, full
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
@@ -270,6 +271,24 @@ fn main() {
             }
         }
     });
+    // Which flank beard to wear, and the axis its own variant carries.
+    let flanks = value("--flanks").map(|name| {
+        let axis = args
+            .iter()
+            .position(|arg| arg == "--flanks")
+            .and_then(|at| args.get(at + 2))
+            .and_then(|it| it.parse::<f32>().ok())
+            .unwrap_or(0.6);
+        match name.as_str() {
+            "none" => symbios_avatar::hair::FlankStyle::None,
+            "sideburns" => symbios_avatar::hair::FlankStyle::Sideburns { drop: axis },
+            "full" => symbios_avatar::hair::FlankStyle::FullConnect { reach: axis },
+            other => {
+                eprintln!("unknown --flanks style {other}: expected none, sideburns or full");
+                std::process::exit(1);
+            }
+        }
+    });
     let overridden: Vec<f32> = value("--hair")
         .map(|spec| {
             spec.split(',')
@@ -393,7 +412,8 @@ fn main() {
             || brow.is_some()
             || scalp.is_some()
             || moustache.is_some()
-            || chin.is_some())
+            || chin.is_some()
+            || flanks.is_some())
         .then(|| {
             // The scalp's own four axes, in the order `Cut` declares them, plus
             // a fifth that silences every region — which is what `--mane 0` on
@@ -424,6 +444,17 @@ fn main() {
             }
             if let Some(style) = scalp {
                 hair.scalp.style = style;
+            }
+            if let Some(style) = flanks {
+                hair.flanks.style = style;
+                if !matches!(style, symbios_avatar::hair::FlankStyle::None) {
+                    hair.flanks.skin = symbios_avatar::hair::Paint {
+                        density: 0.85,
+                        colour: hair.scalp.roots,
+                    };
+                    hair.flanks.roots = hair.scalp.roots;
+                    hair.flanks.tips = hair.scalp.roots;
+                }
             }
             if let Some(style) = chin {
                 hair.chin.style = style;

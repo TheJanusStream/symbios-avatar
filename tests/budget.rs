@@ -412,8 +412,18 @@ fn greediest() -> symbios_avatar::HairRecord {
             cut,
             ..Default::default()
         },
+        // **The dearest variant of each catalogue, not the first one** (#208).
+        // Every region carries a catalogue now, and the styles inside one do not
+        // cost the same: measured on the greedy body, a chin beard is 26,888
+        // triangles braided and 27,168 full, because a braid is a third as many
+        // clumps however many stations its twist earns. A budget test that
+        // picked whichever variant was written first would be measuring the
+        // order of an enum.
+        //
+        // #209 re-derives this properly, as a sweep over the whole catalogue
+        // rather than a hand-picked corner.
         moustache: Tress {
-            style: MoustacheStyle::Chevron,
+            style: MoustacheStyle::Handlebar { sweep: 1.0 },
             cut,
             ..Default::default()
         },
@@ -423,7 +433,7 @@ fn greediest() -> symbios_avatar::HairRecord {
             ..Default::default()
         },
         flanks: Tress {
-            style: FlankStyle::Full,
+            style: FlankStyle::FullConnect { reach: 1.0 },
             cut,
             ..Default::default()
         },

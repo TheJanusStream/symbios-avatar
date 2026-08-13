@@ -513,7 +513,7 @@ mod tests {
         let mut record = AvatarRecord::new("Facing", Archetype::default());
         record.hair.moustache.style = crate::hair::MoustacheStyle::Chevron;
         record.hair.chin.style = crate::hair::ChinStyle::Full;
-        record.hair.flanks.style = crate::hair::FlankStyle::Full;
+        record.hair.flanks.style = crate::hair::FlankStyle::FullConnect { reach: 0.5 };
         for follicle in Follicle::ALL {
             let Some(sown) = record.hair.sowing(follicle, &grounds.follicles) else {
                 panic!("{} grew nothing to face anywhere", follicle.name());

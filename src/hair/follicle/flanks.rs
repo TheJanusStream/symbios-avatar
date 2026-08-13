@@ -129,6 +129,42 @@ const SIDEBURN_RANGE: f32 = 0.25;
 /// Provenance: **tuned by render** (#199).
 const DIAGONAL: f32 = 0.70;
 
+/// The beard line one flank runs under, as one object.
+///
+/// **The fourth handed-out landmark, and the only one whose ends are two
+/// different heights** (#208, following [`Ridge`](super::brows::Ridge),
+/// [`Lip`](super::moustache::Lip) and [`Pad`](super::chin::Pad)). A flank style
+/// needs the same diagonal the mask is cut to — the shaved line runs from the
+/// sideburn down to the cheek — and it needs the jawline under it, which is
+/// `Follicles::border` — handed out as [`Follicles::jawline`] — and is a function of azimuth
+/// rather than a number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Line {
+    /// The beard line in front of the ear, in head-local metres.
+    pub sideburn: f32,
+    /// The beard line at the front of the cheek, likewise.
+    pub cheek: f32,
+    /// How far below the mandible's border the patch reaches, likewise.
+    pub under: f32,
+    /// The edge's width, likewise.
+    pub fade: f32,
+    /// How far back the patch reaches, as a cosine of the azimuth.
+    pub behind: f32,
+}
+
+impl Line {
+    /// The beard line at one point's own distance round the head, in metres.
+    ///
+    /// The same diagonal the mask is cut to, so a style combing down from it
+    /// starts where the paint starts. See `Flanks::top` for why it is carried
+    /// in the azimuth's cosine.
+    #[must_use]
+    pub fn top(&self, facing: f32) -> f32 {
+        let ahead = crate::face::smooth(facing / DIAGONAL);
+        self.sideburn + (self.cheek - self.sideburn) * ahead
+    }
+}
+
 /// The jaw flanks, cut from one head's landmarks.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Flanks {
@@ -182,8 +218,19 @@ impl Flanks {
     /// largest facial region. The cosine changes smoothly everywhere the region
     /// reaches, and it is what the border below is written in anyway.
     fn top(&self, facing: f32) -> f32 {
-        let ahead = crate::face::smooth(facing / DIAGONAL);
-        self.sideburn + (self.cheek - self.sideburn) * ahead
+        self.line().top(facing)
+    }
+
+    /// The beard line this mask was cut around.
+    #[must_use]
+    pub(super) fn line(&self) -> Line {
+        Line {
+            sideburn: self.sideburn,
+            cheek: self.cheek,
+            under: self.under,
+            fade: self.fade,
+            behind: self.behind,
+        }
     }
 }
 

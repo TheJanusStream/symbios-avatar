@@ -23,17 +23,19 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::clump::{Fall, Shape};
+use super::clump::Shape;
 use super::follicle::{Follicle, FollicleParams, Follicles};
 use super::painted::Paint;
 
 pub mod brows;
 pub mod chin;
+pub mod flanks;
 pub mod moustache;
 pub mod scalp;
 
 pub use brows::BrowStyle;
 pub use chin::ChinStyle;
+pub use flanks::FlankStyle;
 pub use moustache::MoustacheStyle;
 pub use scalp::ScalpStyle;
 
@@ -204,7 +206,7 @@ pub trait Style: Copy + Default {
 ///
 /// Provenance: **derived** from the triangle budget and the measured cost of a
 /// card.
-const FULL: [usize; 5] = [104, 40, 78, 84, 80];
+const FULL: [usize; 5] = [104, 40, 78, 84, 116];
 
 /// How many clumps one region grows at a given density.
 ///
@@ -222,50 +224,23 @@ fn clumps_for(cut: &Cut, follicle: Follicle) -> usize {
     ((full as f32) * share).round() as usize
 }
 
-/// How long a region's clumps are at full length, in metres.
+/// **What used to be here, and why it is not** (#208). Every region's base style
+/// was a [`Fall`](super::clump::Fall) with its own numbers once — one `REACH`
+/// table of five lengths and one `fall_for` that built the curve — and a
+/// `styles!` macro declared the
+/// regions still waiting for a catalogue of their own. That was never a
+/// simplification so much as a placeholder: a crop, a brow, a moustache and a
+/// beard are not the same curve at different lengths, and each of them said so
+/// as loudly as it could the first time it was rendered.
 ///
-/// Ordered as [`Follicle::ALL`]. A scalp's is what makes the difference between
-/// a crop and a curtain; the rest are near enough fixed by anatomy.
+/// The five catalogues took them one at a time — the brows at #205, the scalp at
+/// #204, the moustache at #206, the chin at #207 and the flanks at #208 — and
+/// with the last of them the macro, the table and the shared fall have nothing
+/// left to serve, so they are gone rather than kept behind an `allow(dead_code)`.
 ///
-/// Three of the five entries are now what that region would be if it fell, and
-/// nothing shipped reads them: the scalp walks a measured profile (#204), the
-/// brows comb along a measured ridge (#205), and the moustache runs along a
-/// measured lip (#206), each taking its length from the thing it was fitted to.
-/// They stay because this array is indexed by [`Follicle::ALL`]'s own order and
-/// a hole in it would be a worse thing to maintain than an entry the catalogue
-/// has outgrown — and because the chin and the flanks still read theirs until
-/// #207 and #208.
-///
-/// Provenance: **tuned by render** (#202).
-const REACH: [f32; 5] = [0.090, 0.012, 0.014, 0.030, 0.022];
-
-/// The shape one region grows at a given cut.
-///
-/// Every style in this file is a [`Fall`] with its own numbers, which is not a
-/// simplification: a crop, a brow, a moustache and a beard genuinely are the
-/// same curve at different lengths. The catalogues add the ones that are not —
-/// a bob's curtain, a curl's helix, a handlebar's sweep — and those bring their
-/// own [`Shape`] implementations with them.
-fn fall_for(cut: &Cut, follicle: Follicle) -> Fall {
-    let slot = Follicle::ALL
-        .iter()
-        .position(|other| *other == follicle)
-        .unwrap_or(0);
-    // A short floor under the length so the thinnest cut still grows something
-    // that reads as hair rather than as fuzz.
-    let length = REACH[slot] * (0.25 + 0.75 * cut.length.clamp(0.0, 1.0));
-    let width = 0.004 + 0.005 * cut.thickness.clamp(0.0, 1.0);
-    Fall {
-        length,
-        width,
-        taper: 0.35,
-        droop: cut.droop.clamp(0.0, 1.0) * 1.2,
-        // Hair leaves skin at a shallow angle; see [`Fall::lie`] for the render
-        // that settled it.
-        lie: 0.85,
-    }
-}
-
+/// [`Fall`](super::clump::Fall) itself stays. It is the engine's own reference
+/// [`Shape`] and the thing a sixth region would start from; it is simply not
+/// what any of the five ARE.
 /// A natural hair colour, along a melanin ramp.
 ///
 /// **Kept from the shell era, whose own axis it was, because the ramp itself was
@@ -299,70 +274,6 @@ pub fn melanin(shade: f32) -> [f32; 3] {
         low[1] + (high[1] - low[1]) * blend,
         low[2] + (high[2] - low[2]) * blend,
     ]
-}
-
-/// Declares a region's style enum, its `None` variant and its one base style.
-///
-/// The regions that still have exactly one style are identical in shape and
-/// differ only in what they are called, which is the whole argument for writing
-/// them once: a macro that expands to several enums cannot let one of them drift
-/// into implementing [`Style`] differently by accident.
-///
-/// **It shrinks by one with each catalogue issue and is meant to.** The brows
-/// left at #205, the scalp at #204 and the moustache at #206 — three regions
-/// whose styles comb along something measured rather than falling downhill —
-/// each into its own file beside [`brows`]. The chin and the flanks follow at
-/// #207 and #208, and this macro goes with the last of them. What is left here
-/// is the regions whose base style genuinely is the shared fall.
-macro_rules! styles {
-    ($($(#[$doc:meta])* $name:ident { $(#[$grown_doc:meta])* $grown:ident }),* $(,)?) => {
-        $(
-            $(#[$doc])*
-            #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-            #[serde(rename_all = "snake_case")]
-            pub enum $name {
-                /// Nothing is grown here: the region is painted, or bare.
-                #[default]
-                None,
-                $(#[$grown_doc])*
-                $grown,
-            }
-
-            impl Style for $name {
-                fn grows(&self) -> bool {
-                    !matches!(self, Self::None)
-                }
-
-                fn shape(
-                    &self,
-                    cut: &Cut,
-                    follicle: Follicle,
-                    _head: &Follicles,
-                ) -> Option<Box<dyn Shape>> {
-                    match self {
-                        Self::None => None,
-                        Self::$grown => Some(Box::new(fall_for(cut, follicle))),
-                    }
-                }
-
-                fn clumps(&self, cut: &Cut, follicle: Follicle) -> usize {
-                    match self {
-                        Self::None => 0,
-                        Self::$grown => clumps_for(cut, follicle),
-                    }
-                }
-            }
-        )*
-    };
-}
-
-styles! {
-    /// The base styles of the jaw's flanks.
-    FlankStyle {
-        /// Cheek and jaw grown together. #208 adds the sideburns-only cut and
-        /// the full connection to the chin.
-        Full
-    },
 }
 
 /// Everything a record says about one head of hair.
@@ -652,7 +563,7 @@ mod tests {
         record.brows.style = BrowStyle::Natural;
         record.moustache.style = MoustacheStyle::Chevron;
         record.chin.style = ChinStyle::Full;
-        record.flanks.style = FlankStyle::Full;
+        record.flanks.style = FlankStyle::FullConnect { reach: 0.5 };
         for tress in [
             &mut record.scalp.cut,
             &mut record.brows.cut,

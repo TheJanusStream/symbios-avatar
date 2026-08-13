@@ -310,6 +310,26 @@ impl Follicles {
         self.chin.pad()
     }
 
+    /// The beard line one flank grows under, on this head.
+    ///
+    /// The fourth of the handed-out landmarks. Its lower edge is not in here
+    /// because it is not a number: see [`Self::jawline`].
+    #[must_use]
+    pub fn beard_line(&self) -> flanks::Line {
+        self.flanks.line()
+    }
+
+    /// The mandible's lower border at one azimuth, in head-local metres.
+    ///
+    /// **The same line the face was carved to, handed out rather than copied**
+    /// (#196 is what a second copy cost, and #208 is where a style needed it).
+    /// A flank beard's lower edge IS the approved crease, so a style asks for it
+    /// here and there is no second arc to keep in step.
+    #[must_use]
+    pub fn jawline(&self, facing: f32) -> f32 {
+        Self::border(&self.skull, facing)
+    }
+
     /// How much of `follicle` may grow at a head-local point, `0` to `1`.
     #[must_use]
     pub fn weight(&self, follicle: Follicle, local: Vec3) -> f32 {
