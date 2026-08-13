@@ -223,22 +223,8 @@ impl SkinWeights {
 /// after the bind, and it has to hand back exactly the share this field
 /// would have given them or a smile tears at the lip's free edge.
 pub(crate) fn mouth_corners(rig: &Rig) -> Vec<(usize, f32, usize)> {
-    let joints = rig.len();
-    (0..joints)
-        .filter(|&joint| {
-            rig.joints[joint].marker
-                && rig.joints[joint].node.is_some()
-                && rig.joints[joint]
-                    .parent
-                    .is_some_and(|parent| !rig.joints[parent].marker)
-                && !(0..joints).any(|child| {
-                    rig.joints[child].marker && rig.joints[child].parent == Some(joint)
-                })
-                && rig.joints[joint].position.x != 0.0
-                && rig.joints[joint].parent.is_some_and(|parent| {
-                    rig.joints[joint].position.y < rig.joints[parent].position.y
-                })
-        })
+    (0..rig.len())
+        .filter(|&joint| face_leaf(rig, joint) && !leaf_above_parent(rig, joint))
         .filter_map(|joint| {
             Some((
                 joint,
@@ -247,6 +233,54 @@ pub(crate) fn mouth_corners(rig: &Rig) -> Vec<(usize, f32, usize)> {
             ))
         })
         .collect()
+}
+
+/// The brow joints a rig carries, each `(brow, side sign)` — the lone leaves
+/// ABOVE the head joint, where [`mouth_corners`] finds the ones below. Shared
+/// by [`bind`] and the expression layer (#217), for the reason on
+/// [`mouth_corners`].
+pub(crate) fn brow_joints(rig: &Rig) -> Vec<(usize, f32)> {
+    (0..rig.len())
+        .filter(|&joint| face_leaf(rig, joint) && leaf_above_parent(rig, joint))
+        .map(|joint| (joint, rig.joints[joint].position.x.signum()))
+        .collect()
+}
+
+/// The jaw's pivot, if this rig carries the marker chain: the joint the
+/// mandible region swings on. The same structural lookup [`bind`] and the
+/// mouth cut use — a marker whose child is a marker is the chain, and the
+/// pivot is the tip's parent.
+pub(crate) fn jaw_pivot(rig: &Rig) -> Option<usize> {
+    (0..rig.len()).find_map(|tip| {
+        let pivot = rig.joints[tip].parent?;
+        (rig.joints[tip].marker && rig.joints[pivot].marker).then_some(pivot)
+    })
+}
+
+/// Whether `joint` is a skeleton-backed lone marker leaf off a non-marker
+/// parent, off the midline — the shape every per-side face joint (a brow, a
+/// mouth corner) has. `node.is_some()` excludes the lid joints, which are
+/// attached after the first bind with no skeleton node behind them; the
+/// jaw's chain is excluded by both ends (the pivot has a marker child, the
+/// tip a marker parent).
+fn face_leaf(rig: &Rig, joint: usize) -> bool {
+    rig.joints[joint].marker
+        && rig.joints[joint].node.is_some()
+        && rig.joints[joint]
+            .parent
+            .is_some_and(|parent| !rig.joints[parent].marker)
+        && !(0..rig.len())
+            .any(|child| rig.joints[child].marker && rig.joints[child].parent == Some(joint))
+        && rig.joints[joint].position.x != 0.0
+}
+
+/// Which side of its parent joint a face leaf sits: above is a brow, below a
+/// mouth corner. Height against the PARENT and not against a constant,
+/// because the head joint is the one landmark both families are placed from.
+fn leaf_above_parent(rig: &Rig, joint: usize) -> bool {
+    rig.joints[joint]
+        .parent
+        .is_some_and(|parent| rig.joints[joint].position.y > rig.joints[parent].position.y)
 }
 
 /// [`face::skull::corner_hold`](crate::face::skull) at `position`, for one
@@ -313,54 +347,24 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
             Some((pivot, head, neck))
         });
 
-    // The brows, if this rig carries them (#215): SKELETON-BACKED lone marker
-    // leaves hanging straight off a non-marker parent, which is how they
-    // differ structurally from the jaw's chain — no names to read, same as the
-    // jaw's own lookup. `node.is_some()` is load-bearing, not pedantry: the
-    // LID joints are also off-midline marker leaves off the head, but they are
-    // attached AFTER the first bind with no skeleton node behind them
-    // (`Rig::attach` leaves `node: None`), and a re-bind on a lidded rig —
-    // `render --jawsweep` does exactly that — would otherwise hand four lids
-    // the forehead. That is #215's prediction P1 arriving as an
-    // identification collision rather than a territory one.
-    //
-    // Their skin is the region `face::skull::brow_hold` describes, taken from
-    // the head's hold the way the mandible takes its own — and from the
-    // crown's, whose bone begins to win across the field's upper fade; a share
-    // taken from the head alone would leave a crown-held stripe standing still
-    // inside a moving patch. Each entry is `(brow, side sign, head, crown)`.
-    //
-    // A brow sits ABOVE its parent joint and a mouth corner BELOW it, and that
-    // height test is the whole of how the two lone-leaf families are told
-    // apart (#216): parenting the corners to the jaw pivot instead would make
-    // them indistinguishable from the jaw's TIP, which is the other marker
-    // child of a marker. A brow below the head joint would be anatomical
-    // nonsense, so the test is spent on structure rather than on tolerance.
-    let leaf = |joint: usize| {
-        rig.joints[joint].marker
-            && rig.joints[joint].node.is_some()
-            && rig.joints[joint]
-                .parent
-                .is_some_and(|parent| !rig.joints[parent].marker)
-            && !(0..joints)
-                .any(|child| rig.joints[child].marker && rig.joints[child].parent == Some(joint))
-            && rig.joints[joint].position.x != 0.0
-    };
-    let above = |joint: usize| {
-        rig.joints[joint]
-            .parent
-            .is_some_and(|parent| rig.joints[joint].position.y > rig.joints[parent].position.y)
-    };
-    let brows: Vec<(usize, f32, usize, Option<usize>)> = (0..joints)
-        .filter(|&joint| leaf(joint) && above(joint))
-        .filter_map(|joint| {
+    // The brows, if this rig carries them (#215): the lone marker leaves
+    // ABOVE the head joint — see [`face_leaf`] for the identification and why
+    // `node.is_some()` is load-bearing in it. Their skin is the region
+    // `face::skull::brow_hold` describes, taken from the head's hold the way
+    // the mandible takes its own — and from the crown's, whose bone begins to
+    // win across the field's upper fade; a share taken from the head alone
+    // would leave a crown-held stripe standing still inside a moving patch.
+    // Each entry is `(brow, side sign, head, crown)`.
+    let brows: Vec<(usize, f32, usize, Option<usize>)> = brow_joints(rig)
+        .into_iter()
+        .filter_map(|(joint, sign)| {
             let head = rig.joints[joint].parent?;
             let crown = (0..joints).find(|&child| {
                 rig.joints[child].parent == Some(head)
                     && !rig.joints[child].marker
                     && rig.joints[child].role.deforms()
             });
-            Some((joint, rig.joints[joint].position.x.signum(), head, crown))
+            Some((joint, sign, head, crown))
         })
         .collect();
 

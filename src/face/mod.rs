@@ -23,6 +23,7 @@
 pub mod blink;
 pub mod canon;
 mod curve;
+pub mod expression;
 pub mod eye;
 pub mod features;
 pub mod mouth;
@@ -33,6 +34,7 @@ pub mod talk;
 
 pub use blink::Blink;
 pub use canon::Canon;
+pub use expression::Expression;
 pub use eye::{Aperture, Eye, EyeParams, Eyes};
 pub use features::{FaceParams, Features};
 pub use mouth::Mouth;

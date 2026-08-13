@@ -115,13 +115,27 @@ impl Eye {
     const UPPER_SWING: f32 = 1.45;
     /// How far the lower lid swings.
     const LOWER_SWING: f32 = 0.45;
+    /// How far past rest a lid may be WIDENED, as negative closure (#217).
+    ///
+    /// The owner-side bound on [`super::Expression`]'s lids channel: the
+    /// shells sit close over the socket's rim, so the widening arc is a
+    /// twelfth of the closing one. Judged on `--expression surprised` across
+    /// the seed sweep — the number to lower first if a rim ever shows.
+    pub const WIDEN: f32 = 0.12;
 
     /// The rotation to apply to a lid, about the eye's pivot.
     ///
     /// `closure` runs `0` for fully open to `1` for shut.
     #[must_use]
     pub fn lid_rotation(&self, closure: f32, upper: bool) -> Quat {
-        let closure = closure.clamp(0.0, 1.0);
+        // The floor is not zero: an expression may WIDEN the lids past their
+        // rest arc (#217), and the clamp is where that permission is bounded —
+        // it used to be `0.0` and the widening end of the lids channel was
+        // silently dead, a preset asking for wide eyes and getting rest ones.
+        // [`Self::WIDEN`] is small because the shells sit close over the
+        // socket's rim; the bound lives HERE, on the joint's owner, so the
+        // expression layer cannot ask for more than the lid can do.
+        let closure = closure.clamp(-Self::WIDEN, 1.0);
         // Positive about X carries the top of the eye forward over its front,
         // which is the direction an upper lid actually travels; the lower lid
         // starts underneath and so has to come the other way.

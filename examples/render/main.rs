@@ -47,6 +47,7 @@
 //! cargo run --release --example render -- --jaw 20    # open the mouth this many degrees
 //! cargo run --release --example render -- --brows 8   # raise the brows this many degrees
 //! cargo run --release --example render -- --corners 12 # smile this many degrees (negative frowns)
+//! cargo run --release --example render -- --expression happy # or sad, angry, surprised, neutral
 //! cargo run --release --example render -- --jawsweep # tune the jaw's binding reach by measurement
 //! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
 //! cargo run --release --example render -- --clip Wave --clipframes 12   # more frames of it
@@ -74,9 +75,10 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
-    Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, Category, EyeParams,
-    FaceParams, FootingConfig, Gait, GazeConfig, Ground, Influence, Limb, MAX_INFLUENCES, MeshKind,
-    PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
+    Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, Category, Expression,
+    EyeParams, FaceParams, FootingConfig, Gait, GazeConfig, Ground, Influence, Limb,
+    MAX_INFLUENCES, MeshKind, PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams,
+    SkinWeights, Stride, Zone,
     anim::contacts_in,
     anim::gait,
     anim::gaze,
@@ -564,6 +566,23 @@ fn main() {
     // frown), in degrees. The third pose this file exists to take before any
     // system does (#216).
     let corners = value("--corners").and_then(|degrees| degrees.parse::<f32>().ok());
+    // A named preset from the expression layer (#217), applied before the
+    // per-bone flags so those stay override instruments: `--expression happy
+    // --brows 0` is happy with the brows pinned back to rest.
+    let expression = match value("--expression") {
+        Some(name) => match Expression::named(name.as_str()) {
+            some @ Some(_) => some,
+            None => {
+                let names: Vec<&str> = Expression::PRESETS.iter().map(|(name, _)| *name).collect();
+                eprintln!(
+                    "unknown --expression {name}: expected one of {}",
+                    names.join(", ")
+                );
+                std::process::exit(1);
+            }
+        },
+        None => None,
+    };
     let show = Show {
         linear,
         bare,
@@ -581,6 +600,7 @@ fn main() {
         jaw,
         brows,
         corners,
+        expression,
     };
     if clumps {
         grow_clumps(&mut avatar, &record);
@@ -653,8 +673,14 @@ fn main() {
             println!("rendered {} walk frames", frames.max(1));
         }
         None => {
+            // The open-eye sheet rests at the expression's own closure —
+            // negative widens, through the bound `Eye::lid_rotation` owns —
+            // and the blink sheet stays at a full 1.0, because a blink
+            // closes all the way over ANY expression; that it does is the
+            // lids' single-writer contract, photographed (#217).
+            let resting = expression.map_or(0.0, |expression| expression.closure());
             let (Some(sheet), Some(blinking)) = (
-                shoot(&subject.standing(), 0.0),
+                shoot(&subject.standing(), resting),
                 shoot(&subject.standing(), 1.0),
             ) else {
                 eprintln!("this body has no such part to frame");
@@ -792,6 +818,8 @@ struct Show {
     /// How far the mouth corners are raised (a smile) or dropped (a frown),
     /// in degrees, if at all (#216).
     corners: Option<f32>,
+    /// A named resting face from the expression layer, if any (#217).
+    expression: Option<Expression>,
 }
 
 /// The mandible, as the rig carries it.
@@ -995,6 +1023,11 @@ impl Subject {
                     pose.rotations[joint] = Quat::from_rotation_x(0.75);
                 }
             }
+        }
+        // The expression layer first, so the per-bone flags below remain
+        // override instruments over a named resting face (#217).
+        if let Some(expression) = self.show.expression {
+            expression.apply(rig, &mut pose);
         }
         // About the lateral axis, at the PIVOT. Positive drops the chin and
         // draws it back, which is the arc a mandible opens along: the condyle
