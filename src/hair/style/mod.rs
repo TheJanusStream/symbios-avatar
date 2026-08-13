@@ -21,6 +21,8 @@
 //! A variant that exists and does not do what it says is worse than one that
 //! does not exist.
 
+use std::f32::consts::TAU;
+
 use serde::{Deserialize, Serialize};
 
 use super::clump::Shape;
@@ -276,6 +278,64 @@ pub fn melanin(shade: f32) -> [f32; 3] {
     ]
 }
 
+/// Hair the melanin ramp cannot reach: a dye, from a hue and a lightness.
+///
+/// **The ramp is a ramp of one pigment and that is its whole virtue** — it goes
+/// black, brown, red, blonde because that is the order melanin gives up, and no
+/// point on it is green. A record stores free sRGB precisely so a head can be,
+/// and this is the one convenient way to ask for it, as [`melanin`] is for the
+/// natural end.
+///
+/// A cosine wheel, like `dress::dye`, and deliberately NOT that function: cloth
+/// is held short of full saturation because a saturated garment reads as plastic
+/// beside skin that never is, and dyed hair is the opposite case. Somebody who
+/// has dyed their hair green has dyed it green. The ceiling here is high enough
+/// to say so and still short of the corner of the gamut, which nothing lit
+/// stays inside.
+///
+/// Provenance: **derived** from `dress::dye`'s wheel, **loosened** for a dye
+/// rather than a cloth (#203).
+#[must_use]
+pub fn dyed(hue: f32, shade: f32) -> [f32; 3] {
+    let turn = hue.clamp(0.0, 1.0) * TAU;
+    let level = 0.16 + 0.52 * shade.clamp(0.0, 1.0);
+    let spread = 0.62 * (1.0 - (level - 0.42).abs());
+    let wheel = |offset: f32| level + spread * (turn + offset).cos();
+    [
+        wheel(0.0).clamp(0.0, 1.0),
+        wheel(2.094).clamp(0.0, 1.0),
+        wheel(4.189).clamp(0.0, 1.0),
+    ]
+}
+
+/// What grey the hair has gone, mixed into a colour.
+///
+/// **Grey is not a point on the melanin ramp and it never could be** — the
+/// ramp's light end is a warm blonde, which is what pale hair with pigment in it
+/// looks like, and grey hair is hair with the pigment gone. #169 left this open
+/// and the free colours are what let it be answered at all (#203).
+///
+/// A straight mix toward a warm white rather than a desaturation, because that
+/// is physically what is being drawn: a greying head is a MIXTURE of white
+/// hairs and pigmented ones, and at any distance a person is judged from, a
+/// mixture is what a mix reads as. Salt and pepper averages to grey without
+/// anything having to be grey.
+///
+/// Warm rather than neutral: white hair keratin is faintly yellow, and a
+/// neutral grey beside skin reads as blue.
+///
+/// Provenance: **looked up** for the direction, **tuned by render** (#203).
+#[must_use]
+pub fn greyed(colour: [f32; 3], grey: f32) -> [f32; 3] {
+    const WHITE: [f32; 3] = [0.760, 0.748, 0.716];
+    let grey = grey.clamp(0.0, 1.0);
+    [
+        colour[0] + (WHITE[0] - colour[0]) * grey,
+        colour[1] + (WHITE[1] - colour[1]) * grey,
+        colour[2] + (WHITE[2] - colour[2]) * grey,
+    ]
+}
+
 /// Everything a record says about one head of hair.
 ///
 /// **Replaces the eight scalars of the shell era** (#202). Those described one
@@ -509,7 +569,10 @@ mod tests {
         record.sanitize();
         let once = record;
         record.sanitize();
-        assert_eq!(once, record, "sanitize moved a record it had already cleaned");
+        assert_eq!(
+            once, record,
+            "sanitize moved a record it had already cleaned"
+        );
         assert_eq!(record.scalp.cut.length, 1.0);
         assert_eq!(record.scalp.cut.thickness, 0.0);
         assert_eq!(record.scalp.roots[0], 1.0);

@@ -198,6 +198,46 @@ impl Rolls {
         self.stream(axis).random_bool(probability)
     }
 
+    /// One of several outcomes, drawn against their relative weights.
+    ///
+    /// **Because a catalogue is not an axis** (#203). Every hair region carries
+    /// a catalogue of base styles now, and a style is not a number between two
+    /// ends — picking one with a `range` and a stack of thresholds would put the
+    /// distribution in the caller and spell it differently at each of the five
+    /// call sites.
+    ///
+    /// Weights are relative and need not sum to anything; a zero weight is never
+    /// drawn. One draw from the axis's own stream, so the independence contract
+    /// above holds: re-weighting a catalogue moves that catalogue and nothing
+    /// else on any seed.
+    ///
+    /// Returns `0` for an empty table or one that sums to nothing, because the
+    /// alternative is a panic in a re-roll — and every caller here has a first
+    /// entry that is a reasonable answer.
+    #[must_use]
+    pub fn pick(&self, axis: &str, weights: &[f32]) -> usize {
+        let total: f32 = weights.iter().filter(|weight| **weight > 0.0).sum();
+        if total <= 0.0 {
+            return 0;
+        }
+        let mut at = self.range(axis, 0.0, total);
+        for (index, weight) in weights.iter().enumerate() {
+            if *weight <= 0.0 {
+                continue;
+            }
+            at -= weight;
+            if at <= 0.0 {
+                return index;
+            }
+        }
+        // Only reachable if the draw landed exactly on the total, which
+        // `random_range` includes.
+        weights
+            .iter()
+            .rposition(|weight| *weight > 0.0)
+            .unwrap_or(0)
+    }
+
     /// A shape axis drawn as a person first and an extreme rarely (#160).
     ///
     /// Replaces the uniform-inside-a-fence draw the shape axes used to make.

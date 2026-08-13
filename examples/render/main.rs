@@ -72,9 +72,9 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
-    Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, EyeParams, FaceParams,
-    FootingConfig, Gait, GazeConfig, Ground, Influence, Limb, MAX_INFLUENCES, MeshKind, PolyMesh,
-    Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
+    Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, Category, EyeParams,
+    FaceParams, FootingConfig, Gait, GazeConfig, Ground, Influence, Limb, MAX_INFLUENCES, MeshKind,
+    PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams, SkinWeights, Stride, Zone,
     anim::contacts_in,
     anim::gait,
     anim::gaze,
@@ -393,6 +393,29 @@ fn main() {
         record.composites.age = age;
         record.composites.sanitize();
     }
+    // **Hair is re-rolled against the composites the flags just set** (#203).
+    // `--age` and `--femininity` are applied after the seed has already been
+    // rolled, which was harmless while hair took nothing from the composites
+    // and is not now: greying is age-coupled and facial hair is gated on the
+    // frame axis, so `--age 70` would have aged the skin and left the hair the
+    // colour a thirty-year-old rolled — losing the single most visible age
+    // marker on a head from the one flag that exists to sweep age.
+    //
+    // Everything but hair is locked, so this re-draws the haircut and moves no
+    // other axis: the body on the sheet is the same body.
+    if seed.is_some() && (value("--age").is_some() || value("--femininity").is_some()) {
+        let held = Category::ALL
+            .into_iter()
+            .filter(|category| *category != Category::Hair)
+            .fold(symbios_avatar::LockSet::NONE, |locks, category| {
+                locks.with(category)
+            });
+        let was = record.locks;
+        record.locks = held;
+        record.reroll(record.seed);
+        record.locks = was;
+    }
+
     if let Some(spec) = value("--skull") {
         let given: Vec<f32> = spec
             .split(',')

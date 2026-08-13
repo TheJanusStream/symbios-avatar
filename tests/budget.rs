@@ -133,13 +133,28 @@ const MESH_TARGET: usize = 4;
 /// triangles of drift in it. Fifty is thin on purpose — a ratchet moves down
 /// with the measurement and not to the nearest round number.
 ///
+/// **And UP 50 to 27,850 when a re-roll started drawing the whole scalp
+/// catalogue** (#203), which is the direction this constant's own first
+/// paragraph says needs a reason written beside it. The reason is that the space
+/// being measured grew rather than that a body got dearer: every rolled body
+/// wore a `Crop` from #204 until #203, and a crop is the cheapest of the five
+/// styles. Rolling all five moved the dearest corner in this sweep from 27,750
+/// to 27,786.
+///
+/// **Thirty-six triangles is the whole cost of it, and that is the interesting
+/// number.** The dearest scalp style costs nearly three times a crop per card,
+/// so this could as easily have been two thousand; it is thirty-six because
+/// #209 sized each style's clump count by what a card of it actually costs. The
+/// sizing was done for the greedy corner and this is what it bought at the
+/// rolled one.
+///
 /// Note what this does NOT guard, because it is the corner that mattered at
 /// #209 and it is guarded somewhere else now: a record off the network choosing
 /// its own hair rather than rolling it. That product is bounded by
 /// construction — the dearest bald body plus `hair::clump::MAX_TRIANGLES` — and
 /// `the_hair_ceiling_is_what_the_budget_actually_leaves` re-measures both halves
 /// rather than ratcheting the product.
-const TRIANGLE_CEILING: usize = 27_800;
+const TRIANGLE_CEILING: usize = 27_850;
 
 /// Draw calls the crate currently costs.
 ///
