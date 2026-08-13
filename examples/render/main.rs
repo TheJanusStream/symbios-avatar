@@ -54,6 +54,7 @@
 //! cargo run --release --example render -- --clip Wave --clipframes 12   # more frames of it
 //! cargo run --release --example render -- --linear     # matrix skinning, to compare
 //! cargo run --release --example render -- --skin 0.9,-1,0.4,0  # melanin,undertone,blush,freckles
+//! cargo run --release --example render -- --eyes 0.1,0.15,0.19,0.24,0.38,0.46,0.24,0.38,0.46  # ring,inner,outer rgb
 //! cargo run --release --example render -- --hair 1 0.5 1 0.5   # scalp length,thickness,density,droop
 //! cargo run --release --example render -- --hair 0 0 0 0 0     # a fifth zero shaves every region
 //! cargo run --release --example render -- --face 1,0.5,1,1,0.5,0.5 # nose,noseWidth,brow,mouth,mouthWidth,ears
@@ -437,6 +438,26 @@ fn main() {
                 params.face_length = length;
             }
         }
+        record.sanitize();
+    }
+
+    // Nine numbers: the limbal ring, the colour at the pupil's edge, and the
+    // colour at the periphery, each r,g,b in 0..1 — the same free channels the
+    // record stores (#229).
+    if let Some(spec) = value("--eyes") {
+        let given: Vec<f32> = spec
+            .split(',')
+            .filter_map(|axis| axis.trim().parse().ok())
+            .collect();
+        let triple = |at: usize, fallback: [f32; 3]| -> [f32; 3] {
+            match (given.get(at), given.get(at + 1), given.get(at + 2)) {
+                (Some(&r), Some(&g), Some(&b)) => [r, g, b],
+                _ => fallback,
+            }
+        };
+        record.eyes.ring = triple(0, record.eyes.ring);
+        record.eyes.inner = triple(3, record.eyes.inner);
+        record.eyes.outer = triple(6, record.eyes.outer);
         record.sanitize();
     }
 

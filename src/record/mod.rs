@@ -574,6 +574,20 @@ fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, rolls: &Rolls) {
     eyes.spacing = rolls.shape("eyes.spacing", 0.0, 0.6, (-1.0, 1.0));
     eyes.depth = rolls.shape("eyes.depth", 0.0, 0.6, (-1.0, 1.0));
     eyes.aperture = rolls.shape("eyes.aperture", 0.8, 0.225, (0.0, 1.0));
+
+    // Colour, on named streams like hair's, drawn on every roll whatever the
+    // branches do (#203's rule) so adding it moved no other axis on any seed.
+    // The square bias makes brown the population's home the way DARK_BIAS
+    // does for hair; the periphery is the same pigment darkened — life's
+    // irises run darker at the rim — and the ring is the periphery well down
+    // in value, which is exactly what the old constant ring was to the old
+    // constant iris (#229).
+    let shade = rolls.range("eyes.shade", 0.0, 1.0).powi(2);
+    let fade = rolls.range("eyes.fade", 0.10, 0.35);
+    let centre = crate::face::eye::iris_pigment(shade);
+    eyes.inner = centre;
+    eyes.outer = centre.map(|channel| channel * (1.0 - fade));
+    eyes.ring = eyes.outer.map(|channel| channel * 0.41);
 }
 
 /// Draws a fresh head of hair.

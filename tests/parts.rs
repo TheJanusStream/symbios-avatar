@@ -328,8 +328,9 @@ fn an_eye_shows_more_white_than_pupil() {
     // vertices would measure the fix rather than the face. Classified by asking
     // `iris_of` itself for the two colours it uses at the poles, so the test
     // carries no copy of an angle that the geometry could drift away from.
-    let pupil = symbios_avatar::face::eye::iris_of(Vec3::new(0.0, 0.0, 1.0));
-    let sclera = symbios_avatar::face::eye::iris_of(Vec3::new(0.0, 0.0, -1.0));
+    let neutral = symbios_avatar::EyeParams::default();
+    let pupil = symbios_avatar::face::eye::iris_of(Vec3::new(0.0, 0.0, 1.0), &neutral);
+    let sclera = symbios_avatar::face::eye::iris_of(Vec3::new(0.0, 0.0, -1.0), &neutral);
     assert_ne!(pupil, sclera, "the test's premise");
 
     for seed in 0..SEEDS {
@@ -348,7 +349,7 @@ fn an_eye_shows_more_white_than_pupil() {
                 if !outside {
                     return;
                 }
-                let colour = symbios_avatar::face::eye::iris_of(at - eye.pivot);
+                let colour = symbios_avatar::face::eye::iris_of(at - eye.pivot, &eyes.params);
                 let class = if colour == pupil {
                     0
                 } else if colour == sclera {
@@ -632,7 +633,11 @@ fn an_eye_shows_white_on_both_sides_of_its_iris() {
     //
     // Classified by asking `iris_of` for its own pole colours, as that test
     // does, so no angle is copied here for the geometry to drift away from.
-    let sclera = symbios_avatar::face::eye::iris_of(Vec3::new(0.0, 0.0, -1.0));
+    // The sclera is a constant whatever the record's iris colours say, so the
+    // neutral params serve for the pole; each globe is then read with its own
+    // record's colours (#229).
+    let neutral = symbios_avatar::EyeParams::default();
+    let sclera = symbios_avatar::face::eye::iris_of(Vec3::new(0.0, 0.0, -1.0), &neutral);
 
     for seed in 0..SEEDS {
         let mut record = AvatarRecord::new("Sweep", Archetype::default());
@@ -647,7 +652,9 @@ fn an_eye_shows_white_on_both_sides_of_its_iris() {
         for (side, eye) in [("left", &eyes.left), ("right", &eyes.right)] {
             let (mut medial, mut lateral) = (0.0f64, 0.0f64);
             triangles(body, &eye.globe, centre, |at, area, outside| {
-                if !outside || symbios_avatar::face::eye::iris_of(at - eye.pivot) != sclera {
+                if !outside
+                    || symbios_avatar::face::eye::iris_of(at - eye.pivot, &eyes.params) != sclera
+                {
                     return;
                 }
                 // `eye.side` is +1 for the body's right eye, so this is positive

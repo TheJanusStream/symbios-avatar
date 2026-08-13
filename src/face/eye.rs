@@ -46,15 +46,38 @@ pub struct EyeParams {
     /// How far open the lids rest, `0` shut and `1` wide.
     #[serde(with = "crate::plan::scaled")]
     pub aperture: f32,
+    /// The iris beside the pupil, in sRGB.
+    ///
+    /// Two colours with a gradient between them, the way hair fades from roots
+    /// to tips: this one at the pupil's edge, [`EyeParams::outer`] at the
+    /// periphery (#229).
+    #[serde(with = "crate::plan::scaled::triple")]
+    pub inner: [f32; 3],
+    /// The iris at its periphery, in sRGB. Life runs darker out here.
+    #[serde(with = "crate::plan::scaled::triple")]
+    pub outer: [f32; 3],
+    /// The limbal ring around the iris, in sRGB.
+    ///
+    /// The circle that makes an iris read as an iris rather than a coloured
+    /// disc; its default is the old constant, which was the iris colour well
+    /// down in value.
+    #[serde(with = "crate::plan::scaled::triple")]
+    pub ring: [f32; 3],
 }
 
 impl Default for EyeParams {
     fn default() -> Self {
+        // The colours are the constants `iris_of` carried before the record
+        // did (#229): a default body — and every record written before the
+        // fields existed — renders the same iris to the last bit.
         Self {
             size: 0.5,
             spacing: 0.0,
             depth: 0.0,
             aperture: 0.8,
+            inner: [0.24, 0.38, 0.46],
+            outer: [0.24, 0.38, 0.46],
+            ring: [0.1, 0.15, 0.19],
         }
     }
 }
@@ -65,12 +88,52 @@ impl EyeParams {
         // Ranges are the exploration envelope (#160): the conservative range
         // stretched about each axis's own default. `sanitize_axis` rather than
         // clamp-by-hand, for #55's reason: the guard must precede the clamp.
+        use crate::plan::scaled::quantize;
         use crate::plan::{explore_range, sanitize_axis};
         self.size = sanitize_axis(self.size, 0.5, explore_range(0.5, (0.0, 1.0)));
         self.aperture = sanitize_axis(self.aperture, 0.8, explore_range(0.8, (0.0, 1.0)));
         self.spacing = sanitize_axis(self.spacing, 0.0, explore_range(0.0, (-1.0, 1.0)));
         self.depth = sanitize_axis(self.depth, 0.0, explore_range(0.0, (-1.0, 1.0)));
+        for colour in [&mut self.inner, &mut self.outer, &mut self.ring] {
+            for channel in colour.iter_mut() {
+                // The guard precedes the clamp (#55): `clamp` hands NaN back.
+                let safe = if channel.is_finite() { *channel } else { 0.0 };
+                *channel = quantize(safe.clamp(0.0, 1.0));
+            }
+        }
     }
+}
+
+/// A natural iris colour, `0` dark brown through hazel and green to `1` a pale
+/// grey.
+///
+/// The ramp for a ROLL, not a bound on the record: the record's channels are
+/// free exactly as hair's are, so fantasy eyes need no special case — this is
+/// only where a rolled body's colour comes from. Today's default blue sits on
+/// the ramp at 0.85, so the population's cool tail passes through it.
+#[must_use]
+pub fn iris_pigment(shade: f32) -> [f32; 3] {
+    const STOPS: [(f32, [f32; 3]); 6] = [
+        (0.0, [0.15, 0.09, 0.06]),
+        (0.3, [0.30, 0.17, 0.09]),
+        (0.5, [0.42, 0.30, 0.15]),
+        (0.65, [0.29, 0.37, 0.22]),
+        (0.85, [0.24, 0.38, 0.46]),
+        (1.0, [0.50, 0.54, 0.57]),
+    ];
+    let shade = shade.clamp(0.0, 1.0);
+    for pair in STOPS.windows(2) {
+        let ((from, a), (to, b)) = (pair[0], pair[1]);
+        if shade <= to {
+            let t = ((shade - from) / (to - from)).clamp(0.0, 1.0);
+            return [
+                a[0] + (b[0] - a[0]) * t,
+                a[1] + (b[1] - a[1]) * t,
+                a[2] + (b[2] - a[2]) * t,
+            ];
+        }
+    }
+    STOPS[STOPS.len() - 1].1
 }
 
 /// One eye's parts, in head-local space.
@@ -302,6 +365,9 @@ pub struct Eyes {
     pub right: Eye,
     /// The joint the pair is parented to.
     pub head: usize,
+    /// The record axes the pair was built from, kept so the iris can be
+    /// painted from the same description that placed the globes (#229).
+    pub params: EyeParams,
 }
 
 /// The globe's radius on a body of reference stature, in metres.
@@ -429,6 +495,7 @@ impl Eyes {
             left: eye(1.0, pivot, radius, params),
             right: eye(-1.0, Vec3::new(-pivot.x, pivot.y, pivot.z), radius, params),
             head: canon.head,
+            params: *params,
         }
     }
 
@@ -633,16 +700,23 @@ const EDGE: f32 = 0.0244;
 /// Lives here rather than in [`crate::avatar`] because it and `globe` below have to
 /// agree about the angles above, and a threshold in one file with the rings that
 /// carry it in another is how they came to disagree by 30° in the first place.
+///
+/// The pupil and the sclera are constants — a pupil is a hole and a sclera a
+/// membrane, and neither is a thing bodies differ in the way an iris is. The
+/// iris runs the record's own gradient, [`EyeParams::inner`] at the pupil's
+/// edge to [`EyeParams::outer`] at the periphery, carried by the two boundary
+/// rings and Gouraud between them; the limbal ring is [`EyeParams::ring`]
+/// (#229).
 #[must_use]
-pub fn iris_of(offset: Vec3) -> Vec3 {
+pub fn iris_of(offset: Vec3, params: &EyeParams) -> Vec3 {
     let polar = offset.normalize_or(Vec3::Z).z.clamp(-1.0, 1.0).acos();
     if polar < PUPIL {
         Vec3::new(0.05, 0.06, 0.08)
     } else if polar < LIMBUS - LIMBAL {
-        Vec3::new(0.24, 0.38, 0.46)
+        let toward = ((polar - PUPIL) / (LIMBUS - LIMBAL - PUPIL)).clamp(0.0, 1.0);
+        Vec3::from(params.inner).lerp(Vec3::from(params.outer), toward)
     } else if polar < LIMBUS {
-        // The limbal ring: the same hue, well down in value.
-        Vec3::new(0.10, 0.15, 0.19)
+        Vec3::from(params.ring)
     } else {
         Vec3::new(0.93, 0.92, 0.90)
     }
@@ -840,6 +914,82 @@ mod tests {
             &HumanoidParams::default().skeleton(&crate::Composites::default()),
             params,
         )
+    }
+
+    #[test]
+    fn a_record_from_before_the_colour_axis_wears_the_same_iris() {
+        // The defaults ARE the old constants, asserted against literals rather
+        // than against the defaults themselves — a test that compares the code
+        // to the code passes any drift. An old record deserialises to these
+        // and must render to the last bit what it rendered before (#229).
+        let old = EyeParams::default();
+        let at = |polar: f32| iris_of(Vec3::new(polar.sin(), 0.0, polar.cos()), &old);
+        assert_eq!(at(0.05), Vec3::new(0.05, 0.06, 0.08), "the pupil");
+        for polar in [0.2, 0.3, 0.42] {
+            assert_eq!(
+                at(polar),
+                Vec3::new(0.24, 0.38, 0.46),
+                "the iris at {polar}"
+            );
+        }
+        assert_eq!(at(0.48), Vec3::new(0.10, 0.15, 0.19), "the limbal ring");
+        assert_eq!(at(0.7), Vec3::new(0.93, 0.92, 0.90), "the sclera");
+    }
+
+    #[test]
+    fn the_iris_fades_from_its_inner_colour_to_its_outer() {
+        // With a black centre and a white rim the gradient is its own ruler:
+        // monotone non-decreasing across the disc, near-black at the pupil's
+        // edge, near-white at the limbal side.
+        let params = EyeParams {
+            inner: [0.0, 0.0, 0.0],
+            outer: [1.0, 1.0, 1.0],
+            ring: [0.5, 0.5, 0.5],
+            ..EyeParams::default()
+        };
+        let span = (PUPIL + 0.001, LIMBUS - LIMBAL - 0.001);
+        let mut last = -1.0f32;
+        for step in 0..=10 {
+            let polar = span.0 + (span.1 - span.0) * step as f32 / 10.0;
+            let colour = iris_of(Vec3::new(polar.sin(), 0.0, polar.cos()), &params);
+            assert!(
+                colour.x >= last,
+                "the fade reversed at {polar}: {} after {last}",
+                colour.x
+            );
+            last = colour.x;
+        }
+        assert!(last > 0.95, "the rim should reach the outer colour: {last}");
+    }
+
+    #[test]
+    fn rolled_irises_are_mostly_warm_and_darker_at_the_rim() {
+        // The population claim, over seeds rather than one draw (#131's
+        // single-seed lesson): brown is home, cool eyes are the tail, and
+        // every rim is darker than its centre because the fade only darkens.
+        let mut warm = 0;
+        for seed in 0..40 {
+            let mut record = crate::AvatarRecord::new("Eyed", crate::Archetype::default());
+            record.reroll(seed);
+            let eyes = record.eyes;
+            if eyes.inner[0] > eyes.inner[2] {
+                warm += 1;
+            }
+            for channel in 0..3 {
+                assert!(
+                    eyes.outer[channel] <= eyes.inner[channel] + 1e-3,
+                    "seed {seed}: the rim lightened past its centre"
+                );
+                assert!(
+                    eyes.ring[channel] < eyes.outer[channel] + 1e-3,
+                    "seed {seed}: the ring is not darker than the rim"
+                );
+            }
+        }
+        assert!(
+            warm >= 24,
+            "{warm}/40 rolled irises were warm; brown should be the population's home"
+        );
     }
 
     #[test]
@@ -1313,6 +1463,8 @@ mod tests {
             spacing: f32::NAN,
             depth: -7.0,
             aperture: f32::INFINITY,
+            inner: [2.0, -1.0, f32::NAN],
+            ..EyeParams::default()
         };
         params.sanitize();
         // Bounds are the exploration envelope (#160).
@@ -1320,6 +1472,10 @@ mod tests {
         assert_eq!(params.spacing, 0.0);
         assert_eq!(params.depth, -3.0);
         assert_eq!(params.aperture, 0.8);
+        // A colour clamps to its channel range; NaN clamps to the floor.
+        assert_eq!(params.inner[0], 1.0);
+        assert_eq!(params.inner[1], 0.0);
+        assert_eq!(params.inner[2], 0.0);
 
         let once = params;
         params.sanitize();

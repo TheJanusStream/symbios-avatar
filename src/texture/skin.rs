@@ -690,7 +690,13 @@ pub fn paint_skin(
         } else {
             0.0
         };
-        heights[index] = f64::from(pore) * 0.35
+        // The pore grain is age-gated (#228): young skin is glass, by owner's
+        // call, and `ageing` is exactly the curve for it — zero through the
+        // twenties, quadratic into age. Deliberately NOT a factor on the whole
+        // height field: striation belongs to muscle definition whatever the
+        // age, the wrinkle term already carries its own ageing, and the
+        // stubble grain under `painted` is hair, not age.
+        heights[index] = f64::from(pore) * 0.35 * f64::from(condition.ageing)
             + f64::from(striation + wrinkle) * 0.35
             + f64::from(painted) * f64::from(grain_bias(pore));
 

@@ -623,7 +623,7 @@ impl Avatar {
                 globe
                     .positions
                     .iter()
-                    .map(|&point| face::eye::iris_of(point - eye.pivot))
+                    .map(|&point| face::eye::iris_of(point - eye.pivot, &eyes.params))
                     .collect(),
             );
             globes.append(&globe);

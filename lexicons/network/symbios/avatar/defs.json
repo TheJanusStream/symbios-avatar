@@ -238,6 +238,54 @@
           "minimum": -1600,
           "maximum": 1400,
           "default": 800
+        },
+        "inner": {
+          "type": "array",
+          "description": "The iris beside the pupil, in sRGB. Two colours with a gradient between them, the way hair fades from roots to tips: this one at the pupil's edge, 'outer' at the periphery. Three channels, thousandths. Free rather than a point on a pigment ramp, so fantasy eyes need no special case.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            240,
+            380,
+            460
+          ]
+        },
+        "outer": {
+          "type": "array",
+          "description": "The iris at its periphery, in sRGB, faded to from 'inner' across the disc. Three channels, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            240,
+            380,
+            460
+          ]
+        },
+        "ring": {
+          "type": "array",
+          "description": "The limbal ring around the iris, in sRGB — the circle that makes an iris read as an iris rather than a coloured disc. Three channels, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            100,
+            150,
+            190
+          ]
         }
       }
     },
