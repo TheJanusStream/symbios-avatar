@@ -298,6 +298,12 @@ pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
 /// body still sinks exactly zero.
 #[must_use]
 pub fn crouch_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
+    // The same rule [`step`] applies to its targets (#230): a gait that never
+    // lifts a contact expresses no stride, so a standing body asks for no sink
+    // whatever pace the caller left on the stride.
+    if gait.duty >= 1.0 {
+        return 0.0;
+    }
     gait.limbs
         .iter()
         .enumerate()
@@ -371,7 +377,17 @@ pub fn step(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycle: f32
             continue;
         };
         let phase = gait.phase(index, cycle);
-        let target = home + contact_offset(stride, phase);
+        // A gait that never lifts a contact has no stride to express: at duty
+        // 1.0 every phase is a stance whose offset would slide the whole
+        // stride and WRAP — every foot teleport-hopping in lockstep once per
+        // cycle whenever the caller's pace is nonzero (#230). Standing still
+        // is standing still whatever the stride says, so the caller need not
+        // remember to zero it.
+        let target = if gait.duty >= 1.0 {
+            home
+        } else {
+            home + contact_offset(stride, phase)
+        };
 
         if phase.is_stance() {
             steps.stance.push(limb);
@@ -466,7 +482,16 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
             continue;
         };
         let offset = gait.offsets.get(driver).copied().unwrap_or(0.0);
-        let drive = ((cycle - offset + ARM_LAG) * std::f32::consts::TAU).sin();
+        // The legs drive the arms, so legs that never move drive nothing: at
+        // duty 1.0 every offset is 0.0 and both arms would ride the SAME sine,
+        // swinging in sync on a body that is standing still (#230). Zero drive
+        // keeps the drop and the resting elbow below — a standing body hangs
+        // its arms at its sides, it does not pump them.
+        let drive = if gait.duty >= 1.0 {
+            0.0
+        } else {
+            ((cycle - offset + ARM_LAG) * std::f32::consts::TAU).sin()
+        };
         if limb == Limb::ForeLeft {
             lead = drive;
         }
@@ -998,6 +1023,68 @@ mod tests {
                     steps.is_clean(),
                     "{} contacts strained at frame {frame}: {steps:?}",
                     gait.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_standing_body_hangs_its_arms_still() {
+        // The legs drive the arms, so legs that never move drive nothing: the
+        // standing gait's zeroed offsets used to hand both arms the SAME sine
+        // and they pumped in sync on a body going nowhere (#230). What must
+        // remain is the hang itself — dropped from the A-pose, elbows softly
+        // bent — identical at every point of the cycle.
+        let rig = biped();
+        let gait = Gait::standing(&rig);
+        let posed_at = |cycle: f32| {
+            let mut pose = Pose::rest(&rig);
+            swing_arms(&rig, &mut pose, &gait, cycle);
+            pose
+        };
+        let still = posed_at(0.0);
+        for cycle in [0.13, 0.37, 0.62, 0.88] {
+            let again = posed_at(cycle);
+            for (a, b) in still.rotations.iter().zip(&again.rotations) {
+                assert!(
+                    a.abs_diff_eq(*b, 1e-5),
+                    "a standing arm moved between cycle 0 and {cycle}"
+                );
+            }
+        }
+        for limb in [Limb::ForeLeft, Limb::ForeRight] {
+            let bend = elbow_bend(&rig, &still, limb);
+            assert!(
+                bend > 8.0,
+                "{limb:?} hangs {bend:.1} degrees from straight, which is a locked arm"
+            );
+        }
+    }
+
+    #[test]
+    fn a_standing_gait_ignores_the_stride_it_is_handed() {
+        // The viewer hands every gait the same pace-derived stride, and a
+        // standing gait used to express it anyway: each stance target slid the
+        // whole stride and wrapped, so every foot teleport-hopped in lockstep
+        // once per cycle (#230). Standing still is standing still whatever the
+        // stride says.
+        let rig = biped();
+        let gait = Gait::standing(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        assert!(
+            stride.length > 0.1,
+            "the test needs a stride worth ignoring"
+        );
+
+        for frame in 0..20 {
+            let mut pose = Pose::rest(&rig);
+            let steps = step(&rig, &mut pose, &gait, &stride, frame as f32 / 20.0);
+            assert_eq!(steps.crouch, 0.0, "a standing body has nothing to sink for");
+            for rotation in &pose.rotations {
+                assert!(
+                    rotation.to_axis_angle().1 < 0.02,
+                    "a standing body moved at cycle {}: {rotation:?}",
+                    frame as f32 / 20.0
                 );
             }
         }
