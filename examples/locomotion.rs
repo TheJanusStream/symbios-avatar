@@ -98,6 +98,17 @@ fn main() {
                 let stride = Stride::for_body(rig, 1.0);
                 let steps = gait::step(rig, &mut pose, &gait, &stride, cycle);
                 gait::swing_arms(rig, &mut pose, &gait, cycle);
+                // **The ankles, which this instrument used to leave off** — and
+                // leaving them off is what made its gait column an unfair
+                // reading rather than a hard one (#238). Without `roll_feet` a
+                // foot keeps its rest attitude relative to the shin, so at full
+                // stride the whole foot tilts with the leg and the toe dips: on
+                // the default body, 52.6 mm under a FLAT floor at the two
+                // moments of deepest crouch, none of it a gait defect and all of
+                // it billed to one. `examples/walkaudit` has always called this;
+                // the two instruments were driving different gaits and only one
+                // of them was the gait.
+                gait::roll_feet(rig, &mut pose, &gait, cycle);
                 (pose, steps.stance)
             });
             let imported = read(rig, grade, |rig, cycle| {
@@ -114,7 +125,7 @@ fn main() {
                 let stance = contacts_during(rig, walk, cycle * walk.duration());
                 (pose, stance)
             });
-            let gap = imported.sink - procedural.sink;
+            let gap = imported.after - procedural.after;
             if gap > worst_gap.0 {
                 worst_gap = (gap, seed, grade);
             }
@@ -125,27 +136,36 @@ fn main() {
         for (procedural, imported) in &cells {
             print!(
                 "{:>8.0}{:>9.0}",
-                procedural.sink * 1000.0,
-                imported.sink * 1000.0
+                procedural.after * 1000.0,
+                imported.after * 1000.0
             );
         }
         println!();
-        print!("{:>21}  ", "lift");
-        for (procedural, imported) in &cells {
-            print!(
-                "{:>8.0}{:>9.0}",
-                procedural.lift * 1000.0,
-                imported.lift * 1000.0
-            );
+        for (label, pick) in [
+            ("pre-solve", (|r: &Reading| r.before) as fn(&Reading) -> f32),
+            ("lift", |r: &Reading| r.lift),
+        ] {
+            print!("{label:>21}  ");
+            for (procedural, imported) in &cells {
+                print!(
+                    "{:>8.0}{:>9.0}",
+                    pick(procedural) * 1000.0,
+                    pick(imported) * 1000.0
+                );
+            }
+            println!();
         }
-        println!();
     }
 
     println!("{}", "-".repeat(74));
     println!(
-        "The upper row of each pair is how far a foot went UNDER the floor before any\n\
-         solve, which is the defect. The lower is how far the footing solve then had to\n\
-         move a joint to fix it. Both in millimetres."
+        "Top row: how far a foot is under the floor AFTER the footing solve — what a\n\
+         viewer sees, and the only row that asks both sources the same question.\n\
+         'pre-solve' is what the source handed the solve; a gait is two-staged on\n\
+         purpose, so a large figure there is its design and not its defect. 'lift' is\n\
+         how far the solve then had to move a joint. All in millimetres, measured at the\n\
+         extremity joints — which sit inside the foot, so every column understates the\n\
+         sole by the stand-off, equally for both. walkaudit reads the mesh."
     );
     println!(
         "worst the clip sank below the gait: {:.0} mm, on seed {} at grade {:.2}",
@@ -153,6 +173,130 @@ fn main() {
         worst_gap.1,
         worst_gap.2
     );
+
+    let reference = Avatar::build(&AvatarRecord::new("Reference", Archetype::default()))
+        .expect("the default body builds");
+    report_clip_defects(&library, &reference.rig);
+}
+
+/// What the reference clips are, as numbers, so a walk that loses to a
+/// defective reference is not billed as losing (#238).
+///
+/// The owner reported two faults by eye on 2026-08-14: the clips do not loop
+/// cleanly, and some teleport the body as if a reference frame differed between
+/// frames. Both are measurable, and both are measured **relative to each clip's
+/// own typical frame step** rather than as an absolute distance — a fast clip
+/// moves a long way every frame, so an absolute threshold would call `Sprint`
+/// broken and a `Head Nod` perfect no matter what either did.
+///
+/// * **seam** is the size of the wrap from last frame back to first, as a
+///   multiple of the median step. A clean loop wraps like any other frame and
+///   scores about 1. Reported only for clips that claim to loop: a one-shot is
+///   not supposed to return to its start and it is no defect that it does not.
+/// * **jump** is the largest single-frame root move as a multiple of the median
+///   root move. Steady travel scores about 1; a reference frame changing under
+///   the clip shows up as one enormous step among ordinary ones.
+/// * **root seam** is how far the root has to travel to get back to where it
+///   started, in the same units. A clip that stays put scores 0; one that
+///   carries the body forward scores its whole journey, and pays for it in one
+///   frame every loop.
+fn report_clip_defects(library: &ClipLibrary, rig: &Rig) {
+    println!();
+    println!("The reference clips themselves, measured — they are NOT ground truth.");
+    println!("Both figures are multiples of that clip's own median frame step, so a");
+    println!("clean clip scores about 1 whatever its speed. '-' is not applicable.");
+    println!();
+    println!(
+        "{:>18}{:>8}{:>9}{:>9}{:>9}{:>9}{:>11}",
+        "clip", "frames", "loops", "seam", "jump", "jump mm", "root seam"
+    );
+    println!("{}", "-".repeat(73));
+
+    let median = |mut values: Vec<f32>| -> f32 {
+        if values.is_empty() {
+            return 0.0;
+        }
+        values.sort_by(f32::total_cmp);
+        values[values.len() / 2]
+    };
+
+    for clip in &library.clips {
+        if clip.frames < 3 || clip.rate <= 0.0 {
+            continue;
+        }
+        // One pose per authored frame, sampled at the frame times themselves so
+        // nothing here is reading the interpolator instead of the data.
+        let poses: Vec<Pose> = (0..clip.frames)
+            .map(|frame| clip.pose(rig, frame as f32 / clip.rate))
+            .collect();
+        let apart = |a: &Pose, b: &Pose| {
+            a.rotations
+                .iter()
+                .zip(&b.rotations)
+                .map(|(a, b)| 2.0 * a.dot(*b).abs().clamp(-1.0, 1.0).acos())
+                .fold(0.0f32, f32::max)
+        };
+        let steps: Vec<f32> = poses
+            .windows(2)
+            .map(|pair| apart(&pair[0], &pair[1]))
+            .collect();
+        let typical = median(steps.clone());
+        let seam = if clip.looping && typical > 1e-6 {
+            format!(
+                "{:.1}x",
+                apart(&poses[clip.frames - 1], &poses[0]) / typical
+            )
+        } else {
+            "-".to_owned()
+        };
+
+        let root_steps: Vec<f32> = clip
+            .root
+            .windows(2)
+            .map(|pair| pair[0].distance(pair[1]))
+            .collect();
+        let root_typical = median(root_steps.clone());
+        // **A ratio alone can raise a false alarm and this one nearly did.**
+        // Thirty-five times a median of nothing is still nothing, so the
+        // absolute travel is printed beside it and the two are read together: a
+        // defect is a large multiple that is ALSO a distance a viewer would
+        // see.
+        let worst_root = root_steps.iter().copied().fold(0.0f32, f32::max);
+        let jump = if root_typical > 1e-6 {
+            format!("{:.1}x", worst_root / root_typical)
+        } else {
+            "-".to_owned()
+        };
+        let jump_mm = if root_steps.is_empty() {
+            "-".to_owned()
+        } else {
+            format!("{:.0}", worst_root * 1000.0)
+        };
+
+        // The root's own wrap, which is a different question from the pose's.
+        // Every looping clip above seams cleanly in its ROTATIONS, and the
+        // owner still saw loops break — because a clip that travels has to get
+        // back to where it started, and doing that in one frame is a stride's
+        // worth of snap. #141 predicted exactly this before any of it was
+        // built; this is the column that says how big it is.
+        let root_seam = match (clip.looping, clip.root.first(), clip.root.last()) {
+            (true, Some(first), Some(last)) if root_typical > 1e-6 => {
+                format!("{:.1}x", first.distance(*last) / root_typical)
+            }
+            _ => "-".to_owned(),
+        };
+
+        println!(
+            "{:>18}{:>8}{:>9}{:>9}{:>9}{:>9}{:>11}",
+            clip.name,
+            clip.frames,
+            if clip.looping { "yes" } else { "no" },
+            seam,
+            jump,
+            jump_mm,
+            root_seam
+        );
+    }
 }
 
 /// Hip to sole at rest, in metres — how long this body's leg is.
@@ -172,12 +316,29 @@ fn leg_length(rig: &Rig) -> f32 {
 
 /// What one source does to one body on one grade, in metres.
 struct Reading {
-    /// Worst distance any sole ended up BELOW the ground, before the solve.
+    /// Worst distance any foot ended up below the ground **after** the footing
+    /// solve — what a viewer actually sees.
     ///
-    /// Unambiguous and source-neutral: no foot should ever be under the floor,
-    /// whatever it is doing. A swinging foot may legitimately be high, so the
-    /// other direction is not a defect and is not measured.
-    sink: f32,
+    /// **This is the headline, and it used to be [`Self::before`], which asked
+    /// the two sources different questions** (#238). A clip is a finished pose:
+    /// what it delivers is what is drawn. A procedural gait is deliberately two
+    /// staged — [`gait::step`] places contacts in BODY space and
+    /// [`plant_feet_of`] settles them onto the real ground — so its pre-solve
+    /// pose is an intermediate that was never promised to clear anything, and
+    /// scoring it as though it were final is scoring the gait on a contract it
+    /// does not have. The stage both sources genuinely share is the one after
+    /// the solve.
+    ///
+    /// A swinging foot is still measured here, and deliberately: the solve
+    /// plants only stance feet, so a swing arc ploughing through a slope
+    /// survives to this reading, which is exactly the defect #221 names.
+    after: f32,
+    /// The same distance measured before the solve.
+    ///
+    /// Kept as a diagnostic rather than deleted: it is what the gait hands the
+    /// solve, and a number that grows here while [`Self::after`] holds is the
+    /// solve working harder for the same result.
+    before: f32,
     /// Worst distance the footing solve had to move any one joint of a contact.
     ///
     /// **Per joint, each compared against itself.** The first version of this
@@ -197,30 +358,42 @@ struct Reading {
 fn read(rig: &Rig, grade: f32, source: impl Fn(&Rig, f32) -> (Pose, Vec<Limb>)) -> Reading {
     let ground = |foot: Vec3| Some(Ground::level(Vec3::new(foot.x, foot.x * grade, foot.z)));
     let mut reading = Reading {
-        sink: 0.0,
+        after: 0.0,
+        before: 0.0,
         lift: 0.0,
+    };
+    // Penetration of every foot the body has, not only the planted ones: a
+    // swinging foot through the floor is the defect this is looking for.
+    //
+    // Measured at the extremity JOINTS, which sit inside the foot rather than
+    // on its sole, so both columns understate the true sole clearance by the
+    // stand-off — equally for both sources, which is what keeps the comparison
+    // fair. `examples/walkaudit` is the instrument that reads the mesh.
+    let deepest = |pose: &Pose| {
+        let posed = pose.forward(rig);
+        let mut worst = 0.0f32;
+        for limb in rig.ground_contacts() {
+            for &joint in &rig.extremity_joints(limb) {
+                let at = posed.positions[joint];
+                worst = worst.max(at.x * grade - at.y);
+            }
+        }
+        worst
     };
     for step in 0..PHASES {
         let cycle = step as f32 / PHASES as f32;
         let (mut pose, stance) = source(rig, cycle);
-
-        // Penetration, measured on every foot the body has rather than only on
-        // the ones it is standing on: a swinging foot ploughing through the
-        // floor is the defect this is looking for.
-        let posed = pose.forward(rig);
-        for limb in rig.ground_contacts() {
-            for &joint in &rig.extremity_joints(limb) {
-                let at = posed.positions[joint];
-                reading.sink = reading.sink.max(at.x * grade - at.y);
-            }
-        }
+        reading.before = reading.before.max(deepest(&pose));
 
         if stance.is_empty() {
+            // Nothing to settle, so the pose as delivered IS the final one.
+            reading.after = reading.after.max(deepest(&pose));
             continue;
         }
         let before = pose.forward(rig).positions;
         plant_feet_of(rig, &mut pose, &stance, ground, &FootingConfig::default());
         let after = pose.forward(rig).positions;
+        reading.after = reading.after.max(deepest(&pose));
         for &limb in &stance {
             for &joint in &rig.extremity_joints(limb) {
                 reading.lift = reading.lift.max(before[joint].distance(after[joint]));
