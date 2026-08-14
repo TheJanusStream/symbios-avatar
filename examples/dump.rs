@@ -310,6 +310,9 @@ fn walk(dir: &std::path::Path, frames: usize) -> usize {
             },
             &FootingConfig::default(),
         );
+        // Last, after the plant has laid the soles flat: the roll is what puts
+        // the heel-strike and the push-off back into them (#236).
+        let rolled = gait::roll_feet(rig, &mut pose, &gait, cycle);
 
         println!(
             "walk frame {frame:<3} cycle {cycle:.2}  stance {:?}  swing {:?}  \
@@ -318,7 +321,7 @@ fn walk(dir: &std::path::Path, frames: usize) -> usize {
             steps.swing,
             steps.crouch,
             footing.pelvis_drop,
-            if steps.is_clean() && footing.straining.is_empty() {
+            if steps.is_clean() && footing.straining.is_empty() && rolled.is_empty() {
                 ""
             } else {
                 "  STRAINING"

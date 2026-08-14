@@ -12,6 +12,14 @@
 //! short body takes short steps and a long-legged one takes long ones without
 //! anything being retuned. Inverse kinematics turns the goals back into a pose.
 //!
+//! A walk is four passes in order, and the order is not free: [`step`] places
+//! the contacts and sinks the body for them, [`swing_arms`] answers with the
+//! upper body, [`super::plant_feet_of`] settles the stance feet onto whatever
+//! terrain is really there, and [`roll_feet`] takes the soles back off it into
+//! the heel-strike and push-off attitudes a walk is judged by. Each reads the
+//! pose the one before it left; running the roll before the plant would simply
+//! be levelled away.
+//!
 //! The cycle itself is the caller's to drive, because how fast a body walks is a
 //! question about the world — speed, terrain, intent — and this crate does not
 //! know about any of that.
@@ -400,6 +408,228 @@ pub fn step(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycle: f32
     }
 
     steps
+}
+
+/// How far the toe rides above the sole at heel-strike, in radians.
+///
+/// Twenty degrees, in the middle of the 15–25 the gait literature reports for a
+/// normal adult. It is the attitude the foot arrives in rather than one it
+/// holds: [`foot_pitch`] rolls it away again over the first [`SOLE_DOWN`] of the
+/// stance.
+const HEEL_STRIKE: f32 = 0.35;
+
+/// How far the toe rides below the sole at toe-off, in radians.
+///
+/// Seventeen degrees, against a reported 15–20. Smaller than [`HEEL_STRIKE`]
+/// because a rigid foot spends it about the toe rather than about the ball —
+/// see [`roll_feet`] on the toes this body has not got.
+const TOE_OFF: f32 = 0.30;
+
+/// Share of the stance spent rolling from heel-strike down to a flat sole.
+///
+/// The loading response, which is over quickly: the shin travels forward over a
+/// foot that is already down, so the roll is the fastest thing the ankle does
+/// all cycle.
+const SOLE_DOWN: f32 = 0.15;
+
+/// Share of the stance the heel keeps down before it begins to peel.
+///
+/// Heel-rise starts about half way through a stance and finishes at toe-off, so
+/// the peel is spread over the rest of it. A foot that starts peeling at the
+/// moment it lands never reads as bearing weight.
+const HEEL_PEEL: f32 = 0.55;
+
+/// How many times [`roll_feet`] pins the ankle and re-solves the leg under it.
+///
+/// The same fixed point [`super::plant_feet_of`] iterates, for the same reason:
+/// solving the leg turns the shin, which carries the ankle's parent with it, so
+/// a foot pitched before the solve is not quite pitched after it.
+///
+/// **Two, measured, and the second is not optional.** Swept on the default walk
+/// through `examples/walkaudit`: one pass delivers -34.6 to 9.5 degrees against
+/// the -17.2 to 20.1 it is asked for, and scuffs the sole 37.1 mm under the
+/// floor; two deliver the asked figures to a tenth of a degree and clear the
+/// floor by 10.0 mm; three are identical to two on every column. So this is the
+/// converged answer rather than a budget.
+const ROLL_PASSES: usize = 2;
+
+/// A Hermite ramp, `0..1`, flat at both ends.
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// How far the sole is pitched at this point of the cycle, in radians, positive
+/// toe-up.
+///
+/// **One function of the whole cycle, not of the stance alone.** A foot does not
+/// teleport: the attitude it leaves the ground in is the one it carries into its
+/// swing, and the attitude it lands in is the one the swing has to deliver. Written
+/// per-phase, the two ends would each be right and the joins between them would
+/// snap.
+///
+/// The stance is the part the literature names: land at `HEEL_STRIKE` toe-up,
+/// roll flat within `SOLE_DOWN` of the stance, hold the sole down until
+/// `HEEL_PEEL`, then peel to `TOE_OFF` toe-down at the moment of lift. The
+/// swing simply carries the toe-down attitude back round to the toe-up one, and
+/// passing through flat on the way is what gives a swinging toe its clearance.
+///
+/// Every ramp is a `smoothstep`, so the pitch is *C¹* across all four joins —
+/// including the two the phases share. That is not decoration: a corner in this
+/// curve is an infinite angular acceleration at the ankle, and it reads as a
+/// flick.
+#[must_use]
+pub fn foot_pitch(phase: Phase) -> f32 {
+    match phase {
+        Phase::Stance(t) if t < SOLE_DOWN => HEEL_STRIKE * (1.0 - smoothstep(t / SOLE_DOWN)),
+        Phase::Stance(t) if t < HEEL_PEEL => 0.0,
+        Phase::Stance(t) => -TOE_OFF * smoothstep((t - HEEL_PEEL) / (1.0 - HEEL_PEEL)),
+        Phase::Swing(t) => -TOE_OFF + (HEEL_STRIKE + TOE_OFF) * smoothstep(t),
+    }
+}
+
+/// Rolls each foot through the attitude its phase calls for, and moves the leg
+/// to keep the sole on the ground while it does.
+///
+/// **Call after [`super::plant_feet_of`]**, the way [`swing_arms`] is called
+/// after [`step`]. The footing solve lays every sole flat along the ground; this
+/// is what takes it off again, and running it first would simply be levelled
+/// away.
+///
+/// Returns the contacts whose leg could not reach the rolled goal, which should
+/// be none — rolling *raises* the contact at both extremes, so it asks the leg
+/// for less reach than the plant already got.
+///
+/// # The pivot is derived rather than chosen
+///
+/// Pitching the ankle in place swings the whole foot about a joint that is
+/// inside it: on the default body the ankle sits 91 mm above the sole and 19 mm
+/// ahead of the heel, so a naive toe-down drives the toe through the floor. A
+/// foot rolls about whatever part of its **sole** is bearing weight, and which
+/// part that is changes with the sign of the pitch.
+///
+/// Neither end is written down here. Every plan in this crate builds its bodies
+/// standing on `y = 0` — it is what [`crate::extremity::Extremities::build`]
+/// takes a ground plane for — so each of the foot's own joints stands over a
+/// sole point at rest height zero, and that is a sole this module can read
+/// without a mesh. Roll that set of points by the pitch, and the one that ends
+/// up lowest is the one bearing weight; translate the foot so that point does
+/// not move. Toe-up selects the back of the heel and toe-down selects the toe,
+/// both for free, and a foot shaped like nothing in this crate gets whichever
+/// answer its own geometry gives.
+///
+/// Measured on the default body by `examples/walkaudit`, which is the argument
+/// for the whole construction: pitching about the contact joint instead drives
+/// the sole **60.5 mm** under the floor, and the derived pivot leaves the
+/// tightest pass of the cycle **10.0 mm above** it.
+///
+/// # A foot of one node is left alone
+///
+/// `plan::quadruped` gives each limb a single extremity node, so a beast in this
+/// crate has no heel-to-toe run to pitch along and no second sole point to bear
+/// the weight. It is left exactly as the plant left it, because deriving an axis
+/// from one point means choosing one, and a hoof pitched about a guess is worse
+/// than a hoof that does not pitch. Giving a beast a foot it can roll is a plan
+/// question (#178), not a gait one.
+///
+/// # The toes do not extend, and that is a choice
+///
+/// A real push-off keeps the ball *and* the toe down and opens the joint between
+/// them; this rolls a rigid foot up onto its toe tip. Counter-rotating the ball
+/// would buy that anatomy and cost the instrument its reading — with the
+/// forefoot held flat, the heel-to-toe run `examples/walkaudit` measures reports
+/// 0.70 of the pitch asked, so `TOE_OFF` would no longer deliver the degrees
+/// it is written in. Recorded as a cost rather than smuggled in.
+pub fn roll_feet(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) -> Vec<Limb> {
+    let mut straining = Vec::new();
+    // A gait that never lifts a contact expresses no roll either — the same
+    // rule [`step`] and [`crouch_at`] apply to their own outputs (#230). A
+    // standing body puts its soles down flat and leaves them there.
+    if !pose.fits(rig) || gait.duty >= 1.0 {
+        return straining;
+    }
+
+    for (index, &limb) in gait.limbs.iter().enumerate() {
+        let pitch = foot_pitch(gait.phase(index, cycle));
+        if pitch == 0.0 {
+            continue;
+        }
+        if roll_one(rig, pose, limb, pitch) == Some(false) {
+            straining.push(limb);
+        }
+    }
+
+    straining
+}
+
+/// Rolls one foot by `pitch` about whichever of its sole points bears the
+/// weight.
+///
+/// `None` for a limb with no foot to roll — one the body has not got, or one
+/// whose extremity is a single node and so has no length to pitch along.
+/// Otherwise whether the leg reached the goal the roll asked for.
+fn roll_one(rig: &Rig, pose: &mut Pose, limb: Limb, pitch: f32) -> Option<bool> {
+    let joints = rig.extremity_joints(limb);
+    let (&ankle, sole) = (joints.first()?, joints.get(1..)?);
+    let parent = rig.joints[ankle].parent?;
+    let contact = *rig.in_zone(Zone::Extremity(limb)).first()?;
+
+    // The joint being turned has to be ABOVE the foot, or turning it does not
+    // move the contact and the pivot arithmetic below is measuring a foot that
+    // is only half following. [`Rig::extremity_joints`] delivers that by
+    // prepending the joint the extremity hangs from — but only where there is
+    // one, so a limb rooted at its own extremity is left alone rather than
+    // rolled about itself.
+    if rig.joints[ankle].zone == Zone::Extremity(limb) {
+        return None;
+    }
+
+    // The attitude the footing solve settled the foot at. Everything below is
+    // measured against this one pose, so the passes do not chase themselves.
+    let posed = pose.forward(rig);
+    let settled = posed.rotations[ankle];
+    let up = (settled * Vec3::Y).try_normalize()?;
+
+    // The foot's run, rearmost sole joint to foremost, carried into the pose.
+    // `None` where the two coincide: a foot of one node has no direction to be
+    // pitched along, and neither has one whose joints stack vertically.
+    let along = |&joint: &usize| rig.joints[joint].position.z;
+    let rear = *sole.iter().min_by(|a, b| along(a).total_cmp(&along(b)))?;
+    let fore = *sole.iter().max_by(|a, b| along(a).total_cmp(&along(b)))?;
+    let run = settled * (rig.joints[fore].position - rig.joints[rear].position);
+    let axis = run.cross(up).try_normalize()?;
+    let roll = Quat::from_axis_angle(axis, pitch);
+
+    // Each sole point, as an offset from the contact joint. The point is
+    // directly beneath its joint at rest height zero, which is where the build
+    // put the floor.
+    let rest = rig.joints[contact].position;
+    let ground = |joint: usize| {
+        let at = rig.joints[joint].position;
+        settled * (Vec3::new(at.x, 0.0, at.z) - rest)
+    };
+    let bearing = sole
+        .iter()
+        .map(|&joint| ground(joint))
+        .min_by(|a, b| (roll * *a).dot(up).total_cmp(&(roll * *b).dot(up)))?;
+
+    // Where the contact joint has to go for the bearing point to stay put.
+    let goal = posed.positions[contact] + bearing - roll * bearing;
+    let want = roll * settled;
+
+    let mut reached = false;
+    for _ in 0..ROLL_PASSES {
+        // **Assigned, not composed**, exactly as [`super::level_feet`] assigns
+        // the attitude it wants: this is a constraint on where the sole ends up
+        // rather than a contribution to a gesture, so it is re-established from
+        // the settled attitude every pass instead of piling one roll on the
+        // last.
+        let outer = pose.forward(rig).rotations[parent];
+        pose.rotations[ankle] = outer.inverse() * want;
+        reached = solve_contact(rig, pose, limb, goal);
+    }
+
+    Some(reached)
 }
 
 /// How far an arm swings fore and aft, in radians.
@@ -1112,6 +1342,320 @@ mod tests {
                 rotation.to_axis_angle().1 < 0.02,
                 "a still body should not move: {rotation:?}"
             );
+        }
+    }
+
+    /// The heel-to-toe run of one foot, in degrees against the ground and
+    /// against its own rest attitude, positive toe-up.
+    ///
+    /// The same question `examples/walkaudit` asks, and asked the same way: the
+    /// foot's nodes need not lie level in a foot that stands flat — on this body
+    /// they run three degrees uphill — so zero means "carried as it stands".
+    fn sole_pitch(rig: &Rig, pose: &Pose, limb: Limb) -> f32 {
+        let joints = rig.extremity_joints(limb);
+        let sole = &joints[1..];
+        let along = |&joint: &usize| rig.joints[joint].position.z;
+        let rear = *sole
+            .iter()
+            .min_by(|a, b| along(a).total_cmp(&along(b)))
+            .expect("a foot");
+        let fore = *sole
+            .iter()
+            .max_by(|a, b| along(a).total_cmp(&along(b)))
+            .expect("a foot");
+        let angle = |run: Vec3| {
+            run.y
+                .atan2((run.x * run.x + run.z * run.z).sqrt())
+                .to_degrees()
+        };
+        let posed = pose.forward(rig);
+        angle(posed.positions[fore] - posed.positions[rear])
+            - angle(rig.joints[fore].position - rig.joints[rear].position)
+    }
+
+    /// One moment of the whole walk, in the order every consumer runs it:
+    /// step, arms, plant, roll.
+    fn walked(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> (Pose, Vec<Limb>) {
+        use crate::anim::ground::{FootingConfig, Ground, plant_feet_of};
+        let mut pose = Pose::rest(rig);
+        let steps = step(rig, &mut pose, gait, stride, cycle);
+        swing_arms(rig, &mut pose, gait, cycle);
+        plant_feet_of(
+            rig,
+            &mut pose,
+            &steps.stance,
+            |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
+            &FootingConfig::default(),
+        );
+        let straining = roll_feet(rig, &mut pose, gait, cycle);
+        (pose, straining)
+    }
+
+    #[test]
+    fn a_foot_lands_toe_up_and_leaves_toe_down() {
+        // The measurement this whole slice exists for. Before it, the sole was
+        // held flat through the entire cycle — `examples/walkaudit` reported
+        // -0.0 to 0.0 degrees in both phases, which is a shuffle.
+        //
+        // Asked of the POSED body rather than of `foot_pitch`, because a
+        // constant that never reaches the foot is exactly the failure #223
+        // found at the elbow: 0.639 of every degree asked was arriving, and no
+        // test of the constant could have seen it.
+        let rig = biped();
+        let gait = Gait::wave(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+
+        let (mut lowest, mut highest) = (f32::MAX, f32::MIN);
+        for sample in 0..240 {
+            let cycle = sample as f32 / 240.0;
+            let (pose, _) = walked(&rig, &gait, &stride, cycle);
+            for limb in [Limb::HindLeft, Limb::HindRight] {
+                let pitch = sole_pitch(&rig, &pose, limb);
+                lowest = lowest.min(pitch);
+                highest = highest.max(pitch);
+            }
+        }
+
+        // Reference bands from the gait literature, as `examples/walkaudit`
+        // prints them: ~15-25 degrees toe-up at heel-strike, ~15-20 toe-down at
+        // push-off. Asserted as bands rather than as figures, so re-tuning
+        // inside them is free and leaving them is not.
+        assert!(
+            (15.0..=25.0).contains(&highest),
+            "heel-strike reached {highest:.1} deg toe-up, outside the 15-25 band"
+        );
+        assert!(
+            (-20.0..=-15.0).contains(&lowest),
+            "push-off reached {lowest:.1} deg toe-down, outside the -20 to -15 band"
+        );
+    }
+
+    #[test]
+    fn the_part_of_the_sole_bearing_weight_does_not_move_as_the_foot_rolls() {
+        // The invariant the pivot rule exists to hold, and the one that
+        // separates this from a naive ankle pitch: a foot rolls about whatever
+        // part of its sole is down, and that part stays where it is. Pitching
+        // about the ankle instead — a joint 91 mm above the sole and 19 mm
+        // ahead of the heel — drives the toe through the floor.
+        //
+        // Measured on the sole this module can actually read: every plan builds
+        // its bodies standing on y = 0, so each of the foot's joints stands over
+        // a sole point at rest height zero. The mesh's own sole is convex and
+        // sits below that plane (#220), which is a build defect this cannot see
+        // and must not be blamed for.
+        let rig = biped();
+        let gait = Gait::wave(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+
+        for sample in 0..240 {
+            let cycle = sample as f32 / 240.0;
+            let mut pose = Pose::rest(&rig);
+            let steps = step(&rig, &mut pose, &gait, &stride, cycle);
+            {
+                use crate::anim::ground::{FootingConfig, Ground, plant_feet_of};
+                plant_feet_of(
+                    &rig,
+                    &mut pose,
+                    &steps.stance,
+                    |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
+                    &FootingConfig::default(),
+                );
+            }
+
+            // Where each sole point stands before the roll, and after it.
+            let soles = |pose: &Pose, limb: Limb| -> Vec<Vec3> {
+                let joints = rig.extremity_joints(limb);
+                let posed = pose.forward(&rig);
+                let ankle = joints[0];
+                joints[1..]
+                    .iter()
+                    .map(|&joint| {
+                        let at = rig.joints[joint].position;
+                        posed.positions[ankle]
+                            + posed.rotations[ankle]
+                                * (Vec3::new(at.x, 0.0, at.z) - rig.joints[ankle].position)
+                    })
+                    .collect()
+            };
+
+            let before: Vec<Vec<Vec3>> = steps.stance.iter().map(|&l| soles(&pose, l)).collect();
+            roll_feet(&rig, &mut pose, &gait, cycle);
+
+            for (&limb, before) in steps.stance.iter().zip(&before) {
+                let after = soles(&pose, limb);
+                // The bearing point is whichever ends up lowest; it is the one
+                // that must not have moved. The others are free to lift, which
+                // is the whole of what rolling a foot is.
+                let held = after
+                    .iter()
+                    .zip(before)
+                    .map(|(after, before)| (after.y, after.distance(*before)))
+                    .fold((f32::MAX, f32::MAX), |best, (height, moved)| {
+                        if height < best.0 {
+                            (height, moved)
+                        } else {
+                            best
+                        }
+                    });
+                assert!(
+                    held.1 < 2e-3,
+                    "{limb:?} at cycle {cycle:.3}: the sole point bearing the weight \
+                     slid {:.1} mm",
+                    held.1 * 1000.0
+                );
+                // And nothing is driven under the floor it is standing on.
+                let deepest = after.iter().map(|at| at.y).fold(f32::MAX, f32::min);
+                assert!(
+                    deepest > -2e-3,
+                    "{limb:?} at cycle {cycle:.3}: the sole reached {:.1} mm under \
+                     the floor",
+                    deepest * 1000.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_pitch_turns_the_corner_between_stance_and_swing_without_a_kink() {
+        // Every ramp is a smoothstep so that the pitch is C1 all the way round,
+        // including the two joins the phases share — where a foot leaves the
+        // ground and where it lands. A corner here is an infinite angular
+        // acceleration at the ankle, and it reads as a flick.
+        //
+        // Asserted as a bound on the second difference: a curve with a corner
+        // has one sample's worth of turn concentrated at a point, so its second
+        // difference does not shrink as the sampling refines. This one's does.
+        let gait = Gait::wave(&biped());
+        let curve = |steps: usize| -> f32 {
+            let at = |sample: usize| foot_pitch(gait.phase(0, sample as f32 / steps as f32));
+            (1..steps)
+                .map(|sample| (at(sample + 1) - 2.0 * at(sample) + at(sample - 1)).abs())
+                .fold(0.0f32, f32::max)
+        };
+
+        // Halving the step must quarter the worst second difference on a C1
+        // curve. Allowed a wide margin — this is a shape test, not a numeric one
+        // — but a corner would hold its value flat instead of falling at all.
+        let coarse = curve(480);
+        let fine = curve(960);
+        assert!(
+            fine < coarse * 0.4,
+            "refining the sampling took the worst kink from {coarse:.2e} to only \
+             {fine:.2e}, which is a corner rather than a curve"
+        );
+
+        // And the two ends of the cycle meet: the attitude a foot leaves the
+        // ground in is the one it carries into its swing.
+        let toe_off = foot_pitch(Phase::Stance(1.0));
+        let lift = foot_pitch(Phase::Swing(0.0));
+        assert!(
+            (toe_off - lift).abs() < 1e-6,
+            "the foot leaves at {toe_off:.4} rad and starts its swing at {lift:.4}"
+        );
+        let landing = foot_pitch(Phase::Swing(1.0));
+        let strike = foot_pitch(Phase::Stance(0.0));
+        assert!(
+            (landing - strike).abs() < 1e-6,
+            "the foot lands at {landing:.4} rad and starts its stance at {strike:.4}"
+        );
+    }
+
+    #[test]
+    fn a_standing_body_keeps_its_soles_flat() {
+        // The rule #230 established, applied to this producer too: a gait that
+        // never lifts a contact has no roll to express, whatever stride or
+        // cycle the caller leaves on it.
+        let rig = biped();
+        let gait = Gait::standing(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+
+        for sample in 0..40 {
+            let cycle = sample as f32 / 40.0;
+            let (pose, straining) = walked(&rig, &gait, &stride, cycle);
+            assert!(straining.is_empty(), "a standing body strained at {cycle}");
+            for limb in [Limb::HindLeft, Limb::HindRight] {
+                let pitch = sole_pitch(&rig, &pose, limb);
+                assert!(
+                    pitch.abs() < 0.5,
+                    "a standing {limb:?} pitched {pitch:.2} deg at cycle {cycle}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rolling_asks_the_leg_for_no_more_reach_than_the_plant_already_got() {
+        // The roll RAISES the contact at both extremes — a foot up on its heel
+        // or its toe is a foot whose ankle is nearer the hip — so it cannot put
+        // a goal out of reach that the plant had already reached. If this ever
+        // fails, the pivot is being taken from the wrong end of the foot.
+        let rig = biped();
+        let gait = Gait::wave(&rig);
+        for pace in [0.4, 1.0, 1.4] {
+            let stride = Stride::for_body(&rig, pace);
+            for sample in 0..120 {
+                let cycle = sample as f32 / 120.0;
+                let (_, straining) = walked(&rig, &gait, &stride, cycle);
+                assert!(
+                    straining.is_empty(),
+                    "pace {pace} cycle {cycle:.3}: {straining:?} could not reach the roll"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_foot_of_one_node_is_left_alone_rather_than_given_an_invented_axis() {
+        // Nothing here is written for two legs — the pitch comes from the phase
+        // and the pivot from the foot's own geometry — but a quadruped in this
+        // crate has nothing to roll: `plan::quadruped` gives each limb a SINGLE
+        // extremity node, so there is no heel-to-toe run to pitch along and no
+        // second sole point to bear the weight.
+        //
+        // The right answer is to leave it exactly as the plant left it. Deriving
+        // an axis from one point would mean choosing one, and a hoof pitched
+        // about a guess is worse than a hoof that does not pitch. Giving a beast
+        // a foot it can roll is a plan question (#178), not a gait one.
+        let rig = quadruped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        assert_eq!(gait.len(), 4, "the beast this tests needs four corners");
+        for limb in &gait.limbs {
+            assert_eq!(
+                rig.extremity_joints(*limb).len(),
+                2,
+                "{limb:?} has more than an ankle and one node — rewrite this test"
+            );
+        }
+
+        for sample in 0..120 {
+            let cycle = sample as f32 / 120.0;
+            let mut pose = Pose::rest(&rig);
+            let steps = step(&rig, &mut pose, &gait, &stride, cycle);
+            swing_arms(&rig, &mut pose, &gait, cycle);
+            {
+                use crate::anim::ground::{FootingConfig, Ground, plant_feet_of};
+                plant_feet_of(
+                    &rig,
+                    &mut pose,
+                    &steps.stance,
+                    |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
+                    &FootingConfig::default(),
+                );
+            }
+
+            let planted = pose.clone();
+            let straining = roll_feet(&rig, &mut pose, &gait, cycle);
+            assert!(
+                straining.is_empty(),
+                "a foot that cannot roll must not be reported as straining at {cycle:.3}"
+            );
+            for (before, after) in planted.rotations.iter().zip(&pose.rotations) {
+                assert!(
+                    before.abs_diff_eq(*after, 1e-6),
+                    "the beast was moved at cycle {cycle:.3}"
+                );
+            }
         }
     }
 }

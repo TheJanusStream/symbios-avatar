@@ -1139,6 +1139,9 @@ impl Subject {
             |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
             &FootingConfig::default(),
         );
+        // Last, because the plant lays every sole flat and this is what takes
+        // them off again (#236).
+        gait::roll_feet(rig, &mut pose, &self.gait, cycle);
         pose
     }
 

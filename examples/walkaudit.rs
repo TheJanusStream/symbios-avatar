@@ -187,6 +187,9 @@ fn main() {
             floor,
             &FootingConfig::default(),
         );
+        // After the plant, which lays every sole flat: the roll is what takes
+        // them off again, and running it first would simply be levelled away.
+        gait::roll_feet(rig, &mut pose, &gait, cycle);
 
         let posed = pose.forward(rig);
         let moved = posed.deform(rig, &body.positions, weights);
@@ -334,12 +337,15 @@ fn main() {
         mid_swing * 1000.0,
     );
     println!(
-        "          (this lift's arc starts and ends AT the ground, so 0.0 at a phase end is \
-         the constructed floor and only a negative reading is a scuff; a real swing's \
-         tightest pass is 10-30 mm up, mid-swing, because the toe hangs)"
+        "          (this lift's arc starts and ends AT the ground, so only a negative reading \
+         is a scuff; what clears it at a phase end is the roll — a foot pitched onto its heel \
+         or its toe carries the rest of its sole up. A real swing's tightest pass is 10-30 mm \
+         up, mid-swing, because the toe hangs)"
     );
     println!(
-        "  stance: soles held within {:.1} mm of standing depth (a plant holds 0)",
+        "  stance: soles held within {:.1} mm of standing depth (a plant holds the sole flat \
+         at 0; the roll lifts whatever is not bearing weight, and this body's sole is convex \
+         by 11.7 mm, so at full pitch it rests on its rim — #220)",
         stance_err * 1000.0
     );
     println!(
