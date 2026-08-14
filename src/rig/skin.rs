@@ -58,6 +58,7 @@ pub const MAX_INFLUENCES: usize = 4;
 
 /// One bone's hold on one vertex.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Influence {
     /// Index of the influencing joint in [`Rig::joints`].
     pub joint: u16,

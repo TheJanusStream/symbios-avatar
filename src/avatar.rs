@@ -69,6 +69,7 @@ use crate::uv::{Rect, UvConfig, UvUnwrap, unwrap_with};
 /// The grouping *is* the draw-call budget: one entry per kind, and adding a kind
 /// costs every avatar in the scene a draw.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub enum MeshKind {
     /// Skin, in the widest sense: the body and everything made of it.
     Skin,
@@ -95,6 +96,7 @@ impl MeshKind {
 
 /// One merged, skinned, render-ready mesh.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct AvatarMesh {
     /// The material it needs.
     pub kind: MeshKind,
@@ -109,6 +111,7 @@ pub struct AvatarMesh {
 /// `tests/budget.rs`, not here, because a budget that enforces its own limits
 /// cannot be used to find out how far over them something is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Budget {
     /// Triangles across every mesh drawn.
     pub tris: usize,
@@ -176,32 +179,45 @@ impl Default for AvatarConfig {
 /// close-up on its head, check a hem, ask how thick an arm came out — needs the
 /// parts as parts, so they are kept.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Parts {
     /// The body's surface, closed and un-split, before it was charted.
+    ///
+    /// Not carried across a `serde-avatar` round trip — see the feature's
+    /// note in `Cargo.toml`: a sent avatar is drawable, not rebuildable.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub body: PolyMesh,
     /// What holds each body vertex.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub weights: SkinWeights,
     /// Which part of the body each body vertex belongs to.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub zones: Vec<Zone>,
     /// How the body was charted into the atlas.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub unwrap: UvUnwrap,
     /// The body as measured, which is what every attached part is fitted to.
     pub surface: Surface,
     /// Its eyes, if it has a head.
     pub eyes: Option<Eyes>,
     /// Its face, if it is the kind of body that wears one.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub features: Option<Features>,
     /// Its hair, grown in its head joint's own space.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub hair: Option<Growth>,
     /// Its hands and feet.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub extremities: Extremities,
     /// What it is wearing.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub outfit: Outfit,
     /// Whether this body carries limbs it does not stand on.
     ///
     /// See [`Avatar::build`] for why that is the question asked.
     pub handed: bool,
     /// The openable mouth's seam and pocket vertices, if one was cut (#154).
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub mouth: Option<face::Mouth>,
 }
 
@@ -211,6 +227,7 @@ pub struct Parts {
 /// of texture, and none of those three operations is one anybody should get by
 /// accident on something that size. Compare [`Avatar::meshes`] and
 /// [`Avatar::budget`], which are the parts worth comparing.
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Avatar {
     /// The posable hierarchy everything is skinned to.
     pub rig: Rig,
@@ -220,6 +237,7 @@ pub struct Avatar {
     /// their own. [`Avatar::drawn`] appends them and returns the whole list.
     pub meshes: Vec<AvatarMesh>,
     /// The painted skin atlas.
+    #[cfg_attr(feature = "serde-avatar", serde(with = "crate::texture::atlas_serde"))]
     pub skin: TextureMap,
     /// What it all costs.
     pub budget: Budget,
@@ -1613,5 +1631,84 @@ mod tests {
         let twice = Avatar::build(&record).expect("builds");
         assert_eq!(once.meshes, twice.meshes);
         assert_eq!(once.budget, twice.budget);
+    }
+
+    /// Everything a renderer reads survives a worker boundary, and the
+    /// intermediates deliberately do not (#234).
+    #[cfg(feature = "serde-avatar")]
+    #[test]
+    fn a_built_avatar_crosses_a_worker_boundary_drawable() {
+        let mut record = AvatarRecord::new("Sent", Archetype::default());
+        record.reroll(23);
+        let built = Avatar::build_with(
+            &record,
+            &AvatarConfig {
+                atlas: 64,
+                ..AvatarConfig::default()
+            },
+        )
+        .expect("builds");
+
+        // Round-tripped through JSON rather than the worker's own msgpack:
+        // this crate should not take a codec dependency to prove a contract
+        // about its own types, and serde's model is the same either way.
+        let wire = serde_json::to_string(&built).expect("serialises");
+        let back: Avatar = serde_json::from_str(&wire).expect("deserialises");
+
+        // What a renderer draws.
+        assert_eq!(back.meshes, built.meshes, "geometry must survive");
+        assert_eq!(back.rig, built.rig, "the rig must survive");
+        assert_eq!(back.budget, built.budget);
+        assert_eq!(back.skin.width, built.skin.width);
+        assert_eq!(
+            back.skin.albedo, built.skin.albedo,
+            "the atlas must survive"
+        );
+        assert_eq!(back.skin.mip_level_count, built.skin.mip_level_count);
+        // What it queries: eyes blink, and every attachment is fitted to the
+        // measured surface.
+        assert_eq!(back.parts.eyes, built.parts.eyes, "eyes must survive");
+        assert_eq!(
+            back.parts.surface, built.parts.surface,
+            "the measured surface must survive"
+        );
+        assert_eq!(back.parts.handed, built.parts.handed);
+
+        // And what it does not: the merge's own inputs are dropped, which is
+        // the whole reason the payload is affordable.
+        assert!(
+            back.parts.body.positions.is_empty(),
+            "the un-charted body mesh rode along and doubled the payload"
+        );
+        assert!(back.parts.zones.is_empty());
+        assert!(back.parts.features.is_none());
+    }
+
+    /// A truncated atlas is refused where it can still be reported, rather
+    /// than uploaded to a GPU that reads past the end of it.
+    #[cfg(feature = "serde-avatar")]
+    #[test]
+    fn a_short_atlas_buffer_is_refused() {
+        let mut record = AvatarRecord::new("Short", Archetype::default());
+        record.reroll(1);
+        let built = Avatar::build_with(
+            &record,
+            &AvatarConfig {
+                atlas: 64,
+                ..AvatarConfig::default()
+            },
+        )
+        .expect("builds");
+        let mut wire: serde_json::Value = serde_json::to_value(&built).expect("serialises");
+        wire["skin"]["albedo"] = serde_json::json!([0u8, 1, 2, 3]);
+        // Matched rather than `expect_err`: `Avatar` withholds `Debug` on
+        // purpose, and the Ok arm here is the failure being tested for.
+        match serde_json::from_value::<Avatar>(wire) {
+            Ok(_) => panic!("a short atlas buffer was accepted"),
+            Err(error) => assert!(
+                error.to_string().contains("albedo"),
+                "the refusal should name the buffer: {error}"
+            ),
+        }
     }
 }

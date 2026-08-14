@@ -35,6 +35,7 @@ const SAMPLES: usize = 5;
 
 /// The body's measured thickness, sampled along each bone.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Surface {
     profiles: Vec<[f32; SAMPLES]>,
 }

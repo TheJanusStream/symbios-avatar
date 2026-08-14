@@ -138,6 +138,7 @@ pub fn iris_pigment(shade: f32) -> [f32; 3] {
 
 /// One eye's parts, in head-local space.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Eye {
     /// The eyeball, centred on [`Eye::pivot`].
     pub globe: PolyMesh,
@@ -358,6 +359,7 @@ const APERTURE_STEP: f32 = 0.017_453;
 
 /// A body's pair of eyes, and where they belong.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Eyes {
     /// The body's left eye, which is the one at `+X`.
     pub left: Eye,

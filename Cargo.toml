@@ -20,6 +20,19 @@ default = []
 # A consumer that wants the clips says so; one that would rather fetch the file
 # at run time reads it with `ClipLibrary::read` and pays nothing here.
 builtin-clips = []
+# Makes a **built** [`Avatar`] serialisable, so one can cross a process or
+# worker boundary (symbios-avatar#234, for overlands#1061: wasm task pools run
+# on the main thread, so a body has to be built in a Web Worker and sent back).
+#
+# Off by default because it is a contract, not a convenience. A round-tripped
+# `Avatar` is **drawable, not rebuildable**: `Parts` carries its measured
+# surface, its eyes and its handedness, and drops the intermediates the merge
+# was made from (the un-charted body mesh, the weights, the zone list, the
+# unwrap, the face features, the hair growth, the extremities, the outfit and
+# the mouth). Those exist so a caller can ask how the body was made; nothing
+# that DRAWS one reads them, and carrying them would roughly double a payload
+# already dominated by an atlas.
+serde-avatar = ["dep:serde_bytes"]
 
 [dependencies]
 glam = { version = "0.30.10", features = ["serde"] }
@@ -33,6 +46,9 @@ noise = "0.9"
 rand = { version = "0.9", default-features = false }
 rand_pcg = "0.9"
 serde = { version = "1.0", features = ["derive", "rc"] }
+# Only for `serde-avatar`: an atlas is megabytes, and a self-describing codec
+# writes a per-element tag for a plain `Vec<u8>`. Opaque `bin` is one header.
+serde_bytes = { version = "0.11", optional = true }
 # Records are JSON on the wire, and their serialised size is the budget this
 # crate holds itself to — so the serialiser is a runtime dependency, not a
 # test-only one.

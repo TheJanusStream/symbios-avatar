@@ -35,6 +35,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#[cfg(feature = "serde-avatar")]
+pub mod atlas_serde;
 pub mod bake;
 pub mod skin;
 

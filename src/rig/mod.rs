@@ -94,6 +94,7 @@ pub struct BoneHit {
 /// [`crate::anim::Pose`] evaluates it like any other. The role says who is
 /// allowed to bind to it, not how it moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub enum Role {
     /// Drives the body's own surface. Every joint from a skeleton is one.
     #[default]
@@ -130,6 +131,7 @@ impl Role {
 
 /// One posable joint.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Joint {
     /// The skeleton node this joint came from, or `None` if it came from no
     /// node — every joint that is not a [`Role::Deform`] one is attached to the
@@ -198,6 +200,7 @@ pub enum RigError {
 
 /// A skeleton rooted into a posable hierarchy.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Rig {
     /// Joints ordered parent-before-child, root first.
     pub joints: Vec<Joint>,

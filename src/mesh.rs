@@ -100,6 +100,7 @@ pub type VertexSkin = [Influence; MAX_INFLUENCES];
 /// See the [module documentation](self#vertex-attributes) for the rule every
 /// attribute channel obeys.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct PolyMesh {
     /// Vertex positions, indexed by the entries of [`PolyMesh::faces`].
     pub positions: Vec<Vec3>,
