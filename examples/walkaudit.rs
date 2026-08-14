@@ -170,16 +170,20 @@ fn main() {
         .position(|joint| joint.parent.is_none())
         .map(|root| (root, rig.joints[root].position.y));
 
+    // The instrument's model of terrain, and now the gait's too: `step` seats
+    // its contacts on the same surface the plant settles them onto (#221),
+    // which is what stops a swing arc built at the rest ground height from
+    // ploughing through a slope it is climbing.
+    let floor = |foot: Vec3| {
+        Some(Ground {
+            position: Vec3::new(foot.x, foot.z * grade, foot.z),
+            normal: Vec3::new(0.0, 1.0, -grade).normalize(),
+        })
+    };
     let measure = |cycle: f32| -> Moment {
         let mut pose = Pose::rest(rig);
-        let steps = gait::step(rig, &mut pose, &gait, &stride, cycle);
+        let steps = gait::step(rig, &mut pose, &gait, &stride, cycle, floor);
         gait::swing_arms(rig, &mut pose, &gait, cycle);
-        let floor = |foot: Vec3| {
-            Some(Ground {
-                position: Vec3::new(foot.x, foot.z * grade, foot.z),
-                normal: Vec3::new(0.0, 1.0, -grade).normalize(),
-            })
-        };
         plant_feet_of(
             rig,
             &mut pose,

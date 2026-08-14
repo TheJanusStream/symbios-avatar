@@ -296,7 +296,7 @@ fn walk(dir: &std::path::Path, frames: usize) -> usize {
     for frame in 0..frames.max(1) {
         let cycle = frame as f32 / frames.max(1) as f32;
         let mut pose = Pose::rest(rig);
-        let steps = gait::step(rig, &mut pose, &gait, &stride, cycle);
+        let steps = gait::step(rig, &mut pose, &gait, &stride, cycle, |_| None);
 
         let footing = plant_feet_of(
             rig,

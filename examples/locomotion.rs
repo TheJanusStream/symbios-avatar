@@ -49,6 +49,14 @@ const PHASES: usize = 24;
 const SEEDS: [i64; 6] = [0, 3, 7, 19, 42, 101];
 
 /// Grades to try, as a rise over run.
+///
+/// **Along Z, the way the body walks.** This instrument tilted the ground along
+/// X for its whole life, and X is the body's lateral axis: the engine's forward
+/// is `+Z` and [`Stride::for_body`] strides down it, so a stride never crossed
+/// the tilt at all and every "grade" column was measuring a CAMBER — a hill the
+/// body stood across and never climbed. It is why terrain-aware swing targets
+/// (#221) changed the walk on `examples/walkaudit`, which tilts along Z, and
+/// changed nothing whatever here.
 const SLOPES: [f32; 3] = [0.0, 0.15, 0.3];
 
 fn main() {
@@ -96,7 +104,13 @@ fn main() {
                 let mut pose = Pose::rest(rig);
                 let gait = Gait::natural(rig);
                 let stride = Stride::for_body(rig, 1.0);
-                let steps = gait::step(rig, &mut pose, &gait, &stride, cycle);
+                // The gait is told about the slope it is walking, exactly as
+                // the footing solve below is (#221). Withholding it here and
+                // offering it there was the asymmetry that put the swing arc
+                // through the hill.
+                let steps = gait::step(rig, &mut pose, &gait, &stride, cycle, |foot| {
+                    Some(Ground::level(Vec3::new(foot.x, foot.z * grade, foot.z)))
+                });
                 gait::swing_arms(rig, &mut pose, &gait, cycle);
                 // **The ankles, which this instrument used to leave off** — and
                 // leaving them off is what made its gait column an unfair
@@ -356,7 +370,7 @@ struct Reading {
 /// phase. A gait knows its own stance; a clip does not and is asked of the pose
 /// — a difference in what the sources *can say*, not in how they are treated.
 fn read(rig: &Rig, grade: f32, source: impl Fn(&Rig, f32) -> (Pose, Vec<Limb>)) -> Reading {
-    let ground = |foot: Vec3| Some(Ground::level(Vec3::new(foot.x, foot.x * grade, foot.z)));
+    let ground = |foot: Vec3| Some(Ground::level(Vec3::new(foot.x, foot.z * grade, foot.z)));
     let mut reading = Reading {
         after: 0.0,
         before: 0.0,
@@ -375,7 +389,7 @@ fn read(rig: &Rig, grade: f32, source: impl Fn(&Rig, f32) -> (Pose, Vec<Limb>)) 
         for limb in rig.ground_contacts() {
             for &joint in &rig.extremity_joints(limb) {
                 let at = posed.positions[joint];
-                worst = worst.max(at.x * grade - at.y);
+                worst = worst.max(at.z * grade - at.y);
             }
         }
         worst

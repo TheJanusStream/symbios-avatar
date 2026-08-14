@@ -24,7 +24,7 @@ fn assert_walks(record: &AvatarRecord, what: &str) {
     for frame in 0..32 {
         let cycle = frame as f32 / 32.0;
         let mut pose = Pose::rest(&rig);
-        let steps = gait::step(&rig, &mut pose, &gait, &stride, cycle);
+        let steps = gait::step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
 
         assert!(
             steps.is_clean(),
@@ -90,7 +90,9 @@ fn a_walking_body_settles_its_stance_feet_onto_a_slope() {
     let mut lifted_above_ground = 0;
     for frame in 0..24 {
         let mut pose = Pose::rest(&rig);
-        let steps = gait::step(&rig, &mut pose, &gait, &stride, frame as f32 / 24.0);
+        let steps = gait::step(&rig, &mut pose, &gait, &stride, frame as f32 / 24.0, |_| {
+            None
+        });
 
         let footing = plant_feet_of(
             &rig,
@@ -136,7 +138,7 @@ fn a_change_of_gait_is_absorbed_rather_than_snapped() {
 
     let posed_at = |cycle: f32| {
         let mut pose = Pose::rest(&rig);
-        gait::step(&rig, &mut pose, &walking, &stride, cycle);
+        gait::step(&rig, &mut pose, &walking, &stride, cycle, |_| None);
         pose
     };
 
@@ -151,6 +153,7 @@ fn a_change_of_gait_is_absorbed_rather_than_snapped() {
             &Gait::standing(&rig),
             &Stride::still(),
             0.0,
+            |_| None,
         );
         pose
     };
@@ -204,7 +207,9 @@ fn walking_does_not_tear_the_body_it_moves() {
 
     for frame in 0..16 {
         let mut pose = Pose::rest(&rig);
-        gait::step(&rig, &mut pose, &gait, &stride, frame as f32 / 16.0);
+        gait::step(&rig, &mut pose, &gait, &stride, frame as f32 / 16.0, |_| {
+            None
+        });
         let posed = pose.forward(&rig);
 
         for (index, position) in posed.positions.iter().enumerate() {
@@ -319,7 +324,7 @@ fn dual_quaternion_skinning_compresses_less_of_the_body_than_matrices_do() {
     for step in 0..8 {
         let cycle = step as f32 / 8.0;
         let mut pose = Pose::rest(&rig);
-        gait::step(&rig, &mut pose, &gait, &stride, cycle);
+        gait::step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
         let posed = pose.forward(&rig);
 
         let linear_lost = lost(&posed.deform_linear(&rig, &mesh.positions, &weights));
@@ -399,7 +404,7 @@ fn swinging_arms_leaves_the_limbs_the_body_stands_on_alone() {
         for frame in 0..8 {
             let cycle = frame as f32 / 8.0;
             let mut pose = Pose::rest(&rig);
-            let steps = gait::step(&rig, &mut pose, &gait, &stride, cycle);
+            let steps = gait::step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
             plant_feet_of(
                 &rig,
                 &mut pose,

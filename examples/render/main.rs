@@ -1130,7 +1130,7 @@ impl Subject {
     fn walking(&self, cycle: f32) -> Pose {
         let rig = &self.avatar.rig;
         let mut pose = Pose::rest(rig);
-        let steps = gait::step(rig, &mut pose, &self.gait, &self.stride, cycle);
+        let steps = gait::step(rig, &mut pose, &self.gait, &self.stride, cycle, |_| None);
         gait::swing_arms(rig, &mut pose, &self.gait, cycle);
         plant_feet_of(
             rig,

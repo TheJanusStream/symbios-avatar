@@ -26,7 +26,7 @@
 
 use glam::{Quat, Vec3};
 
-use super::ground::solve_contact;
+use super::ground::{Ground, solve_contact};
 use super::pose::Pose;
 use crate::plan::{Limb, Zone};
 use crate::rig::Rig;
@@ -305,6 +305,13 @@ pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
 /// same reach geometry the stride was already solved against, and a standing
 /// body still sinks exactly zero.
 #[must_use]
+///
+/// **Level ground.** [`step`] seats its own contacts on whatever terrain its
+/// caller offers and re-derives the sink from the seated goals (#221), so on a
+/// slope the body actually sinks by more or less than this. That is deliberate
+/// rather than a divergence to fix: this is the planning figure — what a body
+/// of these proportions does on the flat — and the number a camera height or a
+/// clearance is designed against.
 pub fn crouch_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
     // The same rule [`step`] applies to its targets (#230): a gait that never
     // lifts a contact expresses no stride, so a standing body asks for no sink
@@ -368,35 +375,59 @@ impl Steps {
 /// The result reports which contacts are down, which a caller passes to
 /// [`super::plant_feet_of`] to settle them onto real terrain — a swinging foot
 /// must not be dragged to the ground it is travelling over.
-pub fn step(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycle: f32) -> Steps {
+pub fn step<F>(
+    rig: &Rig,
+    pose: &mut Pose,
+    gait: &Gait,
+    stride: &Stride,
+    cycle: f32,
+    ground: F,
+) -> Steps
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
     let mut steps = Steps::default();
     if !pose.fits(rig) {
         return steps;
     }
 
+    // Every contact's goal for this instant, seated on the ground beneath it,
+    // computed once because the crouch and the solve must agree about where the
+    // feet are going. Deriving the sink from level offsets and then solving
+    // against seated ones would sink the body for a stride it is not taking.
+    let goals: Vec<(Limb, Phase, Vec3, Vec3)> = gait
+        .limbs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &limb)| {
+            let home = home_of(rig, limb)?;
+            let phase = gait.phase(index, cycle);
+            // A gait that never lifts a contact has no stride to express: at
+            // duty 1.0 every phase is a stance whose offset would slide the
+            // whole stride and WRAP — every foot teleport-hopping in lockstep
+            // once per cycle whenever the caller's pace is nonzero (#230).
+            // Standing still is standing still whatever the stride says, so the
+            // caller need not remember to zero it.
+            let offset = if gait.duty >= 1.0 {
+                Vec3::ZERO
+            } else {
+                seated_offset(contact_offset(stride, phase), home, &ground)
+            };
+            Some((limb, phase, offset, home + offset))
+        })
+        .collect();
+
     // Sink far enough that every foot's current goal is within its leg's reach
     // — no further. Holding the whole stride's worst case instead is what kept
     // the pelvis riding dead flat, 47 mm down, through the entire cycle.
-    steps.crouch = crouch_at(rig, gait, stride, cycle);
+    steps.crouch = goals
+        .iter()
+        .filter_map(|&(limb, _, offset, _)| sink_needed(rig, limb, offset))
+        .fold(0.0f32, f32::max)
+        * CROUCH_MARGIN;
     pose.translation.y -= steps.crouch;
 
-    for (index, &limb) in gait.limbs.iter().enumerate() {
-        let Some(home) = home_of(rig, limb) else {
-            continue;
-        };
-        let phase = gait.phase(index, cycle);
-        // A gait that never lifts a contact has no stride to express: at duty
-        // 1.0 every phase is a stance whose offset would slide the whole
-        // stride and WRAP — every foot teleport-hopping in lockstep once per
-        // cycle whenever the caller's pace is nonzero (#230). Standing still
-        // is standing still whatever the stride says, so the caller need not
-        // remember to zero it.
-        let target = if gait.duty >= 1.0 {
-            home
-        } else {
-            home + contact_offset(stride, phase)
-        };
-
+    for (limb, phase, _, target) in goals {
         if phase.is_stance() {
             steps.stance.push(limb);
         } else {
@@ -408,6 +439,51 @@ pub fn step(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycle: f32
     }
 
     steps
+}
+
+/// Lift a contact's offset onto the ground actually beneath where it is going.
+///
+/// **The whole of #221.** [`contact_offset`] describes a stride against the
+/// body's own rest ground plane: a stance foot slides backwards at that height
+/// and a swing foot arcs above it, and both end the step exactly where they
+/// began it vertically. On a slope that is wrong at both ends — uphill the arc
+/// drove the sole 38.9 mm into the surface it was travelling over, downhill it
+/// landed in the air and dropped the last centimetres at the plant.
+///
+/// The probe is taken **under the goal at this instant** rather than blended
+/// between the step's two endpoints. The endpoint blend was the first design
+/// and it is the weaker one: it holds only for ground that is flat between the
+/// footfalls, so a foot still ploughs through anything it passes over on the
+/// way. Sampling where the foot actually is clears whatever is under it, and
+/// costs one probe per contact per frame.
+///
+/// **The correction is the ground's RISE between the two points, not its
+/// height at one of them**, and getting that wrong is instructive enough to
+/// record. Seating the goal at the probed surface directly — `offset.y +=
+/// surface.y - home.y` — reads the difference between a SURFACE and a JOINT,
+/// and `home` is the extremity joint, which sits inside the foot about 32 mm
+/// above the sole. On level ground, where this should do nothing at all, it
+/// drove every contact 32 mm under: the swing went from clearing by 2.3 mm to
+/// scuffing by 30.1 mm and the pelvis sank half again as far. Only a difference
+/// of two probes is dimensionally sound, because the stand-off cancels.
+///
+/// A probe that answers `None` at either end leaves the offset alone, which is
+/// the level behaviour this had before — so a caller with no terrain to offer
+/// loses nothing, and one whose terrain has holes in it gets the rest pose's
+/// height rather than a hole.
+///
+/// The probe runs in whatever frame the caller poses in, because `home` and the
+/// offset are both in that frame. A caller whose body is somewhere else in the
+/// world must say so in the closure, exactly as [`super::plant_feet_of`]
+/// already requires.
+fn seated_offset<F>(offset: Vec3, home: Vec3, ground: &F) -> Vec3
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    match (ground(home), ground(home + offset)) {
+        (Some(here), Some(there)) => offset + Vec3::Y * (there.position.y - here.position.y),
+        _ => offset,
+    }
 }
 
 /// How far the toe rides above the sole at heel-strike, in radians.
@@ -1210,7 +1286,7 @@ mod tests {
         // A quarter through the cycle the first contact is mid-stance and the
         // second is mid-swing.
         let mut pose = Pose::rest(&rig);
-        let steps = step(&rig, &mut pose, &gait, &stride, 0.75);
+        let steps = step(&rig, &mut pose, &gait, &stride, 0.75, |_| None);
         assert!(steps.is_clean(), "{steps:?}");
         assert_eq!(steps.stance.len() + steps.swing.len(), 2);
 
@@ -1230,7 +1306,7 @@ mod tests {
 
             let at = |cycle: f32| {
                 let mut pose = Pose::rest(&rig);
-                step(&rig, &mut pose, &gait, &stride, cycle);
+                step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
                 pose
             };
             let start = at(0.0);
@@ -1248,7 +1324,9 @@ mod tests {
             let stride = Stride::for_body(&rig, 1.0);
             for frame in 0..24 {
                 let mut pose = Pose::rest(&rig);
-                let steps = step(&rig, &mut pose, &gait, &stride, frame as f32 / 24.0);
+                let steps = step(&rig, &mut pose, &gait, &stride, frame as f32 / 24.0, |_| {
+                    None
+                });
                 assert!(
                     steps.is_clean(),
                     "{} contacts strained at frame {frame}: {steps:?}",
@@ -1308,7 +1386,9 @@ mod tests {
 
         for frame in 0..20 {
             let mut pose = Pose::rest(&rig);
-            let steps = step(&rig, &mut pose, &gait, &stride, frame as f32 / 20.0);
+            let steps = step(&rig, &mut pose, &gait, &stride, frame as f32 / 20.0, |_| {
+                None
+            });
             assert_eq!(steps.crouch, 0.0, "a standing body has nothing to sink for");
             for rotation in &pose.rotations {
                 assert!(
@@ -1317,6 +1397,109 @@ mod tests {
                     frame as f32 / 20.0
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_slope_lifts_the_whole_stride_and_flat_ground_changes_nothing() {
+        // #221. The stride is described against the body's own rest ground
+        // plane: a stance foot slides back at that height and a swing foot arcs
+        // above it, both ending the step where they began it vertically. On a
+        // hill that is wrong at both ends, and `plant_feet_of` cannot save it
+        // because it settles stance feet only — a swinging foot must not be
+        // dragged to the ground it is travelling over, so it kept its level arc
+        // and ploughed straight through the slope.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+
+        // Two probes, so the assertion is about the GROUND and not about any
+        // one number: the same cycle walked on the flat and up a 1-in-4.
+        let grade = 0.25;
+        let sloped = |foot: Vec3| Some(Ground::level(Vec3::new(foot.x, foot.z * grade, foot.z)));
+
+        let mut lifted = 0;
+        for step_index in 0..16 {
+            let cycle = step_index as f32 / 16.0;
+
+            // **Flat ground must be bit-identical to no ground at all.** A
+            // terrain correction that does something on the level is reading a
+            // surface height against a joint height, which is what the first
+            // version of this did — it buried every contact by the stand-off,
+            // 32 mm, and turned a 2.3 mm swing clearance into a 30 mm scuff.
+            let mut none = Pose::rest(&rig);
+            step(&rig, &mut none, &gait, &stride, cycle, |_| None);
+            let mut level = Pose::rest(&rig);
+            step(&rig, &mut level, &gait, &stride, cycle, |foot| {
+                Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z)))
+            });
+            for limb in [Limb::HindLeft, Limb::HindRight] {
+                let (a, b) = (
+                    contact_height(&rig, &none, limb),
+                    contact_height(&rig, &level, limb),
+                );
+                assert!(
+                    (a - b).abs() < 1e-4,
+                    "level ground moved {limb:?} at cycle {cycle}: {a} against {b}"
+                );
+            }
+
+            // And on a slope every contact rides at the height of the ground
+            // under it, rather than at the height of the ground under its rest
+            // position.
+            let mut hill = Pose::rest(&rig);
+            step(&rig, &mut hill, &gait, &stride, cycle, sloped);
+            for limb in [Limb::HindLeft, Limb::HindRight] {
+                let flat = contact_height(&rig, &none, limb);
+                let climbed = contact_height(&rig, &hill, limb);
+                if (climbed - flat).abs() > 1e-3 {
+                    lifted += 1;
+                }
+            }
+        }
+        assert!(
+            lifted > 16,
+            "the slope moved only {lifted} of 32 contact readings — the stride is \
+             still being described against the rest ground plane"
+        );
+    }
+
+    #[test]
+    fn a_swing_clears_the_hill_it_is_climbing() {
+        // The defect as the issue states it, asserted directly: at the end of a
+        // swing — phase 0.99, where the foot is reaching furthest up the hill —
+        // the contact must be at or above the surface it is about to land on,
+        // not through it.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+
+        for grade in [-0.25f32, -0.12, 0.12, 0.25] {
+            let ground =
+                |foot: Vec3| Some(Ground::level(Vec3::new(foot.x, foot.z * grade, foot.z)));
+            let mut worst = f32::MAX;
+            for step_index in 0..64 {
+                let cycle = step_index as f32 / 64.0;
+                let mut pose = Pose::rest(&rig);
+                let steps = step(&rig, &mut pose, &gait, &stride, cycle, ground);
+                let posed = pose.forward(&rig);
+                for limb in steps.swing {
+                    let joint = rig.in_zone(Zone::Extremity(limb))[0];
+                    let at = posed.positions[joint];
+                    // Measured against the surface under the foot, minus the
+                    // height the same joint stands at on the flat: what is
+                    // asked is that the foot clears the hill by as much as it
+                    // clears level ground, not that a joint inside the foot is
+                    // above the surface.
+                    let stand_off = rig.joints[joint].position.y;
+                    worst = worst.min(at.y - (at.z * grade + stand_off));
+                }
+            }
+            assert!(
+                worst > -0.02,
+                "on a {grade} grade a swinging foot passed {:.1} mm below the surface",
+                worst * 1000.0
+            );
         }
     }
 
@@ -1330,6 +1513,7 @@ mod tests {
             &Gait::standing(&rig),
             &Stride::still(),
             0.4,
+            |_| None,
         );
         assert_eq!(steps.swing.len(), 0);
         assert!(steps.is_clean());
@@ -1378,7 +1562,7 @@ mod tests {
     fn walked(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> (Pose, Vec<Limb>) {
         use crate::anim::ground::{FootingConfig, Ground, plant_feet_of};
         let mut pose = Pose::rest(rig);
-        let steps = step(rig, &mut pose, gait, stride, cycle);
+        let steps = step(rig, &mut pose, gait, stride, cycle, |_| None);
         swing_arms(rig, &mut pose, gait, cycle);
         plant_feet_of(
             rig,
@@ -1450,7 +1634,7 @@ mod tests {
         for sample in 0..240 {
             let cycle = sample as f32 / 240.0;
             let mut pose = Pose::rest(&rig);
-            let steps = step(&rig, &mut pose, &gait, &stride, cycle);
+            let steps = step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
             {
                 use crate::anim::ground::{FootingConfig, Ground, plant_feet_of};
                 plant_feet_of(
@@ -1631,7 +1815,7 @@ mod tests {
         for sample in 0..120 {
             let cycle = sample as f32 / 120.0;
             let mut pose = Pose::rest(&rig);
-            let steps = step(&rig, &mut pose, &gait, &stride, cycle);
+            let steps = step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
             swing_arms(&rig, &mut pose, &gait, cycle);
             {
                 use crate::anim::ground::{FootingConfig, Ground, plant_feet_of};
