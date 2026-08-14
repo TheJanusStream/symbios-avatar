@@ -112,6 +112,7 @@ fn main() {
                     Some(Ground::level(Vec3::new(foot.x, foot.z * grade, foot.z)))
                 });
                 gait::swing_arms(rig, &mut pose, &gait, cycle);
+                gait::lean(rig, &mut pose, &gait, &stride);
                 // **The ankles, which this instrument used to leave off** — and
                 // leaving them off is what made its gait column an unfair
                 // reading rather than a hard one (#238). Without `roll_feet` a

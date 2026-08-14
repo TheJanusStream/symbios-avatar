@@ -1132,6 +1132,8 @@ impl Subject {
         let mut pose = Pose::rest(rig);
         let steps = gait::step(rig, &mut pose, &self.gait, &self.stride, cycle, |_| None);
         gait::swing_arms(rig, &mut pose, &self.gait, cycle);
+        gait::lean(rig, &mut pose, &self.gait, &self.stride);
+
         plant_feet_of(
             rig,
             &mut pose,

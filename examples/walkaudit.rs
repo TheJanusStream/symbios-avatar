@@ -77,6 +77,9 @@ struct Moment {
     twist: f32,
     /// Pelvis height about its standing height, in metres.
     pelvis: f32,
+    /// Trunk pitch away from its own rest carriage, in degrees, positive
+    /// forward.
+    lean: f32,
 }
 
 fn main() {
@@ -184,6 +187,7 @@ fn main() {
         let mut pose = Pose::rest(rig);
         let steps = gait::step(rig, &mut pose, &gait, &stride, cycle, floor);
         gait::swing_arms(rig, &mut pose, &gait, cycle);
+        gait::lean(rig, &mut pose, &gait, &stride);
         plant_feet_of(
             rig,
             &mut pose,
@@ -237,6 +241,7 @@ fn main() {
             elbows,
             twist: torso_twist(rig, &posed),
             pelvis: pelvis_rest.map_or(0.0, |(root, rest)| posed.positions[root].y - rest),
+            lean: trunk_lean(rig, &posed),
         }
     };
 
@@ -302,6 +307,7 @@ fn main() {
     let mut straightest = f32::MAX;
     let mut deepest_bend = 0.0f32;
     let mut widest_twist = 0.0f32;
+    let (mut lean_low, mut lean_high) = (f32::MAX, f32::MIN);
     let (mut pelvis_low, mut pelvis_high) = (f32::MAX, f32::MIN);
     let (mut stance_pitch, mut swing_pitch) = ((f32::MAX, f32::MIN), (f32::MAX, f32::MIN));
     for moment in &sweep {
@@ -324,6 +330,8 @@ fn main() {
         straightest = straightest.min(bend);
         deepest_bend = deepest_bend.max(moment.elbows.iter().copied().fold(0.0, f32::max));
         widest_twist = widest_twist.max(moment.twist.abs());
+        lean_low = lean_low.min(moment.lean);
+        lean_high = lean_high.max(moment.lean);
         pelvis_low = pelvis_low.min(moment.pelvis);
         pelvis_high = pelvis_high.max(moment.pelvis);
     }
@@ -364,6 +372,11 @@ fn main() {
          (reference peak: ~5-15)"
     );
     println!(
+        "  lean:   trunk pitched {lean_low:.1} to {lean_high:.1} deg forward of its rest \
+         carriage (reference: ~2-7 at a normal pace, more as it rises; a body that walks \
+         bolt upright reads as a mannequin being carried, #239)"
+    );
+    println!(
         "  pelvis: rode {:.1} to {:.1} mm about standing height, {:.1} mm peak-to-peak \
          (reference: ~25-50 mm at a natural pace)",
         pelvis_low * 1000.0,
@@ -402,6 +415,32 @@ fn elbow_bend(rig: &Rig, posed: &symbios_avatar::anim::Posed, limb: Limb) -> f32
 /// Positive is the left shoulder forward. Measured between the two lines rather
 /// than from either alone, so a body that turns as one — which is a turn and not
 /// a swing — reads as zero.
+/// How far the trunk is pitched forward of its own rest carriage, in degrees.
+///
+/// Measured pelvis-to-shoulders on the POSED body and referenced to the same
+/// line at rest, for the reason every other column here is: this body is not
+/// built standing perfectly upright, so an angle from vertical would report a
+/// lean that was never applied. Zero means "carried as it stands".
+///
+/// Taken from the joint the arms hang off rather than from the neck, because
+/// the neck deliberately takes the lean back off again to hold the head level —
+/// measuring there would read the head's correction and call it the trunk's
+/// posture.
+fn trunk_lean(rig: &Rig, posed: &symbios_avatar::anim::Posed) -> f32 {
+    let Some(&neck) = rig.in_zone(symbios_avatar::Zone::Neck).first() else {
+        return 0.0;
+    };
+    let Some(girdle) = rig.joints[neck].parent else {
+        return 0.0;
+    };
+    let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
+        return 0.0;
+    };
+    let pitch = |run: Vec3| run.z.atan2(run.y).to_degrees();
+    pitch(posed.positions[girdle] - posed.positions[root])
+        - pitch(rig.joints[girdle].position - rig.joints[root].position)
+}
+
 fn torso_twist(rig: &Rig, posed: &symbios_avatar::anim::Posed) -> f32 {
     let line = |a: Limb, b: Limb| -> Option<Vec3> {
         let at = |limb: Limb| -> Option<Vec3> {

@@ -207,6 +207,17 @@ pub struct Stride {
     pub lift: f32,
 }
 
+/// What share of a leg's reach a natural stride covers.
+///
+/// Named rather than written into [`Stride::for_body`], because [`pace_of`]
+/// reads the relation backwards to recover how fast a stride is, and a
+/// constant that appears twice is one that will disagree with itself — the
+/// slope plane in the viewer drifted apart twice for exactly that reason.
+const STRIDE_OF_REACH: f32 = 0.7;
+
+/// And what share of it a contact lifts at the top of its swing.
+const LIFT_OF_REACH: f32 = 0.12;
+
 impl Stride {
     /// A stride scaled to the body walking it.
     ///
@@ -224,8 +235,8 @@ impl Stride {
             .max(f32::EPSILON);
         Self {
             direction: Vec3::Z,
-            length: reach * 0.7 * pace.max(0.0),
-            lift: reach * 0.12 * pace.max(0.0),
+            length: reach * STRIDE_OF_REACH * pace.max(0.0),
+            lift: reach * LIFT_OF_REACH * pace.max(0.0),
         }
     }
 
@@ -724,6 +735,22 @@ const ARM_DROP: f32 = 0.66;
 /// Spread down the spine rather than spent at one joint — see [`swing_arms`].
 const SHOULDER_TWIST: f32 = 0.17;
 
+/// How far the trunk pitches forward at a natural walking pace, in radians.
+///
+/// Five and a half degrees, in the middle of the 2–7 the gait literature
+/// reports for a normal adult trunk, and growing from there with pace. A body
+/// that walks bolt upright reads as a mannequin being carried along: it was the
+/// last of the three postural complaints #102 made about this gait, after the
+/// elbows and the pelvis, and the only one nothing had been done about.
+///
+/// **Against pace, not against speed in metres.** Pace here is the stride the
+/// body is actually taking measured against the legs taking it — recovered from
+/// [`Stride::for_body`]'s own relation — so a short body and a tall one at the
+/// same dimensionless stride lean by the same amount. That is the dynamic
+/// similarity the whole gait is built on, and it is the form #240's speed axis
+/// will want.
+const TRUNK_LEAN: f32 = 0.096;
+
 /// How far behind the legs the arms run, as a share of the cycle.
 ///
 /// Not zero. Arms driven in lockstep with the legs read as clockwork; the lag is
@@ -859,6 +886,147 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
         }
         pose.rotations[neck] *= Quat::from_rotation_y(-SHOULDER_TWIST * lead);
     }
+}
+
+/// How fast this stride is, as a multiple of the pace [`Stride::for_body`]
+/// calls natural.
+///
+/// Recovered from the stride rather than passed alongside it, so a caller
+/// cannot tell the lean one pace and the legs another. The relation is
+/// `for_body`'s own, read backwards: a body's natural stride is a fixed share
+/// of the reach of the legs taking it, so dividing one by the other leaves a
+/// dimensionless number that means the same thing on any body.
+fn pace_of(rig: &Rig, stride: &Stride) -> f32 {
+    let reach = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.limb_reach(limb))
+        .fold(0.0f32, f32::max);
+    if reach <= f32::EPSILON {
+        return 0.0;
+    }
+    (stride.length / (reach * STRIDE_OF_REACH)).max(0.0)
+}
+
+/// Pitches the trunk forward into the walk, and holds the head level over it.
+///
+/// A walking body leans; a standing one does not. The lean grows with pace
+/// because it is what a body does to put its mass ahead of its feet — the
+/// literature reports 2–7 degrees at a normal walking pace and more as that
+/// pace rises, and this crate's own figure sits in the middle of that band at
+/// the pace [`Stride::for_body`] calls natural.
+///
+/// **Pitched rigidly from the lowest spine joint, where the twist is spread
+/// along the whole chain.** The two are opposite on purpose and the anatomy is
+/// the reason: a spine genuinely twists along its length, so the shoulder wind
+/// is shared out; a trunk leans as one piece about the hip, which is the joint
+/// at the bottom of that same chain. Writing the lean the way the twist is
+/// written also makes the constant lie — **spread down the spine it delivered
+/// 2.1 degrees of the 5.5 it asked for**, because local rotations compound but
+/// the trunk's CHORD from pelvis to shoulders ends up a length-weighted average
+/// of them rather than their sum. That is the #223 elbow defect exactly: a
+/// constant nothing was checking against the body it moved. Pitching the base
+/// carries everything above it by the angle written here, and
+/// `examples/walkaudit` reads back what this says.
+///
+/// **The head is put back level.** The neck takes the whole lean off again, so
+/// a body walking faster looks where it is going instead of at its own feet.
+/// That is the same bargain [`swing_arms`] strikes with the shoulder twist, and
+/// for the same reason: a gaze dragged around by locomotion reads as a body
+/// with no attention of its own. [`super::look_at`] composes on top of this and
+/// is unaffected.
+///
+/// Call after [`step`], like [`swing_arms`]; it touches nothing below the
+/// pelvis and so cannot disturb a footing solve.
+///
+/// **Rotations are composed, not assigned**, so this stacks with the twist
+/// rather than replacing it — running it twice compounds its own lean, as any
+/// additive layer would.
+pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
+    if !pose.fits(rig) {
+        return;
+    }
+    // A gait that never lifts a contact is standing, whatever stride it was
+    // handed — the same rule `step` and `crouch_at` apply (#230). A standing
+    // body stands up straight.
+    if gait.duty >= 1.0 {
+        return;
+    }
+    let pitch = TRUNK_LEAN * pace_of(rig, stride);
+    if pitch.abs() <= f32::EPSILON {
+        return;
+    }
+
+    let Some(&neck) = rig.in_zone(Zone::Neck).first() else {
+        return;
+    };
+    let Some(girdle) = rig.joints[neck].parent else {
+        return;
+    };
+    let spine = spine_to(rig, girdle);
+    if spine.is_empty() {
+        return;
+    }
+    // Positive about X carries `+Y` toward `+Z`, and `+Z` is forward — so a
+    // forward lean is the positive rotation here, where a forward arm swing was
+    // the negative one. The difference is not a sign error waiting to happen:
+    // an arm hangs DOWN and a trunk stands UP, so the same rotation carries them
+    // opposite ways.
+    let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
+        return;
+    };
+    let hinge = spine[0];
+    let below = rig.joints[hinge].position - rig.joints[root].position;
+    let above = rig.joints[girdle].position - rig.joints[hinge].position;
+    let turn = trunk_angle_for(below, above, pitch);
+    pose.rotations[hinge] *= Quat::from_rotation_x(turn);
+    pose.rotations[neck] *= Quat::from_rotation_x(-turn);
+}
+
+/// How many times [`trunk_angle_for`] refines its guess.
+///
+/// **Three, measured.** The relation is a chord pitching about a point part way
+/// along itself, so the angle asked for and the angle delivered differ by a
+/// factor that itself depends on the angle. One pass lands within about a
+/// tenth of a degree on the default body, two within a thousandth, and three is
+/// indistinguishable from the limit on every seed swept — cheap enough that
+/// there is no reason to run fewer, and the same fixed point [`roll_feet`]
+/// iterates for the same kind of reason.
+const TRUNK_PASSES: usize = 3;
+
+/// The rotation to put at the base of the spine so the whole trunk arrives
+/// pitched by `wanted`.
+///
+/// **Solved rather than assumed, because the two are not the same angle.** The
+/// trunk's inclination is the pitch of the chord from the pelvis to the
+/// shoulders, which is what the gait literature measures and what
+/// `examples/walkaudit` reads back. But the pelvis cannot be rotated — it
+/// carries the legs, and turning it turns them out from under the footing solve
+/// — so the hinge is the joint above it, and the segment `below` it stays put
+/// while only `above` swings. The chord is then a length-weighted mix of a
+/// still part and a turned one, and it arrives at a fraction of the angle
+/// applied: 3.0 degrees of a 5.5 asked, on the default body.
+///
+/// Rather than let the constant mean a budget nobody can check, this inverts
+/// the relation. `wanted` is the inclination, the return is whatever rotation
+/// delivers it, and the two are the same number only on a body whose pelvis has
+/// no height at all.
+fn trunk_angle_for(below: Vec3, above: Vec3, wanted: f32) -> f32 {
+    let pitch = |run: Vec3| run.z.atan2(run.y);
+    let rest = pitch(below + above);
+    let mut turn = wanted;
+    for _ in 0..TRUNK_PASSES {
+        let delivered = pitch(below + Quat::from_rotation_x(turn) * above) - rest;
+        // The shortfall, applied to the guess. A body whose trunk is all pelvis
+        // delivers nothing however far it turns, and dividing by that would
+        // spin it; the guard leaves such a body upright, which is the honest
+        // answer for one that cannot lean.
+        if delivered.abs() <= f32::EPSILON {
+            return 0.0;
+        }
+        turn *= wanted / delivered;
+    }
+    turn
 }
 
 /// The spine from the pelvis up to `top`, pelvis end first.
@@ -1499,6 +1667,120 @@ mod tests {
                 worst > -0.02,
                 "on a {grade} grade a swinging foot passed {:.1} mm below the surface",
                 worst * 1000.0
+            );
+        }
+    }
+
+    /// The pitch of the trunk's chord — pelvis to shoulder girdle — away from
+    /// its own rest carriage, in degrees, positive forward.
+    ///
+    /// The same reading `examples/walkaudit` prints, and the same segment the
+    /// gait literature calls trunk inclination.
+    fn trunk_pitch(rig: &Rig, pose: &Pose, girdle: usize) -> f32 {
+        let root = rig
+            .joints
+            .iter()
+            .position(|joint| joint.parent.is_none())
+            .expect("a root");
+        let posed = pose.forward(rig);
+        let pitch = |run: Vec3| run.z.atan2(run.y).to_degrees();
+        pitch(posed.positions[girdle] - posed.positions[root])
+            - pitch(rig.joints[girdle].position - rig.joints[root].position)
+    }
+
+    /// The joint the arms hang from, which is the top of the trunk's chord.
+    fn girdle_of(rig: &Rig) -> usize {
+        let neck = rig.in_zone(Zone::Neck)[0];
+        rig.joints[neck].parent.expect("a girdle under the neck")
+    }
+
+    #[test]
+    fn the_trunk_leans_by_the_angle_the_constant_is_written_as() {
+        // **#239, and the guard is #223's lesson rather than the lean itself.**
+        // The angle that has to be right is the trunk's INCLINATION, which is
+        // what the literature measures and what a viewer sees; the rotation that
+        // produces it is applied at the joint above the pelvis, because the
+        // pelvis carries the legs and cannot turn. Those two are not the same
+        // angle — applied naively the body delivered 3.0 degrees of the 5.5 it
+        // was asked for, and spread down the spine only 2.1 — so this asserts on
+        // the delivered inclination and would fail on any arrangement that let
+        // the constant become a budget.
+        let rig = biped();
+        let girdle = girdle_of(&rig);
+        let gait = Gait::natural(&rig);
+        let mut pose = Pose::rest(&rig);
+        lean(&rig, &mut pose, &gait, &Stride::for_body(&rig, 1.0));
+        let delivered = trunk_pitch(&rig, &pose, girdle);
+        let asked = TRUNK_LEAN.to_degrees();
+        assert!(
+            (delivered - asked).abs() < 0.05,
+            "asked {asked:.2} deg of trunk lean and got {delivered:.2}"
+        );
+    }
+
+    #[test]
+    fn the_lean_grows_with_pace_and_a_standing_body_stands_up_straight() {
+        // A walking body leans and a standing one does not, which is the whole
+        // shape of the thing: the lean is what a body does to put its mass ahead
+        // of its feet, so a body with no stride has nothing to lean for.
+        let rig = biped();
+        let girdle = girdle_of(&rig);
+        let gait = Gait::natural(&rig);
+
+        let at = |pace: f32| {
+            let mut pose = Pose::rest(&rig);
+            lean(&rig, &mut pose, &gait, &Stride::for_body(&rig, pace));
+            trunk_pitch(&rig, &pose, girdle)
+        };
+        assert!(at(0.0).abs() < 1e-3, "a standing body leaned {}", at(0.0));
+
+        let (slow, natural, fast) = (at(0.5), at(1.0), at(2.0));
+        assert!(
+            slow > 0.0 && slow < natural && natural < fast,
+            "the lean must grow with pace: {slow:.2}, {natural:.2}, {fast:.2}"
+        );
+
+        // And a gait that never lifts a contact is standing however long a
+        // stride it is handed — the rule #230 established for `step`.
+        let mut pose = Pose::rest(&rig);
+        lean(
+            &rig,
+            &mut pose,
+            &Gait::standing(&rig),
+            &Stride::for_body(&rig, 1.0),
+        );
+        assert!(
+            trunk_pitch(&rig, &pose, girdle).abs() < 1e-3,
+            "a standing gait leaned on a walking stride"
+        );
+    }
+
+    #[test]
+    fn the_head_keeps_looking_where_it_is_going() {
+        // The bargain `swing_arms` strikes with the shoulder twist, struck again
+        // for the pitch: the trunk leans and the neck takes it back off, so a
+        // body walking faster looks ahead rather than at its own feet. Without
+        // this a body at a run reads as studying the ground.
+        let rig = biped();
+        let neck = rig.in_zone(Zone::Neck)[0];
+        let Some(&head) = rig.in_zone(Zone::Head).first() else {
+            return;
+        };
+        let gait = Gait::natural(&rig);
+        let pitch = |pose: &Pose| {
+            let posed = pose.forward(&rig);
+            let run = posed.positions[head] - posed.positions[neck];
+            run.z.atan2(run.y).to_degrees()
+        };
+        let rest = pitch(&Pose::rest(&rig));
+        for pace in [0.5f32, 1.0, 2.0] {
+            let mut pose = Pose::rest(&rig);
+            lean(&rig, &mut pose, &gait, &Stride::for_body(&rig, pace));
+            let carried = pitch(&pose);
+            assert!(
+                (carried - rest).abs() < 0.05,
+                "at pace {pace} the lean carried the head {:.2} deg off level",
+                carried - rest
             );
         }
     }
