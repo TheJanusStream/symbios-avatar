@@ -448,7 +448,43 @@ where
 /// it — aiming the ankle itself at the ground would bury the foot in it. Shared
 /// with the gait engine, which places contacts for a different reason but has
 /// exactly the same problem.
+///
+/// **One pass, and it misses by the hang it corrected for** (#254). The offset
+/// below is read off the pose, and the solve it feeds then rotates the joint it
+/// was read from — so the extremity lands where it *was* hanging rather than on
+/// `target`. Measured on the default biped: a hand 69.7 mm from its goal on a
+/// rest pose, a stance foot 67 mm above a flat floor at pace 1.5 against 36 mm
+/// at pace 0.5, every one of them reported as a successful solve. Iterating
+/// fixes it and is not free: it moves the gait, which shares this function.
 pub(crate) fn solve_contact(rig: &Rig, pose: &mut Pose, limb: Limb, target: Vec3) -> bool {
+    // Which way the joint folds is the rig's to say, not this function's. It
+    // used to be hardcoded forward here, which is right for a biped's knee and
+    // a quadruped's stifle and backwards for everything else that can be
+    // solved. See [`Rig::bend_pole`].
+    let Some(pole) = rig.bend_pole(limb) else {
+        return false;
+    };
+    solve_contact_toward(rig, pose, limb, target, pole)
+}
+
+/// As [`solve_contact`], but with the fold direction given rather than read off
+/// the rest pose.
+///
+/// [`Rig::bend_pole`] answers in the rig's **rest** space — it is a point thrown
+/// a body's length out from where the chain's root sits on an unposed body. That
+/// is the right answer for a goal which is itself in rest space, which every
+/// ground contact is: the floor does not move when the pelvis does. It is the
+/// wrong answer for a goal carried along by the body, because the pole would
+/// then stay behind while the goal travelled, and the limb would fold on a plane
+/// that drifts with the crouch. A caller that moves the goal moves the pole with
+/// it, through the same transform.
+pub(crate) fn solve_contact_toward(
+    rig: &Rig,
+    pose: &mut Pose,
+    limb: Limb,
+    target: Vec3,
+    pole: Vec3,
+) -> bool {
     let Some(chain) = rig.limb_chain(limb) else {
         return false;
     };
@@ -458,13 +494,6 @@ pub(crate) fn solve_contact(rig: &Rig, pose: &mut Pose, limb: Limb, target: Vec3
 
     let posed = pose.forward(rig);
     let offset = posed.positions[chain[2]] - posed.positions[foot];
-    // Which way the joint folds is the rig's to say, not this function's. It
-    // used to be hardcoded forward here, which is right for a biped's knee and
-    // a quadruped's stifle and backwards for everything else that can be
-    // solved. See [`Rig::bend_pole`].
-    let Some(pole) = rig.bend_pole(limb) else {
-        return false;
-    };
 
     two_bone(rig, pose, chain, target + offset, pole)
 }

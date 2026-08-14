@@ -67,7 +67,7 @@ pub mod pose_clip;
 pub mod spring;
 
 pub use blend::Inertializer;
-pub use clip::{Clip, Key, Target, Track};
+pub use clip::{Clip, Key, Space, Target, Track};
 pub use gait::{Gait, Phase, Steps, Stride, Walk, Walked};
 pub use gaze::{Gaze, GazeConfig, look_at};
 pub use ground::{
