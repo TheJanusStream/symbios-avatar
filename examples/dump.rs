@@ -296,23 +296,28 @@ fn walk(dir: &std::path::Path, frames: usize) -> usize {
     for frame in 0..frames.max(1) {
         let cycle = frame as f32 / frames.max(1) as f32;
         let mut pose = Pose::rest(rig);
-        let steps = gait::step(rig, &mut pose, &gait, &stride, cycle, |_| None);
+        // One floor, given to the stride, the plant and the roll alike. Handing
+        // any two of them different ground is what leaves a swing arc at the
+        // rest height while the feet settle onto a hill (#221) — this printed
+        // its stride against a floor of `None` for as long as it existed.
+        let ground = |foot: Vec3| {
+            Some(Ground {
+                position: Vec3::new(foot.x, foot.z * grade, foot.z),
+                normal: Vec3::new(0.0, 1.0, -grade).normalize(),
+            })
+        };
+        let steps = gait::step(rig, &mut pose, &gait, &stride, cycle, ground);
 
         let footing = plant_feet_of(
             rig,
             &mut pose,
             &steps.stance,
-            |foot| {
-                Some(Ground {
-                    position: Vec3::new(foot.x, foot.z * grade, foot.z),
-                    normal: Vec3::new(0.0, 1.0, -grade).normalize(),
-                })
-            },
+            ground,
             &FootingConfig::default(),
         );
         // Last, after the plant has laid the soles flat: the roll is what puts
         // the heel-strike and the push-off back into them (#236).
-        let rolled = gait::roll_feet(rig, &mut pose, &gait, cycle);
+        let rolled = gait::roll_feet(rig, &mut pose, &gait, cycle, ground);
 
         println!(
             "walk frame {frame:<3} cycle {cycle:.2}  stance {:?}  swing {:?}  \

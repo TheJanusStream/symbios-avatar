@@ -16,9 +16,11 @@
 //! the contacts and sinks the body for them, [`swing_arms`] answers with the
 //! upper body, [`super::plant_feet_of`] settles the stance feet onto whatever
 //! terrain is really there, and [`roll_feet`] takes the soles back off it into
-//! the heel-strike and push-off attitudes a walk is judged by. Each reads the
-//! pose the one before it left; running the roll before the plant would simply
-//! be levelled away.
+//! the heel-strike and push-off attitudes a walk is judged by — attitudes
+//! measured against that same terrain, so a foot climbing a hill meets the hill
+//! rather than the flat it was authored for (#250). Each reads the pose the one
+//! before it left; running the roll before the plant would simply be levelled
+//! away.
 //!
 //! The cycle itself is the caller's to drive, because how fast a body walks is a
 //! question about the world — speed, terrain, intent — and this crate does not
@@ -479,9 +481,11 @@ where
 ///    lays every sole flat and a roll applied before it is simply levelled
 ///    away.
 ///
-/// The same ground is given to the stride and to the plant. Handing those two
-/// different floors is what leaves a swing arc at the rest height while the
-/// feet settle onto a hill, which is the whole of #221.
+/// The same ground is given to the stride, to the plant and to the roll.
+/// Handing any two of them different floors is what leaves a swing arc at the
+/// rest height while the feet settle onto a hill, which is the whole of #221;
+/// the roll joined that list under #250, where a sole pitched for level ground
+/// went through the hill it was climbing.
 ///
 /// # Ablation
 ///
@@ -593,7 +597,7 @@ impl Walk {
         }
         // After the plant. See the type's own docs for why the order is not a
         // preference.
-        roll_feet(rig, pose, gait, self.cycle);
+        roll_feet(rig, pose, gait, self.cycle, &ground);
         walked
     }
 }
@@ -760,6 +764,38 @@ pub fn foot_pitch(phase: Phase) -> f32 {
 /// is what takes it off again, and running it first would simply be levelled
 /// away.
 ///
+/// `ground` answers what is beneath a point, exactly as [`step`] and
+/// [`super::plant_feet_of`] ask it, and it must be the same floor all three are
+/// given — see [`Walk::drive`].
+///
+/// # The pitch rides on the surface, not on the ankle (#250)
+///
+/// This used to take the attitude to pitch about from the ankle's own rotation,
+/// on the reasoning that [`super::level_feet`] had just laid the sole into the
+/// ground and so the ankle already held the answer. It does not, on ground
+/// steep enough to matter: the clamp in [`super::level_feet`] is on the *local*
+/// ankle angle, and a 30% grade asks 44.1 degrees of an ankle that has 40.1
+/// ([`FootingConfig::max_ankle`]). What the ankle reports there is where it got
+/// to rather than where it was sent, and a roll built on it puts the pitch on
+/// the wrong plane and picks the wrong sole point to pivot about.
+///
+/// Measured by `examples/walkaudit` — worst sole pass over one cycle, against
+/// 2.3 mm of clearance on the flat:
+///
+/// | grade | −40% | −30% | +30% | +40% |
+/// |-------|------|------|------|------|
+/// | read off the ankle | −6.8 mm | −2.9 mm | −17.1 mm | −47.7 mm |
+/// | read off the ground | −6.8 mm | −2.9 mm | −1.6 mm | −5.5 mm |
+///
+/// **The asymmetry was the tell**, and it is worth recording because it is what
+/// a downhill-only test would have missed entirely: climbing needs the ankle to
+/// flex further than descending does, so only the uphill readings ever clamped.
+///
+/// The remainder is symmetric in the grade and is a different, smaller term
+/// this did not touch. So is the whole lateral axis: a body walking *across* a
+/// slope still puts a swinging foot 52 mm through the hillside at 30% camber,
+/// which is #255 and is larger than what this fixed.
+///
 /// Returns the contacts whose leg could not reach the rolled goal, which should
 /// be none — rolling *raises* the contact at both extremes, so it asks the leg
 /// for less reach than the plant already got.
@@ -804,7 +840,10 @@ pub fn foot_pitch(phase: Phase) -> f32 {
 /// forefoot held flat, the heel-to-toe run `examples/walkaudit` measures reports
 /// 0.70 of the pitch asked, so `TOE_OFF` would no longer deliver the degrees
 /// it is written in. Recorded as a cost rather than smuggled in.
-pub fn roll_feet(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) -> Vec<Limb> {
+pub fn roll_feet<F>(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32, ground: F) -> Vec<Limb>
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
     let mut straining = Vec::new();
     // A gait that never lifts a contact expresses no roll either — the same
     // rule [`step`] and [`crouch_at`] apply to their own outputs (#230). A
@@ -818,7 +857,7 @@ pub fn roll_feet(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) -> Vec<Lim
         if pitch == 0.0 {
             continue;
         }
-        if roll_one(rig, pose, limb, pitch) == Some(false) {
+        if roll_one(rig, pose, limb, pitch, &ground) == Some(false) {
             straining.push(limb);
         }
     }
@@ -827,12 +866,15 @@ pub fn roll_feet(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) -> Vec<Lim
 }
 
 /// Rolls one foot by `pitch` about whichever of its sole points bears the
-/// weight.
+/// weight, measured against the surface under that foot.
 ///
 /// `None` for a limb with no foot to roll — one the body has not got, or one
 /// whose extremity is a single node and so has no length to pitch along.
 /// Otherwise whether the leg reached the goal the roll asked for.
-fn roll_one(rig: &Rig, pose: &mut Pose, limb: Limb, pitch: f32) -> Option<bool> {
+fn roll_one<F>(rig: &Rig, pose: &mut Pose, limb: Limb, pitch: f32, ground: &F) -> Option<bool>
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
     let joints = rig.extremity_joints(limb);
     let (&ankle, sole) = (joints.first()?, joints.get(1..)?);
     let parent = rig.joints[ankle].parent?;
@@ -851,8 +893,24 @@ fn roll_one(rig: &Rig, pose: &mut Pose, limb: Limb, pitch: f32) -> Option<bool> 
     // The attitude the footing solve settled the foot at. Everything below is
     // measured against this one pose, so the passes do not chase themselves.
     let posed = pose.forward(rig);
-    let settled = posed.rotations[ankle];
-    let up = (settled * Vec3::Y).try_normalize()?;
+    let placed = posed.rotations[ankle];
+
+    // **The surface, asked for directly, rather than read back off the ankle**
+    // (#250). What the settled attitude reports is where the ankle *got to*,
+    // which on a steep grade is not where [`super::level_feet`] sent it: the
+    // clamp there is on the local ankle angle, and a 30% grade asks 44.1
+    // degrees of an ankle that has 40.1. Rolling about a short base then puts
+    // the pitch on the wrong plane and picks the wrong sole point to pivot
+    // about, and the foot ends up through the hill it is climbing.
+    let up = ground(posed.positions[contact])
+        .map_or(Vec3::Y, |ground| ground.normal)
+        .normalize_or(Vec3::Y);
+
+    // The base attitude the pitch rides on: the placed foot with its sole laid
+    // into the surface. Correcting the up axis rather than rebuilding the
+    // rotation keeps the heading the leg gave it — a foot points where the leg
+    // swung it, and only its tilt is the ground's business.
+    let settled = Quat::from_rotation_arc((placed * Vec3::Y).normalize_or(Vec3::Y), up) * placed;
 
     // The foot's run, rearmost sole joint to foremost, carried into the pose.
     // `None` where the two coincide: a foot of one node has no direction to be
@@ -1809,6 +1867,81 @@ mod tests {
         );
     }
 
+    /// The lowest point of every sole, measured against the surface beneath it,
+    /// over one cycle of the whole walk.
+    ///
+    /// Sole points rather than joints, and the surface rather than zero: a
+    /// contact joint sits inside the foot and the floor is not level, so either
+    /// shortcut reports a foot sinking downhill that is doing nothing of the
+    /// kind. The same reading `examples/walkaudit` takes off the deformed mesh,
+    /// taken here off the sole points the plan builds at ground height.
+    fn worst_sole_pass<F>(rig: &Rig, gait: &Gait, stride: &Stride, ground: F) -> f32
+    where
+        F: Fn(Vec3) -> Option<Ground> + Copy,
+    {
+        (0..64).fold(f32::MAX, |worst, sample| {
+            let mut pose = Pose::rest(rig);
+            Walk::at(sample as f32 / 64.0).drive(rig, &mut pose, gait, stride, ground);
+            let posed = pose.forward(rig);
+            gait.limbs.iter().fold(worst, |worst, &limb| {
+                let joints = rig.extremity_joints(limb);
+                let Some(&ankle) = joints.first() else {
+                    return worst;
+                };
+                joints[1..].iter().fold(worst, |worst, &joint| {
+                    let at = rig.joints[joint].position;
+                    let sole = posed.positions[ankle]
+                        + posed.rotations[ankle]
+                            * (Vec3::new(at.x, 0.0, at.z) - rig.joints[ankle].position);
+                    let floor = ground(sole).map_or(0.0, |ground| ground.position.y);
+                    worst.min(sole.y - floor)
+                })
+            })
+        })
+    }
+
+    #[test]
+    fn a_sole_meets_the_hill_it_lands_on_rather_than_the_flat_it_was_authored_for() {
+        // **#250.** `roll_feet` read the attitude to pitch about back off the
+        // ankle, which is where the foot GOT to rather than where `level_feet`
+        // sent it: the clamp there is on the local ankle angle, and a 30% grade
+        // asks 44.1 degrees of an ankle that has 40.1. Rolling about a base
+        // that short put the pitch on the wrong plane and picked the wrong sole
+        // point to pivot about, and the sole went through the hill — 17.1 mm at
+        // a 30% grade and 47.7 mm at 40%, against 2.3 mm of clearance on the
+        // flat.
+        //
+        // **Uphill and downhill both, because the defect was asymmetric and
+        // that asymmetry is the tell.** Downhill never clamped and never
+        // showed it; a test that only walked down the hill would have passed
+        // throughout.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+
+        let flat = worst_sole_pass(&rig, &gait, &stride, |foot| {
+            Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z)))
+        });
+        for grade in [-0.40f32, -0.30, -0.15, 0.15, 0.30, 0.40] {
+            let worst = worst_sole_pass(&rig, &gait, &stride, |foot| {
+                Some(Ground {
+                    position: Vec3::new(foot.x, foot.z * grade, foot.z),
+                    normal: Vec3::new(0.0, 1.0, -grade).normalize(),
+                })
+            });
+            // Against the flat reading rather than against zero: how far a sole
+            // sits from its own standing depth is #220's question and a build
+            // property, not a thing a slope should be blamed for.
+            assert!(
+                worst > flat - 0.012,
+                "on a {grade} grade the sole passed {:.1} mm below the surface, against \
+                 {:.1} mm on the flat",
+                worst * 1000.0,
+                flat * 1000.0
+            );
+        }
+    }
+
     #[test]
     fn a_swing_clears_the_hill_it_is_climbing() {
         // The defect as the issue states it, asserted directly: at the end of a
@@ -2017,7 +2150,7 @@ mod tests {
                     &FootingConfig::default(),
                 );
             }
-            roll_feet(&rig, &mut longhand, &gait, cycle);
+            roll_feet(&rig, &mut longhand, &gait, cycle, ground);
 
             let mut driven = Pose::rest(&rig);
             let walked = Walk::at(cycle).drive(&rig, &mut driven, &gait, &stride, ground);
@@ -2067,7 +2200,7 @@ mod tests {
             ground,
             &FootingConfig::default(),
         );
-        roll_feet(&rig, &mut expected, &gait, cycle);
+        roll_feet(&rig, &mut expected, &gait, cycle, ground);
         for joint in 0..expected.rotations.len() {
             let apart = apart(bare.rotations[joint], expected.rotations[joint]);
             assert!(
@@ -2097,7 +2230,7 @@ mod tests {
         step(&rig, &mut without, &gait, &stride, cycle, ground);
         swing_arms(&rig, &mut without, &gait, cycle);
         lean(&rig, &mut without, &gait, &stride);
-        roll_feet(&rig, &mut without, &gait, cycle);
+        roll_feet(&rig, &mut without, &gait, cycle, ground);
         for joint in 0..without.rotations.len() {
             let apart = apart(raw.rotations[joint], without.rotations[joint]);
             assert!(
@@ -2165,17 +2298,18 @@ mod tests {
     /// step, arms, plant, roll.
     fn walked(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> (Pose, Vec<Limb>) {
         use crate::anim::ground::{FootingConfig, Ground, plant_feet_of};
+        let ground = |foot: Vec3| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z)));
         let mut pose = Pose::rest(rig);
-        let steps = step(rig, &mut pose, gait, stride, cycle, |_| None);
+        let steps = step(rig, &mut pose, gait, stride, cycle, ground);
         swing_arms(rig, &mut pose, gait, cycle);
         plant_feet_of(
             rig,
             &mut pose,
             &steps.stance,
-            |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
+            ground,
             &FootingConfig::default(),
         );
-        let straining = roll_feet(rig, &mut pose, gait, cycle);
+        let straining = roll_feet(rig, &mut pose, gait, cycle, ground);
         (pose, straining)
     }
 
@@ -2235,17 +2369,22 @@ mod tests {
         let gait = Gait::wave(&rig);
         let stride = Stride::for_body(&rig, 1.0);
 
+        let ground = |foot: Vec3| {
+            Some(crate::anim::ground::Ground::level(Vec3::new(
+                foot.x, 0.0, foot.z,
+            )))
+        };
         for sample in 0..240 {
             let cycle = sample as f32 / 240.0;
             let mut pose = Pose::rest(&rig);
-            let steps = step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
+            let steps = step(&rig, &mut pose, &gait, &stride, cycle, ground);
             {
-                use crate::anim::ground::{FootingConfig, Ground, plant_feet_of};
+                use crate::anim::ground::{FootingConfig, plant_feet_of};
                 plant_feet_of(
                     &rig,
                     &mut pose,
                     &steps.stance,
-                    |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
+                    ground,
                     &FootingConfig::default(),
                 );
             }
@@ -2267,7 +2406,7 @@ mod tests {
             };
 
             let before: Vec<Vec<Vec3>> = steps.stance.iter().map(|&l| soles(&pose, l)).collect();
-            roll_feet(&rig, &mut pose, &gait, cycle);
+            roll_feet(&rig, &mut pose, &gait, cycle, ground);
 
             for (&limb, before) in steps.stance.iter().zip(&before) {
                 let after = soles(&pose, limb);
@@ -2416,24 +2555,29 @@ mod tests {
             );
         }
 
+        let ground = |foot: Vec3| {
+            Some(crate::anim::ground::Ground::level(Vec3::new(
+                foot.x, 0.0, foot.z,
+            )))
+        };
         for sample in 0..120 {
             let cycle = sample as f32 / 120.0;
             let mut pose = Pose::rest(&rig);
-            let steps = step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
+            let steps = step(&rig, &mut pose, &gait, &stride, cycle, ground);
             swing_arms(&rig, &mut pose, &gait, cycle);
             {
-                use crate::anim::ground::{FootingConfig, Ground, plant_feet_of};
+                use crate::anim::ground::{FootingConfig, plant_feet_of};
                 plant_feet_of(
                     &rig,
                     &mut pose,
                     &steps.stance,
-                    |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
+                    ground,
                     &FootingConfig::default(),
                 );
             }
 
             let planted = pose.clone();
-            let straining = roll_feet(&rig, &mut pose, &gait, cycle);
+            let straining = roll_feet(&rig, &mut pose, &gait, cycle, ground);
             assert!(
                 straining.is_empty(),
                 "a foot that cannot roll must not be reported as straining at {cycle:.3}"

@@ -48,6 +48,7 @@
 //! cargo run --example walkaudit
 //! cargo run --example walkaudit -- --frames 24
 //! cargo run --example walkaudit -- --pace 1.4 --grade 0.12
+//! cargo run --example walkaudit -- --camber 0.20
 //! ```
 
 use glam::Vec3;
@@ -92,6 +93,13 @@ fn main() {
     let frames = number("--frames").map_or(16, |value| value as usize).max(2);
     let pace = number("--pace").unwrap_or(1.0);
     let grade = number("--grade").unwrap_or(0.0);
+    // The lateral axis, which is a different question from the grade and was
+    // for a long time the only one being asked by accident: `examples/locomotion`
+    // tilted its ground along X and called the result a grade for its whole
+    // life (fixed under #221). A foot on a side-slope has to ROLL to meet it,
+    // where a foot on a grade has to PITCH, and nothing here measured the first
+    // one until #250.
+    let camber = number("--camber").unwrap_or(0.0);
 
     let record = AvatarRecord::new("Walker", Archetype::default());
     let Some(avatar) = Avatar::build(&record) else {
@@ -176,10 +184,11 @@ fn main() {
     // its contacts on the same surface the plant settles them onto (#221),
     // which is what stops a swing arc built at the rest ground height from
     // ploughing through a slope it is climbing.
+    let height = |at: Vec3| at.z * grade + at.x * camber;
     let floor = |foot: Vec3| {
         Some(Ground {
-            position: Vec3::new(foot.x, foot.z * grade, foot.z),
-            normal: Vec3::new(0.0, 1.0, -grade).normalize(),
+            position: Vec3::new(foot.x, height(foot), foot.z),
+            normal: Vec3::new(-camber, 1.0, -grade).normalize(),
         })
     };
     let measure = |cycle: f32| -> Moment {
@@ -205,7 +214,7 @@ fn main() {
                         // zero: on a grade the floor is not level and a foot that
                         // tracks it would otherwise read as sinking downhill.
                         let at = moved[vertex];
-                        at.y - at.z * grade
+                        at.y - height(at)
                     })
                     .fold(f32::MAX, f32::min);
                 let index = gait.limbs.iter().position(|other| other == limb);
@@ -237,8 +246,10 @@ fn main() {
     };
 
     println!(
-        "walking at pace {pace:.2} on a {:.0}% grade, {frames} frames of one cycle",
-        grade * 100.0
+        "walking at pace {pace:.2} on a {:.0}% grade and {:.0}% camber, {frames} frames of \
+         one cycle",
+        grade * 100.0,
+        camber * 100.0
     );
     println!(
         "stride {:.3} m long, lifting {:.3} m; sole clearances measured above the body's \
