@@ -344,8 +344,11 @@ fn main() {
     );
     println!(
         "  stance: soles held within {:.1} mm of standing depth (a plant holds the sole flat \
-         at 0; the roll lifts whatever is not bearing weight, and this body's sole is convex \
-         by 11.7 mm, so at full pitch it rests on its rim — #220)",
+         at 0; the roll lifts whatever is not bearing weight, so a foot pitched onto its heel \
+         or its toe rests on its rim and reads here as a positive. How flat the sole is to \
+         begin with is `examples/footaudit`'s measurement, not this one's — quoting a figure \
+         for it here is what left this line citing an 11.7 mm convexity that #220 had already \
+         fixed)",
         stance_err * 1000.0
     );
     println!(

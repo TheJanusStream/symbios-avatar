@@ -586,11 +586,21 @@ mod tests {
         let footing = plant_feet(&rig, &mut pose, slope(0.25), &FootingConfig::default());
         assert!(footing.is_settled(), "{footing:?}");
 
+        // **Measured against the surface PLUS the foot's own stand-off**, the
+        // same correction the flat-ground test above spells out: the contact
+        // joint sits inside the foot rather than on its sole, so a joint exactly
+        // on the surface would be a foot buried to its ankle. This used to
+        // compare the joint against the bare slope and absorb the difference in
+        // its tolerance, which held only while the foot happened to be thin
+        // enough — #220 moved the sole onto the plan's ground plane, the
+        // stand-off moved with it, and a tolerance standing in for a term
+        // failed the moment the term changed.
         for limb in [Limb::HindLeft, Limb::HindRight] {
             let landed = foot_of(&rig, &pose, limb);
-            let expected = landed.x * 0.25;
+            let foot = rig.in_zone(Zone::Extremity(limb))[0];
+            let expected = landed.x * 0.25 + stand_off(&rig, foot);
             assert!(
-                (landed.y - expected).abs() < 0.03,
+                (landed.y - expected).abs() < 0.02,
                 "{limb:?} sits {:.3} off the slope",
                 landed.y - expected
             );

@@ -19,7 +19,7 @@
 //! parameter space meshable (see the module docs for [`super`]), and they are
 //! listed on [`Dimensions`].
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use super::derive::humanoid::{Dimensions, frame};
@@ -418,31 +418,80 @@ impl BodyPlan for HumanoidParams {
             // the heel a joint. See the placement figures above for what that is
             // worth, measured.
             //
-            // Every node carries the same section: squashed to [`FOOT_FLAT`] of
-            // its width, and rolled half a ring segment so it stands on a flat
-            // edge instead of on a vertex. Without the roll a foot meshed from
-            // the graph rests on a keel, for exactly the reason the swept one did.
-            let sole_section = |at: Vec3, radius: f32| {
+            // Every node reaches the same DEPTH, and that is not the same thing
+            // as every node carrying the same section (#220). The foot's nodes
+            // do not share a radius — the ball is the widest of them and the toe
+            // the narrowest — so one shared squash asked each of them for a
+            // different depth, and four capsules bottoming out at four different
+            // heights make a sole that is convex rather than flat. The body then
+            // stood 11.7 mm into its own ground plane at the ball while its heel
+            // and toe hung 5.3 and 7.8 mm clear, and every consumer inherited it:
+            // standing, walking, and — once the ankle articulated — a roll that
+            // rested the foot on a rim above its own deepest point.
+            //
+            // So the section is solved per node instead, and solved against what
+            // the mesh DELIVERS rather than what the node asks for. A node whose
+            // centre sits `y` above the ground and whose section is asked to
+            // reach `reach` below it lands its surface at `y - reach * kept`,
+            // where `kept` is the share subdivision leaves behind; setting that
+            // to zero gives `reach = y / kept`, which is the whole rule. The
+            // level run and the cap carry different `kept` because the cap is a
+            // short stub between larger neighbours and Catmull-Clark smooths a
+            // small node harder — the same effect that [`FOOT_KEPT`] records
+            // across the foot's width, measured again down its depth.
+            //
+            // Asking the cap for more than the plane is therefore not a fudge to
+            // push it through the floor: it is asking for exactly the surplus
+            // that smoothing removes, and it is what puts the back of the sole
+            // on the ground. With one shared depth it bore 8.2% of the contact
+            // behind the ankle against a reference 11.2% (male) and 13.7%
+            // (female); the heel is where a foot's weight arrives, and a heel
+            // riding clear of the floor is a body on tiptoe.
+            //
+            // The roll is unchanged and still load-bearing: it stands a section
+            // on a flat edge instead of on a vertex, and without it a foot meshed
+            // from the graph rests on a keel for exactly the reason the swept one
+            // did.
+            //
+            // [`FOOT_KEPT`]: super::derive::humanoid
+            let sole_section = |at: Vec3, radius: f32, kept: f32| {
+                let reach = at.y / kept;
                 Node::new(at, radius)
-                    .with_scale(d.sole_section)
+                    .with_scale(Vec2::new(1.0, reach / radius))
                     .with_roll(HALF_SEGMENT)
                     .in_zone(Zone::Extremity(hind))
             };
             let heel = skeleton.extend_from(
                 ankle,
-                sole_section(Vec3::new(side * d.hip_x, d.foot_y, d.heel_z), d.heel_r),
+                sole_section(
+                    Vec3::new(side * d.hip_x, d.foot_y, d.heel_z),
+                    d.heel_r,
+                    d.sole_kept,
+                ),
             );
             skeleton.extend_from(
                 heel,
-                sole_section(Vec3::new(side * d.hip_x, d.cap_y, d.cap_z), d.cap_r),
+                sole_section(
+                    Vec3::new(side * d.hip_x, d.cap_y, d.cap_z),
+                    d.cap_r,
+                    d.cap_kept,
+                ),
             );
             let ball = skeleton.extend_from(
                 heel,
-                sole_section(Vec3::new(side * d.hip_x, d.foot_y, d.ball_z), d.ball_r),
+                sole_section(
+                    Vec3::new(side * d.hip_x, d.foot_y, d.ball_z),
+                    d.ball_r,
+                    d.sole_kept,
+                ),
             );
             skeleton.extend_from(
                 ball,
-                sole_section(Vec3::new(side * d.hip_x, d.foot_y, d.toe_z), d.toe_r),
+                sole_section(
+                    Vec3::new(side * d.hip_x, d.foot_y, d.toe_z),
+                    d.toe_r,
+                    d.sole_kept,
+                ),
             );
         }
 

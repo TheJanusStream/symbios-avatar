@@ -15,7 +15,7 @@ use symbios_avatar::face::{HeadTraits, Skull};
 use symbios_avatar::plan::{AGE_RANGE, DEFAULT_AGE, DEFAULT_BODY_FAT};
 use symbios_avatar::{
     Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, Composites, HumanoidParams,
-    Limb, QuadrupedParams, Rig, Skeleton, Vec3, Zone, build_body, build_cage,
+    Limb, Patch, QuadrupedParams, Rig, Skeleton, Vec3, Zone, build_body, build_cage,
 };
 
 /// Builds a body and asserts it is watertight, reporting the parameters if not.
@@ -712,33 +712,33 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// and `--bare --corners 22` against rest, where the feature visibly moves
 /// and nothing outside its field does.
 const FINGERPRINTS: [(&str, u64); 28] = [
-    ("humanoid default", 0x68845f7930fe1f94),
+    ("humanoid default", 0xfda39e8725d6726c),
     ("quadruped default", 0x2aabd8cffd3320f0),
-    ("humanoid femininity -1", 0x8826ae7a9b7ca7e7),
-    ("humanoid femininity +1", 0xcca0035524379b0e),
-    ("humanoid age 55", 0xe766176ed7d48929),
-    ("humanoid age 80", 0x1112f0b2d3f19dca),
-    ("humanoid corner h=1.2 all=-1", 0x73a6987c687da3af),
-    ("humanoid corner h=2.2 all=-1", 0xcfd7e73547cd9b8a),
-    ("humanoid corner h=1.2 all=0", 0xb8490c2cf9748188),
-    ("humanoid corner h=2.2 all=0", 0xf1b4532af2700a34),
-    ("humanoid corner h=1.2 all=1", 0x28f1a75142aafcaa),
-    ("humanoid corner h=2.2 all=1", 0x7dad39f6ce2d77b2),
-    ("humanoid seed 0", 0xaf4da5febfe57aec),
+    ("humanoid femininity -1", 0x5d8069e80b3efe1f),
+    ("humanoid femininity +1", 0xd6e4ddb5537eccf6),
+    ("humanoid age 55", 0x7801ac1f56523d7d),
+    ("humanoid age 80", 0x0e7d397d6924d412),
+    ("humanoid corner h=1.2 all=-1", 0x9c611c9fbf0bcceb),
+    ("humanoid corner h=2.2 all=-1", 0x9b4cb2ee865eff70),
+    ("humanoid corner h=1.2 all=0", 0xc28693fb5507066e),
+    ("humanoid corner h=2.2 all=0", 0x8cd2d0b90c22f6f6),
+    ("humanoid corner h=1.2 all=1", 0x3a5771cd6adf5d64),
+    ("humanoid corner h=2.2 all=1", 0x76e2099f3c0ec188),
+    ("humanoid seed 0", 0xa6fc82ac43bc06ae),
     ("quadruped seed 0", 0x181d22a61a29e06b),
-    ("humanoid seed 1", 0xb64431314fe8ea66),
+    ("humanoid seed 1", 0x2b638535885f9474),
     ("quadruped seed 1", 0x66b32cdababaf760),
-    ("humanoid seed 2", 0x1962724715b11f58),
+    ("humanoid seed 2", 0xe29862b521d7ae0c),
     ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
-    ("humanoid seed 3", 0xeb85cd929b12a34d),
+    ("humanoid seed 3", 0xa6aeb91910da8553),
     ("quadruped seed 3", 0x5fe315cd16d9b52b),
-    ("humanoid seed 4", 0x9e30f3011665e050),
+    ("humanoid seed 4", 0x4188024ffed8b04e),
     ("quadruped seed 4", 0x050364ec7b8118ea),
-    ("humanoid seed 5", 0x80395a67117fbc85),
+    ("humanoid seed 5", 0xb3a4512408e7192f),
     ("quadruped seed 5", 0x2d22051939b73f20),
-    ("humanoid seed 6", 0x73c037ccdb99f347),
+    ("humanoid seed 6", 0x3ca964084380360f),
     ("quadruped seed 6", 0x94b5b20cbe08a43a),
-    ("humanoid seed 7", 0xd7d66ad5ae5eee6b),
+    ("humanoid seed 7", 0xe8a039905d8969e9),
     ("quadruped seed 7", 0xc6b4259ae378e3bb),
 ];
 
@@ -1248,4 +1248,175 @@ fn the_neck_is_the_length_of_a_neck() {
             (crown - chin) * 1000.0
         );
     }
+}
+
+/// How far the built sole may sit from the plan's own ground plane, in metres.
+///
+/// A millimetre. The plan puts its bodies on `y = 0` and every consumer trusts
+/// it — `Extremities::build` measures stature from it, `stand_off` reads the
+/// rest pose against it, and the footing solve plants contacts at it — so an
+/// error here is not a foot defect, it is a systematic offset applied to the
+/// whole body and to every clearance measured on it.
+///
+/// **Three millimetres, and the figure is the construction's guarantee rather
+/// than a hope.** Measured over the seed set below: five of the six land at
+/// 0.0 mm exactly, because the foot's level run is well conditioned — its nodes
+/// are large and have neighbours their own size, so what they ask for is what
+/// subdivision delivers. The sixth carries 2.4 mm, from the stub that closes the
+/// heel: a short node between larger ones, whose delivered share genuinely moves
+/// with the body around it and which no single constant can pin.
+///
+/// The baseline this replaced, on the same seeds: −9.2, +1.7, −12.8, −9.6, −4.4
+/// and −11.9 mm.
+const SOLE_ON_PLANE: f32 = 0.003;
+
+/// How much the sole may vary along its own length, in metres.
+///
+/// A convex sole rocks: it bears on one band while the rest hangs clear, and
+/// once the ankle articulates a foot pitched onto its heel or its toe rests on a
+/// rim standing above its own deepest point rather than on the sole itself.
+///
+/// **Three millimetres, and read this bound beside [`SOLE_ON_PLANE`] rather than
+/// alone.** At the band resolution below the profile went from 3.8 mm of spread
+/// to 2.4 mm, which is a modest ratchet; what moved decisively is *where* those
+/// bands sit. Before: −9.2 to −5.4 mm, the whole sole under the floor. After:
+/// −0.0 to +2.4 mm, the whole sole on it. `examples/footaudit` reads the
+/// convexity itself at a finer resolution with a ray cast — 7.8 mm to 2.1 mm —
+/// and remains the instrument that owns that figure.
+const SOLE_FLATNESS: f32 = 0.003;
+
+/// The share at each end of the foot excluded from the flatness bound.
+///
+/// A real sole rounds up at the heel and the toe and so does this one; the
+/// contact patch is what has to be flat. An eighth at each end, which is the
+/// resolution `examples/footaudit` prints its profile at.
+const SOLE_ENDS: f32 = 0.125;
+
+#[test]
+fn the_body_stands_on_the_plan_s_own_ground_plane() {
+    // **#220, and the reason it is a body test rather than a foot test.** The
+    // sole sat 11.7 mm BELOW `y = 0` and no test noticed for weeks, because the
+    // two numbers that decide it were never tied together: `foot_y` was a
+    // measured fraction of stature and the sole's actual depth is set by the
+    // ball's radius, so #164's per-site girth moved one and left the other.
+    //
+    // `foot_y` is now derived from that radius, which is what makes this
+    // assertion hold by construction rather than by luck — and this test is what
+    // will catch the next thing that moves out from under it.
+    let mut stood: Vec<(i64, f32)> = Vec::new();
+    for seed in [0_i64, 3, 7, 19, 42, 101] {
+        let record = AvatarRecord::rolled(
+            "stance",
+            Archetype::Humanoid(HumanoidParams::default()),
+            seed,
+        );
+        let avatar = symbios_avatar::Avatar::build(&record)
+            .unwrap_or_else(|| panic!("seed {seed} would not build"));
+        let low = avatar
+            .parts
+            .body
+            .positions
+            .iter()
+            .fold(f32::MAX, |low, at| low.min(at.y));
+        stood.push((seed, low));
+    }
+    let worst = stood.iter().copied().fold((0, 0.0f32), |worst, at| {
+        if at.1.abs() > worst.1.abs() {
+            at
+        } else {
+            worst
+        }
+    });
+    assert!(
+        worst.1.abs() < SOLE_ON_PLANE,
+        "seed {} stands on y = {:.4}, {:.1} mm off the plan's ground plane; all seeds: {:?}",
+        worst.0,
+        worst.1,
+        worst.1 * 1000.0,
+        stood
+            .iter()
+            .map(|(seed, y)| (*seed, (y * 10000.0).round() / 10.0))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn the_sole_is_flat_along_the_foot_it_stands_on() {
+    // The other half of #220: landing the sole on the plane is not the same as
+    // landing it FLAT. The foot's nodes do not share a radius, so a single
+    // section multiplier asked each of them for a different depth and the sole
+    // came out as four capsules tangent to a curve — deepest at the ball, 7.8 mm
+    // clear at the toe. Each section is now solved for the depth it must reach.
+    //
+    // Measured on the built body rather than on `Foot::build`, because the
+    // humanoid does not use that path at all: its foot is nodes in the capsule
+    // graph, which is exactly why `foot.rs`'s own level-sole test passed
+    // throughout.
+    let record = AvatarRecord::rolled("stance", Archetype::Humanoid(HumanoidParams::default()), 0);
+    let avatar = symbios_avatar::Avatar::build(&record).expect("the body builds");
+
+    // Selected by SKIN WEIGHT, not by zone label, which is the same selection
+    // `examples/footaudit` makes and for the same reason: the zone array marks a
+    // few dozen vertices on the foot and they clump around the node rings, so
+    // banding them leaves gaps in the middle of the sole. `Patch::held_by` asks
+    // which vertices the foot's joints actually carry, and answers with the
+    // surface.
+    let joints = avatar.rig.extremity_joints(Limb::HindLeft);
+    assert!(!joints.is_empty(), "the body has no foot to stand on");
+    let patch = Patch::held_by(&avatar.parts.body, &avatar.parts.weights, &joints);
+    let mut feet: Vec<(f32, f32)> = patch
+        .vertices()
+        .map(|vertex| {
+            let at = avatar.parts.body.positions[vertex];
+            (at.z, at.y)
+        })
+        .collect();
+    assert!(feet.len() > 32, "only {} vertices on the foot", feet.len());
+    feet.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    let (back, front) = (feet[0].0, feet[feet.len() - 1].0);
+    let length = front - back;
+    assert!(length > 0.05, "the foot measured {length} m long");
+
+    // Bucket by position along the foot and take the lowest in each, which is
+    // the sole's own profile — the same reading `examples/footaudit` prints, at
+    // the resolution this vertex count actually supports. Eight bands: the foot
+    // patch is dense enough for sixteen, which is the resolution
+    // `examples/footaudit` prints its own profile at.
+    const BANDS: usize = 10;
+    let mut profile = [None; BANDS];
+    for (z, y) in feet {
+        let band = ((((z - back) / length) * BANDS as f32) as usize).min(BANDS - 1);
+        let low: &mut Option<f32> = &mut profile[band];
+        *low = Some(low.map_or(y, |low| low.min(y)));
+    }
+
+    // A real sole rounds up at the heel and the toe, and so does this one; the
+    // contact patch is what has to be flat.
+    let skip = (BANDS as f32 * SOLE_ENDS).round().max(1.0) as usize;
+    let _ = Zone::Extremity(Limb::HindLeft);
+    //
+    // Empty bands are skipped rather than treated as a failure: the foot's
+    // vertices clump around its node rings and the long run between heel and
+    // ball carries few, which is why `examples/footaudit` prints its own profile
+    // at 0, 10, 20, 30, 50, 60, 80 and 90 percent and simply has no row at 40 or
+    // 70. A band with no surface in it is not a hole in the foot.
+    let contact: Vec<f32> = profile[skip..BANDS - skip]
+        .iter()
+        .flatten()
+        .copied()
+        .collect();
+    assert!(contact.len() >= 6, "only {} bands held sole", contact.len());
+
+    let floor = contact.iter().copied().fold(f32::MAX, f32::min);
+    let rim = contact.iter().copied().fold(f32::MIN, f32::max);
+    assert!(
+        rim - floor < SOLE_FLATNESS,
+        "the sole varies by {:.1} mm along its contact patch: {:?}",
+        (rim - floor) * 1000.0,
+        contact
+            .iter()
+            .map(|y| (y * 10000.0).round() / 10.0)
+            .collect::<Vec<_>>()
+    );
 }

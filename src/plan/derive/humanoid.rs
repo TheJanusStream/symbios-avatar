@@ -905,8 +905,32 @@ pub(crate) struct Dimensions {
     pub ankle_r: f32,
     /// Height of the foot's level run.
     pub foot_y: f32,
-    /// Cross-section shared by every node of the foot.
-    pub sole_section: Vec2,
+    /// Share of its asked half-depth that a node of the foot's level run
+    /// delivers as surface, once subdivision has smoothed it.
+    ///
+    /// The depth-direction twin of the width's `FOOT_KEPT`. Measured, because
+    /// nothing predicts it: see [`Self::cap_kept`] for why one figure does not
+    /// serve the whole foot.
+    pub sole_kept: f32,
+    /// The same share for the stub that closes the heel.
+    ///
+    /// **Lower than [`Self::sole_kept`], and measurably so** — 0.73 against
+    /// 0.92 on the default body. The cap is a short node between larger
+    /// neighbours and Catmull-Clark averages a small ring away hardest, which is
+    /// the same mechanism `FOOT_KEPT` records when it notes that a fat ring
+    /// between thin ones does not survive. Asking it for one shared depth left
+    /// the back of the sole 7.8 mm clear of the floor (#220).
+    pub cap_kept: f32,
+    /// How far below [`Self::foot_y`] every node of the foot reaches.
+    ///
+    /// A depth rather than a section multiplier, because the foot's nodes do not
+    /// share a radius: the ball is the widest and the toe the narrowest, so one
+    /// shared multiplier asked each of them for a *different* depth and the sole
+    /// came out convex — 11.7 mm below the plan's own ground plane at the ball
+    /// and 7.8 mm less than that at the toe (#220). Each node's section is
+    /// scaled to reach this depth from wherever its own centre sits, which is
+    /// what makes the sole one plane instead of four tangents to a curve.
+    pub sole_depth: f32,
     /// How far behind the ankle the heel sits.
     pub heel_z: f32,
     /// Radius of the heel node.
@@ -2248,9 +2272,26 @@ impl Dimensions {
         //
         // Provenance: **measured** (#111) — set so the built sole lands on the
         // plan's own ground plane, which it now does to 0.2 mm.
-        const FOOT_SOLE_UP: f32 = 0.0163;
-        let foot_y = h * FOOT_SOLE_UP;
-        let cap_y = foot_y - foot_long * FOOT_CAP_DROP;
+        // **Derived, not looked up, and that is the fix for #220.** The measured
+        // 0.0163 above was correct when it was taken and had silently stopped
+        // being correct: it is a fraction of stature, while what actually decides
+        // where the sole lands is the ball's own radius — and #164's per-site
+        // girth moved that radius without anything here re-deriving. The sole
+        // sank to 11.7 mm below the plan's ground plane and no test noticed,
+        // because nothing tied the two numbers together.
+        //
+        // So tie them. The level run sits exactly as high as the sole reaches
+        // deep, and the sole lands on `y = 0` for any body by construction —
+        // whatever a re-roll does to `foot_r`, to the girth multipliers, or to
+        // stature. `FOOT_SOLE_KEPT` is the depth-direction twin of `FOOT_KEPT`:
+        // the share of the asked half-depth that survives subdivision as
+        // surface, measured through `examples/footaudit` on the default body
+        // once the sole was made one plane rather than four.
+        // Both figures are **measured** through `examples/footaudit` on the
+        // default body, by asking for a depth and reading what arrived. The
+        // level run delivers 0.92 of what it asks and the cap 0.73.
+        const FOOT_SOLE_KEPT: f32 = 0.923;
+        const FOOT_CAP_KEPT: f32 = 0.800;
 
         // The radius that makes the foot the right WIDTH, and width is what a
         // sole is measured by: 37-38% of foot length on both references, so half
@@ -2290,6 +2331,36 @@ impl Dimensions {
         // The toe is narrower than the ball — the sole outline runs 0.185 of foot
         // length at the ball and 0.142 at nine tenths along.
         const FOOT_TOE_WIDE: f32 = 0.77;
+
+        // The sole plane itself, now that the ball's radius exists to derive it
+        // from. Stated here rather than beside `FOOT_SOLE_KEPT` above because a
+        // binding cannot precede what it reads, and the dependency is the point:
+        // move `foot_r` and this moves with it.
+        //
+        // **`extremity` belongs in this product and leaving it out was a real
+        // defect**, caught by `tests/plan.rs`'s reroll sweeps rather than by any
+        // measurement on the default body — where the multiplier is 1 and the
+        // omission is invisible. It scales every one of the foot's radii, so a
+        // small-footed body's sole rises with them; a depth derived without it
+        // held the plane where a full-sized foot would have put it and asked the
+        // shrunken sections to stretch down to meet it. At the clamp's floor
+        // that is a section half again as deep as it is wide, and the cage stops
+        // meshing.
+        let extremity = (1.0 + 0.3 * params.extremity_size).clamp(0.55, 1.36);
+        //
+        // **The NARROWEST node of the level run sets the plane, and which end
+        // sets it is a meshability constraint rather than a preference.** Any
+        // common depth flattens the sole; picking the ball's — the deepest —
+        // asks every other node to stretch DOWN to meet it, and a section
+        // deepened is a section widened in its own plane, which eats the
+        // clearance a socket needs to open the hull. `tests/plan.rs` rejected it
+        // at once: `h=1.2 femininity=-3` wanted 0.0530 of bone where the foot
+        // had 0.0383. Taking the toe's depth instead moves every section the
+        // other way — shallower or unchanged, never deeper — so the sole comes
+        // out flat and no socket loses a millimetre it had before.
+        let sole_depth = foot_r * extremity * FOOT_TOE_WIDE * FOOT_FLAT;
+        let foot_y = sole_depth * FOOT_SOLE_KEPT;
+        let cap_y = foot_y - foot_long * FOOT_CAP_DROP;
 
         // The clavicle has to reach past the chest socket's corners before an
         // arm can attach — the single tightest constraint on the whole body.
@@ -2549,7 +2620,9 @@ impl Dimensions {
         // a meshability limit. Both stay: nothing wants the extra room, and the
         // pair is documented here so the next axis that fans in through this
         // clamp knows which end will actually stop it.
-        let extremity = (1.0 + 0.3 * params.extremity_size).clamp(0.55, 1.36);
+        // Bound above, beside the foot's sole plane, because that plane is
+        // derived from a radius this scales and a binding cannot precede what it
+        // reads. The clamp and its audit are the paragraphs above.
 
         // The limb radius ladder, **measured at last** (#104).
         //
@@ -2737,7 +2810,9 @@ impl Dimensions {
             // stands it on a flat edge instead of on a vertex is the
             // assembler's, because it is about the ground rather than about the
             // body.
-            sole_section: Vec2::new(1.0, FOOT_FLAT),
+            sole_kept: FOOT_SOLE_KEPT,
+            cap_kept: FOOT_CAP_KEPT,
+            sole_depth,
             heel_z,
             heel_r,
             cap_y,
