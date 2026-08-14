@@ -19,6 +19,8 @@
 //!   which is what makes it look like it is *in* a place rather than played back
 //!   near one.
 //! * [`gait`] — walking, for whatever number of legs a body turns out to have.
+//!   [`Walk`] drives one frame of it start to finish; the stages underneath it
+//!   stay public for anything that wants to run only some of them.
 //! * [`Clip`] — authored motion, described by semantic queries and normalised
 //!   goals so one description serves every body.
 //! * [`PoseClip`] — the opposite trade, and it exists because the first one
@@ -66,7 +68,7 @@ pub mod spring;
 
 pub use blend::Inertializer;
 pub use clip::{Clip, Key, Target, Track};
-pub use gait::{Gait, Phase, Steps, Stride};
+pub use gait::{Gait, Phase, Steps, Stride, Walk, Walked};
 pub use gaze::{Gaze, GazeConfig, look_at};
 pub use ground::{
     CONTACT_SLACK, CONTACT_SPEED, Footing, FootingConfig, Ground, contacts_during, contacts_in,

@@ -26,7 +26,7 @@
 
 use glam::{Quat, Vec3};
 
-use super::ground::{Ground, solve_contact};
+use super::ground::{Footing, FootingConfig, Ground, plant_feet_of, solve_contact};
 use super::pose::Pose;
 use crate::plan::{Limb, Zone};
 use crate::rig::Rig;
@@ -450,6 +450,183 @@ where
     }
 
     steps
+}
+
+/// One frame of a procedural walk, start to finish.
+///
+/// # Why this exists
+///
+/// Driving this gait correctly means four stages in a fixed order, with a
+/// footing solve in the middle of them, and **the record is that callers do not
+/// manage it**. [`roll_feet`] was missing from three of five consumers for as
+/// long as it existed, so every body they drew walked on rigid ankles — no
+/// heel-strike, no toe-off, the foot tilting bodily with the shin (#1069, #251,
+/// and `examples/locomotion` under #238). [`step`]'s ground closure was missing
+/// from all of them until #221 put it in the signature, which is the one that
+/// got fixed everywhere, precisely because the compiler asked. Then #239 added
+/// a fourth stage to remember.
+///
+/// A doc comment naming the order was not enough three times over. This is the
+/// order, executable.
+///
+/// # The order, and why each step sits where it does
+///
+/// 1. [`step`] places the contacts and sinks the body to reach them.
+/// 2. [`swing_arms`] swings the arms against the legs and winds the spine.
+/// 3. [`lean`] pitches the trunk into the walk and holds the head level.
+/// 4. [`plant_feet_of`] settles the stance contacts onto the real ground.
+/// 5. [`roll_feet`] rolls the ankles — **after** the plant, because the plant
+///    lays every sole flat and a roll applied before it is simply levelled
+///    away.
+///
+/// The same ground is given to the stride and to the plant. Handing those two
+/// different floors is what leaves a swing arc at the rest height while the
+/// feet settle onto a hill, which is the whole of #221.
+///
+/// # Ablation
+///
+/// The individual stages stay public, and this is not a replacement for calling
+/// them — an instrument that wants to see what the legs alone are doing turns
+/// [`Self::posture`] off, and one asking what the gait delivers before any
+/// correction turns [`Self::footing`] off. What the entry point buys is that
+/// *not choosing* gives the whole sequence rather than an accidental subset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Walk {
+    /// Where in the cycle this frame is, `0..1`, wrapping.
+    pub cycle: f32,
+    /// Whether the postural layer runs: the arms swinging against the legs and
+    /// the trunk leaning into the walk.
+    ///
+    /// One flag for both because they answer one question — what the body above
+    /// the legs is doing — and a body with neither is the mannequin #102
+    /// described.
+    pub posture: bool,
+    /// How to settle the stance contacts onto the ground, or `None` to leave
+    /// the gait's own placement untouched.
+    ///
+    /// `None` is what a caller wants when it is measuring the gait rather than
+    /// drawing it: `examples/locomotion` reads the pose before and after this
+    /// to say how much work the solve is doing.
+    pub footing: Option<FootingConfig>,
+}
+
+impl Walk {
+    /// A full walk at this point of the cycle: posture on, feet settled with
+    /// the default footing.
+    #[must_use]
+    pub fn at(cycle: f32) -> Self {
+        Self {
+            cycle,
+            posture: true,
+            footing: Some(FootingConfig::default()),
+        }
+    }
+
+    /// Runs every stage, in order, and reports what the frame did.
+    ///
+    /// `ground` answers what is beneath a point in the same frame the body is
+    /// posed in, exactly as [`plant_feet_of`] requires; it is given to the
+    /// stride and to the plant so the two cannot disagree about the floor.
+    pub fn drive<F>(
+        &self,
+        rig: &Rig,
+        pose: &mut Pose,
+        gait: &Gait,
+        stride: &Stride,
+        ground: F,
+    ) -> Walked
+    where
+        F: Fn(Vec3) -> Option<Ground>,
+    {
+        let steps = step(rig, pose, gait, stride, self.cycle, &ground);
+        if self.posture {
+            swing_arms(rig, pose, gait, self.cycle);
+            lean(rig, pose, gait, stride);
+        }
+
+        let mut walked = self.settle(rig, pose, gait, &steps.stance, ground);
+        walked.steps = steps;
+        walked
+    }
+
+    /// The tail of the sequence: settle the contacts, then roll the ankles.
+    ///
+    /// **Separated because one real consumer has to put something between the
+    /// two halves.** The viewer can layer an imported clip over the procedural
+    /// walk, and a clip moves the legs — so its contacts must be settled and
+    /// its ankles rolled *after* that, not before. Hand-rolling the tail is
+    /// exactly the fragility this type exists to remove, so the tail is a step
+    /// of its own rather than two calls a caller is trusted to order.
+    ///
+    /// Callers that have nothing to interleave should use [`Self::drive`],
+    /// which is this with the head of the sequence in front of it.
+    pub fn settle<F>(
+        &self,
+        rig: &Rig,
+        pose: &mut Pose,
+        gait: &Gait,
+        stance: &[Limb],
+        ground: F,
+    ) -> Walked
+    where
+        F: Fn(Vec3) -> Option<Ground>,
+    {
+        let mut walked = Walked::default();
+        if let Some(config) = self.footing
+            && !stance.is_empty()
+        {
+            let before = pose.forward(rig).positions;
+            walked.footing = Some(plant_feet_of(rig, pose, stance, &ground, &config));
+            let after = pose.forward(rig).positions;
+            // **Per joint, each against itself.** Taking the lowest joint of a
+            // foot before and after and measuring between them compares a heel
+            // against a toe the moment an ankle turns, and reported a quarter
+            // of a metre of correction on flat ground where there was four
+            // millimetres of it — an argmin whose identity moves is not a
+            // measurement. `examples/locomotion` learned that separately and
+            // this is the same reading, defined once.
+            for &limb in stance {
+                for &joint in &rig.extremity_joints(limb) {
+                    walked.lift = walked.lift.max(before[joint].distance(after[joint]));
+                }
+            }
+        }
+        // After the plant. See the type's own docs for why the order is not a
+        // preference.
+        roll_feet(rig, pose, gait, self.cycle);
+        walked
+    }
+}
+
+/// What one frame of [`Walk::drive`] did.
+#[derive(Clone, Debug, Default)]
+pub struct Walked {
+    /// Which contacts are down, which are swinging, and which strained.
+    pub steps: Steps,
+    /// What the footing solve reported, or `None` if it did not run.
+    pub footing: Option<Footing>,
+    /// How far the footing solve had to move any one joint of a contact, in
+    /// metres.
+    ///
+    /// The readout the locomotion question is settled on rather than on taste:
+    /// a pose whose feet already land where the ground is needs no correction,
+    /// and one whose do not is being held together by the solve. Zero when the
+    /// solve did not run.
+    pub lift: f32,
+}
+
+impl Walked {
+    /// How many contacts the footing solve could not fully satisfy.
+    ///
+    /// Zero when the solve did not run, which is the same answer a caller wants
+    /// for "nothing is straining" and saves every readout unwrapping the
+    /// [`Footing`] itself.
+    #[must_use]
+    pub fn straining(&self) -> usize {
+        self.footing
+            .as_ref()
+            .map_or(0, |footing| footing.straining.len())
+    }
 }
 
 /// Lift a contact's offset onto the ground actually beneath where it is going.
@@ -1781,6 +1958,151 @@ mod tests {
                 (carried - rest).abs() < 0.05,
                 "at pace {pace} the lean carried the head {:.2} deg off level",
                 carried - rest
+            );
+        }
+    }
+
+    /// How far apart two rotations may be and still count as the same pose.
+    ///
+    /// Loose enough for float noise and two orders inside anything a missing
+    /// stage would do, since dropping one moves joints by degrees.
+    const SAME_POSE: f32 = 1e-6;
+
+    /// How far one rotation is from another, as `1 - |dot|` of the two
+    /// **normalised**.
+    ///
+    /// **The normalising is the whole point and leaving it out cost an hour.**
+    /// `1 - |dot(a, b)|` is a distance only if both are unit quaternions, and a
+    /// pose's rotations are products of several composed turns whose norm has
+    /// drifted a part in a million by the time a knee has been stepped, planted
+    /// and rolled. Compared raw, a quaternion differs from ITSELF by up to
+    /// 1.1e-6 — which is what the bitwise check finally showed: zero joints
+    /// different, and a "difference" reported at every one of them. Two whole
+    /// hypotheses were chased on the strength of that number, one about closures
+    /// passed by reference and one about inlining, and both were answers to a
+    /// question the instrument had invented.
+    fn apart(a: Quat, b: Quat) -> f32 {
+        1.0 - a.normalize().dot(b.normalize()).abs()
+    }
+
+    #[test]
+    fn the_entry_point_runs_the_sequence_an_instrument_would_hand_roll() {
+        // **#253.** The point of `Walk` is that not choosing gives the whole
+        // sequence, and this is what says the whole sequence is still the one
+        // the instruments run. If they ever diverge, `examples/walkaudit` stops
+        // measuring what the app draws — which is the failure mode that makes a
+        // second instrument worthless.
+        //
+        // Written out longhand deliberately: this is the one place where
+        // repeating the subject is the test rather than a flaw in it.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let grade = 0.15;
+        let ground = |foot: Vec3| Some(Ground::level(Vec3::new(foot.x, foot.z * grade, foot.z)));
+
+        for sample in 0..12 {
+            let cycle = sample as f32 / 12.0;
+
+            let mut longhand = Pose::rest(&rig);
+            let expected = step(&rig, &mut longhand, &gait, &stride, cycle, ground);
+            swing_arms(&rig, &mut longhand, &gait, cycle);
+            lean(&rig, &mut longhand, &gait, &stride);
+            if !expected.stance.is_empty() {
+                plant_feet_of(
+                    &rig,
+                    &mut longhand,
+                    &expected.stance,
+                    ground,
+                    &FootingConfig::default(),
+                );
+            }
+            roll_feet(&rig, &mut longhand, &gait, cycle);
+
+            let mut driven = Pose::rest(&rig);
+            let walked = Walk::at(cycle).drive(&rig, &mut driven, &gait, &stride, ground);
+
+            assert_eq!(walked.steps.stance, expected.stance, "at cycle {cycle}");
+            assert_eq!(walked.steps.swing, expected.swing, "at cycle {cycle}");
+            assert!(
+                (driven.translation - longhand.translation).length() < 1e-6,
+                "at cycle {cycle} the root sat differently"
+            );
+            for joint in 0..longhand.rotations.len() {
+                let apart = apart(driven.rotations[joint], longhand.rotations[joint]);
+                assert!(
+                    apart < SAME_POSE,
+                    "at cycle {cycle} joint {joint} differs between the entry point and the \
+                     sequence it is supposed to be"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_ablation_switches_take_off_what_they_name_and_nothing_else() {
+        // The other half of the contract: an instrument turning a stage off has
+        // to get exactly that stage off. Without this, `posture` could quietly
+        // become "and also skip the roll" and every reading taken with it off
+        // would be measuring two changes at once.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let ground = |_: Vec3| None;
+        let cycle = 0.3;
+
+        let legs_only = Walk {
+            posture: false,
+            ..Walk::at(cycle)
+        };
+        let mut bare = Pose::rest(&rig);
+        legs_only.drive(&rig, &mut bare, &gait, &stride, ground);
+
+        let mut expected = Pose::rest(&rig);
+        let steps = step(&rig, &mut expected, &gait, &stride, cycle, ground);
+        plant_feet_of(
+            &rig,
+            &mut expected,
+            &steps.stance,
+            ground,
+            &FootingConfig::default(),
+        );
+        roll_feet(&rig, &mut expected, &gait, cycle);
+        for joint in 0..expected.rotations.len() {
+            let apart = apart(bare.rotations[joint], expected.rotations[joint]);
+            assert!(
+                apart < SAME_POSE,
+                "posture off changed joint {joint} as well"
+            );
+        }
+
+        // And an arm must actually have moved with it on, or the switch is
+        // testing nothing.
+        let mut dressed = Pose::rest(&rig);
+        Walk::at(cycle).drive(&rig, &mut dressed, &gait, &stride, ground);
+        let shoulder = rig.in_zone(Zone::UpperLimb(Limb::ForeLeft))[0];
+        assert!(
+            apart(dressed.rotations[shoulder], bare.rotations[shoulder]) > 1e-6,
+            "the posture switch moved nothing"
+        );
+
+        // Footing off must leave the gait's own placement alone.
+        let unplanted = Walk {
+            footing: None,
+            ..Walk::at(cycle)
+        };
+        let mut raw = Pose::rest(&rig);
+        unplanted.drive(&rig, &mut raw, &gait, &stride, ground);
+        let mut without = Pose::rest(&rig);
+        step(&rig, &mut without, &gait, &stride, cycle, ground);
+        swing_arms(&rig, &mut without, &gait, cycle);
+        lean(&rig, &mut without, &gait, &stride);
+        roll_feet(&rig, &mut without, &gait, cycle);
+        for joint in 0..without.rotations.len() {
+            let apart = apart(raw.rotations[joint], without.rotations[joint]);
+            assert!(
+                apart < SAME_POSE,
+                "footing off changed joint {joint} as well"
             );
         }
     }

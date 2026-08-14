@@ -33,8 +33,10 @@
 //! differs is not one.
 
 use glam::Vec3;
-use symbios_avatar::anim::{FootingConfig, Ground, contacts_during, gait, plant_feet_of};
-use symbios_avatar::{Archetype, Avatar, AvatarRecord, ClipLibrary, Gait, Limb, Pose, Rig, Stride};
+use symbios_avatar::anim::{FootingConfig, Ground, contacts_during, plant_feet_of};
+use symbios_avatar::{
+    Archetype, Avatar, AvatarRecord, ClipLibrary, Gait, Limb, Pose, Rig, Stride, Walk,
+};
 
 /// Where the baked artifact sits.
 const ARTIFACT: &str = "assets/clips.bin";
@@ -104,27 +106,29 @@ fn main() {
                 let mut pose = Pose::rest(rig);
                 let gait = Gait::natural(rig);
                 let stride = Stride::for_body(rig, 1.0);
-                // The gait is told about the slope it is walking, exactly as
-                // the footing solve below is (#221). Withholding it here and
-                // offering it there was the asymmetry that put the swing arc
-                // through the hill.
-                let steps = gait::step(rig, &mut pose, &gait, &stride, cycle, |foot| {
+                // **The whole sequence through the engine's entry point**
+                // (#253), with the footing switched OFF — because settling the
+                // feet is the correction this instrument exists to measure, and
+                // `read` applies it either side of its own reading. This is the
+                // ablation the switch was put there for.
+                //
+                // Hand-rolled until now, and it is why the gait column was
+                // unfair for as long as it was: `roll_feet` was simply missing
+                // from it, so this measured a walk with no ankles while
+                // `examples/walkaudit` measured one with them (#238). Two
+                // instruments, two different gaits, one of them the gait.
+                //
+                // The stride is told about the slope, exactly as the solve is —
+                // withholding it here and offering it there was the asymmetry
+                // that put the swing arc through the hill (#221).
+                let unsettled = Walk {
+                    footing: None,
+                    ..Walk::at(cycle)
+                };
+                let walked = unsettled.drive(rig, &mut pose, &gait, &stride, |foot| {
                     Some(Ground::level(Vec3::new(foot.x, foot.z * grade, foot.z)))
                 });
-                gait::swing_arms(rig, &mut pose, &gait, cycle);
-                gait::lean(rig, &mut pose, &gait, &stride);
-                // **The ankles, which this instrument used to leave off** — and
-                // leaving them off is what made its gait column an unfair
-                // reading rather than a hard one (#238). Without `roll_feet` a
-                // foot keeps its rest attitude relative to the shin, so at full
-                // stride the whole foot tilts with the leg and the toe dips: on
-                // the default body, 52.6 mm under a FLAT floor at the two
-                // moments of deepest crouch, none of it a gait defect and all of
-                // it billed to one. `examples/walkaudit` has always called this;
-                // the two instruments were driving different gaits and only one
-                // of them was the gait.
-                gait::roll_feet(rig, &mut pose, &gait, cycle);
-                (pose, steps.stance)
+                (pose, walked.steps.stance)
             });
             let imported = read(rig, grade, |rig, cycle| {
                 let mut pose = walk.pose(rig, cycle * walk.duration());

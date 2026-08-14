@@ -52,8 +52,7 @@
 
 use glam::Vec3;
 use symbios_avatar::{
-    Archetype, Avatar, AvatarRecord, FootingConfig, Gait, Ground, Limb, Patch, Pose, Rig, Stride,
-    anim::gait, anim::plant_feet_of,
+    Archetype, Avatar, AvatarRecord, Gait, Ground, Limb, Patch, Pose, Rig, Stride, Walk, anim::gait,
 };
 
 /// How many points of the cycle the summary statistics are taken from.
@@ -185,19 +184,11 @@ fn main() {
     };
     let measure = |cycle: f32| -> Moment {
         let mut pose = Pose::rest(rig);
-        let steps = gait::step(rig, &mut pose, &gait, &stride, cycle, floor);
-        gait::swing_arms(rig, &mut pose, &gait, cycle);
-        gait::lean(rig, &mut pose, &gait, &stride);
-        plant_feet_of(
-            rig,
-            &mut pose,
-            &steps.stance,
-            floor,
-            &FootingConfig::default(),
-        );
-        // After the plant, which lays every sole flat: the roll is what takes
-        // them off again, and running it first would simply be levelled away.
-        gait::roll_feet(rig, &mut pose, &gait, cycle);
+        // The whole sequence, through the engine's own entry point (#253) —
+        // step, arms, lean, plant, roll, in that order. Hand-rolled here until
+        // the fourth stage arrived and the order stopped being something an
+        // instrument should be trusted to remember.
+        Walk::at(cycle).drive(rig, &mut pose, &gait, &stride, floor);
 
         let posed = pose.forward(rig);
         let moved = posed.deform(rig, &body.positions, weights);

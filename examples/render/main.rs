@@ -80,9 +80,8 @@ use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, Category, Expression,
     EyeParams, FaceParams, FootingConfig, Gait, GazeConfig, Ground, Influence, Limb,
     MAX_INFLUENCES, MeshKind, PolyMesh, Pose, Rig, Role, Skeleton, SkinConfig, SkinParams,
-    SkinWeights, Stride, Viseme, Zone,
+    SkinWeights, Stride, Viseme, Walk, Zone,
     anim::contacts_in,
-    anim::gait,
     anim::gaze,
     anim::plant_feet_of,
     face::Skull,
@@ -1130,20 +1129,13 @@ impl Subject {
     fn walking(&self, cycle: f32) -> Pose {
         let rig = &self.avatar.rig;
         let mut pose = Pose::rest(rig);
-        let steps = gait::step(rig, &mut pose, &self.gait, &self.stride, cycle, |_| None);
-        gait::swing_arms(rig, &mut pose, &self.gait, cycle);
-        gait::lean(rig, &mut pose, &self.gait, &self.stride);
-
-        plant_feet_of(
-            rig,
-            &mut pose,
-            &steps.stance,
-            |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
-            &FootingConfig::default(),
-        );
-        // Last, because the plant lays every sole flat and this is what takes
-        // them off again (#236).
-        gait::roll_feet(rig, &mut pose, &self.gait, cycle);
+        // The whole sequence through the engine's entry point (#253). The floor
+        // is level and given to the stride as well as the plant, so the two
+        // agree about it — on level ground that is the same answer either way,
+        // and saying it once is how it stays that way.
+        Walk::at(cycle).drive(rig, &mut pose, &self.gait, &self.stride, |foot| {
+            Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z)))
+        });
         pose
     }
 
