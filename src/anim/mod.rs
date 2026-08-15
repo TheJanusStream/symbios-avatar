@@ -101,7 +101,7 @@ pub use ik::{FabrikConfig, fabrik, two_bone};
 pub use leap::{Leap, Leapt, Stage};
 pub use library::{ClipLibrary, LibraryError};
 pub use pose::{Pose, Posed};
-pub use pose_clip::{Curve, JointTrack, Play, PoseClip, Slot};
+pub use pose_clip::{Continuity, Curve, JointTrack, Play, PoseClip, Slot};
 pub use speed::Speed;
 pub use spring::{SpringConfig, Springs};
 pub use swim::{Swim, Swum};

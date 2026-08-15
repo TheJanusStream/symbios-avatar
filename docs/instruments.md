@@ -22,8 +22,8 @@ All under `examples/`, all release-built (`cargo run --release --example …`).
 | `garmentaudit` | what the clothes cover and what the body stops drawing for it; the hem as cut against the hem as worn — step, turn, and distance from a smooth ring |
 | `follicleaudit` | the five follicle regions on a built head: where each mask lands and what the grown hair occupies against it, `--sweep` over the population; `render -- --follicles` is its visual half |
 | `bodyaudit`, `footaudit`, `walkaudit`, `neckaudit`, `column`, `jawprobe`, `envelope` | body regions: proportions, sole contact, gait excursions, neck spans, midline profiles, jaw shelf, exploration-range envelopes |
-| `locomotion` | procedural gait vs baked clips: feet-to-ground across body scales and grades |
-| `measure`, `dump`, `headref`, `reference`, `retargetaudit`, `bakeclips` | scalar dumps, mesh export, reference comparisons, clip retarget checks, artifact baking |
+| `locomotion` | procedural gait vs baked clips: feet-to-ground across body scales and grades, and what the imported set does between its own frames (#249) |
+| `measure`, `dump`, `headref`, `reference`, `retargetaudit`, `bakeclips` | scalar dumps, mesh export, reference comparisons, clip retarget checks, artifact baking with its loop-seam and teleport readings |
 
 The second instrument is the Bevy viewer (`../bevy_symbios_avatar`,
 `--example viewer`): `--face` framing, `--still`, `--shot`, `--gait/--cadence/

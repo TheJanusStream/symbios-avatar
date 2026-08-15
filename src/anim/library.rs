@@ -7,6 +7,25 @@
 //! reference library — see `docs/clips.md` for which clip came from which file
 //! under which licence.
 //!
+//! # What this is for now
+//!
+//! **A development reference rather than a runtime motion source** (#237,
+//! #249). The baked set was the second of those when it was imported; the
+//! procedural layer replaced it for locomotion and [`super::gesture`] replaced
+//! it for the expressive roster, at a cost of the bytes of each gesture's own
+//! description rather than of its frames. What a library is good for now is
+//! putting an imported motion beside a procedural one — which is what the
+//! viewer's clip picker and `examples/locomotion` do.
+//!
+//! **Never as a gold standard**, and that is measured rather than asserted:
+//! [`PoseClip::continuity`] reads a clip's own loop seam and worst inter-frame
+//! jump, and on the shipped twelve six of the eight loops pause for a frame at
+//! the wrap while two of the one-shots throw a body six and twenty-four times
+//! their own median step between adjacent frames. Neither is visible in a
+//! render. `docs/clips.md` carries the table.
+//!
+//! [`PoseClip::continuity`]: super::PoseClip::continuity
+//!
 //! # Why not serde
 //!
 //! [`PoseClip`] already derives `Serialize`, so JSON was free and the choice was

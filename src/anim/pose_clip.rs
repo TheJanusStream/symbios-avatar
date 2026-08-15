@@ -310,6 +310,94 @@ impl PoseClip {
             + self.root.len() * 12
     }
 
+    /// This clip alone, at one of its own frames, with no interpolation.
+    ///
+    /// [`Self::pose`] takes a time and lands between two frames; this lands ON
+    /// one, which is what a continuity reading needs — asked through a time,
+    /// `frame / rate * rate` comes back a hair under the frame it names and the
+    /// answer is smeared with its neighbour.
+    #[must_use]
+    fn at_frame(&self, rig: &Rig, frame: usize) -> Pose {
+        let mut pose = Pose::rest(rig);
+        for track in &self.tracks {
+            let Some(joint) = track.slot.resolve(rig) else {
+                continue;
+            };
+            if joint < pose.rotations.len() {
+                pose.rotations[joint] = track.rotation.at(frame, frame, 0.0);
+            }
+        }
+        if !self.root.is_empty() {
+            pose.translation = self.root[frame.min(self.root.len() - 1)];
+        }
+        pose
+    }
+
+    /// What this clip does to a body between its own frames.
+    ///
+    /// **The measurement that keeps a baked clip a reference rather than a gold
+    /// standard** (#237, #249). The owner's report of the imported set was that
+    /// the clips do not loop cleanly and that on some of them the body teleports
+    /// between frames, as if a reference frame had changed under it. Both are
+    /// real and both are now a number every comparison inherits, rather than a
+    /// caveat somebody has to remember.
+    ///
+    /// See [`Continuity`] for what the two readings are and why neither is
+    /// asked as "does it close".
+    #[must_use]
+    pub fn continuity(&self, rig: &Rig) -> Continuity {
+        let empty = Continuity {
+            step: 0.0,
+            jump: 0.0,
+            jump_at: 0,
+            seam: None,
+        };
+        if self.frames < 2 {
+            return empty;
+        }
+        let places: Vec<Vec<Vec3>> = (0..self.frames)
+            .map(|frame| self.at_frame(rig, frame).forward(rig).positions)
+            .collect();
+        // **The furthest any ONE joint moves**, not the mean over joints: a
+        // teleport is a body arriving somewhere else, and a mean over
+        // seventy-odd joints of which two moved would hide one.
+        let travel = |a: &[Vec3], b: &[Vec3]| {
+            a.iter()
+                .zip(b)
+                .fold(0.0f32, |most, (from, to)| most.max(from.distance(*to)))
+        };
+        let steps: Vec<f32> = places
+            .windows(2)
+            .map(|pair| travel(&pair[0], &pair[1]))
+            .collect();
+        let (jump_at, jump) =
+            steps
+                .iter()
+                .enumerate()
+                .fold((0usize, 0.0f32), |worst, (at, step)| {
+                    if *step > worst.1 {
+                        (at + 1, *step)
+                    } else {
+                        worst
+                    }
+                });
+        // The median, so one teleport does not raise the family it is being
+        // compared against — which is exactly what a mean would let it do.
+        let mut sorted = steps.clone();
+        sorted.sort_by(f32::total_cmp);
+        Continuity {
+            step: sorted[sorted.len() / 2],
+            jump,
+            jump_at,
+            // **Excluded from the family it is judged against.** The wrap is the
+            // thing being asked about, so a clip whose wrap is enormous must not
+            // get to raise its own median with it.
+            seam: self
+                .looping
+                .then(|| travel(&places[self.frames - 1], &places[0])),
+        }
+    }
+
     /// How many of its tracks actually move.
     ///
     /// Beside [`Self::bytes`] because the ratio is the thing worth watching: a
@@ -321,6 +409,70 @@ impl PoseClip {
             .iter()
             .filter(|track| matches!(track.rotation, Curve::Sampled(_)))
             .count()
+    }
+}
+
+/// What a baked clip does to a body between its own frames (#249).
+///
+/// **A wrapping motion cannot be asked whether it closes, only whether the step
+/// across the wrap is in family.** Every frame of a clip moves the body some
+/// distance; a loop that closes is one whose wrap moves it about as far as the
+/// frames either side of it do. The absolute distance says nothing on its own —
+/// a sprint's every frame moves further than an idle's — so the reading that
+/// means something is the RATIO to the clip's own family, and the family is the
+/// MEDIAN step rather than the mean, because a mean lets one teleport raise the
+/// bar it is being measured against.
+///
+/// **A ratio far from one is the defect, and it is a different defect on each
+/// side.** Much above one is a jerk: the body is somewhere else at the top of
+/// the cycle. Much BELOW one is a stutter, and it is the more common of the two
+/// here — a wrap that moves the body a third of a frame's distance is a body
+/// pausing for a frame every cycle, which is what a last frame duplicating the
+/// first produces (see [`PoseClip::looping`]). Measured on the shipped
+/// artifact, none of the twelve jerks at the wrap and half of them pause there.
+///
+/// The same reading answers the second defect. A teleport is a step much larger
+/// than the family wherever it happens; a seam is one that happens at the wrap.
+/// One pass finds both, and [`Self::jump_at`] says which frame to look at.
+///
+/// Distances are metres on the rig the reading was taken on, which is why the
+/// ratios are the figures that travel and the metres are the ones that make
+/// them concrete.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Continuity {
+    /// The median distance the furthest-moving joint travels between two
+    /// adjacent frames.
+    pub step: f32,
+    /// The largest such distance anywhere inside the clip.
+    pub jump: f32,
+    /// The frame [`Self::jump`] arrives at.
+    pub jump_at: usize,
+    /// The same distance across a loop's wrap, last frame back to first.
+    ///
+    /// `None` for a clip that does not loop, where the question does not arise:
+    /// a one-shot has no wrap and asking about one would invent a defect.
+    pub seam: Option<f32>,
+}
+
+impl Continuity {
+    /// How far out of family the worst step inside the clip is.
+    ///
+    /// One means the clip's own median; a smooth motion sits near it. Returns
+    /// `0.0` for a clip that never moves, where a ratio has no meaning.
+    #[must_use]
+    pub fn jump_ratio(&self) -> f32 {
+        if self.step <= f32::EPSILON {
+            0.0
+        } else {
+            self.jump / self.step
+        }
+    }
+
+    /// How far out of family the step across the wrap is, for a loop.
+    #[must_use]
+    pub fn seam_ratio(&self) -> Option<f32> {
+        let seam = self.seam?;
+        (self.step > f32::EPSILON).then(|| seam / self.step)
     }
 }
 
@@ -468,6 +620,115 @@ mod tests {
             }],
             root: Vec::new(),
         }
+    }
+
+    /// A clip spinning one joint at a constant rate through a whole turn, so
+    /// that its wrap back to the first frame is one step like every other.
+    ///
+    /// **A whole turn and not part of one**, because that is what makes the
+    /// loop honest: the last frame sits one step short of the first, so wrapping
+    /// costs exactly what any other frame does.
+    fn spinning(frames: usize) -> PoseClip {
+        let samples: Vec<Quat> = (0..frames)
+            .map(|frame| {
+                Quat::from_rotation_z(frame as f32 / frames as f32 * std::f32::consts::TAU)
+            })
+            .collect();
+        PoseClip {
+            name: "Spin".into(),
+            rate: frames as f32,
+            frames,
+            looping: true,
+            tracks: vec![JointTrack {
+                slot: Slot::new(Zone::Chest, 0),
+                rotation: Curve::bake(&samples, 1e-4),
+            }],
+            root: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_loop_whose_wrap_costs_what_a_frame_costs_reads_as_closed() {
+        // **A wrapping motion cannot be asked whether it CLOSES**, only whether
+        // the step across the wrap is in family, and this is the family: a
+        // constant-rate spin, where every step including the wrap is the same
+        // size. One is what that has to read.
+        let read = spinning(24).continuity(&rig());
+        let ratio = read.seam_ratio().expect("a loop has a seam");
+        assert!(
+            (ratio - 1.0).abs() < 0.05,
+            "a constant-rate loop's wrap read {ratio:.2} of its own median step",
+        );
+    }
+
+    #[test]
+    fn a_loop_that_repeats_its_first_frame_reads_as_a_pause() {
+        // **The defect the shipped set actually has**, and it is the one below
+        // one rather than above it. A last frame that duplicates the first
+        // makes the wrap cost nothing, so the body holds still for a frame
+        // every cycle — which is what [`PoseClip::looping`] warns about and
+        // what six of the twelve imported clips read as, down to 0.1 on
+        // `Sleeping` and 0.4 on `Jog`.
+        //
+        // Built by taking a whole turn's worth of frames and asking for one
+        // more, so the extra frame lands back on the start.
+        let mut clip = spinning(24);
+        let samples: Vec<Quat> = (0..=24)
+            .map(|frame| Quat::from_rotation_z(frame as f32 / 24.0 * std::f32::consts::TAU))
+            .collect();
+        clip.frames = 25;
+        clip.tracks[0].rotation = Curve::bake(&samples, 1e-4);
+        let ratio = clip
+            .continuity(&rig())
+            .seam_ratio()
+            .expect("a loop has a seam");
+        assert!(
+            ratio < 0.1,
+            "a loop repeating its first frame read {ratio:.2}, which is not a pause",
+        );
+    }
+
+    #[test]
+    fn a_teleport_is_found_and_named() {
+        // The second half of the owner's report: on some clips the body
+        // arrives somewhere else between two frames. A ratio against the
+        // clip's own MEDIAN step is what finds it — against the mean, a jump
+        // large enough to matter raises the bar it is measured against — and
+        // the frame is reported because a defect that cannot be pointed at has
+        // to be hunted for by eye.
+        //
+        // Measured on the shipped artifact, `Bow` reads 24.5 at frame 71 of 113
+        // and `Reject` 6.0 at frame 79 of 114.
+        let mut clip = spinning(24);
+        let mut samples: Vec<Quat> = (0..24)
+            .map(|frame| Quat::from_rotation_z(frame as f32 / 24.0 * std::f32::consts::TAU))
+            .collect();
+        // One frame thrown a quarter turn off the path it was on.
+        samples[10] = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2) * samples[10];
+        clip.tracks[0].rotation = Curve::bake(&samples, 1e-4);
+        let read = clip.continuity(&rig());
+        assert!(
+            read.jump_ratio() > 4.0,
+            "a thrown frame read {:.1} of the clip's own median step",
+            read.jump_ratio(),
+        );
+        assert_eq!(
+            read.jump_at, 10,
+            "the jump was reported at frame {} rather than at the one that moved",
+            read.jump_at,
+        );
+    }
+
+    #[test]
+    fn a_one_shot_is_not_asked_about_a_wrap_it_does_not_have() {
+        // Asking a one-shot whether it loops cleanly invents a defect: its last
+        // frame is meant to be somewhere else entirely. `None` is the answer,
+        // and the four expressive clips in the shipped set are all of this
+        // kind.
+        let read = turning(Zone::Chest, false).continuity(&rig());
+        assert_eq!(read.seam, None);
+        assert_eq!(read.seam_ratio(), None);
+        assert!(read.jump > 0.0, "a one-shot is still asked about teleports");
     }
 
     #[test]

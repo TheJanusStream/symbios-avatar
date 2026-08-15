@@ -33,13 +33,61 @@
 //! differs is not one.
 
 use glam::Vec3;
-use symbios_avatar::anim::{FootingConfig, Ground, contacts_during, plant_feet_of};
+use symbios_avatar::anim::{Continuity, FootingConfig, Ground, contacts_during, plant_feet_of};
 use symbios_avatar::{
     Archetype, Avatar, AvatarRecord, ClipLibrary, Gait, Limb, Pose, Rig, Stride, Walk,
 };
 
 /// Where the baked artifact sits.
 const ARTIFACT: &str = "assets/clips.bin";
+
+/// What the imported set does to a body between its own frames.
+///
+/// **Printed first and by this instrument on purpose** (#249). Everything below
+/// compares a clip against the procedural gait, and a comparison against a
+/// reference nobody has stated the flaws of is a comparison that treats the
+/// reference as a gold standard. It is not one: the owner reported at #237 that
+/// the clips do not loop cleanly and that on some of them the body teleports
+/// between frames, and epic #237 removes them from the runtime for exactly that
+/// kind of reason. So the caveat is a number every future comparison inherits
+/// rather than a warning somebody has to remember.
+///
+/// Two readings, one pass — see [`Continuity`]. Both are ratios to the clip's
+/// own median frame-to-frame travel, because an absolute distance says nothing
+/// across clips that move at wildly different speeds, and **one is what wants
+/// watching in both directions**: a wrap far above the family jerks, and one
+/// far below it pauses.
+fn continuity(library: &ClipLibrary) {
+    let reference = Avatar::build(&AvatarRecord::new("Reference", Archetype::default()))
+        .expect("the default record builds");
+    println!("What the imported set does between its own frames, on the default body.");
+    println!("Both ratios are against each clip's OWN median step, so they compare across");
+    println!("clips that move at very different speeds. One is in family; far from one,");
+    println!("either way, is not.");
+    println!();
+    println!(
+        "{:>16}{:>8}{:>9}{:>9}{:>8}{:>10}{:>9}{:>8}",
+        "clip", "frames", "step mm", "jump mm", "jump x", "at frame", "seam mm", "seam x"
+    );
+    println!("{}", "-".repeat(77));
+    for clip in &library.clips {
+        let read: Continuity = clip.continuity(&reference.rig);
+        println!(
+            "{:>16}{:>8}{:>9.1}{:>9.1}{:>8.1}{:>10}{:>9}{:>8}",
+            clip.name,
+            clip.frames,
+            read.step * 1000.0,
+            read.jump * 1000.0,
+            read.jump_ratio(),
+            format!("{}/{}", read.jump_at, clip.frames),
+            read.seam
+                .map_or_else(|| "-".to_string(), |seam| format!("{:.1}", seam * 1000.0)),
+            read.seam_ratio()
+                .map_or_else(|| "-".to_string(), |ratio| format!("{ratio:.1}")),
+        );
+    }
+    println!();
+}
 
 /// How many points around one cycle each source is sampled at.
 const PHASES: usize = 24;
@@ -68,6 +116,8 @@ fn main() {
     };
     let library = ClipLibrary::read(&bytes).expect("the artifact parses");
     let walk = library.get("Walk").expect("Walk is in the shipped set");
+
+    continuity(&library);
 
     println!("The imported Walk against the procedural gait, on the same bodies.");
     println!("Each figure is the worst distance the footing solve had to move a sole,");

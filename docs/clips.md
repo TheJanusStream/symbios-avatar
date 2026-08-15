@@ -5,6 +5,77 @@ retargeted animations, and every one of them is somebody else's work released
 into the public domain. This file is the record of whose, from where, and under
 what.
 
+## What this is now
+
+**A development reference, and not a runtime motion source.** It was the second
+of those when it was imported. Epic #237 replaced runtime clip locomotion with
+the procedural layer, and #248 re-authored the expressive roster as goal-space
+clips that cost the bytes of their own description; what the artifact is for now
+is comparison — a second opinion when a procedural motion looks wrong, and the
+material `examples/locomotion` measures the gait against.
+
+**It is a second opinion and never a gold standard**, and the reason is
+measured rather than asserted. The owner's report at #237 was that the imported
+clips do not loop cleanly and that on some of them the body teleports between
+frames, as if a reference frame had changed under it. Both are real, both are
+now printed by the instruments, and both are properties of the source rather
+than of the transfer — the collapse rate below says the retarget invented no
+motion of its own.
+
+### The two defects, as numbers
+
+Every figure is a ratio to that clip's **own** median frame-to-frame travel,
+because an absolute distance means nothing across clips that move at very
+different speeds. One is in family. Far from one, **either way**, is not.
+
+```text
+cargo run --release --example locomotion
+```
+
+| clip | frames | step | jump | jump × | at frame | seam × |
+| --- | --- | --- | --- | --- | --- | --- |
+| `Idle_A` | 94 | 2.6 mm | 3.0 mm | 1.1 | 8/94 | 1.2 |
+| `Idle_Talking` | 110 | 8.9 | 22.8 | 2.6 | 48/110 | **0.3** |
+| `Idle Listening` | 51 | 1.9 | 2.6 | 1.4 | 14/51 | **0.2** |
+| `Walk` | 50 | 42.0 | 96.5 | 2.3 | 41/50 | 0.8 |
+| `Jog` | 35 | 113.5 | 257.5 | 2.3 | 6/35 | **0.4** |
+| `Sprint` | 25 | 163.5 | 238.2 | 1.5 | 5/25 | **0.4** |
+| `Sitting_Idle` | 62 | 0.6 | 0.9 | 1.6 | 51/62 | **0.3** |
+| `Greeting` | 145 | 19.9 | 50.5 | 2.5 | 19/145 | — |
+| `Head Nod` | 26 | 4.3 | 6.3 | 1.5 | 21/26 | — |
+| `Reject` | 114 | 11.9 | 71.8 | **6.0** | 79/114 | — |
+| `Bow` | 113 | 2.0 | 50.1 | **24.5** | 71/113 | — |
+| `Sleeping` | 50 | 0.2 | 0.3 | 1.5 | 13/50 | **0.1** |
+
+**The loops do not jerk at the wrap. They pause at it.** That is the half of
+the report the measurement corrected: not one of the eight looping clips steps
+too far across its wrap, and six of them step far too little — `Sleeping` moves
+a tenth of a normal frame's distance there and `Jog` four tenths. A wrap that
+costs nothing is a body holding still for a frame every cycle, which is what a
+last frame duplicating the first produces, and it is the shape of "does not
+loop cleanly" that this set actually has. `Idle_A` and `Walk`, at 1.2 and 0.8,
+are the two that close.
+
+**The teleports are real, and they are two clips.** `Bow` moves a body
+twenty-four times its own median step between frames 70 and 71, and `Reject` six
+times between 78 and 79. Nothing else in the set is past 2.6, which is about
+what a gait's fastest moment costs. Those two frames are the report, located.
+
+Neither reading is available by watching: a pause of one frame at 30 fps and a
+50 mm jump in a 2 mm clip both pass a render. They are `Continuity`, on
+`PoseClip`, so the readings belong to the clip rather than to whichever
+instrument remembered to take them — and `examples/bakeclips` prints them as it
+bakes, so a re-bake cannot quietly lose the caveat.
+
+### Where the artifact is used
+
+The `builtin-clips` feature embeds it, and is **off by default and meant for
+development**: the viewer's `--clip` picker uses it to put an imported motion
+beside a procedural one, and `examples/locomotion` uses it to measure them
+against each other. Nothing that ships to a person needs it. `ClipLibrary::read`
+stays for a consumer that would rather fetch the file at run time, and
+`src/retarget.rs` and the glTF reader stay because they are the bake path.
+
 ## Provenance
 
 All twelve come from [mesh2motion](https://github.com/scottpetrovic/mesh2motion-app),

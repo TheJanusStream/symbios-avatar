@@ -14,6 +14,15 @@ categories = ["simulation", "game-development", "graphics"]
 default = []
 # Embeds `assets/clips.bin` in the binary and turns on `ClipLibrary::builtin`.
 #
+# **For development, not for shipping** (#249). The baked set was the runtime
+# motion source when it was imported; epic #237 replaced locomotion with the
+# procedural layer and #248 re-authored the expressive roster in goal space, so
+# what the artifact is for now is comparison — a second opinion when a
+# procedural motion looks wrong. It is a poor gold standard and `docs/clips.md`
+# says so with numbers: six of its eight loops pause for a frame at the wrap,
+# and two of its one-shots move a body six and twenty-four times their own
+# median step between two frames.
+#
 # **Off by default, and that is the whole reason it is a feature.** The artifact
 # is 200 KiB and a consumer that only builds bodies should not carry it — least
 # of all a wasm one, where every byte of the library is a byte of the download.

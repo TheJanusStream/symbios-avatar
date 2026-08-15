@@ -29,6 +29,18 @@
 //! derived rather than read off its channel list: each node's LOCAL rotation is
 //! recovered per frame and counted as moving under the same tolerance
 //! [`Curve::bake`] uses, which is the same question asked of both rigs.
+//!
+//! # And two the collapse rate cannot see
+//!
+//! The collapse rate says the transfer did not invent motion. It says nothing
+//! about the motion the SOURCE brought with it, and epic #237 came out of
+//! exactly that: the owner's report that the imported clips do not loop cleanly
+//! and that on some of them the body teleports between frames. Both are now
+//! printed per clip as ratios to that clip's own median step — see
+//! [`Continuity`] — so a re-bake reports them and nobody has to remember the
+//! caveat separately.
+//!
+//! [`Continuity`]: symbios_avatar::Continuity
 
 use std::path::Path;
 
@@ -146,10 +158,19 @@ fn main() {
     let rig = &avatar.rig;
 
     println!(
-        "{:<17}{:>8}{:>7}{:>9}{:>8}{:>7}{:>10}{:>10}",
-        "clip", "seconds", "frames", "src move", "leaves", "ours", "bytes", "loop"
+        "{:<17}{:>8}{:>7}{:>9}{:>8}{:>7}{:>10}{:>10}{:>8}{:>8}",
+        "clip",
+        "seconds",
+        "frames",
+        "src move",
+        "leaves",
+        "ours",
+        "bytes",
+        "loop",
+        "jump x",
+        "seam x"
     );
-    println!("{}", "-".repeat(76));
+    println!("{}", "-".repeat(92));
 
     let mut library = ClipLibrary::new();
     let mut provenance: Vec<(String, &str)> = Vec::new();
@@ -182,8 +203,14 @@ fn main() {
             suspect.push((name, total, silent, ours));
         }
 
+        // **What the clip does to a body between its own frames, printed at
+        // the moment it is made** (#249). The collapse rate says the transfer
+        // did not invent motion; these say what motion the SOURCE brought with
+        // it, which is not the same question and is the one that decides
+        // whether a clip can be a gold standard. It cannot: see `Continuity`.
+        let continuity = baked.continuity(rig);
         println!(
-            "{:<17}{:>8.2}{:>7}{:>6} /66{:>8}{:>7}{:>10}{:>10}",
+            "{:<17}{:>8.2}{:>7}{:>6} /66{:>8}{:>7}{:>10}{:>10}{:>8.1}{:>8}",
             name,
             baked.duration(),
             baked.frames,
@@ -191,14 +218,18 @@ fn main() {
             silent,
             ours,
             baked.bytes(),
-            if looping { "yes" } else { "one-shot" }
+            if looping { "yes" } else { "one-shot" },
+            continuity.jump_ratio(),
+            continuity
+                .seam_ratio()
+                .map_or_else(|| "-".to_string(), |ratio| format!("{ratio:.1}")),
         );
         provenance.push((baked.name.clone(), path));
         library.clips.push(baked);
     }
 
     let bytes = library.write();
-    println!("{}", "-".repeat(76));
+    println!("{}", "-".repeat(92));
     println!(
         "{} clips, {} bytes ({:.1} KiB), {:.1} KiB per clip on average",
         library.len(),
