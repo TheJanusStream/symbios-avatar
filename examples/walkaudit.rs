@@ -6,6 +6,14 @@
 //! that no parameter can answer, because each of them is a property of the
 //! *posed body* rather than of a constant:
 //!
+//! Two readings exist for the ground a slope never asked about. The **halves**
+//! split the sole fore and aft and score each against the ground beneath
+//! itself, because a sole spans 289 mm of foot and a staircase can put a riser
+//! under the middle of it; the **jump** is the furthest a contact moved between
+//! two samples, because a seat that teleports is above the surface at every
+//! sample and no penetration reading can see it. A jump that halves when
+//! `--samples` doubles was fast; one that does not was a cliff.
+//!
 //! 1. **Does a swinging foot clear the ground?** Not the ankle — the foot. The
 //!    leg IK places a joint, and everything below it rides along in whatever
 //!    orientation the rest pose left it, so a foot can sit at a perfectly good
@@ -86,6 +94,8 @@
 //! cargo run --example walkaudit -- --heading 90       # strafing left
 //! cargo run --example walkaudit -- --headings         # the sweep, and the pop check
 //! cargo run --example walkaudit -- --step 0.15        # a staircase, not a slope (#245)
+//! cargo run --example walkaudit -- --step 0.15 --step-phase 0.0   # risers under the feet
+//! cargo run --example walkaudit -- --step 0.15 --samples 960      # fast, or discontinuous?
 //! ```
 //!
 //! [`Speed::of`]: symbios_avatar::anim::Speed::of
@@ -103,14 +113,53 @@ use symbios_avatar::{
 /// display's blind spots.
 const SWEEP: usize = 240;
 
+/// The same, as `--samples` overrides it.
+///
+/// **A jump reading cannot tell fast from discontinuous on its own.** A goal
+/// that teleports moves the same millimetres however finely the cycle is
+/// sampled; one that is merely travelling quickly moves half as far when the
+/// sampling doubles. Doubling this is the test, and it is the only way to read
+/// a jump figure that is large but not obviously a cliff (#245).
+fn sweep_of(args: &[String]) -> usize {
+    args.iter()
+        .position(|arg| arg == "--samples")
+        .and_then(|at| args.get(at + 1))
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(SWEEP)
+        .max(2)
+}
+
+/// What one foot's sole is doing at one moment, in the body's own frame.
+struct Sole {
+    /// Whether the foot is swinging.
+    airborne: bool,
+    /// The lowest point of the whole sole above the ground **beneath that
+    /// point**, measured from the body's own standing depth.
+    lowest: f32,
+    /// The same reading taken over the rear half of the sole patch, and over
+    /// the fore half.
+    ///
+    /// **A sole spans about 200 mm of foot, and on a staircase that is enough
+    /// to span a riser** — so a single minimum over the patch cannot say
+    /// whether a foot is buried in the ground it stands on or standing on a
+    /// tread with its toe out over the next step's column. The two halves can
+    /// (#245), and which of them the worst reading came from is the difference
+    /// between a placement defect and a foot that is simply longer than the
+    /// stair it is being asked to fit on.
+    heel: f32,
+    toe: f32,
+    /// Progress through the current phase, `0..1`.
+    progress: f32,
+    /// Pitch against the ground plane in degrees, positive toe-up.
+    pitch: f32,
+}
+
 /// What one moment of the walk measures.
 struct Moment {
     /// Where in the cycle this is, `0..1`.
     cycle: f32,
-    /// Per foot: whether it is swinging, sole height above the body's own
-    /// standing depth, its progress through its phase, and its pitch against
-    /// the ground plane in degrees (positive toe-up).
-    feet: Vec<(bool, f32, f32, f32)>,
+    /// Per foot, in the body's own frame.
+    feet: Vec<Sole>,
     /// Elbow bend per arm, degrees away from straight.
     elbows: Vec<f32>,
     /// Shoulder line against hip line, degrees.
@@ -132,6 +181,12 @@ struct Moment {
     /// merging the two is how an instrument ends up reporting a world skid as a
     /// body-space clearance.
     planted: Vec<(bool, Vec3, f32)>,
+    /// Per foot, in the **world** frame: the fore-and-aft span the sole covers
+    /// while it is bearing weight, and `None` while it is not.
+    ///
+    /// The ground the foot is actually standing on, as opposed to the point the
+    /// gait pins — which is what a staircase has to be laid out against.
+    footprint: Vec<Option<(f32, f32)>>,
 }
 
 fn main() {
@@ -143,6 +198,7 @@ fn main() {
             .and_then(|value| value.parse::<f32>().ok())
     };
     let frames = number("--frames").map_or(16, |value| value as usize).max(2);
+    let samples = sweep_of(&args);
     let pace = number("--pace").unwrap_or(1.0);
     let grade = number("--grade").unwrap_or(0.0);
     // The lateral axis, which is a different question from the grade and was
@@ -257,9 +313,50 @@ fn main() {
             a,
         )
     };
+    // **One stair per FOOTFALL**, which is how a person takes stairs and the
+    // only spacing that puts each landing on a tread rather than part way up a
+    // riser. Taken from the body's travel per cycle divided by how many times
+    // it transfers support, which is `Gait::footfalls` — the same count
+    // `Speed::cycle_length` divides by, and taking the contact count instead
+    // would put a trotting body on half a stair.
+    let tread =
+        (Stride::for_body(rig, pace).length / gait.duty / gait.footfalls().max(1) as f32).max(1e-3);
+    // **Where the risers fall, which is a choice and was being made by accident.**
+    // Fixing the tread to the footfall spacing decides how FAR apart the risers
+    // are and says nothing about where they sit between the feet, and the grid
+    // this had before was anchored at world `z = 0` — which is to say at
+    // wherever the body happened to start. Measured, that put every riser 50 to
+    // 85 mm under the leading edge of a 289 mm sole, on a 414 mm tread with 125
+    // mm to spare, and the whole -98 mm reading of #245 was that overhang. A
+    // staircase whose risers land under the feet measures its own alignment.
+    //
+    // So the phase is calibrated below against the body's own footprint rather
+    // than chosen, and `--step-phase` overrides it for the deliberately
+    // awkward case. `None` here is flat ground, which is also how the
+    // calibration pass gets an unstepped body to measure.
+    let riser_at: std::cell::Cell<Option<f32>> = std::cell::Cell::new(None);
+    let world_height = |at: Vec3| {
+        let plane = at.z * grade + at.x * camber;
+        match riser_at.get() {
+            Some(phase) if step != 0.0 => plane + ((at.z - phase) / tread).floor() * step,
+            _ => plane,
+        }
+    };
+    // Each tread is flat, so the surface normal is the underlying plane's — a
+    // staircase is level underfoot and only its height jumps.
+    let world_normal = Vec3::new(-camber, 1.0, -grade).normalize();
+    // **The world has a height, and this had none.** A body-space reading is
+    // taken against the ground under the body's own origin, so carrying one out
+    // into the world means adding that ground back — and while it was left out,
+    // every world reading was short by however far the body had climbed. On a
+    // plane that is a smooth error and nothing here could see it. On a
+    // staircase the reference under the origin is a step function, so the whole
+    // body frame dropped 100 mm the moment the origin crossed a riser and a
+    // contact that had not moved at all read as teleporting exactly one riser
+    // (#245). The gait was innocent: the ruler had no vertical.
     let into_world = |u: f32, at: Vec3| {
         let (origin, yaw) = frame(u);
-        origin + Quat::from_rotation_y(yaw) * at
+        origin + Vec3::Y * world_height(origin) + Quat::from_rotation_y(yaw) * at
     };
 
     // **The joint the gait actually pins**, which is not the ankle and the
@@ -303,6 +400,26 @@ fn main() {
                 .vertices()
                 .map(|vertex| body.positions[vertex].y)
                 .fold(f32::MAX, f32::min)
+        })
+        .collect();
+
+    // Which half of the sole each vertex is in, taken once from the rest body
+    // and split at the patch's own mid-length. Rear half is the heel's, fore
+    // half is the toe's; see `Sole::heel` for why a whole-patch minimum cannot
+    // answer the question a staircase asks.
+    let halves: Vec<(Vec<usize>, Vec<usize>)> = feet
+        .iter()
+        .map(|(_, patch)| {
+            let span = patch
+                .vertices()
+                .map(|vertex| body.positions[vertex].z)
+                .fold((f32::MAX, f32::MIN), |span, z| {
+                    (span.0.min(z), span.1.max(z))
+                });
+            let mid = (span.0 + span.1) / 2.0;
+            patch
+                .vertices()
+                .partition(|&vertex| body.positions[vertex].z < mid)
         })
         .collect();
 
@@ -361,25 +478,6 @@ fn main() {
     // and a subtraction of the body's own height, and with no turn and no
     // travel it collapses to exactly the expression this had before, which is
     // why every reading above is unmoved.
-    // **One stair per FOOTFALL**, which is how a person takes stairs and the
-    // only spacing that puts each landing on a tread rather than part way up a
-    // riser. Taken from the body's travel per cycle divided by how many times
-    // it transfers support, which is `Gait::footfalls` — the same count
-    // `Speed::cycle_length` divides by, and taking the contact count instead
-    // would put a trotting body on half a stair.
-    let tread =
-        (Stride::for_body(rig, pace).length / gait.duty / gait.footfalls().max(1) as f32).max(1e-3);
-    let world_height = |at: Vec3| {
-        let plane = at.z * grade + at.x * camber;
-        if step == 0.0 {
-            plane
-        } else {
-            plane + (at.z / tread).floor() * step
-        }
-    };
-    // Each tread is flat, so the surface normal is the underlying plane's — a
-    // staircase is level underfoot and only its height jumps.
-    let world_normal = Vec3::new(-camber, 1.0, -grade).normalize();
     let height = |u: f32, at: Vec3| world_height(into_world(u, at)) - world_height(frame(u).0);
     let measure = |u: f32, stride: &Stride| -> Moment {
         let cycle = u.rem_euclid(1.0);
@@ -411,21 +509,47 @@ fn main() {
         let posed = pose.forward(rig);
         let moved = posed.deform(rig, &body.positions, weights);
 
+        // The footprint: what fore-and-aft band of world a bearing sole covers,
+        // which is the band a riser must not be inside. Taken from the sole
+        // patch rather than from the contact joint, because the joint is a
+        // point and the question is about the 289 mm of foot around it.
+        let footprint: Vec<Option<(f32, f32)>> = feet
+            .iter()
+            .map(|(limb, patch)| {
+                let index = gait.limbs.iter().position(|other| other == limb);
+                if index.is_some_and(|at| !gait.phase(at, cycle).is_stance()) {
+                    return None;
+                }
+                Some(
+                    patch
+                        .vertices()
+                        .map(|vertex| into_world(u, moved[vertex]).z)
+                        .fold((f32::MAX, f32::MIN), |span, z| {
+                            (span.0.min(z), span.1.max(z))
+                        }),
+                )
+            })
+            .collect();
+
         let feet = feet
             .iter()
             .zip(&standing)
             .zip(&spans)
-            .map(|(((limb, patch), base), span)| {
+            .zip(&halves)
+            .map(|((((limb, patch), base), span), (rear, fore))| {
+                // Height above the ground beneath that vertex, not above zero:
+                // on a grade the floor is not level and a foot that tracks it
+                // would otherwise read as sinking downhill.
+                let above = |vertex: &usize| {
+                    let at = moved[*vertex];
+                    at.y - height(u, at)
+                };
                 let sole = patch
                     .vertices()
-                    .map(|vertex| {
-                        // Height above the ground beneath that vertex, not above
-                        // zero: on a grade the floor is not level and a foot that
-                        // tracks it would otherwise read as sinking downhill.
-                        let at = moved[vertex];
-                        at.y - height(u, at)
-                    })
+                    .map(|vertex| above(&vertex))
                     .fold(f32::MAX, f32::min);
+                let heel = rear.iter().map(above).fold(f32::MAX, f32::min);
+                let toe = fore.iter().map(above).fold(f32::MAX, f32::min);
                 let index = gait.limbs.iter().position(|other| other == limb);
                 let phase = index.map_or(gait::Phase::Stance(0.0), |at| gait.phase(at, cycle));
                 let pitch = span.map_or(0.0, |(heel, toe, rest)| {
@@ -441,7 +565,14 @@ fn main() {
                         - (-normal.z / normal.y).atan().to_degrees()
                         - rest
                 });
-                (!phase.is_stance(), sole - base, phase.progress(), pitch)
+                Sole {
+                    airborne: !phase.is_stance(),
+                    lowest: sole - base,
+                    heel: heel - base,
+                    toe: toe - base,
+                    progress: phase.progress(),
+                    pitch,
+                }
             })
             .collect();
 
@@ -481,6 +612,7 @@ fn main() {
             lean: trunk_lean(rig, &posed),
             bank: trunk_bank(rig, &posed),
             planted,
+            footprint,
         }
     };
 
@@ -511,6 +643,66 @@ fn main() {
             radius.abs(),
         );
     }
+    // **Laying the staircase out against the feet, not against the origin.**
+    // The tread is already the footfall spacing, so every landing is congruent
+    // modulo one tread and a single phase serves the whole flight. Which phase
+    // is measured, not chosen: sweep the body over flat ground, fold every
+    // bearing footprint onto one tread, and put the riser in the middle of the
+    // widest band no sole ever covers. A riser anywhere else is one the foot is
+    // standing on, and the -98 mm this instrument reported for a whole session
+    // was exactly that (#245).
+    //
+    // If there is no free band the foot is longer than the stair, which is a
+    // real and different finding — it is reported rather than papered over, and
+    // the phase falls back to the emptiest point.
+    let gap;
+    if step != 0.0 {
+        const BINS: usize = 2048;
+        let mut covered = [false; BINS];
+        for at in 0..samples * 2 {
+            let moment = measure(at as f32 / samples as f32, &stride);
+            for span in moment.footprint.iter().flatten() {
+                let from = span.0.rem_euclid(tread);
+                let across = ((span.1 - span.0) / tread * BINS as f32).ceil() as usize;
+                let first = (from / tread * BINS as f32) as usize;
+                for bin in 0..=across.min(BINS) {
+                    covered[(first + bin) % BINS] = true;
+                }
+            }
+        }
+        // The widest free run, on a circle: doubled so a run that wraps the
+        // seam is found as one run rather than as two halves.
+        let (mut best, mut run) = ((0usize, 0usize), 0usize);
+        for bin in 0..BINS * 2 {
+            run = if covered[bin % BINS] { 0 } else { run + 1 };
+            if run > best.1 {
+                best = (bin + 1 - run, run);
+            }
+        }
+        let middle = (best.0 as f32 + best.1 as f32 / 2.0) / BINS as f32 * tread;
+        gap = (
+            best.1 as f32 / BINS as f32 * tread,
+            middle.rem_euclid(tread),
+        );
+        riser_at.set(Some(number("--step-phase").unwrap_or(gap.1)));
+        println!(
+            "a staircase of {:.0} mm risers on {:.0} mm treads — one stair per footfall — with \
+             the risers at {:.0} mm into each tread, the middle of the {:.0} mm band no sole \
+             ever covers{}",
+            step * 1000.0,
+            tread * 1000.0,
+            riser_at.get().unwrap_or(0.0) * 1000.0,
+            gap.0 * 1000.0,
+            if gap.0 <= 0.0 {
+                " — WHICH IS NOTHING: this foot is longer than this tread and cannot stand \
+                 clear of a riser at any phase, so every reading below carries an overhang \
+                 the gait has no way to avoid"
+            } else {
+                ""
+            },
+        );
+    }
+
     println!(
         "stride {:.3} m long, lifting {:.3} m; sole clearances measured above the body's \
          own standing depth ({:.1} mm under the build's floor — the mesh's, not the walk's, #220)",
@@ -539,12 +731,12 @@ fn main() {
     for frame in 0..frames {
         let moment = measure(frame as f32 / frames as f32, &stride);
         let mut cells = String::new();
-        for &(airborne, sole, _, pitch) in &moment.feet {
+        for foot in &moment.feet {
             cells.push_str(&format!(
                 " {:>6} {:>10.1} {:>7.1}",
-                if airborne { "swing" } else { "stance" },
-                sole * 1000.0,
-                pitch,
+                if foot.airborne { "swing" } else { "stance" },
+                foot.lowest * 1000.0,
+                foot.pitch,
             ));
         }
         println!(
@@ -564,8 +756,8 @@ fn main() {
     // measured across a broken stance is measured across a re-plant. Every
     // body-space reading below is periodic in the cycle and so is unmoved by
     // the extra lap.
-    let sweep: Vec<Moment> = (0..SWEEP * 2)
-        .map(|at| measure(at as f32 / SWEEP as f32, &stride))
+    let sweep: Vec<Moment> = (0..samples * 2)
+        .map(|at| measure(at as f32 / samples as f32, &stride))
         .collect();
 
     let mut lowest_swing = f32::MAX;
@@ -579,20 +771,30 @@ fn main() {
     let (mut bank_low, mut bank_high) = (f32::MAX, f32::MIN);
     let (mut pelvis_low, mut pelvis_high) = (f32::MAX, f32::MIN);
     let (mut stance_pitch, mut swing_pitch) = ((f32::MAX, f32::MIN), (f32::MAX, f32::MIN));
+    // The same two readings again, split along the foot — see `Sole::heel`.
+    let (mut swing_heel, mut swing_toe) = (f32::MAX, f32::MAX);
+    let (mut stance_heel, mut stance_toe) = (f32::MAX, f32::MAX);
     for moment in &sweep {
-        for &(airborne, sole, progress, pitch) in &moment.feet {
-            if airborne {
-                if sole < lowest_swing {
-                    lowest_swing = sole;
-                    lowest_at = progress;
+        for foot in &moment.feet {
+            if foot.airborne {
+                if foot.lowest < lowest_swing {
+                    lowest_swing = foot.lowest;
+                    lowest_at = foot.progress;
                 }
-                if (0.4..=0.6).contains(&progress) {
-                    mid_swing = mid_swing.min(sole);
+                if (0.4..=0.6).contains(&foot.progress) {
+                    mid_swing = mid_swing.min(foot.lowest);
                 }
-                swing_pitch = (swing_pitch.0.min(pitch), swing_pitch.1.max(pitch));
+                swing_heel = swing_heel.min(foot.heel);
+                swing_toe = swing_toe.min(foot.toe);
+                swing_pitch = (swing_pitch.0.min(foot.pitch), swing_pitch.1.max(foot.pitch));
             } else {
-                stance_err = stance_err.max(sole.abs());
-                stance_pitch = (stance_pitch.0.min(pitch), stance_pitch.1.max(pitch));
+                stance_err = stance_err.max(foot.lowest.abs());
+                stance_heel = stance_heel.min(foot.heel);
+                stance_toe = stance_toe.min(foot.toe);
+                stance_pitch = (
+                    stance_pitch.0.min(foot.pitch),
+                    stance_pitch.1.max(foot.pitch),
+                );
             }
         }
         let bend = moment.elbows.iter().copied().fold(f32::MAX, f32::min);
@@ -606,10 +808,10 @@ fn main() {
         pelvis_low = pelvis_low.min(moment.pelvis);
         pelvis_high = pelvis_high.max(moment.pelvis);
     }
-    let both_down = (0..SWEEP)
-        .filter(|&at| gait.grounded(at as f32 / SWEEP as f32) >= 2)
+    let both_down = (0..samples)
+        .filter(|&at| gait.grounded(at as f32 / samples as f32) >= 2)
         .count() as f32
-        / SWEEP as f32;
+        / samples as f32;
 
     // What a PLANTED contact did in the world, over each whole stance the sweep
     // contains.
@@ -638,11 +840,16 @@ fn main() {
     // sweep.
     let mut jump = 0.0f32;
     let mut jump_at = 0.0f32;
+    // Which foot, and whether it was bearing weight — because a goal that
+    // teleports in stance and one that teleports in flight are different
+    // defects, and a bare millimetre count cannot be acted on.
+    let mut jump_by = (0usize, false);
     for pair in sweep.windows(2) {
-        for (before, after) in pair[0].planted.iter().zip(&pair[1].planted) {
+        for (foot, (before, after)) in pair[0].planted.iter().zip(&pair[1].planted).enumerate() {
             if before.1.distance(after.1) > jump {
                 jump = before.1.distance(after.1);
                 jump_at = pair[1].cycle;
+                jump_by = (foot, after.0);
             }
         }
     }
@@ -660,7 +867,7 @@ fn main() {
             if whole {
                 stances += 1;
                 let mid = run[run.len() / 2];
-                let yaw = per_cycle_yaw * (mid as f32 / SWEEP as f32);
+                let yaw = per_cycle_yaw * (mid as f32 / samples as f32);
                 let heading = Vec3::new(yaw.sin(), 0.0, yaw.cos());
                 let across = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
                 let axis = |direction: Vec3| {
@@ -702,7 +909,7 @@ fn main() {
         }
     }
 
-    println!("\nagainst the reference, over {SWEEP} samples of the cycle:");
+    println!("\nagainst the reference, over {samples} samples of the cycle:");
     println!(
         "  swing:  lowest pass {:.1} mm above standing depth, at swing phase {:.2}; \
          mid-swing bottoms at {:.1} mm",
@@ -724,6 +931,18 @@ fn main() {
          for it here is what left this line citing an 11.7 mm convexity that #220 had already \
          fixed)",
         stance_err * 1000.0
+    );
+    println!(
+        "  halves: the worst swing pass was {:.1} mm at the heel and {:.1} mm at the toe; \
+         in stance, {:.1} mm and {:.1} mm (each half against the ground beneath ITSELF. On \
+         continuous ground the two track each other and this line says nothing; on a \
+         staircase they part, and which one is under says whether a foot is buried in the \
+         step it stands on or standing on a tread with its toe out over the next riser's \
+         column, #245)",
+        swing_heel * 1000.0,
+        swing_toe * 1000.0,
+        stance_heel * 1000.0,
+        stance_toe * 1000.0,
     );
     println!(
         "  elbows: never under {straightest:.1} deg bent, peaking {deepest_bend:.1} \
@@ -809,11 +1028,11 @@ fn main() {
             let mut worst = f32::MAX;
             let mut planted = 0.0f32;
             let mut anchor: Option<(usize, Vec3)> = None;
-            for at in 0..SWEEP {
-                let moment = measure(at as f32 / SWEEP as f32, &swept);
-                for &(airborne, sole, _, _) in &moment.feet {
-                    if airborne {
-                        worst = worst.min(sole);
+            for at in 0..samples {
+                let moment = measure(at as f32 / samples as f32, &swept);
+                for foot in &moment.feet {
+                    if foot.airborne {
+                        worst = worst.min(foot.lowest);
                     }
                 }
                 // The skid, on the first contact, across whatever stance the
@@ -825,7 +1044,7 @@ fn main() {
                 // counts it twice — measured, every heading reported about 500
                 // mm of skid including the forward one the main reading puts at
                 // 31.9. One clock at a time.
-                let u = at as f32 / SWEEP as f32;
+                let u = at as f32 / samples as f32;
                 let (origin, yaw) = frame(u);
                 let local = Quat::from_rotation_y(-yaw) * (moment.planted[0].1 - origin);
                 let at_world = local + ahead * (per_cycle * u);
@@ -855,17 +1074,19 @@ fn main() {
 
     println!(
         "  jump:   the furthest a contact moved between two of the {} samples was {:.1} mm, \
-         at cycle {jump_at:.2} — {:.2} m/s at this body's cadence",
-        SWEEP * 2,
+         at cycle {jump_at:.2}, by foot {} in {} — {:.2} m/s at this body's cadence",
+        samples * 2,
         jump * 1000.0,
-        jump * SWEEP as f32 * cadence,
+        jump_by.0,
+        if jump_by.1 { "stance" } else { "flight" },
+        jump * samples as f32 * cadence,
     );
     println!(
         "          (a foot travels about a stride per stance, so a smooth walk lands near \
          {:.1} mm a sample here. Much more is the goal being TELEPORTED — which is what \
          seating it on the ground directly beneath it does the moment that ground has a step \
          in it)",
-        stride.length / (SWEEP as f32 * gait.duty) * 1000.0,
+        stride.length / (samples as f32 * gait.duty) * 1000.0,
     );
     println!(
         "  gait:   duty {:.2}, both feet down {both_down:.2} of the cycle, airborne \

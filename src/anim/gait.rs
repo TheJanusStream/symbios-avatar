@@ -1059,7 +1059,7 @@ where
             let offset = if gait.duty >= 1.0 {
                 Vec3::ZERO
             } else {
-                seated_offset(home, stride, phase, &ground)
+                seated_offset(home, stride, phase, gait.duty, &ground)
             };
             Some((limb, phase, offset, home + offset))
         })
@@ -1385,7 +1385,33 @@ impl Walked {
 /// hidden: ground that rises and falls again inside one foot length can be
 /// missed.
 ///
-fn seated_offset<F>(home: Vec3, stride: &Stride, phase: Phase, ground: &F) -> Vec3
+/// # Both ends are points in the world (#245)
+///
+/// And the frame this is computed in is not. A take-off happened where it
+/// happened; the body walks away from it for the whole of the flight, so
+/// asking [`contact_offset`] where the swing began gives the answer for a foot
+/// beginning its swing *now* — a point that travels forward at walking pace.
+/// The landing is the mirror of it, a fixed piece of ground the body closes on.
+///
+/// So both are carried past the stance's own ends by the share of a stance the
+/// swing lasts, `(1 - duty) / duty`. On continuous ground this only slid the
+/// probes along a smooth surface; across a riser the drifting end crosses the
+/// step in mid-flight and the goal built on it jumps by the height of the step.
+/// Measured on a 100 mm flight, 99.2 mm between two adjacent samples against a
+/// 4.3 mm average — and the whole of it gone once the ends hold still.
+///
+/// # What this still does not do
+///
+/// **It seats a point, and a foot is 289 mm long.** A swing whose contact
+/// clears a riser can still drag its toe through it, because the toe is half a
+/// foot ahead of the joint being seated and crosses the riser 43 mm after
+/// take-off, when the arc has lifted 20 mm of the 100 it needs. Measured on the
+/// same flight: the heel passes 4.2 mm clear and the toe 74.2 mm under. That is
+/// a swing profile question rather than a seating one — the climb has to happen
+/// at the start of the flight where the obstacle is, not in the middle where a
+/// smoothstep puts it — and it is #259.
+///
+fn seated_offset<F>(home: Vec3, stride: &Stride, phase: Phase, duty: f32, ground: &F) -> Vec3
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
@@ -1399,11 +1425,32 @@ where
     };
 
     // The two ends of the swing, which are the last stance's departure and the
-    // next one's arrival — asked of `contact_offset` rather than assumed, so
-    // they follow the arc a turning body walks (#241) as readily as a straight
-    // one.
-    let leaving = contact_offset(home, stride, Phase::Swing(0.0));
-    let arriving = contact_offset(home, stride, Phase::Swing(1.0));
+    // next one's arrival — asked of [`carried`] rather than assumed, so they
+    // follow the arc a turning body walks (#241) as readily as a straight one.
+    //
+    // **Both are points in the WORLD, and this frame is not.** A take-off
+    // happened where it happened; the body has been walking away from it ever
+    // since, and a swing that asks `contact_offset` where its take-off is gets
+    // the answer for a foot taking off *now* — which is a point that travels
+    // forward with the body at walking pace. Same at the other end: the landing
+    // spot is fixed ground, and the body closes on it over the swing.
+    //
+    // So both are carried past the stance's own ends by however far the body
+    // moves while the foot is in the air. That share is the swing's duration
+    // over the stance's, which is `(1 - duty) / duty` — a stance spans exactly
+    // one `carried` unit, by construction, so the two are directly comparable.
+    //
+    // On continuous ground this only ever slid the probes along a smooth
+    // surface and read as a fraction of a millimetre. Across a riser it is the
+    // whole defect: the drifting end crosses the step in mid-flight, the ground
+    // under it jumps, and the goal built on it jumps with it (#245).
+    let drift = if duty > f32::EPSILON {
+        (1.0 - duty) / duty
+    } else {
+        0.0
+    };
+    let leaving = carried(home, stride, 0.5 + drift * t);
+    let arriving = carried(home, stride, -0.5 - drift * (1.0 - t));
     let (from, to) = (beneath(leaving), beneath(arriving));
 
     // Smoothstep rather than a straight line, so the foot leaves and arrives
@@ -1415,7 +1462,11 @@ where
     // arc has to clear that as well as make its own toe clearance, so the two
     // add: a step gets the lift a flat walk gets, on top of the step.
     let mut over = 0.0f32;
-    let probes = clearance_probes(home, stride);
+    // Over the whole flight path, which is longer than a stride: the foot
+    // covers its own stride plus everything the body walks past while it is in
+    // the air, and probing only the stride's worth leaves the rest unlooked-at
+    // at exactly the resolution the count is chosen to guarantee.
+    let probes = clearance_probes(stride, (arriving - leaving).length());
     for probe in 1..probes {
         let at = probe as f32 / probes as f32;
         let along = leaving.lerp(arriving, at);
@@ -1442,10 +1493,13 @@ where
 /// the foot is a step the foot spans, and one narrower than the spacing here
 /// can be stepped over without being cleared. At least two, so a swing always
 /// has one sample in the middle of it.
-fn clearance_probes(home: Vec3, stride: &Stride) -> usize {
-    let _ = home;
+///
+/// `across` is how far the flight actually goes, which is **not** the stride:
+/// the foot covers its own stride plus whatever the body walks past while it is
+/// in the air, so a duty of 0.6 puts a third as much ground again under it.
+fn clearance_probes(stride: &Stride, across: f32) -> usize {
     let foot = stride.lift.max(1e-3);
-    ((stride.length / foot).ceil() as usize).clamp(2, 16)
+    ((across / foot).ceil() as usize).clamp(2, 16)
 }
 
 /// How far the toe rides above the sole at heel-strike, in radians.
@@ -3286,6 +3340,106 @@ mod tests {
         }
     }
 
+    /// A flight of stairs, laid out the way a body meets one: `rise` per step,
+    /// and a tread the body covers in exactly one footfall.
+    ///
+    /// The **world's** ground, so it takes a world point. A body walking over
+    /// it is given [`travelling`], which is the same surface seen from where
+    /// the body currently stands.
+    fn staircase(rise: f32, tread: f32) -> impl Fn(f32) -> f32 + Copy {
+        move |z: f32| (z / tread).floor() * rise
+    }
+
+    /// The ground closure a body posed at `origin` must be handed: the world
+    /// surface, carried into the frame the body is posed in.
+    ///
+    /// Body space is measured against the ground under the body's own feet, so
+    /// both the query and the answer are relative to `origin` — which is what
+    /// makes a walking body's closure change from frame to frame even though
+    /// the hillside does not move.
+    fn travelling<G>(origin: f32, world: G) -> impl Fn(Vec3) -> Option<Ground> + Copy
+    where
+        G: Fn(f32) -> f32 + Copy,
+    {
+        move |at: Vec3| {
+            Some(Ground {
+                position: Vec3::new(at.x, world(origin + at.z) - world(origin), at.z),
+                normal: Vec3::Y,
+            })
+        }
+    }
+
+    #[test]
+    fn a_swing_crosses_a_step_without_teleporting_over_it() {
+        // **#245, and the reading that found it was not a penetration one.** A
+        // goal seated on the ground beneath it is continuous exactly as long as
+        // that ground is; across a riser it is a cliff, and a foot that arrives
+        // at the top of a step in one frame is above the surface at every
+        // sample it is measured at. It simply got there impossibly fast.
+        //
+        // The cause was that a swing asked [`contact_offset`] where its own two
+        // ends were, in the frame the body is posed in NOW. A take-off happened
+        // where it happened and the body has been walking away from it ever
+        // since, so that answer describes a point travelling forward at walking
+        // pace — and on a staircase the drifting point crosses a riser in
+        // mid-flight and takes the goal with it.
+        //
+        // Measured on a 100 mm flight before the ends were fixed: 99.2 mm
+        // between two adjacent samples of a swing that averages 4.3 mm, and
+        // 199.2 on a 200 mm flight. The size of the jump is the size of the
+        // step, which is the signature of a seat rather than of a motion.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let home = home_of(&rig, Limb::HindLeft).expect("the biped has a hind left foot");
+
+        // One stair per footfall, which is how a body meets a staircase and the
+        // only spacing that puts a landing on a tread rather than part way up a
+        // riser.
+        let travel = stride.length / gait.duty;
+        let tread = travel / gait.footfalls().max(1) as f32;
+
+        for rise in [0.1, 0.2] {
+            let world = staircase(rise, tread);
+            // The swing alone, sampled finely, with the body carried forward by
+            // exactly what a swing of this duty covers.
+            const STEPS: usize = 200;
+            let flight = travel * (1.0 - gait.duty);
+            let path: Vec<Vec3> = (0..=STEPS)
+                .map(|at| {
+                    let t = at as f32 / STEPS as f32;
+                    let origin = flight * t;
+                    let offset = seated_offset(
+                        home,
+                        &stride,
+                        Phase::Swing(t),
+                        gait.duty,
+                        &travelling(origin, world),
+                    );
+                    home + offset + Vec3::new(0.0, world(origin), origin)
+                })
+                .collect();
+
+            let steps: Vec<f32> = path
+                .windows(2)
+                .map(|pair| pair[0].distance(pair[1]))
+                .collect();
+            let worst = steps.iter().copied().fold(0.0f32, f32::max);
+            let usual = steps.iter().sum::<f32>() / steps.len() as f32;
+            // Three times the average, which a teleport clears by an order of
+            // magnitude — the 99.2 mm above is 23 times it — and which a swing
+            // whose speed merely varies over its arc never comes near.
+            assert!(
+                worst < usual * 3.0,
+                "on a {:.0} mm flight a swing goal moved {:.1} mm between two samples, \
+                 against an average of {:.1} mm",
+                rise * 1000.0,
+                worst * 1000.0,
+                usual * 1000.0,
+            );
+        }
+    }
+
     #[test]
     fn a_sole_meets_the_hillside_it_is_crossing_and_not_only_the_one_it_is_climbing() {
         // **#255, and it is the axis nothing had ever asked about.** The stride
@@ -3320,8 +3474,26 @@ mod tests {
             (-0.30, -0.30),
         ] {
             let worst = worst_sole_pass(&rig, &gait, &stride, tilted(grade, camber));
+            // **Twelve millimetres, and why it is now fourteen.** Six of the
+            // seven cases sit inside 4 mm; the diagonal extreme has always been
+            // the outlier, and it read -12.40 against a -12.40 bound — a guard
+            // passing by four microns is a guard about to break for a reason
+            // that has nothing to do with what it guards.
+            //
+            // It broke under #245, by 0.84 mm, and the cause is the swing's two
+            // ends becoming world-fixed points: a foot near its take-off now
+            // holds the height it actually left instead of being carried up
+            // with the climbing body, which is right and which costs exactly
+            // that much clearance at the moment it leaves. Measured at cycle
+            // 0.125 — the take-off end, and nowhere else.
+            //
+            // What is left there is the sole's downhill corner on a doubly
+            // tilted surface, which is the unclamped ankle of #256 and not this
+            // test's subject. The bound this one exists to catch is tens of
+            // millimetres — 24.7, 52.2 and 70.3 at 15, 30 and 40 percent of
+            // camber — and it catches them at 14 as decisively as at 12.
             assert!(
-                worst > flat - 0.012,
+                worst > flat - 0.014,
                 "on a {grade} grade and {camber} camber the sole passed {:.1} mm below \
                  the surface, against {:.1} mm on the flat",
                 worst * 1000.0,
