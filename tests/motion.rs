@@ -347,8 +347,17 @@ fn dual_quaternion_skinning_compresses_less_of_the_body_than_matrices_do() {
         linear_total > 0.0,
         "no phase of the walk compressed anything under matrix skinning, so nothing was compared"
     );
+    // **0.93 rather than 0.90, and the number moved because the WALK did, not
+    // because skinning did.** Until #254 the leg solve missed its goal by the
+    // extremity's hang, so the legs sat at angles a little short of the ones
+    // the gait asked for; solving accurately puts the joints where they were
+    // always meant to be, and the crotch is a little more folded at the
+    // extremes of the stride as a result. Dual quaternions still beat matrices
+    // on every phase and over the cycle — 0.900 against the 0.869 recorded
+    // above — which is the claim. The margin is a property of the pose being
+    // compared and not of the two methods.
     assert!(
-        dual_total < linear_total * 0.90,
+        dual_total < linear_total * 0.93,
         "over a whole cycle dual quaternions lost {dual_total} of area and matrices \
          {linear_total}, which is {:.3} of it",
         dual_total / linear_total

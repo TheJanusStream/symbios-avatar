@@ -487,11 +487,16 @@ mod tests {
             let seconds = (to - from) / speed.cadence(&rig);
             let travelled = slid / seconds;
             let ratio = travelled / metres;
+            // **The bound is now nearly nothing, and that is #254 landing.**
+            // Written when the solve missed its target by the extremity's hang,
+            // this allowed the overshoot that hang can account for — 12.7% on
+            // this body, and 12.3% was measured. With the solve iterated the
+            // body travels within a third of a percent of the speed it was
+            // asked for, so the allowance is a fiftieth of what it was.
+            let _ = hang;
             assert!(
-                ratio > 0.98 && ratio < 1.0 + hang + 0.02,
-                "asked {metres:.2} m/s and the body travelled {travelled:.2}; the solve's \
-                 own overshoot accounts for at most {:.1}%",
-                hang * 100.0
+                (ratio - 1.0).abs() < 0.01,
+                "asked {metres:.2} m/s and the body travelled {travelled:.2}"
             );
             ratios.push(ratio);
         }

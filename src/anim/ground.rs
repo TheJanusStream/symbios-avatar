@@ -404,9 +404,13 @@ where
     if !pose.fits(rig) {
         return;
     }
-    let posed = pose.forward(rig);
 
     for limb in rig.ground_contacts() {
+        // Re-read each limb, because levelling the last one moved the leg it
+        // hangs from. One sweep for all of them was right while this only
+        // assigned a rotation; it stopped being right when it started putting
+        // the contact back (#257).
+        let posed = pose.forward(rig);
         // The joint the foot hangs from — the ankle on a body whose foot is a
         // chain of its own, the last leg node on one whose foot is an attached
         // part. `extremity_joints` answers that without either being assumed.
@@ -417,6 +421,13 @@ where
         let Some(parent) = rig.joints[ankle].parent else {
             continue;
         };
+        let Some(&contact) = rig.in_zone(Zone::Extremity(limb)).first() else {
+            continue;
+        };
+        // Where the contact stands before the ankle turns. Turning an ankle
+        // swings everything hanging off it, and this is the thing that must not
+        // move.
+        let held = posed.positions[contact];
 
         // Level against the ground under the foot itself, not under the ankle:
         // on a slope those are a step apart, and the sole is what has to lie
@@ -439,6 +450,20 @@ where
         };
         pose.rotations[ankle] =
             Quat::from_axis_angle(axis, angle.clamp(-config.max_ankle, config.max_ankle));
+
+        // **And then put the contact back** (#257). Levelling used to be
+        // described here as free, on the grounds that a swinging foot is pinned
+        // by nothing. It is not free: turning the ankle swings the contact
+        // hanging off it — measured at 41.7 mm on a walk and 54.3 on a run —
+        // and for a foot nothing is about to solve, nothing took it out again.
+        //
+        // It hid behind a second defect for as long as both existed. The
+        // one-pass solve aimed the ANKLE at the goal plus the rest hang, which
+        // is roughly straight up from where the contact belongs, so a foot
+        // levelled afterwards landed its sole at zero by accident. Fixing the
+        // solve (#254) removed the accident and left the drag showing at 11 mm.
+        // The two had to land together.
+        solve_contact(rig, pose, limb, held);
     }
 }
 
@@ -449,13 +474,25 @@ where
 /// with the gait engine, which places contacts for a different reason but has
 /// exactly the same problem.
 ///
-/// **One pass, and it misses by the hang it corrected for** (#254). The offset
+/// **Iterated, because the hang turns as the limb solves** (#254). The offset
 /// below is read off the pose, and the solve it feeds then rotates the joint it
-/// was read from — so the extremity lands where it *was* hanging rather than on
-/// `target`. Measured on the default biped: a hand 69.7 mm from its goal on a
-/// rest pose, a stance foot 67 mm above a flat floor at pace 1.5 against 36 mm
-/// at pace 0.5, every one of them reported as a successful solve. Iterating
-/// fixes it and is not free: it moves the gait, which shares this function.
+/// was read from — so one pass lands the extremity where it *was* hanging
+/// rather than on `target`. This was a one-pass function until #254, and
+/// `two_bone` reported success every time it happened.
+///
+/// **What it cost, measured on the default biped.** A hand landed 69.7 mm from
+/// its goal on a rest pose. A stance foot sat 36 mm above a flat floor at pace
+/// 0.5 and 67 mm at pace 1.5 — pace-dependent, because the miss is a fraction
+/// of how far the limb turned, and pace-dependent foot placement is what a
+/// skate looks like. Worst of all, the **body travelled 12.3% further than its
+/// stride said**: a planted contact slides back under the hip by `d(1 +
+/// hang/reach)` when the goal moves by `d`, and 1 + 0.09/0.71 is 1.127 against
+/// 1.123 measured. Every walk this crate produced was 12% out against the floor
+/// it was walking on.
+///
+/// Re-reading and re-solving is the same fixed point [`FootingConfig::passes`],
+/// [`level_feet`] and the gait's own trunk angle each iterate, and for the same
+/// reason: the answer moves what the question was asked about.
 pub(crate) fn solve_contact(rig: &Rig, pose: &mut Pose, limb: Limb, target: Vec3) -> bool {
     // Which way the joint folds is the rig's to say, not this function's. It
     // used to be hardcoded forward here, which is right for a biped's knee and
@@ -492,10 +529,237 @@ pub(crate) fn solve_contact_toward(
         return false;
     };
 
-    let posed = pose.forward(rig);
-    let offset = posed.positions[chain[2]] - posed.positions[foot];
+    let mut reached = false;
+    for _ in 0..CONTACT_PASSES {
+        let posed = pose.forward(rig);
+        // The convergence check reads the pose the *previous* pass left, which
+        // costs at most one extra pass and saves a whole forward-kinematics
+        // sweep every other one. A limb that cannot reach its goal never meets
+        // the tolerance and spends the full budget, which is the right way for
+        // a straining limb to be bounded rather than to spin.
+        //
+        // Guarded on `reached` rather than on the pass index so the first solve
+        // always runs: callers reach for this to make a leg answer for an ankle
+        // they have just turned, and a foot already standing where it is being
+        // sent still needs the leg moved under it.
+        if reached && posed.positions[foot].distance(target) <= CONTACT_TOLERANCE {
+            break;
+        }
+        let offset = posed.positions[chain[2]] - posed.positions[foot];
+        reached = two_bone(rig, pose, chain, target + offset, pole);
+    }
 
-    two_bone(rig, pose, chain, target + offset, pole)
+    // **The verdict gets its own tolerance, and a looser one.** `reached` means
+    // "this limb strained" to every caller, and neither of the obvious readings
+    // says that. `two_bone`'s own answer is about the joint IT was given, and
+    // the goal handed to it moves every pass as the hang is re-read, so near
+    // the edge of a limb's reach its verdict straddles the limit and a caller
+    // sees whichever pass happened to be last — that is how a gait came to
+    // report a strained leg walking on flat ground. Arrival within
+    // [`CONTACT_TOLERANCE`] is too strict at the same edge: a rest-pose leg
+    // stands at exactly full extension, which is where the solver deliberately
+    // holds back from the singularity, so a goal that IS within reach — by two
+    // tenths of a millimetre, measured — never closes the last of the distance.
+    //
+    // A limb missing by [`CONTACT_STRAIN`] is not straining; one missing by
+    // centimetres is, and that is the case worth reporting.
+    reached || pose.forward(rig).positions[foot].distance(target) <= CONTACT_STRAIN
+}
+
+/// How far an extremity may land from its goal before the limb counts as
+/// straining, in metres.
+///
+/// **Five millimetres, an order of magnitude above [`CONTACT_TOLERANCE`].** The
+/// tighter number is what the iteration aims for; this is what a caller is told
+/// about. Two are needed because a limb at full extension cannot meet the first
+/// even when its goal is inside its reach — see [`solve_contact_toward`] — and
+/// a report that cries strain there is a report nobody can act on.
+pub(crate) const CONTACT_STRAIN: f32 = 5e-3;
+
+/// Most times [`solve_contact_toward`] will re-aim before giving up.
+///
+/// **Six, and in the ordinary case [`CONTACT_TOLERANCE`] stops it sooner.** The
+/// correction shrinks by about a factor of four a pass — 69.7 mm, 10.8, 2.9,
+/// 0.76, and so on — so the cap only binds on a goal the limb cannot reach,
+/// where the extremity never arrives and no tolerance is ever met.
+const CONTACT_PASSES: usize = 6;
+
+/// How near its target an extremity has to land for the solve to stop, in
+/// metres.
+///
+/// **Half a millimetre.** The residual after that is smaller than the line a
+/// renderer would draw it with, and each further pass costs a whole
+/// forward-kinematics sweep over the rig. Measured on the default biped over a
+/// walk: this leaves a hand 0.1–0.3 mm from its goal and takes a walk frame
+/// from 8.1 to 16.4 microseconds, against 24.0 for chasing it to a tenth of a
+/// millimetre.
+const CONTACT_TOLERANCE: f32 = 5e-4;
+
+#[cfg(test)]
+mod contact_tests {
+    use super::*;
+    use crate::anim::gait::{self, Gait, Stride};
+    use crate::plan::{BodyPlan, HumanoidParams, Zone};
+    use crate::rig::Rig;
+
+    fn biped() -> Rig {
+        Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+            .expect("rigs")
+    }
+
+    #[test]
+    fn a_contact_lands_where_it_was_aimed_rather_than_where_it_was_hanging() {
+        // **#254.** `solve_contact` aims the joint the extremity hangs off, and
+        // corrects for the hang with an offset read BEFORE the solve — which
+        // the solve then turns. One pass left a hand 69.7 mm from its goal on a
+        // rest pose while `two_bone` reported success, so nothing surfaced it.
+        let rig = biped();
+        let limb = Limb::ForeLeft;
+        let reach = rig.limb_reach(limb).expect("reach");
+        let hand = rig.in_zone(Zone::Extremity(limb))[0];
+        let home = rig.joints[hand].position;
+
+        for offset in [
+            Vec3::new(0.0, 0.5, 0.35),
+            Vec3::new(0.0, 0.3, 0.2),
+            Vec3::new(0.05, 0.15, 0.1),
+        ] {
+            let mut pose = Pose::rest(&rig);
+            let goal = home + offset * reach;
+            let reported = solve_contact(&rig, &mut pose, limb, goal);
+            let miss = pose.forward(&rig).positions[hand].distance(goal);
+            assert!(
+                reported,
+                "{offset:?} was out of reach: missed by {miss:.4} m"
+            );
+            assert!(
+                miss < 1e-3,
+                "the hand landed {:.1} mm from the goal it was aimed at",
+                miss * 1000.0
+            );
+        }
+    }
+
+    #[test]
+    fn a_stance_foot_lands_the_same_distance_from_the_floor_at_every_pace() {
+        // **#254 on the gait, which shares the solver.** The miss is the hang
+        // the solve did not re-read, so it grew with how far the leg had to
+        // turn: a stance contact sat 36 mm above a flat floor at pace 0.5 and
+        // 67 mm at pace 1.5. What is left is the contact joint's own height
+        // above the sole, which is a constant of the body and not a pace.
+        let rig = biped();
+        let gait = Gait::wave(&rig);
+        let ground = |point: Vec3| Some(Ground::level(Vec3::new(point.x, 0.0, point.z)));
+
+        let worst_at = |pace: f32| {
+            let stride = Stride::for_body(&rig, pace);
+            (0..60).fold(0.0f32, |worst, sample| {
+                let mut pose = Pose::rest(&rig);
+                let steps = gait::step(
+                    &rig,
+                    &mut pose,
+                    &gait,
+                    &stride,
+                    sample as f32 / 60.0,
+                    ground,
+                );
+                let posed = pose.forward(&rig);
+                steps.stance.iter().fold(worst, |worst, &limb| {
+                    let foot = rig.in_zone(Zone::Extremity(limb))[0];
+                    worst.max(posed.positions[foot].y.abs())
+                })
+            })
+        };
+
+        let (slow, fast) = (worst_at(0.5), worst_at(1.5));
+        assert!(
+            (fast - slow).abs() < 1e-3,
+            "the miss still grows with pace: {:.1} mm at 0.5 against {:.1} mm at 1.5",
+            slow * 1000.0,
+            fast * 1000.0
+        );
+    }
+
+    #[test]
+    fn levelling_a_foot_leaves_its_contact_where_it_found_it() {
+        // **#257, which had to land with #254 and did not exist on its own.**
+        // Levelling was described as free on the grounds that a swinging foot
+        // is pinned by nothing. Turning an ankle swings the contact hanging off
+        // it — measured at 41.7 mm on a walk and 54.3 on a run — and for a foot
+        // nothing was about to solve, nothing took it out again.
+        //
+        // It hid behind #254 for as long as both existed: the one-pass solve
+        // aimed the ANKLE at the goal plus the rest hang, which is roughly
+        // straight up from where the contact belongs, so a foot levelled
+        // afterwards landed its sole at zero by accident.
+        let rig = biped();
+        let gait = Gait::wave(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let ground = |point: Vec3| Some(Ground::level(Vec3::new(point.x, 0.0, point.z)));
+
+        let mut worst = 0.0f32;
+        for sample in 0..120 {
+            let cycle = sample as f32 / 120.0;
+            let mut pose = Pose::rest(&rig);
+            let steps = gait::step(&rig, &mut pose, &gait, &stride, cycle, ground);
+            let before = pose.forward(&rig).positions;
+            level_feet(&rig, &mut pose, ground, &FootingConfig::default());
+            let after = pose.forward(&rig).positions;
+            for &limb in steps.swing.iter().chain(&steps.stance) {
+                let foot = rig.in_zone(Zone::Extremity(limb))[0];
+                worst = worst.max(before[foot].distance(after[foot]));
+            }
+        }
+        assert!(
+            worst < 2e-3,
+            "levelling dragged a contact {:.1} mm and nothing put it back",
+            worst * 1000.0
+        );
+    }
+
+    #[test]
+    fn a_leg_that_falls_short_makes_the_body_sink_the_difference() {
+        // **The crouch is chosen before the solve that would tell you better.**
+        // It is sized with the hang the rest pose has; the solve then turns the
+        // shin, which swings that hang and moves the ankle position the goal
+        // implies — occasionally past full extension. Measured at 0.29 mm on
+        // the default biped at one frame in 240, which `two_bone` correctly
+        // refuses, so the gait reported a strained leg on level ground. `step`
+        // now reads the shortfall back off the solved pose and sinks by it.
+        //
+        // **Asserted on where the foot ENDED UP, not on the strain flag.** At
+        // full extension that flag is the wrong instrument twice over: the
+        // solver holds back from the singularity by design, and the goal handed
+        // to `two_bone` moves every pass as the hang is re-read, so its verdict
+        // straddles the limit. How far the contact is from where the gait sent
+        // it is what #254 is about and what a body shows.
+        let rig = biped();
+        for gait in [Gait::wave(&rig), Gait::natural(&rig)] {
+            let stride = Stride::for_body(&rig, 1.0);
+            let mut worst = 0.0f32;
+            for sample in 0..240 {
+                let cycle = sample as f32 / 240.0;
+                let mut pose = Pose::rest(&rig);
+                gait::step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
+                let posed = pose.forward(&rig);
+                for (index, &limb) in gait.limbs.iter().enumerate() {
+                    let foot = rig.in_zone(Zone::Extremity(limb))[0];
+                    let goal = rig.joints[foot].position
+                        + gait::contact_offset(&stride, gait.phase(index, cycle));
+                    worst = worst.max(posed.positions[foot].distance(goal));
+                }
+            }
+            // **41.72 mm before this, 2.42 mm after** — the worst any contact
+            // lands from where the gait sent it, over a whole cycle on level
+            // ground. The remainder is the solver's own hold-back at full
+            // extension, which a rest-pose leg is permanently at.
+            assert!(
+                worst < 3e-3,
+                "a contact ended {:.1} mm from where the gait sent it on level ground",
+                worst * 1000.0
+            );
+        }
+    }
 }
 
 #[cfg(test)]
