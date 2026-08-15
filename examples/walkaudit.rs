@@ -49,6 +49,7 @@
 //! cargo run --example walkaudit -- --frames 24
 //! cargo run --example walkaudit -- --pace 1.4 --grade 0.12
 //! cargo run --example walkaudit -- --camber 0.20
+//! cargo run --example walkaudit -- --run          # a run, not a walk (#186)
 //! ```
 
 use glam::Vec3;
@@ -109,7 +110,11 @@ fn main() {
     let rig = &avatar.rig;
     let body = &avatar.parts.body;
     let weights = &avatar.parts.weights;
-    let gait = Gait::natural(rig);
+    let gait = if args.iter().any(|arg| arg == "--run") {
+        Gait::running(rig)
+    } else {
+        Gait::natural(rig)
+    };
     let stride = Stride::for_body(rig, pace);
 
     // The feet, as surface rather than as joints. Selected once from the rest
@@ -378,12 +383,23 @@ fn main() {
          carriage (reference: ~2-7 at a normal pace, more as it rises; a body that walks \
          bolt upright reads as a mannequin being carried, #239)"
     );
+    // **A run is held to a run's references, not a walk's.** Quoting a walk's
+    // band beside a run's reading is how a correct number gets read as a
+    // defect, and the two differ on every line that mentions the ground: a
+    // runner's centre of mass travels roughly twice as far vertically, spends
+    // no time at all on both feet, and rises ABOVE its standing height, which
+    // a walking body never does.
     println!(
         "  pelvis: rode {:.1} to {:.1} mm about standing height, {:.1} mm peak-to-peak \
-         (reference: ~25-50 mm at a natural pace)",
+         (reference: {})",
         pelvis_low * 1000.0,
         pelvis_high * 1000.0,
         (pelvis_high - pelvis_low) * 1000.0,
+        if gait.has_flight() {
+            "~70-100 mm running, and the crest is above standing height"
+        } else {
+            "~25-50 mm at a natural walking pace"
+        }
     );
     println!(
         "  feet:   pitched {:.1} to {:.1} deg in stance, {:.1} to {:.1} in swing \
@@ -391,9 +407,15 @@ fn main() {
         stance_pitch.0, stance_pitch.1, swing_pitch.0, swing_pitch.1,
     );
     println!(
-        "  gait:   duty {:.2}, both feet down {both_down:.2} of the cycle \
-         (reference: ~0.60 / ~0.20)",
+        "  gait:   duty {:.2}, both feet down {both_down:.2} of the cycle, airborne \
+         {:.2} (reference: {})",
         gait.duty,
+        gait.airborne(),
+        if gait.has_flight() {
+            "duty ~0.35 at the transition, ~0.22 at a sprint, no double support"
+        } else {
+            "duty ~0.60, both feet down ~0.20, airborne 0"
+        }
     );
 }
 

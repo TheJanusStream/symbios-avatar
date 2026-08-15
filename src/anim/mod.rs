@@ -13,14 +13,22 @@
 //!   kinematics and applied to geometry by linear blend skinning.
 //! * [`ik`] — [`ik::two_bone`] for limbs, which has a closed form, and
 //!   [`ik::fabrik`] for spines and tails, which does not.
+//! * [`Speed`] — one dimensionless axis, the Froude number, from which the
+//!   stride, the cadence, the duty and the choice of walking or running all
+//!   follow. A caller says how fast the body is going and stops choosing the
+//!   rest.
 //! * [`Inertializer`] — transitions that carry momentum through, rather than
-//!   crossfades that stall it.
+//!   crossfades that stall it — and [`transition`], the layer above it that
+//!   decides when a transition is needed at all. Along the speed axis it is
+//!   not: a walk becoming a run is one generator moving along one parameter.
 //! * [`plant_feet`] — putting a body's contacts on whatever it is standing on,
 //!   which is what makes it look like it is *in* a place rather than played back
 //!   near one.
-//! * [`gait`] — walking, for whatever number of legs a body turns out to have.
-//!   [`Walk`] drives one frame of it start to finish; the stages underneath it
-//!   stay public for anything that wants to run only some of them.
+//! * [`gait`] — walking and running, for whatever number of legs a body turns
+//!   out to have. [`Walk`] drives one frame of it start to finish; the stages
+//!   underneath it stay public for anything that wants to run only some of
+//!   them. A run is [`Gait::running`] or, better, whatever [`Speed::gait`] says
+//!   at the speed in hand.
 //! * [`Clip`] — authored motion, described by semantic queries and normalised
 //!   goals so one description serves every body.
 //! * [`PoseClip`] — the opposite trade, and it exists because the first one
@@ -64,7 +72,9 @@ pub mod ik;
 pub mod library;
 pub mod pose;
 pub mod pose_clip;
+pub mod speed;
 pub mod spring;
+pub mod transition;
 
 pub use blend::Inertializer;
 pub use clip::{Clip, Key, Space, Target, Track};
@@ -78,4 +88,6 @@ pub use ik::{FabrikConfig, fabrik, two_bone};
 pub use library::{ClipLibrary, LibraryError};
 pub use pose::{Pose, Posed};
 pub use pose_clip::{Curve, JointTrack, Play, PoseClip, Slot};
+pub use speed::Speed;
 pub use spring::{SpringConfig, Springs};
+pub use transition::{Entry, Family, Frames};

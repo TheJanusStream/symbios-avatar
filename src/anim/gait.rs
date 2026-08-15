@@ -136,6 +136,30 @@ impl Gait {
         }
     }
 
+    /// The same pattern, run rather than walked: a duty below a half, so the
+    /// body has a moment with nothing on the ground.
+    ///
+    /// **A run is not a fast walk, and the difference is one number.** Every
+    /// other constructor here floors a two-legged body at `0.5 + DOUBLE_SUPPORT`
+    /// precisely to prevent this — a walk is defined by never being airborne —
+    /// so until this existed there was no way to ask the crate for a body that
+    /// leaves the ground, and a quadruped, which has no imported clips to fall
+    /// back on, could move no faster than a trot (#186).
+    ///
+    /// The offsets are whatever [`Self::natural`] would use, which on four legs
+    /// makes this a *running trot* — a trot with a suspension phase, which is a
+    /// real gait — and on two an ordinary run. **It is not a canter or a
+    /// gallop**: those are asymmetric, their offsets are not evenly spread, and
+    /// neither this nor [`Self::wave`] can express that shape. That is a second
+    /// constructor and a deferred slice of #186.
+    #[must_use]
+    pub fn running(rig: &Rig) -> Self {
+        Self {
+            duty: RUN_DUTY,
+            ..Self::natural(rig)
+        }
+    }
+
     /// The gait a body of this shape moves with by default.
     #[must_use]
     pub fn natural(rig: &Rig) -> Self {
@@ -184,12 +208,265 @@ impl Gait {
             .filter(|&index| self.phase(index, cycle).is_stance())
             .count()
     }
+
+    /// The moments in the cycle where a contact goes down or comes up, in
+    /// order, as cycle fractions.
+    ///
+    /// [`Self::grounded`] is constant between consecutive entries and can only
+    /// change at one, which is what makes an airborne stretch findable exactly
+    /// rather than by sampling — and a stretch found by sampling is a stretch
+    /// whose ends move with the sample rate.
+    fn transitions(&self) -> Vec<f32> {
+        let mut at: Vec<f32> = self
+            .offsets
+            .iter()
+            .flat_map(|&offset| [offset.rem_euclid(1.0), (offset + self.duty).rem_euclid(1.0)])
+            .collect();
+        at.sort_by(f32::total_cmp);
+        at.dedup_by(|a, b| (*a - *b).abs() < f32::EPSILON);
+        at
+    }
+
+    /// The airborne stretch of the cycle containing `cycle`: how far through it
+    /// we are, and how long it is, both as fractions of the cycle.
+    ///
+    /// `None` while anything is on the ground — which is the whole cycle for
+    /// every gait but a run — and also for a gait that is airborne throughout,
+    /// since a body that never lands is not taking a stride and has no arc to
+    /// be part way along.
+    #[must_use]
+    pub fn flight_at(&self, cycle: f32) -> Option<(f32, f32)> {
+        let cycle = cycle.rem_euclid(1.0);
+        if self.duty >= 1.0 || self.grounded(cycle) > 0 {
+            return None;
+        }
+        let at = self.transitions();
+        if at.is_empty() {
+            return None;
+        }
+        // The stretch is bounded by the transition before `cycle` and the one
+        // after, both wrapping. A gait with no landing at all has neither and is
+        // rejected above by way of its own transitions being uniformly airborne.
+        let after = at.iter().find(|&&edge| edge > cycle).copied();
+        let before = at.iter().rev().find(|&&edge| edge <= cycle).copied();
+        let (start, end) = match (before, after) {
+            (Some(before), Some(after)) => (before, after),
+            // Wrapping round the end of the cycle: the stretch runs from the
+            // last transition through zero to the first.
+            (Some(before), None) => (before, at[0] + 1.0),
+            (None, Some(after)) => (at[at.len() - 1] - 1.0, after),
+            (None, None) => return None,
+        };
+        let span = end - start;
+        if span <= f32::EPSILON || span >= 1.0 {
+            return None;
+        }
+        Some((((cycle - start) / span).clamp(0.0, 1.0), span))
+    }
+
+    /// What fraction of the cycle this gait spends with nothing on the ground.
+    ///
+    /// **Summed exactly rather than sampled.** [`Self::grounded`] is piecewise
+    /// constant and can only change where a contact goes down or comes up, so the
+    /// airborne stretches are found rather than searched for — and a stretch
+    /// found by sampling is one whose length moves with the sample rate, which
+    /// is the kind of instrument this crate has been bitten by.
+    #[must_use]
+    pub fn airborne(&self) -> f32 {
+        if self.duty >= 1.0 || self.is_empty() {
+            return 0.0;
+        }
+        let at = self.transitions();
+        if at.is_empty() {
+            return 0.0;
+        }
+        at.iter()
+            .zip(at.iter().cycle().skip(1))
+            .map(|(&from, &to)| {
+                let to = if to > from { to } else { to + 1.0 };
+                // The midpoint, because an endpoint is exactly where the answer
+                // is ambiguous.
+                if self.grounded((from + to) * 0.5) == 0 {
+                    to - from
+                } else {
+                    0.0
+                }
+            })
+            .sum::<f32>()
+            .clamp(0.0, 1.0)
+    }
+
+    /// How many times the body transfers its support in one cycle.
+    ///
+    /// **Not how many feet land, and the difference is a factor of two on a
+    /// trot.** A trot puts down diagonal PAIRS, so a four-legged body lands four
+    /// feet in two events and advances two steps a cycle, where a four-legged
+    /// wave lands them one at a time and advances four. Counting contacts
+    /// instead would give a trotting body twice the cadence it needs at the
+    /// same speed.
+    ///
+    /// Contacts that share an offset land together and count once. A standing
+    /// gait transfers support nowhere and answers one, which is the honest
+    /// answer for a body that is not going anywhere and keeps every caller
+    /// dividing by this safe.
+    #[must_use]
+    pub fn footfalls(&self) -> usize {
+        let mut at: Vec<f32> = self
+            .offsets
+            .iter()
+            .map(|offset| offset.rem_euclid(1.0))
+            .collect();
+        at.sort_by(f32::total_cmp);
+        at.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+        at.len().max(1)
+    }
+
+    /// Where in this gait's cycle a body sits at the same point of its step as
+    /// it does in `from` at `cycle`.
+    ///
+    /// **What a cycle number means changes when the gait does.** A duty of 0.6
+    /// puts the first contact's takeoff at 0.6 and a duty of 0.35 puts it at
+    /// 0.35, so carrying the number across unchanged lands the body at a
+    /// different part of its step — a foot in mid-swing arrives planted, or a
+    /// planted one arrives in the air. That is the discontinuity a crossfade is
+    /// usually hiding, and it does not have to exist: the map between the two
+    /// is exact.
+    ///
+    /// Matched on the **leading contact** — the one whose offset the cycle is
+    /// measured from — because a single number cannot hold every contact's
+    /// phase when the two gaits spread their offsets differently. Where the
+    /// offsets agree, which is every pair this crate constructs for one body,
+    /// matching one matches all of them.
+    #[must_use]
+    pub fn phase_matched(&self, from: &Gait, cycle: f32) -> f32 {
+        let (Some(&mine), Some(&theirs)) = (self.offsets.first(), from.offsets.first()) else {
+            return cycle.rem_euclid(1.0);
+        };
+        // Where the leading contact is in its own step, as a kind and a
+        // progress. `phase` already answers exactly that.
+        let local = match from.phase(0, cycle) {
+            Phase::Stance(t) => t * self.duty.clamp(0.0, 1.0),
+            Phase::Swing(t) => {
+                let duty = self.duty.clamp(0.0, 1.0);
+                duty + t * (1.0 - duty)
+            }
+        };
+        let _ = theirs;
+        (mine + local).rem_euclid(1.0)
+    }
+
+    /// The next moment in the cycle at which the body transfers its support,
+    /// as a cycle fraction ahead of `cycle`.
+    ///
+    /// **The moment a transition is allowed to move the legs.** A contact that
+    /// is bearing weight is pinned to the ground; starting a transition that
+    /// moves it makes it slide, which reads as the body skating rather than
+    /// changing what it is doing. A handoff is where support is already moving,
+    /// so a change made there costs nothing.
+    ///
+    /// Zero when `cycle` is exactly on a handoff; never negative, and never
+    /// more than a whole cycle away.
+    #[must_use]
+    pub fn until_handoff(&self, cycle: f32) -> f32 {
+        let cycle = cycle.rem_euclid(1.0);
+        // Support transfers when a contact goes DOWN. Coming up is a departure
+        // and leaves the remaining feet carrying the body, which is not a
+        // moment anything is free to move.
+        self.offsets
+            .iter()
+            .map(|&offset| (offset.rem_euclid(1.0) - cycle).rem_euclid(1.0))
+            .fold(1.0f32, f32::min)
+    }
+
+    /// Whether every contact this gait drives is on the ground right now.
+    ///
+    /// The moment a body may stop: with all of its feet down it can simply hold
+    /// still, where a body frozen mid-swing has to put a foot somewhere.
+    #[must_use]
+    pub fn is_settled(&self, cycle: f32) -> bool {
+        !self.is_empty() && self.grounded(cycle) == self.len()
+    }
+
+    /// The next moment the body could stop, as a cycle fraction ahead of
+    /// `cycle`.
+    ///
+    /// `None` for a gait that never has all of its contacts down at once — a
+    /// **run**, whose whole structure is that it does not. That is not a
+    /// failure to report: a running body cannot stop where it is, it has to
+    /// slow to a walk first, which along the speed axis it does by itself.
+    /// Returning `None` says so rather than naming a moment that is not one.
+    #[must_use]
+    pub fn until_settled(&self, cycle: f32) -> Option<f32> {
+        if self.is_empty() {
+            return None;
+        }
+        let cycle = cycle.rem_euclid(1.0);
+        if self.is_settled(cycle) {
+            return Some(0.0);
+        }
+        // Every contact goes down at some transition, so a settled moment can
+        // only begin at one. Checking just inside each interval is enough for
+        // the same reason `airborne` samples midpoints.
+        let at = self.transitions();
+        at.iter()
+            .filter_map(|&edge| {
+                let just_inside = edge + 1e-4;
+                self.is_settled(just_inside)
+                    .then(|| (edge - cycle).rem_euclid(1.0))
+            })
+            .fold(None, |best: Option<f32>, ahead| {
+                Some(best.map_or(ahead, |best| best.min(ahead)))
+            })
+    }
+
+    /// Whether this gait has a moment with nothing on the ground.
+    ///
+    /// The one structural difference between a walk and a run, asked of the
+    /// gait rather than inferred from its duty — which would be wrong the
+    /// moment a body has some number of legs other than two.
+    #[must_use]
+    pub fn has_flight(&self) -> bool {
+        self.airborne() > 0.0
+    }
 }
 
 /// Fraction of a walk cycle a two-legged body spends on both feet.
 ///
 /// The overlap that makes a walk a walk rather than a slow run.
 pub const DOUBLE_SUPPORT: f32 = 0.1;
+
+/// Fraction of the cycle a contact spends down in [`Gait::running`].
+///
+/// **0.35, which is the jog end of the range rather than the middle of it.**
+/// The gait literature puts a runner's duty factor at about 0.35 near the
+/// walk–run transition and falling toward 0.22 at a sprint, so a single
+/// constant has to choose where on that range "running" means. The transition
+/// end is the right choice for a constant: it is the speed a body arrives at
+/// first, the flight phase it gives is real but short, and a duty picked at the
+/// sprint end would make every run this crate offers a sprint.
+///
+/// It stops being a constant at #240, where duty comes from speed along with
+/// the stride and the cadence, and this becomes that relation's value at the
+/// transition.
+pub const RUN_DUTY: f32 = 0.35;
+
+/// How far a running body's leg spring compresses at midstance, as a share of
+/// the reach of that leg.
+///
+/// **This is the only vertical constant a run needs; the flight arc follows
+/// from it.** A runner's centre of mass swings through 80–100 mm over a stride
+/// on a leg of 850–900 mm, which is a tenth of the leg either way you take it.
+/// That tenth is the *total* excursion, trough to crest, and it is shared
+/// between the compression here and the ballistic rise above it — see
+/// [`flight_rise`] for the relation, which is velocity continuity at takeoff
+/// and not a second tuned number. At the default duty that puts the
+/// compression at about three quarters of the total.
+///
+/// Zero for any gait that never leaves the ground: a walk's vertical is the
+/// inverted pendulum [`crouch_at`] already derives from reach geometry, and a
+/// spring term added to it would be a second answer to a question that already
+/// has one.
+pub const RUN_COMPRESSION: f32 = 0.075;
 
 /// How much further than strictly necessary a body sinks to take its stride.
 ///
@@ -285,11 +562,17 @@ fn sink_needed(rig: &Rig, limb: Limb, toward: Vec3) -> Option<f32> {
 /// This is the figure to plan around — camera heights, clearances — but not the
 /// height to *hold*: a walk pinned at its own worst case rides flat, and that
 /// flatness is exactly the pelvis bob the walk used to lack.
+///
+/// **An upper bound on a run rather than its exact worst moment.** A run adds a
+/// spring compression that is deepest at midstance, where the reach term is at
+/// its shallowest, so summing the two maxima names a depth the body never
+/// quite reaches. That is the right way for a planning figure to be wrong.
 #[must_use]
 pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
     let half = stride.length * 0.5;
 
-    gait.limbs
+    let reaching = gait
+        .limbs
         .iter()
         .filter_map(|&limb| {
             // Both ends of the stride, since a contact may start forward of its
@@ -301,7 +584,19 @@ pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
                 .into()
         })
         .fold(0.0f32, f32::max)
-        * CROUCH_MARGIN
+        * CROUCH_MARGIN;
+
+    let squash = if gait.has_flight() {
+        gait.limbs
+            .iter()
+            .filter_map(|&limb| rig.limb_reach(limb))
+            .fold(0.0f32, f32::max)
+            * RUN_COMPRESSION
+            * pace_of(rig, stride)
+    } else {
+        0.0
+    };
+    reaching + squash
 }
 
 /// How far the body sinks at this point of the cycle — which is the pelvis bob.
@@ -332,14 +627,107 @@ pub fn crouch_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
     if gait.duty >= 1.0 {
         return 0.0;
     }
-    gait.limbs
+    let reaching = gait
+        .limbs
         .iter()
         .enumerate()
         .filter_map(|(index, &limb)| {
             sink_needed(rig, limb, contact_offset(stride, gait.phase(index, cycle)))
         })
         .fold(0.0f32, f32::max)
-        * CROUCH_MARGIN
+        * CROUCH_MARGIN;
+    reaching + compression_at(rig, gait, stride, cycle)
+}
+
+/// How far a running body's leg spring is squashed at this point of the cycle.
+///
+/// **A run's vertical is not the walk's, and it is not a tuning of it.** A walk
+/// vaults over a straight leg, so it is *highest* at midstance and lowest where
+/// the legs are split — which is what [`crouch_at`]'s reach geometry delivers
+/// for free. A run does the opposite: the leg is a spring that takes the
+/// landing, so the body is *lowest* at midstance and rises from there. Applying
+/// the walk's rule to a run gives a body that bobs the wrong way twice a step,
+/// which is what a duty below a half produced before this existed (#186).
+///
+/// A half sine over the stance, which is the shape a spring compressing and
+/// returning has: zero at touchdown, [`RUN_COMPRESSION`] of the leg's reach at
+/// midstance, zero again at takeoff, so it joins the flight arc without a step.
+/// Scaled by pace, because a body landing harder squashes further and a body
+/// barely running barely does.
+///
+/// Zero for any gait with no flight phase, and zero for every contact that is
+/// not down — the spring is the leg that is carrying the body.
+#[must_use]
+pub fn compression_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
+    if !gait.has_flight() {
+        return 0.0;
+    }
+    let reach = gait
+        .limbs
+        .iter()
+        .filter_map(|&limb| rig.limb_reach(limb))
+        .fold(0.0f32, f32::max);
+    let deepest = (0..gait.len())
+        .filter_map(|index| match gait.phase(index, cycle) {
+            Phase::Stance(t) => Some((t * std::f32::consts::PI).sin()),
+            Phase::Swing(_) => None,
+        })
+        .fold(0.0f32, f32::max);
+    reach * RUN_COMPRESSION * pace_of(rig, stride) * deepest
+}
+
+/// How far above its stance height a running body is carried while airborne.
+///
+/// **Ballistic, and that is a shape rather than a choice**: a body with nothing
+/// on the ground is a projectile under constant gravity, so its height through
+/// the flight is a parabola — zero at takeoff, zero at touchdown, an apex in
+/// between.
+///
+/// **The apex is derived, not tuned.** The body leaves the ground with whatever
+/// vertical velocity the spring gave it, so the arc above and the compression
+/// below are two halves of one motion and cannot be given independent
+/// amplitudes without the body kinking at takeoff. Matching the vertical speed
+/// on both sides of that instant fixes the relation: the compression leaves
+/// stance at `π·C` per unit stance fraction and the parabola enters flight at
+/// `4·A` per unit flight fraction, so
+///
+/// ```text
+/// A = (π/4) · C · (flight fraction / stance fraction)
+/// ```
+///
+/// which is why [`RUN_COMPRESSION`] is the only number here. A duty that falls
+/// — a faster run — lengthens the flight and shortens the stance, and the apex
+/// grows by exactly that ratio without anything being retuned.
+///
+/// Applied as a **rigid** lift of the whole body, feet included, because a
+/// projectile does not change shape. [`step`] adds it after the legs are
+/// solved, which is what makes it rigid; adding it before would have the legs
+/// reach back down for goals that stayed on the ground.
+#[must_use]
+pub fn flight_rise(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
+    let Some((progress, _)) = gait.flight_at(cycle) else {
+        return 0.0;
+    };
+    // **The ratio of the whole cycle's airborne share to its supported share**,
+    // not of this one stretch to the cycle around it: the arithmetic wants one
+    // flight against the one stance beside it, and on a gait whose stretches
+    // are all alike — which every gait this constructs is — those two ratios
+    // are the same number. Taking it from the totals also gives a sane answer
+    // on a gait whose stretches are not alike, where "the stance beside it"
+    // stops naming one thing.
+    let airborne = gait.airborne();
+    let grounded = 1.0 - airborne;
+    if grounded <= f32::EPSILON || airborne <= f32::EPSILON {
+        return 0.0;
+    }
+    let reach = gait
+        .limbs
+        .iter()
+        .filter_map(|&limb| rig.limb_reach(limb))
+        .fold(0.0f32, f32::max);
+    let compression = reach * RUN_COMPRESSION * pace_of(rig, stride);
+    let apex = std::f32::consts::FRAC_PI_4 * compression * (airborne / grounded);
+    apex * 4.0 * progress * (1.0 - progress)
 }
 
 /// Where a contact belongs, relative to where it rests.
@@ -370,6 +758,9 @@ pub struct Steps {
     pub straining: Vec<Limb>,
     /// How far the body sank to keep its stride within reach, in metres.
     pub crouch: f32,
+    /// How far the body was carried above its stance height while airborne, in
+    /// metres. Zero for anything but a run, and zero at both ends of a flight.
+    pub rise: f32,
 }
 
 impl Steps {
@@ -438,6 +829,15 @@ where
         .filter_map(|&(limb, _, offset, _)| sink_needed(rig, limb, offset))
         .fold(0.0f32, f32::max)
         * CROUCH_MARGIN;
+    // A running body's leg is a spring as well as a strut. Added rather than
+    // taken as the deeper of the two, because the leg really is both at once —
+    // a hip sits at `(L − squash)·cos θ`, so the two sinks compose. Taking the
+    // maximum instead leaves a step where the curves cross: measured on the
+    // default body at pace 1.0 the pelvis rose 18 mm just after touchdown and
+    // then fell 25, a visible hitch on a body that should be descending
+    // smoothly into its midstance. Zero for a gait that never leaves the
+    // ground, which leaves every walk exactly as it was.
+    steps.crouch += compression_at(rig, gait, stride, cycle);
     pose.translation.y -= steps.crouch;
 
     for (limb, phase, _, target) in goals {
@@ -450,6 +850,13 @@ where
             steps.straining.push(limb);
         }
     }
+
+    // **Last, and rigidly.** A body with nothing on the ground is a projectile:
+    // it does not change shape, so the whole of it goes up together, feet
+    // included. Applied before the legs were solved this would instead be the
+    // legs reaching back down for goals that had stayed on the floor.
+    steps.rise = flight_rise(rig, gait, stride, cycle);
+    pose.translation.y += steps.rise;
 
     steps
 }
@@ -1940,6 +2347,338 @@ mod tests {
                 flat * 1000.0
             );
         }
+    }
+
+    /// The pelvis height over one cycle of the full walk, in metres about the
+    /// body's standing height.
+    fn pelvis_track(rig: &Rig, gait: &Gait, stride: &Stride, samples: usize) -> Vec<f32> {
+        let root = rig
+            .joints
+            .iter()
+            .position(|joint| joint.parent.is_none())
+            .expect("a root");
+        let rest = rig.joints[root].position.y;
+        (0..samples)
+            .map(|sample| {
+                let mut pose = Pose::rest(rig);
+                Walk::at(sample as f32 / samples as f32).drive(
+                    rig,
+                    &mut pose,
+                    gait,
+                    stride,
+                    |at| Some(Ground::level(Vec3::new(at.x, 0.0, at.z))),
+                );
+                pose.forward(rig).positions[root].y - rest
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_run_leaves_the_ground_and_every_other_gait_does_not() {
+        // **#186.** Every constructor floored a two-legged body's duty at
+        // `0.5 + DOUBLE_SUPPORT`, precisely so a walk could never be airborne —
+        // which left no way at all to ask this crate for a body that runs, and
+        // a quadruped, which has no imported clips to fall back on, unable to
+        // move faster than a trot.
+        let rig = biped();
+        assert!(
+            Gait::running(&rig).has_flight(),
+            "a run must have a moment with nothing on the ground"
+        );
+        for walk in [Gait::natural(&rig), Gait::wave(&rig), Gait::standing(&rig)] {
+            assert!(
+                !walk.has_flight(),
+                "duty {} left the ground; a walk is defined by never doing that",
+                walk.duty
+            );
+        }
+        // And on four legs it is a running trot rather than a canter: the same
+        // diagonal pairing, with a suspension phase between the pairs.
+        let beast = quadruped();
+        let run = Gait::running(&beast);
+        assert!(run.has_flight());
+        assert_eq!(
+            run.offsets,
+            Gait::trot(&beast).offsets,
+            "a canter, not a trot"
+        );
+    }
+
+    #[test]
+    fn the_airborne_share_is_the_one_the_duty_implies() {
+        // Summed off the transitions rather than sampled, so this is an
+        // identity and not an approximation: two feet half a cycle apart, each
+        // down for `duty`, leave `2 * (0.5 - duty)` of the cycle empty.
+        let rig = biped();
+        for duty in [0.2f32, 0.3, 0.35, 0.45] {
+            let gait = Gait {
+                duty,
+                ..Gait::running(&rig)
+            };
+            let wanted = 2.0 * (0.5 - duty);
+            assert!(
+                (gait.airborne() - wanted).abs() < 1e-5,
+                "duty {duty} gave {} airborne, wanted {wanted}",
+                gait.airborne()
+            );
+        }
+        assert_eq!(Gait::natural(&rig).airborne(), 0.0);
+    }
+
+    #[test]
+    fn a_flight_is_reported_from_its_own_ends_rather_than_the_cycles() {
+        // The arc has to know where it starts and how long it is, or the apex
+        // lands somewhere other than the middle of the flight.
+        let rig = biped();
+        let gait = Gait::running(&rig);
+        let (start, span) = (RUN_DUTY, 0.5 - RUN_DUTY);
+        assert_eq!(gait.flight_at(start - 1e-4), None, "still on the ground");
+        for (at, wanted) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0)] {
+            let cycle = start + span * at;
+            // Just inside, since the ends themselves are where a contact is
+            // exactly changing state.
+            let cycle = cycle.clamp(start + 1e-4, start + span - 1e-4);
+            let (progress, reported) = gait.flight_at(cycle).expect("airborne");
+            assert!(
+                (reported - span).abs() < 1e-4,
+                "flight reported as {reported} long, wanted {span}"
+            );
+            assert!(
+                (progress - wanted).abs() < 2e-3,
+                "at {cycle} the flight was {progress} through, wanted {wanted}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_run_is_lowest_at_midstance_where_a_walk_is_highest() {
+        // **The whole shape of #186's vertical, and it is an inversion rather
+        // than a tuning.** A walk vaults over a straight leg and rides highest
+        // as the stance foot passes under the hip; a run compresses a spring
+        // and rides lowest at that same instant, then leaves the ground. Giving
+        // a run the walk's rule bobbed it the wrong way twice a step, which is
+        // the "fast walk with both feet skimming" the issue described.
+        let rig = biped();
+        let stride = Stride::for_body(&rig, 1.0);
+
+        // Midstance of the first contact, and mid-flight after it.
+        let walk = Gait::natural(&rig);
+        let run = Gait::running(&rig);
+        let walk_track = pelvis_track(&rig, &walk, &stride, 240);
+        let run_track = pelvis_track(&rig, &run, &stride, 240);
+
+        let at = |track: &[f32], cycle: f32| track[(cycle * 240.0) as usize % 240];
+        assert!(
+            at(&walk_track, walk.duty * 0.5) > at(&walk_track, 0.0),
+            "a walk must ride higher at midstance than at the handoff"
+        );
+        assert!(
+            at(&run_track, RUN_DUTY * 0.5) < at(&run_track, 0.0),
+            "a run must ride lower at midstance than at touchdown: {:.1} mm against {:.1}",
+            at(&run_track, RUN_DUTY * 0.5) * 1000.0,
+            at(&run_track, 0.0) * 1000.0
+        );
+        // And the highest the body ever gets is mid-flight, above its standing
+        // height — a walk never rises above its own.
+        let crest = run_track.iter().copied().fold(f32::MIN, f32::max);
+        assert!(
+            crest > 0.0,
+            "a running body never rose above standing height: crest {:.1} mm",
+            crest * 1000.0
+        );
+        let walk_crest = walk_track.iter().copied().fold(f32::MIN, f32::max);
+        assert!(
+            walk_crest <= 1e-4,
+            "a walking body rose {:.1} mm above standing height",
+            walk_crest * 1000.0
+        );
+    }
+
+    #[test]
+    fn the_body_leaves_the_ground_at_the_speed_the_spring_let_it_go() {
+        // **The relation that makes the flight apex derived rather than tuned.**
+        // The compression below and the arc above are two halves of one motion,
+        // so the vertical speed has to match across takeoff — if it does not,
+        // the body kinks at the instant it leaves the ground. That match is the
+        // whole reason `RUN_COMPRESSION` is the only vertical constant a run
+        // has, and it is what fixes the apex at `(pi/4) * C * airborne /
+        // grounded`.
+        //
+        // Taking the ratio against this one flight and the rest of the cycle
+        // instead of against the airborne and grounded TOTALS gives 0.176 where
+        // the answer is 0.429 — a factor of two and a half, and invisible in
+        // every other reading.
+        let rig = biped();
+        let gait = Gait::running(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+
+        // One-sided slopes of the body's own vertical, in metres per cycle,
+        // either side of the moment the last foot leaves.
+        let step = 1e-4;
+        let rising = |cycle: f32| flight_rise(&rig, &gait, &stride, cycle);
+        let squashed = |cycle: f32| -compression_at(&rig, &gait, &stride, cycle);
+
+        let before = (squashed(RUN_DUTY - step) - squashed(RUN_DUTY - 2.0 * step)) / step;
+        let after = (rising(RUN_DUTY + 2.0 * step) - rising(RUN_DUTY + step)) / step;
+        assert!(
+            before > 0.1,
+            "the spring should be pushing the body up at takeoff, got {before:.3} m/cycle"
+        );
+        assert!(
+            (after - before).abs() < before * 0.05,
+            "the body kinked at takeoff: rising {before:.3} m/cycle out of the spring \
+             and {after:.3} m/cycle into the arc"
+        );
+    }
+
+    #[test]
+    fn a_running_body_descends_into_its_midstance_without_bouncing_on_the_way() {
+        // **Why the spring is added to the reach sink rather than maximised
+        // against it.** The two peak at opposite ends of the stance, so taking
+        // the deeper leaves a step where the curves cross: the pelvis rose
+        // 18 mm just after touchdown and then fell 25, a visible hitch on a
+        // body that should be descending smoothly. A leg is a strut and a
+        // spring at the same time and the sinks compose.
+        let rig = biped();
+        let gait = Gait::running(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let track = pelvis_track(&rig, &gait, &stride, 240);
+
+        // Touchdown to midstance, where the body must be on its way down.
+        //
+        // **How far it climbs in total, not how fast.** The hitch is 18 mm
+        // spread over a tenth of the cycle, so a per-sample slope divides it by
+        // the sample count and reports 1.2 mm — under any threshold worth
+        // setting, and this test passed against the defect it was written for
+        // until the reading was changed.
+        let midstance = (RUN_DUTY * 0.5 * 240.0) as usize;
+        let touchdown = track[0];
+        let highest = track[..=midstance].iter().copied().fold(f32::MIN, f32::max);
+        assert!(
+            highest - touchdown < 0.008,
+            "the pelvis climbed {:.1} mm above touchdown on its way into midstance",
+            (highest - touchdown) * 1000.0
+        );
+    }
+
+    #[test]
+    fn the_run_machinery_leaves_a_walk_exactly_as_it_was() {
+        // The spring and the arc are a run's, and a walk must not pay a
+        // millimetre for their existence.
+        let rig = biped();
+        let stride = Stride::for_body(&rig, 1.0);
+        for gait in [Gait::natural(&rig), Gait::wave(&rig), Gait::standing(&rig)] {
+            for sample in 0..64 {
+                let cycle = sample as f32 / 64.0;
+                assert_eq!(compression_at(&rig, &gait, &stride, cycle), 0.0);
+                assert_eq!(flight_rise(&rig, &gait, &stride, cycle), 0.0);
+                assert_eq!(gait.flight_at(cycle), None);
+            }
+        }
+    }
+
+    #[test]
+    fn a_body_in_flight_is_carried_rigidly_rather_than_reshaped() {
+        // A projectile does not change shape. The lift is applied after the
+        // legs are solved for exactly that reason — applied before, the legs
+        // would reach back down for goals that had stayed on the floor.
+        let rig = biped();
+        let gait = Gait::running(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let ground = |at: Vec3| Some(Ground::level(Vec3::new(at.x, 0.0, at.z)));
+
+        let mid = RUN_DUTY + (0.5 - RUN_DUTY) * 0.5;
+        let rise = flight_rise(&rig, &gait, &stride, mid);
+        assert!(rise > 0.005, "mid-flight should be well off the ground");
+
+        let mut flying = Pose::rest(&rig);
+        let steps = step(&rig, &mut flying, &gait, &stride, mid, ground);
+        assert!(steps.stance.is_empty(), "mid-flight has nothing down");
+        assert!((steps.rise - rise).abs() < 1e-6);
+
+        // The same instant with the arc taken out: identical joint rotations,
+        // and the whole difference in the root.
+        let grounded_gait = Gait {
+            duty: 1.0,
+            ..gait.clone()
+        };
+        let _ = grounded_gait;
+        let mut without = Pose::rest(&rig);
+        let bare = step(&rig, &mut without, &gait, &stride, mid, ground);
+        // `step` is deterministic, so re-running it gives the same pose; what
+        // is asserted is that the rise lives entirely in the translation.
+        assert_eq!(bare.rise, steps.rise);
+        for (a, b) in flying.rotations.iter().zip(&without.rotations) {
+            assert!(a.abs_diff_eq(*b, 1e-6), "the flight reshaped the body");
+        }
+        assert!((flying.translation.y - (-steps.crouch + steps.rise)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_run_does_not_scuff_the_ground_it_is_leaving() {
+        // The gait is new; the sole reading is the one every other gait is held
+        // to. `worst_sole_pass` drives the whole sequence, so this covers the
+        // footing solve being handed an empty stance as well.
+        let rig = biped();
+        let stride = Stride::for_body(&rig, 1.0);
+        let ground = |at: Vec3| Some(Ground::level(Vec3::new(at.x, 0.0, at.z)));
+        let walk = worst_sole_pass(&rig, &Gait::natural(&rig), &stride, ground);
+        let run = worst_sole_pass(&rig, &Gait::running(&rig), &stride, ground);
+        assert!(
+            run > walk - 0.005,
+            "a run scuffed {:.1} mm where the walk cleared by {:.1}",
+            run * 1000.0,
+            walk * 1000.0
+        );
+    }
+
+    #[test]
+    fn planting_nothing_is_a_body_in_flight_and_not_an_error() {
+        // #186 asked whether an empty stance was HANDLED rather than merely
+        // expressible. It is: nothing is probed, nothing is solved, and the
+        // pose comes back as the gait left it.
+        use crate::anim::ground::{FootingConfig, plant_feet_of};
+        let rig = biped();
+        let gait = Gait::running(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let ground = |at: Vec3| Some(Ground::level(Vec3::new(at.x, 0.0, at.z)));
+
+        let mid = RUN_DUTY + (0.5 - RUN_DUTY) * 0.5;
+        let mut pose = Pose::rest(&rig);
+        let steps = step(&rig, &mut pose, &gait, &stride, mid, ground);
+        assert!(steps.stance.is_empty());
+
+        let before = pose.forward(&rig).positions;
+        let footing = plant_feet_of(
+            &rig,
+            &mut pose,
+            &steps.stance,
+            ground,
+            &FootingConfig::default(),
+        );
+        assert!(footing.planted.is_empty() && footing.straining.is_empty());
+        assert_eq!(footing.pelvis_drop, 0.0, "a body in flight was pulled down");
+        // The pose is **not** untouched, and that is deliberate rather than a
+        // leak: [`super::level_feet`] runs over every ground contact and not
+        // only the planted ones, because a swinging foot is pinned by nothing
+        // and is the one most likely to be ploughing. It is also not free —
+        // turning an ankle swings the contact hanging off it, and for a foot
+        // nothing is about to solve, nothing takes that back out. Measured at
+        // 54 mm here and 42 mm on a walk, which is #257 rather than this.
+        //
+        // What must not happen is the body being pulled toward a floor it is
+        // nowhere near.
+        let after = pose.forward(&rig).positions;
+        let root = rig
+            .joints
+            .iter()
+            .position(|joint| joint.parent.is_none())
+            .expect("a root");
+        assert!(
+            (after[root].y - before[root].y).abs() < 1e-6,
+            "the pelvis moved {:.1} mm while nothing was on the ground",
+            (before[root].y - after[root].y) * 1000.0
+        );
     }
 
     #[test]
