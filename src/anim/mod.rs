@@ -72,6 +72,7 @@ pub mod dual;
 pub mod gait;
 pub mod gaze;
 pub mod ground;
+pub mod heading;
 pub mod idle;
 pub mod ik;
 pub mod leap;
@@ -91,6 +92,7 @@ pub use ground::{
     CONTACT_SLACK, CONTACT_SPEED, Footing, FootingConfig, Ground, contacts_during, contacts_in,
     level_feet, plant_feet, plant_feet_of,
 };
+pub use heading::Heading;
 pub use idle::{Idle, IdleConfig, Idled};
 pub use ik::{FabrikConfig, fabrik, two_bone};
 pub use leap::{Leap, Leapt, Stage};

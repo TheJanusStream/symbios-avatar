@@ -82,13 +82,16 @@
 //! cargo run --example walkaudit -- --turn 40      # a left turn, 40 deg/s (#241)
 //! cargo run --example walkaudit -- --turn -40 --grade 0.15
 //! cargo run --example walkaudit -- --turn 40 --bare   # the placement alone
+//! cargo run --example walkaudit -- --heading 180      # walking backwards (#242)
+//! cargo run --example walkaudit -- --heading 90       # strafing left
+//! cargo run --example walkaudit -- --headings         # the sweep, and the pop check
 //! ```
 //!
 //! [`Speed::of`]: symbios_avatar::anim::Speed::of
 
 use glam::{Quat, Vec3};
 use symbios_avatar::{
-    Archetype, Avatar, AvatarRecord, Gait, Ground, Limb, Patch, Pose, Rig, Stride, Walk,
+    Archetype, Avatar, AvatarRecord, Gait, Ground, Heading, Limb, Patch, Pose, Rig, Stride, Walk,
     anim::{Speed, gait},
 };
 
@@ -154,6 +157,11 @@ fn main() {
     // one. Checked against the rig rather than assumed: `Limb::HindLeft` sits
     // at `x = +0.088` on the default body.
     let turn = number("--turn").unwrap_or(0.0);
+    // Which way the body TRAVELS, against the way it faces: 0 is forward, 180
+    // is backwards, +90 is a strafe to the body's left. A separate input from
+    // the speed and from the turn, so a diagonal is a heading rather than a
+    // mode — see `Heading` (#242).
+    let heading = number("--heading").unwrap_or(0.0);
     // Ablation: the gait's own placement, with neither the plant nor the roll
     // over it. **Which is the only way to tell whose skid a skid is** — the
     // roll deliberately moves the contact joint, sliding the foot so that
@@ -179,7 +187,7 @@ fn main() {
     } else {
         Gait::natural(rig)
     };
-    let mut stride = Stride::for_body(rig, pace);
+    let mut stride = Stride::for_body(rig, pace).toward(rig, Heading::degrees(heading));
 
     // The world clock. See the module docs: a yaw RATE is per second and
     // everything else here is per cycle, so the cadence is what joins them —
@@ -218,6 +226,16 @@ fn main() {
     // `(1 − cos a)/a` are its two shape functions and both have limits, where
     // the centre-and-radius form has neither. A straight walk is then the same
     // expression rather than a branch beside it.
+    //
+    // **Along the HEADING, not along `+Z`** (#242). This clock was written when
+    // the only travel was forward, and it advanced the body down its own facing
+    // — so a body strafing left was drawn walking forward while its feet walked
+    // sideways, and the sweep's skid reading grew with the heading all the way
+    // to 832 mm at backwards. That is the instrument disagreeing with the
+    // crate, not the crate being wrong: `carried` had the heading right from
+    // #241. The two build their arcs from the same two vectors now.
+    let facing = Heading::degrees(heading).direction();
+    let sideways = Vec3::Y.cross(facing);
     let frame = |u: f32| -> (Vec3, f32) {
         let a = per_cycle_yaw * u;
         let (along, across) = if a.abs() < 1e-4 {
@@ -226,7 +244,10 @@ fn main() {
             (a.sin() / a, (1.0 - a.cos()) / a)
         };
         let travelled = per_cycle_travel * u;
-        (Vec3::new(travelled * across, 0.0, travelled * along), a)
+        (
+            facing * (travelled * along) + sideways * (travelled * across),
+            a,
+        )
     };
     let into_world = |u: f32, at: Vec3| {
         let (origin, yaw) = frame(u);
@@ -335,7 +356,7 @@ fn main() {
     let world_height = |at: Vec3| at.z * grade + at.x * camber;
     let world_normal = Vec3::new(-camber, 1.0, -grade).normalize();
     let height = |u: f32, at: Vec3| world_height(into_world(u, at)) - world_height(frame(u).0);
-    let measure = |u: f32| -> Moment {
+    let measure = |u: f32, stride: &Stride| -> Moment {
         let cycle = u.rem_euclid(1.0);
         let normal = Quat::from_rotation_y(-frame(u).1) * world_normal;
         let floor = |foot: Vec3| {
@@ -357,9 +378,9 @@ fn main() {
             // a `Walk` with everything switched off still rolls, and the
             // ablation read 31.7 mm where the placement alone leaves 2.8. The
             // stage has to be stepped past rather than configured away.
-            gait::step(rig, &mut pose, &gait, &stride, cycle, floor);
+            gait::step(rig, &mut pose, &gait, stride, cycle, floor);
         } else {
-            Walk::at(cycle).drive(rig, &mut pose, &gait, &stride, floor);
+            Walk::at(cycle).drive(rig, &mut pose, &gait, stride, floor);
         }
 
         let posed = pose.forward(rig);
@@ -444,6 +465,16 @@ fn main() {
         grade * 100.0,
         camber * 100.0
     );
+    if heading != 0.0 {
+        println!(
+            "travelling {heading:.0} deg off forward ({}), which takes {:.0}% of a forward \
+             stride: {:.3} m against {:.3}",
+            Heading::degrees(heading).describe(),
+            Heading::degrees(heading).reach() * 100.0,
+            stride.length,
+            Stride::for_body(rig, pace).length,
+        );
+    }
     if turn != 0.0 {
         println!(
             "turning {turn:.1} deg/s {} at {:.2} m/s and {cadence:.2} cycles/s: {:.1} deg and \
@@ -481,7 +512,7 @@ fn main() {
     );
 
     for frame in 0..frames {
-        let moment = measure(frame as f32 / frames as f32);
+        let moment = measure(frame as f32 / frames as f32, &stride);
         let mut cells = String::new();
         for &(airborne, sole, _, pitch) in &moment.feet {
             cells.push_str(&format!(
@@ -509,7 +540,7 @@ fn main() {
     // body-space reading below is periodic in the cycle and so is unmoved by
     // the extra lap.
     let sweep: Vec<Moment> = (0..SWEEP * 2)
-        .map(|at| measure(at as f32 / SWEEP as f32))
+        .map(|at| measure(at as f32 / SWEEP as f32, &stride))
         .collect();
 
     let mut lowest_swing = f32::MAX;
@@ -714,6 +745,72 @@ fn main() {
          rather than on the instrument: the travel comes from the stride's own excursion \
          divided by the duty, so a reading here says the two disagree)"
     );
+    // **The heading sweep** (#242): the acceptance test asks for a
+    // walkaudit-style read of sole penetration and clearance in every
+    // direction, and for no pop crossing from forward to diagonal. The pop is a
+    // property of `Heading::reach` and is asserted in the engine's own tests
+    // where it can be swept a degree at a time; what this adds is the reading
+    // no unit test can take — what the posed body's SOLES do once every layer
+    // has run over them.
+    if args.iter().any(|arg| arg == "--headings") {
+        println!(
+            "\n{:>8} {:>18} {:>8} {:>10} {:>10} {:>9}",
+            "heading", "", "reach", "stride m", "worst mm", "skid mm"
+        );
+        for degrees in (0..360).step_by(30) {
+            let heading = Heading::degrees(degrees as f32);
+            let swept = Stride::for_body(rig, pace).toward(rig, heading);
+            // Its own clock, because each heading covers a different distance
+            // per cycle, and the outer one was built for `--heading`'s.
+            let per_cycle = swept.length / gait.duty;
+            let ahead = heading.direction();
+            let mut worst = f32::MAX;
+            let mut planted = 0.0f32;
+            let mut anchor: Option<(usize, Vec3)> = None;
+            for at in 0..SWEEP {
+                let moment = measure(at as f32 / SWEEP as f32, &swept);
+                for &(airborne, sole, _, _) in &moment.feet {
+                    if airborne {
+                        worst = worst.min(sole);
+                    }
+                }
+                // The skid, on the first contact, across whatever stance the
+                // sweep happens to catch it in — the same question the turn
+                // reading asks and the same answer a straight walk gives.
+                // **Back out of the outer clock, then into this heading's.**
+                // `Moment::planted` is already carried into the world by the
+                // clock `--heading` built, so adding this sweep's travel on top
+                // counts it twice — measured, every heading reported about 500
+                // mm of skid including the forward one the main reading puts at
+                // 31.9. One clock at a time.
+                let u = at as f32 / SWEEP as f32;
+                let (origin, yaw) = frame(u);
+                let local = Quat::from_rotation_y(-yaw) * (moment.planted[0].1 - origin);
+                let at_world = local + ahead * (per_cycle * u);
+                let down = moment.planted[0].0;
+                match (down, anchor) {
+                    (true, Some((_, from))) => planted = planted.max(at_world.distance(from)),
+                    (true, None) => anchor = Some((at, at_world)),
+                    (false, _) => anchor = None,
+                }
+            }
+            println!(
+                "{:>7}\u{00b0} {:>18} {:>8.2} {:>10.3} {:>10.1} {:>9.1}",
+                degrees,
+                heading.describe(),
+                heading.reach(),
+                swept.length,
+                worst * 1000.0,
+                planted * 1000.0,
+            );
+        }
+        println!(
+            "          (worst mm is the lowest a SWINGING sole passed above the body's own \
+             standing depth — negative is a scuff. skid is how far a planted contact moved in \
+             the world across one stance, which must not care which way the body is going)"
+        );
+    }
+
     println!(
         "  gait:   duty {:.2}, both feet down {both_down:.2} of the cycle, airborne \
          {:.2} (reference: {})",

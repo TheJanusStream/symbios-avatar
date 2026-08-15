@@ -30,6 +30,7 @@ use glam::{Quat, Vec3};
 
 use super::gaze::GazeConfig;
 use super::ground::{Footing, FootingConfig, Ground, plant_feet_of, solve_contact};
+use super::heading::Heading;
 use super::pose::Pose;
 use crate::plan::{Limb, Zone};
 use crate::rig::Rig;
@@ -553,6 +554,43 @@ impl Stride {
         }
     }
 
+    /// The same stride, taken in another direction (#242).
+    ///
+    /// **Both the heading and the length**, which is why this is one call
+    /// rather than a field to assign. A body does not step as far backwards as
+    /// forwards or as far sideways as either — see [`Heading::reach`] — so a
+    /// caller that set `direction` alone would get a body reaching further than
+    /// its hips allow, in the direction they allow least. Making the two
+    /// inseparable is what stops that being expressible.
+    ///
+    /// The lift comes with it, in the same proportion, so a shorter step lifts
+    /// its foot less: a toe clearance is a share of the ground being covered
+    /// and a sideways shuffle covers little.
+    ///
+    /// **The rig is here for the second bound**, which is geometric and which
+    /// only a body can answer: a sideways stride long enough drives one foot
+    /// past the other. See `shuffle_limit` — and see `Heading`'s own docs for
+    /// how that was found, which was by a guard refuting the claim it had been
+    /// written to confirm.
+    #[must_use]
+    pub fn toward(self, rig: &Rig, heading: Heading) -> Self {
+        // The sideways semi-axis is the smaller of what the hip allows and what
+        // the stance does — folded into the ellipse rather than clipped over
+        // it, so a diagonal stays interpolated. See `Heading::reach_within`.
+        let lateral = if self.length > f32::EPSILON {
+            crate::anim::heading::LATERAL_REACH.min(shuffle_limit(rig) / self.length)
+        } else {
+            crate::anim::heading::LATERAL_REACH
+        };
+        let scale = heading.reach_within(lateral);
+        Self {
+            direction: heading.direction(),
+            length: self.length * scale,
+            lift: self.lift * scale,
+            ..self
+        }
+    }
+
     /// Standing still.
     #[must_use]
     pub fn still() -> Self {
@@ -564,6 +602,51 @@ impl Stride {
         }
     }
 }
+
+/// The longest stride this body can take toward `heading` without putting one
+/// foot through the other, in metres.
+///
+/// **A sideways step is bounded by the stance, not only by the hip.** Two feet
+/// at opposite points of the cycle differ in their offsets by most of a
+/// stride's length — one is sliding back through its stance while the other
+/// swings forward — so a lateral stride wider than the feet stand apart crosses
+/// them. Measured before this existed: strafing left on the default body put
+/// the left foot 72 mm to the RIGHT of the right one, which is the
+/// self-intersection a shuffle is chosen over a crossover to avoid.
+///
+/// Returned as a **distance**, which the caller turns into a share of its own
+/// forward stride and hands to `Heading::reach_within` as the ellipse's
+/// sideways semi-axis. A purely fore-and-aft heading never reaches it, because
+/// two feet side by side have nothing to cross when they both travel down the
+/// body's length — which is why every forward and backward reading in this
+/// crate is untouched.
+///
+/// The margin is [`SHUFFLE_CLEARANCE`]. The bound scales with the body, because
+/// the stance does.
+fn shuffle_limit(rig: &Rig) -> f32 {
+    let sides: Vec<f32> = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
+        .map(|joint| rig.joints[joint].position.x)
+        .collect();
+    let low = sides.iter().copied().fold(f32::MAX, f32::min);
+    let high = sides.iter().copied().fold(f32::MIN, f32::max);
+    if sides.len() < 2 || high <= low {
+        return f32::INFINITY;
+    }
+    (high - low) * (1.0 - SHUFFLE_CLEARANCE)
+}
+
+/// How much of its standing separation a shuffling body keeps between its feet.
+///
+/// **Half.** Nought would let the two soles arrive at the same point, which is
+/// not a crossover but is not a step either; one would forbid a sideways stride
+/// altogether. Half leaves the feet a stance-width apart at their closest,
+/// which on the default body is 88 mm — about a foot's width, which is the
+/// clearance that matters and which this crate cannot ask for directly because
+/// a foot's width is a mesh question and this is a rig one.
+const SHUFFLE_CLEARANCE: f32 = 0.5;
 
 /// How far one limb must sink for its chain to reach a goal `toward` its rest
 /// contact, before any margin.
@@ -1143,7 +1226,7 @@ impl Walk {
     {
         let steps = step(rig, pose, gait, stride, self.cycle, &ground);
         if self.posture {
-            swing_arms(rig, pose, gait, self.cycle);
+            swing_arms(rig, pose, gait, stride, self.cycle);
             lean(rig, pose, gait, stride);
         }
         // After the lean, which the neck has just taken back off to hold the
@@ -1496,7 +1579,14 @@ where
 
     for (index, &limb) in gait.limbs.iter().enumerate() {
         let phase = gait.phase(index, cycle);
-        let pitch = foot_pitch(phase);
+        // **Scaled by how much of the travel is fore-and-aft** (#242). Forward
+        // walking lands on the heel and leaves from the toe; backwards it is
+        // exactly the other way round, and sideways the sole comes down flat.
+        // All three are one multiplication by the heading's forward share,
+        // which is `+1`, `−1` and `0` — so a diagonal gets a partial roll
+        // rather than a choice between two of them, and nothing pops as the
+        // heading swings.
+        let pitch = foot_pitch(phase) * Heading::toward(stride.direction).along();
         let heading = contact_heading(stride, phase);
         // Nothing to do is nothing to do — but it now takes both to be nothing,
         // and a foot flat in mid-stance on a turn still has a bearing to hold.
@@ -1697,10 +1787,22 @@ const ELBOW_SWING: f32 = 0.26;
 /// solve rather than merely disagree with one. Each producer contributes to a
 /// pose once; running this twice compounds its own drop, as any additive layer
 /// would.
-pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
+pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycle: f32) {
     if !pose.fits(rig) {
         return;
     }
+    // **The arms answer the legs' FORE-AND-AFT excursion, because that is what
+    // they counterbalance** (#242). A walking body's legs swing angular
+    // momentum about its vertical axis and the arms cancel it; a body shuffling
+    // sideways generates none and swings its arms not at all, and one walking
+    // backwards generates it the other way round and swings them the other way.
+    //
+    // The damping the backward case wants arrives here too, without a second
+    // constant: a backward stride is three quarters of a forward one, so the
+    // arms come with it. Forward this is exactly one and the swing is what it
+    // always was.
+    let heading = Heading::toward(stride.direction);
+    let travel = heading.along() * heading.reach();
 
     let carries = rig.ground_contacts();
     let mut lead = 0.0;
@@ -1728,7 +1830,7 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32) {
         let drive = if gait.duty >= 1.0 {
             0.0
         } else {
-            ((cycle - offset + ARM_LAG) * std::f32::consts::TAU).sin()
+            ((cycle - offset + ARM_LAG) * std::f32::consts::TAU).sin() * travel
         };
         if limb == Limb::ForeLeft {
             lead = drive;
@@ -1877,7 +1979,13 @@ pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
     // reason; the correctness claim was not, and was checked.
     let pitch = TRUNK_LEAN * pace_of(rig, stride);
     let bank = bank_of(rig, gait, stride);
-    let toward = (Vec3::Z * pitch + Vec3::X * bank).normalize_or_zero();
+    // **Along the way the body is GOING, not the way it faces** (#242). The
+    // lean exists to put the body's mass ahead of its feet in the direction it
+    // is travelling, so a body walking backwards leans back and one shuffling
+    // sideways leans that way. On a forward walk this is `+Z` and nothing
+    // moves, which is every reading this crate has taken.
+    let travel = stride.direction.normalize_or(Vec3::Z);
+    let toward = (travel * pitch + Vec3::X * bank).normalize_or_zero();
     let wanted = (pitch * pitch + bank * bank).sqrt();
     if wanted <= f32::EPSILON || toward == Vec3::ZERO {
         return;
@@ -2500,6 +2608,130 @@ mod tests {
     }
 
     #[test]
+    fn a_backward_walk_lands_on_its_toe_and_a_shuffle_lands_flat() {
+        // The whole of the foot's answer to a heading, and all three cases come
+        // out of one multiplication by the heading's forward share.
+        //
+        // **Measured off the POSED foot, through the real drive.** Written the
+        // obvious way — `foot_pitch(strike) * heading.along()` — this asserted
+        // its own arithmetic and passed with the scaling removed from the
+        // crate entirely, which is a test that can never fail from a change to
+        // the thing it is named after.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let joints = rig.extremity_joints(Limb::HindLeft);
+        let (heel, toe) = (joints[1], joints[joints.len() - 1]);
+        let rest = {
+            let run = rig.joints[toe].position - rig.joints[heel].position;
+            run.y.atan2((run.x * run.x + run.z * run.z).sqrt())
+        };
+        let pitch_at = |heading: Heading, cycle: f32| {
+            let stride = Stride::for_body(&rig, 1.0).toward(&rig, heading);
+            let mut pose = Pose::rest(&rig);
+            Walk::at(cycle).drive(&rig, &mut pose, &gait, &stride, |at: Vec3| {
+                Some(Ground {
+                    position: Vec3::new(at.x, 0.0, at.z),
+                    normal: Vec3::Y,
+                })
+            });
+            let posed = pose.forward(&rig);
+            let run = posed.positions[toe] - posed.positions[heel];
+            (run.y.atan2((run.x * run.x + run.z * run.z).sqrt()) - rest).to_degrees()
+        };
+        // At the strike, which is the start of this contact's stance.
+        let forward = pitch_at(Heading::FORWARD, 0.0);
+        let backward = pitch_at(Heading::BACKWARD, 0.0);
+        let sideways = pitch_at(Heading::LEFT, 0.0);
+        assert!(
+            forward > 5.0,
+            "a forward walk lands toe-up: {forward:.1} deg"
+        );
+        assert!(
+            backward < -5.0,
+            "a backward walk lands toe-down: {backward:.1} deg"
+        );
+        assert!(
+            sideways.abs() < 2.0,
+            "a shuffle lands flat: {sideways:.1} deg"
+        );
+    }
+
+    #[test]
+    fn a_shuffle_swings_no_arms_and_a_backward_walk_swings_them_the_other_way() {
+        // The arms counterbalance the legs' FORE-AND-AFT excursion, so a body
+        // shuffling sideways has nothing to counterbalance. Measured off the
+        // posed wrist, not off the rotation asked for — a quaternion about the
+        // arm's own axis is a perfectly good rotation that swings nothing, and
+        // this crate has been caught reading the parameter before (#223).
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let wrist = rig.limb_chain(Limb::ForeLeft).expect("an arm")[2];
+        let swing = |heading: Heading| {
+            let stride = Stride::for_body(&rig, 1.0).toward(&rig, heading);
+            let at = |cycle: f32| {
+                let mut pose = Pose::rest(&rig);
+                swing_arms(&rig, &mut pose, &gait, &stride, cycle);
+                pose.forward(&rig).positions[wrist].z
+            };
+            // Signed: how far the wrist is ahead at the quarter of the cycle a
+            // forward walk has it forward.
+            at(0.25) - at(0.75)
+        };
+        let forward = swing(Heading::FORWARD);
+        assert!(forward.abs() > 0.05, "a forward walk swings: {forward}");
+        assert!(
+            swing(Heading::LEFT).abs() < forward.abs() * 0.02,
+            "a shuffle swung its arms {:.4} against a walk's {forward:.4}",
+            swing(Heading::LEFT)
+        );
+        let backward = swing(Heading::BACKWARD);
+        assert!(
+            backward * forward < 0.0,
+            "a backward walk must swing the other way: {backward} against {forward}"
+        );
+        // And damped, which arrives from the shorter backward stride rather
+        // than from a second constant.
+        assert!(
+            backward.abs() < forward.abs(),
+            "{backward} against {forward}"
+        );
+    }
+
+    #[test]
+    fn a_sideways_walk_shuffles_and_never_crosses_its_feet() {
+        // **This guard refuted the claim it was written to confirm**, which is
+        // why it is worth having. The module said a shuffle came free — every
+        // contact moves by the same screw, so surely the feet keep the
+        // separation they start with. They do not: the two are at different
+        // points of the cycle, so their offsets differ by most of a stride, and
+        // strafing left put the LEFT foot 72 mm to the right of the right one.
+        //
+        // The bound is `shuffle_limit`, and what is asserted here is its
+        // contract: the feet keep at least `SHUFFLE_CLEARANCE` of the stance
+        // they stand in. Reintroducing the defect means dropping that bound
+        // from `Stride::toward`, which puts the reading back to −72 mm.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0).toward(&rig, Heading::LEFT);
+        let home = |limb: Limb| rig.joints[rig.in_zone(Zone::Extremity(limb))[0]].position;
+        let (left, right) = (home(Limb::HindLeft), home(Limb::HindRight));
+        let apart = (left.x - right.x).abs();
+        let mut closest = f32::MAX;
+        for at in 0..240 {
+            let cycle = at as f32 / 240.0;
+            let one = left + contact_offset(left, &stride, gait.phase(0, cycle));
+            let other = right + contact_offset(right, &stride, gait.phase(1, cycle));
+            closest = closest.min(one.x - other.x);
+        }
+        assert!(
+            closest > apart * (1.0 - SHUFFLE_CLEARANCE),
+            "the feet closed to {:.1} mm of a {:.1} mm stance",
+            closest * 1000.0,
+            apart * 1000.0
+        );
+    }
+
+    #[test]
     fn a_pivot_counter_rotates_the_feet_about_a_body_going_nowhere() {
         // `length = 0` with a yaw: the body turns on the spot, so a foot is
         // carried round the body's centre and the two feet go opposite ways.
@@ -2581,10 +2813,11 @@ mod tests {
         // three collinear points, so the bend has to come from here.
         let rig = biped();
         let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
         for frame in 0..12 {
             let cycle = frame as f32 / 12.0;
             let mut pose = Pose::rest(&rig);
-            swing_arms(&rig, &mut pose, &gait, cycle);
+            swing_arms(&rig, &mut pose, &gait, &stride, cycle);
             for limb in [Limb::ForeLeft, Limb::ForeRight] {
                 let bend = elbow_bend(&rig, &pose, limb);
                 assert!(
@@ -2606,9 +2839,10 @@ mod tests {
         // place in their own swings, so the comparison is like for like.
         let rig = biped();
         let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
         let bend_at = |limb: Limb, cycle: f32| {
             let mut pose = Pose::rest(&rig);
-            swing_arms(&rig, &mut pose, &gait, cycle);
+            swing_arms(&rig, &mut pose, &gait, &stride, cycle);
             elbow_bend(&rig, &pose, limb)
         };
         for frame in 0..6 {
@@ -2629,8 +2863,9 @@ mod tests {
         // elbow folds the hand toward the front of the body.
         let rig = biped();
         let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
         let mut pose = Pose::rest(&rig);
-        swing_arms(&rig, &mut pose, &gait, 0.0);
+        swing_arms(&rig, &mut pose, &gait, &stride, 0.0);
         let posed = pose.forward(&rig);
 
         for limb in [Limb::ForeLeft, Limb::ForeRight] {
@@ -2657,9 +2892,10 @@ mod tests {
         // winding (#114).
         let rig = biped();
         let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
         let mut pose = Pose::rest(&rig);
         // A quarter cycle, where the lead is near its widest.
-        swing_arms(&rig, &mut pose, &gait, 0.25);
+        swing_arms(&rig, &mut pose, &gait, &stride, 0.25);
         let posed = pose.forward(&rig);
 
         let neck = *rig.in_zone(Zone::Neck).first().expect("a neck");
@@ -2822,9 +3058,10 @@ mod tests {
         // bent — identical at every point of the cycle.
         let rig = biped();
         let gait = Gait::standing(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
         let posed_at = |cycle: f32| {
             let mut pose = Pose::rest(&rig);
-            swing_arms(&rig, &mut pose, &gait, cycle);
+            swing_arms(&rig, &mut pose, &gait, &stride, cycle);
             pose
         };
         let still = posed_at(0.0);
@@ -3611,7 +3848,7 @@ mod tests {
 
             let mut longhand = Pose::rest(&rig);
             let expected = step(&rig, &mut longhand, &gait, &stride, cycle, ground);
-            swing_arms(&rig, &mut longhand, &gait, cycle);
+            swing_arms(&rig, &mut longhand, &gait, &stride, cycle);
             lean(&rig, &mut longhand, &gait, &stride);
             if !expected.stance.is_empty() {
                 plant_feet_of(
@@ -3700,7 +3937,7 @@ mod tests {
         unplanted.drive(&rig, &mut raw, &gait, &stride, ground);
         let mut without = Pose::rest(&rig);
         step(&rig, &mut without, &gait, &stride, cycle, ground);
-        swing_arms(&rig, &mut without, &gait, cycle);
+        swing_arms(&rig, &mut without, &gait, &stride, cycle);
         lean(&rig, &mut without, &gait, &stride);
         roll_feet(&rig, &mut without, &gait, &stride, cycle, ground);
         for joint in 0..without.rotations.len() {
@@ -3773,7 +4010,7 @@ mod tests {
         let ground = |foot: Vec3| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z)));
         let mut pose = Pose::rest(rig);
         let steps = step(rig, &mut pose, gait, stride, cycle, ground);
-        swing_arms(rig, &mut pose, gait, cycle);
+        swing_arms(rig, &mut pose, gait, stride, cycle);
         plant_feet_of(
             rig,
             &mut pose,
@@ -4053,7 +4290,7 @@ mod tests {
             let cycle = sample as f32 / 120.0;
             let mut pose = Pose::rest(&rig);
             let steps = step(&rig, &mut pose, &gait, &stride, cycle, ground);
-            swing_arms(&rig, &mut pose, &gait, cycle);
+            swing_arms(&rig, &mut pose, &gait, &stride, cycle);
             {
                 use crate::anim::ground::{FootingConfig, plant_feet_of};
                 plant_feet_of(

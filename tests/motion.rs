@@ -423,7 +423,7 @@ fn swinging_arms_leaves_the_limbs_the_body_stands_on_alone() {
             );
 
             let planted = pose.forward(&rig);
-            gait::swing_arms(&rig, &mut pose, &gait, cycle);
+            gait::swing_arms(&rig, &mut pose, &gait, &stride, cycle);
             let swung = pose.forward(&rig);
 
             for &limb in &carries {
@@ -443,7 +443,7 @@ fn swinging_arms_leaves_the_limbs_the_body_stands_on_alone() {
         if carries.len() < Limb::ALL.len() {
             let mut pose = Pose::rest(&rig);
             let before = pose.clone();
-            gait::swing_arms(&rig, &mut pose, &gait, 0.25);
+            gait::swing_arms(&rig, &mut pose, &gait, &stride, 0.25);
             assert_ne!(pose, before, "{name} did not swing its arms at all");
         }
     }
