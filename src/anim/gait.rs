@@ -1068,15 +1068,26 @@ impl Walked {
 /// way. Sampling where the foot actually is clears whatever is under it, and
 /// costs one probe per contact per frame.
 ///
-/// **The correction is the ground's RISE between the two points, not its
-/// height at one of them**, and getting that wrong is instructive enough to
-/// record. Seating the goal at the probed surface directly — `offset.y +=
-/// surface.y - home.y` — reads the difference between a SURFACE and a JOINT,
-/// and `home` is the extremity joint, which sits inside the foot about 32 mm
-/// above the sole. On level ground, where this should do nothing at all, it
-/// drove every contact 32 mm under: the swing went from clearing by 2.3 mm to
-/// scuffing by 30.1 mm and the pelvis sank half again as far. Only a difference
-/// of two probes is dimensionally sound, because the stand-off cancels.
+/// **The surface's own height, and nothing subtracted from it** (#255). This
+/// took the RISE between two probes — the surface under the goal minus the
+/// surface under the foot's rest position — which is right for every axis the
+/// stride runs ALONG and silently wrong for the one it runs across. A camber
+/// moves the two contacts apart in height without moving either along its own
+/// stride, so the two probes return the same rise and the correction is zero:
+/// measured, a swinging foot went 52.2 mm through a 30 percent side-slope,
+/// which is the stance width times the camber, and the reading did not move by
+/// a millimetre under #250 or #254 because neither was the cause.
+///
+/// **What made a difference of probes look necessary**, since it was not an
+/// arbitrary choice: seating the goal as `offset.y += surface.y - home.y` reads
+/// a SURFACE minus a JOINT, and `home` is the extremity joint, which sits
+/// inside the foot about 32 mm above the sole. On level ground, where this
+/// should do nothing at all, that drove every contact 32 mm under — the swing
+/// went from clearing by 2.3 mm to scuffing by 30.1, and the pelvis sank half
+/// again as far. The bug was the `- home.y`, not the absolute probe: `offset.y
+/// += surface.y` leaves the goal at `stand_off` above the surface, which is
+/// exactly where [`super::plant_feet_of`] puts a planted contact, and is
+/// unchanged on level ground because the surface is zero there.
 ///
 /// A probe that answers `None` at either end leaves the offset alone, which is
 /// the level behaviour this had before — so a caller with no terrain to offer
@@ -1091,9 +1102,9 @@ fn seated_offset<F>(offset: Vec3, home: Vec3, ground: &F) -> Vec3
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
-    match (ground(home), ground(home + offset)) {
-        (Some(here), Some(there)) => offset + Vec3::Y * (there.position.y - here.position.y),
-        _ => offset,
+    match ground(home + offset) {
+        Some(there) => offset + Vec3::Y * there.position.y,
+        None => offset,
     }
 }
 
@@ -2329,6 +2340,61 @@ mod tests {
                 })
             })
         })
+    }
+
+    /// Ground tilted along both axes at once: `grade` rises toward `+z`, the
+    /// way the body walks, and `camber` toward `+x`, across it.
+    fn tilted(grade: f32, camber: f32) -> impl Fn(Vec3) -> Option<Ground> + Copy {
+        move |at: Vec3| {
+            Some(Ground {
+                position: Vec3::new(at.x, at.z * grade + at.x * camber, at.z),
+                normal: Vec3::new(-camber, 1.0, -grade).normalize(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_sole_meets_the_hillside_it_is_crossing_and_not_only_the_one_it_is_climbing() {
+        // **#255, and it is the axis nothing had ever asked about.** The stride
+        // seats itself on the terrain by taking the ground's RISE between where
+        // a foot rests and where it is going — which is right for every axis the
+        // stride runs ALONG, and silently does nothing for the one it runs
+        // across. A camber moves the two contacts apart in height without moving
+        // either along its own stride, so both probes return the same rise and
+        // the correction is zero.
+        //
+        // Measured before: a swinging foot 24.7 mm through a 15 percent
+        // side-slope, 52.2 through a 30 and 70.3 through a 40 — the stance width
+        // times the camber — and not a millimetre of it moved under #250 or
+        // #254, because neither was the cause.
+        //
+        // **Both axes, and the diagonals.** `examples/locomotion` tilted its
+        // ground along X for its whole life while calling it a grade (#221), and
+        // this crate then measured the fore-and-aft axis alone until #250 said
+        // so. A test for one axis is how that happens twice.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let flat = worst_sole_pass(&rig, &gait, &stride, tilted(0.0, 0.0));
+
+        for (grade, camber) in [
+            (0.0, 0.15),
+            (0.0, 0.30),
+            (0.0, -0.30),
+            (0.15, 0.15),
+            (-0.15, 0.15),
+            (0.30, 0.30),
+            (-0.30, -0.30),
+        ] {
+            let worst = worst_sole_pass(&rig, &gait, &stride, tilted(grade, camber));
+            assert!(
+                worst > flat - 0.012,
+                "on a {grade} grade and {camber} camber the sole passed {:.1} mm below \
+                 the surface, against {:.1} mm on the flat",
+                worst * 1000.0,
+                flat * 1000.0
+            );
+        }
     }
 
     #[test]
