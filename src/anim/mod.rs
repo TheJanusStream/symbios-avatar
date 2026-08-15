@@ -71,6 +71,7 @@ pub mod clip;
 pub mod dual;
 pub mod gait;
 pub mod gaze;
+pub mod gesture;
 pub mod ground;
 pub mod heading;
 pub mod idle;
@@ -86,9 +87,10 @@ pub mod transition;
 pub mod turn;
 
 pub use blend::Inertializer;
-pub use clip::{Clip, Key, Space, Target, Track};
+pub use clip::{Clip, Key, Scale, Space, Target, Track};
 pub use gait::{Gait, Phase, Steps, Stride, Walk, Walked};
 pub use gaze::{Gaze, GazeConfig, look_at};
+pub use gesture::{reject, wave};
 pub use ground::{
     CONTACT_SLACK, CONTACT_SPEED, Footing, FootingConfig, Ground, contacts_during, contacts_in,
     level_feet, plant_feet, plant_feet_of,

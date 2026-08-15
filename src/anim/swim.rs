@@ -279,24 +279,18 @@ impl Swim {
 
 /// How long a body is, in metres: the whole of it, head to heel.
 ///
-/// Public because an instrument measuring a swim has to normalise by the same
-/// length the swim does, and a second implementation of it would be a second
-/// answer.
-///
 /// **Not the leg**, which is what [`super::Speed`] normalises a walk by and
 /// would be wrong here. A walk is a pendulum hung from the hip and its period
 /// is set by the leg; a swim is a body lying in the water being pushed along
 /// it, and what it costs to push is set by how long the whole body is.
 ///
-/// Taken off the rest skeleton's own vertical extent rather than from a
-/// landmark, so it holds for a body whose head is not its highest joint and
-/// for one that has no head at all.
+/// [`Rig::extent`] is that measurement and this is a name for it, kept because
+/// the swim and the instrument that audits it must normalise by the same
+/// length: a second implementation would be a second answer, and this file
+/// carried one for exactly as long as it took to notice (#261).
 #[must_use]
 pub fn length_is(rig: &Rig) -> f32 {
-    let span = rig.joints.iter().fold((f32::MAX, f32::MIN), |span, joint| {
-        (span.0.min(joint.position.y), span.1.max(joint.position.y))
-    });
-    (span.1 - span.0).max(0.0)
+    rig.extent()
 }
 
 /// How an arm is turned at this moment of the stroke, from its rest attitude.

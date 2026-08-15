@@ -122,8 +122,8 @@ pub mod uv;
 pub use anim::{
     Clip, ClipLibrary, Curve, Footing, FootingConfig, Gait, Gaze, GazeConfig, Ground, Heading,
     Idle, IdleConfig, Idled, Inertializer, JointTrack, Key, Leap, Leapt, LibraryError, Play, Pose,
-    PoseClip, Posed, Slot, Space, Speed, Stride, Swim, Swum, Target, Track, Turn, Walk, Walked,
-    contacts_in, look_at, plant_feet,
+    PoseClip, Posed, Scale, Slot, Space, Speed, Stride, Swim, Swum, Target, Track, Turn, Walk,
+    Walked, contacts_in, look_at, plant_feet,
 };
 pub use avatar::{Avatar, AvatarConfig, AvatarMesh, Budget, MeshKind, Parts};
 pub use cage::{CageConfig, CageError, build_cage};

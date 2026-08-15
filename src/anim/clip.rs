@@ -48,7 +48,25 @@ pub enum Target {
     /// body that walks on all of its limbs.
     Graspers,
     /// One named limb, for motion that is genuinely one-sided.
+    ///
+    /// Addresses the limb whatever it is for: a march and a kick lift a limb the
+    /// body stands on, so this deliberately does not ask whether it is free.
+    /// [`Target::Grasper`] is the one that asks.
     Just(Limb),
+    /// One named limb, but only where it is free to gesture.
+    ///
+    /// **The per-item refusal an expressive roster needs** (#248). A greeting
+    /// wave is one-handed — [`Target::Graspers`] would raise both — and it is
+    /// also a motion a body walking on all four of its limbs simply cannot
+    /// make. Neither [`Target::Just`] nor [`Target::Graspers`] can say both of
+    /// those at once, so a gesture written with either says the wrong thing on
+    /// one body or the other: `Just` waves a quadruped's front leg at you, and
+    /// `Graspers` turns every one-handed gesture into a two-handed one.
+    ///
+    /// Resolving to nothing is the refusal, and it needs no special path: a
+    /// track that finds no limb does nothing, and a clip of nothing but such
+    /// tracks leaves the body alone.
+    Grasper(Limb),
 }
 
 impl Target {
@@ -66,6 +84,13 @@ impl Target {
                 .collect(),
             Target::Just(limb) => {
                 if rig.in_zone(Zone::Extremity(limb)).is_empty() {
+                    Vec::new()
+                } else {
+                    vec![limb]
+                }
+            }
+            Target::Grasper(limb) => {
+                if contacts.contains(&limb) || rig.in_zone(Zone::Extremity(limb)).is_empty() {
                     Vec::new()
                 } else {
                     vec![limb]
@@ -109,6 +134,36 @@ pub enum Space {
     World,
 }
 
+/// What a track's offsets are measured in.
+///
+/// **Two normalisations, because a gesture means one of two different things**
+/// and stating both in one unit is what makes a roster read wrong on half the
+/// bodies it lands on (#248).
+///
+/// A **push, a stretch, a reach** is about how far the limb extends, and it
+/// scales with the limb: a long-armed body pushing something away puts its hand
+/// further out, and that is right. That is [`Scale::Reach`], and it is the
+/// default because it is what the format was built for.
+///
+/// A **wave, a hand on the chest, a salute** is about where the hand IS on the
+/// body, and it does not scale with the limb at all: a long-armed body waving
+/// still puts its hand beside its own head, with a more folded elbow. Measured
+/// in reaches, that gesture drifts — the audit puts it at 0.115 of a body
+/// height between the short-limbed and long-limbed ends of the sweep, which is
+/// a hand at the ear on one body and above the crown on the other.
+///
+/// The unit is a property of the track rather than of the clip, because one
+/// gesture wants both: a refusal holds its hands at chest height, which is the
+/// body's business, and pushes them out, which is the arm's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scale {
+    /// Multiples of the limb's own reach, shoulder to extremity.
+    #[default]
+    Reach,
+    /// Multiples of the body's own vertical extent — see [`Rig::extent`].
+    Body,
+}
+
 /// Where a part should be, at one moment.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Key {
@@ -140,6 +195,8 @@ pub struct Track {
     pub keys: Vec<Key>,
     /// Whether the goal travels with the body or stays put.
     pub space: Space,
+    /// What the offsets are measured in.
+    pub scale: Scale,
 }
 
 impl Track {
@@ -156,7 +213,16 @@ impl Track {
             target,
             keys,
             space: Space::Body,
+            scale: Scale::Reach,
         }
+    }
+
+    /// Measures this track's offsets in the body's own extent rather than in
+    /// the limb's reach. See [`Scale`].
+    #[must_use]
+    pub fn on_body(mut self) -> Self {
+        self.scale = Scale::Body;
+        self
     }
 
     /// Fixes this track's goal in the space the body is posed in, rather than
@@ -294,7 +360,11 @@ impl Clip {
                     Space::World => Frame::REST,
                     Space::Body => Frame::carrying(rig, pose, limb),
                 };
-                let goal = frame.at(home + offset * reach);
+                let unit = match track.scale {
+                    Scale::Reach => reach,
+                    Scale::Body => rig.extent(),
+                };
+                let goal = frame.at(home + offset * unit);
                 if !solve_contact_toward(rig, pose, limb, goal, frame.at(pole)) {
                     straining.push(limb);
                 }
