@@ -94,9 +94,16 @@ pub enum Target {
     ///
     /// **A rotation, for [`Target::Gaze`]'s reason and measured the same way.**
     /// A bow is a trunk inclined by an angle, and an angle is what survives
-    /// being asked of a body of different proportions; so a trunk key's offset
-    /// is a tangent too, and neither [`Scale`] nor [`Space`] is consulted for
-    /// one.
+    /// being asked of a body of different proportions; so neither [`Scale`] nor
+    /// [`Space`] is consulted for a trunk key.
+    ///
+    /// **In QUARTER TURNS off vertical rather than in the gaze's tangent**, and
+    /// the sleeping item is what settled it (#248). A tangent is exactly right
+    /// for a gaze, which is a ray, and wrong for a rotation the moment the
+    /// rotation gets large: it is nonlinear where it works — a key of 2.0 is 63
+    /// degrees and 10.0 is 84 — and it cannot say a quarter turn at all, which
+    /// is where a body lying down is. So `1.0` is a right angle, `0.333` is the
+    /// 30 degrees a bow uses, and the unit reaches the horizontal.
     ///
     /// **The inclination is the trunk's CHORD, pelvis to shoulders, and not the
     /// rotation put at the hinge** — the gait learned that the expensive way
@@ -109,9 +116,44 @@ pub enum Target {
     /// two.
     ///
     /// **Only the horizontal part of the offset is read**, because a trunk
-    /// cannot lean upward: `(0.0, 0.0, 0.577)` is "bow 30 degrees forward" and
+    /// cannot lean upward: `(0.0, 0.0, 0.333)` is "bow 30 degrees forward" and
     /// the vertical component of a trunk key means nothing at all.
     Trunk,
+    /// Where the body itself is — the carriage's place, rather than any part's.
+    ///
+    /// **The third kind of thing this format addresses, and it takes a third
+    /// unit** (#248). A reach is measured in the limb's own reach and a
+    /// rotation in turns; a carriage is measured in **the standing leg's**
+    /// reach, because what holds a root up is the leg. Measured across the
+    /// sweep, a seated pelvis stated in body heights drifts 0.0440 of a body
+    /// height — the leg is between 0.3975 and 0.4415 of a body — and stated in
+    /// leg reaches it is exact.
+    ///
+    /// So [`Scale::Reach`] means the leg's here, and [`Scale::Body`] is still
+    /// available for a carriage that genuinely means something about the whole
+    /// body. [`Space`] is not consulted: the offset displaces the root from
+    /// wherever the pose already has it, which is what lets this ride whatever
+    /// is underneath.
+    ///
+    /// **This is what folds the legs**, and it does it without saying anything
+    /// about a knee. Drop the root and hold the contacts still in the world and
+    /// the solve has no choice but to bend them — which is the whole argument
+    /// for goals over angles, arriving at the one item that looked least like a
+    /// reach.
+    Root,
+    /// How far the whole body is tipped off upright.
+    ///
+    /// In quarter turns, like [`Target::Trunk`], and for the same reason
+    /// doubled: sleeping is a body at a right angle to standing, and that is
+    /// exactly the rotation a tangent cannot name. `(0.0, 0.0, 1.0)` lays a
+    /// body on its back with its feet toward `+Z`; `(0.0, 0.0, 0.0)` is
+    /// standing, so a track that returns to zero stands the body back up.
+    ///
+    /// **The root, not the spine.** [`Target::Trunk`] pitches a body's trunk
+    /// above its pelvis and leaves the legs under it, which is a bow; this
+    /// turns the body and everything on it, which is lying down. A gesture that
+    /// wants both says both, in two tracks.
+    Tilt,
 }
 
 impl Target {
@@ -141,9 +183,9 @@ impl Target {
                     vec![limb]
                 }
             }
-            // Neither of these drives a limb, so neither is something this
-            // list can name. `Clip::apply` reaches them directly.
-            Target::Gaze | Target::Trunk => Vec::new(),
+            // None of these drives a limb, so none is something this list can
+            // name. `Clip::apply` reaches them directly.
+            Target::Gaze | Target::Trunk | Target::Root | Target::Tilt => Vec::new(),
         }
     }
 }
@@ -229,13 +271,20 @@ pub struct Key {
     /// suit any body: `(0.0, 0.6, 0.4)` is "half a limb-length up and a little
     /// forward" whether the limb is a toddler's arm or a giant's.
     ///
-    /// **On a [`Target::Gaze`] track this is a tangent instead**, and it is one
-    /// by construction rather than by convention: the look point is the head's
-    /// own rest facing plus this, carried out to [`GAZE_AHEAD`] — so both the
-    /// run and the rise scale with the body, the extent divides out of the
-    /// ratio, and `(0.0, -0.27, 0.0)` is "look `atan 0.27` — about 15 degrees —
-    /// down" on every body there is. See [`Target::Gaze`] for the measurement
-    /// that chose this over a displacement.
+    /// **What this measures depends on what the track addresses, and there
+    /// are three answers because there are three kinds of thing.**
+    ///
+    /// * a limb — reaches, or body heights under [`Scale::Body`]; a
+    ///   [`Target::Root`] the same, in the standing leg's reach;
+    /// * a rotation, [`Target::Trunk`] and [`Target::Tilt`] — **quarter
+    ///   turns** off vertical, so `1.0` is a right angle and only the
+    ///   horizontal part is read;
+    /// * a gaze — a **tangent**, and one by construction rather than by
+    ///   convention: the look point is the head's own rest facing plus this,
+    ///   carried out to [`GAZE_AHEAD`], so both the run and the rise scale with
+    ///   the body, the extent divides out of the ratio, and `(0.0, -0.27, 0.0)`
+    ///   is "look `atan 0.27` — about 15 degrees — down" on every body there
+    ///   is. A gaze is a ray, and rise over run is what a ray means.
     pub offset: Vec3,
 }
 
@@ -449,18 +498,24 @@ impl Clip {
         };
         let mut straining = Vec::new();
 
-        // **The trunk first and the gaze last, whatever order the tracks were
-        // written in.** Both of the parts that are not limbs are measured in a
-        // frame something else moves: a gaze aimed before the trunk pitched is
-        // aimed from a body that has not bowed yet, and a limb goal is carried
-        // by the girdle the trunk swings. Stable, so tracks that do not care
-        // keep the order their author gave them — a clip with one track of each
-        // kind is the normal case and this costs it a three-element sort.
+        // **Outward from the carriage, whatever order the tracks were written
+        // in.** Every part that is not a limb is measured in a frame something
+        // else moves, so the order is the body's own: place and tip the whole
+        // body, then pitch the trunk on it, then solve the limbs against where
+        // that left them, then aim the head last. A gaze aimed before the trunk
+        // pitched is aimed from a body that has not bowed yet; a contact solved
+        // before the root dropped is solved from a body still standing up, and
+        // that one is the whole of what makes a seated body's legs fold.
+        //
+        // Stable, so tracks that do not care keep the order their author gave
+        // them — the normal clip has one track of each kind and this costs it a
+        // five-element sort.
         let mut ordered: Vec<&Track> = self.tracks.iter().collect();
         ordered.sort_by_key(|track| match track.target {
-            Target::Trunk => 0,
-            Target::Gaze => 2,
-            _ => 1,
+            Target::Root | Target::Tilt => 0,
+            Target::Trunk => 1,
+            Target::Gaze => 3,
+            _ => 2,
         });
 
         for track in ordered {
@@ -469,6 +524,18 @@ impl Clip {
             };
             if track.target == Target::Trunk {
                 pitch_trunk(rig, pose, offset);
+                continue;
+            }
+            if track.target == Target::Root {
+                let unit = match track.scale {
+                    Scale::Reach => stance_reach(rig).unwrap_or_else(|| rig.extent()),
+                    Scale::Body => rig.extent(),
+                };
+                pose.translation += offset * unit;
+                continue;
+            }
+            if track.target == Target::Tilt {
+                tilt_body(rig, pose, offset);
                 continue;
             }
             if track.target == Target::Gaze {
@@ -645,13 +712,57 @@ const TRUNK_UPRIGHT: f32 = std::f32::consts::FRAC_PI_4;
 /// Returns quietly on a body with no neck to find the shoulder girdle by, and
 /// on one whose trunk does not stand up: see [`TRUNK_UPRIGHT`].
 fn pitch_trunk(rig: &Rig, pose: &mut Pose, offset: Vec3) {
-    let sideways = Vec3::new(offset.x, 0.0, offset.z);
-    let wanted = sideways.length().atan();
-    let toward = sideways.normalize_or_zero();
+    let (toward, wanted) = turned(offset);
     if wanted <= f32::EPSILON || toward == Vec3::ZERO || !stands_up(rig) {
         return;
     }
     incline_trunk(rig, pose, toward, wanted);
+}
+
+/// Tips the whole body `offset` quarter turns off upright.
+///
+/// **Composed onto the root's rotation rather than assigned**, so a tilt rides
+/// whatever else has turned the body — a heading, a swim's roll — instead of
+/// replacing it. See [`Target::Tilt`].
+fn tilt_body(rig: &Rig, pose: &mut Pose, offset: Vec3) {
+    let (toward, wanted) = turned(offset);
+    if wanted <= f32::EPSILON || toward == Vec3::ZERO {
+        return;
+    }
+    let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
+        return;
+    };
+    // The axis that carries `+Y` toward `toward`, written as a cross product
+    // for `incline_trunk`'s reason: naming it would need one convention per
+    // direction a body can tip in.
+    pose.rotations[root] *= Quat::from_axis_angle(Vec3::Y.cross(toward), wanted);
+}
+
+/// A rotation key read: which way it tips the part, and how far in radians.
+///
+/// **Only the horizontal part is read**, because neither a trunk nor a body
+/// tips upward, and **the length is quarter turns** — see [`Target::Trunk`] for
+/// why a rotation is not keyed in the gaze's tangent.
+fn turned(offset: Vec3) -> (Vec3, f32) {
+    let sideways = Vec3::new(offset.x, 0.0, offset.z);
+    (
+        sideways.normalize_or_zero(),
+        sideways.length() * std::f32::consts::FRAC_PI_2,
+    )
+}
+
+/// The reach of a limb the body stands on, which is what holds its root up.
+///
+/// The unit [`Scale::Reach`] means on a [`Target::Root`] track. `None` on a
+/// body that stands on nothing, which is the refusal: a carriage measured in a
+/// leg needs a leg.
+fn stance_reach(rig: &Rig) -> Option<f32> {
+    rig.ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.limb_reach(limb))
+        .fold(None, |most: Option<f32>, reach| {
+            Some(most.map_or(reach, |most| most.max(reach)))
+        })
 }
 
 /// Whether the body's trunk rests near enough to upright to be pitched off it.

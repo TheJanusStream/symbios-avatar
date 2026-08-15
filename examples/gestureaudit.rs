@@ -32,6 +32,19 @@
 //!    and not the hinge's rotation** — those are different angles, and the gait
 //!    found out how different by writing a constant against the wrong one.
 //!
+//! 3c. **The carriage**, for a clip that moves one: how far the root dropped,
+//!    what angle that left the knee at, how far the body tipped, and how far
+//!    its lowest SURFACE sank below where the same body's does when it stands.
+//!    Two corrections, and the clip reads as broken without either: a joint is
+//!    a point on an axis and the body hangs off it by the bone's own radius, so
+//!    the surface is the joint less that; and a STANDING body already reads 50
+//!    mm under, because a node's radius overstates a surface that subdivision
+//!    pulls inside it. Against zero, every clip sinks. Against the body's own
+//!    standing figure, only the ones that do. **The knee is the reading that
+//!    matters** and it is an angle, because sitting is a right angle at the
+//!    knee and nothing about a length: the drop and the reach that produce it
+//!    are stated in the leg, and whether that was the right unit shows up here.
+//!
 //! 3a. **The gaze**, for a clip that has one: how far the head's facing pitches
 //!    from rest, how much of that the chest took, and how far the head joint
 //!    actually travelled. **A rotation cannot be judged by the spread of a
@@ -156,9 +169,13 @@ fn main() {
             .tracks
             .iter()
             .any(|track| track.target == Target::Trunk);
+        let carrying = clip
+            .tracks
+            .iter()
+            .any(|track| matches!(track.target, Target::Root | Target::Tilt));
         println!(
             "\n{:>7} {:>5} {:>5} {:>5} {:>7} {:>6} {:>7} {:>7} {:>7} {:>8} {:>7} {:>8} {:>8} \
-             {:>7} {:>8} {:>7} {:>7} {:>7} {:>7}",
+             {:>7} {:>8} {:>7} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>7}",
             "stature",
             "limbs",
             "neck",
@@ -177,12 +194,17 @@ fn main() {
             "gaze mm",
             "bow deg",
             "girdle",
+            "root/leg",
+            "knee deg",
+            "tilt deg",
+            "under mm",
             "step mm"
         );
 
         let mut spread: Vec<(f32, f32, f32)> = Vec::new();
         let mut dipped: Vec<f32> = Vec::new();
         let mut bowed: Vec<f32> = Vec::new();
+        let mut kneed: Vec<f32> = Vec::new();
         for (stature, limbs, neck, headsize) in BODIES {
             let rig = body(stature, limbs, neck, headsize);
             let Some(arm) = rig.limb_reach(Limb::ForeRight) else {
@@ -292,6 +314,34 @@ fn main() {
             // on the chord and its lean is small enough that nobody had to look
             // at the other number; a 30 degree bow is not.
             let mut girdle_turn = 0.0f32;
+            // The carriage's four: how far the root fell as a share of the leg
+            // that holds it up, the angle that left at the knee, how far the
+            // body tipped, and how near the floor its lowest joint came.
+            let mut fell = 0.0f32;
+            let mut knee_angle = 180.0f32;
+            let mut tipped = 0.0f32;
+            let mut floor = f32::MAX;
+            // The same reading taken on the body standing, which is what the
+            // clip's is compared against.
+            let standing = rest.iter().enumerate().fold(f32::MAX, |low, (joint, at)| {
+                let (near, far) = rig.bone_radii(joint);
+                low.min(at.y - near.max(far))
+            });
+            let leg = rig
+                .ground_contacts()
+                .into_iter()
+                .filter_map(|limb| rig.limb_reach(limb))
+                .fold(0.0f32, f32::max);
+            let knees: Vec<[usize; 3]> = rig
+                .ground_contacts()
+                .into_iter()
+                .filter_map(|limb| rig.limb_chain(limb))
+                .collect();
+            let root = rig
+                .joints
+                .iter()
+                .position(|joint| joint.parent.is_none())
+                .expect("a rig has a root");
             let rested = Pose::rest(&rig).forward(&rig).rotations;
 
             for frame in 0..=samples {
@@ -328,6 +378,33 @@ fn main() {
                         rested[girdle] * landmark::FORWARD,
                         posed.rotations[girdle] * landmark::FORWARD,
                     ));
+                }
+                if carrying {
+                    fell = fell.max(-pose.translation.y);
+                    tipped = tipped.max(
+                        (posed.rotations[root] * Vec3::Y)
+                            .angle_between(Vec3::Y)
+                            .to_degrees(),
+                    );
+                    // **The lowest SURFACE, not the lowest joint.** A joint is
+                    // a point on an axis and the body hangs off it by the bone's
+                    // own radius, so a pose whose lowest JOINT rests at zero has
+                    // its back through the floor by half a torso. The radius
+                    // overstates it a little — subdivision pulls the mesh inside
+                    // the node — and overstating a clearance is the safe way to
+                    // be wrong about one.
+                    floor = floor.min(places.iter().enumerate().fold(
+                        f32::MAX,
+                        |low, (joint, at)| {
+                            let (near, far) = rig.bone_radii(joint);
+                            low.min(at.y - near.max(far))
+                        },
+                    ));
+                    for &[hip, knee, ankle] in &knees {
+                        let thigh = (places[hip] - places[knee]).normalize_or_zero();
+                        let shin = (places[ankle] - places[knee]).normalize_or_zero();
+                        knee_angle = knee_angle.min(thigh.angle_between(shin).to_degrees());
+                    }
                 }
                 if frame == samples / 2 {
                     for &(contact, flat) in &palms {
@@ -370,9 +447,13 @@ fn main() {
             if bowing {
                 bowed.push(inclined);
             }
+            if carrying {
+                kneed.push(knee_angle);
+            }
+            let carried = |value: f32| carrying.then_some(value);
             println!(
                 "{stature:>7.2} {limbs:>5.1} {neck:>5.1} {headsize:>5.1} {arm:>7.3} \
-                 {strained:>6} {} {} {} {} {} {} {} {} {} {} {} {} {step_mm:>7.1}",
+                 {strained:>6} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {step_mm:>7.1}",
                 maybe(reading(most.0), 7, 3),
                 maybe(reading(most.1), 7, 3),
                 maybe(reading(most.2), 7, 3),
@@ -385,6 +466,10 @@ fn main() {
                 maybe(gaze(head_moved * 1000.0), 7, 0),
                 maybe(bowing.then_some(inclined), 7, 1),
                 maybe(bowing.then_some(girdle_turn), 7, 1),
+                maybe(carried(fell / leg.max(f32::EPSILON)), 8, 3),
+                maybe(carried(knee_angle), 8, 1),
+                maybe(carried(tipped), 8, 1),
+                maybe(carried((floor - standing) * 1000.0), 8, 0),
                 step_mm = step * 1000.0,
             );
         }
@@ -420,6 +505,21 @@ fn main() {
                 "\n  trunk spread: the chord's inclination varies by {:.3} of a degree across the \
                  sweep, {low:.2} to {high:.2}",
                 high - low
+            );
+        }
+        if !kneed.is_empty() {
+            let (low, high) = kneed.iter().fold((f32::MAX, f32::MIN), |range, at| {
+                (range.0.min(*at), range.1.max(*at))
+            });
+            println!(
+                "\n  carriage spread: the knee closes to between {low:.2} and {high:.2} degrees \
+                 across the sweep, a spread of {:.3}",
+                high - low
+            );
+            println!(
+                "          (a carriage is stated in the LEG, because what holds a root up is the \
+                 leg — the same drop stated in body heights drifts 0.044 of a body across this \
+                 sweep. The knee is where that shows: sitting is a right angle at it)"
             );
         }
         if !dipped.is_empty() {

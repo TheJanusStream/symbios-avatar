@@ -216,7 +216,7 @@ pub fn nod() -> Clip {
     Clip::new([Track::new(Target::Gaze, keys)])
 }
 
-/// How far a bow inclines the trunk, as a tangent — see [`Key::offset`].
+/// How far a bow inclines the trunk, in quarter turns — see [`Key::offset`].
 ///
 /// **Thirty degrees, and this one is a social number rather than an anatomical
 /// one.** There is nothing in a body that says how deep a bow is: lumbar
@@ -226,7 +226,7 @@ pub fn nod() -> Clip {
 /// which is an apology — and 30 is the ordinary respectful one in the middle of
 /// it. Saying that plainly is better than deriving it from a joint that does
 /// not constrain it.
-pub const BOW_PITCH: f32 = 0.577_350_3;
+pub const BOW_PITCH: f32 = 1.0 / 3.0;
 
 /// Where a bow looks, as a tangent below the horizon — an absolute pitch, not
 /// an increment.
@@ -377,10 +377,206 @@ fn push_with(hand: Limb) -> Track {
         .facing(PALM_FORWARD)
 }
 
+/// How much of its own leg a seated body drops, and moves its feet forward.
+///
+/// **One constant for both, and it is the thigh** — read off the anatomy rather
+/// than dialled. Sitting IS a thigh held horizontal over a shin held vertical,
+/// and that pose is reached by dropping the pelvis exactly one thigh and moving
+/// the foot forward exactly one thigh: the hip then sits level with the knee,
+/// the ankle hangs directly under it, and the knee arrives at a right angle by
+/// construction rather than by being asked for.
+///
+/// In the standing leg's reach, which is the unit a carriage is measured in
+/// (see [`Target::Root`]). The plan holds the thigh at 0.4872 of the leg on
+/// every body of the sweep, spread 0.0000, so this number is the plan's own; a
+/// plan that varied the ratio would want it read from the rig instead, and the
+/// right angle would survive either way.
+pub const SEAT: f32 = 0.487_2;
+
+/// Share of the descent by which a sitting body's feet have arrived.
+///
+/// **The feet lead, and the reading that says how much is the floor.** Root and
+/// feet moving together over the same span is the obvious authoring and it
+/// buckles: early in the descent the pelvis has fallen while the foot is still
+/// under it, so the leg folds with nowhere to put the shin and the heel is
+/// driven 14 mm through the floor. Nothing is wrong with the held pose — the
+/// dip lives entirely in the transition — but a foot through a floor is a foot
+/// through a floor.
+///
+/// Set against a criterion rather than by eye — the lowest joint must clear the
+/// floor for the whole descent — and the criterion is what picks it out of a
+/// band rather than a taste for the number. On the reference body, whose lowest
+/// joint rests 18 mm up:
+///
+/// | lead | 0.9 | 0.7 | 0.5 | 0.35 | 0.2 |
+/// |------|-----|-----|-----|------|-----|
+/// | lowest joint | -10 mm | 1 | 13 | 15 | 14 |
+///
+/// Half, which clears by 13 mm with room either side, and which is also what a
+/// body sitting down does: the feet go where they are going to be while it is
+/// still on the way down, rather than after. Earlier buys two more millimetres
+/// and starts to read as a step followed by a squat.
+pub const SEAT_LEAD: f32 = 0.25;
+
+/// Share of a sit spent lowering, and of a lie spent going down.
+///
+/// **The rest is the pose, because these two are states rather than gestures.**
+/// A wave and a bow end where they began; sitting down ends up sitting, and a
+/// clip that stood the body back up at its last key could not express that.
+pub const SETTLE: f32 = 0.35;
+
+/// How far a lying body drops, in the standing leg's reach.
+///
+/// **The pelvis's own rest height, less what a body lying on it is thick**, and
+/// the second term is why this is measured rather than written down. The tilt
+/// turns the body about its root, so a body tipped and not dropped lies
+/// horizontally at hip height with nothing under it; this is the drop that puts
+/// its BACK on the floor rather than its spine.
+///
+/// The correction is the deepest surface point of the lying pose — every
+/// joint's height less its own bone radius — and it reads 0.0145 of the leg on
+/// every body of the sweep, which is what makes it a constant here rather than
+/// a term. Erring shallow on purpose: a node's radius overstates the surface,
+/// because subdivision pulls the mesh inside it, and a body floating a
+/// millimetre is better than one sunk in the floor.
+pub const SLEEP_DROP: f32 = 1.009_5;
+
+/// Share of the descent by which a lying body has finished tipping, the drop
+/// finishing after it.
+///
+/// **Over before down, and the measurement said so against my expectation.** A
+/// body that gets low first and reclines after is what a person does and it is
+/// the worse of the two here, badly: dropping while still upright puts a
+/// standing body's feet most of a leg below the floor. Tipping first swings
+/// them up and round instead, and only then does the body settle onto its back.
+///
+/// **And this constant buys one defect with another, which is worth saying
+/// plainly rather than hiding in a chosen number.** A faster tilt sinks less
+/// and jumps more, because a body swinging a quarter turn about its own pelvis
+/// moves its ends a long way in very little time. Sank below the standing
+/// surface, and the furthest any joint travels between two samples:
+///
+/// | lead | 1.0 | 0.7 | 0.5 | 0.3 | 0.15 |
+/// |------|-----|-----|-----|-----|------|
+/// | sank | -139 mm | -70 | -38 | -14 | 0 |
+/// | step | 47 mm | 59 | 77 | 116 | 216 |
+///
+/// There is no free point on that curve, and the reason is that the authoring
+/// is a draft: **a body does not lie down by rotating about its pelvis.** It
+/// gets low, reclines, and then extends — three stages, of which [`sit`]
+/// already is the first. Written that way the drop happens while the legs fold
+/// and the turn happens from a body whose ends are already near its root, and
+/// neither reading has to be paid for. That is a real piece of work rather than
+/// a constant, and it is #263.
+///
+/// Three tenths in the meantime: 14 mm under and 116 mm of step, both moderate,
+/// neither pretending to be a solution.
+pub const SLEEP_LEAD: f32 = 0.3;
+
+/// Which way a body lies down: a quarter turn, feet toward `-Z`.
+///
+/// **Face up rather than face down, and the sign is the whole difference.** A
+/// body tipped toward `+Z` rotates its ventral `+Z` down into the floor and
+/// sleeps on its face; toward `-Z` the belly comes up and the body lies on its
+/// back, which is what a resting body does.
+pub const SLEEP_TILT: f32 = -1.0;
+
+/// A sitting idle: the pelvis drops one thigh, the feet come forward one thigh,
+/// and the legs fold because they have nowhere else to go.
+///
+/// **The item that looked least like this format and turned out to be its
+/// cleanest case.** Nothing here says anything about a knee. The root drops,
+/// the contacts are held still in the world ([`Space::World`], which exists for
+/// exactly this), and the solve is left with no way to reach them except to
+/// bend — which is the whole argument for goals over angles, arriving at the
+/// one roster item that is not a reach.
+///
+/// **A state, not a gesture**: it ends sitting rather than standing, so
+/// [`returns_to_rest`] is false for it and that is the answer rather than a
+/// gap. A caller playing this holds it at its end.
+///
+/// **The life on top is the caller's**, not this clip's. A seated body still
+/// breathes and shifts, and [`super::IdleConfig`] is where that lives; a clip
+/// that carried its own idle would have to decide whether this body is alert or
+/// dozing, which is exactly the thing the caller knows and the clip does not.
+///
+/// [`Target::Root`]: super::Target::Root
+/// [`Space::World`]: super::Space::World
+#[must_use]
+pub fn sit() -> Clip {
+    let down = Vec3::new(0.0, -SEAT, 0.0);
+    let out = Vec3::new(0.0, 0.0, SEAT);
+    Clip::new([
+        Track::new(
+            Target::Root,
+            [
+                Key::new(0.0, Vec3::ZERO),
+                Key::new(SETTLE, down),
+                Key::new(1.0, down),
+            ],
+        ),
+        Track::new(
+            Target::Contacts,
+            [
+                Key::new(0.0, Vec3::ZERO),
+                Key::new(SETTLE * SEAT_LEAD, out),
+                Key::new(1.0, out),
+            ],
+        )
+        .in_world(),
+    ])
+}
+
+/// A sleeping idle: the body lies down on its back.
+///
+/// A quarter turn and a drop, and nothing else — the limbs are left where the
+/// carriage puts them, which for a body on its back is lying beside it. See
+/// [`Target::Tilt`] for why a rotation this large needed the unit changing, and
+/// [`SLEEP_TILT`] for why it is negative.
+///
+/// **The feet point at the ceiling and that is a draft's cost, measured.** An
+/// ankle holds whatever angle it rests at — 74.8 degrees to the shin, standing
+/// or lying — so a body tipped through a quarter turn takes its standing feet
+/// with it and the toe ends up 375 mm off the floor with the sole facing very
+/// nearly straight up. A relaxed supine foot flops the other way. Nothing in
+/// this format addresses an ankle's angle, and the fix belongs with the staged
+/// descent that would place the feet along the floor rather than carry them
+/// round: #263.
+///
+/// **A state, not a gesture**, for [`sit`]'s reason and in the same shape.
+///
+/// [`Target::Tilt`]: super::Target::Tilt
+#[must_use]
+pub fn sleep() -> Clip {
+    let over = Vec3::new(0.0, 0.0, SLEEP_TILT);
+    let down = Vec3::new(0.0, -SLEEP_DROP, 0.0);
+    let held = |at: Vec3| {
+        vec![
+            Key::new(0.0, Vec3::ZERO),
+            Key::new(SETTLE, at),
+            Key::new(1.0, at),
+        ]
+    };
+    Clip::new([
+        Track::new(
+            Target::Tilt,
+            [
+                Key::new(0.0, Vec3::ZERO),
+                Key::new(SETTLE * SLEEP_LEAD, over),
+                Key::new(1.0, over),
+            ],
+        ),
+        Track::new(Target::Root, held(down)),
+    ])
+}
+
 /// Whether a gesture is one a body at rest can hold, or one it plays and leaves.
 ///
-/// Every gesture in this module is the second kind, and both ends of every one
-/// of them is the body's own rest pose — see [`REACH_TIME`].
+/// **Both kinds are in the roster now.** A wave, a refusal, a nod and a bow are
+/// the second kind and both ends of every one of them is the body's own rest
+/// pose (see [`REACH_TIME`]); [`sit`] and [`sleep`] are the first, and end in
+/// the pose they are for. This is what tells them apart, and a caller that
+/// plays a held pose and expects the body back is the mistake it catches.
 #[must_use]
 pub fn returns_to_rest(clip: &Clip) -> bool {
     !clip.looping
@@ -402,12 +598,21 @@ pub fn by_name(name: &str) -> Option<Clip> {
         "Reject" => Some(reject()),
         "Head Nod" => Some(nod()),
         "Bow" => Some(bow()),
+        "Sitting_Idle" => Some(sit()),
+        "Sleeping" => Some(sleep()),
         _ => None,
     }
 }
 
 /// The roster this module covers, in the baked set's own names.
-pub const ROSTER: &[&str] = &["Greeting", "Reject", "Head Nod", "Bow"];
+pub const ROSTER: &[&str] = &[
+    "Greeting",
+    "Reject",
+    "Head Nod",
+    "Bow",
+    "Sitting_Idle",
+    "Sleeping",
+];
 
 #[cfg(test)]
 mod tests {
@@ -601,7 +806,14 @@ mod tests {
         // Measured on the first draft, which raised the hand 1.15 arm-reaches
         // and carried it outward as it rose: the goal sat 63 mm outside the
         // sphere and half the frames of the gesture strained, on every body.
-        for clip in [wave(Limb::ForeRight), reject(), nod(), bow()] {
+        for clip in [
+            wave(Limb::ForeRight),
+            reject(),
+            nod(),
+            bow(),
+            sit(),
+            sleep(),
+        ] {
             for &(height, limbs, neck, head) in &BODIES {
                 let rig = body(height, limbs, neck, head);
                 let strained: usize = (0..=SWEEP)
@@ -680,13 +892,29 @@ mod tests {
         // across the whole sweep. The zero bound is honest for the two gestures
         // that exist: both keep the whole upper arm hanging, so an elbow even
         // AT shoulder height means the pole has stopped doing its work.
-        for clip in [wave(Limb::ForeRight), reject(), nod(), bow()] {
+        for clip in [
+            wave(Limb::ForeRight),
+            reject(),
+            nod(),
+            bow(),
+            sit(),
+            sleep(),
+        ] {
             for &(height, limbs, neck, head) in &BODIES {
                 let rig = body(height, limbs, neck, head);
+                // **Only the limbs a clip addresses, and only the ones that
+                // are arms.** The first half is why the palm reading stopped
+                // reporting an untouched hand's rest pose as the greeting's
+                // failing; the second is why a seated body does not report its
+                // knee as an elbow above a shoulder. A carriage clip addresses
+                // the legs, and `limb_chain` will hand back a leg's three
+                // joints as happily as an arm's.
+                let stance = rig.ground_contacts();
                 let addressed: Vec<Limb> = clip
                     .tracks
                     .iter()
                     .flat_map(|track| track.target.resolve(&rig))
+                    .filter(|limb| !stance.contains(limb))
                     .collect();
                 for frame in 0..=SWEEP {
                     let mut pose = Pose::rest(&rig);
@@ -716,13 +944,29 @@ mod tests {
         // the minimal arc leaves wherever the arm's configuration happens to
         // put it — measured, palms correctly forward with the fingers pointing
         // at each other, a body presenting its chest.
-        for clip in [wave(Limb::ForeRight), reject(), nod(), bow()] {
+        for clip in [
+            wave(Limb::ForeRight),
+            reject(),
+            nod(),
+            bow(),
+            sit(),
+            sleep(),
+        ] {
             for &(height, limbs, neck, head) in &BODIES {
                 let rig = body(height, limbs, neck, head);
+                // **Only the limbs a clip addresses, and only the ones that
+                // are arms.** The first half is why the palm reading stopped
+                // reporting an untouched hand's rest pose as the greeting's
+                // failing; the second is why a seated body does not report its
+                // knee as an elbow above a shoulder. A carriage clip addresses
+                // the legs, and `limb_chain` will hand back a leg's three
+                // joints as happily as an arm's.
+                let stance = rig.ground_contacts();
                 let addressed: Vec<Limb> = clip
                     .tracks
                     .iter()
                     .flat_map(|track| track.target.resolve(&rig))
+                    .filter(|limb| !stance.contains(limb))
                     .collect();
                 let mut pose = Pose::rest(&rig);
                 clip.apply(&rig, &mut pose, 0.5);
@@ -817,7 +1061,7 @@ mod tests {
         // instead of solving for it: the chord arrives at 16.4 degrees of the
         // 30 asked, and drifts by 1.5 across limb proportion because the stub
         // below the hinge is a different share of the trunk on every body.
-        let wanted = BOW_PITCH.atan().to_degrees();
+        let wanted = (BOW_PITCH * std::f32::consts::FRAC_PI_2).to_degrees();
         let chords: Vec<f32> = BODIES
             .iter()
             .map(|&(height, limbs, neck, head)| {
@@ -854,6 +1098,209 @@ mod tests {
             assert!(
                 (dip - wanted).abs() < 0.5,
                 "a {height} m body bowed with its head {dip:.2} degrees down, not {wanted:.2},                  while its girdle turned {girdle:.2}",
+            );
+        }
+    }
+
+    /// What a carriage clip does to the body: the tightest angle it closes a
+    /// knee to, how far it tips the body, how far its lowest SURFACE sinks
+    /// below where the same body's sits standing, and how far a contact strays
+    /// from the height it rests at.
+    ///
+    /// **The surface, and against the body's own standing figure.** A joint is
+    /// a point on an axis and the body hangs off it by the bone's radius, so
+    /// the floor a pose has to clear is the joint less that; and a STANDING
+    /// body already reads 50 mm under, because a node's radius overstates a
+    /// surface subdivision pulls inside it. Measured against zero, every clip
+    /// in the roster sinks and the reading says nothing.
+    fn carried(rig: &Rig, clip: &Clip) -> (f32, f32, f32, f32) {
+        let root = rig
+            .joints
+            .iter()
+            .position(|joint| joint.parent.is_none())
+            .expect("a rig has a root");
+        let legs: Vec<[usize; 3]> = rig
+            .ground_contacts()
+            .into_iter()
+            .filter_map(|limb| rig.limb_chain(limb))
+            .collect();
+        let feet: Vec<usize> = rig
+            .ground_contacts()
+            .into_iter()
+            .filter_map(|limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
+            .collect();
+        let under = |places: &[Vec3]| {
+            places
+                .iter()
+                .enumerate()
+                .fold(f32::MAX, |low, (joint, at)| {
+                    let (near, far) = rig.bone_radii(joint);
+                    low.min(at.y - near.max(far))
+                })
+        };
+        let rest = Pose::rest(rig).forward(rig).positions;
+        let standing = under(&rest);
+        let times = (0..=SWEEP).map(|frame| frame as f32 / SWEEP as f32).chain(
+            clip.tracks
+                .iter()
+                .flat_map(|track| &track.keys)
+                .map(|key| key.time),
+        );
+        times.fold((180.0f32, 0.0f32, 0.0f32, 0.0f32), |most, time| {
+            let mut pose = Pose::rest(rig);
+            clip.apply(rig, &mut pose, time);
+            let posed = pose.forward(rig);
+            let places = &posed.positions;
+            let knee = legs.iter().fold(most.0, |tightest, &[hip, knee, ankle]| {
+                let thigh = (places[hip] - places[knee]).normalize_or_zero();
+                let shin = (places[ankle] - places[knee]).normalize_or_zero();
+                tightest.min(thigh.angle_between(shin).to_degrees())
+            });
+            let foot = feet.iter().fold(most.3, |worst, &joint| {
+                worst.max((places[joint].y - rest[joint].y).abs())
+            });
+            (
+                knee,
+                most.1.max(
+                    (posed.rotations[root] * Vec3::Y)
+                        .angle_between(Vec3::Y)
+                        .to_degrees(),
+                ),
+                most.2.min(under(places) - standing),
+                foot,
+            )
+        })
+    }
+
+    #[test]
+    fn a_seated_body_folds_its_legs_to_a_right_angle_on_every_body() {
+        // **The claim a carriage makes, and it is an angle** — sitting IS a
+        // right angle at the knee, and nothing about a length. Nothing in
+        // `sit` says so: the root drops one thigh, the contacts are held in the
+        // world, and the solve has no way to reach them but to bend. That is
+        // the whole argument for goals over angles, arriving at the roster item
+        // that is not a reach.
+        //
+        // **Two asserts, and they catch two different mistakes** — the same
+        // pair the wave's spread test documents. Measuring the drop in body
+        // heights rather than in the leg that holds the root up, and leaving
+        // the number alone, closes the knee to 46 degrees: a squat, caught by
+        // the depth. Re-deriving the number for the new unit hides that and
+        // leaves the drift, because the leg is between 0.3975 and 0.4415 of a
+        // body across this sweep — the knee then runs 86.73 to 88.59, which the
+        // spread catches and the depth does not.
+        let angles: Vec<f32> = BODIES
+            .iter()
+            .map(|&(height, limbs, neck, head)| carried(&body(height, limbs, neck, head), &sit()).0)
+            .collect();
+        let (low, high) = angles.iter().fold((f32::MAX, f32::MIN), |range, at| {
+            (range.0.min(*at), range.1.max(*at))
+        });
+        assert!(
+            high - low < 1.0,
+            "the seated knee ran {low:.2} to {high:.2} degrees across the sweep",
+        );
+        // Not merely consistent but right: a pose that agreed with itself at
+        // 60 degrees on every body would pass the spread and be a crouch.
+        assert!(
+            (low - 90.0).abs() < 3.0,
+            "the seated knee closed to {low:.2} degrees, which is not a seat",
+        );
+    }
+
+    #[test]
+    fn a_seated_body_leaves_its_feet_where_it_found_them() {
+        // **What [`Space::World`] is for, and the one line of `sit` that does
+        // the work.** A body-relative contact goal travels with the body, so a
+        // pelvis dropping a third of a metre would take the feet with it and
+        // the body would sink through the floor with its legs straight. Held in
+        // the world, the feet stay and the legs have to fold instead.
+        //
+        // Reintroduced by dropping `in_world`: the feet fall 336 mm, the whole
+        // of the drop, and the knee never bends at all.
+        for &(height, limbs, neck, head) in &BODIES {
+            let rig = body(height, limbs, neck, head);
+            let (_, _, _, strayed) = carried(&rig, &sit());
+            assert!(
+                strayed < 0.005,
+                "a {height} m body's foot moved {:.0} mm off the height it rests at",
+                strayed * 1000.0,
+            );
+        }
+    }
+
+    #[test]
+    fn a_carriage_stays_on_top_of_the_floor() {
+        // A pose that puts a body through the ground is not a pose, and both of
+        // these can: sitting folds a leg past where the foot is, and lying
+        // swings a standing body's feet down through the floor if the turn is
+        // slow enough. Bounded at 25 mm, where the two read -4 and -14 — see
+        // [`SEAT_LEAD`] and [`SLEEP_LEAD`], whose whole job is these numbers.
+        //
+        // Reintroduced by moving either lead: at a seat lead of 0.9 the sit
+        // sinks 41 mm, and at a tilt lead of 1.0 the lie sinks 139.
+        for (name, clip) in [("sit", sit()), ("sleep", sleep())] {
+            for &(height, limbs, neck, head) in &BODIES {
+                let rig = body(height, limbs, neck, head);
+                let (_, _, sank, _) = carried(&rig, &clip);
+                assert!(
+                    sank > -0.025,
+                    "{name} sank a {height} m body {:.0} mm below where it stands",
+                    -sank * 1000.0,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_sleeping_body_lies_on_its_back() {
+        // A quarter turn, and the SIGN of it is the whole difference between
+        // sleeping and being face down in the floor. Asserted on where the
+        // body's ventral axis ends up rather than on the angle, because the
+        // angle is the same either way — which is exactly how a sign error
+        // survives a test.
+        //
+        // Reintroduced by flipping [`SLEEP_TILT`]: still a 90 degree tilt, and
+        // the belly points at the ground.
+        for &(height, limbs, neck, head) in &BODIES {
+            let rig = body(height, limbs, neck, head);
+            let (_, tipped, _, _) = carried(&rig, &sleep());
+            assert!(
+                (tipped - 90.0).abs() < 0.5,
+                "a {height} m body tipped {tipped:.1} degrees, not a quarter turn",
+            );
+            let root = rig
+                .joints
+                .iter()
+                .position(|joint| joint.parent.is_none())
+                .expect("a root");
+            let mut pose = Pose::rest(&rig);
+            sleep().apply(&rig, &mut pose, 1.0);
+            let ventral = pose.forward(&rig).rotations[root] * crate::rig::landmark::FORWARD;
+            assert!(
+                ventral.y > 0.9,
+                "a sleeping body's belly pointed ({:.2}, {:.2}, {:.2}), which is not upward",
+                ventral.x,
+                ventral.y,
+                ventral.z,
+            );
+        }
+    }
+
+    #[test]
+    fn a_held_pose_is_not_a_gesture_and_says_so() {
+        // **The roster has two kinds now** and `returns_to_rest` is what tells
+        // them apart. A wave, a refusal, a nod and a bow end where they began;
+        // sitting down ends up sitting. A caller that plays a held pose and
+        // expects the body back is the mistake this catches, and it could only
+        // ever be caught by asking the clip.
+        for clip in [wave(Limb::ForeRight), reject(), nod(), bow()] {
+            assert!(returns_to_rest(&clip), "a gesture must give the body back");
+        }
+        for clip in [sit(), sleep()] {
+            assert!(
+                !returns_to_rest(&clip),
+                "a held pose must not claim to give the body back",
             );
         }
     }
