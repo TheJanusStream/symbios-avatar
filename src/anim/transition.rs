@@ -126,7 +126,11 @@ impl Entry {
 /// An overlay family never waits: a gesture does not move what is under it.
 #[must_use]
 pub fn entry(gait: &Gait, cycle: f32, into: Family) -> Entry {
-    if into.is_overlay() || gait.is_empty() {
+    // A body with nothing on the ground has no planted foot to protect, so
+    // there is nothing for it to wait for. That covers the case waiting would
+    // be actively wrong for: the ground vanishing under a walking body is not
+    // an elective change and cannot be held until a convenient moment (#243).
+    if into.is_overlay() || gait.is_empty() || gait.grounded(cycle) == 0 {
         return Entry::Now;
     }
     let ahead = gait.until_handoff(cycle);

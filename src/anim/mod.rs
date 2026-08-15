@@ -13,6 +13,10 @@
 //!   kinematics and applied to geometry by linear blend skinning.
 //! * [`ik`] — [`ik::two_bone`] for limbs, which has a closed form, and
 //!   [`ik::fabrik`] for spines and tails, which does not.
+//! * [`Leap`] — jumping, falling and landing, which are one motion: the leg is
+//!   a spring and the body is a projectile, so the wind-up, the flight and the
+//!   landing all follow from a single dimensionless stiffness and cannot
+//!   disagree at the seams.
 //! * [`Speed`] — one dimensionless axis, the Froude number, from which the
 //!   stride, the cadence, the duty and the choice of walking or running all
 //!   follow. A caller says how fast the body is going and stops choosing the
@@ -69,6 +73,7 @@ pub mod gait;
 pub mod gaze;
 pub mod ground;
 pub mod ik;
+pub mod leap;
 pub mod library;
 pub mod pose;
 pub mod pose_clip;
@@ -85,6 +90,7 @@ pub use ground::{
     level_feet, plant_feet, plant_feet_of,
 };
 pub use ik::{FabrikConfig, fabrik, two_bone};
+pub use leap::{Leap, Leapt, Stage};
 pub use library::{ClipLibrary, LibraryError};
 pub use pose::{Pose, Posed};
 pub use pose_clip::{Curve, JointTrack, Play, PoseClip, Slot};
