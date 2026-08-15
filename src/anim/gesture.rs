@@ -270,10 +270,22 @@ pub const BOW_FALL: f32 = 0.3;
 /// **The gaze is stated in the world, not against the bowed trunk**, which is
 /// the one thing the bow had to decide that the nod did not — see [`BOW_GAZE`].
 ///
-/// **The arms are deliberately not addressed.** Left alone they are carried
-/// round by the chest and stay flat against the thighs, which is what a formal
-/// standing bow does with them; holding them vertical instead would be a
-/// different gesture and would need a goal that tracked the moving shoulder.
+/// **The arms are deliberately not addressed, and what that leaves them doing
+/// was measured rather than assumed.** They keep the relation to the chest they
+/// rest in — 49.9 degrees off the trunk's own axis at rest, 54.3 at the bottom
+/// of the bow — and are carried round with it. Against the WORLD that means
+/// they swing further from hanging rather than nearer: 49.9 degrees off
+/// vertical standing, 68.3 bowed, with the hand ending up 45 mm further from
+/// the knee than it started.
+///
+/// That is the honest description and it is not the same as a bow with its arms
+/// at its sides. The cause is the rest pose rather than this gesture: these
+/// bodies rest with their arms out at about 50 degrees, so every gesture that
+/// leaves an arm alone leaves it there. Bringing the hands in would be a pair
+/// of grasper tracks and a decision about whether a bow's arms hang, press the
+/// thighs, or meet in front — a real authorial choice, and one worth making
+/// against a body whose rest arms hang, rather than one compensating for arms
+/// that do not.
 ///
 /// Not looping, and both ends are the body's own rest pose.
 ///
