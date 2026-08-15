@@ -80,6 +80,7 @@ pub mod pose_clip;
 pub mod speed;
 pub mod spring;
 pub mod transition;
+pub mod turn;
 
 pub use blend::Inertializer;
 pub use clip::{Clip, Key, Space, Target, Track};
@@ -97,3 +98,4 @@ pub use pose_clip::{Curve, JointTrack, Play, PoseClip, Slot};
 pub use speed::Speed;
 pub use spring::{SpringConfig, Springs};
 pub use transition::{Entry, Family, Frames};
+pub use turn::Turn;

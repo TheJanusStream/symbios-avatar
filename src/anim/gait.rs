@@ -28,6 +28,7 @@
 
 use glam::{Quat, Vec3};
 
+use super::gaze::GazeConfig;
 use super::ground::{Footing, FootingConfig, Ground, plant_feet_of, solve_contact};
 use super::pose::Pose;
 use crate::plan::{Limb, Zone};
@@ -475,15 +476,47 @@ pub const RUN_COMPRESSION: f32 = 0.075;
 /// added to it, so a body that is standing still does not crouch at all.
 pub const CROUCH_MARGIN: f32 = 1.15;
 
-/// How far and how high a body steps.
+/// How far and how high a body steps, and how far its heading turns while it
+/// does.
+///
+/// **Everything here is per stance**, which is the span [`contact_offset`]
+/// parameterises: `length` is the ground a contact covers between going down
+/// and coming up, and `yaw` is the body's own turn across the same span. The
+/// two together are a screw motion in the ground plane, and that is the whole
+/// of what a body travelling does to a foot that is standing on the floor.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stride {
     /// Direction of travel in body space. `+Z` is forward.
+    ///
+    /// **Live as of #241, and it had never been anything but `+Z` before
+    /// that.** Every construction site in every repo set it to forward and
+    /// nothing read it except as a multiplier on a scalar slide, so the lateral
+    /// path was code that compiled and had never run. It is now the heading the
+    /// whole screw below is built around, which is the seam #242's reverse and
+    /// strafe want: backwards is this direction negated and a strafe is it
+    /// turned a quarter.
     pub direction: Vec3,
     /// Ground covered per cycle, in metres.
     pub length: f32,
     /// How high a contact lifts at the top of its swing, in metres.
     pub lift: f32,
+    /// How far the body's own heading turns across one stance, in radians.
+    ///
+    /// Positive toward `+X`, the body's left — which is also the direction a
+    /// positive rotation about `+Y` carries `+Z`, so this is the sign of the
+    /// yaw itself rather than a convention laid over it.
+    ///
+    /// **The partner of `length`, in the same span and to the same purpose.**
+    /// A body walking a curve is turning while it travels, and the two
+    /// together say where a planted foot has to sit at every moment of the
+    /// stance for it not to slide. Zero is a straight line, and at zero every
+    /// expression below collapses to exactly the scalar slide this had before.
+    ///
+    /// The pair also fixes the path: `yaw / length` is the curvature of the
+    /// arc the body walks, in reciprocal metres, and its reciprocal is the turn
+    /// radius. That ratio is what [`super::Turn`] hands back and what the bank
+    /// is derived from.
+    pub yaw: f32,
 }
 
 /// What share of a leg's reach a natural stride covers.
@@ -516,6 +549,7 @@ impl Stride {
             direction: Vec3::Z,
             length: reach * STRIDE_OF_REACH * pace.max(0.0),
             lift: reach * LIFT_OF_REACH * pace.max(0.0),
+            yaw: 0.0,
         }
     }
 
@@ -526,6 +560,7 @@ impl Stride {
             direction: Vec3::Z,
             length: 0.0,
             lift: 0.0,
+            yaw: 0.0,
         }
     }
 }
@@ -578,17 +613,22 @@ fn sink_needed(rig: &Rig, limb: Limb, toward: Vec3) -> Option<f32> {
 /// quite reaches. That is the right way for a planning figure to be wrong.
 #[must_use]
 pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
-    let half = stride.length * 0.5;
-
     let reaching = gait
         .limbs
         .iter()
         .filter_map(|&limb| {
+            // **Per limb, since #241.** The two extremes of a stance are the
+            // ends of that contact's own arc, and on a turn the outside foot's
+            // is longer than the inside foot's — so the envelope is the deepest
+            // any one of them asks for, not one figure taken for all. A
+            // contact with no home is one `step` would skip, and skipping it
+            // here is what keeps the planning figure and the frame agreeing.
+            let home = home_of(rig, limb)?;
             // Both ends of the stride, since a contact may start forward of its
             // hip and only the further extreme matters.
-            [half, -half]
+            [0.5f32, -0.5]
                 .into_iter()
-                .filter_map(|swing| sink_needed(rig, limb, stride.direction * swing))
+                .filter_map(|share| sink_needed(rig, limb, carried(home, stride, share)))
                 .fold(f32::NEG_INFINITY, f32::max)
                 .into()
         })
@@ -641,7 +681,15 @@ pub fn crouch_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
         .iter()
         .enumerate()
         .filter_map(|(index, &limb)| {
-            sink_needed(rig, limb, contact_offset(stride, gait.phase(index, cycle)))
+            // Per limb since #241 — see `crouch_for`. A contact's goal is a
+            // function of where that contact rests, so on a turn the two legs
+            // ask for different sinks and the body owes the deeper one.
+            let home = home_of(rig, limb)?;
+            sink_needed(
+                rig,
+                limb,
+                contact_offset(home, stride, gait.phase(index, cycle)),
+            )
         })
         .fold(0.0f32, f32::max)
         * CROUCH_MARGIN;
@@ -742,18 +790,122 @@ pub fn flight_rise(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
 /// Where a contact belongs, relative to where it rests.
 ///
 /// During stance the foot holds still in the world while the body travels over
-/// it, which in body space is a slide backwards. During swing it arcs forward
-/// and up, and back down to meet the ground at the front of the step.
+/// it, which in body space is a slide backwards. During swing it retraces that
+/// path forwards, lifted, to meet the ground at the front of the step.
+///
+/// # Why this takes the contact's home, and what that bought (#241)
+///
+/// **A planted foot holds still in the world, and that one sentence is the
+/// whole of the geometry.** Its body-space position is therefore the body's own
+/// motion, inverted, applied at the point where the foot is standing — and a
+/// point is where the limb comes in. On a straight line every contact gets the
+/// same answer, because a translation moves every point of the ground alike,
+/// and that is why this was a scalar slide for as long as the only motion was a
+/// straight line.
+///
+/// The moment the body turns it stops being alike. A body walking a curve is
+/// rotating as well as translating, and a rotation moves a point on the inside
+/// of the arc less than one on the outside. So the **differential stride falls
+/// out** rather than being applied: the inside foot sweeps a shorter arc
+/// because it is nearer the centre, by exactly the ratio of the two radii, and
+/// nothing here knows which foot is which or that a turn has an inside at all.
+/// The alternative — scaling `length` per limb by a factor derived from the
+/// radius — gets the same lengths and the wrong paths, because a foot on an arc
+/// does not travel in a straight line, and it needs a constant nobody can check
+/// where this needs none.
+///
+/// The same expression covers the cases that would otherwise each be a branch:
+/// a straight walk is `yaw = 0`, a **pivot in place** is `length = 0` with the
+/// feet counter-rotating about the body's centre, and #242's reverse and strafe
+/// are the sign and the axis of [`Stride::direction`].
+///
+/// # Why the swing retraces the stance
+///
+/// The foot must arrive where the *next* stance begins, which is where the last
+/// one started. Running the same path backwards is the shortest description of
+/// that and it is also, exactly, what the straight-line version did: a slide
+/// from `+half` to `−half` and a swing from `−half` to `+half` are one segment
+/// walked twice. The lift is added on top, unchanged.
 #[must_use]
-pub fn contact_offset(stride: &Stride, phase: Phase) -> Vec3 {
-    let half = stride.length * 0.5;
+pub fn contact_offset(home: Vec3, stride: &Stride, phase: Phase) -> Vec3 {
     match phase {
-        Phase::Stance(t) => stride.direction * (half - stride.length * t),
+        // The stance is parameterised either side of the moment the foot was
+        // planted, so `home` is where the contact sits at MIDSTANCE — which is
+        // what the old form said too, with its `half` at each end.
+        Phase::Stance(t) => carried(home, stride, t - 0.5),
         Phase::Swing(t) => {
-            let along = stride.direction * (stride.length * t - half);
-            along + Vec3::Y * (stride.lift * (t * std::f32::consts::PI).sin())
+            carried(home, stride, 0.5 - t)
+                + Vec3::Y * (stride.lift * (t * std::f32::consts::PI).sin())
         }
     }
+}
+
+/// Which way a contact points, relative to the heading it rests at.
+///
+/// **The rotational half of [`contact_offset`], and it is needed for the same
+/// reason.** A planted foot holds still in the world, and holding still means
+/// its *bearing* as much as its position: a body turning over a foot that is on
+/// the floor leaves that foot pointing where it was put. Without this the
+/// contact stops sliding and carries on spinning — measured, a foot was dragged
+/// through 29.4 of the 29.5 degrees a stance asked for, which at a 200 mm foot
+/// is a bigger skid than the translation ever was.
+///
+/// Zero on a straight walk, at every phase, which is why nothing needed it
+/// until #241.
+///
+/// # Where this is applied, and why not earlier
+///
+/// [`roll_feet`], which is the last stage to touch an ankle. It cannot be
+/// applied when the contact is *placed* — [`super::level_feet`] assigns the
+/// ankle `from_rotation_arc(Y, up)`, a pure tilt with no bearing in it at all,
+/// so any heading authored before the plant is wiped by it. That assignment is
+/// invisible on a straight walk, where the bearing wanted is zero and the one
+/// destroyed was zero too, and it is the reason this reads as a property of the
+/// ankle's ground attitude rather than of the leg's swing.
+#[must_use]
+pub fn contact_heading(stride: &Stride, phase: Phase) -> f32 {
+    let share = match phase {
+        Phase::Stance(t) => t - 0.5,
+        Phase::Swing(t) => 0.5 - t,
+    };
+    -stride.yaw * share
+}
+
+/// Where a contact planted at `home` sits in body space, `share` of a stance
+/// either side of the moment it was planted.
+///
+/// The body's motion over that span is a screw in the ground plane — travel
+/// `length · share` along [`Stride::direction`] and a heading turn of
+/// `yaw · share` — and this is that motion inverted and applied at `home`.
+///
+/// **Written in the `sin a / a` form**, which is the arc's own shape function
+/// and stays finite as the curvature goes to zero. The centre-and-radius form
+/// is the obvious one and it is unusable here: the centre runs off to infinity
+/// on a straight line, which is the case that has to keep working exactly.
+fn carried(home: Vec3, stride: &Stride, share: f32) -> Vec3 {
+    let angle = stride.yaw * share;
+    let forward = stride.direction.normalize_or_zero();
+    if forward == Vec3::ZERO {
+        return Vec3::ZERO;
+    }
+    // The turn centre sits to this side. `+Y × +Z` is `+X`, the body's left,
+    // and a positive rotation about `+Y` carries `+Z` toward `+X` — so a
+    // positive yaw curves to the left, and the two agree by construction rather
+    // than by a sign that has to be remembered.
+    let across = Vec3::Y.cross(forward);
+    let (along_shape, across_shape) = if angle.abs() < 1e-4 {
+        // The leading terms of both series. Below this the difference is under
+        // a float's resolution on any distance a body walks, and above it the
+        // closed forms are well conditioned.
+        (1.0 - angle * angle / 6.0, angle * 0.5)
+    } else {
+        (angle.sin() / angle, (1.0 - angle.cos()) / angle)
+    };
+    let travelled = stride.length * share;
+    let body = forward * (travelled * along_shape) + across * (travelled * across_shape);
+    // Where the body has got to, undone: the plant point seen from the frame
+    // the body occupies `share` of a stance later.
+    Quat::from_rotation_y(-angle) * (home - body) - home
 }
 
 /// What one step of a gait did.
@@ -824,7 +976,7 @@ where
             let offset = if gait.duty >= 1.0 {
                 Vec3::ZERO
             } else {
-                seated_offset(contact_offset(stride, phase), home, &ground)
+                seated_offset(contact_offset(home, stride, phase), home, &ground)
             };
             Some((limb, phase, offset, home + offset))
         })
@@ -924,6 +1076,22 @@ pub struct Walk {
     /// the legs is doing — and a body with neither is the mannequin #102
     /// described.
     pub posture: bool,
+    /// How to aim the head down the path the body is walking, or `None` to
+    /// leave the gaze alone.
+    ///
+    /// **`None` by default**, including from [`Self::at`], and that is a
+    /// deliberate asymmetry with [`Self::footing`]. Where a body looks is very
+    /// often something its caller is already deciding — at another avatar, at
+    /// what it is carrying, at the camera — and a walk that quietly takes the
+    /// gaze over would be overwriting an intention rather than filling a gap.
+    /// A caller with nothing else in mind turns it on; one that is aiming the
+    /// head itself composes [`super::look_at`] on top and this stays out of the
+    /// way.
+    ///
+    /// On a straight walk it is a target directly ahead, which is where the
+    /// head already points, so switching it on costs a body walking in a line
+    /// nothing.
+    pub gaze: Option<GazeConfig>,
     /// How to settle the stance contacts onto the ground, or `None` to leave
     /// the gait's own placement untouched.
     ///
@@ -941,9 +1109,21 @@ impl Walk {
         Self {
             cycle,
             posture: true,
+            gaze: None,
             footing: Some(FootingConfig::default()),
         }
     }
+
+    /// How far ahead down its own path a walk looks, in cycles.
+    ///
+    /// **One cycle, which is one full step per leg**, and it is a horizon
+    /// rather than an angle — see [`path_ahead`]. Drivers and walkers alike are
+    /// reported to fixate the path roughly a step or two ahead, and the near
+    /// end of that band is the conservative choice here for the same reason
+    /// [`RUN_DUTY`] took the transition end of its own: it is the reading a body
+    /// arrives at first, and a longer horizon on a tight turn asks the neck for
+    /// more than it has.
+    pub const GAZE_LEAD: f32 = 1.0;
 
     /// Runs every stage, in order, and reports what the frame did.
     ///
@@ -966,8 +1146,19 @@ impl Walk {
             swing_arms(rig, pose, gait, self.cycle);
             lean(rig, pose, gait, stride);
         }
+        // After the lean, which the neck has just taken back off to hold the
+        // head level — a gaze applied first would be levelled away, the same
+        // ordering trap the roll hit against the plant.
+        if let Some(config) = self.gaze {
+            super::look_at(
+                rig,
+                pose,
+                path_ahead(rig, gait, stride, Self::GAZE_LEAD),
+                &config,
+            );
+        }
 
-        let mut walked = self.settle(rig, pose, gait, &steps.stance, ground);
+        let mut walked = self.settle(rig, pose, gait, stride, &steps.stance, ground);
         walked.steps = steps;
         walked
     }
@@ -988,6 +1179,7 @@ impl Walk {
         rig: &Rig,
         pose: &mut Pose,
         gait: &Gait,
+        stride: &Stride,
         stance: &[Limb],
         ground: F,
     ) -> Walked
@@ -1015,8 +1207,9 @@ impl Walk {
             }
         }
         // After the plant. See the type's own docs for why the order is not a
-        // preference.
-        roll_feet(rig, pose, gait, self.cycle, &ground);
+        // preference — and see [`contact_heading`] for why the stride has to
+        // come this far down the sequence rather than stopping at [`step`].
+        roll_feet(rig, pose, gait, stride, self.cycle, &ground);
         walked
     }
 }
@@ -1282,7 +1475,14 @@ pub fn foot_pitch(phase: Phase) -> f32 {
 /// forefoot held flat, the heel-to-toe run `examples/walkaudit` measures reports
 /// 0.70 of the pitch asked, so `TOE_OFF` would no longer deliver the degrees
 /// it is written in. Recorded as a cost rather than smuggled in.
-pub fn roll_feet<F>(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32, ground: F) -> Vec<Limb>
+pub fn roll_feet<F>(
+    rig: &Rig,
+    pose: &mut Pose,
+    gait: &Gait,
+    stride: &Stride,
+    cycle: f32,
+    ground: F,
+) -> Vec<Limb>
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
@@ -1295,11 +1495,15 @@ where
     }
 
     for (index, &limb) in gait.limbs.iter().enumerate() {
-        let pitch = foot_pitch(gait.phase(index, cycle));
-        if pitch == 0.0 {
+        let phase = gait.phase(index, cycle);
+        let pitch = foot_pitch(phase);
+        let heading = contact_heading(stride, phase);
+        // Nothing to do is nothing to do — but it now takes both to be nothing,
+        // and a foot flat in mid-stance on a turn still has a bearing to hold.
+        if pitch == 0.0 && heading == 0.0 {
             continue;
         }
-        if roll_one(rig, pose, limb, pitch, &ground) == Some(false) {
+        if roll_one(rig, pose, limb, pitch, heading, &ground) == Some(false) {
             straining.push(limb);
         }
     }
@@ -1308,12 +1512,20 @@ where
 }
 
 /// Rolls one foot by `pitch` about whichever of its sole points bears the
-/// weight, measured against the surface under that foot.
+/// weight, and turns it to `heading`, both measured against the surface under
+/// that foot.
 ///
 /// `None` for a limb with no foot to roll — one the body has not got, or one
 /// whose extremity is a single node and so has no length to pitch along.
 /// Otherwise whether the leg reached the goal the roll asked for.
-fn roll_one<F>(rig: &Rig, pose: &mut Pose, limb: Limb, pitch: f32, ground: &F) -> Option<bool>
+fn roll_one<F>(
+    rig: &Rig,
+    pose: &mut Pose,
+    limb: Limb,
+    pitch: f32,
+    heading: f32,
+    ground: &F,
+) -> Option<bool>
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
@@ -1353,6 +1565,22 @@ where
     // rotation keeps the heading the leg gave it — a foot points where the leg
     // swung it, and only its tilt is the ground's business.
     let settled = Quat::from_rotation_arc((placed * Vec3::Y).normalize_or(Vec3::Y), up) * placed;
+
+    // **And then turned to face where it was planted** (#241). About the
+    // surface's own normal rather than about `+Y`, which is what keeps the sole
+    // flat: a rotation about the axis a plane's normal points along carries the
+    // plane onto itself, so the bearing costs the levelling nothing. Applied on
+    // the outside, in world space, because it is the foot's attitude in the
+    // WORLD that a planted foot holds — the whole point of the reading.
+    //
+    // Ahead of the pitch below, so the pitch axis is derived from a foot that
+    // is already pointing the right way; taking the run off an unturned foot
+    // would pitch it along an axis it no longer has.
+    let settled = if heading == 0.0 {
+        settled
+    } else {
+        Quat::from_axis_angle(up, heading) * settled
+    };
 
     // The foot's run, rearmost sole joint to foremost, carried into the pose.
     // `None` where the two coincide: a foot of one node has no direction to be
@@ -1629,8 +1857,29 @@ pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
     if gait.duty >= 1.0 {
         return;
     }
+    // **One inclination rather than two rotations, and the reason is
+    // simplicity — not correctness.** The trunk is pitched forward by the pace
+    // and banked sideways by the turn, and those are the two components of the
+    // single direction the body leans in: the way its own effective gravity
+    // points once the centripetal demand is added to the real one. Solving each
+    // separately and composing the two results is the obvious alternative and
+    // it was written here as the thing this form fixes.
+    //
+    // It fixes nothing. Measured against it, the two constructions agree to
+    // 0.02 degrees at a 4.3 degree bank and 0.08 at 8.5, which is past the
+    // sharpest turn a walk takes; they only part company at banks a body would
+    // have to be running to reach, and there neither is right — the combined
+    // form overshoots the pitch it was asked for (14.4 delivered of 12.0 at a
+    // 40 degree bank) because the solve pins the inclination toward `toward`
+    // rather than that inclination's forward component, and the composed form
+    // undershoots it by more. What this form actually buys is one solve instead
+    // of two and one axis convention instead of two. That is enough of a
+    // reason; the correctness claim was not, and was checked.
     let pitch = TRUNK_LEAN * pace_of(rig, stride);
-    if pitch.abs() <= f32::EPSILON {
+    let bank = bank_of(rig, gait, stride);
+    let toward = (Vec3::Z * pitch + Vec3::X * bank).normalize_or_zero();
+    let wanted = (pitch * pitch + bank * bank).sqrt();
+    if wanted <= f32::EPSILON || toward == Vec3::ZERO {
         return;
     }
 
@@ -1644,20 +1893,118 @@ pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
     if spine.is_empty() {
         return;
     }
-    // Positive about X carries `+Y` toward `+Z`, and `+Z` is forward — so a
-    // forward lean is the positive rotation here, where a forward arm swing was
-    // the negative one. The difference is not a sign error waiting to happen:
-    // an arm hangs DOWN and a trunk stands UP, so the same rotation carries them
-    // opposite ways.
+    // The axis that carries `+Y` toward `toward`. For a pure forward lean that
+    // is `+X`, and a positive rotation about it carries `+Y` toward `+Z` —
+    // where a forward arm swing was the negative one. The difference is not a
+    // sign error waiting to happen: an arm hangs DOWN and a trunk stands UP, so
+    // the same rotation carries them opposite ways. Writing the axis as a cross
+    // product rather than naming it is what lets the bank in without a second
+    // convention to keep straight.
+    let axis = Vec3::Y.cross(toward);
     let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
         return;
     };
     let hinge = spine[0];
     let below = rig.joints[hinge].position - rig.joints[root].position;
     let above = rig.joints[girdle].position - rig.joints[hinge].position;
-    let turn = trunk_angle_for(below, above, pitch);
-    pose.rotations[hinge] *= Quat::from_rotation_x(turn);
-    pose.rotations[neck] *= Quat::from_rotation_x(-turn);
+    let turn = trunk_angle_for(below, above, wanted, axis, toward);
+    pose.rotations[hinge] *= Quat::from_axis_angle(axis, turn);
+    pose.rotations[neck] *= Quat::from_axis_angle(axis, -turn);
+}
+
+/// Where on its own path the body will be `cycles` from now, in body space, at
+/// the height of its head.
+///
+/// **The gaze's target, and a point rather than an angle** so that
+/// [`super::look_at`] can be handed it directly. The gaze layer already spreads
+/// a turn down the chest, neck and head and already clamps it at a neck's
+/// limit; an angle computed here would be a second opinion about both.
+///
+/// The lead is a *distance* ahead rather than an angle, which is what makes it
+/// derived rather than dialled: a body walking a bend looks where it is going,
+/// so the further round the bend that is, the further its head has come. On a
+/// straight line the point is straight ahead and the gaze does nothing at all.
+///
+/// Taken from the stride for `bank_of`'s reason — a caller cannot aim the
+/// head down a curve the feet are not walking.
+#[must_use]
+pub fn path_ahead(rig: &Rig, gait: &Gait, stride: &Stride, cycles: f32) -> Vec3 {
+    let duty = gait.duty.clamp(f32::EPSILON, 1.0);
+    let angle = stride.yaw / duty * cycles;
+    let ahead = stride.length / duty * cycles;
+    let (along, across) = if angle.abs() < 1e-4 {
+        (1.0 - angle * angle / 6.0, angle * 0.5)
+    } else {
+        (angle.sin() / angle, (1.0 - angle.cos()) / angle)
+    };
+    let forward = stride.direction.normalize_or(Vec3::Z);
+    let sideways = Vec3::Y.cross(forward);
+    let eye = rig
+        .in_zone(Zone::Head)
+        .first()
+        .map_or(0.0, |&joint| rig.joints[joint].position.y);
+    forward * (ahead * along) + sideways * (ahead * across) + Vec3::Y * eye
+}
+
+/// How far the trunk banks into the turn this stride describes, in radians,
+/// positive toward the body's left.
+///
+/// [`super::Turn::bank`] is where the physics is written down; this is that
+/// quantity **recovered from the stride** instead of passed beside it, which is
+/// exactly [`pace_of`]'s argument for the pitch: a caller that carries a bank
+/// next to a stride can tell the trunk one turn and the legs another, and a
+/// body leaning into a corner its feet are not walking is worse than one that
+/// does not lean at all.
+///
+/// The recovery is `atan(Fr · L · c)`, which is `atan(v·ω/g)` rewritten in
+/// quantities the stride has: `c = yaw / length` is the curvature of the path,
+/// `L` is the leg, and the Froude number comes from [`super::Speed::of`]. All
+/// three are exact except the last.
+///
+/// # What the recovery costs, measured rather than estimated
+///
+/// [`super::Speed::of`] reads the **centreline** step against Grieve's
+/// relation, while [`super::Turn::stride`] set the cadence from the working
+/// contact — so on a turn the recovered speed sits under the true one and the
+/// bank with it. Against [`super::Turn::bank`], which is the statics and has no
+/// recovery in it, on the default body:
+///
+/// | radius | 4.0 m | 2.4 m | 1.3 m | 0.67 m | 0.33 m |
+/// |--------|-------|-------|-------|--------|--------|
+/// | short by | 3.7% | 3.1% | 10.3% | 19.1% | 32.9% |
+///
+/// **The shortfall is not a function of the radius but of the radius against
+/// the stance width**, which is why the 2.4 m column beats the 4.0 m one — the
+/// first is a fast body and the second a slow one. It is under four percent
+/// wherever the turn is wider than a few paces, and it reaches a third only
+/// under half a metre of radius, where the body is very nearly pivoting.
+///
+/// **Left, rather than fixed, and on an argument rather than for the effort.**
+/// Grieve's relation is fitted to bodies walking in a straight line and there
+/// is no published one for a body walking a curve, so reading a turning body's
+/// step against it is approximate by construction and no arrangement of these
+/// terms makes it exact. The direction of the error is the useful part: people
+/// walking sharp turns are reported *not* to reach the ideal bank — they place
+/// their feet instead, which is the differential stride this crate now has — so
+/// under-leaning where the radius closes up is closer to a body than the ideal
+/// angle would be. It is exact where the ideal angle is well founded and
+/// conservative where it is not.
+///
+/// The two alternatives are both worse. Handing [`lean`] a speed re-opens
+/// exactly the disagreement this is built to make unrepresentable, and setting
+/// the cadence from the body's centre instead leaves the outside foot
+/// over-striding to keep up.
+fn bank_of(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
+    if stride.yaw == 0.0 || stride.length <= f32::EPSILON {
+        return 0.0;
+    }
+    let leg = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.limb_reach(limb))
+        .fold(0.0f32, f32::max);
+    let froude = super::speed::Speed::of(rig, gait, stride).froude();
+    (froude * leg * (stride.yaw / stride.length)).atan()
 }
 
 /// How many times [`trunk_angle_for`] refines its guess.
@@ -1672,7 +2019,7 @@ pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
 const TRUNK_PASSES: usize = 3;
 
 /// The rotation to put at the base of the spine so the whole trunk arrives
-/// pitched by `wanted`.
+/// inclined by `wanted`, toward `toward`, about `axis`.
 ///
 /// **Solved rather than assumed, because the two are not the same angle.** The
 /// trunk's inclination is the pitch of the chord from the pelvis to the
@@ -1688,12 +2035,16 @@ const TRUNK_PASSES: usize = 3;
 /// the relation. `wanted` is the inclination, the return is whatever rotation
 /// delivers it, and the two are the same number only on a body whose pelvis has
 /// no height at all.
-fn trunk_angle_for(below: Vec3, above: Vec3, wanted: f32) -> f32 {
-    let pitch = |run: Vec3| run.z.atan2(run.y);
+fn trunk_angle_for(below: Vec3, above: Vec3, wanted: f32, axis: Vec3, toward: Vec3) -> f32 {
+    // The inclination of a run, measured in the plane it is being tilted in.
+    // `toward.dot` rather than a named component, so the same solve answers for
+    // a forward pitch, a sideways bank, and the mixture of the two a body
+    // walking round a bend actually holds.
+    let pitch = |run: Vec3| run.dot(toward).atan2(run.y);
     let rest = pitch(below + above);
     let mut turn = wanted;
     for _ in 0..TRUNK_PASSES {
-        let delivered = pitch(below + Quat::from_rotation_x(turn) * above) - rest;
+        let delivered = pitch(below + Quat::from_axis_angle(axis, turn) * above) - rest;
         // The shortfall, applied to the guess. A body whose trunk is all pelvis
         // delivers nothing however far it turns, and dividing by that would
         // spin it; the guard leaves such a body upright, which is the honest
@@ -1854,44 +2205,325 @@ mod tests {
         assert!(close(gait.phase(0, -0.7), gait.phase(0, 0.3)));
     }
 
-    #[test]
-    fn a_stance_foot_travels_backwards_and_a_swing_foot_lifts() {
-        let stride = Stride {
+    /// A contact standing half a metre to the body's left, at ankle height.
+    fn home() -> Vec3 {
+        Vec3::new(0.5, 0.1, 0.0)
+    }
+
+    fn straight() -> Stride {
+        Stride {
             direction: Vec3::Z,
             length: 0.8,
             lift: 0.1,
-        };
+            yaw: 0.0,
+        }
+    }
 
-        let early = contact_offset(&stride, Phase::Stance(0.0));
-        let late = contact_offset(&stride, Phase::Stance(1.0));
+    #[test]
+    fn a_stance_foot_travels_backwards_and_a_swing_foot_lifts() {
+        let stride = straight();
+
+        let early = contact_offset(home(), &stride, Phase::Stance(0.0));
+        let late = contact_offset(home(), &stride, Phase::Stance(1.0));
         assert!(early.z > late.z, "the body travels over a planted foot");
         assert_eq!(early.y, 0.0, "a planted foot stays down");
 
-        let peak = contact_offset(&stride, Phase::Swing(0.5));
+        let peak = contact_offset(home(), &stride, Phase::Swing(0.5));
         assert!(
             (peak.y - 0.1).abs() < 1e-5,
             "the swing should reach its lift"
         );
-        assert!(contact_offset(&stride, Phase::Swing(0.0)).y.abs() < 1e-5);
-        assert!(contact_offset(&stride, Phase::Swing(1.0)).y.abs() < 1e-5);
+        assert!(contact_offset(home(), &stride, Phase::Swing(0.0)).y.abs() < 1e-5);
+        assert!(contact_offset(home(), &stride, Phase::Swing(1.0)).y.abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_straight_stride_is_the_slide_it_always_was() {
+        // The whole arc construction has to leave the straight line EXACTLY
+        // where it found it, or every reading this crate has ever taken moves
+        // under it. Asserted against the closed form the scalar version used,
+        // at a contact well off the centreline so a rotation that leaked in
+        // would show.
+        let stride = straight();
+        let half = stride.length * 0.5;
+        for at in 0..=20 {
+            let t = at as f32 / 20.0;
+            let stance = contact_offset(home(), &stride, Phase::Stance(t));
+            assert!(
+                stance.distance(Vec3::Z * (half - stride.length * t)) < 1e-6,
+                "stance {t}: {stance:?}"
+            );
+            let swing = contact_offset(home(), &stride, Phase::Swing(t));
+            let along = Vec3::Z * (stride.length * t - half);
+            let lift = Vec3::Y * (stride.lift * (t * std::f32::consts::PI).sin());
+            assert!(swing.distance(along + lift) < 1e-6, "swing {t}: {swing:?}");
+        }
     }
 
     #[test]
     fn a_step_ends_where_the_next_one_starts() {
         // Stance must hand off to swing without a jump, or the foot teleports
-        // once per cycle.
+        // once per cycle. **On a turn as well**: the swing retraces the stance
+        // rather than lerping its endpoints, and if it did lerp them the
+        // handoff would still match while everything between the ends cut the
+        // chord of the arc.
+        for yaw in [0.0f32, 0.4, -0.4, 1.2] {
+            let stride = Stride { yaw, ..straight() };
+            let handoff = contact_offset(home(), &stride, Phase::Stance(1.0));
+            let pickup = contact_offset(home(), &stride, Phase::Swing(0.0));
+            assert!(
+                handoff.distance(pickup) < 1e-5,
+                "yaw {yaw}: {handoff:?} vs {pickup:?}"
+            );
+
+            let landing = contact_offset(home(), &stride, Phase::Swing(1.0));
+            let plant = contact_offset(home(), &stride, Phase::Stance(0.0));
+            assert!(
+                landing.distance(plant) < 1e-5,
+                "yaw {yaw}: {landing:?} vs {plant:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_planted_contact_holds_its_ground_through_a_turn() {
+        // **The property the whole arc exists for**, asserted the way the
+        // instrument measures it: carry the body-space offset back out through
+        // the body's own travel and turn, and the foot must not have moved.
+        //
+        // Reintroducing the defect means dropping the rotation — using the
+        // translation alone, which is what a per-limb SCALE on the stride
+        // amounts to. That leaves the contact tracing the chord instead of the
+        // arc and the check fails by centimetres at a metre's radius.
         let stride = Stride {
             direction: Vec3::Z,
-            length: 0.8,
+            length: 0.6,
             lift: 0.1,
+            yaw: 0.5,
         };
-        let handoff = contact_offset(&stride, Phase::Stance(1.0));
-        let pickup = contact_offset(&stride, Phase::Swing(0.0));
-        assert!(handoff.distance(pickup) < 1e-5, "{handoff:?} vs {pickup:?}");
+        for home in [Vec3::new(0.09, 0.12, 0.0), Vec3::new(-0.09, 0.12, 0.0)] {
+            let planted = |t: f32| {
+                let share = t - 0.5;
+                let angle = stride.yaw * share;
+                let (along, across) = if angle.abs() < 1e-4 {
+                    (1.0, angle * 0.5)
+                } else {
+                    (angle.sin() / angle, (1.0 - angle.cos()) / angle)
+                };
+                let travelled = stride.length * share;
+                let origin = Vec3::Z * (travelled * along) + Vec3::X * (travelled * across);
+                let at = home + contact_offset(home, &stride, Phase::Stance(t));
+                origin + Quat::from_rotation_y(angle) * at
+            };
+            let anchor = planted(0.5);
+            for at in 0..=20 {
+                let moved = planted(at as f32 / 20.0).distance(anchor);
+                assert!(moved < 1e-5, "the contact at {home:?} slid {moved} m");
+            }
+        }
+    }
 
-        let landing = contact_offset(&stride, Phase::Swing(1.0));
-        let plant = contact_offset(&stride, Phase::Stance(0.0));
-        assert!(landing.distance(plant) < 1e-5, "{landing:?} vs {plant:?}");
+    #[test]
+    fn the_inside_of_a_turn_takes_the_shorter_step() {
+        // The differential stride, which nothing computes: it is what a
+        // rotation does to two points at different radii. Measured as the
+        // ground each contact covers across its own stance.
+        let stride = Stride {
+            direction: Vec3::Z,
+            length: 0.6,
+            lift: 0.1,
+            yaw: 0.5,
+        };
+        let covered = |home: Vec3| {
+            let from = home + contact_offset(home, &stride, Phase::Stance(0.0));
+            let to = home + contact_offset(home, &stride, Phase::Stance(1.0));
+            from.distance(to)
+        };
+        // Positive yaw curves left, so the LEFT foot is on the inside.
+        let inside = covered(Vec3::new(0.09, 0.12, 0.0));
+        let outside = covered(Vec3::new(-0.09, 0.12, 0.0));
+        assert!(
+            inside < outside,
+            "the inside foot covered {inside} m and the outside {outside}"
+        );
+        // And by the ratio of the two radii, which is the only number the
+        // geometry allows: the path's radius is `length / yaw`.
+        let radius = stride.length / stride.yaw;
+        let wanted = (radius - 0.09) / (radius + 0.09);
+        assert!(
+            (inside / outside - wanted).abs() < 1e-3,
+            "the two steps stood at {:.4} where the radii say {wanted:.4}",
+            inside / outside
+        );
+    }
+
+    #[test]
+    fn the_trunk_banks_by_what_the_statics_ask_and_the_pitch_stays_where_it_was() {
+        // Two things at once, because they are one rotation. The bank must
+        // arrive within the shortfall `bank_of` documents, and adding it must
+        // not have moved the forward pitch every reading this crate has taken
+        // was measured against.
+        //
+        // **What this does not guard**, said out loud because it was tried:
+        // composing two separate solves instead of one combined tilt passes
+        // this test unchanged, because at a walk's banks the two constructions
+        // are 0.08 degrees apart. The combined form is here for being one solve
+        // rather than for being the right one — see `lean`.
+        let rig = crate::Rig::from_skeleton(
+            &HumanoidParams {
+                height: 1.75,
+                ..Default::default()
+            }
+            .skeleton(&crate::Composites::default()),
+        )
+        .expect("rigs");
+        let speed = super::super::Speed::new(&rig, 1.4);
+        let level = |pose: &Pose| {
+            let posed = pose.forward(&rig);
+            let neck = rig.in_zone(Zone::Neck)[0];
+            let girdle = rig.joints[neck].parent.expect("a girdle");
+            let root = rig
+                .joints
+                .iter()
+                .position(|joint| joint.parent.is_none())
+                .expect("a root");
+            let run = posed.positions[girdle] - posed.positions[root];
+            let rest = rig.joints[girdle].position - rig.joints[root].position;
+            (
+                run.z.atan2(run.y).to_degrees() - rest.z.atan2(rest.y).to_degrees(),
+                run.x.atan2(run.y).to_degrees() - rest.x.atan2(rest.y).to_degrees(),
+            )
+        };
+
+        let straight = super::super::Turn::STRAIGHT;
+        let mut upright = Pose::rest(&rig);
+        lean(
+            &rig,
+            &mut upright,
+            &straight.gait(&rig, speed),
+            &straight.stride(&rig, speed),
+        );
+        let (pitch, roll) = level(&upright);
+        assert!(roll.abs() < 1e-3, "a straight walk must not bank: {roll}");
+
+        for degrees in [15.0f32, 30.0, -30.0] {
+            let turn = super::super::Turn::new(degrees.to_radians());
+            let gait = turn.gait(&rig, speed);
+            let stride = turn.stride(&rig, speed);
+            let mut pose = Pose::rest(&rig);
+            lean(&rig, &mut pose, &gait, &stride);
+            let (turned_pitch, turned_roll) = level(&pose);
+            let wanted = turn.bank(&rig, speed).to_degrees();
+            assert!(
+                turned_roll * wanted > 0.0,
+                "at {degrees} deg/s the body banked {turned_roll} where the turn asks {wanted}"
+            );
+            // Within the shortfall the doc names — under four percent at these
+            // radii, which are 5.3 m and 2.7 m.
+            assert!(
+                (turned_roll.abs() - wanted.abs()).abs() < wanted.abs() * 0.06,
+                "banked {turned_roll} against {wanted}"
+            );
+            // And the pitch is very nearly the walk's. **Not exactly**, and
+            // the residue is geometry rather than interference: the segment
+            // below the hinge does not turn, so the trunk's chord is a
+            // length-weighted mix of a still part and a turned one — and a mix
+            // taken in two planes at once dilutes each of them by a little more
+            // than either alone. Measured at 1.6 percent of the lean at these
+            // radii, 8.08 degrees falling to 7.92, which is a fortieth of the
+            // band the literature quotes.
+            assert!(
+                (turned_pitch - pitch).abs() < pitch.abs() * 0.03,
+                "the forward lean moved from {pitch} to {turned_pitch}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_head_leads_the_turn_and_a_straight_walk_costs_it_nothing() {
+        // The two halves of why the gaze can be switched on without thinking
+        // about it: down a curve the head really does come round, and down a
+        // straight line the target is where the head already points so nothing
+        // moves. Reintroducing the defect means aiming at a fixed distance
+        // straight ahead — the target then never leaves the centreline and the
+        // first assertion fails at every yaw rate.
+        let rig = crate::Rig::from_skeleton(
+            &HumanoidParams {
+                height: 1.75,
+                ..Default::default()
+            }
+            .skeleton(&crate::Composites::default()),
+        )
+        .expect("rigs");
+        let speed = super::super::Speed::new(&rig, 1.4);
+        let head = rig.in_zone(Zone::Head)[0];
+        let facing = |walk: &Walk, turn: super::super::Turn| {
+            let mut pose = Pose::rest(&rig);
+            walk.drive(
+                &rig,
+                &mut pose,
+                &turn.gait(&rig, speed),
+                &turn.stride(&rig, speed),
+                |at: Vec3| {
+                    Some(Ground {
+                        position: Vec3::new(at.x, 0.0, at.z),
+                        normal: Vec3::Y,
+                    })
+                },
+            );
+            let forward = pose.forward(&rig).rotations[head] * Vec3::Z;
+            forward.x.atan2(forward.z).to_degrees()
+        };
+        let looking = Walk {
+            gaze: Some(GazeConfig::default()),
+            ..Walk::at(0.25)
+        };
+        let blind = Walk::at(0.25);
+
+        let straight = facing(&looking, super::super::Turn::STRAIGHT);
+        assert!(
+            (straight - facing(&blind, super::super::Turn::STRAIGHT)).abs() < 0.5,
+            "a straight walk must not move the head: {straight} deg"
+        );
+        for degrees in [20.0f32, 60.0, -60.0] {
+            let turn = super::super::Turn::new(degrees.to_radians());
+            let led = facing(&looking, turn) - facing(&blind, turn);
+            assert!(
+                led * degrees > 0.0,
+                "at {degrees} deg/s the head led by {led} deg — the wrong way"
+            );
+            assert!(
+                led.abs() < 90.0,
+                "at {degrees} deg/s the head led by {led} deg — past a neck"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pivot_counter_rotates_the_feet_about_a_body_going_nowhere() {
+        // `length = 0` with a yaw: the body turns on the spot, so a foot is
+        // carried round the body's centre and the two feet go opposite ways.
+        // No branch delivers this — it is the same expression with one term
+        // gone.
+        let stride = Stride {
+            direction: Vec3::Z,
+            length: 0.0,
+            lift: 0.05,
+            yaw: 0.6,
+        };
+        let left = contact_offset(Vec3::new(0.09, 0.12, 0.0), &stride, Phase::Stance(1.0));
+        let right = contact_offset(Vec3::new(-0.09, 0.12, 0.0), &stride, Phase::Stance(1.0));
+        assert!(
+            left.z * right.z < 0.0,
+            "the feet must go opposite ways: {left:?} and {right:?}"
+        );
+        assert!(
+            (left.z + right.z).abs() < 1e-6,
+            "and by the same amount: {left:?} and {right:?}"
+        );
+        // A contact standing on the axis of the turn has nowhere to go.
+        let centre = contact_offset(Vec3::new(0.0, 0.12, 0.0), &stride, Phase::Stance(1.0));
+        assert!(centre.length() < 1e-6, "{centre:?}");
     }
 
     #[test]
@@ -2990,7 +3622,7 @@ mod tests {
                     &FootingConfig::default(),
                 );
             }
-            roll_feet(&rig, &mut longhand, &gait, cycle, ground);
+            roll_feet(&rig, &mut longhand, &gait, &stride, cycle, ground);
 
             let mut driven = Pose::rest(&rig);
             let walked = Walk::at(cycle).drive(&rig, &mut driven, &gait, &stride, ground);
@@ -3040,7 +3672,7 @@ mod tests {
             ground,
             &FootingConfig::default(),
         );
-        roll_feet(&rig, &mut expected, &gait, cycle, ground);
+        roll_feet(&rig, &mut expected, &gait, &stride, cycle, ground);
         for joint in 0..expected.rotations.len() {
             let apart = apart(bare.rotations[joint], expected.rotations[joint]);
             assert!(
@@ -3070,7 +3702,7 @@ mod tests {
         step(&rig, &mut without, &gait, &stride, cycle, ground);
         swing_arms(&rig, &mut without, &gait, cycle);
         lean(&rig, &mut without, &gait, &stride);
-        roll_feet(&rig, &mut without, &gait, cycle, ground);
+        roll_feet(&rig, &mut without, &gait, &stride, cycle, ground);
         for joint in 0..without.rotations.len() {
             let apart = apart(raw.rotations[joint], without.rotations[joint]);
             assert!(
@@ -3149,7 +3781,7 @@ mod tests {
             ground,
             &FootingConfig::default(),
         );
-        let straining = roll_feet(rig, &mut pose, gait, cycle, ground);
+        let straining = roll_feet(rig, &mut pose, gait, stride, cycle, ground);
         (pose, straining)
     }
 
@@ -3246,7 +3878,7 @@ mod tests {
             };
 
             let before: Vec<Vec<Vec3>> = steps.stance.iter().map(|&l| soles(&pose, l)).collect();
-            roll_feet(&rig, &mut pose, &gait, cycle, ground);
+            roll_feet(&rig, &mut pose, &gait, &stride, cycle, ground);
 
             for (&limb, before) in steps.stance.iter().zip(&before) {
                 let after = soles(&pose, limb);
@@ -3434,7 +4066,7 @@ mod tests {
             }
 
             let planted = pose.clone();
-            let straining = roll_feet(&rig, &mut pose, &gait, cycle, ground);
+            let straining = roll_feet(&rig, &mut pose, &gait, &stride, cycle, ground);
             assert!(
                 straining.is_empty(),
                 "a foot that cannot roll must not be reported as straining at {cycle:.3}"

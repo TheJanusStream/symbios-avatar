@@ -744,8 +744,8 @@ mod contact_tests {
                 let posed = pose.forward(&rig);
                 for (index, &limb) in gait.limbs.iter().enumerate() {
                     let foot = rig.in_zone(Zone::Extremity(limb))[0];
-                    let goal = rig.joints[foot].position
-                        + gait::contact_offset(&stride, gait.phase(index, cycle));
+                    let home = rig.joints[foot].position;
+                    let goal = home + gait::contact_offset(home, &stride, gait.phase(index, cycle));
                     worst = worst.max(posed.positions[foot].distance(goal));
                 }
             }

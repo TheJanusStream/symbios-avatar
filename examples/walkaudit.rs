@@ -22,6 +22,35 @@
 //!    cycle; a pelvis that rides at one height reads as a dolly shot.
 //! 5. **Does the foot articulate?** Heel-strike lands toe-up, push-off leaves
 //!    toe-down. A sole held flat through the whole cycle is a shuffle.
+//! 6. **Does a planted foot hold still in the world?** Which is the question a
+//!    turn is judged on, and the one nothing here could ask until `--turn`
+//!    existed, because everything above is a property of the body's *own*
+//!    frame and a skid is only visible from outside it. See the world clock
+//!    below.
+//!
+//! # The world clock, and why a turn needs one
+//!
+//! Every reading above is taken on a body posed at the origin: the gait
+//! expresses travel as a foot sliding backwards *in body space*, and where the
+//! body actually is never comes into it. That is exactly why a turn could not
+//! be measured. A planted foot is pinned to the **ground**, not to the body,
+//! and whether it stays pinned is a question about the world frame the body is
+//! moving through.
+//!
+//! So `--turn` gives the instrument one: the body travels a circular arc of
+//! whatever curvature its stride and its yaw rate imply, and every foot is
+//! carried out into that frame before it is measured. Three readings follow,
+//! and the first of them checks the clock itself — **on a straight walk a
+//! planted foot must not move at all**, and it only comes out that way if the
+//! body's travel per cycle and the stride's excursion per stance agree. They
+//! are derived from each other, so the reading is a real check on the crate
+//! rather than on the arithmetic here.
+//!
+//! A yaw *rate* is per second where everything else here is per cycle, and the
+//! two are joined by the cadence. That is taken from the stride the body is
+//! actually walking, through [`Speed::of`], rather than named beside it — the
+//! same argument `pace_of` makes for the trunk lean, and the reason a `--turn`
+//! reading cannot be a turn the legs are not taking.
 //!
 //! **Clearances are measured against the body's own standing depth, not against
 //! `y = 0`.** The build delivers a sole that bulges below its own ground plane
@@ -50,11 +79,17 @@
 //! cargo run --example walkaudit -- --pace 1.4 --grade 0.12
 //! cargo run --example walkaudit -- --camber 0.20
 //! cargo run --example walkaudit -- --run          # a run, not a walk (#186)
+//! cargo run --example walkaudit -- --turn 40      # a left turn, 40 deg/s (#241)
+//! cargo run --example walkaudit -- --turn -40 --grade 0.15
+//! cargo run --example walkaudit -- --turn 40 --bare   # the placement alone
 //! ```
+//!
+//! [`Speed::of`]: symbios_avatar::anim::Speed::of
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use symbios_avatar::{
-    Archetype, Avatar, AvatarRecord, Gait, Ground, Limb, Patch, Pose, Rig, Stride, Walk, anim::gait,
+    Archetype, Avatar, AvatarRecord, Gait, Ground, Limb, Patch, Pose, Rig, Stride, Walk,
+    anim::{Speed, gait},
 };
 
 /// How many points of the cycle the summary statistics are taken from.
@@ -81,6 +116,18 @@ struct Moment {
     /// Trunk pitch away from its own rest carriage, in degrees, positive
     /// forward.
     lean: f32,
+    /// Trunk bank away from its own rest carriage, in degrees, positive toward
+    /// the body's left — which on a left turn is INTO it.
+    bank: f32,
+    /// Per foot, in the **world** frame: whether it is bearing weight, where
+    /// its ground contact is, and which way its heel-to-toe line points in
+    /// degrees.
+    ///
+    /// Separate from `feet` because it is a different frame and not a different
+    /// column: everything in `feet` is a property of the body's own space, and
+    /// merging the two is how an instrument ends up reporting a world skid as a
+    /// body-space clearance.
+    planted: Vec<(bool, Vec3, f32)>,
 }
 
 fn main() {
@@ -101,6 +148,23 @@ fn main() {
     // where a foot on a grade has to PITCH, and nothing here measured the first
     // one until #250.
     let camber = number("--camber").unwrap_or(0.0);
+    // Degrees per second, positive toward the body's LEFT — which is `+X`, and
+    // which is also the direction a positive rotation about `+Y` carries `+Z`,
+    // so the sign here is the sign of the yaw and not a convention layered over
+    // one. Checked against the rig rather than assumed: `Limb::HindLeft` sits
+    // at `x = +0.088` on the default body.
+    let turn = number("--turn").unwrap_or(0.0);
+    // Ablation: the gait's own placement, with neither the plant nor the roll
+    // over it. **Which is the only way to tell whose skid a skid is** — the
+    // roll deliberately moves the contact joint, sliding the foot so that
+    // whichever sole point is bearing weight stays put while the foot pitches
+    // about it, and that shows in the planted reading as a slide the gait did
+    // not ask for. On the flat it is 31.9 mm of the 32.1 measured; the gait's
+    // own placement is 2.8. Without this flag the two are inseparable and the
+    // turn gets billed for the ankle's work. Every column but the planted one
+    // reads as a body with no posture and unsettled feet under this flag; it is
+    // for the one reading, not for the table.
+    let bare = args.iter().any(|arg| arg == "--bare");
 
     let record = AvatarRecord::new("Walker", Archetype::default());
     let Some(avatar) = Avatar::build(&record) else {
@@ -115,7 +179,77 @@ fn main() {
     } else {
         Gait::natural(rig)
     };
-    let stride = Stride::for_body(rig, pace);
+    let mut stride = Stride::for_body(rig, pace);
+
+    // The world clock. See the module docs: a yaw RATE is per second and
+    // everything else here is per cycle, so the cadence is what joins them —
+    // recovered from the stride the legs are actually taking rather than named
+    // beside it, so a `--turn` reading cannot describe a turn at a speed the
+    // body is not walking.
+    let cadence = Speed::of(rig, &gait, &stride).cadence(rig);
+    let per_cycle_yaw = if cadence > f32::EPSILON {
+        turn.to_radians() / cadence
+    } else {
+        0.0
+    };
+    // How far the body travels in one cycle, from the stride rather than
+    // alongside it. A contact's excursion is the body's travel over the share
+    // of the cycle that contact is DOWN, so the body's travel is the excursion
+    // divided by the duty — and it is that identity the straight-line skate
+    // reading checks.
+    let per_cycle_travel = if gait.duty > f32::EPSILON && gait.duty < 1.0 {
+        stride.length / gait.duty
+    } else {
+        0.0
+    };
+    // And what the legs are asked for: `Stride::yaw` is per STANCE, the same
+    // span its `length` is, so it is the cycle's yaw times the duty.
+    stride.yaw = per_cycle_yaw * gait.duty;
+    let radius = if per_cycle_yaw.abs() > 1e-6 {
+        per_cycle_travel / per_cycle_yaw
+    } else {
+        f32::INFINITY
+    };
+
+    // Where the body is and which way it faces after `u` cycles.
+    //
+    // A circular arc of the curvature the travel and the yaw imply, written in
+    // the form that stays finite as the curvature goes to zero: `sin a / a` and
+    // `(1 − cos a)/a` are its two shape functions and both have limits, where
+    // the centre-and-radius form has neither. A straight walk is then the same
+    // expression rather than a branch beside it.
+    let frame = |u: f32| -> (Vec3, f32) {
+        let a = per_cycle_yaw * u;
+        let (along, across) = if a.abs() < 1e-4 {
+            (1.0 - a * a / 6.0, a * 0.5)
+        } else {
+            (a.sin() / a, (1.0 - a.cos()) / a)
+        };
+        let travelled = per_cycle_travel * u;
+        (Vec3::new(travelled * across, 0.0, travelled * along), a)
+    };
+    let into_world = |u: f32, at: Vec3| {
+        let (origin, yaw) = frame(u);
+        origin + Quat::from_rotation_y(yaw) * at
+    };
+
+    // **The joint the gait actually pins**, which is not the ankle and the
+    // difference is the whole reading. `home_of` and `solve_contact` both take
+    // the contact from `in_zone(Extremity)`, whose first entry is the joint
+    // *past* the ankle; `extremity_joints` carries the ankle at its head, which
+    // is why the spans below slice it from 1. Measuring the ankle instead reads
+    // the roll — it is a child of nothing that is planted, and it swings 88 mm
+    // fore-and-aft across a stance on a perfectly straight walk while the
+    // contact under it holds to 1.6 mm. That is this crate's recurring defect
+    // exactly: an instrument measuring something other than its own name.
+    let contacts: Vec<Option<usize>> = [Limb::HindLeft, Limb::HindRight]
+        .into_iter()
+        .map(|limb| {
+            rig.in_zone(symbios_avatar::Zone::Extremity(limb))
+                .first()
+                .copied()
+        })
+        .collect();
 
     // The feet, as surface rather than as joints. Selected once from the rest
     // body and then carried through every frame, because a patch is a set of
@@ -189,20 +323,44 @@ fn main() {
     // its contacts on the same surface the plant settles them onto (#221),
     // which is what stops a swing arc built at the rest ground height from
     // ploughing through a slope it is climbing.
-    let height = |at: Vec3| at.z * grade + at.x * camber;
-    let floor = |foot: Vec3| {
-        Some(Ground {
-            position: Vec3::new(foot.x, height(foot), foot.z),
-            normal: Vec3::new(-camber, 1.0, -grade).normalize(),
-        })
-    };
-    let measure = |cycle: f32| -> Moment {
+    //
+    // **The plane is the world's; the closure is the body's.** `step` and
+    // `plant_feet_of` ask what is beneath a point *in the frame the body is
+    // posed in*, so a body that has walked and turned must be given the same
+    // hillside seen from where it now stands — carried out into the world,
+    // sampled, and brought back. On a plane that is a rotation of the gradient
+    // and a subtraction of the body's own height, and with no turn and no
+    // travel it collapses to exactly the expression this had before, which is
+    // why every reading above is unmoved.
+    let world_height = |at: Vec3| at.z * grade + at.x * camber;
+    let world_normal = Vec3::new(-camber, 1.0, -grade).normalize();
+    let height = |u: f32, at: Vec3| world_height(into_world(u, at)) - world_height(frame(u).0);
+    let measure = |u: f32| -> Moment {
+        let cycle = u.rem_euclid(1.0);
+        let normal = Quat::from_rotation_y(-frame(u).1) * world_normal;
+        let floor = |foot: Vec3| {
+            Some(Ground {
+                position: Vec3::new(foot.x, height(u, foot), foot.z),
+                normal,
+            })
+        };
         let mut pose = Pose::rest(rig);
         // The whole sequence, through the engine's own entry point (#253) —
         // step, arms, lean, plant, roll, in that order. Hand-rolled here until
         // the fourth stage arrived and the order stopped being something an
         // instrument should be trusted to remember.
-        Walk::at(cycle).drive(rig, &mut pose, &gait, &stride, floor);
+        if bare {
+            // **Not `Walk` with its flags turned down**, which is what this
+            // tried first and is wrong: `Walk::settle` rolls the ankles
+            // unconditionally — the roll is outside the `footing` option, on
+            // purpose, because forgetting it is what #251 and #1069 were — so
+            // a `Walk` with everything switched off still rolls, and the
+            // ablation read 31.7 mm where the placement alone leaves 2.8. The
+            // stage has to be stepped past rather than configured away.
+            gait::step(rig, &mut pose, &gait, &stride, cycle, floor);
+        } else {
+            Walk::at(cycle).drive(rig, &mut pose, &gait, &stride, floor);
+        }
 
         let posed = pose.forward(rig);
         let moved = posed.deform(rig, &body.positions, weights);
@@ -219,7 +377,7 @@ fn main() {
                         // zero: on a grade the floor is not level and a foot that
                         // tracks it would otherwise read as sinking downhill.
                         let at = moved[vertex];
-                        at.y - height(at)
+                        at.y - height(u, at)
                     })
                     .fold(f32::MAX, f32::min);
                 let index = gait.limbs.iter().position(|other| other == limb);
@@ -228,8 +386,14 @@ fn main() {
                     let run = posed.positions[toe] - posed.positions[heel];
                     let flat = (run.x * run.x + run.z * run.z).sqrt();
                     // Against the slope the foot walks on, not against level:
-                    // a sole lying along a ramp is flat for this question.
-                    run.y.atan2(flat).to_degrees() - grade.atan().to_degrees() - rest
+                    // a sole lying along a ramp is flat for this question. Read
+                    // off the ground's normal *in the body's frame* rather than
+                    // from `--grade` directly, because a body that has turned
+                    // is climbing some mixture of the grade and the camber and
+                    // neither flag alone names it any more.
+                    run.y.atan2(flat).to_degrees()
+                        - (-normal.z / normal.y).atan().to_degrees()
+                        - rest
                 });
                 (!phase.is_stance(), sole - base, phase.progress(), pitch)
             })
@@ -240,6 +404,28 @@ fn main() {
             .map(|limb| elbow_bend(rig, &posed, limb))
             .collect();
 
+        // The same feet again, in the world. A stance foot's contact should
+        // hold one point of ground for the whole of its stance and its
+        // heel-to-toe line should hold one bearing; both are free to do whatever they like
+        // in body space while the body travels and turns over them, which is
+        // why neither can be asked of the columns above.
+        let planted = [Limb::HindLeft, Limb::HindRight]
+            .into_iter()
+            .zip(&contacts)
+            .zip(&spans)
+            .map(|((limb, contact), span)| {
+                let index = gait.limbs.iter().position(|other| *other == limb);
+                let stance = index.is_none_or(|at| gait.phase(at, cycle).is_stance());
+                let at = contact.map_or(Vec3::ZERO, |joint| into_world(u, posed.positions[joint]));
+                let bearing = span.map_or(0.0, |(heel, toe, _)| {
+                    let run =
+                        into_world(u, posed.positions[toe]) - into_world(u, posed.positions[heel]);
+                    run.x.atan2(run.z).to_degrees()
+                });
+                (stance, at, bearing)
+            })
+            .collect();
+
         Moment {
             cycle,
             feet,
@@ -247,6 +433,8 @@ fn main() {
             twist: torso_twist(rig, &posed),
             pelvis: pelvis_rest.map_or(0.0, |(root, rest)| posed.positions[root].y - rest),
             lean: trunk_lean(rig, &posed),
+            bank: trunk_bank(rig, &posed),
+            planted,
         }
     };
 
@@ -256,6 +444,17 @@ fn main() {
         grade * 100.0,
         camber * 100.0
     );
+    if turn != 0.0 {
+        println!(
+            "turning {turn:.1} deg/s {} at {:.2} m/s and {cadence:.2} cycles/s: {:.1} deg and \
+             {:.3} m per cycle, on a {:.2} m radius",
+            if turn > 0.0 { "left" } else { "right" },
+            Speed::of(rig, &gait, &stride).metres_per_second(rig),
+            per_cycle_yaw.to_degrees(),
+            per_cycle_travel,
+            radius.abs(),
+        );
+    }
     println!(
         "stride {:.3} m long, lifting {:.3} m; sole clearances measured above the body's \
          own standing depth ({:.1} mm under the build's floor — the mesh's, not the walk's, #220)",
@@ -302,8 +501,14 @@ fn main() {
         );
     }
 
-    // The judging pass, at its own resolution.
-    let sweep: Vec<Moment> = (0..SWEEP)
+    // The judging pass, at its own resolution — and over **two** cycles rather
+    // than one, because a stance wraps. On the default gait `HindRight` goes
+    // down at 0.5 and comes up at 1.1, so a single cycle's worth of samples
+    // holds two broken halves of that stance and no whole one, and a skid
+    // measured across a broken stance is measured across a re-plant. Every
+    // body-space reading below is periodic in the cycle and so is unmoved by
+    // the extra lap.
+    let sweep: Vec<Moment> = (0..SWEEP * 2)
         .map(|at| measure(at as f32 / SWEEP as f32))
         .collect();
 
@@ -315,6 +520,7 @@ fn main() {
     let mut deepest_bend = 0.0f32;
     let mut widest_twist = 0.0f32;
     let (mut lean_low, mut lean_high) = (f32::MAX, f32::MIN);
+    let (mut bank_low, mut bank_high) = (f32::MAX, f32::MIN);
     let (mut pelvis_low, mut pelvis_high) = (f32::MAX, f32::MIN);
     let (mut stance_pitch, mut swing_pitch) = ((f32::MAX, f32::MIN), (f32::MAX, f32::MIN));
     for moment in &sweep {
@@ -339,6 +545,8 @@ fn main() {
         widest_twist = widest_twist.max(moment.twist.abs());
         lean_low = lean_low.min(moment.lean);
         lean_high = lean_high.max(moment.lean);
+        bank_low = bank_low.min(moment.bank);
+        bank_high = bank_high.max(moment.bank);
         pelvis_low = pelvis_low.min(moment.pelvis);
         pelvis_high = pelvis_high.max(moment.pelvis);
     }
@@ -346,6 +554,80 @@ fn main() {
         .filter(|&at| gait.grounded(at as f32 / SWEEP as f32) >= 2)
         .count() as f32
         / SWEEP as f32;
+
+    // What a PLANTED contact did in the world, over each whole stance the sweep
+    // contains.
+    //
+    // A foot bearing weight is pinned to the ground, so anything it does out
+    // here is a slide. Split along the heading the body held at the middle of
+    // that stance, because the two components are different defects: a
+    // fore-and-aft slide is the stride and the travel disagreeing, and a
+    // lateral one is the turn — which is the skate a differential stride exists
+    // to prevent, and the axis #250 found this crate could not see at all.
+    //
+    // Partial runs at either end of the sweep are dropped rather than measured:
+    // a stance clipped by the end of the sampling is a stance whose spread is
+    // an artefact of where the sampling stopped.
+    let mut skid_along = 0.0f32;
+    let mut skid_lateral = 0.0f32;
+    let mut skid_total = 0.0f32;
+    let mut spin = 0.0f32;
+    let mut stances = 0usize;
+    for foot in 0..2 {
+        let mut run: Vec<usize> = Vec::new();
+        for at in 0..=sweep.len() {
+            let down = sweep.get(at).is_some_and(|moment| moment.planted[foot].0);
+            if down {
+                run.push(at);
+                continue;
+            }
+            // A run touching either end of the sweep was cut by the sampling
+            // rather than by a footfall.
+            let whole = !run.is_empty() && run[0] > 0 && at < sweep.len();
+            if whole {
+                stances += 1;
+                let mid = run[run.len() / 2];
+                let yaw = per_cycle_yaw * (mid as f32 / SWEEP as f32);
+                let heading = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+                let across = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+                let axis = |direction: Vec3| {
+                    let spread = run
+                        .iter()
+                        .map(|&at| sweep[at].planted[foot].1.dot(direction));
+                    let low = spread.clone().fold(f32::MAX, f32::min);
+                    let high = spread.fold(f32::MIN, f32::max);
+                    high - low
+                };
+                skid_along = skid_along.max(axis(heading));
+                skid_lateral = skid_lateral.max(axis(across));
+                // **Horizontally, and that is not a shortcut.** A planted
+                // contact rises and falls by design — it is the joint the roll
+                // pitches the sole about, so a heel-strike and a toe-off carry
+                // it up — and folding that into the skid reported 75 mm of
+                // slide on a straight walk where there are 32. A skid is a
+                // distance over the GROUND.
+                for &a in &run {
+                    for &b in &run {
+                        let (from, to) = (sweep[a].planted[foot].1, sweep[b].planted[foot].1);
+                        let flat = Vec3::new(to.x - from.x, 0.0, to.z - from.z);
+                        skid_total = skid_total.max(flat.length());
+                    }
+                }
+                // Unwrapped against the first sample of the stance, since the
+                // body's own bearing runs right round on a long enough turn and
+                // a raw min-and-max would fold at the seam.
+                let first = sweep[run[0]].planted[foot].2;
+                let turned = run.iter().map(|&at| {
+                    let delta = sweep[at].planted[foot].2 - first;
+                    (delta + 180.0).rem_euclid(360.0) - 180.0
+                });
+                let low = turned.clone().fold(f32::MAX, f32::min);
+                let high = turned.fold(f32::MIN, f32::max);
+                spin = spin.max(high - low);
+            }
+            run.clear();
+        }
+    }
 
     println!("\nagainst the reference, over {SWEEP} samples of the cycle:");
     println!(
@@ -406,6 +688,32 @@ fn main() {
          (reference: ~15-25 toe-up at heel-strike, ~15-20 toe-down at push-off)",
         stance_pitch.0, stance_pitch.1, swing_pitch.0, swing_pitch.1,
     );
+    if turn != 0.0 {
+        println!(
+            "  bank:   trunk inclined {bank_low:.2} to {bank_high:.2} deg toward its left, \
+             against the {:.2} deg the statics ask for (atan of v*w/g — no constant in it; \
+             the shortfall is `Speed::of` reading the centreline step, see `bank_of`)",
+            (Speed::of(rig, &gait, &stride).metres_per_second(rig) * turn.to_radians() / 9.81)
+                .atan()
+                .to_degrees(),
+        );
+    }
+    println!(
+        "  planted: over {stances} whole stances a bearing foot slid {:.1} mm along its own \
+         heading and {:.1} mm across it, {:.1} mm over the ground in all, and was dragged \
+         {spin:.1} deg round \
+         (asked of the turn: {:.1} deg per stance)",
+        skid_along * 1000.0,
+        skid_lateral * 1000.0,
+        skid_total * 1000.0,
+        (per_cycle_yaw * gait.duty).to_degrees().abs(),
+    );
+    println!(
+        "          (a foot bearing weight is pinned to the GROUND, so every millimetre here is \
+         a skid. On a straight walk all four must be ~0, and that is a check on the crate \
+         rather than on the instrument: the travel comes from the stride's own excursion \
+         divided by the duty, so a reading here says the two disagree)"
+    );
     println!(
         "  gait:   duty {:.2}, both feet down {both_down:.2} of the cycle, airborne \
          {:.2} (reference: {})",
@@ -463,6 +771,26 @@ fn trunk_lean(rig: &Rig, posed: &symbios_avatar::anim::Posed) -> f32 {
     let pitch = |run: Vec3| run.z.atan2(run.y).to_degrees();
     pitch(posed.positions[girdle] - posed.positions[root])
         - pitch(rig.joints[girdle].position - rig.joints[root].position)
+}
+
+/// How far the trunk is banked toward the body's left, in degrees.
+///
+/// The lateral partner of [`trunk_lean`], measured the same way and for the
+/// same reason: against this body's own rest carriage rather than against
+/// vertical, so zero means "carried as it stands".
+fn trunk_bank(rig: &Rig, posed: &symbios_avatar::anim::Posed) -> f32 {
+    let Some(&neck) = rig.in_zone(symbios_avatar::Zone::Neck).first() else {
+        return 0.0;
+    };
+    let Some(girdle) = rig.joints[neck].parent else {
+        return 0.0;
+    };
+    let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
+        return 0.0;
+    };
+    let roll = |run: Vec3| run.x.atan2(run.y).to_degrees();
+    roll(posed.positions[girdle] - posed.positions[root])
+        - roll(rig.joints[girdle].position - rig.joints[root].position)
 }
 
 fn torso_twist(rig: &Rig, posed: &symbios_avatar::anim::Posed) -> f32 {

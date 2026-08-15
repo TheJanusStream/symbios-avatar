@@ -254,6 +254,57 @@ impl Speed {
             direction: Vec3::Z,
             length,
             lift: length * LIFT_OF_STRIDE,
+            // A speed alone says nothing about a heading changing. `Turn`
+            // is what fills this in, and it takes the speed as its argument
+            // for exactly that reason.
+            yaw: 0.0,
+        }
+    }
+
+    /// How fast a body taking this stride with this gait is going.
+    ///
+    /// **The inverse of [`Self::stride`], recovered rather than passed
+    /// alongside it.** That is `super::gait::pace_of`'s argument applied to
+    /// the whole speed axis: a caller that carries a speed *next to* a stride
+    /// can tell one layer one thing and another layer something else, and the
+    /// layers that want a speed here — the bank of a turn, an instrument's
+    /// clock — must agree with the legs or they are describing a different
+    /// body. Grieve's relation is invertible, so nothing has to be trusted.
+    ///
+    /// The gait is an argument because [`Self::stride`] took its duty and its
+    /// footfall count from one, and a stride divided by a different gait's is
+    /// not this stride's speed. Handing back the gait that produced the stride
+    /// round-trips exactly.
+    ///
+    /// **The inversion amplifies.** Grieve's exponent is applied to the
+    /// dimensionless speed rather than to the Froude number, so recovering the
+    /// Froude number raises the relative step to the power `2/β`, about 3.7 —
+    /// a one percent error in the stride is nearly four percent in the speed.
+    /// That is fine for the quantities this feeds, which are all ratios that
+    /// answer to speed gently, and it is the reason to invert *this* relation
+    /// rather than re-fit a second one going the other way.
+    #[must_use]
+    pub fn of(rig: &Rig, gait: &Gait, stride: &Stride) -> Self {
+        let leg = leg_of(rig);
+        let duty = gait.duty.clamp(0.0, 1.0);
+        let footfalls = gait.footfalls() as f32;
+        if leg <= f32::EPSILON || duty <= f32::EPSILON {
+            return Self::STILL;
+        }
+        // A standing gait keeps every contact down for the whole cycle, so
+        // there is no stance to divide by and no travel to recover — whatever
+        // stride the caller is holding, a body that never lifts a foot is not
+        // going anywhere (#230).
+        if gait.duty >= 1.0 {
+            return Self::STILL;
+        }
+        let step = stride.length / (duty * footfalls);
+        if step <= f32::EPSILON {
+            return Self::STILL;
+        }
+        let relative = step / (leg * GRIEVE_ALPHA);
+        Self {
+            froude: relative.powf(2.0 / GRIEVE_BETA),
         }
     }
 }
@@ -402,6 +453,45 @@ mod tests {
             );
             assert!((speed.metres_per_second(&rig) - metres).abs() < 1e-3);
         }
+    }
+
+    #[test]
+    fn a_stride_says_how_fast_the_body_taking_it_is_going() {
+        // The round trip, on both body plans and across the whole range,
+        // because everything that recovers a speed from a stride — a turn's
+        // bank, an instrument's clock — is only as good as this being exact.
+        // Reintroducing the defect this guards means letting `of` take the
+        // footfall count from the contacts rather than from the gait: on the
+        // quadruped's trot that is 4 against 2 and the recovered speed lands a
+        // factor of `2^3.7` out, which is the check the biped alone would have
+        // passed.
+        for rig in [biped(), quadruped()] {
+            for froude in [0.02f32, 0.1, 0.3, 0.49, 0.6, 1.5, 3.0] {
+                let speed = Speed::from_froude(froude);
+                let gait = speed.gait(&rig);
+                let back = Speed::of(&rig, &gait, &speed.stride(&rig));
+                assert!(
+                    (back.froude() - froude).abs() < froude * 1e-3 + 1e-4,
+                    "a stride taken at Fr {froude} read back as Fr {}",
+                    back.froude()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_body_that_never_lifts_a_foot_is_not_going_anywhere() {
+        // Whatever stride it is holding. A standing gait has no stance to
+        // divide by, and `Stride::for_body` will happily hand out a full-length
+        // one at pace 1.0 — the same trap #230 found in `step` and `crouch_at`.
+        let rig = biped();
+        let standing = Gait::standing(&rig);
+        let stride = gait::Stride::for_body(&rig, 1.0);
+        assert!(
+            stride.length > 0.0,
+            "the stride under test must be a real one"
+        );
+        assert_eq!(Speed::of(&rig, &standing, &stride).froude(), 0.0);
     }
 
     #[test]
