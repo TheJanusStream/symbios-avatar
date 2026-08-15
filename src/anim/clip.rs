@@ -197,6 +197,36 @@ pub struct Track {
     pub space: Space,
     /// What the offsets are measured in.
     pub scale: Scale,
+    /// Which way the limb's elbow (or knee) should point, or `None` for the
+    /// body's own preference.
+    ///
+    /// **Where the middle of the limb goes is half of what a gesture is.** The
+    /// contact goal fixes the hand and leaves the elbow to the solve, whose
+    /// default pole is the plan's — backward, for an arm — and a hand raised
+    /// beside the head with a backward pole gets an elbow flared up level with
+    /// it, which is a stretch. A casual wave is the same hand position with the
+    /// elbow kept low, and only this can say so.
+    ///
+    /// A direction in the track's own frame (see [`Space`]), not a point.
+    /// Stated as authored for every limb the track resolves to — a direction
+    /// with a lateral component means different things to the two arms, so a
+    /// track that wants mirrored elbows is written once per limb, which is also
+    /// how a track wants mirrored *offsets* (see [`Target::Grasper`]).
+    pub bending: Option<Vec3>,
+    /// Which way the flat of the extremity — a hand's palm — should face, or
+    /// `None` to leave it wherever the solve carries it.
+    ///
+    /// **A palm is half a gesture's meaning.** A raised hand with the palm
+    /// shown is a greeting; the same hand edge-on is a salute, and palm-down is
+    /// a dismissal. The solve cannot say: it places the contact and the hand
+    /// keeps whatever orientation the forearm's arc happens to carry it into.
+    ///
+    /// Applied in proportion to how far the track has displaced its goal, so a
+    /// hand at a rest key is the body's and a hand arrived at its goal faces
+    /// where the author said — the palm turns *while* the arm travels, the way
+    /// a forearm actually pronates, and a track whose keys return to zero
+    /// returns the palm with them.
+    pub facing: Option<Vec3>,
 }
 
 impl Track {
@@ -214,7 +244,24 @@ impl Track {
             keys,
             space: Space::Body,
             scale: Scale::Reach,
+            bending: None,
+            facing: None,
         }
+    }
+
+    /// Points the limb's elbow (or knee) toward `direction`. See
+    /// [`Self::bending`].
+    #[must_use]
+    pub fn bending_toward(mut self, direction: Vec3) -> Self {
+        self.bending = Some(direction);
+        self
+    }
+
+    /// Faces the flat of the extremity toward `direction`. See [`Self::facing`].
+    #[must_use]
+    pub fn facing(mut self, direction: Vec3) -> Self {
+        self.facing = Some(direction);
+        self
     }
 
     /// Measures this track's offsets in the body's own extent rather than in
@@ -345,8 +392,22 @@ impl Clip {
             let Some(offset) = track.offset_at(time, self.looping) else {
                 continue;
             };
+            // How far along its own excursion the track is, `0..1`: the palm
+            // aim ramps with it — see [`Track::facing`]. Against the largest
+            // key rather than the current one, so the ramp is a property of
+            // the track and not of wherever the interpolation happens to be.
+            let widest = track
+                .keys
+                .iter()
+                .map(|key| key.offset.length())
+                .fold(0.0f32, f32::max);
+            let engaged = if widest > f32::EPSILON {
+                (offset.length() / widest).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             for limb in track.target.resolve(rig) {
-                let (Some(reach), Some(home), Some(pole)) = (
+                let (Some(reach), Some(home), Some(rest_pole)) = (
                     rig.limb_reach(limb),
                     rest_contact(rig, limb),
                     rig.bend_pole(limb),
@@ -364,9 +425,25 @@ impl Clip {
                     Scale::Reach => reach,
                     Scale::Body => rig.extent(),
                 };
+                // The author's pole is a direction; the solver wants a point.
+                // Anchored at the chain's root and thrown a body's length out,
+                // exactly as `bend_pole` throws its own.
+                let pole = track
+                    .bending
+                    .and_then(|toward| {
+                        let root = rig.limb_chain(limb)?[0];
+                        Some(
+                            rig.joints[root].position
+                                + toward.normalize_or(Vec3::NEG_Y) * rig.extent(),
+                        )
+                    })
+                    .unwrap_or(rest_pole);
                 let goal = frame.at(home + offset * unit);
                 if !solve_contact_toward(rig, pose, limb, goal, frame.at(pole)) {
                     straining.push(limb);
+                }
+                if let Some(toward) = track.facing {
+                    face_extremity(rig, pose, limb, frame.rotation * toward, engaged);
                 }
             }
         }
@@ -379,6 +456,71 @@ impl Clip {
 fn rest_contact(rig: &Rig, limb: Limb) -> Option<Vec3> {
     let joint = *rig.in_zone(Zone::Extremity(limb)).first()?;
     Some(rig.joints[joint].position)
+}
+
+/// Turns the extremity so its flat faces `toward`, by `engaged` of the way.
+///
+/// **The palm's rest normal is the hand builder's own convention, re-derived.**
+/// `Hand::build` frames a hand from the wrist bone's direction and world up —
+/// `across = out × up` — and curls the fingers away from that `up`, so the palm
+/// faces `-(Y ⊥ out)`: on the A-pose arm, down and in toward the thigh. The
+/// mirrored hand works out to the same expression in its own `out`, because
+/// reflecting the frame reflects the normal with it.
+///
+/// The turn is the minimal arc from where the palm currently faces, applied at
+/// the contact joint the whole hand hangs from — which is the wrist for this
+/// purpose: pronation and flexion composed, with the solve's arm left alone.
+fn face_extremity(rig: &Rig, pose: &mut Pose, limb: Limb, toward: Vec3, engaged: f32) {
+    let toward = toward.normalize_or_zero();
+    if toward == Vec3::ZERO || engaged <= f32::EPSILON {
+        return;
+    }
+    let Some(&contact) = rig.in_zone(Zone::Extremity(limb)).first() else {
+        return;
+    };
+    let Some(parent) = rig.joints[contact].parent else {
+        return;
+    };
+    let out = (rig.joints[contact].position - rig.joints[parent].position).normalize_or_zero();
+    if out == Vec3::ZERO {
+        return;
+    }
+    let flat = -(Vec3::Y - out * out.dot(Vec3::Y)).normalize_or_zero();
+    if flat == Vec3::ZERO {
+        return;
+    }
+
+    let posed = pose.forward(rig);
+    let showing = posed.rotations[contact] * flat;
+    let turn = Quat::from_rotation_arc(showing, toward);
+
+    // **The fingers follow, and which way they point is a convention rather
+    // than a field.** Aiming the normal leaves the hand free to roll about it,
+    // and the minimal arc leaves that roll wherever the arm's configuration
+    // happens to put it — measured on the refusal, palms correctly forward
+    // with the fingers pointing at each other, which is a body presenting its
+    // chest. A shown palm carries its fingers as UP as the palm allows, and a
+    // palm shown flat — up or down, where "up" stops meaning anything — points
+    // them forward instead. A gesture that wants sideways fingers is a field
+    // this does not have yet, on purpose.
+    let out_world = turn * posed.rotations[contact] * out;
+    let fingers = (out_world - toward * out_world.dot(toward)).normalize_or_zero();
+    let wanted = {
+        let up = Vec3::Y - toward * toward.dot(Vec3::Y);
+        let flatwise = Vec3::Z - toward * toward.dot(Vec3::Z);
+        if up.length() > 0.2 { up } else { flatwise }.normalize_or_zero()
+    };
+    let roll = if fingers != Vec3::ZERO && wanted != Vec3::ZERO {
+        Quat::from_rotation_arc(fingers, wanted)
+    } else {
+        Quat::IDENTITY
+    };
+
+    let parent_world = posed.rotations[parent];
+    // Composed in the world and written back in the joint's own frame, scaled
+    // by how far the track is into its excursion.
+    let eased = Quat::IDENTITY.slerp(roll * turn, engaged.clamp(0.0, 1.0));
+    pose.rotations[contact] = parent_world.inverse() * eased * posed.rotations[contact];
 }
 
 /// The rigid transform taking a point in the rig's rest space to where a pose

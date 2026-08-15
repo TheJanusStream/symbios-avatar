@@ -30,6 +30,12 @@
 //! 4. **Return.** How far from rest the body is at the first and last frame. A
 //!    gesture that ends somewhere else leaves the body in a pose it never chose.
 //!
+//! 6. **Elbow and palm.** How far above the shoulder the elbow ever gets, and
+//!    which way the palm faces at the gesture's peak. Both were judged by eye
+//!    first (#248): the raise read as a stretch because the default pole flared
+//!    the elbow level with the shoulder, and the palm faced wherever the
+//!    forearm's arc left it. The eye found them; these read them.
+//!
 //! 5. **Step.** The furthest any joint moves between two adjacent samples, which
 //!    catches a key that jumps.
 //!
@@ -111,8 +117,9 @@ fn main() {
             gesture::returns_to_rest(&clip)
         );
         println!(
-            "\n{:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>9} {:>8} {:>8}",
+            "\n{:>8} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8} {:>9} {:>8} {:>9} {:>9} {:>8}",
             "stature",
+            "limbs",
             "reach m",
             "strain",
             "up",
@@ -120,6 +127,8 @@ fn main() {
             "across",
             "head mm",
             "trunk",
+            "elbow mm",
+            "palm deg",
             "step mm"
         );
 
@@ -150,6 +159,34 @@ fn main() {
                 .into_iter()
                 .flat_map(|zone| rig.in_zone(zone))
                 .collect();
+            let arms: Vec<[usize; 3]> = [Limb::ForeLeft, Limb::ForeRight]
+                .into_iter()
+                .filter_map(|limb| rig.limb_chain(limb))
+                .collect();
+            // The palm's rest normal, per hand: the hand builder's own frame,
+            // re-derived — fingers curl away from world up projected off the
+            // wrist bone, so the palm faces the other way. The same expression
+            // `Track::facing` aims, so this reading and that control agree
+            // about what a palm is.
+            // Only the hands the clip actually addresses: a right-hand wave
+            // leaves the left palm at rest, and a max over both would report
+            // the rest pose's 90 degrees as the gesture's failing.
+            let addressed: Vec<Limb> = clip
+                .tracks
+                .iter()
+                .flat_map(|track| track.target.resolve(&rig))
+                .collect();
+            let palms: Vec<(usize, Vec3)> = addressed
+                .into_iter()
+                .filter_map(|limb| {
+                    let contact = *rig.in_zone(Zone::Extremity(limb)).first()?;
+                    let parent = rig.joints[contact].parent?;
+                    let out = (rig.joints[contact].position - rig.joints[parent].position)
+                        .normalize_or_zero();
+                    let flat = -(Vec3::Y - out * out.dot(Vec3::Y)).normalize_or_zero();
+                    Some((contact, flat))
+                })
+                .collect();
             let shoulder = rig.limb_chain(Limb::ForeLeft).expect("an arm")[0];
 
             let rest = Pose::rest(&rig).forward(&rig).positions;
@@ -170,12 +207,26 @@ fn main() {
             let mut nearest_trunk = f32::MAX;
             let mut step = 0.0f32;
             let mut before: Option<Vec<Vec3>> = None;
+            // The highest any elbow gets above its own shoulder, and the
+            // furthest any palm points from forward at mid-gesture.
+            let mut elbow_over = f32::MIN;
+            let mut palm_off = 0.0f32;
 
             for frame in 0..=samples {
                 let time = frame as f32 / samples as f32;
                 let mut pose = Pose::rest(&rig);
                 strained += clip.apply(&rig, &mut pose, time).len();
-                let places = pose.forward(&rig).positions;
+                let posed = pose.forward(&rig);
+                let places = posed.positions;
+                for &[shoulder, elbow, _] in &arms {
+                    elbow_over = elbow_over.max(places[elbow].y - places[shoulder].y);
+                }
+                if frame == samples / 2 {
+                    for &(contact, flat) in &palms {
+                        let showing = posed.rotations[contact] * flat;
+                        palm_off = palm_off.max(showing.angle_between(Vec3::Z).to_degrees());
+                    }
+                }
                 for &hand in &hands {
                     let moved = places[hand] - rest[hand];
                     most = (
@@ -196,26 +247,18 @@ fn main() {
                 }
                 before = Some(places);
             }
-            // Where the hand ends up against the shoulder, which is what makes a
-            // raise a greeting rather than a stretch.
-            let over_shoulder = {
-                let mut pose = Pose::rest(&rig);
-                clip.apply(&rig, &mut pose, 0.5);
-                let places = pose.forward(&rig).positions;
-                (places[hands[hands.len() - 1]].y - places[shoulder].y) / height
-            };
-
             spread.push(most);
             println!(
-                "{stature:>8.2} {limbs:>6.1} {arm:>8.3} {strained:>7} {:>8.3} {:>8.3} {:>8.3} {:>9.0} {:>8.0} {:>8.1}",
+                "{stature:>8.2} {limbs:>6.1} {arm:>8.3} {strained:>7} {:>8.3} {:>8.3} {:>8.3} {:>9.0} {:>8.0} {:>9.0} {:>9.0} {:>8.1}",
                 most.0,
                 most.1,
                 most.2,
                 nearest_head * 1000.0,
                 nearest_trunk * 1000.0,
+                elbow_over * 1000.0,
+                palm_off,
                 step * 1000.0,
             );
-            let _ = over_shoulder;
         }
 
         let widest = |pick: fn(&(f32, f32, f32)) -> f32| {

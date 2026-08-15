@@ -48,34 +48,33 @@ use crate::plan::Limb;
 /// body height apart between the short-limbed and long-limbed ends of the
 /// sweep — a hand at the ear on one body and over the crown on the other.
 ///
-/// The number is the anatomy: on the plan's rest pose the contact hangs 0.221 of
-/// a body height below the shoulder, and a wave holds it beside the ear, which is
-/// about 0.12 above — so the rise is the sum of the two. Rendered at 0.08 above
-/// the shoulder instead, which is where the arithmetic of "above shoulder
-/// height" lands, the hand sits at the chin and the gesture reads as a body
-/// covering its mouth.
-pub const RAISE: f32 = 0.341;
+/// The number is the anatomy of a CASUAL wave, which is a forearm gesture: the
+/// hand stops at jaw height — about 0.06 above the shoulder, where the contact
+/// hangs 0.221 below it at rest — with the elbow staying down (see
+/// [`wave`]'s bend). Raised to ear height and above, the same gesture needs the
+/// whole arm and reads as hailing rescue.
+pub const RAISE: f32 = 0.284;
 
 /// How far IN from its rest position a raised hand comes, in body heights.
 ///
-/// **In, not out**, which is the correction the first draft needed. A hanging
-/// arm on this plan rests 0.263 of a body height out from the shoulder, and a
-/// wave is made beside the head with the elbow bent, so the hand comes in to
-/// about 0.13 — a hand carried further out as it rises is a hand outside the
-/// arm's own sphere, which the audit called strain in half the frames, and one
-/// brought all the way in to the midline is a hand in front of the face.
-pub const RAISE_IN: f32 = 0.153;
+/// A hanging arm on this plan rests 0.263 of a body height out from the
+/// shoulder; a casual wave brings the hand in to about 0.14 — still clearly
+/// out to the side, past the head rather than in front of it, which is what
+/// keeps the elbow low and the face clear.
+pub const RAISE_IN: f32 = 0.119;
 
 /// How far forward a raised hand is held, in body heights.
 ///
-/// A hand raised in the shoulder's own plane is behind the face from anyone in
-/// front of the body.
-pub const RAISE_FORWARD: f32 = 0.06;
+/// A touch: enough that the hand reads to someone in front of the body without
+/// turning the wave into a reach toward them.
+pub const RAISE_FORWARD: f32 = 0.04;
 
 /// How wide the wave itself is, in body heights, each way from the raise.
 ///
 /// The gesture is the oscillation, not the raise: an arm held up and still is
-/// a body hailing a taxi.
+/// a body hailing a taxi. Along the body's lateral axis, which on a standing
+/// body is world horizontal — a casual wave swings the hand side to side, it
+/// does not bob it.
 pub const WAVE: f32 = 0.05;
 
 /// How many times a greeting waves.
@@ -93,28 +92,53 @@ pub const WAVES: usize = 3;
 /// purpose.
 pub const REACH_TIME: f32 = 0.18;
 
+/// Which way a gesturing arm's elbow points: down, a little out, a little
+/// forward.
+///
+/// **The elbow is half the difference between a wave and a stretch.** The
+/// solver's default pole for an arm is the plan's — backward — and a hand
+/// raised beside the head with a backward pole gets an elbow flared up level
+/// with the shoulder. Pointing it down keeps the upper arm hanging and makes
+/// the raise a forearm's, which is what a casual gesture is.
+///
+/// Written for the body's left arm; [`wave`] and [`reject`] mirror the lateral
+/// component per side, the same way they mirror their offsets.
+pub const ELBOW_DOWN: Vec3 = Vec3::new(0.35, -1.0, 0.1);
+
+/// Where every gesturing palm faces: forward, tilted a little up.
+///
+/// An open palm shown to the other person is the whole difference between a
+/// greeting and a salute, and between a refusal and a shove. The tilt keeps
+/// the hand from reading as a traffic stop.
+pub const PALM_FORWARD: Vec3 = Vec3::new(0.0, 0.25, 1.0);
+
 /// How high a refusing hand is held, in body heights above its rest position.
 ///
-/// Chest height: a refusal is made in front of the body where it can be seen,
-/// and not at the hip. On the body, like the wave and for the same reason — a
-/// chest is where it is whatever the arm's length.
-pub const PUSH_UP: f32 = 0.201;
+/// Chest height — about 0.06 below the shoulder, like the wave one gesture
+/// over: a refusal is made in front of the body where it can be seen, and not
+/// at the hip.
+pub const PUSH_UP: f32 = 0.161;
 
 /// How far in from its rest position a refusing hand comes, in body heights.
-pub const PUSH_IN: f32 = 0.103;
-
-/// How far forward a refusing hand pushes, in body heights.
 ///
-/// **This one is the arm's business and it is still written on the body**, and
-/// the reason is the strain reading rather than the meaning: a push measured in
-/// reaches puts a long-armed body's hand 0.23 of a body height out and a
-/// short-armed one's at 0.16, and the second of those is inside the first's
-/// gesture rather than a smaller version of it. Held to the body, both push to
-/// the same place and the long-armed body simply keeps more elbow.
-pub const PUSH: f32 = 0.17;
+/// **In front of the body, not beside it** — the hands land about 0.07 of a
+/// body height either side of the midline, just inside their own shoulders,
+/// because a defence is made between yourself and the thing declined. The
+/// first cut left them at the torso's flanks (0.10 outside the shoulder) and
+/// the render read as a fitness exercise; the palms cannot refuse anything
+/// from out there.
+pub const PUSH_IN: f32 = 0.30;
+
+/// How far forward a refusing hand pushes, in body heights, and where it sits
+/// between pushes.
+///
+/// Close. The first draft pushed to 0.17 of a body height with the palms down
+/// and read as a fitness exercise; a defensive refusal keeps the hands near
+/// the chest and lets the palms do the refusing.
+pub const PUSH: f32 = 0.20;
 
 /// Where a refusing hand sits between pushes, in body heights forward.
-pub const PUSH_READY: f32 = 0.09;
+pub const PUSH_READY: f32 = 0.14;
 
 /// How many times a refusal pushes.
 ///
@@ -145,7 +169,11 @@ pub fn wave(hand: Limb) -> Clip {
         keys.push(Key::new(at, raised + Vec3::X * (side * swing)));
     }
     keys.push(Key::new(1.0, Vec3::ZERO));
-    Clip::new([Track::new(Target::Grasper(hand), keys).on_body()])
+    let bend = Vec3::new(side * ELBOW_DOWN.x, ELBOW_DOWN.y, ELBOW_DOWN.z);
+    Clip::new([Track::new(Target::Grasper(hand), keys)
+        .on_body()
+        .bending_toward(bend)
+        .facing(PALM_FORWARD)])
 }
 
 /// A refusal: both hands up and pushed away, twice.
@@ -179,7 +207,11 @@ fn push_with(hand: Limb) -> Track {
     }
     keys.push(Key::new(1.0 - REACH_TIME, ready));
     keys.push(Key::new(1.0, Vec3::ZERO));
-    Track::new(Target::Grasper(hand), keys).on_body()
+    let bend = Vec3::new(side * ELBOW_DOWN.x, ELBOW_DOWN.y, ELBOW_DOWN.z);
+    Track::new(Target::Grasper(hand), keys)
+        .on_body()
+        .bending_toward(bend)
+        .facing(PALM_FORWARD)
 }
 
 /// Whether a gesture is one a body at rest can hold, or one it plays and leaves.
@@ -382,6 +414,93 @@ mod tests {
                         "at time {time} a {height} m body with limb length {limbs} sat {:.1} mm \
                          from rest",
                         worst * 1000.0,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_gesturing_elbow_stays_below_its_shoulder() {
+        // **The elbow is half the difference between a wave and a stretch**
+        // (#248, owner's eye). The contact goal fixes the hand and says nothing
+        // about the middle of the limb; the solver's default pole for an arm is
+        // backward, and a hand raised beside the head with a backward pole
+        // flares the elbow up level with the shoulder — measured, 7 mm ABOVE it
+        // on the smallest body, and the flare is what read as a stretch long
+        // before it crossed the line. [`Track::bending`] pointed down is what
+        // holds it low, and with it the same elbow reads 106 to 200 mm below
+        // across the whole sweep. The zero bound is honest for the two gestures
+        // that exist: both keep the whole upper arm hanging, so an elbow even
+        // AT shoulder height means the pole has stopped doing its work.
+        for clip in [wave(Limb::ForeRight), reject()] {
+            for &(height, limbs) in &BODIES {
+                let rig = body(height, limbs);
+                let addressed: Vec<Limb> = clip
+                    .tracks
+                    .iter()
+                    .flat_map(|track| track.target.resolve(&rig))
+                    .collect();
+                for frame in 0..=SWEEP {
+                    let mut pose = Pose::rest(&rig);
+                    clip.apply(&rig, &mut pose, frame as f32 / SWEEP as f32);
+                    let places = pose.forward(&rig).positions;
+                    for &limb in &addressed {
+                        let [shoulder, elbow, _] = rig.limb_chain(limb).expect("an arm");
+                        assert!(
+                            places[elbow].y < places[shoulder].y,
+                            "on a {height} m body with limb length {limbs} the elbow rose \
+                             {:.0} mm above the shoulder",
+                            (places[elbow].y - places[shoulder].y) * 1000.0,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_gesture_shows_its_palm_with_the_fingers_up() {
+        // **A palm is half a gesture's meaning** (#248, owner's eye): a raised
+        // hand palm-forward is a greeting, edge-on it is a salute, and the
+        // refusal with the palms anywhere else is a fitness exercise. Two
+        // separate claims, because they fail separately: the NORMAL is what
+        // [`Track::facing`] aims, and the FINGERS are the roll about it, which
+        // the minimal arc leaves wherever the arm's configuration happens to
+        // put it — measured, palms correctly forward with the fingers pointing
+        // at each other, a body presenting its chest.
+        for clip in [wave(Limb::ForeRight), reject()] {
+            for &(height, limbs) in &BODIES {
+                let rig = body(height, limbs);
+                let addressed: Vec<Limb> = clip
+                    .tracks
+                    .iter()
+                    .flat_map(|track| track.target.resolve(&rig))
+                    .collect();
+                let mut pose = Pose::rest(&rig);
+                clip.apply(&rig, &mut pose, 0.5);
+                let posed = pose.forward(&rig);
+                for &limb in &addressed {
+                    let contact = *rig.in_zone(Zone::Extremity(limb)).first().expect("a hand");
+                    let parent = rig.joints[contact].parent.expect("a wrist");
+                    let out = (rig.joints[contact].position - rig.joints[parent].position)
+                        .normalize_or_zero();
+                    let flat = -(Vec3::Y - out * out.dot(Vec3::Y)).normalize_or_zero();
+                    let showing = posed.rotations[contact] * flat;
+                    let off = showing.angle_between(Vec3::Z).to_degrees();
+                    assert!(
+                        off < 30.0,
+                        "on a {height} m body with limb length {limbs} the palm faced {off:.0} \
+                         degrees away from forward",
+                    );
+                    let fingers = posed.rotations[contact] * out;
+                    assert!(
+                        fingers.y > 0.5,
+                        "on a {height} m body with limb length {limbs} the fingers pointed \
+                         ({:.2}, {:.2}, {:.2}) instead of up",
+                        fingers.x,
+                        fingers.y,
+                        fingers.z,
                     );
                 }
             }
