@@ -487,6 +487,52 @@ impl Rig {
         joints
     }
 
+    /// How far a limb's extremity reaches behind and ahead of its contact
+    /// joint, along `along`, on the rig at rest.
+    ///
+    /// **The crate's notion of how long a foot is** (#259), and it had none:
+    /// [`crate::anim::gait`] used the stride's own toe clearance as a stand-in,
+    /// which is the right order of magnitude and the wrong quantity — 85 mm
+    /// against this body's 257. A gait needs the real one twice over. It cannot
+    /// choose how finely to probe ground a foot is about to swing over without
+    /// knowing what the foot spans, because a foot bridges anything narrower
+    /// than itself; and it cannot tell whether a swing clears a step without
+    /// knowing how far in front of the joint it seats the toe actually is.
+    ///
+    /// **From [`Self::extremity_joints`] and not from [`Zone::Extremity`]**, so
+    /// the heel is in it. On this plan, and on the reference mannequins, the
+    /// rearmost part of a foot hangs off the ankle rather than off a heel joint
+    /// of its own; the zone list starts past that and reports a foot with no
+    /// back to it at all. This plan happens to carry a heel joint in the zone,
+    /// so the two lists agree on it and the choice costs nothing here; the
+    /// reference mannequins are the case it is made for.
+    ///
+    /// Measured to the joints, which is a little short of the sole: the surface
+    /// hangs off each joint by its own radius, and a body walking is judged on
+    /// the sole. Both figures are honest and this is the conservative one —
+    /// a shorter foot probes more finely and clears less eagerly.
+    ///
+    /// Returns `None` for a limb this body has not got, and `(0.0, 0.0)` for one
+    /// whose extremity is a single joint, which has no length to speak of.
+    #[must_use]
+    pub fn extremity_extent(&self, limb: Limb, along: Vec3) -> Option<(f32, f32)> {
+        let along = along.normalize_or_zero();
+        let joints = self.extremity_joints(limb);
+        let &contact = self.in_zone(Zone::Extremity(limb)).first()?;
+        if along == Vec3::ZERO {
+            return Some((0.0, 0.0));
+        }
+        let seat = self.joints[contact].position;
+        Some(
+            joints
+                .into_iter()
+                .fold((0.0f32, 0.0f32), |(behind, ahead), joint| {
+                    let along = (self.joints[joint].position - seat).dot(along);
+                    (behind.max(-along), ahead.max(along))
+                }),
+        )
+    }
+
     /// The three joints an [`crate::anim::ik::two_bone`] solve needs for `limb`.
     ///
     /// Returns `[root, mid, tip]` — hip, knee, ankle, or shoulder, elbow, wrist —
@@ -646,6 +692,83 @@ impl Rig {
 mod tests {
     use super::*;
     use crate::plan::{Archetype, BodyPlan, HumanoidParams, Limb, QuadrupedParams};
+
+    #[test]
+    fn a_foot_has_a_length_and_it_runs_the_way_the_foot_points() {
+        // **The crate had no notion of this and used the swing's toe clearance
+        // instead** (#259). Both are lengths of about the right order on a
+        // human, which is exactly what let the proxy sit there: 85 mm against a
+        // real 257 on a BUILT body. A gait needs the real one to choose how
+        // finely to probe ground a foot is about to swing over, and to know
+        // whether a swing that clears a riser with the joint it seats also
+        // clears it with the toe that is a quarter of a metre in front.
+        let avatar = crate::Avatar::build(&crate::AvatarRecord::new(
+            "Ref",
+            crate::plan::Archetype::default(),
+        ))
+        .expect("the default record builds");
+        let rig = &avatar.rig;
+
+        let (behind, ahead) = rig
+            .extremity_extent(Limb::HindRight, Vec3::Z)
+            .expect("a biped has a hind foot");
+        assert!(
+            (behind + ahead - 0.257).abs() < 0.02,
+            "the foot spanned {:.0} mm along the way it points",
+            (behind + ahead) * 1000.0,
+        );
+        // **Mostly in front of the joint being seated, and not entirely**,
+        // which is both halves of what a swing needs to know: the toe is a
+        // quarter of a metre out in front, and that is the part that drags
+        // through a riser.
+        //
+        // The 14 mm behind is this plan's own heel and it sits in the extremity
+        // zone, so the two joint lists agree here and nothing in this test can
+        // tell them apart. Reading [`Rig::extremity_joints`] is still the right
+        // choice and its reason is that list's own: a rig whose heel hangs off
+        // the ankle — the reference mannequins do — reports no back to its foot
+        // through the zone alone. That is a property of other rigs, so it is
+        // said rather than guarded.
+        assert!(
+            ahead > behind * 4.0 && behind > 0.005,
+            "the foot reached {:.0} mm ahead of its contact and {:.0} mm behind",
+            ahead * 1000.0,
+            behind * 1000.0,
+        );
+
+        // **Along the direction asked for and not along the foot**, because a
+        // body shuffling sideways swings its feet across their own width. A
+        // foot is long one way and narrow the other and the number has to know
+        // which was wanted.
+        let (across_back, across_ahead) = rig
+            .extremity_extent(Limb::HindRight, Vec3::X)
+            .expect("a biped has a hind foot");
+        assert!(
+            across_back + across_ahead < (behind + ahead) / 3.0,
+            "the foot read {:.0} mm across against {:.0} mm along",
+            (across_back + across_ahead) * 1000.0,
+            (behind + ahead) * 1000.0,
+        );
+
+        // A body that has not got the limb is asked and says so, rather than
+        // answering zero — which a caller would take for a foot with no length.
+        let quadruped =
+            Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
+        assert!(
+            quadruped
+                .extremity_extent(Limb::HindRight, Vec3::Z)
+                .is_some()
+        );
+        let legless =
+            Rig::from_skeleton(&HumanoidParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
+        assert_eq!(
+            legless.extremity_extent(Limb::HindRight, Vec3::ZERO),
+            Some((0.0, 0.0)),
+            "a direction with no direction in it has no span to report"
+        );
+    }
 
     #[test]
     fn joints_come_out_parent_before_child() {

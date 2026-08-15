@@ -1059,7 +1059,13 @@ where
             let offset = if gait.duty >= 1.0 {
                 Vec3::ZERO
             } else {
-                seated_offset(home, stride, phase, gait.duty, &ground)
+                // Along the stride, because a foot's length only matters in the
+                // direction it is travelling: a body shuffling sideways swings
+                // its feet across their own width, not along their length.
+                let foot = rig
+                    .extremity_extent(limb, stride.direction)
+                    .unwrap_or((0.0, 0.0));
+                seated_offset(home, foot, stride, phase, gait.duty, &ground)
             };
             Some((limb, phase, offset, home + offset))
         })
@@ -1411,7 +1417,14 @@ impl Walked {
 /// at the start of the flight where the obstacle is, not in the middle where a
 /// smoothstep puts it — and it is #259.
 ///
-fn seated_offset<F>(home: Vec3, stride: &Stride, phase: Phase, duty: f32, ground: &F) -> Vec3
+fn seated_offset<F>(
+    home: Vec3,
+    foot: (f32, f32),
+    stride: &Stride,
+    phase: Phase,
+    duty: f32,
+    ground: &F,
+) -> Vec3
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
@@ -1466,7 +1479,7 @@ where
     // covers its own stride plus everything the body walks past while it is in
     // the air, and probing only the stride's worth leaves the rest unlooked-at
     // at exactly the resolution the count is chosen to guarantee.
-    let probes = clearance_probes(stride, (arriving - leaving).length());
+    let probes = clearance_probes(foot, (arriving - leaving).length());
     for probe in 1..probes {
         let at = probe as f32 / probes as f32;
         let along = leaving.lerp(arriving, at);
@@ -1497,9 +1510,17 @@ where
 /// `across` is how far the flight actually goes, which is **not** the stride:
 /// the foot covers its own stride plus whatever the body walks past while it is
 /// in the air, so a duty of 0.6 puts a third as much ground again under it.
-fn clearance_probes(stride: &Stride, across: f32) -> usize {
-    let foot = stride.lift.max(1e-3);
-    ((across / foot).ceil() as usize).clamp(2, 16)
+///
+/// **`foot` is the foot, and for a long time it was not** (#259). This asked
+/// [`Stride::lift`] how long a foot is, which is the toe clearance of a swing
+/// and has no business answering: on the reference body it says 85 mm against a
+/// real 257, so the ground was probed three times as finely as the reasoning
+/// called for. Over-probing is the safe direction to be wrong in and it was
+/// still a proxy standing where a measurement belonged —
+/// [`Rig::extremity_extent`] is the measurement.
+fn clearance_probes(foot: (f32, f32), across: f32) -> usize {
+    let length = (foot.0 + foot.1).max(1e-3);
+    ((across / length).ceil() as usize).clamp(2, 16)
 }
 
 /// How far the toe rides above the sole at heel-strike, in radians.
@@ -3414,6 +3435,9 @@ mod tests {
         let gait = Gait::natural(&rig);
         let stride = Stride::for_body(&rig, 1.0);
         let home = home_of(&rig, Limb::HindLeft).expect("the biped has a hind left foot");
+        let foot = rig
+            .extremity_extent(Limb::HindLeft, stride.direction)
+            .expect("the biped has a foot with a length");
 
         // One stair per footfall, which is how a body meets a staircase and the
         // only spacing that puts a landing on a tread rather than part way up a
@@ -3433,6 +3457,7 @@ mod tests {
                     let origin = flight * t;
                     let offset = seated_offset(
                         home,
+                        foot,
                         &stride,
                         Phase::Swing(t),
                         gait.duty,
