@@ -1059,7 +1059,7 @@ where
             let offset = if gait.duty >= 1.0 {
                 Vec3::ZERO
             } else {
-                seated_offset(contact_offset(home, stride, phase), home, &ground)
+                seated_offset(home, stride, phase, &ground)
             };
             Some((limb, phase, offset, home + offset))
         })
@@ -1328,21 +1328,24 @@ impl Walked {
     }
 }
 
-/// Lift a contact's offset onto the ground actually beneath where it is going.
+/// Lift a contact's offset onto the ground it is travelling over, and over the
+/// ground it is travelling toward.
 ///
-/// **The whole of #221.** [`contact_offset`] describes a stride against the
-/// body's own rest ground plane: a stance foot slides backwards at that height
-/// and a swing foot arcs above it, and both end the step exactly where they
-/// began it vertically. On a slope that is wrong at both ends — uphill the arc
-/// drove the sole 38.9 mm into the surface it was travelling over, downhill it
-/// landed in the air and dropped the last centimetres at the plant.
+/// **The whole of #221, and then the whole of #245.** [`contact_offset`]
+/// describes a stride against the body's own rest ground plane: a stance foot
+/// slides backwards at that height and a swing foot arcs above it, and both end
+/// the step exactly where they began it vertically. On a slope that is wrong at
+/// both ends — uphill the arc drove the sole 38.9 mm into the surface it was
+/// travelling over, downhill it landed in the air and dropped the last
+/// centimetres at the plant.
+///
+/// # A stance is seated where it stands
 ///
 /// The probe is taken **under the goal at this instant** rather than blended
 /// between the step's two endpoints. The endpoint blend was the first design
 /// and it is the weaker one: it holds only for ground that is flat between the
 /// footfalls, so a foot still ploughs through anything it passes over on the
-/// way. Sampling where the foot actually is clears whatever is under it, and
-/// costs one probe per contact per frame.
+/// way. Sampling where the foot actually is clears whatever is under it.
 ///
 /// **The surface's own height, and nothing subtracted from it** (#255). This
 /// took the RISE between two probes — the surface under the goal minus the
@@ -1351,37 +1354,98 @@ impl Walked {
 /// moves the two contacts apart in height without moving either along its own
 /// stride, so the two probes return the same rise and the correction is zero:
 /// measured, a swinging foot went 52.2 mm through a 30 percent side-slope,
-/// which is the stance width times the camber, and the reading did not move by
-/// a millimetre under #250 or #254 because neither was the cause.
+/// which is the stance width times the camber.
 ///
-/// **What made a difference of probes look necessary**, since it was not an
-/// arbitrary choice: seating the goal as `offset.y += surface.y - home.y` reads
-/// a SURFACE minus a JOINT, and `home` is the extremity joint, which sits
-/// inside the foot about 32 mm above the sole. On level ground, where this
-/// should do nothing at all, that drove every contact 32 mm under — the swing
-/// went from clearing by 2.3 mm to scuffing by 30.1, and the pelvis sank half
-/// again as far. The bug was the `- home.y`, not the absolute probe: `offset.y
-/// += surface.y` leaves the goal at `stand_off` above the surface, which is
-/// exactly where [`super::plant_feet_of`] puts a planted contact, and is
-/// unchanged on level ground because the surface is zero there.
+/// # A swing is seated where it will LAND (#245)
 ///
-/// A probe that answers `None` at either end leaves the offset alone, which is
-/// the level behaviour this had before — so a caller with no terrain to offer
-/// loses nothing, and one whose terrain has holes in it gets the rest pose's
-/// height rather than a hole.
+/// **A smooth grade is the easy case, and seating a swing where it stands is
+/// only right while the ground is continuous.** A step is not. Across a riser
+/// the ground beneath the foot jumps, so a goal seated on it jumps too, and the
+/// foot arrives at the top of the step in a single frame — measured on a 100 mm
+/// staircase, the sole passed 98.0 mm through the riser and the goal moved
+/// 100.4 mm between two samples where a walking foot moves 10.
 ///
-/// The probe runs in whatever frame the caller poses in, because `home` and the
-/// offset are both in that frame. A caller whose body is somewhere else in the
-/// world must say so in the closure, exactly as [`super::plant_feet_of`]
-/// already requires.
-fn seated_offset<F>(offset: Vec3, home: Vec3, ground: &F) -> Vec3
+/// A penetration reading alone cannot see that, which is why
+/// `examples/walkaudit` grew a jump reading for it: the foot is above the
+/// surface at every sample, it simply got there impossibly fast.
+///
+/// So a swing is built from three probes instead of one:
+///
+/// * **where it takes off**, which is the ground the last stance left;
+/// * **where it will land**, which is the ground under the goal at the front of
+///   the step — the probe this issue is named for, and the one that makes the
+///   vertical continuous at both ends because the arc now *ends* at the height
+///   it is going to;
+/// * **the highest ground in between**, which sets how far the arc has to rise
+///   to clear whatever it is stepping over.
+///
+/// The middle probes are taken at the resolution of the body's own foot, on the
+/// reasoning that a foot cannot fall into a gap narrower than itself — see
+/// [`clearance_probes`]. That is a real limit and it is stated rather than
+/// hidden: ground that rises and falls again inside one foot length can be
+/// missed.
+///
+fn seated_offset<F>(home: Vec3, stride: &Stride, phase: Phase, ground: &F) -> Vec3
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
-    match ground(home + offset) {
-        Some(there) => offset + Vec3::Y * there.position.y,
-        None => offset,
+    let offset = contact_offset(home, stride, phase);
+    let beneath = |at: Vec3| ground(home + at).map_or(0.0, |there| there.position.y);
+
+    let Phase::Swing(t) = phase else {
+        // A stance is seated where it stands. It is on the ground; there is
+        // nothing to anticipate.
+        return offset + Vec3::Y * beneath(offset);
+    };
+
+    // The two ends of the swing, which are the last stance's departure and the
+    // next one's arrival — asked of `contact_offset` rather than assumed, so
+    // they follow the arc a turning body walks (#241) as readily as a straight
+    // one.
+    let leaving = contact_offset(home, stride, Phase::Swing(0.0));
+    let arriving = contact_offset(home, stride, Phase::Swing(1.0));
+    let (from, to) = (beneath(leaving), beneath(arriving));
+
+    // Smoothstep rather than a straight line, so the foot leaves and arrives
+    // with no vertical speed of its own and the whole of the climb happens in
+    // the middle of the swing, where the arc has already lifted it clear.
+    let base = from + (to - from) * smoothstep(t);
+
+    // How far above the higher of the two ends anything in between rises. The
+    // arc has to clear that as well as make its own toe clearance, so the two
+    // add: a step gets the lift a flat walk gets, on top of the step.
+    let mut over = 0.0f32;
+    let probes = clearance_probes(home, stride);
+    for probe in 1..probes {
+        let at = probe as f32 / probes as f32;
+        let along = leaving.lerp(arriving, at);
+        over = over.max(beneath(along) - from.max(to));
     }
+
+    let apex = stride.lift + over.max(0.0);
+    Vec3::new(
+        offset.x,
+        base + apex * (t * std::f32::consts::PI).sin(),
+        offset.z,
+    )
+}
+
+/// How many points along a swing are probed for what it has to clear.
+///
+/// **At the resolution of the body's own foot**, because a foot cannot fall
+/// into a gap narrower than itself: ground that rises and falls again within
+/// one foot length is ground the foot bridges. That makes the count a property
+/// of the body and the stride rather than a number, so a long stride on a small
+/// body probes more finely than a short one on a large.
+///
+/// **What this cannot see, said out loud**: a step whose tread is shorter than
+/// the foot is a step the foot spans, and one narrower than the spacing here
+/// can be stepped over without being cleared. At least two, so a swing always
+/// has one sample in the middle of it.
+fn clearance_probes(home: Vec3, stride: &Stride) -> usize {
+    let _ = home;
+    let foot = stride.lift.max(1e-3);
+    ((stride.length / foot).ceil() as usize).clamp(2, 16)
 }
 
 /// How far the toe rides above the sole at heel-strike, in radians.

@@ -85,6 +85,7 @@
 //! cargo run --example walkaudit -- --heading 180      # walking backwards (#242)
 //! cargo run --example walkaudit -- --heading 90       # strafing left
 //! cargo run --example walkaudit -- --headings         # the sweep, and the pop check
+//! cargo run --example walkaudit -- --step 0.15        # a staircase, not a slope (#245)
 //! ```
 //!
 //! [`Speed::of`]: symbios_avatar::anim::Speed::of
@@ -162,6 +163,13 @@ fn main() {
     // the speed and from the turn, so a diagonal is a heading rather than a
     // mode — see `Heading` (#242).
     let heading = number("--heading").unwrap_or(0.0);
+    // A staircase instead of a plane: the rise of each step, in metres, with
+    // the tread taken from the stride so the body meets one riser per step it
+    // takes. **A smooth grade is the easy case** — the terrain-aware swing #221
+    // added seats each goal on the ground beneath it, which is exactly right
+    // while that ground is continuous and is a cliff the moment it is not
+    // (#245).
+    let step = number("--step").unwrap_or(0.0);
     // Ablation: the gait's own placement, with neither the plant nor the roll
     // over it. **Which is the only way to tell whose skid a skid is** — the
     // roll deliberately moves the contact joint, sliding the foot so that
@@ -353,7 +361,24 @@ fn main() {
     // and a subtraction of the body's own height, and with no turn and no
     // travel it collapses to exactly the expression this had before, which is
     // why every reading above is unmoved.
-    let world_height = |at: Vec3| at.z * grade + at.x * camber;
+    // **One stair per FOOTFALL**, which is how a person takes stairs and the
+    // only spacing that puts each landing on a tread rather than part way up a
+    // riser. Taken from the body's travel per cycle divided by how many times
+    // it transfers support, which is `Gait::footfalls` — the same count
+    // `Speed::cycle_length` divides by, and taking the contact count instead
+    // would put a trotting body on half a stair.
+    let tread =
+        (Stride::for_body(rig, pace).length / gait.duty / gait.footfalls().max(1) as f32).max(1e-3);
+    let world_height = |at: Vec3| {
+        let plane = at.z * grade + at.x * camber;
+        if step == 0.0 {
+            plane
+        } else {
+            plane + (at.z / tread).floor() * step
+        }
+    };
+    // Each tread is flat, so the surface normal is the underlying plane's — a
+    // staircase is level underfoot and only its height jumps.
     let world_normal = Vec3::new(-camber, 1.0, -grade).normalize();
     let height = |u: f32, at: Vec3| world_height(into_world(u, at)) - world_height(frame(u).0);
     let measure = |u: f32, stride: &Stride| -> Moment {
@@ -604,6 +629,23 @@ fn main() {
     let mut skid_total = 0.0f32;
     let mut spin = 0.0f32;
     let mut stances = 0usize;
+    // **The reading a step needs and a slope never did.** Seating a goal on the
+    // ground beneath it is continuous while the ground is; across a riser it is
+    // a cliff, and the foot arrives at the top of it in one frame. A
+    // penetration reading cannot see that — the foot is above the surface at
+    // every sample, it just got there impossibly fast — so the jump is measured
+    // directly, as the furthest any contact moved between two samples of the
+    // sweep.
+    let mut jump = 0.0f32;
+    let mut jump_at = 0.0f32;
+    for pair in sweep.windows(2) {
+        for (before, after) in pair[0].planted.iter().zip(&pair[1].planted) {
+            if before.1.distance(after.1) > jump {
+                jump = before.1.distance(after.1);
+                jump_at = pair[1].cycle;
+            }
+        }
+    }
     for foot in 0..2 {
         let mut run: Vec<usize> = Vec::new();
         for at in 0..=sweep.len() {
@@ -811,6 +853,20 @@ fn main() {
         );
     }
 
+    println!(
+        "  jump:   the furthest a contact moved between two of the {} samples was {:.1} mm, \
+         at cycle {jump_at:.2} — {:.2} m/s at this body's cadence",
+        SWEEP * 2,
+        jump * 1000.0,
+        jump * SWEEP as f32 * cadence,
+    );
+    println!(
+        "          (a foot travels about a stride per stance, so a smooth walk lands near \
+         {:.1} mm a sample here. Much more is the goal being TELEPORTED — which is what \
+         seating it on the ground directly beneath it does the moment that ground has a step \
+         in it)",
+        stride.length / (SWEEP as f32 * gait.duty) * 1000.0,
+    );
     println!(
         "  gait:   duty {:.2}, both feet down {both_down:.2} of the cycle, airborne \
          {:.2} (reference: {})",
