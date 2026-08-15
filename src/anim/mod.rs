@@ -81,6 +81,7 @@ pub mod pose;
 pub mod pose_clip;
 pub mod speed;
 pub mod spring;
+pub mod swim;
 pub mod transition;
 pub mod turn;
 
@@ -101,5 +102,6 @@ pub use pose::{Pose, Posed};
 pub use pose_clip::{Curve, JointTrack, Play, PoseClip, Slot};
 pub use speed::Speed;
 pub use spring::{SpringConfig, Springs};
+pub use swim::{Swim, Swum};
 pub use transition::{Entry, Family, Frames};
 pub use turn::Turn;
