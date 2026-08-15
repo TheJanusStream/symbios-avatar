@@ -9,16 +9,17 @@
 //! # What a gesture is allowed to say
 //!
 //! [`Clip`] addresses **limbs**, by where their extremity should be, measured
-//! in multiples of that limb's own reach. That is enough for a gesture made of
-//! arms and not enough for one made of anything else, and the roster splits
-//! cleanly along that line:
+//! in multiples of that limb's own reach; a **gaze**, by the angle it turns
+//! through; and a **trunk**, by the angle it inclines through. Two of those
+//! three arrived because a gesture here needed them, and each is an angle
+//! because what it names is a rotation. The roster splits along that line:
 //!
-//! * expressible here and now — the **wave** and the **refusal**, which are
-//!   hands and only hands;
-//! * needing the head — the **nod**, and the gaze drop that finishes a bow;
-//! * needing the trunk — the **bow**;
-//! * needing the whole carriage — **sitting** and **sleeping**, which move the
-//!   pelvis and fold the legs rather than reaching anywhere.
+//! * hands and only hands — the **wave** and the **refusal**;
+//! * a gaze and only a gaze — the **nod**;
+//! * a trunk and a gaze — the **bow**;
+//! * the whole carriage — **sitting** and **sleeping**, which move the pelvis
+//!   and fold the legs rather than reaching or turning anywhere, and which are
+//!   the part of the roster this module cannot say yet.
 //!
 //! Two more of the roster are already procedural and want wiring rather than
 //! authoring: [`IdleConfig::talking`] and [`IdleConfig::listening`] are the
@@ -34,6 +35,15 @@
 //! that sweep. A gesture written in reaches should put the hand in the same
 //! place on every body, as a fraction of that body; a figure that drifts with
 //! stature is a goal that is normalised in name only.
+//!
+//! **Which spread depends on what the gesture is made of, and the sweep has to
+//! be able to see the part** (#248). A reach is judged by displacement, and the
+//! axis that moves a displacement is limb proportion. A nod is a rotation, so
+//! displacement says nothing about it — it is judged by the ANGLE it delivers,
+//! and the axes that move an angle are the neck's length and the head's size.
+//! Neither was in the sweep until a nod needed them, and across limb proportion
+//! alone the neck stays 0.250 of a body's height on every body: the reading
+//! would have been a flat zero for any authoring at all.
 
 use glam::Vec3;
 
@@ -145,6 +155,147 @@ pub const PUSH_READY: f32 = 0.14;
 /// Two. A refusal is emphatic and brief; a third push is a body arguing.
 pub const PUSHES: usize = 2;
 
+/// How far a nod drops the gaze, as a tangent — see [`Key::offset`].
+///
+/// **Derived from the joint it drives, not chosen for it.** A clip's gaze is
+/// the neck's and the head's, and [`gaze_config`] clamps that chain at 0.9
+/// radians because that is about where cervical flexion runs out. A nod of
+/// agreement is a third of the neck's own range — clear at a distance, and
+/// nowhere near the end stop, so it reads as a nod rather than as a body
+/// running out of neck. That is 0.3 radians, or 17.2 degrees, and this is its
+/// tangent because a gaze key's offset is one.
+///
+/// A number with its argument written down: if [`gaze_config`]'s limit moves,
+/// this is wrong, and `a_nod_is_a_third_of_the_neck_it_has` says so.
+///
+/// [`gaze_config`]: super::clip::gaze_config
+/// [`Key::offset`]: super::Key::offset
+pub const NOD_DIP: f32 = 0.309_336_2;
+
+/// How many times a nod dips.
+///
+/// Two. One dip is a twitch that a viewer half-catches, and three is a body
+/// agreeing rather too hard — the same argument [`PUSHES`] makes for the
+/// refusal, one gesture over.
+pub const NODS: usize = 2;
+
+/// Share of one dip spent going down, the rest coming back up.
+///
+/// **Under a half, because a nod falls faster than it recovers.** The drop is
+/// the gesture and the return is the body getting ready to make it again; even
+/// timing reads as a metronome rather than as agreement.
+pub const NOD_FALL: f32 = 0.45;
+
+/// A nod: the gaze dips and comes back level, twice.
+///
+/// **A rotation rather than a place, and the whole of the gesture is in the
+/// angle** — see [`Target::Gaze`] for the measurement that settled that, and
+/// [`NOD_DIP`] for where the angle comes from. Nothing else moves: the trunk
+/// staying out of it is what keeps this a nod rather than a small bow, and it
+/// is [`gaze_config`]'s convention rather than anything written here.
+///
+/// **Only where there is a head to nod.** A body without one resolves to
+/// nothing and is left alone, the same per-item refusal [`Target::Grasper`]
+/// makes for a body with no free hand.
+///
+/// Not looping, and both ends are level, so a caller can play it over anything
+/// and get the body's own gaze back.
+///
+/// [`gaze_config`]: super::clip::gaze_config
+/// [`Key::offset`]: super::Key::offset
+#[must_use]
+pub fn nod() -> Clip {
+    let dip = Vec3::new(0.0, -NOD_DIP, 0.0);
+    let unit = 1.0 / NODS as f32;
+    let mut keys = vec![Key::new(0.0, Vec3::ZERO)];
+    for step in 0..NODS {
+        let base = step as f32 * unit;
+        keys.push(Key::new(base + unit * NOD_FALL, dip));
+        keys.push(Key::new(base + unit, Vec3::ZERO));
+    }
+    Clip::new([Track::new(Target::Gaze, keys)])
+}
+
+/// How far a bow inclines the trunk, as a tangent — see [`Key::offset`].
+///
+/// **Thirty degrees, and this one is a social number rather than an anatomical
+/// one.** There is nothing in a body that says how deep a bow is: lumbar
+/// flexion runs past 60 degrees and a body could fold to its knees. What sets
+/// it is what the gesture means — the band runs from a 15 degree nod of the
+/// whole body, which is an acknowledgement in passing, to a 45 degree bow,
+/// which is an apology — and 30 is the ordinary respectful one in the middle of
+/// it. Saying that plainly is better than deriving it from a joint that does
+/// not constrain it.
+pub const BOW_PITCH: f32 = 0.577_350_3;
+
+/// Where a bow looks, as a tangent below the horizon — an absolute pitch, not
+/// an increment.
+///
+/// **Stated in the world rather than against the trunk, and that is the one
+/// thing this gesture had to decide for itself.** A trunk pitched at a single
+/// hinge above a pelvis that cannot move turns everything above that hinge
+/// further than it inclines the chord — 54.9 degrees of segment for a 30 degree
+/// chord, measured. That is fine for the gait, whose lean is five degrees and
+/// which takes the whole of it back off at the neck anyway, and it is not fine
+/// for a head: carried, the head of a 30 degree bow ends up looking 63 degrees
+/// down, which is a body inspecting its own shoes.
+///
+/// So the bow's gaze track is [`Space::World`] and says where the head points
+/// rather than how much further than the trunk it turns. Thirty-five degrees:
+/// five past the trunk's own inclination, so the neck contributes a little and
+/// the head is neither slack nor held insolently level. It is the same job
+/// [`super::gait`]'s lean does with its neck counter-rotation, said as a goal
+/// instead of as a subtraction.
+///
+/// [`Space::World`]: super::Space::World
+pub const BOW_GAZE: f32 = 0.700_207_5;
+
+/// Share of a bow spent going down, and the same again coming up.
+///
+/// **The rest is the hold, and the hold is what makes it a bow.** A body that
+/// pitches and immediately straightens has stumbled; the pause at the bottom is
+/// the whole of the courtesy. At 0.3 either end the hold is the middle 40 per
+/// cent of the gesture.
+pub const BOW_FALL: f32 = 0.3;
+
+/// A bow: the trunk pitches forward, holds, and comes back up, with the gaze
+/// dropping a little further than the trunk carries it.
+///
+/// **Two tracks for the two parts, and neither is a limb** — the trunk's is
+/// [`Target::Trunk`] and the head's is [`Target::Gaze`], which is the nod's
+/// answer inherited whole (#248). [`Clip::apply`] runs the trunk before the
+/// gaze whatever order they are written in, so the gaze is aimed from a body
+/// that has already bowed.
+///
+/// **The gaze is stated in the world, not against the bowed trunk**, which is
+/// the one thing the bow had to decide that the nod did not — see [`BOW_GAZE`].
+///
+/// **The arms are deliberately not addressed.** Left alone they are carried
+/// round by the chest and stay flat against the thighs, which is what a formal
+/// standing bow does with them; holding them vertical instead would be a
+/// different gesture and would need a goal that tracked the moving shoulder.
+///
+/// Not looping, and both ends are the body's own rest pose.
+///
+/// [`Key::offset`]: super::Key::offset
+#[must_use]
+pub fn bow() -> Clip {
+    let pitched = Vec3::new(0.0, 0.0, BOW_PITCH);
+    let dropped = Vec3::new(0.0, -BOW_GAZE, 0.0);
+    let keys = |held: Vec3| {
+        vec![
+            Key::new(0.0, Vec3::ZERO),
+            Key::new(BOW_FALL, held),
+            Key::new(1.0 - BOW_FALL, held),
+            Key::new(1.0, Vec3::ZERO),
+        ]
+    };
+    Clip::new([
+        Track::new(Target::Trunk, keys(pitched)),
+        Track::new(Target::Gaze, keys(dropped)).in_world(),
+    ])
+}
+
 /// A greeting: one hand raised and waved, and put down again.
 ///
 /// **One hand, and only where there is a hand free to raise** — see
@@ -237,39 +388,115 @@ pub fn by_name(name: &str) -> Option<Clip> {
     match name {
         "Greeting" => Some(wave(Limb::ForeRight)),
         "Reject" => Some(reject()),
+        "Head Nod" => Some(nod()),
+        "Bow" => Some(bow()),
         _ => None,
     }
 }
 
 /// The roster this module covers, in the baked set's own names.
-pub const ROSTER: &[&str] = &["Greeting", "Reject"];
+pub const ROSTER: &[&str] = &["Greeting", "Reject", "Head Nod", "Bow"];
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::anim::Pose;
+    use crate::anim::clip::gaze_config;
     use crate::plan::{BodyPlan, Composites, HumanoidParams, QuadrupedParams, Zone};
     use crate::rig::Rig;
 
-    /// The bodies every gesture is judged on: a stature in metres and a limb
-    /// length against the torso.
+    /// The bodies every gesture is judged on: a stature in metres, then limb
+    /// length, neck length and head size against it.
     ///
-    /// **The limb proportion is the half that tests anything.** The plan scales
-    /// a body uniformly with stature, so a goal in any unit lands in the same
-    /// relative place by arithmetic; only a change of proportion moves the
-    /// shoulder, the reach and the hand's rest position against each other.
-    const BODIES: [(f32, f32); 4] = [(1.2, 0.0), (2.2, 0.0), (1.7, -1.0), (1.7, 1.0)];
+    /// **Proportion is the half that tests anything.** The plan scales a body
+    /// uniformly with stature, so a goal in any unit lands in the same relative
+    /// place by arithmetic; only a change of proportion moves the parts of a
+    /// body against each other.
+    ///
+    /// **And which proportion depends on what the gesture is made of** (#248).
+    /// `limb_length` moves the shoulder, the reach and the hand's rest position
+    /// — and moves the head by nothing at all: across its whole range the neck
+    /// stays 0.250 of a body's height and the head sits at 0.955 of it, to
+    /// three figures. A nod tested on stature and limbs alone reads a flat
+    /// spread whatever it is written in. `neck_length` and `head_size` are the
+    /// axes a rotation can be wrong on.
+    const BODIES: [(f32, f32, f32, f32); 8] = [
+        (1.2, 0.0, 0.0, 0.0),
+        (2.2, 0.0, 0.0, 0.0),
+        (1.7, -1.0, 0.0, 0.0),
+        (1.7, 1.0, 0.0, 0.0),
+        (1.7, 0.0, -1.0, 0.0),
+        (1.7, 0.0, 1.0, 0.0),
+        (1.7, 0.0, 0.0, -1.0),
+        (1.7, 0.0, 0.0, 1.0),
+    ];
 
     /// How many points of a gesture the tests sample.
     const SWEEP: usize = 60;
 
-    fn body(height: f32, limbs: f32) -> Rig {
+    fn body(height: f32, limbs: f32, neck: f32, head: f32) -> Rig {
         let params = HumanoidParams {
             height,
             limb_length: limbs,
+            neck_length: neck,
+            head_size: head,
             ..HumanoidParams::default()
         };
         Rig::from_skeleton(&params.skeleton(&Composites::default())).expect("the plan builds a rig")
+    }
+
+    /// How far below its rest facing a gesture ever pitches the head, in
+    /// degrees, and how far any chest joint pitches with it.
+    ///
+    /// **Two readings and not one, because what separates a nod from a bow is
+    /// which joints did it.** The head's own pitch cannot tell them apart: a
+    /// head carried down by a chest is pointing exactly where a nodded one is.
+    ///
+    /// The chest's is taken as a magnitude — a chest that pitched BACK to hold
+    /// the head level would be a posture too — while the head's is signed, so a
+    /// gesture that lifts the head does not read as one that dropped it.
+    ///
+    /// **Sampled on the clip's own key times as well as on a grid, and the
+    /// grid alone reported a defect that was not there.** These gestures
+    /// interpolate linearly, so a peak sits exactly ON a key; the nod's are at
+    /// 0.225 and 0.725, which a 60-point grid straddles. It read the quadruped
+    /// nodding 16.6 degrees of an asked-for 17.19 and the shortfall looked like
+    /// the gaze falling short on a long neck. It was the ruler's phase — the
+    /// same reading the gait's own audit was caught making.
+    fn dipped(rig: &Rig, clip: &Clip) -> (f32, f32) {
+        let head = *rig
+            .in_zone(Zone::Head)
+            .first()
+            .expect("the plan builds a head");
+        let chest = rig.in_zone(Zone::Chest);
+        let rested = Pose::rest(rig).forward(rig).rotations;
+        let pitch = |from: Vec3, to: Vec3| {
+            let angle = |run: Vec3| run.y.atan2(run.z.hypot(run.x));
+            (angle(from) - angle(to)).to_degrees()
+        };
+        let times = (0..=SWEEP).map(|frame| frame as f32 / SWEEP as f32).chain(
+            clip.tracks
+                .iter()
+                .flat_map(|track| &track.keys)
+                .map(|key| key.time),
+        );
+        times.fold((0.0f32, 0.0f32), |most, time| {
+            let mut pose = Pose::rest(rig);
+            clip.apply(rig, &mut pose, time);
+            let turned = pose.forward(rig).rotations;
+            let facing = |joint: usize| {
+                pitch(
+                    rested[joint] * crate::rig::landmark::FORWARD,
+                    turned[joint] * crate::rig::landmark::FORWARD,
+                )
+            };
+            (
+                most.0.max(facing(head)),
+                chest
+                    .iter()
+                    .fold(most.1, |most, &joint| most.max(facing(joint).abs())),
+            )
+        })
     }
 
     /// How far a gesture moves the hand at its furthest, as a fraction of the
@@ -323,7 +550,9 @@ mod tests {
         for clip in [wave(Limb::ForeRight), reject()] {
             let reached: Vec<Vec3> = BODIES
                 .iter()
-                .map(|&(height, limbs)| furthest(&body(height, limbs), &clip))
+                .map(|&(height, limbs, neck, head)| {
+                    furthest(&body(height, limbs, neck, head), &clip)
+                })
                 .collect();
             let spread = |pick: fn(Vec3) -> f32| {
                 let (low, high) = reached.iter().fold((f32::MAX, f32::MIN), |range, at| {
@@ -360,9 +589,9 @@ mod tests {
         // Measured on the first draft, which raised the hand 1.15 arm-reaches
         // and carried it outward as it rose: the goal sat 63 mm outside the
         // sphere and half the frames of the gesture strained, on every body.
-        for clip in [wave(Limb::ForeRight), reject()] {
-            for &(height, limbs) in &BODIES {
-                let rig = body(height, limbs);
+        for clip in [wave(Limb::ForeRight), reject(), nod(), bow()] {
+            for &(height, limbs, neck, head) in &BODIES {
+                let rig = body(height, limbs, neck, head);
                 let strained: usize = (0..=SWEEP)
                     .map(|frame| {
                         let mut pose = Pose::rest(&rig);
@@ -384,10 +613,16 @@ mod tests {
         // caller can play one over anything and get the body back. A gesture
         // that ends with the arm still up leaves the body in a pose it never
         // chose, and a caller blending out of it hides that by accident.
-        for clip in [wave(Limb::ForeLeft), wave(Limb::ForeRight), reject()] {
+        for clip in [
+            wave(Limb::ForeLeft),
+            wave(Limb::ForeRight),
+            reject(),
+            nod(),
+            bow(),
+        ] {
             assert!(returns_to_rest(&clip));
-            for &(height, limbs) in &BODIES {
-                let rig = body(height, limbs);
+            for &(height, limbs, neck, head) in &BODIES {
+                let rig = body(height, limbs, neck, head);
                 let rest = Pose::rest(&rig).forward(&rig).positions;
                 for time in [0.0, 1.0] {
                     let mut pose = Pose::rest(&rig);
@@ -433,9 +668,9 @@ mod tests {
         // across the whole sweep. The zero bound is honest for the two gestures
         // that exist: both keep the whole upper arm hanging, so an elbow even
         // AT shoulder height means the pole has stopped doing its work.
-        for clip in [wave(Limb::ForeRight), reject()] {
-            for &(height, limbs) in &BODIES {
-                let rig = body(height, limbs);
+        for clip in [wave(Limb::ForeRight), reject(), nod(), bow()] {
+            for &(height, limbs, neck, head) in &BODIES {
+                let rig = body(height, limbs, neck, head);
                 let addressed: Vec<Limb> = clip
                     .tracks
                     .iter()
@@ -469,9 +704,9 @@ mod tests {
         // the minimal arc leaves wherever the arm's configuration happens to
         // put it — measured, palms correctly forward with the fingers pointing
         // at each other, a body presenting its chest.
-        for clip in [wave(Limb::ForeRight), reject()] {
-            for &(height, limbs) in &BODIES {
-                let rig = body(height, limbs);
+        for clip in [wave(Limb::ForeRight), reject(), nod(), bow()] {
+            for &(height, limbs, neck, head) in &BODIES {
+                let rig = body(height, limbs, neck, head);
                 let addressed: Vec<Limb> = clip
                     .tracks
                     .iter()
@@ -505,6 +740,329 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// How far a gesture ever inclines the trunk's chord off where it rests,
+    /// in degrees, and how far the shoulder girdle itself turns.
+    ///
+    /// **Two readings, because a one-hinge trunk makes them different
+    /// numbers.** The pelvis cannot rotate — it carries the legs out from under
+    /// the footing solve — so the joint above it swings a segment, and the
+    /// chord from pelvis to girdle is a length-weighted mix of that turned
+    /// segment and a stub that stayed put. It arrives at a fraction of the
+    /// angle applied: 30 degrees of chord costs 54.9 degrees of girdle on the
+    /// default body. The chord is the quantity the gesture is stated in and the
+    /// girdle is what the head would inherit if anything let it.
+    fn inclined(rig: &Rig, clip: &Clip) -> (f32, f32) {
+        let girdle = rig
+            .in_zone(Zone::Neck)
+            .first()
+            .and_then(|&neck| rig.joints[neck].parent)
+            .expect("the plan hangs a neck off a girdle");
+        let root = rig
+            .joints
+            .iter()
+            .position(|joint| joint.parent.is_none())
+            .expect("a rig has a root");
+        let resting = Pose::rest(rig).forward(rig);
+        let pitch = |from: Vec3, to: Vec3| {
+            let angle = |run: Vec3| run.y.atan2(run.z.hypot(run.x));
+            (angle(from) - angle(to)).to_degrees()
+        };
+        let times = (0..=SWEEP).map(|frame| frame as f32 / SWEEP as f32).chain(
+            clip.tracks
+                .iter()
+                .flat_map(|track| &track.keys)
+                .map(|key| key.time),
+        );
+        times.fold((0.0f32, 0.0f32), |most, time| {
+            let mut pose = Pose::rest(rig);
+            clip.apply(rig, &mut pose, time);
+            let posed = pose.forward(rig);
+            (
+                most.0.max(pitch(
+                    resting.positions[girdle] - resting.positions[root],
+                    posed.positions[girdle] - posed.positions[root],
+                )),
+                most.1.max(pitch(
+                    resting.rotations[girdle] * crate::rig::landmark::FORWARD,
+                    posed.rotations[girdle] * crate::rig::landmark::FORWARD,
+                )),
+            )
+        })
+    }
+
+    #[test]
+    fn a_bow_inclines_the_trunk_it_asked_for_on_every_body() {
+        // **The chord, not the rotation that delivers it** — the two are the
+        // same number only on a body whose pelvis has no height, and the gait
+        // found that out by writing a constant against the wrong one (#223).
+        // `trunk_angle_for` inverts the relation and the bow asks it for the
+        // same thing the walk does, so there is one description of how a trunk
+        // pitches in this crate rather than two that drift.
+        //
+        // Reintroduced by putting the asked-for angle straight at the hinge
+        // instead of solving for it: the chord arrives at 16.4 degrees of the
+        // 30 asked, and drifts by 1.5 across limb proportion because the stub
+        // below the hinge is a different share of the trunk on every body.
+        let wanted = BOW_PITCH.atan().to_degrees();
+        let chords: Vec<f32> = BODIES
+            .iter()
+            .map(|&(height, limbs, neck, head)| {
+                inclined(&body(height, limbs, neck, head), &bow()).0
+            })
+            .collect();
+        for (body, chord) in BODIES.iter().zip(&chords) {
+            assert!(
+                (chord - wanted).abs() < 0.1,
+                "{body:?} asked for a {wanted:.2} degree bow and made a {chord:.2} degree one",
+            );
+        }
+    }
+
+    #[test]
+    fn a_bow_does_not_look_at_its_own_shoes() {
+        // **The gesture the trunk track cannot finish, and the reason the bow's
+        // gaze is stated in the world.** A trunk pitched at one hinge turns
+        // everything above it by the girdle's 54.9 degrees rather than the
+        // chord's 30, and a head carried by that inherits the whole of it. The
+        // first cut wrote the gaze as an increment on the bowed trunk, the way
+        // the nod's is written on the body, and asked for a small extra drop:
+        // 63.5 degrees. Asking today's number that way gives 89.9, which is a
+        // body looking straight at the ground.
+        //
+        // Stated absolutely it is 35 degrees on every body: five past the
+        // trunk's own inclination, so the neck contributes and the head is
+        // neither slack nor held level. Reintroduced by dropping `in_world`
+        // from the track.
+        let wanted = BOW_GAZE.atan().to_degrees();
+        for &(height, limbs, neck, head) in &BODIES {
+            let rig = body(height, limbs, neck, head);
+            let (dip, girdle) = (dipped(&rig, &bow()).0, inclined(&rig, &bow()).1);
+            assert!(
+                (dip - wanted).abs() < 0.5,
+                "a {height} m body bowed with its head {dip:.2} degrees down, not {wanted:.2},                  while its girdle turned {girdle:.2}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_clip_pitches_its_trunk_before_it_aims_its_gaze() {
+        // **Both parts of a bow are measured in a frame the other one moves**,
+        // so one of them has to go first and it cannot be whichever the author
+        // happened to type first. `Clip::apply` sorts: trunk, then limbs, then
+        // gaze.
+        //
+        // The guard is that writing the bow backwards changes nothing. Without
+        // the sort it changes a great deal — the gaze aims the head 35 degrees
+        // down and the trunk then carries it another 54.9, to 90.
+        let rig = body(1.7, 0.0, 0.0, 0.0);
+        let forwards = bow();
+        let mut backwards = forwards.clone();
+        backwards.tracks.reverse();
+        for frame in 0..=SWEEP {
+            let time = frame as f32 / SWEEP as f32;
+            let (front, back) = (forwards.pose(&rig, time), backwards.pose(&rig, time));
+            let worst = front
+                .forward(&rig)
+                .positions
+                .iter()
+                .zip(back.forward(&rig).positions)
+                .fold(0.0f32, |most, (a, b)| most.max(a.distance(b)));
+            assert!(
+                worst < 1e-5,
+                "the bow written backwards posed the body {:.1} mm differently at time {time}",
+                worst * 1000.0,
+            );
+        }
+    }
+
+    #[test]
+    fn a_nod_is_the_same_angle_on_every_neck() {
+        // **The same claim as `a_gesture_lands_in_the_same_place_on_every_body`
+        // and it cannot be asked the same way** (#248). That one reads a
+        // displacement, and a nod displaces the head by 12 to 22 mm — an
+        // artefact of where the neck's joints happen to sit, not the gesture.
+        // What a nod IS is the angle, so the angle is what the spread is taken
+        // of.
+        //
+        // Measured against the alternative this rejected: a nod written as a
+        // place — a goal the neck chain solves toward, the way a limb's contact
+        // is — put the same authored displacement at 25.7 degrees on a
+        // big-headed body and 39.9 on a small-headed one, a spread of 14.2. In
+        // its own unit that authoring is exact, holding the head's travel to
+        // 0.0000 of a body height while this one varies; each normalisation
+        // holds constant the quantity it is stated in, and only one of the two
+        // is what the gesture means.
+        //
+        // The bug this catches in the shipped form is the same mistake wearing
+        // the format's own clothes: consulting `Scale` for a gaze. Scaled by
+        // the arm's reach instead of cancelling, the nod runs 4.4 degrees on
+        // the short-limbed body and 6.2 on the long-limbed one.
+        let angles: Vec<f32> = BODIES
+            .iter()
+            .map(|&(height, limbs, neck, head)| dipped(&body(height, limbs, neck, head), &nod()).0)
+            .collect();
+        let (low, high) = angles.iter().fold((f32::MAX, f32::MIN), |range, at| {
+            (range.0.min(*at), range.1.max(*at))
+        });
+        // **Half a degree, and the true figure is 0.07.** What is left is the
+        // gaze aiming from the head's posed position at a point pinned to its
+        // rest one, which moves by a hair as the neck bends; the format's own
+        // contribution is nothing.
+        assert!(
+            high - low < 0.5,
+            "the nod ran {low:.2} to {high:.2} degrees across the sweep",
+        );
+        // And it is the angle that was asked for, not merely a consistent one:
+        // a gesture that agreed with itself at the wrong depth on every body
+        // would pass the spread and still be the wrong gesture.
+        let wanted = NOD_DIP.atan().to_degrees();
+        assert!(
+            (low - wanted).abs() < 0.5,
+            "the nod asked for {wanted:.2} degrees and delivered {low:.2}",
+        );
+    }
+
+    #[test]
+    fn a_nod_is_a_third_of_the_neck_it_has() {
+        // **A tuned constant is a number with a hidden argument**, and this is
+        // [`NOD_DIP`]'s written down. It is not a depth that looked right: it
+        // is a third of the range [`gaze_config`] clamps a clip's gaze at, in
+        // the tangent a gaze key is stated in. Move that limit and this becomes
+        // a different fraction of a different neck without a line of it
+        // changing, which is exactly how the elbow constant went wrong in #223.
+        let third = (gaze_config().limit / 3.0).tan();
+        assert!(
+            (NOD_DIP - third).abs() < 1e-4,
+            "the nod dips {NOD_DIP}, a third of the neck's range is {third}",
+        );
+    }
+
+    #[test]
+    fn a_nod_does_not_bow() {
+        // **What separates a nod from a bow is which joints made it**, and the
+        // head's own pitch cannot tell them apart — a head carried down by a
+        // leaning chest points exactly where a nodded one does. So the chest is
+        // read separately, and a nod's answer is that it did nothing.
+        //
+        // This is a convention rather than a field, and the convention is
+        // [`gaze_config`]'s leading share of zero. Reintroduced by handing the
+        // gaze `GazeConfig::default` instead, whose 0.25 chest share is the
+        // sensible one for looking at something on purpose: 3.5 degrees of the
+        // 17.2 goes into the chest, a quarter of the gesture spent bowing.
+        for &(height, limbs, neck, head) in &BODIES {
+            let rig = body(height, limbs, neck, head);
+            let (dip, chest) = dipped(&rig, &nod());
+            assert!(
+                chest < 0.5,
+                "a {height} m body's chest pitched {chest:.2} degrees of a {dip:.2} degree nod",
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_that_walks_on_its_hands_still_nods() {
+        // **The refusal is per item, and this is the item that does not
+        // refuse.** A quadruped has no hand free to wave and every reason to
+        // have a head, so the nod is the one gesture of the three that lands on
+        // it — which is the whole point of naming parts semantically rather
+        // than deciding per body plan.
+        //
+        // The guard is worth its line because the cheap way to write a gaze
+        // track would have been to hang it off a limb the way every other track
+        // is, and a quadruped's front limb is a leg.
+        let quadruped =
+            Rig::from_skeleton(&QuadrupedParams::default().skeleton(&Composites::default()))
+                .expect("the plan builds a quadruped");
+        let (dip, chest) = dipped(&quadruped, &nod());
+        let wanted = NOD_DIP.atan().to_degrees();
+        // A fifth of a degree, and the tenth of it that is not zero is
+        // [`GAZE_AHEAD`]'s measured residual on exactly this body.
+        assert!(
+            (dip - wanted).abs() < 0.2,
+            "a quadruped asked for a {wanted:.2} degree nod and made a {dip:.2} degree one",
+        );
+        assert!(
+            chest < 0.5,
+            "a quadruped's chest pitched {chest:.2} degrees"
+        );
+    }
+
+    #[test]
+    fn a_gaze_is_measured_in_neither_of_the_units_a_track_can_name() {
+        // **A rotation has no unit to be normalised in**, so [`Scale`] has
+        // nothing to say about a gaze track and is not consulted for one. The
+        // guard is that saying either thing changes nothing at all — the same
+        // nod, to the last bit, whichever unit the track claims.
+        //
+        // Written as a test rather than as a type because the alternative is a
+        // third `Scale` arm that multiplies by one, and a builder method a
+        // gesture is free to call is better answered than forbidden.
+        let rig = body(1.7, 0.0, 0.0, 0.0);
+        let plain = nod();
+        let claimed = Clip::new(
+            plain
+                .tracks
+                .iter()
+                .cloned()
+                .map(Track::on_body)
+                .collect::<Vec<_>>(),
+        );
+        for frame in 0..=SWEEP {
+            let time = frame as f32 / SWEEP as f32;
+            assert_eq!(
+                plain.pose(&rig, time).rotations,
+                claimed.pose(&rig, time).rotations,
+                "the nod changed when its track claimed a unit, at time {time}",
+            );
+        }
+
+        // The trunk ignores the space as well as the unit, and for a narrower
+        // reason: its inclination is solved from the rig's rest chord, so there
+        // is no posed frame to hold it against. It composes onto whatever lean
+        // the body already carries, which is [`Space::Body`]'s answer, and a
+        // track that says otherwise gets it anyway rather than getting silence
+        // in some third form.
+        let trunk = Clip::new([Track::new(Target::Trunk, bow().tracks[0].keys.clone())]);
+        let dressed = Clip::new([Track::new(Target::Trunk, bow().tracks[0].keys.clone())
+            .on_body()
+            .in_world()]);
+        for frame in 0..=SWEEP {
+            let time = frame as f32 / SWEEP as f32;
+            assert_eq!(
+                trunk.pose(&rig, time).rotations,
+                dressed.pose(&rig, time).rotations,
+                "the bow's trunk changed when its track claimed a unit and a space, at {time}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_built_to_stand_on_all_fours_does_not_bow() {
+        // **The bow's own per-item refusal, and it is read off the body rather
+        // than off the plan that built it.** Inclining a trunk off vertical is
+        // only a movement a body has if its trunk stands up: a quadruped's rest
+        // chord lies 88 degrees off vertical, and the solve that finds the
+        // hinge angle for a wanted inclination goes through the pitch of that
+        // chord, which for a horizontal body is `atan2` of a vertical run it
+        // does not have. Reintroduced by dropping the check, a 30 degree bow
+        // threw joints 690 mm across a body 580 mm tall.
+        //
+        // **The gaze half is not refused and should not be**, which is the
+        // point of refusing per track. A quadruped can look down; what it
+        // cannot do is fold. Whether a deep head-drop is an acceptable
+        // quadruped bow is #248's deferred quadruped clause, and this guard is
+        // about the trunk not breaking either way.
+        let quadruped =
+            Rig::from_skeleton(&QuadrupedParams::default().skeleton(&Composites::default()))
+                .expect("the plan builds a quadruped");
+        let (chord, girdle) = inclined(&quadruped, &bow());
+        assert!(
+            chord.abs() < 0.01 && girdle.abs() < 0.01,
+            "a quadruped's trunk pitched {chord:.2} degrees at the chord and {girdle:.2} at the \
+             girdle",
+        );
     }
 
     #[test]

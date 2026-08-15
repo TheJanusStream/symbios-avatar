@@ -2109,15 +2109,38 @@ pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
         return;
     }
 
-    let Some(&neck) = rig.in_zone(Zone::Neck).first() else {
+    let Some((neck, applied)) = incline_trunk(rig, pose, toward, wanted) else {
         return;
     };
-    let Some(girdle) = rig.joints[neck].parent else {
-        return;
-    };
+    pose.rotations[neck] *= applied.inverse();
+}
+
+/// Pitches the whole trunk to an inclination of `wanted` radians, leaning
+/// `toward` — a horizontal direction — and hands back the neck joint and the
+/// rotation put at the hinge.
+///
+/// **The lean's anatomy without the lean's opinion about the head.** [`lean`]
+/// takes the pitch back off again at the neck, because a body walking faster
+/// should look where it is going rather than at its own feet. A bow is the
+/// gesture where that is exactly wrong: the head goes down WITH the trunk, and
+/// what happens to the gaze afterwards is the bow's own gaze track's business
+/// (#248). So the counter-rotation is the caller's and everything under it is
+/// shared, which is the only way there is one description of how a trunk
+/// pitches rather than two that drift apart.
+///
+/// **Composed rather than assigned**, so this stacks onto whatever lean or
+/// twist the pose already carries.
+pub(super) fn incline_trunk(
+    rig: &Rig,
+    pose: &mut Pose,
+    toward: Vec3,
+    wanted: f32,
+) -> Option<(usize, Quat)> {
+    let &neck = rig.in_zone(Zone::Neck).first()?;
+    let girdle = rig.joints[neck].parent?;
     let spine = spine_to(rig, girdle);
     if spine.is_empty() {
-        return;
+        return None;
     }
     // The axis that carries `+Y` toward `toward`. For a pure forward lean that
     // is `+X`, and a positive rotation about it carries `+Y` toward `+Z` —
@@ -2127,15 +2150,14 @@ pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
     // product rather than naming it is what lets the bank in without a second
     // convention to keep straight.
     let axis = Vec3::Y.cross(toward);
-    let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
-        return;
-    };
+    let root = rig.joints.iter().position(|joint| joint.parent.is_none())?;
     let hinge = spine[0];
     let below = rig.joints[hinge].position - rig.joints[root].position;
     let above = rig.joints[girdle].position - rig.joints[hinge].position;
     let turn = trunk_angle_for(below, above, wanted, axis, toward);
-    pose.rotations[hinge] *= Quat::from_axis_angle(axis, turn);
-    pose.rotations[neck] *= Quat::from_axis_angle(axis, -turn);
+    let applied = Quat::from_axis_angle(axis, turn);
+    pose.rotations[hinge] *= applied;
+    Some((neck, applied))
 }
 
 /// Where on its own path the body will be `cycles` from now, in body space, at

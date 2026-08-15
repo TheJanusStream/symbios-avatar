@@ -31,10 +31,12 @@
 
 use glam::{Quat, Vec3};
 
+use super::gait::incline_trunk;
+use super::gaze::{GazeConfig, look_at};
 use super::ground::solve_contact_toward;
 use super::pose::Pose;
 use crate::plan::{Limb, Zone};
-use crate::rig::Rig;
+use crate::rig::{Rig, landmark};
 
 /// Which parts of a body a track addresses.
 ///
@@ -67,6 +69,49 @@ pub enum Target {
     /// track that finds no limb does nothing, and a clip of nothing but such
     /// tracks leaves the body alone.
     Grasper(Limb),
+    /// Where the body looks — the only part of this format that is not a limb.
+    ///
+    /// **A head is addressed as a rotation, not as a place, and that was
+    /// measured rather than assumed** (#248). Written as a place — a goal the
+    /// neck chain solves toward, the way a limb's contact is — the same
+    /// authored displacement delivered a 26 degree nod on a big-headed body
+    /// and a 40 degree one on a small-headed body, a drift wider than half the
+    /// gesture; written as a gaze it is the same nod on every body in the
+    /// sweep, to 0.06 of a degree. Each normalisation holds constant exactly
+    /// the quantity it is stated in, and what a nod MEANS is its angle.
+    ///
+    /// So a gaze key's offset is neither reaches nor body heights but a
+    /// **tangent** — see [`Key::offset`] — and [`Scale`] is not consulted for
+    /// one. The turn itself is [`super::look_at`]'s, which already spreads a
+    /// gaze down the chain a body actually has and already clamps it at a
+    /// neck's limit; see [`gaze_config`] for the one convention this adds.
+    ///
+    /// Resolves to no limb, because it drives none. A body with no head is the
+    /// refusal, and it needs no special path: the track finds nothing to aim
+    /// and leaves the body alone.
+    Gaze,
+    /// How the trunk stands — the other part of a body that is not a limb.
+    ///
+    /// **A rotation, for [`Target::Gaze`]'s reason and measured the same way.**
+    /// A bow is a trunk inclined by an angle, and an angle is what survives
+    /// being asked of a body of different proportions; so a trunk key's offset
+    /// is a tangent too, and neither [`Scale`] nor [`Space`] is consulted for
+    /// one.
+    ///
+    /// **The inclination is the trunk's CHORD, pelvis to shoulders, and not the
+    /// rotation put at the hinge** — the gait learned that the expensive way
+    /// (#223). The pelvis cannot turn, because it carries the legs out from
+    /// under the footing solve, so the joint above it swings a segment that is
+    /// only part of the chord and delivers a fraction of the angle applied: 3.0
+    /// degrees of a 5.5 asked, on the default body. [`super::gait`]'s
+    /// `trunk_angle_for` inverts that relation and this asks it for the same
+    /// thing, so there is one description of how a trunk pitches rather than
+    /// two.
+    ///
+    /// **Only the horizontal part of the offset is read**, because a trunk
+    /// cannot lean upward: `(0.0, 0.0, 0.577)` is "bow 30 degrees forward" and
+    /// the vertical component of a trunk key means nothing at all.
+    Trunk,
 }
 
 impl Target {
@@ -96,6 +141,9 @@ impl Target {
                     vec![limb]
                 }
             }
+            // Neither of these drives a limb, so neither is something this
+            // list can name. `Clip::apply` reaches them directly.
+            Target::Gaze | Target::Trunk => Vec::new(),
         }
     }
 }
@@ -155,6 +203,11 @@ pub enum Space {
 /// The unit is a property of the track rather than of the clip, because one
 /// gesture wants both: a refusal holds its hands at chest height, which is the
 /// body's business, and pushes them out, which is the arm's.
+///
+/// **Neither unit answers for a rotation, and a [`Target::Gaze`] track does not
+/// consult this at all.** A nod is an angle; an angle is dimensionless; the
+/// body's own size cancels out of it rather than scaling it. Extending this
+/// enum with a third arm for that would be a unit that multiplies nothing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Scale {
     /// Multiples of the limb's own reach, shoulder to extremity.
@@ -175,6 +228,14 @@ pub struct Key {
     /// Measuring in reaches rather than metres is what makes the same gesture
     /// suit any body: `(0.0, 0.6, 0.4)` is "half a limb-length up and a little
     /// forward" whether the limb is a toddler's arm or a giant's.
+    ///
+    /// **On a [`Target::Gaze`] track this is a tangent instead**, and it is one
+    /// by construction rather than by convention: the look point is the head's
+    /// own rest facing plus this, carried out to [`GAZE_AHEAD`] — so both the
+    /// run and the rise scale with the body, the extent divides out of the
+    /// ratio, and `(0.0, -0.27, 0.0)` is "look `atan 0.27` — about 15 degrees —
+    /// down" on every body there is. See [`Target::Gaze`] for the measurement
+    /// that chose this over a displacement.
     pub offset: Vec3,
 }
 
@@ -388,10 +449,36 @@ impl Clip {
         };
         let mut straining = Vec::new();
 
-        for track in &self.tracks {
+        // **The trunk first and the gaze last, whatever order the tracks were
+        // written in.** Both of the parts that are not limbs are measured in a
+        // frame something else moves: a gaze aimed before the trunk pitched is
+        // aimed from a body that has not bowed yet, and a limb goal is carried
+        // by the girdle the trunk swings. Stable, so tracks that do not care
+        // keep the order their author gave them — a clip with one track of each
+        // kind is the normal case and this costs it a three-element sort.
+        let mut ordered: Vec<&Track> = self.tracks.iter().collect();
+        ordered.sort_by_key(|track| match track.target {
+            Target::Trunk => 0,
+            Target::Gaze => 2,
+            _ => 1,
+        });
+
+        for track in ordered {
             let Some(offset) = track.offset_at(time, self.looping) else {
                 continue;
             };
+            if track.target == Target::Trunk {
+                pitch_trunk(rig, pose, offset);
+                continue;
+            }
+            if track.target == Target::Gaze {
+                let frame = match track.space {
+                    Space::World => Frame::REST,
+                    Space::Body => Frame::carrying_gaze(rig, pose),
+                };
+                aim_gaze(rig, pose, frame, offset);
+                continue;
+            }
             // How far along its own excursion the track is, `0..1`: the palm
             // aim ramps with it — see [`Track::facing`]. Against the largest
             // key rather than the current one, so the ramp is a property of
@@ -456,6 +543,131 @@ impl Clip {
 fn rest_contact(rig: &Rig, limb: Limb) -> Option<Vec3> {
     let joint = *rig.in_zone(Zone::Extremity(limb)).first()?;
     Some(rig.joints[joint].position)
+}
+
+/// How far in front of the head a gaze track's look point sits, in body
+/// lengths.
+///
+/// The run and the offset are scaled together — the point is
+/// `head + (FORWARD + offset) * GAZE_AHEAD * extent` — so this cancels out of
+/// the ratio between them and a key's offset is the tangent of the angle at any
+/// distance at all. What the distance buys is not the angle but its
+/// **exactness**, and that is measured.
+///
+/// [`super::look_at`] aims from where the head IS toward a point that is fixed,
+/// and a turning head moves — a nod carries it 12 to 22 mm across the humanoid
+/// sweep, and further on a long neck. So a near point subtends a slightly
+/// different angle at the end of the turn than at the start and the gesture
+/// lands short by that much. The shortfall halves with every doubling of the
+/// run; measured on the quadruped, which is the worst body for it, against an
+/// asked-for 17.19 degrees:
+///
+/// | run | 1 | 2 | 4 | 8 | 16 | 32 |
+/// |-----|---|---|---|---|----|----|
+/// | delivered | 15.62 | 16.41 | 16.80 | 16.99 | 17.09 | 17.14 |
+///
+/// Sixteen is where the error reaches a tenth of a degree, which is well inside
+/// what an eye or a body plan could care about, and a point sixteen
+/// body-lengths out costs exactly what one a body-length out costs. Past it the
+/// returns are hundredths of a degree apiece.
+pub const GAZE_AHEAD: f32 = 16.0;
+
+/// How a clip's gaze is spread down the body, and how far it may go.
+///
+/// **The chest takes none of it, and that is a convention rather than a field**
+/// (#248). What separates a gaze from a posture is exactly whether the trunk
+/// joins in: a head dropped with the chest following is a bow, whether its
+/// author meant one or not. A gesture that wants the trunk says so with a
+/// track that moves the trunk, and then this aims the head *relative to it* —
+/// so the field a caller might have wanted here is already the next track
+/// along. Measured on the nod, the default share put 3.5 degrees of a 14
+/// degree dip into the chest, which is a quarter of the gesture spent bowing.
+///
+/// The limit is a neck's rather than a whole body's, for the same reason: with
+/// the chest excluded, the chain that remains is the neck and the head, and
+/// cervical flexion runs out around 50 degrees. It is [`super::idle`]'s glance
+/// limit, arrived at from the same argument.
+#[must_use]
+pub fn gaze_config() -> GazeConfig {
+    GazeConfig {
+        limit: 0.9,
+        shares: [0.0, 0.35, 1.0],
+    }
+}
+
+/// Points the body's gaze `offset` tangents away from where it rests.
+///
+/// **The rig's forward IS where the head rests**, and that is worth a line
+/// because it looks like it needs guarding and does not: a [`Pose`] carries
+/// every orientation this crate has, [`Pose::rest`] is identity throughout, and
+/// a [`Rig`] holds joint positions and no rotations at all. So a zero key aims
+/// the head exactly where it already points, on any body plan, without
+/// re-deriving a rest facing that cannot differ. A plan that one day gives its
+/// joints rest orientations would have to revisit this.
+///
+/// Returns quietly on a body with no head, which is [`Target::Gaze`]'s refusal.
+fn aim_gaze(rig: &Rig, pose: &mut Pose, frame: Frame, offset: Vec3) {
+    let Some(&head) = rig.in_zone(Zone::Head).first() else {
+        return;
+    };
+    let ahead = (landmark::FORWARD + offset) * GAZE_AHEAD * rig.extent();
+    look_at(
+        rig,
+        pose,
+        frame.at(rig.joints[head].position + ahead),
+        &gaze_config(),
+    );
+}
+
+/// How far from vertical a trunk may already rest and still be one this can
+/// pitch, in radians.
+///
+/// **A quarter turn, which is just "nearer standing than lying".** Inclining a
+/// trunk off vertical is only a movement a body has if its trunk is upright to
+/// begin with: measured against the pitch of the chord itself, which goes to
+/// `atan2` of a vertical run that a horizontal body does not have. A quadruped's
+/// rest chord lies 88 degrees off vertical, and asked to bow 30 it threw joints
+/// 690 mm across a body 580 mm tall.
+///
+/// So this is [`Target::Trunk`]'s refusal, and it is the same discipline
+/// [`Target::Grasper`] applies to a body with no free hand: the answer to "bow"
+/// on a body built to stand on all fours is nothing at all, arrived at from what
+/// the body is rather than from which plan built it.
+const TRUNK_UPRIGHT: f32 = std::f32::consts::FRAC_PI_4;
+
+/// Inclines the trunk by `offset` tangents off vertical.
+///
+/// Only the horizontal part of `offset` is read — a trunk cannot lean upward —
+/// and the inclination is the trunk's chord rather than the rotation delivering
+/// it. See [`Target::Trunk`], and [`super::gait`] for the anatomy this borrows
+/// whole.
+///
+/// Returns quietly on a body with no neck to find the shoulder girdle by, and
+/// on one whose trunk does not stand up: see [`TRUNK_UPRIGHT`].
+fn pitch_trunk(rig: &Rig, pose: &mut Pose, offset: Vec3) {
+    let sideways = Vec3::new(offset.x, 0.0, offset.z);
+    let wanted = sideways.length().atan();
+    let toward = sideways.normalize_or_zero();
+    if wanted <= f32::EPSILON || toward == Vec3::ZERO || !stands_up(rig) {
+        return;
+    }
+    incline_trunk(rig, pose, toward, wanted);
+}
+
+/// Whether the body's trunk rests near enough to upright to be pitched off it.
+fn stands_up(rig: &Rig) -> bool {
+    let Some(girdle) = rig
+        .in_zone(Zone::Neck)
+        .first()
+        .and_then(|&neck| rig.joints[neck].parent)
+    else {
+        return false;
+    };
+    let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
+        return false;
+    };
+    let chord = rig.joints[girdle].position - rig.joints[root].position;
+    chord.normalize_or_zero().angle_between(Vec3::Y) <= TRUNK_UPRIGHT
 }
 
 /// Turns the extremity so its flat faces `toward`, by `engaged` of the way.
@@ -566,6 +778,37 @@ impl Frame {
         let anchor = rig
             .limb_chain(limb)
             .and_then(|chain| rig.joints[chain[0]].parent);
+        Self::anchored(rig, pose, anchor)
+    }
+
+    /// The frame a gaze is carried by: the joint the neck chain hangs from.
+    ///
+    /// **Below the chest, not at it**, by [`Self::carrying`]'s own argument one
+    /// part along. [`super::look_at`] spreads its turn down whatever run of
+    /// chest, neck and head the body has, so every one of those is a joint the
+    /// gaze is about to rotate and none of them can be the frame the gaze is
+    /// measured in. The first ancestor that is neither is the trunk carrying
+    /// the whole head — which is what makes a bow's gaze drop land relative to
+    /// the bow, and a nod laid over a walk nod with the trunk's lean rather
+    /// than against it.
+    fn carrying_gaze(rig: &Rig, pose: &Pose) -> Self {
+        let anchor = rig.in_zone(Zone::Head).first().copied().and_then(|head| {
+            let mut at = head;
+            while let Some(parent) = rig.joints[at].parent {
+                if !matches!(rig.joints[parent].zone, Zone::Neck | Zone::Chest) {
+                    return Some(parent);
+                }
+                at = parent;
+            }
+            None
+        });
+        Self::anchored(rig, pose, anchor)
+    }
+
+    /// The frame `anchor` carries, or the root's own translation where a part
+    /// hangs straight off the root and there is no joint above it to borrow
+    /// one from.
+    fn anchored(rig: &Rig, pose: &Pose, anchor: Option<usize>) -> Self {
         let Some(anchor) = anchor else {
             return Self {
                 origin: pose.translation,

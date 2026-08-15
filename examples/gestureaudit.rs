@@ -27,6 +27,18 @@
 //!    axis. A raised hand belongs beside the head, and the arithmetic that puts
 //!    it there is exactly the arithmetic that can put it through the ear.
 //!
+//! 3b. **The trunk**, for a clip that pitches one: how far the chord from the
+//!    pelvis to the shoulder girdle inclines off where it rests. **The chord
+//!    and not the hinge's rotation** — those are different angles, and the gait
+//!    found out how different by writing a constant against the wrong one.
+//!
+//! 3a. **The gaze**, for a clip that has one: how far the head's facing pitches
+//!    from rest, how much of that the chest took, and how far the head joint
+//!    actually travelled. **A rotation cannot be judged by the spread of a
+//!    displacement**, which is what every reading above is — so a gaze clip is
+//!    judged on the spread of its ANGLE, and that needed the sweep to grow an
+//!    axis that moves a neck against a body (see [`BODIES`]).
+//!
 //! 4. **Return.** How far from rest the body is at the first and last frame. A
 //!    gesture that ends somewhere else leaves the body in a pose it never chose.
 //!
@@ -50,19 +62,29 @@
 //! cargo run --example gestureaudit -- --gesture Reject
 //! cargo run --example gestureaudit -- --samples 480
 //! ```
+//!
+//! Every reading is taken over only what the clip actually addresses: a
+//! one-handed wave leaves the other palm alone, and a nod's hand columns are
+//! blank rather than zero. The distinction is not cosmetic — the palm reading's
+//! first cut maxed over both hands and reported the untouched one's rest pose
+//! as the greeting's failing.
 
 use glam::Vec3;
 use symbios_avatar::{
     Limb, Pose, Rig, Zone,
-    anim::gesture::{self, ROSTER},
+    anim::{
+        Target,
+        gesture::{self, ROSTER},
+    },
     plan::{BodyPlan, Composites, HumanoidParams},
+    rig::landmark,
 };
 
 /// How many points of a gesture every reading is taken from.
 const SWEEP: usize = 120;
 
-/// The bodies the roster is judged on: a stature in metres, and a limb length
-/// against the torso.
+/// The bodies the roster is judged on: a stature in metres, then limb length,
+/// neck length and head size against it.
 ///
 /// **Stature alone is not a test of this format.** The plan scales a body
 /// uniformly with height, so every length in it stays in the same proportion
@@ -72,14 +94,27 @@ const SWEEP: usize = 120;
 /// pelvis and shortens the torso at a fixed stature, so it moves the shoulder,
 /// the reach and the hand's rest position against each other. The sweep runs
 /// both, and the extremes of the second are where a gesture actually breaks.
-const BODIES: [(f32, f32); 7] = [
-    (1.2, 0.0),
-    (1.5, 0.0),
-    (1.7, 0.0),
-    (2.0, 0.0),
-    (2.2, 0.0),
-    (1.7, -1.0),
-    (1.7, 1.0),
+///
+/// **And limb proportion is blind to the head** (#248). Across `limb_length`
+/// -1, 0 and +1 the neck stays 0.250 of a body's height and the head sits at
+/// 0.955 of it, to three figures — so a sweep of stature and limbs cannot tell
+/// a nod written as an angle from one written as a displacement. Both read a
+/// spread of 0.000 and the reading endorses whichever was written first. The
+/// axes that move a head against a body are `neck_length` and `head_size`, and
+/// on those the two authorings come apart by 14 degrees. They are here because
+/// a rotation asked for them; they cost the reach readings nothing.
+const BODIES: [(f32, f32, f32, f32); 11] = [
+    (1.2, 0.0, 0.0, 0.0),
+    (1.5, 0.0, 0.0, 0.0),
+    (1.7, 0.0, 0.0, 0.0),
+    (2.0, 0.0, 0.0, 0.0),
+    (2.2, 0.0, 0.0, 0.0),
+    (1.7, -1.0, 0.0, 0.0),
+    (1.7, 1.0, 0.0, 0.0),
+    (1.7, 0.0, -1.0, 0.0),
+    (1.7, 0.0, 1.0, 0.0),
+    (1.7, 0.0, 0.0, -1.0),
+    (1.7, 0.0, 0.0, 1.0),
 ];
 
 fn main() {
@@ -116,25 +151,40 @@ fn main() {
             "  returns to rest at both ends: {}",
             gesture::returns_to_rest(&clip)
         );
+        let gazing = clip.tracks.iter().any(|track| track.target == Target::Gaze);
+        let bowing = clip
+            .tracks
+            .iter()
+            .any(|track| track.target == Target::Trunk);
         println!(
-            "\n{:>8} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8} {:>9} {:>8} {:>9} {:>9} {:>8}",
+            "\n{:>7} {:>5} {:>5} {:>5} {:>7} {:>6} {:>7} {:>7} {:>7} {:>8} {:>7} {:>8} {:>8} \
+             {:>7} {:>8} {:>7} {:>7} {:>7} {:>7}",
             "stature",
             "limbs",
+            "neck",
+            "head",
             "reach m",
             "strain",
             "up",
             "forward",
             "across",
-            "head mm",
+            "clear mm",
             "trunk",
             "elbow mm",
             "palm deg",
+            "nod deg",
+            "chest deg",
+            "gaze mm",
+            "bow deg",
+            "girdle",
             "step mm"
         );
 
         let mut spread: Vec<(f32, f32, f32)> = Vec::new();
-        for (stature, limbs) in BODIES {
-            let rig = body(stature, limbs);
+        let mut dipped: Vec<f32> = Vec::new();
+        let mut bowed: Vec<f32> = Vec::new();
+        for (stature, limbs, neck, headsize) in BODIES {
+            let rig = body(stature, limbs, neck, headsize);
             let Some(arm) = rig.limb_reach(Limb::ForeRight) else {
                 eprintln!("the {stature} m body has no arm");
                 std::process::exit(1);
@@ -155,6 +205,22 @@ fn main() {
                 .in_zone(Zone::Head)
                 .first()
                 .expect("the humanoid plan builds a head");
+            // Every joint the gaze could have recruited that is NOT the neck
+            // or the head: what separates a nod from a bow is whether these
+            // moved, so they are read separately rather than folded into the
+            // pitch.
+            let chest = rig.in_zone(Zone::Chest);
+            // The trunk's chord: the pelvis to the girdle the neck hangs off.
+            // The joints between it are the ones that swing, so neither of its
+            // ends is one of them.
+            let chord = rig
+                .in_zone(Zone::Neck)
+                .first()
+                .and_then(|&neck| rig.joints[neck].parent)
+                .and_then(|girdle| {
+                    let root = rig.joints.iter().position(|joint| joint.parent.is_none())?;
+                    Some((root, girdle))
+                });
             let trunk: Vec<usize> = [Zone::Chest, Zone::Abdomen, Zone::Pelvis]
                 .into_iter()
                 .flat_map(|zone| rig.in_zone(zone))
@@ -211,6 +277,22 @@ fn main() {
             // furthest any palm points from forward at mid-gesture.
             let mut elbow_over = f32::MIN;
             let mut palm_off = 0.0f32;
+            // The gaze's three: how far the facing pitched below rest, how much
+            // of it the chest took, and how far the head joint travelled. A nod
+            // that translates the head is a body leaning in, not agreeing.
+            let mut dip = 0.0f32;
+            let mut chest_dip = 0.0f32;
+            let mut head_moved = 0.0f32;
+            let mut inclined = 0.0f32;
+            // **How far the shoulder girdle itself turns, which is not the
+            // chord's angle.** A trunk pitched at one hinge above a pelvis that
+            // cannot move turns the whole segment above that hinge, and the
+            // chord — a length-weighted mix of the still stub and the turned
+            // segment — arrives at a fraction of it. The gait's constant lives
+            // on the chord and its lean is small enough that nobody had to look
+            // at the other number; a 30 degree bow is not.
+            let mut girdle_turn = 0.0f32;
+            let rested = Pose::rest(&rig).forward(&rig).rotations;
 
             for frame in 0..=samples {
                 let time = frame as f32 / samples as f32;
@@ -220,6 +302,32 @@ fn main() {
                 let places = posed.positions;
                 for &[shoulder, elbow, _] in &arms {
                     elbow_over = elbow_over.max(places[elbow].y - places[shoulder].y);
+                }
+                if gazing {
+                    dip = dip.max(pitch_between(
+                        rested[head] * landmark::FORWARD,
+                        posed.rotations[head] * landmark::FORWARD,
+                    ));
+                    for &joint in &chest {
+                        chest_dip = chest_dip.max(
+                            pitch_between(
+                                rested[joint] * landmark::FORWARD,
+                                posed.rotations[joint] * landmark::FORWARD,
+                            )
+                            .abs(),
+                        );
+                    }
+                    head_moved = head_moved.max(places[head].distance(rest[head]));
+                }
+                if bowing && let Some((root, girdle)) = chord {
+                    inclined = inclined.max(pitch_between(
+                        rest[girdle] - rest[root],
+                        places[girdle] - places[root],
+                    ));
+                    girdle_turn = girdle_turn.max(pitch_between(
+                        rested[girdle] * landmark::FORWARD,
+                        posed.rotations[girdle] * landmark::FORWARD,
+                    ));
                 }
                 if frame == samples / 2 {
                     for &(contact, flat) in &palms {
@@ -247,38 +355,88 @@ fn main() {
                 }
                 before = Some(places);
             }
-            spread.push(most);
+            // Blank rather than zero wherever the clip does not address the
+            // part: a nod moves no hand and a wave turns no head, and printing
+            // a 0 for either invites reading it as a measurement.
+            let handed = !palms.is_empty();
+            if handed {
+                spread.push(most);
+            }
+            let reading = |value: f32| handed.then_some(value);
+            let gaze = |value: f32| gazing.then_some(value);
+            if gazing {
+                dipped.push(dip);
+            }
+            if bowing {
+                bowed.push(inclined);
+            }
             println!(
-                "{stature:>8.2} {limbs:>6.1} {arm:>8.3} {strained:>7} {:>8.3} {:>8.3} {:>8.3} {:>9.0} {:>8.0} {:>9.0} {:>9.0} {:>8.1}",
-                most.0,
-                most.1,
-                most.2,
-                nearest_head * 1000.0,
-                nearest_trunk * 1000.0,
-                elbow_over * 1000.0,
-                palm_off,
-                step * 1000.0,
+                "{stature:>7.2} {limbs:>5.1} {neck:>5.1} {headsize:>5.1} {arm:>7.3} \
+                 {strained:>6} {} {} {} {} {} {} {} {} {} {} {} {} {step_mm:>7.1}",
+                maybe(reading(most.0), 7, 3),
+                maybe(reading(most.1), 7, 3),
+                maybe(reading(most.2), 7, 3),
+                maybe(reading(nearest_head * 1000.0), 8, 0),
+                maybe(reading(nearest_trunk * 1000.0), 7, 0),
+                maybe(reading(elbow_over * 1000.0), 8, 0),
+                maybe(reading(palm_off), 8, 0),
+                maybe(gaze(dip), 7, 1),
+                maybe(gaze(chest_dip), 8, 1),
+                maybe(gaze(head_moved * 1000.0), 7, 0),
+                maybe(bowing.then_some(inclined), 7, 1),
+                maybe(bowing.then_some(girdle_turn), 7, 1),
+                step_mm = step * 1000.0,
             );
         }
 
-        let widest = |pick: fn(&(f32, f32, f32)) -> f32| {
-            let (low, high) = spread.iter().fold((f32::MAX, f32::MIN), |range, at| {
-                (range.0.min(pick(at)), range.1.max(pick(at)))
-            });
-            high - low
-        };
-        println!(
-            "\n  spread: across every body in the sweep the hand's rise varies by {:.3} of a body \
+        // Only what the clip addressed gets a spread. A nod moves no hand, and
+        // "the hand's rise varies by 0.000" is a sentence that reads as a
+        // result rather than as an absence.
+        if !spread.is_empty() {
+            let widest = |pick: fn(&(f32, f32, f32)) -> f32| {
+                let (low, high) = spread.iter().fold((f32::MAX, f32::MIN), |range, at| {
+                    (range.0.min(pick(at)), range.1.max(pick(at)))
+                });
+                high - low
+            };
+            println!(
+                "\n  spread: across every body in the sweep the hand's rise varies by {:.3} of a body \
              height, its forward reach by {:.3} and its swing by {:.3}",
-            widest(|at| at.0),
-            widest(|at| at.1),
-            widest(|at| at.2),
-        );
-        println!(
-            "          (this is the reading that says whether the format works. A gesture stated \
+                widest(|at| at.0),
+                widest(|at| at.1),
+                widest(|at| at.2),
+            );
+            println!(
+                "          (this is the reading that says whether the format works. A gesture stated \
              in reaches should land in the same place on every body as a fraction of that body; \
              one whose figures drift with stature is normalised in name only)"
-        );
+            );
+        }
+        if !bowed.is_empty() {
+            let (low, high) = bowed.iter().fold((f32::MAX, f32::MIN), |range, at| {
+                (range.0.min(*at), range.1.max(*at))
+            });
+            println!(
+                "\n  trunk spread: the chord's inclination varies by {:.3} of a degree across the \
+                 sweep, {low:.2} to {high:.2}",
+                high - low
+            );
+        }
+        if !dipped.is_empty() {
+            let (low, high) = dipped.iter().fold((f32::MAX, f32::MIN), |range, at| {
+                (range.0.min(*at), range.1.max(*at))
+            });
+            println!(
+                "\n  gaze spread: the head's pitch varies by {:.3} of a degree across the sweep, \
+                 {low:.2} to {high:.2}",
+                high - low
+            );
+            println!(
+                "          (the spread above is a DISPLACEMENT and cannot judge a rotation. This \
+                 is the same claim in the unit the gesture is actually stated in: a nod written \
+                 as an angle is the same nod on every neck, and one written as a place is not)"
+            );
+        }
     }
     println!(
         "\nhow it READS is not in this table. `cargo run --release -F builtin-clips --example \
@@ -286,14 +444,35 @@ fn main() {
     );
 }
 
-/// A humanoid rig of the given stature and limb proportion.
-fn body(height: f32, limbs: f32) -> Rig {
+/// A humanoid rig of the given stature and proportions.
+fn body(height: f32, limbs: f32, neck: f32, head: f32) -> Rig {
     let params = HumanoidParams {
         height,
         limb_length: limbs,
+        neck_length: neck,
+        head_size: head,
         ..HumanoidParams::default()
     };
     Rig::from_skeleton(&params.skeleton(&Composites::default())).expect("the plan builds a rig")
+}
+
+/// How far `to` sits below `from`, in degrees, measuring each direction's own
+/// inclination rather than the angle between them.
+///
+/// **Inclination rather than the arc**, because a nod's claim is about pitch:
+/// the angle between two directions is positive whichever way the second one
+/// went, and a head that lifted would read the same as one that dropped.
+fn pitch_between(from: Vec3, to: Vec3) -> f32 {
+    let angle = |run: Vec3| run.y.atan2(run.z.hypot(run.x));
+    (angle(from) - angle(to)).to_degrees()
+}
+
+/// A reading a body may not have, formatted for the table.
+fn maybe(value: Option<f32>, width: usize, places: usize) -> String {
+    match value {
+        Some(value) => format!("{value:>width$.places$}"),
+        None => format!("{:>width$}", "-"),
+    }
 }
 
 /// How far a point is from the line the trunk lies along.
