@@ -1002,6 +1002,27 @@ pub struct Steps {
     pub straining: Vec<Limb>,
     /// How far the body sank to keep its stride within reach, in metres.
     pub crouch: f32,
+    /// What each contact asked for: the goal it was given, as an offset from
+    /// its rest contact, and how far the body would have to sink for its leg to
+    /// reach that goal.
+    ///
+    /// **The crouch's argument list (#264).** [`Self::crouch`] is a maximum
+    /// over these, and a maximum is only as continuous as the terms under it:
+    /// it steps wherever the term owning it changes hands, and it inherits any
+    /// step a term of its own has. A depth on its own cannot tell a body
+    /// sinking deeper from a body sinking for a different leg — which is why a
+    /// crouch that teleports 83 mm on a staircase went a whole session
+    /// unsuspected. Reported per contact so an instrument can follow the
+    /// argmax and the terms it beat; see `examples/walkaudit --crouch-trace`.
+    ///
+    /// Every contact is in here, the ones in the air included: a swinging foot
+    /// is asked how far the body must sink for a goal it is not standing on,
+    /// and whether that is right is the open question #264 carries. Which of
+    /// them were in the air is [`Self::swing`]'s answer, not a second field's.
+    ///
+    /// The reach term only. A run's spring compression is added to every
+    /// contact alike and so belongs to no one of them.
+    pub asked: Vec<(Limb, Vec3, f32)>,
     /// How far the body was carried above its stance height while airborne, in
     /// metres. Zero for anything but a run, and zero at both ends of a flight.
     pub rise: f32,
@@ -1012,6 +1033,25 @@ impl Steps {
     #[must_use]
     pub fn is_clean(&self) -> bool {
         self.straining.is_empty()
+    }
+
+    /// Which contact the crouch was taken for, and how deep its own demand was
+    /// — or `None` when no contact asked to sink at all.
+    ///
+    /// The argmax of [`Self::asked`], which is what [`Self::crouch`] is the
+    /// maximum of. A tie goes to the first contact of the gait's own order,
+    /// which is arbitrary and is the honest answer: at a tie there really are
+    /// two limbs asking for the same depth, and that is exactly the moment a
+    /// maximum changes hands.
+    #[must_use]
+    pub fn sank_for(&self) -> Option<(Limb, f32)> {
+        self.asked.iter().filter(|&&(_, _, sink)| sink > 0.0).fold(
+            None,
+            |best: Option<(Limb, f32)>, &(limb, _, sink)| match best {
+                Some((_, deepest)) if deepest >= sink => best,
+                _ => Some((limb, sink)),
+            },
+        )
     }
 }
 
@@ -1074,9 +1114,18 @@ where
     // Sink far enough that every foot's current goal is within its leg's reach
     // — no further. Holding the whole stride's worst case instead is what kept
     // the pelvis riding dead flat, 47 mm down, through the entire cycle.
-    steps.crouch = goals
+    //
+    // Kept per contact rather than folded away, so an instrument can see the
+    // terms as well as their maximum (#264). The depth is the fold's to the
+    // last bit — every term of it is a sink, and a sink is never negative.
+    steps.asked = goals
         .iter()
-        .filter_map(|&(limb, _, offset, _)| sink_needed(rig, limb, offset))
+        .filter_map(|&(limb, _, offset, _)| Some((limb, offset, sink_needed(rig, limb, offset)?)))
+        .collect();
+    steps.crouch = steps
+        .asked
+        .iter()
+        .map(|&(_, _, sink)| sink)
         .fold(0.0f32, f32::max)
         * CROUCH_MARGIN;
     // A running body's leg is a spring as well as a strut. Added rather than
@@ -1469,59 +1518,168 @@ where
     // Smoothstep rather than a straight line, so the foot leaves and arrives
     // with no vertical speed of its own and the whole of the climb happens in
     // the middle of the swing, where the arc has already lifted it clear.
-    let base = from + (to - from) * smoothstep(t);
+    //
+    // Right for a slope, where the ground rises evenly along the path, and on
+    // its own wrong for a stair, where the obstacle is at the START of the
+    // flight and the middle of the swing is far too late to be climbing (#259).
+    // The roof below is what answers that; this stays because it is the shape a
+    // swing has where there is nothing in the way.
+    let ramp = from + (to - from) * smoothstep(t);
 
-    // How far above the higher of the two ends anything in between rises. The
-    // arc has to clear that as well as make its own toe clearance, so the two
-    // add: a step gets the lift a flat walk gets, on top of the step.
-    let mut over = 0.0f32;
+    // **The ground, dilated by the foot and by how steeply a foot may climb.**
+    //
+    // A swing seated on the ground beneath one point is a swing that seats a
+    // POINT, and a foot is 289 mm long: the toe is a quarter of a metre ahead
+    // of the joint being seated, so on a stair it crosses the riser at 7% of
+    // the flight, when a mid-swing arc has lifted 20 mm of the 100 it needs.
+    // Raising the apex cannot buy that — covering an 80 mm deficit at 7% of a
+    // sine means flying the foot 364 mm up at mid-swing.
+    //
+    // So the sole is carried above the highest ground within reach of it rather
+    // than above the ground under one point of it, and "within reach" is a
+    // cone: ground `gap` metres beyond the sole's own span lifts the foot by
+    // that height less [`CLIMB`] times the gap. Two properties follow, and both
+    // are the reason this shape was chosen over re-timing the swing's
+    // horizontal:
+    //
+    // - It is **continuous** wherever the terrain is bounded, because it is a
+    //   maximum of continuous functions of `t` over a fixed set of samples. A
+    //   plain max filter over a step is still a step; the cone's slope is what
+    //   makes it a ramp the foot climbs rather than a wall it teleports up.
+    // - It **collapses to nothing on flat ground**, to the last decimal, since
+    //   a cone laid over level ground can only reach the level it started at.
+    //   A walk on the flat is the walk it was before this existed.
+    let along_stride = stride.direction;
+    let here = Vec3::new(offset.x, 0.0, offset.z);
+    // The sole's own span at this instant: `foot` is how far the extremity
+    // reaches behind and ahead of the joint being seated, projected on the way
+    // the body is going (`Rig::extremity_extent`), so a body shuffling sideways
+    // dilates by its feet's width and one walking forwards by their length.
+    let (heel, toe) = (here - along_stride * foot.0, here + along_stride * foot.1);
+    let mut roof = f32::MIN;
     // Over the whole flight path, which is longer than a stride: the foot
     // covers its own stride plus everything the body walks past while it is in
     // the air, and probing only the stride's worth leaves the rest unlooked-at
     // at exactly the resolution the count is chosen to guarantee.
     let probes = clearance_probes(foot, (arriving - leaving).length());
-    for probe in 1..probes {
+    for probe in 0..=probes {
         let at = probe as f32 / probes as f32;
         let along = leaving.lerp(arriving, at);
-        over = over.max(beneath(along) - from.max(to));
+        // How far this sample lies beyond the sole itself, measured along the
+        // way the body is going: nought for ground the foot is directly over,
+        // which is ground it must clear outright.
+        let past = (along - heel).dot(along_stride).min(0.0).abs()
+            + (along - toe).dot(along_stride).max(0.0);
+        roof = roof.max(beneath(along) - CLIMB * past);
     }
 
-    let apex = stride.lift + over.max(0.0);
+    // **The same cone, about the flight's own two ends.** Anticipation is
+    // useless at take-off: the foot is still on the ground, and a roof that has
+    // already seen the riser would seat it above the tread it is standing on —
+    // measured, a 20 mm pop the instant the foot lifted, which does not halve
+    // when the sampling doubles and so is a cliff rather than a speed.
+    //
+    // A foot that may not climb faster than `CLIMB` toward an obstacle may not
+    // climb faster than `CLIMB` away from where it left, either. So the roof is
+    // clipped to a cone about each end, which pins the seat to the stance's own
+    // at both of them and opens only as fast as the foot travels away from
+    // them. Measured on the 100 mm flight, that is the whole of the pop: 20.3
+    // mm at 240 samples, 20.2 at 480 and 20.2 at 960 before the clip, and 15.6,
+    // 7.8, 4.2 after — a cliff turned back into a speed.
+    let ends =
+        (from + CLIMB * (here - leaving).length()).min(to + CLIMB * (here - arriving).length());
+
+    // The higher of the ramp and whatever the roof asks for within that. On
+    // ground with nothing above the foot's own line there is nothing to raise
+    // it with and this is the ramp exactly.
+    let base = ramp.max(roof.min(ends));
+
+    // No separate obstacle term on top: what a swing has to clear IS the roof,
+    // and adding the highest ground on the path to the apex as well would climb
+    // the same stair twice. Measured on a 100 mm flight, taking it out moved
+    // nothing — the roof had already made it redundant.
     Vec3::new(
         offset.x,
-        base + apex * (t * std::f32::consts::PI).sin(),
+        base + stride.lift * (t * std::f32::consts::PI).sin(),
         offset.z,
     )
 }
 
-/// How many points along a swing are probed for what it has to clear.
+/// How many points along a swing the ground is read at, for the roof
+/// [`seated_offset`] dilates it into.
 ///
-/// **At the resolution of the body's own foot**, because a foot cannot fall
-/// into a gap narrower than itself: ground that rises and falls again within
-/// one foot length is ground the foot bridges. That makes the count a property
-/// of the body and the stride rather than a number, so a long stride on a small
-/// body probes more finely than a short one on a large.
+/// **At a fraction of the body's own foot**, so the count is a property of the
+/// body and the stride rather than a number: a long stride on a small body
+/// reads the ground more finely than a short one on a large.
 ///
-/// **What this cannot see, said out loud**: a step whose tread is shorter than
-/// the foot is a step the foot spans, and one narrower than the spacing here
-/// can be stepped over without being cleared. At least two, so a swing always
-/// has one sample in the middle of it.
+/// **`foot` is the foot, and for a long time it was not** (#259). This asked
+/// [`Stride::lift`] how long a foot is, which is the toe clearance of a swing
+/// and has no business answering: on the reference body it said 85 mm against a
+/// real 257. [`Rig::extremity_extent`] is the measurement.
+///
+/// # Why a fraction of it, and not the whole
+///
+/// The argument this had while it was counting clearances was that a foot
+/// cannot fall into a gap narrower than itself, so ground that rises and falls
+/// again within one sole is ground the foot bridges. That argument survives and
+/// stops applying: the roof is a MAXIMUM, and a maximum ignores a dip for free,
+/// however finely it is sampled. Nothing is bought by reading coarsely.
+///
+/// What coarseness costs is the other direction. A rise between two samples is
+/// seen late, and seen late by `d` metres of run it costs the sole [`CLIMB`]
+/// times `d` of the clearance it was owed. Measured on a 100 mm flight: at a
+/// quarter of a sole the toe passes 14.3 mm UNDER the nosing; at an eighth it
+/// clears; at a sixteenth, a twenty-fourth and a fiftieth it clears by exactly
+/// as much. So [`SOLE_SAMPLES`] is the first count that buys everything there
+/// is to buy, and the rest is ground queries a caller would pay for and get
+/// nothing back.
 ///
 /// `across` is how far the flight actually goes, which is **not** the stride:
 /// the foot covers its own stride plus whatever the body walks past while it is
 /// in the air, so a duty of 0.6 puts a third as much ground again under it.
 ///
-/// **`foot` is the foot, and for a long time it was not** (#259). This asked
-/// [`Stride::lift`] how long a foot is, which is the toe clearance of a swing
-/// and has no business answering: on the reference body it says 85 mm against a
-/// real 257, so the ground was probed three times as finely as the reasoning
-/// called for. Over-probing is the safe direction to be wrong in and it was
-/// still a proxy standing where a measurement belonged —
-/// [`Rig::extremity_extent`] is the measurement.
+/// **What this cannot see, said out loud**: a rise narrower than the spacing
+/// can still be stepped over without being cleared, and a tread shorter than
+/// the sole is one the foot spans however finely the ground is read. At least
+/// two, so a swing always has one sample in the middle of it.
 fn clearance_probes(foot: (f32, f32), across: f32) -> usize {
-    let length = (foot.0 + foot.1).max(1e-3);
-    ((across / length).ceil() as usize).clamp(2, 16)
+    let spacing = (foot.0 + foot.1).max(1e-3) / SOLE_SAMPLES as f32;
+    ((across / spacing).ceil() as usize).clamp(2, SOLE_SAMPLES * 8)
 }
+
+/// How many times the ground is read across one sole, for the swing's roof.
+///
+/// Eight, measured — see [`clearance_probes`], which is also where the ceiling
+/// of eight soles' worth of samples comes from: a flight is about two and a
+/// half soles long at a walk, so the clamp is a runaway guard against a body
+/// with tiny feet and a long stride rather than a limit this one reaches.
+const SOLE_SAMPLES: usize = 8;
+
+/// The steepest a swinging foot is asked to climb, in rise over run.
+///
+/// The slope of the cone [`seated_offset`] dilates the ground with: an obstacle
+/// `gap` metres beyond the sole lifts the foot by its height less `CLIMB` times
+/// the gap, so a foot begins climbing a riser this many metres of run before it
+/// reaches it, and one further off than that is left for the next step.
+///
+/// **Not a taste, and not the stair's own pitch.** A stair is climbed by a
+/// stride that clears the nosing, not by a foot that follows the treads: the
+/// swing has to have the whole riser under its sole by the time the sole is
+/// over it, and the run available for that is what the FOOT leaves — the toe is
+/// [`Rig::extremity_extent`]'s ahead-reach in front of the joint, so the sole
+/// clears its own length of ground before the joint arrives. One rise per run
+/// puts a body's foot at the top of a riser exactly one riser-height of travel
+/// before it, which on the 100 mm flight this was measured against is 100 mm of
+/// approach for a sole that spans 289.
+///
+/// Read against the alternatives on that flight, at the toe (the reading #259
+/// is named for, against -74.2 mm before any of this): 0.35 clears by 23.0 mm,
+/// 0.5 by 22.4, 1.0 by 18.0, 2.0 by -0.8. The shallow end buys a millimetre or
+/// two of clearance and pays for it by dilating the ground three times as far
+/// out — a body that starts lifting for a step it is nowhere near — and 2.0
+/// does not clear at all, because a cone that steep is under the nosing by the
+/// time the toe is there.
+const CLIMB: f32 = 1.0;
 
 /// How far the toe rides above the sole at heel-strike, in radians.
 ///
@@ -3410,6 +3568,139 @@ mod tests {
                 normal: Vec3::Y,
             })
         }
+    }
+
+    #[test]
+    fn a_crouch_that_changes_hands_does_not_step() {
+        // **#264, which was raised as a suspicion and killed by this.** The
+        // crouch is a maximum over every contact's sink demand, the ones in the
+        // air included, and the suspicion was that a maximum steps wherever its
+        // argmax changes hands — which would make the pelvis jump every time
+        // one foot overtook another.
+        //
+        // It does not, and the reason is arithmetic rather than luck: at a
+        // hand-over the two terms are EQUAL, which is precisely where the
+        // maximum of two continuous functions is continuous. The identity of
+        // the argmax jumps; its value does not. A crouch can only step if a
+        // TERM of it steps.
+        //
+        // Asked the only way a discontinuity can be told from a fast motion:
+        // sample twice as finely and see whether the largest change halves. On
+        // flat ground it does — 5.4 mm at 240 samples, 2.7 at 480, 1.4 at 960
+        // on this body — and every hand-over is inside that.
+        //
+        // **The preconditions are asserted rather than assumed.** A walk whose
+        // crouch never changes hands, or one where no foot in flight ever owns
+        // it, would pass this while measuring nothing at all — and a foot in
+        // flight owning the maximum is the exact configuration #264 was about.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let floor = |at: Vec3| {
+            Some(Ground {
+                position: Vec3::new(at.x, 0.0, at.z),
+                normal: Vec3::Y,
+            })
+        };
+
+        // The largest change between adjacent samples, how often the maximum
+        // changed hands, and how often a foot in the air owned it.
+        let sweep = |samples: usize| -> (f32, usize, usize) {
+            let (mut worst, mut handovers, mut in_flight) = (0.0f32, 0usize, 0usize);
+            let mut before: Option<(f32, Option<Limb>)> = None;
+            for at in 0..=samples {
+                let mut pose = Pose::rest(&rig);
+                let steps = step(
+                    &rig,
+                    &mut pose,
+                    &gait,
+                    &stride,
+                    at as f32 / samples as f32,
+                    floor,
+                );
+                let owner = steps.sank_for().map(|(limb, _)| limb);
+                if let Some((sink, who)) = before {
+                    worst = worst.max((steps.crouch - sink).abs());
+                    handovers += usize::from(who != owner);
+                }
+                in_flight += usize::from(owner.is_some_and(|limb| steps.swing.contains(&limb)));
+                before = Some((steps.crouch, owner));
+            }
+            (worst, handovers, in_flight)
+        };
+
+        let coarse = sweep(240);
+        let fine = sweep(480);
+        assert!(
+            coarse.1 >= 4,
+            "the crouch changed hands {} times in a cycle — with no hand-overs this guard \
+             measures nothing",
+            coarse.1,
+        );
+        assert!(
+            coarse.2 > 0,
+            "no foot in flight ever owned the crouch, which is the configuration #264 is \
+             about — this guard is measuring some other walk",
+        );
+        // Six tenths rather than a half: halving is what a smooth motion does
+        // exactly, and the slack is for where the two samplings straddle the
+        // peak differently.
+        assert!(
+            fine.0 <= coarse.0 * 0.6,
+            "the crouch's largest step was {:.1} mm at 240 samples and {:.1} at 480 — a \
+             motion that does not halve when the sampling doubles is a cliff, not a speed",
+            coarse.0 * 1000.0,
+            fine.0 * 1000.0,
+        );
+    }
+
+    #[test]
+    fn the_crouch_is_the_deepest_thing_any_contact_asked_for() {
+        // `Steps::asked` is the crouch's argument list and `sank_for` its
+        // argmax, and an instrument that reads them is only as good as the two
+        // agreeing with the depth the body actually sank by (#264).
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let floor = |at: Vec3| {
+            Some(Ground {
+                position: Vec3::new(at.x, 0.0, at.z),
+                normal: Vec3::Y,
+            })
+        };
+        let mut named = 0usize;
+        for at in 0..240 {
+            let mut pose = Pose::rest(&rig);
+            let steps = step(&rig, &mut pose, &gait, &stride, at as f32 / 240.0, floor);
+            let deepest = steps
+                .asked
+                .iter()
+                .map(|&(_, _, sink)| sink)
+                .fold(0.0f32, f32::max);
+            assert!(
+                (steps.crouch - deepest * CROUCH_MARGIN).abs() < 1e-6,
+                "the body sank {:.1} mm for a deepest demand of {:.1}",
+                steps.crouch * 1000.0,
+                deepest * CROUCH_MARGIN * 1000.0,
+            );
+            let Some((limb, sink)) = steps.sank_for() else {
+                assert!(deepest == 0.0, "nobody was named for a {deepest} m sink");
+                continue;
+            };
+            named += 1;
+            assert!(
+                (sink - deepest).abs() < 1e-6,
+                "{limb:?} was named for {sink} m against a deepest demand of {deepest}",
+            );
+            assert!(
+                steps
+                    .asked
+                    .iter()
+                    .any(|&(who, _, asked)| who == limb && asked == sink),
+                "{limb:?} was named for a demand it never made",
+            );
+        }
+        assert!(named > 0, "no sample named an owner at all");
     }
 
     #[test]

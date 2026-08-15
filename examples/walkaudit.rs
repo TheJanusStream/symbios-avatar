@@ -187,6 +187,27 @@ struct Moment {
     /// The ground the foot is actually standing on, as opposed to the point the
     /// gait pins — which is what a staircase has to be laid out against.
     footprint: Vec<Option<(f32, f32)>>,
+    /// How far the body sank this frame, in metres, and which contact it sank
+    /// for — with whether that contact was carrying weight at the time.
+    ///
+    /// **The owner, not just the depth (#264).** The crouch is a maximum over
+    /// every contact's reach, including the ones in the air, and a maximum
+    /// steps wherever its owner changes hands. A depth on its own cannot tell
+    /// a body sinking deeper from a body sinking for a different leg, so the
+    /// depth alone was the reading that could not answer why a swing profile
+    /// that improved every clearance made the goals jump.
+    crouch: (f32, Option<(Limb, bool)>),
+    /// How many contacts could not reach the goal the gait asked for.
+    ///
+    /// The crouch exists to keep this at zero, and it is the only route by
+    /// which a sink can move a FOOT: a reachable goal is solved exactly
+    /// wherever the pelvis is, so a body that sinks under a leg with slack in
+    /// it moves nothing below the hip. A strained leg has run out of that
+    /// slack and its contact rides with the pelvis instead.
+    straining: usize,
+    /// What each contact asked the body to sink for, and the goal it asked for
+    /// it for — the crouch's own argument list, in the gait's order.
+    asked: Vec<(Limb, Vec3, f32)>,
 }
 
 fn main() {
@@ -493,7 +514,7 @@ fn main() {
         // step, arms, lean, plant, roll, in that order. Hand-rolled here until
         // the fourth stage arrived and the order stopped being something an
         // instrument should be trusted to remember.
-        if bare {
+        let steps = if bare {
             // **Not `Walk` with its flags turned down**, which is what this
             // tried first and is wrong: `Walk::settle` rolls the ankles
             // unconditionally — the roll is outside the `footing` option, on
@@ -501,10 +522,24 @@ fn main() {
             // a `Walk` with everything switched off still rolls, and the
             // ablation read 31.7 mm where the placement alone leaves 2.8. The
             // stage has to be stepped past rather than configured away.
-            gait::step(rig, &mut pose, &gait, stride, cycle, floor);
+            gait::step(rig, &mut pose, &gait, stride, cycle, floor)
         } else {
-            Walk::at(cycle).drive(rig, &mut pose, &gait, stride, floor);
-        }
+            Walk::at(cycle)
+                .drive(rig, &mut pose, &gait, stride, floor)
+                .steps
+        };
+        // Whether the owner was carrying weight is asked of the same frame's
+        // own stance list rather than of the phase recomputed here, so an
+        // owner and its phase cannot come from two different readings of the
+        // cycle.
+        let sank_for = steps
+            .sank_for()
+            .map(|(limb, _)| (limb, steps.stance.contains(&limb)));
+        let straining = steps.straining.len();
+        // Every contact's own demand and the goal it was made for, in the
+        // gait's order, so the trace can show the terms the maximum beat as
+        // well as the one it took.
+        let asked = steps.asked.clone();
 
         let posed = pose.forward(rig);
         let moved = posed.deform(rig, &body.positions, weights);
@@ -613,6 +648,9 @@ fn main() {
             bank: trunk_bank(rig, &posed),
             planted,
             footprint,
+            crouch: (steps.crouch, sank_for),
+            straining,
+            asked,
         }
     };
 
@@ -1072,6 +1110,117 @@ fn main() {
         );
     }
 
+    // **Who the crouch belongs to, and when it changes hands (#264).**
+    // `Steps::crouch` is a maximum over every contact's reach — the ones in the
+    // air included, since a swinging foot's goal is a goal like any other — and
+    // a maximum is discontinuous exactly where its argument changes hands. A
+    // depth alone cannot tell a body sinking deeper from a body sinking for a
+    // different leg, which is why the jump reading above could be measured for
+    // a whole session without the crouch being a suspect. So the depth is
+    // reported beside its owner, the largest single-sample change in it is
+    // reported beside the hand-over that may have caused it, and the shares are
+    // printed: a walk whose crouch is owned by a foot in FLIGHT is a body
+    // sinking for a leg that is carrying nothing.
+    let owner_name = |owner: Option<(Limb, bool)>| match owner {
+        Some((limb, true)) => format!("{limb:?} in stance"),
+        Some((limb, false)) => format!("{limb:?} in FLIGHT"),
+        None => "nobody".to_string(),
+    };
+    let (mut crouch_low, mut crouch_high) = (f32::MAX, f32::MIN);
+    let mut shares: Vec<(Option<(Limb, bool)>, usize)> = Vec::new();
+    for moment in &sweep {
+        crouch_low = crouch_low.min(moment.crouch.0);
+        crouch_high = crouch_high.max(moment.crouch.0);
+        match shares.iter_mut().find(|(who, _)| *who == moment.crouch.1) {
+            Some((_, count)) => *count += 1,
+            None => shares.push((moment.crouch.1, 1)),
+        }
+    }
+    shares.sort_by_key(|share| std::cmp::Reverse(share.1));
+    let mut crouch_step = 0.0f32;
+    let mut crouch_step_at = 0.0f32;
+    let mut crouch_step_between = (None, None);
+    let mut handovers = 0usize;
+    let mut handover_step = 0.0f32;
+    for pair in sweep.windows(2) {
+        let change = (pair[1].crouch.0 - pair[0].crouch.0).abs();
+        let handed = pair[0].crouch.1 != pair[1].crouch.1;
+        if handed {
+            handovers += 1;
+            handover_step = handover_step.max(change);
+        }
+        if change > crouch_step {
+            crouch_step = change;
+            crouch_step_at = pair[1].cycle;
+            crouch_step_between = (pair[0].crouch.1, pair[1].crouch.1);
+        }
+    }
+    // The whole sweep, sample by sample, when asked for: the summary above says
+    // a maximum stepped and by how much, and only the sequence says WHERE in
+    // the swing it happened and what the contacts were doing on either side of
+    // it. Off by default because it is 480 rows.
+    if args.iter().any(|arg| arg == "--crouch-trace") {
+        println!(
+            "\n{:>6} {:>9} {:>22} {:>6}   per contact: the goal it was given (mm, fore/up) \
+             and the sink it asked for",
+            "cycle", "crouch mm", "sank for", "strain",
+        );
+        for pair in sweep.windows(2) {
+            let moment = &pair[1];
+            let terms = moment
+                .asked
+                .iter()
+                .map(|(limb, goal, sink)| {
+                    format!(
+                        "{limb:?} fore {:>7.1} up {:>7.1} -> {:>6.1}",
+                        goal.z * 1000.0,
+                        goal.y * 1000.0,
+                        sink * 1000.0
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("   ");
+            println!(
+                "{:>6.3} {:>9.1} {:>22} {:>6}   {terms}{}",
+                moment.cycle,
+                moment.crouch.0 * 1000.0,
+                owner_name(moment.crouch.1),
+                moment.straining,
+                if (moment.crouch.0 - pair[0].crouch.0).abs() > 0.005 {
+                    "  <-- the sink moved more than 5 mm in one sample"
+                } else {
+                    ""
+                },
+            );
+        }
+    }
+
+    println!(
+        "  crouch: {:.1} mm deep at its deepest, {:.1} at its shallowest — {:.1} mm \
+         peak-to-peak. Owned by {}",
+        crouch_high * 1000.0,
+        crouch_low * 1000.0,
+        (crouch_high - crouch_low) * 1000.0,
+        shares
+            .iter()
+            .map(|(who, count)| format!(
+                "{} for {:.0}%",
+                owner_name(*who),
+                *count as f32 / sweep.len() as f32 * 100.0
+            ))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    println!(
+        "          the sink changed by at most {:.1} mm between two samples, at cycle \
+         {crouch_step_at:.2} ({} -> {}); it changed hands {} times over the two cycles swept, \
+         and the largest change AT a hand-over was {:.1} mm",
+        crouch_step * 1000.0,
+        owner_name(crouch_step_between.0),
+        owner_name(crouch_step_between.1),
+        handovers,
+        handover_step * 1000.0,
+    );
     println!(
         "  jump:   the furthest a contact moved between two of the {} samples was {:.1} mm, \
          at cycle {jump_at:.2}, by foot {} in {} — {:.2} m/s at this body's cadence",
