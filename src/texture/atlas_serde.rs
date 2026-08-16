@@ -1,4 +1,4 @@
-//! Sending a painted atlas across a worker boundary (#234).
+//! Sending a painted atlas across a worker boundary.
 //!
 //! [`TextureMap`] belongs to the published `symbios-texture` crate, so this
 //! crate cannot derive `Serialize` on it — and a downstream that needs a

@@ -4,7 +4,7 @@
 //! and the timing between them. Nothing is stored per body, so a gesture costs
 //! the bytes of its own description and reads on a body that did not exist when
 //! it was written — which is the whole point of the format and the whole reason
-//! the baked roster can go (#237, #248).
+//! the baked roster is a reference rather than a runtime source.
 //!
 //! # What a gesture is allowed to say
 //!
@@ -18,12 +18,11 @@
 //! * a gaze and only a gaze — the **nod**;
 //! * a trunk and a gaze — the **bow**;
 //! * the whole carriage — **sitting** and **sleeping**, which move the pelvis
-//!   and fold the legs rather than reaching or turning anywhere, and which are
-//!   the part of the roster this module cannot say yet.
+//!   and fold the legs rather than reaching or turning anywhere.
 //!
 //! Two more of the roster are already procedural and want wiring rather than
 //! authoring: [`IdleConfig::talking`] and [`IdleConfig::listening`] are the
-//! talking and listening idles, and have been since #246.
+//! talking and listening idles.
 //!
 //! [`IdleConfig::talking`]: super::IdleConfig::talking
 //! [`IdleConfig::listening`]: super::IdleConfig::listening
@@ -37,13 +36,13 @@
 //! stature is a goal that is normalised in name only.
 //!
 //! **Which spread depends on what the gesture is made of, and the sweep has to
-//! be able to see the part** (#248). A reach is judged by displacement, and the
+//! be able to see the part.** A reach is judged by displacement, and the
 //! axis that moves a displacement is limb proportion. A nod is a rotation, so
 //! displacement says nothing about it — it is judged by the ANGLE it delivers,
 //! and the axes that move an angle are the neck's length and the head's size.
-//! Neither was in the sweep until a nod needed them, and across limb proportion
-//! alone the neck stays 0.250 of a body's height on every body: the reading
-//! would have been a flat zero for any authoring at all.
+//! The sweep varies both for exactly that reason: across limb proportion
+//! alone the neck stays 0.250 of a body's height on every body, so the
+//! reading would be a flat zero for any authoring at all.
 
 use glam::Vec3;
 
@@ -263,7 +262,7 @@ pub const BOW_FALL: f32 = 0.3;
 ///
 /// **Two tracks for the two parts, and neither is a limb** — the trunk's is
 /// [`Target::Trunk`] and the head's is [`Target::Gaze`], which is the nod's
-/// answer inherited whole (#248). [`Clip::apply`] runs the trunk before the
+/// answer inherited whole. [`Clip::apply`] runs the trunk before the
 /// gaze whatever order they are written in, so the gaze is aimed from a body
 /// that has already bowed.
 ///
@@ -467,7 +466,7 @@ pub const SLEEP_DROP: f32 = 1.009_5;
 /// already is the first. Written that way the drop happens while the legs fold
 /// and the turn happens from a body whose ends are already near its root, and
 /// neither reading has to be paid for. That is a real piece of work rather than
-/// a constant, and it is #263.
+/// a constant, and it has not been done here.
 ///
 /// Three tenths in the meantime: 14 mm under and 116 mm of step, both moderate,
 /// neither pretending to be a solution.
@@ -541,7 +540,7 @@ pub fn sit() -> Clip {
 /// nearly straight up. A relaxed supine foot flops the other way. Nothing in
 /// this format addresses an ankle's angle, and the fix belongs with the staged
 /// descent that would place the feet along the floor rather than carry them
-/// round: #263.
+/// round.
 ///
 /// **A state, not a gesture**, for [`sit`]'s reason and in the same shape.
 ///
@@ -590,7 +589,7 @@ pub fn returns_to_rest(clip: &Clip) -> bool {
 /// Every gesture this module can build, by name.
 ///
 /// The names are the baked roster's, so a caller swapping a procedural gesture
-/// in for a baked one can look it up by the name it already has (#248).
+/// in for a baked one can look it up by the name it already has.
 #[must_use]
 pub fn by_name(name: &str) -> Option<Clip> {
     match name {
@@ -630,7 +629,7 @@ mod tests {
     /// place by arithmetic; only a change of proportion moves the parts of a
     /// body against each other.
     ///
-    /// **And which proportion depends on what the gesture is made of** (#248).
+    /// **And which proportion depends on what the gesture is made of.**
     /// `limb_length` moves the shoulder, the reach and the hand's rest position
     /// — and moves the head by nothing at all: across its whole range the neck
     /// stays 0.250 of a body's height and the head sits at 0.955 of it, to

@@ -17,19 +17,18 @@
 //! answers "what is beneath this point?", so the same code works against a
 //! physics engine, a heightmap, or a flat plane in a test.
 //!
-//! Feet are placed **and now oriented**, which waited on the feet having any
-//! orientation to correct. A body plan's foot used to be one node; since #111 it
-//! is a heel, a ball and a toe lying across a sole, and [`level_feet`] holds
+//! Feet are placed **and oriented**. A body plan's foot is not one node but a
+//! heel, a ball and a toe lying across a sole, and [`level_feet`] holds
 //! that sole against the ground instead of letting it ride the shin.
 //!
-//! What that was costing, measured over a walk cycle by `examples/walkaudit`:
-//! **a planted foot sank 121 mm through the floor.** The leg IK aims the joint
-//! the foot hangs from, and everything below it keeps whatever orientation the
-//! rest pose left it with — so as the body travels over a planted foot, the foot
-//! turns with the shin and drives its toe into the ground. The sole started a
-//! stance 33 mm under and finished it 121 mm under. A swinging foot was no
-//! better: at its lowest it was 101 mm below the floor it was supposed to be
-//! swinging over.
+//! What riding the shin costs, measured over a walk cycle by
+//! `examples/walkaudit`: **a planted foot sinks 121 mm through the floor.**
+//! The leg IK aims the joint the foot hangs from, and everything below it
+//! keeps whatever orientation the rest pose left it with — so as the body
+//! travels over a planted foot, the foot turns with the shin and drives its
+//! toe into the ground. The sole starts a stance 33 mm under and finishes it
+//! 121 mm under. A swinging foot is no better: at its lowest it is 101 mm
+//! below the floor it is supposed to be swinging over.
 
 use glam::{Quat, Vec3};
 
@@ -174,7 +173,7 @@ pub fn contacts_in(rig: &Rig, pose: &Pose) -> Vec<Limb> {
 /// How fast a foot may be moving, as a share of the fastest foot's speed, and
 /// still count as planted.
 ///
-/// Measured on the reference's own `Walk` at #139: the slowest frame-to-frame
+/// Measured on the reference library's own `Walk`: the slowest frame-to-frame
 /// step of a toe is 2.7 mm against a quickest of 97, a separation of thirty-six
 /// times. A third leaves room for a foot that is peeling or settling without
 /// letting a swinging one through.
@@ -474,21 +473,20 @@ where
 /// with the gait engine, which places contacts for a different reason but has
 /// exactly the same problem.
 ///
-/// **Iterated, because the hang turns as the limb solves** (#254). The offset
+/// **Iterated, because the hang turns as the limb solves.** The offset
 /// below is read off the pose, and the solve it feeds then rotates the joint it
 /// was read from — so one pass lands the extremity where it *was* hanging
-/// rather than on `target`. This was a one-pass function until #254, and
-/// `two_bone` reported success every time it happened.
+/// rather than on `target`, and `two_bone` reports success when it does.
 ///
-/// **What it cost, measured on the default biped.** A hand landed 69.7 mm from
-/// its goal on a rest pose. A stance foot sat 36 mm above a flat floor at pace
-/// 0.5 and 67 mm at pace 1.5 — pace-dependent, because the miss is a fraction
-/// of how far the limb turned, and pace-dependent foot placement is what a
-/// skate looks like. Worst of all, the **body travelled 12.3% further than its
-/// stride said**: a planted contact slides back under the hip by `d(1 +
-/// hang/reach)` when the goal moves by `d`, and 1 + 0.09/0.71 is 1.127 against
-/// 1.123 measured. Every walk this crate produced was 12% out against the floor
-/// it was walking on.
+/// **What one pass costs, measured on the default biped.** A hand lands 69.7
+/// mm from its goal on a rest pose. A stance foot sits 36 mm above a flat
+/// floor at pace 0.5 and 67 mm at pace 1.5 — pace-dependent, because the miss
+/// is a fraction of how far the limb turned, and pace-dependent foot placement
+/// is what a skate looks like. Worst of all, the **body travels 12.3% further
+/// than its stride says**: a planted contact slides back under the hip by
+/// `d(1 + hang/reach)` when the goal moves by `d`, and 1 + 0.09/0.71 is 1.127
+/// against 1.123 measured. Every walk produced that way is 12% out against the
+/// floor it is walking on.
 ///
 /// Re-reading and re-solving is the same fixed point [`FootingConfig::passes`],
 /// [`level_feet`] and the gait's own trunk angle each iterate, and for the same

@@ -1,18 +1,18 @@
-//! A mouth that opens (#154).
+//! A mouth that opens.
 //!
-//! The mandible region (#152) gave the lower face a bone and the talk driver
-//! (#153) gave that bone speech, but the skin over both was one continuous
-//! sheet: opening the jaw stretched the face between the lips rather than
-//! parting them. This cuts the parting.
+//! The mandible region gives the lower face a bone and the talk driver gives
+//! that bone speech, but the skin over both arrives as one continuous
+//! sheet: opening the jaw would stretch the face between the lips rather than
+//! part them. This cuts the parting.
 //!
 //! **The body stays one closed solid.** The surface is split along the lip
 //! parting and sewn back together through a shallow pocket — inner lips, an
 //! upper teeth ridge, a back wall — so the mouth is a concave fold of the same
 //! watertight surface, not a hole. Every contract that stands on the closed
 //! manifold (containment, garments, the meshability sweeps) survives by
-//! construction. An attached mouth solid was rejected before this existed:
-//! #59 measured what a solid laid on bending skin costs, and it is why the
-//! lips are relief rather than parts.
+//! construction. An attached mouth solid was rejected on measurement: a solid
+//! laid on bending skin costs more than it gives, and it is why the lips are
+//! relief rather than parts.
 //!
 //! **The parting is the relief's own line.** The cut follows the same curved
 //! groove `relief` carves — the mouth line dipping toward the corners by
@@ -40,7 +40,7 @@ use crate::uv::{Rect, UvUnwrap};
 
 /// How deep the pocket reaches, in head radii.
 ///
-/// Shallow by the owner's word: enough that an open mouth shows an interior
+/// Shallow on purpose: enough that an open mouth shows an interior
 /// rather than a void, and nothing a viewer never sees. On the default head
 /// this is about 13 mm.
 const DEPTH: f32 = 0.14;
@@ -69,8 +69,8 @@ pub struct Mouth {
     pub teeth: Vec<u32>,
     /// Pocket floor and the whole back wall: the jaw's.
     ///
-    /// The back wall's TOP was the skull's first, and the owner caught what
-    /// that means from outside (#156): open the jaw and the wall stands still
+    /// Giving the back wall's TOP to the skull looks reasonable and reads
+    /// wrong from outside: open the jaw and the wall stands still
     /// while everything around it drops — a stationary sheet of mouth exactly
     /// where the inner lower lip should be, reading as the lip stuck on the
     /// skull. A mouth's floor and inner gum ride the mandible; the stretch a
@@ -78,21 +78,21 @@ pub struct Mouth {
     /// ridge, where nobody has ever seen the inside of a mouth.
     pub floor: Vec<u32>,
     /// The outer skin of the lower lip, below the parting: the jaw's
-    /// outright (#155, deepened by #157).
+    /// outright.
     ///
     /// The mandible field's blend has no business here: inside the slit there
     /// is no continuous skin across the parting any more, so the ramp that
-    /// eases a cheek eased the lip tip instead — the seam's own edge moved
-    /// with the jaw while the skin a millimetre below it hung on the skull,
-    /// which the owner saw as the lower lip stuck mid-word. And the band is
+    /// eases a cheek would ease the lip tip instead — the seam's own edge
+    /// moving with the jaw while the skin a millimetre below it hangs on the
+    /// skull, which reads as the lower lip stuck mid-word. And the band is
     /// DEEP, because the field's top edge is a span-fraction constant while
     /// the cut follows each body's own canon: on seed 1 the two disagree by
-    /// six millimetres, and the skin between them hung half-held across a
-    /// wide-open mouth as a stretched sheet (#157). Where the field is
+    /// six millimetres, and skin left between them would hang half-held
+    /// across a wide-open mouth as a stretched sheet. Where the field is
     /// already 1.0 the override changes nothing, so depth is cheap; the cut
     /// line is the one authority.
     pub lip: Vec<u32>,
-    /// The outer skin just above the parting: the skull's outright (#157).
+    /// The outer skin just above the parting: the skull's outright.
     ///
     /// The same seed-mismatch mirrored: a body whose parting sits below the
     /// field's top would have upper-lip skin claimed for the jaw. Skin above
@@ -110,7 +110,7 @@ pub struct Mouth {
 /// Returns `None` — leaving the body exactly as it was — when the rig carries
 /// no jaw markers (a quadruped), when the parting curve crosses no clean chain
 /// of edges, or when the cut would be degenerate. A body without an openable
-/// mouth is the state every body shipped in until #154, not an error.
+/// mouth is a whole, closed body, not an error.
 #[must_use]
 pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) -> Option<Mouth> {
     // No jaw, no mouth to open: the seam's two sides would have nothing to
@@ -551,10 +551,10 @@ pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) 
 /// Moves the pocket's charts into `rect`, out from under the face's.
 ///
 /// The unwrap charts by zone and connectivity, and the pocket is Head-zone
-/// skin connected to the face through its own seams — so it landed in the
+/// skin connected to the face through its own seams — so it would land in the
 /// face's chart, where a projection that flattens a face cannot also flatten
-/// a fold hidden behind it: the cavity's texels rasterised over the lip's and
-/// the paint ran down the chin as dark drips (#155). The interior gets the
+/// a fold hidden behind it: the cavity's texels rasterise over the lip's and
+/// the paint runs down the chin as dark drips. The interior gets the
 /// same treatment as an attached part instead: one reserved rectangle,
 /// asked from the packer like an ear's, with the faces re-charted into it on
 /// their own duplicated vertices so the seam's texels stay the lip's.

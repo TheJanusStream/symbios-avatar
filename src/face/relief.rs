@@ -1,13 +1,12 @@
 //! A face carved into the head rather than stuck onto it.
 //!
-//! Features used to be separate closed solids — a nose, two brows, two lips —
-//! appended to the body mesh without being welded to it. Measured against the
-//! surface they sat on, every one of them was at or below one quad in its
-//! smallest dimension: a brow ridge is 10 mm tall on a head whose faces were
-//! 24 mm across, and a nose was exactly one quad wide (#59). There was no
-//! surface to be a face, so the face was appliqué, and it read as appliqué —
-//! sweeping all three prominence axes across their whole range barely changed
-//! it, because the axes were attached to the wrong thing.
+//! Features are not separate solids appended to the body mesh. They cannot be:
+//! measured against an unrefined head, every one of them is at or below one
+//! quad in its smallest dimension — a brow ridge is 10 mm tall on a head whose
+//! faces are 24 mm across, and a nose is exactly one quad wide. A face built
+//! that way is appliqué and reads as appliqué, and sweeping the prominence axes
+//! across their whole range barely changes it, because the axes are attached to
+//! the wrong thing.
 //!
 //! [`crate::face::refine_face`] gave the front of the head 6.8 mm cells, which
 //! is what makes this file possible: every feature here is a **displacement of
@@ -44,19 +43,19 @@ use super::features::FaceParams;
 /// **Gathered into one place because their WIDTHS are the thing that decides
 /// whether a mouth reads at all.** Every one of them has to be wider than the
 /// mesh cell under it — a Gaussian one cell across renders as a single displaced
-/// row of vertices, which is a horizontal bar, and four of those stacked is what
-/// the owner reported as a terraced lower face (#85). At 3.6 mm cells they
+/// row of vertices, which is a horizontal bar, and four of those stacked is a
+/// terraced lower face. At 3.6 mm cells they
 /// measured 0.99, 1.29, 1.67 and 1.75 cells; the mouth band is refined a fourth
 /// time so they are 2.0 to 3.5. `the_mouth_is_wider_than_the_mesh_under_it`
 /// holds that, as a ratio rather than a millimetre figure, because the cell size
 /// moves with the refinement level and with the size of the head.
 /// **The fourth number is how each lobe ends at the corner of the mouth, and
-/// giving them all the same one is what drew the bars.** Every lobe used to be
-/// multiplied by a single `corner` factor that is 1.0 out to 0.90 of the mouth's
-/// half-width and only then lets go: measured off the vertices, the lower lip
-/// stood 5.34 mm proud DEAD FLAT from the midline to 20 mm out, with the whole
-/// taper crammed into the last 6 mm of 26. That is an extruded bar with a
-/// rounded end, and no amount of resolution can make it a lip (#82).
+/// giving them all the same one is what draws bars.** Multiplied by a single
+/// `corner` factor that is 1.0 out to 0.90 of the mouth's half-width and only
+/// then lets go, the lower lip stands 5.34 mm proud DEAD FLAT from the midline
+/// to 20 mm out, with the whole taper crammed into the last 6 mm of 26. That is
+/// an extruded bar with a rounded end, and no amount of resolution can make it
+/// a lip.
 ///
 /// The two vermilion lobes and the sulcus below them are `Lens`: they thin
 /// continuously from the middle and vanish where the lips meet. The line between
@@ -64,21 +63,21 @@ use super::features::FaceParams;
 /// commissure is the DEEPEST part of the mouth line, not the shallowest, and
 /// fading the groove out along with the vermilion is what leaves a bar with a
 /// rounded end instead of two lips meeting at a point.
-/// Provenance: **tuned by render** (#82), against a bisected profile — the
-/// 5.34 mm dead-flat measurement above is what condemned the previous table.
+/// Provenance: **tuned by render**, against a bisected profile — the
+/// 5.34 mm dead-flat measurement above is what condemns a wider table.
 ///
-/// **The vermilion lobes were 0.46 and 0.44 and are 0.38 and 0.36** (#182). At
-/// the old widths the two of them had not died by the time they reached the
-/// mouth line: measured at `up = 0` the lower still contributed +0.161 of reach
-/// and the upper +0.144, against the groove's −0.44 — so the field's own value
-/// between the lips was −0.135, which is −0.72 mm, and `examples/facesection`
-/// found the built surface delivering −0.71. **The line was not being lost to
-/// the mesh, it was being cancelled by its own neighbours**, on a band whose
-/// cell is 0.82 mm and which therefore had resolution to spare. Narrowed, the
-/// tails come to +0.073 and +0.061 and the line reads −1.63 mm.
+/// **The vermilion lobes are 0.38 and 0.36, and narrower is what draws the
+/// mouth line.** At 0.46 and 0.44 the two of them have not died by the time
+/// they reach the mouth line: measured at `up = 0` the lower still contributes
+/// +0.161 of reach and the upper +0.144, against the groove's −0.44 — so the
+/// field's own value between the lips is −0.135, which is −0.72 mm, and
+/// `examples/facesection` finds the built surface delivering −0.71. **The line
+/// is not lost to the mesh, it is cancelled by its own neighbours**, on a band
+/// whose cell is 0.82 mm and which therefore has resolution to spare. Narrowed,
+/// the tails come to +0.073 and +0.061 and the line reads −1.63 mm.
 ///
-/// It buys an edge as well as a depth, which is the other half of what #182
-/// found: a Gaussian's steepest point scales as its amplitude over its width, so
+/// It buys an edge as well as a depth: a Gaussian's steepest point scales as
+/// its amplitude over its width, so
 /// the vermilion's outer flank steepens by a fifth in the same change. The lips'
 /// own peaks do not move — the weights are untouched — and the vermilion's
 /// half-height span comes in from 9.9 mm to 8.2, against a life upper vermilion
@@ -88,13 +87,13 @@ use super::features::FaceParams;
 /// `the_mouth_is_wider_than_the_mesh_under_it` measured; the two borders below
 /// are narrower and it measures those now.
 ///
-/// **The last two lobes are where each lip STOPS** (#182), and they are a term
-/// rather than an amplitude because no amplitude could have done it. A lobe that
+/// **The last two lobes are where each lip STOPS**, and they are a term
+/// rather than an amplitude because no amplitude can do it. A lobe that
 /// is a plain Gaussian falls to nothing and stays there, so a lip built out of
 /// two of them has no line at which it stops being a lip — measured, the upper
 /// flank fell at 1.13 and slowed to 0.17 without ever turning, against the nose
-/// base's 3.03 on the same face. #184 swept the amplitude and confirmed the
-/// arithmetic this issue had already recorded: compensating the weights to hold
+/// base's 3.03 on the same face. Swept, the amplitude confirms the arithmetic:
+/// compensating the weights to hold
 /// the lips at their life 4 to 6 mm takes back most of what raising the reach
 /// gives, so the flank reaches 1.35 at 1.6x and 1.52 at 2.0x. What draws a
 /// border is a crease — the surface must stop falling and come back up — and a
@@ -122,19 +121,19 @@ use super::features::FaceParams;
 /// For scale, the sulcus under the lower lip — the one crease this face carried
 /// before — recovers at +0.11 to +0.17 by the same measurement, so where the
 /// border does land it is as much of a crease as the feature it is judged
-/// against, and the flank it lands on is steeper than the 1.13 this issue
-/// opened with.
+/// against, and the flank it lands on is steeper than the 1.13 an unbordered
+/// lip gives.
 ///
-/// **Five of the seven, and the seat and the width are both part of why**
-/// (#182, second pass). The window a border has is the cutaneous lip, from the
+/// **Five of the seven heads, and the seat and the width are both part of
+/// why.** The window a border has is the cutaneous lip, from the
 /// vermilion to `Canon::nose_foot`, and the stack under the seat grows with the
 /// mouth axis while the foot does not move with it — so a constant seat lands
 /// outside its own window on a full mouth under a short face, which is where
-/// the misses all were. [`Face::border`] clamps the seat under the foot with
-/// [`BORDER_MARGIN`] of room; the width came in from 0.18 to 0.15 because a
+/// the misses are. [`Face::border`] clamps the seat under the foot with
+/// [`BORDER_MARGIN`] of room; the width is 0.15 rather than 0.18 because a
 /// narrower lobe overlaps the vermilion's tail less, which buys flank and
-/// recovery at once — the default went from falls 1.09/+0.19 to 1.14/+0.32 in
-/// the same change. Still above the mesh floor everywhere: 1.9 mm over seed
+/// recovery at once — 1.09/+0.19 against 1.14/+0.32 on the default body.
+/// Still above the mesh floor everywhere: 1.9 mm over seed
 /// 42's 0.96 mm cell.
 ///
 /// What was measured and rejected, so nobody prices it again: deepening to
@@ -146,7 +145,7 @@ use super::features::FaceParams;
 /// width and depth were each priced against the two heads that still miss:
 /// **seed 42's flank runs FLAT from its bottom to the foot** whatever the
 /// seat, and **seed 99's window is occupied by the sweep's most prominent
-/// nose** reaching its own relief down to the foot. Both are #192's proportion
+/// nose** reaching its own relief down to the foot. Both are a proportion
 /// question — where the nose base sits on a short face — and not a lip term's
 /// to answer.
 ///
@@ -157,8 +156,8 @@ use super::features::FaceParams;
 /// to 0.51 at −0.72). What it delivers is a quarter more slope — 0.66 to 0.80 on
 /// seed 7, 0.89 to 1.15 on 42, 0.87 to 1.10 on 99 — which is the same currency.
 /// A lower border that turns needs a small POSITIVE lobe between it and the
-/// sulcus, and three alternating lobes inside six millimetres is how #85's
-/// terraced lower face was drawn; it is not worth that risk.
+/// sulcus, and three alternating lobes inside six millimetres is how a terraced
+/// lower face gets drawn; it is not worth that risk.
 ///
 /// Provenance: **tuned by measurement, judged by render**, in both renderers.
 const LIPS: [(f32, f32, f32, Across); 6] = [
@@ -243,28 +242,26 @@ const FRONTAL: f32 = 0.15;
 /// What the `noseWidth` axis multiplies the nose's authored ramp by at its
 /// middle, and how far either way it goes.
 ///
-/// **The neutral is not one, and finding out why is the whole of what #61's
-/// "measure both extremes before believing it" step bought.** The axis was built
-/// symmetric about the ramp as authored, so that splitting a hard constant out
-/// into a record field moved no face. Measured on the built carve — where the
-/// displacement is still a fifth of its midline peak, at the base of the nose,
-/// on the default body — that gave 11.0 mm at one end, 20.4 in the middle and
-/// 29.8 at the other, against a life alare breadth of 31 to 42.
+/// **The neutral is not one, and measuring both extremes is what says why.**
+/// An axis built symmetric about the ramp as authored — so that splitting a
+/// hard constant out into a record field moves no face — measures, on the built
+/// carve where the displacement is still a fifth of its midline peak at the
+/// base of the nose, 11.0 mm at one end, 20.4 in the middle and 29.8 at the
+/// other, against a life alare breadth of 31 to 42.
 ///
-/// So the axis's **whole range lay below life**, and the two renders at its ends
-/// were very nearly the same picture. That is the undertone axis of #39 again in
-/// a different feature: a slider that measurably moves something, over a range
+/// That puts the axis's **whole range below life**, and the two renders at its
+/// ends are very nearly the same picture. It is the general trap for a
+/// parametric axis: a slider that measurably moves something, over a range
 /// where none of the movement means anything, reads as a slider that does
-/// nothing. What was wrong was not the span, it was where the span sat.
+/// nothing. What is wrong is not the span, it is where the span sits.
 ///
 /// Re-centred so the middle of the axis IS the middle of life — 1.60 puts the
 /// neutral nose at 32.6 mm, against a population mean near 34 — and widened so
 /// both ends are somewhere a face could be: 16.3 mm at zero and 49.0 at one,
 /// with life's 31 to 42 spanning 0.44 to 0.65 of the slider.
 ///
-/// This is the only default on this face that #61 moved, and it moved because a
-/// measurement said the constant it replaced was 40% under life. The skull's own
-/// two axes kept their neutrals; the reasoning for each is on that issue.
+/// It is the one neutral on this face that is not the constant it replaced,
+/// and it moved because a measurement said that constant was 40% under life.
 ///
 /// Provenance: **derived** from a life alare breadth of 31 to 42 mm against the
 /// built carve, measured rather than computed from the ramp — a report that
@@ -321,11 +318,11 @@ pub fn carve(mesh: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams)
 
 /// The landmarks every field here is placed from, in head-local metres.
 ///
-/// **Two rulers, not one.** Every coefficient below used to be a multiple of the
-/// eyeball's radius, which meant the eye-size slider silently resized the nose,
-/// the mouth, the lips, the brow and both ears — and meant a coefficient fitted
-/// on one body was up to 84% out on another, because that ruler's ratio to the
-/// face it was ruling was itself a free variable (#77). Widths and reaches are
+/// **Two rulers, not one.** A coefficient written as a multiple of the
+/// eyeball's radius makes the eye-size slider silently resize the nose,
+/// the mouth, the lips, the brow and both ears — and means a coefficient fitted
+/// on one body is up to 84% out on another, because that ruler's ratio to the
+/// face it rules is itself a free variable. Widths and reaches are
 /// counted in [`Canon::unit`], heights in [`Canon::frame`], and the two are
 /// measured off the built head rather than derived from each other.
 struct Face {
@@ -449,12 +446,12 @@ impl Face {
     /// globe's own surface about its own axis, the skin used to cover it from
     /// 16° medial inward and not reach it at all until 99° lateral: an opening
     /// 115° wide whose middle sat 42° off the direction the eye was looking.
-    /// The iris is the one thing on an eye that IS centred, so it read as
-    /// shoved to the nasal side (#88).
+    /// The iris is the one thing on an eye that IS centred, so it reads as
+    /// shoved to the nasal side.
     ///
     /// **Medial only, and that is a measurement rather than a saving.** Laterally
     /// the lid's own margin closes the aperture at 59° while the skin does not
-    /// reach the globe until 99, so the LID owns that edge already (#81) and
+    /// reach the globe until 99, so the LID owns that edge already and
     /// anything added out there is a rim rather than an aperture. Medially the
     /// globe lies 3.6 mm under the skin at 40° off the gaze — which is where the
     /// aperture's centroid comes back inside 5° of the gaze — rising to 7.7 at
@@ -467,10 +464,11 @@ impl Face {
     /// by the same amount and takes its medial surface down with it: a bowl
     /// centred on the eye achieves exactly nothing, however deep.
     ///
-    /// This used to be read as "keep the hollow away from the column", and that
-    /// is a stronger conclusion than the premise supports (#91). What the premise
-    /// forbids is a hollow that is FLAT across the eye, not one that touches it.
-    /// The hollow now reaches the column at about half its depth and the canthus
+    /// The rule this implies is NOT "keep the hollow away from the column",
+    /// which is a stronger conclusion than the premise supports. What the
+    /// premise forbids is a hollow that is FLAT across the eye, not one that
+    /// touches it.
+    /// The hollow reaches the column at about half its depth and the canthus
     /// at full, and it is that gradient which opens the aperture; the globe
     /// recedes 3 to 4 mm and the opening still gains 14°. Anatomically it is the
     /// right shape too — the medial orbital wall is the deepest part of the rim,
@@ -480,7 +478,7 @@ impl Face {
     /// shows medially only past 28.9° off the gaze, which is `eye::LIMBUS`; the
     /// pupil's 8.2° is not the bar and a medial edge that clears it looks like a
     /// success while the eye still reads as having no white on the nasal side.
-    /// Before this pass the edge sat at −15.5° to −24° on seven seeds — inside
+    /// Undercut, the edge sits at −15.5° to −24° on seven seeds — inside
     /// the iris on six of them — so the iris met skin directly and the eye read
     /// as shoved toward the nose.
     ///
@@ -505,37 +503,34 @@ impl Face {
         /// **What stops it going further is `an_eye_is_seated_in_the_face`, not
         /// taste.** Deepening the socket exposes more of the globe, and that
         /// test holds exposure under 25% because an eye past it reads as popped
-        /// out (#73). The two requirements pull against each other and this sits
-        /// at the boundary, so a future change that wants a deeper orbit has to
+        /// out. The two requirements pull against each other and this sits
+        /// at the boundary, so a change that wants a deeper orbit has to
         /// buy exposure back somewhere else rather than raise that ceiling.
         ///
-        /// **Down from 0.620 because #93 shortened the neck**, which drops the
-        /// head about 18 mm and re-scales the skull's below-joint domain, and
-        /// that was enough to put seed 13's right eye at 25% exposure. Sitting
-        /// on a ceiling means any change to the head spends the margin, and this
-        /// is the second time in two passes that has happened here; 0.540 is too
-        /// shallow and loses the nasal white again, so the usable band is narrow
-        /// in both directions.
+        /// **The usable band is narrow in both directions**, and anything that
+        /// moves the head spends the margin: shortening the neck drops the head
+        /// about 18 mm and re-scales the skull's below-joint domain, which at
+        /// 0.620 is enough to put seed 13's right eye at 25% exposure, while
+        /// 0.540 is too shallow and loses the nasal white.
         const DEPTH: f32 = 0.580;
         /// How far medial of the pupil it is deepest, in eye-widths.
         ///
         /// **Down from 0.28, and inward is the direction nobody had tried.**
         /// 0.28 put the hollow's centre 8.7 mm medial of the pupil while the
         /// aperture's edge sits about 3.3 mm out, so the Gaussian delivered less
-        /// than half its depth where the edge actually was. #88 tested this axis
-        /// OUTWARD only — 0.36 took the medial edge from −42° to −19° on seed 7
-        /// — and recorded that as "do not move `MEDIAL`", when what it shows is
-        /// "do not move it outward". Inward is worth more than depth is, and
-        /// costs no material.
+        /// than half its depth where the edge actually is. Outward is the
+        /// direction that does not work — 0.36 takes the medial edge from −42°
+        /// to −19° on seed 7 and no further. Inward is worth more than depth
+        /// is, and costs no material.
         const MEDIAL: f32 = 0.14;
         /// How far it reaches across and up, as Gaussian widths in eye-widths.
         ///
         /// Both are six to eleven cells where the face is refined, well clear of
-        /// the one-cell floor that renders a field as a bar (#85). Widening `UP`
+        /// the one-cell floor that renders a field as a bar. Widening `UP`
         /// past 0.40 buys nothing — 0.48 moves the aperture's centre by under a
         /// degree.
         ///
-        /// `ACROSS` narrowed with `MEDIAL`, and for the same reason: what opens
+        /// `ACROSS` is narrow for the same reason `MEDIAL` is: what opens
         /// the aperture is the DIFFERENCE between the cut at the canthus and the
         /// cut at the eye's own column, so a hollow that is tight around the
         /// canthus has a steeper gradient than a broad one of the same depth.
@@ -761,10 +756,10 @@ impl Face {
 /// How deep the crease at the wing of the nose is cut, as a share of the nose's
 /// own reach.
 ///
-/// **Measured, and it was 0.16** (#180). `examples/facesection` cuts the nose
+/// **Measured rather than chosen.** `examples/facesection` cuts the nose
 /// across at the alae and reports how far the surface falls UNDER the same head
 /// uncarved just outside the feature's shoulder, which is what an alar-facial
-/// groove is. At 0.16 that delivered 1.09 mm on the default face and 0.73 to
+/// groove is. At 0.16 that delivers 1.09 mm on the default face and 0.73 to
 /// 1.55 mm across the nose axis, against a life groove of 1.5 to 3 mm — under
 /// half of life at the bottom of the axis and barely reaching it at the top.
 ///
@@ -798,14 +793,14 @@ const NOSE_FLANK: f32 = 0.88;
 /// whose sides fall away too fast to read as a nose from the front, and the
 /// 0.65 exponent puts the shoulder back on it.
 ///
-/// **And that exponent was the worst thing in the whole relief field** (#82).
+/// **The exponent alone would be the worst thing in the whole relief field.**
 /// `(1 − a²)^0.65` has an INFINITE derivative where it reaches zero, because
-/// 0.65 is under one — so the flank meets the cheek at a cusp.
-/// `the_relief_field_has_no_cliffs_in_it` has been reporting it by name since it
-/// was written: that test halves its sample step and reads the ratio, a cliff
-/// gives 1.00 and a smooth feature 0.50, and this gave **0.623 — which is
-/// 2^−0.68**, the exponent's own signature. It is continuous, so it is not a
-/// step; it aliases, because no sampling can resolve an infinite slope.
+/// 0.65 is under one — so the flank would meet the cheek at a cusp.
+/// `the_relief_field_has_no_cliffs_in_it` names it: that test halves its sample
+/// step and reads the ratio, a cliff gives 1.00 and a smooth feature 0.50, and
+/// the bare power gives **0.623 — which is 2^−0.68**, the exponent's own
+/// signature. It is continuous, so it is not a step; it aliases, because no
+/// sampling can resolve an infinite slope.
 ///
 /// **Patched rather than replaced, and the arithmetic is why.** The obvious
 /// fixes are all shape changes: `1 − a³` has a finite edge slope but runs 13% of
@@ -838,7 +833,7 @@ fn nose_section(across: f32) -> f32 {
 /// lower, which is what stops two brows reading as one bar. `side` is zero over
 /// the pupil and ±1.15 at the gate.
 ///
-/// Provenance: **tuned by render** (#59), and the heights are shares so the axis
+/// Provenance: **tuned by render**, and the heights are shares so the axis
 /// scales them.
 const BROW_ARCH: [(f32, f32); 5] = [
     (-1.15, 0.62),
@@ -855,11 +850,11 @@ const BROW_ARCH: [(f32, f32); 5] = [
 /// around, which is why [`super::curve::monotone`]'s zero-tangent rule at an
 /// extremum is load-bearing here and nowhere else.
 ///
-/// **The two knots below the tip are 5.9 and 3.9 mm apart on the default face**
-/// (#82), against 1.6 mm cells at the nose base. Piecewise-linear that is a
+/// **The two knots below the tip are 5.9 and 3.9 mm apart on the default face**,
+/// against 1.6 mm cells at the nose base. Read piecewise-linear that is a
 /// slope break every two to four cells while the value swings 1.00 → 0.86 →
-/// 0.00, which is the same arithmetic that made the skull terrace at a break
-/// every 7.9 mm (#83).
+/// 0.00, which is the arithmetic that terraces a skull at a break every
+/// 7.9 mm.
 ///
 /// Provenance: **tuned by render**.
 const NOSE_RISE: [(f32, f32); 6] = [
@@ -890,40 +885,35 @@ const NOSE_SPREAD: [(f32, f32); 4] = [
 /// The face's own name for [`super::curve::monotone`], which [`super::skull`]
 /// calls `knot` and gives its profiles to from the crown down.
 ///
-/// **This was piecewise-linear until #82, and the note that kept it that way was
-/// half right.** It read: *the mirror of the skull's profile reader, which runs
-/// the other way — kept separate rather than shared and flipped, because two
-/// readers that disagree about which end they start from is exactly the kind of
-/// thing that looks correct in both files.* The worry was sound and the cure
-/// was the wrong one. A lerp is cheap to keep twice; a Fritsch–Carlson limiter
-/// is not, and #83 gave one to the skull and left this reader with a slope that
-/// jumps at every knot. So there is one reader now and it takes its direction
-/// from the knots rather than from which file is calling.
+/// **One reader, not two.** Keeping a separate piecewise-linear reader here
+/// guards against a real hazard — two readers that disagree about which end
+/// they start from look correct in both files — but the cure is worse than the
+/// disease: a lerp is cheap to keep twice and a Fritsch–Carlson limiter is not,
+/// and a face read with a lerp has a slope that jumps at every knot. So there
+/// is one reader and it takes its direction from the knots rather than from
+/// which file is calling.
 ///
-/// The knot values did not change. See [`NOSE_RISE`] for the segment that made
-/// this worth doing and [`super::curve::monotone`] for why monotone.
+/// See [`NOSE_RISE`] for the segment that makes this matter and
+/// [`super::curve::monotone`] for why monotone.
 fn ramp(curve: &[(f32, f32)], at: f32) -> f32 {
     super::curve::monotone(curve, at)
 }
 
 /// A smooth bump, one at `centre` and falling away over `width`.
 ///
-/// **Why the mouth is drawn with these and not with knots.** [`ramp`] used to
-/// have a slope that jumps at every knot. That is invisible where a span holds
-/// several cells and unmissable where it holds one, and the mouth was the second
+/// **Why the mouth is drawn with these and not with knots.** A knot reader's
+/// slope jumps at every knot. That is invisible where a span holds
+/// several cells and unmissable where it holds one, and the mouth is the second
 /// case: both lips, the line between them and the crease below span about 25 mm,
-/// so the knots landed roughly a cell apart and each slope change landed on its
-/// own row of quads. The mouth came out as a stack of horizontal bars.
-/// Re-authoring the knots did not help and could not have — a Gaussian has no
-/// knots to alias.
+/// so the knots land roughly a cell apart and each slope change lands on its
+/// own row of quads — a stack of horizontal bars. Re-authoring the knots cannot
+/// help; a Gaussian has no knots to alias.
 ///
-/// **The cell figure that argument rested on was 3.4 mm and it is 0.82 now**
-/// (#82). Measured as the median edge length over the faces whose centroids sit
-/// within a lip's span of the mouth line: 0.82 mm at the mouth and 1.62 at the
-/// nose base, after #85 refined the mouth band, #107 added a subdivision and
-/// #158 split with `refine_curved`. The conclusion stands — a Gaussian is still
-/// the right shape for a lip — but nothing in this file may any longer argue
-/// that a millimetre is too small to show. It is four cells wide.
+/// **And the cell under the mouth is 0.82 mm**, measured as the median edge
+/// length over the faces whose centroids sit within a lip's span of the mouth
+/// line, against 1.62 at the nose base. A Gaussian is still the right shape for
+/// a lip — but nothing in this file may argue that a millimetre is too small to
+/// show. It is four cells wide.
 fn bump(at: f32, centre: f32, width: f32) -> f32 {
     let along = (at - centre) / width.max(f32::EPSILON);
     (-along * along).exp()
@@ -976,10 +966,10 @@ mod tests {
     ///
     /// The interval property [`super::super::curve::monotone`]'s limiter exists
     /// to guarantee, asked of the relief's curves the way `skull`'s
-    /// `a_profile_reads_between_its_knots` asks it of the head's (#82). These had
-    /// no such test because a lerp cannot overshoot and needed none; a cubic can,
-    /// and [`NOSE_RISE`] turns around at its tip, which is the one shape in this
-    /// file where an ordinary spline would.
+    /// `a_profile_reads_between_its_knots` asks it of the head's. A lerp cannot
+    /// overshoot and would need no such test; a cubic can, and [`NOSE_RISE`]
+    /// turns around at its tip, which is the one shape in this file where an
+    /// ordinary spline would.
     #[test]
     fn a_ramp_reads_between_its_knots() {
         for (name, ramp_curve) in RAMPS {

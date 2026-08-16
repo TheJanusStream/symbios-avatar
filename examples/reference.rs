@@ -6,7 +6,7 @@
 //! ladder — was measured once by hand off these two GLBs and then written into
 //! that file as a constant. Nothing could reproduce them, so nothing could
 //! notice if one were wrong, and the female half of several tables was never
-//! taken at all (#173).
+//! taken at all.
 //!
 //! This reads both mannequins and prints the tables. The male column is the
 //! proof: it has to come out as the numbers already in `bodyaudit`, because
@@ -239,7 +239,7 @@ fn heights(bodies: &[(&str, Body)]) {
 /// abdomen, and the difference between two bodies gets mixed with the
 /// difference between two heights. Every figure here is taken in a band centred
 /// on that body's own bone, so the columns are like for like — which is what a
-/// frame axis has to be tuned against (#100).
+/// frame axis has to be tuned against.
 fn girths(bodies: &[(&str, Body)]) {
     println!("\ntrunk at each body's OWN landmark, half-width and half-depth of stature");
     println!(

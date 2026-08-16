@@ -1,9 +1,9 @@
 //! Hair that is painted on rather than grown.
 //!
 //! The first of the two layers: hair drawn into the skin's own albedo, at the
-//! density and colour each region asks for. It is what stubble was, generalised
-//! from one scalar over a hand-drawn window to five regions over the masks both
-//! layers share.
+//! density and colour each region asks for — stubble generalised, five regions
+//! over the masks both layers share rather than one scalar over a hand-drawn
+//! window.
 //!
 //! **It is not a cheaper substitute for the grown layer, it is the other half
 //! of it.** Geometry gives hair a silhouette and catches light; paint gives it
@@ -12,8 +12,8 @@
 //! shape — so most heads want both, and the two agree about where because they
 //! ask the same [`super::Follicles`].
 //!
-//! One colour per region and no gradient, which is the owner's own line: a
-//! painted hair is a hair seen end-on, and the end of a hair is one colour.
+//! One colour per region and no gradient: a painted hair is a hair seen
+//! end-on, and the end of a hair is one colour.
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -63,12 +63,12 @@ impl Paint {
 
 /// How one region's painted hair breaks up into hairs.
 ///
-/// **One grain for five regions was one region's grain**, and the region it
-/// suited was a stubbled jaw (#205). Painted stubble is mostly skin with hairs
-/// through it, so its grain has to cut nearly to bare skin at its darkest; a
-/// brow is the opposite — dense hair with almost no skin between — and drawn at
-/// the stubble's grain it read as a checkerboard rather than as a brow, being
-/// three cells wide in total.
+/// **One grain cannot serve five regions, because the regions are not one kind
+/// of hair.** Painted stubble is mostly skin with hairs through it, so its
+/// grain has to cut nearly to bare skin at its darkest; a brow is the opposite
+/// — dense hair with almost no skin between — and drawn at the stubble's grain
+/// it reads as a checkerboard rather than as a brow, being three cells wide in
+/// total.
 ///
 /// So both numbers are per region: how much skin shows between the hairs, and
 /// how big a hair's own cell is. Neither is a taste, and the second one has a
@@ -79,26 +79,26 @@ pub struct Grain {
     /// and `1` bare skin.
     ///
     /// Its mean is half of this, so a region at `1` reaches half its own colour
-    /// on average, which is what the one carried stubble term did.
+    /// on average — the strength a shave paints at.
     pub shows: f32,
     /// How close to its own colour the paint gets where the mask is full and the
     /// density is `1`.
     ///
-    /// **Not all the way, and how far is the region's business** (#204). Eight
-    /// tenths is what the stubble term used and it is right for stubble: a shaved
-    /// jaw is mostly skin with hair through it, and paint that reaches its colour
-    /// exactly reads as a decal. A SCALP under a head of hair is the opposite — the
-    /// skin between the locks is in shadow under hair, not showing between
-    /// bristles — and at eight tenths of a dark brown from a pale complexion it
-    /// rendered as a tan disc at the crown that read as a bald spot.
+    /// **Not all the way, and how far is the region's business.** Eight tenths
+    /// is right for stubble: a shaved jaw is mostly skin with hair through it,
+    /// and paint that reaches its colour exactly reads as a decal. A SCALP
+    /// under a head of hair is the opposite — the skin between the locks is in
+    /// shadow under hair, not showing between bristles — and at eight tenths of
+    /// a dark brown from a pale complexion it renders as a tan disc at the
+    /// crown that reads as a bald spot.
     pub reach: f32,
     /// How many cells of it there are per metre.
     ///
     /// **A wish rather than a promise**, because most charts carry three to five
     /// millimetres of body per texel and a cell finer than twice that cannot be
     /// drawn — the painter fades the variation by what the local spacing
-    /// actually resolves, exactly as it does for pores, striations and wrinkles
-    /// (#158's lesson, applied to the one grain that was missing it). Where a
+    /// actually resolves, exactly as it does for pores, striations and
+    /// wrinkles. Where a
     /// grain cannot be resolved the region paints its mean, which is the right
     /// answer: at four millimetres a texel you cannot draw a hair, so you draw
     /// what a patch of them averages to.
@@ -108,12 +108,11 @@ pub struct Grain {
 impl Grain {
     /// The grain one region's painted hair has.
     ///
-    /// Provenance: the stubble regions are **carried** from #200 — one shows
-    /// bare skin at its thinnest, its reach is the 0.8 the stubble term used and
-    /// its cells are that term's 260 per metre, so a beard's painted colour is
-    /// unchanged to the bit. The brows and the scalp are **derived** from what
-    /// they are (dense hair rather than a shave) and **tuned by render** (#205,
-    /// #204).
+    /// Provenance: the stubble regions are **carried** from the complexion's
+    /// retired stubble term — bare skin at the thinnest, its 0.8 reach and its
+    /// 260 cells per metre — so a beard's painted colour matches it to the bit.
+    /// The brows and the scalp are **derived** from what they are (dense hair
+    /// rather than a shave) and **tuned by render**.
     #[must_use]
     pub fn of(follicle: Follicle) -> Self {
         match follicle {

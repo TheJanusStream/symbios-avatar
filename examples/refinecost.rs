@@ -1,13 +1,10 @@
 //! What each face-refinement pass costs, and which band it buys.
 //!
-//! #115 is a triangle cut, and it has been costed twice from numbers that were
-//! true when they were taken: the per-pass breakdown on that issue is from
-//! 2026-08-06, and #164's allometric girth, #174's neck floor and #167's age
-//! settle have all moved the body since. Its own recorded lesson is that a pass
-//! set cannot be costed by scaling a band — the cost is quantised by ring, so a
-//! band edge landing ON a row of faces rather than between them is worth
-//! hundreds of triangles — and that they have to be built and measured. This
-//! builds and measures them.
+//! A pass set cannot be costed by scaling a band, and a costing taken off an
+//! older body goes stale as soon as anything moves the surface under it: the
+//! cost is quantised by ring, so a band edge landing ON a row of faces rather
+//! than between them is worth hundreds of triangles. Pass sets have to be
+//! built and measured. This builds and measures them.
 //!
 //! One row per pass, walking [`FACE_PASSES`](symbios_avatar::face::refine_face)
 //! from none to all of them, each row reporting what that pass added and what
@@ -23,29 +20,28 @@
 //!
 //! **The bands are measured once, off the fully refined body, and then held.**
 //! A band defined per level would move as the head's own surface changed under
-//! it, and the rows would not be comparable — which is the same failure the
-//! refinement bands themselves had before #61 tied them to the frame.
+//! it, and the rows would not be comparable — which is the same reason the
+//! refinement bands themselves are tied to the frame.
 //!
-//! **A cell is reported ACROSS and DOWN separately, and the single median this
-//! example printed until 2026-08-11 was wrong wherever it mattered** (#185). The
+//! **A cell is reported ACROSS and DOWN separately, because a single median is
+//! wrong wherever it matters.** The
 //! head's faces are not square: measured at the nose's dorsum on the shipped
 //! body they run 3.42 mm across and 7.23 mm down, a 2:1 quad that
 //! [`PolyMesh::refine_curved`] preserves, so every band holds two populations of
 //! edge a factor of two apart. A median over both reports whichever one happens
 //! to hold the middle, and a refinement that halves EVERY edge moves the count
-//! balance rather than the median — which is exactly what it did: a dorsum band
-//! took the band from 3.42/7.23 to 1.71/3.64 and this table said `3.53 -> 3.58`,
-//! and the nose base from 0.76/2.25 to 0.38/1.12 and it said `0.83 -> 1.12`,
-//! WORSE. Two costed proposals were abandoned on those readings before the
-//! distribution was looked at rather than its middle.
+//! balance rather than the median: a dorsum band that goes from 3.42/7.23 to
+//! 1.71/3.64 reads `3.53 -> 3.58` as one median, and a nose base that goes
+//! from 0.76/2.25 to 0.38/1.12 reads `0.83 -> 1.12`, WORSE.
 //!
 //! So each band reports the median of the edges that run across the face and the
 //! median of the ones that run down it. Which one a question wants depends on
 //! the question: `the_mouth_is_wider_than_the_mesh_under_it` counts cells ACROSS
-//! the mouth, #181 counts them across the nose's dorsum, and a lip term that is
-//! narrow in HEIGHT is held by the DOWN cell. Nothing here recomputes a relief
-//! constant: the guard rails on how far a cut may go are the tests that already
-//! hold them, and a report that restates the source is not measuring the body.
+//! the mouth, a ridge is held by the cell across the nose's dorsum, and a lip
+//! term that is narrow in HEIGHT is held by the DOWN cell. Nothing here
+//! recomputes a relief constant: the guard rails on how far a cut may go are
+//! the tests that already hold them, and a report that restates the source is
+//! not measuring the body.
 
 use symbios_avatar::face::{
     Canon, HeadTraits, Skull, refine_face, refine_neck, shape_neck, shape_skull,
@@ -61,7 +57,7 @@ use symbios_avatar::{
 /// labelled 9 is the SHIPPED body and not one pass past it. Ten is one past:
 /// `refine_face` repeats its tightest region rather than widening again, so that
 /// row is what another pass over the mouth band would cost and buy — the
-/// question every proposal on #115 has had to answer by hand.
+/// question a refinement proposal otherwise has to answer by hand.
 const PASSES: usize = 11;
 
 /// The bands each row reports a cell for.

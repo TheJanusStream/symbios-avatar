@@ -1,7 +1,8 @@
 //! The eyebrows' own catalogue.
 //!
-//! **The first region to leave the shared [`Fall`](super::super::clump::Fall),
-//! and it had to** (#205). A brow is where the engine's defaults are most wrong:
+//! **A catalogue of its own rather than the shared
+//! [`Fall`](super::super::clump::Fall), and it has to be.** A brow is where
+//! the engine's defaults are most wrong:
 //! `Fall` combs downhill, and downhill on a brow ridge is straight over the eye,
 //! so a brow grown that way is a row of dark spikes hanging into the socket. The
 //! render was unambiguous about it.
@@ -24,9 +25,9 @@
 //! of clumps, each at the sampler's floor. The difference is section, streak
 //! length, taper and how flat they lie — a fine tapered stroke against a coarse
 //! blunt block. **A style that reads differently for the same triangles is the
-//! whole bet of this milestone**, and the brow is the smallest region to test it
-//! on, so it is the one where a wider ribbon has to do the work a longer clump
-//! list would have done.
+//! whole bet of the hair system**, and the brow is the smallest region to test
+//! it on, so it is the one where a wider ribbon has to do the work a longer
+//! clump list would have done.
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -65,7 +66,7 @@ pub enum BrowStyle {
 /// disagree with the ridge's curve over its own length; shorter and the gaps
 /// between them show.
 ///
-/// Provenance: **tuned by render** (#205), against the clump count `FULL` sets.
+/// Provenance: **tuned by render**, against the clump count `FULL` sets.
 const REACH: [f32; 2] = [0.50, 0.44];
 
 /// How wide one is at the root, in metres.
@@ -74,7 +75,7 @@ const REACH: [f32; 2] = [0.50, 0.44];
 /// ribbon costs exactly the same triangles as a narrow one, so a brow that has
 /// to read at eighteen clumps reads by being wide rather than by being many.
 ///
-/// Provenance: **tuned by render** (#205).
+/// Provenance: **tuned by render**.
 const WIDTH: [f32; 2] = [0.0038, 0.0062];
 
 /// What share of the section is left at the tip.
@@ -82,7 +83,7 @@ const WIDTH: [f32; 2] = [0.0038, 0.0062];
 /// The natural brow comes to a point and the thick one stays blunt, which is
 /// the difference between a stroke and a block at the same cost.
 ///
-/// Provenance: **tuned by render** (#205).
+/// Provenance: **tuned by render**.
 const TAPER: [f32; 2] = [0.22, 0.50];
 
 /// How much of its length and width the tail loses.
@@ -101,7 +102,7 @@ const THIN: [f32; 2] = [0.55, 0.22];
 /// stands off a little, and that lift over a 10 mm streak is the whole of what
 /// makes it read as bushy rather than as painted.
 ///
-/// Provenance: **tuned by render** (#205).
+/// Provenance: **tuned by render**.
 const LIE: [f32; 2] = [0.97, 0.88];
 
 /// Where along the ridge the tail's thinning begins.
@@ -115,34 +116,34 @@ const TAPER_FROM: f32 = 0.62;
 /// How thin a clump is at each of its ends, as a share of its middle.
 ///
 /// **A leaf rather than a wedge, and it is what makes eighteen clumps read as
-/// two brows** (#205). Swept from full width to a point, every clump ends in a
+/// two brows.** Swept from full width to a point, every clump ends in a
 /// blunt face at the root, and a row of them reads as a row of separate objects
 /// however much they overlap. Thin at both ends, the overlaps have no ends in
 /// them: the union is one arched mass with a ragged edge, which is what a brow is
 /// at this triangle count. See [`Shape::width_at`], whose default is the wedge.
 ///
-/// Provenance: **tuned by render** (#205).
+/// Provenance: **tuned by render**.
 const ENDS: f32 = 0.3;
 
 /// How much of its offset from the ridge a clump closes over its own length.
 ///
-/// **What turns a scatter of streaks into one brow** (#205). Roots land anywhere
+/// **What turns a scatter of streaks into one brow.** Roots land anywhere
 /// in the band's twelve millimetres, and a streak that runs straight out from
-/// wherever it started stays there — so the row read as two or three stacked
-/// bars, and the ones rooted in the band's lower edge ran out of the brow
+/// wherever it started stays there — the row reads as two or three stacked
+/// bars, and the ones rooted in the band's lower edge run out of the brow
 /// altogether and onto the eyelid. Real brow hairs converge toward the body of
 /// the brow, and a clump that does the same is both more correct and the reason
 /// eighteen of them read as a stroke.
 ///
 /// Half is enough to gather them without making the brow read as a single line.
 ///
-/// Provenance: **tuned by render** (#205).
+/// Provenance: **tuned by render**.
 const GATHER: f32 = 0.7;
 
 /// How far past the tail a clump may reach, in metres.
 ///
 /// A streak rooted near the tail would otherwise run its whole length past the
-/// end of the brow and hang in the air beside the temple, which the sheet showed
+/// end of the brow and hang in the air beside the temple, which reads
 /// as a detached dash. Inside the mask's own lateral fade — 3.3 mm on this
 /// frame — so a hair that passes the nominal end is still somewhere the paint
 /// reaches.
@@ -153,17 +154,17 @@ const OVERSHOOT: f32 = 0.002;
 /// The shortest clump worth growing, as a share of the style's full reach.
 ///
 /// Only a floor against the degenerate: a clump under a millimetre and a half is
-/// invisible and its fourteen triangles are spent on nothing, which is what
+/// invisible and its triangles are spent on nothing, which is what
 /// [`Shape::length`]'s zero is for.
 ///
-/// **It was five times this and that was the wrong instrument** (#205). A root
-/// near the tail has little ridge left to run along, and declining every one of
-/// them threw away a fifth of the brow's clumps and left the outer five
-/// millimetres bare — measured: thirteen clumps asked for, ten grown, and the
-/// audit's grown band stopping short of the mask's. The fat lozenge that
-/// prompted it was not the shortness, it was a short clump keeping its full
-/// width; a section that follows the length is the fix, and then a short clump
-/// is what it should always have been — the fine hair at the end of a brow.
+/// **Low on purpose, because a higher floor is the wrong instrument.** A root
+/// near the tail has little ridge left to run along, and declining every
+/// short clump throws away a fifth of the brow's clumps and leaves the outer
+/// five millimetres bare — measured at five times this floor: thirteen clumps
+/// asked for, ten grown, and the audit's grown band stopping short of the
+/// mask's. A fat lozenge at the tail is not the shortness, it is a short
+/// clump keeping its full width; the section follows the length, so a short
+/// clump is what it should be — the fine hair at the end of a brow.
 ///
 /// Provenance: **derived** from what the render can resolve.
 const LEAST_WORTH: f32 = 0.08;
@@ -176,7 +177,7 @@ const LEAST_WORTH: f32 = 0.08;
 /// metres of drop per metre run, added to the ridge's slope, so half of the axis
 /// is the ridge as measured.
 ///
-/// Provenance: **tuned by render** (#205).
+/// Provenance: **tuned by render**.
 const SAG: f32 = 0.45;
 
 impl Style for BrowStyle {
@@ -286,7 +287,7 @@ impl Brow {
     /// How much of the full section this clump gets.
     ///
     /// **Its own length as a share of the full reach, so a clump is as thick as
-    /// it is long** (#205). The alternative is [`Self::share`] alone, and the
+    /// it is long.** The alternative is [`Self::share`] alone, and the
     /// difference is every clump the end of the brow cuts short: at full width a
     /// four-millimetre one is a lozenge sitting off the tail, and at a
     /// proportional width it is the fine hair a brow actually ends in.
@@ -298,12 +299,11 @@ impl Brow {
     ///
     /// **Sideways only, with the rise left out of it on purpose.** How much a
     /// clump climbs is the ridge's own business and [`Shape::at`] takes it from
-    /// the ridge's height directly; a direction that also carried the climb meant
-    /// the two were added and then one of them subtracted again, which is how
-    /// `droop` came to do nothing at all — the axis was cancelled by the very
-    /// correction that keeps a clump on its line (caught by
-    /// `droop_raises_and_lowers_a_brow_rather_than_hanging_it`, which measured
-    /// -0.12 mm of tilt at every setting).
+    /// the ridge's height directly; a direction that also carried the climb
+    /// would add the two and then subtract one again, leaving `droop`
+    /// doing nothing at all — the axis cancelled by the very
+    /// correction that keeps a clump on its line (guarded by
+    /// `droop_raises_and_lowers_a_brow_rather_than_hanging_it`).
     ///
     /// The surface's own component is taken out so the streak stays on the brow it
     /// grew on rather than leaving the skin.

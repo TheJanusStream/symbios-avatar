@@ -240,7 +240,7 @@ impl Outfit {
     /// `hidden` rather than [`claim`](Garment::claim), and the difference is
     /// the row of faces the hem itself runs through: the hem is smoothed off
     /// the face boundaries it was cut along, so a face it crosses may end up
-    /// half-seen and has to be drawn. About a sixth of the claim (#117).
+    /// half-seen and has to be drawn. About a sixth of the claim.
     #[must_use]
     pub fn covered(&self, faces: usize) -> Vec<bool> {
         let mut hidden = vec![false; faces];

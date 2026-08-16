@@ -14,7 +14,7 @@ use crate::skeleton::{Chain, NodeKind, Skeleton};
 
 /// How many vertices each ring carries.
 ///
-/// **This is the single biggest lever on how fat the cage has to be** (#107).
+/// **This is the single biggest lever on how fat the cage has to be.**
 /// A ring is a control polygon, and Catmull-Clark converges to a curve well
 /// inside it: a 4-point diamond delivers about 0.64 of its own half-extent as
 /// rendered surface, so every node radius in a body plan has to be inflated by
@@ -50,8 +50,7 @@ pub(crate) fn ring_offsets(u: Vec3, v: Vec3, half: Vec2, roll: f32) -> [Vec3; RI
 /// Named because it is the only value of [`crate::skeleton::Node::roll`] anything
 /// has a reason to use, and because it has to follow [`RING`] rather than be
 /// written out — at four points it is 45°, at eight 22.5°, and a literal would
-/// silently stop meaning "half a segment" whenever [`RING`] moves (as it did
-/// at #107).
+/// silently stop meaning "half a segment" whenever [`RING`] moves.
 pub(crate) const HALF_SEGMENT: f32 = std::f32::consts::TAU / (2.0 * RING as f32);
 
 /// Rings of one meshed limb, ordered from start to end.

@@ -86,8 +86,8 @@ pub fn sphere(radius: f32, rings: usize, segments: usize) -> PolyMesh {
 /// as an eye are both angular: an 11.7 mm iris is 28.9° of half-angle on a life
 /// globe and a 3.5 mm pupil is 8.2°. Evenly spaced rings about `+Y` cross that
 /// pattern diagonally and land nowhere near either boundary, so a per-vertex
-/// colour draws a limbus as an 18° Gouraud smear and cannot draw a pupil at all
-/// (#81).
+/// colour draws a limbus as an 18° Gouraud smear and cannot draw a pupil at
+/// all.
 ///
 /// So `polars` is the list of interior latitudes, in radians from the `+Z` pole,
 /// and a caller that wants a crisp colour boundary puts a PAIR of rings a degree
@@ -180,10 +180,10 @@ pub fn cap_shell(
 /// **Because two circles cannot meet at two points.** An eyelid is a cap whose
 /// rim has to run from one canthus round to the other and back, meeting its
 /// opposite lid at both — and two spherical caps with circular rims either miss
-/// each other everywhere (leaving an annulus of bare eye, which is what this
-/// crate shipped) or overlap along a whole arc. Letting the rim's polar angle
+/// each other everywhere (leaving an annulus of bare eye) or overlap along a
+/// whole arc. Letting the rim's polar angle
 /// vary with azimuth is the smallest change that lets a boundary be authored
-/// rather than inherited from the shape of a cap (#81).
+/// rather than inherited from the shape of a cap.
 ///
 /// `rim` gives the polar angle at each segment, measured from the `+Y` pole, and
 /// its length is the segment count. Angles past 90° are meaningful and used: a
@@ -327,13 +327,13 @@ pub fn sweep(path: &[Vec3], sections: &[Vec2], sides: usize, across: Vec3) -> Po
 /// **The cross-section a body part wants is not always an ellipse, and a foot is
 /// the case that proves it.** [`sweep`]'s ring puts a vertex at every `turn`,
 /// which on an even count means one pointing straight down — so a foot swept that
-/// way rests on a keel rather than on a sole, and measured by ray-cast against the
-/// built mesh it touched the ground along its centre line and rose 6 mm at the
+/// way rests on a keel rather than on a sole: measured by ray-cast against a
+/// built mesh, it touches the ground along its centre line and rises 6 mm at the
 /// quarter width and up to 19 mm at its edges. Both Quaternius reference bodies
-/// are flat across the whole sole to within a few millimetres (#110).
+/// are flat across the whole sole to within a few millimetres.
 ///
 /// Flattening an ellipse afterwards would be the wrong repair: the outline is what
-/// is wrong, so the outline is what this takes. [`sweep`] is now an ellipse
+/// is wrong, so the outline is what this takes. [`sweep`] is itself an ellipse
 /// outline through here, which keeps one stitcher, one parallel-transport frame
 /// and one UV convention for every swept part in the crate.
 ///

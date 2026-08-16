@@ -7,8 +7,8 @@
 //!
 //! **This plan's girth is already a two-axis composite**, and the older of the
 //! two in the crate: legginess slims the barrel as well as `build` and `muscle`
-//! thickening it. See [`girth`], which is the shape every axis of #161 is going
-//! to take.
+//! thickening it. See [`girth`], which is the shape every composite axis in
+//! this crate takes.
 
 use glam::{Vec2, Vec3};
 
@@ -117,8 +117,8 @@ pub(crate) struct Dimensions {
 /// move independently produces bodies that read as mistakes.
 ///
 /// That makes this the crate's oldest composite — an axis reaching a quantity
-/// it is not named for, because the correlation is real — and the pattern #161
-/// generalises.
+/// it is not named for, because the correlation is real — and the pattern the
+/// crate's newer composites generalise.
 fn girth(params: &QuadrupedParams) -> f32 {
     // Saturated for the exploration range (#160), like the humanoid's:
     // radii scale with this while the plan's lengths do not, and the pair
@@ -132,12 +132,12 @@ impl Dimensions {
     /// Derives every dimension of one quadruped from its record's axes.
     /// The composites are taken and not yet read.
     ///
-    /// **The frame axis is a humanoid one** (#100): it is anchored on a
+    /// **The frame axis is a humanoid one**: it is anchored on a
     /// measured male and female mannequin, and there is no such pair for a
     /// beast — a quadruped's dimorphism is a species question before it is a
     /// body question. The parameter is in the signature so the two plans keep
-    /// one shape and so whatever reaches a beast first, most likely #164's
-    /// mass, has somewhere to land rather than a signature change to make.
+    /// one shape and so whatever reaches a beast first, most likely `mass`,
+    /// has somewhere to land rather than a signature change to make.
     pub(crate) fn of(params: &QuadrupedParams, _composites: &Composites) -> Self {
         let h = params.height;
         let girth = girth(params);

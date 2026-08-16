@@ -6,9 +6,9 @@
 //!
 //! # What this is for
 //!
-//! #141 asks whether the imported `Walk` replaces [`anim::gait`] or whether
-//! procedural locomotion stays and clips cover only the expressive set. That is
-//! a judgement made by watching — the viewer is where it gets made — but a
+//! Whether an imported `Walk` could replace [`anim::gait`], or procedural
+//! locomotion stays and clips cover only the expressive set, is a judgement
+//! made by watching — the viewer is where it gets made — but a
 //! judgement made only by watching is one nobody can check, and this is the half
 //! that can be.
 //!
@@ -19,8 +19,8 @@
 //! together by [`plant_feet_of`], and the size of that correction is the
 //! difference between the two sources stated without an opinion in it.
 //!
-//! The prediction it exists to test, made on #141 before any of it was written:
-//! the retargeter matches bone DIRECTIONS and is deliberately scale-free (#139),
+//! The prediction it exists to test, stated before any of it was written:
+//! the retargeter matches bone DIRECTIONS and is deliberately scale-free,
 //! so an imported clip fixes joint ANGLES. The procedural gait derives its
 //! stride from the body it is on, through [`Stride::for_body`]. So the imported
 //! walk should need more correction as a body's legs move away from the
@@ -43,14 +43,13 @@ const ARTIFACT: &str = "assets/clips.bin";
 
 /// What the imported set does to a body between its own frames.
 ///
-/// **Printed first and by this instrument on purpose** (#249). Everything below
+/// **Printed first and by this instrument on purpose**. Everything below
 /// compares a clip against the procedural gait, and a comparison against a
 /// reference nobody has stated the flaws of is a comparison that treats the
-/// reference as a gold standard. It is not one: the owner reported at #237 that
-/// the clips do not loop cleanly and that on some of them the body teleports
-/// between frames, and epic #237 removes them from the runtime for exactly that
-/// kind of reason. So the caveat is a number every future comparison inherits
-/// rather than a warning somebody has to remember.
+/// reference as a gold standard. It is not one: the clips do not loop cleanly
+/// and on some of them the body teleports between frames, which is why they are
+/// not the runtime motion source. So the caveat is a number every comparison
+/// inherits rather than a warning somebody has to remember.
 ///
 /// Two readings, one pass — see [`Continuity`]. Both are ratios to the clip's
 /// own median frame-to-frame travel, because an absolute distance says nothing
@@ -105,7 +104,7 @@ const SEEDS: [i64; 6] = [0, 3, 7, 19, 42, 101];
 /// is `+Z` and [`Stride::for_body`] strides down it, so a stride never crossed
 /// the tilt at all and every "grade" column was measuring a CAMBER — a hill the
 /// body stood across and never climbed. It is why terrain-aware swing targets
-/// (#221) changed the walk on `examples/walkaudit`, which tilts along Z, and
+/// changed the walk on `examples/walkaudit`, which tilts along Z, and
 /// changed nothing whatever here.
 const SLOPES: [f32; 3] = [0.0, 0.15, 0.3];
 
@@ -249,9 +248,9 @@ fn main() {
 }
 
 /// What the reference clips are, as numbers, so a walk that loses to a
-/// defective reference is not billed as losing (#238).
+/// defective reference is not billed as losing.
 ///
-/// The owner reported two faults by eye on 2026-08-14: the clips do not loop
+/// Two faults are visible by eye in the imported set: the clips do not loop
 /// cleanly, and some teleport the body as if a reference frame differed between
 /// frames. Both are measurable, and both are measured **relative to each clip's
 /// own typical frame step** rather than as an absolute distance — a fast clip
@@ -389,7 +388,7 @@ struct Reading {
     /// solve — what a viewer actually sees.
     ///
     /// **This is the headline, and it used to be [`Self::before`], which asked
-    /// the two sources different questions** (#238). A clip is a finished pose:
+    /// the two sources different questions**. A clip is a finished pose:
     /// what it delivers is what is drawn. A procedural gait is deliberately two
     /// staged — [`gait::step`] places contacts in BODY space and
     /// [`plant_feet_of`] settles them onto the real ground — so its pre-solve
@@ -400,7 +399,7 @@ struct Reading {
     ///
     /// A swinging foot is still measured here, and deliberately: the solve
     /// plants only stance feet, so a swing arc ploughing through a slope
-    /// survives to this reading, which is exactly the defect #221 names.
+    /// survives to this reading.
     after: f32,
     /// The same distance measured before the solve.
     ///
@@ -414,7 +413,8 @@ struct Reading {
     /// took the LOWEST joint of each foot before and after and measured between
     /// them — but which joint is lowest changes when an ankle turns, so it was
     /// comparing a heel against a toe and reporting a quarter of a metre of
-    /// correction on flat ground where #139 had measured four millimetres. An
+    /// correction on flat ground where the retarget audit measures four
+    /// millimetres. An
     /// argmin whose identity moves is not a measurement.
     lift: f32,
 }

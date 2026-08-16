@@ -9,7 +9,7 @@
 //!
 //! # Why an offline bake
 //!
-//! Owner's decision, 2026-08-07: bake rather than import at run time, so glTF
+//! Baked rather than imported at run time, so glTF
 //! stays out of the shipping payload and every retarget defect is a bake-time
 //! defect somebody can look at. The two source files are **not vendored** —
 //! eleven megabytes of somebody else's CC0 — so this reads them from a sibling
@@ -20,7 +20,7 @@
 //! Not the bytes. **The collapse rate**: how many of our 65 tracks move against
 //! how many of the reference's own 66 joints move through the same clip. Those
 //! two numbers should agree closely, because a transfer that introduces motion
-//! of its own is a transfer that is wrong — and at #139 that is exactly what a
+//! of its own is a transfer that is wrong, which is what a
 //! first draft did, turning Walk's 21 moving tracks into 52 while every visible
 //! check passed at 0.028 degrees. Nothing visible would have shown it. The size
 //! did.
@@ -33,9 +33,8 @@
 //! # And two the collapse rate cannot see
 //!
 //! The collapse rate says the transfer did not invent motion. It says nothing
-//! about the motion the SOURCE brought with it, and epic #237 came out of
-//! exactly that: the owner's report that the imported clips do not loop cleanly
-//! and that on some of them the body teleports between frames. Both are now
+//! about the motion the SOURCE brought with it — the imported clips do not
+//! loop cleanly, and on some of them the body teleports between frames. Both are
 //! printed per clip as ratios to that clip's own median step — see
 //! [`Continuity`] — so a re-bake reports them and nobody has to remember the
 //! caveat separately.
@@ -62,7 +61,7 @@ const ARTIFACT: &str = "assets/clips.bin";
 /// The frame rate every clip is resampled to.
 ///
 /// The sources are two thirds `STEP` samplers at irregular times, so nothing is
-/// lost by resampling; 30 is what #139 measured Walk at and what the retarget's
+/// lost by resampling; 30 is what `Walk` was measured at and what the retarget's
 /// own audit reports.
 const RATE: f32 = 30.0;
 
@@ -339,7 +338,7 @@ struct Moving {
 /// carried rigidly by a moving hand has a world delta as large as the hand's and
 /// a local rotation that never changes; counting the world one would say the
 /// source moves everything and make the comparison useless — which is the same
-/// confusion of frames that produced the bug at #139.
+/// confusion of frames that produces a silent transfer bug.
 ///
 /// Sampled at the same rate and over the same span as the bake, so the two
 /// counts are comparable frame for frame.

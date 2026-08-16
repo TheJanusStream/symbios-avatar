@@ -85,7 +85,7 @@ const SIDE: f32 = 0.30;
 
 /// How far below the ear's centre the hair reaches at the nape, in frames.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const NAPE: f32 = 0.30;
 
 /// How far the hairline moves over the whole of [`Params::line`], in frames.
@@ -94,12 +94,12 @@ const NAPE: f32 = 0.30;
 /// from about the brow ridge to well up the vault — the range a person would
 /// call low-to-high without either end reading as a different species.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const LINE_RANGE: f32 = 0.20;
 
 /// How far the temples pull back at [`Params::temples`] of one, in frames.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const TEMPLE_DEPTH: f32 = 0.28;
 
 /// Where the temple bay is centred, as a cosine of the azimuth.
@@ -114,24 +114,24 @@ const TEMPLE_AT: f32 = 0.64;
 
 /// How wide that bay is, in the same cosine.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const TEMPLE_WIDE: f32 = 0.26;
 
 /// How far the nape moves over the whole of [`Params::nape`], in frames.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const NAPE_RANGE: f32 = 0.18;
 
 /// How softly the hairline fades, in frames.
 ///
-/// **A hairline is the softest edge on a head and the render says so.** The
-/// first cut of this faded over a tenth of what it does now and read as a wig's
-/// rim in the contact sheet — a line hair stopped at rather than thinned
-/// through. Real hair thins over a centimetre or more, and both layers want the
+/// **A hairline is the softest edge on a head and the render says so.** Faded
+/// over a tenth of this it reads as a wig's rim in the contact sheet — a line
+/// hair stopped at rather than thinned through. Real hair thins over a
+/// centimetre or more, and both layers want the
 /// same gradient: the painted one to fade its density, the geometry one to
 /// thin its clumps.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const FADE: f32 = 0.09;
 
 /// The scalp, cut from one head's landmarks.

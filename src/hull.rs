@@ -104,7 +104,7 @@ const HULL_TOLERANCE_STEPS: i32 = 4;
 /// The point set distinguishes them exactly.
 ///
 /// **Only MAXIMAL point sets are facets, and that is not a refinement — it is
-/// what keeps a facet from being emitted alongside its own pieces** (#107). A
+/// what keeps a facet from being emitted alongside its own pieces**. A
 /// supporting plane is fitted to one triple and then collects every point within
 /// `eps` of it. Where several points are *nearly* coplanar, different triples
 /// drawn from the group fit slightly different planes, and each of those
@@ -189,11 +189,11 @@ fn facets(points: &[Vec3], eps: f32) -> Vec<Vec<u32>> {
 /// facet search. Returning an error keeps that from surfacing later as a hole in
 /// a body, which is far harder to trace back to its cause.
 ///
-/// **Counted, not collected into a set** (#107). This used a `HashSet` of
-/// directed edges, which answers "is every edge matched" while discarding how
-/// MANY faces use it — so a hull that returned a facet together with the two
-/// triangles making it up passed here cleanly and surfaced later as four
-/// non-manifold edges in a cage, one joint deep in a body. In a closed oriented
+/// **Counted, not collected into a set.** A `HashSet` of directed edges
+/// answers "is every edge matched" while discarding how MANY faces use it —
+/// so a hull that returns a facet together with the two triangles making it
+/// up would pass here cleanly and surface later as four non-manifold edges
+/// in a cage, one joint deep in a body. In a closed oriented
 /// hull every directed edge is used exactly once. Anything else is a defeated
 /// facet search whether it leaves a hole or an overlap, and both are this
 /// error's business.

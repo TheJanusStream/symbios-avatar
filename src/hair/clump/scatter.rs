@@ -1,10 +1,10 @@
 //! Where the clumps of one region are rooted.
 //!
 //! **Scattered over the built surface's own faces, not over a profile of it.**
-//! Every other way of placing hair on this head has been tried and each one
-//! approximated the surface: a node radius (hair floated a head-width off the
-//! scalp), a radius-against-height profile (the brow ridge and the occiput came
-//! through it), a profile per sector (better, and still a table). The faces of
+//! Every other way of placing hair on a head approximates the surface: a node
+//! radius floats hair a head-width off the scalp, a radius-against-height
+//! profile lets the brow ridge and the occiput poke through, and a profile per
+//! sector is better and still a table. The faces of
 //! the mesh ARE the surface, so a point placed inside one is on the head by
 //! construction and needs no clearance pass at all.
 //!
@@ -33,7 +33,7 @@ pub struct Root {
     /// Interpolated from the corners' own shading normals rather than taken
     /// from the face, because a vault carries 24 mm faces and a per-face normal
     /// would send every clump in one of them the same way — which reads as
-    /// tufts on facets, the exact artefact the old shell was built to avoid.
+    /// tufts on facets.
     pub out: Vec3,
     /// What the region's mask said where it landed, `0` to `1`.
     ///
@@ -45,8 +45,8 @@ pub struct Root {
     /// Which joints hold the skin this root grew out of, and how strongly.
     ///
     /// **Hair is bound like the skin it grows from, not like the head it is
-    /// near** (#207). The whole crop used to bind rigidly to the head joint,
-    /// which is right for a scalp and wrong for a face: measured with the jaw
+    /// near.** Binding the whole crop rigidly to the head joint is right for a
+    /// scalp and wrong for a face: measured with the jaw
     /// twenty-five degrees open, the chin's own skin moves 44.7 mm and hair
     /// bound to the head moves NOTHING — so a beard stays where the closed
     /// mouth was while the chin it grows on drops away from underneath it.

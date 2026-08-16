@@ -140,9 +140,9 @@ fn main() {
 /// The ankle: the joint the foot's own chain hangs from.
 ///
 /// Named by what it is rather than by where it sits in the chain. Reading a
-/// landmark off its position in a bone list is what put our extremity node
-/// beside the reference's ankle joint and reported an ankle at 2.6% of stature
-/// that was never anywhere but 6.86% (#110).
+/// landmark off its position in a bone list is how an extremity node ends up
+/// beside the reference's ankle joint, reporting an ankle at 2.6% of stature
+/// that was never anywhere but 6.86%.
 fn ankle(joints: &[usize]) -> usize {
     joints[0]
 }

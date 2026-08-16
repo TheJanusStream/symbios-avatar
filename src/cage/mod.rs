@@ -175,14 +175,14 @@ pub(crate) struct Socket {
     /// How far the ring sits off the bone, in the `(u, v)` frame, blended the
     /// same way `half` is. See [`crate::skeleton::Node::offset`].
     ///
-    /// **It has to travel with the half-extents or an offset section is not one**
-    /// (#125). A socket blends its neighbour's SIZE, so a node given a deeper
+    /// **It has to travel with the half-extents or an offset section is not
+    /// one.** A socket blends its neighbour's SIZE, so a node given a deeper
     /// section to carry mass on one side hands that depth to the joint hull —
-    /// symmetrically about the bone, because the displacement that was supposed
-    /// to cancel it stayed behind. Measured on the neck, whose section reaches
+    /// symmetrically about the bone, if the displacement that is supposed
+    /// to cancel it stays behind. Measured on the neck, whose section reaches
     /// `1.56 − 0.62` radii forward and should therefore leave the throat exactly
-    /// where it was: without this the throat came 9 mm forward at mid-neck and
-    /// the CHEST 20 mm, a node the change never touched.
+    /// where it is: without this the throat comes 9 mm forward at mid-neck and
+    /// the CHEST 20 mm, a node whose own section never moved.
     pub offset: Vec2,
     /// The joint's own half-extents, the ring's size at distance zero.
     pub joint_half: Vec2,

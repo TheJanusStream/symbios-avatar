@@ -1,6 +1,6 @@
 //! The mouth shapes speech is drawn with, under their industry names.
 //!
-//! The #35 decision, delivered: ARKit-52 and Oculus-15 as NAMING ONLY. An
+//! ARKit-52 and Oculus-15 are adopted as NAMING ONLY. An
 //! integration driving lipsync — an audio pipeline, a network peer — sends
 //! the standard vocabulary, and this crate renders the nearest shape its
 //! macro rig can make. The wire format stays stable while the rig grows: a
@@ -9,7 +9,7 @@
 //!
 //! **What "nearest shape" honestly means here.** The mouth set is two
 //! channels — the jaw's parting and the corners' spread — because that is
-//! what #135/#152 and #216 built. There is no lip-rounding bone and no
+//! all the macro rig carries. There is no lip-rounding bone and no
 //! lip-closure bone, so the fifteen names collapse onto about five visibly
 //! distinct shapes, and the table below records every alias rather than
 //! letting a render discover it: the bilabials (`PP`) sit AT silence, the
@@ -28,8 +28,8 @@
 //!
 //! The jaw is counted in [`super::talk::TalkConfig::open`]'s own ruler — a
 //! viseme is speech at full articulation, not a resting bias, and the
-//! expression layer's 4° jaw gain under-articulates every open vowel (#218's
-//! P3). `aa` at 1.0 is the full 12° conversational open.
+//! expression layer's 4° jaw gain under-articulates every open vowel. `aa`
+//! at 1.0 is the full 12° conversational open.
 
 use glam::Quat;
 

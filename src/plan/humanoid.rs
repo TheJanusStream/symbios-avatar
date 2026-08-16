@@ -9,8 +9,8 @@
 //! **What is left in this file is the graph, not the geometry.** The axes, how
 //! they are clamped, how they are rolled and how they are written to a share
 //! code are here; every number a node is built from comes out of
-//! [`Dimensions`], and so does every coefficient's provenance note. The split
-//! is #163's, and its reasoning is in that module's docs — the short version is
+//! [`Dimensions`], and so does every coefficient's provenance note. The
+//! reasoning for the split is in that module's docs — the short version is
 //! that a composite axis has to reach a dozen quantities at once, and it can
 //! only do that from one place.
 //!
@@ -34,7 +34,7 @@ use crate::skeleton::{Node, Skeleton};
 /// Smallest and largest stature this plan accepts, in metres.
 pub const HEIGHT_RANGE: (f32, f32) = (1.2, 2.2);
 
-/// The stature envelope: [`HEIGHT_RANGE`] stretched about the default (#160).
+/// The stature envelope: [`HEIGHT_RANGE`] stretched about the default.
 fn height_envelope() -> (f32, f32) {
     super::explore_range(default_height(), HEIGHT_RANGE)
 }
@@ -42,38 +42,39 @@ fn height_envelope() -> (f32, f32) {
 /// How much of its old width a per-region axis draws at, now that it is an
 /// offset on a composite rather than the thing that shapes the body.
 ///
-/// **A third, and the number is bounded from both sides** (#169). Too wide and
-/// the offset out-swings the composite it is correcting, which is the incoherence
-/// generation 3 exists to remove; too narrow and a rolled population is one body
-/// at several sizes, with every seed's shoulders exactly where `femininity` and
-/// `mass` put them. At a third, `shoulder_width`'s typical draw moves the
+/// **A third, and the number is bounded from both sides.** Too wide and the
+/// offset out-swings the composite it is correcting, which is the incoherence
+/// the composite scheme exists to remove; too narrow and a rolled population
+/// is one body at several sizes, with every seed's shoulders exactly where
+/// `femininity` and `mass` put them. At a third, `shoulder_width`'s typical
+/// draw moves the
 /// shoulders about 2.7% where the two composites move them 13% and 20% at their
 /// own ±1 — a correction that can be seen and cannot take over.
 ///
 /// The WILDCARD tail is deliberately not scaled: one seed in thirty still draws
 /// uniformly over the whole exploration envelope, so an extreme offset stays
-/// reachable by a roll. Rarely being a caricature was #160's decision and this
-/// does not revisit it.
+/// reachable by a roll. Rarely being a caricature is the envelope's own
+/// decision and this does not revisit it.
 ///
-/// Provenance: **judged by render** (#169), on reroll contact sheets against
-/// the same seeds at full width.
+/// Provenance: **judged by render**, on reroll contact sheets against the
+/// same seeds at full width.
 const OFFSET_SIGMA: f32 = 1.0 / 3.0;
 
 /// How far a rolled stature strays from its centre, in metres.
 ///
-/// **This narrows #160's stature draw and it is the one judgement in
-/// generation 3 that is not forced** (#169), so it is written down where it can
-/// be reversed with one number.
+/// **This narrows the stature draw, and it is the one judgement in the reroll
+/// scheme that is not forced**, so it is written down where it can be
+/// reversed with one number.
 ///
-/// #160 gave every shape axis a sigma of its old fence's half-width. On the
-/// signed axes that is ±1, a sane typical draw. On stature the fence was
-/// `HEIGHT_RANGE`, so the same rule gave **0.5 m**: a one-sigma body was 1.25 m
-/// or 2.25 m, and measured over 400 seeds the rolled statures had a standard
-/// deviation of 0.537 m. That is not a population, and it is what made the
-/// frame axis's own claim on stature invisible — the correlation this
-/// generation adds moves the centre by 0.068 m, which against 0.537 m of noise
-/// is a correlation coefficient of −0.16, a real term drowned by an accident of
-/// a rule written for a different kind of axis.
+/// The blanket rule gives every shape axis a sigma of its old fence's
+/// half-width. On the signed axes that is ±1, a sane typical draw. On stature
+/// the fence is `HEIGHT_RANGE`, so the same rule would give **0.5 m**: a
+/// one-sigma body at 1.25 m or 2.25 m, and measured over 400 seeds the rolled
+/// statures had a standard deviation of 0.537 m. That is not a population,
+/// and it drowns the frame axis's own claim on stature — the frame
+/// correlation moves the centre by 0.068 m, which against 0.537 m of noise
+/// is a correlation coefficient of −0.16, a real term drowned by an accident
+/// of a rule written for a different kind of axis.
 ///
 /// 0.12 m is about 1.7× the adult within-sex standard deviation, so two sigma
 /// spans roughly 1.51 to 1.99 m and a rolled crowd reads as a crowd. **The
@@ -81,11 +82,11 @@ const OFFSET_SIGMA: f32 = 1.0 / 3.0;
 /// wildcard tail is untouched, so one seed in thirty still draws uniformly over
 /// the whole 0.5–3.1 m envelope and giants remain a roll away.
 ///
-/// Provenance: **judged against the population it draws** (#169) — the
-/// measurement above, then reroll contact sheets.
+/// Provenance: **judged against the population it draws** — the measurement
+/// above, then reroll contact sheets.
 const STATURE_SIGMA: f32 = 0.12;
 
-/// The envelope every signed axis clamps and encodes against (#160).
+/// The envelope every signed axis clamps and encodes against.
 fn signed_envelope() -> (f32, f32) {
     super::explore_range(0.0, (-1.0, 1.0))
 }
@@ -141,7 +142,7 @@ pub struct HumanoidParams {
     /// Separate from [`Self::head_size`] deliberately, and it is the separation
     /// that is the point: head size moved the crown and the chin together, so
     /// two seeds could differ in how big their heads were and never in how long
-    /// their faces were (#61).
+    /// their faces were.
     #[serde(with = "super::scaled")]
     pub face_length: f32,
     /// Hand and foot size.
@@ -171,7 +172,7 @@ impl Default for HumanoidParams {
 }
 
 impl HumanoidParams {
-    /// The stature envelope `sanitize` clamps to, in metres (#160).
+    /// The stature envelope `sanitize` clamps to, in metres.
     ///
     /// Public so an editor's slider and the clamp cannot disagree about
     /// where the axis ends.

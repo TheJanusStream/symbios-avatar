@@ -22,8 +22,8 @@
 //! # What is not here
 //!
 //! A direction of travel. Reverse and strafe are [`super::gait::Stride`]'s
-//! `direction`, which this leaves at forward, and they are #242 — the seam is
-//! open and the arc construction already runs around it.
+//! `direction`, which this leaves at forward — that axis belongs to
+//! [`super::Heading`], and the arc construction runs around it unchanged.
 
 use glam::Vec3;
 
@@ -127,7 +127,7 @@ impl Turn {
     /// still stepping, still transferring support, still doing everything a
     /// gait describes. Asking the body's own speed there gives zero, which
     /// picks [`Gait::standing`] and freezes every foot to the floor — the
-    /// duty-1.0 rule that #230 put into [`super::gait::step`] and
+    /// duty-1.0 rule in [`super::gait::step`] and
     /// [`super::gait::crouch_at`] doing exactly its job on a body that really
     /// is moving.
     ///

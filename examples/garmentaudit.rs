@@ -1,7 +1,6 @@
-//! What a garment's cut costs, and how smooth the hem it leaves is (#117).
+//! What a garment's cut costs, and how smooth the hem it leaves is.
 //!
-//! Three questions, because the tracker filed them as three defects and they
-//! turned out to be one piece of arithmetic:
+//! Three questions that turn out to be one piece of arithmetic:
 //!
 //! 1. **What suppression would save.** A claimed body face is enclosed by the
 //!    garment solid on every side, the rim included, so it can never be seen.

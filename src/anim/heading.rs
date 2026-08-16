@@ -11,7 +11,7 @@
 //! # What a heading changes, and what it does not
 //!
 //! The arc [`super::gait::contact_offset`] walks every contact around was built
-//! around [`super::Stride::direction`] under #241, so the *geometry* of
+//! around [`super::Stride::direction`], so the *geometry* of
 //! travelling sideways or backwards already works — a foot planted on the floor
 //! stays planted whichever way the body is going over it. What a heading adds
 //! is the three things that are not geometry:
@@ -29,19 +29,19 @@
 //!
 //! # The shuffle does NOT come free, and the test is what said so
 //!
-//! The issue this was drafted from asked for a lateral step sequence with a
-//! shuffle rather than a crossover, on the grounds that a crossover risks the
-//! feet intersecting. This module first claimed that was not a choice available
-//! to get wrong — [`super::gait::contact_offset`] moves every contact by the
-//! same screw, so surely two feet keep the separation they start with.
+//! A lateral step sequence wants a shuffle rather than a crossover, on the
+//! grounds that a crossover risks the feet intersecting. It is tempting to
+//! claim that is not a choice available to get wrong —
+//! [`super::gait::contact_offset`] moves every contact by the same screw, so
+//! surely two feet keep the separation they start with.
 //!
-//! **They do not, and the guard written to confirm the claim refuted it
+//! **They do not, and the guard written to confirm the claim refutes it
 //! instead.** The two feet are at different points of the cycle: one is sliding
 //! back through its stance while the other is swinging forward, so their
 //! offsets differ by most of a stride's length rather than by nothing. Strafing
-//! left on the default body, the left foot ended up 72 mm to the RIGHT of the
+//! left on the default body, the left foot ends up 72 mm to the RIGHT of the
 //! right one — a crossover, arrived at by accident, and exactly the
-//! self-intersection the issue wanted avoided.
+//! self-intersection the shuffle exists to avoid.
 //!
 //! So a sideways stride carries a second bound that a forward one does not, and
 //! it is geometric rather than anatomical: **the feet have to stay apart**. On

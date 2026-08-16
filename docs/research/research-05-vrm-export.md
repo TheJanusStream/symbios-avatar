@@ -1,5 +1,8 @@
 # Dossier: Exporting procedurally-generated rigged characters from Rust to VRM / glTF
 
+*A point-in-time research dossier gathered while this crate was being designed. Kept as the record of what was found and why the decisions in [../plan.md](../plan.md) were made — external version numbers, prices and library gaps in it were true when written and are not maintained.*
+
+
 ## 1. VRM spec landscape (2025–2026)
 
 - Stewarded by the **VRM Consortium** (Dwango, Cluster, REALITY/pixiv…); spec at github.com/vrm-c/vrm-specification; docs vrm.dev. Khronos collaboration announced to ratify VRM as official glTF extensions → ISO path.

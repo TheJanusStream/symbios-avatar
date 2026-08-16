@@ -45,7 +45,7 @@ const VERMILION: f32 = 0.45;
 /// How far that edge moves over the whole of [`Params::drop`], in the same
 /// share.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const DROP_RANGE: f32 = 0.25;
 
 /// Half the patch's width, in [`Canon::unit`]s.
@@ -58,25 +58,25 @@ const HALF: f32 = 0.95;
 
 /// How far that moves over the whole of [`Params::width`], likewise.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const WIDTH_RANGE: f32 = 0.30;
 
 /// How softly the patch fades, in [`Canon::frame`]s.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const FADE: f32 = 0.025;
 
 /// How much of the gap to the nose the patch stops short of, in the same share.
 ///
 /// **The ceiling is the nostril line, not [`Canon::nose_foot`], and the
-/// difference is 6 mm of moustache** (#199). That landmark is where the nose's
+/// difference is 6 mm of moustache**. That landmark is where the nose's
 /// RELIEF has finished — the foot of a ramp, which is what anything measuring
 /// the lip's own surface wants — and it sits 6.4 mm below the base on a
 /// default head. Hair does not stop there: a moustache grows to the nostrils.
 /// Read against the base, the region is 10 mm tall and reaches full weight in
-/// the middle; read against the foot it was 3.2 mm tall between two fades that
-/// were each 2.9, so it never reached full weight anywhere and rendered as a
-/// smudge under the nose.
+/// the middle; read against the foot it would be 3.2 mm tall between two fades
+/// of 2.9 each, so it would never reach full weight anywhere and would render
+/// as a smudge under the nose.
 ///
 /// Provenance: **derived** from the fade this region needs to clear.
 const UNDER_NOSE: f32 = 0.05;
@@ -87,13 +87,13 @@ const UNDER_NOSE: f32 = 0.05;
 /// so this is a high bar and exists to stop the region wrapping onto the cheek
 /// on a narrow head.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const FRONT: f32 = 0.45;
 
 /// The patch of lip a moustache grows on, as one object.
 ///
-/// **Handed out to the styles rather than kept inside the mask** (#206,
-/// following #205's [`Ridge`](super::brows::Ridge)). A moustache's whole shape
+/// **Handed out to the styles rather than kept inside the mask**, following
+/// [`Ridge`](super::brows::Ridge)'s discipline. A moustache's whole shape
 /// is these four numbers: how far down it may reach is the vermilion, how far up
 /// is the nostrils, how far out is the half-width, and the band between them is
 /// what a hair runs along. If the style carried its own copy of any of them the

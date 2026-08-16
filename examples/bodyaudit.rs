@@ -55,7 +55,7 @@ use symbios_avatar::{
 /// spine, where this plan's are the centres of a head node and a neck node.
 /// Their rows are printed because the *trend* is still worth seeing, and
 /// flagged because the offset is not an error figure. The head has its own
-/// milestone and its own instruments.
+/// instruments.
 const HEIGHTS: [(&str, Zone, f32, f32); 6] = [
     ("head ~", Zone::Head, 0.8575, 0.8673),
     ("neck ~", Zone::Neck, 0.7940, 0.8030),
@@ -344,20 +344,15 @@ fn proportions(rig: &Rig, height: f32, floor: f32) {
 /// drop the T-posed arms out of the shoulder bands — which is the step that
 /// makes the figure a torso rather than a wingspan.
 ///
-/// **Re-derived by `examples/reference` and one figure was wrong** (#173).
-/// These were measured once by hand and written down, and nothing could
-/// reproduce them until that example existed. Reading them off the GLB a second
-/// way agrees on all nine widths and on eight of the nine depths; the last
-/// band's depth was 0.0663 and measures 0.0715, which is 7.8% and is the
-/// difference between our top band reading 9% shallow and 15%. The same pass
-/// corrected the thigh, the shank and the female upper arm by smaller amounts.
+/// **Re-derivable by `examples/reference`.** These were measured once by hand,
+/// and re-deriving them is what catches a wrong figure: the margins matter —
+/// 7.8% in the top band's depth is the difference between our top band reading
+/// 9% shallow and 15%.
 ///
 /// **The table stops below the reference's own widest trunk band, and that is
 /// worth knowing before quoting the top row.** Run out to the crown, the male
 /// keeps widening past 0.72 to 0.0965 at 0.75–0.78 — its shoulder shelf, which
-/// sits where ours does — so this last row is a climb read as a peak. Widening
-/// the table is #100's, since it is the female column that makes it worth
-/// having.
+/// sits where ours does — so this last row is a climb read as a peak.
 const TRUNK: [(f32, f32, f32); 9] = [
     (0.45, 0.0717, 0.0504),
     (0.48, 0.0910, 0.0551),
@@ -372,7 +367,7 @@ const TRUNK: [(f32, f32, f32); 9] = [
 
 /// The two [`TRUNK`] bands the coat-hanger ratio used to be quoted at.
 ///
-/// Kept because this issue's history is written in them — `0.66..0.69` is where
+/// Kept for comparison — `0.66..0.69` is where
 /// the reference reads 2.38 — and printed under the girdle-anchored figure
 /// rather than instead of it. See [`Trunk::hanger_at_girdle`] for why a fixed
 /// band is the weaker instrument of the two.
@@ -388,7 +383,7 @@ const HANGER_REFERENCE: f32 = 0.1899 / 0.0911;
 /// is the whole reason this is a struct rather than a print: rendered height
 /// moves whenever the head or the neck does, so a band figure from one build
 /// cannot be compared with a band figure from another unless both say what they
-/// are a fraction of. #106 carried a stale table for four days on exactly that.
+/// are a fraction of.
 #[derive(Clone, Copy)]
 struct Trunk {
     /// Rendered height, in metres.
@@ -502,7 +497,7 @@ impl Trunk {
     /// **The number that separates the two failures this axis sits between.** A
     /// span that grows because the body under it grew is a trunk; a span that
     /// grows on its own is a coat hanger, and both read as "wider shoulders" in
-    /// a span figure alone. #106's decision is bought only if this comes DOWN
+    /// a span figure alone. A widening is bought only if this comes DOWN
     /// while [`Self::shoulder_span`] goes up.
     ///
     /// Taken at each body's own girdle height rather than at a fixed band,
@@ -581,15 +576,15 @@ fn build(
 
 /// The trunk averaged over the rolled bodies that are plausible bodies.
 ///
-/// **A rolled seed is no longer a sample of a person** (#171). Generator 2's
+/// **A rolled seed is no longer a sample of a person.** Generator 2's
 /// wildcard tail reaches the whole exploration envelope by design, so seed 13
 /// renders at 0.49 m and seed 7 at 2.35 m, and averaging a proportion across raw
 /// seeds averages in caricatures. This filters first, the way
 /// `the_neck_is_the_length_of_a_neck` already does: **every axis this ruler
 /// reads has to be inside ±1**, and for the trunk that is not only the axes that
 /// set its width. `neck_length` and `head_size` are in the list because every
-/// figure here is a fraction of RENDERED height and those two move it — the trap
-/// that made #106 carry a stale table for four days. Stature is in it too, by
+/// figure here is a fraction of RENDERED height and those two move it — the
+/// trap that keeps a table stale. Stature is in it too, by
 /// its own rule: it is a length rather than a sigma, so what it has to be inside
 /// is `humanoid_height_range`.
 ///

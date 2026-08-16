@@ -1,4 +1,4 @@
-//! Whether a goal-space gesture reads the same on every body (#248).
+//! Whether a goal-space gesture reads the same on every body.
 //!
 //! A baked clip is a set of joint angles and means whatever those angles mean on
 //! the skeleton it was baked from. A gesture in [`symbios_avatar::anim::gesture`]
@@ -56,10 +56,10 @@
 //!    gesture that ends somewhere else leaves the body in a pose it never chose.
 //!
 //! 6. **Elbow and palm.** How far above the shoulder the elbow ever gets, and
-//!    which way the palm faces at the gesture's peak. Both were judged by eye
-//!    first (#248): the raise read as a stretch because the default pole flared
-//!    the elbow level with the shoulder, and the palm faced wherever the
-//!    forearm's arc left it. The eye found them; these read them.
+//!    which way the palm faces at the gesture's peak. Both are defects the eye
+//!    finds first: a raise reads as a stretch when the pole flares the elbow
+//!    level with the shoulder, and the palm faces wherever the forearm's arc
+//!    leaves it. The eye finds them; these read them.
 //!
 //! 5. **Step.** The furthest any joint moves between two adjacent samples, which
 //!    catches a key that jumps.
@@ -108,7 +108,7 @@ const SWEEP: usize = 120;
 /// the reach and the hand's rest position against each other. The sweep runs
 /// both, and the extremes of the second are where a gesture actually breaks.
 ///
-/// **And limb proportion is blind to the head** (#248). Across `limb_length`
+/// **And limb proportion is blind to the head.** Across `limb_length`
 /// -1, 0 and +1 the neck stays 0.250 of a body's height and the head sits at
 /// 0.955 of it, to three figures — so a sweep of stature and limbs cannot tell
 /// a nod written as an angle from one written as a displacement. Both read a

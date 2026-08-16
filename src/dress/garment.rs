@@ -133,8 +133,8 @@ pub fn claimed(mesh: &PolyMesh, zones: &[Zone], cut: &GarmentCut) -> Vec<bool> {
 /// The zone boundary the claim follows is a nearest-bone classification, and
 /// where two bones hold the surface almost equally it wanders vertex by vertex
 /// across a ring — so the raw hem is a zigzag of one-face bites out of the
-/// garment and one-face spurs of it into bare skin (#148, where a neck change
-/// small enough to be invisible re-cut the collar into sawteeth). Rather than
+/// garment and one-face spurs of it into bare skin: a neck change
+/// small enough to be invisible re-cuts the collar into sawteeth. Rather than
 /// tune geometry until the boundary happens to land between rings, the hem is
 /// smoothed here, where it is made: any unclaimed face sharing two or more
 /// edges with claimed faces is a notch, and is claimed too, to a fixed point.
@@ -499,7 +499,7 @@ fn hem_walk(covered: &[&Vec<u32>], fan: &Fans, hem: &[(usize, usize)]) -> Vec<Ve
 /// vertex that is not itself on the hem.
 ///
 /// **Under a half, and that is the whole safety argument for suppressing the
-/// skin underneath** (#117). A face whose corners are all off the hem is
+/// skin underneath.** A face whose corners are all off the hem is
 /// separated from the hem by a whole face, so a hem that cannot travel even
 /// half a face can never uncover one. Above a half the smoothing would have to
 /// re-decide which faces are covered as it went, and [`Garment::hidden`] could
@@ -611,8 +611,8 @@ fn onto_surface(mesh: &PolyMesh, faces: &[usize], point: Vec3) -> Vec3 {
 /// back onto the surface takes — which is what keeps a hem inside the row of
 /// faces it was cut along and lets [`Garment::hidden`] stay a subset of the
 /// claim. A column with no such neighbour cannot be bounded and does not move,
-/// which is why a two-ring band like a pair of shorts keeps its staircase
-/// (#191): every one of its vertices is on a hem.
+/// which is why a two-ring band like a pair of shorts keeps its staircase:
+/// every one of its vertices is on a hem.
 fn smooth_hem(mesh: &PolyMesh, rings: &[Vec<u32>], source: &[u32], at: &mut [Vec3]) {
     let mut on_hem = vec![false; mesh.vertex_count()];
     for ring in rings {
@@ -691,7 +691,7 @@ fn smooth_hem(mesh: &PolyMesh, rings: &[Vec<u32>], source: &[u32], at: &mut [Vec
 
 /// Runs of covered faces that meet edge to edge, one class per corner.
 ///
-/// **A vertex is not a column** (#105). The covered region is a patch cut out of
+/// **A vertex is not a column.** The covered region is a patch cut out of
 /// the body, and its boundary is a set of loops only so long as it never touches
 /// itself. It does touch itself — at the top of a pair of shorts, all the way
 /// round the waist — and there a single body vertex carries two separate runs of

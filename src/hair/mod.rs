@@ -11,9 +11,8 @@
 //! A head grows hair in five places — the scalp, the brows, the upper lip, the
 //! chin and the jaw's flanks — and each of them is cut from the built mesh as a
 //! [`Follicle`] mask. Every mask is **measured from the geometry the body
-//! actually has**, never derived from the plan's numbers, which is the lesson
-//! the shell era paid for twice: a hairline computed from a head radius sits on
-//! a different part of every skull.
+//! actually has**, never derived from the plan's numbers: a hairline computed
+//! from a head radius sits on a different part of every skull.
 //!
 //! Over each mask, two layers:
 //!
@@ -50,7 +49,7 @@
 //!
 //! # Cost
 //!
-//! Hair was once 70% of the whole triangle budget. An element is now **one flat
+//! Hair is where a triangle budget goes to die. An element is **one flat
 //! card**, four triangles a segment. The per-region counts (`FULL` in
 //! [`style`]) are derived from the budget and the measured cost of a card, each
 //! style's share of them is granted so that a dear style spends what a crop

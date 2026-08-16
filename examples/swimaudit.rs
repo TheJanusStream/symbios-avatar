@@ -1,10 +1,10 @@
-//! What a swim is doing, measured (#244).
+//! What a swim is doing, measured.
 //!
 //! There is no ground under a swimming body, so the readings a walk lives or
 //! dies by — penetration, skid, clearance — have nothing to be taken against.
-//! The issue that asked for this said as much and suggested judging a swim by
-//! eye. That is right about the *last* question and wrong about the ones before
-//! it: a cycle can be measured for whether it closes, for whether its two
+//! The temptation is to judge a swim by eye. That is right about the *last*
+//! question and wrong about the ones before it: a cycle can be measured for
+//! whether it closes, for whether its two
 //! halves agree, for whether the hands actually push water backwards, and for
 //! whether anything sweeps through the body. All four are defects a viewer
 //! shows only once you already suspect them.
@@ -14,7 +14,7 @@
 //! 1. **Does the cycle close?** The furthest any joint sits from where it was a
 //!    whole cycle earlier. A procedural loop that does not close pops once per
 //!    cycle for as long as the body swims, and it is the exact defect the
-//!    epic's own reference clips carry (#237). This is the reading the design
+//!    imported reference clips carry. This is the reading the design
 //!    is built around: every frequency in the motion is a whole multiple of the
 //!    stroke because of it.
 //!

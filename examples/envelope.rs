@@ -1,4 +1,4 @@
-//! Where each record axis stops building, measured (#160).
+//! Where each record axis stops building, measured.
 //!
 //! The exploration envelope stretches every shape axis [`EXPLORE`]× past its
 //! conservative range, and the one contract that cannot bend is that a

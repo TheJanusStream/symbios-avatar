@@ -18,7 +18,7 @@
 //! neck, because there is no way for it to get there.
 //!
 //! **It moves with the JAW.** Hair binds like the skin it grows out of now
-//! (#207), and the skin of a chin is held by the mandible — so a beard opens
+//!, and the skin of a chin is held by the mandible — so a beard opens
 //! with the mouth. It used to bind rigidly to the head joint with everything
 //! else: measured at twenty-five degrees of jaw, the chin's own skin moves
 //! 44.7 mm and the hair on it moved zero, which is a beard hanging in the air
@@ -73,7 +73,7 @@ pub enum ChinStyle {
 /// beard is a hand's breadth on any head — and the patch it grew from has no
 /// opinion about how far down a rope reaches.
 ///
-/// Provenance: **tuned by render** (#207), against the anatomy each is named
+/// Provenance: **tuned by render**, against the anatomy each is named
 /// for: a goatee stops on the jaw, a full beard reaches the throat's own hollow,
 /// a braid hangs past it.
 const REACH: [f32; 3] = [0.030, 0.075, 0.130];
@@ -84,12 +84,12 @@ const REACH: [f32; 3] = [0.030, 0.075, 0.130];
 /// the braid coarsest of all because its whole mass is a few ropes rather than
 /// many hairs.
 ///
-/// Provenance: **tuned by render** (#207).
+/// Provenance: **tuned by render**.
 const WIDTH: [f32; 3] = [0.0115, 0.0135, 0.0155];
 
 /// What share of that is left at the tip.
 ///
-/// Provenance: **tuned by render** (#207).
+/// Provenance: **tuned by render**.
 const TAPER: [f32; 3] = [0.26, 0.22, 0.55];
 
 /// How much of the way to the hanging line a clump is drawn over its own fall.
@@ -103,7 +103,7 @@ const TAPER: [f32; 3] = [0.26, 0.22, 0.55];
 /// The braid takes nearly all of it, being one rope; the goatee takes less,
 /// being a tuft that keeps the pad's own width.
 ///
-/// Provenance: **derived** from the clearance, **tuned by render** (#207).
+/// Provenance: **derived** from the clearance, **tuned by render**.
 const GATHER: [f32; 3] = [0.0, 0.0, 0.75];
 
 /// How far the clump bends toward the ground over its length.
@@ -111,7 +111,7 @@ const GATHER: [f32; 3] = [0.0, 0.0, 0.75];
 /// `0` is straight out along the skin and `1` is hanging. A beard hangs, and the
 /// record's own droop moves it either side of this.
 ///
-/// Provenance: **tuned by render** (#207).
+/// Provenance: **tuned by render**.
 const DROOP: [f32; 3] = [0.85, 1.05, 1.20];
 
 /// How much a clump lies along the skin where it leaves it.
@@ -120,7 +120,7 @@ const DROOP: [f32; 3] = [0.85, 1.05, 1.20];
 /// settled it: hair leaves skin at a shallow angle, and the alternative is a
 /// hedgehog.
 ///
-/// Provenance: **carried** (#201).
+/// Provenance: **carried**.
 const LIE: f32 = 0.85;
 
 /// How many clumps each style asks for at full density, as a share of the shared
@@ -132,13 +132,13 @@ const LIE: f32 = 0.85;
 /// pays for the stations a turning clump costs.
 ///
 /// Provenance: **derived** from what each style is, **sized by the budget**
-/// (#207).
+///.
 const CROWD: [f32; 3] = [1.0, 1.0, 0.34];
 
 /// How far a rope turns about the hanging line over a metre of fall, in radians.
 ///
 /// **A rope and not a corkscrew, and the budget is what decided that**, exactly
-/// as it decided the scalp's ringlet (#204). Cost here is curvature: the sampler
+/// as it decided the scalp's ringlet. Cost here is curvature: the sampler
 /// holds a drawn spine within a millimetre of its curve, so a turn of `k` radians
 /// a metre at a radius `r` needs a station every `sqrt(8 x 0.001 / (k² r))`
 /// metres. At this rate and the eight millimetres a braid's clumps sit out from
@@ -154,7 +154,7 @@ const TWIST: [f32; 2] = [6.0, 16.0];
 /// profile across the patch, and a beard drawn to a point is one whose edges
 /// stop short while its middle carries on.
 ///
-/// Provenance: **tuned by render** (#207).
+/// Provenance: **tuned by render**.
 const POINT: f32 = 0.55;
 
 /// How far a clump stands off the chin once it has left it, in metres.
@@ -171,7 +171,7 @@ const STAND: f32 = 0.004;
 /// Early: the clump is against the skin at its root and clear of it by the time
 /// it is crossing anything.
 ///
-/// Provenance: **tuned by render** (#207).
+/// Provenance: **tuned by render**.
 const LEAVE: f32 = 0.35;
 
 /// How much forward lean the leaving direction carries, against straight down.
@@ -183,7 +183,7 @@ const LEAVE: f32 = 0.35;
 ///
 /// Provenance: **derived** from the neck's own measured profile — it recedes
 /// 58 mm over the four centimetres below the menton — **tuned by render**
-/// (#207).
+///.
 const FORWARD: f32 = 0.85;
 
 /// How much of a style's hang a clump rooted at the very back of the submental
@@ -193,14 +193,14 @@ const FORWARD: f32 = 0.85;
 /// and little enough that the hair there is lying on it rather than hanging off
 /// it into the throat. See [`Beard::hangs`].
 ///
-/// Provenance: **derived** from the clearance, **tuned by render** (#207).
+/// Provenance: **derived** from the clearance, **tuned by render**.
 const BACK: f32 = 0.2;
 
 /// How much of its hang the patch's own outer corner gives up.
 ///
 /// Most of it. The corner of a submental patch is the jaw's ANGLE, and three
 /// things are true there at once: there is no chin under it to hang over, the
-/// flanks' own hair takes over (#208), and the neck bulges forward below it — so
+/// flanks' own hair takes over, and the neck bulges forward below it — so
 /// a clump given a hang there falls straight into the throat, because at the
 /// side of a jaw the skin's normal points sideways and the forward lean has
 /// almost nothing left after it is projected onto the surface.
@@ -210,7 +210,7 @@ const BACK: f32 = 0.2;
 /// hanging there at all.
 ///
 /// Provenance: **derived** from where the region ends, **measured** against the
-/// body (#207).
+/// body.
 const CORNER: f32 = 0.78;
 
 /// Over how much of its own reach, below the menton, a clump finishes closing on
@@ -221,22 +221,22 @@ const CORNER: f32 = 0.78;
 /// itself in. Shorter and the hairs kink where they arrive; longer and a full
 /// beard is still spreading at its own ends.
 ///
-/// Provenance: **tuned by render** (#207).
+/// Provenance: **tuned by render**.
 const FALLEN: f32 = 0.5;
 
 /// The shortest clump worth growing, as a share of the style's full reach.
 ///
 /// Provenance: **carried** from [`brows`](super::brows), whose render settled it
-/// (#205).
+///.
 const LEAST_WORTH: f32 = 0.08;
 
 /// What share of its width a clump keeps at the root.
 ///
-/// **Thin, full, thin again — a leaf** (#205). A beard's clumps overlap heavily
+/// **Thin, full, thin again — a leaf**. A beard's clumps overlap heavily
 /// on a patch this small, and a wedge ending in a blunt face at every root is
 /// what makes a row of them read as a row of objects.
 ///
-/// **Thinner at the root than the brows chose, and a chin is why** (#207). A
+/// **Thinner at the root than the brows chose, and a chin is why**. A
 /// beard's cards are the widest in the catalogue — width is what makes a mass
 /// read as a mass — and their width here lies ACROSS the fall, level with the
 /// ground. A chin is round, so a wide card centred on its front has its own
@@ -244,8 +244,8 @@ const LEAST_WORTH: f32 = 0.08;
 /// millimetres into the chin. By the middle of a clump the hair has left the
 /// skin and the width costs nothing.
 ///
-/// Provenance: **carried** from [`brows`](super::brows) (#205), **cut by the
-/// chin's own curvature** (#207).
+/// Provenance: **carried** from [`brows`](super::brows), **cut by the
+/// chin's own curvature**.
 const ENDS: f32 = 0.16;
 
 impl Style for ChinStyle {
@@ -346,7 +346,7 @@ impl Beard {
     /// How much of the style's hang this root is allowed, `0` to `1`.
     ///
     /// **A beard's mass hangs from the front of the jaw and lies flat behind
-    /// it, and that is anatomy before it is arithmetic** (#207). The submental
+    /// it, and that is anatomy before it is arithmetic**. The submental
     /// plane runs backward and meets the neck in a crease; hair rooted just in
     /// front of that crease, given a full hang, goes straight through the neck
     /// under it — which is what the body's own containment test caught, and what
@@ -369,7 +369,7 @@ impl Beard {
     /// Which way the clump leaves the skin.
     ///
     /// **Down and FORWARD, and the engine's own downhill is exactly wrong here**
-    /// (#207). [`Fall`](super::super::clump::Fall) combs downhill — the ground
+    ///. [`Fall`](super::super::clump::Fall) combs downhill — the ground
     /// projected onto the tangent plane — which is right on a scalp and on a
     /// brow and is the direction into somebody's throat on the underside of a
     /// jaw: that surface slopes BACKWARD as it descends, so downhill along it

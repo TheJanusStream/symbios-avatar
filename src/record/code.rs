@@ -20,39 +20,39 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
-/// **7** — the complexion loses its `stubble` byte (#212). It followed exactly
-/// the path `build` and `muscle` took: the thing it drove was replaced — by the
-/// painted hair layer at #200, and then by a density and a colour per follicle
-/// region at #202 — and the axis was left on the wire, still written and still
+/// **7** — the complexion loses its `stubble` byte. It followed exactly
+/// the path `build` and `muscle` took: the thing it drove was replaced — first
+/// by the painted hair layer, then by a density and a colour per follicle
+/// region — and the axis was left on the wire, still written and still
 /// read by nothing. Version 6 and below stay readable through
 /// `PAINTED_STUBBLE_VERSION` (private, below), which is the same spans with the
 /// slot still present; the byte is taken off the payload and dropped, because
 /// what it said has no field left to say it into.
 ///
-/// **6** — the humanoid payload loses the two dead bytes `build` and `muscle`
-/// left behind when #164 retired them (#169). Their slots were held rather than
+/// **6** — the humanoid payload loses the two dead bytes the retired `build`
+/// and `muscle` axes left behind. Their slots were held rather than
 /// removed so that codes already in circulation kept decoding at the right
-/// offsets, and this is the pass that was going to collect the removal. Version
+/// offsets; this is the version that collects the removal. Version
 /// 5 and 4 stay readable through `Archetype::decode_reserved`, which is the
 /// same spans with the two slots still on the wire; the quadruped's payload is
 /// unchanged, because its own `build` and `muscle` never retired.
 ///
-/// **5** — the composites block (#162): four bytes for the high-level axes,
-/// written after the archetype and before the complexion. Added here rather
-/// than left for the epic's versioning pass, because a record field that
+/// **5** — the composites block: four bytes for the high-level axes,
+/// written after the archetype and before the complexion. Added the moment
+/// the axes existed, because a record field that
 /// silently drops out of a share code is a look that changes when it is passed
 /// between people — the one thing a code exists not to do. Version 4 stays
 /// readable and decodes to the neutral composites, which is what a code written
 /// before the axes existed meant.
 ///
-/// **4** — the exploration envelope (#160): each plan byte now spans its
+/// **4** — the exploration envelope: each plan byte now spans its
 /// axis's widened range rather than ±1, so a code can carry the extremes the
 /// record can. The byte LAYOUT is version 3's, only the spans moved, which is
 /// why 3 is not a refusal: `decode` reads a version-3 payload through the
 /// old spans and an old code goes on meaning the body it named when it was
 /// written down.
 ///
-/// **3** — the humanoid plan gained `headBreadth` and `faceLength` (#61), which
+/// **3** — the humanoid plan gained `headBreadth` and `faceLength`, which
 /// are two more bytes in the middle of its payload. A version 2 code read as a
 /// version 3 one would take a head's breadth from what used to be the extremity
 /// size and then run off the end, so the version gate is what keeps an old code
@@ -64,20 +64,20 @@ pub const SHARE_CODE_VERSION: u8 = 7;
 /// The oldest format whose codes still decode.
 const OLDEST_VERSION: u8 = 3;
 
-/// The last format written before the composites block existed (#162).
+/// The last format written before the composites block existed.
 ///
 /// Codes at or below it carry no composites and decode to the neutral ones,
 /// which is exactly what they meant when they were written down.
 const PRE_COMPOSITES_VERSION: u8 = 4;
 
 /// The last format whose plan bytes span ±1 rather than the exploration
-/// envelope (#160).
+/// envelope.
 const NARROW_SPAN_VERSION: u8 = 3;
 
-/// The last format that carried the retired `build` and `muscle` slots (#169).
+/// The last format that carried the retired `build` and `muscle` slots.
 const RESERVED_SLOTS_VERSION: u8 = 5;
 
-/// The last format that carried the retired `stubble` byte (#212).
+/// The last format that carried the retired `stubble` byte.
 ///
 /// Codes at or below it have one more unit byte after the freckles, which
 /// `decode` takes and throws away: the complexion it belonged to has no field
@@ -111,7 +111,7 @@ pub enum ShareCodeError {
     /// Every field was read and there were bytes left over.
     ///
     /// **A layout disagreement between the writer and the reader**, and the one
-    /// failure this format could previously have without saying so (#212). The
+    /// failure this format could otherwise have without saying so. The
     /// checksum is over the bytes rather than over the fields, so a reader that
     /// stops one field early leaves the remainder on the payload and returns a
     /// body that decodes cleanly. It is harmless exactly until the next field is

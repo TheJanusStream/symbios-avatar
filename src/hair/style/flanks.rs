@@ -2,11 +2,11 @@
 //!
 //! # The region whose edges are somebody else's
 //!
-//! Every other region in this milestone draws its own boundary. This one has
-//! three it does not own: the shaved beard line above it, which the mask cuts
+//! Every other region draws its own boundary. This one has three it does not
+//! own: the shaved beard line above it, which the mask cuts
 //! and [`Line::top`] carries; the mandible's crease below it, which
-//! [`crate::face::skull`] carved and #196 proved must not be copied; and the
-//! chin's own patch beside it, which #207 grew and which this has to meet
+//! [`crate::face::skull`] carves and which must not be copied; and the
+//! chin's own patch beside it, which this has to meet
 //! without a stripe of bare jaw between them.
 //!
 //! So the styles here are shorter on invention than the other four and longer
@@ -16,13 +16,6 @@
 //! rather than where its own length runs out. That is what makes the edge a
 //! LINE: the tips arrive at the crease together, from wherever they grew.
 //!
-//! # And it is the last, so the macro dies here
-//!
-//! `styles!` in [`super`] declared the regions whose base style genuinely was
-//! the shared [`Fall`](super::super::clump::Fall). The brows left at #205, the
-//! scalp at #204, the moustache at #206, the chin at #207, and this one leaves
-//! now — so there is nothing left for it to declare and it goes with them.
-
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -63,13 +56,13 @@ pub enum FlankStyle {
 /// runs. A clump long enough to cross the whole flank would leave the surface
 /// at the jaw and hang in the air, which is what the chin's own catalogue is for.
 ///
-/// Provenance: **tuned by render** (#208).
+/// Provenance: **tuned by render**.
 const REACH: [f32; 2] = [0.020, 0.026];
 
 /// How wide one is at the root at the coarsest cut, in metres.
 ///
 /// **The widest cards in the catalogue, because this is the widest region**
-/// (#208). The flanks hold 7.5% of a head's own surface — measured by
+///. The flanks hold 7.5% of a head's own surface — measured by
 /// `follicleaudit`, against the chin's 4.3 and the moustache's 0.5 — so the same
 /// count of the same cards covers a fraction of what it covers anywhere else.
 /// At half this the sheet read as a field of dark blobs with light between them,
@@ -80,12 +73,12 @@ const REACH: [f32; 2] = [0.020, 0.026];
 /// Width is free and count is four triangles a time, so the answer is width.
 ///
 /// Provenance: **derived** from the region's measured area, **tuned by render**
-/// (#208).
+///.
 const WIDTH: [f32; 2] = [0.0165, 0.0210];
 
 /// What share of that is left at the tip.
 ///
-/// Provenance: **tuned by render** (#208).
+/// Provenance: **tuned by render**.
 const TAPER: [f32; 2] = [0.30, 0.26];
 
 /// How much a clump lies along the skin where it leaves it.
@@ -93,7 +86,7 @@ const TAPER: [f32; 2] = [0.30, 0.26];
 /// Flatter than a beard's and flatter than a moustache's: hair on a cheek is
 /// pressed against the face, and standing it off reads as a fur collar.
 ///
-/// Provenance: **tuned by render** (#208).
+/// Provenance: **tuned by render**.
 const LIE: [f32; 2] = [0.94, 0.92];
 
 /// How many clumps each style asks for at full density, as a share of the shared
@@ -104,7 +97,7 @@ const LIE: [f32; 2] = [0.94, 0.92];
 /// roots the budget gets back rather than clumps drawn somewhere they should not
 /// be.
 ///
-/// Provenance: **derived** from what each style is (#208).
+/// Provenance: **derived** from what each style is.
 const CROWD: [f32; 2] = [0.34, 1.0];
 
 /// How far forward of the ear a sideburn reaches, in the azimuth's cosine.
@@ -112,7 +105,7 @@ const CROWD: [f32; 2] = [0.34, 1.0];
 /// Sideburns are the region BEHIND this; the full connection is everything. A
 /// cosine rather than a distance for the reason the mask's own edges are: it is
 /// what a boundary that runs round a head is written in, and it changes smoothly
-/// everywhere the region reaches (#199).
+/// everywhere the region reaches.
 ///
 /// Provenance: **derived** from the mask's own `DIAGONAL`, which is where the
 /// beard line has finished dropping to the cheek — a sideburn stops well before
@@ -121,7 +114,7 @@ const BURNS_FRONT: f32 = 0.28;
 
 /// How softly that edge comes on, in the same cosine.
 ///
-/// Provenance: **tuned by render** (#208).
+/// Provenance: **tuned by render**.
 const BURNS_FADE: f32 = 0.16;
 
 /// How far down its own reach a sideburn runs at each end of its own axis.
@@ -129,39 +122,39 @@ const BURNS_FADE: f32 = 0.16;
 /// As a share of the way from the beard line to the jawline, so a sideburn ends
 /// where a sideburn ends on a face of any length rather than at a fixed depth.
 ///
-/// Provenance: **tuned by render** (#208), against the anatomy it is named for.
+/// Provenance: **tuned by render**, against the anatomy it is named for.
 const BURNS_DOWN: [f32; 2] = [0.30, 1.0];
 
 /// How far below the jawline a full connection may ride, in metres, at each end
 /// of its own axis.
 ///
-/// **Under it, not to it, and the mask says the same** (#199): beard growth
-/// crosses the jawline and stops on the upper neck, and a beard that ended on the
-/// crease would draw a bright line down the one edge #195 spent a day making
+/// **Under it, not to it, and the mask says the same**: beard growth
+/// crosses the jawline and stops on the upper neck, and a beard that ended on
+/// the crease would draw a bright line down an edge the skull works to keep
 /// smooth.
 ///
-/// Provenance: **tuned by render** (#208), inside the mask's own reach below the
+/// Provenance: **tuned by render**, inside the mask's own reach below the
 /// border.
 const RIDES: [f32; 2] = [0.002, 0.014];
 
 /// The shortest clump worth growing, as a share of the style's full reach.
 ///
-/// Provenance: **carried** from [`brows`](super::brows) (#205).
+/// Provenance: **carried** from [`brows`](super::brows).
 const LEAST_WORTH: f32 = 0.08;
 
 /// How thin a clump is at each of its ends, as a share of its middle.
 ///
 /// A leaf rather than a wedge, so a row of overlapping clumps has no ends in it.
 ///
-/// **Blunter than the other four regions, and the render is why** (#208). A leaf
+/// **Blunter than the other four regions, and the render is why**. A leaf
 /// pinched to a third of its width tiles a patch like a lattice of lenses: the
 /// cards overlap three deep and the flank still read as a field of dark diamonds
 /// with light between them, because what was between them was the gaps the
 /// pinched ends left. A row of streaks along a brow wants a fine end; a sheet
 /// covering a cheek wants a blunt one.
 ///
-/// Provenance: **carried** from [`brows`](super::brows) (#205), **re-tuned by
-/// render** for a region that tiles rather than rows (#208).
+/// Provenance: **carried** from [`brows`](super::brows), **re-tuned by
+/// render** for a region that tiles rather than rows.
 const ENDS: f32 = 0.58;
 
 impl Style for FlankStyle {
@@ -304,8 +297,8 @@ impl Flank {
     ///
     /// Downhill, which on the side of a face is very nearly straight down — the
     /// one region in this catalogue where the engine's own default direction is
-    /// simply right. Under a jaw it points backward into the throat (#207) and
-    /// on a brow ridge it points into the eye (#205); on a cheek it points where
+    /// simply right. Under a jaw it points backward into the throat and
+    /// on a brow ridge it points into the eye; on a cheek it points where
     /// a beard grows.
     fn run(&self, root: &Root) -> Vec3 {
         let down = Vec3::NEG_Y;

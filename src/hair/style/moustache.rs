@@ -91,7 +91,7 @@ pub enum MoustacheStyle {
 /// [`brows`](super::brows)'s own reach was tuned to. The pencil runs longer
 /// because it has fewer clumps to cover the same width with.
 ///
-/// Provenance: **tuned by render** (#206).
+/// Provenance: **tuned by render**.
 const REACH: [f32; 3] = [0.38, 0.62, 0.55];
 
 /// How wide one is at the root, in metres.
@@ -101,12 +101,12 @@ const REACH: [f32; 3] = [0.38, 0.62, 0.55];
 /// brow and sits on a patch about twice as deep, so these are up on
 /// [`brows`](super::brows)'s.
 ///
-/// Provenance: **tuned by render** (#206).
+/// Provenance: **tuned by render**.
 const WIDTH: [f32; 3] = [0.0038, 0.0042, 0.0026];
 
 /// What share of that is left at the tip.
 ///
-/// Provenance: **tuned by render** (#206).
+/// Provenance: **tuned by render**.
 const TAPER: [f32; 3] = [0.30, 0.34, 0.20];
 
 /// Where in the band each style's mass sits, `0` at the vermilion and `1` at the
@@ -116,13 +116,12 @@ const TAPER: [f32; 3] = [0.30, 0.34, 0.20];
 /// pencil is a line above the lip's own border, which is the low end of this and
 /// what its own axis moves.
 ///
-/// Provenance: **tuned by render** (#206), against the anatomy each is named for.
+/// Provenance: **tuned by render**, against the anatomy each is named for.
 const LINE: [f32; 3] = [0.46, 0.46, 0.16];
 
 /// How much of its offset from that line a clump closes over its own length.
 ///
-/// **What turns a scatter of streaks into one moustache** (#205's lesson, and
-/// the reason this file could start where the brows finished). Roots land
+/// **What turns a scatter of streaks into one moustache.** Roots land
 /// anywhere in the band's ten millimetres, and a streak running straight out
 /// from wherever it started stays there — which reads as three stacked bars
 /// rather than as one moustache.
@@ -131,7 +130,7 @@ const LINE: [f32; 3] = [0.46, 0.46, 0.16];
 /// only one of the three whose whole character is that its hairs agree about
 /// where they are.
 ///
-/// Provenance: **tuned by render** (#206).
+/// Provenance: **tuned by render**.
 const GATHER: [f32; 3] = [0.15, 0.18, 0.88];
 
 /// How far a clump may run past the patch's outer edge, as a share of it.
@@ -141,7 +140,7 @@ const GATHER: [f32; 3] = [0.15, 0.18, 0.88];
 /// which is where its own curl happens — and a pencil ends at the corner because
 /// a pencil that overshot would be a handlebar drawn thin.
 ///
-/// Provenance: **tuned by render** (#206).
+/// Provenance: **tuned by render**.
 const OVERSHOOT: [f32; 3] = [0.06, 0.55, 0.02];
 
 /// How flat against the skin the clumps lie, `1` flat and `0` standing out.
@@ -151,7 +150,7 @@ const OVERSHOOT: [f32; 3] = [0.06, 0.55, 0.02];
 /// pencil is the one that lies almost flat, being nearly the painted layer with
 /// a few hairs on it.
 ///
-/// Provenance: **tuned by render** (#206).
+/// Provenance: **tuned by render**.
 const LIE: [f32; 3] = [0.86, 0.84, 0.96];
 
 /// How many clumps each style asks for at full density, as a share of the shared
@@ -162,7 +161,7 @@ const LIE: [f32; 3] = [0.86, 0.84, 0.96];
 /// patch's worth of clumps would be drawing a thin chevron.
 ///
 /// Provenance: **derived** from what each style is, **sized by the budget**
-/// (#206).
+///.
 const CROWD: [f32; 3] = [1.0, 1.0, 0.34];
 
 /// The most of a clump's clearance above the vermilion its own half-width may
@@ -178,7 +177,7 @@ const WIDTH_SHARE: f32 = 0.55;
 
 /// The most of its own room above the vermilion a clump may sweep down through.
 ///
-/// **The clearance, written as an inequality rather than as a clamp** (#206).
+/// **The clearance, written as an inequality rather than as a clamp**.
 /// The floor a whisker may not reach is the vermilion, so the drop is a share of
 /// how far the clump's own seat stands above it — and at four fifths the last
 /// fifth of that room is never spent, on any head, at any cut, for any root.
@@ -198,7 +197,7 @@ const SAG: f32 = 0.8;
 /// rather than how far it hangs, so the axis runs from a whisker held out level
 /// to one combed down over the lip. Its top end is [`SAG`] itself.
 ///
-/// Provenance: **tuned by render** (#206).
+/// Provenance: **tuned by render**.
 const SWEEP_FROM: f32 = 0.25;
 
 /// How high the handlebar's ends rise past the corner at a sweep of one, as a
@@ -207,7 +206,7 @@ const SWEEP_FROM: f32 = 0.25;
 /// **Measured against the patch rather than in millimetres**, so a waxed end is
 /// the same gesture on a small face and a large one.
 ///
-/// Provenance: **tuned by render** (#206).
+/// Provenance: **tuned by render**.
 const CURL: f32 = 0.62;
 
 /// How far out the pencil's own axis may raise its line, in the band's share.
@@ -222,7 +221,7 @@ const RIDE: f32 = 0.34;
 ///
 /// Only a floor against the degenerate, and the same one the brows settled on
 /// after learning that shortness is not what makes a stub read badly — a section
-/// that follows the clump's own length is (#205).
+/// that follows the clump's own length is.
 ///
 /// Provenance: **derived** from what the render can resolve.
 const LEAST_WORTH: f32 = 0.08;
@@ -234,7 +233,7 @@ const LEAST_WORTH: f32 = 0.08;
 /// wedge.
 ///
 /// Provenance: **carried** from [`brows`](super::brows), whose render settled it
-/// (#205).
+///.
 const ENDS: f32 = 0.3;
 
 impl Style for MoustacheStyle {
@@ -411,7 +410,7 @@ impl Whisker {
     ///
     /// Its own length as a share of the full reach, so a clump is as thick as it
     /// is long: a short one cut off by the corner is the fine hair a moustache
-    /// ends in rather than a lozenge sitting off it (#205).
+    /// ends in rather than a lozenge sitting off it.
     fn stoutness(&self, root: &Root) -> f32 {
         self.length(root) / self.reach.max(f32::EPSILON)
     }
@@ -537,7 +536,7 @@ mod tests {
     /// A root in the lip's band, a share of the way up it and out along it.
     ///
     /// **Its normal points forward and DOWN, which is what an upper lip's skin
-    /// does** (#206). The first cut of this used a level `+Z` and could
+    /// does**. The first cut of this used a level `+Z` and could
     /// therefore not see the defect the built head had: every term that rides
     /// the normal — the root lift, the standoff — carries a drop with it there,
     /// and on a lip that drop is millimetres. A synthetic root with a level
@@ -737,8 +736,8 @@ mod tests {
     ///
     /// **From one stream in [`Follicle::ALL`]'s order**, which is what
     /// `Avatar::build` does — so these are the roots that shipped rather than a
-    /// second sample from the same distribution (#89's lesson, in the form
-    /// `examples/follicleaudit` takes it).
+    /// second sample from the same distribution, which is the form
+    /// `examples/follicleaudit` takes it in.
     fn grown(record: &AvatarRecord, avatar: &Avatar, follicles: &Follicles) -> Vec<Vec3> {
         use crate::hair::Growth;
         use crate::hair::clump::{Bed, Sowing};

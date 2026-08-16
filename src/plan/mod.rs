@@ -63,29 +63,25 @@ pub fn quadruped_height_range() -> (f32, f32) {
 /// ## What a category is for
 ///
 /// **A lock answers "what do I want to keep while I roll again", and the
-/// grouping is only right if it can answer that** (#53). The set below was four
-/// body groups and one called `Features` that meant head size, extremity size,
-/// skull breadth, face length, skin, eyes, face and hair all at once — eight
-/// kinds of thing, including the two that most decide whether two seeds read as
-/// two people. Somebody who had found a skull they liked and wanted a different
-/// complexion could not say so.
+/// grouping is only right if it can answer that.** A single category covering
+/// head size, extremity size, skull breadth, face length, skin, eyes, face
+/// and hair all at once — eight kinds of thing, including the two that most
+/// decide whether two seeds read as two people — cannot answer it: somebody
+/// who has found a skull they like and wants a different complexion could not
+/// say so.
 ///
-/// So `Features` is split into [`Category::Head`], [`Category::Colouring`] and
-/// [`Category::Hair`], extremity size joins the proportions it belongs with,
-/// and the composite that fits nowhere else gets its own bit. The line drawn:
-/// **a category is a thing a creator would keep on purpose**, which is why
-/// colouring and hair are separate from the shape they sit on, and why one
-/// axis on its own can still earn a bit if nothing else is like it.
+/// So the head's shape, its colouring and its hair are [`Category::Head`],
+/// [`Category::Colouring`] and [`Category::Hair`], extremity size sits with
+/// the proportions it belongs with, and the composite that fits nowhere else
+/// gets its own bit. The line drawn: **a category is a thing a creator would
+/// keep on purpose**, which is why colouring and hair are separate from the
+/// shape they sit on, and why one axis on its own can still earn a bit if
+/// nothing else is like it.
 ///
-/// ## This renumbered nothing, and narrowed one bit
+/// ## The bitmask is open
 ///
-/// Bits 0 to 3 mean exactly what they meant. Bit 4 was `Features` and is now
-/// the narrower [`Category::Head`]; bits 5, 6 and 7 are new. A stored lock set
-/// that set bit 4 meant to hold its complexion and hair as well, and against
-/// this build it will not — **the one break here, taken while the lexicon is
-/// unpublished and deliberately, which is what "before the bitmask has a
-/// reader" meant.** Unknown bits still round-trip untouched, so the reverse
-/// direction — a newer client's locks surviving an older one — holds as it did.
+/// Unknown bits round-trip untouched, so a newer client's locks survive a
+/// round trip through an older one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Category {
@@ -98,7 +94,7 @@ pub enum Category {
     Frame,
     /// Relative lengths of limbs, neck and tail, and the size of hands and feet.
     ///
-    /// Extremity size joined this from `Features` (#53): a hand is a
+    /// Extremity size belongs here rather than with the head: a hand is a
     /// proportion of the arm it ends, and nobody locks a face to hold a hand.
     Proportions,
     /// The shape of the head: its size, breadth and face length, the eyes, and
@@ -200,8 +196,8 @@ impl Rolls {
 
     /// One of several outcomes, drawn against their relative weights.
     ///
-    /// **Because a catalogue is not an axis** (#203). Every hair region carries
-    /// a catalogue of base styles now, and a style is not a number between two
+    /// **Because a catalogue is not an axis.** Every hair region carries a
+    /// catalogue of base styles, and a style is not a number between two
     /// ends — picking one with a `range` and a stack of thresholds would put the
     /// distribution in the caller and spell it differently at each of the five
     /// call sites.
@@ -238,12 +234,12 @@ impl Rolls {
             .unwrap_or(0)
     }
 
-    /// A shape axis drawn as a person first and an extreme rarely (#160).
+    /// A shape axis drawn as a person first and an extreme rarely.
     ///
-    /// Replaces the uniform-inside-a-fence draw the shape axes used to make.
-    /// That fence was a judgement — "a re-roll that reaches the bounds makes
-    /// every third seed a caricature" — and this keeps the judgement while
-    /// removing the wall: the bulk is a Gaussian centred on the axis's own
+    /// A uniform draw inside a fence encodes a judgement — "a re-roll that
+    /// reaches the bounds makes every third seed a caricature" — as a wall.
+    /// This keeps the judgement while removing the wall: the bulk is a
+    /// Gaussian centred on the axis's own
     /// **default** with `sigma` half the old fence's width, so a typical draw
     /// lands where it always did, and the tail is a `WILDCARD` chance of a
     /// uniform draw over the whole exploration `range`, because a clamped
@@ -289,15 +285,15 @@ impl Rolls {
 /// With about twenty shape axes on a body, one in thirty per axis means most
 /// bodies carry no wild axis and every third or so carries one — exploration
 /// without every seed being a caricature.
-/// Provenance: **tuned by render** (#160), over reroll contact sheets.
+/// Provenance: **tuned by render**, over reroll contact sheets.
 const WILDCARD: f64 = 1.0 / 30.0;
 
 /// How far past its conservative range an axis may be pushed, as a factor on
 /// each bound's distance from the axis's own default.
 ///
-/// The conservative ranges were chosen so no slider could distort a body; the
-/// owner's call (#160) is that *exploration* should not be so limited, and the
-/// records already carry the values (scaled i64, no format ceiling at ±1).
+/// The conservative ranges were chosen so no slider could distort a body;
+/// *exploration* is deliberately not so limited, and the records already
+/// carry the values (scaled i64, no format ceiling at ±1).
 /// The stored unit's MEANING does not change — a stored `0.7` nose is the nose
 /// it always was — the envelope just continues past the old ends. Extremes are
 /// bounded by the one contract that cannot bend: a sanitised record must
@@ -324,7 +320,8 @@ pub trait BodyPlan: Sized {
     /// Rust API can be handed, and which is what a creator UI produces when a
     /// slider is fed a division that blew up — takes that axis's documented
     /// default. Build each axis with `plan::sanitize_axis` and both hold by
-    /// construction; do the clamping by hand and see #55.
+    /// construction; do the clamping by hand and the `NaN` guard is silently
+    /// lost — `sanitize_axis`'s docs walk through why.
     fn sanitize(&mut self);
 
     /// Builds the capsule graph this plan describes.
@@ -339,7 +336,7 @@ pub trait BodyPlan: Sized {
     /// never changes what the others produce for a given seed.
     ///
     /// **`composites` are already drawn when this is called, and that ordering
-    /// is the whole of reroll v3** (#169). A plan's axes are OFFSETS on what
+    /// is the whole of the reroll design.** A plan's axes are OFFSETS on what
     /// the composites derive, so they are drawn second and drawn small; a plan
     /// that wants to correlate — stature with the frame axis, say — reads them
     /// here rather than rolling a quantity the composites have already decided.
@@ -358,7 +355,7 @@ pub trait BodyPlan: Sized {
     /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
 
-    /// Reads parameters from a **version-3** share code (#160).
+    /// Reads parameters from a **version-3** share code.
     ///
     /// Version 4 widened each byte's span to the exploration envelope; the
     /// old codes map ±1 and `0..1` and must go on meaning the body they named
@@ -369,11 +366,11 @@ pub trait BodyPlan: Sized {
     /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
     fn decode_legacy(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
 
-    /// Reads parameters from a **version-4 or version-5** share code (#169).
+    /// Reads parameters from a **version-4 or version-5** share code.
     ///
     /// Between them, those two versions carried a humanoid payload with two
-    /// dead bytes in the middle of it: `build` and `muscle` retired into `mass`
-    /// and `bodyFat` in #164, and their slots were held rather than removed so
+    /// dead bytes in the middle of it: `build` and `muscle` retired into
+    /// `mass` and `bodyFat`, and their slots were held rather than removed so
     /// that codes minted before the retirement went on decoding at the right
     /// offsets. Version 6 removes the slots, so the older layout needs a path
     /// of its own — this one.
@@ -412,8 +409,8 @@ pub const QUADRUPED_TYPE: &str = "network.symbios.avatar.defs#quadruped";
 /// that does not know a variant can recognise that fact rather than mis-render
 /// the body. New archetypes are added as variants without disturbing old ones.
 ///
-/// **Open means a reader must survive a `$type` it has never heard of.** WS6
-/// adds creature archetypes by design, so the day the first one exists every
+/// **Open means a reader must survive a `$type` it has never heard of.** More
+/// creature archetypes are coming by design, so the day one exists every
 /// deployed client would otherwise lose the ability to render even a
 /// placeholder — a derived `Deserialize` fails the whole record on an unknown
 /// variant, taking the name, the seed and the locks down with the body. The
@@ -606,7 +603,7 @@ impl Archetype {
         }
     }
 
-    /// Reads an archetype from a **version-3** share code payload (#160).
+    /// Reads an archetype from a **version-3** share code payload.
     ///
     /// See [`BodyPlan::decode_legacy`]: same layout, narrower byte spans.
     ///
@@ -623,7 +620,7 @@ impl Archetype {
         }
     }
 
-    /// Reads an archetype from a **version-4 or version-5** payload (#169).
+    /// Reads an archetype from a **version-4 or version-5** payload.
     ///
     /// See [`BodyPlan::decode_reserved`]: the same spans, with the two slots
     /// `build` and `muscle` left behind them still on the wire.
@@ -658,28 +655,28 @@ pub(crate) mod scaled {
 
     /// Writes a float as its scaled integer.
     ///
-    /// **This used to narrow to `i16` first, and that was a silent ceiling of
-    /// 32.767 IN AXIS UNITS** (#170). Nothing about the wire format asked for
-    /// it: the value is emitted as an `i32` and read back as an `i64`, and
+    /// **Written wide deliberately: narrowing to `i16` here would be a silent
+    /// ceiling of 32.767 IN AXIS UNITS.** Nothing about the wire format asks
+    /// for it: the value is emitted as an `i32` and read back as an `i64`, and
     /// [`deserialize`] says in as many words why it reads wide — an
     /// out-of-range value is bad data for `sanitize` to clamp, never a reason
     /// to lose a record. A writer that quietly truncates is the same defect
     /// from the other end, and it is worse, because the truncation is what
     /// gets stored.
     ///
-    /// No shipped axis met it — every shape axis is inside the ±3 exploration
-    /// envelope and every length is a stature in metres — but #162 walked
-    /// straight into it: the composites wanted an age in whole years, and forty
-    /// years through this encoder is 40000 thousandths, which would have stored
-    /// a forty-year-old as 32.767. That axis is a count instead, which is the
-    /// honest representation anyway, so the trap was avoided rather than met
-    /// and the next physical quantity would have met it silently.
+    /// No shipped axis comes near that ceiling — every shape axis is inside
+    /// the ±3 exploration envelope and every length is a stature in metres —
+    /// but an axis with a large natural unit walks straight into it: forty
+    /// years of age through this encoder is 40000 thousandths, which a narrow
+    /// writer would store as 32.767. Age is a count instead, which is the
+    /// honest representation anyway, and the test
+    /// `an_axis_with_a_large_natural_unit_survives_the_thousandths_encoder`
+    /// holds the door open for the next physical quantity.
     ///
-    /// What bounds it now is the `as` cast, which saturates: an axis would have
+    /// What bounds it is the `as` cast, which saturates: an axis would have
     /// to reach 2_147_483 in its own units to lose anything here, and a value
-    /// that large is a caller that never sanitized. The narrowing is gone; the
-    /// principle — read wide, write wide, clamp in `sanitize` — is the module's
-    /// throughout.
+    /// that large is a caller that never sanitized. The principle — read wide,
+    /// write wide, clamp in `sanitize` — is the module's throughout.
     ///
     /// # Errors
     ///
@@ -731,13 +728,14 @@ pub(crate) mod scaled {
     /// different and nothing downstream can be compared for equality.
     /// The same encoding for a colour, which is three of them.
     ///
-    /// **Colours are axes too, and #202 is where that bit.** A record grew two
-    /// sRGB triples per hair region and they went onto the wire as plain
-    /// floats, because `#[serde(with = "scaled")]` is written for one value and
-    /// says nothing about an array of them — so the guard that exists for
-    /// exactly this (`axes_are_written_as_integers_because_atproto_has_no_float_type`)
-    /// caught fifteen of them in one run. The AT Protocol data model omits
-    /// floats deliberately, so a record carrying one is a record other software
+    /// **Colours are axes too, and it is an easy thing to miss.** A record
+    /// carries two sRGB triples per hair region, and `#[serde(with = "scaled")]`
+    /// is written for one value and says nothing about an array of them — so
+    /// plain floats are the path of least resistance, and the guard that
+    /// exists for exactly this
+    /// (`axes_are_written_as_integers_because_atproto_has_no_float_type`)
+    /// is what catches the slip. The AT Protocol data model omits floats
+    /// deliberately, so a record carrying one is a record other software
     /// on the network cannot represent.
     pub mod triple {
         use serde::{Deserialize, Deserializer, Serializer, ser::SerializeSeq};
@@ -800,10 +798,10 @@ pub(crate) mod scaled {
 /// `f32::clamp` propagates `NaN` rather than choosing a bound, and
 /// [`scaled::quantize`] maps every non-finite value to `0.0` — so a guard
 /// placed *after* those two can never fire, and the axis lands on zero
-/// whatever its range says. Both body plans had exactly that shape, and it was
-/// only visible on `height`, whose range excludes zero (#55). Every other axis
-/// agreed with zero because zero is its neutral, which made fifteen of
-/// seventeen axes correct by coincidence rather than by construction.
+/// whatever its range says. The failure is only visible on an axis whose
+/// range excludes zero, like `height`; every axis whose neutral IS zero
+/// agrees with it by coincidence rather than by construction, which is what
+/// lets the wrong order sit unnoticed.
 ///
 /// So the fallback is passed in rather than assumed: callers hand over the
 /// axis's own value from `Default::default()`, which cannot drift from the
@@ -822,7 +820,7 @@ pub(crate) fn sanitize_axis(value: f32, fallback: f32, range: (f32, f32)) -> f32
     scaled::quantize(value.clamp(range.0, range.1))
 }
 
-/// Quantises an axis to one byte over an explicit span (#160).
+/// Quantises an axis to one byte over an explicit span.
 ///
 /// The share code's byte has always mapped a fixed range; with the
 /// exploration envelope the range is per-axis, so the span is a parameter and
@@ -924,11 +922,11 @@ mod tests {
         )
     }
 
-    /// **A body's left limbs are the ones at `+X`.** The guard #142 was missing.
+    /// **A body's left limbs are the ones at `+X`.**
     ///
     /// Stated as a coordinate convention rather than as a comparison between the
     /// two sides, because that is the difference between this and the test that
-    /// let the body wear two right hands for as long as that code existed (#113):
+    /// let the body wear two right hands for as long as that code existed:
     /// a comparison of bounds is satisfied by a HALF TURN just as well as by a
     /// reflection, so it cannot tell a mirrored body from a correct one. Only an
     /// absolute statement can, and the absolute statement is glTF's: right-handed,

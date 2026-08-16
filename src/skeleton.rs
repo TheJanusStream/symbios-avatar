@@ -31,9 +31,9 @@ pub struct Node {
     /// and a body part that has to rest on the ground cannot afford one.** With
     /// the cage's ring at four points the section is a diamond standing on
     /// its point, so a foot meshed from the graph contacts the floor along a line
-    /// and rocks — measured on the swept foot this replaces, 0.0 mm at the centre
+    /// and rocks — measured by ray-cast on such a foot, 0.0 mm at the centre
     /// line rising to 19 mm at the edges against a reference sole flat to a few
-    /// millimetres (#111). Rolled by half a segment the same four points become an
+    /// millimetres. Rolled by half a segment the same four points become an
     /// axis-aligned rectangle standing on a flat edge, and the sole is a face
     /// rather than a ridge.
     ///
@@ -56,12 +56,12 @@ pub struct Node {
     /// How far the swept cross-section sits from the joint, in the ring frame.
     ///
     /// **The joint stays where it is and the SURFACE moves, which is the whole
-    /// point of it being here rather than on [`Node::position`]** (#125). A
+    /// point of it being here rather than on [`Node::position`]**. A
     /// node's position is a joint: bones meet there, the rig rotates about it,
     /// and `face::skull` and `hair::follicle` measure the head in radii about it.
     /// Moving a node to put mass somewhere therefore moves the axis everything
-    /// else is measured from — which is exactly what happened when the neck was
-    /// leaned back, and is why that lean is bounded at a third of a radius by
+    /// else is measured from — leaning the neck node back does exactly that,
+    /// which is why the neck's lean is bounded at a third of a radius by
     /// what it does to the head's own floor rather than by anatomy.
     ///
     /// This moves only the ring that is swept. A section offset back by `d` with
@@ -88,12 +88,12 @@ pub struct Node {
     /// CAGE skips it entirely.
     ///
     /// **This exists because the joint-hull mesher cannot carry an extra socket
-    /// beside large sibling rings, and that has now been measured at three
-    /// joints** (#134). A socket must sit past every sibling ring corner along
+    /// beside large sibling rings, measured at three
+    /// joints.** A socket must sit past every sibling ring corner along
     /// its own axis (see `cage::joint`), and beside the head's rings that floor
     /// is ~0.12 m against an 0.82-of-the-bone ceiling — a mandible node meshed
-    /// as a socket would have to hang outside the head's own surface. #125
-    /// measured the same wall at the girdle and the neck for a trapezius.
+    /// as a socket would have to hang outside the head's own surface. The
+    /// girdle and the neck hit the same wall for a trapezius.
     ///
     /// A marker is the honest answer for anatomy that is not a limb: a mandible
     /// is a mass fused to the skull with its own hinge. The mass stays the

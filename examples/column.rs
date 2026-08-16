@@ -11,7 +11,7 @@
 //! and who owns that length. This answers a different question — *what shape*
 //! the column is — and it answers it against the CC0 reference body rather than
 //! against a canon, because "the neck reads wrong" has three times been a
-//! statement about the shoulder rather than about the neck (#125, #129, #143).
+//! statement about the shoulder rather than about the neck.
 //!
 //! # Exact plane cuts, not bins
 //!
@@ -27,21 +27,20 @@
 //! stature are compared at the same anatomy. `|x| < 0.20 m` keeps the T-posed
 //! arms out of the section.
 //!
-//! # What it showed the first time it was run (#143)
+//! # What it showed the first time it was run
 //!
 //! Two findings, and the second corrected an impression taken from a render:
 //!
 //! - **The shoulder arrives about seventy millimetres too low.** Ours holds a
 //!   flat 51–53 mm half-width from the chin all the way to −80, then flares. The
 //!   reference is at 71 mm at the chin and fully flared to 191 by −50. That is
-//!   #129's finding — "the flare is right and it happens too low" — with a
-//!   sharper number on it.
+//!   The flare itself is right; it happens too low.
 //! - **Our neck is not too wide. It is NARROWER than the reference's**, 50.5 mm
 //!   at its narrowest against 66.7. What reads as a slab in a render is ninety
 //!   millimetres of unchanging width, not excess width, and any fix aimed at
 //!   slimming it would have been aimed at nothing.
 //!
-//! # What it showed the second time, and the reading to be careful with (#131)
+//! # What it showed the second time, and the reading to be careful with
 //!
 //! The second finding above was acted on and `neck_r` went from `0.030 · girth`
 //! to `0.040 + 0.020 · (girth − 1)`. Two cautions for anyone reading the summary
@@ -76,7 +75,7 @@ use symbios_avatar::{
 /// millimetres, taken every ten millimetres from 250 above the chin to 240
 /// below.
 ///
-/// **Extended from +110 to the crown** (#144). The old table stopped 10 mm short
+/// **Extended from +110 to the crown**. The old table stopped 10 mm short
 /// of where the reference is WIDEST, so every reading taken from it under-read
 /// the vault: its maximum is 86.7 mm at +120 to +140 and the top row said 85.7.
 /// The crown sits at +260.0. Regenerated with the same plane cut against the
@@ -84,9 +83,9 @@ use symbios_avatar::{
 /// reproduce the originals to 0.4 mm, which is the calibration on the chin
 /// height rather than a disagreement.
 ///
-/// Provenance: **measured** (#143), off `model-human.glb` in the mesh2motion
-/// checkout, with its chin taken at its own `head` joint — which #126 measured
-/// sits at the chin on that rig, 4.4% of the head below it. Recorded here as
+/// Provenance: **measured**, off `model-human.glb` in the mesh2motion
+/// checkout, with its chin taken at its own `head` joint — which sits at the
+/// chin on that rig, 4.4% of the head below it. Recorded here as
 /// numbers rather than read at run time because [`crate::gltf`] deliberately
 /// reads no meshes: it is an animation reader, and giving it a mesh path to
 /// support one instrument would be the largest thing in this crate that only
@@ -233,7 +232,7 @@ fn main() {
 
 /// The head's own proportions, cut with the same planes as the column above.
 ///
-/// **Why this is here and not in `headaudit`** (#144). That tool reads the crown
+/// **Why this is here and not in `headaudit`**. That tool reads the crown
 /// off `Skull::span`, which is a *measured* landmark that stops about 20 mm
 /// under the mesh's actual top, and its widths off `Skull`'s azimuthal profile.
 /// Both are the right answers to their own questions and neither can be held
@@ -310,8 +309,8 @@ fn cut(mesh: &symbios_avatar::PolyMesh, height: f32) -> Vec<(f32, f32)> {
 /// column's depth-to-width where it is narrowest.
 ///
 /// **The waist is the only landmark the two columns share, which is why the
-/// second figure is here** (#131, settled in #144). Comparing the neck's depth
-/// at a fixed height under the chin is the trap #144 was closed on: our column
+/// second figure is here.** Comparing the neck's depth
+/// at a fixed height under the chin is a trap: our column
 /// and the reference's have different lengths, so the same millimetre offset is
 /// different anatomy on each. Both bodies have exactly one narrowest point —
 /// theirs at +10 above the chin, ours below it — and the ratio there is
@@ -374,8 +373,8 @@ fn reference_front(at: f32) -> f32 {
 ///
 /// **Beside [`front`] because a section's forward-most point is not always on
 /// the midline** — the jaw's flank beside the chin can stand ahead of the chin
-/// itself, which is the blade #128 measured and #134 reopened once by planing
-/// radially. The two rows agreeing says the run under the chin is the chin's;
+/// itself — the blade a radial planing of the submental leaves behind.
+/// The two rows agreeing says the run under the chin is the chin's;
 /// the two rows parting says the next question is about the flank and not about
 /// a profile. `REFERENCE` is a section maximum, so [`front`] is what may be held
 /// against it and this may not.
@@ -452,11 +451,11 @@ fn built(record: &AvatarRecord, chin: Option<f32>) -> Option<(PolyMesh, Rig)> {
 ///
 /// # What this was built to settle
 ///
-/// #94 spent a week on the drop over the first centimetre below the chin — the
-/// reference gives up 9.6 mm there and holds a shelf, ours gave up 16.1 — and
-/// closed its last session pointing at the CAGE, on the grounds that
-/// `examples/jawprobe`'s cage row is a constant 0.207–0.225 against a reference
-/// that is "well under that". **That comparison is not legal.** jawprobe's shelf
+/// The drop over the first centimetre below the chin: the
+/// reference gives up 9.6 mm there and holds a shelf. Read off
+/// `examples/jawprobe`, whose cage row is a constant 0.207–0.225 against a
+/// reference "well under that", the cage looks like the culprit.
+/// **That comparison is not legal.** jawprobe's shelf
 /// is a share over a BONE-relative span and the reference's 0.165 is a share
 /// over chin-to-throat; quoting one against the other is the error jawprobe's
 /// own docstring exists to forbid. Nobody had measured the cage chin-relatively,
@@ -476,8 +475,7 @@ fn built(record: &AvatarRecord, chin: Option<f32>) -> Option<(PolyMesh, Rig)> {
 /// than the reference under the jaw; it is barely two thirds as steep. And
 /// below −20 it sits on the reference's own throat line to within a few
 /// millimetres — 43.5 against 53.6, 41.2 against 44.0, 42.0 against 42.2 on
-/// seed 0. The swept-capsule surface is not what is left, and #96/#131 are not
-/// where this goes next.
+/// seed 0. The swept-capsule surface is not what is left.
 ///
 /// **The first centimetre was never the defect either — the ruler was.** Read
 /// as REACH rather than as a drop, at the same share of each face, ours lands
@@ -506,7 +504,7 @@ fn built(record: &AvatarRecord, chin: Option<f32>) -> Option<(PolyMesh, Rig)> {
 /// # The calibration, said out loud
 ///
 /// Our zero is a measured crest and the reference's is its `head` joint, which
-/// #126 puts at the chin. The reference's own front reach falls monotonically
+/// sits at its chin. The reference's own front reach falls monotonically
 /// from the nose to that row, so its chin cannot be ABOVE it — and every
 /// recalibration downward makes the −20 excess larger rather than smaller. The
 /// finding is robust to the one thing about this comparison that is not

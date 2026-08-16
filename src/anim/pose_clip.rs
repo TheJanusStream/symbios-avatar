@@ -1,7 +1,7 @@
 //! Motion that was authored on a body, retargeted onto ours and baked.
 //!
 //! **This is the second clip format, and it exists beside [`Clip`] rather than
-//! instead of it** (#138). The two answer different questions and neither can
+//! instead of it.** The two answer different questions and neither can
 //! answer the other's:
 //!
 //! * [`Clip`] describes motion by semantic query and normalised goal — raise
@@ -39,8 +39,8 @@
 //! fingers and a walking body does not use them.
 //!
 //! So including the fingers roughly triples the track *count* and adds almost
-//! nothing to the bytes, which is the arithmetic behind the owner's decision to
-//! bake them in. A 1.4-second clip at 30 frames a second with twenty moving
+//! nothing to the bytes, which is the arithmetic behind baking them in. A
+//! 1.4-second clip at 30 frames a second with twenty moving
 //! tracks is about 6.7 KiB of rotation and half a KiB of root motion.
 //!
 //! [`Clip`]: super::clip::Clip
@@ -298,7 +298,7 @@ impl PoseClip {
 
     /// How many bytes its curves occupy.
     ///
-    /// The figure #140 budgets the baked artifact against. Counts the motion
+    /// The figure the baked artifact is budgeted against. Counts the motion
     /// rather than the container: names and structure are the same handful of
     /// bytes whatever they are serialised into, and the curves are not.
     #[must_use]
@@ -336,11 +336,10 @@ impl PoseClip {
     /// What this clip does to a body between its own frames.
     ///
     /// **The measurement that keeps a baked clip a reference rather than a gold
-    /// standard** (#237, #249). The owner's report of the imported set was that
-    /// the clips do not loop cleanly and that on some of them the body teleports
-    /// between frames, as if a reference frame had changed under it. Both are
-    /// real and both are now a number every comparison inherits, rather than a
-    /// caveat somebody has to remember.
+    /// standard.** In the imported set the clips do not loop cleanly, and on
+    /// some of them the body teleports between frames, as if a reference frame
+    /// had changed under it. Both are real and both are a number every
+    /// comparison inherits, rather than a caveat somebody has to remember.
     ///
     /// See [`Continuity`] for what the two readings are and why neither is
     /// asked as "does it close".
@@ -412,7 +411,7 @@ impl PoseClip {
     }
 }
 
-/// What a baked clip does to a body between its own frames (#249).
+/// What a baked clip does to a body between its own frames.
 ///
 /// **A wrapping motion cannot be asked whether it closes, only whether the step
 /// across the wrap is in family.** Every frame of a clip moves the body some

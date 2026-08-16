@@ -2,18 +2,15 @@
 //!
 //! [`super::skull`] gives its profiles from the crown down and [`super::relief`]
 //! gives its ramps from each feature's own top down, so the two run in opposite
-//! directions. They used to carry two readers for that reason, and the note on
-//! the second one said so out loud: *kept separate rather than shared and
-//! flipped, because two readers that disagree about which end they start from is
-//! exactly the kind of thing that looks correct in both files.*
-//!
-//! That was the right worry about the wrong duplication (#82). A lerp is cheap
-//! to keep twice; **a Fritsch–Carlson limiter is not**, and the moment the
-//! relief's ramp needed the same C1 treatment the skull's profiles got in #83,
-//! keeping them apart would have meant two copies of the one piece of arithmetic
-//! in this crate that is genuinely subtle. So there is one reader, and the
-//! direction is read off the knots rather than assumed: ascending or descending,
-//! it clamps before the first knot and past the last and interpolates between.
+//! directions. That is a tempting reason to keep two readers — two readers
+//! that disagree about which end they start from is exactly the kind of thing
+//! that looks correct in both files. But a lerp is cheap to keep twice; **a
+//! Fritsch–Carlson limiter is not**, and both callers need the same C1
+//! treatment, so keeping them apart would mean two copies of the one piece of
+//! arithmetic in this crate that is genuinely subtle. So there is one reader,
+//! and the direction is read off the knots rather than assumed: ascending or
+//! descending, it clamps before the first knot and past the last and
+//! interpolates between.
 
 /// The slope of the straight line between two neighbouring knots.
 ///
@@ -73,34 +70,27 @@ fn tangent(curve: &[(f32, f32)], at: usize) -> f32 {
 /// **Monotone cubic Hermite (Fritsch–Carlson), and both halves of that name are
 /// load-bearing.**
 ///
-/// *Cubic*, because these were piecewise linear and a piecewise-linear curve has
-/// a slope that jumps at every knot. On the skull the union of six profiles' knot
-/// heights is 27 values over a 212 mm span — a tangent discontinuity every
-/// 7.9 mm — and `skull::BREADTH` and `skull::DEPTH` carry no azimuthal window, so
-/// each of theirs runs the whole way round the head. That is the signature the
-/// owner reported as a terraced lower face, and it is visible as full-width
-/// horizontal bands in the renderer's normal pass (#83).
+/// *Cubic*, because a piecewise-linear curve has a slope that jumps at every
+/// knot. On the skull the union of six profiles' knot heights is 27 values over
+/// a 212 mm span — a tangent discontinuity every 7.9 mm — and `skull::BREADTH`
+/// and `skull::DEPTH` carry no azimuthal window, so each of theirs runs the
+/// whole way round the head. That is the signature of a terraced lower face,
+/// visible as full-width horizontal bands in the renderer's normal pass.
 ///
-/// **Finer sampling makes a C0 break worse, not better**, which is why three
-/// refinement passes made the face look worse: a slope jump spread across a
-/// 24 mm quad is hidden by Gouraud interpolation, and the same jump resolved at
-/// 3.6 mm is a ledge. Refining onto the limit surface was tried first and
-/// measured: it moves the head 0.059 mm and changes the banding not at all
-/// (#75). The interpolant was always the cause.
+/// **Finer sampling makes a C0 break worse, not better**, so refinement cannot
+/// hide it: a slope jump spread across a 24 mm quad is hidden by Gouraud
+/// interpolation, and the same jump resolved at 3.6 mm is a ledge. Refining
+/// onto the limit surface was measured: it moves the head 0.059 mm and changes
+/// the banding not at all. The interpolant is the cause.
 ///
 /// *Monotone*, because an ordinary interpolating spline overshoots, and there is
 /// one segment on the skull where overshoot is a shipped defect rather than a
 /// wobble: `skull::CHIN`'s tail into its junction, where a natural or
 /// Catmull-Rom spline dips **below zero**, which stands the head's lowest band
-/// behind the throat it has to meet — the #47 seam, returning. Fritsch–Carlson's
-/// limiter forbids that by construction: where a segment is monotone the
-/// interpolant is monotone, so no curve can leave the interval its own knots
-/// span.
-///
-/// The knot values are unchanged from the linear version in both files.
-/// Changing the values and the interpolant in one step would make it impossible
-/// to say which of them moved a silhouette, which is the same discipline
-/// [`crate::mesh::PolyMesh::refine`] keeps for shape and resolution.
+/// behind the throat it has to meet — an open seam at the neck. Fritsch–
+/// Carlson's limiter forbids that by construction: where a segment is monotone
+/// the interpolant is monotone, so no curve can leave the interval its own
+/// knots span.
 pub(super) fn monotone(curve: &[(f32, f32)], at: f32) -> f32 {
     let Some(&(first, low)) = curve.first() else {
         return 0.0;

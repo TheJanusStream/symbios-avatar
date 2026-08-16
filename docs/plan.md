@@ -1,291 +1,223 @@
 # symbios-avatar — Project Plan
 
-Parametric 3D avatars whose source of truth is a small AT Protocol record — rpg.actor's idea carried into 3D, at AAA-adjacent render and animation quality. Two crates in the symbios pattern: **symbios-avatar** (engine-agnostic, this repo) and **bevy_symbios_avatar** (Bevy integration, sibling repo). Symbios Overlands becomes the first consuming application once the engine stands.
+Parametric 3D avatars whose source of truth is a small AT Protocol record —
+rpg.actor's idea carried into 3D, at AAA-adjacent render and animation quality.
+Two crates in the symbios pattern: **symbios-avatar** (engine-agnostic, this
+repo) and **bevy_symbios_avatar** (Bevy integration, sibling repo). Symbios
+Overlands becomes the first consuming application once the engine stands.
 
-Synthesized 2026-08-01 from six web-research dossiers in [docs/research/](research/). Tracked as epic #1 (workstreams #2–#11, milestone "v0.1 vertical slice").
+The plan was synthesized from six web-research dossiers in
+[docs/research/](research/), which stay in the repository as the record of what
+was found and why the decisions below were made.
 
 ## Locked decisions
 
 | Decision | Choice |
-|---|---|
+| --- | --- |
 | Visual target | Stylized semi-realistic (Fortnite / Overwatch / Sea-of-Thieves class) |
 | Geometry | Fully procedural — no shipped mesh assets, records stay tiny |
 | Scope | Humanoid + creatures from day one (goal-space animation mandatory) |
-| Interop | Native atproto records are canonical; **GLB export only — VRM 1.0 was dropped 2026-08-02** (see below) |
+| Interop | Native atproto records are canonical; **GLB export only** — VRM 1.0 was considered and dropped; research-05 stays as the record of what conformance would have cost |
 | Lexicon root | `network.symbios.avatar.*` (symbios ecosystem, outside overlands) |
 | Multiplicity | Wardrobe of named avatars per identity, one marked default |
 | Baked artifacts | Stored on PDS within reason; degree decided along the way by content size |
-| Repos | `~/Workspace/symbios-avatar` + `~/Workspace/bevy_symbios_avatar` (each with own chainlink + docs) |
 | Overlands chassis | All four existing families — vehicles included — eventually migrate onto this system |
 | Face parameter space | ARKit-52 naming + Oculus-15 visemes |
-| How the face animates | **Bone-driven macro rig, ARKit-52 naming-only**, with generated pose-space correctives held in reserve for where bones are *measured* to fail. Decided 2026-08-02 (#35) — see §0 |
+| How the face animates | **Bone-driven macro rig, ARKit-52 naming-only**, with generated pose-space correctives held in reserve for where bones are *measured* to fail |
+| Runtime motion | The procedural layer (IK, gait, footing, goal-space clips) is the only runtime motion source; the baked clip set is a development reference (see [clips.md](clips.md)) |
 
-## 0. Revisions
+Dropping VRM retired the T-pose conflict, freed dual-quaternion skinning, and
+removed VRM as a constraint on mesh decomposition and on how the face animates.
+Creatures staying day one means humanoid-only assumptions are a live
+architectural problem wherever they appear; the pattern to design against is a
+rule stated about a body *part* where it should be stated about what that part
+*does*.
 
-### 2026-08-02, the adversarial review
+Why bones and not morph targets, in brief: Bevy stores morph targets as an
+R32Float 3D texture at nine floats per vertex per target, unconditionally and
+sized by the *whole* mesh — ARKit-52 over the merged skin mesh costs megabytes,
+or a dedicated head mesh costs a draw call on the half of the budget that is
+hardest to hold. Bones cost neither, and the eyelids become a pose rather than
+geometry. This is pose space deformation (Lewis et al., 2000) as shipped by
+Maya, Houdini and Unreal's MetaHuman: a facial joint hierarchy first, corrective
+shapes only where measurement demands them. This crate is better placed than the
+studios that invented the technique, because `skull::reshape` is an analytic
+parametric head deformation — a corrective is that function evaluated at another
+parameter and subtracted, not a hand sculpt.
 
-**A sixteen-agent adversarial review** (seven lenses, each attacked by an independent skeptic, plus
-a completeness critic). Verdict: **sound with corrections**. The foundations were examined and
-defended — shared-socket-ring joint construction, goal-space clips over joint-space, `rig::Surface`
-as the rule that you measure the built mesh and never trust the plan, `Zone` + `ground_contacts()`
-as a generalised body plan, integer-only wire encoding with a test that checks it, and the
-two-bone/FABRIK/inertializer trio that has no equivalent in the Bevy ecosystem. None of those
-change.
+## Headline research findings
 
-What was missing was a **product**: `PolyMesh` carried no vertex attributes and there was no
-`Avatar` type, so the record-to-renderable recipe lived in the examples and had already diverged
-between two of them. Everything else the review found was downstream of that. Filed as #27 with the
-work in #28–#57.
+1. **First-of-kind.** No parametric 3D avatar lexicon exists on atproto;
+   rpg.actor is the only shipped parametric-avatar-on-PDS system and it is 2D
+   sprite layers. Conventions to lift from it: singleton pointer records, a
+   `source` AT-URI on baked artifacts pointing back at the parametric record, an
+   `isCustom` flag protecting hand-edits from recomposition, cross-PDS give/item
+   attestation pairs for granted equipment, lexicon JSONs at predictable URLs,
+   and granular OAuth `repo:<nsid>` scopes (live in their production).
+   Constraints: 1 MB hard record limit (we keep the 100 KiB discipline), 50 MB
+   blobs, blob GC on last-reference deletion, and **no CDN for arbitrary binary
+   blobs** — serving baked GLBs needs our own caching layer. (research-01)
 
-Three locked decisions changed by the owner in the same session:
+2. **Convergent body recipe, license-clean.** SMPL, MakeHuman, and runevision's
+   creature project independently converge on: small semantic parameter vector →
+   skeleton *derived from* the shaped geometry → mesh generated over it → skin
+   weights derived analytically at generation time → additive
+   identity/pose/corrective layers before one standard LBS pass. SMPL-family and
+   SMAL are MPI non-commercial (design reference only); every technique we
+   actually need (B-Mesh, Spore, Pinocchio, sphere-meshes, implicit skinning,
+   delta mush) is a published paper. Parameter-space law confirmed three ways:
+   hand-authored semantic macro axes with encoded correlations — never PCA.
+   (research-02)
 
-- **VRM 1.0 export dropped.** Native records plus our own GLB. This retires the T-pose conflict
-  that #19 introduced, frees dual-quaternion skinning, and removes VRM as a constraint on mesh
-  decomposition and on how the face animates. Research-05 stays in the repository as a record of
-  what conformance would have cost.
-- **Horizon: build it properly, no deadline.** Foundations get fixed even where that discards work.
-- **Creatures stay day one.** Humanoid-only assumptions are therefore a live architectural problem.
-  Three were found and fixed in a single session (#26); the underlying pattern — a rule stated
-  about a body *part* where it should be stated about what that part *does* — is the thing to
-  design against, not the three instances.
+3. **Mesh path: capsule node-graph → B-Mesh quad cage → Catmull-Clark.**
+   Quad-dominant cages with skeleton-aligned edge flow give the clean deforming
+   silhouettes the fidelity target needs. Humanoids and quadrupeds are just
+   different node graphs on the same engine. The acknowledged hard 20% is the
+   3+-branch joint-merge topology — prototyped first, before anything else
+   depended on it, and it held. (research-02)
 
-### 2026-08-02, what has since closed
+4. **Animation is goal-space from day one.** The only proven
+   one-animation-set-many-morphologies system is Spore's (Hecker et al.,
+   SIGGRAPH 2008): motion stored as semantic part queries plus goals in
+   normalized body space, reconstructed per body by a fast IK solver —
+   corroborated by Unreal's IK Rig and Bereznyak's GDC 2016 IK Rig. We are
+   better-positioned than Spore because our generator names its own parts. Bevy
+   ships a solid low-level AnimationGraph but **no retargeting, no IK, no
+   inertialization, no foot placement** — exactly the layer these crates occupy;
+   no incumbent crate exists. Motion matching is rejected as structurally
+   incompatible with parametric bodies. Retrofitting goal-space later would
+   invalidate authored clips, hence day one. (research-03)
 
-**The headline finding is resolved.** `PolyMesh` carries positions, UVs, normals, skin weights and
-vertex colours; `Avatar::build` is the single record-to-renderable recipe; and both examples now
-consume it, which turns them from parallel implementations into conformance tests (#28, #29). The
-record-evolution defects that become unfixable once the lexicon is published are fixed and tested
-(#30, #31, #32, #57), as are the anatomy and IK faults the review found (#41, #42, #43) and the
-atlas regions for attached parts (#58).
+5. **The look is ~70% textures, not shaders.** All three reference games are
+   plain PBR with painterly inputs: painted bevels + baked AO in albedo,
+   micro-detail confined to roughness/spec, subdermal "blood map" faked SSS,
+   solid clumped mesh hair (no alpha sorting), deterministic non-physical eye
+   highlights, no outlines. Most of the win lands in the symbios texture stack.
+   Custom shaders are a short list: skin ExtendedMaterial and eye parallax.
+   WebGL2 shapes the budget: one draw per skinned mesh → a handful of skinned
+   meshes per avatar, 15–30k tris, quality tiers that degrade by omission.
+   (research-04)
 
-Three more closed in a second pass, and each changed something the plan asserts:
+6. **Dress needs no cages and no cloth sim.** Because the body is procedural,
+   hair/outfit/accessory generators evaluate against its analytic surface.
+   Substrate: a landmark/measurement API (named anchors + scalar measurements
+   from the record) and a zone coverage set. Tight clothing is the body surface
+   re-evaluated at +ε with covered zones suppressed at generation —
+   intersection-proof by construction. Loose garments are swept panels from body
+   rings (GarmentCode's component taxonomy evaluated directly in 3D). Physics is
+   VRMC_springBone semantics, shared by hair, tails, hems, accessories.
+   Rejected: Roblox cage deformation, RPM body-replacing outfits, full cloth
+   simulation. (research-06)
 
-- **The body now fits the WebGL2 triangle budget** (#40). 43,308 → 29,076 triangles, of which hair
-  fell 30,208 → 15,976. The `tests/budget.rs` target test is on and passing, so §1's finding 5
-  ("15–30k tris") is met rather than aspired to — but the way it was met matters: each lock of hair
-  is sampled by how far it *travels* rather than at a fixed resolution, and the cheaper
-  cross-sections were rendered and rejected (a four-sided lock reads as rope; a flat card reads as a
-  helmet). The draw-call half of the target is **not** met: five draws against a target of three,
-  and both of the extra two are the eyes — the globes, which want a glossy material of their own,
-  and the lids, which are geometry rather than a pose because nothing rigs a lid. The lids are
-  answered by the face decision below; the globes are not, and a body that draws four is the honest
-  expectation until something merges them.
-- **A rig can carry joints the body is not made of** (#34). `Role { Deform, Helper, Spring, Facial }`
-  on `Joint`, with `Rig::attach` and a filter in both `skin::bind` and `Rig::nearest_bone`. This is
-  the prerequisite §3 assumed for both spring chains (#38) and a bone-driven face rig (WS4/#7), and
-  it unblocks whichever way #35 goes.
-- **`bevy_symbios_avatar` exists** (#37). Library, plugin and a viewer example that draws a body
-  through a real GPU, with `--shot <path>` for headless capture. This is the "and in-app" half of
-  the gate, which had never once been executed. It found a cross-instrument difference on its first
-  frame (hands and feet shade differently in the two renderers), which is precisely the class of
-  thing §5's "unproven Bevy quality ceiling" risk needed an instrument to see.
+7. **GLB is the export target.** No Rust VRM writer exists, and VRM is
+   confirmed humanoid-only — creatures were always plain GLB. Native records
+   plus our own GLB writer serve every consumer we care about; research-05
+   records the assembly a VRM path would have needed had it been kept.
 
-### 2026-08-02, how the face animates (#35, closed)
+## Lexicon (`network.symbios.avatar.*`)
 
-**Decided: a bone-driven macro rig, ARKit-52 naming-only, with generated pose-space correctives
-held in reserve for where bones are *measured* to fail.** VRM forced morph targets; with VRM gone
-this was a real choice, and it was made on measurement rather than on preference.
+The published schemas live in [lexicons/](../lexicons/).
 
-The arithmetic. Bevy stores morph targets as an R32Float 3D texture at nine floats per vertex per
-target — position, normal *and* tangent deltas, unconditionally, with no sparse form. Over the
-merged 3,643-vertex skin mesh that is 128 KiB per target: **6.5 MiB for ARKit-52**, 8.4 MiB with
-Oculus-15 as well, on top of a 12 MiB atlas. Bones cost nothing comparable — 25 joints are in use
-of Bevy's 256, the skinning uniform is 16 KiB whether or not it is filled, and a face rig of about
-thirty adds no per-vertex data at all. Neither costs record bytes; both are generated.
-
-What settled it was not the ratio but a structural trap: **a morph target image is sized by the
-whole mesh**, so face targets pay for all 3,643 vertices including the feet, and confining them to
-the 189 head-zone vertices means giving the head its own mesh — a **draw call**, on the half of the
-budget that is already failing (five against three). Bones move that number the right way instead,
-because the eyelids become a pose rather than geometry.
-
-This is not an improvisation. It is **pose space deformation** (Lewis et al., 2000) — corrective
-displacements interpolated in a pose space of joint angles and added to the skinned surface —
-shipped by Maya, Houdini and Unreal. MetaHuman, Epic's flagship real-time human, is the same shape:
-Rig Logic drives a facial *joint* hierarchy with RBF solvers mapping joint rotations onto corrective
-bones and shapes. It is not blendshape-primary. §1's finding 2 already described this pattern
-without naming it — "additive identity/pose/**corrective** layers before one standard LBS pass" is
-PSD — so the decision follows the research the plan was built on rather than departing from it.
-
-One way this repository is better placed than the studios that invented the technique: in
-production a corrective is a hand sculpt, and that labour is why they are rationed. Here
-`skull::reshape` is already an analytic parametric head deformation, so a corrective is that
-function evaluated at another parameter and subtracted. The usual reason to keep the set small does
-not apply; memory is the only one left, and memory agrees.
-
-Two prerequisites came out of the decision, neither previously costed:
-
-- **#59 — weld the face into a continuous surface.** `Features::build` appends nose, brows, lips
-  and ears as detached rigid solids. Nothing can deform across a boundary that does not exist, so
-  this is true whichever way the decision had gone, and WS4 cannot start without it.
-- **#60 — `anim/` has no pose-space corrective driver.** Bevy blends morph weights but nothing
-  reads a joint angle and produces one. That solver is ours, belongs beside the inertializer, and
-  must stay engine-agnostic so the software renderer can use it too. **Not to be built
-  speculatively** — the decision was bones first, correctives where measurement demands them.
-
-`Role::Facial` (#34) already exists and the body skin already ignores it, so nothing blocks WS4.
-
-*Sources for the technique, since the research dossiers predate the decision:* [Lewis et al., pose
-space deformation](https://en.wikipedia.org/wiki/Pose_space_deformation) and its shipped forms in
-[Maya](https://help.autodesk.com/cloudhelp/2018/ENU/Maya-CharacterAnimation/files/GUID-45D389D6-B8E4-4225-B27B-9927BB61C28D.htm)
-and [Houdini](https://www.sidefx.com/docs/houdini/nodes/sop/posespacedeform.html);
-[Rig Logic for MetaHumans](https://kalyansthupili.wordpress.com/2025/04/14/demystifying-rig-logic-for-metahumans/)
-and its [RBF corrective layer](https://www.cgchannel.com/2026/03/metahuman-dna-add-on-for-blender-gets-new-rbf-editor/);
-practitioner accounts of the joint-primary hybrid at
-[Tech-Artists.Org](https://www.tech-artists.org/t/blendshapes-vs-joint-driven-facial-set-up/1127)
-and [Polycount](https://polycount.com/discussion/217908/cost-of-morphs-blendshapes-vs-bones).
-
-### 2026-08-02, the complexion (#39, half closed)
-
-The melanin ramp was two stops interpolated between a pale colour and a deep one, and measuring it
-against the **Monk Skin Tone Scale** — Ellis Monk's ten published shades, developed with Google —
-found three faults rather than the one the issue reported. Hue was flat at 18–21° from end to end
-where real skin runs 30–40° pale and falls through the high teens; the ramp did not reach far
-enough into the dark; and, worst, **saturation climbed monotonically into the deepest tones** where
-the reference peaks in the deep middle and falls away. A saturated colour at a dark value is a
-garish orange, and that is what full melanin produced. The undertone axis was an absolute offset,
-so it moved 15% of the blue in the palest complexion and **100%** of it in the deepest.
-
-The ramp is now ten stops fitted to that reference, undertone is a hue *rotation* that preserves
-value and saturation, and blush is scaled down by melanin because pigment sits above blood and
-absorbs what would have shown through it. `AvatarConfig::complexion` and `render -- --skin` were
-added so the axes can be walked by eye, symmetric with `--hair`.
-
-Two things worth carrying forward. **The reference is a set of colour chips, not a ramp** — its
-outermost shades are nearly neutral, which is right under flat neutral light and rendered as a
-colourless mannequin at one end and charcoal grey at the other. Saturation is held up at both ends
-against the reference, deliberately, toward the stylised target in the table above. And **fitting
-it verbatim measured correct and looked wrong**, which is the second time in this file that a
-number has been right and a body has not; the deviation was found by sampling rendered pixels, not
-by reasoning about albedo.
-
-The **geometry** half of #39 — `FaceParams` is four prominence scalars over one fixed skull, and
-`skull.rs` ships six const tables no record touches — is split out as **#61**, deliberately
-sequenced *after* #59: widening the face axes means tuning feature shapes by eye against a
-topology that #59 is about to replace.
-
-### 2026-08-02, spring chains (#38, closed)
-
-WS3 named spring chains in its own description and had zero grep hits for them. `anim::spring` now
-carries the simulation: `Springs::of` finds a chain in any run of [`Role::Spring`] joints hanging
-off one that is not, and `advance` integrates it and writes rotations back into the pose. It knows
-nothing about *what* it is moving, which is what `Role` (#34) was for — hair, a hem and a tail are
-the same code.
-
-`VRMC_springBone` remains the vocabulary, and the departures from it are all in one direction —
-away from things that only worked because a particular engine did them a particular way. Drag is
-per *second* rather than per frame, so hair is not limp at 30 Hz and lively at 144 Hz. Stiffness is
-a real spring toward the pose's own answer rather than a constant pull along the rest direction,
-which cannot settle. Collision is against `rig::Surface` — the body as measured, which hair already
-clears itself against at generation time — rather than hand-placed collider capsules that would
-have to be authored and kept in sync. Long steps are subdivided rather than trusted. And an anchor
-that jumps more than four chain-lengths in a step is treated as having been *relocated*, which the
-spec has no answer for and a game that moves bodies between regions very much needs.
-
-Gravity defaults to **zero**, which is not what the spec would do. It is a real force here, so it
-moves where a chain comes to rest, and everything this crate generates is already drooped: hair is
-grown falling, with its own lean and its own clearance. A gentle `1.2` sagged a four-link chain by
-6.6 cm and left it there. Set it for a chain whose rest shape does not already hang.
-
-Nothing yet *attaches* spring joints in the shipping path — hair is still bound rigidly to the head
-joint. That is **#62**, and it is explicitly a measure-first job: a chain per lock would put the rig
-past Bevy's 256-joint limit, so how many chains a head of hair gets is a design choice constrained
-by a hard number that should be found before a shape is committed to.
-
-### Where this leaves the gate
-
-**The P1 band #34–#39 is closed.** Gate #6 (#36) was shut to re-judging until it cleared, and it
-has — so rewriting the gate as a checklist with numeric thresholds, and executing its "and in-app" half
-for the first time through `bevy_symbios_avatar`, is now the next thing rather than a deferred one.
-
-Behind it, in order: **#59** (weld the face) before WS4 can start, then **#61** (face geometry axes),
-then **#62** (wire hair to the springs), then **#60** (the pose-space corrective driver) only if
-measurement asks for it.
-
-## 1. Headline research findings
-
-1. **First-of-kind.** No parametric 3D avatar lexicon exists on atproto; rpg.actor is the only shipped parametric-avatar-on-PDS system and it is 2D sprite layers. Conventions to lift from it: singleton pointer records, a `source` AT-URI on baked artifacts pointing back at the parametric record, an `isCustom` flag protecting hand-edits from recomposition, cross-PDS give/item attestation pairs for granted equipment, lexicon JSONs at predictable URLs, and granular OAuth `repo:<nsid>` scopes (live in their production). Constraints: 1 MB hard record limit (we keep the 100 KiB discipline), 50 MB blobs, blob GC on last-reference deletion, and **no CDN for arbitrary binary blobs** — serving baked GLBs needs our own caching layer. (research-01)
-
-2. **Convergent body recipe, license-clean.** SMPL, MakeHuman, and runevision's creature project independently converge on: small semantic parameter vector → skeleton *derived from* the shaped geometry (joint regressor / joint-cube idea) → mesh generated over it → skin weights derived analytically at generation time → additive identity/pose/corrective layers before one standard LBS pass. SMPL-family and SMAL are MPI non-commercial (design reference only); every technique we actually need (B-Mesh, Spore, Pinocchio, sphere-meshes, implicit skinning, delta mush) is a published paper. Parameter-space law confirmed three ways: hand-authored semantic macro axes with encoded correlations — never PCA. (research-02)
-
-3. **Mesh path: capsule node-graph → B-Mesh quad cage → Catmull-Clark.** Quad-dominant cages with skeleton-aligned edge flow give the clean deforming silhouettes the fidelity target needs; implicit/SDF math is used only to fair joint regions. Humanoids and quadrupeds are just different node graphs on the same engine. The acknowledged hard 20% is the 3+-branch joint-merge topology — prototyped first, before anything else depends on it. (research-02 synthesis, Architecture A growing into C)
-
-4. **Animation is goal-space from day one.** The only proven one-animation-set-many-morphologies system is Spore's (Hecker et al., SIGGRAPH 2008): motion stored as semantic part queries plus goals in normalized body space, reconstructed per body by a fast IK solver — corroborated by Unreal's IK Rig (named chains + goals) and Bereznyak's GDC 2016 IK Rig. We are better-positioned than Spore because our generator names its own parts. Bevy ships a solid low-level AnimationGraph but **no retargeting, no IK, no inertialization, no foot placement** — exactly the layer these crates occupy; no incumbent crate exists. Shippable data: 100STYLE (CC BY 4.0) + code-authored Rosen-style sparse poses; Mixamo and LaFAN1 can never live in the crate. Motion matching is rejected as structurally incompatible with parametric bodies. Retrofitting goal-space later would invalidate authored clips, hence day one. (research-03)
-
-5. **The look is ~70% textures, not shaders.** All three reference games are plain PBR with painterly inputs: painted bevels + baked AO in albedo, micro-detail confined to roughness/spec, subdermal "blood map" faked SSS, solid clumped mesh hair (no alpha sorting), deterministic non-physical eye highlights, no outlines. Most of the win lands in the symbios texture stack. Custom shaders are a short list: skin ExtendedMaterial (wrap lighting → Penner pre-integrated LUT with curvature baked at mesh-gen time — cheap because we own the mesher) and eye parallax v2. WebGL2 shapes the budget: one draw per skinned mesh → **1–3 skinned meshes per avatar**, 15–30k tris, quality tiers that degrade by omission (SSAO/TAA/OIT/batching are native/WebGPU-only). (research-04)
-
-6. **Dress needs no cages and no cloth sim.** Because the body is procedural, hair/outfit/accessory generators evaluate against its analytic surface. Substrate: a **landmark/measurement API** (named anchors + scalar measurements from the record) and a **≤32-zone coverage bitmask**. Hair = VRoid's model (parameter records generating strand-tube groups on a scalp offset surface; spring physics per group). Tight clothing = the body surface re-evaluated at +ε with covered zones suppressed at generation — intersection-proof by construction. Loose garments = GarmentCode's component taxonomy evaluated directly in 3D as swept panels from body rings. Physics = VRMC_springBone semantics verbatim, shared by hair, tails, hems, accessories. Rejected: Roblox cage deformation, RPM body-replacing outfits, full cloth simulation. (research-06)
-
-7. **VRM export is buildable, not adoptable.** No Rust VRM writer exists. Assemble: `gltf-json` (serde glTF 2.0 schema) + pixiv's `vrm-spec` crate (Apache-2.0 serde structs for all VRMC_* extensions) + a ~50-line GLB writer. VRM 1.0 canonical: 15 required humanoid bones, normalized T-pose rest (identity rotations — also required by 0.x and makes inverse bind matrices trivial), +Z facing (matches our authoring convention); optional 0.x bake for VSeeFace is a yaw-180 + different extension JSON. Creatures = plain GLB (VRM is confirmed humanoid-only; GLB is also the Resonite path). PNG textures only (no KTX2 in the VRM ecosystem). CI: mrxz/vrm-validator. Expectation check: VRChat does **not** consume VRM; conformance buys Cluster, three-vrm/web, Godot, Unity, Blender, VTuber apps. (research-05)
-
-## 2. Lexicon sketch (`network.symbios.avatar.*`)
-
-Design work happens in WS0 (#2); this is the starting shape:
-
-- **`network.symbios.avatar.avatar`** — the parametric record, one per avatar, **named/TID rkeys** (wardrobe model). Contains the full parameter tree: body-plan macro axes, face, hair regions, outfit, accessories, palette, seed + per-category locks. Additive-evolution discipline throughout (new fields optional, field-level serde defaults — the overlands record-scaling lessons apply verbatim). Self-imposed budget: 100 KiB (protocol limit 1 MB; small records drive good parameterization — a Wii Mii was 74 bytes, Spore kept recipes deliberately tiny for sharing).
-- **`network.symbios.avatar.profile`** (singleton `self`) — points at the default avatar's rkey; room for future per-app preferences.
-- **`network.symbios.avatar.bake`** — optional baked artifacts keyed to a source avatar: thumbnail PNG blob always; optionally a baked GLB blob (≤50 MB, "within reason" — actual policy decided by observed content size). Carries `source` AT-URI + `isCustom` (rpg.actor conventions). Non-symbios consumers get renderable output without implementing the generator.
-- Publication: lexicon JSONs at predictable URLs **and** `com.atproto.lexicon.schema` records + `_lexicon` DNS; clients request granular OAuth `repo:network.symbios.avatar.*` + `blob:*` scopes.
+- **`network.symbios.avatar.avatar`** — the parametric record, one per avatar,
+  named/TID rkeys (wardrobe model). Contains the full parameter tree: body-plan
+  macro axes, composites, face, hair regions, outfit, palette, seed +
+  per-category locks. Additive-evolution discipline throughout: new fields
+  optional, container-level serde defaults, unknown fields preserved.
+  Self-imposed budget: 100 KiB (protocol limit 1 MB; small records drive good
+  parameterization — a Wii Mii was 74 bytes, Spore kept recipes deliberately
+  tiny for sharing).
+- **`network.symbios.avatar.profile`** (singleton `self`) — points at the
+  default avatar's rkey; room for future per-app preferences.
+- **`network.symbios.avatar.bake`** (future) — optional baked artifacts keyed to
+  a source avatar: thumbnail PNG blob always; optionally a baked GLB blob
+  (≤50 MB, "within reason" — actual policy decided by observed content size).
+  Carries `source` AT-URI + `isCustom` (rpg.actor conventions). Non-symbios
+  consumers get renderable output without implementing the generator.
+- Publication: lexicon JSONs at predictable URLs **and**
+  `com.atproto.lexicon.schema` records + `_lexicon` DNS; clients request
+  granular OAuth `repo:network.symbios.avatar.*` + `blob:*` scopes.
 - Share codes: record → base32 compact code (MH-Wilds-style), QR-friendly.
 
-## 3. Crate architecture
+## Crate architecture
 
-**symbios-avatar** (engine-agnostic):
-- `record/` — lexicon types + serde, seed + category-lock model, share-code codec.
-- `plan/` — body-plan graph (typed parts: spine chain, limb chains, head, tail, digits, sockets), macro-axis → graph resolution, constraint/correlation layer, semantic capability tags (ground contacts, graspers, gaze) feeding both meshing and animation.
-- `mesh/` — capsule graph → B-Mesh quad cage → subdivision; skeleton derivation; analytic weights + smoothing; landmark/measurement API; zone bitmask; canonical UV charting (fixed face layout).
-- `dress/` — hair groups, tight-garment re-evaluation, swept-panel loose garments, accessory generators + sockets, region/layer arbitration.
-- `face/` — a **bone-driven** macro rig on `Role::Facial` joints, with ARKit-52 naming and
-  Oculus-15 visemes over it, and generated pose-space correctives only where bones are measured to
-  fail (#35). The face must be welded into a continuous surface first (#59); the driver that turns
-  a joint angle into a corrective weight lives in `anim/`, not here (#60).
-- `anim/` — goal-space clip format, two-bone + FABRIK IK, gait engine (phase + duty-cycle over N contacts), inertialization, spring chains (VRMC_springBone semantics, #38), look-at, and the pose-space driver that turns joint angles into corrective weights (#60). Pure math, no engine deps — the software renderer needs all of it too.
-- `texture/` — character generators atop symbios-texture: skin stack (melanin/subdermal/freckle/stubble/AO-bevel), iris, hair strand, fabric weave/knit/print, gradient-map palette baking.
-- `export/` — glTF/GLB writer. (VRM dropped; see §0.)
+**symbios-avatar** (engine-agnostic), as built:
 
-**bevy_symbios_avatar**: spawn path (record → entities, 1–3 skinned meshes per avatar), skin/eye ExtendedMaterials, AnimationGraph bridge + IK/inertialization/spring/foot-placement/look-at systems, LOD hooks, headless render-tool integration (contact-sheet review loop), creator-UI-agnostic parameter surface. Bevy animation events API is still churning (0.19 event rearchitecture) — keep this bridge thin.
+- `record/` — lexicon types + serde, seed + category-lock model, share-code
+  codec.
+- `plan/` — body plans (humanoid, quadruped), the composite axes and the
+  derivation layer that turns them into skeleton parameters, zones and zone
+  sets.
+- `skeleton`, `cage/`, `subdiv`, `hull`, `mesh`, `prim` — the mesher: capsule
+  graph → B-Mesh quad cage → Catmull-Clark, with `PolyMesh` carrying positions,
+  normals, UVs, skin weights and vertex colours.
+- `rig/` — joint hierarchy with roles and zones, analytic skin binding,
+  landmarks, the measured `Surface`, named prop sockets, patches.
+- `face/` — skull shaping and refinement, features, eyes, the bone-driven
+  expression layer, blink, talk, visemes.
+- `extremity/` — hands and feet.
+- `hair/` — five follicle regions measured from the built surface, style
+  catalogues, card geometry, the painted layer.
+- `dress/` — tight garments as re-evaluated body surface with zone suppression.
+- `anim/` — pose, two-bone + FABRIK IK, foot placement, gait, speed/heading/
+  turn, idle, swim, leap, inertialization, spring chains, goal-space clips,
+  baked-clip playback, look-at, blink/gaze drivers. Pure math, no engine deps.
+- `texture/` — geometry bake (position/normal/zone per texel) and the
+  procedural skin painter, atop symbios-texture.
+- `uv/` — zone-driven unwrap into named charts, importance-weighted packing.
+- `avatar` — `Avatar::build`, the one record-to-renderable recipe.
+- `gltf` + `retarget` — the clip *import* path (reader only; the GLB writer is
+  still ahead).
 
-## 4. Workstreams (chainlink issues)
+**bevy_symbios_avatar**: spawn path (record → entities), skin/eye
+ExtendedMaterials, AnimationGraph bridge + IK/inertialization/spring/
+foot-placement/look-at systems, LOD hooks, headless render-tool integration,
+creator-UI-agnostic parameter surface. Bevy's animation API still churns — keep
+this bridge thin.
 
-| # | Workstream | Notes |
-|---|---|---|
-| #2 | WS0 Lexicon + records + share codes | high |
-| #3 | WS1 Body engine | high — **joint-merge topology prototype first** |
-| #4 | WS2 Look (textures, eyes, hair, skin material) | |
-| #5 | WS3 Motion (IK, foot placement, inertialization, gait, goal-space) | high |
-| #6 | Vertical slice checkpoint | gate for everything after. **Rewritten as six numeric criteria** (#36); not judged since. Criterion 5's blockers (#59, #61) have since closed |
-| #7 | WS4 Face | bone-driven, per #35. Blocked by #59 (the face is currently detached solids) |
-| #8 | WS5 Dress | |
-| #9 | WS6 Creatures | |
-| #10 | WS7 Export (GLB) | **split**: the assembly half is pre-gate and **done** (#28, #29); the writer half moves to immediately post-gate. VRM dropped. |
-| #11 | WS8 Creator UX + Overlands adoption (incl. eventual vehicle-chassis migration) | spans sibling repos. **Started at the gate, not last**: #37 stood the Bevy crate up, so the gate's "and in-app" clause is now executable. The creator UI itself is still post-gate. |
+## Status, and what remains
 
-Milestone **"v0.1 vertical slice"** = #2–#6: one parametric humanoid walking/idling/running on terrain with blink + look-at, one outfit, one hair style, judged against the Fortnite/Overwatch bar via render contact sheets and in-app. AAA feel is won by iteration; the slice is where we find out early.
+A body can be described, built, given a face, eyes and hair, dressed in its own
+skin and clothes, rigged, and walked — see the README's status section for the
+full list. The instruments that judge it are catalogued in
+[instruments.md](instruments.md), the triangle economy in
+[budget.md](budget.md).
 
-The gate has been judged three times, and each time it answered the question it was built to ask —
-*is the bar reachable* — with yes. That question is settled, and re-asking it stopped producing
-information, which is why #36 replaced the prose with six pass/fail criteria and shut the gate to
-re-judging until the P1 band cleared. It has now cleared. **The next judgement is a different and
-much less forgiving question: is the bar *met*.**
+The milestone the work is judged against is **one parametric humanoid
+walking/idling/running on terrain with blink + look-at, one outfit, one hair
+style**, held to the Fortnite/Overwatch bar via render contact sheets *and*
+in-app through `bevy_symbios_avatar`. Two instruments, one rule: a defect
+visible in one renderer is the renderer's; a defect visible in both is the
+body's.
 
-Two things will be true of that judgement that were not true of any before it. There are **two
-instruments** rather than one, so a defect in one renderer is the renderer's and a defect in both is
-the body's — a distinction that has never been available, and the whole reason `bevy_symbios_avatar`
-exists. And the gate's own "and in-app" clause, which all three previous judgements silently
-skipped because there was no app, can finally be executed.
+Still ahead, in rough order:
 
-## 5. Risks
+- **GLB export** — a writer for baked avatar artifacts; the glTF module only
+  reads today.
+- **Loose garments and accessories** — swept panels and sockets; tight garments
+  ship, loose ones do not.
+- **Creature variety** — part generators, patterns, fur, and the constraint
+  system over them; the quadruped proves the engine, the variety is unbuilt.
+- **Creator UX** — seed-lock editor, share-code flow, staged preview, spanning
+  both crates.
 
-1. **B-Mesh joint-merge topology** — the hard 20% of meshing; prototyped before dependence. *Retired
-   as a risk: it was built, and the review defended it.*
-2. **Goal-space encoding/reconstruction subtlety** — highest-risk subsystem; mitigated by landing IK/inertialization/springs first (they deliver feel even with a tiny pose set) and by Spore's shipped precedent. *Springs landed (#38), completing the trio.*
-3. **Unproven Bevy quality ceiling** — no published Bevy project shows this character fidelity; nothing engine-side blocks it, but the gap is art-direction iteration. *There is now an instrument for it (#37), and the first thing it showed was a difference the software renderer alone could not have attributed.*
-4. **WebGL2 constraints** — draw-per-skinned-mesh, no SSAO/TAA; tiers degrade by omission; WebGPU improves everything later. *Both halves are now met and held by `tests/budget.rs`: triangles inside the 30,000 target (#40, re-derived at #209), and four draws against a target of four — skin, hair, cloth, eye — after #118 turned the eyelids into a pose.*
-5. **Bevy animation API churn** — thin bridge, engine-agnostic core.
-6. **A budget that only holds for the default record.** Until #40, a body's cost was nearly
-   independent of its parameters, so one measurement covered the space. It is not any more: a lock
-   of hair is priced by how far it travels, and a head of hair now ranges over more than a factor of
-   five. Anything else whose cost a record can move needs the same treatment — a ceiling enforced in
-   the generator, not a number asserted about one body.
+## Risks
 
-*(The former risk 6, VRM conformance fiddliness, went away with VRM.)*
+1. **Goal-space encoding/reconstruction subtlety** — the highest-risk
+   subsystem; mitigated by having landed IK, inertialization and springs first
+   (they deliver feel even with a tiny pose set) and by Spore's shipped
+   precedent.
+2. **Unproven Bevy quality ceiling** — no published Bevy project shows this
+   character fidelity; nothing engine-side blocks it, but the gap is
+   art-direction iteration. The two-renderer rule exists to attribute defects
+   while closing it.
+3. **WebGL2 constraints** — draw-per-skinned-mesh, no SSAO/TAA; tiers degrade
+   by omission; WebGPU improves everything later. Both halves are currently met
+   and held by `tests/budget.rs`: triangles inside the 30,000 target, and four
+   draws — skin, hair, cloth, eye — each justified by a material the others
+   cannot provide.
+4. **Bevy animation API churn** — thin bridge, engine-agnostic core.
+5. **A budget that only holds for the default record.** A record can move a
+   body's cost — a head of hair ranges over more than a factor of five — so any
+   axis whose cost a record can move needs a ceiling enforced in the generator,
+   not a number asserted about one body. The hair catalogue has this treatment;
+   anything new and expensive owes the same.

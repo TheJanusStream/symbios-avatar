@@ -13,14 +13,12 @@
 //! both arms. The table below is hand-authored against measured anatomy for
 //! that reason, not because two rigs happened to agree on spelling.
 //!
-//! **The sides do agree, and that took a fix on our end.** Measured at #139,
-//! the reference's `_l` bones sat on the opposite side of `X` from our
-//! `Limb::…Left` ones with both bodies facing `+Z` — and glTF's convention
-//! (right-handed, `+Y` up, front at `+Z`) puts a character's left at `+X`, so
-//! the reference was named correctly and we were not. For as long as that was
-//! true this table mapped `_l` to our `…Right`, which looked like a bug and was
-//! not. #142 moved our limb names onto the sides they describe, so the table is
-//! now plain name to name. Thirty of the library's 162 clips are one-handed, so
+//! **The sides do agree, and that was measured rather than assumed.** With
+//! both bodies facing `+Z`, the reference's `_l` bones and our `Limb::…Left`
+//! ones sit on the same side of `X` — glTF's convention
+//! (right-handed, `+Y` up, front at `+Z`) puts a character's left at `+X`,
+//! and both rigs honour it — so the table is
+//! plain name to name. Thirty of the library's 162 clips are one-handed, so
 //! which way round this goes is not a detail.
 //!
 //! Our side of the table is a [`Slot`] — a zone and an ordinal — never a joint
@@ -32,21 +30,21 @@
 //! relative to the reference's rest, and apply it relative to ours. It is cheap,
 //! it needs no solver, and it carries twist for free.
 //!
-//! It does not work for a LIMB, and the measurement that says so is at #139:
+//! It does not work for a LIMB, and the measurement says so:
 //! **the reference rests in a true T-pose and we rest in an A-pose, forty
 //! degrees apart at the shoulder.** A delta reproduces our rest plus their
 //! motion, so an absolute pose — folded arms, a hand on a hip, a fist at the
 //! chin — lands forty degrees out. So bone DIRECTIONS are matched instead, which
 //! is scale-free and puts the limb where the animator put it.
 //!
-//! **And a delta is the only thing that works for the SPINE, which took #143 to
-//! find out.** The same rest difference exists in the neck and runs the other
+//! **And a delta is the only thing that works for the SPINE.** The same rest
+//! difference exists in the neck and runs the other
 //! way: the reference rests with its head carried **26.2 degrees** forward of
 //! vertical and ours rests at **6.4**, so pointing our neck where theirs points
-//! imported twenty degrees of somebody else's posture into every clip — whether
-//! or not the animator had touched the neck at all. On a body whose neck is also
-//! 1.8 times the reference's length, that carried the head 72 mm forward against
-//! their 40, and it read as a broken neck rather than as a walk.
+//! imports twenty degrees of somebody else's posture into every clip — whether
+//! or not the animator touched the neck at all. On a body whose neck is also
+//! 1.8 times the reference's length, that carries the head 72 mm forward against
+//! their 40, and it reads as a broken neck rather than as a walk.
 //!
 //! The distinction is not which is *better*. It is what the two kinds of bone
 //! mean. An arm folded across a chest is a place the animator chose and has to
@@ -151,15 +149,15 @@ enum Carriage {
     /// What a limb wants. Folded arms, a hand on a hip and a fist at the chin
     /// are absolute positions the animator chose, and reproducing them means
     /// reproducing the angle whatever our own rest happens to be — which at the
-    /// shoulder is forty degrees away from theirs, A-pose against T-pose (#139).
+    /// shoulder is forty degrees away from theirs, A-pose against T-pose.
     Absolute,
     /// Turn our bone by however much the reference turned its own.
     ///
-    /// What the spine wants, and #143 is what it cost to find that out. The
+    /// What the spine wants. The
     /// reference rests with its head carried **26.2 degrees** forward of
     /// vertical and ours rests at **6.4**, so pointing our neck where theirs
-    /// points imported twenty degrees of somebody else's posture into every clip
-    /// — whether or not the animator had touched the neck at all. Nobody authors
+    /// points imports twenty degrees of somebody else's posture into every clip
+    /// — whether or not the animator touched the neck at all. Nobody authors
     /// an absolute neck angle; a nod is a nod relative to the shoulders it sits
     /// on.
     ///
@@ -211,9 +209,7 @@ const fn axial(name: &'static str, zone: Zone, ordinal: u8) -> Bone {
 ///
 /// **Name to name, side for side** — the reference's `_l` bones and our
 /// `Limb::…Left` ones both sit at `+X` on a body facing `+Z`, which is glTF's
-/// convention for a character's left. That agreement is younger than this
-/// table: until #142 our names were mirrored and these rows read `_l` to our
-/// `…Right`.
+/// convention for a character's left.
 ///
 /// Sixty-five of the reference's sixty-six joints are here. The missing one is
 /// its `root`, which sits above the pelvis and carries the whole body; our rig is
@@ -230,7 +226,7 @@ const fn axial(name: &'static str, zone: Zone, ordinal: u8) -> Bone {
 /// The ordinals are measured off a body built by [`crate::Avatar::build`], not
 /// off a plan's skeleton: the plan rigs 33 joints and a built body 73, and the
 /// difference is the hands and feet where forty of these names land.
-/// Provenance: **measured** (#139) — `examples/retargetaudit` prints both
+/// Provenance: **measured** — `examples/retargetaudit` prints both
 /// skeletons, and every row below was read off that table.
 #[rustfmt::skip]
 const HUMAN: &[Bone] = &[
@@ -502,18 +498,18 @@ impl Correspondence {
     /// first is what brings it across. The correction after it is the minimal
     /// rotation putting our bone back on the direction theirs actually points,
     /// and it is needed only because our rest pose is not theirs: forty degrees
-    /// apart at the shoulder, A-pose against T-pose (#139).
+    /// apart at the shoulder, A-pose against T-pose.
     ///
     /// **The `arc` is dropped for a bone marked relative in the table**, leaving
     /// `W = D`: our own rest direction turned by exactly what the animator did.
     /// That is what the spine wants, and the module docs carry the 26.2 against
-    /// 6.4 degrees that made it necessary (#143).
+    /// 6.4 degrees that make it necessary.
     ///
-    /// **The order matters and the first draft had it wrong.** Reading the roll
+    /// **The order matters.** Reading the roll
     /// out of `D` as an angle and applying it about our own bone in the LOCAL
     /// frame mixes two frames, and the cost is not subtle: a finger rigidly
-    /// carried by a hand picked up the roll its parent underwent, so it wobbled
-    /// where the source held it still. Measured, that turned 21 moving tracks
+    /// carried by a hand picks up the roll its parent underwent, so it wobbles
+    /// where the source holds it still. Measured, that turns 21 moving tracks
     /// into 52 of 65 — caught by the bake's own collapse rate rather than by
     /// anything visible.
     ///

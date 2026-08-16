@@ -1,7 +1,7 @@
 //! The chin, and the plane under it.
 //!
 //! The mental region: below the lower lip, over the chin's own pad, and round
-//! under it onto the submental plane the neck work shaped (#193). It reaches
+//! under it onto the submental plane the neck work shaped. It reaches
 //! under rather than stopping at the menton because a chin beard hangs — the
 //! part of it a profile view reads is the part below the jaw, and a region that
 //! stops at the front of the chin can only grow a painted-on one.
@@ -46,7 +46,7 @@ const VERMILION: f32 = 0.5;
 
 /// How far that ceiling moves over the whole of [`Params::rise`], likewise.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const RISE_RANGE: f32 = 0.28;
 
 /// How far under the menton the patch reaches, in [`Canon::frame`]s.
@@ -59,7 +59,7 @@ const UNDER: f32 = 0.20;
 
 /// How far that reach moves over the whole of [`Params::under`], likewise.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const UNDER_RANGE: f32 = 0.12;
 
 /// Half the patch's width, in [`Canon::unit`]s.
@@ -72,12 +72,12 @@ const HALF: f32 = 1.25;
 
 /// How far that moves over the whole of [`Params::width`], likewise.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const WIDTH_RANGE: f32 = 0.45;
 
 /// How softly the patch fades, in frames.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const FADE: f32 = 0.045;
 
 /// How far round the head the patch may reach.
@@ -86,13 +86,13 @@ const FADE: f32 = 0.045;
 /// the chin where the surface has turned to face the ground and the share falls
 /// away. Its job is only to keep the region off the back of the neck.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const FRONT: f32 = -0.35;
 
 /// The patch of chin a beard grows on, as one object.
 ///
 /// **Handed out to the styles, the same discipline as
-/// [`Ridge`](super::brows::Ridge) and [`Lip`](super::moustache::Lip)** (#207).
+/// [`Ridge`](super::brows::Ridge) and [`Lip`](super::moustache::Lip)**.
 /// A beard's shape is these numbers: how high it climbs is the lower lip, how
 /// far back under the jaw it reaches is the submental edge, and where it hangs
 /// FROM is the menton — which no mask needs and every chin style does, because

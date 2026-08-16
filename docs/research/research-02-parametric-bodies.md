@@ -1,5 +1,8 @@
 # Dossier: Parametric 3D Body/Character Generation — Techniques, Architectures, Licensing
 
+*A point-in-time research dossier gathered while this crate was being designed. Kept as the record of what was found and why the decisions in [../plan.md](../plan.md) were made — external version numbers, prices and library gaps in it were true when written and are not maintained.*
+
+
 Scope: parameter-space design + mesh-generation technique survey for a fully-procedural (no shipped base mesh) Rust generator covering humanoids AND creatures at Fortnite/Sea-of-Thieves fidelity. All third-party model data below is reference-only; licensing analysis included to confirm what must NOT be shipped.
 
 ---
@@ -139,7 +142,7 @@ Parameters define a node graph of spheres (position, radius, optional ellipse ra
 
 **Licensing bottom line**: SMPL/SMPL-X/STAR/SUPR/SMAL = MPI non-commercial (commercial only via Meshcapade) — reference only. GHUM = request-gated. RigNet = GPLv3 + dataset-tainted — avoid. MakeHuman assets = CC0 (legally shippable, architecturally rejected). Spore/B-Mesh/Pinocchio/sphere-meshes/implicit-skinning *techniques* are published papers — freely implementable (Marching Cubes patent long expired).
 
-## Allometry — how a circumference tracks body size (#164)
+## Allometry — how a circumference tracks body size
 
 Two sources, both used directly by `plan::derive::humanoid::Girth`, whose
 docstring carries the numbers at the sites that read them.

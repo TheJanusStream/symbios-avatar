@@ -61,12 +61,12 @@ pub use surface::Surface;
 ///
 /// Answers questions about the *skeleton* — how thick the body is here, how far
 /// under the skin the bone runs. It deliberately answers nothing about the shape
-/// of the surface. This type used to carry a `crease` that compared a normal
-/// against the direction away from the bone, which holds only where the surface
+/// of the surface. A `crease` derived here — a normal compared
+/// against the direction away from the bone — would hold only where the surface
 /// was swept around that bone: an attached hand, nose or ear sits past the end
 /// of the nearest bone, so the direction away from it is the limb's own axis
-/// while the part's normals point every other way, and every one of them read as
-/// a deep cavity (#63). Surface shape is [`crate::mesh::PolyMesh::crease`], which
+/// while the part's normals point every other way, and every one of them reads
+/// as a deep cavity. Surface shape is [`crate::mesh::PolyMesh::crease`], which
 /// measures the mesh.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoneHit {
@@ -147,7 +147,7 @@ pub struct Joint {
     ///
     /// **A radius alone does not say how wide a body part is, and anything
     /// measuring one has to know that.** Every trunk node in the humanoid plan
-    /// carries a section, and #61 gave the skull one too — so a head's lateral
+    /// carries a section, and the skull carries one too — so a head's lateral
     /// reach is `radius * section.x` and reading it as `radius` puts a broad
     /// skull's surface outside its own node and a narrow one's well inside.
     /// Mirrored here rather than looked up in the skeleton because the rig is
@@ -163,9 +163,9 @@ pub struct Joint {
     /// What the joint is for, and so what may bind to it.
     pub role: Role,
     /// Whether the skeleton node behind this joint was a marker — a joint the
-    /// cage never meshed (#134). The generic falloff must not bind the body to
+    /// cage never meshed. The generic falloff must not bind the body to
     /// one: the jaw's pivot and tip get their skin from the mandible REGION
-    /// instead (#152), and a marker that also falloff-bound would hold the
+    /// instead, and a marker that also falloff-bound would hold the
     /// same skin twice. Distinct from [`Role`], because a marker still
     /// deforms — its held skin must follow it when it is posed.
     pub marker: bool,
@@ -338,17 +338,17 @@ impl Rig {
     /// The joints the body's surface is actually made OF, in hierarchy order.
     ///
     /// [`Self::deforming`] less the markers. **The two are different questions
-    /// and [`Role`] answers only one of them** (#136): a marker is a joint the
+    /// and [`Role`] answers only one of them**: a marker is a joint the
     /// surface BINDS to and is not made of — the mandible's pivot and tip hold
     /// skin so that skin follows a jaw when it opens, but the cage never meshed
     /// them and there is no surface under them to measure. Binding wants
     /// `deforming`; anything asking what lies beneath a point wants this.
     ///
     /// `Role` cannot carry that distinction as it stands, because `Deform` is
-    /// both the only role that binds and the role a surface query trusts. #136
-    /// records the open question of whether it should have been a role rather
-    /// than a bit; the bit is what the skeleton already carries, so the bit is
-    /// what this reads.
+    /// both the only role that binds and the role a surface query trusts.
+    /// Whether marker-ness ought to be a role rather
+    /// than a bit is open; the bit is what the skeleton already carries, so the
+    /// bit is what this reads.
     pub fn surfaced(&self) -> impl Iterator<Item = usize> + '_ {
         self.joints
             .iter()
@@ -400,22 +400,22 @@ impl Rig {
     /// otherwise put a dozen bones inside the skull and win every one of those
     /// queries.
     ///
-    /// **That paragraph was a statement of intent for six weeks and is a
-    /// filter now** (#136). The condition it describes arrived the moment
-    /// #134's jaw markers did: a marker has to be [`Role::Deform`] or the skin
-    /// could not be bound to it, so this loop saw it, and the mandible runs
+    /// **That paragraph is a working filter, not a statement of intent**, and
+    /// the jaw markers are what force it: a marker has to be [`Role::Deform`]
+    /// or the skin could not be bound to it, so an unfiltered loop sees it,
+    /// and the mandible runs
     /// diagonally through the middle of the skull where it is nearer to most of
     /// the face than any bone the head is actually made of. Measured on the
-    /// shipped body, the two markers won **6,425 of 8,965 body vertices** —
-    /// essentially the whole head, since `refine_face` puts most of the mesh
+    /// default body, the two markers would win **6,425 of 8,965 body vertices**
+    /// — essentially the whole head, since `refine_face` puts most of the mesh
     /// there.
     ///
-    /// Nothing that reads only the hit's ZONE could see it, which is why it
-    /// went unnoticed: a marker's zone is `Head`, and so is the head's.
+    /// Nothing that reads only the hit's ZONE can tell the difference: a
+    /// marker's zone is `Head`, and so is the head's.
     /// [`crate::texture::paint_skin`] and [`Surface::measure`] read more than
     /// the zone — the first takes `radius` as a thinness and the second credits
-    /// `distance` to `joint` — so those two were quietly being answered by a
-    /// bone with no surface of its own.
+    /// `distance` to `joint` — so both would quietly be answered by a bone
+    /// with no surface of its own.
     #[must_use]
     pub fn nearest_bone(&self, point: Vec3) -> BoneHit {
         let mut best = BoneHit {
@@ -490,10 +490,11 @@ impl Rig {
     /// How far a limb's extremity reaches behind and ahead of its contact
     /// joint, along `along`, on the rig at rest.
     ///
-    /// **The crate's notion of how long a foot is** (#259), and it had none:
-    /// [`crate::anim::gait`] used the stride's own toe clearance as a stand-in,
-    /// which is the right order of magnitude and the wrong quantity — 85 mm
-    /// against this body's 257. A gait needs the real one twice over. It cannot
+    /// **The crate's notion of how long a foot is.** Without one,
+    /// [`crate::anim::gait`] could only stand in the stride's own toe
+    /// clearance, which is the right order of magnitude and the wrong quantity
+    /// — 85 mm against this body's 257. A gait needs the real one twice over.
+    /// It cannot
     /// choose how finely to probe ground a foot is about to swing over without
     /// knowing what the foot spans, because a foot bridges anything narrower
     /// than itself; and it cannot tell whether a swing clears a step without

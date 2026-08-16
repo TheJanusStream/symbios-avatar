@@ -1,4 +1,4 @@
-//! What the five follicle regions hold on a built head (#199).
+//! What the five follicle regions hold on a built head.
 //!
 //! The numeric half of the pair: this reports where each region lands and how
 //! wide its edges are, and `render --follicles` shows the same five regions on
@@ -13,7 +13,7 @@
 //! cargo run --release --example follicleaudit -- --sweep # the population
 //! ```
 //!
-//! **It measures the GROWN layer against the mask as well** (#205). The epic's
+//! **It measures the GROWN layer against the mask as well**. The epic's
 //! own invariant is that the two layers agree about where hair is, and until this
 //! nothing measured whether they did — the sheet showed a brow whose clumps might
 //! or might not have been sitting under their own paint, and no amount of
@@ -27,7 +27,7 @@
 //! would be reading the instrument rather than the hair.
 //!
 //! **Every share here is an AREA share, and the reason is worth carrying**
-//! (#199). `refine_face` splits the front of the face ten times and leaves the
+//!. `refine_face` splits the front of the face ten times and leaves the
 //! vault at the base subdivision, so a head carries thousands of vertices on a
 //! chin and dozens on a crown. Counting vertices, the first cut of these numbers
 //! read the scalp — the largest region on any head — as 2.9% of one, and the
@@ -65,7 +65,7 @@ fn main() {
     report(seed);
 }
 
-/// Every card of one region and style, one row each (#210, generalised at #206).
+/// Every card of one region and style, one row each.
 ///
 /// **The instrument a defect gets when four guesses from a contact sheet have
 /// already been wrong.** Two blocky slabs stood off the back-top of the head in
@@ -648,8 +648,8 @@ fn measure(seed: Option<i64>) -> Option<Head> {
 /// **Region by region, and from one stream in [`Follicle::ALL`]'s order**, which
 /// is exactly what `Avatar::build` does — so the roots measured here are the roots
 /// that shipped, not a second sample from the same distribution. A fresh stream
-/// per region would draw different hair and this would be measuring an instrument
-/// (#89's lesson, in the form it takes here).
+/// per region would draw different hair and this would be measuring an
+/// instrument rather than the artifact.
 fn grow(
     record: &AvatarRecord,
     body: &PolyMesh,

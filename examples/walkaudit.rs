@@ -62,7 +62,7 @@
 //!
 //! **Clearances are measured against the body's own standing depth, not against
 //! `y = 0`.** The build delivers a sole that bulges below its own ground plane
-//! (#220), and an instrument that measures from the floor reads that geometry as
+//!, and an instrument that measures from the floor reads that geometry as
 //! a gait defect. The baseline is printed so the build defect stays visible; it
 //! is just not billed to the walk.
 //!
@@ -86,14 +86,14 @@
 //! cargo run --example walkaudit -- --frames 24
 //! cargo run --example walkaudit -- --pace 1.4 --grade 0.12
 //! cargo run --example walkaudit -- --camber 0.20
-//! cargo run --example walkaudit -- --run          # a run, not a walk (#186)
-//! cargo run --example walkaudit -- --turn 40      # a left turn, 40 deg/s (#241)
+//! cargo run --example walkaudit -- --run          # a run, not a walk
+//! cargo run --example walkaudit -- --turn 40      # a left turn, 40 deg/s
 //! cargo run --example walkaudit -- --turn -40 --grade 0.15
 //! cargo run --example walkaudit -- --turn 40 --bare   # the placement alone
-//! cargo run --example walkaudit -- --heading 180      # walking backwards (#242)
+//! cargo run --example walkaudit -- --heading 180      # walking backwards
 //! cargo run --example walkaudit -- --heading 90       # strafing left
 //! cargo run --example walkaudit -- --headings         # the sweep, and the pop check
-//! cargo run --example walkaudit -- --step 0.15        # a staircase, not a slope (#245)
+//! cargo run --example walkaudit -- --step 0.15        # a staircase, not a slope
 //! cargo run --example walkaudit -- --step 0.15 --step-phase 0.0   # risers under the feet
 //! cargo run --example walkaudit -- --step 0.15 --samples 960      # fast, or discontinuous?
 //! ```
@@ -119,7 +119,7 @@ const SWEEP: usize = 240;
 /// that teleports moves the same millimetres however finely the cycle is
 /// sampled; one that is merely travelling quickly moves half as far when the
 /// sampling doubles. Doubling this is the test, and it is the only way to read
-/// a jump figure that is large but not obviously a cliff (#245).
+/// a jump figure that is large but not obviously a cliff.
 fn sweep_of(args: &[String]) -> usize {
     args.iter()
         .position(|arg| arg == "--samples")
@@ -143,7 +143,7 @@ struct Sole {
     /// to span a riser** — so a single minimum over the patch cannot say
     /// whether a foot is buried in the ground it stands on or standing on a
     /// tread with its toe out over the next step's column. The two halves can
-    /// (#245), and which of them the worst reading came from is the difference
+    ///, and which of them the worst reading came from is the difference
     /// between a placement defect and a foot that is simply longer than the
     /// stair it is being asked to fit on.
     heel: f32,
@@ -190,7 +190,7 @@ struct Moment {
     /// How far the body sank this frame, in metres, and which contact it sank
     /// for — with whether that contact was carrying weight at the time.
     ///
-    /// **The owner, not just the depth (#264).** The crouch is a maximum over
+    /// **The owner, not just the depth.** The crouch is a maximum over
     /// every contact's reach, including the ones in the air, and a maximum
     /// steps wherever its owner changes hands. A depth on its own cannot tell
     /// a body sinking deeper from a body sinking for a different leg, so the

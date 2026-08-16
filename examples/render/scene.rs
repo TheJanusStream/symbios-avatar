@@ -93,13 +93,13 @@ pub enum Paint<'a> {
         /// material's constant roughness per texel; R and B are deliberately
         /// not consumed (this renderer casts its own occlusion, and nothing on
         /// a body is metal), which is recorded here so their silence reads as
-        /// a decision rather than an oversight (#45).
+        /// a decision rather than an oversight.
         orm: Option<&'a [u8]>,
         /// Tangent-space normal bytes beside them, when the atlas carries a
         /// relief of its own. Linear data, decoded `*2-1` with no sRGB pass;
         /// carried into world through a per-triangle `∂P/∂u, ∂P/∂v` frame
         /// measured from these very UVs, so the map's axis convention is
-        /// honoured by construction rather than by a handedness guess (#45).
+        /// honoured by construction rather than by a handedness guess.
         normals: Option<&'a [u8]>,
         /// Pixels per side.
         side: u32,
@@ -529,7 +529,7 @@ impl ShadowMap {
     /// with diagonal acne. The stripes drew as a woven, dirty crumple over the
     /// jaw flank, the neck and the temple in every lit render, and were
     /// chased as skin, texture and geometry before `--pass shadow` put them in
-    /// this map (#158) — the twenty-first instrument caught reporting its own
+    /// this map — the twenty-first instrument caught reporting its own
     /// artifact as the body's.
     pub fn lit(&self, point: Vec3, normal: Vec3, slope: f32) -> f32 {
         let clip = self

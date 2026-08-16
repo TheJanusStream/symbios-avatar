@@ -1,5 +1,8 @@
 # Dossier: AAA-feel animation for parametric humanoid + creature bodies, and the Bevy animation landscape
 
+*A point-in-time research dossier gathered while this crate was being designed. Kept as the record of what was found and why the decisions in [../plan.md](../plan.md) were made — external version numbers, prices and library gaps in it were true when written and are not maintained.*
+
+
 ## 1. Bevy animation, current state (0.18 shipped Jan 2026; 0.19 shipped June 19, 2026)
 
 **What exists in-engine (`bevy_animation`):**

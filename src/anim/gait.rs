@@ -18,7 +18,7 @@
 //! terrain is really there, and [`roll_feet`] takes the soles back off it into
 //! the heel-strike and push-off attitudes a walk is judged by — attitudes
 //! measured against that same terrain, so a foot climbing a hill meets the hill
-//! rather than the flat it was authored for (#250). Each reads the pose the one
+//! rather than the flat it was authored for. Each reads the pose the one
 //! before it left; running the roll before the plant would simply be levelled
 //! away.
 //!
@@ -144,16 +144,15 @@ impl Gait {
     /// **A run is not a fast walk, and the difference is one number.** Every
     /// other constructor here floors a two-legged body at `0.5 + DOUBLE_SUPPORT`
     /// precisely to prevent this — a walk is defined by never being airborne —
-    /// so until this existed there was no way to ask the crate for a body that
-    /// leaves the ground, and a quadruped, which has no imported clips to fall
-    /// back on, could move no faster than a trot (#186).
+    /// so this is the one way to ask the crate for a body that leaves the
+    /// ground; without it a quadruped could move no faster than a trot.
     ///
     /// The offsets are whatever [`Self::natural`] would use, which on four legs
     /// makes this a *running trot* — a trot with a suspension phase, which is a
     /// real gait — and on two an ordinary run. **It is not a canter or a
     /// gallop**: those are asymmetric, their offsets are not evenly spread, and
     /// neither this nor [`Self::wave`] can express that shape. That is a second
-    /// constructor and a deferred slice of #186.
+    /// constructor this module does not have.
     #[must_use]
     pub fn running(rig: &Rig) -> Self {
         Self {
@@ -447,9 +446,8 @@ pub const DOUBLE_SUPPORT: f32 = 0.1;
 /// first, the flight phase it gives is real but short, and a duty picked at the
 /// sprint end would make every run this crate offers a sprint.
 ///
-/// It stops being a constant at #240, where duty comes from speed along with
-/// the stride and the cadence, and this becomes that relation's value at the
-/// transition.
+/// Under [`super::Speed`] the duty comes from speed along with the stride and
+/// the cadence, and this is that relation's value at the transition.
 pub const RUN_DUTY: f32 = 0.35;
 
 /// How far a running body's leg spring compresses at midstance, as a share of
@@ -489,13 +487,10 @@ pub const CROUCH_MARGIN: f32 = 1.15;
 pub struct Stride {
     /// Direction of travel in body space. `+Z` is forward.
     ///
-    /// **Live as of #241, and it had never been anything but `+Z` before
-    /// that.** Every construction site in every repo set it to forward and
-    /// nothing read it except as a multiplier on a scalar slide, so the lateral
-    /// path was code that compiled and had never run. It is now the heading the
-    /// whole screw below is built around, which is the seam #242's reverse and
-    /// strafe want: backwards is this direction negated and a strafe is it
-    /// turned a quarter.
+    /// **The heading the whole screw below is built around.** Backwards is
+    /// this direction negated and a strafe is it turned a quarter — and both
+    /// arrive through [`Stride::toward`], which shortens the reach to match
+    /// rather than leaving this a field to assign alone.
     pub direction: Vec3,
     /// Ground covered per cycle, in metres.
     pub length: f32,
@@ -554,7 +549,7 @@ impl Stride {
         }
     }
 
-    /// The same stride, taken in another direction (#242).
+    /// The same stride, taken in another direction.
     ///
     /// **Both the heading and the length**, which is why this is one call
     /// rather than a field to assign. A body does not step as far backwards as
@@ -660,12 +655,11 @@ const SHUFFLE_CLEARANCE: f32 = 0.5;
 ///
 /// **Sized with the hang the rest pose has, which is the only one available**
 /// — the crouch has to be chosen before the solve that would measure a better
-/// one. Under #254 that looked like the cause of a strained leg on flat ground
-/// and was not: the goal there is inside the limb's reach by two tenths of a
-/// millimetre, and what refuses it is the solver holding back from the
-/// singularity a rest-pose leg permanently stands at. Sinking further would
-/// have been treating a reporting threshold as a geometry problem. See
-/// [`super::ground::CONTACT_STRAIN`].
+/// one. That is not what strains a leg on flat ground: the goal there is
+/// inside the limb's reach by two tenths of a millimetre, and what refuses it
+/// is the solver holding back from the singularity a rest-pose leg permanently
+/// stands at. Sinking further would be treating a reporting threshold as a
+/// geometry problem. See [`super::ground::CONTACT_STRAIN`].
 fn sink_needed(rig: &Rig, limb: Limb, toward: Vec3) -> Option<f32> {
     let reach = rig.limb_reach(limb)?;
     let chain = rig.limb_chain(limb)?;
@@ -687,8 +681,8 @@ fn sink_needed(rig: &Rig, limb: Limb, toward: Vec3) -> Option<f32> {
 /// out of reach and the legs merely stretch toward the ground.
 ///
 /// This is the figure to plan around — camera heights, clearances — but not the
-/// height to *hold*: a walk pinned at its own worst case rides flat, and that
-/// flatness is exactly the pelvis bob the walk used to lack.
+/// height to *hold*: a walk pinned at its own worst case rides flat, and the
+/// bob of the pelvis is exactly what that flatness costs.
 ///
 /// **An upper bound on a run rather than its exact worst moment.** A run adds a
 /// spring compression that is deepest at midstance, where the reach term is at
@@ -747,7 +741,7 @@ pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
 #[must_use]
 ///
 /// **Level ground.** [`step`] seats its own contacts on whatever terrain its
-/// caller offers and re-derives the sink from the seated goals (#221), so on a
+/// caller offers and re-derives the sink from the seated goals, so on a
 /// slope the body actually sinks by more or less than this. That is deliberate
 /// rather than a divergence to fix: this is the planning figure — what a body
 /// of these proportions does on the flat — and the number a camera height or a
@@ -786,8 +780,8 @@ pub fn crouch_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
 /// the legs are split — which is what [`crouch_at`]'s reach geometry delivers
 /// for free. A run does the opposite: the leg is a spring that takes the
 /// landing, so the body is *lowest* at midstance and rises from there. Applying
-/// the walk's rule to a run gives a body that bobs the wrong way twice a step,
-/// which is what a duty below a half produced before this existed (#186).
+/// the walk's rule to a run gives a body that bobs the wrong way twice a
+/// step.
 ///
 /// A half sine over the stance, which is the shape a spring compressing and
 /// returning has: zero at touchdown, [`RUN_COMPRESSION`] of the leg's reach at
@@ -876,15 +870,14 @@ pub fn flight_rise(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
 /// it, which in body space is a slide backwards. During swing it retraces that
 /// path forwards, lifted, to meet the ground at the front of the step.
 ///
-/// # Why this takes the contact's home, and what that bought (#241)
+/// # Why this takes the contact's home, and what that buys
 ///
 /// **A planted foot holds still in the world, and that one sentence is the
 /// whole of the geometry.** Its body-space position is therefore the body's own
 /// motion, inverted, applied at the point where the foot is standing — and a
 /// point is where the limb comes in. On a straight line every contact gets the
-/// same answer, because a translation moves every point of the ground alike,
-/// and that is why this was a scalar slide for as long as the only motion was a
-/// straight line.
+/// same answer, because a translation moves every point of the ground alike —
+/// which is why a plain scalar slide suffices there, and only there.
 ///
 /// The moment the body turns it stops being alike. A body walking a curve is
 /// rotating as well as translating, and a rotation moves a point on the inside
@@ -899,7 +892,7 @@ pub fn flight_rise(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
 ///
 /// The same expression covers the cases that would otherwise each be a branch:
 /// a straight walk is `yaw = 0`, a **pivot in place** is `length = 0` with the
-/// feet counter-rotating about the body's centre, and #242's reverse and strafe
+/// feet counter-rotating about the body's centre, and reverse and strafe
 /// are the sign and the axis of [`Stride::direction`].
 ///
 /// # Why the swing retraces the stance
@@ -929,12 +922,12 @@ pub fn contact_offset(home: Vec3, stride: &Stride, phase: Phase) -> Vec3 {
 /// reason.** A planted foot holds still in the world, and holding still means
 /// its *bearing* as much as its position: a body turning over a foot that is on
 /// the floor leaves that foot pointing where it was put. Without this the
-/// contact stops sliding and carries on spinning — measured, a foot was dragged
-/// through 29.4 of the 29.5 degrees a stance asked for, which at a 200 mm foot
+/// contact stops sliding and carries on spinning — measured, a foot is dragged
+/// through 29.4 of the 29.5 degrees a stance asks for, which at a 200 mm foot
 /// is a bigger skid than the translation ever was.
 ///
-/// Zero on a straight walk, at every phase, which is why nothing needed it
-/// until #241.
+/// Zero on a straight walk, at every phase, so only a turning body ever
+/// notices it.
 ///
 /// # Where this is applied, and why not earlier
 ///
@@ -1006,18 +999,18 @@ pub struct Steps {
     /// its rest contact, and how far the body would have to sink for its leg to
     /// reach that goal.
     ///
-    /// **The crouch's argument list (#264).** [`Self::crouch`] is a maximum
+    /// **The crouch's argument list.** [`Self::crouch`] is a maximum
     /// over these, and a maximum is only as continuous as the terms under it:
     /// it steps wherever the term owning it changes hands, and it inherits any
     /// step a term of its own has. A depth on its own cannot tell a body
-    /// sinking deeper from a body sinking for a different leg — which is why a
-    /// crouch that teleports 83 mm on a staircase went a whole session
+    /// sinking deeper from a body sinking for a different leg — which is how a
+    /// crouch that teleports 83 mm on a staircase can go
     /// unsuspected. Reported per contact so an instrument can follow the
     /// argmax and the terms it beat; see `examples/walkaudit --crouch-trace`.
     ///
     /// Every contact is in here, the ones in the air included: a swinging foot
     /// is asked how far the body must sink for a goal it is not standing on,
-    /// and whether that is right is the open question #264 carries. Which of
+    /// and whether that is right is an open question. Which of
     /// them were in the air is [`Self::swing`]'s answer, not a second field's.
     ///
     /// The reach term only. A run's spring compression is added to every
@@ -1168,16 +1161,14 @@ where
 /// # Why this exists
 ///
 /// Driving this gait correctly means four stages in a fixed order, with a
-/// footing solve in the middle of them, and **the record is that callers do not
-/// manage it**. [`roll_feet`] was missing from three of five consumers for as
-/// long as it existed, so every body they drew walked on rigid ankles — no
-/// heel-strike, no toe-off, the foot tilting bodily with the shin (#1069, #251,
-/// and `examples/locomotion` under #238). [`step`]'s ground closure was missing
-/// from all of them until #221 put it in the signature, which is the one that
-/// got fixed everywhere, precisely because the compiler asked. Then #239 added
-/// a fourth stage to remember.
+/// footing solve in the middle of them, and **callers do not manage it by
+/// hand**. A consumer that forgets [`roll_feet`] draws every body it has on
+/// rigid ankles — no heel-strike, no toe-off, the foot tilting bodily with
+/// the shin — and nothing fails loudly when that happens. The one stage a
+/// caller never misses is the one the compiler asks about, because [`step`]'s
+/// ground closure is in its signature.
 ///
-/// A doc comment naming the order was not enough three times over. This is the
+/// A doc comment naming the order is not enough. This is the
 /// order, executable.
 ///
 /// # The order, and why each step sits where it does
@@ -1191,10 +1182,9 @@ where
 ///    away.
 ///
 /// The same ground is given to the stride, to the plant and to the roll.
-/// Handing any two of them different floors is what leaves a swing arc at the
-/// rest height while the feet settle onto a hill, which is the whole of #221;
-/// the roll joined that list under #250, where a sole pitched for level ground
-/// went through the hill it was climbing.
+/// Handing any two of them different floors leaves a swing arc at the rest
+/// height while the feet settle onto a hill, or a sole pitched for level
+/// ground going through the hill it is climbing.
 ///
 /// # Ablation
 ///
@@ -1211,8 +1201,7 @@ pub struct Walk {
     /// the trunk leaning into the walk.
     ///
     /// One flag for both because they answer one question — what the body above
-    /// the legs is doing — and a body with neither is the mannequin #102
-    /// described.
+    /// the legs is doing — and a body with neither is a mannequin.
     pub posture: bool,
     /// How to aim the head down the path the body is walking, or `None` to
     /// leave the gaze alone.
@@ -1386,32 +1375,32 @@ impl Walked {
 /// Lift a contact's offset onto the ground it is travelling over, and over the
 /// ground it is travelling toward.
 ///
-/// **The whole of #221, and then the whole of #245.** [`contact_offset`]
+/// **The seat of every contact on real terrain.** [`contact_offset`]
 /// describes a stride against the body's own rest ground plane: a stance foot
 /// slides backwards at that height and a swing foot arcs above it, and both end
 /// the step exactly where they began it vertically. On a slope that is wrong at
-/// both ends — uphill the arc drove the sole 38.9 mm into the surface it was
-/// travelling over, downhill it landed in the air and dropped the last
+/// both ends — uphill the arc drives the sole 38.9 mm into the surface it is
+/// travelling over, downhill it lands in the air and drops the last
 /// centimetres at the plant.
 ///
 /// # A stance is seated where it stands
 ///
 /// The probe is taken **under the goal at this instant** rather than blended
-/// between the step's two endpoints. The endpoint blend was the first design
-/// and it is the weaker one: it holds only for ground that is flat between the
+/// between the step's two endpoints. The endpoint blend is
+/// the weaker design: it holds only for ground that is flat between the
 /// footfalls, so a foot still ploughs through anything it passes over on the
 /// way. Sampling where the foot actually is clears whatever is under it.
 ///
-/// **The surface's own height, and nothing subtracted from it** (#255). This
-/// took the RISE between two probes — the surface under the goal minus the
-/// surface under the foot's rest position — which is right for every axis the
+/// **The surface's own height, and nothing subtracted from it.** Taking
+/// instead the RISE between two probes — the surface under the goal minus the
+/// surface under the foot's rest position — is right for every axis the
 /// stride runs ALONG and silently wrong for the one it runs across. A camber
 /// moves the two contacts apart in height without moving either along its own
 /// stride, so the two probes return the same rise and the correction is zero:
-/// measured, a swinging foot went 52.2 mm through a 30 percent side-slope,
+/// measured, a swinging foot goes 52.2 mm through a 30 percent side-slope,
 /// which is the stance width times the camber.
 ///
-/// # A swing is seated where it will LAND (#245)
+/// # A swing is seated where it will LAND
 ///
 /// **A smooth grade is the easy case, and seating a swing where it stands is
 /// only right while the ground is continuous.** A step is not. Across a riser
@@ -1421,16 +1410,15 @@ impl Walked {
 /// 100.4 mm between two samples where a walking foot moves 10.
 ///
 /// A penetration reading alone cannot see that, which is why
-/// `examples/walkaudit` grew a jump reading for it: the foot is above the
+/// `examples/walkaudit` carries a jump reading: the foot is above the
 /// surface at every sample, it simply got there impossibly fast.
 ///
 /// So a swing is built from three probes instead of one:
 ///
 /// * **where it takes off**, which is the ground the last stance left;
-/// * **where it will land**, which is the ground under the goal at the front of
-///   the step — the probe this issue is named for, and the one that makes the
-///   vertical continuous at both ends because the arc now *ends* at the height
-///   it is going to;
+/// * **where it will land**, which is the ground under the goal at the front
+///   of the step — the probe that makes the vertical continuous at both ends,
+///   because the arc now *ends* at the height it is going to;
 /// * **the highest ground in between**, which sets how far the arc has to rise
 ///   to clear whatever it is stepping over.
 ///
@@ -1440,7 +1428,7 @@ impl Walked {
 /// hidden: ground that rises and falls again inside one foot length can be
 /// missed.
 ///
-/// # Both ends are points in the world (#245)
+/// # Both ends are points in the world
 ///
 /// And the frame this is computed in is not. A take-off happened where it
 /// happened; the body walks away from it for the whole of the flight, so
@@ -1449,8 +1437,9 @@ impl Walked {
 /// The landing is the mirror of it, a fixed piece of ground the body closes on.
 ///
 /// So both are carried past the stance's own ends by the share of a stance the
-/// swing lasts, `(1 - duty) / duty`. On continuous ground this only slid the
-/// probes along a smooth surface; across a riser the drifting end crosses the
+/// swing lasts, `(1 - duty) / duty`. On continuous ground the choice is
+/// invisible — the probes merely slide along a smooth surface; across a riser
+/// a drifting end crosses the
 /// step in mid-flight and the goal built on it jumps by the height of the step.
 /// Measured on a 100 mm flight, 99.2 mm between two adjacent samples against a
 /// 4.3 mm average — and the whole of it gone once the ends hold still.
@@ -1464,7 +1453,7 @@ impl Walked {
 /// same flight: the heel passes 4.2 mm clear and the toe 74.2 mm under. That is
 /// a swing profile question rather than a seating one — the climb has to happen
 /// at the start of the flight where the obstacle is, not in the middle where a
-/// smoothstep puts it — and it is #259.
+/// smoothstep puts it.
 ///
 fn seated_offset<F>(
     home: Vec3,
@@ -1612,17 +1601,17 @@ where
 /// body and the stride rather than a number: a long stride on a small body
 /// reads the ground more finely than a short one on a large.
 ///
-/// **`foot` is the foot, and for a long time it was not** (#259). This asked
-/// [`Stride::lift`] how long a foot is, which is the toe clearance of a swing
-/// and has no business answering: on the reference body it said 85 mm against a
-/// real 257. [`Rig::extremity_extent`] is the measurement.
+/// **`foot` is the foot, measured, and not a proxy.** [`Stride::lift`] is the
+/// tempting stand-in for how long a foot is, and it is the toe clearance of a
+/// swing with no business answering: on the reference body it says 85 mm
+/// against a real 257. [`Rig::extremity_extent`] is the measurement.
 ///
 /// # Why a fraction of it, and not the whole
 ///
-/// The argument this had while it was counting clearances was that a foot
-/// cannot fall into a gap narrower than itself, so ground that rises and falls
-/// again within one sole is ground the foot bridges. That argument survives and
-/// stops applying: the roof is a MAXIMUM, and a maximum ignores a dip for free,
+/// The argument for reading at whole soles is that a foot cannot fall into a
+/// gap narrower than itself, so ground that rises and falls
+/// again within one sole is ground the foot bridges. That argument is true and
+/// does not apply: the roof is a MAXIMUM, and a maximum ignores a dip for free,
 /// however finely it is sampled. Nothing is bought by reading coarsely.
 ///
 /// What coarseness costs is the other direction. A rise between two samples is
@@ -1672,8 +1661,8 @@ const SOLE_SAMPLES: usize = 8;
 /// before it, which on the 100 mm flight this was measured against is 100 mm of
 /// approach for a sole that spans 289.
 ///
-/// Read against the alternatives on that flight, at the toe (the reading #259
-/// is named for, against -74.2 mm before any of this): 0.35 clears by 23.0 mm,
+/// Read against the alternatives on that flight, at the toe (which with no
+/// climb at all passes 74.2 mm under the riser): 0.35 clears by 23.0 mm,
 /// 0.5 by 22.4, 1.0 by 18.0, 2.0 by -0.8. The shallow end buys a millimetre or
 /// two of clearance and pays for it by dilating the ground three times as far
 /// out — a body that starts lifting for a step it is nowhere near — and 2.0
@@ -1716,24 +1705,23 @@ const HEEL_PEEL: f32 = 0.55;
 /// solving the leg turns the shin, which carries the ankle's parent with it, so
 /// a foot pitched before the solve is not quite pitched after it.
 ///
-/// **Four, re-swept under #254 — it was two, and two was right at the time.**
-/// The number depends on how accurately the leg solve places the contact, and
-/// that changed: with a solve that missed by the extremity's hang, the contact
-/// barely moved from pass to pass and two passes converged. With one that lands
-/// where it was aimed, the leg moves further each pass and the fixed point
+/// **Four, and the number depends on how accurately the leg solve places the
+/// contact.** With a solve that misses by the extremity's hang, the contact
+/// barely moves from pass to pass and two passes converge. With one that lands
+/// where it is aimed, the leg moves further each pass and the fixed point
 /// takes longer to settle.
 ///
 /// Swept on the default walk through `examples/walkaudit`, asked for -17.2 to
-/// 20.1 degrees: two passes now deliver -19.9 to 18.5 and scuff the sole 8.3 mm
+/// 20.1 degrees: two passes deliver -19.9 to 18.5 and scuff the sole 8.3 mm
 /// under the floor; three deliver -17.6 to 19.8 and clear it by 0.7 mm; four
 /// deliver -17.3 to 20.0 and clear by 2.1; six deliver the asked figures exactly
 /// and clear by 2.4. Four is where the degrees are inside a tenth and the
 /// clearance has stopped moving usefully.
 ///
 /// **The lesson is the constant, not the number.** A pass count swept against
-/// one version of the thing it iterates is a number with a hidden argument, and
-/// this is the second constant in this file to need re-measuring for exactly
-/// that reason (see [`super::ground::solve_contact_toward`]).
+/// one version of the thing it iterates is a number with a hidden argument,
+/// and it has to be re-swept whenever that thing changes (see
+/// [`super::ground::solve_contact_toward`]).
 const ROLL_PASSES: usize = 4;
 
 /// A Hermite ramp, `0..1`, flat at both ends.
@@ -1783,11 +1771,11 @@ pub fn foot_pitch(phase: Phase) -> f32 {
 /// [`super::plant_feet_of`] ask it, and it must be the same floor all three are
 /// given — see [`Walk::drive`].
 ///
-/// # The pitch rides on the surface, not on the ankle (#250)
+/// # The pitch rides on the surface, not on the ankle
 ///
-/// This used to take the attitude to pitch about from the ankle's own rotation,
-/// on the reasoning that [`super::level_feet`] had just laid the sole into the
-/// ground and so the ankle already held the answer. It does not, on ground
+/// The tempting source for the attitude to pitch about is the ankle's own
+/// rotation, on the reasoning that [`super::level_feet`] has just laid the sole
+/// into the ground and so the ankle already holds the answer. It does not, on ground
 /// steep enough to matter: the clamp in [`super::level_feet`] is on the *local*
 /// ankle angle, and a 30% grade asks 44.1 degrees of an ankle that has 40.1
 /// ([`FootingConfig::max_ankle`]). What the ankle reports there is where it got
@@ -1802,14 +1790,14 @@ pub fn foot_pitch(phase: Phase) -> f32 {
 /// | read off the ankle | −6.8 mm | −2.9 mm | −17.1 mm | −47.7 mm |
 /// | read off the ground | −6.8 mm | −2.9 mm | −1.6 mm | −5.5 mm |
 ///
-/// **The asymmetry was the tell**, and it is worth recording because it is what
-/// a downhill-only test would have missed entirely: climbing needs the ankle to
-/// flex further than descending does, so only the uphill readings ever clamped.
+/// **The asymmetry is the tell**, and it is worth recording because it is what
+/// a downhill-only test would miss entirely: climbing needs the ankle to
+/// flex further than descending does, so only the uphill readings ever clamp.
 ///
 /// The remainder is symmetric in the grade and is a different, smaller term
-/// this did not touch. So is the whole lateral axis: a body walking *across* a
-/// slope still puts a swinging foot 52 mm through the hillside at 30% camber,
-/// which is #255 and is larger than what this fixed.
+/// this does not touch. So is the whole lateral axis: what keeps a swinging
+/// foot out of the hillside on a camber is the seating reading the surface's
+/// own height, not anything the roll does.
 ///
 /// Returns the contacts whose leg could not reach the rolled goal, which should
 /// be none — rolling *raises* the contact at both extremes, so it asks the leg
@@ -1845,7 +1833,7 @@ pub fn foot_pitch(phase: Phase) -> f32 {
 /// the weight. It is left exactly as the plant left it, because deriving an axis
 /// from one point means choosing one, and a hoof pitched about a guess is worse
 /// than a hoof that does not pitch. Giving a beast a foot it can roll is a plan
-/// question (#178), not a gait one.
+/// question, not a gait one.
 ///
 /// # The toes do not extend, and that is a choice
 ///
@@ -2031,16 +2019,14 @@ const SHOULDER_TWIST: f32 = 0.17;
 ///
 /// Five and a half degrees, in the middle of the 2–7 the gait literature
 /// reports for a normal adult trunk, and growing from there with pace. A body
-/// that walks bolt upright reads as a mannequin being carried along: it was the
-/// last of the three postural complaints #102 made about this gait, after the
-/// elbows and the pelvis, and the only one nothing had been done about.
+/// that walks bolt upright reads as a mannequin being carried along.
 ///
 /// **Against pace, not against speed in metres.** Pace here is the stride the
 /// body is actually taking measured against the legs taking it — recovered from
 /// [`Stride::for_body`]'s own relation — so a short body and a tall one at the
 /// same dimensionless stride lean by the same amount. That is the dynamic
-/// similarity the whole gait is built on, and it is the form #240's speed axis
-/// will want.
+/// similarity the whole gait is built on, and the form [`super::Speed`] states
+/// it in.
 const TRUNK_LEAN: f32 = 0.096;
 
 /// How far behind the legs the arms run, as a share of the cycle.
@@ -2066,16 +2052,16 @@ const ELBOW_SWING: f32 = 0.26;
 /// Hangs the arms at the body's sides: the carriage a body has whenever
 /// nothing else is using them.
 ///
-/// **The bind pose is a modelling pose, not a stance** (#267). Bodies are
+/// **The bind pose is a modelling pose, not a stance.** Bodies are
 /// built in an A-pose — measured on the default body, the upper arms sit 50
 /// degrees off vertical with the elbows dead straight — because that is the
 /// pose skinning, sockets and garments are authored against. A body DRAWN in
-/// it reads as a mannequin, and the owner said so the first time a standing
-/// body was actually looked at: the walk had always hidden it, because
-/// [`swing_arms`] carries this same drop and fold under its swing.
+/// it reads as a mannequin, and a walk hides the fact:
+/// [`swing_arms`] carries this same drop and fold under its swing, so only a
+/// standing body shows the pose it was modelled in.
 ///
 /// The zero-drive case of that carriage, deliberately: the same two constants
-/// (`ARM_DROP`, `ELBOW_REST`), the same drop-corrected fold axis (#223),
+/// (`ARM_DROP`, `ELBOW_REST`), the same drop-corrected fold axis,
 /// and the same rule about whose arms — a limb that carries the body is a leg
 /// whatever it is called, and is left to the legs' own layers. A guard holds
 /// this equal to [`swing_arms`] on a standing gait so the two carriages
@@ -2265,8 +2251,8 @@ fn pace_of(rig: &Rig, stride: &Stride) -> f32 {
 /// written also makes the constant lie — **spread down the spine it delivered
 /// 2.1 degrees of the 5.5 it asked for**, because local rotations compound but
 /// the trunk's CHORD from pelvis to shoulders ends up a length-weighted average
-/// of them rather than their sum. That is the #223 elbow defect exactly: a
-/// constant nothing was checking against the body it moved. Pitching the base
+/// of them rather than their sum — a
+/// constant nothing is checking against the body it moves. Pitching the base
 /// carries everything above it by the angle written here, and
 /// `examples/walkaudit` reads back what this says.
 ///
@@ -2339,8 +2325,8 @@ pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
 /// takes the pitch back off again at the neck, because a body walking faster
 /// should look where it is going rather than at its own feet. A bow is the
 /// gesture where that is exactly wrong: the head goes down WITH the trunk, and
-/// what happens to the gaze afterwards is the bow's own gaze track's business
-/// (#248). So the counter-rotation is the caller's and everything under it is
+/// what happens to the gaze afterwards is the bow's own gaze track's business.
+/// So the counter-rotation is the caller's and everything under it is
 /// shared, which is the only way there is one description of how a trunk
 /// pitches rather than two that drift apart.
 ///
@@ -3151,7 +3137,7 @@ mod tests {
     /// quaternion about the arm's own axis is a perfectly good rotation that
     /// bends nothing, and that is exactly what this used to be: turning about Y
     /// spent most of itself spinning a forearm that hangs 50 degrees off that
-    /// axis (#114).
+    /// axis.
     fn elbow_bend(rig: &Rig, pose: &Pose, limb: Limb) -> f32 {
         let Some([shoulder, elbow, wrist]) = rig.limb_chain(limb) else {
             return 0.0;

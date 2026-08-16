@@ -140,7 +140,7 @@ fn main() {
 
 /// How fine the face's surface is, in each band a feature occupies.
 ///
-/// The argument of #59 in one table. A brow ridge is 10 mm tall and a nose is
+/// The argument in one table: a brow ridge is 10 mm tall and a nose is
 /// one eye-width across; neither can be shaped into a surface whose quads are
 /// 24 mm on a side, and no amount of tuning the feature generators changes that.
 /// The figure to watch is the median edge, because a mean is dragged down by the

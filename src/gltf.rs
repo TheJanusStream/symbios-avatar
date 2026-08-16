@@ -3,18 +3,17 @@
 //!
 //! This began with one question, and the question was most of the
 //! specification: **where is each of a skin's joints, at time `t` of animation
-//! `n`?** The motion library it was written for
-//! ([#102](https://github.com/TheJanusStream/symbios-avatar/issues/102)) is
+//! `n`?** The motion library it was written for is
 //! 162 clips of skeletal animation and a skeleton to hang them on, and nothing
 //! else in those files was wanted.
 //!
-//! It now answers a second: **what shape is the body those joints are in?**
+//! It also answers a second: **what shape is the body those joints are in?**
 //! Every reference figure in this crate — the landmark heights, the segment
 //! lengths, the spans, the trunk silhouette, the limb-thickness ladder — is a
-//! measurement of the two CC0 mannequins, and until [`Gltf::rest_meshes`]
-//! existed each one was a number somebody wrote down once, with nothing able to
-//! reproduce it and so nothing able to notice it was wrong. One was
-//! ([#173](https://github.com/TheJanusStream/symbios-avatar/issues/173)). See
+//! measurement of the two CC0 mannequins, and without [`Gltf::rest_meshes`]
+//! each one would be a number somebody wrote down once, with nothing able to
+//! reproduce it and so nothing able to notice it was wrong — one of them was.
+//! See
 //! `examples/reference`, which prints the tables, and the mannequin test below,
 //! which is the ratchet under them.
 //!
@@ -52,8 +51,8 @@
 //!   7399 vertices on the male, 24037 on the female, both about 14k triangles
 //! ```
 //!
-//! Which is why integers and the `normalized` flag are read now and were not
-//! before: an animation accessor is FLOAT and a vertex attribute is very often
+//! Which is why integers and the `normalized` flag are read at all: an
+//! animation accessor is FLOAT and a vertex attribute is very often
 //! not.
 //!
 //! Everything on that list that is *absent* is refused loudly rather than
@@ -66,26 +65,25 @@
 //!
 //! # Where it lives, and the number behind that
 //!
-//! In the library rather than behind a feature or in the bake tool, and the
-//! number that decided it is **not** the number that was guessed. The bake is
+//! In the library rather than behind a feature or in the bake tool, and a
+//! measured number is what decided it. The bake is
 //! offline, so nothing at runtime calls any of this, and a browser payload
 //! should not carry it.
 //!
-//! Measured on the `wasm32-unknown-unknown` rlib: 4,134,098 bytes before this
-//! module and 4,770,752 after, so **622 KiB**, against a guess of sixty. An
+//! Measured on the `wasm32-unknown-unknown` rlib: 4,134,098 bytes without this
+//! module and 4,770,752 with it, so **622 KiB**. An
 //! rlib is not a payload — it carries metadata and uninstantiated generic code,
 //! and `serde`'s derive is most of what makes that figure large — so this is an
 //! upper bound and a loose one. What settles it is a wasm consumer binary,
 //! where nothing reachable from an entry point calls `Gltf::read` and the
-//! link-time pass should strip the lot; the viewer (#141) is that binary's
-//! nearest stand-in, and the figure has not been re-taken since.
+//! link-time pass should strip the lot.
 //!
 //! Being in the library is what lets `cargo test` reach it, which is the reason
 //! it is not a feature today: a default-off feature is a module the shipped
 //! test command silently stops testing, and this crate has been bitten enough
-//! times by assertions that quietly select nothing. If the measurement at #141
-//! disagrees, the remedy is that feature plus a test command that turns it on
-//! — not a move into the bake tool, which no test runs at all.
+//! times by assertions that quietly select nothing. If a consumer binary
+//! measures otherwise, the remedy is that feature plus a test command that
+//! turns it on — not a move into the bake tool, which no test runs at all.
 
 use std::collections::HashMap;
 

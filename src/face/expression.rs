@@ -3,12 +3,12 @@
 //! The sibling of [`super::blink`] and [`super::talk`], one layer up: those
 //! two decide when the involuntary machinery moves, and this decides where
 //! the face RESTS while they do. An expression here is four numbers — one per
-//! bone pair the macro rig grew (#135, #215, #216) plus the lids — and a
+//! bone pair the macro rig carries, plus the lids — and a
 //! preset is a named point in that space, not a pose: two expressions blend
 //! by interpolating the numbers and applying once, never by mixing poses.
 //! Blending in pose space dips through neutral on opposed channels — half a
 //! smile plus half a frown is a straight mouth, not a flickering one — and
-//! quaternion blends do not commute with per-side sign flips (#217).
+//! quaternion blends do not commute with per-side sign flips.
 //!
 //! **The composition contract, per channel.** The brows and the corners are
 //! written over: nothing else in the crate poses them, so an expression is
@@ -30,14 +30,14 @@ use crate::rig::skin::{brow_joints, jaw_pivot, mouth_corners};
 
 /// Degrees of whole-brow raise at `brows = 1.0`, and of lowering at `-1.0`.
 ///
-/// The range `render --brows` was judged over on #215: 10° reads as surprise
+/// The range `render --brows` was judged over: 10° reads as surprise
 /// and −8° as a scowl, so the channel spans what the render has already
 /// vouched for and nothing it has not.
 const BROW_GAIN: f32 = 10.0;
 
 /// Degrees of smile at `corners = 1.0`, and of frown at `-1.0`.
 ///
-/// 22° read as a smile and −10° as a frown on #216's sheets; the asymmetry is
+/// Judged by render: 22° reads as a smile and −10° as a frown; the asymmetry is
 /// real — a mouth droops less than it grins — and lives in the presets rather
 /// than the gain, which stays one number so the channel is linear.
 const CORNER_GAIN: f32 = 22.0;
@@ -55,8 +55,8 @@ const JAW_GAIN: f32 = 4.0;
 /// [`super::eye::Eye::WIDEN`], owned by the eye because the lid shells are
 /// its to protect — `lid_rotation`'s clamp is the bound, and this layer asks
 /// for exactly as much as that clamp will grant, no constant of its own to
-/// drift (#217's P2, which arrived as a silently dead channel rather than a
-/// cleared rim: the old clamp floor was zero).
+/// drift — a drifted copy fails as a silently dead channel, not as anything
+/// a render would show.
 const LID_HEAVY: f32 = 0.40;
 
 /// A resting face, as a point in the macro rig's own space.
@@ -105,13 +105,12 @@ impl Expression {
     ///
     /// The macro rig has one bone per brow and sadness lives in the INNER
     /// brow's tilt, so this preset leans on the mouth and the lids instead of
-    /// asking the brows for a shape they cannot make — see #217's P3 for the
-    /// residual, and the reroll of that judgement if a second brow bone ever
-    /// lands.
+    /// asking the brows for a shape they cannot make — a judgement worth
+    /// rerolling if a second brow bone ever lands.
     ///
     /// The corner droop is HALF the smile's reach on purpose, not taste: past
     /// about −11° the dropped seam edges punch through the lower lip's own
-    /// bulge below them and surface as tabs (#217, measured at −15.4° and
+    /// bulge below them and surface as tabs (measured at −15.4° and
     /// clean at −10°). A smile has no such collision — the upper lip recedes
     /// where the lower one protrudes — so the asymmetry is the face's
     /// geometry, and every droop in this catalogue stays inside it.

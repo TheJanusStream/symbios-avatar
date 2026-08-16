@@ -22,7 +22,7 @@
 //! that separability is what left the lower face a right circular frustum for as
 //! long as it did: a mandible is a border whose HEIGHT MIGRATES WITH AZIMUTH and
 //! no product of the two can say so. `jaw` is the one term here that takes
-//! both at once, and it is the difference between a jawline and a cone (#80).
+//! both at once, and it is the difference between a jawline and a cone.
 //!
 //! Heights here are in skull radii above the head joint, which is the same unit
 //! the features are placed in. One unit for the head, everywhere. (Hair's own
@@ -43,26 +43,25 @@ use crate::rig::Rig;
 /// A head with a circular cross-section reads as a ball however well the rest of
 /// it is shaped.
 ///
-/// **Down from 0.24, and this constant was never the built ratio** (#79). It is
-/// a raw multiplier on the fore-aft radius, applied before [`BREADTH`] narrows
-/// the lateral one and before [`OCCIPUT`] swells the back. What a head comes out
-/// at is the product of the three: at +0.35 R that was
-/// `1.24 × 0.974 / 0.891 × (1 + 0.14 behind)`, so the head built to 1.50 while
-/// the coefficient said 1.24 and the docstring said "about a quarter". True of
-/// the number, false of the head — which is [`TEMPLE`]'s unit confusion again,
-/// one table down and in a different disguise.
+/// **This constant is not the built ratio, and reading it as one is a trap.**
+/// It is a raw multiplier on the fore-aft radius, applied before [`BREADTH`]
+/// narrows the lateral one and before [`OCCIPUT`] swells the back. What a head
+/// comes out at is the product of the three, so a statement about the
+/// coefficient can be true of the number and false of the head — which is
+/// [`TEMPLE`]'s unit confusion again, one table down and in a different
+/// disguise.
 ///
-/// The note that stood here called itself unsourced and offered the built 1.29
-/// as weak support. That support was withdrawn by #107 without anyone noticing:
-/// the eight-point cage delivers `cos(π/8)` where four-point rings delivered
-/// `cos(π/4)`, the head's built width went up 26% and its depth 47%, and the
-/// ratio went to 1.50 with this constant untouched. A number whose only evidence
-/// is a measurement taken through a mesher does not survive the mesher changing.
+/// Nor can the built ratio alone support it, because the mesher stands between
+/// the two: eight-point cage rings deliver `cos(π/8)` where four-point rings
+/// deliver `cos(π/4)`, so a cage change moves the built width and depth by
+/// double-digit percentages with this constant untouched. A number whose only
+/// evidence is a measurement taken through a mesher does not survive the mesher
+/// changing.
 ///
 /// At 0.11 the vault measures 208.1 mm deep on a width of 160.9 — 1.29, against
 /// a life head length over head breadth of 195 over 152 — and 1.29 to 1.32
 /// across eight seeds at neutral breadth.
-/// Provenance: **derived from the built ratio** (#79), which is the only
+/// Provenance: **derived from the built ratio**, which is the only
 /// honest thing to derive it from while it is one factor of three. The TARGET
 /// is looked up — head length 195 mm against head breadth 152 to 156 — and
 /// this is the value that puts the built vault on it. If [`BREADTH`],
@@ -72,30 +71,29 @@ const ELONGATION: f32 = 0.11;
 
 /// How wide the skull is at each height, relative to its unshaped width.
 ///
-/// **Widest on the parietal, well above the eye, and this file said the
-/// opposite for a long time.** It read "widest at the cheekbones, which sit just
-/// below the eye line", and encoded it: 1.03 at −0.05 R falling monotonically
-/// to 0.62 at the crown. Anthropometry runs the other way. Maximum breadth is at
+/// **Widest on the parietal, well above the eye — not at the cheekbones,
+/// however natural "widest at the cheekbones, just below the eye line"
+/// sounds.** Anthropometry runs the other way. Maximum breadth is at
 /// eurion — 156 mm against a bizygomatic 137 — and eurion sits 25 to 45 mm
-/// *above* the pupil line. Built, the maximum came out at −4 to −12 mm on four
-/// seeds: at or just below the eye, which is the defect (#79).
+/// *above* the pupil line. A table that peaks at the cheek puts a head's
+/// widest point at or below the eye, which is the defect this one exists to
+/// avoid.
 ///
-/// The correction is not only these numbers. The cage cones on its own — see
-/// the humanoid plan's crown node, which was so much narrower than the
-/// head node that the blend converged toward an apex — and a profile cannot
-/// un-cone a cage without inflating the cranium past anything a skull does. The
-/// two were fixed together: the cage is near-cylindrical through the
-/// mid-cranium now, and this profile narrows where a head narrows.
+/// This profile does not act alone. The cage cones on its own — a crown node
+/// much narrower than the head node makes the blend converge toward an apex —
+/// and a profile cannot un-cone a cage without inflating the cranium past
+/// anything a skull does. So the two are shaped together: the cage is
+/// near-cylindrical through the mid-cranium, and this profile narrows where a
+/// head narrows.
 ///
-/// The head was also **11 to 21 percent too wide for its own height** on those
-/// four seeds (H:W 1.22–1.31 against a life 1.48), so every knot from the
-/// cheekbone down came in as well. That is a narrower face, deliberately, and
-/// it is the half of this change that had to be judged by eye rather than
-/// measured.
+/// The knots from the cheekbone down are also drawn in deliberately: left
+/// wider, the head runs **11 to 21 percent too wide for its own height**
+/// (H:W 1.22–1.31 against a life 1.48). That is a narrower face, and it is the
+/// half of this table that has to be judged by eye rather than measured.
 ///
 /// **The lower half narrows far less than it looks like it should, and returns
 /// to nothing at all where the head meets the neck.** Two reasons, both
-/// measured (#47).
+/// measured.
 ///
 /// The unshaped head is already a taper. It is a capsule blend from a 131 mm
 /// head node down to a 66 mm neck node, so it goes from 78.5 mm half-width at
@@ -109,63 +107,53 @@ const ELONGATION: f32 = 0.11;
 /// the silhouette, and it said 0.46 — a 19 mm cliff in 11 mm of height, against
 /// a neck the unshaped head met to within 2 mm. Anything but 1.0 down there is
 /// a seam.
-/// **The two vault knots moved with the crown, and that is a hazard this table
-/// carries permanently** (#79). Heights above the joint are RAW skull radii and
-/// heights below it are profile heights, so the lower half of this table follows
-/// a head's own lower face and the upper half does not follow anything. When #79
-/// took the built crown from 0.85 radii to 1.03, the knot marked "crown" stayed
-/// at 0.86 — and [`knot`] clamps above its first entry, so the top sixth of the
-/// vault held a flat 0.58 instead of tapering. Built, the half-width ran 46.5,
-/// 42.1, 40.8, 39.4 mm over 12 mm of height and then fell off a cliff: a
-/// cylinder with a cap on it, in the exact place this table exists to round.
-/// The crown knot is 1.05 and the upper-cranium knot 0.75 now, both scaled by
-/// the same 1.204 the crown moved by, and the built vault tapers smoothly from
-/// the parietal to the vertex.
+/// **The two vault knots must move whenever the built crown does, and that is a
+/// hazard this table carries permanently.** Heights above the joint are RAW
+/// skull radii and heights below it are profile heights, so the lower half of
+/// this table follows a head's own lower face and the upper half does not
+/// follow anything. And [`knot`] clamps above its first entry, so a crown that
+/// rises past the knot marked "crown" leaves the top of the vault holding a
+/// flat 0.58 instead of tapering: a cylinder with a cap on it, in the exact
+/// place this table exists to round. With the crown knot at 1.12 and the
+/// upper-cranium knot at 0.80 the built vault tapers smoothly from the
+/// parietal to the vertex.
 ///
-/// The parietal knot at 0.42 did NOT scale and must not: it is where eurion
-/// sits, and eurion is quoted against the pupil line, which does not move with
-/// the crown. Built, the widest point lands at +0.42 to +0.43 R on eight seeds —
-/// 39 mm above the eye line against a life 25 to 45.
-/// Provenance: **looked up, then tuned by render** (#79). Eurion 156 mm
+/// The parietal knot at 0.42 does NOT scale with the crown and must not: it is
+/// where eurion sits, and eurion is quoted against the pupil line, which does
+/// not move with the crown. Built, the widest point lands at +0.42 to +0.43 R
+/// on eight seeds — 39 mm above the eye line against a life 25 to 45.
+/// Provenance: **looked up, then tuned by render**. Eurion 156 mm
 /// against a bizygomatic 137, with eurion 25 to 45 mm above the pupil line,
-/// is the looked-up half and it is what inverted this table's premise. The
-/// knots from the cheekbone down are tuned: the head was 11 to 21 percent too
-/// wide for its height and narrowing it had to be judged by eye. The two
-/// vault knots are **derived** — they are the old pair scaled by the ratio
-/// the built crown moved by, not a new shape. They have been scaled twice now:
-/// 0.86/0.62 → 1.05/0.75 when the crown first moved (#79), and → 1.12/0.80 when
-/// the humanoid plan's `CROWN_HIGH` took the head to an eighth of its own
-/// stature. The parietal
-/// knot at 0.42 has never scaled and must not — eurion is quoted against the
-/// pupil line, which does not move with a crown.
+/// is the looked-up half and it is what sets this table's premise. The
+/// knots from the cheekbone down are tuned: left wider, the head runs 11 to 21
+/// percent too wide for its height, and narrowing it has to be judged by eye.
+/// The two vault knots are **derived** — a pair scaled by the ratio the built
+/// crown moves by, not a new shape; 1.12/0.80 is where the humanoid plan's
+/// `CROWN_HIGH` puts them, with the head at an eighth of its own stature. The
+/// parietal knot at 0.42 never scales and must not — eurion is quoted against
+/// the pupil line, which does not move with a crown.
 ///
-/// **THE FACE KNOTS SAT BELOW THE LANDMARKS THEY ARE NAMED FOR, and that was
-/// the whole of #79's last open item** (#79). The knot commented "the angle of
-/// the jaw" was at −0.46 while [`GONION`] — the crate's own derived landmark of
-/// that name, and where [`Skull::gonion`] answers — is at −0.31. So the
-/// narrowing meant for the gonion was being spent a sixth of a profile height
-/// below it, and at the gonion itself this table still read 0.750, most of the
-/// way back to the cheekbone's 0.825.
+/// **THE FACE KNOTS SIT AT THE LANDMARKS THEY ARE NAMED FOR**, which is what
+/// makes their amplitudes mean anything. The knot commented "the angle of
+/// the jaw" is at −0.31 because [`GONION`] — the crate's own derived landmark
+/// of that name, and where [`Skull::gonion`] answers — is at −0.31; narrowing
+/// aimed at a landmark and spent below it reads at the landmark itself as most
+/// of the way back to the cheekbone's 0.825. The knot at −0.18 follows the
+/// gonion to the midpoint between the cheekbone and the gonion, and is the one
+/// knot here with no landmark of its own.
 ///
 /// Measured on `the_face_narrows_from_cheekbone_to_chin`'s own ruler with the
-/// breadth axis held neutral, bigonial over bizygomatic ran 0.858, 0.866, 0.870
-/// and 0.816 against a life 0.73–0.76 — every body outside it, and three of the
-/// four had drifted FURTHER out since the figures in that test were recorded.
+/// breadth axis held neutral, bigonial over bizygomatic reads **0.752,
+/// 0.760, 0.763 and 0.715** on four bodies against a life 0.73–0.76, and over
+/// the eight seeds of `examples/headaudit --sweep` with each body's own axis
+/// rolled, 0.678 to 0.865.
 ///
-/// **The amplitudes did not move. Only the heights did**, which is why this is a
-/// re-base and not another round of tuning: −0.46 → −0.31 puts 0.646 on the
-/// gonion, and −0.28 → −0.18 follows it to the midpoint between the cheekbone
-/// and the gonion, which is the one knot here with no landmark of its own. The
-/// chin knot at −0.60 is untouched. Measured after, on the same four: **0.752,
-/// 0.760, 0.763 and 0.715**, and over the eight seeds of `examples/headaudit
-/// --sweep` with each body's own axis rolled, 0.678 to 0.865 against 0.771 to
-/// 0.986 before.
-///
-/// What it cost, recorded rather than absorbed: the off-midline bound in
-/// `the_profile_agrees_with_the_surface_it_was_measured_from` went 18.8 mm to
-/// 20.0. A narrower lower face is harder for a fixed number of lateral columns
-/// to describe, and that ruler reports it — the sample heights are identical
-/// before and after, so this is the binning of #74 and not a span that slid.
+/// What the narrow lower face costs, recorded rather than absorbed: the
+/// off-midline bound in
+/// `the_profile_agrees_with_the_surface_it_was_measured_from` stands at
+/// 20.0 mm rather than 18.8. A narrower lower face is harder for a fixed
+/// number of lateral columns to describe, and that ruler reports it — as
+/// binning, not as a span that slid.
 ///
 /// The alternative was tried and measured worse: raising the gonion knot to
 /// 0.660 centres the population on life but takes that same bound to 24.4.
@@ -191,18 +179,18 @@ const BREADTH: [(f32, f32); 9] = [
 /// makes `deep` come out at exactly one, so the head's fore-aft extent matches
 /// the neck's where they meet. See [`BREADTH`] for why anything else is a seam —
 /// unshaped, the two agreed to within 2 mm, and the profile was opening an 11 mm
-/// gap at the nape and a 7 mm overhang at the throat (#47).
+/// gap at the nape and a 7 mm overhang at the throat.
 ///
-/// **The two vault knots moved with the crown** (#79), by the same 1.204 and for
-/// the same reason [`BREADTH`]'s did — read that table's note, which is where
-/// the mechanism is written out. 0.86 and 0.55 became 1.05 and 0.66. The knots
-/// at 0.20 and below did not move: they are the face, and the face is where it
-/// was.
-/// Provenance: **tuned by render** (#47 for the junction knot), except the
+/// **The two vault knots move with the crown**, by the same ratio and for
+/// the same reason [`BREADTH`]'s do — read that table's note, which is where
+/// the mechanism is written out; 1.12 and 0.70 is where the built crown puts
+/// them. The knots at 0.20 and below do not follow it: they are the face, and
+/// the face stays where it is.
+/// Provenance: **tuned by render**, except the
 /// last, which is **derived** — `1/(1 + ELONGATION)` is exactly what makes
 /// `deep` come out at one where the head meets the neck, and is a solved
 /// value rather than a shape — and the two vault knots, also **derived**, as
-/// the old pair scaled by the ratio the built crown moved by.
+/// a pair scaled by the ratio the built crown moves by.
 const DEPTH: [(f32, f32); 7] = [
     (1.12, 0.66),
     (0.70, 0.94),
@@ -220,17 +208,15 @@ const DEPTH: [(f32, f32); 7] = [
 /// jaw's angle and the neck, without which a head sits on its neck like a ball
 /// on a post.
 ///
-/// **Examined at last (#79), and the defect was where it STOPPED rather than
-/// how hard it pushed.** Heights above the joint are raw skull radii and this
-/// table's top knot was 0.70 of one. [`knot`] clamps above its first entry, so
-/// everything higher carried a flat 0.04 — and when #79 took the built crown
-/// from 0.85 radii to 1.03, that clamp covered the top third of the vault. The
-/// vertex of a skull is very nearly symmetric fore and aft; this was holding a
-/// four percent backward bulge all the way to it, so the whole cap leaned.
+/// **Where this table STOPS matters as much as how hard it pushes.** Heights
+/// above the joint are raw skull radii, and [`knot`] clamps above its first
+/// entry, so whatever the top knot holds is carried flat all the way to the
+/// vertex. The vertex of a skull is very nearly symmetric fore and aft; a top
+/// knot that still holds a backward bulge leans the whole cap.
 ///
-/// It runs out at the crown now: 0.0 at 1.05 radii, where [`BREADTH`] and
-/// [`DEPTH`] also end, and 0.04 kept at 0.84 so the taper above the occiput is
-/// unchanged in the band it was tuned in.
+/// So it runs out at the crown: 0.0 at 1.12 radii, where [`BREADTH`] and
+/// [`DEPTH`] also end, and 0.04 kept at 0.90 so the taper above the occiput
+/// holds in the band it was tuned in.
 ///
 /// **The amplitudes were left alone, and that is a finding rather than an
 /// omission.** Built and measured after the depth came down, the vault reaches
@@ -241,7 +227,7 @@ const DEPTH: [(f32, f32); 7] = [
 /// that says what a fore-and-aft split about it should be. What there IS a
 /// source for is the TOTAL, and that is [`ELONGATION`]'s and it is now right.
 /// Provenance: **tuned by render**, except the crown knot, which is
-/// **derived** (#79) — it is where the built crown sits, the same value
+/// **derived** — it is where the built crown sits, the same value
 /// [`BREADTH`] and [`DEPTH`] end at, and not a shape.
 const OCCIPUT: [(f32, f32); 7] = [
     (1.12, 0.0),
@@ -259,7 +245,7 @@ const OCCIPUT: [(f32, f32); 7] = [
 /// straight down into the eye socket and the face has no ledge for the eyes to
 /// sit under — which is a large part of why a smooth head reads as a doll.
 /// Provenance: **tuned by render**, and in skull radii — unlike [`TEMPLE`]
-/// directly below, which is the confusion #79 had to unpick.
+/// directly below, whose docstring records the unit confusion between them.
 const BROW: [(f32, f32); 5] = [
     (0.58, 0.0),
     (0.42, 0.018),
@@ -274,22 +260,21 @@ const BROW: [(f32, f32); 5] = [
 /// The flat at the side of the skull between the brow and the ear. A head
 /// without it is a barrel from every angle above the cheekbone.
 ///
-/// **A fraction, not skull radii, and this docstring used to say the wrong
-/// one.** It is subtracted from `wide` in [`reshape_to`], which is a
-/// dimensionless multiplier on the horizontal radius — so 0.040 has always
-/// realised as 4% of the local half-width, about 3.2 mm at the widest, rather
-/// than as 0.040 R. [`BROW`] genuinely is in skull radii: it is multiplied by
+/// **A fraction, not skull radii, and the difference matters.** It is
+/// subtracted from `wide` in [`reshape_to`], which is a
+/// dimensionless multiplier on the horizontal radius — so the peak's 0.042
+/// realises as 4.2% of the local half-width, a few millimetres at the widest,
+/// rather than as 0.042 R. [`BROW`] genuinely is in skull radii: it is multiplied by
 /// `radius` where this one is not. Two neighbouring profiles documented in the
 /// same unit and applied in different ones is how a term gets tuned twice and
-/// moves half as far as its author expects, so the doc now says what the code
-/// does (#79).
+/// moves half as far as its author expects, so this doc says what the code
+/// does.
 ///
-/// **The peak came down from 0.40 R to brow height.** The temporal fossa sits
-/// just above the zygomatic arch and *below* the greatest breadth of the skull;
-/// at 0.40 R this was hollowing the parietal instead — about 28 mm above the
+/// **The peak sits at brow height, not higher.** The temporal fossa sits
+/// just above the zygomatic arch and *below* the greatest breadth of the
+/// skull; a peak up near 0.40 R hollows the parietal instead — well above the
 /// brow crest — which is the one part of the vault that should be full.
-/// Provenance: **tuned by render** (#79), at a strength that was documented
-/// in the wrong unit for as long as it existed. Worth reading as a caution:
+/// Provenance: **tuned by render**. Worth reading as a caution:
 /// a number tuned against a docstring that lies about its unit gets tuned
 /// twice and moves half as far as its author expects.
 const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.06, 0.0)];
@@ -301,93 +286,63 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// the chin's projection. Fixing either without watching the other put a defect
 /// on screen both times.
 ///
-/// The outline, bisected against the built surface on the midline every 2 mm and
-/// given here as millimetres forward of the head joint:
+/// **The rise is spread from the junction to the tip, and the spreading is the
+/// shape.** Concentrated instead, the bisected midline outline gains tens of
+/// millimetres of projection inside a single 2 mm step: a horizontal shelf
+/// with the chin's tip at the top of the wall above it, which is a chin aimed
+/// upward and read exactly that way. Spread, the largest step is about 12 mm.
 ///
-/// ```text
-///   height     shelf   pulled back    here     what it is
-///   -84.7 mm    51.0      51.0        51.0     the throat
-///   -76.7       52.4      66.3        74.3     the underside of the jaw
-///   -70.7       65.7      79.0        88.5
-///   -68.7       97.9      91.1       100.1     <- a 32 mm step, in 2 mm
-///   -62.7      104.7      98.7       105.7     the chin
-///   -52.7      100.6      95.1        98.2     the crease under the lip
-///   -46.7      104.7      99.3       101.6     the lower lip
-/// ```
-///
-/// In the first column the surface gains 32 mm of projection inside one 2 mm
-/// step: a horizontal shelf with the chin's tip at the top of the wall above it,
-/// which is a chin aimed upward and read exactly that way (#71). Spreading the
-/// rise from the junction to the tip fixes that — the largest step here is
-/// 12 mm — and it is the whole of the fix.
-///
-/// **The amplitude was not part of it, and cutting it was a mistake.** Pulling
-/// the peak from 0.30 to 0.24 to steepen the underside cost the chin 7 mm of
-/// projection and put the lower lip in front of it. A face whose lip swallows
-/// its chin has no jaw at all, which is how it looked. The peak sits at 0.34
-/// now, set against a lip that is finally in the right place (#72): the carved
-/// tip comes out within a couple of millimetres of the lower lip's line across
-/// seeds, which is where a chin sits. It looks higher than the 0.30 that
-/// started all this only because the frame moved — against the old throat-based
-/// frame this value would have read as a pigeon chest.
+/// **The amplitude is not a lever for the underside, and cutting it to steepen
+/// the run is the classic mistake.** Millimetres off the peak cost the chin
+/// its projection and put the lower lip in front of it, and a face whose lip
+/// swallows its chin has no jaw at all — which is exactly how it renders. The
+/// peak is set against the lip instead: the carved tip comes out within a
+/// couple of millimetres of the lower lip's line across seeds, which is where
+/// a chin sits.
 ///
 /// It reaches zero at [`JUNCTION`] like everything else. An earlier version let
 /// go before the others, because holding 0.16 within a mesh row of the junction
-/// stood the head's lowest band 27 mm forward of the throat (#47); the gentler
+/// stood the head's lowest band 27 mm forward of the throat; the gentler
 /// tail here does not need the exception.
 ///
-/// **The knot below the peak came down from 0.26 to 0.17, which is where a
-/// straight run puts it** (#94). Between the peak at `-0.54` and zero at
-/// `JUNCTION`, the chord passes through 0.170 at `-0.62`; the table said 0.260,
-/// so the knot stood 0.09 skull radii — about 11.8 mm — proud of a straight
-/// line, and the underside of the jaw bulged forward instead of running back to
-/// the throat.
-///
-/// **It is worth 2.2 mm of a 9.2 mm defect and no more, which is why the
-/// measurement matters more than the knot.** `the_underside_of_the_jaw_does_not_bulge`
-/// measures the whole submental run against its own chord, and the remaining
-/// seven millimetres are NOT in this table: zeroing every below-joint knot here
-/// still leaves +3.4 mm, putting the tail exactly on the chord leaves +7.0, and
-/// adding knots to force the descent to start at the peak leaves +6.9. Whatever
+/// **Most of the submental deviation is NOT in this table, which is why the
+/// measurement matters more than any knot.**
+/// `the_underside_of_the_jaw_does_not_bulge`
+/// measures the whole submental run against its own chord, and zeroing every
+/// below-joint knot here still leaves most of the figure standing. Whatever
 /// puts the rest there survives this profile being deleted.
-/// **Every knot came down 25% because the chin had grown into a blade** (#128),
-/// in two steps of 15% and a further 10%. Nothing here was re-authored: the four
-/// non-zero knots are the old ones times 0.75. What made it necessary is
-/// `stretch`, and `stretch` is correct — it
-/// holds the chin's ASPECT as the head's floor moves, which is what #107 added
-/// it for. The consequence is that this table's push grows every time the head
-/// gets longer, and the head has got longer twice: measured on the default
-/// body, the midline push at the peak reached 67 mm on a section whose lateral
-/// half-extent at that height is 22 mm. A five-to-one blade is what the owner
-/// reported as a second nose.
 ///
-/// At 0.85 the chin's tip projected 101.2 mm forward of the head joint against
-/// 110.7 before, and the midline stood 14.0 mm proud of its own neighbours
-/// against 21.7. The ear canal to pogonion on a life head scaled to ours is
-/// about 92 to 101 mm, so that landed at the top of that range where it was over
-/// it.
+/// **The amplitude is deliberately modest, because `stretch` grows it.** The
+/// push is multiplied by `stretch`, and `stretch` is correct — it
+/// holds the chin's ASPECT as the head's floor moves. The consequence is that
+/// this table's push grows every time the head
+/// gets longer. Left unchecked, the midline push at the
+/// peak measured 67 mm on a section whose lateral
+/// half-extent at that height is 22 mm — a five-to-one blade, which reads as a
+/// second nose. The ear canal to pogonion on a life head scaled to ours is
+/// about 92 to 101 mm, and the amplitude holds the built projection in that
+/// range.
 ///
-/// **And 0.85 to 0.75, which is the second step and the last one available**
-/// (#128). The first step was taken alone because #72 records this amplitude
-/// being cut once before on an argument that sounded good and measured badly.
-/// So the second is taken against the measurement that argument lacked: what the
-/// chin does to its own LIP. `examples/headaudit` walks the carved midline as
+/// **The amplitude's floor is a sweep against what the chin does to its own
+/// LIP**, because this amplitude was once cut on an argument that sounded good
+/// and measured badly, and only a measurement stops that happening again.
+/// `examples/headaudit` walks the carved midline as
 /// the anatomy runs — the chin's crest, the crease under the lip, the lip's own
 /// crest — and reports the margin between the first and the last.
 ///
 /// ```text
 ///   amplitude   projection   proud   chin over its lip
 ///     x0.85        101.2      13.9        +8.9
-///     x0.75         94.9       8.9        +5.3   <- here
+///     x0.75         94.9       8.9        +5.3
 ///     x0.70         91.7       6.7        +3.5
 ///     x0.65         88.6       4.2        +1.7
-///     x0.60         85.5       2.2        -0.1   <- #72, exactly
+///     x0.60         85.5       2.2        -0.1   <- the lip swallows the chin
 /// ```
 ///
-/// **That last row is the failure #72 recorded, reproduced at a known point.** A
-/// face whose lip swallows its chin has no jaw at all, and it happens at 0.60.
-/// 0.75 sits three steps clear of it and keeps the projection inside the 92 to
-/// 101 mm life range; below 0.70 the range is left as well. The chin landmark
+/// **That last row is the known failure, reproduced at a known point.** A
+/// face whose lip swallows its chin has no jaw at all, and it happens at 0.60
+/// of the swept base. The shipped knots sit clear of it; below 0.70 the 92 to
+/// 101 mm life range is left as well. The chin landmark
 /// itself starts moving at 0.65 — [`Skull::chin`] reads −99.5 there against
 /// −99.9 above it — which is the crest going flat enough that the thing finding
 /// it picks a different point, and a second independent signal for the same
@@ -399,19 +354,18 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// find. So the prominence is this table's from end to end, and the amplitude is
 /// a real lever rather than the last of one.
 ///
-/// **The PEAK moved for the first time, −0.54 to −0.53, and it is the whole of
-/// #94's fix** (#94). Everything above is about how much this table pushes;
-/// this is about where.
+/// **The PEAK's height is as deliberate as its amplitude.** Everything above
+/// is about how much this table pushes; this is about where.
 ///
 /// The midline is `cage_reach · DEPTH · (1 + ELONGATION) + CHIN · stretch ·
 /// radius`, and `cage_reach` is falling steeply through the jaw — so the
-/// SURFACE crests ABOVE where this table crests. Measured on seed 0 at the old
-/// value: the surface's forward-most point sat at profile height −0.5045 and
-/// this table's peak at −0.54, 8.6 mm lower. `the_underside_of_the_jaw_does_not_bulge`
-/// draws its chord from the surface's crest, and for those 8.6 mm the chin was
+/// SURFACE crests ABOVE where this table crests: with the peak at −0.54, seed
+/// 0's forward-most point sits at profile height −0.5045, 8.6 mm higher.
+/// `the_underside_of_the_jaw_does_not_bulge`
+/// draws its chord from the surface's crest, and for those 8.6 mm the chin is
 /// still RISING toward its own maximum. That is the bulge, entire: it is why the
 /// deviation peaks at step 3 of 20 on every seed, and why nothing below −0.58
-/// ever moved it.
+/// ever moves it.
 ///
 /// ```text
 ///   peak    worst deviation, fixed ruler    the population, 16 seeds
@@ -429,77 +383,77 @@ const TEMPLE: [(f32, f32); 4] = [(0.50, 0.0), (0.30, 0.042), (0.12, 0.036), (-0.
 /// is the crest of a sum whose two terms are moving against each other, so
 /// moving this knot moves the landmark measuring it — the same 0.02 step shifts
 /// the default body's chin 0.4 mm and seed 21's 8.1, twenty times as much, which
-/// is a crest changing identity rather than moving. Filed as its own blocker.
+/// is a crest changing identity rather than moving.
 ///
 /// At −0.53 the head does not move at all: crown to chin 211.9 mm, cranium:face
-/// 1.02, [`Skull::chin`] −99.9, all unchanged. It costs 0.8 mm of the chin's
-/// proud figure (8.9 to 9.7, #128) and 2.4 mm of its lead over its own lip (8.9
-/// to 6.5, against a floor of 2.0).
+/// 1.02, [`Skull::chin`] −99.9, all unchanged. It moves the chin's
+/// proud figure 0.8 mm (8.9 to 9.7) and costs 2.4 mm of its lead over its own
+/// lip (8.9 to 6.5, against a floor of 2.0).
 ///
-/// **And it is below what a render can show.** 2 mm on a 90 mm run: the number
-/// improves and the picture does not. The owner's report — that the skin under
-/// the jaw should hug the bone — is not answered by this, and saying so is the
+/// **And that trade is below what a render can show.** 2 mm on a 90 mm run:
+/// the number improves and the picture does not. Whether the skin under
+/// the jaw hugs the bone is not decided here, and saying so is the
 /// point of writing it down.
 ///
-/// Provenance: **tuned by render** (#71 for the spacing, #72 for the
-/// amplitude, #47 for the tail), and the bisected outline above is what
-/// tuning it looked like. The amplitude was cut once on an argument that
-/// sounded good and measured badly, which is why the reasoning is kept. The
-/// 25% off it now is **derived** from the projection against life and
-/// **bounded by a sweep** against the lip (#128); the peak's height is
+/// Provenance: **tuned by render** for the spacing, the
+/// amplitude and the tail. The amplitude was cut once on an argument that
+/// sounded good and measured badly, which is why the reasoning is kept. Its
+/// level is **derived** from the projection against life and
+/// **bounded by a sweep** against the lip; the peak's height is
 /// **derived** from where the surface crests and **bounded by a sweep** against
-/// the neck and the chin landmark (#94).
-/// **The tail steepened for the submental corner** (#150). `examples/column`
+/// the neck and the chin landmark.
+///
+/// **The tail is steep because the reference's submental corner is.**
+/// `examples/column`
 /// against the reference, front reach below each body's own chin: at the chin
-/// the two agree (102.2 against 98.6), and by 20 mm under it the reference has
-/// cut to 53.6 while the old tail — `(-0.62, 0.128)`, still half the peak a
-/// centimetre below the crest — held us at 73.5. The reference gives up 45 mm
-/// of forward reach in ten millimetres and is near-vertical after; ours spread
-/// 60 mm over fifty. A corner against a slope, and the tail knot is the slope.
-/// **And then it steepened too far, and took the SHELF with it** (#94). #150
-/// aimed at the reference's cliff and hit the ten millimetres above it as well.
-/// Measured the same way, the drop over the first centimetre below each body's
-/// own chin ran 19.7, 20.4, 15.3 and 25.6 mm on seeds 0, 3, 6 and 12 against the
-/// reference's 9.6 — twice its rate — and then ours cut LESS than the reference
-/// over the next centimetre, 28.1 against 35.4. The reference holds a shelf
-/// under the chin and falls off a cliff below it; we were one even slope through
-/// both.
+/// the two agree (102.2 against 98.6), and the reference then gives up 45 mm
+/// of forward reach in ten millimetres and is near-vertical after. A tail knot
+/// still holding half the peak a centimetre below the crest spreads that
+/// 45 mm over fifty: a corner against a slope, and the tail knot is the slope.
 ///
-/// So the tail gains a knot that holds the crest's own value for the first 0.045
-/// of profile height and then falls harder than before — `(-0.575, 0.250)` and
-/// `(-0.63, 0.020)` for the single `(-0.60, 0.065)` — which takes the
-/// first-centimetre drop to 16.1, 16.1, 14.2 and 19.8.
-/// **The lower knot was eased to −0.66 during #193's redesign and put back**:
-/// with `SUBMENTAL_SPEND` softened, the eased tail let the masculine chin hang
-/// in a soft midline drip — the render caught it on the veto sheet — and the
-/// bend below the mandible turned out to owe its gentleness to the spend curve
-/// alone. The tail stays at −0.63; the shelf knot at −0.575 never moved.
+/// **But one steep slope from the crest is too much of it**: aimed straight at
+/// the reference's cliff, the tail takes the ten millimetres above the cliff
+/// with it — twice the reference's drop over the first centimetre below the
+/// chin, and then LESS than the reference over the next. The reference holds a
+/// shelf under the chin and falls off a cliff below it, so the tail does the
+/// same: a knot holds the crest's own value for the first 0.045
+/// of profile height and the fall comes after —
+/// `(-0.575, 0.230)` and `(-0.63, 0.020)` rather than a single mid-tail knot —
+/// which puts the
+/// first-centimetre drop at 16.1, 16.1, 14.2 and 19.8 mm on seeds 0, 3, 6 and
+/// 12 against the reference's 9.6.
+/// **The tail knot stays at −0.63, and easing it is a measured hazard**:
+/// eased to −0.66 with `SUBMENTAL_SPEND` softened, the masculine chin hangs
+/// in a soft midline drip — the render catches it — because the
+/// bend below the mandible owes its gentleness to the spend curve
+/// alone.
 ///
-/// **AND THEN NEITHER THIS TABLE NOR THE CAGE WAS WHAT WAS LEFT** (#94). The
-/// sentence that stood here said the remainder belonged to the cage, on
-/// `examples/jawprobe`'s cage row against the reference's 0.165 — a share over a
-/// bone-relative span quoted against a share over chin-to-throat, which is the
-/// comparison that file's docstring exists to forbid. Measured chin-relatively
+/// **What remains of the submental deviation belongs to [`SUBMENTAL_SPEND`],
+/// not to this table and not to the cage.** Blaming the cage rests on
+/// `examples/jawprobe`'s cage row against the reference's 0.165 — a share over
+/// a bone-relative span quoted against a share over chin-to-throat, which is
+/// the comparison that file's docstring exists to forbid. Measured
+/// chin-relatively
 /// instead, on the shipped body with `HeadTraits::chin` at zero, the cage spends
 /// 0.0250 of the face over that centimetre against the reference's 0.0369: it is
-/// two thirds as steep, not steeper. And the first centimetre was not the defect
-/// either — read as REACH rather than as a drop, at each face's own share of
-/// each height, ours lands on the reference at −10 on every seed. The
-/// millimetre figures above compare ten millimetres of a 181 mm face with ten of
-/// a 260 mm one. What was left was the second centimetre, and it belonged to the
-/// straight chord in [`SUBMENTAL_SPEND`].
+/// two thirds as steep, not steeper. Nor is the first centimetre the defect —
+/// read as REACH rather than as a drop, at each face's own share of
+/// each height, ours lands on the reference at −10 on every seed, and
+/// millimetre figures there compare ten millimetres of a 181 mm face with ten
+/// of a 260 mm one. What remains is the second centimetre, and it belongs to
+/// the chord in [`SUBMENTAL_SPEND`].
 ///
-/// **The peak does not move, deliberately.** #133 is the crest of this sum
-/// changing identity between bodies when the peak is touched, and a knot below
+/// **The peak does not move, deliberately.** The crest of this sum changes
+/// identity between bodies when the peak is touched, and a knot below
 /// the peak cannot do that. A flatter tail should if anything help it: the sum's
 /// crest is where this table's rise cancels the base's fall, and a table that is
 /// flat there hands the decision to the base, which falls monotonically.
-/// **The peak and its shelf came down together, 0.255/0.250 → 0.235/0.230**
-/// (#197, owner: the chin stands out too much to the front). Scaled as a pair
-/// so the crest keeps its identity — the #133 trap is the peak and the shelf
+/// **The peak and its shelf are cut to 0.235/0.230 as a pair, so that the chin
+/// does not stand out too far to the front while the crest keeps its identity**
+/// — the trap is the peak and the shelf
 /// swapping winner, not the amplitude itself — and the heights are untouched,
 /// so [`MENTON`]'s identity with the peak knot holds. A deeper cut to
-/// 0.225/0.220 was built and rendered first: on the default body it read
+/// 0.225/0.220 was built and rendered: on the default body it read
 /// well, and on seed 15 — the weakest rolled chin in the sweep — it erased
 /// the chin outright (`the_chin_stands_clear_of_the_hollow_above_it` read NO
 /// CHIN at one subdivision and 0.61 mm at the other, and the render agreed).
@@ -537,12 +491,11 @@ const GONION: f32 = -0.31;
 /// border ends at the point of the chin by definition, and two constants for
 /// one landmark is how a chin and the thing measuring it drift apart.
 ///
-/// **−0.54 to −0.53 with that peak** (#94), which is the identity doing its job:
-/// the peak moved to stop the chin rising below the surface's own crest, and
-/// this followed without anyone having to remember it. It lifts the mandibular
-/// border about 2 mm on the default body; `the_jawline_turns_a_corner` does not
-/// move, because the gonion it reads is far out to the side where [`GONION`]
-/// rather than this dominates the border.
+/// **It follows the peak wherever the peak goes**, which is the identity doing
+/// its job: when the peak moves to keep the chin from rising below the
+/// surface's own crest, this follows without anyone having to remember it.
+/// `the_jawline_turns_a_corner` does not care, because the gonion it reads is
+/// far out to the side where [`GONION`] rather than this dominates the border.
 ///
 /// Provenance: **derived** from [`CHIN`], by identity rather than by
 /// arithmetic — it is that table's peak knot and deliberately not a second
@@ -553,26 +506,19 @@ const MENTON: f32 = -0.53;
 /// heights.
 ///
 /// **The narrowest term in this file, and the one the resolution question is
-/// about.** 0.035 profile heights is 5.0 mm on seed 7 and 6.9 mm on the default
-/// body. Where `the_jawline_turns_a_corner` measures — azimuth 33–52° from dead
-/// ahead — the cells are 1.8 to 3.5 mm, so the knee spans 1.4 to 2.8 of them,
-/// which is the floor #85 established for a feature that has to render as a
-/// shape rather than as a bar. Past about 56° there is no refinement at all and
+/// about.** A knee that fits inside one mesh cell cannot render as a shape:
+/// vertex rows catch the cut alternately and the crease's upper edge renders
+/// as a scallop at exactly cell pitch. So the knee is held to the same floor
+/// every feature here answers to — a span of one and a half to two cells over
+/// the strip it actually crosses — and 0.060 profile heights is ~8.5 mm on the
+/// default body, 1.5–2 cells over the refined strip the cosine border runs
+/// through. Past about 56° there is no refinement at all and
 /// the cells are 24 mm, so out at the gonion this knee is a fifth of a cell and
 /// the border is smeared however sharp the field is. That is a resolution defect
 /// and not a shape one; see [`FACE_PASSES`].
-/// Provenance: **derived** from the mesh, not from a face: it is the #85
-/// floor for a feature that must read as a shape rather than a bar, given
-/// the cell sizes quoted above.
-///
-/// **0.035 → 0.060 when the border moved to the cosine** (#196). The cosine
-/// border (#195) crosses cells the sine one never visited, and at 5 mm the
-/// knee fit inside one of them: vertex rows caught the cut alternately and the
-/// crease's upper edge rendered as a scallop at exactly cell pitch — masked
-/// until then by the fairing ramp that #196's re-aim stopped from smoothing
-/// across the crease. 0.060 is ~8.5 mm on the default body, 1.5–2 cells over
-/// the refined strip, which is the same #85 floor re-applied to where the
-/// border actually runs now.
+/// Provenance: **derived** from the mesh, not from a face: the cell
+/// floor for a feature that must read as a shape rather than a bar, applied
+/// to where the border actually runs.
 const JAW_RISE: f32 = 0.060;
 
 /// How deep the hollow under the jaw cuts, as a fraction of the horizontal
@@ -644,12 +590,13 @@ const SETTLE: f32 = 0.92;
 
 /// How far the head reaches below its own joint, as a share of the bone.
 ///
-/// **The number that stops the neck from stretching the face** (#127). Every
-/// profile below the joint is scaled onto the head's floor, and the floor used
-/// to be MEASURED: the lowest vertex whose nearest bone is the head's. That
-/// reads the SURFACE, and the surface at the bottom of the head is the blend
-/// into the neck — so anything that moved the neck moved the floor, which
-/// stretched the whole lower face silently and in the wrong direction.
+/// **The number that stops the neck from stretching the face.** Every
+/// profile below the joint is scaled onto the head's floor, and a floor
+/// MEASURED — the lowest vertex whose nearest bone is the head's — is the
+/// wrong floor: it reads the SURFACE, and the surface at the bottom of the
+/// head is the blend
+/// into the neck, so anything that moves the neck moves the floor, which
+/// stretches the whole lower face silently and in the wrong direction.
 ///
 /// Measured three ways before it was believed. Deepening the girdle backward
 /// moved the chin from −95.8 mm to −107.7 and grew the head from 201.8 mm to
@@ -672,11 +619,9 @@ const SETTLE: f32 = 0.92;
 /// knot of `BREADTH` is 1.00 and of `OCCIPUT` is 0.0 — so a small error in where
 /// the junction falls is a small step and not a cliff. Anything that gives those
 /// tables a gradient at `JUNCTION` makes this a seam again.
-/// Provenance: **measured, then fixed** (#127). Seven bodies read 0.9082,
+/// Provenance: **measured, then fixed**. Seven bodies read 0.9082,
 /// 0.9002, 0.9182, 0.9008, 0.8936, 0.9533 and 0.8984 against their own
-/// bones; 0.91 is the middle of that. #78 recorded 0.895 over four seeds on
-/// the four-point cage and called it stable, which is the same measurement
-/// one cage earlier.
+/// bones; 0.91 is the middle of that.
 const SETTLED: f32 = 0.91;
 /// How far up the forehead the frontal fullness reaches, and how much of it
 /// each height takes.
@@ -691,7 +636,7 @@ const SETTLED: f32 = 0.91;
 /// millimetre, and zero again at the crown where a ray grazes and no
 /// measurement is trustworthy.
 ///
-/// Provenance: **derived** from the two CC0 mannequins (#166). Their foreheads
+/// Provenance: **derived** from the two CC0 mannequins. Their foreheads
 /// are where they most disagree: measured by ray from each head's own axis and
 /// normalised by that head's own peak forward reach, the female's falls away 9%
 /// less steeply from 0.65 to 0.90 of the head's span, which is 0.48 to 0.94 in
@@ -700,16 +645,8 @@ const FOREHEAD: [(f32, f32); 4] = [(1.00, 0.0), (0.80, 1.0), (0.58, 0.55), (0.45
 
 /// How a head reads the composites.
 ///
-/// **Named `Dimorphism` until #169.** It was the frame axis alone when #166
-/// wrote it and it carried age as well from #167, at which point the name was
-/// narrower than the type; the rename waited for the epic's single versioning
-/// batch rather than landing on its own. Nothing about the seed moved with it —
-/// a type name is not a PRNG stream key, which is what that batching rule is
-/// actually about — but a reader who greps for the old name should find this
-/// sentence.
-///
-/// **The first record parameter the profiles in this file have ever taken**
-/// (#166). Every other head variation is cage-side — `head_size` is a node
+/// **The only record parameter the profiles in this file take.** Every other
+/// head variation is cage-side — `head_size` is a node
 /// radius, `head_breadth` a node section, `face_length` a joint placement — and
 /// `crate::plan::derive::humanoid`'s `HEAD_BREADTH_SPAN` records why: a
 /// breadth-like quantity moved here rather than on the cage opens the head/neck
@@ -720,7 +657,7 @@ const FOREHEAD: [(f32, f32); 4] = [(1.00, 0.0), (0.80, 1.0), (0.58, 0.55), (0.45
 /// **Every field is a factor about ONE, and the neutral head is the identity.**
 /// `femininity` zero is the midpoint of the two measured references, which is
 /// the head this crate already built, so `HeadTraits::of(&Composites::default())`
-/// has to be [`HeadTraits::default`] to four decimals or the epic's neutral
+/// has to be [`HeadTraits::default`] to four decimals or the neutral
 /// anchor has moved. `the_neutral_head_is_the_head_that_was_already_built`
 /// asserts it.
 ///
@@ -734,13 +671,13 @@ const FOREHEAD: [(f32, f32); 4] = [(1.00, 0.0), (0.80, 1.0), (0.58, 0.55), (0.45
 /// [`Self::frontal`] take their SIGN from the references and their size from a
 /// render, and [`Self::brow`] and [`Self::gonion`] are looked up. Each says so.
 ///
-/// **`ELONGATION` is measurably dimorphic and is deliberately NOT here**, and
-/// the reason is the one that retired `build` and `muscle` (#164). The two
-/// mannequins' head length-to-breadth reads 1.566 masculine against 1.522
+/// **`ELONGATION` is measurably dimorphic and is deliberately NOT here.** The
+/// two mannequins' head length-to-breadth reads 1.566 masculine against 1.522
 /// feminine, so the axis has a real claim on it — but `head_breadth` is already
 /// a record axis and it sets that same ratio from the cage's own section. A
 /// second, hidden driver of one quantity is two axes that can contradict each
-/// other, which is what this epic exists to stop. It is also not a carve: the
+/// other, which is the whole thing the two-tier parameter model exists to stop.
+/// It is also not a carve: the
 /// split this file's header describes puts breadth-like quantities on the cage.
 /// Anyone who wants the axis to reach it should move `head_breadth`'s DEFAULT,
 /// not add a term here.
@@ -773,8 +710,8 @@ pub struct HeadTraits {
     /// axis does to the same ratio, which is the intended size — an old jaw
     /// loses its straight line without becoming a masculine one.
     ///
-    /// Provenance: **derived from the reference mannequins** (#166); the age
-    /// term **looked up, sized by render** (#167).
+    /// Provenance: **derived from the reference mannequins**; the age
+    /// term **looked up, sized by render**.
     pub jaw_breadth: f32,
     /// Multiplier on `CHIN`'s forward push.
     ///
@@ -788,7 +725,7 @@ pub struct HeadTraits {
     /// deleted the feminine chin.
     ///
     /// Provenance: **sign derived from the references, magnitude tuned by
-    /// render** (#166).
+    /// render**.
     pub chin: f32,
     /// Multiplier on `BROW`'s ledge.
     ///
@@ -797,7 +734,7 @@ pub struct HeadTraits {
     /// to measure — their foreheads agree to 2% right through the brow's own
     /// band — so this is the looked-up direction at a size the render carries.
     ///
-    /// Provenance: **looked up, sized by render** (#166).
+    /// Provenance: **looked up, sized by render**.
     pub brow: f32,
     /// How far the forehead above the brow stands proud, in skull radii, over
     /// the `FOREHEAD` window.
@@ -808,17 +745,16 @@ pub struct HeadTraits {
     /// See `FOREHEAD` for the measurement that sets the window.
     ///
     /// Provenance: **sign and window derived from the references, magnitude
-    /// tuned by render** (#166).
+    /// tuned by render**.
     pub frontal: f32,
     /// How much fuller the lips are than the record asks for, as an offset on
     /// `super::features::FaceParams::mouth`.
     ///
     /// **An offset rather than a factor**, alone among these fields, because
     /// what it modifies is a record axis rather than a coefficient — see
-    /// `FaceParams::on`, which is where the offsets-on-derived-defaults
-    /// architecture #61 asked for actually lands.
+    /// `FaceParams::on`, which is where offsets on derived defaults land.
     ///
-    /// Feminine lips are fuller, and this is the one item in #166's dimorphism
+    /// Feminine lips are fuller, and this is the one item in the dimorphism
     /// set the two mannequins cannot speak to at all: at 328 and 388 head
     /// triangles neither of them has a mouth to measure. So it is looked up.
     ///
@@ -832,21 +768,21 @@ pub struct HeadTraits {
     /// because there is no measurement here to spend and the record's own axis
     /// is not wide enough to carry a whole one on top of the user's range.
     ///
-    /// Anyone widening this should widen `plump`'s own gain first, in #61, and
+    /// Anyone widening this should widen `plump`'s own gain first and
     /// re-derive this from it — the ceiling is that axis's range and not this
     /// coefficient.
     ///
-    /// **Age takes the same axis the other way and takes more of it** (#167).
+    /// **Age takes the same axis the other way and takes more of it.**
     /// A lip thins over a life — the vermilion loses height, the philtrum
     /// lengthens and the upper lip rolls under — and unlike the sex difference
     /// this one is not subtle. It is still bounded by the same narrow axis:
     /// measured through `relief::Face::plump` on the default face, thirty to
     /// eighty runs 13.60 mm to 13.09 mm, so the whole of the age term is 0.5 mm
     /// of the 3.4 mm that slider spans end to end. That is less than life and
-    /// it is all there is to give until `plump`'s own gain widens in #61.
+    /// it is all there is to give until `plump`'s own gain widens.
     ///
-    /// Provenance: **looked up, sized against the axis it offsets** (#166), and
-    /// the age term the same way (#167).
+    /// Provenance: **looked up, sized against the axis it offsets**, and
+    /// the age term the same way.
     pub lips: f32,
     /// Multiplier on the whole `OCCIPUT` profile.
     ///
@@ -871,7 +807,7 @@ pub struct HeadTraits {
     /// the size, as the chin does.
     ///
     /// Provenance: **sign and window derived from the references, magnitude
-    /// tuned by render** (#166).
+    /// tuned by render**.
     pub occiput: f32,
     /// Replaces `GONION` — where the mandible's lower border sits at the
     /// angle of the jaw.
@@ -884,9 +820,9 @@ pub struct HeadTraits {
     /// docstring derives −0.31 from the middle of that band, so the ends of the
     /// band are the ends of this axis and no new source is needed.
     ///
-    /// **Age was given a term here and it was taken back out, with the
-    /// numbers** (#167). The gonial angle does grow more obtuse over a life —
-    /// the alveolar bone resorbs, the ramus shortens — so the axis has a claim
+    /// **Age deliberately has no term here, and the numbers are why.** The
+    /// gonial angle does grow more obtuse over a life — the alveolar bone
+    /// resorbs, the ramus shortens — so the axis has a claim
     /// on this field, and a term of `+0.018 · ageing`, half the sex term, was
     /// written and then measured on `headaudit --axis age`. It does not behave
     /// like half of anything:
@@ -911,7 +847,7 @@ pub struct HeadTraits {
     /// reads the mandibular plane ANGLE directly.
     ///
     /// Provenance: **derived from `GONION`'s own looked-up 22–28° plane**,
-    /// read at its ends instead of its middle (#166).
+    /// read at its ends instead of its middle.
     pub gonion: f32,
     /// How far the laryngeal prominence stands off the throat, in head radii.
     ///
@@ -921,7 +857,7 @@ pub struct HeadTraits {
     /// 120° and barely does. Applied by [`super::neck::fair`] AFTER the column
     /// is faired, so the smoothing cannot eat it.
     ///
-    /// Provenance: **sized by render** (#193), like the ageing jowl beside it —
+    /// Provenance: **sized by render**, like the ageing jowl beside it —
     /// there is nothing to measure it against; neither mannequin models one.
     pub larynx: f32,
 }
@@ -1019,12 +955,12 @@ impl HeadTraits {
 /// a cosine of the angle from dead ahead, then its lowest and highest point.
 ///
 /// **Heights above the joint are skull radii; heights below it are PROFILE
-/// HEIGHTS, the same remapped unit [`reshape_to`] reads its knots in, and until
-/// #61 they were raw radii in both directions.** That was a latent defect and it
-/// became a blocking one the moment face length became a record axis.
+/// HEIGHTS**, the same remapped unit [`reshape_to`] reads its knots in. The
+/// asymmetry is deliberate and it is what keeps a band aimed at a feature when
+/// face length moves.
 ///
 /// **That kink at the joint is the only thing standing between a band and the
-/// landmarks it is aimed at, and it is what [`band_at`] is for** (#185). The
+/// landmarks it is aimed at, and it is what [`band_at`] is for.** The
 /// height axis itself is shared: [`reshape_to`] returns `local.y` untouched, so
 /// a face that sits at a given height on the mesh [`refine_face`] selects from
 /// sits at exactly that height on the shaped head — asserted by
@@ -1032,40 +968,24 @@ impl HeadTraits {
 /// handed is a landmark straight out of [`super::Canon`], because those are
 /// metres above the joint and these are two different normalisations of them
 /// either side of zero. [`band_at`] does that conversion, and
-/// `every_refinement_band_still_contains_its_own_feature` is the guard that the
-/// bands below still cover what they exist for — which nothing checked before,
-/// and which is the other half of what #185 reported.
+/// `every_refinement_band_still_contains_its_own_feature` guards that the
+/// bands below still cover what they exist for.
 ///
-/// #185 also reported that a band aimed from the built body's landmarks lands
-/// somewhere else entirely, and **that part was the instrument** rather than
-/// this unit: `examples/refinecost` reported one median over a face that is 2:1,
-/// so a band that halved every edge at the nose's dorsum read as no change at
-/// all. The costed dorsum bands on #181 and #115 did land where they said. See
-/// that example's own note.
-///
-/// A head reaches anywhere from −1.07 to −1.16 radii below its joint on the
-/// bodies that ship today and would run −0.89 to −1.36 across the new axis, so a
-/// band edge in raw radii is the mouth on one body and the chin on another. The
+/// **Why profile heights below the joint and not raw radii.** A head reaches
+/// anywhere from −1.07 to −1.16 radii below its joint on the bodies that ship
+/// and runs −0.89 to −1.36 across the face-length axis, so a band edge in raw
+/// radii is the mouth on one body and the chin on another. The
 /// features are not in raw radii either: every one of them is placed as a
 /// fraction of the eye-to-chin frame, and the chin is a fixed 0.7097 of the
 /// head's own floor — which works out to a **dead constant −0.540 profile
 /// heights on every body, whatever its floor**. Worked through, the mouth line
 /// lands at −0.304 to −0.310 across the whole face-length range against a −0.307
 /// on the default, so in this unit the whole feature stack holds still and a
-/// band that covers it once covers it always.
-///
-/// In raw radii it does not. The same arithmetic puts the mouth line at −0.377 R
-/// on a short face and −0.520 on a long one, against a finest pass that spans
-/// −0.52 to −0.34: the lip line walks out of its own refinement at BOTH ends of
-/// the axis, which is #85's terraced mouth returning with nothing in the code to
-/// say why. #78 had already done this once in the other direction — it
-/// lengthened the head and the mouth's field walked out of a band that ended at
-/// −0.55 — and the fix then was to move the numbers. This is the fix that stops
-/// it happening again.
-///
-/// The values below are the old ones divided through by the default body's own
-/// stretch of 1.401, so the region every pass covers on that body is unchanged
-/// to a millimetre and what moved is which bodies agree with it.
+/// band that covers it once covers it always. In raw radii the same arithmetic
+/// puts the mouth line at −0.377 R on a short face and −0.520 on a long one,
+/// against a finest pass spanning −0.52 to −0.34: the lip line walks out of its
+/// own refinement at BOTH ends of the axis, and a mouth outside its refinement
+/// renders as a stack of bars.
 ///
 /// **Graded, not uniform, and that is what makes it affordable.** Refining the
 /// whole front of the head twice costs 2,660 triangles and spends most of them
@@ -1084,28 +1004,20 @@ impl HeadTraits {
 /// every term in the lip field was at or near one cell wide — the lip line's
 /// groove 0.99, the sulcus 1.29, the two vermilion lobes 1.67 and 1.75 — and a
 /// Gaussian one cell wide cannot render as anything but a single displaced row
-/// of vertices, which is a bar. That is what the owner had been reporting as a
-/// terraced lower face through three rounds of fixes aimed elsewhere (#85).
+/// of vertices, which is a bar — a terraced lower face.
 ///
-/// Confirmed by the experiment before it was built: widening every lip term to
-/// three cells and changing nothing else removed the bars outright — and took
-/// the mouth with them, which is the other half of the answer. A lip line is
-/// 1–2 mm across on a person, so a mouth wide enough to survive 3.6 mm sampling
-/// is not a mouth. The band gets the resolution instead, and keeps its shape.
-/// **The heights moved with the frame in #78 and had to.** These are vertex
-/// heights, not frame fractions, so lengthening the head below its joint slides
-/// every feature down through them: the mouth line went from −0.32 R to −0.43,
-/// and its field's lower edge from −0.47 to −0.57, which walked straight out of
-/// a band that ended at −0.55. A refinement band that no longer contains the
-/// feature it exists for is the #85 defect back again with nothing in the code to
-/// say so.
+/// Widening every lip term to three cells instead removes the bars outright —
+/// and takes the mouth with them, which is the other half of the answer. A lip
+/// line is 1–2 mm across on a person, so a mouth wide enough to survive 3.6 mm
+/// sampling is not a mouth. The band gets the resolution instead, and keeps its
+/// shape.
+///
 /// **The fifth region is the LIP LINE alone**, and it is that narrow because the
-/// whole mouth band could not be afforded. #78's stretch coarsened the cells
-/// under the mouth by about a fifth, which took the narrowest term — the groove
-/// between the lips, at 0.26 of a lip stack — from 2.0 cells to 1.43, and the
-/// bars of #85 came straight back on screen. Refining the whole mouth band again
-/// fixes it and costs 10,244 triangles, putting skin at 66% of the body against
-/// `tests/budget.rs`'s 0.60 guard. So the pass goes where the shortfall is: every
+/// whole mouth band cannot be afforded twice. The narrowest term — the groove
+/// between the lips, at 0.26 of a lip stack — is the only one that falls short
+/// at the fourth pass's cell; refining the whole mouth band again costs 10,244
+/// triangles, putting skin at 66% of the body against `tests/budget.rs`'s 0.60
+/// guard. So the pass goes where the shortfall is: every
 /// other lip term measures 2.2 to 2.9 cells and needs nothing.
 ///
 /// Bounded at plus or minus 0.7 of a lip stack about the mouth line, where the
@@ -1113,7 +1025,7 @@ impl HeadTraits {
 /// on a part of the field that is not doing anything. It still takes in both
 /// vermilion lobes.
 ///
-/// **0.7, down from 0.85, and it is derived rather than trimmed to fit** (#61).
+/// **0.7 is derived rather than trimmed to fit.**
 /// The groove is `bump(up, 0.00, 0.26)`, which is `exp(-(up/0.26)²)`: at 0.85 of
 /// a lip stack it is two parts in a hundred thousand of its peak and at 0.7 it
 /// is seven in ten thousand. Both are nothing, and the pass exists for the
@@ -1122,11 +1034,10 @@ impl HeadTraits {
 /// and still inside; what is outside is a tail of the one term that was ever the
 /// reason for this pass.
 ///
-/// It buys 390 triangles on the default body and 750 on the dearest, which is
-/// what pays for the profile-height re-basing above: a band edge lands on a ring
-/// of faces rather than between them, so a one-percent move in an edge is a
-/// whole row of quads in or out and the re-basing cost 976 triangles on a head
-/// whose stretch differs from the default's by 1.4%.
+/// It buys 390 triangles on the default body and 750 on the dearest. Costs
+/// here are quantised: a band edge lands on a ring of faces rather than between
+/// them, so a one-percent move in an edge is a whole row of quads in or out.
+///
 /// **The sixth region is the JAW FLANK, and it is the first here that is an
 /// annulus rather than a cap.** Every pass above reaches from dead ahead round
 /// to a cosine and stops, so the region a pass covers always contains the front
@@ -1135,9 +1046,9 @@ impl HeadTraits {
 /// Measured on the shipped head, the median head-owned edge in the band from
 /// −0.85 to −0.30 R runs 0.8 mm dead ahead, 1.8 mm at 40°, 3.5 mm at 55° and
 /// **24 mm past 60°** — the base subdivision, untouched. The jaw's own border
-/// migrates from the menton out to the gonion at 90°, so half of it lay in a
-/// region with no resolution at all and [`JAW_RISE`] was a fifth of a cell
-/// there (#80).
+/// migrates from the menton out to the gonion at 90°, so without this pass half
+/// of it lies in a region with no resolution at all and [`JAW_RISE`] is a fifth
+/// of a cell there.
 ///
 /// So a pass carries a near AND a far cosine, and this one takes the strip
 /// between them: from 57° out to 99°, over the heights the border crosses. It
@@ -1148,12 +1059,11 @@ impl HeadTraits {
 /// 664 — but that puts skin at 59.0% of the body against `tests/budget.rs`'s
 /// 0.60 guard, and a guard with one percent left in it is not a guard. So the
 /// border out at the gonion is carved across three quarters of a cell and is
-/// softer there than the 33–57° jawline is; that is measured, it is the reason
-/// this band and not the guard is where the next resolution comes from, and it
-/// is the one thing #80 did not finish.
+/// softer there than the 33–57° jawline is; that is measured, and it is the
+/// reason this band is where the next resolution should come from.
 ///
-/// **There is no ninth region for the chin, and that is now a measured decision
-/// rather than an open one** (#158). The chin's crest measures −0.498 to −0.522
+/// **There is no region for the chin's crest, and that is a measured decision
+/// rather than an open one.** The chin's crest measures −0.498 to −0.522
 /// profile heights across seeds 7, 0, 21 and 3, so it falls BELOW the nose-base
 /// pair's floor of −0.443 and the comment on that pair has been true of no body
 /// this crate builds: the most projecting feature of the lower face gets three
@@ -1163,35 +1073,33 @@ impl HeadTraits {
 /// azimuth — does exactly what it says it will: rows at the crest go from 4.2 mm
 /// apart to 2.5, and the descent spreads over four of them instead of one.
 ///
-/// It has now been built, costed and judged TWICE, and it does not show either
+/// It has been built, costed and judged twice, and it does not show either
 /// time. At 0.85 it costs 326 triangles on the default and 712 at the dearest
-/// corner of `tests/budget.rs`'s sweep, landing at 29,778 against the then-29,900
-/// ceiling; at 0.92, 246 and 504, landing at 29,570. Against that, side by side
-/// at the same seed and light — and the second time with [`refine_face`]'s
-/// curved split already in, which is what made re-judging it worth doing, since
-/// the first verdict blamed the flank for drowning it out — the chin is
+/// corner of `tests/budget.rs`'s sweep; at 0.92, 246 and 504. Against that,
+/// side by side at the same seed and light, the chin is
 /// marginally rounder in the lit render and indistinguishable in the normal
 /// buffer, where a geometric change of any size has nowhere to hide. The bars
 /// the eye reads across the lower face are the mouth's own forms, in a band
 /// that already has six passes.
 ///
-/// So the crest stays at three passes. What would justify the ninth is a chin
+/// So the crest stays at three passes. What would justify a pass here is a chin
 /// whose SHAPE needs the rows — a curve authored to turn inside that 4 mm — and
 /// not the rows on their own.
 ///
-/// **The seventh region is the NOSE'S DORSUM — the ninth pass the note above
-/// could not justify for the chin, spent somewhere it shows — and it is the
-/// first band here aimed by arithmetic rather than by iteration** (#181, #185).
-/// Everything from the nose base pair's ceiling up to the root of the nose was
-/// left at the third pass's cell — 3.42 mm across and 7.23 mm down on the default body,
-/// against 0.76 and 2.25 immediately below it — because the five passes after
-/// the third all stop at or under −0.171 profile heights. Nothing went near the
-/// bridge, and the bridge is where a nose is a tent: `examples/facesection`
-/// counts one to two post-carve facets between the midline and the shoulder over
-/// the top half of it, and the render shows a hard crease down the ridge.
+/// **The seventh region is the NOSE'S DORSUM — the pass the note above
+/// could not justify for the chin, spent somewhere it shows — and it is aimed
+/// by arithmetic rather than by iteration.**
+/// Without it, everything from the nose base pair's ceiling up to the root of
+/// the nose sits at the third pass's cell — 3.42 mm across and 7.23 mm down on
+/// the default body, against 0.76 and 2.25 immediately below it — because the
+/// five passes after the third all stop at or under −0.171 profile heights.
+/// Nothing goes near the bridge, and the bridge is where a nose is a tent:
+/// `examples/facesection` counts one to two post-carve facets between the
+/// midline and the shoulder over the top half of it, and the render shows a
+/// hard crease down the ridge.
 ///
-/// The band is [`band_at`] applied to the nose's own two ends, which is the
-/// whole of what #185 bought. Its floor is the nose base pair's ceiling exactly,
+/// The band is [`band_at`] applied to the nose's own two ends.
+/// Its floor is the nose base pair's ceiling exactly,
 /// so the two are contiguous and no strip of the nose is left between them. Its
 /// ceiling is the root — `level + frame * 0.1237`, where [`super::relief`]'s
 /// nose begins — measured at 0.150 to 0.196 radii across the corners of
@@ -1204,11 +1112,10 @@ impl HeadTraits {
 /// subtends about 7° on the unsectioned head at this height, so a cosine of 0.97
 /// — 14° — is twice the reach the feature needs and leaves the resolution
 /// boundary off the shape entirely. The same band at 0.92 costs 30,154 at the
-/// dearest corner of the sweep and at 0.55, which is what #181 tried first,
-/// 6,196 triangles on the default body alone. At 0.97 it is **382 on the default
-/// and 548 at the dearest**, landing that corner at 29,818 against a then-29,900
-/// ceiling — which is the whole of the room there was, and is why the two ends
-/// were measured rather than guessed at.
+/// dearest corner of the sweep, and at 0.55, 6,196 triangles on the default
+/// body alone. At 0.97 it is **382 on the default and 548 at the dearest**.
+/// A band's cost lives in its azimuth, which is why the two ends here are
+/// measured rather than guessed at.
 const FACE_PASSES: [(f32, f32, f32, f32); 10] = [
     // **The broadest pass, and it is here because the body's subdivision level
     // halved** (#107). Eight-point cage rings buy the body a smooth surface at
@@ -1279,14 +1186,14 @@ const FACE_PASSES: [(f32, f32, f32, f32); 10] = [
 /// returns it in the unit [`refine_face`]'s own table is written in.
 ///
 /// **The conversion exists because the unit has a kink at the joint and the
-/// height axis does not** (#185). Nothing about the shaping moves a vertex up or
+/// height axis does not.** Nothing about the shaping moves a vertex up or
 /// down: [`reshape_to`] scales `x` and `z` and hands `y` back as it found it, so
 /// a landmark measured on the finished surface is at the same height on the
 /// unshaped one that [`refine_face`] runs against, and this is a change of units
 /// rather than of coordinates. Below the joint that unit is a profile height, so
 /// a band follows the length of the face it is aimed at; above the joint it is a
 /// raw skull radius, because what is above the brow is a vault the frame does
-/// not stretch and a ceiling there is margin past a crown (#79).
+/// not stretch and a ceiling there is margin past a crown.
 ///
 /// Returns `None` for a body with no head, or one whose head has no radius.
 #[must_use]
@@ -1309,7 +1216,7 @@ pub fn band_at(rig: &Rig, height: f32) -> Option<f32> {
 /// The head arrives from the cage as a four-sided tube. Subdivided twice it is
 /// 189 faces with a mean edge of 24 mm, and every feature a face needs is at or
 /// below that: a brow ridge is 10 mm tall and a nose one quad wide. Nothing can
-/// be shaped into a surface that has no vertices where the shape goes (#59).
+/// be shaped into a surface that has no vertices where the shape goes.
 ///
 /// Refines only the front of the head, because the cost is triangles and the
 /// back of a skull carries nothing. Runs BEFORE [`shape`], so the vertices it
@@ -1318,26 +1225,26 @@ pub fn band_at(rig: &Rig, height: f32) -> Option<f32> {
 /// subdividing the facets of an already-shaped one.
 ///
 /// **And it splits with [`PolyMesh::refine_curved`], because sampling the field
-/// more finely is only half of what a face needs** (#158). [`reshape_to`] is an
+/// more finely is only half of what a face needs.** [`reshape_to`] is an
 /// anisotropic SCALING of the section it is handed — `x` by one factor, `z` by
 /// another, both slow functions of azimuth — so a flat chord in maps to a flat
 /// chord out. The head arrives as a sixteen-sided tube, every plain midpoint
-/// sits on one of those chords, and every pass below therefore bought the base
-/// skull no curvature whatsoever: measured round the built head with
+/// sits on one of those chords, and a plain split would therefore buy the base
+/// skull no curvature whatsoever: measured round a linearly-split head with
 /// `examples/chinprofile --ring`, the section turned 0.0° through four
 /// consecutive samples and then 19 to 23° in one, at every multiple of 22.5°.
 /// The additive terms — `CHIN`'s push, the brow's ledge, the mouth's relief —
-/// are what the extra samples were ever buying, and the eye was reading the
+/// are all the extra samples would buy, and the eye reads the
 /// sixteen-gon underneath them as flat planes meeting at a hard edge from the
 /// zygomatic down to the jaw. A curved split costs no triangles and is the
 /// whole of that defect.
 ///
-/// **A wider band is not the alternative, and it was costed rather than
-/// argued** (#158). Extending the jaw flank's annulus up to the zygomatic —
+/// **A wider band is not the alternative, and it is costed rather than
+/// argued.** Extending the jaw flank's annulus up to the zygomatic —
 /// `(-0.15, 0.55, -0.571, 0.20)`, an eleventh pass with `FACE_REFINEMENT`
 /// moved with it — costs 5,428 triangles on the default body and lands the
-/// dearest corner of `tests/budget.rs`'s own sweep at 33,966 against a then-29,900
-/// ceiling. Four times through it, for a region whose fields carry nothing
+/// dearest corner of `tests/budget.rs`'s own sweep at 33,966, four times
+/// through the 30,000 target, for a region whose fields carry nothing
 /// finer than the cells already there.
 ///
 /// Does nothing to a body with no head, or to one that walks on four legs: this
@@ -1467,16 +1374,13 @@ const SUBMENTAL_COLUMNS: usize = 6;
 /// How much convexity the chin's own button may keep above the submental
 /// chord, in head radii, and the share of the run it may keep it over.
 ///
-/// **This pair is the discriminator between a chin and the #94 bulge, and it
-/// took two wrong constructions to find it** (#134). The first chord was
-/// anchored at the crest with no allowance: it amputated the chin button on
-/// every soft-chinned body — a dome's lower shoulder is always forward of the
-/// straight line from its apex, so seeds 21 and 2 lost 8 mm of chin,
-/// `Skull::chin` migrated up with the surface, and cranium:face read 1.15 and
-/// 1.23 against 1.08 and 1.14. The second anchored the chord a fixed
-/// chin-thickness below the crest: that restored the buttons and spared the
-/// BULGE too, because on the default family the bulge peaks 8 mm under the
-/// crest — inside any anatomical thickness.
+/// **This pair is the discriminator between a chin and a bulge under the jaw.**
+/// A chord anchored at the crest with no allowance at all amputates the chin
+/// button on every soft-chinned body — a dome's lower shoulder is always
+/// forward of the straight line from its apex — and one anchored a fixed
+/// chin-thickness below the crest spares the BULGE too, because on the default
+/// family the bulge peaks 8 mm under the crest, inside any anatomical
+/// thickness.
 ///
 /// What separates them is not where they sit but how far they stand out:
 /// measured across the sweep, a button deviates from the crest-to-throat chord
@@ -1484,19 +1388,16 @@ const SUBMENTAL_COLUMNS: usize = 6;
 /// TRUE crest, and this allowance — about 2.3 mm on the default head, fading
 /// to nothing over the top [`BUTTON_RUN`] of the run — is the convexity a chin
 /// is entitled to. Everything past it is bulge and is planed off.
-/// **0.022 over 0.35 of the run → 0.070 over 0.22, and the shape of that trade
-/// is the finding** (#94). `CHIN`'s tail holds a shelf under the chin now, and a
-/// raised surface is no use if this ceiling cuts it straight back off — the
-/// construction only ever clamps downward, so the allowance is what lets the
-/// shelf survive. But the allowance cannot simply grow: swept at 0.050 over 0.85
-/// of the run it put seed 10 back 5.7 mm proud of its chord at 43% of the way
-/// down, which is not a button, it is #94's own bulge returning at #94's own
-/// depth, and `the_underside_of_the_jaw_does_not_bulge` duly failed at 0.065
-/// against its 0.045.
 ///
-/// A LARGER button over a SHORTER run does both: three times the convexity at
-/// the crest, dead by a fifth of the way down, which is above everywhere the
-/// bulge has ever been measured. Sixteen seeds pass and the shelf holds.
+/// **A large button over a SHORT run, rather than the reverse.** `CHIN`'s tail
+/// holds a shelf under the chin, and a raised surface is no use if this ceiling
+/// cuts it straight back off — the construction only ever clamps downward, so
+/// the allowance is what lets the shelf survive. But the allowance cannot
+/// simply grow: swept at 0.050 over 0.85 of the run it puts seed 10 back 5.7 mm
+/// proud of its chord at 43% of the way down, which is a bulge and not a
+/// button, and `the_underside_of_the_jaw_does_not_bulge` fails at 0.065 against
+/// its 0.045. Three times the convexity at the crest, dead by a fifth of the
+/// way down — above everywhere the bulge has ever been measured — does both.
 ///
 /// **And on its own it buys nothing**, which is worth recording because it looks
 /// like the obvious lever. With `CHIN`'s tail left alone this pair moves the
@@ -1511,16 +1412,15 @@ const BUTTON_RUN: f32 = 0.22;
 /// How much of the crest-to-throat drop the submental ceiling has spent, at
 /// each share of the run from the crest down to [`JUNCTION`].
 ///
-/// **The chord this replaces was STRAIGHT, and a straight chord is not what a
-/// jaw does** (#94). `construct_submental` planed the underside onto the line
-/// joining each column's crest to its throat; life falls off a cliff and then
-/// runs flat. Measured against the CC0 reference with `examples/column`, at each
-/// face's own share of each height, ours stood 19.9, 18.7, 23.7 and 10.3 mm
-/// PROUD of it two centimetres under the chin on seeds 0, 3, 6 and 12 — and
-/// within a few millimetres of it at every other height on the run. One row,
-/// and it is the row a straight line puts in the wrong place.
+/// **A STRAIGHT chord is not what a jaw does**, which is why the ceiling this
+/// curve describes is not one. Planing the underside onto the line joining each
+/// column's crest to its throat stands 19.9, 18.7, 23.7 and 10.3 mm PROUD of
+/// the CC0 reference two centimetres under the chin on seeds 0, 3, 6 and 12 —
+/// measured with `examples/column` at each face's own share of each height —
+/// and within a few millimetres of it at every other height on the run. One
+/// row, and it is the row a straight line puts in the wrong place.
 ///
-/// # Why this and not [`CHIN`]'s tail, which is where #94 went twice
+/// # Why this and not [`CHIN`]'s tail
 ///
 /// Because on half the population the tail cannot reach it. With
 /// `SKIP_SUBMENTAL` set, seed 0 reads 82.7 mm at −20 and the shipped body reads
@@ -1538,62 +1438,44 @@ const BUTTON_RUN: f32 = 0.22;
 /// the way, 0.92 by half. The knots below are that shape re-fitted against
 /// measurement rather than transcribed, because this run is the crest to
 /// `JUNCTION` and the reference's is its chin to its throat, and a share over
-/// one span is not a share over the other — the mistake this issue's own
-/// write-up made once already.
+/// one span is not a share over the other.
 ///
-/// Measured after, ours proud of the reference at 0, −10, −20, −30 and −40:
+/// Measured, ours proud of the reference at 0, −10, −20, −30 and −40 mm:
 ///
 /// ```text
-///   seed  0   +3.7  +2.5   +9.5  +1.0  +0.8      was  +3.7  +0.5  +19.9  +5.7
-///   seed  3   +1.4  +1.5   +6.9  -7.0  -7.4      was  +1.1  +0.3  +18.7  +5.2
-///   seed  6   +5.0  +4.2   +3.0  +4.8  +5.2      was  +5.0  +1.8  +23.7  +5.0
-///   seed 12   -4.9  -5.5   -5.8  -6.0  -4.2      was  -4.9  -7.6  +10.3  -6.0
+///   seed  0   +3.7  +2.5   +9.5  +1.0  +0.8
+///   seed  3   +1.4  +1.5   +6.9  -7.0  -7.4
+///   seed  6   +5.0  +4.2   +3.0  +4.8  +5.2
+///   seed 12   -4.9  -5.5   -5.8  -6.0  -4.2
 /// ```
 ///
-/// and `tests/parts::the_jaw_gives_up_its_reach_where_the_reference_does` —
-/// then the guard for this, deleted with the jaw band's other rulers (#196) —
-/// went from 0.578–0.751 of the drop spent two fifths of the way down to
-/// 0.791–0.905 against the reference's 0.823.
+/// # The top third is deliberately left straight
 ///
-/// # The top third is deliberately left straight, and seed 9 is why
-///
-/// The first cut of this curve started falling at 0.15 of the run and AMPUTATED
-/// a chin: seed 9's went from 73.3 mm of forward reach to 52.7, `Skull::chin`
-/// migrated 15 mm up the head, and the whole submental run inverted — its reach
-/// increased downward. That is #134's crest-anchored failure returning, and the
-/// body it returns on is the one whose head the column has all but swallowed,
-/// where this run is only a few millimetres long and a fifth of it is under one.
-/// So `spend` is the identity down to 0.30 — the surface above that is exactly
-/// what shipped before — and the cliff lives entirely below it, where a chin's
-/// dome does not reach. [`BUTTON`]'s allowance is unchanged and still fades out
+/// A curve that starts falling at 0.15 of the run AMPUTATES a chin: seed 9's
+/// goes from 73.3 mm of forward reach to 52.7, `Skull::chin`
+/// migrates 15 mm up the head, and the whole submental run inverts — its reach
+/// increasing downward. The body it fails on is the one whose head the column
+/// has all but swallowed, where this run is only a few millimetres long and a
+/// fifth of it is under a chin.
+/// So `spend` is the identity down to 0.30, and the fall lives entirely below
+/// it, where a chin's dome does not reach. [`BUTTON`]'s allowance fades out
 /// by 0.22, which is inside the straight part.
 ///
+/// # One curve, not a shelf and a cliff
+///
+/// The bend directly below the mandible is gentler than the reference's step:
+/// the knots below deliberately do not transcribe it. Softening the middle
+/// alone does not move the thing that matters — measured on `examples/column`,
+/// the midline drop over the first centimetre below the chin reads 19.5 mm
+/// either way against the reference's 9.6, because with the ceiling switched
+/// off entirely that centimetre still falls 15.6, so the ceiling never owned
+/// it. Holding the spend out of the top third, and stopping the fairing
+/// inflating the crest (`FAIR_OVER`), takes the run to 14.3 / 19.8 — slow, then
+/// steep, then slow. Judged in both renderers at the frame ends, the heavy
+/// corner and the guarded seeds.
+///
 /// Provenance: **shape derived from the reference, knots tuned by sweep against
-/// it and by render** (#94).
-///
-/// **And then the cliff was deliberately given back** (#193). The owner's
-/// render-first redesign of the mandible-to-throat band asked for the bend
-/// directly below the mandible to be gentler than the reference's step, so the
-/// knots below no longer transcribe the reference at all: one curve rather
-/// than shelf-then-cliff, and the spend held near zero over the first third so
-/// that the ceiling cannot cut into the centimetre under the chin.
-///
-/// **What the first cut of this got wrong is worth keeping.** Softening the
-/// middle alone did not move the thing the owner was pointing at: measured on
-/// `examples/column`, the midline drop over the first centimetre below the
-/// chin read 19.5 mm before and 19.5 after, against the reference's 9.6 —
-/// because with the ceiling switched off entirely that centimetre still falls
-/// 15.6, so the ceiling was never what owned it. Holding the spend out of the
-/// top third, and stopping the fairing inflating the crest (`FAIR_OVER`),
-/// takes the run to 14.3 / 19.8 — slow, then steep, then slow, which is the
-/// S the owner asked for and which neither the old shelf-and-cliff nor the
-/// first softening produced. Judged in both renderers at the frame ends, the heavy corner and
-/// the guarded seeds; the numeric contract that used to hold the cliff —
-/// `the_jaw_gives_up_its_reach_where_the_reference_does`, since deleted (#196)
-/// — was re-fitted to the chosen curve afterwards, which is the order #193
-/// mandates. The top
-/// third's straightness and [`BUTTON`]'s allowance are untouched, so seed 9's
-/// chin-amputation guard still holds.
+/// it and by render**.
 #[rustfmt::skip]
 const SUBMENTAL_SPEND: [(f32, f32); 6] = [
     (1.00, 1.00),
@@ -1875,25 +1757,25 @@ pub fn reshape_to(local: Vec3, radius: f32, floor: f32, traits: &HeadTraits) -> 
 /// lives at. A mandible is none of those. It is a border whose HEIGHT MIGRATES
 /// WITH AZIMUTH, from the gonion out at the side down to the menton dead ahead,
 /// and no product of a height profile and an angular window can say that. The
-/// built half-width fell a dead constant 1.4–1.7 mm per 4 mm over sixteen
-/// consecutive bands — a right circular frustum on every seed — and the sharpest
-/// turn anywhere in the front silhouette was 3.4° against a mandible's fifty
-/// (#80).
+/// built half-width falls a dead constant 1.4–1.7 mm per 4 mm over sixteen
+/// consecutive bands without it — a right circular frustum on every seed — and
+/// the sharpest turn anywhere in the front silhouette is 3.4° against a
+/// mandible's fifty.
 ///
 /// So this takes both at once. [`GONION`] and [`MENTON`] give the border's
 /// height at the two ends and it runs between them with the cosine of the
-/// azimuth — straight in side view, as a mandible's lower border is (#195; it
-/// ran in the sine first, which put the crease's forward end at mouth height);
-/// everything below it is drawn in, everything above it is left exactly as the
+/// azimuth — straight in side view, as a mandible's lower border is; in the
+/// sine instead, the crease's forward end lands at mouth height. Everything
+/// below the border is drawn in, everything above it is left exactly as the
 /// profiles left it.
 ///
 /// **A knee and a long release, not a shelf, and the difference is which edge
 /// the jawline is.** A step that saturates and then stops puts an equal and
 /// opposite corner at its lower edge where the hollow lets go, and measured
-/// against the acceptance criterion's own sweep that lower edge is the LARGER of
-/// the two. A test passing on the bottom of a hollow while the jawline above it
-/// stayed soft is exactly the kind of instrument failure this milestone has
-/// spent itself on. So the fall-off is spread over [`JAW_RELEASE`] of the whole
+/// against a sweep that lower edge is the LARGER of
+/// the two — and a test passing on the bottom of a hollow while the jawline
+/// above it stays soft is the instrument failure this whole file is written
+/// against. So the fall-off is spread over [`JAW_RELEASE`] of the whole
 /// run down to [`JUNCTION`] — five or six times the knee — which leaves one
 /// corner where the border is and none anywhere else, and reaches nothing at the
 /// junction, so no other profile had to move to make room for it.
@@ -1964,7 +1846,7 @@ fn jaw(height: f32, facing: f32, side: f32, traits: &HeadTraits) -> f32 {
 /// Where the lower-jaw region lets go of the throat, as a fraction of the
 /// head's reach below its own joint — the owner's "about the adam's apple".
 ///
-/// **Derived, not modelled** (#152): there is no larynx in the geometry, so the
+/// **Derived, not modelled**: there is no larynx in the geometry, so the
 /// line is where the throat's forward reach goes vertical below the submental
 /// corner — measured on the default body at −140 mm below the head joint on a
 /// 166 mm below-joint span, and expressed in that span's own fractions because
@@ -1983,25 +1865,25 @@ pub(crate) const NAPE: f32 = 0.35;
 
 /// How much of the skin at a point one BROW carries, `0..1`.
 ///
-/// The sibling of [`mandible_hold`] for the second face territory (#215): the
+/// The sibling of [`mandible_hold`] for the second face territory: the
 /// brow ridge and the forehead above it, one side at a time. `rise` is height
 /// above the head's own joint in head radii, `facing` and `side` are the same
 /// horizontal azimuth cosines the mandible uses — but `side` here is signed
 /// TOWARD the brow being asked about, so one function serves both sides and
 /// the caller flips the sign for the other.
 ///
-/// The bands are measured, not styled (#215's canon probe, spread across
-/// femininity −1..+1 and brow 0..1):
+/// The bands are measured, not styled — probed against [`super::Canon`] across
+/// femininity −1..+1 and brow 0..1:
 /// * the eye line sits at +0.049 head radii above the joint and the upper
 ///   lid's aperture reaches to about +0.12, so the field is ZERO below +0.13
 ///   and full by +0.18 — a raised brow must not drag the lids up with it,
-///   which is the boundary #136 put on this whole family of joints;
+///   which is the boundary on this whole family of joints;
 /// * the brow's crest sits at +0.19 to +0.26 by the brow axis, inside the
 ///   full band at both ends;
 /// * the fade above spans +0.35 to +0.55 — mid-forehead to the hairline —
 ///   so the raise dies into the scalp the way skin over a skull does,
-///   rather than shearing at an edge (the #152 top-blend lesson, applied
-///   at filing time instead of after the render caught it).
+///   rather than shearing at an edge, which is what a narrow top blend on a
+///   territory field always produces.
 ///
 /// Azimuth: full ahead of the temple and gone behind it — the brow's own tail
 /// measures `facing` 0.70 at the temple and the release runs 0.55 down to
@@ -2018,18 +1900,18 @@ pub(crate) fn brow_hold(rise: f32, facing: f32, side: f32) -> f32 {
 
 /// How much of the skin at a point one MOUTH CORNER carries, `0..1`.
 ///
-/// The third face territory (#216): a patch astride the commissure, one side
+/// The third face territory: a patch astride the commissure, one side
 /// at a time. `below` is the fraction of the head's below-joint span — the
 /// mandible's own ruler, because this field lives where that one does —
 /// `facing`/`side` the usual azimuth cosines, `side` signed toward the corner
 /// being asked about like [`brow_hold`]'s.
 ///
-/// The bands, measured (#216's probe):
+/// The bands, measured:
 /// * **Height**: symmetric about the MOUTH LINE, which sits at 0.345 of the
 ///   span on every body probed and dips toward the corner — the centre
 ///   follows that dip. Symmetric about the line and not about a height
 ///   constant, because the slit's two edges are held by different bones
-///   (head above, jaw below — the lower edge is wholly the jaw's, #154) and
+///   (head above, jaw below — the lower edge is wholly the jaw's) and
 ///   only a field that takes the SAME share from both sides moves the seam
 ///   as one thing. Full within ±0.06 of the span, gone by ±0.10.
 /// * **Side**: the corner sits at 0.21 to 0.31 of the horizontal reach by
@@ -2057,14 +1939,14 @@ pub(crate) fn corner_hold(below: f32, facing: f32, side: f32) -> f32 {
     0.72 * band * outward * inward * ahead
 }
 
-/// How strongly a point belongs to the lower-jaw region, 0..1 (#152).
+/// How strongly a point belongs to the lower-jaw region, 0..1.
 ///
-/// **The owner's contract, verbatim: "the lower jaw should include the lower
-/// lip, to the chin, under the chin, to about the adam's apple", along the
-/// jawline to the gonion, with the ear as the hinge.** This field is that
-/// region written down once, where the jaw's other landmarks already live, so
-/// the carve and the binding read the same lines — the contradiction #151
-/// measured was three fragments of this region each implemented alone.
+/// **The region, stated once: the lower lip, to the chin, under the chin, to
+/// about the laryngeal prominence**, along the jawline to the gonion, with the
+/// ear as the hinge. Written down here, where the jaw's other landmarks
+/// already live, so the carve and the binding read the same lines — three
+/// fragments of this region each implemented alone is how they come to
+/// contradict each other.
 ///
 /// `below` is the fraction of the head's below-joint span (0 at the joint, 1
 /// at the neck joint); `facing`/`side` are the azimuth cosine/sine
@@ -2096,16 +1978,13 @@ pub(crate) fn mandible_hold(below: f32, facing: f32, side: f32) -> f32 {
 
 /// Reads a profile, which is given from the crown downward.
 ///
-/// **The interpolant lives in [`super::curve`] now and this is the skull's name
-/// for it** (#82). It was Fritsch–Carlson here and piecewise-linear in
-/// [`super::relief`], whose own note explained that the two readers were kept
-/// apart because they run in opposite directions. When the relief's ramps needed
-/// the same C1 treatment these profiles got in #83, that argument stopped
-/// paying: a lerp is cheap to keep twice and a monotone limiter is not. One
-/// reader, direction taken from the knots.
+/// **The interpolant lives in [`super::curve`] and this is the skull's name
+/// for it.** The relief's ramps and these profiles need the same C1 treatment
+/// and run in opposite directions, and a lerp is cheap to keep twice where a
+/// monotone limiter is not. One reader, direction taken from the knots.
 ///
-/// Everything about WHY it is monotone and cubic — the 7.9 mm terracing this
-/// replaced, and [`CHIN`]'s tail into [`JUNCTION`], where an ordinary spline
+/// Everything about WHY it is monotone and cubic — the 7.9 mm terracing a
+/// linear read leaves, and [`CHIN`]'s tail into [`JUNCTION`], where an ordinary spline
 /// dips below zero and stands the head's lowest band behind its own throat — is
 /// written at [`super::curve::monotone`], with the profiles named.
 fn knot(profile: &[(f32, f32)], height: f32) -> f32 {
@@ -3252,11 +3131,11 @@ mod tests {
     /// The same, at a chosen skull breadth rather than the seed's own.
     ///
     /// **Every test below that measures a WIDTH RATIO wants this, and wants
-    /// `Some(0.0)`** (#61). Skull breadth is a record axis now, so a re-rolled
+    /// `Some(0.0)`.** Skull breadth is a record axis, so a re-rolled
     /// seed arrives with a section the plan gave it, and a test asserting what
     /// `BREADTH` and [`jaw`] do to a head has no business also measuring what
-    /// the record asked for. Held at neutral these read exactly what they read
-    /// before the axis existed; the axis's own effect is
+    /// the record asked for. Held at neutral these read the carve alone; the
+    /// axis's own effect is
     /// `the_breadth_axis_narrows_the_jaw_with_the_cheek`.
     fn skull_of(seed: i64, levels: usize, breadth: Option<f32>) -> (PolyMesh, Skull, Vec3, f32) {
         let mut record = AvatarRecord::new("Skulled", Archetype::default());
@@ -3858,7 +3737,7 @@ const BANDS: usize = 20;
 /// the cheekbones — puts every sample it has into the first two columns and
 /// leaves the rest to be filled in from them, so the map answers with the
 /// midline wherever it is asked. Measured that way the forward reach came back
-/// 14 mm too deep at the chin against 5 mm at the cheek (#67).
+/// 14 mm too deep at the chin against 5 mm at the cheek.
 ///
 /// Fifteen, not nine, and not twenty-one. A bin's answer is the outermost sample
 /// in it, so halving the bin halves how far the surface has curved away inside
@@ -3874,7 +3753,7 @@ const COLUMNS: usize = 15;
 /// The mirror of [`COLUMNS`], and it exists for the ear: an ear sits on the side
 /// of the head and about a third of an eye-radius *behind* the midline, where
 /// the head is a couple of millimetres narrower than at the cheekbone in front
-/// of it. A width that only knows height reports the cheekbone (#67).
+/// of it. A width that only knows height reports the cheekbone.
 ///
 /// Normalised per band for the same reason [`COLUMNS`] is.
 const DEPTHS: usize = 15;
@@ -4091,8 +3970,7 @@ impl Skull {
     /// same reason: a head is no more a cylinder than it is a surface of
     /// revolution. An ear seats about a third of an eye-radius behind the
     /// midline, where the skull has already begun to fall away, and
-    /// [`Self::half_width`] answers there with the cheekbone in front of it
-    /// (#67).
+    /// [`Self::half_width`] answers there with the cheekbone in front of it.
     #[must_use]
     pub fn width_across(&self, height: f32, depth: f32) -> f32 {
         self.bilinear(&self.side, height, |band| {
@@ -4138,7 +4016,7 @@ impl Skull {
     /// 6.4 mm rather than 90, so a lock combed round to the nape dived for the
     /// axis. It survived a test because the test compared the lock's radius
     /// against the same broken formula on both sides; only a style that crossed
-    /// from the front hemisphere into the back one showed it (#204).
+    /// from the front hemisphere into the back one shows it.
     #[must_use]
     pub fn depth_behind(&self, height: f32) -> f32 {
         self.sample(&self.behind, height)
@@ -4151,8 +4029,8 @@ impl Skull {
     /// what hair needs and nothing here offered: [`Self::half_width`] and
     /// [`Self::depth_across`] are the two halves of one ellipse per height, and
     /// every caller that wanted a point on the surface was assembling them
-    /// itself. Two already were — `hair::follicle`'s own edge instrument and
-    /// #204's scalp styles — and a third copy is how they drift.
+    /// itself — `hair::follicle`'s own edge instrument and the scalp styles —
+    /// and a third copy is how they drift.
     ///
     /// `azimuth` is measured from dead ahead, turning toward the body's right,
     /// so its cosine is [`crate::hair::follicle`]'s `facing` and zero is the
@@ -4164,35 +4042,34 @@ impl Skull {
     /// surface rather than near it belongs on the faces themselves; see
     /// `hair::clump::scatter`.
     ///
-    /// **The ellipse is asymmetric fore-and-aft, and the first cut of this was
-    /// not** (#204). Written as the forward reach times the azimuth's cosine, it
-    /// used the brow's depth for the occiput and read the back of the head as 5 mm
-    /// inside itself — which a scalp lock walking the surface turned into hair
-    /// sunk into the skull behind the ear.
+    /// **The ellipse has to be asymmetric fore-and-aft.** Written as the
+    /// forward reach times the azimuth's cosine it uses the brow's depth for
+    /// the occiput and reads the back of the head as 5 mm inside itself, which
+    /// a scalp lock walking the surface turns into hair sunk into the skull
+    /// behind the ear.
     ///
     /// **And an ellipse through the three extremes is an outer BOUND rather than
-    /// the surface**, which was the second cut and the worse mistake: a head is
+    /// the surface**, which is the worse trap: a head is
     /// flatter at the back and narrower at the temples than any ellipse through
-    /// its own widest points, so hair walking that ellipse floated a centimetre
-    /// off the head at the diagonals and the sheet showed cards standing proud of
+    /// its own widest points, so hair walking that ellipse floats a centimetre
+    /// off the head at the diagonals and stands cards proud of
     /// the scalp with light under them. The two-dimensional tables say where the
     /// outline actually is — [`Self::width_across`] is the half-width at a depth
     /// and [`Self::depth_across`] the depth at a half-width — so the ellipse is
     /// only a first guess and the measured outline is found from it.
     ///
     /// **It is found by BISECTING a monotone residual rather than by iterating
-    /// the table** (#210), and that is not a refinement of the third cut but a
-    /// repair of it. Solving `r = w(r cos) / sin` by substitution is a fixed
+    /// the table.** Solving `r = w(r cos) / sin` by substitution is a fixed
     /// point only where `|w'(z) cos / sin| < 1`; on the back diagonals of a head
     /// the outline turns fast and the ray is shallow, so the iteration DIVERGES
-    /// by oscillating — measured at 157°, one step answered 70 mm and the next
+    /// by oscillating — measured at 157°, one step answers 70 mm and the next
     /// 132 about a true 85. Dropping a step that strays too far from the guess
-    /// (which is what the third cut did) does not repair that, because a
+    /// does not repair that, because a
     /// diverging iterate lands inside the trust band by luck about half the
-    /// time: the accepted radius then flickered between 66 mm and 109 as the
-    /// height moved by six millimetres, and a walk that keeps the widest radius
-    /// it has passed latches the highest flicker and hangs there. That is what
-    /// put two blocky slabs off the back-top of every head of hair.
+    /// time: the accepted radius then flickers between 66 mm and 109 as the
+    /// height moves by six millimetres, and a walk that keeps the widest radius
+    /// it has passed latches the highest flicker and hangs there — which puts
+    /// blocky slabs off the back-top of a head of hair.
     ///
     /// The residual — how far inside the tables' own surface a radius is —
     /// falls monotonically along any ray from the joint, because the head
@@ -4298,7 +4175,7 @@ impl Skull {
     ///
     /// Answered rather than re-derived, because deriving it means knowing
     /// `BANDS`, and a second copy of that number is one that stays behind when
-    /// the profile is resampled (#210).
+    /// the profile is resampled.
     #[must_use]
     pub fn crown_band(&self) -> f32 {
         (self.hi - self.lo) / (BANDS - 1) as f32
@@ -4307,14 +4184,13 @@ impl Skull {
     /// The throat and the crown — the lowest and highest the measured profile
     /// reaches, in head-local metres.
     ///
-    /// **The low end is the THROAT, not the chin**, and the name says so now
-    /// because the old one (`span`) did not. The head's surface runs 28 mm past
-    /// the chin on a default body before the neck owns it; two call sites read
-    /// `span().0` as the chin and hung the entire feature frame from it, which
-    /// put the mouth 9 mm above the chin's tip where a face has about 20 and
-    /// read as the whole jaw rotated up into the throat (#72). A third reader
-    /// made the same mistake in a test (#73). Anything placed as a fraction of
-    /// the way down the FACE wants [`Self::chin`].
+    /// **The low end is the THROAT, not the chin**, and the name says so. The
+    /// head's surface runs 28 mm past the chin on a default body before the
+    /// neck owns it, so reading the low end as the chin and hanging the feature
+    /// frame from it puts the mouth 9 mm above the chin's tip where a face has
+    /// about 20, and reads as the whole jaw rotated up into the throat.
+    /// Anything placed as a fraction of the way down the FACE wants
+    /// [`Self::chin`].
     #[must_use]
     pub fn throat_and_crown(&self) -> (f32, f32) {
         (self.lo, self.hi)
@@ -4327,19 +4203,17 @@ impl Skull {
     /// mouth 9 mm above the chin's tip where a face has about 20: the lower lip
     /// was painted onto the chin itself and the crease below the lip was carved
     /// into the underside of the jaw. Material added above the tip and removed
-    /// below it reads as the whole jaw rotated up into the throat (#72), which
-    /// is exactly how the owner reported it.
+    /// below it reads as the whole jaw rotated up into the throat.
     ///
     /// **Found on the surface, by a definition rather than by a window.** It is
     /// the lowest crest of the midline profile — see `chin_of` — and nothing
     /// about the plan enters into it on a head that has a chin. The plan's
-    /// `CHIN` peak used to say roughly where the tip was and a ±16 mm bisected
-    /// search said exactly where; that was an estimate the search was tuned to
-    /// sit on top of, and it drifted with the head (#78 took it from under 2 mm
-    /// to 6.0 on seed 1) and then came apart entirely from the test that checked
-    /// it (#108). Binning cannot do this at all — finding the maximum from 20
-    /// measured bands needs the shallow dip above the chin to survive them, and
-    /// it does not.
+    /// `CHIN` peak says roughly where the tip is, and a bisected search around
+    /// it is an estimate tuned to sit on top of that guess: it drifts with the
+    /// head, by up to 6 mm as the frame moves, and then comes apart from the
+    /// test that checks it. Binning cannot do this at all — finding the maximum
+    /// from 20 measured bands needs the shallow dip above the chin to survive
+    /// them, and it does not.
     ///
     /// Verified across seeds by `the_chin_landmark_lands_on_the_chin`, against
     /// the carved surface at two subdivision levels by
@@ -4360,15 +4234,13 @@ impl Skull {
     /// bigonial breadth is measured across. Derived from [`Self::chin`] through
     /// the same pair of profile heights `jaw` runs the mandible's border
     /// between, so the landmark and the border cannot come apart — which is
-    /// exactly what happened to the chin and the profile that drew it (#108).
+    /// the failure a landmark measured independently of its own profile has.
     ///
-    /// **Public because three things outside this impl need it and each had its
-    /// own arithmetic.** `the_face_narrows_from_cheekbone_to_chin` wrote
-    /// `chin() * (GONION / MENTON)` inline, and `examples/headaudit` could not
-    /// write it at all, because both constants are private — so the one
-    /// measurement #79 turns on lived in a test and nowhere a person could run
-    /// it. A landmark that only a test can compute is a landmark nobody
-    /// re-measures.
+    /// **Public because things outside this impl need it and would each write
+    /// their own arithmetic.** `chin() * (GONION / MENTON)` inline in a test is
+    /// not available to `examples/headaudit` at all, because both constants are
+    /// private, and a landmark that only a test can compute is a landmark
+    /// nobody re-measures.
     #[must_use]
     pub fn gonion(&self) -> f32 {
         self.chin * (GONION / MENTON)
@@ -4422,8 +4294,8 @@ impl Skull {
 /// the search is closed at it: see [`Skull::surface_at`] for the reading past
 /// the end of a table that makes that necessary.
 ///
-/// **A bisection and not a substitution, and the difference is the whole of
-/// #210.** Rearranging the same equation into `r = w(r cos) / sin` and iterating
+/// **A bisection and not a substitution.**
+/// Rearranging the same equation into `r = w(r cos) / sin` and iterating
 /// it converges only where `|w'(z) cos / sin| < 1`, which the back diagonals of
 /// a head are not: there the iteration oscillates, and no test on how far one
 /// step moved can tell an oscillating iterate from a converging one. See
@@ -4471,11 +4343,10 @@ const OUTLINE_STEPS: usize = 12;
 /// built from the half-widths is nearly flat there, so where its root is says
 /// more about the table's own interpolation than about the head.
 ///
-/// **It is no longer about dividing by a sine near zero** (#210). That was the
-/// old substitution's problem, and it is what put a third case behind the head
-/// where there is no table to divide; the residual this now chooses between has
-/// no division in it. What is left is which of two measurements is the sharper
-/// one to read, and behind the head there is only one.
+/// **It is not about dividing by a sine near zero.** That is a substitution's
+/// problem, and the residual this chooses between has no division in it. What
+/// is left is which of two measurements is the sharper one to read, and behind
+/// the head there is only one.
 ///
 /// Provenance: **derived** from the conditioning.
 const LATERAL_ENOUGH: f32 = 0.35;
@@ -4507,7 +4378,7 @@ const MINIMUM_REACH: f32 = 0.001;
 /// through the same heights and is not the head.
 /// How far the head reaches below its own joint, in head radii, negative down.
 ///
-/// **Asked of the rig and not of the mesh** (#127). See [`SETTLED`] for why, and
+/// **Asked of the rig and not of the mesh.** See [`SETTLED`] for why, and
 /// for what it costs. The short of it: the surface at the bottom of a head is
 /// the blend into the neck, so measuring the floor there made the entire lower
 /// face a function of the neck's shape.
@@ -4523,14 +4394,13 @@ fn floor(rig: &Rig, head: usize) -> f32 {
 /// How far up its run the mandible's border stands at one azimuth: 0 at the
 /// menton dead ahead, 1 at the gonion, held there behind the ear.
 ///
-/// **The one conversion from an azimuth to [`border`]'s `raise`, and it exists
-/// because the two halves of it forked once** (#196). #195 moved [`jaw`]'s
-/// border from the sine of the azimuth to the cosine — straight in side view,
-/// as a mandible is — and `face::neck`'s three call sites kept feeding
-/// [`border`] the sine. The sine is the LARGER number everywhere between dead
-/// ahead and the side, so the fairing's ramp began above the real crease and
-/// ran partial-weight smoothing straight across it, which rendered as a band
-/// along the jawline rougher than the head above or the throat below it.
+/// **The one conversion from an azimuth to [`border`]'s `raise`, and it is one
+/// function because the two halves of it can fork.** [`jaw`] runs the border in
+/// the COSINE of the azimuth — straight in side view, as a mandible is — and a
+/// caller feeding [`border`] the sine instead gets the LARGER number everywhere
+/// between dead ahead and the side, so a fairing ramp begins above the real
+/// crease and runs partial-weight smoothing straight across it: a band along
+/// the jawline rougher than the head above or the throat below it.
 /// `facing` is the cosine of the azimuth from dead ahead, exactly as
 /// [`reshape_to`] has it; feed it a point's own `across.z / reach`.
 pub(crate) fn border_raise(facing: f32) -> f32 {
@@ -4542,8 +4412,9 @@ pub(crate) fn border_raise(facing: f32) -> f32 {
 ///
 /// [`GONION`] in the unit the rest of the body is measured in, so that
 /// `face::neck` can be bounded by the same landmark this file carves to without
-/// re-deriving the floor remap — which is the arithmetic that has walked out
-/// from under this file twice (#78, #107). `raise` comes from [`border_raise`]
+/// re-deriving the floor remap — the arithmetic most apt to walk out from
+/// under a caller when the head's proportions move. `raise` comes from
+/// [`border_raise`]
 /// on a point's own azimuth, or is 1.0 for "the highest the border ever gets".
 pub(crate) fn border(rig: &Rig, head: usize, traits: &HeadTraits, raise: f32) -> f32 {
     // **The border MIGRATES, and a flat one tears a chin off** (#175). This is
@@ -4567,8 +4438,8 @@ pub(crate) fn border(rig: &Rig, head: usize, traits: &HeadTraits, raise: f32) ->
 ///
 /// The remap [`reshape_to`] applies, in one place, so anything outside this
 /// file that needs to reach an anatomy the profiles name does not re-derive it
-/// — which is the arithmetic that has walked out from under this file twice
-/// (#78, #107).
+/// — the arithmetic most apt to walk out from under a caller when the head's
+/// proportions move.
 pub(crate) fn at_profile(rig: &Rig, head: usize, profile: f32) -> f32 {
     let radius = rig.joints[head].radius;
     if radius <= f32::EPSILON {
@@ -4583,7 +4454,7 @@ pub(crate) fn at_profile(rig: &Rig, head: usize, profile: f32) -> f32 {
 /// [`Skull::measure`] reads the landmark with this on the shaped head, and
 /// `the_chin_landmark_lands_on_the_chin_of_the_shipped_face` re-applies it to the
 /// carved one — so that test compares two answers to the same question instead
-/// of two different instruments that happened to agree on one cage (#108).
+/// of two different instruments that happen to agree on one cage.
 ///
 /// The chin is [`menton`]'s lowest crest, searched from the throat up to the
 /// highest height at which [`shape`] still pushes a chin forward at all: `CHIN`'s
@@ -4693,12 +4564,11 @@ const FLAT: f32 = 0.0001;
 /// This is the definition [`Skull::measure`] reads the landmark with and the one
 /// `the_chin_landmark_lands_on_the_chin_of_the_shipped_face` re-applies to the
 /// carved surface, which is what makes that test a comparison rather than a
-/// coincidence. The two used to be different instruments — a bisected argmax over
-/// ±16 mm of a plan estimate here, a bisected argmax over ±25 mm of the answer
-/// there — and they agreed on exactly one cage, the one they were tuned against.
-/// On any other the test's window reached the lower lip and its argmax walked to
-/// the top of its own scan, which reads as a 23 mm error and is not one: it is a
-/// saturated measurement of an unbounded disagreement (#108).
+/// coincidence. Two bisected argmaxes over windows around a plan estimate agree
+/// on exactly the one cage they are tuned against; on any other, the window
+/// reaches the lower lip and the argmax walks to the top of its own scan, which
+/// reads as a 23 mm error and is not one — it is a saturated measurement of an
+/// unbounded disagreement.
 ///
 /// Scanned coarsely and then finely: the crest is bracketed at four steps and
 /// re-read at one within that bracket, because [`PolyMesh::contains`] is the
@@ -4708,7 +4578,7 @@ const FLAT: f32 = 0.0001;
 /// `None` when the profile climbs all the way to `ceiling` without falling clear
 /// of its own maximum. That is the saturated case and it is reported as no
 /// answer rather than as the top of the scan, which is precisely the reading
-/// error that made a 23 mm figure out of an unbounded one (#108).
+/// error that makes a bounded figure out of an unbounded one.
 fn menton(mesh: &PolyMesh, centre: Vec3, throat: f32, ceiling: f32) -> Option<f32> {
     /// How finely, in metres. Half the finest cell the face ever carries.
     const STEP: f32 = 0.0009;

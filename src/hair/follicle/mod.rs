@@ -16,12 +16,12 @@
 //!
 //! The regions are cut from [`Skull`] and [`Canon`], which are themselves
 //! measured from the built surface — so a boundary lands on the head that was
-//! actually meshed rather than on the sphere the body plan described. This is
-//! the lesson the shell-era scalp paid for: subdivision pulls a head well inside
-//! its node radius, and anything placed against the nominal one floats.
+//! actually meshed rather than on the sphere the body plan described:
+//! subdivision pulls a head well inside its node radius, and anything placed
+//! against the nominal one floats.
 //!
 //! It is also why nothing here re-measures. [`Skull::measure`] is 61% of a
-//! geometry build (#89), so this takes the one the pipeline already has.
+//! geometry build, so this takes the one the pipeline already has.
 //!
 //! # A point is asked about in the head's own proportions
 //!
@@ -178,7 +178,7 @@ pub(crate) trait Region {
 
 /// How the five regions are shaped on one head.
 ///
-/// Every field is an axis a record will carry (#202) and a panel will show. They
+/// Every field is an axis a record carries and a panel will show. They
 /// are shape parameters rather than style ones: they move where hair MAY grow,
 /// which both layers obey, and say nothing about what is grown there.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -265,14 +265,14 @@ impl Follicles {
     /// The head this was cut from, as it was measured.
     ///
     /// **Handed out because a style has to be able to walk the surface it grows
-    /// on** (#204). A scalp lock is supported by the skull for the first half of
+    /// on**. A scalp lock is supported by the skull for the first half of
     /// its travel and hangs only once the head has fallen away beneath it, and a
     /// lock that cannot ask where the skull is leaves the tangent plane at its
     /// root and hangs in the air — which is most of why a hundred and fifty of
     /// them read as strings over a bare scalp rather than as hair.
     ///
     /// The one the pipeline already measured, never a second: `Skull::measure` is
-    /// 61% of a geometry build (#89).
+    /// 61% of a geometry build.
     #[must_use]
     pub fn skull(&self) -> &Skull {
         &self.skull
@@ -281,7 +281,7 @@ impl Follicles {
     /// The line one brow follows on this head.
     ///
     /// **Handed out rather than copied, because a style has to comb along the
-    /// very curve the mask is centred on** (#205). Both brow styles take their
+    /// very curve the mask is centred on**. Both brow styles take their
     /// direction, their rise and their fall from this, so a change to the ridge
     /// moves the paint and the geometry together and there is no second arc to
     /// keep in step. It is the same discipline the private `border` here follows:
@@ -293,7 +293,7 @@ impl Follicles {
 
     /// The patch of lip a moustache grows on, on this head.
     ///
-    /// **The same discipline as [`Self::brow_ridge`]** (#206): the styles take
+    /// **The same discipline as [`Self::brow_ridge`]**: the styles take
     /// their floor, their ceiling and their outer end from the object the mask
     /// was cut around, so a record moving the patch moves the paint and the
     /// geometry together. The moustache is the region where that matters most —
@@ -308,8 +308,8 @@ impl Follicles {
     ///
     /// The third of the handed-out landmarks, and the one whose styles need it
     /// most: a chin beard is the only hair on a face that leaves the face, so a
-    /// style has to know where the chin STOPS as well as where the patch is
-    /// (#207). See [`chin::Pad::hangs_from`].
+    /// style has to know where the chin STOPS as well as where the patch is.
+    /// See [`chin::Pad::hangs_from`].
     #[must_use]
     pub fn pad(&self) -> chin::Pad {
         self.chin.pad()
@@ -326,8 +326,7 @@ impl Follicles {
 
     /// The mandible's lower border at one azimuth, in head-local metres.
     ///
-    /// **The same line the face was carved to, handed out rather than copied**
-    /// (#196 is what a second copy cost, and #208 is where a style needed it).
+    /// **The same line the face was carved to, handed out rather than copied.**
     /// A flank beard's lower edge IS the approved crease, so a style asks for it
     /// here and there is no second arc to keep in step.
     #[must_use]
@@ -421,8 +420,8 @@ impl Follicles {
 
     /// The mandible's lower border at one azimuth, in head-local metres.
     ///
-    /// **The jawline the face was actually carved to, not a second copy of it**
-    /// (#196 is what happens when there are two). [`Skull::chin`] and
+    /// **The jawline the face was actually carved to, not a second copy of
+    /// it.** [`Skull::chin`] and
     /// [`Skull::gonion`] are the two ends of the very profile heights
     /// `face::skull::jaw` runs its border between, and `border_raise` is the
     /// same run in the same cosine — so the beard's lower edge and the crease
@@ -466,13 +465,13 @@ mod tests {
         skull: Skull,
         /// The head's own surface, as a centroid and an area per face.
         ///
-        /// **Area rather than vertices, and the difference is not a detail**
-        /// (#199). `refine_face` splits the front of the face ten times and
+        /// **Area rather than vertices, and the difference is not a detail.**
+        /// `refine_face` splits the front of the face ten times and
         /// leaves the vault at the base subdivision, so a head carries thousands
-        /// of vertices on a chin and dozens on a crown. Counting vertices, the
-        /// first cut of these tests read the scalp — the largest region on the
-        /// head — as 2.9% of it and the chin as 25%, which is a measurement of
-        /// the refinement schedule and not of the mask.
+        /// of vertices on a chin and dozens on a crown. Counted by vertices the
+        /// scalp — the largest region on the head — reads as 2.9% of it and the
+        /// chin as 25%, which is a measurement of the refinement schedule and
+        /// not of the mask.
         surface: Vec<(Vec3, f32)>,
         origin: Vec3,
     }

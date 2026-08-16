@@ -11,8 +11,8 @@
 //! Four questions, and the first one is the one that saves the most work:
 //!
 //! * **Does this need a blend?** Within locomotion, no. Walking faster and
-//!   running are the same generator at different points of one speed axis
-//!   (#240), and a body moving along that axis is already continuous — blending
+//!   running are the same generator at different points of one speed axis,
+//!   and a body moving along that axis is already continuous — blending
 //!   it against itself would only smear it. A blend is for changing *family*:
 //!   locomotion to a jump, a jump to a swim. See [`Family::needs_blend`].
 //! * **May it start now?** Not while a foot is bearing weight. A transition that
@@ -30,7 +30,7 @@
 //!   check it rather than assuming it, because "it should compose" is how a
 //!   crossfade-shaped bug gets in.
 //!
-//! Nothing here holds state. Overlands' own motion component stays the thing
+//! Nothing here holds state. The caller's own motion component stays the thing
 //! that remembers what the body was doing; these are the questions it asks.
 //!
 //! [`Gait::until_handoff`]: super::gait::Gait::until_handoff

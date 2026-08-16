@@ -79,11 +79,11 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
 ///
-/// **5** — the hair priors (#203). Every axis a re-roll draws for hair changed
+/// **5** — the hair priors. Every axis a re-roll draws for hair changed
 /// distribution at once, and none of them changed name:
 ///
 /// - the scalp draws a STYLE, where it had been `Crop` on every body since the
-///   catalogue landed. Uncoupled from the frame axis by owner call — the two
+///   catalogue landed. Deliberately uncoupled from the frame axis — the
 ///   couplings this crate makes are anatomy, and a haircut is culture.
 /// - the natural shade is dark-dominant rather than uniform. A uniform draw put
 ///   as many blondes on the street as black-haired people.
@@ -92,7 +92,7 @@ pub const MAX_NAME_CHARS: usize = 64;
 ///   hair with the pigment gone.
 /// - one rolled head in fifty is dyed instead.
 /// - facial hair is a quarter at neutral where it was a twentieth, and
-///   symmetric about the frame axis rather than flat below it (owner call); and
+///   symmetric about the frame axis rather than flat below it; and
 ///   a bearded face draws a coherent CONFIGURATION rather than three
 ///   independent coins.
 ///
@@ -102,8 +102,8 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// because a generation-4 record's hair is valid in the current schema and
 /// re-rolling it would silently restyle avatars that are fine.
 ///
-/// **3** — the two-tier draw (#169), and the one bump the composite epic
-/// batched every rename and removal into. Three things moved at once and each
+/// **3** — the two-tier draw, and the one bump every rename and removal was
+/// batched into. Three things moved at once and each
 /// would have moved every seed on its own:
 ///
 /// - the order. Composites are drawn first and everything else is drawn
@@ -118,13 +118,13 @@ pub const MAX_NAME_CHARS: usize = 64;
 ///   at all; it is 38 with sigma 15. The hairline's window follows age and the
 ///   frame axis.
 ///
-/// `humanoid.build` and `humanoid.muscle` are gone for good with it — retired
-/// in #164, their share-code slots removed in the version-6 payload — and
+/// `humanoid.build` and `humanoid.muscle` are gone for good with it, their
+/// share-code slots removed in the version-6 payload, and
 /// `face::HeadTraits` is what `face::Dimorphism` was called. Stream NAMES are
 /// otherwise untouched, so axis independence survives the bump exactly as it
 /// did the last one.
 ///
-/// **2** — the exploration distributions (#160). Every shape axis moved from
+/// **2** — the exploration distributions. Every shape axis moved from
 /// a uniform draw inside a conservative fence to [`crate::plan::Rolls::shape`]:
 /// a Gaussian on the axis's own default with the old fence as its width, plus
 /// a rare wildcard over the whole widened envelope. Stream names are
@@ -140,23 +140,23 @@ pub const GENERATOR_VERSION: u32 = 5;
 
 /// The generation whose hair a record has to be re-rolled to reach.
 ///
-/// **The hair rewrite is the only migration this crate has ever needed, and it
-/// needed one because the old axes cannot be mapped** (#202). The shell era
+/// **The hair rewrite is the only migration this crate has needed, and it
+/// needed one because the old axes cannot be mapped.** The superseded schema
 /// described one object — a sculpted mass with locks cut into its rim, at one
-/// length, one volume and one colour — and the record now describes five
+/// length, one volume and one colour — and the record describes five
 /// regions in two layers with a style and two colours each. There is no
 /// function from the first to the second: a body with `length` 0.4 has no
 /// answer for whether it has a beard.
 ///
 /// So a record older than this has its hair **re-drawn from its own seed**,
-/// which is the owner's own call over mapping to a nearest look. It is
+/// deliberately, rather than mapped to a nearest look. It is
 /// deterministic, it is what the same seed would produce today, and it is
 /// honest about the break rather than inventing a beard nobody chose. Every
 /// other axis is untouched: hair draws from streams named for itself, so the
 /// rest of the body a seed describes is bit-identical across the bump.
 ///
-/// **It stayed at 4 when the priors moved to 5** (#203), and the distinction is
-/// the whole reason this constant is separate from [`GENERATOR_VERSION`]. That
+/// **It stays at 4 while [`GENERATOR_VERSION`] is 5**, and the distinction is
+/// the whole reason this constant is separate. That
 /// bump changed what a FRESH roll produces; it did not make any stored record
 /// unreadable. A generation-4 record describes five regions with styles and
 /// colours the current build understands perfectly, and re-drawing its hair
@@ -190,7 +190,7 @@ pub struct AvatarRecord {
     pub archetype: Archetype,
     /// How the body is described at the level a person is described at.
     ///
-    /// The high tier of the two-tier parameterisation (#161): these fan out
+    /// The high tier of the two-tier parameterisation: these fan out
     /// through formulas to many quantities at once, and the per-region axes on
     /// [`Self::archetype`] and the face blocks apply as offsets on top. Kept
     /// here rather than inside the archetype because the cage, the skull and
@@ -370,7 +370,7 @@ impl AvatarRecord {
     /// one category never reshuffles another — a lock is a promise about what
     /// stays, and it would be broken if unlocking changed unrelated axes.
     ///
-    /// **Two passes since generation 3, and the order is the design** (#169).
+    /// **Two passes, and the order is the design.**
     /// The composites are drawn first, in full, and everything else is drawn
     /// afterwards against the result — which is what lets a body be coherent:
     /// stature can follow the frame axis, the offsets can be small because the
@@ -554,10 +554,8 @@ impl ProfileRecord {
     /// a record from the network, where nothing about the contents can be
     /// assumed.
     ///
-    /// **An invalid pointer is dropped, never repaired** (#51). This is the
-    /// one field consumers dereference into an AT-URI, and it was the one
-    /// field in the crate with no sanitization — every neighbour has some, so
-    /// a developer reasonably assumes this one does too. Repairing is the
+    /// **An invalid pointer is dropped, never repaired.** This is the
+    /// one field consumers dereference into an AT-URI. Repairing is the
     /// wrong shape for a POINTER: stripping the offending characters from a
     /// record key yields a syntactically valid key that names some *other*
     /// record, which turns a malformed profile into a working reference to a
@@ -611,12 +609,11 @@ fn is_record_key(key: &str) -> bool {
 
 /// Draws a new face: the eyes, and what is carved around them.
 ///
-/// **Shape only.** This used to draw the complexion and the hair as well,
-/// because all three rode the one `Features` lock; #53 gave each its own, and
-/// the argument that grouped them — "a creator with one lock per slider ends up
-/// with more locks than anyone reads" — turned out to be answering the wrong
-/// question. The right one is what somebody would keep on purpose, and a face
-/// is kept while its colouring is rolled all the time.
+/// **Shape only.** The complexion and the hair have locks of their own. The
+/// argument for grouping all three — "a creator with one lock per slider ends
+/// up with more locks than anyone reads" — answers the wrong question. The
+/// right one is what somebody would keep on purpose, and a face is kept while
+/// its colouring is rolled all the time.
 fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, rolls: &Rolls) {
     // Shape axes draw [`Rolls::shape`] (#160): a Gaussian on each axis's own
     // default with sigma half the old uniform fence — so a typical seed still
@@ -661,18 +658,16 @@ fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, rolls: &Rolls) {
 
 /// Draws a fresh head of hair.
 ///
-/// Its own category since #53. Hair is the loudest thing about a head and the
+/// Its own category. Hair is the loudest thing about a head and the
 /// one most often kept while everything under it changes, which is the whole
 /// argument for a lock of its own.
 ///
-/// **Five regions since #202**, drawn from the streams their own names give
+/// **Five regions**, drawn from the streams their own names give
 /// them. The composites keep their say — a beard is strongly sexed and a
-/// hairline recedes with age — and #203 is where the colour gamut and the rest
-/// of the priors are fitted; what is here is the coupling the shell era already
-/// had, carried over rather than dropped on the floor during the rewrite.
+/// hairline recedes with age.
 fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composites) {
     // Hair is a style, not a shape: it keeps its uniform draws and its
-    // conservative ranges (#160, owner call — same reason complexion does).
+    // conservative ranges, for the same reason complexion does.
     let masculinity = -composites.femininity.clamp(-1.0, 1.0);
     let ageing = composites.ageing();
 
@@ -857,19 +852,18 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
 /// the same number.
 ///
 /// Provenance: **looked up** for the direction and the ordering, **sized by
-/// eye** against a sheet of rolled heads (#203).
+/// eye** against a sheet of rolled heads.
 const DARK_BIAS: f32 = 2.2;
 
 /// How often a rolled head is dyed rather than grown.
 ///
-/// One in fifty. The epic's own decision is that grey and fantasy come free
-/// from the record's sRGB pairs and that DELIBERATE fantasy lives in the
-/// editor's colour pickers; what a roll owes is the occasional surprise, not a
-/// parade. At one in fifty a creator flipping through re-rolls meets one every
+/// One in fifty. Grey and fantasy come free from the record's sRGB pairs, and
+/// DELIBERATE fantasy belongs in a creator's colour pickers; what a roll owes
+/// is the occasional surprise, not a parade. At one in fifty a creator flipping through re-rolls meets one every
 /// page or two, which is what "rare" has to mean to be worth having at all.
 ///
 /// Provenance: **owner brief** ("rare outlier chance for the fantasy end"),
-/// **sized by eye** (#203).
+/// **sized by eye**.
 const DYED: f64 = 0.02;
 
 /// The two colours one rolled head of hair fades between.
@@ -949,7 +943,7 @@ fn rolled_colour(rolls: &Rolls, ageing: f32) -> ([f32; 3], [f32; 3]) {
 /// The variant axes inside a configuration are still drawn independently, since
 /// how far a handlebar sweeps says nothing about how pointed a chin is.
 ///
-/// Provenance: **derived** from what a beard is, **weighted by eye** (#203).
+/// Provenance: **derived** from what a beard is, **weighted by eye**.
 fn rolled_beard(
     rolls: &Rolls,
 ) -> (
@@ -1279,7 +1273,7 @@ mod tests {
     /// One rolled population, at a frame and an age the caller names.
     ///
     /// **A prior is a statement about a POPULATION and cannot be tested on a
-    /// body** (#203). Every claim this issue makes — dark-dominant, greying with
+    /// body.** Every claim the priors make — dark-dominant, greying with
     /// age, a quarter bearded at neutral — is false of some individual seed and
     /// has to be, or it would not be a distribution. So the tests below roll
     /// several hundred and count.

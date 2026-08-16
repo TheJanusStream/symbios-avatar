@@ -34,7 +34,7 @@
 //! # Why every loop closes
 //!
 //! A procedural cycle that does not return to where it started pops once per
-//! cycle forever, and the epic's own reference clips do exactly that (#237). So
+//! cycle forever, and the baked reference clips do exactly that. So
 //! nothing here is allowed a frequency that is not a whole multiple of the
 //! stroke: the legs run at [`KICKS_PER_ARM`] times the arms, the surge at
 //! twice, the roll at once. That constraint is what rules out the obvious
@@ -48,7 +48,7 @@
 //! degrees of cone about a mean direction to the great circle that is a
 //! windmill, and a circle of any radius closes.
 //!
-//! # What this draft does not do
+//! # What this does not do
 //!
 //! Named, rather than left to be discovered:
 //!
@@ -286,8 +286,7 @@ impl Swim {
 ///
 /// [`Rig::extent`] is that measurement and this is a name for it, kept because
 /// the swim and the instrument that audits it must normalise by the same
-/// length: a second implementation would be a second answer, and this file
-/// carried one for exactly as long as it took to notice (#261).
+/// length: a second implementation would be a second answer.
 #[must_use]
 pub fn length_is(rig: &Rig) -> f32 {
     rig.extent()

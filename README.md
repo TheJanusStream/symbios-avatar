@@ -5,9 +5,10 @@ mesh and no third-party model licences. The engine-agnostic half of the pair;
 [`bevy_symbios_avatar`] binds it to Bevy.
 
 One asset is shipped, and it is motion rather than geometry: `assets/clips.bin`
-holds twelve animations retargeted from a CC0 reference library. Every body is
-still generated. See [`docs/clips.md`](docs/clips.md) for which clip came from
-where.
+holds twelve animations retargeted from a CC0 reference library. It is a
+development reference rather than a runtime motion source — runtime motion is
+procedural — and it is behind an off-by-default feature. Every body is
+generated. See [`docs/clips.md`](docs/clips.md) for which clip came from where.
 
 ```text
 Record   ──►  Skeleton  ──►  control cage  ──►  Catmull-Clark  ──►  render mesh
@@ -26,6 +27,7 @@ record.reroll(42);
 let avatar = Avatar::build(&record).expect("a default body builds");
 println!("{} tris across {} meshes", avatar.budget.tris, avatar.budget.meshes);
 
+// Merged skinned meshes plus the eye globes, ready to hand to a renderer.
 for drawn in avatar.drawn(0.0) {
     assert_eq!(drawn.mesh.skin.len(), drawn.mesh.vertex_count());
 }
@@ -39,13 +41,13 @@ the examples consume.
 
 - **A body is a record, not a mesh.** Nine plan axes for a biped (eight for a
   quadruped) plus four composites — femininity, mass, body fat, age — with eyes,
-  face, skin, hair and outfit in blocks of their own, under two kilobytes of
+  face, skin, hair and outfit in blocks of their own, about two kilobytes of
   JSON all told. Geometry is derived on demand, so the avatar belongs to the
   identity rather than to whichever app rendered it.
 - **Every point of the space is a body.** Procedural character systems classically
   fail when sliders reach shapes that cannot be built. The constraints live in the
-  body plans, and a sweep over 3,000 random bodies plus every axis extreme holds
-  them honest.
+  body plans, and a sweep over 3,000 random bodies — 1,500 per plan — plus every
+  axis extreme holds them honest.
 - **Humanoids and creatures on one engine.** Only the graph differs; a pelvis
   carrying two legs and a quadruped girdle carrying four are the same code path.
 - **Deterministic.** The same record always yields the same vertex layout, so
@@ -87,8 +89,9 @@ reshuffles another. A look also renders as a short share code:
 ```
 
 Codes are deliberately lossy — quantised to a byte per axis (a length gets
-two), checksummed, and written in Crockford base32 so `I`/`L`/`O` survive being
-copied by hand. The record remains the source of truth.
+two), checksummed, and written in Crockford base32, whose alphabet drops
+`I`, `L`, `O` and `U` so a code survives being read aloud or copied by hand.
+The record remains the source of truth.
 
 ## How joints work
 
@@ -134,8 +137,8 @@ glTF export.
 
 ## Rigging and dressing
 
-A meshed body is also a posable one. [`Rig`] roots the capsule graph into a
-hierarchy ordered parent-before-child — the order glTF and VRM want joints
+A meshed body is also a posable one. `Rig` roots the capsule graph into a
+hierarchy ordered parent-before-child — the order glTF wants joints
 written in — and `rig::skin::bind` attaches a mesh to it. Weights are derived
 analytically rather than solved for, because the same code generated both the
 skeleton and the surface, then smoothed across the surface so a torso does not
@@ -147,7 +150,7 @@ lets the rest of the system address a body without knowing which plan built it:
 ```rust
 use symbios_avatar::{AvatarRecord, Landmark, Limb, Rig, Zone};
 
-let rig = Rig::from_skeleton(&AvatarRecord::default().skeleton())?;
+let rig = Rig::from_skeleton(&AvatarRecord::default().skeleton()).expect("a default body rigs");
 
 // Semantic queries instead of bone names — the same call works on a quadruped.
 // A hind extremity is a graph of its own — heel, the stub that closes it, ball
@@ -162,7 +165,6 @@ let shoulders = marks.span(
     Landmark::LimbRoot(Limb::ForeLeft),
     Landmark::LimbRoot(Limb::ForeRight),
 );
-# Ok::<(), symbios_avatar::RigError>(())
 ```
 
 Garments declare the zones they cover as a `ZoneSet`, and the body suppresses
@@ -202,19 +204,23 @@ tractable — a freckle becomes arithmetic on a position rather than a search
 through geometry.
 
 ```rust
-use symbios_avatar::{AvatarRecord, texture};
-# use symbios_avatar::{BODY_SUBDIVISIONS, CageConfig, Rig, SkinConfig, UvConfig, build_cage, catmull_clark, rig::skin, unwrap};
+use symbios_avatar::{
+    AvatarRecord, BODY_SUBDIVISIONS, CageConfig, Rig, SkinConfig, UvConfig,
+    build_cage, catmull_clark, rig::skin, texture, unwrap,
+};
 
+// The stages `Avatar::build` runs, spelled out.
 let record = AvatarRecord::default();
-# let skeleton = record.skeleton();
-# let mesh = catmull_clark(&build_cage(&skeleton, &CageConfig::default())?, BODY_SUBDIVISIONS);
-# let rig = Rig::from_skeleton(&skeleton)?;
-# let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);
-# let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
+let skeleton = record.skeleton();
+let cage = build_cage(&skeleton, &CageConfig::default()).expect("a default body meshes");
+let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
+let rig = Rig::from_skeleton(&skeleton).expect("a meshable skeleton rigs");
+let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);
+let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
+
 let geometry = texture::bake_geometry(&mesh, &uv, 1024);
 let condition = texture::Condition::of(&record.composites);
 let map = texture::paint_skin(&geometry, &rig, &record.skin, &condition, None);
-# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 The output is a `symbios_texture::generator::TextureMap` — the same container
@@ -264,7 +270,7 @@ survives being replayed on a body that did not exist when it was written.
 ```rust
 use symbios_avatar::{AvatarRecord, Ground, Rig, Vec3, anim::{Pose, plant_feet}, FootingConfig};
 
-let rig = Rig::from_skeleton(&AvatarRecord::default().skeleton())?;
+let rig = Rig::from_skeleton(&AvatarRecord::default().skeleton()).expect("a default body rigs");
 let mut pose = Pose::rest(&rig);
 
 // Stand the body on whatever is beneath it. The closure is the only thing that
@@ -277,7 +283,6 @@ let footing = plant_feet(
     &FootingConfig::default(),
 );
 assert!(footing.is_settled());
-# Ok::<(), symbios_avatar::RigError>(())
 ```
 
 - `anim::ik::two_bone` solves a limb analytically; `anim::ik::fabrik` iterates a
@@ -296,7 +301,6 @@ assert!(footing.is_settled());
   cycles can do. Stride length scales with the legs' own reach, and the body
   sinks exactly as far as it must for its feet to stay within it — a leg standing
   straight has no slack to step with.
-
 - `anim::clip` describes authored motion the same way: a **semantic query**
   naming which parts it moves — every ground contact, every grasper — and goals
   measured in fractions of the limb's own reach. "Raise both graspers" waves a
@@ -313,17 +317,32 @@ without changing any of this.
 cargo run --example dump -- --walk 12   # a walk cycle over a slope, frame by frame
 ```
 
+## Cargo features
+
+Both are off by default:
+
+- **`builtin-clips`** embeds `assets/clips.bin` (~200 KiB) and turns on
+  `ClipLibrary::builtin`. Meant for development: the baked set is a comparison
+  reference rather than a runtime motion source, and a consumer that only
+  builds bodies should not carry it — least of all a wasm one. A consumer that
+  wants the clips at run time can fetch the file and read it with
+  `ClipLibrary::read` without this feature.
+- **`serde-avatar`** makes a built `Avatar` serialisable, so one can cross a
+  process or worker boundary. A round-tripped avatar is drawable, not
+  rebuildable: it keeps its measured surface, eyes and handedness, and drops
+  the intermediates the build was made from.
+
 ## Status
 
 Early, but a body can now be described, built, given a face, eyes and hair,
 dressed in its own skin and clothes, rigged, and walked. Records, body plans,
 the mesher, rigging, skinning, zones, landmarks, UV charting, procedural skin,
-hair, tight garments, and motion (pose, IK, foot placement, inertialization,
-gait, goal-space clips, baked-clip playback, blink, gaze) are in place and
-tested.
+hair, tight garments, the bone-driven face layer (expressions, blink, talk and
+visemes), and motion (pose, IK, foot placement, inertialization, gait,
+goal-space clips, baked-clip playback, gaze) are in place and tested.
 
-Still ahead: a GLB writer (the glTF module only *reads*, for clip import), the
-bone-driven face rig, loose garments and accessories, and creature variety —
+Still ahead: a GLB writer (the glTF module only *reads*, for clip import),
+loose garments and accessories, and creature variety —
 see [`docs/plan.md`](docs/plan.md). [`docs/budget.md`](docs/budget.md) is the
 triangle economy and how to measure a proposal against it;
 [`docs/instruments.md`](docs/instruments.md) is the measurement fleet and the

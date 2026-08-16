@@ -44,6 +44,20 @@
 //! # Ok::<(), symbios_avatar::CageError>(())
 //! ```
 //!
+//! ## Cargo features
+//!
+//! Both are off by default:
+//!
+//! * **`builtin-clips`** embeds the baked reference clips (`assets/clips.bin`,
+//!   ~200 KiB) and turns on `ClipLibrary::builtin`. A development aid: the
+//!   baked set is a comparison reference rather than a runtime motion source,
+//!   and a consumer that would rather fetch the file at run time reads it with
+//!   [`ClipLibrary::read`] and pays nothing here.
+//! * **`serde-avatar`** makes a built [`Avatar`] serialisable, so one can
+//!   cross a process or worker boundary. A round-tripped avatar is drawable,
+//!   not rebuildable: it keeps its measured surface, its eyes and its
+//!   handedness, and drops the intermediates the build was made from.
+//!
 //! ## Design notes
 //!
 //! * **Joints are the hard part.** Where three or more limbs meet, the surface
@@ -65,7 +79,7 @@
 //! This crate ships no data, only constants: profile tables, facial canons and
 //! body coefficients, several hundred numbers that together decide what a body
 //! looks like. Each is tagged in its own docstring with one of four
-//! provenances, and the tags are worth reading before changing anything (#52).
+//! provenances, and the tags are worth reading before changing anything.
 //!
 //! * **Looked up** — a published proportion, with the source named. There are
 //!   few of these and they are the only numbers that mean anything outside this
@@ -73,18 +87,17 @@
 //! * **Derived** — computed from another constant, with the arithmetic written
 //!   out so it can be re-run when what it depends on moves. A derived constant
 //!   that does not show its working is indistinguishable from a guess.
-//! * **Tuned by render** — chosen by building the body and looking at it, named
-//!   with the issue that tuned it. This is clean provenance, not an admission:
-//!   a number honestly labelled this way is one nobody will later mistake for a
-//!   measurement.
+//! * **Tuned by render** — chosen by building the body and looking at it.
+//!   This is clean provenance, not an admission: a number honestly labelled
+//!   this way is one nobody will later mistake for a measurement.
 //! * **Unsourced** — carried from an early implementation and never checked
 //!   against anything. Most of [`HumanoidParams`] is in this state.
 //!
 //! **The failure this exists to prevent is two wrong numbers that agree.** The
-//! face's `FIFTH` was calibrated against a face the same file recorded as 16%
-//! too wide, with `PUPIL = 1.0` silently absorbing the error; both read as
+//! face's `FIFTH` was once calibrated against a face the same file recorded as
+//! 16% too wide, with `PUPIL = 1.0` silently absorbing the error; both read as
 //! correct and their agreement was a coincidence, and it took a test failure to
-//! find (#79). Nothing about either number said which had been measured and
+//! find. Nothing about either number said which had been measured and
 //! which had been fitted to it. Neither is *licence* provenance, which is the
 //! other reason this matters: a crate that claims to ship no encumbered data
 //! should be able to say where every number in it came from.
@@ -159,10 +172,9 @@ pub use symbios_texture::generator::TextureMap;
 /// How many extra times the front of the head is split.
 ///
 /// Not a subdivision level for the body: the whole body at one more level costs
-/// four times the triangles everywhere, most of them on a shin. Two extra splits
-/// of the face alone take its mean edge from 24 mm to about 6 mm, which is what
-/// a 10 mm brow ridge needs to exist at all (#59), and leave the rest of the
-/// body exactly as it was.
+/// four times the triangles everywhere, most of them on a shin. Refining the
+/// face alone buys the millimetre cells the features need and leaves the rest
+/// of the body exactly as it was.
 ///
 /// Measured across the four bands the features occupy — brow, eye, nose, mouth —
 /// as the median edge of a face on the front of the head:
@@ -172,102 +184,63 @@ pub use symbios_texture::generator::TextureMap;
 ///  1 pass     13.2  14.1  14.1  13.7 mm
 ///  2 passes    6.6   7.1   7.2   7.3 mm
 ///  3 passes    3.3   3.6   3.6   3.6 mm
-///  4 passes    3.3   3.6   3.6   1.8 mm   <- here
+///  4 passes    3.3   3.6   3.6   1.8 mm
 /// ```
 ///
-/// The fourth pass covers the mouth band only — see [`face::skull`]'s
-/// `FACE_PASSES` — which is why only the last column halves.
+/// Later passes cover only the band whose feature needs them — see
+/// [`face::skull`]'s `FACE_PASSES` — which is why only the last column halves
+/// at the fourth. Each pass is there because a feature is measured to need it:
 ///
-/// **The third pass is what makes a nose a nose.** Carved into 7 mm cells
-/// (#59), the nose was a soft mound with no bridge, no tip and no wing — a
-/// nostril crease is about 5 mm wide and simply cannot exist there. At 3.6 mm
-/// the same field, unchanged, comes out with all three. The alternative was
-/// exaggerating the amplitude until the feature read through a coarse surface,
-/// and the owner's stylisation call rules that out by name.
-///
-/// **The fourth pass is what makes a mouth a mouth**, for the same reason and
-/// with the arithmetic stated in advance this time. At 3.6 mm every term in the
-/// lip field was about one cell wide — the lip line's groove 0.99, the sulcus
-/// 1.29, the lobes 1.67 and 1.75 — and a Gaussian one cell wide renders as a
-/// single displaced row of vertices, which is a bar. The prediction was that
-/// halving the cell would remove the bars and keep the lips; it did (#85).
-///
-/// **The fifth pass is the fourth's again, and it is here because #78 took the
-/// fourth one's margin away.** The cage lays one ring per node, so lengthening
-/// the head below its joint from 0.69 radii to 1.19 spread the rings under the
-/// face by the same 1.7 and the mouth's cells grew with them. Measured, the
-/// narrowest lip term went from 2.0–3.5 cells to 1.43–1.76 — back under the 1.5
-/// a Gaussian needs to survive sampling — and the bars came back on screen,
-/// plainly, in the same place they were in #85. The mouth field was rebased to
-/// hold its millimetres, so the terms did not shrink; the surface under them
-/// coarsened.
-///
-/// **The sixth and seventh are the JAW FLANK, and they are the cheapest passes
-/// here by an order of magnitude.** Every pass above reaches from dead ahead
-/// round to a cosine, so widening one to take in the angle of the jaw pays for
-/// another refinement of a nose as well. Past about 57° from dead ahead the
-/// lower face was still at the base subdivision — 24 mm cells against 1.8 mm on
-/// the front — and half the mandible's border lives out there, so its 5 mm knee
-/// was a fifth of a cell. Giving a pass a near AND a far cosine lets these two
-/// take the strip alone: they cost 652 triangles between them and quarter the
-/// cells they cover (#80).
-///
-/// **The ninth is the NOSE'S DORSUM, and it is the first one aimed rather than
-/// tuned** (#181, #185). The bridge was the last part of the face still at the
-/// third pass's cell — 3.42 mm across on the default body against 0.76 under the
-/// nose — because every pass after the third stops below the nose base, and a
-/// nose sampled once between its ridge and its shoulder is a tent with a crease
-/// down it. It reaches from the nose base pair's own ceiling to the root of the
-/// nose, at a cosine of 0.97 which is twice the reach the feature needs, and
-/// costs 382 triangles on the default body and 548 at the dearest corner of
-/// `tests/budget.rs`'s sweep. The two costed attempts before it spent 6,196 and
-/// 2,456 on a forehead; what changed is [`face::band_at`] and an instrument that
-/// reports the two directions of a 2:1 face separately.
-///
-/// **The tenth is the FRONT of the mandible's border, and it is the first pass
-/// bought by the owner on an A/B sheet against its own arithmetic** (#196).
-/// The cosine border (#195) crosses a strip between 33° and 57° that no other
-/// band covers, and the crease's knee scalloped at cell pitch there. It is the
-/// dearest pass in the table — 1,340 on the default body, 2,848 at the dearest
-/// sweep corner — and `tests/budget.rs`'s ratchet moved to carry it. The
-/// 30,000 target test was ignored until the cost was won back elsewhere; the
-/// hair makeover won it back, and the target test runs and passes again.
-///
-/// It is affordable because the same stretch made the face refinement CHEAPER:
-/// the bands are fixed heights in head radii, so a taller head puts less of
-/// itself inside them. The body went 23,182 triangles to 20,668 on the stretch
-/// alone, and this spends part of that back.
-///
-/// The three passes cost about 3,500 triangles and the fourth about 2,150,
-/// measured on the default body before #78. The ceiling and every seed still
-/// pass; what it moves is the balance, and that is recorded in
-/// `tests/budget.rs`.
-///
-/// It sat at one for a long time for a reason that was nothing to do with cost:
-/// the second pass moved the profile the ears are placed from, and one seed's
-/// ear fell to 18% visible against a 25% floor. That was a defect in the
-/// measurement rather than in the refinement, and it is fixed (#67).
+/// * **The third pass is what makes a nose a nose.** A nostril crease is about
+///   5 mm wide and simply cannot exist in 7 mm cells; at 3.6 mm the same
+///   relief field, unchanged, comes out with a bridge, a tip and a wing. The
+///   alternative was exaggerating the amplitude until the feature read through
+///   a coarse surface, and the stylisation target rules that out.
+/// * **The fourth and fifth are what make a mouth a mouth.** The narrow terms
+///   of the lip field — the lip line's groove, the sulcus, the lobes — sit
+///   between one and two cells at 3.6 mm, and a Gaussian about one cell wide
+///   renders as a single displaced row of vertices, which is a bar. The mouth
+///   band needs its cells under half the narrowest term, and the cage's ring
+///   spacing under the face (set by the head's length below its joint) is what
+///   these two passes are correcting for.
+/// * **The sixth and seventh are the jaw flank, and they are the cheapest
+///   passes here by an order of magnitude.** Every pass above reaches from
+///   dead ahead round to a cosine, so widening one to take in the angle of the
+///   jaw would pay for another refinement of a nose as well. Past about 57°
+///   from dead ahead the lower face would otherwise stay at the base
+///   subdivision — 24 mm cells against 1.8 mm on the front — and half the
+///   mandible's border lives out there, where its 5 mm knee would be a fifth
+///   of a cell. Giving a pass a near AND a far cosine lets these two take the
+///   strip alone: they cost 652 triangles between them and quarter the cells
+///   they cover.
+/// * **The ninth is the nose's dorsum.** Every pass after the third stops
+///   below the nose base, and a nose sampled once between its ridge and its
+///   shoulder is a tent with a crease down it. This one reaches from the nose
+///   base pair's own ceiling to the root of the nose, at a cosine of 0.97 —
+///   twice the reach the feature needs — and costs 382 triangles on the
+///   default body and 548 at the dearest corner of `tests/budget.rs`'s sweep.
+/// * **The tenth is the front of the mandible's border**, the strip between
+///   33° and 57° that no other band covers, where the crease's knee otherwise
+///   scallops at cell pitch. It was judged worth its price on an A/B render
+///   sheet, and it is the dearest pass in the table — 1,340 on the default
+///   body, 2,848 at the dearest sweep corner — which `tests/budget.rs`'s
+///   ratchet carries.
 const FACE_REFINEMENT: usize = 10;
 
 /// How many Catmull-Clark passes a body's cage gets.
 ///
-/// A constant rather than the twenty-odd literals it replaces. The level was
-/// written out at every call site, including a dozen test helpers and two
-/// examples that each had to be right independently. Two of them were already
-/// wrong in the way that matters: `the_chin_landmark_lands_on_the_chin_of_the_shipped_face`
-/// and its neighbour built at a level of their own, so they measured a head
-/// nobody renders and would have gone on passing if the shipped level moved
-/// underneath them. **Anything measuring the body's surface has to build it the
-/// way the body ships.**
+/// One constant rather than a literal at every call site, because **anything
+/// measuring the body's surface has to build it the way the body ships**: a
+/// test that builds at a level of its own measures a head nobody renders, and
+/// goes on passing when the shipped level moves underneath it.
 ///
-/// The value is one because the cage's rings are eight-pointed. Ring size
-/// governs how far a control cage sits outside the surface it approximates,
-/// and #107 widened the ring from four points to eight in the same change that
-/// dropped this from two — an eight-point cage sits close enough to its limit
-/// surface that a second pass was a smoothing of something already smooth.
-/// Measured on the default body when the pair moved: 24,776 triangles at four
+/// The value is one because the cage's rings are eight-pointed, and the pair
+/// moves together or not at all. Ring size governs how far a control cage sits
+/// outside the surface it approximates, and an eight-point cage sits close
+/// enough to its limit surface that a second pass is a smoothing of something
+/// already smooth. Measured on the default body: 24,776 triangles at four
 /// points and two passes, 43,196 at eight and two, and **15,862 at eight and
-/// one**. The pair moves together or not at all.
+/// one**.
 pub const BODY_SUBDIVISIONS: usize = 1;
 
 /// Builds a body's surface from its skeleton, shaped and ready to bind.

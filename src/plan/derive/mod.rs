@@ -13,7 +13,7 @@
 //! survivable while an axis is one-to-one with a body part, and it stops being
 //! survivable the moment an axis is a *composite* — a body-fat fraction that
 //! moves the waist one way, the thigh another and the wrist not at all, or a
-//! frame axis that has to reach the shoulders and the hips together (#161).
+//! frame axis that has to reach the shoulders and the hips together.
 //! Adding one of those to the old arrangement meant an edit at every site and a
 //! hope that none had been missed.
 //!
@@ -37,14 +37,14 @@
 //! default bodies, the corners of the humanoid space and the first rolls of
 //! each. Moving arithmetic between these files is only correct when those
 //! fingerprints do not move; changing it on purpose means judging the new
-//! bodies by render and re-basing them (#163).
+//! bodies by render and re-basing them.
 //!
 //! ## Provenance
 //!
 //! Unchanged, and it travelled with the arithmetic: every coefficient carries
 //! the note it carried in its plan, including the ones whose note says they are
-//! unsourced guesses from the first commit. See the crate docs (#52) for what
-//! the four provenance tags mean.
+//! unsourced guesses from the first commit. See the crate docs for what the
+//! four provenance tags mean.
 
 pub(crate) mod humanoid;
 pub(super) mod quadruped;

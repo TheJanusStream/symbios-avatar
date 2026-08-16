@@ -11,22 +11,22 @@
 //! applied on top. Neither tier replaces the other — the composite carries the
 //! intent, which is what lets the formulas improve later without a stored
 //! avatar losing what it meant, and the offset carries the choice a creator
-//! made that no formula predicted (#161).
+//! made that no formula predicted.
 //!
 //! ## Why these live on the record rather than on a body plan
 //!
 //! Every other parameter struct sits with its one consumer — `SkinParams` in
 //! `texture`, `HairRecord` in `hair`, `HumanoidParams` in `plan`. These have
-//! three: the cage derives from them, the skull will (#166), and the skin will
-//! (#165 wants muscle definition at low body fat, #167 wants creases with age).
+//! three: the cage derives from them, the skull reads them, and so does the
+//! skin — muscle definition at low body fat, creases with age.
 //! Putting them inside an [`super::Archetype`] variant would make every one of
 //! those consumers match on the variant to reach a number that has nothing to
 //! do with which body plan is in use.
 //!
 //! ## Physical axes are not stretched, and that is a departure
 //!
-//! Every *shape* axis in this crate carries the exploration envelope of #160 —
-//! its conservative range tripled about its own default — because going past
+//! Every *shape* axis in this crate carries the exploration envelope — its
+//! conservative range tripled about its own default — because going past
 //! the population is a stylistic choice a creator is allowed to make. A giant
 //! is a legible body; `height` is stretched to 3.1 m for exactly that reason.
 //!
@@ -54,7 +54,7 @@ use super::{Category, Rolls, explore_range, sanitize_axis};
 /// runs about 3% male against about 12% female, and the two store what they
 /// carry in different places — abdominal against hip and thigh. Both facts are
 /// the formulas' business: `femininity` drives the distribution that `body_fat`
-/// fills (#164), which is the first place in this crate where two composites
+/// fills, which is the first place in this crate where two composites
 /// have to be read together.
 ///
 /// Provenance: **looked up** — the visual bands of body composition
@@ -67,8 +67,7 @@ pub const BODY_FAT_RANGE: (f32, f32) = (0.03, 0.60);
 ///
 /// A middling adult, between the male and female midpoints of the population.
 /// **This is the identity anchor**: at this value, with every other composite
-/// neutral, the formulas must reproduce the body the plan built before
-/// composites existed (#163).
+/// neutral, the formulas must reproduce the plan's own base body unchanged.
 pub const DEFAULT_BODY_FAT: f32 = 0.22;
 
 /// Youngest and oldest a body may be, in whole years.
@@ -89,12 +88,11 @@ pub const DEFAULT_AGE: u32 = 28;
 /// a twenty-eight-year-old differ in almost nothing this crate can draw: peak
 /// bone mass, peak muscle mass and peak stature are all reached inside that
 /// band, so the honest formula over it is the identity. That also happens to be
-/// what the epic's anchor needs — [`DEFAULT_AGE`] is under this pivot, so a
-/// body no one has aged is bit-identical to the body the plan built before this
-/// axis existed (#161, #167).
+/// what the identity anchor needs — [`DEFAULT_AGE`] is under this pivot, so a
+/// body no one has aged is bit-identical to the plan's own base body.
 pub const AGE_PIVOT: u32 = 30;
 
-/// The exploration envelope of the two signed composites (#160).
+/// The exploration envelope of the two signed composites.
 fn signed_envelope() -> (f32, f32) {
     explore_range(0.0, (-1.0, 1.0))
 }
@@ -114,12 +112,12 @@ pub struct Composites {
     /// **Zero is the midpoint of the two measured references, which is the body
     /// this plan already builds.** `plan::derive::humanoid`'s arm segments say
     /// so in as many words: the upper arm is the midpoint of a male 0.162 and a
-    /// female 0.129 of stature, "the honest neutral until the frame axis (#100)
+    /// female 0.129 of stature, "the honest neutral until the frame axis
     /// carries that difference". This is that axis, and that one coefficient is
     /// where most of its travel will be.
     ///
-    /// One axis for the whole body, read by the frame (#100), by the fat
-    /// distribution (#164) and by the skull (#166) — because a body whose
+    /// One axis for the whole body, read by the frame, by the fat
+    /// distribution and by the skull — because a body whose
     /// shoulders and whose jaw disagree about this reads as two people.
     #[serde(with = "super::scaled")]
     pub femininity: f32,
@@ -131,7 +129,7 @@ pub struct Composites {
     /// all in the bony ones, and the head hardly moves.
     ///
     /// Retires `build` and `muscle`, which said the same thing in two axes that
-    /// could contradict each other (#164).
+    /// could contradict each other.
     #[serde(with = "super::scaled")]
     pub mass: f32,
     /// What share of the body is fat, as a fraction within
@@ -141,19 +139,17 @@ pub struct Composites {
     /// written against the thresholds the eye actually reads — definition and
     /// vascularity appear at the lean end, softening and a filled waist at the
     /// heavy end — and so the numbers in them can be sourced rather than tuned.
-    /// It reaches the skin as well as the shape (#165).
+    /// It reaches the skin as well as the shape.
     #[serde(with = "super::scaled")]
     pub body_fat: f32,
     /// How old the body is, in whole years within [`AGE_RANGE`].
     ///
     /// **Whole years, and NOT through the thousandths encoder that every other
-    /// axis uses, because that encoder cannot carry them.**
-    /// `plan::scaled::serialize` clamps to `i16` before it writes, so an axis
-    /// whose thousandths pass 32767 — that is, whose value passes 32.767 — is
-    /// silently truncated. Every axis in the crate is inside `±3` or a stature
-    /// in metres, so nothing had ever met that ceiling; an age in years walks
-    /// straight into it and would have stored a 40-year-old as 32.767. A count
-    /// is the honest representation anyway: nothing wants a fractional year.
+    /// axis uses.** A count is the honest representation — nothing wants a
+    /// fractional year — and an age in years is the one axis whose natural
+    /// unit is large: forty years is 40000 thousandths, the exact shape a
+    /// narrowing writer would truncate in silence. See
+    /// `plan::scaled::serialize` for the ceiling that encoder refuses to have.
     #[serde(
         deserialize_with = "super::scaled::deserialize_count",
         serialize_with = "super::scaled::serialize_count"
@@ -173,7 +169,7 @@ impl Default for Composites {
 }
 
 impl Composites {
-    /// The envelope `femininity` and `mass` clamp to (#160).
+    /// The envelope `femininity` and `mass` clamp to.
     ///
     /// Public so an editor's slider and the clamp cannot disagree about where
     /// the axis ends.
@@ -207,7 +203,7 @@ impl Composites {
     ///    80      1.00       5.0 cm      5.0
     /// ```
     ///
-    /// Provenance: **derived from a looked-up curve** (#167) — Sorkin, Muller
+    /// Provenance: **derived from a looked-up curve** — Sorkin, Muller
     /// and Andres, *Longitudinal change in height of men and women*, Am J
     /// Epidemiol 1999, whose cumulative losses are the right-hand column.
     #[must_use]
@@ -236,10 +232,10 @@ impl Composites {
     /// Mass and body fat are what [`Category::Build`] has always meant and the
     /// frame axis is what [`Category::Frame`] has always meant, so those two
     /// join the group they belong to. Age has its own bit, because it belongs
-    /// to no other group and reaches all of them (#53).
+    /// to no other group and reaches all of them.
     ///
     /// **These are drawn before anything else on the record, and two of them
-    /// read the ones drawn first** (#169). `AvatarRecord::reroll` calls this for
+    /// read the ones drawn first.** `AvatarRecord::reroll` calls this for
     /// `Frame`, then `Age`, then `Build`, in that order and not in
     /// `Category::ALL`'s, because [`Self::body_fat`]'s draw reads both of the
     /// first two. A locked category is skipped and its STORED value is what the

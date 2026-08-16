@@ -1,15 +1,15 @@
 //! The proportion canon, measured off the head in hand.
 //!
-//! Every feature on a face is placed as a fraction of something, and until now
-//! that something was **one number doing three jobs**: `eyes.left.radius`, which
-//! was simultaneously the anatomical eyeball, the ruler widths were counted in
-//! and the ruler heights were counted in. It was keyed to the head's *node*
+//! Every feature on a face is placed as a fraction of something, and that
+//! something must never be **one number doing three jobs**: an eye radius that
+//! is simultaneously the anatomical eyeball, the ruler widths are counted in
+//! and the ruler heights are counted in. Keyed to the head's *node*
 //! radius, which the plan supplies and the built surface undershoots by about a
-//! third — by a different third on every body. Measured across seventeen bodies
-//! the globe came out 1.9 to 2.2 times life on every one of them, and the ratio
-//! of that ruler to the face it was ruling spanned 0.249 to 0.458, an 84%
-//! spread. A coefficient fitted on one body was most of a half out on another,
-//! which is why three rounds of tuning the face looked random (#77).
+//! third — by a different third on every body — such a ruler was measured
+//! across seventeen bodies: the globe came out 1.9 to 2.2 times life on every
+//! one of them, and the ratio of ruler to the face it was ruling spanned 0.249
+//! to 0.458, an 84% spread. A coefficient fitted on one body is most of a half
+//! out on another, which is why tuning a face against it looks random.
 //!
 //! So the ruler is split from the eyeball, and then split again, because a face
 //! has two independent extents and neither predicts the other:
@@ -38,14 +38,14 @@ use super::skull::Skull;
 ///
 /// Head-local metres throughout, like everything else that sits on a head.
 ///
-/// **This is also the cycle break.** [`super::relief::carve`] used to take an
+/// **This is also the cycle break.** Were [`super::relief::carve`] to take an
 /// `Eyes` and read three numbers out of it — the eye line, how far apart the
-/// eyes are, and the ruler — which meant a face could not be carved until the
+/// eyes are, and the ruler — a face could not be carved until the
 /// eyes had been placed, and the eyes could not be placed against the face they
 /// belonged in. None of those three needs a globe to exist; all three are
-/// properties of the measured skull. Moving them here deletes the edge rather
+/// properties of the measured skull. Holding them here deletes the edge rather
 /// than ordering around it, and the eye is seated afterwards, against the
-/// orbit-carved surface it will be rendered against (#76).
+/// orbit-carved surface it will be rendered against.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Canon {
     /// The head joint everything on the face hangs from.
@@ -64,41 +64,36 @@ impl Canon {
     /// How far above the head joint the eye line sits, in node radii.
     ///
     /// The one landmark still read off the plan rather than the surface, and
-    /// deliberately: it was measured against the head's own height and found
-    /// right (#73), and moving it moves every feature on the face. What the
-    /// vertical frame should be is #78's question, not this one's.
-    /// **Checked at last, and the answer is that it cannot be checked from
-    /// here** (#79). The docstring below asked for a height pass to settle this.
-    /// One happened — the head went from 161 mm crown to chin to 201.8 — and it
-    /// settles less than it looks like it does.
+    /// deliberately: moving it moves every feature on the face.
     ///
+    /// **It cannot be checked from here.**
     /// Measured up from the menton as a fraction of head height, this constant
-    /// now puts the pupil line at 0.500 against #73's Farkas 0.522, where before
-    /// the pass it read 0.486. Closer, and both inside 5%. But that reading is
+    /// puts the pupil line at 0.500 against Farkas's 0.522, both inside 5%.
+    /// But that reading is
     /// NOT independent of `cranium:face`: `(crown − level) / (level − chin) = 1`
     /// and `level` halving the head are the same sentence written twice, and
-    /// #79 tuned the head until the first was true. So the agreement is
-    /// consistency, not confirmation, and a pass that moved the crown could
-    /// never have been the thing that tested this.
+    /// the head was tuned until the first was true. So the agreement is
+    /// consistency, not confirmation, and no pass that moves the crown can
+    /// ever be the thing that tests this.
     ///
-    /// What the exercise DID turn up is that the two references disagree, and
-    /// nobody had put them side by side. A pupil line at 0.522 of head height
+    /// The two references themselves disagree, put side by side.
+    /// A pupil line at 0.522 of head height
     /// above the menton is a cranium:face of 0.478/0.522 = **0.916**, not the
-    /// 1.00 this crate has called life's since #78. Read the other way round —
+    /// 1.00 this crate calls life's. Read the other way round —
     /// 0.522 measured DOWN from the vertex — it is 1.092. The built head sits at
     /// 1.00, almost exactly between them, which is a defensible place to be and
     /// is not the same as being right. Settling it means resolving which end
     /// Farkas measured from, and that is a source question rather than a
     /// geometry one.
     /// Provenance: **unsourced**, and it is the one constant on this face
-    /// whose supporting measurement was later withdrawn. #73 recorded the eye
-    /// at 0.520 of head height against a Farkas 0.522 and called the vertical
-    /// settled; #78 could not reproduce 0.520 against either candidate
+    /// whose supporting measurement was later withdrawn. An eye once recorded
+    /// at 0.520 of head height against a Farkas 0.522 could not be reproduced
+    /// against either candidate
     /// denominator on seventeen bodies — chin-to-crown gives 0.400, throat-to-
     /// crown 0.478 — so whatever surface that check measured, it was neither.
-    /// The value has not moved because moving it moves every feature, and it
+    /// The value stays because moving it moves every feature, and it
     /// should still be read as untested: see the note above for why a taller
-    /// head did not test it.
+    /// head cannot test it.
     const EYE_LINE: f32 = 0.05;
 
     /// A face is five eye-widths across, so a half-face is two and a half and
@@ -107,42 +102,37 @@ impl Canon {
     /// The oldest measured thing in this file — the canon of fifths — and it
     /// falls straight out of the measured half-width, which is why the ruler
     /// is derived here rather than guessed. On a default body the half-width
-    /// was 79.6 mm when this was written, so the unit was 31.8 mm and a face
-    /// 159 mm across, against a measured human bizygomatic 137 and eu-eu 151.
-    /// #79 narrowed the head; the same half-width is 69.0 mm now and the face
-    /// 138, which is what a bizygomatic is.
+    /// is 69.0 mm and the face 138 across, which is what a bizygomatic is
+    /// (measured human bizygomatic 137, eu-eu 151).
     /// Provenance: **looked up** — the canon of fifths, the oldest measured
     /// thing in this file. **And it is the worked example the whole provenance
-    /// exercise exists for** (#52): it was calibrated against a half-width the
-    /// same docstring recorded as 159 mm on a face whose bizygomatic should be
-    /// 137, so the canon was right and the surface it was applied to was 16%
-    /// too wide. Nothing said which of the two had been measured. See
-    /// [`Canon::PUPIL`] for the number that was absorbing the error.
+    /// exercise exists for**: a right canon applied to a face 16% wider than
+    /// its bizygomatic yields wrong features with nothing in the number to say
+    /// whether the canon or the surface had been measured. See
+    /// [`Canon::PUPIL`] for the number that absorbs exactly that error.
     const FIFTH: f32 = 0.40;
 
     /// Where the same canon puts the eye's centre, in eye-widths from the
     /// midline.
     ///
-    /// **This was 1.0, and it was carrying somebody else's error.** The fifths
+    /// **Not the fifths' own figure, on purpose.** The fifths
     /// canon puts the eye's centre half an inter-eye gap plus half an eye out,
-    /// which is one whole unit — and on a face 159 mm across, one unit gave an
+    /// which is one whole unit — and on a face 159 mm across, one unit gives an
     /// inter-pupillary 63.7 mm against a measured human 63 to 64.7. Both
-    /// numbers were right and the agreement was a coincidence: the face was 16%
-    /// wider than a bizygomatic, and a pupil placed 16% too far in landed in the
-    /// right place anyway. #79 corrected the face, the cancellation went with
-    /// it, and the inter-pupillary fell to 55.2 mm — which the canon's own test
-    /// caught on the first run.
+    /// numbers right, and the agreement a coincidence: such a face is 16%
+    /// wider than a bizygomatic, and a pupil placed 16% too far in lands in
+    /// the right place anyway. Correct the face and the cancellation goes
+    /// with it — the inter-pupillary falls to 55.2 mm, which the canon's own
+    /// test catches on the first run.
     ///
     /// So it is measured against life directly rather than against the fifths:
     /// a bizygomatic 137 mm gives a half-width of 68.5 and a unit of 27.4, and
     /// an inter-pupillary of 63.5 puts each pupil 31.75 mm out, which is 1.16
-    /// units. The old placement, `0.34` of a node radius, gave 90.9 — which
-    /// parked the pupil out on the flank where the surface has already receded,
-    /// and cost 11.5 mm of the 26 mm depth error all by itself.
+    /// units.
     /// Provenance: **derived** — 63.5 mm inter-pupillary over a 27.4 mm unit
     /// from a 137 mm bizygomatic. Derived deliberately against life rather
     /// than against the fifths, because deriving it from the fifths is exactly
-    /// what made the old 1.0 agree with reality by coincidence.
+    /// how a coincidental agreement comes to stand in for a measurement.
     const PUPIL: f32 = 1.16;
 
     /// How far the spacing axis moves the pupils, as a share of the unit.
@@ -180,8 +170,9 @@ impl Canon {
 
     /// A height `fraction` of the way from the eye line down to the chin.
     ///
-    /// One place where that arithmetic lives, because it used to be written out
-    /// at four call sites and one of them counted from the throat instead (#72).
+    /// One place where that arithmetic lives, because four call sites each
+    /// writing it out is how one of them comes to count from the throat
+    /// instead.
     #[must_use]
     pub fn down(&self, fraction: f32) -> f32 {
         self.level - self.frame * fraction
@@ -190,10 +181,10 @@ impl Canon {
     /// Where the base of the nose sits.
     ///
     /// These three exist so that nothing outside this module has to keep its own
-    /// copy of the canon's fractions. `examples/headaudit` did, and went on
-    /// printing the old 0.51, 0.69 and 0.19 after #78 moved them — a measurement
-    /// tool reporting landmarks the crate had stopped using, which is the exact
-    /// failure this crate has now hit six times under different names.
+    /// copy of the canon's fractions. A copy in a measurement tool goes on
+    /// printing the old numbers the day the originals move — a tool reporting
+    /// landmarks the crate has stopped using, which is a failure this crate
+    /// has hit repeatedly under different names.
     #[must_use]
     pub fn nose_base(&self) -> f32 {
         self.down(super::features::NOSE_BASE)
@@ -201,8 +192,8 @@ impl Canon {
 
     /// Where the nose's relief has finished, below its base.
     ///
-    /// **A landmark rather than a constant, because three files were reading
-    /// it** (#182). `relief::nose` runs its ramp from the root to seven
+    /// **A landmark rather than a constant, because three files read
+    /// it.** `relief::nose` runs its ramp from the root to seven
     /// millimetres UNDER the base — a term has to reach zero somewhere — and
     /// `examples/facesection` carried its own copy of that offset to report the
     /// nose's span. Anything measuring the upper lip needs the same number from

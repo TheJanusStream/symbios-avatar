@@ -1,5 +1,8 @@
 # Dossier: rpg.actor & the state of avatars/games/3D on AT Protocol
 
+*A point-in-time research dossier gathered while this crate was being designed. Kept as the record of what was found and why the decisions in [../plan.md](../plan.md) were made — external version numbers, prices and library gaps in it were true when written and are not maintained.*
+
+
 ## 1. rpg.actor — what it is
 
 "RPG Actor Registry — a universal character compendium" at https://rpg.actor. Users log in with any atproto account and store character sheets, pixel-art sprites, and equipment **as records in their own repo**; the registry indexes and displays them; "any ATproto-enabled service can read or write the same data." (https://rpg.actor/dev-guide)

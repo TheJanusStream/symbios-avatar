@@ -1,7 +1,8 @@
 //! Measures the two skeletons against each other, and a retarget against the
 //! motion it came from.
 //!
-//! **The instrument #139 is built before, not after.** Retargeting is a place
+//! **The instrument is built before the retargeter, not after.** Retargeting is
+//! a place
 //! where a wrong result looks exactly like a right one at a glance: a limb that
 //! points the right way with the wrong roll, a foot that lands in the right
 //! place and slides while it is there, a clip that reads fine on the default
@@ -12,8 +13,8 @@
 //! skeletons side by side, ours by zone and ordinal — which is how a [`Slot`]
 //! addresses a joint — and the reference's by its own hierarchy, both at rest.
 //!
-//! Three things were measured off that table before any retargeting was written,
-//! and all three are on #139:
+//! Three things were measured off that table before any retargeting was
+//! written:
 //!
 //! * **Our arms rest forty degrees below horizontal and the reference's rest dead
 //!   level.** An A-pose against a true T-pose, whatever the comment at the arm's
@@ -21,8 +22,8 @@
 //!   delta — cheap, and it carries roll for free — because an absolute pose would
 //!   land forty degrees out.
 //! * **The two rigs put their same-named side on opposite signs of `X`**, and
-//!   both bodies face `+Z`. See #142; the correspondence maps by anatomy rather
-//!   than by name.
+//!   both bodies face `+Z`. The correspondence maps by anatomy rather than by
+//!   name.
 //! * **A clip has to be baked against a built body's rig, not a plan's.** The
 //!   plan gives 33 joints and `Avatar::build` gives 73; the difference is the
 //!   hands and feet, which is where forty of the reference's sixty-six joints

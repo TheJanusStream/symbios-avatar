@@ -41,7 +41,7 @@
 //! one complexion cover an avatar.
 //!
 //! One thing is still degenerate: eyelids. They are built after the atlas is
-//! packed — a blink is a pose on the four lid joints (#118), and the lid
+//! packed — a blink is a pose on the four lid joints, and the lid
 //! surface rides in the skin's own draw — so nothing reserves a region for
 //! them. A lid samples one texel of the face's chart, which at a lid's size is
 //! all it needs.
@@ -148,12 +148,12 @@ pub struct AvatarConfig {
     /// Whether the body wears the outfit its record asks for.
     ///
     /// **The only way to see a body undressed, and it has to be asked for at
-    /// BUILD time** (#117). A dressed body no longer emits the skin under its
+    /// BUILD time.** A dressed body does not emit the skin under its
     /// clothes, so dropping the cloth draw afterwards does not undress it — it
-    /// opens a hole where the clothes were. `examples/render`'s `--bare` did
-    /// exactly that and came back as a torso with its middle missing, which is
-    /// the cost of suppression stated as plainly as it can be: what a garment
-    /// covers stops existing, and only a body built without the garment has it.
+    /// opens a hole where the clothes were, a torso with its middle missing.
+    /// That is the cost of suppression stated as plainly as it can be: what a
+    /// garment covers stops existing, and only a body built without the
+    /// garment has it.
     pub dressed: bool,
 }
 
@@ -216,7 +216,7 @@ pub struct Parts {
     ///
     /// See [`Avatar::build`] for why that is the question asked.
     pub handed: bool,
-    /// The openable mouth's seam and pocket vertices, if one was cut (#154).
+    /// The openable mouth's seam and pocket vertices, if one was cut.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub mouth: Option<face::Mouth>,
 }
@@ -268,8 +268,9 @@ impl Avatar {
     /// what the record calls itself: it is whether the body has a limb it does
     /// not stand on. A quadruped carries its weight on all four, so it has no
     /// hands, and a fringe hanging off a muzzle over a pair of sleeved front legs
-    /// is a costume rather than a creature — creatures get fur, a muzzle and a
-    /// harness of their own, which is WS6. Asking it this way also gets a body
+    /// is a costume rather than a creature — creatures want fur, a muzzle and
+    /// a harness of their own, none of which exist here yet. Asking it this
+    /// way also gets a body
     /// nobody has planned yet right: something with four legs and two arms is
     /// dressed, and a six-legged walker is not.
     ///
@@ -598,9 +599,12 @@ impl Avatar {
         Some(avatar)
     }
 
-    /// Everything to draw, with the eyes at the given closure.
+    /// Everything to draw: the merged skinned meshes and the eye globes.
     ///
-    /// `closure` runs `0` for open to `1` for shut.
+    /// `closure` runs `0` for open to `1` for shut, and is passed through to
+    /// [`Self::eyes_at`] — which ignores it, because a blink is a pose the lid
+    /// joints carry rather than geometry. See that method for why the parameter
+    /// is kept.
     #[must_use]
     pub fn drawn(&self, closure: f32) -> Vec<AvatarMesh> {
         let mut drawn = self.meshes.clone();
@@ -610,10 +614,9 @@ impl Avatar {
 
     /// The eye globes.
     ///
-    /// **The lids are no longer here** (#118). They used to be rebuilt beside
-    /// the globes on every blink, because a lid swings about its eye's pivot and
-    /// no joint drove it; they are now four joints on the rig and part of the
-    /// skin's own draw, so a blink is [`Eyes::blink`] writing a pose and this
+    /// **The lids are not here.** A lid swings about its eye's pivot, but it
+    /// is driven by four lid joints on the rig and rides in the skin's own
+    /// draw, so a blink is [`Eyes::blink`] writing a pose and this
     /// returns the same geometry whatever it is passed.
     ///
     /// `closure` is kept in the signature and ignored, so that a caller which
@@ -663,8 +666,8 @@ impl Avatar {
     ///
     /// The one call an integration needs per frame once the geometry is up.
     ///
-    /// **`closure` reaches the lids through the POSE now** (#118), rather than
-    /// through a rebuild of their geometry. The blink is written onto a copy of
+    /// **`closure` reaches the lids through the POSE**, not through a rebuild
+    /// of their geometry. The blink is written onto a copy of
     /// what the caller handed over, so a caller's own pose is not edited behind
     /// its back and a pose that already carries a walk keeps it — the four lid
     /// joints are the only ones touched.
@@ -782,7 +785,7 @@ impl Avatar {
 
     /// The body, unwrapped into the atlas and ready to draw.
     ///
-    /// **Minus the skin under the clothes** (#46, #117). A garment is the body
+    /// **Minus the skin under the clothes.** A garment is the body
     /// pushed outward, so it stands over every face it was cut from — outer
     /// shell above, inner shell below, rim across the hem — and cloth deforms
     /// with the skin beneath it, so it stands there in every pose too. That
@@ -795,8 +798,8 @@ impl Avatar {
     /// no longer follows their edges. Measured with `cargo run --release
     /// --example garmentaudit`: 1,216 triangles on the default body and 1,236
     /// at the dearest, from 360 in the barest cut (bare sleeves and shorts) to
-    /// 1,344 in the fullest. The whole avatar's headroom under
-    /// `TRIANGLE_CEILING` was 82 before this.
+    /// 1,344 in the fullest. Without the drop, the whole avatar's headroom
+    /// under `TRIANGLE_CEILING` would be 82.
     ///
     /// Only `parts.body` is cut; `Parts` keeps the whole surface, because
     /// everything that measures a body — a hem, a chin, a foot's contact — needs
@@ -1505,7 +1508,7 @@ mod tests {
     }
 
     /// A body whose every region is styled `None`: the record's way of saying
-    /// bald, and the thing #124's cliff was standing in for.
+    /// bald.
     fn bald() -> Avatar {
         let record = AvatarRecord::new("Bald", Archetype::default());
         Avatar::build_with(
@@ -1634,7 +1637,7 @@ mod tests {
     }
 
     /// Everything a renderer reads survives a worker boundary, and the
-    /// intermediates deliberately do not (#234).
+    /// intermediates deliberately do not.
     #[cfg(feature = "serde-avatar")]
     #[test]
     fn a_built_avatar_crosses_a_worker_boundary_drawable() {

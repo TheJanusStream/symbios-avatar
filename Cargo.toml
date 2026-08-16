@@ -10,18 +10,20 @@ repository = "https://github.com/TheJanusStream/symbios-avatar"
 keywords = ["avatar", "procedural", "character", "mesh", "generative"]
 categories = ["simulation", "game-development", "graphics"]
 
+# docs.rs builds with every feature on, so the feature-gated API is documented.
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = []
 # Embeds `assets/clips.bin` in the binary and turns on `ClipLibrary::builtin`.
 #
-# **For development, not for shipping** (#249). The baked set was the runtime
-# motion source when it was imported; epic #237 replaced locomotion with the
-# procedural layer and #248 re-authored the expressive roster in goal space, so
-# what the artifact is for now is comparison — a second opinion when a
-# procedural motion looks wrong. It is a poor gold standard and `docs/clips.md`
-# says so with numbers: six of its eight loops pause for a frame at the wrap,
-# and two of its one-shots move a body six and twenty-four times their own
-# median step between two frames.
+# **For development, not for shipping.** Runtime motion is procedural; the
+# baked set is a comparison reference — a second opinion when a procedural
+# motion looks wrong. It is a poor gold standard and `docs/clips.md` says so
+# with numbers: six of its eight loops pause for a frame at the wrap, and two
+# of its one-shots move a body six and twenty-four times their own median step
+# between two frames.
 #
 # **Off by default, and that is the whole reason it is a feature.** The artifact
 # is 200 KiB and a consumer that only builds bodies should not carry it — least
@@ -29,9 +31,9 @@ default = []
 # A consumer that wants the clips says so; one that would rather fetch the file
 # at run time reads it with `ClipLibrary::read` and pays nothing here.
 builtin-clips = []
-# Makes a **built** [`Avatar`] serialisable, so one can cross a process or
-# worker boundary (symbios-avatar#234, for overlands#1061: wasm task pools run
-# on the main thread, so a body has to be built in a Web Worker and sent back).
+# Makes a **built** `Avatar` serialisable, so one can cross a process or
+# worker boundary (wasm task pools run on the main thread, so a body has to be
+# built in a Web Worker and sent back).
 #
 # Off by default because it is a contract, not a convenience. A round-tripped
 # `Avatar` is **drawable, not rebuildable**: `Parts` carries its measured

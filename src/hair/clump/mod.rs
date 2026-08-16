@@ -24,13 +24,13 @@
 //! - **A clump is sampled by how much it bends**, so a straight lock costs two
 //!   stations and only a curl pays for more. Measured on the reference head,
 //!   that is 87,168 triangles against 25,998 for geometry within a millimetre
-//!   of identical (#40, #201).
+//!   of identical.
 //!
 //! # What it costs
 //!
 //! [`Growth::grown`] carries a per-region count of clumps and triangles, because
-//! hair has been 70% of this crate's triangle budget before and the way that
-//! happened was nobody being able to say which part of it was expensive.
+//! hair can quietly become most of a triangle budget, and the way that
+//! happens is nobody being able to say which part of it is expensive.
 
 pub mod loft;
 pub mod scatter;
@@ -77,8 +77,8 @@ pub trait Shape {
 
     /// Half the clump's width at its root and at its tip, in metres.
     ///
-    /// **A width and not a section, because a clump is one flat card** (owner
-    /// call, #204). There is no thickness to give: a swept volume spent two
+    /// **A width and not a section, because a clump is one flat card.**
+    /// There is no thickness to give: a swept volume spends two
     /// thirds of its triangles closing a shape nobody sees the inside of, and a
     /// lock at this budget is a sheet.
     fn width(&self, root: &Root) -> (f32, f32);
@@ -86,7 +86,7 @@ pub trait Shape {
     /// Half its width a share of the way along it.
     ///
     /// **Because a lock's width comes and goes, and only the tapered case can be
-    /// written as two ends** (#205). The default runs [`Self::width`]'s two ends
+    /// written as two ends.** The default runs [`Self::width`]'s two ends
     /// into each other, which is a wedge: full at the root, a point at the tip,
     /// and a blunt squared-off end where it began. That is right for a hanging
     /// lock, whose root is hidden in the hair above it, and wrong for anything
@@ -111,7 +111,7 @@ pub trait Shape {
     /// that is. The default is across a clump that falls: tangent to the head and
     /// level, which is the sheet a hanging lock lies in.
     ///
-    /// A brow is what proves it has to be asked (#205). Its clumps run sideways
+    /// A brow is what proves it has to be asked. Its clumps run sideways
     /// along the ridge, and the falling default is parallel to that — a ribbon
     /// whose width lies along its own spine has no width at all, and
     /// [`crate::prim::sweep_outline`] quietly substitutes an arbitrary frame,
@@ -161,7 +161,7 @@ pub struct Growth {
 /// The three things every region needs and none of them owns: the built
 /// surface roots are scattered over, the rig that says which part of it is a
 /// head, and the regions themselves. Bundled because they travel together —
-/// every caller from #202 on holds all three and passes all three.
+/// every caller holds all three and passes all three.
 #[derive(Clone, Copy, Debug)]
 pub struct Bed<'a> {
     /// The built body, whose faces the roots are scattered over.
@@ -170,8 +170,8 @@ pub struct Bed<'a> {
     pub rig: &'a Rig,
     /// How that rig holds each of the body's own vertices.
     ///
-    /// **Carried so that hair can be bound like the skin it grows out of**
-    /// (#207): a root takes the binding of the seat it landed on, and every
+    /// **Carried so that hair can be bound like the skin it grows out of**:
+    /// a root takes the binding of the seat it landed on, and every
     /// vertex of its clump takes the root's. See [`scatter::Root::skin`].
     pub weights: &'a crate::rig::SkinWeights,
     /// Where each kind of hair may grow on it.
@@ -180,9 +180,9 @@ pub struct Bed<'a> {
 
 /// One region's worth of hair to grow, and what it should look like.
 ///
-/// The record carries one of these per region once #202 lands; until then a
-/// caller writes them out. Split from [`Bed`] because a head is grown five
-/// times, once per region, and only this half changes between them.
+/// The record carries one of these per region. Split from [`Bed`] because a
+/// head is grown five times, once per region, and only this half changes
+/// between them.
 ///
 /// Not `Debug`: a style is a trait object here, and requiring every style in
 /// every catalogue to be printable to make one struct derivable is the tail
@@ -203,23 +203,18 @@ pub struct Sowing<'a> {
 
 /// What a whole head of hair may cost, in triangles.
 ///
-/// **The tier the shell era had and the clump era dropped, restored because the
-/// budget test could not see the styles that needed it** (#209). `HairParams`
-/// used to hold a leftover-defined ceiling and tier the lock count down under
-/// it; that went with the shell, and nothing replaced it because the clump
-/// engine was cheap enough not to need one — measured against a CROP, which is
-/// the cheapest style in the scalp catalogue and the only one the budget test
-/// ever wore.
-///
-/// The catalogue sweep at #209 costed the rest. A tied-back tail is 42 triangles
+/// **A hard ceiling, because a budget test alone cannot police the whole
+/// catalogue.** A budget test wears one style at a time, and the styles are
+/// not one cost. A tied-back tail is 42 triangles
 /// a card against a crop's 15 and a ringlet is 65, because both spend their cost
-/// on path and curvature rather than on count — so the dearest legal record was
-/// 32,448 triangles against a 30,000 target while every budget test passed. Two
-/// and a half thousand over, on a corner nothing visited.
+/// on path and curvature rather than on count — so without this the dearest
+/// legal record is
+/// 32,448 triangles against a 30,000 target while every budget test passes. Two
+/// and a half thousand over, on a corner nothing visits.
 ///
 /// A ceiling is the right answer rather than smaller counts, and the difference
-/// matters: every scalp style's count and width were tuned by render at #204 and
-/// #210, and cutting them to fit the corner would pay for one unreachable record
+/// matters: every scalp style's count and width are tuned by render,
+/// and cutting them to fit the corner would pay for one unreachable record
 /// with every reachable one. A record that asks for maximum length AND maximum
 /// thickness AND maximum density AND a tail is asking for more than the budget
 /// holds, and the crate's answer to that has always been that the count is a
@@ -229,8 +224,8 @@ pub struct Sowing<'a> {
 /// `tests/budget.rs` reaches costs 26,670 triangles without any hair on it, and
 /// the WebGL2 target is 30,000, so this is what is left over with a little kept
 /// back — and `the_hair_ceiling_is_what_the_budget_actually_leaves` re-measures
-/// the leftover rather than trusting this docstring, which is how the last
-/// leftover-defined ceiling went stale at three times the room that existed.
+/// the leftover rather than trusting this docstring: a leftover-defined
+/// ceiling taken on faith goes stale the moment the body's own cost moves.
 pub const MAX_TRIANGLES: usize = 3_200;
 
 /// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].
@@ -250,11 +245,11 @@ const TIER_AIM: f32 = 0.98;
 
 /// Grows a whole head of hair, tiered to fit [`MAX_TRIANGLES`].
 ///
-/// **One place the five regions are grown**, because there were two: the loop
-/// lived in `Avatar::build` and `tests/budget.rs` kept a copy of it to cost a
-/// catalogue without building a body forty times. Two copies of a loop whose
-/// whole content is "one shared stream, in `Follicle::ALL` order" is two
-/// opinions about the one thing that has to match (#89).
+/// **The one place the five regions are grown**, shared by `Avatar::build` and
+/// by `tests/budget.rs`, which costs a catalogue without building a body forty
+/// times. Two copies of a loop whose
+/// whole content is "one shared stream, in `Follicle::ALL` order" would be two
+/// opinions about the one thing that has to match.
 ///
 /// Every region is grown from one stream seeded from the record's own seed, so a
 /// body grows the same hair every time it is built. If the result is over the
@@ -370,13 +365,11 @@ impl Growth {
 /// buried in it — which reads as hair sunk into the scalp wherever the surface
 /// curves away.
 ///
-/// **Sized by the SAMPLER, not by the geometry, and that changed with the card**
-/// (#204). It was half a millimetre, which was under the thinnest cross-section
-/// any style asked for — a rationale that retired with the swept volume. A card
+/// **Sized by the SAMPLER, not by the geometry.** A card
 /// is a polyline of chords, and a chord may sag [`loft`]'s own flatness tolerance
 /// below the curve it stands for: a whole millimetre. At half of that the cards
-/// crossing the crown dipped under the scalp between their stations and the
-/// contact sheet showed a bare star-shaped hole at the whorl — the one part of a
+/// crossing the crown dip under the scalp between their stations and the
+/// contact sheet shows a bare star-shaped hole at the whorl — the one part of a
 /// head no other card covers.
 ///
 /// Provenance: **derived** from the loft's flatness tolerance, which is what a
@@ -387,15 +380,14 @@ pub const LIFT: f32 = 0.0015;
 ///
 /// **The reference implementation of [`Shape`], and a real one rather than a
 /// stub**: it is what a short crop, a brow and a stubbled chin all are, and the
-/// styles of #204-#208 are this with their own curves.
+/// region catalogues are this with their own curves.
 ///
-/// **It leaves at a shallow angle to the skin, and the first cut of it did
-/// not** (#201). Straight out along the normal is what a hair follicle looks
+/// **It leaves at a shallow angle to the skin, and it has to.**
+/// Straight out along the normal is what a hair follicle looks
 /// like in a diagram and what a hedgehog looks like in a render: on a head,
 /// every normal is radial, so a thousand clumps drawn that way are a thousand
-/// spines. The old shell system had already learned this and said so — a lock
-/// "follows the skull down to the hairline before falling free" — and
-/// [`Self::lie`] is that sentence as a parameter.
+/// spines. A lock follows the skull down to the hairline before falling free,
+/// and [`Self::lie`] is that sentence as a parameter.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fall {
     /// How long a clump is at full mask weight, in metres.

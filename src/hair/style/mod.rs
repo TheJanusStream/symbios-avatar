@@ -15,7 +15,7 @@
 //! # Every style is real
 //!
 //! Every variant in every catalogue besides `None` is implemented and rendered
-//! with a curve of its own (#204–#208): crop, bob, long, tied-back and curly on
+//! with a curve of its own: crop, bob, long, tied-back and curly on
 //! the scalp; natural and thick brows; chevron, handlebar and pencil
 //! moustaches; goatee, full and braided chins; sideburns and full-connect
 //! flanks. Nothing is declared ahead of its curve and mapped to something else
@@ -104,7 +104,7 @@ pub struct Tress<S> {
     pub roots: [f32; 3],
     /// The colour at the tips, likewise.
     ///
-    /// **Two colours with a fade between them is the owner's own model**, and
+    /// **Two colours with a fade between them is the whole colour model**, and
     /// it is what makes hair read as hair at this triangle count: a single
     /// colour on a low-poly clump is a plastic wig, and the fade costs nothing
     /// because it is vertex colour.
@@ -164,7 +164,7 @@ pub trait Style: Copy + Default {
     /// Clamps and quantises whatever axes the style itself carries. Idempotent.
     ///
     /// **Because a variant may carry its own axis**, which is how a tail height
-    /// exists without every other style having one (#204). Most styles carry
+    /// exists without every other style having one. Most styles carry
     /// none, so this does nothing by default — but a record off the network can
     /// put anything in the ones that do, and every other number in a record is
     /// clamped and snapped to the wire's precision before it is used.
@@ -174,34 +174,27 @@ pub trait Style: Copy + Default {
 /// How many clumps a region gets at full density.
 ///
 /// **The single most expensive number in the hair system, and it is a budget
-/// rather than a taste.** A clump costs about 14 triangles straight and up to
-/// 45 curved (#201), and the whole avatar's target is 30,000 of which the body
-/// already spends about 28,000 — so a full head of hair has a few thousand to
-/// live in, not tens of thousands. The reference sheet at #201 used 883 scalp
-/// clumps and cost 15,932 triangles for that region alone.
+/// rather than a taste.** A card costs four triangles at the sampler's floor
+/// and about twenty where it walks a skull, and the whole avatar's target is
+/// 30,000 of which the body already spends about 28,000 — so a full head of
+/// hair has a few thousand to live in, not tens of thousands. An unbudgeted
+/// reference head used 883 scalp clumps and cost 15,932 triangles for that
+/// region alone.
 ///
 /// Ordered as [`Follicle::ALL`].
 ///
-/// **Set by the budget test rather than by eye, and re-set three times** (#202,
-/// #204). The history is the argument for what an element should be:
+/// **Set by the budget test rather than by eye**, and the element is what makes
+/// the counts affordable. A swept tube pays `sides x 2` triangles a segment
+/// plus two caps — 59 for the walk over a skull that a flat card does for 19 —
+/// and at that price a budget starves a scalp down to a hundred and fifty
+/// bristles standing off bare skin, which reads STRINGY. One flat card buys
+/// coverage with width, which is free, so the counts can simply be paid for.
 ///
-/// - 220 when a clump was a swept tube, which put the greediest record at 31,892
-///   against the 30,000 target.
-/// - 150 when the budget cut it, which is where the scalp read STRINGY: a hundred
-///   and fifty bristles standing off a bare scalp.
-/// - 44 when a clump became a wide card that walks the skull — better coverage for
-///   fewer elements, and still 59 triangles each because a swept volume pays
-///   `sides x 2` a segment plus two caps.
-/// - These, once an element became ONE FLAT CARD (owner call): 19 triangles for the
-///   same walk and 4 for a brow. The counts that the budget had been starving
-///   could simply be paid for, and coverage stopped being a fight.
-///
-/// **The two facial-hair entries went back UP as their catalogues landed**
-/// (#206, #207), and the reason is the same both times: the numbers here were
-/// set when a clump was 14 to 45 triangles, and a card is four. A moustache
-/// drawn with 34 clumps is twenty-five tiles as tall as the lip they sit on; a
-/// beard drawn with 56 is a fringe of separate blades. Both read as hair at
-/// roughly twice the count, and both cost about what one swept lock used to.
+/// The two facial-hair entries are sized in the card's own currency: at the
+/// counts a swept tube could afford, a moustache is twenty-five tiles as tall
+/// as the lip they sit on and a beard is a fringe of separate blades. Both
+/// read as hair at roughly twice that, and the extra cards cost
+/// about what one swept lock did.
 ///
 /// The sparseness these buy is still what the painted layer is for: skin the
 /// colour of hair between the cards reads as hair, and bare skin between them
@@ -227,38 +220,21 @@ fn clumps_for(cut: &Cut, follicle: Follicle) -> usize {
     ((full as f32) * share).round() as usize
 }
 
-/// **What used to be here, and why it is not** (#208). Every region's base style
-/// was a [`Fall`](super::clump::Fall) with its own numbers once — one `REACH`
-/// table of five lengths and one `fall_for` that built the curve — and a
-/// `styles!` macro declared the
-/// regions still waiting for a catalogue of their own. That was never a
-/// simplification so much as a placeholder: a crop, a brow, a moustache and a
-/// beard are not the same curve at different lengths, and each of them said so
-/// as loudly as it could the first time it was rendered.
-///
-/// The five catalogues took them one at a time — the brows at #205, the scalp at
-/// #204, the moustache at #206, the chin at #207 and the flanks at #208 — and
-/// with the last of them the macro, the table and the shared fall have nothing
-/// left to serve, so they are gone rather than kept behind an `allow(dead_code)`.
-///
-/// [`Fall`](super::clump::Fall) itself stays. It is the engine's own reference
-/// [`Shape`] and the thing a sixth region would start from; it is simply not
-/// what any of the five ARE.
 /// A natural hair colour, along a melanin ramp.
 ///
-/// **Kept from the shell era, whose own axis it was, because the ramp itself was
-/// never the problem** (#202). Dark hair is very dark — the common mistake is a
+/// Dark hair is very dark — the common mistake is a
 /// mid-brown that reads as dusty — and the ramp reddens through the middle
 /// before it lightens, because that is the order melanin actually gives up.
 ///
-/// What retired with the shell is the ramp being the ONLY colour a record could
-/// ask for. A record now stores two sRGB colours per region and this is one
+/// The ramp is not the only colour a record can
+/// ask for. A record stores two sRGB colours per region and this is one
 /// convenient way to pick a plausible pair, used by `reroll` and by any editor
 /// preset that wants a natural head; nothing is confined to it. Its light end is
-/// a warm blonde, so it cannot say grey — which is exactly why grey needed the
-/// free colours rather than another point on this line (#169 left that open).
+/// a warm blonde, so it cannot say grey — which is exactly why grey takes the
+/// free colours rather than another point on this line.
 ///
-/// Provenance: **carried** from `HairParams::colour`, unchanged.
+/// Provenance: **carried**, unchanged, from the single colour axis this crate's
+/// hair once was.
 #[must_use]
 pub fn melanin(shade: f32) -> [f32; 3] {
     const RAMP: [[f32; 3]; 5] = [
@@ -295,7 +271,7 @@ pub fn melanin(shade: f32) -> [f32; 3] {
 /// stays inside.
 ///
 /// Provenance: **derived** from `dress::dye`'s wheel, **loosened** for a dye
-/// rather than a cloth (#203).
+/// rather than a cloth.
 #[must_use]
 pub fn dyed(hue: f32, shade: f32) -> [f32; 3] {
     let turn = hue.clamp(0.0, 1.0) * TAU;
@@ -313,8 +289,8 @@ pub fn dyed(hue: f32, shade: f32) -> [f32; 3] {
 ///
 /// **Grey is not a point on the melanin ramp and it never could be** — the
 /// ramp's light end is a warm blonde, which is what pale hair with pigment in it
-/// looks like, and grey hair is hair with the pigment gone. #169 left this open
-/// and the free colours are what let it be answered at all (#203).
+/// looks like, and grey hair is hair with the pigment gone; the free colours
+/// are what let a record say so at all.
 ///
 /// A straight mix toward a warm white rather than a desaturation, because that
 /// is physically what is being drawn: a greying head is a MIXTURE of white
@@ -325,7 +301,7 @@ pub fn dyed(hue: f32, shade: f32) -> [f32; 3] {
 /// Warm rather than neutral: white hair keratin is faintly yellow, and a
 /// neutral grey beside skin reads as blue.
 ///
-/// Provenance: **looked up** for the direction, **tuned by render** (#203).
+/// Provenance: **looked up** for the direction, **tuned by render**.
 #[must_use]
 pub fn greyed(colour: [f32; 3], grey: f32) -> [f32; 3] {
     const WHITE: [f32; 3] = [0.760, 0.748, 0.716];
@@ -339,8 +315,8 @@ pub fn greyed(colour: [f32; 3], grey: f32) -> [f32; 3] {
 
 /// Everything a record says about one head of hair.
 ///
-/// **Replaces the eight scalars of the shell era** (#202). Those described one
-/// object — a sculpted mass with locks cut into its rim — and could not say
+/// **Per region, because one set of scalars cannot describe a head of hair.**
+/// A single sculpted mass with locks cut into its rim cannot say
 /// that a face has eyebrows.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -463,8 +439,8 @@ impl HairRecord {
     ///
     /// Takes the head's own regions, because a style may need to be fitted to
     /// the face it grows on rather than only to the cut it was asked for: a brow
-    /// combs along the ridge the mask was centred on, and #204's curtain will
-    /// want the same measured head. The one every caller already holds — the
+    /// combs along the ridge the mask was centred on, and a scalp lock walks
+    /// the very skull it was measured from. The one every caller already holds — the
     /// masks the roots are about to be scattered through — rather than a second
     /// measurement of it.
     #[must_use]

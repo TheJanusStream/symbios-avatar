@@ -10,7 +10,7 @@
 //!    this, and it does more for skin reading as skin than any lighting model;
 //! 3. cavity shading, darkening and reddening creases;
 //! 4. freckles as masked high-frequency detail, and hair painted through the
-//!    follicle regions the grown layer shares (#200).
+//!    follicle regions the grown layer shares.
 //!
 //! Every layer samples noise in **body space, never atlas space**. Atlas space
 //! is discontinuous across chart boundaries, so a freckle field sampled there
@@ -143,19 +143,19 @@ const SUBDERMAL_TINT: Vec3 = Vec3::new(0.30, -0.10, -0.13);
 /// viewer sees — the lip grooves, the jaw hollow, and every resolution
 /// boundary's curvature row painted as a ladder of dark bars between the mouth
 /// and the chin, with a dark line across the whole throat where the refinement
-/// passes end at the head zone's edge (#158). The upper skull stayed clean
+/// passes end at the head zone's edge. The upper skull stays clean
 /// only because its forms are broader than the crease measure's floor, which
-/// is why the lower face read a class below it.
+/// is why the lower face reads a class below it.
 ///
-/// Zeroing the response cleaned the whole lower face in one move and cost the
-/// body almost nothing — the occlusion pass was already near-white everywhere
-/// but the artifacts — but it also erased the parting's own shadow, and a
+/// Zeroing the response cleans the whole lower face in one move and costs the
+/// body almost nothing — the occlusion pass is already near-white everywhere
+/// but the artifacts — but it also erases the parting's own shadow, and a
 /// mouth needs its line. So the response is *compressed*, not removed: fold
 /// shading survives at this fraction, which keeps the parting, the nostrils
 /// and the eye sockets readable while a saturated artifact row can no longer
 /// paint darker than a deliberate groove.
 ///
-/// Provenance: **tuned by render** (#158), closed and open profile shots
+/// Provenance: **tuned by render**, closed and open profile shots
 /// against the untouched upper skull.
 const CREASE_INK: f32 = 0.30;
 
@@ -274,7 +274,7 @@ fn clamp_unit(value: f32, fallback: f32) -> f32 {
 
 /// What the body under the skin is made of.
 ///
-/// **The composites reach the painter through this and not directly** (#165).
+/// **The composites reach the painter through this and not directly.**
 /// Every other consumer of the record's high-level axes has a derived read of
 /// its own — the cage has `plan::derive`, the skull has `face::HeadTraits` —
 /// and the skin wants the same thing for the same reason: what a painter needs
@@ -288,21 +288,21 @@ pub struct Condition {
     /// enough fat to hide it and `1` at the leanest a record can describe.
     ///
     /// **The threshold it is measured from is dimorphic, and that is the whole
-    /// derivation** (#165). `plan::BODY_FAT_RANGE` already records the bands
+    /// derivation.** `plan::BODY_FAT_RANGE` already records the bands
     /// this comes from: visible definition below about 10% of body fat on men
     /// and about 18% on women. Those are not two opinions about one number,
     /// they are essential fat differing by sex — so the same 0.16 fraction is a
     /// lean woman and a soft man, and a definition signal that read the
     /// fraction alone would have painted them the same.
     ///
-    /// Provenance: **derived** from `BODY_FAT_RANGE`'s own looked-up bands
-    /// (#165), interpolated by `femininity` the way every other cross-composite
+    /// Provenance: **derived** from `BODY_FAT_RANGE`'s own looked-up bands,
+    /// interpolated by `femininity` the way every other cross-composite
     /// term in the crate is.
     pub definition: f32,
     /// How far into the changes of age this body is, straight off
     /// [`Composites::ageing`].
     ///
-    /// The skin's share of #167: an old skin creases where a young one does
+    /// The skin's share of ageing: an old skin creases where a young one does
     /// not, and it is drier.
     pub ageing: f32,
 }
@@ -327,7 +327,7 @@ impl Condition {
 }
 
 impl Default for Condition {
-    /// The body the painter drew before it could read a composite: a middling
+    /// A middling
     /// adult at the default fat fraction, which is well above every definition
     /// threshold, and under the age pivot.
     fn default() -> Self {
@@ -338,19 +338,19 @@ impl Default for Condition {
 /// How much of the crease ink definition may add, at the middle of the fold
 /// measure.
 ///
-/// **A gain on a BAND rather than on the signal** (#165, #158). `CREASE_INK`
-/// was cut to 0.30 because saturated folds painted as ink ladders, and the
-/// obvious way to make a lean body read — raising the ink — is the exact change
-/// that was reverted. So this multiplies a hump that is zero at both ends of
+/// **A gain on a BAND rather than on the signal.** `CREASE_INK`
+/// is held at 0.30 because saturated folds paint as ink ladders, and the
+/// obvious way to make a lean body read — raising the ink — would bring those
+/// ladders straight back. So this multiplies a hump that is zero at both ends of
 /// the fold measure and one in the middle: a saturated artifact row cannot be
 /// made darker by any body composition, and a shallow fold that a lean body
 /// would actually show gets the whole of it.
 ///
 /// **This one IS visible to the render**, unlike the two relief constants
 /// below it: a crease multiplies the colour as well as the occlusion, so the
-/// ink lands in the albedo the contact sheet samples (#45).
+/// ink lands in the albedo the contact sheet samples.
 ///
-/// Provenance: **tuned by render** (#165), against the lean end of the body-fat
+/// Provenance: **tuned by render**, against the lean end of the body-fat
 /// sweep at a fixed light.
 const DEFINITION_INK: f32 = 0.55;
 /// How much less rough taut skin over a muscle belly is.
@@ -358,14 +358,14 @@ const DEFINITION_INK: f32 = 0.55;
 /// Small: skin is skin, and this is the difference between a highlight that
 /// finds an edge and one that does not.
 ///
-/// **NOT judged by render, and it cannot be** (#45): `examples/render` samples
+/// **NOT judged by render, and it cannot be**: `examples/render` samples
 /// the albedo of this atlas and nothing else, so every roughness term in this
-/// file — including `roughness_bias`, which has shipped for months — has never
+/// file — `roughness_bias` included — has never
 /// been drawn. Sized instead against the span of the roughness axis it moves,
 /// which is 0.25 to 0.85, and left deliberately at a sixteenth of it until an
 /// instrument exists to look.
 ///
-/// Provenance: **sized against the axis it moves** (#165).
+/// Provenance: **sized against the axis it moves**.
 const DEFINITION_SHEEN: f32 = 0.05;
 /// Relief the striation grain adds over a muscle group at full definition, as a
 /// share of what the pores add.
@@ -374,16 +374,16 @@ const DEFINITION_SHEEN: f32 = 0.05;
 /// take.** A striation is a 15 mm feature and most charts carry 3–5 mm of body
 /// per texel, so it is inside what the atlas can hold — but only just, and the
 /// fade is what keeps it from becoming per-texel noise on the finely-packed
-/// charts (#158).
+/// charts.
 ///
-/// **NOT judged by render** (#45): this rides the height field, which becomes
+/// **NOT judged by render**: this rides the height field, which becomes
 /// the normal map, and the contact sheet reads only the albedo. Sized instead
 /// against the field it sits beside — at a typical body chart the pore term
 /// lands near 0.31 of the height range after its own resolvability fade, and
 /// this is 0.45 at full definition, so a defined muscle carries about half
 /// again the relief of the skin over it and no more.
 ///
-/// Provenance: **sized against the pore field's own amplitude** (#165).
+/// Provenance: **sized against the pore field's own amplitude**.
 const STRIATION: f32 = 0.45;
 /// How much of the crease ink age may add, on the same band as
 /// [`DEFINITION_INK`].
@@ -393,7 +393,7 @@ const STRIATION: f32 = 0.45;
 ///
 /// Visible to the render for the reason [`DEFINITION_INK`] gives.
 ///
-/// Provenance: **tuned by render** (#167), on `--head --bare` at `--age` 18
+/// Provenance: **tuned by render**, on `--head --bare` at `--age` 18
 /// against 80, where the change it carries is a low-contrast field over the
 /// cheek and jaw — 5.3 grey levels mean over the quarter of the sheet it
 /// touches — rather than a drawn line.
@@ -404,10 +404,10 @@ const AGE_INK: f32 = 0.85;
 /// roughness axis in this painter spans 0.25 to 0.85, so this is about a
 /// twelfth of it end to end.
 ///
-/// **NOT judged by render** — see [`DEFINITION_SHEEN`] and #45.
+/// **NOT judged by render** — see [`DEFINITION_SHEEN`].
 ///
 /// Provenance: **looked up for the direction, sized against the axis it
-/// moves** (#167).
+/// moves**.
 const AGE_DRY: f32 = 0.05;
 /// Relief the wrinkle grain adds at the top of the age ramp, as a share of what
 /// the pores add.
@@ -417,20 +417,20 @@ const AGE_DRY: f32 = 0.05;
 /// and the backs of the hands carry them decades before covered skin does, and
 /// a body-wide wrinkle field reads as dirt rather than as age.
 ///
-/// **NOT judged by render** (#45), for the reason [`STRIATION`] gives. Sized
+/// **NOT judged by render**, for the reason [`STRIATION`] gives. Sized
 /// the same way: about three times the pore relief on a finely-charted face,
 /// where the wrinkle's 6.7 mm period is inside what the atlas resolves and the
 /// pore's 2.5 mm one is not.
 ///
 /// Provenance: **looked up for where, sized against the pore field for how
-/// much** (#167).
+/// much**.
 const WRINKLE: f32 = 0.9;
 
 /// The share of a composite's crease gain a fold of this depth may take.
 ///
 /// Zero at a flat texel, zero at a saturated one and one in the middle. The
 /// second of those is the load-bearing end: `CREASE_INK` exists because
-/// saturated folds painted as ink ladders (#158), so no body composition may
+/// saturated folds paint as ink ladders, so no body composition may
 /// darken one.
 fn crease_band(crease: f32) -> f32 {
     4.0 * crease * (1.0 - crease)

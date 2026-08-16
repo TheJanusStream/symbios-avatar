@@ -8,7 +8,7 @@
 //!   a skull — jaw, chin, cheekbones, occiput ([`shape_skull`]) — driven by
 //!   [`HeadTraits`] resolved from the record.
 //! - [`relief`] carves the features — nose, brows, lips — as displacements of
-//!   the head's own surface ([`carve_face`]), so a face has no seams (#59).
+//!   the head's own surface ([`carve_face`]), so a face has no seams.
 //! - [`mouth`] splits the skin along the parting line and sews a cavity in
 //!   behind it, so the jaw can open.
 //! - [`neck`] refines, fairs and narrows the column under the skull it carries.

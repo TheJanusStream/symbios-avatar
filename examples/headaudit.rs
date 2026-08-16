@@ -1,4 +1,4 @@
-//! Every measurable fact about a built head, in one dump (#73).
+//! Every measurable fact about a built head, in one dump.
 //!
 //! Written to be handed to people (and agents) who cannot run the code: the
 //! landmarks the crate believes in, the surface it actually built, the two
@@ -7,7 +7,7 @@
 //! **Every surface query here is a bisection against [`PolyMesh::contains`],
 //! never a bin over vertices.** Binning the furthest-forward vertex in each
 //! 2 mm band reported six millimetres of ripple that is not in the mesh, off
-//! the midline where the surface curves fast across a band (#71). The
+//! the midline where the surface curves fast across a band. The
 //! containment test is the same primitive `tests/parts.rs` judges with.
 //!
 //! ```text
@@ -19,14 +19,14 @@
 //! ```
 //!
 //! `--axis` takes `breadth`, `length`, `nose`, `mouth` or `age` and walks it
-//! from one end to the other on every sweep seed, which is what #61 needs before
-//! it can choose where a default sits: an axis is not an axis until somebody has
+//! from one end to the other on every sweep seed, which is what choosing where
+//! a default sits needs: an axis is not an axis until somebody has
 //! looked at both of its ends on more than one body.
 //!
 //! **`age` is a composite and the columns read it unevenly.** Its lower-face
 //! term is jowling, which lands squarely in `bigon/bizyg`; its lip term moves
 //! the lip band's HEIGHT and this table's `mouth` column is the carve's width,
-//! so that one does not appear here at all and wants the viewer (#167).
+//! so that one does not appear here at all and wants the viewer.
 
 use symbios_avatar::face::{Canon, Eyes, Skull};
 use symbios_avatar::{Archetype, Avatar, AvatarConfig, AvatarRecord, PolyMesh, Vec3, Zone, face};
@@ -36,8 +36,9 @@ const STEP: f32 = 0.002;
 
 /// The seeds `--sweep` reports when it is not given any.
 ///
-/// The four #79 measured its baseline on, plus the two #107 found chinless
-/// under the eight-point cage and two more for spread. A breadth default chosen
+/// The four the head's proportion baseline was measured on, plus the two that
+/// come out chinless under the eight-point cage and two more for spread.
+/// A breadth default chosen
 /// on one body is a breadth default chosen on one body.
 const SWEEP_SEEDS: [i64; 8] = [7, 23, 29, 42, 1, 3, 6, 12];
 
@@ -492,9 +493,9 @@ fn main() {
     held_by(&avatar, centre, radius);
 }
 
-/// The chin's own section, and whether it is a point or a blade (#128).
+/// The chin's own section, and whether it is a point or a blade.
 ///
-/// The binding's territories, read from the weights that ship (#151/#152).
+/// The binding's territories, read from the weights that ship.
 ///
 /// Each cell is the nearest vertex to a bisected surface point: its strongest
 /// joint and that hold, with the jaw pivot's hold in brackets wherever it is
@@ -619,8 +620,8 @@ fn held_by(avatar: &Avatar, centre: Vec3, radius: f32) {
 /// **Both surfaces, because the two answer different questions.** The SHAPED
 /// head is where [`symbios_avatar::face`]'s own profile tables land, so it is
 /// what a change to them moves. The CARVED one is what ships, and it is the only
-/// place the lip can be compared with the chin — which is the check #72 was
-/// bought with: cutting this amplitude once before cost the chin 7 mm and put
+/// place the lip can be compared with the chin, which is the check that
+/// matters: cutting this amplitude too far costs the chin 7 mm and puts
 /// the lower lip in front of it, and a face whose lip swallows its chin has no
 /// jaw at all.
 fn chin_blade(shaped: &PolyMesh, carved: &PolyMesh, centre: Vec3, chin: f32, nose_base: f32) {
@@ -779,12 +780,12 @@ fn chin_blade(shaped: &PolyMesh, carved: &PolyMesh, centre: Vec3, chin: f32, nos
 
 /// The head's overall proportions, in head-local metres.
 ///
-/// **Here rather than in a scratch script, which is where it was.** #79's
-/// baseline — where the head is widest, how wide it is for its height, the jaw's
-/// angle against the cheekbone — was measured by a harness that was never
-/// committed, so every number on that issue went stale the moment #107 moved the
-/// cage and there was nothing to re-run. A measurement that cannot be repeated
-/// is a measurement that has to be argued about instead.
+/// **Here rather than in a scratch script.** The head's proportion baseline —
+/// where it is widest, how wide it is for its height, the jaw's angle against
+/// the cheekbone — is worth nothing measured by a harness nobody committed:
+/// every figure goes stale the first time the cage moves, with nothing to
+/// re-run. A measurement that cannot be repeated is a measurement that has to
+/// be argued about instead.
 struct Proportions {
     /// The widest half-width anywhere on the head, and where.
     widest: f32,
@@ -798,7 +799,7 @@ struct Proportions {
     /// The same over the VAULT alone, above the brow.
     ///
     /// **The column life's 1.28 is actually a ratio of, and [`Proportions::depth`]
-    /// above is not** (#79). Head length is glabella to opisthocranion: it stops
+    /// above is not**. Head length is glabella to opisthocranion: it stops
     /// at the brow and does not include a nose. Measured anywhere from the chin
     /// up, a face with a prominent nose reports its nose — on seed 42 the
     /// greatest extent sits at −0.08 R, which is the nose tip against the
@@ -813,14 +814,12 @@ struct Proportions {
     cranium_to_face: f32,
     /// Where the eye's aperture is centred, in degrees off the gaze.
     ///
-    /// **Skin AND lids, which is what #88 and #79 both quote and what the first
-    /// version of this column did not measure.** Asked of the skin alone the
+    /// **Skin AND lids**, which is what the orbit and the aperture are both
+    /// tuned against. Asked of the skin alone the
     /// same eye reads twenty degrees further lateral, because the lid's own
-    /// margin owns that edge (#81) — so a column headed "eye azimuth" that
-    /// omitted the lids was reporting a number nothing in the crate is tuned
-    /// against, and would have said the aperture had regressed when it had not.
-    /// The fifteenth instrument in this project to have measured something other
-    /// than its own name.
+    /// margin owns that edge — so a column headed "eye azimuth" that
+    /// omitted the lids would report a number nothing in the crate is tuned
+    /// against, and would call a regression that had not happened.
     eye_azimuth: f32,
 }
 
@@ -828,8 +827,8 @@ impl Proportions {
     /// How far a life-proportioned head of this height is from this one's width.
     ///
     /// Human height-to-breadth is 1.48. A head broader than that for its own
-    /// length is too wide by this much, and it is the figure #79 raised and
-    /// #61 has to choose a breadth default against.
+    /// length is too wide by this much, and it is the figure the breadth
+    /// default has to be chosen against.
     fn too_wide(&self) -> f32 {
         LIFE_HEIGHT_TO_WIDTH / (self.height / self.width) - 1.0
     }
@@ -840,8 +839,8 @@ impl Proportions {
     /// comes off a landmark, not off a constant.** The chin is [`Skull::chin`]
     /// and the angle of the jaw is [`Skull::gonion`], so this report and
     /// `the_face_narrows_from_cheekbone_to_chin` measure the same two places by
-    /// construction. The first version of #79's harness probed DOWN the midline
-    /// for a chin, which on a body whose head and neck are one surface walks
+    /// construction. Probing DOWN the midline for a chin instead, on a body
+    /// whose head and neck are one surface, walks
     /// through the throat and the chest and reports a head a metre tall.
     fn measure(
         body: &symbios_avatar::PolyMesh,
@@ -936,9 +935,9 @@ impl Proportions {
 
 /// Height over breadth on a human head.
 ///
-/// Vertex-to-menton against maximum breadth. The one ratio #61's breadth default
-/// has to be chosen against, and the reason #79 could say the head was 11% wide
-/// without anybody having tuned it wide on purpose.
+/// Vertex-to-menton against maximum breadth. The one ratio the breadth default
+/// has to be chosen against, and what makes it possible to say a head is 11%
+/// wide when nobody tuned it wide on purpose.
 const LIFE_HEIGHT_TO_WIDTH: f32 = 1.48;
 
 /// The four axes this report can hold at a chosen value.
@@ -952,7 +951,7 @@ struct Axes {
     nose: Option<f32>,
     mouth: Option<f32>,
     /// In whole years, and a composite rather than a per-region axis — the
-    /// first one this instrument can walk (#167).
+    /// first one this instrument can walk.
     age: Option<u32>,
 }
 
@@ -972,11 +971,10 @@ impl Axes {
 
 /// Walks one axis from end to end on every sweep seed.
 ///
-/// **The step #61 exists to make possible, and the one the complexion half of
-/// #39 skipped**: the undertone axis swung 47 to 59 degrees of hue and was still
-/// wrong, because nobody had looked at what it did at BOTH ends on more than one
-/// body. An axis that moves something is not the same as an axis that means
-/// something.
+/// **The step that has to happen before a default is chosen.** A complexion
+/// undertone axis can swing 47 to 59 degrees of hue and still be wrong, because
+/// nobody has looked at what it does at BOTH ends on more than one body. An
+/// axis that moves something is not the same as an axis that means something.
 fn walk(axis: &str) {
     let values: [f32; 5] = match axis {
         "nose" | "mouth" => [0.0, 0.25, 0.5, 0.75, 1.0],
@@ -1088,9 +1086,9 @@ fn sweep(seeds: &[i64], axes: Axes) {
 /// **Measured off the displacement, not computed from the constants that drew
 /// it.** A report that recomputes a feature's width from its own copy of the
 /// ramp is not measuring the body, it is restating the source — which is how
-/// `examples/headaudit` went on printing the canon's old thirds for a whole
-/// milestone after #78 moved them. This carves a copy of the head and asks where
-/// the carve stops pushing.
+/// this instrument can go on printing a canon's superseded thirds for months
+/// after the head moved under them. This carves a copy of the head and asks
+/// where the carve stops pushing.
 struct Features {
     nose: f32,
     mouth: f32,

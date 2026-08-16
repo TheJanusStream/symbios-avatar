@@ -1,10 +1,9 @@
 //! Where the lower face TURNS, and how finely it is sampled — down the midline
 //! and round the flank.
 //!
-//! **The instrument that tells a curve defect from a sampling one** (#158), which
+//! **The instrument that tells a curve defect from a sampling one**, which
 //! `face::skull` has got the wrong way round more than once — the ladder of dark
-//! bars was refinement boundaries, the jaw flank's smear is cell size, and the
-//! chin reading boxy is where this was written.
+//! bars was refinement boundaries, and the jaw flank's smear is cell size.
 //!
 //! Bisects the built surface at a fine pitch and differences it twice. The reach
 //! comes off `PolyMesh::contains`, so what it reports is the POLYGON mesh: a run
@@ -14,9 +13,9 @@
 //! change that — the answer there is `FACE_PASSES`.
 //!
 //! `--ring` asks the same question the other way round, because the chin's
-//! boxiness turned out to be one instance of a lower face built of flat planes
-//! meeting at a hard edge from the zygomatic down to the jaw, and that edge runs
-//! DOWN the face rather than across it (#158). It cuts horizontal sections and
+//! boxiness is one instance of a lower face built of flat planes meeting at a
+//! hard edge from the zygomatic down to the jaw, and that edge runs DOWN the
+//! face rather than across it. It cuts horizontal sections and
 //! walks them by azimuth from dead ahead round past the ear. **The reference
 //! turn is the step itself**: a circle sampled every 3° turns 3° per sample, so
 //! a row reading 0.0 is a flat facet and one reading 9.0 is three samples' worth
@@ -172,15 +171,13 @@ fn main() {
 
 /// A difference of two `atan2` angles, in degrees, brought into (−180, 180].
 ///
-/// **Without this a smooth minimum reads as a catastrophic corner** (#176). The
-/// two branch directions straddle `atan2`'s cut wherever a profile turns
-/// around, which is exactly where a chin crests and where a throat stops coming
-/// in — so the two most interesting rows this instrument has ever printed were
-/// the two it reported worst. The −304.2 at the chin's crest in #158 is +55.8,
-/// the +352.0 in the throat is −8.0, and every reading between −180 and 180 was
-/// always right. Nothing that was acted on turns out to have been wrong, but
-/// that is luck rather than method: the sign of the two chin readings was
-/// inverted, and a curve is judged by its sign.
+/// **Without this a smooth minimum reads as a catastrophic corner.** The two
+/// branch directions straddle `atan2`'s cut wherever a profile turns around,
+/// which is exactly where a chin crests and where a throat stops coming in — so
+/// the most interesting rows on the page are exactly the ones a raw difference
+/// reports worst. Unwrapped, a −304.2 at the chin's crest stands for +55.8 and
+/// a +352.0 in the throat for −8.0, while every reading between −180 and 180 is
+/// already right — and a curve is judged by its sign.
 fn wrapped(radians: f32) -> f32 {
     let mut turn = radians.to_degrees() % 360.0;
     if turn > 180.0 {

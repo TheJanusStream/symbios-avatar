@@ -324,8 +324,8 @@ enum Kind {
 /// value moves almost nothing: on the default body the spans cluster under
 /// 0.5 rad off the pole and above 2 off it.
 ///
-/// Provenance: **derived** from the two regimes above; see #158 for the
-/// confetti charts the orientation-only test produced.
+/// Provenance: **derived** from the two regimes above; an orientation-only
+/// test produced confetti charts.
 const CAP_SPAN: f32 = 1.0;
 
 /// A connected run of faces sharing one zone and one projection.
@@ -647,16 +647,16 @@ const WARP_BINS: usize = 32;
 /// region at least half its uniform share while the dense regions roughly
 /// double theirs.
 ///
-/// Provenance: **tuned by render** (#158), against the lower face.
+/// Provenance: **tuned by render**, against the lower face.
 const WARP_FOLLOW: f32 = 0.5;
 
 /// A monotone remap of a chart axis toward the mesh's own vertex density.
 ///
-/// A chart's texels used to be spread uniformly over its extent, but a chart's
-/// DETAIL is not: the head chart spends four refinement passes on the mouth
-/// band, so the lower face carries most of the chart's faces in a tenth of its
-/// height — and got a tenth of its texels. Painted at that density the jaw
-/// flank came out as magnified single-texel rectangles (#158). The atlas is
+/// Spread uniformly over a chart's extent, texels miss where the DETAIL is:
+/// the head chart spends four refinement passes on the mouth band, so the
+/// lower face carries most of the chart's faces in a tenth of its height —
+/// and would get a tenth of its texels. Painted at that density the jaw
+/// flank comes out as magnified single-texel rectangles. The atlas is
 /// per-texel positional — every painter is a function of `texel.position` — so
 /// warping where the texels go changes only how finely each region is
 /// sampled, never what is painted there.

@@ -10,9 +10,8 @@
 //!   leg it is not a component of anything.
 //! * **A box, or a height crop.** A foot is at the bottom of a leg, so cropping
 //!   below a height looks like it should work. It does not: the crop catches the
-//!   shin, which reaches down past the ankle on the inside of it, and the first
-//!   thing this cost was a sole reported 145 mm above the ground on a body whose
-//!   sole was on it (#111).
+//!   shin, which reaches down past the ankle on the inside of it, and reports
+//!   a sole 145 mm above the ground on a body whose sole is on it.
 //!
 //! What survives is the binding. Every vertex says which joints hold it and how
 //! strongly, so "the foot" can be asked as *the surface the foot's own joints

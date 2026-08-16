@@ -9,10 +9,10 @@
 //! floor and `clavicle_x`'s, plus `extremity`'s pair. They are listed together
 //! on [`Dimensions`] and derived individually beside the expressions that meet
 //! them — and two of those six ends turned out under audit not to be walls at
-//! all, which the table on [`Dimensions`] now says (#163).
+//! all, which the table on [`Dimensions`] says.
 //!
-//! **Why this body has no trapezius, and what would give it one** (#131,
-//! closed 2026-08-12 as a body-plan constraint after six constructions).
+//! **Why this body has no trapezius, and what would give it one** — a
+//! body-plan constraint, established over six refuted constructions.
 //!
 //! `examples/neckaudit` splits the chin-to-shoulder span four ways, and the
 //! last term — the girdle's crown down to where the body reads as shoulder — is
@@ -35,18 +35,18 @@
 //! an eight-head canon of 0.33 — worse at every height, every width and every
 //! gap, and worse across seeds. A yoke can exist; it cannot help.
 //!
-//! It is a fact about TODAY's body rather than about the idea. The same
-//! construction worked in August, when the floor was 0.9 radii — below the
-//! crown — so it added mass without lifting anything; #164's allometric girth
-//! re-priced `girdle_r` against `clavicle_r` and took that away.
+//! It is a fact about TODAY's body rather than about the idea. At a floor of
+//! 0.9 radii — below the crown — the same construction would add mass without
+//! lifting anything; the allometric girth prices `girdle_r` against
+//! `clavicle_r` in a way that takes that floor away.
 //!
 //! **What would reopen it is a fall of about 20% in `needed`, and it is not a
 //! coefficient here.** [`GIRDLE_SECTION`]'s depth moves it — 0.0331 at 1.10,
 //! 0.0300 at 0.75 — but only reaches a floor of about 1.05 radii, and would
-//! need roughly 0.45 to clear the crown, which is below the 0.80 that predates
-//! #106 and undoes that issue's depth work. The lever is the cage's own socket
-//! clearance, not the plan's. Six constructions are refuted and recorded on
-//! #131: a trapezius pair on the neck, a fifth and sixth socket on the girdle, a
+//! need roughly 0.45 to clear the crown, which gives back all of the
+//! upper-trunk depth that constant exists to buy. The lever is the cage's own
+//! socket clearance, not the plan's. Six constructions are refuted: a
+//! trapezius pair on the neck, a fifth and sixth socket on the girdle, a
 //! third on the clavicle, an in-chain yoke at two different walls, and a leaf
 //! yoke off the girdle.
 
@@ -84,13 +84,14 @@ use crate::plan::{Composites, DEFAULT_BODY_FAT, HumanoidParams};
 /// not a citation — if this set is ever revisited it should be measured, not
 /// re-remembered.
 ///
-/// **The pelvis was narrowed to 0.55 in #98 and put back in #104, and the round
-/// trip is worth keeping.** The narrowing was real at the time: the hip sockets
-/// could not come in past the reach of the spine socket's ring, that reach is
-/// `x · pelvis_r`, and moving it was what let `hip_x` fall from 1.35 to 0.60.
+/// **A pelvis narrowed to 0.55 was tried and put back, and the round trip is
+/// worth keeping.** The narrowing was real on a slimmer hip node: the hip
+/// sockets could not come in past the reach of the spine socket's ring, that
+/// reach is `x · pelvis_r`, and moving it was what let `hip_x` fall from 1.35
+/// to 0.60.
 ///
-/// Then #104 fattened the hip node from 0.047 to 0.067 of stature, and **that
-/// changed which constraint binds.** The failure below 0.64 is now
+/// The hip node is fatter now — 0.067 of stature, not 0.047 — and **that
+/// changed which constraint binds.** The failure below 0.64 is
 /// `SocketsOverlap` — the two hip sockets running into each other, which is
 /// governed by `hip_x ≥ hip_r / 1.64` and has nothing to do with this constant.
 /// Swept to confirm rather than reasoned about: at `hip_x` 0.50 the sweep fails
@@ -121,13 +122,13 @@ const CHEST_SECTION: Vec2 = Vec2::new(1.0, 0.74);
 /// shoulder silhouette is carried by the clavicle and shoulder nodes outboard
 /// of it, and the ribcage below by [`CHEST_SECTION`], which is untouched.
 ///
-/// **0.55 → 0.75 and 0.80 → 1.10, on the owner's decision to accept wider
-/// shoulders** (#106, option d). The narrowing to 0.55 was #98 buying shoulder
-/// width by starving the trunk above the ribcage, and what it cost was visible:
-/// the top band of the silhouette table pinched where the reference carries its
-/// trapezius, because the taper out of the chest is aimed at this node. Putting
-/// the width back re-widens the shoulders through `clavicle_x`'s floor, which
-/// is what the decision agrees to stop fighting.
+/// **0.55 → 0.75 and 0.80 → 1.10, accepting wider shoulders deliberately.**
+/// The narrower 0.55 bought shoulder width by starving the trunk above the
+/// ribcage, and what it cost was visible: the top band of the silhouette
+/// table pinched where the reference carries its trapezius, because the taper
+/// out of the chest is aimed at this node. Putting the width back re-widens
+/// the shoulders through `clavicle_x`'s floor, which is the fight this pair
+/// agrees to stop fighting.
 ///
 /// **The two axes are not the same trade and it is worth keeping them apart.**
 ///
@@ -153,7 +154,7 @@ const CHEST_SECTION: Vec2 = Vec2::new(1.0, 0.74);
 /// ```
 ///
 /// **The coat-hanger ratio answers differently depending on where it is
-/// anchored, and #106 quotes both without saying so.** Taken at the girdle —
+/// anchored, and the two are easy to conflate.** Taken at the girdle —
 /// the trunk's own half-width where the shoulders actually are — it falls,
 /// 2.468 to 2.250 on the default body, which is the trade working. Taken at a
 /// fixed band down on the ribcage it rises, 2.564 to 2.695, and no setting of
@@ -162,7 +163,7 @@ const CHEST_SECTION: Vec2 = Vec2::new(1.0, 0.74);
 /// only 0.31 of it. Anyone re-opening this should read that as "the ribcage
 /// ratio is not reachable from here" rather than as a failed widening.
 ///
-/// Provenance: **swept, then judged by render** (#106). The pair above was
+/// Provenance: **swept, then judged by render**. The pair above was
 /// chosen off a sweep of `.x` at 0.55, 0.65, 0.75, 0.85, 0.95 and 1.05, each
 /// with `clavicle_x` re-floored against it; the ratio at the girdle is flat
 /// from 0.65 up, so past 0.75 the extra span buys almost nothing the eye can
@@ -177,7 +178,7 @@ const GIRDLE_SECTION: Vec2 = Vec2::new(0.75, 1.10);
 /// is that fixed point, measured rather than solved — see the neck floor in
 /// [`Dimensions::of`], which is the only thing that reads it.
 ///
-/// Provenance: **measured against the mesher** (#174). The neck bone was
+/// Provenance: **measured against the mesher**. The neck bone was
 /// bisected on each of `tests/plan.rs`'s 400 rolled records to find the shortest
 /// one that still meshes, and this blend is what makes
 /// `(1 − b) · GIRDLE_SECTION.y · girdle_r + b · clavicle_r` an upper bound on 397
@@ -197,47 +198,37 @@ const CLAVICLE_RING_BLEND: f32 = 0.62;
 /// Mirroring a config default into the plan is the same bargain
 /// [`CLAVICLE_RING_BLEND`] takes and carries the same risk: nothing checks the
 /// two agree. The plan derives no cage config and is handed none, so the
-/// alternative is a magic 0.82 with the dependency unrecorded, which is exactly
-/// the defect #174 was raised for.
+/// alternative is a magic 0.82 with the dependency unrecorded, which is the
+/// worse defect.
 const MAX_SOCKET_FRACTION: f32 = 0.82;
 /// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite — and it
 /// is not centred on its own joint either, which is what the depth here is for.
 ///
-/// **0.94 → 1.56, and it means nothing without [`NECK_LOBE`]** (#125). The pair
-/// is one shape: the section is swept `NECK_LOBE` radii astern of the joint, so
-/// it reaches `depth + lobe` behind and `depth − lobe` in front. That front
-/// figure is 0.94 — exactly what stood here before #125 — and **every change to
-/// this pair since has held it**: the throat stands where it always did and
-/// only the rear reach moves.
+/// **It means nothing without [`NECK_LOBE`].** The pair is one shape: the
+/// section is swept `NECK_LOBE` radii astern of the joint, so it reaches
+/// `depth + lobe` behind and `depth − lobe` in front. The front figure — the
+/// throat — is held at 0.94 through every setting of the pair: only the rear
+/// reach may move.
 ///
-/// **1.56 → 1.28, with [`NECK_LOBE`] 0.62 → 0.34, on the owner's side-view
-/// verdict** (#148). The nape stood proud of the head's own rear line — the
-/// neck, the back below it and the blend between them all bulging astern of
-/// the occiput — so the rear reach came in by `0.56` neck radii while the
-/// front held at 0.94. Judged on `--head --bare` renders across seeds 0, 3, 7
-/// and 21: the rear contour now runs occiput to collar without the hump, and
-/// the silhouette ruler in `the_neck_is_the_length_of_a_neck` reads the tuck
-/// at four-decimal nothing on three of five seeds.
-///
-/// **1.28 → 0.94, with [`NECK_LOBE`] 0.34 → 0.00, and this is the FLOOR of
-/// the mechanism** (#149). The owner judged #148's tuck an improvement and
-/// asked for a lot more; at a lobe of zero the section is symmetric about its
-/// own node and `depth` cannot go lower without pulling the throat back —
-/// which is exactly what the reverted 1.32 attempt did and what
+/// **0.94 with a lobe of zero is the FLOOR of the mechanism.** At a lobe of
+/// zero the section is symmetric about its own node and `depth` cannot go
+/// lower without pulling the throat back — which is exactly what the
+/// reverted 1.32 attempt below did and what
 /// `the_chin_follows_the_jaw_and_not_the_skull` guards. The remaining astern
 /// terms are [`NECK_BACK`]'s 0.35 (the cervical lean, which moves the throat
-/// with it) and the girdle below. Judged across the same four seeds: the back
-/// of the neck now sits inside the occiput's line with a true nape hollow.
-/// Any further tuck is a different mechanism, not a smaller number here.
+/// with it) and the girdle below. Judged on `--head --bare` renders across
+/// seeds 0, 3, 7 and 21: the back of the neck sits inside the occiput's line
+/// with a true nape hollow, where a deeper rear reach bulged astern of the
+/// occiput and read as a hump. Any further tuck is a different mechanism, not
+/// a smaller number here.
 ///
-/// The paragraph below said this constant was SETTLED against the reference's
-/// own column, and the measurement it stands on is still true — but it was
-/// answering a different question. The reference carries its rear depth fused
-/// into a trapezius it actually has; ours floats the same depth on a body with
-/// no shoulder mass under it (#131, open), and there it reads as a dowager
-/// hump rather than a back. Matching the reference's depth column is the right
-/// TARGET once #131 lands the mass below it; until then the depth defers to
-/// the render.
+/// **Why the reference's own rear depth is deferred rather than matched.**
+/// The reference carries its rear depth fused into a trapezius it actually
+/// has; ours would float the same depth on a body with no shoulder mass under
+/// it (see the module docs on the trapezius), and there it reads as a dowager
+/// hump rather than a back. Matching the reference's depth column is the
+/// right TARGET once shoulder mass exists below it; until then the depth
+/// defers to the render.
 ///
 /// The two columns share exactly one landmark — each has a single narrowest
 /// point — and the ratio there is stature-free and anchor-free. Depth over width
@@ -250,29 +241,23 @@ const MAX_SOCKET_FRACTION: f32 = 0.82;
 ///
 /// Within 4% across the space and within 1% on the two seeds nearest neutral. So
 /// the neck's depth for its width is right and 1.32 would have made it wrong.
-/// The waist also now sits +14 to +21 above the chin against the reference's
-/// +10, where before #131 it was at −20 — eighty millimetres of anatomy out.
-/// That was #143's own unmeasured candidate and the widening closed it without
-/// being aimed at it.
+/// The waist also sits +14 to +21 above the chin against the reference's +10.
 ///
-/// **What the stale reading was.** `examples/neckaudit` cuts at heights below the
-/// HEAD JOINT and its 167 mm reference depth was taken at a "mid-neck" that no
-/// longer means the same anatomy, so it reported 195 against 167 and looked like
-/// a 17% overshoot. This is #144's failure exactly — a comparison anchored on one
-/// landmark is only valid where the two bodies share the anatomy between it and
-/// the reading — arriving in a second place within one session.
+/// **`examples/neckaudit`'s depth reading overstates here.** It cuts at
+/// heights below the HEAD JOINT, and its 167 mm reference depth was taken at
+/// a "mid-neck" that does not mean the same anatomy on this body, so it
+/// reports 195 against 167 and looks like a 17% overshoot. A comparison
+/// anchored on one landmark is only valid where the two bodies share the
+/// anatomy between it and the reading.
 ///
-/// The rest of this note is kept because the arithmetic in it is still correct
-/// and it records what was built and thrown away.
-///
-/// **#131 widened `neck_r` by a third and this constant is expressed in neck
-/// radii.** The
-/// axis-free depth at mid-neck went 152 mm to 195 against the reference's 167,
-/// so a figure that used to sit 9% under it now sits 17% over. Bringing this to
-/// 1.32 lands it on 167.4 exactly and restores the old forward reach to within a
-/// millimetre — 48.1 mm against 48.9 — which would also give back the millimetre
-/// `tests/parts::the_underside_of_the_jaw_does_not_bulge` had to widen its bound
-/// for. It was built, measured and REVERTED, for two reasons.
+/// **A depth of 1.32 was built, measured and REVERTED, and the arithmetic is
+/// kept so nobody rebuilds it.** This constant is expressed in neck radii, so
+/// the wide neck puts the axis-free depth at mid-neck at 195 mm against the
+/// reference's 167 — 17% over. Bringing this to 1.32 lands it on 167.4
+/// exactly and restores a forward reach within a millimetre of the old one —
+/// 48.1 mm against 48.9 — which would also give back the millimetre
+/// `tests/parts::the_underside_of_the_jaw_does_not_bulge` had to widen its
+/// bound for. Two reasons it does not ship.
 ///
 /// `rig::skin`'s `the_chin_follows_the_jaw_and_not_the_skull` fails at 1.32: the
 /// throat comes back toward the neck bone, the neck wins weight under the chin,
@@ -281,9 +266,9 @@ const MAX_SOCKET_FRACTION: f32 = 0.82;
 ///
 /// And the two instruments disagree about which way this should go at all. The
 /// axis-free depth says we are 17% too deep; `examples/column`, cutting planes
-/// anchored on the chin, says the opposite — our back reached only −120.8 mm at
-/// 60 mm under the chin against the reference's −146.7 before #131 and lands on
-/// −149.6 after. Same body, same reference, opposite verdicts, because they read
+/// anchored on the chin, says the opposite — our back reaches −149.6 mm at
+/// 60 mm under the chin against the reference's −146.7, deeper rather than
+/// shallower. Same body, same reference, opposite verdicts, because they read
 /// at different heights off different anchors. Reconciling them is a pass of its
 /// own, and picking a value that satisfies the skinning test instead would be
 /// choosing a number to fit a bound.
@@ -299,13 +284,13 @@ const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 
 /// How far astern of its own joint the neck's section is swept, in neck radii.
 ///
-/// **A neck is the front of a column, and ours was a pole between two balls**
-/// (#125). Measured on the Quaternius reference, the surface reaches 2.0 to 2.4
+/// **A neck is the front of a column, not a pole between two balls.**
+/// Measured on the Quaternius reference, the surface reaches 2.0 to 2.4
 /// times as far behind the neck's axis as the throat reaches in front, at every
-/// height from the chin to the shoulders; ours read 1.00, exactly, at every
-/// height, because a centred ellipse is symmetric fore and aft by construction.
-/// Seen from above, ours was a closed oval floating in clear air where the
-/// reference is a forward lobe fused into a wide back mass — the trapezius and
+/// height from the chin to the shoulders; a centred section reads 1.00, at
+/// every height, because a centred ellipse is symmetric fore and aft by
+/// construction. Seen from above, that is a closed oval floating in clear
+/// air where the reference is a forward lobe fused into a wide back mass — the trapezius and
 /// the upper back come right up behind the skull and there is no back of the
 /// neck as a separate surface at all.
 ///
@@ -325,41 +310,41 @@ const NECK_SECTION: Vec2 = Vec2::new(1.0, 0.94);
 /// fifty millimetres more behind it at every height from the head's floor to
 /// the shoulders. `examples/neckaudit` prints the table.
 ///
-/// **Two figures recorded on #125 before this landed do not survive their own
-/// instrument, and the corrected ones are above.** The depth was reported as
-/// 167.5 — measured with the joint hull still handing the neck's extra depth to
+/// **Two earlier readings do not survive their own instrument, and the
+/// corrected ones are above.** The depth was once reported as 167.5 —
+/// measured with the joint hull still handing the neck's extra depth to
 /// the girdle symmetrically, so a fifth of that number was the CHEST. And the
-/// column was reported monotone for the first time; asked with a width probe
+/// column was once reported monotone; asked with a width probe
 /// that takes the widest point of each slice instead of firing sideways from
 /// the joint — a ray from the axis crosses an off-centre ellipse on a chord —
 /// the column turns exactly once, at the neck's own waist, both before this
 /// change and after. The lateral profile barely moves for this at all, which is
 /// what a displacement in `z` should do.
 ///
-/// Provenance: **derived from the reference** (#125), and paired with
+/// Provenance: **derived from the reference**, and paired with
 /// [`NECK_SECTION`] rather than chosen against it. The mid-neck depth figures
-/// above were measured at 0.62; **0.62 → 0.34 in #148, → 0.00 in #149**, the
-/// two moving as one shape so the throat held at `depth − lobe = 0.94` while
-/// the rear came in. Zero is this constant's floor, not its retirement: the
-/// sweep-astern mechanism stays for the day #131's shoulder mass gives the
-/// rear reach something to stand on — the full record, and why the reference's
-/// own rear reach is deferred rather than matched, is on [`NECK_SECTION`].
+/// above were measured at a lobe of 0.62; the tuck to zero moved the pair as
+/// one shape, holding the throat at `depth − lobe = 0.94` while the rear came
+/// in. Zero is this constant's floor, not its retirement: the sweep-astern
+/// mechanism stays for the day shoulder mass gives the rear reach something
+/// to stand on — the full record, and why the reference's own rear reach is
+/// deferred rather than matched, is on [`NECK_SECTION`].
 const NECK_LOBE: f32 = 0.00;
 
 /// How far behind the midline the neck node sits, in neck radii.
 ///
-/// **A neck leans forward, and ours was a vertical pole** (#125). Measured on
-/// the Quaternius reference, the neck node sits BEHIND BOTH ITS PARENT AND ITS
-/// CHILD: `spine_03` at z −13.4 mm, `neck_01` at −51.4, `head` at +11.4. So the
-/// column kinks backward at the neck and comes forward again into the skull,
-/// which is the cervical curve. Every node in this file sat on `z = 0`, so ours
-/// went straight up.
+/// **A neck leans forward, and a column on the midline is a vertical pole.**
+/// Measured on the Quaternius reference, the neck node sits BEHIND BOTH ITS
+/// PARENT AND ITS CHILD: `spine_03` at z −13.4 mm, `neck_01` at −51.4, `head`
+/// at +11.4. So the column kinks backward at the neck and comes forward again
+/// into the skull, which is the cervical curve; without this constant every
+/// node in the column sits on `z = 0` and the neck goes straight up.
 ///
 /// What it buys is the length complaint rather than the shape one. Moving the
 /// neck back seats it further inside the shoulder mass, so the flare reaches
 /// higher and the VISIBLE neck shortens: `the_neck_is_the_length_of_a_neck`
-/// reads 0.327–0.428 across its five seeds against 0.423–0.472 before, and the
-/// best of them is on the eight-head canon's 0.33.
+/// reads 0.327–0.428 across its five seeds against 0.423–0.472 without the
+/// lean, and the best of them is on the eight-head canon's 0.33.
 ///
 /// **What it does NOT buy is the mass behind the neck, and a measurement said
 /// otherwise before the instrument was corrected.** The reference's surface
@@ -375,40 +360,36 @@ const NECK_LOBE: f32 = 0.00;
 /// 0.35 rather than the reference's own 0.73 of a neck radius, because ours is
 /// bounded by what it does to the FLOOR rather than by the reference: see
 /// `HEAD_BELOW_JOINT`, which had to be re-derived for it.
-/// Provenance: **derived from the reference** (#125), then bounded by the
+/// Provenance: **derived from the reference**, then bounded by the
 /// coupling to the head. `neck_01` sits 38.0 mm behind `spine_03` on a
 /// 1.829 m body and its neck measures about 52 mm across, which is 0.73 of a
 /// radius; ours is 0.35 because past that the lower face stretches faster
-/// than `HEAD_BELOW_JOINT` can be brought back — three sentences of this
-/// docstring said 0.50, which is a value that was measured and not kept.
+/// than `HEAD_BELOW_JOINT` can be brought back.
 const NECK_BACK: f32 = 0.35;
 
 /// Where the crown node sits above the head joint, in head radii.
 ///
 /// See [`CROWN_WIDE`]: the two are chosen together and neither number means
-/// anything alone. It came down 0.72 → 0.68 when that went up, to hold the built
-/// crown still while the vault was widened. It goes 0.68 → 0.86 here, to move
-/// the built crown on purpose.
+/// anything alone — raising this widens the head unless that comes down with
+/// it, and the trap is recorded there.
 ///
-/// **Up from 0.68, and this is half of the head's missing height** (#79). The
-/// built head measured 161 mm crown to chin on a breadth of 160, where the
-/// eight-head canon on this body's own rendered stature asks 206 — a quarter
-/// short. The other half is `HEAD_BELOW_JOINT`, and splitting it between the two
-/// is what holds cranium:face at 1.00. Taking it all from either end buys the
-/// height by spoiling the proportion #78 derived and #61 measured.
+/// **This carries half of the head's height above the canon's floor.** A cage
+/// left to its own devices builds a head about a quarter shorter than the
+/// eight-head canon asks — 161 mm crown to chin on a breadth of 160 against a
+/// canon 206 on this body's rendered stature — and the recovery is split
+/// between this constant and `HEAD_BELOW_JOINT`, because the split is what
+/// holds cranium:face at 1.00. Taking it all from either end buys the height
+/// by spoiling that derived, measured proportion.
 ///
-/// **Delivery is very nearly one for one, which the head overhaul did not think
-/// it was.** #79 was raised recording the cap collapsing 69 mm under
-/// subdivision, and concluded the crown node was a poor lever and the vault
-/// needed shape rather than height. Swept on the eight-point cage that is no
-/// longer true: 10.0 mm of built crown per 0.10 of this, against a 10.32 mm
-/// nominal. The collapse belonged to the four-point cage.
+/// **Delivery is very nearly one for one.** Swept on the eight-point cage:
+/// 10.0 mm of built crown per 0.10 of this, against a 10.32 mm nominal. (A
+/// four-point cage collapses its cap under subdivision — 69 mm of it — which
+/// made the crown look like a poor lever; the eight-point cage does not.)
 ///
-/// At 0.86 the built crown sits at +106.0 mm on the default body — 1.03 head
-/// radii, up from 0.85 — which is the figure three profile tables in
-/// [`crate::face::skull`] had to be re-based onto, because their heights above
+/// The built crown's height is what three profile tables in
+/// [`crate::face::skull`] are based against, because their heights above
 /// the joint are raw radii and do not follow a crown that moves.
-/// Provenance: **derived** (#79), from cranium:face. `HEAD_BELOW_JOINT` sets
+/// Provenance: **derived**, from cranium:face. `HEAD_BELOW_JOINT` sets
 /// the chin and `Canon::EYE_LINE` the eye line; this is the value that puts
 /// the crown as far above that line as the chin is below it. Measured 0.999
 /// on the default body and 0.95 to 1.01 across eight seeds at neutral face
@@ -417,28 +398,28 @@ const CROWN_HIGH: f32 = 0.917;
 
 /// How wide the crown node is, in head radii.
 ///
-/// **Up from 0.66, and it is the cage's half of #79.** A cranium is very nearly
-/// a cylinder in front view — its greatest breadth is on the parietal, 25 to
-/// 45 mm above the pupil line, not at the cheekbone — and at 0.66 this node was
-/// so much smaller than the head node below it that the blend between the two
-/// converged toward an apex. Measured on the built cage, with no profile
-/// applied at all, the half-width fell from 0.584 head radii at the joint to
-/// 0.407 at +0.75 R: a cone before the skull's breadth profile ever ran.
+/// **Wide enough that the vault is a cylinder rather than a cone.** A cranium
+/// is very nearly a cylinder in front view — its greatest breadth is on the
+/// parietal, 25 to 45 mm above the pupil line, not at the cheekbone — and a
+/// crown node much smaller than the head node below it converges the blend
+/// between the two toward an apex. Measured on the built cage at 0.66, with
+/// no profile applied at all, the half-width fell from 0.584 head radii at
+/// the joint to 0.407 at +0.75 R: a cone before the skull's breadth profile
+/// ever ran.
 ///
-/// At 0.87 the same measurement reads 0.620 / 0.632 / 0.630 / 0.599 / 0.513 at
-/// +0.05 / +0.20 / +0.35 / +0.55 / +0.75 R — flat through the mid-cranium and
-/// falling only where a skull does. [`CROWN_HIGH`] came down from 0.72 to 0.68
-/// at the same time so the built crown did not move.
+/// Near this width the same measurement reads 0.620 / 0.632 / 0.630 / 0.599 /
+/// 0.513 at +0.05 / +0.20 / +0.35 / +0.55 / +0.75 R — flat through the
+/// mid-cranium and falling only where a skull does.
 ///
-/// **Down to 0.825 when [`CROWN_HIGH`] went to 0.86, and this is the trap in
-/// that pair** (#79). Raising the crown node WIDENS the head without touching a
+/// **This is held down against [`CROWN_HIGH`], and that is the trap in the
+/// pair.** Raising the crown node WIDENS the head without touching a
 /// breadth term anywhere: the node is most of a head radius across, so lifting
-/// it makes the blend below it bulge. Measured, `CROWN_HIGH` 0.90 on its own
-/// took maximum breadth from 159.7 mm to 165.7 — spending, silently, the one
-/// absolute width on this head that was RIGHT, and the one #61 chose the breadth
-/// axis's default against. At 0.825 the built breadth is 160.9 mm against a life
-/// eu-eu of 156, which is where it was.
-/// Provenance: **looked up, then tuned by render** (#79) — the only coefficient
+/// it makes the blend below it bulge. Measured, 0.04 of extra crown height on
+/// its own took maximum breadth from 159.7 mm to 165.7 — spending, silently,
+/// the one absolute width on this head that was RIGHT, the one the breadth
+/// axis's default is chosen against. At 0.825 the built breadth is 160.9 mm
+/// against a life eu-eu of 156.
+/// Provenance: **looked up, then tuned by render** — the only coefficient
 /// in this file with a stated anthropometric premise underneath it. The premise
 /// is that maximum head breadth is at eurion, high on the parietal roughly 25
 /// to 45 mm above the pupil line, and exceeds bizygomatic breadth (156 mm
@@ -450,14 +431,14 @@ const CROWN_WIDE: f32 = 0.825;
 /// How broad the skull is for its own height, as a scale on both cross-section
 /// axes of the head's nodes.
 ///
-/// **The head was a fifth too wide for its height, and it is the last of the
-/// three axes this issue names** (#79). Measured on the default body against a
-/// life head scaled to our own crown-to-chin: the breadth read 160.6 mm where
-/// life asks 135.1, while the FACE across the cheekbones read 114.2 against a
-/// life 118.7 — so the face was right and the skull around it was not. A
-/// correctly proportioned face inset in a vault a fifth too broad is what reads
-/// as a pinched jaw, which is what the owner reported and what three width
-/// measurements disagreed about before one of them was asked the right way.
+/// **Without this the head is a fifth too wide for its height.** Measured on
+/// the default body against a life head scaled to our own crown-to-chin: the
+/// unscaled breadth read 160.6 mm where life asks 135.1, while the FACE
+/// across the cheekbones read 114.2 against a life 118.7 — so the face was
+/// right and the skull around it was not. A correctly proportioned face inset
+/// in a vault a fifth too broad is what reads as a pinched jaw — a defect
+/// three width measurements disagreed about before one of them was asked the
+/// right way.
 ///
 /// **Both axes, not just the lateral one.** Narrowing the breadth alone would
 /// take vault depth-to-width from 1.31 to 1.55 against a life 1.28 — that ratio
@@ -468,31 +449,30 @@ const CROWN_WIDE: f32 = 0.825;
 /// body in the parameter space is close enough to the ceiling that a taller
 /// crown has to be argued for and a narrower skull does not.
 ///
-/// Provenance: **derived** (#79), from H:W. At 0.897 the breadth comes to about
+/// Provenance: **derived**, from H:W. At 0.897 the breadth comes to about
 /// 144 mm, which keeps the default inside the life population of roughly 140 to
 /// 165 that [`HEAD_BREADTH_SPAN`] is quoted against — the reason it is not the
-/// 0.845 that H:W 1.48 asks for at the height the head had before this pass.
+/// 0.845 that a strict H:W of 1.48 would ask for.
 const SKULL_SLENDER: f32 = 0.897;
 
 /// Where the jaw's hinge sits, in head radii about the head joint: `(down,
 /// forward)`.
 ///
 /// **A MARKER, not meshed geometry — and that is a measured necessity, not a
-/// shortcut** (#134). A mandible node as a third socket on the head was swept
+/// shortcut.** A mandible node as a third socket on the head was swept
 /// against the cage and can never mesh: the plane rule needs ~0.12 m beside
 /// rings as large as the head's, and 0.82 of the bone only reaches that once
-/// the node hangs outside the head's own surface. The same wall #125 measured
-/// at the girdle and the neck for a trapezius, now measured at the head.
+/// the node hangs outside the head's own surface. The same wall measured
+/// at the girdle and the neck for a trapezius, measured again at the head.
 ///
 /// So the jaw enters the RIG and not the cage: this pivot and [`JAW_TIP`] give
-/// `anim` the condyle-to-chin bone a bone-driven jaw needs (#118), and the
+/// `anim` the condyle-to-chin bone a bone-driven jaw needs, and the
 /// skin binds to it by the ordinary falloff. The mandible's MASS stays the
-/// skull stage's business — see `face::skull`'s submental construction, which
-/// is the other half of #134.
+/// skull stage's business — see `face::skull`'s submental construction.
 ///
 /// **The hinge sits well BELOW the ear, and the anatomical TMJ was measured
-/// and rejected for it** (#159). The temporomandibular joint is at the ear
-/// canal — the first cut put the pivot there (down 0.06, #134, looked up) —
+/// and rejected for it.** The temporomandibular joint is at the ear
+/// canal — the first cut put the pivot there (down 0.06, looked up) —
 /// but a real jaw does not rotate about its condyle alone: the condyle
 /// translates forward along the articular eminence as the mouth opens, and
 /// the instantaneous centre of a wide opening migrates down the ramus toward
@@ -500,8 +480,8 @@ const SKULL_SLENDER: f32 = 0.897;
 /// At the ear it cannot: the chin sits 0.91 head radii below and 0.82 forward
 /// of it, and rotation moves the chin backward by its depth below the pivot
 /// per radian against downward by its forward offset — a back-to-down ratio
-/// of 1.11, so a wide-open chin retreated faster than it fell and the owner
-/// read it as the chin being pulled into the throat.
+/// of 1.11, so a wide-open chin retreated faster than it fell and read on
+/// the render as the chin being pulled into the throat.
 ///
 /// Lowering the pivot spends depth-below-the-pivot directly: swept at down
 /// 0.06 / 0.25 / 0.45 / 0.60 (ratios 1.11 / 0.87 / 0.61 / 0.42) and judged on
@@ -510,7 +490,7 @@ const SKULL_SLENDER: f32 = 0.897;
 /// lowered pivot counter-rotates (the throat lifts on open, first visible at
 /// 0.60), and the mouth-corner shear band grows with the arc. The rest pose
 /// is untouched by construction — the pivot only matters posed.
-/// Provenance: **tuned by render** (#159), against that four-point sweep;
+/// Provenance: **tuned by render**, against that four-point sweep;
 /// the down component is a stand-in for condylar translation, not the TMJ.
 const JAW_PIVOT: Vec2 = Vec2::new(0.45, 0.10);
 
@@ -521,13 +501,14 @@ const JAW_PIVOT: Vec2 = Vec2::new(0.45, 0.10);
 /// mandible — rotating the pivot swings the chin through the arc a jaw actually
 /// opens along.
 ///
-/// **The two components are counted in two different rulers, and that is the
-/// correction #135 measured** (#134 shipped both in head radii, as 0.97 and
-/// 0.92). A head's reach below its own joint is what `face_length` stretches —
+/// **The two components are counted in two different rulers, and the
+/// difference is measured — a tip pinned in head radii walks away from the
+/// chin.** A head's reach below its own joint is what `face_length` stretches —
 /// it is the `HEAD_BELOW_JOINT` span at the head's placement above, scaled by
 /// [`FACE_LENGTH_SPAN`] — while the head's RADIUS does not move with it at all.
-/// So a tip pinned to the radius stayed put while the chin walked away from it:
-/// measured on the built body, the tip sat +16.5 mm BELOW the chin at
+/// So a tip pinned to the radius stays put while the chin walks away from it:
+/// measured on the built body with both components in radii (0.97 and 0.92),
+/// the tip sat +16.5 mm BELOW the chin at
 /// `face_length` −1, +0.7 mm at 0, and 15.2 mm ABOVE it at +1, and the axis
 /// rolls over ±0.7. At +1 that put the bone's end up by the lower lip, and the
 /// binding followed it there — the upper lip came out held 0.79 by the jaw at
@@ -545,32 +526,32 @@ const JAW_PIVOT: Vec2 = Vec2::new(0.45, 0.10);
 /// constant in neither ruler — so the tip sits 7.1 mm proud of a short face's
 /// chin and 8.6 mm behind a long one's. Small against the ~28 mm falloff, and
 /// the fix is to hang the marker off the MEASURED skull rather than off the
-/// plan, which is a different issue's work.
-/// Provenance: **measured** (#135) — the chin's height on built bodies at three
+/// plan, which is a pass of its own.
+/// Provenance: **measured** — the chin's height on built bodies at three
 /// face lengths, agreeing with `owner_of`'s independent 0.599.
 const JAW_TIP: Vec2 = Vec2::new(0.603, 0.92);
 
 /// The marker radii of the jaw's two nodes, in head radii: `(pivot, tip)`.
 ///
-/// **Retired as a binding mechanism by #152 and kept as the record of why.**
-/// These were BINDING reaches — the falloff that decided which skin follows
-/// the mandible scaled with them — and the sweep below is the measurement that
-/// eventually killed that mechanism: its own conclusion is that no reach can
+/// **Not a binding mechanism, and the sweep below is the record of why not.**
+/// Used as BINDING reaches — scaling the falloff that decides which skin
+/// follows the mandible — their own measurement concludes that no reach can
 /// hold the chin's flank while releasing the upper lip. The mandible's skin is
-/// now the REGION `face::skull::mandible_hold` describes (the owner's
-/// lip-to-larynx contract), `rig::skin::bind` skips marker bones in its
-/// falloff entirely, and these radii mesh nothing and bind nothing.
-/// **Sourced by sweep against a posed jaw** (#135), which is the only thing
+/// the REGION `face::skull::mandible_hold` describes, `rig::skin::bind` skips
+/// marker bones in its falloff entirely, and these radii mesh nothing and bind
+/// nothing.
+///
+/// **Sourced by sweep against a posed jaw**, which is the only thing
 /// that can source it: dual quaternion blending deforms a bad reach and a good
 /// one identically at rest AND under a head turn, so every suite in the crate
-/// stayed green over the unsourced first cut of `(0.24, 0.30)`. Rotating the
+/// stays green over an unsourced `(0.24, 0.30)`. Rotating the
 /// pivot is what tells them apart, and `render --jaw 20 --jawsweep` is what
 /// rotates it.
 ///
 /// The two opposed requirements: **the chin must follow the jaw and the upper
-/// lip must stay with the head.** At the first cut the upper lip was held 0.652
-/// by the mandible and travelled 19.2 mm of the lower lip's 28.2 at a 20-degree
-/// open — the lips could not part, which is the one thing a jaw is for. Swept
+/// lip must stay with the head.** At `(0.24, 0.30)` the upper lip is held 0.652
+/// by the mandible and travels 19.2 mm of the lower lip's 28.2 at a 20-degree
+/// open — the lips cannot part, which is the one thing a jaw is for. Swept
 /// at three face lengths, in the upper lip's travel and its worst single
 /// vertex's hold, against the separation the lips actually open by:
 ///
@@ -582,7 +563,7 @@ const JAW_TIP: Vec2 = Vec2::new(0.603, 0.92);
 ///   0.14  0.20     2.2 mm .51  0.2 .19   0.0 .01   15.6 to 18.5 mm
 ///   0.10  0.23     3.2 mm .60  0.7 .32   0.0 .00   15.9 to 20.7 mm
 ///   0.10  0.26     6.6 mm .73  3.2 .62   0.3 .12   14.3 to 26.1 mm
-///   0.24  0.30    (the first cut) 19.2 mm .90 on the default body
+///   0.24  0.30    (too far)       19.2 mm .90 on the default body
 /// ```
 ///
 /// A SHORT face is what binds, and it is not obvious: it packs the mouth line
@@ -592,15 +573,14 @@ const JAW_TIP: Vec2 = Vec2::new(0.603, 0.92);
 /// pivot buys separation up to about 0.10 before it starts costing the upper
 /// lip more than the lower one gains.
 ///
-/// What the sweep could NOT buy — the chin at 37 to 44% of a rigid mandible's
-/// arc, the submental at 8 to 20% — was the falloff's structural limit: a
+/// What the sweep cannot buy — the chin at 37 to 44% of a rigid mandible's
+/// arc, the submental at 8 to 20% — is the falloff's structural limit: a
 /// single midline segment puts the chin's flanks 27.4 mm away and the upper
 /// lip 28.5, and nothing keyed to distance holds one while releasing the
-/// other. #135 named a pair of rami as the fix; #152 dissolved the problem
-/// instead by binding the `face::skull::mandible_hold` REGION, under which the
-/// chin measures held 1.000 at 97.6% of the rigid arc (#214) and no rami are
-/// wanted.
-/// Provenance: **swept** (#135) against a 20-degree open at `face_length` −1, 0
+/// other. Binding the `face::skull::mandible_hold` REGION dissolves the problem
+/// instead: under it the chin measures held 1.000 at 97.6% of the rigid arc.
+///
+/// Provenance: **swept** against a 20-degree open at `face_length` −1, 0
 /// and +1; the table above is the sweep.
 const JAW_REACH: Vec2 = Vec2::new(0.10, 0.20);
 
@@ -630,16 +610,16 @@ const JAW_REACH: Vec2 = Vec2::new(0.10, 0.20);
 /// turns it, and a few millimetres of pivot error changes the slide direction
 /// imperceptibly — which is what retires the plan-vs-measured trap `JAW_TIP`
 /// fell into. Nothing here needs to sit ON a feature.
-/// Provenance: **measured** (#215) — the canon probe above, on built bodies.
+/// Provenance: **measured** — the canon probe above, on built bodies.
 const BROW_JOINT: Vec2 = Vec2::new(0.30, 0.049);
 
 /// The brow markers' radius, in head radii.
 ///
-/// Markers mesh nothing and, since #152, bind nothing through the falloff —
-/// but `nearest_bone` still answers with a marker's radius where the marker
-/// wins, and `paint_skin` and `rig::Surface` read that radius (#136's
-/// standing finding). The jaw's markers carry 0.10 and 0.20 without incident;
-/// this matches the smaller of them.
+/// Markers mesh nothing and bind nothing through the falloff — but
+/// `nearest_bone` still answers with a marker's radius where the marker
+/// wins, and `paint_skin` and `rig::Surface` read that radius. The jaw's
+/// markers carry 0.10 and 0.20 without incident; this matches the smaller of
+/// them.
 const BROW_REACH: f32 = 0.10;
 
 /// Where each mouth-corner marker sits: `(out from the midline in head radii,
@@ -650,8 +630,8 @@ const BROW_REACH: f32 = 0.10;
 ///
 /// The height is the MOUTH LINE, measured in the below-joint span because
 /// that is the ruler the line is stationary in: 0.345 of it on the default
-/// and at both mouth-width ends and the full mouth (#216's probe; the same
-/// ruler argument as `JAW_TIP`'s 0.603, made once and reused).
+/// and at both mouth-width ends and the full mouth — the same
+/// ruler argument as `JAW_TIP`'s 0.603, made once and reused.
 ///
 /// The lateral component is deliberately SMALL and off the midline in each
 /// corner's own direction. Two reasons, one structural and one geometric. It
@@ -665,7 +645,7 @@ const BROW_REACH: f32 = 0.10;
 /// philtrum and the maximum at the commissure, which is the shape of a
 /// smile. The corner itself sits at 0.21 to 0.31 of the head's horizontal
 /// reach by the mouth-width axis; 0.06 leaves 16 mm of lever on the default.
-/// Provenance: **measured** (#216) — the probe above, on built bodies.
+/// Provenance: **measured** — the probe above, on built bodies.
 const CORNER_JOINT: Vec2 = Vec2::new(0.06, 0.345);
 
 /// The corner markers' radius, in head radii. See [`BROW_REACH`].
@@ -676,7 +656,7 @@ const CORNER_REACH: f32 = 0.10;
 ///
 /// **The head is the only major node in this file with no section, and giving it
 /// one is what makes a broad skull and a narrow one two different people rather
-/// than two different sizes** (#61). Every other trunk node carries a
+/// than two different sizes.** Every other trunk node carries a
 /// [`PELVIS_SECTION`]-style pair because a body part is not a surface of
 /// revolution; the head carried none, so the record could say how BIG a head was
 /// and never how it was shaped.
@@ -697,7 +677,7 @@ const CORNER_REACH: f32 = 0.10;
 /// bounds cannot express anyone at them, since a face is the sum of several
 /// axes and each one has to have somewhere to go.
 ///
-/// Provenance: **derived from a sweep, then bounded by meshability** (#61).
+/// Provenance: **derived from a sweep, then bounded by meshability**.
 /// The span is what `tests/plan.rs`'s 1500-body sweep carries — see
 /// `head_breadth` in [`HumanoidParams`] for why the broad end is the one that
 /// binds — and the life figures above are what the default is chosen against,
@@ -707,11 +687,11 @@ const HEAD_BREADTH_SPAN: f32 = 0.20;
 /// How far the `face_length` axis stretches the head below its own joint, as a
 /// share of [`Dimensions::of`]'s `HEAD_BELOW_JOINT`.
 ///
-/// **The other half of #61's owner call, and the constant it names.** Face
-/// length was a derived quantity: `head_size` moved the crown and the chin
-/// together, so a record could ask for a bigger head and never for a longer
-/// face. This is the one coefficient that separates them, and the whole of its
-/// derivation is written beside it at its use site.
+/// **The coefficient that makes face length its own axis.** Left derived,
+/// `head_size` moves the crown and the chin together, so a record could ask for
+/// a bigger head and never for a longer face. This is the one coefficient that
+/// separates them, and the whole of its derivation is written beside it at its
+/// use site.
 ///
 /// **A sixth either way, and what bounds it is the triangle budget rather than
 /// anything about a face.** Measured end to end on eight seeds: the eye-to-chin
@@ -728,29 +708,20 @@ const HEAD_BREADTH_SPAN: f32 = 0.20;
 /// body anywhere in the space is 29,886 triangles against a 30,000 target, and
 /// 826 of the distance to it is this axis's top end.
 ///
-/// **Which is also why the neutral did not move**, though the measurement says
-/// it should: cranium:face is 1.05–1.08 today against the 1.00 that #78 derived
-/// `HEAD_BELOW_JOINT` to give, and restoring it costs 534 triangles at that same
-/// dearest corner and puts it over the target. The head is 32% short of life
-/// overall (#79) and 6% of that is this coefficient's; spending the budget on
-/// the small half while the large half is open is the wrong order.
+/// **The neutral of this axis is 0.0, and the length it is a sixth of lives in
+/// `HEAD_BELOW_JOINT` and [`CROWN_HIGH`]** — which are set together, at 1.55
+/// and 0.86, for a cranium:face of 0.999 on the default body. Setting them
+/// together is what makes it affordable: a taller vault sits ABOVE
+/// `FACE_PASSES`'s above-joint ceilings, so stretching the head makes the face
+/// refinement CHEAPER, and the dearest body anywhere in the space falls rather
+/// than rises.
 ///
-/// **That deferral is discharged and the fear behind it was wrong** (#79). Both
-/// halves were spent together: `HEAD_BELOW_JOINT` 1.19 → 1.55 with
-/// [`CROWN_HIGH`] 0.68 → 0.86, cranium:face 0.999 on the default body. And the
-/// budget went the other way — a taller vault sits ABOVE `FACE_PASSES`'s
-/// above-joint ceilings, so the dearest body anywhere in the space fell from
-/// 29,886 to 29,092. The 534-triangle figure quoted above is real and it is also
-/// not monotone in the stretch: 1.19 → 1.55 costs 188 at that corner where
-/// 1.19 → 1.27 costs 534, because a band edge lands on a ring of faces rather
-/// than between them. Cost here has to be measured at the value, never
-/// interpolated to it.
+/// **Cost here has to be measured at the value, never interpolated to it.**
+/// Stretching `HEAD_BELOW_JOINT` 1.19 → 1.55 costs 188 triangles at the dearest
+/// corner where 1.19 → 1.27 costs 534, because a band edge lands on a ring of
+/// faces rather than between them.
 ///
-/// The neutral of THIS axis is unchanged at 0.0 — what moved is the constant it
-/// multiplies, so a record asking for a long face still gets one a sixth longer
-/// than the default, and the default is now the right length to be a sixth of.
-///
-/// Provenance: **derived** (#61), from the budget headroom measured across the
+/// Provenance: **derived** from the budget headroom measured across the
 /// space rather than from anthropometry — the anthropometry is what says where
 /// the DEFAULT should be, and it is recorded above rather than applied.
 const FACE_LENGTH_SPAN: f32 = 0.17;
@@ -798,11 +769,10 @@ const A_POSE: f32 = 0.70;
 ///                               the bottom end is editorial too
 /// ```
 ///
-/// **Every figure in that table was re-measured in #163's audit rather than
-/// carried forward**, each against the gate it actually stands on: a
-/// coefficient against the 1500 random bodies and the corners, a saturation
-/// against the 400 rerolled records. Two moved, two were confirmed, and two of
-/// the six ends turned out not to be mesher walls at all. Each is derived
+/// **Every figure in that table is measured against the gate it actually
+/// stands on** — a coefficient against the 1500 random bodies and the corners,
+/// a saturation against the 400 rerolled records — rather than carried
+/// forward. Two of the six ends are not mesher walls at all. Each is derived
 /// beside its own expression.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Dimensions {
@@ -919,7 +889,7 @@ pub(crate) struct Dimensions {
     /// neighbours and Catmull-Clark averages a small ring away hardest, which is
     /// the same mechanism `FOOT_KEPT` records when it notes that a fat ring
     /// between thin ones does not survive. Asking it for one shared depth left
-    /// the back of the sole 7.8 mm clear of the floor (#220).
+    /// the back of the sole 7.8 mm clear of the floor.
     pub cap_kept: f32,
     /// How far below [`Self::foot_y`] every node of the foot reaches.
     ///
@@ -927,7 +897,7 @@ pub(crate) struct Dimensions {
     /// share a radius: the ball is the widest and the toe the narrowest, so one
     /// shared multiplier asked each of them for a *different* depth and the sole
     /// came out convex — 11.7 mm below the plan's own ground plane at the ball
-    /// and 7.8 mm less than that at the toe (#220). Each node's section is
+    /// and 7.8 mm less than that at the toe. Each node's section is
     /// scaled to reach this depth from wherever its own centre sits, which is
     /// what makes the sole one plane instead of four tangents to a curve.
     pub sole_depth: f32,
@@ -983,9 +953,9 @@ pub(crate) struct Dimensions {
 ///
 /// "Males enlarging at a greater rate around the waist and calf and females
 /// around the hips, thighs" is that paper's own summary, and it is the whole of
-/// the flagship cross-composite formula this was raised for (#164): the
-/// android/gynoid blend is not authored, it is [`between`] applied to a
-/// measured pair. See [`Girth::at`].
+/// the cross-composite formula this exists for: the android/gynoid blend is
+/// not authored, it is [`between`] applied to a measured pair. See
+/// [`Girth::at`].
 ///
 /// At a fixed height a body that grows only sideways has radius ∝ volume^0.5,
 /// so **0.5 is the neutral exponent here and not 0.333**: the waist and the arm
@@ -1024,7 +994,7 @@ struct Girth {
     /// squared, which is a definition that says where the loss is — the limbs,
     /// while the trunk's own musculature and the ribcage under it hold. So
     /// [`Self::at`] spends the budget above and [`Self::limb`] spends this one,
-    /// and the two are the same number until a body is thirty (#167).
+    /// and the two are the same number until a body is thirty.
     wasting: f32,
     /// How far into the changes of age this body is, straight off
     /// [`Composites::ageing`].
@@ -1156,8 +1126,8 @@ impl Girth {
 ///
 /// so `frame(+1) / frame(−1) = female / male` exactly, whatever the plan builds
 /// at zero. That matters here more than it looks: this body's shoulder span is
-/// 10.8% over the male reference and stays there (#106), and snapping the axis
-/// onto the reference midpoint would have quietly re-litigated that decision on
+/// 10.8% over the male reference and stays there, and snapping the axis
+/// onto the reference midpoint would quietly re-litigate that decision on
 /// the way past.
 pub(crate) fn frame(femininity: f32, male: f32, female: f32) -> f32 {
     between(femininity, male, female) / ((male + female) * 0.5)

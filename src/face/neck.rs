@@ -1,12 +1,12 @@
 //! The column between the jaw and the shoulders, carved rather than swept.
 //!
-//! **The head used to sit on a stump, and the stump was the cage's** (#175). A
+//! **Left to the cage alone, the head sits on a stump — the cage's stump.** A
 //! neck arrives from [`crate::cage`] as a swept ring of its own radius, and that
 //! radius is a fraction of STATURE times girth times the frame axis, while the
 //! skull above it is a fraction of stature times `head_size`. The two share
 //! stature and nothing else, so a body could carry either on the other:
-//! measured over an ordinary grid before this existed, the built column ran from
-//! 0.65 of the skull's own width to 1.21 of it — at `head_size` −1 the neck was
+//! measured over an ordinary grid with no carve, the built column ran from
+//! 0.65 of the skull's own width to 1.21 of it — at `head_size` −1 the neck
 //! WIDER than the head, which reads as a knob on a post.
 //!
 //! So the column's width stops being the cage's business. What the sweep
@@ -25,11 +25,11 @@
 //! and the girdle's crown below — and reaches identity at both, so it composes
 //! with the skull's profiles rather than fighting them.
 //!
-//! **And then the whole band is faired** ([`fair`], #193). Three systems share
+//! **And then the whole band is faired** ([`fair`]). Three systems share
 //! the mandible-to-throat skin — `CHIN`'s tail, `construct_submental`'s chords
-//! and [`shape`]'s narrowing — and their seams rendered as a hanging tab, a
-//! crevasse and shelf-breaks. The owner's direction was to shape this region by
-//! render and re-fit the instruments after, and the shape that survived that
+//! and [`shape`]'s narrowing — and their raw seams render as a hanging tab, a
+//! crevasse and shelf-breaks. The region is shaped by render, with the
+//! instruments re-fit after, and the shape that survives that
 //! judgement is: every seam smoothed out of the finished surface, one
 //! femininity-scaled laryngeal prominence raised on the result.
 
@@ -44,24 +44,24 @@ use super::smooth;
 /// built skull's own widest half-width.
 ///
 /// **Sourced from one mannequin and corroborated from outside it, and the
-/// caveat travels with the number** (#175). The obvious derivation — measure
+/// caveat travels with the number.** The obvious derivation — measure
 /// both CC0 references, as `HeadTraits`'s whole set is measured — does not
-/// work here, and four instruments were built and thrown away proving it: the
+/// work here, and that was established by instrument, not assumed: the
 /// male is 7,399 vertices so a fine band holds one ring or none; a ray from the
 /// skull's axis is not a half-width once it leaves the skull, because a neck
 /// stands behind that axis; a swept section at neck height contains the
-/// trapezius as well as the neck. The fourth worked on the male and read 0.716,
-/// and the female's `neck_01` weights own so much shoulder that her column
-/// measures WIDER below the jaw than at it. No threshold makes the two files
-/// the same selection.
+/// trapezius as well as the neck. An instrument clear of all three reads 0.716
+/// on the male, and the female's `neck_01` weights own so much shoulder that
+/// her column measures WIDER below the jaw than at it. No threshold makes the
+/// two files the same selection.
 ///
 /// 0.716 is corroborated from anthropometry rather than from the other
 /// mannequin: neck breadth against head breadth is about 110 mm against 152,
 /// which is 0.72. Two independent routes to the same figure on a quantity where
-/// our own neutral body read 0.90 is enough to author against.
+/// the uncarved neutral body reads 0.90 is enough to author against.
 ///
 /// Provenance: **measured on the male reference mannequin, corroborated by
-/// anthropometry; the female mannequin cannot carry the measurement** (#175).
+/// anthropometry; the female mannequin cannot carry the measurement**.
 const NECK_SKULL: f32 = 0.72;
 
 /// What the built skull's widest half-width is worth against its own node.
@@ -85,7 +85,7 @@ const NECK_SKULL: f32 = 0.72;
 /// was WIDER than its head, so the instrument's "skull's widest" was reading
 /// neck. That cell is the defect this module exists to remove.
 ///
-/// Provenance: **measured over the parameter grid** (#175).
+/// Provenance: **measured over the parameter grid**.
 const SKULL_OF_NODE: f32 = 0.781;
 
 /// How much of the run the carve takes to arrive, below each point's own
@@ -93,40 +93,41 @@ const SKULL_OF_NODE: f32 = 0.781;
 ///
 /// **A share of the run and not a fixed depth**, so a long neck eases in over a
 /// longer distance and a short one does not take the carve as a step. Measured
-/// on the built column before this existed, the narrowest section sat 80 mm
+/// on the uncarved column, the narrowest section sits 80 mm
 /// below the head joint against a border at 55 and a girdle crown at 210, so
 /// the waist is about a sixth of the way down and the ramp has to be shorter
 /// than that or the neck is at its narrowest nowhere.
 ///
-/// Provenance: **measured on the built column** (#175).
+/// Provenance: **measured on the built column**.
 const RAMP: f32 = 0.16;
 
 /// Where the shoulders take the column back, in the same fractions.
 ///
 /// The neck holds its own width from the end of [`RAMP`] down to here and then
-/// lets go, so the surface between them cannot swell — which is what it did:
-/// `neckaudit` counted three turns down the column, swell then pinch then
-/// swell, where a neck narrows into its shoulder and stops. It counts one now.
+/// lets go, so the surface between them cannot swell — which is what an unheld
+/// column does: `neckaudit` counts three turns down one, swell then pinch then
+/// swell, where a neck narrows into its shoulder and stops. Held, it counts
+/// one.
 ///
-/// Provenance: **tuned by render** (#175).
+/// Provenance: **tuned by render**.
 const RELEASE: f32 = 0.72;
 
 /// How much of the carve still reaches the throat, dead ahead.
 ///
 /// **Zero would be a neck that narrows sideways and nowhere else, and one tears
-/// the jaw off** (#175). The first version scaled the whole section about the
-/// column's axis, which drew the throat back with the sides while the chin in
-/// front of it stayed exactly where the skull's own profiles had put it — so
-/// the submental surface had to bridge a gap that had grown by about twenty
-/// millimetres over the same three rows of vertices, and it folded. In the
-/// normal buffer it is a cliff with a torn edge; in the lit render it is the
+/// the jaw off.** Scaling the whole section about the
+/// column's axis draws the throat back with the sides while the chin in
+/// front of it stays exactly where the skull's own profiles put it — so
+/// the submental surface has to bridge a gap grown by about twenty
+/// millimetres over the same three rows of vertices, and it folds. In the
+/// normal buffer that is a cliff with a torn edge; in the lit render it is the
 /// jaw shattering.
 ///
 /// A third of it, because a throat does come in a little under a narrower neck
 /// and holding it rigid leaves a flat plate where the submental hollow should
 /// keep curving.
 ///
-/// Provenance: **tuned by render, against a fold** (#175).
+/// Provenance: **tuned by render, against a fold**.
 const THROAT_HOLD: f32 = 0.33;
 
 /// How far the nape cuts in under the occiput, as a fraction of the column's
@@ -136,10 +137,10 @@ const THROAT_HOLD: f32 = 0.33;
 /// undercut at all the occiput runs straight down into the column and the
 /// silhouette from behind is one tube from crown to shoulders — the head has no
 /// bottom. `OCCIPUT`'s own negative tail cuts this hollow where the head owns
-/// the surface; below the head's floor nothing did, so the hollow stopped dead
-/// at a zone boundary.
+/// the surface; below the head's floor nothing else does, and without this the
+/// hollow stops dead at a zone boundary.
 ///
-/// Provenance: **tuned by render** (#175).
+/// Provenance: **tuned by render**.
 const NAPE_CUT: f32 = 0.14;
 
 /// How far down the column the nape's cut has faded out, in the same fractions.
@@ -148,7 +149,7 @@ const NAPE_CUT: f32 = 0.14;
 /// to be gone well before the shoulders or the column reads pinched from behind
 /// rather than undercut.
 ///
-/// Provenance: **tuned by render** (#175).
+/// Provenance: **tuned by render**.
 const NAPE_FADE: f32 = 0.55;
 
 /// Where the column is measured, as a fraction of the way from the mandible's
@@ -159,30 +160,30 @@ const NAPE_FADE: f32 = 0.55;
 /// strength by here, so this is the height whose width the carve actually sets
 /// and the honest place to read what it has to work with.
 ///
-/// Provenance: **measured on the built column** (#175) — the narrowest section
-/// sat 80 mm below the head joint against a border at 55 and a girdle crown at
+/// Provenance: **measured on the built column** — the narrowest section
+/// sits 80 mm below the head joint against a border at 55 and a girdle crown at
 /// 210, which is about a sixth of the way down.
 const WAIST: f32 = 0.18;
 
 /// How far either side of the waist a vertex still counts, in the same
 /// fractions.
 ///
-/// Wide enough that a ring always lands inside it, which is the whole lesson of
-/// the band table this replaced: the column's rings are about 8 mm apart before
+/// Wide enough that a ring always lands inside it — the constraint any
+/// height-window here must respect: the column's rings are about 8 mm apart before
 /// refinement and a window narrower than that reports the tessellation. A tenth
 /// of a run about 90 mm long is 9 mm either side.
 const WINDOW: f32 = 0.10;
 
 /// How many times the column's own faces are split before anything shapes it.
 ///
-/// **The neck had never been refined at all, and a carve cannot draw a curve
-/// on a surface with no rows to hold it** (#176, and it is #158's lesson at the
-/// other end of the same body). `refine_face` rejects every face whose nearest
-/// bone is not the head's, so the column arrived at the base subdivision: the
-/// midline throat measured as a POLYLINE with runs of exactly zero turn eleven
-/// millimetres long, and the waist and the nape this module authors were being
-/// drawn between rows that far apart. The owner read it as the sides of the
-/// neck and the throat not being smooth, which is what it was.
+/// **A carve cannot draw a curve on a surface with no rows to hold it.**
+/// `refine_face` rejects every face whose nearest
+/// bone is not the head's, so without this pass the column arrives at the base
+/// subdivision: the
+/// midline throat measures as a POLYLINE with runs of exactly zero turn eleven
+/// millimetres long, and the waist and the nape this module authors would be
+/// drawn between rows that far apart — read on screen as the sides of the
+/// neck and the throat simply not being smooth, which is what it is.
 ///
 /// Runs BEFORE the carve and before `shape_skull`, for the reason `refine_face`
 /// runs before shaping: splitting first samples the shape finely, and splitting
@@ -191,8 +192,8 @@ const REFINEMENT: usize = 1;
 
 /// How far past the column's own span the refinement reaches, as a share of it.
 ///
-/// A resolution boundary is a curvature spike wherever the surface is curved
-/// (#158), so the split has to finish somewhere the carve is not working.
+/// A resolution boundary is a curvature spike wherever the surface is curved,
+/// so the split has to finish somewhere the carve is not working.
 /// Below, that is inside the shoulder, where the release has already returned
 /// the surface to the cage's own; above, it is inside the head, whose faces are
 /// refined eight times over by `refine_face` and cannot notice one more.
@@ -249,8 +250,7 @@ pub fn refine(mesh: &PolyMesh, rig: &Rig, traits: &HeadTraits) -> PolyMesh {
 ///
 /// One definition, read by both [`refine`] and [`shape`], because a split that
 /// covered a different run from the carve would put a resolution boundary in
-/// the middle of the carve's own curvature — which is the one place #158 says
-/// it must not go.
+/// the middle of the carve's own curvature — the one place it must not go.
 fn span(rig: &Rig, traits: &HeadTraits) -> Option<(f32, f32, f32, f32)> {
     if rig.ground_contacts().len() > 2 {
         return None;
@@ -451,8 +451,7 @@ const FAIR_UNSHRINK: f32 = -0.53;
 ///
 /// Tighter above than the carve's own [`RAMP`], because the fairing must not
 /// reach the chin: the border is the boundary of the FACE's identity, and a
-/// fairing weight that is still nonzero there planes the chin button the way
-/// #134's first chord did.
+/// fairing weight that is still nonzero there planes the chin button flat.
 const FAIR_IN: f32 = 0.14;
 
 /// How far ABOVE its own border a point may still be faired, as a share of the
@@ -460,23 +459,23 @@ const FAIR_IN: f32 = 0.14;
 /// systems, and the seam is the thing being removed.
 ///
 /// **A fiftieth, and the difference between a fiftieth and a twentieth is a
-/// POINTED CHIN** (#193). At 0.05 the fairing's unshrinking pass reaches the
+/// POINTED CHIN.** At 0.05 the fairing's unshrinking pass reaches the
 /// chin's own crest and pushes it forward: measured on `examples/column`, the
-/// midline crest stood 105.3 mm against the untouched body's 102.3, and the
-/// owner read the render as the chin getting too pointy. At 0.02 the crest is
-/// 102.3 again — bit for bit the shape the crate shipped — and the jawline
+/// midline crest stands 105.3 mm against the untouched body's 102.3, and the
+/// render reads as a chin gone too pointy. At 0.02 the crest is
+/// 102.3 again — bit for bit the untouched shape — and the jawline
 /// streaks this constant exists to remove stay gone, which is the whole reason
 /// it survives at all rather than going to zero.
 const FAIR_OVER: f32 = 0.02;
 
 /// [`FAIR_IN`], dead ahead of the column — see the weight's comment: under the
 /// chin there is no edge for a gentle ramp to protect, and the gentleness is
-/// what let the wattle's drip survive.
+/// what lets a wattle's drip survive.
 const FAIR_IN_AHEAD: f32 = 0.03;
 
 /// How far BELOW the girdle's crown the fairing still holds, dead ahead, as a
 /// share of the run — see the weight's comment: the crown is a height, the
-/// shoulder mass it protects is at the sides, and the drip hung under it.
+/// shoulder mass it protects is at the sides, and the drip hangs under it.
 const FAIR_BELOW: f32 = 0.30;
 
 /// The wattle pocket's shrinking passes, and how far below the border the
@@ -487,7 +486,7 @@ const MELT_REACH: f32 = 0.30;
 
 /// How far ABOVE the menton the melt still reaches, dead ahead, as a share of
 /// the run. The chin's underside comes to a midline point — visible as a drip
-/// once the wattle around it was faired away, and present under the wattle all
+/// once the wattle around it is faired away, and present under the wattle all
 /// along — and the point's tip is the few millimetres of surface just above
 /// the border. The chin's forward crest sits two to three centimetres higher
 /// and the melt's weight is long dead there, which is what keeps this from
@@ -499,7 +498,7 @@ const FAIR_OUT: f32 = 0.20;
 /// Where the laryngeal prominence sits, as a fraction of the border-to-girdle
 /// run, and how far it spreads in the same fractions.
 ///
-/// Provenance: **tuned by render** (#193) — the thyroid notch has no landmark
+/// Provenance: **tuned by render** — the thyroid notch has no landmark
 /// on this rig to derive from.
 const LARYNX_AT: f32 = 0.36;
 const LARYNX_SPREAD: f32 = 0.12;
@@ -510,15 +509,15 @@ const LARYNX_WIDTH: f32 = 0.09;
 /// Fairs the column into one smooth surface, then raises the larynx on it.
 ///
 /// **This is where the mandible-to-throat skin gets its shape, and it is a
-/// fairing rather than another term, by the owner's direction** (#193). Three
+/// fairing rather than another term.** Three
 /// systems share this band — `CHIN`'s tail, `construct_submental`'s six
 /// column-chords and [`shape`]'s lateral narrowing — and each is individually
-/// defensible while their seams are not: rendered before this existed, the
-/// region carried a hanging tab under the chin, a crevasse up one side of the
+/// defensible while their seams are not: rendered unfaired, the
+/// region carries a hanging tab under the chin, a crevasse up one side of the
 /// throat and shelf-breaks in profile, every one of them a boundary between two
-/// of those systems. Rather than tune three systems into agreement knot by
-/// knot — which is what #94 tried, four times, each fix moving the seam rather
-/// than closing it — the seams are faired out of the finished surface, which
+/// of those systems. Tuning three systems into agreement knot by
+/// knot fails by moving each seam rather
+/// than closing it — so the seams are faired out of the finished surface, which
 /// is the operation "smooth, nicely curved" actually names.
 ///
 /// The larynx is raised AFTER the fairing, on the faired surface, so the

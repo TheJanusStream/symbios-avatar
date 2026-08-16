@@ -1,5 +1,8 @@
 # Dossier: Parametric Hair, Clothing, Accessories & Character-Creator UX
 
+*A point-in-time research dossier gathered while this crate was being designed. Kept as the record of what was found and why the decisions in [../plan.md](../plan.md) were made — external version numbers, prices and library gaps in it were true when written and are not maintained.*
+
+
 ## 1. Procedural hair
 
 ### VRoid Studio model (best-documented parametric hair authoring)
@@ -63,9 +66,9 @@
 - **BG3**: curated discrete options — zero broken outputs, fast good results.
 - **Mii**: parts-based caricature; super-deformed models make tiny discrete changes strongly distinct — likeness through exaggeration. **Coarse discrete parameters beat fine continuous sliders** for likeness and shareability in stylized settings.
 - **Preset-blend vs sliders**: presets = saved slider vectors over the same parameter space, blendable. Taxonomy: presets (archetype) → macro sliders (region) → micro sliders (feature) = Sims Top/Macro/Micro.
-- **Randomize + locks**: Ship of Heroes ships master randomize + checkbox locks per option + hierarchical randomizers (3 major: look/costume/colors; ~10 secondary). Our seed-hunt + pin_axis_row 🔒 mechanic (#1005) is directly transplantable and MORE principled (deterministic seed hunt vs naive re-roll).
+- **Randomize + locks**: Ship of Heroes ships master randomize + checkbox locks per option + hierarchical randomizers (3 major: look/costume/colors; ~10 secondary). A seed-hunt plus per-axis pin mechanic is directly transplantable and MORE principled (deterministic seed hunt vs naive re-roll).
 - **Save/share**: MH Wilds short alphanumeric preset codes (hunter + Palico); DD2 slider formulas on boards; Elden Ring community JSON tools; Mii QR. **Native compact codes win** — small-record + seed architecture makes this nearly free (record → base32/QR).
-- **Colorways**: curated swatch ramps by default, full picker behind "advanced" (consistent with #900 realistic palettes).
+- **Colorways**: curated swatch ramps by default, full picker behind "advanced".
 - **Nikke/Stellar Blade**: contribution is **presentation** — invest in the preview stage (turntable, pose, lighting, backdrop); it sells procedural outfits.
 
 ## 6. Creature customization

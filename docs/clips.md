@@ -5,22 +5,20 @@ retargeted animations, and every one of them is somebody else's work released
 into the public domain. This file is the record of whose, from where, and under
 what.
 
-## What this is now
+## What it is
 
-**A development reference, and not a runtime motion source.** It was the second
-of those when it was imported. Epic #237 replaced runtime clip locomotion with
-the procedural layer, and #248 re-authored the expressive roster as goal-space
-clips that cost the bytes of their own description; what the artifact is for now
-is comparison — a second opinion when a procedural motion looks wrong, and the
-material `examples/locomotion` measures the gait against.
+**A development reference, and not a runtime motion source.** Runtime
+locomotion is procedural, and the expressive roster is authored as goal-space
+clips that cost only the bytes of their own description; what the artifact is
+for is comparison — a second opinion when a procedural motion looks wrong, and
+the material `examples/locomotion` measures the gait against.
 
 **It is a second opinion and never a gold standard**, and the reason is
-measured rather than asserted. The owner's report at #237 was that the imported
-clips do not loop cleanly and that on some of them the body teleports between
-frames, as if a reference frame had changed under it. Both are real, both are
-now printed by the instruments, and both are properties of the source rather
-than of the transfer — the collapse rate below says the retarget invented no
-motion of its own.
+measured rather than asserted: the imported clips do not loop cleanly, and on
+some of them the body teleports between frames, as if a reference frame had
+changed under it. Both defects are real, both are printed by the instruments,
+and both are properties of the source rather than of the transfer — the
+collapse rate below says the retarget invented no motion of its own.
 
 ### The two defects, as numbers
 
@@ -110,9 +108,8 @@ The names are the source's own, kept verbatim so that a row here can be checked
 against the file it came from without a translation table in between.
 
 What is *not* taken: mesh2motion's retargeting code, which is MIT and would
-need attribution. It was read while designing ours (#139) and none of it was
-copied; the transfer here is a different formulation, recorded at
-`src/retarget.rs`.
+need attribution. It was read while designing ours and none of it was copied;
+the transfer here is a different formulation, recorded at `src/retarget.rs`.
 
 ## Why these twelve
 
@@ -159,8 +156,8 @@ And four ways out:
 - **`Meditate`, `Kneeling Tired`** — both are rests, and `Sleeping` covers the
   away state more legibly than either.
 - **The whole `_RM` family** — root-motion variants of clips already here. They
-  belong with a locomotion system that consumes root motion, which is #141's
-  question.
+  belong with a locomotion system that consumes root motion, and ours derives
+  its root movement procedurally.
 
 ## What it costs
 
@@ -176,8 +173,8 @@ Measured by `cargo run --release --example bakeclips`:
 | as JSON instead | 636.8 KiB, 3.2× |
 | gzipped | 117.9 KiB, 59% |
 
-**Fingers are nearly half of it, and they stay.** Including them was the owner's
-decision (2026-08-07) and the price is stated here rather than quietly taken out
+**Fingers are nearly half of it, and they stay.** Including them was a
+deliberate decision and the price is stated here rather than quietly taken out
 of it: a hand is twenty-one of our rig's seventy-seven joints and forty of the
 reference's sixty-six, so a clip that moves the fingers spends most of its bytes
 on them. `Greeting` is a wave with an open hand and is fifty-nine times the size
@@ -208,8 +205,8 @@ identity, not by a tolerance —
 source does: a leaf, whose rotation deforms no surface, and the reference's own
 `root`, which arrives as translation rather than as a joint. It holds exactly on
 all twelve. Anything else is a finding: above means the transfer introduced
-motion of its own, which is what a first draft of the retargeter did at #139
-while every visible check passed at 0.028 degrees; below means it dropped some.
+motion of its own, which is what a first draft of the retargeter once did while
+every visible check passed at 0.028 degrees; below means it dropped some.
 Neither shows in a render.
 
 To look at a clip rather than measure it:

@@ -1,4 +1,4 @@
-//! Where the submental bulge comes from, on a ruler that cannot move (#94).
+//! Where the submental bulge comes from, on a ruler that cannot move.
 //!
 //! The shipped guard — `tests/parts::the_underside_of_the_jaw_does_not_bulge` —
 //! measures the underside against the chord joining two MEASURED landmarks, the
@@ -7,11 +7,11 @@
 //! thing measuring them, so a term can be zeroed and the number improve because
 //! the ruler moved rather than because the shape did.
 //!
-//! **Every earlier attribution on #94 was contaminated that way, including its
-//! headline finding.** It recorded that deleting `CHIN`'s whole below-joint tail
-//! still left +3.4 mm of bulge, and sent the next person after `DEPTH`. On a
-//! fixed ruler the same experiment reads −0.4 mm: with no chin there is no crest
-//! for `chin_of` to find, so the chord started somewhere else entirely.
+//! **A moving ruler contaminates every attribution taken off it.** On the
+//! moving chord, deleting `CHIN`'s whole below-joint tail still leaves +3.4 mm
+//! of bulge — a reading that sends the search after `DEPTH`. On a fixed ruler
+//! the same experiment reads −0.4 mm: with no chin there is no crest for
+//! `chin_of` to find, so the chord starts somewhere else entirely.
 //!
 //! So this measures between two FIXED heights instead — 0.40 and 0.09 along the
 //! neck-to-head bone, which `rig::skin::owner_of` records as where the chin and
@@ -100,7 +100,7 @@ fn main() {
 ///
 /// The figure that discriminates, where the chord's worst does not.
 ///
-/// **The hollow is not the defect, and this file said it was** (#94, #134). A
+/// **The hollow is not the defect, however loudly the chord says it is.** A
 /// chord from the chin's tip to the throat cuts straight across a jaw, so ANY
 /// real jaw is deeply hollow against it — measured off `examples/column`, the
 /// CC0 reference reads −21.7 mm at −20 below its own chin on exactly this

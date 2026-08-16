@@ -1,12 +1,10 @@
 # The instruments, and the rules for trusting one
 
-This crate is developed measurement-first, and its history's most repeated
-event — more than twenty-five times as of 2026-08-12 — is an instrument caught
-answering a different question than its name asks. Every one had been passing;
-every one was caught because **a number moved when the geometry had not**, or
-because two instruments disagreed. This file is the fleet and the distilled
-rules. Collected from the tracker by #188; the case histories live in the
-closed issues and are not repeated here.
+This crate is developed measurement-first, and its most repeated failure —
+caught more than twenty-five times — is an instrument answering a different
+question than its name asks. Every one had been passing; every one was caught
+because **a number moved when the geometry had not**, or because two
+instruments disagreed. This file is the fleet and the distilled rules.
 
 ## The fleet
 
@@ -22,7 +20,7 @@ All under `examples/`, all release-built (`cargo run --release --example …`).
 | `garmentaudit` | what the clothes cover and what the body stops drawing for it; the hem as cut against the hem as worn — step, turn, and distance from a smooth ring |
 | `follicleaudit` | the five follicle regions on a built head: where each mask lands and what the grown hair occupies against it, `--sweep` over the population; `render -- --follicles` is its visual half |
 | `bodyaudit`, `footaudit`, `walkaudit`, `neckaudit`, `column`, `jawprobe`, `envelope` | body regions: proportions, sole contact, gait excursions, neck spans, midline profiles, jaw shelf, exploration-range envelopes |
-| `locomotion` | procedural gait vs baked clips: feet-to-ground across body scales and grades, and what the imported set does between its own frames (#249) |
+| `locomotion` | procedural gait vs baked clips: feet-to-ground across body scales and grades, and what the imported set does between its own frames |
 | `measure`, `dump`, `headref`, `reference`, `retargetaudit`, `bakeclips` | scalar dumps, mesh export, reference comparisons, clip retarget checks, artifact baking with its loop-seam and teleport readings |
 
 The second instrument is the Bevy viewer (`../bevy_symbios_avatar`,
@@ -35,8 +33,8 @@ judgement is final on one instrument.
 
 1. **When a number moves and nothing physical did, suspect the measurement
    first.** The converse too: when a real change reads as no change, the
-   instrument may be blind to it (a median over the face's 2:1 quads read a
-   halving of every edge as `3.53 → 3.58`; #185).
+   instrument may be blind to it (a median over the face's 2:1 quads once read
+   a halving of every edge as `3.53 → 3.58`).
 
 2. **Ask the surface, not the vertex list.** Bisect against
    `PolyMesh::contains`; never bin vertices in a height window (row spacing
@@ -62,19 +60,16 @@ judgement is final on one instrument.
    true of the span and of no particular body.
 
 6. **Anchor on constructed landmarks, not measured crests.** `Skull::chin` is
-   a crest the carve moves (#133, accepted); `Canon` is the ruler features are
-   authored against. An instrument anchored on a crest follows the surface it
-   is supposed to judge.
+   a crest the carve moves — accepted, by design; `Canon` is the ruler features
+   are authored against. An instrument anchored on a crest follows the surface
+   it is supposed to judge.
 
-7. **A guard per axis does not guard the product** — see `docs/budget.md`
-   (#187). If two tests each pin one axis at its worst, write a third that
-   pins both.
+7. **A guard per axis does not guard the product** — see `docs/budget.md`.
+   If two tests each pin one axis at its worst, write a third that pins both.
 
 8. **Know what each renderer cannot see.** The software renderer samples only
-   the skin atlas's albedo (#45 open): every relief change is invisible there
-   *by construction*. Judge relief in the viewer or with numbers. The viewer's
-   vertex colours were sRGB-in-a-linear-channel until 2026-08-11 (viewer#14):
-   every in-app colour judgement recorded before that date is void.
+   the skin atlas's albedo: every relief change is invisible there *by
+   construction*. Judge relief in the viewer or with numbers.
 
 9. **Print the number the test computes.** A test that computes its worst case
    and asserts silently makes the figure obtainable only by breaking the

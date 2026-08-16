@@ -122,15 +122,14 @@ pub struct PolyMesh {
     /// still differ: every lock of hair is its own shade, and drawn as one solid
     /// in one colour a head of hair reads as a helmet.
     ///
-    /// **sRGB, and this line used to say linear.** It is the same space
+    /// **sRGB, not linear.** It is the same space
     /// everything else on a body is authored in — [`crate::texture::skin`] says
     /// so for the melanin ramp, [`crate::hair::style::melanin`] is picked by
     /// eye, [`crate::dress::dye`] mixes by eye, and `examples/render` decodes
     /// with `to_linear` before it lights anything. A renderer that hands these
     /// to a linear channel unchanged draws them two to four times too bright in
-    /// the midtones, which is bevy_symbios_avatar#14: it turned a mid-blue iris
-    /// into a pale bead and dark hair into milk chocolate, in one instrument
-    /// only, on the word of this doc comment.
+    /// the midtones: a mid-blue iris becomes a pale bead, and dark hair milk
+    /// chocolate.
     pub colours: Vec<Vec3>,
 }
 
@@ -535,7 +534,7 @@ impl PolyMesh {
     /// by the surface it is part of, and the head arrives from the cage as a
     /// four-sided tube: subdivided twice it is 189 faces with a **mean edge of
     /// 24 mm**, while a brow ridge is 10 mm tall and a nose one quad wide. There
-    /// is nothing there to shape (#59). Subdividing the whole body again would
+    /// is nothing there to shape. Subdividing the whole body again would
     /// buy that at four times the triangles everywhere, most of them on a shin.
     ///
     /// **Linear, not smooth.** New vertices are plain midpoints and centroids
@@ -543,7 +542,7 @@ impl PolyMesh {
     /// changing the shape. That separation is the point: refining and reshaping
     /// in one step makes it impossible to tell which of them moved a silhouette.
     ///
-    /// **And what the separation costs is a whole class of defect** (#158). A
+    /// **And what the separation costs is a whole class of defect.** A
     /// midpoint on a chord is still on the chord, so this cannot round anything:
     /// on a surface that is already a polygon it hands every facet three more
     /// vertices sharing one normal and compresses all of the curvature into the
@@ -574,8 +573,8 @@ impl PolyMesh {
     /// curvature instead of on the chord.
     ///
     /// **A linear split adds sampling and no shape, and on a surface that is
-    /// already a polygon that makes the faceting worse rather than better**
-    /// (#158). The head arrives from the cage as a sixteen-sided tube. Every
+    /// already a polygon that makes the faceting worse rather than better.**
+    /// The head arrives from the cage as a sixteen-sided tube. Every
     /// midpoint [`PolyMesh::refine`] adds sits ON one of those sixteen chords,
     /// and `face::skull`'s shaping is an anisotropic scaling of the section it
     /// is handed — so the chord maps to a chord and stays flat. Measured round
@@ -690,8 +689,8 @@ impl PolyMesh {
     /// attached part — a hand, a nose, an ear — sits *past* the end of the
     /// nearest bone, so the direction away from it is the limb's own axis while
     /// the part's normals point every other way. That reads as a deep crease
-    /// over the whole part, and cavity shading then darkened every hand, foot
-    /// and facial feature by up to 35% (#63).
+    /// over the whole part, and cavity shading darkens every hand, foot and
+    /// facial feature by up to 35%.
     ///
     /// The measure here is the discrete mean curvature: where the neighbours of
     /// a vertex sit relative to its tangent plane. Neighbours *above* the plane,

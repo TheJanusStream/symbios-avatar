@@ -9,11 +9,10 @@
 //!
 //! Everything about a brow follows one curve — [`Ridge`] — and both layers are
 //! written against that one object rather than against two copies of it. The
-//! mask centres its band on the ridge; the style of #205 combs its clumps along
-//! it and takes its own rise and fall from the ridge's slope. So a painted brow
-//! and a grown brow arch together by construction, which is the discipline #199
-//! spent the jawline learning: a boundary that is a copy of another boundary
-//! drifts from it, and a boundary that IS it cannot.
+//! mask centres its band on the ridge; the styles comb their clumps along it
+//! and take their own rise and fall from the ridge's slope. So a painted brow
+//! and a grown brow arch together by construction: a boundary that is a copy
+//! of another boundary drifts from it, and a boundary that IS it cannot.
 
 use serde::{Deserialize, Serialize};
 
@@ -67,16 +66,16 @@ const RISE: f32 = 0.18;
 
 /// How far that height moves over the whole of [`Params::rise`], in frames.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const RISE_RANGE: f32 = 0.07;
 
 /// Half the brow's thickness, in frames.
 ///
 /// Provenance: **looked up**, same conversion: a brow is about 12 mm deep at
-/// its fullest, so half of it is 6 mm on that 100 mm frame. The first cut of
-/// this took the 10 mm a brow is usually quoted at, which left a band whose
-/// two fades met in the middle — a brow that never came fully on anywhere
-/// (best weight 0.920) and so had no core for a clump to root in.
+/// its fullest, so half of it is 6 mm on that 100 mm frame. Not the 10 mm a
+/// brow is usually quoted at — at that thickness the band's two fades meet in
+/// the middle, a brow that never comes fully on anywhere (best weight 0.920)
+/// and so has no core for a clump to root in.
 const THICK: f32 = 0.06;
 
 /// Where the inner end sits, in [`Canon::apart`]s from the midline.
@@ -90,7 +89,7 @@ const INNER: f32 = 0.35;
 
 /// How far that end moves over the whole of [`Params::apart`], likewise.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const INNER_RANGE: f32 = 0.25;
 
 /// Where the outer end sits, in [`Canon::unit`]s past the pupil's own offset.
@@ -103,7 +102,7 @@ const OUTER: f32 = 0.62;
 
 /// How far that end moves over the whole of [`Params::reach`], likewise.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const OUTER_RANGE: f32 = 0.22;
 
 /// How far the arch's peak stands above the line's mean, in frames.
@@ -143,7 +142,7 @@ const TAIL: f32 = 0.45;
 ///
 /// **The arch tilts the line without moving it**, which is what keeps
 /// [`Params::arch`] from fighting [`Params::rise`]: subtracting the profile's
-/// own mean leaves the brow's average height exactly where #199 tuned it, so
+/// own mean leaves the brow's average height exactly where [`RISE`] puts it, so
 /// turning the arch up raises the peak and drops the ends rather than raising
 /// the whole brow.
 ///
@@ -159,7 +158,7 @@ const ARCH_MEAN: f32 = 0.5 * PEAK + (1.0 - PEAK) * (1.0 - 0.5 * (1.0 - TAIL));
 /// above 2 mm all the same, which is `no_boundary_is_a_cliff`'s floor and the
 /// width of two of the finest cells on the face.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const FADE: f32 = 0.032;
 
 /// How far round the head a brow may reach before the face has turned away.
@@ -168,7 +167,7 @@ const FADE: f32 = 0.032;
 /// fixed angle. A brow's tail is on the front of the face by definition; past
 /// this the surface belongs to the temple.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const FRONT: f32 = 0.30;
 
 /// The arch's profile: `0` at the inner end, `1` at the peak, [`TAIL`] at the
@@ -208,7 +207,7 @@ pub struct Ridge {
     /// Part of the line's own description rather than of the mask that uses it,
     /// because it is what says how far off the line hair may be — which the mask
     /// needs to draw its band and an instrument needs to say whether the grown
-    /// layer stayed inside it (#205).
+    /// layer stayed inside it.
     pub thick: f32,
 }
 

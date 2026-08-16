@@ -1,6 +1,6 @@
 //! Deciding how a jaw moves when a body talks.
 //!
-//! The sibling of [`super::blink`], for the joint #152 gave a territory: the
+//! The sibling of [`super::blink`], for the jaw's own territory: the
 //! mandible region swings on the jaw pivot, and this decides how far, when.
 //!
 //! Speech is not a wave. A jaw talking is **utterances** — runs of a few

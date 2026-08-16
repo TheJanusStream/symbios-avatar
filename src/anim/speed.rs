@@ -1,14 +1,14 @@
 //! One axis for how fast a body is going, and everything that follows from it.
 //!
-//! Before this, a walk took a `pace` — a free multiplier on the stride with no
-//! units and no relation to anything. Everything downstream inherited that: the
-//! trunk lean scales with pace, the crouch scales with the stride, the gait was
-//! chosen by hand, and the cadence was whatever the caller advanced the cycle
-//! by. Overlands pinned the stride at `pace 1.0` and expressed speed by bending
-//! the cadence alone, so a sprinting avatar took the same length of step more
-//! often — which is not what a body does, and which left the trunk lean a
-//! constant in the app because the lean is scaled by exactly the ratio that
-//! never moved (#239, #240).
+//! The defect this axis exists to remove is a walk driven by a `pace` — a free
+//! multiplier on the stride with no units and no relation to anything, which
+//! everything downstream then inherits: the trunk lean scales with pace, the
+//! crouch scales with the stride, the gait is chosen by hand, and the cadence
+//! is whatever the caller advances the cycle by. A caller that pins the stride
+//! and expresses speed by bending the cadence alone gets a sprinting avatar
+//! taking the same length of step more often — which is not what a body does,
+//! and leaves the trunk lean a constant because the lean is scaled by exactly
+//! the ratio that never moves.
 //!
 //! What replaces it is one number with a physical meaning, and the rest derived:
 //!

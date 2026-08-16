@@ -4,10 +4,10 @@
 //! Everything expensive about hair is decided here, so three things are worth
 //! stating up front:
 //!
-//! - **A clump is ONE low-poly construction, not a volume built out of parts**
-//!   (owner call, #204). It was a cross-section swept down the spine — a closed
-//!   tube of rings, `sides x 2` triangles a segment plus two caps, which is
-//!   fourteen at the floor and fifty-nine for a card that walks a skull. A card
+//! - **A clump is ONE low-poly construction, not a volume built out of
+//!   parts.** A cross-section swept down the spine — a closed tube of rings,
+//!   `sides x 2` triangles a segment plus two caps — is fourteen at the floor
+//!   and fifty-nine for a card that walks a skull. A card
 //!   is four at the floor and twenty for the same walk, so the avatar's 30,000
 //!   stops being the thing every other decision is squeezed against.
 //!
@@ -18,14 +18,14 @@
 //!   handles with a double-sided hair material — the standard for cards.
 //!
 //! - **A clump is sampled by how much it BENDS**, not by how far it travels and
-//!   not by a fixed count. #40's lesson was the second of those — a fringe a
+//!   not by a fixed count. A fixed count is wrong because a fringe a
 //!   tenth the length of the hair behind it does not need the same number of
-//!   points — and following it by travel alone still spends fourteen stations
-//!   drawing a straight line. The tolerance that replaces it is this module's
+//!   points, and travel alone still spends fourteen stations
+//!   drawing a straight line. The tolerance that replaces both is this module's
 //!   own `FLATNESS`.
 //! - **The gradient is vertex colour**, so a root-to-tip fade costs nothing: no
 //!   texture, no second material, no atlas space. It is the whole reason the
-//!   owner's two-colour model is affordable at this triangle count.
+//!   two-colour model is affordable at this triangle count.
 
 use glam::{Vec2, Vec3};
 
@@ -37,10 +37,10 @@ use crate::mesh::{PolyMesh, VertexSkin};
 /// metres.
 ///
 /// **The one number that decides what hair costs, and it is a tolerance rather
-/// than a step** (#201). Sampling by travel alone spends the same on a straight
+/// than a step.** Sampling by travel alone spends the same on a straight
 /// lock as on a curled one: at four millimetres a station the reference head
-/// cost 87,168 triangles, of which the scalp's 883 clumps were 70,202 — and
-/// most of those stations were drawing a straight line with fourteen points.
+/// costs 87,168 triangles, of which the scalp's 883 clumps are 70,202 — and
+/// most of those stations are drawing a straight line with fourteen points.
 /// Splitting only where the polyline actually departs from the curve gives a
 /// straight lock two stations and a curl as many as it needs, with no knob for
 /// a style to get wrong.
@@ -245,7 +245,7 @@ fn sample(root: &Root, shape: &dyn Shape) -> (Vec<f32>, Vec<Vec3>) {
 /// **The hand-over is a REPLACEMENT and not an average of two influence lists.**
 /// Those are sorted by strength and index different joints, so entry `k` of one
 /// is a different bone from entry `k` of the other and averaging them entry by
-/// entry produces a binding nobody wrote (#207). This scales what is there and
+/// entry produces a binding nobody wrote. This scales what is there and
 /// adds the head's share to the head's own entry, which is the same arithmetic
 /// a skinning weight has everywhere else.
 fn handed_over(mut skin: VertexSkin, head: u16, along: f32) -> VertexSkin {
@@ -295,7 +295,7 @@ fn normalised(mut skin: VertexSkin) -> VertexSkin {
 /// The colour a share of the way from root to tip.
 ///
 /// **Interpolated in the space the colours are stored in, which is sRGB**
-/// (`PolyMesh::colours` is, whatever its own docstring once said), because
+/// (the convention `PolyMesh::colours` documents), because
 /// these two came off a record where a person picked them and a renderer draws
 /// them without converting. Blending in linear light instead would be more
 /// correct about photons and would put a colour on the middle of the lock that

@@ -23,10 +23,10 @@ use crate::prim;
 
 /// How a digit's length divides between its phalanges, proximal first.
 ///
-/// **Three, because a finger has three, and this is now a rig as well as a
-/// shape** (#113). The digit used to be swept from four equal segments chosen
-/// for how smooth the curl looked; the reference divides every finger into
-/// three unequal ones, and its bones sit on those divisions. Measured off the
+/// **Three, because a finger has three, and this is a rig as well as a
+/// shape.** Four equal segments chosen for how smooth the curl looked would
+/// not do: the reference divides every finger into three unequal ones, and
+/// its bones sit on those divisions. Measured off the
 /// Quaternius male, as fractions of each digit's own length:
 ///
 /// ```text
@@ -40,7 +40,7 @@ use crate::prim;
 /// The four fingers agree closely enough to share one set; the thumb does not,
 /// because its two long segments are nearly equal where a finger's taper.
 ///
-/// Provenance: **looked up** (#113), from the reference's own bone positions.
+/// Provenance: **looked up**, from the reference's own bone positions.
 const PHALANGES: [f32; 3] = [0.402, 0.311, 0.287];
 /// See [`PHALANGES`]. The thumb's own division, which is not a finger's.
 const THUMB_PHALANGES: [f32; 3] = [0.362, 0.367, 0.271];
@@ -67,21 +67,19 @@ const PALM_SIDES: usize = 8;
 /// Where each finger sits across the palm, how far out its knuckle stands, and
 /// how long it is — all relative to the middle finger.
 ///
-/// **The knuckles are not in a line**, which is the part that was missing. The
+/// **The knuckles are not in a line.** The
 /// reference's four sit at 10.98, 10.91, 10.07 and 9.06 cm out from the wrist,
 /// so the little finger's is nearly two centimetres nearer in than the index's,
 /// and the row curves. Built on one straight line the four roots read as a
 /// comb's spine however well the fingers themselves are proportioned.
 ///
 /// Reach from the wrist, which is what the eye actually reads, comes out at
-/// 0.939, 1.000, 0.930 and 0.829 of the middle finger's on the reference. The
-/// first three were already within a hundredth of that by render-tuning; the
-/// little finger was at 0.76 and is now measured.
+/// 0.939, 1.000, 0.930 and 0.829 of the middle finger's on the reference.
 ///
-/// Provenance: the offsets across the palm remain **tuned by render** — the
+/// Provenance: the offsets across the palm are **tuned by render** — the
 /// constraint that decided them is that neighbouring fingers must touch, which
 /// is a rendering observation. The knuckle set-back and the lengths are
-/// **looked up** (#113).
+/// **looked up**.
 const FINGERS: [Finger; 4] = [
     Finger {
         across: -0.75,
@@ -156,7 +154,7 @@ impl Hand {
     /// the hand.
     ///
     /// **This builds one chirality, and handing it the other arm's direction
-    /// does not produce the other hand** (#113). A hand is chiral — the thumb is
+    /// does not produce the other hand.** A hand is chiral — the thumb is
     /// on one particular edge of the palm and no rotation moves it to the other
     /// — and everything here is derived from a frame that turns with `out`:
     /// `across` is `out × up`, and the thumb is seated at `-across`. Feed it a
@@ -166,9 +164,8 @@ impl Hand {
     /// 5.5 mm mean and 33.4 mm worst error, against 0.000 mm for both Quaternius
     /// references, whose entire mesh is one side reflected.
     ///
-    /// The comment this replaces claimed the opposite in as many words, and the
-    /// test under it compared the two hands' *x* bounds — which a half-turn
-    /// satisfies exactly as well as a reflection does. See
+    /// A bounds test cannot catch this: comparing the two hands' *x* bounds
+    /// is satisfied exactly as well by a half-turn as by a reflection. See
     /// [`crate::extremity`] for how the other hand is actually made.
     ///
     /// Which chirality comes out follows from `across = out × up`: with `up`

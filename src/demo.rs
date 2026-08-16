@@ -14,13 +14,13 @@
 //! landmarks, unwrapping — should be tested against [`crate::plan`] instead,
 //! where the body plans tag every node.
 //!
-//! # These are not bodies, and the difference is not cosmetic (#54)
+//! # These are not bodies, and the difference is not cosmetic
 //!
-//! That paragraph has been here all along and was not enough: someone audited
-//! UV charts on [`humanoid`] and reported an anisotropy defect that does not
-//! exist, because an unzoned body unwraps into 9 charts where the plan's
-//! default unwraps into 30. So the warning is repeated on each function, and
-//! `tests/topology.rs` now pins the property rather than trusting the prose.
+//! An unzoned body unwraps into 9 charts where the plan's default unwraps into
+//! 30, so auditing UV charts — or anything else zone-driven — on [`humanoid`]
+//! produces a confident wrong answer about a defect that does not exist. The
+//! warning is therefore repeated on each function, and `tests/topology.rs`
+//! pins the property rather than trusting the prose.
 //!
 //! **The right fix was to keep these as mesher fixtures, not to zone them**, and
 //! the deciding evidence is structural rather than a matter of effort. A zone
@@ -52,8 +52,8 @@ use crate::skeleton::{Node, Skeleton};
 /// **A mesher fixture, not an avatar.** It carries no zones, so it has no head
 /// as far as the rest of the crate is concerned: no face, no skin zone map, no
 /// garment cut, no landmarks, and a UV unwrap with no zone boundaries to chart
-/// on. Auditing any of those here will produce a confident wrong answer — it
-/// already has once (#54). Build [`crate::HumanoidParams::default`] and call
+/// on. Auditing any of those here will produce a confident wrong answer.
+/// Build [`crate::HumanoidParams::default`] and call
 /// [`crate::BodyPlan::skeleton`] for a body the whole pipeline runs on.
 #[must_use]
 pub fn humanoid() -> Skeleton {

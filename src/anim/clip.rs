@@ -15,13 +15,13 @@
 //! has none free, and neither case needs a special path. The normalised goal
 //! lets a child and a giant perform the same gesture at their own scale.
 //!
-//! **Body space is the body's, not the world's, and that took a fix** (#49). A
-//! goal stated as a displacement from the part's rest position is only a
-//! displacement from the *body* while the body is at rest. Laid over a walk it
-//! is not: the gait has sunk the pelvis, wound the spine and pitched the trunk,
-//! and a goal that stayed at the rest height sat up to 191 mm high on the body
-//! it was supposed to be a gesture of — driving the arm toward its reach limit
-//! instead of toward droop. Each track now says which frame it means, and a
+//! **Body space is the body's, not the world's.** A goal stated as a
+//! displacement from the part's rest position is only a displacement from the
+//! *body* while the body is at rest. Laid over a walk it is not: the gait has
+//! sunk the pelvis, wound the spine and pitched the trunk, and a goal that
+//! stays at the rest height sits up to 191 mm high on the body it is supposed
+//! to be a gesture of — driving the arm toward its reach limit instead of
+//! toward droop. Each track therefore says which frame it means, and a
 //! body-relative one is resolved against the joint its limb hangs from. See
 //! [`Space`].
 //!
@@ -57,7 +57,7 @@ pub enum Target {
     Just(Limb),
     /// One named limb, but only where it is free to gesture.
     ///
-    /// **The per-item refusal an expressive roster needs** (#248). A greeting
+    /// **The per-item refusal an expressive roster needs.** A greeting
     /// wave is one-handed — [`Target::Graspers`] would raise both — and it is
     /// also a motion a body walking on all four of its limbs simply cannot
     /// make. Neither [`Target::Just`] nor [`Target::Graspers`] can say both of
@@ -72,7 +72,7 @@ pub enum Target {
     /// Where the body looks — the only part of this format that is not a limb.
     ///
     /// **A head is addressed as a rotation, not as a place, and that was
-    /// measured rather than assumed** (#248). Written as a place — a goal the
+    /// measured rather than assumed.** Written as a place — a goal the
     /// neck chain solves toward, the way a limb's contact is — the same
     /// authored displacement delivered a 26 degree nod on a big-headed body
     /// and a 40 degree one on a small-headed body, a drift wider than half the
@@ -98,7 +98,7 @@ pub enum Target {
     /// [`Space`] is consulted for a trunk key.
     ///
     /// **In QUARTER TURNS off vertical rather than in the gaze's tangent**, and
-    /// the sleeping item is what settled it (#248). A tangent is exactly right
+    /// the roster's sleeping gesture is what settles it. A tangent is right
     /// for a gaze, which is a ray, and wrong for a rotation the moment the
     /// rotation gets large: it is nonlinear where it works — a key of 2.0 is 63
     /// degrees and 10.0 is 84 — and it cannot say a quarter turn at all, which
@@ -106,8 +106,8 @@ pub enum Target {
     /// 30 degrees a bow uses, and the unit reaches the horizontal.
     ///
     /// **The inclination is the trunk's CHORD, pelvis to shoulders, and not the
-    /// rotation put at the hinge** — the gait learned that the expensive way
-    /// (#223). The pelvis cannot turn, because it carries the legs out from
+    /// rotation put at the hinge.** The pelvis cannot turn, because it carries
+    /// the legs out from
     /// under the footing solve, so the joint above it swings a segment that is
     /// only part of the chord and delivers a fraction of the angle applied: 3.0
     /// degrees of a 5.5 asked, on the default body. [`super::gait`]'s
@@ -122,7 +122,7 @@ pub enum Target {
     /// Where the body itself is — the carriage's place, rather than any part's.
     ///
     /// **The third kind of thing this format addresses, and it takes a third
-    /// unit** (#248). A reach is measured in the limb's own reach and a
+    /// unit.** A reach is measured in the limb's own reach and a
     /// rotation in turns; a carriage is measured in **the standing leg's**
     /// reach, because what holds a root up is the leg. Measured across the
     /// sweep, a seated pelvis stated in body heights drifts 0.0440 of a body
@@ -228,7 +228,7 @@ pub enum Space {
 ///
 /// **Two normalisations, because a gesture means one of two different things**
 /// and stating both in one unit is what makes a roster read wrong on half the
-/// bodies it lands on (#248).
+/// bodies it lands on.
 ///
 /// A **push, a stretch, a reach** is about how far the limb extends, and it
 /// scales with the limb: a long-armed body pushing something away puts its hand
@@ -641,8 +641,8 @@ pub const GAZE_AHEAD: f32 = 16.0;
 
 /// How a clip's gaze is spread down the body, and how far it may go.
 ///
-/// **The chest takes none of it, and that is a convention rather than a field**
-/// (#248). What separates a gaze from a posture is exactly whether the trunk
+/// **The chest takes none of it, and that is a convention rather than a
+/// field.** What separates a gaze from a posture is exactly whether the trunk
 /// joins in: a head dropped with the chest following is a bow, whether its
 /// author meant one or not. A gesture that wants the trunk says so with a
 /// track that moves the trunk, and then this aims the head *relative to it* —
@@ -1116,9 +1116,9 @@ mod tests {
     ///
     /// Deliberately not [`Walk`]: the arm swing changes the arm's own local
     /// rotations, and how far that moves an extremity through one solve is
-    /// [`solve_contact`]'s business (#254), not this frame's. Everything here
-    /// moves the body *above* the shoulder, which is exactly what #49 was
-    /// missing, and it moves it three different ways — a translation, a
+    /// [`solve_contact`]'s business, not this frame's. Everything here
+    /// moves the body *above* the shoulder, which a goal measured in body
+    /// space cannot express on its own — and it moves it three ways: a translation, a
     /// rotation below the anchor, and a rotation of the root itself — because
     /// adding `pose.translation` answers only the first.
     fn carried(rig: &Rig, sink: f32, yaw: f32) -> Pose {

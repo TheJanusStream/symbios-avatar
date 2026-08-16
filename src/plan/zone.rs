@@ -7,7 +7,7 @@
 //!   faces underneath — poke-through is avoided by not emitting the geometry
 //!   rather than by hiding it. Whole faces, since the cut takes whole faces —
 //!   the hem row included, because the garment's rim closes over the hem edge
-//!   exactly (`Outfit::covered`, #46/#117).
+//!   exactly (`Outfit::covered`).
 //! * **Landmarks** are found by zone rather than by node index, so hats and
 //!   belts fit any body without the fitting code knowing which plan built it.
 //! * **Animation** can pose semantic queries — every ground contact, every
@@ -27,12 +27,9 @@ use serde::{Deserialize, Serialize};
 /// right-handed with `+Y` up and an asset's front at `+Z`, so a character's
 /// right is forward cross up, which is `Z × Y`, which is `−X`. Every plan in
 /// this crate builds to that, and `a_left_limb_is_at_positive_x` holds each of
-/// them to it.
-///
-/// It was not always so: until #142 every `…Left` here named a body's right,
-/// which nothing noticed for as long as nothing on a body was asymmetric and no
-/// clip had ever played. It was corrected by moving the names rather than the
-/// geometry, so no record migrated and no vertex moved.
+/// them to it. The definition is easy to get backwards and nothing notices until
+/// a body is asymmetric or a clip plays, which is why it is a guarded invariant
+/// rather than a convention.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Limb {

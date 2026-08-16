@@ -1,4 +1,4 @@
-//! The column between the shoulders and the jaw, measured axis-free (#125).
+//! The column between the shoulders and the jaw, measured axis-free.
 //!
 //! Every figure here is a bisection against `PolyMesh::contains`, the same
 //! primitive `tests/parts.rs` judges a buried feature with.
@@ -17,12 +17,12 @@
 //! had come 9 mm forward and the chest 20, because the socket ring a joint hull
 //! opens for a limb blended that limb's depth without its offset.
 //!
-//! **And it says how long the neck reads, broken into who owns that length**
-//! (#129). The table at the end runs
+//! **And it says how long the neck reads, broken into who owns that length.**
+//! The table at the end runs
 //! `tests/plan::the_neck_is_the_length_of_a_neck`'s own arithmetic over that
 //! test's own seeds — so its ratio column can be checked against a shipped
 //! assertion — and then splits the chin-to-shoulder span four ways. That split
-//! is the answer to why three passes of tuning the neck moved it so little: the
+//! is the answer to why tuning the neck moves it so little: the
 //! neck bone owns two to five millimetres of it.
 //!
 //! ```text
@@ -147,7 +147,7 @@ fn main() {
 }
 
 /// What a neck is worth against the skull it carries, across the axes that move
-/// the two independently (#175).
+/// the two independently.
 ///
 /// **The one number the stump is a symptom of.** `neck_r` is a fraction of
 /// stature times girth times the frame axis; `head_r` is a fraction of stature
@@ -160,9 +160,8 @@ fn main() {
 /// heights: the skull's widest anywhere above the jaw, and the column's
 /// narrowest below it.
 ///
-/// **The reference pair cannot source a target for this** — four instruments
-/// were built against the CC0 mannequins and thrown away, and the reasons are
-/// written up on #175. The anchor is the neutral body's own reading.
+/// **The reference pair cannot source a target for this.** The anchor is the
+/// neutral body's own reading.
 fn ratio() {
     println!();
     println!("neck against skull, over the axes that move them apart (#175)");
@@ -275,16 +274,15 @@ fn ratio() {
 /// an instrument: the day they disagree, the instrument is the one that is
 /// wrong, and that is only checkable if the numbers can be held side by side.
 ///
-/// The reference figures it is read against, both measured in #125: the
+/// The reference figures it is read against: the
 /// Quaternius pair land on 0.13 and 0.14, and the eight-head canon this crate
 /// quotes elsewhere puts the shoulder line about a third of a head under the
 /// chin, so 0.33.
 ///
 /// **The span is broken into its four owners, and that is the reading that
-/// matters** (#129). Three passes have tried to shorten this by tuning the neck
-/// — #93 the girdle's socket floor, #107 a re-sweep for the eight-point cage,
-/// #125 the neck's backward lean — and the columns below say why so little
-/// moved: the neck BONE's own contribution is the few millimetres by which its
+/// matters.** Tuning the neck itself moves this span very little, and the
+/// columns below say why: the neck BONE's own contribution is the few
+/// millimetres by which its
 /// length exceeds the girdle's radius, because the girdle's crown sits directly
 /// under the neck joint by construction. Most of what an eye reads as neck is
 /// head-owned surface hanging below the chin, and the rest is the girdle.

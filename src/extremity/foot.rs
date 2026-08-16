@@ -28,21 +28,21 @@ use crate::prim;
 ///
 /// Provenance: **looked up**, from the Quaternius reference bodies — the ankle
 /// joint sits 16% along the foot on the male and 19% on the female, measured
-/// from the heel as a fraction of foot length (#110). It was 0.28 before, from a
-/// first guess, which carried nearly twice the heel a foot has and left too
-/// little in front of the joint for the toe to roll over.
+/// from the heel as a fraction of foot length. A much deeper fraction carries
+/// more heel than a foot has and leaves too little in front of the joint for
+/// the toe to roll over.
 const ANKLE_AT: f32 = 0.18;
 
 /// The foot's cross-section, in half-width and half-depth, going the way
 /// [`prim::sweep_outline`] winds: `x` across the foot, `y` **toward the sole**.
 ///
-/// **A foot rests on a sole, and an ellipse has no sole.** The ring this used to
-/// be put a vertex straight down, so the foot touched the ground along its centre
-/// line and rose away from it to either side — measured on the built mesh by
+/// **A foot rests on a sole, and an ellipse has no sole.** An elliptical ring
+/// puts a vertex straight down, so the foot touches the ground along its centre
+/// line and rises away from it to either side — measured on a built mesh by
 /// ray-cast, 0.0 mm at the centre, 6 mm at the quarter width and up to 19 mm at
 /// the edges. Both Quaternius bodies are flat across the whole sole to within a
 /// few millimetres, and a foot that contacts along a line rocks under everything
-/// that plants it (#110).
+/// that plants it.
 ///
 /// So the sole is three points at full depth — dead flat across the middle 90% of
 /// the width — with the edges rolled up over two more, and the instep an ellipse
@@ -76,8 +76,8 @@ const SECTION: [(f32, f32); 12] = [
 /// Provenance: **looked up**, read off the Quaternius male's own sole outline at
 /// the five stations below. Its half-width runs 0.149 of foot length at the heel,
 /// 0.161 a tenth along, 0.185–0.186 across the ball, 0.174 at four fifths and
-/// 0.142 at nine tenths (#110). The previous values peaked at 0.21, which made
-/// the foot 42% of its length wide against a measured 37–38%.
+/// 0.142 at nine tenths — a foot 37–38% of its own length across at the
+/// widest.
 const WIDTHS: [f32; 5] = [0.150, 0.161, 0.185, 0.175, 0.130];
 
 /// A built foot, in ankle-local space.
@@ -161,9 +161,9 @@ impl Foot {
 /// Provenance: **derived** from the reference toe. A Quaternius foot is 9.1%
 /// (male) and 10.3% (female) of its own length thick at the toe, and a foot is
 /// about three times its ankle height long — so the toe wants to come out near
-/// 0.30 of the heel's depth. The tail was 0.42 before, leaving the toe at 0.58
-/// and the foot a slab of nearly even thickness: a 1.6:1 wedge against the
-/// references' 2.9:1 and 3.2:1 (#110).
+/// 0.30 of the heel's depth. The 0.70 tail leaves it exactly there: a 3.3:1
+/// wedge beside the references' 2.9:1 and 3.2:1, where a gentler tail leaves
+/// the foot a slab of nearly even thickness.
 fn instep(at: f32) -> f32 {
     let along = at.clamp(0.0, 1.0);
     // Gentle, and gentlest through the middle. Tapering hard from the ankle
@@ -179,11 +179,12 @@ mod tests {
     /// A foot the crate would actually build.
     ///
     /// The length is three times the drop because that is the relation
-    /// `grow_foot` uses, measured off both reference bodies (#110). It was 0.11
-    /// against a 0.045 drop — a ratio of 2.4 — and a fixture with proportions the
-    /// builder never produces is a fixture that answers about nothing. It also
-    /// hid the sole: a foot that short comes out narrower than it is deep, which
-    /// is the shape `a_foot_is_longer_than_it_is_wide_and_wider_than_it_is_deep`
+    /// `grow_foot` uses, measured off both reference bodies. A fixture with
+    /// proportions the builder never produces is a fixture that answers about
+    /// nothing. It would also
+    /// hide the sole: a foot much shorter comes out narrower than it is deep,
+    /// which is the shape
+    /// `a_foot_is_longer_than_it_is_wide_and_wider_than_it_is_deep`
     /// exists to rule out.
     const DROP: f32 = 0.045;
 

@@ -50,7 +50,7 @@ pub struct EyeParams {
     ///
     /// Two colours with a gradient between them, the way hair fades from roots
     /// to tips: this one at the pupil's edge, [`EyeParams::outer`] at the
-    /// periphery (#229).
+    /// periphery.
     #[serde(with = "crate::plan::scaled::triple")]
     pub inner: [f32; 3],
     /// The iris at its periphery, in sRGB. Life runs darker out here.
@@ -161,12 +161,12 @@ pub struct Eye {
     /// The sign of this eye's `x`, so `+1` for the body's left eye and `-1` for
     /// its right.
     ///
-    /// Left is `+X` — see [`crate::plan::Limb`] for the convention and #142 for
-    /// the pass that corrected it here. What this field actually keys is
+    /// Left is `+X` — see [`crate::plan::Limb`] for the convention. What this
+    /// field actually keys is
     /// `CANTHAL_TILT` — private, so unlinked — which tilts the outer canthus
     /// above the inner, and that
-    /// wants the sign of `x` rather than a name; the two only ever disagreed
-    /// about what to call the eye.
+    /// wants the sign of `x` rather than a name; a name and a sign can only
+    /// ever disagree about what to call the eye.
     pub side: f32,
 }
 
@@ -179,7 +179,7 @@ impl Eye {
     const UPPER_SWING: f32 = 1.45;
     /// How far the lower lid swings.
     const LOWER_SWING: f32 = 0.45;
-    /// How far past rest a lid may be WIDENED, as negative closure (#217).
+    /// How far past rest a lid may be WIDENED, as negative closure.
     ///
     /// The owner-side bound on [`super::Expression`]'s lids channel: the
     /// shells sit close over the socket's rim, so the widening arc is a
@@ -248,11 +248,11 @@ impl Eye {
     ///   lids alone       32.1%       +0.0   -180..+179    top and bottom
     /// ```
     ///
-    /// Those were the shipped numbers before #81. Reading them together says
+    /// Those numbers are a worked defect, and reading them together says
     /// what no single one of them does: the elevation is identical with and
     /// without the skin, so the lids own it; the medial azimuth is identical
     /// with and without the lids, so the skin owns it; and the lateral edge is
-    /// the same in all three, so **nothing owned it** and the eye was bare 97°
+    /// the same in all three, so **nothing owned it** and that eye was bare 97°
     /// round the side of the head.
     ///
     /// Sampled on the globe's own surface and weighted by solid angle. It is not
@@ -325,9 +325,9 @@ impl Eye {
 /// **The measurement the eye's whole shape turns on, and it lives here so that
 /// nothing has to keep its own copy.** `examples/headaudit` reports it and
 /// `the_eye_opens_on_the_gaze_rather_than_where_the_skin_falls_away` asserts on
-/// it; the last time an instrument and the code it judged carried two copies of
-/// the same angles they drifted 30° apart (#81), and the time before that a tool
-/// went on printing fractions the canon had moved (#74).
+/// it; an instrument and the code it judges that carry two copies of the same
+/// angles drift — 30° apart, at the worst measured — and a tool with its own
+/// copy goes on printing fractions the canon has moved.
 ///
 /// Angles are about the **gaze**, not about the head: azimuth is the turn right
 /// of dead ahead and elevation the rise above it, both in radians, both measured
@@ -339,7 +339,7 @@ pub struct Aperture {
     ///
     /// Solid-angle weighted, not a count of samples: a degree of latitude near
     /// the pole is a shorter arc than one at the equator, and a share of samples
-    /// is a share of the sampling (#81).
+    /// is a share of the sampling.
     pub share: f32,
     /// Where the middle of the bare set points: azimuth, then elevation.
     pub centre: (f32, f32),
@@ -368,7 +368,7 @@ pub struct Eyes {
     /// The joint the pair is parented to.
     pub head: usize,
     /// The record axes the pair was built from, kept so the iris can be
-    /// painted from the same description that placed the globes (#229).
+    /// painted from the same description that placed the globes.
     pub params: EyeParams,
 }
 
@@ -378,8 +378,8 @@ pub struct Eyes {
 /// to back, and it is the one facial dimension that holds still: no significant
 /// dependence on sex, on age past infancy, or on ethnicity. Uniformly scaling a
 /// head by 8% mis-sizes its eye by 2 mm, so an eyeball keyed to the head is
-/// wrong by construction rather than by tuning — which is how this crate came to
-/// carry a globe twice life size on every body it built (#77).
+/// wrong by construction rather than by tuning — the route by which a globe
+/// comes to be twice life size on every body built.
 /// Provenance: **looked up** — 24.2 mm transverse, 23.7 mm axial. No
 /// citation is attached and one should be: these are standard ocular
 /// dimensions, quoted here from general knowledge rather than from a named
@@ -415,9 +415,8 @@ const STATURE_GAIN: f32 = 0.35;
 /// is small on purpose. It is also the whole of what decides how much eye shows:
 /// the body is a closed surface with no opening cut for an eye, so the visible
 /// part of the globe is exactly the cap that clears the skin. Three millimetres
-/// on a 12.4 mm globe is a lens 16.2 mm wide, against a globe that until now
-/// stood 19 to 51 mm proud on every body (#76).
-/// Provenance: **looked up, then tuned by render** (#76). The looked-up part
+/// on a 12.4 mm globe is a lens 16.2 mm wide.
+/// Provenance: **looked up, then tuned by render**. The looked-up part
 /// is that the corneal apex sits roughly level with the lids; 3 mm is what
 /// that came to on a 12.4 mm globe.
 const PROUD: f32 = 0.003;
@@ -434,24 +433,25 @@ impl Eyes {
     /// Builds a pair of eyes, seated in a head that has already been built.
     ///
     /// `mesh` is the body **as it will be rendered** — carved, since that is the
-    /// surface the eye is seen against. Where the last version of this predicted
-    /// the surface by warping an interior point through [`super::skull::reshape`],
-    /// this bisects the real one.
+    /// surface the eye is seen against. The seat is found by bisecting that real
+    /// surface rather than by predicting it, and the alternatives were measured
+    /// and fail.
     ///
-    /// That is not a refinement, it is the fix: `reshape` scales `z` by a single
+    /// Warping an interior point through [`super::skull::reshape`] scales `z`
+    /// by a single
     /// factor with no dependence on `x`, so its answer is right on the midline
     /// (98.5 predicted against 97.1 measured) and 26.3 mm too deep at the eye's
-    /// own column — a globe whose *centre* stood 6.8 mm outside the head, with
+    /// own column — a globe whose *centre* stands 6.8 mm outside the head, with
     /// 41 to 69% of its surface in the air. Nor is [`super::skull::Skull::depth_across`]
-    /// the answer, which is what #76 proposed: measured against a bisection of
+    /// the answer: measured against a bisection of
     /// the same column it overstates by 2.0 to 6.0 mm across seventeen bodies,
     /// which is most of a 5 mm budget. Bins are for profiles; a seat wants the
     /// surface.
     ///
-    /// It also works on a head this crate does not shape. `reshape` was called
-    /// unconditionally while [`super::skull::shape`] bails for anything with more
-    /// than two feet, so a creature's eyes were placed by a human skull's
-    /// transform that had never been applied to its head.
+    /// Bisecting the real surface also works on a head this crate does not
+    /// shape: [`super::skull::shape`] bails for anything with more
+    /// than two feet, and a creature's eyes must not be placed by a human
+    /// skull's transform that was never applied to its head.
     #[must_use]
     pub fn build(rig: &Rig, mesh: &PolyMesh, canon: &Canon, params: &EyeParams) -> Self {
         let centre = rig.joints[canon.head].position;
@@ -519,7 +519,7 @@ impl Eyes {
     /// equivalence is asserted rather than asserted-by-comment: see
     /// `a_posed_lid_lands_where_the_rebuilt_one_did`.
     ///
-    /// **Call it AFTER the body has been bound and never before** (#136). These
+    /// **Call it AFTER the body has been bound and never before.** These
     /// are joints inside the skull, and `skin::bind`'s falloff would hand them
     /// cheek and brow vertices that would then follow a blink. They are markers
     /// for the same reason the mandible's are — the surface binds to them and is
@@ -631,9 +631,9 @@ fn globe_radius(mesh: &PolyMesh, params: &EyeParams) -> f32 {
 ///
 /// Bisected against [`PolyMesh::contains`], which is the same primitive
 /// `tests/parts.rs` judges the result with and the one the head audit measures
-/// through. Binning the frontmost vertex in a band reported six millimetres of
+/// through. Binning the frontmost vertex in a band reports six millimetres of
 /// ripple that is not in the mesh, off the midline where the surface curves fast
-/// across a band (#71) — and off the midline is precisely where an eye sits.
+/// across a band — and off the midline is precisely where an eye sits.
 fn reach(mesh: &PolyMesh, from: Vec3, far: f32) -> Option<f32> {
     if !mesh.contains(from) {
         return None;
@@ -654,26 +654,25 @@ fn reach(mesh: &PolyMesh, from: Vec3, far: f32) -> Option<f32> {
 /// Half-angle of the pupil, in radians.
 ///
 /// **The eye's landmarks are ANGLES, and they live here so that the geometry and
-/// the colours cannot drift apart.** They were two bare cosines in
-/// `avatar::iris_of` — 0.78 and 0.50, which is 38.7° and 60° — and the globe was
-/// a sphere with rings 18° apart about `+Y`, so neither threshold landed near a
-/// ring and the pupil covered 91.7% of the visible cap by solid angle (#81).
+/// the colours cannot drift apart.** Bare cosines kept in another file, over a
+/// globe whose rings land nowhere near them, drift until a pupil covers 91.7%
+/// of the visible cap by solid angle — a measured figure, not a hypothetical.
 ///
 /// A pupil is about 3.5 mm across a 24.2 mm globe at an ordinary indoor light
 /// level, which is this.
-/// Provenance: **looked up** (#81) — 3.5 mm across a 24.2 mm globe at an
-/// ordinary indoor light level. **This is the constant #52 was written
-/// about.** Its predecessor was the bare cosine 0.78 sitting in another file
-/// with nothing saying whether it had been measured or fitted, and it was
-/// silently absorbing an error in the face's width.
+/// Provenance: **looked up** — 3.5 mm across a 24.2 mm globe at an
+/// ordinary indoor light level. A bare cosine sitting in another file, with
+/// nothing saying whether it had been measured or fitted, silently absorbs an
+/// error in the face's width — which is what these provenance labels exist to
+/// prevent.
 const PUPIL: f32 = 0.1431;
 
 /// Half-angle of the iris.
 ///
 /// An 11.7 mm iris on a 24.2 mm globe. This is the best-sourced figure on the
 /// whole face: visible iris diameter is near-constant across sex, age past
-/// infancy and ethnicity, in the same way the globe itself is (#77).
-/// Provenance: **looked up** (#77) — 11.7 mm visible iris on a 24.2 mm
+/// infancy and ethnicity, in the same way the globe itself is.
+/// Provenance: **looked up** — 11.7 mm visible iris on a 24.2 mm
 /// globe, and the docstring's claim that this is the best-sourced figure on
 /// the face is true only in the sense that it is the most invariant; it
 /// carries no more citation than the rest.
@@ -690,8 +689,8 @@ const LIMBAL: f32 = 0.0454;
 ///
 /// A colour boundary on a Gouraud-shaded mesh is only as sharp as the gap
 /// between the two rings that carry the two colours. At 1.4° that is 0.3 mm on a
-/// 12.5 mm globe, which reads as an edge; at the 18° the old ring spacing gave,
-/// it read as a smear.
+/// 12.5 mm globe, which reads as an edge; at a ring spacing of 18°,
+/// it reads as a smear.
 /// Provenance: **derived** from the ring spacing — 1.4 degrees is 0.3 mm on
 /// a 12.5 mm globe, which is the width a colour boundary reads as an edge at.
 const EDGE: f32 = 0.0244;
@@ -701,14 +700,13 @@ const EDGE: f32 = 0.0244;
 /// Takes an offset from the eye's own pivot, so it turns with the gaze for free.
 /// Lives here rather than in [`crate::avatar`] because it and `globe` below have to
 /// agree about the angles above, and a threshold in one file with the rings that
-/// carry it in another is how they came to disagree by 30° in the first place.
+/// carry it in another is how the two come to disagree by 30°.
 ///
 /// The pupil and the sclera are constants — a pupil is a hole and a sclera a
 /// membrane, and neither is a thing bodies differ in the way an iris is. The
 /// iris runs the record's own gradient, [`EyeParams::inner`] at the pupil's
 /// edge to [`EyeParams::outer`] at the periphery, carried by the two boundary
-/// rings and Gouraud between them; the limbal ring is [`EyeParams::ring`]
-/// (#229).
+/// rings and Gouraud between them; the limbal ring is [`EyeParams::ring`].
 #[must_use]
 pub fn iris_of(offset: Vec3, params: &EyeParams) -> Vec3 {
     let polar = offset.normalize_or(Vec3::Z).z.clamp(-1.0, 1.0).acos();
@@ -816,8 +814,8 @@ const RIM_LIMIT: f32 = 1.955;
 /// aperture and whatever the tilt — the lids meet at two corners by
 /// construction. Past the canthus the cosine goes negative, so the upper margin
 /// drops below the eye's equator while the lower rises above it and the two
-/// overlap: there is no bare band outside the fissure, which is the whole defect
-/// this replaces (#81).
+/// overlap: there is no bare band outside the fissure, which is the defect a
+/// margin without this crossing leaves.
 fn margin(azimuth: f32, side: f32, open: f32, upper: bool) -> f32 {
     let (shut, wide) = if upper { UPPER_MARGIN } else { LOWER_MARGIN };
     let reach = shut + (wide - shut) * open;
@@ -1243,11 +1241,11 @@ mod tests {
     /// in degrees of latitude, and where the middle of that gap sits.
     ///
     /// **Sampled on the globe's own surface, not off the lids' bounding box.**
-    /// A lid's rim is a curve now, so its lowest point is out at the canthus
+    /// A lid's rim is a curve, so its lowest point is out at the canthus
     /// rather than over the pupil, and a test that reads `bounds()` is reading
-    /// the corner while claiming to measure the opening — which is how
-    /// `a_resting_aperture_sets_how_open_the_eyes_start` came to invert when the
-    /// rim stopped being a circle (#81).
+    /// the corner while claiming to measure the opening — the way
+    /// `a_resting_aperture_sets_how_open_the_eyes_start` would invert on a
+    /// rim that is not a circle.
     fn bare(eye: &Eye, azimuth: f32) -> (f32, f32) {
         let upper = eye.upper_lid.transformed(eye.lid_transform(0.0, true));
         let lower = eye.lower_lid.transformed(eye.lid_transform(0.0, false));

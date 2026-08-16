@@ -25,7 +25,7 @@
 //!
 //! let geometry = texture::bake_geometry(&mesh, &uv, 512);
 //! // What the skin is painted ON: the record's composites, read into the two
-//! // things a painter needs from them (#165).
+//! // things a painter needs from them.
 //! let condition = texture::Condition::of(&record.composites);
 //! // The last argument is the painted hair layer — one colour and a density
 //! // per follicle region — which a body without a measured head simply has

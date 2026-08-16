@@ -26,13 +26,13 @@
 //! undo that: the weight a vertex earns from lying near the segment `hip → knee`
 //! belongs to the **hip**, not to the knee.
 //!
-//! **This was wrong until #97, and it is what made limbs bend like rope.**
-//! Binding the thigh to the knee meant flexing a knee rotated the thigh about
-//! the knee as well, so the whole leg curved instead of hinging. Measured by
-//! `examples/bodyaudit` on the default body: turning only the knee moved the
-//! mid-thigh 39.8 mm against the mid-shank's 73.1 mm, a 54% leak into the
-//! segment that must not move; the elbow leaked 76%. Both are zero once the
-//! bone is owned by the joint that actually turns it.
+//! **Getting this wrong is what makes limbs bend like rope.** Binding the
+//! thigh to the knee means flexing a knee rotates the thigh about the knee as
+//! well, so the whole leg curves instead of hinging. Measured by
+//! `examples/bodyaudit` on the default body: bound that way, turning only the
+//! knee moves the mid-thigh 39.8 mm against the mid-shank's 73.1 mm, a 54%
+//! leak into the segment that must not move; the elbow leaks 76%. Both are
+//! zero once the bone is owned by the joint that actually turns it.
 //!
 //! A consequence worth stating, because it looks like a bug: **a leaf joint gets
 //! no weight from the body's own surface.** A hand, a foot, a crown has no bone
@@ -158,7 +158,7 @@ impl SkinWeights {
     /// emitted — poke-through avoided by deleting the geometry rather than by
     /// hiding it. The claim is [`Garment::claim`](crate::Garment::claim) and
     /// the deletion is `Avatar::charted_body`; it is worth about 1,500
-    /// triangles on a clothed body (#46/#117).
+    /// triangles on a clothed body.
     ///
     /// A vertex takes the zone of the **nearer end** of the bone holding it, not
     /// the bone's own joint. A bone spans two nodes that may sit in different
@@ -238,7 +238,7 @@ pub(crate) fn mouth_corners(rig: &Rig) -> Vec<(usize, f32, usize)> {
 
 /// The brow joints a rig carries, each `(brow, side sign)` — the lone leaves
 /// ABOVE the head joint, where [`mouth_corners`] finds the ones below. Shared
-/// by [`bind`] and the expression layer (#217), for the reason on
+/// by [`bind`] and the expression layer, for the reason on
 /// [`mouth_corners`].
 pub(crate) fn brow_joints(rig: &Rig) -> Vec<(usize, f32)> {
     (0..rig.len())
@@ -508,7 +508,7 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
 /// Which joint's rotation turns the bone leading into `segment`, for a vertex
 /// lying on the body part `on`.
 ///
-/// **Almost always the parent, and the exception is the head** (#123). The
+/// **Almost always the parent, and the exception is the head.** The
 /// module docs above give the rule and why it is the parent: rotating a hip
 /// swings the thigh, so the bone `hip → knee` is the hip's. That is right for
 /// every hinge in the body, and a head is not a hinge.
@@ -518,17 +518,17 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
 /// radii above the neck node, so the whole lower face — the jaw, the chin, the
 /// mouth, the base of the nose — hangs off the `neck → head` bone, below the
 /// joint that ought to turn it. Credited to the parent, every one of those
-/// vertices belongs to the NECK. Measured on the default body before this: the
-/// mouth line and the chin were held 1.00 by the neck and moved **zero
-/// millimetres** when the head turned thirty degrees, against the 57.4 and
-/// 60.6 mm a rigid head moves them; the brow was 0.75/0.25 and lost 14.7 mm of
-/// 58.7. The face stayed behind while the skull turned out from under it, which
-/// is what the owner saw as the nose and chin smearing under look-at.
+/// vertices belongs to the NECK. Measured on the default body under that
+/// rule: the mouth line and the chin are held 1.00 by the neck and move
+/// **zero millimetres** when the head turns thirty degrees, against the 57.4
+/// and 60.6 mm a rigid head moves them; the brow at 0.75/0.25 loses 14.7 mm
+/// of 58.7. The face stays behind while the skull turns out from under it —
+/// the nose and chin smear under look-at.
 ///
-/// **It got worse twice without anything here changing.** The head used to
-/// reach 0.69 radii below its joint; #78 took that to 1.19 and #107's cage flip
-/// took the built floor to 1.07–1.16. Each of those moved more of the face onto
-/// the neck's bone, and nothing measured a head turn, so nothing said so.
+/// And the deeper the head reaches below its joint — the built floor sits
+/// 1.07 to 1.16 radii below it — the more of the face the parent rule hands
+/// to the neck. Nothing else here measures a head turn, so nothing else would
+/// say so.
 ///
 /// The test is the vertex's own body part rather than a distance, because a
 /// distance cannot answer it: the chin's tip sits **1.34 head radii** from the

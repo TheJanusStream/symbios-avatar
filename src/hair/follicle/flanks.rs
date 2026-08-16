@@ -3,8 +3,8 @@
 //! The largest of the four facial regions and the only one whose lower edge is
 //! shared with another file. A beard ends where the mandible does, and the
 //! mandible's lower border is [`crate::face::skull`]'s own carved line — so this
-//! region reads that line rather than drawing a second one beside it. #196 is
-//! what the second copy cost.
+//! region reads that line rather than drawing a second one beside it: two
+//! copies of one border drift apart the moment either moves.
 
 use serde::{Deserialize, Serialize};
 
@@ -44,12 +44,12 @@ impl Params {
 /// The sideburn's top, which is the one part of this boundary a person picks
 /// deliberately. Level with the ear's upper third on a default face.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const SIDEBURN: f32 = 0.08;
 
 /// How far the whole cheek line moves over [`Params::cheek`], in frames.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const CHEEK_RANGE: f32 = 0.16;
 
 /// How far below the mandible's border the beard reaches, in frames.
@@ -57,14 +57,14 @@ const CHEEK_RANGE: f32 = 0.16;
 /// **Below it, not to it, and that is the anatomy rather than a soft edge.**
 /// Beard growth crosses the jawline and stops on the upper neck; a region that
 /// ended at the border would leave the crease itself bald and draw a bright
-/// line down the one edge #195 spent a day getting smooth.
+/// line down an edge the skull work keeps smooth.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const UNDER: f32 = 0.16;
 
 /// How far that reach moves over the whole of [`Params::under`], likewise.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const UNDER_RANGE: f32 = 0.12;
 
 /// How softly the patch fades, in frames.
@@ -75,7 +75,7 @@ const UNDER_RANGE: f32 = 0.12;
 /// sum of its own fade and its movement. At the 0.05 the other regions use,
 /// `follicleaudit` read the beard line as a 1.7 mm edge against a 5.2 mm fade.
 ///
-/// Provenance: **derived** from that measurement, and judged by render (#199).
+/// Provenance: **derived** from that measurement, and judged by render.
 const FADE: f32 = 0.07;
 
 /// Where the region gives way to the chin's, as a share of the skull's own
@@ -87,22 +87,19 @@ const FADE: f32 = 0.07;
 /// a broad head the two would part and leave a bald stripe down the jaw if this
 /// were a metre figure.
 ///
-/// **It comes on faster than it used to, and the render is what said so**
-/// (#199). At a ramp reaching full only past 0.72 of the half-width, the
-/// underside of the jaw was left at about a quarter weight: a point below the
-/// border sits at a height where the skull's half-width is already the neck's,
-/// so it never reaches a high lateral share however far out it is. The overlay
-/// drew that as a pale wedge between this region and the chin's, and it was
-/// the mask rather than the instrument — the first suspicion, that the two
-/// regions were each half-on and the overlay was hiding their sum, was checked
-/// by changing the overlay to show coverage and the wedge did not move.
+/// **The ramp has to come on early, and the render is why.** At a ramp
+/// reaching full only past 0.72 of the half-width, the underside of the jaw is
+/// left at about a quarter weight: a point below the border sits at a height
+/// where the skull's half-width is already the neck's, so it never reaches a
+/// high lateral share however far out it is — and the overlay draws that as a
+/// pale wedge between this region and the chin's.
 ///
-/// Provenance: **tuned by render** (#199), against the seam it has to close.
+/// Provenance: **tuned by render**, against the seam it has to close.
 const INNER: f32 = 0.35;
 
 /// How quickly it comes on over that share.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const INNER_RAMP: f32 = 0.20;
 
 /// How far behind the ear the region reaches, as a cosine of the azimuth.
@@ -110,13 +107,13 @@ const INNER_RAMP: f32 = 0.20;
 /// Negative because the sideburn's own root is already behind the widest part
 /// of the head. Past this is the nape, which is the scalp's business.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const BEHIND: f32 = -0.35;
 
 /// How far forward of the ear the sideburn's back edge moves over the whole of
 /// [`Params::sideburn`], in the same cosine.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const SIDEBURN_RANGE: f32 = 0.25;
 
 /// How far round from the side the beard line has finished dropping to the
@@ -125,13 +122,13 @@ const SIDEBURN_RANGE: f32 = 0.25;
 /// About 45°, so the line runs diagonally down the flank and is level again by
 /// the time it reaches the chin's own patch.
 ///
-/// Provenance: **tuned by render** (#199).
+/// Provenance: **tuned by render**.
 const DIAGONAL: f32 = 0.70;
 
 /// The beard line one flank runs under, as one object.
 ///
 /// **The fourth handed-out landmark, and the only one whose ends are two
-/// different heights** (#208, following [`Ridge`](super::brows::Ridge),
+/// different heights** (following [`Ridge`](super::brows::Ridge),
 /// [`Lip`](super::moustache::Lip) and [`Pad`](super::chin::Pad)). A flank style
 /// needs the same diagonal the mask is cut to — the shaved line runs from the
 /// sideburn down to the cheek — and it needs the jawline under it, which is
@@ -209,13 +206,13 @@ impl Flanks {
     /// rather than sitting level and reading as a chinstrap.
     ///
     /// **In the azimuth's cosine and not in [`At::forward`], and that is the
-    /// difference between a soft edge and a cliff** (#199). A moving boundary
+    /// difference between a soft edge and a cliff**. A moving boundary
     /// is as steep as whatever moves it: `forward` is a share of the skull's
     /// reach at the point's own height, and under the jaw that reach is small,
-    /// so a millimetre of travel there moved this line three — which made a
-    /// 5 mm fade read as a 0.8 mm one and put the only cliff in the file on the
-    /// largest facial region. The cosine changes smoothly everywhere the region
-    /// reaches, and it is what the border below is written in anyway.
+    /// so a millimetre of travel there moves this line three — which would make
+    /// a 5 mm fade read as a 0.8 mm one and put the only cliff in the file on
+    /// the largest facial region. The cosine changes smoothly everywhere the
+    /// region reaches, and it is what the border below is written in anyway.
     fn top(&self, facing: f32) -> f32 {
         self.line().top(facing)
     }

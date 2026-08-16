@@ -14,7 +14,7 @@
 //! 12 mm off the surface, so it covers scalp for a centimetre and then hangs in
 //! the air. That is the whole of why a hundred and fifty of them read as strings
 //! over a bare scalp: each one is a bristle standing off the head, not a lock
-//! lying on it (#204).
+//! lying on it.
 //!
 //! So a lock here **walks the measured profile**. It descends the head at its own
 //! azimuth, staying on the surface while the surface is still supporting it, and
@@ -100,13 +100,13 @@ pub enum ScalpStyle {
 /// One entry per style, in the order the enum declares them, and the whole
 /// difference between a crop and a curtain.
 ///
-/// **Past the hairline, not from the root** (#204). A card covers the scalp
+/// **Past the hairline, not from the root**. A card covers the scalp
 /// first — the crown to the hairline is 100 mm of travel on a default head and
 /// the style has no say in it — and this is only what is left over to hang. The
 /// numbers were the total when the cap was a share of them, and left where they
 /// were they gave a crop a 54 mm fringe: dreadlocks over the eyes.
 ///
-/// Provenance: **tuned by render** (#204), against the anatomy each style is
+/// Provenance: **tuned by render**, against the anatomy each style is
 /// named for — a crop stops on the head, a bob reaches the jaw, a long reaches
 /// past the shoulder.
 const REACH: [f32; 5] = [0.022, 0.130, 0.330, 0.045, 0.120];
@@ -121,7 +121,7 @@ const REACH: [f32; 5] = [0.022, 0.130, 0.330, 0.045, 0.120];
 /// Curly is widest, because coiled hair genuinely clumps into fewer, fatter
 /// locks — which is also what pays for its extra stations.
 ///
-/// **The three HANGING styles were widened when [`CROWD`] was re-sized** (#209),
+/// **The three HANGING styles were widened when [`CROWD`] was re-sized**,
 /// and the split between which styles needed it and which did not is the
 /// interesting half. Cutting the counts by measured card cost left a crop and a
 /// tail unchanged on the render — a card that lies ON the skull tiles it, so
@@ -132,20 +132,20 @@ const REACH: [f32; 5] = [0.022, 0.130, 0.330, 0.045, 0.120];
 ///
 /// So the count came down for the budget and the width went up for the mass,
 /// which is the flanks' own lesson in the region where it is least obvious
-/// (#208): width is free and a card is four triangles a segment. Measured, the
+///: width is free and a card is four triangles a segment. Measured, the
 /// whole catalogue still lands inside the scalp's share of the budget with these
 /// at nearly twice their old widths.
 ///
-/// Provenance: **tuned by render** (#204), **widened by render against a
-/// re-sized count** (#209).
+/// Provenance: **tuned by render**, **widened by render against a
+/// re-sized count**.
 const WIDTH: [f32; 5] = [0.034, 0.046, 0.056, 0.036, 0.070];
 
 /// What share of its width a lock keeps at its tip.
 ///
 /// Real hair gathers: locks that fall exactly as they were rooted stay parallel
-/// all the way down and read as a comb (the shell era's own lesson, #40).
+/// all the way down and read as a comb.
 ///
-/// **Nearly to a point, because a card's END is a flat cap** (#204). At a third of
+/// **Nearly to a point, because a card's END is a flat cap**. At a third of
 /// the width the fringe was a row of square teeth over the forehead — the caps
 /// themselves, 14 mm across and facing the camera. Only the hanging part tapers
 /// (see `Sheet::width_at`), so this is what the fringe line is made of.
@@ -160,12 +160,11 @@ const TAPER: [f32; 5] = [0.10, 0.16, 0.14, 0.14, 0.30];
 /// hair clumps into fewer, fatter locks than straight hair does. It is also what
 /// makes a coil affordable, since a curve pays for its own stations.
 ///
-/// **Re-sized against the measured cost of each style's own card** (#209), and
-/// it is the same mistake in the same currency the facial catalogues each found:
-/// a count is set in cards and paid for in triangles. These were sized at #204
-/// against a crop, and the budget test wore a crop too — so nothing ever costed
-/// the four styles that are not one. Measured at the greediest cut a record may
-/// ask for, one card is
+/// **Sized against the measured cost of each style's own card**, because a
+/// count is set in cards and paid for in triangles — the rule every catalogue
+/// in this crate has had to learn. Sized against a crop, with a budget test
+/// wearing a crop too, nothing costs the four styles that are not one.
+/// Measured at the greediest cut a record may ask for, one card is
 ///
 /// ```text
 ///   crop  15.3    bob  18.3    long  24.4    tied  42.0    curly  64.9
@@ -174,23 +173,23 @@ const TAPER: [f32; 5] = [0.10, 0.16, 0.14, 0.14, 0.30];
 /// triangles, because a tail's card walks the whole skull before it gathers and
 /// a ringlet pays a station for every millimetre its coil departs from a chord.
 /// At a flat count that is a scalp costing four times what its own budget was
-/// set to, and it is why the dearest legal record came in 2,448 triangles over
-/// the WebGL2 target with every budget test passing.
+/// set to — which is how a dearest legal record lands thousands of triangles
+/// over the WebGL2 target with every budget test passing.
 ///
 /// So each style is granted the count that spends what a crop spends. The crop
 /// itself is the anchor and does not move; nothing about a card's width, reach,
-/// taper or coil moves either, because those are what #204 and #210 tuned by
-/// render and none of them is what went wrong.
+/// taper or coil moves either, because those are tuned by render against the
+/// shape of a card and not against its price.
 ///
-/// **Coverage was checked before the count was cut, not after** (the flanks'
-/// lesson, #208). The scalp holds 34.5% of a head's own surface — 485 cm² on the
+/// **Coverage is checked before a count is cut, not after.** The scalp holds
+/// 34.5% of a head's own surface — 485 cm² on the
 /// default body — and these grant it between two and three times that in card
 /// area at the default cut, against the one-and-a-half the flanks were judged
 /// to need. Width is free and a card is four triangles a segment, so a style
 /// that wants more mass takes it in [`WIDTH`], not here.
 ///
 /// Provenance: **derived** from what each style is, **sized by the budget**
-/// (#204), **re-sized by the measured cost of a card** (#209).
+///, **re-sized by the measured cost of a card**.
 const CROWD: [f32; 5] = [1.0, 0.83, 0.62, 0.36, 0.24];
 
 /// How far a lock stands off the skull at no droop at all, in metres.
@@ -200,7 +199,7 @@ const CROWD: [f32; 5] = [1.0, 0.83, 0.62, 0.36, 0.24];
 /// lift over a lock's own travel is the difference between hair combed flat and
 /// hair with body in it.
 ///
-/// Provenance: **tuned by render** (#204).
+/// Provenance: **tuned by render**.
 const VOLUME: f32 = 0.008;
 
 /// How far round the head the fringe's shortening reaches.
@@ -209,7 +208,7 @@ const VOLUME: f32 = 0.008;
 /// ahead and this is about the temple. A fringe that reaches further is a bowl
 /// cut, and one that reaches less is a tuft over the nose.
 ///
-/// Provenance: **tuned by render** (#204).
+/// Provenance: **tuned by render**.
 const FRONT: f32 = 0.35;
 
 /// How far a coil swings either side of the lock's own fall, loose to tight, in
@@ -341,7 +340,7 @@ impl ScalpStyle {
 /// has to close the last of the distance. Starting it earlier is what draws a
 /// chord through the head.
 ///
-/// Provenance: **tuned by render** (#204).
+/// Provenance: **tuned by render**.
 const KNOT_FROM: f32 = 0.55;
 
 /// How far the knot sits off the back of the head, as a share of its reach there.
@@ -349,7 +348,7 @@ const KNOT_FROM: f32 = 0.55;
 /// Just clear of the occiput, so the tail is behind the head rather than inside
 /// it, and the locks arriving have somewhere to meet.
 ///
-/// Provenance: **tuned by render** (#204).
+/// Provenance: **tuned by render**.
 const KNOT_STANDOFF: f32 = 1.15;
 
 /// The mask weight below which a card has left the scalp and is hanging.
@@ -367,7 +366,7 @@ const EDGE: f32 = 0.35;
 /// on over the first few centimetres of hanging, which is what makes a crop hug
 /// and a curtain swing.
 ///
-/// Provenance: **tuned by render** (#204).
+/// Provenance: **tuned by render**.
 const LOOSE: f32 = 0.045;
 
 /// How wide a card is where it leaves the crown, as a share of its full width.
@@ -378,7 +377,7 @@ const LOOSE: f32 = 0.045;
 /// piled into a rosette of plates at the crown where the circumference they had
 /// to cover was a tenth of what they were carrying.
 ///
-/// Provenance: **tuned by render** (#204).
+/// Provenance: **tuned by render**.
 const FAN: f32 = 0.10;
 
 /// The azimuths the walk is measured at, in radians from dead ahead.
@@ -396,7 +395,7 @@ const TURNS: [f32; 16] = [
 /// The walk has no closed form — it is the measured profile, sampled — so travel
 /// along it is a sum, and the drawn clump can be no smoother than this polyline.
 ///
-/// **Set by the COMB, not by the descent** (#204). A lock going straight down
+/// **Set by the COMB, not by the descent**. A lock going straight down
 /// needs very few steps: at two dozen the chord between them sagged 0.2 mm on a
 /// 90 mm skull. A lock combed to the nape turns 180° over about 60 mm of
 /// descent, which at two dozen steps is 40° between two of them and a chord
@@ -440,7 +439,7 @@ struct Sheet {
     /// built it. The pipeline had already measured all of it.
     ///
     /// **The mask is in here because the card has to know where the hairline is**
-    /// (#204): the scalp is where a card LIES, and the hairline is where it stops
+    ///: the scalp is where a card LIES, and the hairline is where it stops
     /// lying and starts hanging. A style that guessed that from a height would
     /// hang a fringe off the middle of a forehead.
     regions: Follicles,
@@ -508,14 +507,14 @@ impl Sheet {
     /// Which way round the head this lock is heading, having descended to
     /// `height` from `root`.
     ///
-    /// **A comb turns the azimuth, it does not move the point** (#204). The first
+    /// **A comb turns the azimuth, it does not move the point**. The first
     /// cut of the tied-back style lerped a lock's POSITION toward the knot, which
     /// draws a chord straight through the skull — measured at 88.6 mm off the
     /// surface for a lock rooted over the brow. Hair combed back travels ROUND
     /// the head, so what a comb changes is which way the walk is going, and the
     /// walk stays on the surface for free.
     ///
-    /// **Scheduled on the DESCENT, and it has to be** (#204). Scheduled on the
+    /// **Scheduled on the DESCENT, and it has to be**. Scheduled on the
     /// travel it fed back on itself: turning the azimuth adds azimuthal arc,
     /// which is travel, which turns it further — so the walk's steps grew from
     /// five millimetres to fifty, the polyline went coarse exactly where it was
@@ -544,7 +543,7 @@ impl Sheet {
     /// point of a lock that finished combing in a quarter of the length and
     /// `at(root, 1.0)` the tip of a different one: the sampler was drawing a
     /// polyline through points that were never on one curve, and it went 14 mm
-    /// inside the skull (#204).
+    /// inside the skull.
     ///
     /// **The walk is the whole design, and where a lock leaves the head is
     /// computed rather than given.** An earlier cut let the cap have a fixed share
@@ -719,7 +718,7 @@ struct Walked {
     free: f32,
     /// Whether the mask claimed this meridian anywhere along the walk.
     ///
-    /// **A card whose meridian grows no hair grows nothing at all** (#204). It
+    /// **A card whose meridian grows no hair grows nothing at all**. It
     /// used to grow a card with no cap, and a card with no cap is full width from
     /// its first station and only as long as its own hang — a short wide slab. The
     /// contact sheet showed two of them floating off the back of the head, one
@@ -729,7 +728,7 @@ struct Walked {
     /// How far it had travelled when it crossed the hairline, if it did.
     ///
     /// **What says how long the cap is, and the first cut of this had no such
-    /// field** (#204). Without it the cap was the whole polyline — the walk runs
+    /// field**. Without it the cap was the whole polyline — the walk runs
     /// on past the head so that a fall has somewhere to go — so every lock became
     /// a 300 mm dreadlock hanging past the chin and cost 84 triangles.
     cap: Option<f32>,

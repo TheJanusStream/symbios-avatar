@@ -1,8 +1,8 @@
-//! What the two CC0 mannequins say about head DIMORPHISM (#166).
+//! What the two CC0 mannequins say about head DIMORPHISM.
 //!
 //! The sibling of `examples/reference`, which measures the same two files for
 //! the body. Kept for the reason that one is kept: every reference column in
-//! this crate has to be re-derivable rather than remembered (#173), and
+//! this crate has to be re-derivable rather than remembered, and
 //! [`crate::face::HeadTraits`]'s anchors are reference columns.
 //!
 //! Measured by RAY CASTING rather than by binning vertices: the male head is 200
@@ -11,7 +11,7 @@
 //! surface wherever it is.
 //!
 //! Everything is normalised by the head's own span, so overall head size — which
-//! is `head_size` on the cage and not this issue's business — divides out.
+//! is `head_size` on the cage and not this instrument's business — divides out.
 
 use glam::Vec3;
 use symbios_avatar::gltf::Gltf;
@@ -130,9 +130,9 @@ fn hit(from: Vec3, dir: Vec3, face: &[Vec3; 3]) -> Option<f32> {
 
 /// The neck's SECTION at mid-neck, as fractions of stature.
 ///
-/// **A mean radius about the neck's own axis, not a half-width across it**
-/// (#166). The first version of this measured `max |x|` in a band and reported
-/// the feminine mannequin's neck as 14% the thicker of the two, which is the
+/// **A mean radius about the neck's own axis, not a half-width across it.**
+/// Measuring `max |x|` in a band reports the feminine mannequin's neck as 14%
+/// the thicker of the two, which is the
 /// opposite of what neck circumference does in life. A neck is not round, and
 /// one axis of an ellipse is not its size: the lateral reading alone cannot
 /// tell a wider neck from a flatter one. Rays at every azimuth can, and they

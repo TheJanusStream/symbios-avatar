@@ -30,7 +30,7 @@ pub struct Texel {
     /// by the painter, because the mesh is the only thing that knows: see
     /// [`PolyMesh::crease`].
     pub crease: f32,
-    /// Whether this texel is inside the mouth (#154): `0` on skin, near `0.5`
+    /// Whether this texel is inside the mouth: `0` on skin, near `0.5`
     /// on the teeth ridge, `1` in the cavity. Carried per vertex from the
     /// surgery's own classes, because nothing derivable from position can
     /// tell the inside of a closed fold from the lip a millimetre outside it.

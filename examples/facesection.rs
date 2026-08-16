@@ -3,7 +3,7 @@
 //! `examples/headaudit` reports a nose's delivered WIDTH, off the displacement
 //! rather than off the constants that drew it, and that was the right thing to
 //! measure when the question was whether the axes reached the surface at all.
-//! It is the wrong instrument for #180, which is a judgement about
+//! It is the wrong instrument for a judgement about
 //! cross-section: **a ridge and a nose have the same width.** What separates
 //! them is how far the thing stands off the face, how the section is shaped
 //! between the midline and the flank, and whether the small negative terms — an
@@ -24,12 +24,12 @@
 //! `delivered` reads the polygon surface between them, so the ratio of the two
 //! is exactly how much of the authored feature survives onto the mesh. A
 //! feature whose peak lands between two rows reads lower here than the vertices
-//! it was written onto, and that gap is what #59's mean-edge argument predicts.
+//! it was written onto, and that gap is what the mean-edge argument in
+//! `examples/measure` predicts.
 //!
 //! Both bodies are built the way the shipped path builds them — `HeadTraits::of`
 //! the record's composites, and `FaceParams::on` those traits — because a probe
-//! that passes `Default::default()` measures a body no shipped path produces
-//! (#179).
+//! that passes `Default::default()` measures a body no shipped path produces.
 //!
 //! ```text
 //! cargo run --release --example facesection            # the default body
@@ -60,7 +60,8 @@ const HALVINGS: usize = 30;
 /// Where the nose is sectioned, along its own span from root to under.
 ///
 /// Not evenly spaced: the top half of a nose is a bridge and says little, and
-/// everything the issue is about — the tip, the wings, the crease under them —
+/// everything this instrument is about — the tip, the wings, the crease under
+/// them —
 /// happens in the last third. `NOSE_RISE` peaks at 0.80 and `NOSE_SPREAD` is
 /// widest at 0.92, so those two are both sampled directly rather than
 /// straddled.
@@ -545,11 +546,11 @@ fn mouth_profile(section: &Section, canon: &Canon, params: &FaceParams, cells: &
 /// and comes back up, which is what a vermilion border is. One that bottoms out
 /// at the far end never stopped.
 ///
-/// **The lowest point, and the recovery read one step past it — not a roll**
-/// (#182). Reading the border as a minimum followed by a maximum needs a
+/// **The lowest point, and the recovery read one step past it — not a roll.**
+/// Reading the border as a minimum followed by a maximum needs a
 /// maximum, and above the upper lip the next maximum is the NOSE: unbounded it
-/// called the nose base a 13 mm border on the default head, and with a window
-/// and a height ceiling on top of it, it still read seed 99's nose flank as a
+/// calls the nose base a 13 mm border on the default head, and even windowed
+/// with a height ceiling it reads seed 99's nose flank as a
 /// recovery of 5.67 millimetres of relief per millimetre of face. A single step
 /// is 0.5 mm and the nose's rise is two millimetres further out.
 fn flank_break(
@@ -611,7 +612,7 @@ fn millimetres(value: Option<f32>) -> String {
 /// vault is not, so one figure for a head is a figure for neither. Every number
 /// in the tables above is worth reading against the cell beside it — a feature
 /// narrower than the surface under it cannot be drawn however well it is
-/// authored, which is #59's argument and the one #180 expects to be the answer.
+/// authored, which is `examples/measure`'s mean-edge argument again.
 struct Cells {
     /// Median edge per band, low to high, and the band's own height.
     bands: Vec<(f32, f32)>,

@@ -124,7 +124,7 @@ enum Focus {
     Foot,
     /// One follicle region, framed on the mask itself.
     ///
-    /// **A head shot is not close enough to judge a brow** (#205). A brow is
+    /// **A head shot is not close enough to judge a brow**. A brow is
     /// eight millimetres of the head's own height, so at the head close-up's
     /// framing the whole region is thirty pixels and every defect in it is one:
     /// the shipped brow was combed the wrong way for two issues and the sheet
@@ -744,7 +744,7 @@ fn main() {
 /// Prints what one avatar costs to *build*, at three atlas sizes.
 ///
 /// **A baseline exists to be re-taken, so it lives in the tool rather than in a
-/// comment** (#56). The figures wander by a percent between runs and are useful
+/// comment**. The figures wander by a percent between runs and are useful
 /// to about that: what they are for is attributing a regression to a change,
 /// which needs a before as well as an after.
 ///
@@ -753,7 +753,8 @@ fn main() {
 /// `nearest_bone` per texel; geometry does not move with the atlas at all. At
 /// the shipping 1024 the atlas is fifteen times the drawn geometry, so atlas
 /// size is the whole of the memory lever and `nearest_bone` is the whole of the
-/// time lever — see #56 for the remedies, which are deliberately not here.
+/// time lever. The remedies for either are deliberately not in this
+/// instrument.
 ///
 /// The geometry figure is counted rather than estimated: position, normal, uv,
 /// colour, four joint indices and four weights per drawn vertex.
@@ -834,7 +835,7 @@ struct Show {
     ///
     /// A shell of hair covers the ears and most of the brow on almost every
     /// seed, and the face is the thing under active work — judging a feature
-    /// through a fringe is judging the fringe (#67, #59).
+    /// through a fringe is judging the fringe.
     bare: bool,
     /// Whether every finger is curled, to show the hand rig working.
     fist: bool,
@@ -855,16 +856,16 @@ struct Show {
     /// How far the mouth is opened, in degrees, if at all.
     jaw: Option<f32>,
     /// How far the brows are raised (or, negative, lowered), in degrees, if at
-    /// all. The same instrument argument as `jaw`: #215 gave each brow a joint
+    /// all. The same instrument argument as `jaw`: each brow has a joint
     /// and a territory, and only rotating the joints can show whether the
-    /// binding articulates — a green suite cannot (#135).
+    /// binding articulates — a green suite cannot.
     brows: Option<f32>,
     /// How far the mouth corners are raised (a smile) or dropped (a frown),
-    /// in degrees, if at all (#216).
+    /// in degrees, if at all.
     corners: Option<f32>,
-    /// A named resting face from the expression layer, if any (#217).
+    /// A named resting face from the expression layer, if any.
     expression: Option<Expression>,
-    /// A mouth shape from the lipsync vocabulary, if any (#218).
+    /// A mouth shape from the lipsync vocabulary, if any.
     viseme: Option<Viseme>,
 }
 
@@ -886,7 +887,7 @@ struct JawBone {
 ///
 /// Found through the SKELETON's own marker flag rather than by position or by
 /// index, because a marker is exactly what the crate calls a rig-only node and
-/// a second definition of one here is a second implementation of #134. The jaw
+/// a second definition of one here is a second implementation of it. The jaw
 /// is the marker whose parent is also a marker: the chain runs
 /// `head → pivot → tip` and only the tip has a marked parent.
 fn jaw_bone(rig: &Rig, skeleton: &Skeleton) -> Option<JawBone> {
@@ -907,7 +908,7 @@ fn jaw_bone(rig: &Rig, skeleton: &Skeleton) -> Option<JawBone> {
 /// the rig carries them: lone marker leaves off a non-marker parent, off the
 /// midline, split by which side of their parent joint they sit — the same
 /// structural identification `skin::bind` uses, so the instrument poses
-/// exactly the joints the binding credits (#215, #216).
+/// exactly the joints the binding credits.
 fn face_leaves(rig: &Rig, skeleton: &Skeleton, above: bool) -> Vec<usize> {
     let marked = |joint: usize| {
         rig.joints[joint]
@@ -934,9 +935,9 @@ fn face_leaves(rig: &Rig, skeleton: &Skeleton, above: bool) -> Vec<usize> {
 ///
 /// **The instrument for the two defects a still cannot show.** A mirrored
 /// correspondence poses a rest body identically to a correct one, so only a
-/// one-handed clip says which side ours landed on (#142); and a twist bug moves
+/// one-handed clip says which side ours landed on; and a twist bug moves
 /// a bone's axes without moving its position, so only a roll-heavy clip shows it
-/// (#139). Both go through `retarget::clip` — the same path a bake takes — so
+///. Both go through `retarget::clip` — the same path a bake takes — so
 /// what is on screen is what would be baked.
 ///
 /// The feet are re-planted at playback rather than trusted from the clip,
@@ -1057,9 +1058,9 @@ impl Subject {
     /// The body standing still, or with its hands closed.
     ///
     /// Closing them is what a hand rig is *for*, and a rest pose cannot show
-    /// whether one works: before #113 the whole hand rode the wrist, so every
-    /// finger joint in the world would have moved nothing and the rest pose
-    /// looked exactly the same either way.
+    /// whether one works. Where a whole hand rides the wrist, every
+    /// finger joint in the world moves nothing and the rest pose
+    /// looks exactly the same either way.
     fn standing(&self) -> Pose {
         let rig = &self.avatar.rig;
         let mut pose = Pose::rest(rig);
@@ -1389,8 +1390,8 @@ impl Subject {
 /// rotation stored at a joint turns that joint's children about it — so the
 /// bone from the neck up to the head is owned by the NECK, and the jaw and chin
 /// hanging off its far end are the neck's surface as far as deformation is
-/// concerned. That is #123's whole subject and the reason `owner_of` and its
-/// `COVERED` constant exist. Here it is as a picture rather than as a constant.
+/// concerned. That is the reason `owner_of` and its `COVERED` constant exist;
+/// here it is as a picture rather than as a constant.
 ///
 /// Three bones are named and everything else is left alone:
 ///
@@ -1563,7 +1564,7 @@ fn report_junction(rig: &Rig, span: &[Reach]) {
 
 /// How strongly the mandible holds each patch of skin.
 ///
-/// **The question nobody had answered about #134's jaw.** The bone runs
+/// **The question the jaw's constants cannot answer.** The bone runs
 /// diagonally through the face's interior, from the hinge at the ear to the
 /// chin, so which vertices its bounded falloff actually catches is not
 /// something anyone can read off the constants: it might be the lower lip, the
@@ -1598,14 +1599,14 @@ fn jaw_tint(mesh: &PolyMesh, jaw: JawBone) -> Vec<Vec3> {
 
 /// Grows the clump engine's hair on all five regions, replacing the shipped one.
 ///
-/// **#201's judgement image, and it goes through the real hair mesh rather than
-/// beside it** — same material, same light, same merge — because a new system
+/// **A judgement image that goes through the real hair mesh rather than
+/// beside it** — same material, same light, same merge — because a system
 /// shown in a viewer of its own is a system nobody can compare to the one it
 /// replaces.
 ///
 /// The shapes and colours here are a REFERENCE rather than a catalogue: one
-/// `Fall` per region at a length that suits it, and two colours a record will
-/// carry once #202 lands. The styles of #204-#208 are what this becomes.
+/// `Fall` per region at a length that suits it, and two colours off the
+/// record.
 fn grow_clumps(avatar: &mut Avatar, record: &AvatarRecord) {
     let Some(skull) = Skull::measure(&avatar.parts.body, &avatar.rig) else {
         eprintln!("this body has no head to grow hair on");
@@ -1714,7 +1715,7 @@ fn grow_clumps(avatar: &mut Avatar, record: &AvatarRecord) {
 
 /// Which hair region owns each vertex of the skin, as a colour to tint it by.
 ///
-/// **The visual half of #199's pair**: `follicleaudit` says how much of the
+/// **The visual half of the follicle audit**: `follicleaudit` says how much of the
 /// head each region holds and how wide its edges are, and this says WHERE — the
 /// one thing a table cannot, and the thing a mask is most often wrong about.
 ///
@@ -1725,7 +1726,7 @@ fn grow_clumps(avatar: &mut Avatar, record: &AvatarRecord) {
 /// the five agree about which is which.
 ///
 /// **The hue is the regions' weighted mean and the strength is their SUM, and
-/// the first cut of this had it the other way round** (#199). Showing only the
+/// the first cut of this had it the other way round**. Showing only the
 /// strongest region drew the chin-to-flank seam as a pale wedge — each of the
 /// two holds about 0.4 there while their sum is 0.8, so the one place both
 /// layers will composite read as a bald patch in the very picture meant to rule
@@ -2365,7 +2366,7 @@ const GOLDEN_CHANNEL_TOLERANCE: i16 = 2;
 /// Share of pixels allowed past the channel tolerance before a check fails.
 const GOLDEN_PIXEL_SHARE: f32 = 0.005;
 
-/// Blesses or checks the golden images the instrument is held to (#45, #224).
+/// Blesses or checks the golden images the instrument is held to.
 ///
 /// The instrument every judgement in this crate rests on had zero tests of its
 /// own, having twice produced a false diagnosis. A golden is the cheap

@@ -62,7 +62,7 @@ fn default_height() -> f32 {
     0.58
 }
 
-/// The stature envelope: [`HEIGHT_RANGE`] stretched about the default (#160).
+/// The stature envelope: [`HEIGHT_RANGE`] stretched about the default.
 ///
 /// The raw stretch runs to −0.41 m — the conservative floor sits closer to
 /// the default than the ceiling does, and tripling the short side crosses
@@ -74,12 +74,12 @@ fn height_envelope() -> (f32, f32) {
     (raw.0.max(0.05), raw.1)
 }
 
-/// The envelope every signed axis clamps and encodes against (#160).
+/// The envelope every signed axis clamps and encodes against.
 fn signed_envelope() -> (f32, f32) {
     super::explore_range(0.0, (-1.0, 1.0))
 }
 
-/// The `muscle` envelope; its default sits at the bottom of its range (#160).
+/// The `muscle` envelope; its default sits at the bottom of its range.
 fn muscle_envelope() -> (f32, f32) {
     super::explore_range(0.0, (0.0, 1.0))
 }
@@ -100,7 +100,7 @@ impl Default for QuadrupedParams {
 }
 
 impl QuadrupedParams {
-    /// The stature envelope `sanitize` clamps to, in metres (#160).
+    /// The stature envelope `sanitize` clamps to, in metres.
     ///
     /// Public so an editor's slider and the clamp cannot disagree about
     /// where the axis ends.
@@ -205,8 +205,8 @@ impl BodyPlan for QuadrupedParams {
     }
 
     /// **The composites reach no quadruped and this signature is the only
-    /// place that shows it** (#169). Wave 1 of the composite overhaul is the
-    /// humanoid: `plan::derive::quadruped` reads none of the four axes, so a
+    /// place that shows it.** The composites are wired into the humanoid
+    /// only: `plan::derive::quadruped` reads none of the four axes, so a
     /// beast's `build` and `muscle` are still its own girth axes and are NOT
     /// retired here — the humanoid's were retired because `mass` and `bodyFat`
     /// took over what they said, and nothing has taken over here. Wiring the

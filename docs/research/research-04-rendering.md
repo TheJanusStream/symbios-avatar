@@ -1,5 +1,8 @@
 # Dossier: Stylized Semi-Realistic Character Rendering in Bevy 0.18 (native + wasm)
 
+*A point-in-time research dossier gathered while this crate was being designed. Kept as the record of what was found and why the decisions in [../plan.md](../plan.md) were made — external version numbers, prices and library gaps in it were true when written and are not maintained.*
+
+
 ## 1. What makes the look (Fortnite / Overwatch / Sea of Thieves / Arcane)
 
 **Common core: it is PBR underneath, stylized in the *inputs*, not the shading model.** All three games run standard physically-based shading; the style comes from hand-authored/simplified textures, controlled roughness, and lighting discipline. None uses outlines.

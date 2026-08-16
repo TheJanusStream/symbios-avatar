@@ -1,17 +1,16 @@
 //! Ears.
 //!
-//! This file used to build a nose, two brows and two lips as well, as separate
-//! closed solids appended to the body. They are displacements of the head's own
-//! surface now — see [`super::relief`] — because a feature that is a solid laid
-//! on a surface has a boundary, and a boundary is a shading seam, a UV seam, and
-//! a rigid piece half-buried in skin that bends around it (#59).
+//! The nose, the brows and the lips are not built here: they are displacements
+//! of the head's own surface — see [`super::relief`] — because a feature that
+//! is a solid laid on a surface has a boundary, and a boundary is a shading
+//! seam, a UV seam, and a rigid piece half-buried in skin that bends around it.
 //!
-//! An ear did not go with them, and that is a judgement rather than an
+//! An ear stays a part, and that is a judgement rather than an
 //! oversight. A nose is a swelling of the face and an ear is a separate
 //! structure standing off the side of the head with a hollow in it; a
 //! displacement field over the skull cannot make one without the skull already
-//! having somewhere to put it. It is conformed to the measured surface instead
-//! (#67), which is the same relationship by another route.
+//! having somewhere to put it. It is conformed to the measured surface instead,
+//! which is the same relationship by another route.
 //!
 //! Placed from the published proportion canons rather than by eye, because those
 //! canons are exactly the kind of thing that is cheap to look up and expensive to
@@ -47,22 +46,22 @@ use super::skull::Skull;
 /// is a record other readers cannot round-trip.
 ///
 /// **Four of these say how far a feature stands OUT and two say how far it
-/// reaches ACROSS, and until #61 the second pair were hard constants.** A nose's
-/// width across the wings and a mouth's width to the corners were fixed
-/// multiples of [`Canon::unit`], so every seed had the same nose seen end-on and
-/// the same mouth seen straight on however prominent either was. Those are two
-/// of the loudest differences between two faces and neither was in the record.
+/// reaches ACROSS.** The second pair earn their place: were a nose's
+/// width across the wings and a mouth's width to the corners fixed
+/// multiples of [`Canon::unit`], every seed would have the same nose seen
+/// end-on and the same mouth seen straight on however prominent either was —
+/// two of the loudest differences between two faces, and neither in the record.
 ///
 /// The skull's own breadth and the face's length are NOT here: they are
 /// [`crate::plan::HumanoidParams`] axes, because they are built into the cage
 /// rather than carved into it. See `HEAD_BREADTH_SPAN` there for why.
 ///
 /// **All six fall under the `Features` lock, which already covers six
-/// categories of thing.** That bit now means skin, eyes, face, hair, head size
+/// categories of thing.** That bit means skin, eyes, face, hair, head size
 /// and extremity size, and these do not make it worse — they are the same kind
 /// of choice as the four beside them. Whether a face deserves a lock of its own
-/// is #53's question, and answering it here by adding a seventh category ad hoc
-/// is how a lock set stops meaning anything.
+/// is an open question, and answering it here by adding a seventh category ad
+/// hoc is how a lock set stops meaning anything.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct FaceParams {
@@ -84,11 +83,10 @@ pub struct FaceParams {
     pub mouth: f32,
     /// How wide the mouth is, corner to corner.
     ///
-    /// **Split out of [`Self::mouth`] rather than added beside it.** Fullness
-    /// used to widen the mouth as well as plump it, at exactly the gain this
-    /// axis now carries — so the default face is unchanged and what moved is
-    /// that a wide thin mouth and a small full one are now two records instead
-    /// of one impossible one.
+    /// **A separate axis, not a gain on [`Self::mouth`].** Fullness that
+    /// widened the mouth as well as plumping it would fold two independent
+    /// choices into one: a wide thin mouth and a small full one are two
+    /// records, not one impossible one.
     #[serde(with = "crate::plan::scaled")]
     pub mouth_width: f32,
     /// How far the ears stand out from the head.
@@ -112,8 +110,7 @@ impl Default for FaceParams {
 impl FaceParams {
     /// The face this record asks for on this body, with the frame axis folded in.
     ///
-    /// **The record's axes are OFFSETS on a derived default, which is the
-    /// architecture #61 asked for and #166 is the first thing to need** (#166).
+    /// **The record's axes are OFFSETS on a derived default.**
     /// Lip fullness is dimorphic, and a record that stored it as an absolute
     /// would make a masculine body and a feminine one with the same stored 0.5
     /// come out with the same lips — so the axis would be saying something the
@@ -146,10 +143,10 @@ impl FaceParams {
     /// Clamps every axis into range. Idempotent.
     ///
     /// **Through `crate::plan::sanitize_axis` rather than a second copy of the
-    /// rule.** This carried its own substitute-then-clamp, and it differed from
-    /// the shared one in exactly the case the shared one documents: it
-    /// substituted for `NaN` alone, so an infinity clamped to the near bound and
-    /// a mouth arrived at zero width rather than at its default. The fallbacks
+    /// rule.** A private substitute-then-clamp drifts from the shared one in
+    /// exactly the case the shared one documents: substituting for `NaN`
+    /// alone lets an infinity clamp to the near bound, and a mouth arrives at
+    /// zero width rather than at its default. The fallbacks
     /// come from `Default` for the same reason they do there — a written-out
     /// fallback can drift from the documented default and this one cannot.
     pub fn sanitize(&mut self) {
@@ -179,19 +176,16 @@ impl FaceParams {
 /// Where each feature sits between the eye line and the **chin's tip**, as a
 /// fraction of that span on the measured head.
 ///
-/// **These are the canon's figures now, and until #78 they were not.** They were
-/// 0.19, 0.51 and 0.69, each about 0.09 too low as a fraction — and each landing
-/// near its correct height in MILLIMETRES anyway, because the frame they were
-/// fractions of was itself 39% short. Two errors cancelling, which is why they
-/// survived being checked against a render three times, and why #78 required
-/// them to move in the same commit that fixes the frame: correcting either one
-/// alone makes the face worse than leaving both.
-///
 /// Against a 115 mm pupil-to-menton frame, Farkas puts subnasale 45.3 mm below
 /// the pupil (0.394) and stomion 68.5 (0.596). The ear's is its CENTRE, half way
 /// between the brow line and the base of the nose, which on the same frame is
-/// 0.110 — it was 0.19, and only read correctly because a short frame turned it
-/// into the right number of millimetres.
+/// 0.110.
+///
+/// **Check these fractions and the frame's length together, never alone.** A
+/// fraction that is too low over a frame that is short by the same share still
+/// lands near its correct height in MILLIMETRES — two errors cancelling can
+/// survive being checked against a render — and then correcting either one
+/// alone makes the face worse than leaving both.
 pub(super) const EAR_HEIGHT: f32 = 0.110;
 /// See [`EAR_HEIGHT`]. The base of the nose, where the nostrils are.
 pub(super) const NOSE_BASE: f32 = 0.394;
@@ -263,37 +257,39 @@ impl Features {
 /// Between the brow line and the base of the nose, which is where a real one
 /// sits — people place them too low from memory.
 ///
-/// Placed by **measuring the shell it just built**. Two things made that
-/// necessary. The head's true half-width is a third less than the planned
-/// radius the old placement was derived from; and the shell is built around
+/// Placed by **measuring the shell it just built**, never from the plan. The
+/// head's true half-width is a third less than the planned
+/// radius; and the shell is built around
 /// `+Y` and turned by a quarter turn about `Z`, which carries `+Y` to `-X` —
-/// so the ear pointed *into* the head, and its body sat inward of wherever its
-/// origin was put. Both errors ran the same way, which is why an ear was buried
-/// on every seed rather than on some of them.
+/// so a plan-derived placement points the ear *into* the head, with its body
+/// inward of wherever its origin was put. Both errors run the same way, which
+/// is how an ear ends up buried on every seed rather than on some of them.
 fn ear(canon: &Canon, skull: &Skull, seat: f32, stand: f32) -> PolyMesh {
     /// How far behind the midline the ear sits, in eye-widths.
     ///
-    /// A depth, so counted in the width ruler. The figure is the old eye-radius
-    /// one rebased by 0.7423 (#77), which holds a default body's ear exactly
-    /// where it was — it was validated on screen there (#67) and the change of
-    /// ruler is not a reason to move it.
+    /// A depth, so counted in the width ruler. Provenance: **validated by
+    /// render** — the value holds a default body's ear exactly where the
+    /// screen vouched for it, and a change of ruler is not a reason to move
+    /// an ear.
     const BACK: f32 = 0.2598;
     /// How much of the ear's own depth is buried in the head.
     ///
-    /// **A fraction of the ear, not of an eye.** This was 0.30 eye-radii, and an
-    /// ear is 0.56 of one thick — so more than half of it was inside the head
-    /// before the skull's curvature was considered at all, which left nothing in
-    /// hand when the measurement it was seated from moved (#67). A quarter is
-    /// enough to read as attached rather than stuck on, and it now scales with
-    /// the ear: a flatter ear sinks less deep, which is what "attached" means.
+    /// **A fraction of the ear, not of an eye.** An eye-radius figure has no
+    /// relation to the thing it buries — an ear is 0.56 of an eye-radius
+    /// thick, so a plausible-looking constant in that ruler can put more than
+    /// half the ear inside the head before the skull's curvature is considered
+    /// at all, leaving nothing in hand when a seating measurement moves. A
+    /// quarter is enough to read as attached rather than stuck on, and it
+    /// scales with the ear: a flatter ear sinks less deep, which is what
+    /// "attached" means.
     const SINK: f32 = 0.25;
     /// How wide the lobe is against the helix above it.
     ///
-    /// **An ear is not symmetric about its middle and this one was.** A cap
+    /// **An ear is not symmetric about its middle, and a bare cap is.** A cap
     /// scaled into an oval is the same shape at the top as at the bottom, and
     /// what stands furthest out is its centre — so on a head that narrows
     /// downward, the part that clears the skull and gets seen is the BOTTOM
-    /// half, tapering to a point. It read as a fin hanging off the jaw. Nearly
+    /// half, tapering to a point: a fin hanging off the jaw. Nearly
     /// half again: the helix is broad and stands proud, the lobe is small and
     /// tucks in, and that asymmetry is most of what says which way up an ear is.
     const LOBE: f32 = 0.45;

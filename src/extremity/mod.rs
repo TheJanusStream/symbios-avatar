@@ -77,7 +77,7 @@ impl Extremities {
     /// down each of five digits, in [`Role::Digit`] — and the hand mesh comes
     /// back skinned to them rather than bound rigidly. That is the reference's
     /// layout exactly: `hand_l`, then `<digit>_01`, `_02`, `_03` and `_04_leaf`
-    /// for thumb, index, middle, ring and pinky, twenty-one bones a hand (#113).
+    /// for thumb, index, middle, ring and pinky, twenty-one bones a hand.
     ///
     /// Taking `&mut Rig` rather than cloning one is the point: a hand skinned
     /// against a rig the caller does not hold is a hand bound to joints that do
@@ -186,19 +186,20 @@ impl Extremities {
 /// Builds one hand and sets it back so the palm straddles the wrist.
 ///
 /// **One hand is built and the other is its reflection, which is how both
-/// reference bodies are made** (#113). Measured off the GLBs, the Quaternius
+/// reference bodies are made.** Measured off the GLBs, the Quaternius
 /// male's mesh is 3,619 vertices either side of the midline and reflecting one
 /// onto the other lands to 0.000 mm — mean and worst alike — and every paired
 /// bone from `upperarm` out to `thumb_04_leaf` reflects to the same 0.000 mm.
 /// The body is one side, mirrored.
 ///
-/// Ours was not. [`Hand::build`] derives its whole frame from the direction it
-/// is handed, so feeding it each arm in turn *rotates* the hand rather than
-/// reflecting it — a half turn about the body's axis, which carries the thumb
-/// around with it. On the default body the two hands reflected onto each other
-/// to 5.5 mm mean and 33.4 mm worst, and the thumbs pointed to opposite ends of
-/// the fore-aft axis: one hand had its thumb in front of the palm and the other
-/// behind, which is a pair of right hands.
+/// [`Hand::build`] cannot be fed each arm in turn: it derives its whole frame
+/// from the direction it is handed, so the second call *rotates* the hand
+/// rather than reflecting it — a half turn about the body's axis, which
+/// carries the thumb around with it. Built that way, the default body's two
+/// hands reflect onto each other only to 5.5 mm mean and 33.4 mm worst, and
+/// the thumbs point to opposite ends of the fore-aft axis: one hand has its
+/// thumb in front of the palm and the other behind, which is a pair of right
+/// hands.
 ///
 /// So the hand is built once, in the half-space where `Hand::build`'s own
 /// chirality is the wanted one, and reflected across the sagittal plane for the
