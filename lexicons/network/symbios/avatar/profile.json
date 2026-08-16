@@ -8,12 +8,15 @@
       "key": "literal:self",
       "record": {
         "type": "object",
-        "required": ["createdAt"],
+        "required": [
+          "createdAt"
+        ],
         "properties": {
           "defaultAvatar": {
             "type": "string",
             "description": "Record key of the wardrobe's default avatar within network.symbios.avatar.avatar.",
-            "maxLength": 512
+            "maxLength": 512,
+            "format": "record-key"
           },
           "createdAt": {
             "type": "string",

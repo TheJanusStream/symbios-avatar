@@ -548,6 +548,31 @@ impl ProfileRecord {
         }
     }
 
+    /// Clamps every field into what the lexicon allows.
+    ///
+    /// Idempotent, like every `sanitize` in this crate: call it after reading
+    /// a record from the network, where nothing about the contents can be
+    /// assumed.
+    ///
+    /// **An invalid pointer is dropped, never repaired** (#51). This is the
+    /// one field consumers dereference into an AT-URI, and it was the one
+    /// field in the crate with no sanitization — every neighbour has some, so
+    /// a developer reasonably assumes this one does too. Repairing is the
+    /// wrong shape for a POINTER: stripping the offending characters from a
+    /// record key yields a syntactically valid key that names some *other*
+    /// record, which turns a malformed profile into a working reference to a
+    /// document nobody chose. A profile whose pointer was invalid simply has
+    /// no default avatar, exactly as if the optional field were absent.
+    pub fn sanitize(&mut self) {
+        if self
+            .default_avatar
+            .as_deref()
+            .is_some_and(|key| !is_record_key(key))
+        {
+            self.default_avatar = None;
+        }
+    }
+
     /// Whether this record carries everything the lexicon marks required.
     ///
     /// # Errors
@@ -563,6 +588,25 @@ impl ProfileRecord {
         }
         Ok(())
     }
+}
+
+/// Whether `key` is a syntactically valid atproto record key.
+///
+/// The specification's rule, verbatim: one to 512 characters drawn from
+/// `A-Z a-z 0-9 . _ : ~ -`, and not the two path-traversal spellings `.` and
+/// `..`, which are reserved. `self` — the key this crate's own profile lives
+/// under — is an ordinary word under this rule and needs no case.
+///
+/// The charset is the whole of the safety argument: every character in it is
+/// unreserved in a URI path segment, so a key that passes cannot terminate,
+/// escape or re-route the AT-URI a consumer builds around it.
+fn is_record_key(key: &str) -> bool {
+    (1..=512).contains(&key.len())
+        && key != "."
+        && key != ".."
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'~' | b'-'))
 }
 
 /// Draws a new face: the eyes, and what is carved around them.
@@ -1850,6 +1894,89 @@ mod tests {
         assert_eq!(profile.publishable(), Ok(()));
         let back: ProfileRecord = serde_json::from_str(&json).expect("deserialises");
         assert_eq!(back, profile);
+    }
+
+    #[test]
+    fn a_profile_pointer_that_is_not_a_record_key_is_dropped_not_repaired() {
+        // **#51.** `defaultAvatar` is the one field consumers dereference into
+        // an AT-URI and was the one field with no sanitization. The rule is
+        // the record-key spec's own; the design decision under test is that an
+        // invalid pointer is DROPPED — repairing one by stripping characters
+        // yields a valid key that names some other record, which is worse than
+        // no default at all.
+        let profile = |key: &str| ProfileRecord {
+            default_avatar: Some(key.into()),
+            created_at: Some("2026-08-16T00:00:00Z".into()),
+        };
+
+        // Keys the spec allows, including the odd-looking ones: every
+        // character class, `self` (this record's own key), and a 512-char key
+        // at the length limit exactly.
+        let longest = "a".repeat(512);
+        for key in [
+            "3lm2k4x",
+            "self",
+            "a.b:c~d_e-f",
+            "A-Za-z0-9",
+            longest.as_str(),
+        ] {
+            let mut kept = profile(key);
+            kept.sanitize();
+            assert_eq!(
+                kept.default_avatar.as_deref(),
+                Some(key),
+                "{key:?} is a valid record key and must survive"
+            );
+        }
+
+        // The hostile and the malformed: URI metacharacters that would
+        // terminate or re-route the AT-URI built around the key, the two
+        // reserved traversal spellings, the empty string, and one past the
+        // length limit.
+        let overlong = "a".repeat(513);
+        for key in [
+            "",
+            ".",
+            "..",
+            "a/b",
+            "a?b=c",
+            "a#b",
+            "a b",
+            "a%2Fb",
+            "key\u{9}tab",
+            "\u{fc}mlaut",
+            overlong.as_str(),
+        ] {
+            let mut dropped = profile(key);
+            dropped.sanitize();
+            assert_eq!(
+                dropped.default_avatar, None,
+                "{key:?} is not a record key and the pointer must be dropped"
+            );
+        }
+
+        // Idempotent, like every sanitize in the crate: a second pass changes
+        // nothing, on a kept pointer and on a dropped one.
+        let mut twice = profile("3lm2k4x");
+        twice.sanitize();
+        let once = twice.clone();
+        twice.sanitize();
+        assert_eq!(twice, once);
+
+        // And the lexicon says the same thing the code does, in the spec's own
+        // vocabulary: the field is format record-key. A rule enforced in code
+        // and absent from the schema is one every other consumer of the
+        // lexicon re-discovers by incident (#211's three-directions lesson,
+        // pointed the other way).
+        let lexicon: serde_json::Value = serde_json::from_str(include_str!(
+            "../../lexicons/network/symbios/avatar/profile.json"
+        ))
+        .expect("the profile lexicon parses");
+        assert_eq!(
+            lexicon["defs"]["main"]["record"]["properties"]["defaultAvatar"]["format"],
+            "record-key",
+            "the lexicon must name the constraint the code enforces"
+        );
     }
 
     #[test]
