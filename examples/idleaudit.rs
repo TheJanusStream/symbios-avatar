@@ -193,6 +193,13 @@ fn main() {
     let frames = (seconds / STEP) as usize;
     let keep_every = (KEEP / STEP).max(1.0) as usize;
 
+    // The arm chains, for the carriage reading: how far off vertical the
+    // upper arm hangs and how bent the elbow is, both off the POSED skeleton.
+    let arms: Vec<[usize; 3]> = [Limb::ForeLeft, Limb::ForeRight]
+        .into_iter()
+        .filter_map(|limb| rig.limb_chain(limb))
+        .collect();
+
     let mut kept: Vec<(f32, Vec<Vec3>)> = Vec::new();
     let mut breath_chest: Vec<f32> = Vec::new();
     let mut breath_abdomen: Vec<f32> = Vec::new();
@@ -204,6 +211,7 @@ fn main() {
     let mut fidgets = 0usize;
     let mut bearing: Option<Limb> = None;
     let mut previous: Option<Vec<Vec3>> = None;
+    let (mut arm_hang, mut arm_bend) = ((f32::MAX, f32::MIN), (f32::MAX, f32::MIN));
     let rest = Pose::rest(rig).forward(rig).positions;
 
     for frame in 0..frames {
@@ -261,6 +269,21 @@ fn main() {
                 }
             }
         }
+
+        for &[shoulder, elbow, wrist] in &arms {
+            let upper = posed[elbow] - posed[shoulder];
+            let hang = upper
+                .normalize_or(Vec3::NEG_Y)
+                .dot(Vec3::NEG_Y)
+                .clamp(-1.0, 1.0);
+            let fore = posed[wrist] - posed[elbow];
+            let bend = upper
+                .normalize_or(Vec3::NEG_Y)
+                .dot(fore.normalize_or(Vec3::NEG_Y))
+                .clamp(-1.0, 1.0);
+            arm_hang = (arm_hang.0.min(hang.acos()), arm_hang.1.max(hang.acos()));
+            arm_bend = (arm_bend.0.min(bend.acos()), arm_bend.1.max(bend.acos()));
+        }
         previous = Some(posed);
 
         if frame % keep_every == 0 {
@@ -276,6 +299,44 @@ fn main() {
             )),
         1.0 / STEP
     );
+
+    // ---- arms ------------------------------------------------------------
+    // The carriage, against the bind pose it must NOT be showing (#267): a
+    // relaxed arm hangs a few degrees off vertical with a slightly bent
+    // elbow, and the A-pose the body is modelled in is neither.
+    {
+        let rest_arm = |chain: &[usize; 3]| {
+            let upper = rest[chain[1]] - rest[chain[0]];
+            let fore = rest[chain[2]] - rest[chain[1]];
+            (
+                upper
+                    .normalize_or(Vec3::NEG_Y)
+                    .dot(Vec3::NEG_Y)
+                    .clamp(-1.0, 1.0)
+                    .acos(),
+                upper
+                    .normalize_or(Vec3::NEG_Y)
+                    .dot(fore.normalize_or(Vec3::NEG_Y))
+                    .clamp(-1.0, 1.0)
+                    .acos(),
+            )
+        };
+        let bind: Vec<(f32, f32)> = arms.iter().map(rest_arm).collect();
+        let bind_hang = bind.iter().map(|arm| arm.0).fold(0.0f32, f32::max);
+        let bind_bend = bind.iter().map(|arm| arm.1).fold(0.0f32, f32::max);
+        println!(
+            "  arms:   hung {:.0} to {:.0} deg off vertical, elbow bent {:.0} to {:.0} deg \
+             (the BIND pose splays {:.0} deg with {:.0} of elbow — a standing body showing \
+             those numbers is showing the modelling pose, #267. A relaxed hang is ~5-15 deg \
+             of abduction with ~10-25 deg of elbow)",
+            arm_hang.0.to_degrees(),
+            arm_hang.1.to_degrees(),
+            arm_bend.0.to_degrees(),
+            arm_bend.1.to_degrees(),
+            bind_hang.to_degrees(),
+            bind_bend.to_degrees(),
+        );
+    }
 
     // ---- breath ----------------------------------------------------------
     //

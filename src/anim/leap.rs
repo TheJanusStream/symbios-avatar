@@ -300,6 +300,12 @@ impl Leap {
         }
         leapt.height = self.height_at(rig, elapsed);
 
+        // The arms hang throughout (#267): a leap says nothing about them, and
+        // a body that jumps in the bind pose's splay reads as a thrown
+        // mannequin. Before the stages, so the flight's rigid translation
+        // carries hung arms and a landing's solve bends legs under them.
+        super::gait::hang_arms(rig, pose);
+
         match leapt.stage {
             Stage::Flight(t) => {
                 // **Rigid, and the feet come with it.** A projectile does not
@@ -574,6 +580,44 @@ mod tests {
         assert!((a_time - b_time).abs() < 1e-5);
         // And in metres they differ, or nothing scaled at all.
         assert!(super::contact_time(&large) > super::contact_time(&small) * 1.2);
+    }
+
+    #[test]
+    fn a_leaping_body_hangs_its_arms_rather_than_flying_in_the_bind_pose() {
+        // **#267's leap half.** A leap says nothing about the arms, and
+        // saying nothing used to mean the bind pose: a body jumping with its
+        // arms splayed 50 degrees reads as a thrown mannequin. The idle's own
+        // guard proves the carriage itself; this proves the LEAP calls it,
+        // which is a separate line that can be separately lost.
+        let rig = body(1.8);
+        let leap = Leap::new(3.0);
+        let mut pose = Pose::rest(&rig);
+        // Mid-flight, where nothing else touches the arms.
+        let elapsed = leap.wind_up(&rig) + leap.flight() * 0.5;
+        leap.drive(&rig, &mut pose, elapsed, |at| {
+            Some(Ground {
+                position: Vec3::new(at.x, 0.0, at.z),
+                normal: Vec3::Y,
+            })
+        });
+        let posed = pose.forward(&rig).positions;
+        let splay = [crate::plan::Limb::ForeLeft, crate::plan::Limb::ForeRight]
+            .into_iter()
+            .filter_map(|limb| rig.limb_chain(limb))
+            .map(|[shoulder, elbow, _]| {
+                (posed[elbow] - posed[shoulder])
+                    .normalize_or(Vec3::NEG_Y)
+                    .dot(Vec3::NEG_Y)
+                    .clamp(-1.0, 1.0)
+                    .acos()
+            })
+            .fold(0.0f32, f32::max);
+        assert!(
+            splay.to_degrees() < 25.0,
+            "a body at mid-flight carried its arm {:.0} deg off vertical — the bind \
+             pose's splay is 50 and a hung arm is under 20",
+            splay.to_degrees(),
+        );
     }
 
     #[test]

@@ -434,6 +434,13 @@ impl Idle {
         self.elapsed += dt.max(0.0);
         self.advance(dt.max(0.0));
 
+        // The arms first, hung at the sides (#267): a standing body was
+        // drawing the bind pose's 50-degree splay, because nothing standing
+        // ever called the carriage the walk keeps under its swing. First, so
+        // the breath's slight opening and a fidget's shoulder roll compose on
+        // a hung arm rather than on a mannequin's.
+        super::gait::hang_arms(rig, pose);
+
         let breath = self.breath(rig);
         self.breathe(rig, pose, breath);
         // The two horizontal axes are gathered before either is applied,
@@ -913,6 +920,60 @@ mod tests {
                 pose.forward(rig).positions
             })
             .collect()
+    }
+
+    /// The upper arm's angle off the world's vertical, in radians, worst of
+    /// both arms, read off posed joint positions.
+    fn arm_splay(rig: &Rig, posed: &[Vec3]) -> f32 {
+        [crate::plan::Limb::ForeLeft, crate::plan::Limb::ForeRight]
+            .into_iter()
+            .filter_map(|limb| rig.limb_chain(limb))
+            .map(|[shoulder, elbow, _]| {
+                (posed[elbow] - posed[shoulder])
+                    .normalize_or(Vec3::NEG_Y)
+                    .dot(Vec3::NEG_Y)
+                    .clamp(-1.0, 1.0)
+                    .acos()
+            })
+            .fold(0.0f32, f32::max)
+    }
+
+    #[test]
+    fn a_standing_body_hangs_its_arms_instead_of_showing_the_bind_pose() {
+        // **#267, the owner's own words: "the arms are in a pose that does
+        // not seem relaxed .. that pose seems to be the default and it is a
+        // bit awkward."** It was the default — the A-pose the body is
+        // modelled in, 50 degrees of splay with a dead-straight elbow — and
+        // the idle drew it verbatim, because the carriage the walk keeps
+        // under its arm swing was never called by anything standing.
+        //
+        // The precondition is asserted rather than assumed: on a body whose
+        // BIND pose already hangs its arms this test measures nothing, so the
+        // rest pose must read splayed for the idle's reading to mean anything.
+        let rig = body(1.8);
+        let rest = Pose::rest(&rig).forward(&rig).positions;
+        let bind = arm_splay(&rig, &rest);
+        assert!(
+            bind.to_degrees() > 35.0,
+            "the bind pose hangs its arms at {:.0} deg — this guard is measuring a body \
+             it was not written for",
+            bind.to_degrees(),
+        );
+
+        // Through the whole schedule — breath, sway, shifts, fidgets — so a
+        // fidget's shoulder roll cannot carry the arm back out of its hang
+        // unnoticed.
+        let frames = run(&rig, IdleConfig::default(), 60.0);
+        let worst = frames
+            .iter()
+            .map(|posed| arm_splay(&rig, posed))
+            .fold(0.0f32, f32::max);
+        assert!(
+            worst.to_degrees() < 25.0,
+            "an idle body's arm reached {:.0} deg off vertical against a relaxed hang's \
+             ~5-15 — the body is showing its modelling pose (measured 46-55 before #267)",
+            worst.to_degrees(),
+        );
     }
 
     #[test]

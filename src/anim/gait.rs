@@ -2063,6 +2063,43 @@ const ELBOW_REST: f32 = 0.30;
 /// of what stops the swing reading as a pendulum.
 const ELBOW_SWING: f32 = 0.26;
 
+/// Hangs the arms at the body's sides: the carriage a body has whenever
+/// nothing else is using them.
+///
+/// **The bind pose is a modelling pose, not a stance** (#267). Bodies are
+/// built in an A-pose — measured on the default body, the upper arms sit 50
+/// degrees off vertical with the elbows dead straight — because that is the
+/// pose skinning, sockets and garments are authored against. A body DRAWN in
+/// it reads as a mannequin, and the owner said so the first time a standing
+/// body was actually looked at: the walk had always hidden it, because
+/// [`swing_arms`] carries this same drop and fold under its swing.
+///
+/// The zero-drive case of that carriage, deliberately: the same two constants
+/// (`ARM_DROP`, `ELBOW_REST`), the same drop-corrected fold axis (#223),
+/// and the same rule about whose arms — a limb that carries the body is a leg
+/// whatever it is called, and is left to the legs' own layers. A guard holds
+/// this equal to [`swing_arms`] on a standing gait so the two carriages
+/// cannot drift apart: an idle body and a walking one that hang their arms
+/// differently would pop at every start and stop.
+pub fn hang_arms(rig: &Rig, pose: &mut Pose) {
+    if !pose.fits(rig) {
+        return;
+    }
+    let carries = rig.ground_contacts();
+    for limb in [Limb::ForeLeft, Limb::ForeRight] {
+        if carries.contains(&limb) {
+            continue;
+        }
+        let Some([shoulder, elbow, _]) = rig.limb_chain(limb) else {
+            continue;
+        };
+        let side = rig.joints[shoulder].position.x.signum();
+        pose.rotations[shoulder] *= Quat::from_rotation_z(-ARM_DROP * side);
+        let fold = Quat::from_rotation_z(ARM_DROP * side) * Vec3::X;
+        pose.rotations[elbow] *= Quat::from_axis_angle(fold, -ELBOW_REST);
+    }
+}
+
 /// Swings the arms against the legs and counter-rotates the shoulders.
 ///
 /// The arm on one side follows the leg on the *other*, which is the whole of why
@@ -3568,6 +3605,35 @@ mod tests {
                 normal: Vec3::Y,
             })
         }
+    }
+
+    #[test]
+    fn the_idle_and_the_walk_hang_an_arm_the_same_way() {
+        // **The drift guard #267's carriage split demands.** `hang_arms` is
+        // the zero-drive case of `swing_arms`' own carriage, written out
+        // rather than called — `swing_arms`' composition order is measured
+        // (#223) and could not be split without changing it — so this is what
+        // keeps the two from coming apart: an idle body and a walking one
+        // that hang their arms differently pop at every start and stop.
+        //
+        // Bit-equality, not a tolerance: at zero drive every swing term is an
+        // exact identity, so the two paths must produce the same rotations to
+        // the last bit or one of them has changed.
+        let rig = biped();
+        let mut hung = Pose::rest(&rig);
+        hang_arms(&rig, &mut hung);
+        let mut swung = Pose::rest(&rig);
+        swing_arms(
+            &rig,
+            &mut swung,
+            &Gait::standing(&rig),
+            &Stride::still(),
+            0.25,
+        );
+        assert_eq!(
+            hung.rotations, swung.rotations,
+            "hang_arms and swing_arms disagree about a standing body's arms"
+        );
     }
 
     #[test]
