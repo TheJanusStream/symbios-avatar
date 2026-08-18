@@ -19,6 +19,10 @@
 //!   moves a planted contact makes it slide, which reads as skating rather than
 //!   as changing what the body is doing. [`Gait::until_handoff`] names the next
 //!   moment support is already moving, which is when a change is free.
+//!   **Waiting is not free either** — a body that holds keeps striding while
+//!   whatever stopped it has stopped — so for a stop the answer turned out to
+//!   be a different mechanism rather than a better moment. See [`entry`] and
+//!   #266.
 //! * **What does the new clock read?** Not the old number. A cycle fraction
 //!   means a different part of the step at a different duty, so carrying it
 //!   across unchanged lands a swinging foot planted. [`Gait::phase_matched`]
@@ -34,6 +38,7 @@
 //! that remembers what the body was doing; these are the questions it asks.
 //!
 //! [`Gait::until_handoff`]: super::gait::Gait::until_handoff
+//! [`Gait::until_midstance`]: super::gait::Gait::until_midstance
 //! [`Gait::phase_matched`]: super::gait::Gait::phase_matched
 
 use super::blend::Inertializer;
@@ -92,9 +97,25 @@ impl Family {
 /// **A third, which is about one step.** Waiting is what buys a transition that
 /// does not slide a planted foot; waiting *indefinitely* is how a body ignores
 /// the thing that just happened to it. A third of a cycle is long enough to
-/// reach the next handoff from almost anywhere in the step and short enough
+/// reach the good moment from almost anywhere in the step and short enough
 /// that nobody reads it as a delay: at the cadence the speed axis gives a body
 /// walking at 1.4 m/s, it is under three tenths of a second.
+///
+/// **The budget is what #266 found to be the problem, and it is left standing
+/// deliberately.** Waiting is not free: a body holding for a better moment
+/// keeps striding at the speed it remembers while whatever stopped it has
+/// already stopped, so the planted foot slides through the world at very
+/// nearly walking pace — about 1.23 m per cycle held on the default biped.
+/// Anything this budget buys has to beat that, and for a stop nothing does:
+/// the drag saved by reaching the cheapest moment is 366 mm and a third of a
+/// cycle of holding costs more. Both candidate moments were adopted in
+/// overlands and measured as regressions on the swept worst — 297.9 mm
+/// baseline, 351.3 waiting for a handoff, 322.2 waiting for a midstance.
+///
+/// It stays because a jump is a different cost function and is untested, not
+/// because it is known to pay there. See [`super::gait::Gait::until_midstance`]
+/// for where a stop's cost actually goes, and #276 for the mechanism that
+/// removes it without waiting at all.
 pub const HANDOFF_PATIENCE: f32 = 1.0 / 3.0;
 
 /// When a change of family should begin.
@@ -124,6 +145,29 @@ impl Entry {
 /// [`HANDOFF_PATIENCE`] from one — the first because the moment is free, the
 /// second because a body that waits longer than that has stopped responding.
 /// An overlay family never waits: a gesture does not move what is under it.
+///
+/// # Do not make this per-family without re-reading #266
+///
+/// **A per-family moment was built, measured and taken back out**, and the
+/// shape of the mistake is worth more than the code was. The reasoning that
+/// motivates it is sound as far as it goes: entering an idle costs how far the
+/// blend must drag the planted foot, that distance is identically zero at
+/// [`Gait::until_midstance`] and 365.8 mm at a handoff on the default biped,
+/// and so a body should plainly wait for the midstance. It was implemented,
+/// and the swept worst in overlands went from 297.9 mm to 322.2 — a
+/// regression, exactly as the handoff rule had already produced 351.3.
+///
+/// What both attempts missed is that **the waiting is itself a skate**. A body
+/// holding for a good moment keeps striding while whatever stopped it has
+/// stopped, and the planted foot slides at walking pace for as long as the hold
+/// lasts. See [`HANDOFF_PATIENCE`] for the arithmetic; the saving and the cost
+/// are the same order of magnitude, which is why both attempts landed near the
+/// baseline rather than far from it.
+///
+/// So there is no moment worth waiting for on a stop, and the fix is a
+/// different mechanism rather than a better moment — #276, an idle that keeps
+/// the stance it arrived in. [`Gait::until_midstance`] is kept because its
+/// zero is a proof rather than a measurement and that fix needs it.
 #[must_use]
 pub fn entry(gait: &Gait, cycle: f32, into: Family) -> Entry {
     // A body with nothing on the ground has no planted foot to protect, so
@@ -210,6 +254,7 @@ pub fn begin(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Limb;
     use crate::anim::Speed;
     use crate::anim::gait::{Phase, step};
     use crate::anim::ground::Ground;
@@ -271,6 +316,109 @@ mod tests {
         assert!(entry(&gait, 0.15, Family::Jump).is_now());
         // And a gesture never waits, because it does not move what is under it.
         assert!(entry(&gait, mid, Family::Expressive).is_now());
+    }
+
+    #[test]
+    fn a_stop_is_cheapest_where_the_foot_is_already_home() {
+        // **The reading behind #266 and #276**, measured here rather than
+        // quoted, because this is the file that keeps being tempted to act on
+        // it. What it says is true and useful; what it does NOT license is a
+        // per-family wait in `entry`, which was built on exactly this number
+        // and measured as a regression. See `entry`'s own docs.
+        //
+        // The cost of entering an idle is how far the blend must drag the
+        // planted foot to reach the standing pose. So: walk the default biped
+        // at 1.4 m/s, and at each point of the cycle measure the distance from
+        // the stance foot to where that same foot stands in the idle the body
+        // would blend into. Every millimetre of it is a skate.
+        //
+        // **The ground closure returns the patch BENEATH the query point.** A
+        // constant `Ground::level(Vec3::ZERO)` is a patch AT the origin, and
+        // `plant_feet_of` seats a foot on `position` — so the first version of
+        // this measurement dragged every foot to (0, 0) and read a flat 90 mm
+        // at every phase, which is the stance half-width and nothing to do with
+        // stopping. It is the twenty-somethingth instrument in this crate to
+        // measure something other than its name and it was caught the usual
+        // way: a number that would not move when the thing it named plainly
+        // did.
+        let rig = biped();
+        let speed = Speed::new(&rig, 1.4);
+        let gait = speed.gait(&rig);
+        let stride = speed.stride(&rig);
+        let floor = |at: Vec3| Some(Ground::level(Vec3::new(at.x, 0.0, at.z)));
+
+        // Where a standing body's feet are. `Pose::rest` is what the idle
+        // starts from, and the drag is measured against the pose the blend is
+        // actually aiming at.
+        let standing = Pose::rest(&rig).forward(&rig).positions;
+        let foot_of = |limb: Limb| rig.in_zone(crate::plan::Zone::Extremity(limb))[0];
+
+        let drag_at = |cycle: f32| {
+            let mut pose = Pose::rest(&rig);
+            let steps = step(&rig, &mut pose, &gait, &stride, cycle, floor);
+            let posed = pose.forward(&rig);
+            steps
+                .stance
+                .iter()
+                .map(|&limb| {
+                    let joint = foot_of(limb);
+                    posed.positions[joint].distance(standing[joint])
+                })
+                .fold(0.0f32, f32::max)
+        };
+
+        // The two moments the governor could name, on this gait.
+        let midstance = {
+            let ahead = gait.until_midstance(0.0);
+            assert!(ahead > 0.0, "a walk reaches a midstance");
+            ahead
+        };
+        let at_midstance = drag_at(midstance);
+        let at_handoff = drag_at(0.0);
+        assert!(
+            gait.until_handoff(0.0) <= f32::EPSILON,
+            "cycle 0 is a handoff on this gait"
+        );
+
+        // The prize, and it is the largest ratio this crate's instruments have
+        // produced: 0.0 mm against 365.8 when it was written. Asserted as an
+        // order of magnitude rather than to the tenth, because the figure moves
+        // with every stride and footing change and the CLAIM is the ratio.
+        // This is the number #276 has to make true at EVERY phase rather than
+        // at one of them.
+        assert!(
+            at_midstance * 10.0 < at_handoff,
+            "midstance dragged the planted foot {:.1} mm against {:.1} at a handoff — \
+             the fact #276 is built on has gone",
+            at_midstance * 1000.0,
+            at_handoff * 1000.0
+        );
+
+        // And midstance is not merely better than a handoff, it is the best
+        // moment there is. Swept, because a curve judged at two points is two
+        // points — but asked as "is anything cheaper than the named moment"
+        // rather than "where is the argmin, and is it a midstance". An argmin
+        // is an identity that moves: a hair past the minimum of a shallow
+        // valley the nearest midstance is BEHIND, a forward-looking
+        // `until_midstance` wraps almost a whole cycle, and the assertion fails
+        // on a body that is doing exactly the right thing. This crate has paid
+        // for that trap before.
+        let cheapest = (0..400)
+            .map(|sample| drag_at(sample as f32 / 400.0))
+            .fold(f32::MAX, f32::min);
+        assert!(
+            at_midstance <= cheapest + 0.001,
+            "the governor names a midstance costing {:.1} mm when some phase of the cycle \
+             costs {:.1} mm — midstance is no longer the cheapest moment to stop",
+            at_midstance * 1000.0,
+            cheapest * 1000.0
+        );
+        println!(
+            "stop drag: midstance {:.1} mm, handoff {:.1} mm, cheapest anywhere {:.1} mm",
+            at_midstance * 1000.0,
+            at_handoff * 1000.0,
+            cheapest * 1000.0
+        );
     }
 
     #[test]

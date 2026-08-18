@@ -379,6 +379,65 @@ impl Gait {
             .fold(1.0f32, f32::min)
     }
 
+    /// The next moment a contact is squarely under the joint that carries it,
+    /// as a cycle fraction ahead of `cycle`.
+    ///
+    /// **The moment a body may cheaply stop being a body in motion**, and it is
+    /// the opposite of [`Self::until_handoff`]. The cost of leaving a gait is
+    /// not "is a foot bearing weight" — one nearly always is — it is HOW FAR
+    /// THE BLEND MUST DRAG THE PLANTED FOOT to reach the pose it is blending
+    /// into. That distance is smallest here, where the stance contact is
+    /// already standing on the spot a standing body would stand on, and largest
+    /// at a handoff, where the legs are at full split and the newly-planted
+    /// foot is half a stride from home.
+    ///
+    /// Measured on the default biped at 1.4 m/s, as the distance from the
+    /// walking pose's planted foot to the same foot at rest
+    /// (`transition::a_stop_is_cheapest_where_the_foot_is_already_home`):
+    ///
+    /// ```text
+    ///   midstance          0.0 mm     <- here
+    ///   cheapest anywhere  0.9 mm
+    ///   at a handoff     365.8 mm     <- `until_handoff`
+    /// ```
+    ///
+    /// **The zero is exact rather than lucky, and that is the whole argument.**
+    /// [`contact_offset`] parameterises a stance either side of the moment the
+    /// foot was planted, so `home` IS the contact's position at midstance and
+    /// the offset there is `carried(home, stride, 0.0)`, which is
+    /// [`Vec3::ZERO`] identically. A body at midstance has its planted foot
+    /// exactly where a resting body puts it, so there is nothing for the blend
+    /// to drag. Every other phase pays the fraction of a stride it has travelled
+    /// away from that point.
+    ///
+    /// See #266 for the reading that reversed the rule, and note that
+    /// [`Self::until_settled`] is NOT this moment: it names double support,
+    /// which on a walk is the handoff neighbourhood, so it points at the same
+    /// wrong place.
+    ///
+    /// **Structural rather than geometric, and the difference is deliberate.**
+    /// Midstance is the middle of a contact's own stance interval — `offset +
+    /// duty / 2` — rather than the moment a solve says the ankle crosses under
+    /// the hip. The two agree on the bodies measured, the structural one costs
+    /// no pose, and it stays defined for a gait whose contacts are wings or
+    /// treads and have no hip to be under.
+    ///
+    /// Zero when `cycle` is exactly at a midstance; never negative, and never
+    /// more than a whole cycle away.
+    #[must_use]
+    pub fn until_midstance(&self, cycle: f32) -> f32 {
+        let cycle = cycle.rem_euclid(1.0);
+        // A contact goes down at its offset and stays down for `duty`, so the
+        // middle of that interval is half a duty later. Clamped for the same
+        // reason `phase_matched` clamps it: a duty outside `0..=1` is not a
+        // gait, and half of a nonsense is a worse nonsense.
+        let half = self.duty.clamp(0.0, 1.0) * 0.5;
+        self.offsets
+            .iter()
+            .map(|&offset| ((offset + half).rem_euclid(1.0) - cycle).rem_euclid(1.0))
+            .fold(1.0f32, f32::min)
+    }
+
     /// Whether every contact this gait drives is on the ground right now.
     ///
     /// The moment a body may stop: with all of its feet down it can simply hold
