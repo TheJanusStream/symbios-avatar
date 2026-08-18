@@ -1395,11 +1395,31 @@ impl Walk {
         // After the plant. See the type's own docs for why the order is not a
         // preference — and see [`contact_heading`] for why the stride has to
         // come this far down the sequence rather than stopping at [`step`].
-        // The same limit levelling used, so the two stages cannot disagree about
-        // what an ankle has (#256). A walk given no footing config has had
-        // nothing levelled and so nothing to agree with — but an ankle is still
-        // an ankle, and the default is where that figure is written down.
-        let footing = self.footing.unwrap_or_default();
+        //
+        // **And only where there WAS a plant** (#278). [`roll_feet`]'s own
+        // contract is that it runs after the footing solve, because the plant
+        // lays every sole flat and the roll takes it off again; run without
+        // one, it is not merely wasted — it aims `solve_contact` at a goal
+        // derived from a foot nothing has put on the ground, and moves the leg
+        // there. A caller that turns the footing off is saying it will run the
+        // tail itself later, and the roll is part of the tail.
+        //
+        // Measured on a body walking at a DEAD CONSTANT speed, worst slide of a
+        // planted sole point over two cycles, driven the way overlands drives
+        // it — the head with the footing off, an emote, then `settle`:
+        //
+        // ```text
+        //   m/s        0.4   0.7   1.0   1.2   1.4   1.6   1.8
+        //   rolling    1.4   1.0   2.0   1.4  18.8  20.3  19.8  mm
+        //   not        3.4   3.2   4.6   4.1   3.3   3.8   4.6  mm
+        // ```
+        //
+        // The threshold between 1.2 and 1.4 m/s is what made this look like a
+        // speed defect for two issues. It is not: it is the second roll's goal
+        // crossing what the leg can absorb.
+        let Some(footing) = self.footing else {
+            return walked;
+        };
         roll_feet(rig, pose, gait, stride, self.cycle, &ground, &footing);
         walked
     }
@@ -3977,6 +3997,20 @@ mod tests {
         }
     }
 
+    /// How many samples of the cycle the skate sweep walks.
+    const SKATE_SAMPLES: usize = 128;
+
+    /// How far above its own lowest reach a sole point still counts as down.
+    const SKATE_CLEARANCE: f32 = 0.005;
+
+    /// How far a planted sole may slide, in metres.
+    ///
+    /// Eight millimetres: the sweep reads 2.8 to 4.6, and the defect this
+    /// guards against read 18.8 to 20.3 on the same instrument. Set between the
+    /// two rather than just above the passing figure, so ordinary drift does
+    /// not trip it and the defect returning cannot hide under it.
+    const SKATE_CEILING: f32 = 0.008;
+
     /// The angle a joint's local rotation holds, folded into `-PI..=PI`.
     ///
     /// `to_axis_angle` reports the turn the short way round or the long way
@@ -3992,6 +4026,135 @@ mod tests {
             angle
         }
         .abs()
+    }
+
+    #[test]
+    fn a_planted_sole_holds_its_ground_at_every_pace() {
+        // **#278.** A body walking at a DEAD CONSTANT speed slid a planted sole
+        // point 25.3 mm at 1.4 m/s against 0.9 at 0.7 — thirty-three times the
+        // skate for twice the pace, and paid continuously by every avatar that
+        // walks anywhere. It was neither superlinear nor a solver residual: it
+        // is a THRESHOLD between 1.0 and 1.2 m/s, and it belonged to the
+        // ORDERING rather than to the speed.
+        //
+        // `Walk::settle` rolled the ankles whether or not it had planted. A
+        // caller that turns the footing off is saying it will run the tail
+        // itself later — overlands does exactly that, so it may lay an emote
+        // between the two halves — and the head's roll then aimed
+        // `solve_contact` at a goal derived from a foot nothing had put on the
+        // ground, and moved the leg there. Measured over two cycles, worst
+        // slide of a planted sole point, driven that way:
+        //
+        // ```text
+        //   m/s        0.4   0.7   1.0   1.2   1.4   1.6   1.8
+        //   before     1.4   1.0   2.0   1.4  18.8  20.3  19.8  mm
+        //   after      3.4   3.2   4.6   4.1   3.3   3.8   4.6  mm
+        // ```
+        //
+        // **It is a trade and the slow end pays a little**, which is worth
+        // saying rather than hiding: below 1.2 m/s the skate rises from about a
+        // millimetre to about four, and above it falls from twenty to four. A
+        // flat four across the axis is what a walk should have; a threshold
+        // that trebles at the pace people actually walk is not.
+        //
+        // **The sole POINT, never the sole joint and never the ankle.** A sole
+        // joint sits above the sole it belongs to, so a foot pitching about a
+        // point still translates every joint over it: the ankle reads 88 mm on
+        // a perfectly steady walk and the sole joints 12 to 16, both of which
+        // are the roll and neither of which is a skate. The point is the
+        // joint's rest position dropped to the ground plane the body was built
+        // standing on, carried by the ankle — how `roll_feet` models a sole.
+        let rig = biped();
+        let ground = |at: Vec3| Some(Ground::level(Vec3::new(at.x, 0.0, at.z)));
+
+        let mut report = Vec::new();
+        for metres in [0.4f32, 0.7, 1.0, 1.2, 1.4, 1.8] {
+            let speed = crate::anim::Speed::new(&rig, metres);
+            let gait = speed.gait(&rig);
+            let stride = speed.stride(&rig);
+            let per_cycle = if gait.duty > f32::EPSILON && gait.duty < 1.0 {
+                stride.length / gait.duty
+            } else {
+                0.0
+            };
+
+            // Two whole cycles, sampled continuously, so a stance that straddles
+            // the wrap is one run rather than two — and so the body's own travel
+            // never resets under a foot that has not moved.
+            let mut lanes: Vec<Vec<(bool, Vec3)>> = Vec::new();
+            for sample in 0..SKATE_SAMPLES * 2 {
+                let elapsed = sample as f32 / SKATE_SAMPLES as f32;
+                let mut pose = Pose::rest(&rig);
+                // The sequence a consumer with something to interleave runs:
+                // the head with the footing off, then the tail as its own call.
+                let walked = Walk {
+                    footing: None,
+                    ..Walk::at(elapsed.fract())
+                }
+                .drive(&rig, &mut pose, &gait, &stride, ground);
+                Walk::at(elapsed.fract()).settle(
+                    &rig,
+                    &mut pose,
+                    &gait,
+                    &stride,
+                    &walked.steps.stance,
+                    ground,
+                );
+                let posed = pose.forward(&rig);
+                let travelled = Vec3::Z * (per_cycle * elapsed);
+
+                let mut row = Vec::new();
+                for (index, &limb) in gait.limbs.iter().enumerate() {
+                    let bearing = gait.phase(index, elapsed.fract()).is_stance();
+                    let joints = rig.extremity_joints(limb);
+                    let Some(&ankle) = joints.first() else {
+                        continue;
+                    };
+                    for &joint in &joints[1..] {
+                        let rest = rig.joints[joint].position;
+                        let sole = posed.positions[ankle]
+                            + posed.rotations[ankle]
+                                * (Vec3::new(rest.x, 0.0, rest.z) - rig.joints[ankle].position);
+                        row.push((bearing, travelled + sole));
+                    }
+                }
+                if lanes.is_empty() {
+                    lanes.extend(row.iter().map(|&entry| vec![entry]));
+                } else {
+                    for (lane, entry) in lanes.iter_mut().zip(row) {
+                        lane.push(entry);
+                    }
+                }
+            }
+
+            // Each point judged while IT is down, against ITSELF — never against
+            // the lowest point of the moment, because an argmin whose identity
+            // moves compares a heel against a toe.
+            let mut worst = 0.0f32;
+            for lane in &lanes {
+                let floor = lane.iter().map(|&(_, at)| at.y).fold(f32::MAX, f32::min);
+                let mut anchor: Option<Vec3> = None;
+                for &(bearing, at) in lane {
+                    if bearing && at.y - floor <= SKATE_CLEARANCE {
+                        let from = *anchor.get_or_insert(at);
+                        worst = worst.max(Vec3::new(at.x - from.x, 0.0, at.z - from.z).length());
+                    } else {
+                        anchor = None;
+                    }
+                }
+            }
+            report.push(format!("{metres:.1}: {:.1}", worst * 1000.0));
+            assert!(
+                worst < SKATE_CEILING,
+                "at a constant {metres} m/s a planted sole slid {:.1} mm, against a ceiling \
+                 of {:.1}. The sweep so far: {report:?}",
+                worst * 1000.0,
+                SKATE_CEILING * 1000.0
+            );
+        }
+        // Swept and printed, because the CURVE is the claim: one pace cannot
+        // show that a skate is flat in speed, and #278 was filed on two.
+        println!("planted sole slide by pace — {}", report.join(", "));
     }
 
     #[test]
@@ -4765,7 +4928,14 @@ mod tests {
             "the posture switch moved nothing"
         );
 
-        // Footing off must leave the gait's own placement alone.
+        // Footing off must leave the gait's own placement alone — and it takes
+        // the ROLL with it, which is the switch's contract rather than an
+        // omission (#278). `roll_feet` runs after the footing solve because the
+        // plant lays every sole flat and the roll takes it off again; with no
+        // plant there is nothing for it to take off, and what it does instead
+        // is aim `solve_contact` at a goal derived from a foot nothing has put
+        // down. A caller that turns the footing off is saying it will run the
+        // tail itself, and the tail is plant AND roll.
         let unplanted = Walk {
             footing: None,
             ..Walk::at(cycle)
@@ -4776,15 +4946,6 @@ mod tests {
         step(&rig, &mut without, &gait, &stride, cycle, ground);
         swing_arms(&rig, &mut without, &gait, &stride, cycle);
         lean(&rig, &mut without, &gait, &stride);
-        roll_feet(
-            &rig,
-            &mut without,
-            &gait,
-            &stride,
-            cycle,
-            ground,
-            &FootingConfig::default(),
-        );
         for joint in 0..without.rotations.len() {
             let apart = apart(raw.rotations[joint], without.rotations[joint]);
             assert!(
