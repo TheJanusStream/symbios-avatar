@@ -132,6 +132,9 @@ fn extreme_bodies_unwrap_soundly() {
             head_breadth: rng.random_range(-1.0..=1.0),
             face_length: rng.random_range(-1.0..=1.0),
             extremity_size: rng.random_range(-1.0..=1.0),
+            chest_volume: rng.random_range(-1.0..=1.0),
+            chest_projection: rng.random_range(-1.0..=1.0),
+            chest_lift: rng.random_range(-1.0..=1.0),
         };
         use symbios_avatar::BodyPlan;
         params.sanitize();

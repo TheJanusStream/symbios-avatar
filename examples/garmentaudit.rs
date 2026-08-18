@@ -125,9 +125,45 @@ fn report(avatar: &Avatar, seed: i64, sleeve: &Sleeve, leg: &Leg) -> f32 {
         "spurs",
         "isth"
     );
+    println!("  {:<9} {:>10} {:>10}", "", "in body", "buried mm");
 
     let mut hidden_total = 0;
     let mut given_back = 0;
+    // **How much of the garment ends up INSIDE the body it is worn over**
+    // (#274). A garment is an offset shell cut from the body's own faces, so
+    // it follows whatever the body does — but a chest is the first thing this
+    // crate has put on the trunk that an offset can fold over, and an offset
+    // surface crosses itself wherever the concavity it spans is tighter than
+    // the offset. Measured before assuming: zero vertices inside on every body
+    // of the composite sweep, and 2 mm on two vertices of the most extreme
+    // chest a record can ask for.
+    //
+    // **The OUTER shell only, and the reading is worthless without that.** A
+    // garment is a closed solid whose inner shell sits just inside the body on
+    // purpose, so half its vertices are inside by construction: measured over
+    // the whole cloth mesh, this read 137 of 272 "inside" on a body with no
+    // chest at all. The inner twin of a column is that column plus half the
+    // vertex count.
+    //
+    // `buried` is how far along `+Z` the body still extends from the offending
+    // vertex, not its distance to the nearest surface — a proxy, and named for
+    // what it is. It says how badly a vertex is inside rather than by how
+    // little, which is the question worth asking of a garment.
+    let inside_of = |garment: &symbios_avatar::dress::Garment| -> (usize, f32) {
+        let half = garment.mesh.positions.len() / 2;
+        garment.mesh.positions[..half]
+            .iter()
+            .fold((0usize, 0.0f32), |(count, deepest), &point| {
+                if !body.contains(point) {
+                    return (count, deepest);
+                }
+                let mut depth = 0.0f32;
+                while depth < 0.2 && body.contains(point + Vec3::Z * depth) {
+                    depth += 0.001;
+                }
+                (count + 1, deepest.max(depth))
+            })
+    };
     for (index, garment) in avatar.parts.outfit.garments.iter().enumerate() {
         let name = if index == 0 { "trousers" } else { "top" };
         // The crate's own answer, not a re-derivation of it: a garment knows
@@ -141,6 +177,8 @@ fn report(avatar: &Avatar, seed: i64, sleeve: &Sleeve, leg: &Leg) -> f32 {
         let cut = Hem::measure(&positions(body, &loops));
         let worn = Hem::measure(&positions(&garment.mesh, &garment.hem));
         let (spurs, isthmuses) = rim_faults(body, &mine);
+        let (inside, deepest) = inside_of(garment);
+        println!("  {:<9} {:>10} {:>10.1}", name, inside, deepest * 1000.0);
         for (stage, hem) in [("cut", &cut), ("worn", &worn)] {
             println!(
                 "  {:<9} {:>6} {:>7} {:>5} {:>6} {:>4.1}/{:<4.1} {:>8.1} {:>6.0}% {:>4.2}/{:<5.2} {:>6} {:>5}",

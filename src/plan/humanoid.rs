@@ -148,6 +148,39 @@ pub struct HumanoidParams {
     /// Hand and foot size.
     #[serde(with = "super::scaled")]
     pub extremity_size: f32,
+    /// How much chest there is, over what the composites already predict.
+    ///
+    /// **An OFFSET on `torso::ChestTraits`, not a slider of its own** (#273).
+    /// The two-tier contract is that a quantity is `formula(composites)` and
+    /// then the per-region axis on top: the composite carries the intent, which
+    /// is what lets the formulas improve later without a stored avatar losing
+    /// what it meant, and this carries the choice a creator made that no
+    /// formula predicted. Zero is whatever `femininity`, `mass`, `body_fat` and
+    /// `age` came to on their own.
+    ///
+    /// **Not a route back to `build`.** Those went at #164/#169 because a
+    /// global build axis and a composite tier cannot both be the truth; this is
+    /// regional and signed about the formula's own answer, which is the shape
+    /// every axis on this struct has.
+    #[serde(with = "super::scaled")]
+    pub chest_volume: f32,
+    /// How far that chest stands off the ribcage against how far it spreads
+    /// across it, at a fixed volume.
+    ///
+    /// **The shape axis rather than the size one**, and the separation is
+    /// [`Self::head_size`] and [`Self::face_length`]'s: two bodies can carry
+    /// the same amount of chest and differ entirely in whether it is a high
+    /// tight one or a broad soft one, and an axis that moved both together
+    /// could never say so. Negative spreads it and positive stands it off.
+    #[serde(with = "super::scaled")]
+    pub chest_projection: f32,
+    /// How high the chest sits, over what age and body fat predict.
+    ///
+    /// Positive lifts and positive also refuses the descent `Composites::ageing`
+    /// asks for; negative lets it hang. The descent itself stays the
+    /// composites' — this says what they got wrong about one body.
+    #[serde(with = "super::scaled")]
+    pub chest_lift: f32,
 }
 
 /// Neutral stature, used when a record omits the field.
@@ -167,6 +200,9 @@ impl Default for HumanoidParams {
             head_breadth: 0.0,
             face_length: 0.0,
             extremity_size: 0.0,
+            chest_volume: 0.0,
+            chest_projection: 0.0,
+            chest_lift: 0.0,
         }
     }
 }
@@ -201,6 +237,9 @@ impl BodyPlan for HumanoidParams {
             (&mut self.head_breadth, default.head_breadth),
             (&mut self.face_length, default.face_length),
             (&mut self.extremity_size, default.extremity_size),
+            (&mut self.chest_volume, default.chest_volume),
+            (&mut self.chest_projection, default.chest_projection),
+            (&mut self.chest_lift, default.chest_lift),
         ] {
             *axis = super::sanitize_axis(*axis, fallback, signed_envelope());
         }
@@ -545,7 +584,27 @@ impl BodyPlan for HumanoidParams {
                 self.height =
                     rolls.shape("humanoid.height", stature, STATURE_SIGMA, height_envelope());
             }
-            Category::Build => {}
+            Category::Build => {
+                // **Build rather than Frame, and the choice is a promise to a
+                // creator with a lock set** (#273). Frame is the skeleton — the
+                // frame axis, the shoulders, the hips — and a chest is soft
+                // tissue carried on it: what fills it is `mass` and `body_fat`,
+                // which are this category's own composites. A creator who locks
+                // Build to keep a heavy body heavy expects its chest to stay
+                // with it, and one who locks Frame to keep a silhouette expects
+                // the skeleton and not the flesh.
+                //
+                // It also fills the arm that had nothing in it, which is the
+                // sign the category was right: Build named the two composites
+                // and no plan axis, because the axes it would have held were
+                // the two that retired into them.
+                self.chest_volume = offset("humanoid.chestVolume", 1.0);
+                // Tighter, for `headBreadth`'s reason: a shape axis at the same
+                // sigma as its own size axis produces a caricature about every
+                // third seed, and the composites already place the chest.
+                self.chest_projection = offset("humanoid.chestProjection", 0.7);
+                self.chest_lift = offset("humanoid.chestLift", 0.7);
+            }
             Category::Frame => {
                 self.shoulder_width = offset("humanoid.shoulderWidth", 1.0);
                 self.hip_width = offset("humanoid.hipWidth", 1.0);
@@ -589,6 +648,14 @@ impl BodyPlan for HumanoidParams {
         put_span(out, self.head_breadth, signed_envelope());
         put_span(out, self.face_length, signed_envelope());
         put_span(out, self.extremity_size, signed_envelope());
+        // **Appended, which is what makes this version 8** (#273). Three axes
+        // at the end of the payload rather than beside the ones they belong
+        // with: a byte stream has no field names, so inserting anywhere but the
+        // end would move every axis after the insertion and silently re-read an
+        // old code as a different body — the trap the version gate exists for.
+        put_span(out, self.chest_volume, signed_envelope());
+        put_span(out, self.chest_projection, signed_envelope());
+        put_span(out, self.chest_lift, signed_envelope());
     }
 
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
@@ -602,6 +669,31 @@ impl BodyPlan for HumanoidParams {
             head_breadth: take_span(bytes, signed_envelope())?,
             face_length: take_span(bytes, signed_envelope())?,
             extremity_size: take_span(bytes, signed_envelope())?,
+            chest_volume: take_span(bytes, signed_envelope())?,
+            chest_projection: take_span(bytes, signed_envelope())?,
+            chest_lift: take_span(bytes, signed_envelope())?,
+        };
+        params.sanitize();
+        Ok(params)
+    }
+
+    fn decode_pre_chest(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // Versions 6 and 7: today's layout without the three chest axes on the
+        // end. A code minted before them described a body whose chest was
+        // whatever its composites came to, which IS the neutral offset — not a
+        // gap to be guessed at, exactly as a pre-composites code means the
+        // neutral composites.
+        let mut params = Self {
+            height: take_length(bytes)?,
+            shoulder_width: take_span(bytes, signed_envelope())?,
+            hip_width: take_span(bytes, signed_envelope())?,
+            limb_length: take_span(bytes, signed_envelope())?,
+            neck_length: take_span(bytes, signed_envelope())?,
+            head_size: take_span(bytes, signed_envelope())?,
+            head_breadth: take_span(bytes, signed_envelope())?,
+            face_length: take_span(bytes, signed_envelope())?,
+            extremity_size: take_span(bytes, signed_envelope())?,
+            ..Self::default()
         };
         params.sanitize();
         Ok(params)
@@ -625,6 +717,7 @@ impl BodyPlan for HumanoidParams {
             head_breadth: take_span(bytes, signed_envelope())?,
             face_length: take_span(bytes, signed_envelope())?,
             extremity_size: take_span(bytes, signed_envelope())?,
+            ..Self::default()
         };
         params.sanitize();
         Ok(params)
@@ -650,6 +743,7 @@ impl BodyPlan for HumanoidParams {
             head_breadth: take_signed(bytes)?,
             face_length: take_signed(bytes)?,
             extremity_size: take_signed(bytes)?,
+            ..Self::default()
         };
         params.sanitize();
         Ok(params)

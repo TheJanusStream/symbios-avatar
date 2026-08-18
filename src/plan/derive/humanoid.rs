@@ -49,6 +49,66 @@
 //! trapezius pair on the neck, a fifth and sixth socket on the girdle, a
 //! third on the clavicle, an in-chain yoke at two different walls, and a leaf
 //! yoke off the girdle.
+//!
+//! **Why this body's chest is a tube, and which of the three ways out survives**
+//! — the same constraint met from the front, established by measurement rather
+//! than by argument (#271).
+//!
+//! A pectoral or a bust is a **paired, localised forward lobe**, and
+//! [`CHEST_SECTION`] is an ellipse: no setting of either of its two numbers
+//! expresses one. `examples/chestsection` states the defect as a number — the
+//! front of the trunk stands `+0.00` mm proud of its own back at every band, the
+//! section shows ONE side at every band, and femininity from `-1` to `+1` at
+//! equal stature changes those readings by exactly nothing while *removing* 25
+//! mm of chest depth through `shoulder_frame`. Three mechanisms were costed
+//! against that instrument on one target.
+//!
+//! **A. A CAGE LOBE — a paired node off the chest — is REFUTED, and by a
+//! sharper rule than the trapezius's.** The socket condition is the plane
+//! condition: `dist ≥ max over sibling ring points of dir · (p − centre)`. For a
+//! socket pointing FORWARD off a trunk node the siblings are the column's own
+//! up and down sockets, whose rings reach forward by the trunk's own
+//! fore-and-aft half-extent — so `needed` is not a multiple of the hub's radius
+//! at all, it is the ellipse's depth:
+//!
+//! ```text
+//!   lobe node forward of the chest   30      60      90     110 mm
+//!   needed                          130.7   121.6   121.1   —
+//!   available (its own bone)         80.4    91.0   106.3   —  meshes
+//! ```
+//!
+//! `needed` barely moves with the lobe's own radius (130.7 at 45 mm against
+//! 132.2 at 75) because the socket's size is not what buries it. **A pectoral
+//! node has to sit 110 mm in front of the chest's centre, and the chest's
+//! delivered front surface is at 102.6 mm** — so the node whose job is to add a
+//! lobe to the chest can only exist beyond where the chest already ends. That
+//! is a spike in front of a body, not a chest. Past 150 mm it fails again on the
+//! two lobes burying each other.
+//!
+//! **B. A RICHER SECTION delivers half of itself and cannot reach life's
+//! spacing.** Prototyped as the cheapest form of it — the cage's chest ring has
+//! exactly three points on its front, at `x = 0` and `x = ±106.4` mm, and the
+//! pair was pushed forward — the limit surface takes 0.51 of the push (10.3 mm
+//! of surface per 20 mm of cage) and lands its peaks at `±51` mm *whatever the
+//! push*, because Catmull-Clark averages the pushed points against the midline
+//! one. Life puts the pair at `±91`. A section term that moved the ring's
+//! points angularly as well could do better, but it changes a primitive every
+//! node in the crate shares.
+//!
+//! **C. A CARVE ON THE TRUNK SURFACE is what survives, and it is the only one
+//! that cannot break meshing at all**, being a displacement applied after the
+//! cage. It takes 0.83 to 0.90 of what is authored onto the polygons and lands
+//! its peaks at `±88` mm against `±91` authored, because the trunk's surface
+//! ring carries vertices at `x = 0, ±49.4, ±91.7, ±119.4` and life's spacing
+//! falls almost exactly on one of them. It spends no triangles.
+//!
+//! **The resolution bound, which is a property of the trunk rather than of the
+//! mechanism**: there is ONE facet between the midline and the first vertex out.
+//! A feature at life's spacing has to out-climb the ribcage's own 30.6 mm fall
+//! over the same span before the section reads as two-sided at all — so a
+//! projection shows from a millimetre up and a *shape* needs 30 to 40 mm.
+//! A bust clears that; a male pectoral, 10 to 20 mm in life, does not and reads
+//! as a broad shelf with a shallow groove, which is what a pectoral is.
 
 use glam::{Vec2, Vec3};
 

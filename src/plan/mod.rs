@@ -87,8 +87,16 @@ pub fn quadruped_height_range() -> (f32, f32) {
 pub enum Category {
     /// Overall size — how tall or long the body is.
     Stature,
-    /// Mass and how it is carried: the `mass` and `bodyFat` composites, and the
-    /// `build` and `muscle` axes they are replacing.
+    /// Mass and how it is carried: the `mass` and `bodyFat` composites, the
+    /// `build` and `muscle` axes they replaced, and the chest.
+    ///
+    /// **The chest is here rather than in [`Self::Frame`], and the choice is a
+    /// promise to a creator with a lock set** (#273). Frame is the skeleton —
+    /// the frame axis, the shoulders, the hips — and a chest is soft tissue
+    /// carried on it: what fills it is `mass` and `bodyFat`, which are this
+    /// category's own composites. Someone who locks Build to keep a heavy body
+    /// heavy expects its chest to stay with it; someone who locks Frame to hold
+    /// a silhouette expects the skeleton and not the flesh.
     Build,
     /// Skeletal frame: the `femininity` composite, shoulder and hip width.
     Frame,
@@ -355,6 +363,17 @@ pub trait BodyPlan: Sized {
     /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
 
+    /// Reads parameters from a **version-6 or version-7** share code.
+    ///
+    /// Version 8 appended the chest axes; those two versions carry today's
+    /// layout without them, and a code written before an axis existed means
+    /// that axis's neutral rather than a gap to be guessed at.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
+    fn decode_pre_chest(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
+
     /// Reads parameters from a **version-3** share code.
     ///
     /// Version 4 widened each byte's span to the exploration envelope; the
@@ -616,6 +635,28 @@ impl Archetype {
         match tag {
             1 => Ok(Archetype::Humanoid(HumanoidParams::decode_legacy(bytes)?)),
             2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_legacy(bytes)?)),
+            other => Err(PlanDecodeError::UnknownArchetype(other)),
+        }
+    }
+
+    /// Reads an archetype from a **version-6 or version-7** payload.
+    ///
+    /// See [`BodyPlan::decode_pre_chest`]: today's layout without the three
+    /// chest axes on the end of the humanoid's.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError`] if the tag is unknown or the payload is short.
+    pub fn decode_pre_chest(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        let (&tag, rest) = bytes.split_first().ok_or(PlanDecodeError::Truncated)?;
+        *bytes = rest;
+        match tag {
+            1 => Ok(Archetype::Humanoid(HumanoidParams::decode_pre_chest(
+                bytes,
+            )?)),
+            2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_pre_chest(
+                bytes,
+            )?)),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }

@@ -40,6 +40,7 @@
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
+//! cargo run --release --example render -- --bare --chest 1,-1  # the chest axes; needs --bare
 //! cargo run --release --example render -- --junction  # tint the skin by which bone deforms it
 //! cargo run --release --example render -- --jawbind   # tint the skin by how the JAW bone holds it
 //! cargo run --release --example render -- --follicles # tint the skin by where hair may grow
@@ -435,6 +436,31 @@ fn main() {
             }
             if let Some(&length) = given.get(1) {
                 params.face_length = length;
+            }
+        }
+        record.sanitize();
+    }
+
+    // The chest's three axes, in the order they read: how much there is, how
+    // far it stands off against how far it spreads, and how high it sits
+    // (#273). Here for `--skull`'s reason — an axis whose default has to be
+    // chosen by looking at both ends needs an instrument that can ask for an
+    // end — and because a chest is invisible on a DRESSED body: the skin under
+    // the clothes is not emitted, so `--bare` is not optional for this one.
+    if let Some(spec) = value("--chest") {
+        let given: Vec<f32> = spec
+            .split(',')
+            .filter_map(|axis| axis.trim().parse().ok())
+            .collect();
+        if let Archetype::Humanoid(ref mut params) = record.archetype {
+            if let Some(&volume) = given.first() {
+                params.chest_volume = volume;
+            }
+            if let Some(&projection) = given.get(1) {
+                params.chest_projection = projection;
+            }
+            if let Some(&lift) = given.get(2) {
+                params.chest_lift = lift;
             }
         }
         record.sanitize();

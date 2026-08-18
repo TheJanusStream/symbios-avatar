@@ -130,6 +130,7 @@ pub mod rig;
 pub mod skeleton;
 pub mod subdiv;
 pub mod texture;
+pub mod torso;
 pub mod uv;
 
 pub use anim::{

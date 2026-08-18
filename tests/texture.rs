@@ -149,12 +149,16 @@ fn painting_does_not_bloat_the_record() {
     // hair became five regions in two layers (#202): measured, a rolled avatar
     // went 800 -> 1760 bytes. Five regions carrying a style, four cut axes and
     // three sRGB colours apiece is what the owner's two-colour model costs, and
-    // the alternative was fewer colours.
+    // the alternative was fewer colours. Raised 1900 -> 1950 for the three
+    // chest axes (#273): measured, 1898 -> 1902, which is two bytes and three
+    // field names — the cheapest thing this ratchet has ever been moved for,
+    // and moved rather than widened because a ratchet that is not tight is not
+    // a ratchet.
     // Report the size, because "by how much" is the only useful thing to know
     // when a ratchet fires.
     let size = record.serialized_size().expect("serialises");
     assert!(
-        size < 1900,
+        size < 1950,
         "a whole avatar is {size} bytes, and should still be a couple of kilobytes"
     );
 }

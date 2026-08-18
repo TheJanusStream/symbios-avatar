@@ -180,6 +180,9 @@ fn the_humanoid_corners_of_the_space_mesh() {
                 head_breadth: value,
                 face_length: value,
                 extremity_size: value,
+                chest_volume: value,
+                chest_projection: value,
+                chest_lift: value,
             };
             params.sanitize();
             assert_meshable(
@@ -205,6 +208,9 @@ fn random_humanoids_always_mesh() {
             head_breadth: rng.random_range(-1.0..=1.0),
             face_length: rng.random_range(-1.0..=1.0),
             extremity_size: rng.random_range(-1.0..=1.0),
+            chest_volume: rng.random_range(-1.0..=1.0),
+            chest_projection: rng.random_range(-1.0..=1.0),
+            chest_lift: rng.random_range(-1.0..=1.0),
         };
         params.sanitize();
         // **The composites are rolled here too, and that is the epic's rule
@@ -258,6 +264,9 @@ fn the_frame_axis_meshes_against_every_corner_of_the_body() {
                     head_breadth: value,
                     face_length: value,
                     extremity_size: value,
+                    chest_volume: value,
+                    chest_projection: value,
+                    chest_lift: value,
                 };
                 params.sanitize();
                 assert_meshable(
@@ -301,6 +310,9 @@ fn the_age_axis_meshes_against_every_corner_of_the_body() {
                         head_breadth: value,
                         face_length: value,
                         extremity_size: value,
+                        chest_volume: value,
+                        chest_projection: value,
+                        chest_lift: value,
                     };
                     params.sanitize();
                     assert_meshable(
@@ -579,6 +591,9 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
                 head_breadth: value,
                 face_length: value,
                 extremity_size: value,
+                chest_volume: value,
+                chest_projection: value,
+                chest_lift: value,
             };
             params.sanitize();
             bodies.push((

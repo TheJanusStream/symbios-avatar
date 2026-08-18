@@ -59,7 +59,7 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 7;
+pub const SHARE_CODE_VERSION: u8 = 8;
 
 /// The oldest format whose codes still decode.
 const OLDEST_VERSION: u8 = 3;
@@ -83,6 +83,15 @@ const RESERVED_SLOTS_VERSION: u8 = 5;
 /// `decode` takes and throws away: the complexion it belonged to has no field
 /// for it, and the hair it described is on the record rather than in a code.
 const PAINTED_STUBBLE_VERSION: u8 = 6;
+
+/// The last version whose humanoid payload ended at `extremitySize`.
+///
+/// Version 8 appends `chestVolume`, `chestProjection` and `chestLift` (#273).
+/// A version-7 code read as a version-8 one would run off the end of its own
+/// payload, which is the whole reason the gate is here rather than a length
+/// check: the checksum covers the body, so a short read is not otherwise an
+/// error until the next field is added after it.
+const PRE_CHEST_VERSION: u8 = 7;
 
 /// Crockford base32 digits.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -167,13 +176,16 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
 
     use crate::plan::{take_signed, take_unit};
 
-    // Three plan layouts are readable and the order of these arms is the
-    // order they arrived in: version 3's narrow spans, versions 4 and 5's
-    // envelope spans with the retired slots still on the wire, and today's.
+    // Four plan layouts are readable and the order of these arms is the order
+    // they arrived in: version 3's narrow spans, versions 4 and 5's envelope
+    // spans with the retired slots still on the wire, versions 6 and 7's
+    // payload ending at `extremitySize`, and today's with the chest on it.
     let archetype = if version <= NARROW_SPAN_VERSION {
         Archetype::decode_legacy(&mut payload)?
     } else if version <= RESERVED_SLOTS_VERSION {
         Archetype::decode_reserved(&mut payload)?
+    } else if version <= PRE_CHEST_VERSION {
+        Archetype::decode_pre_chest(&mut payload)?
     } else {
         Archetype::decode(&mut payload)?
     };
@@ -604,12 +616,19 @@ mod tests {
         // Re-checksummed after the spare byte is added, so a mistyped code is
         // not what this measures — those are a different failure and must not
         // be reported as this one.
-        let mut payload = vec![SHARE_CODE_VERSION, 1]; // humanoid tag
-        crate::plan::put_length(&mut payload, 1.7);
-        let signed = crate::plan::explore_range(0.0, (-1.0, 1.0));
-        for axis in [0.0f32; 8] {
-            crate::plan::put_span(&mut payload, axis, signed);
-        }
+        //
+        // **Built through the real encoder rather than by hand**, and that is
+        // #273's own lesson rather than tidiness: hand-written, the payload
+        // listed eight signed axes, so when the chest added three the spare
+        // byte was swallowed as one of them and this test passed by reading a
+        // truncated code. A fixture that has to be updated whenever the layout
+        // moves is a fixture that stops testing the layout.
+        let mut payload = vec![SHARE_CODE_VERSION];
+        Archetype::Humanoid(crate::plan::HumanoidParams {
+            height: 1.7,
+            ..Default::default()
+        })
+        .encode(&mut payload);
         Composites::default().encode(&mut payload);
         crate::plan::put_unit(&mut payload, 0.35); // melanin
         crate::plan::put_signed(&mut payload, 0.0); // undertone

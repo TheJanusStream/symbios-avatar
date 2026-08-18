@@ -287,6 +287,21 @@ impl Avatar {
         // holding a skeleton and no record — every test and probe in this crate
         // — is entitled to the neutral head without inventing composites.
         let traits = face::HeadTraits::of(&record.composites);
+        // The trunk's own read of the same axes, `HeadTraits`'s sibling, with
+        // the record's own chest axes as offsets on top — `FaceParams::on`'s
+        // shape and for its reason: everything downstream has to agree about
+        // one chest. A plan that is not a humanoid has no chest axes and takes
+        // the composites' answer unchanged, which is the refusal and needs no
+        // special path.
+        let chest_traits =
+            crate::torso::ChestTraits::of(&record.composites).on(match &record.archetype {
+                crate::plan::Archetype::Humanoid(params) => crate::torso::ChestAxes {
+                    volume: params.chest_volume,
+                    projection: params.chest_projection,
+                    lift: params.chest_lift,
+                },
+                _ => crate::torso::ChestAxes::default(),
+            });
         // The record's face axes are offsets on what the frame axis already
         // derives, so everything downstream reads this and not `record.face` —
         // the carve, the mouth cut and the built features all have to agree
@@ -322,6 +337,12 @@ impl Avatar {
         if let Some(canon) = &canon {
             face::carve_face(&mut body, &rig, canon, &face_params);
         }
+        // The chest, on the same rule as the face and for the same reason: it
+        // is a displacement of the body's own surface, so everything that
+        // fits itself to that surface has to run after it (#272). Independent
+        // of the face's canon — a body with no head still has a chest — so it
+        // is outside the `canon` block rather than inside it.
+        crate::torso::carve_chest(&mut body, &rig, &chest_traits);
         // The mouth is cut AFTER the carve — the parting follows the carved
         // groove — and before anything measures, binds or charts the surface,
         // so the pocket is simply more body to all of them (#154). A rig with

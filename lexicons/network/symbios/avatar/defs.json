@@ -71,6 +71,27 @@
           "minimum": -3000,
           "maximum": 3000,
           "default": 0
+        },
+        "chestVolume": {
+          "type": "integer",
+          "description": "How much chest there is, over what femininity, mass, bodyFat and age already predict (#273). An offset on the derived chest and not a slider of its own: zero is whatever the composites came to, so a record keeps meaning what it meant when the formulas improve. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "chestProjection": {
+          "type": "integer",
+          "description": "How far the chest stands off the ribcage against how far it spreads across it, at a fixed volume: negative spreads it, positive stands it off. The shape axis rather than the size one, the same separation headSize and faceLength exist to make. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "chestLift": {
+          "type": "integer",
+          "description": "How high the chest sits, over what age and bodyFat predict: positive lifts it and refuses the descent ageing asks for, negative lets it hang. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
         }
       }
     },

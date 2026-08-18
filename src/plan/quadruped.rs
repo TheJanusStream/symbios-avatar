@@ -273,6 +273,13 @@ impl BodyPlan for QuadrupedParams {
         Ok(params)
     }
 
+    fn decode_pre_chest(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // Identical to `decode`, for `decode_reserved`'s reason one version on:
+        // the three axes version 8 appends are the HUMANOID's chest, and this
+        // plan's trunk is not carved. Its payload has not moved since version 4.
+        Self::decode(bytes)
+    }
+
     fn decode_reserved(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
         // Identical to `decode`, and that is the fact worth writing down: the
         // slots version 6 removes are the HUMANOID's retired `build` and

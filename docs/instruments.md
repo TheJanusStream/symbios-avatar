@@ -15,6 +15,7 @@ All under `examples/`, all release-built (`cargo run --release --example …`).
 | `render` | the software renderer: four-view contact sheets, `--head` close-ups, `--pass normal`, clip playback through the real retarget path |
 | `headaudit` | head proportions vs the canon, `--sweep` over the guarded seeds, `--axis` walks one record axis |
 | `facesection` | nose and mouth in CROSS-SECTION off the built surface — delivered relief, slopes, cells; the instrument for "does this feature exist on the polygons" |
+| `chestsection` | the TRUNK in cross-section off the built surface — how far the front stands proud of its own back, how many sides the section shows and how far apart, and the cells there; `--lobe` displaces a synthetic pair onto the mesh as its control |
 | `refinecost` | what each face-refinement pass costs and the cell it buys per feature band, across/down |
 | `chinprofile` | where the surface turns (`--ring`): curvature per azimuth, the flat-facet detector |
 | `garmentaudit` | what the clothes cover and what the body stops drawing for it; the hem as cut against the hem as worn — step, turn, and distance from a smooth ring |
