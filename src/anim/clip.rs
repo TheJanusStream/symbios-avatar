@@ -781,18 +781,57 @@ fn stands_up(rig: &Rig) -> bool {
     chord.normalize_or_zero().angle_between(Vec3::Y) <= TRUNK_UPRIGHT
 }
 
+/// Which way the flat of `limb`'s extremity faces on the body at rest.
+///
+/// **Two answers, because a body has two kinds of extremity and they are not
+/// built the same way.**
+///
+/// A **sole** is the side of a foot that meets the ground, and on a body that
+/// stands at rest that side is `-Y` by construction: the humanoid plan puts
+/// heel, ball and toe at one height, and a body whose feet did not rest on the
+/// floor would not be standing. [`Rig::ground_contacts`] is the question "is
+/// this limb one the body stands on", answered off the rest pose rather than
+/// off the plan, so this gets a quadruped's four right for the same reason it
+/// gets a biped's two.
+///
+/// A **palm** has no such definition, because nothing rests on it, so it comes
+/// from the hand builder's own convention re-derived: `Hand::build` frames a
+/// hand from the wrist bone's direction and world up — `across = out × up` —
+/// and curls the fingers away from that `up`, so the palm faces `-(Y ⊥ out)`:
+/// on the A-pose arm, down and in toward the thigh. The mirrored hand works
+/// out to the same expression in its own `out`, because reflecting the frame
+/// reflects the normal with it.
+///
+/// **Using the second for a foot is what this exists to stop** (#263). A foot's
+/// contact joint is its HEEL and the joint above it is the ankle, so `out`
+/// there points nearly straight down rather than out along the part — 77.7
+/// degrees off the hand's case — and the expression returns a near-horizontal
+/// vector that is not the sole in any direction. Aiming that at the floor puts
+/// a lying body's toe 200 mm THROUGH it.
+fn extremity_flat(rig: &Rig, limb: Limb) -> Option<Vec3> {
+    if rig.ground_contacts().contains(&limb) {
+        return Some(Vec3::NEG_Y);
+    }
+    let contact = *rig.in_zone(Zone::Extremity(limb)).first()?;
+    let parent = rig.joints[contact].parent?;
+    let out = (rig.joints[contact].position - rig.joints[parent].position).normalize_or_zero();
+    if out == Vec3::ZERO {
+        return None;
+    }
+    let flat = -(Vec3::Y - out * out.dot(Vec3::Y)).normalize_or_zero();
+    (flat != Vec3::ZERO).then_some(flat)
+}
+
 /// Turns the extremity so its flat faces `toward`, by `engaged` of the way.
 ///
-/// **The palm's rest normal is the hand builder's own convention, re-derived.**
-/// `Hand::build` frames a hand from the wrist bone's direction and world up —
-/// `across = out × up` — and curls the fingers away from that `up`, so the palm
-/// faces `-(Y ⊥ out)`: on the A-pose arm, down and in toward the thigh. The
-/// mirrored hand works out to the same expression in its own `out`, because
-/// reflecting the frame reflects the normal with it.
+/// Which direction the flat is on the rest body is [`extremity_flat`]'s, and it
+/// is a different derivation for a sole than for a palm.
 ///
-/// The turn is the minimal arc from where the palm currently faces, applied at
-/// the contact joint the whole hand hangs from — which is the wrist for this
-/// purpose: pronation and flexion composed, with the solve's arm left alone.
+/// The turn is the minimal arc from where the flat currently faces, applied at
+/// the contact joint the whole extremity hangs from — the wrist for a hand,
+/// which composes pronation and flexion with the solve's arm left alone, and
+/// the heel for a foot, which is the ankle's angle and the one thing about a
+/// foot this format could not otherwise say.
 fn face_extremity(rig: &Rig, pose: &mut Pose, limb: Limb, toward: Vec3, engaged: f32) {
     let toward = toward.normalize_or_zero();
     if toward == Vec3::ZERO || engaged <= f32::EPSILON {
@@ -808,10 +847,9 @@ fn face_extremity(rig: &Rig, pose: &mut Pose, limb: Limb, toward: Vec3, engaged:
     if out == Vec3::ZERO {
         return;
     }
-    let flat = -(Vec3::Y - out * out.dot(Vec3::Y)).normalize_or_zero();
-    if flat == Vec3::ZERO {
+    let Some(flat) = extremity_flat(rig, limb) else {
         return;
-    }
+    };
 
     let posed = pose.forward(rig);
     let showing = posed.rotations[contact] * flat;
@@ -826,17 +864,29 @@ fn face_extremity(rig: &Rig, pose: &mut Pose, limb: Limb, toward: Vec3, engaged:
     // palm shown flat — up or down, where "up" stops meaning anything — points
     // them forward instead. A gesture that wants sideways fingers is a field
     // this does not have yet, on purpose.
-    let out_world = turn * posed.rotations[contact] * out;
-    let fingers = (out_world - toward * out_world.dot(toward)).normalize_or_zero();
-    let wanted = {
-        let up = Vec3::Y - toward * toward.dot(Vec3::Y);
-        let flatwise = Vec3::Z - toward * toward.dot(Vec3::Z);
-        if up.length() > 0.2 { up } else { flatwise }.normalize_or_zero()
-    };
-    let roll = if fingers != Vec3::ZERO && wanted != Vec3::ZERO {
-        Quat::from_rotation_arc(fingers, wanted)
-    } else {
+    //
+    // **A SOLE takes no roll at all, and that is the same convention rather
+    // than an exception to it** (#263). The free turn about the aimed normal
+    // has to point the part's length axis somewhere the author did not say; for
+    // a hand that is "up", and for a foot it is "along the leg", which is
+    // exactly where the minimal arc has already left it. Rolling one anyway
+    // spins the foot to stand its heel up: measured on a lying body, aiming the
+    // sole with the hand's roll applied put the toe 188 mm through the floor.
+    let roll = if rig.ground_contacts().contains(&limb) {
         Quat::IDENTITY
+    } else {
+        let out_world = turn * posed.rotations[contact] * out;
+        let fingers = (out_world - toward * out_world.dot(toward)).normalize_or_zero();
+        let wanted = {
+            let up = Vec3::Y - toward * toward.dot(Vec3::Y);
+            let flatwise = Vec3::Z - toward * toward.dot(Vec3::Z);
+            if up.length() > 0.2 { up } else { flatwise }.normalize_or_zero()
+        };
+        if fingers != Vec3::ZERO && wanted != Vec3::ZERO {
+            Quat::from_rotation_arc(fingers, wanted)
+        } else {
+            Quat::IDENTITY
+        }
     };
 
     let parent_world = posed.rotations[parent];

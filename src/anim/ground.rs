@@ -527,6 +527,31 @@ pub(crate) fn solve_contact_toward(
         return false;
     };
 
+    // **A limb nothing has posed, asked for exactly where it already is, is
+    // left alone** (#262). Solving is not free: `two_bone` reaches the goal and
+    // then settles the bend on the POLE's plane, which is not quite the plane a
+    // rest limb sits in, so the mid joint moves a little and the extremity
+    // less. Every gesture in [`super::gesture`] opens and closes on a zero key
+    // and paid 1.6 mm of it at both ends, which is what held their return guard
+    // at five millimetres against a real drift it could not then have caught.
+    //
+    // **Both halves are needed, and the second one is what the gait's foot roll
+    // costs.** Gating on arrival alone regressed
+    // `the_part_of_the_sole_bearing_weight_does_not_move_as_the_foot_rolls`
+    // from 2.2 mm of slide to 4.6: [`level_feet`] alternates pinning the ankle
+    // at the attitude a roll wants against solving the leg under it, and
+    // neither constraint is exact until the two agree — so a pass that arrives
+    // is still a pass that has to run. What tells the two apart is not the
+    // distance but whether anything has posed the limb at all: the rest
+    // configuration is itself a valid answer to a rest goal, and the one the
+    // body's author chose.
+    let untouched = chain
+        .iter()
+        .all(|&joint| pose.rotations[joint].angle_between(Quat::IDENTITY) <= REST_SLACK);
+    if untouched && pose.forward(rig).positions[foot].distance(target) <= CONTACT_TOLERANCE {
+        return true;
+    }
+
     let mut reached = false;
     for _ in 0..CONTACT_PASSES {
         let posed = pose.forward(rig);
@@ -536,10 +561,12 @@ pub(crate) fn solve_contact_toward(
         // the tolerance and spends the full budget, which is the right way for
         // a straining limb to be bounded rather than to spin.
         //
-        // Guarded on `reached` rather than on the pass index so the first solve
-        // always runs: callers reach for this to make a leg answer for an ankle
-        // they have just turned, and a foot already standing where it is being
-        // sent still needs the leg moved under it.
+        // Guarded on `reached` rather than on the pass index so a limb that
+        // something HAS posed always gets one solve: callers reach for this to
+        // make a leg answer for an ankle they have just turned, and a foot
+        // already standing where it is being sent still needs the leg moved
+        // under it. The limb nothing has posed is the one exception, and it
+        // returned above.
         if reached && posed.positions[foot].distance(target) <= CONTACT_TOLERANCE {
             break;
         }
@@ -563,6 +590,17 @@ pub(crate) fn solve_contact_toward(
     // centimetres is, and that is the case worth reporting.
     reached || pose.forward(rig).positions[foot].distance(target) <= CONTACT_STRAIN
 }
+
+/// How far a joint may be turned and still count as unposed, in radians.
+///
+/// **A milliradian, which is not a tolerance so much as a guard against
+/// arithmetic.** The question [`solve_contact_toward`] asks with it is whether
+/// anything has posed this limb at all, and the honest answer is exact
+/// identity; this is only enough slack that a caller who composed a turn and
+/// its inverse still reads as having done nothing. A thousandth of a radian
+/// moves the reference body's ankle 0.7 mm — below the tolerance the solve
+/// aims for — so nothing a pose actually means can hide under it.
+const REST_SLACK: f32 = 1e-3;
 
 /// How far an extremity may land from its goal before the limb counts as
 /// straining, in metres.

@@ -45,6 +45,19 @@
 //!    knee and nothing about a length: the drop and the reach that produce it
 //!    are stated in the leg, and whether that was the right unit shows up here.
 //!
+//! 3d. **The feet**, for a clip that moves a carriage: how far the toe ends up
+//!    off the floor at the held pose, and how far the foot's own length axis —
+//!    heel to toe — has tipped off horizontal. Both are read off the RIG rather
+//!    than off `Track::facing`'s idea of a flat, which re-derives a HAND's
+//!    convention and is 77.7 degrees out on a foot; the plan puts heel, ball
+//!    and toe at one height, so a rest foot reads exactly 0 degrees and its
+//!    sole normal is exactly `-Y`. **The comparison that matters is the CC0
+//!    reference**, retargeted onto our own rig: its sleeping pose holds the
+//!    foot 73.6 degrees off horizontal with the toe 268 mm up. An ankle holds
+//!    whatever angle it rests at, because nothing in this format addresses one,
+//!    so what these columns actually catch is a body carried round upright
+//!    instead of laid out along the floor.
+//!
 //! 3a. **The gaze**, for a clip that has one: how far the head's facing pitches
 //!    from rest, how much of that the chest took, and how far the head joint
 //!    actually travelled. **A rotation cannot be judged by the spread of a
@@ -175,7 +188,7 @@ fn main() {
             .any(|track| matches!(track.target, Target::Root | Target::Tilt));
         println!(
             "\n{:>7} {:>5} {:>5} {:>5} {:>7} {:>6} {:>7} {:>7} {:>7} {:>8} {:>7} {:>8} {:>8} \
-             {:>7} {:>8} {:>7} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>7}",
+             {:>7} {:>8} {:>7} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>7}",
             "stature",
             "limbs",
             "neck",
@@ -198,6 +211,8 @@ fn main() {
             "knee deg",
             "tilt deg",
             "under mm",
+            "toe mm",
+            "foot deg",
             "step mm"
         );
 
@@ -254,8 +269,16 @@ fn main() {
             // The palm's rest normal, per hand: the hand builder's own frame,
             // re-derived — fingers curl away from world up projected off the
             // wrist bone, so the palm faces the other way. The same expression
-            // `Track::facing` aims, so this reading and that control agree
-            // about what a palm is.
+            // `Track::facing` aims for a limb that is NOT a ground contact, so
+            // this reading and that control agree about what a palm is.
+            //
+            // **And a foot is not a palm, which this had to learn** (#263).
+            // Once `sleep` grew a contact track it addressed the legs, so every
+            // hand column in the table lit up for a clip that has no hand
+            // gesture in it — reporting a rise of 0.000 for a body that had
+            // just lain down, because the hand went down and back and these are
+            // signed maxima. A sole is measured by the foot columns and by
+            // nothing here.
             // Only the hands the clip actually addresses: a right-hand wave
             // leaves the left palm at rest, and a max over both would report
             // the rest pose's 90 degrees as the gesture's failing.
@@ -264,8 +287,10 @@ fn main() {
                 .iter()
                 .flat_map(|track| track.target.resolve(&rig))
                 .collect();
+            let standing_on = rig.ground_contacts();
             let palms: Vec<(usize, Vec3)> = addressed
                 .into_iter()
+                .filter(|limb| !standing_on.contains(limb))
                 .filter_map(|limb| {
                     let contact = *rig.in_zone(Zone::Extremity(limb)).first()?;
                     let parent = rig.joints[contact].parent?;
@@ -289,6 +314,18 @@ fn main() {
                     hand.z / height,
                 );
             }
+            // The feet, at the held pose: the four foot nodes of every limb the
+            // body stands on, with the toe last.
+            let soles: Vec<(usize, usize)> = rig
+                .ground_contacts()
+                .into_iter()
+                .filter_map(|limb| {
+                    let nodes = rig.in_zone(Zone::Extremity(limb));
+                    Some((*nodes.first()?, *nodes.get(3)?))
+                })
+                .collect();
+            let mut toe_up = f32::MIN;
+            let mut foot_tip = f32::MIN;
             let mut strained = 0usize;
             let mut most = (0.0f32, 0.0f32, 0.0f32);
             let mut nearest_head = f32::MAX;
@@ -405,6 +442,16 @@ fn main() {
                         let shin = (places[ankle] - places[knee]).normalize_or_zero();
                         knee_angle = knee_angle.min(thigh.angle_between(shin).to_degrees());
                     }
+                    if frame == samples {
+                        for &(heel, toe) in &soles {
+                            toe_up = toe_up.max(places[toe].y);
+                            let along = (rig.joints[toe].position - rig.joints[heel].position)
+                                .normalize_or_zero();
+                            let tipped = posed.rotations[heel] * along;
+                            foot_tip = foot_tip
+                                .max(tipped.y.atan2(tipped.z.hypot(tipped.x)).abs().to_degrees());
+                        }
+                    }
                 }
                 if frame == samples / 2 {
                     for &(contact, flat) in &palms {
@@ -453,7 +500,8 @@ fn main() {
             let carried = |value: f32| carrying.then_some(value);
             println!(
                 "{stature:>7.2} {limbs:>5.1} {neck:>5.1} {headsize:>5.1} {arm:>7.3} \
-                 {strained:>6} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {step_mm:>7.1}",
+                 {strained:>6} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} \
+                 {step_mm:>7.1}",
                 maybe(reading(most.0), 7, 3),
                 maybe(reading(most.1), 7, 3),
                 maybe(reading(most.2), 7, 3),
@@ -470,6 +518,8 @@ fn main() {
                 maybe(carried(knee_angle), 8, 1),
                 maybe(carried(tipped), 8, 1),
                 maybe(carried((floor - standing) * 1000.0), 8, 0),
+                maybe(carried(toe_up * 1000.0), 8, 0),
+                maybe(carried(foot_tip), 7, 1),
                 step_mm = step * 1000.0,
             );
         }

@@ -417,11 +417,14 @@ pub const SEAT: f32 = 0.487_2;
 /// and starts to read as a step followed by a squat.
 pub const SEAT_LEAD: f32 = 0.25;
 
-/// Share of a sit spent lowering, and of a lie spent going down.
+/// Share of a sit spent lowering.
 ///
-/// **The rest is the pose, because these two are states rather than gestures.**
-/// A wave and a bow end where they began; sitting down ends up sitting, and a
+/// **The rest is the pose, because a sit is a state rather than a gesture.** A
+/// wave and a bow end where they began; sitting down ends up sitting, and a
 /// clip that stood the body back up at its last key could not express that.
+///
+/// A lie-down has its own share and a much larger one — see [`SLEEP_SETTLE`]
+/// for why it stopped being able to share this one.
 pub const SETTLE: f32 = 0.35;
 
 /// How far a lying body drops, in the standing leg's reach.
@@ -440,37 +443,79 @@ pub const SETTLE: f32 = 0.35;
 /// millimetre is better than one sunk in the floor.
 pub const SLEEP_DROP: f32 = 1.009_5;
 
-/// Share of the descent by which a lying body has finished tipping, the drop
-/// finishing after it.
+/// Share of a lie-down spent going down, the rest holding the pose.
 ///
-/// **Over before down, and the measurement said so against my expectation.** A
-/// body that gets low first and reclines after is what a person does and it is
-/// the worse of the two here, badly: dropping while still upright puts a
-/// standing body's feet most of a leg below the floor. Tipping first swings
-/// them up and round instead, and only then does the body settle onto its back.
+/// **Twice [`SETTLE`]'s, and a criterion picks it rather than a taste: a
+/// lie-down moves the body no faster than the sit-down it begins with.**
+/// [`sit`]'s worst step across the sweep is 51.3 mm per sample of 120, and this
+/// is the smallest share at which the lie matches it — 51.3 mm, to the tenth of
+/// a millimetre the instrument reports. Below it the body is being flung
+/// faster than the roster's other carriage clip moves; above it the descent is
+/// slower than a sit-down for no reason anyone has given, and the pose is
+/// visible for less of the clip. Measured, at [`SLEEP_FOLD`]:
 ///
-/// **And this constant buys one defect with another, which is worth saying
-/// plainly rather than hiding in a chosen number.** A faster tilt sinks less
-/// and jumps more, because a body swinging a quarter turn about its own pelvis
-/// moves its ends a long way in very little time. Sank below the standing
-/// surface, and the furthest any joint travels between two samples:
+/// | settle | 0.66 | 0.68 | 0.70 | 0.72 | 0.74 |
+/// |--------|------|------|------|------|------|
+/// | step | 53.9 | 52.6 | 51.3 | 50.4 | 49.2 |
 ///
-/// | lead | 1.0 | 0.7 | 0.5 | 0.3 | 0.15 |
-/// |------|-----|-----|-----|-----|------|
-/// | sank | -139 mm | -70 | -38 | -14 | 0 |
-/// | step | 47 mm | 59 | 77 | 116 | 216 |
+/// **Staging the descent is what made this a free choice.** The old authoring
+/// had to tip fast, because dropping a body that was still upright drove its
+/// feet through the floor, and its removed `SLEEP_LEAD` traded 139 mm of sink
+/// against 216 mm of step with no free point between them. With the contacts
+/// pinned to the world from the first frame nothing can go through the floor
+/// whatever the tilt does, so the sink stops responding to the schedule — it
+/// reads between 5.4 and 5.7 mm at every point of this table and of
+/// [`SLEEP_FOLD`]'s — and how long the descent takes becomes a question with an
+/// answer.
 ///
-/// There is no free point on that curve, and the reason is that the authoring
-/// is a draft: **a body does not lie down by rotating about its pelvis.** It
-/// gets low, reclines, and then extends — three stages, of which [`sit`]
-/// already is the first. Written that way the drop happens while the legs fold
-/// and the turn happens from a body whose ends are already near its root, and
-/// neither reading has to be paid for. That is a real piece of work rather than
-/// a constant, and it has not been done here.
+/// **And the criterion was unreachable in the first authoring of the staged
+/// version**, which is worth recording because it was nearly written down as a
+/// fact. With the legs held still until the turn finished, the lie bottomed out
+/// at 58.3 mm even spending the whole clip descending, and "a lie-down is
+/// simply a bigger movement than a sit-down" looked like the honest conclusion.
+/// It was a property of that schedule and not of the movement: sliding the feet
+/// out WHILE the body reclines takes the same descent to 43.8 mm at the same
+/// share.
+pub const SLEEP_SETTLE: f32 = 0.70;
+
+/// Share of the descent spent getting low, before the body starts to recline.
 ///
-/// Three tenths in the meantime: 14 mm under and 116 mm of step, both moderate,
-/// neither pretending to be a solution.
-pub const SLEEP_LEAD: f32 = 0.3;
+/// **Half, and it is a crisp optimum: the same half at every value of
+/// [`SLEEP_SETTLE`].** Measured on the worst of the sweep, with the sink and
+/// the knee both flat across the whole grid:
+///
+/// | fold | 0.40 | 0.45 | 0.50 | 0.55 |
+/// |------|------|------|------|------|
+/// | step at settle 0.85 | 52.6 | 47.9 | 43.8 | 45.7 |
+/// | step at settle 0.65 | 65.5 | 59.8 | 54.6 | 59.7 |
+///
+/// This is [`sit`]'s own move and it is the only stage boundary the clip has
+/// left. **The recline and the extension share the rest of the descent rather
+/// than following one another**, which was worth 40 mm of knee and 23 mm of
+/// step and cost nothing at all: with the feet held planted until the turn
+/// finished, a reclining body folded its knees to 43.5 degrees — heel to
+/// buttock, past anything a seat asks for — and sliding them out as it goes
+/// back holds the tightest knee of the whole descent at 87.2 degrees, which is
+/// the seated angle. So the seat is as folded as this clip ever gets, and the
+/// sink, the strain and the held pose are identical either way.
+pub const SLEEP_FOLD: f32 = 0.50;
+
+/// How far out along the floor a lying body's contacts go, in the leg's reach.
+///
+/// **Measured against the slack rather than against full extension**, which is
+/// the trap a straight leg sets: the extension limit here is sharp. At 1.200
+/// the knee reads 179 degrees and the miss has already climbed to 1.4 mm on the
+/// tall body; at 1.220 all five bodies of the sweep strain and miss by 14.7 mm.
+/// This is the last value with slack left on every one of them — knee 154 to
+/// 160 degrees, miss under 0.43 mm, no strain.
+///
+/// **And the vertical key is zero, which looks like an omission and is the
+/// point.** A [`super::Space::World`] goal is stated from the contact's own
+/// rest position, and a standing body's heel rests at its own radius — on the
+/// floor. So "out along the floor" is a displacement with no height in it at
+/// all, and the heel lands at 31.2 mm on the reference body whether it is
+/// standing or lying.
+pub const SLEEP_REACH: f32 = 1.18;
 
 /// Which way a body lies down: a quarter turn, feet toward `-Z`.
 ///
@@ -526,46 +571,113 @@ pub fn sit() -> Clip {
     ])
 }
 
-/// A sleeping idle: the body lies down on its back.
+/// A sleeping idle: the body sits down, then reclines and stretches out.
 ///
-/// A quarter turn and a drop, and nothing else — the limbs are left where the
-/// carriage puts them, which for a body on its back is lying beside it. See
-/// [`Target::Tilt`] for why a rotation this large needed the unit changing, and
-/// [`SLEEP_TILT`] for why it is negative.
+/// **A body does not lie down by rotating about its pelvis** (#263), which is
+/// what this used to do. Rotating a standing body about its hip swings its feet
+/// through the floor if it is done slowly and flings them if it is done fast,
+/// and there is no free point on that curve — the old authoring picked 0.3 for
+/// a lead and paid 14 mm under the floor and 116 mm of step per sample on the
+/// reference body, with a table in its removed `SLEEP_LEAD` saying plainly that
+/// both numbers were the wrong shape of answer.
 ///
-/// **The feet point at the ceiling and that is a draft's cost, measured.** An
-/// ankle holds whatever angle it rests at — 74.8 degrees to the shin, standing
-/// or lying — so a body tipped through a quarter turn takes its standing feet
-/// with it and the toe ends up 375 mm off the floor with the sole facing very
-/// nearly straight up. A relaxed supine foot flops the other way. Nothing in
-/// this format addresses an ankle's angle, and the fix belongs with the staged
-/// descent that would place the feet along the floor rather than carry them
-/// round.
+/// A body gets low, reclines, and extends its legs, and the last two happen
+/// together:
+///
+/// 1. **Fold**, over the first half of the descent, which is [`sit`]'s move
+///    exactly: the root drops one thigh and the contacts go out to where a
+///    seated body's feet are, held in the world, so the legs bend because they
+///    have nowhere else to go.
+/// 2. **Recline and extend**, over the rest of it: the quarter turn, the rest
+///    of the drop, and the feet sliding out along the floor to [`SLEEP_REACH`],
+///    all at once. Holding the feet planted until the turn finished was tried
+///    first and folds the knees to the buttocks — see [`SLEEP_FOLD`].
+///
+/// **The recline needed something establishing before any of this could be
+/// built on it**, because nothing in the roster had ever asked a
+/// [`Space::World`] goal to answer for a carriage that rotates ninety degrees
+/// under it. It does: the goal is a point in the space the floor is in, the
+/// heel lands 0.1 mm from it at the held pose having travelled 596 mm to get
+/// there, and nothing strains anywhere on the sweep.
+///
+/// **What the staging buys is that the trade is gone**, not that one end of it
+/// was chosen better. On the audit's eleven bodies the sink goes from 19 mm to
+/// 6 at its worst, and it now reads under 6 whatever schedule the stages are
+/// given — it has stopped
+/// responding to the timing at all, because the feet are pinned to the world
+/// from the first frame and nothing the tilt does can drive them anywhere. So
+/// has the tightest knee of the descent, at 87.2 degrees, which is the seat's
+/// own angle. What is left responding is only how long the descent takes, and
+/// that has a criterion now: see [`SLEEP_SETTLE`].
+///
+/// **Do not name a pole.** [`Rig::bend_pole`] answers in the rig's rest space,
+/// which is exactly where a world goal lives, and it already bends the lying
+/// knee upward. Saying so explicitly with `bending_toward(+Y)` costs 430 to 790
+/// mm of step and changes no other reading by a measurable amount.
+///
+/// **The feet are left alone, and that is a refutation rather than an
+/// omission.** This clip's own doc used to report the toe 375 mm off the floor
+/// with the sole near vertical, and call for a relaxed supine foot that "flops
+/// the other way". The CC0 reference disagrees: retargeted onto our own rig,
+/// its sleeping pose holds the foot 73.6 degrees off horizontal — nearly
+/// straight up — with the toe 268 mm above the floor and the knee at 158.7
+/// degrees. Staged, this clip reads 79.6 degrees, 264 mm and 154.1. The 375 mm
+/// was real and was the body being carried round upright instead of laid out
+/// along the floor, which the descent fixes; what is left is six degrees of
+/// ankle. [`Track::facing`] would aim it — it aims a sole correctly now, which
+/// it did not before — but its turn ramps with how far the contact track has
+/// travelled, and on a track that passes through a seated pose that reads 0.41
+/// while the body is still sitting and tips a planted foot up by 49 degrees.
+/// Six degrees is not worth a seated foot through the floor.
 ///
 /// **A state, not a gesture**, for [`sit`]'s reason and in the same shape.
 ///
 /// [`Target::Tilt`]: super::Target::Tilt
+/// [`Space::World`]: super::Space::World
+/// [`Track::facing`]: super::Track::facing
+/// [`Rig::bend_pole`]: crate::Rig::bend_pole
 #[must_use]
 pub fn sleep() -> Clip {
+    let settle = SLEEP_SETTLE;
+    let fold = settle * SLEEP_FOLD;
+    let seated = Vec3::new(0.0, 0.0, SEAT);
+    let lying = Vec3::new(0.0, 0.0, SLEEP_REACH);
+    let low = Vec3::new(0.0, -SEAT, 0.0);
+    let deep = Vec3::new(0.0, -SLEEP_DROP, 0.0);
     let over = Vec3::new(0.0, 0.0, SLEEP_TILT);
-    let down = Vec3::new(0.0, -SLEEP_DROP, 0.0);
-    let held = |at: Vec3| {
-        vec![
-            Key::new(0.0, Vec3::ZERO),
-            Key::new(SETTLE, at),
-            Key::new(1.0, at),
-        ]
-    };
     Clip::new([
+        Track::new(
+            Target::Root,
+            [
+                Key::new(0.0, Vec3::ZERO),
+                Key::new(fold, low),
+                Key::new(settle, deep),
+                Key::new(1.0, deep),
+            ],
+        ),
         Track::new(
             Target::Tilt,
             [
                 Key::new(0.0, Vec3::ZERO),
-                Key::new(SETTLE * SLEEP_LEAD, over),
+                Key::new(fold, Vec3::ZERO),
+                Key::new(settle, over),
                 Key::new(1.0, over),
             ],
         ),
-        Track::new(Target::Root, held(down)),
+        Track::new(
+            Target::Contacts,
+            [
+                Key::new(0.0, Vec3::ZERO),
+                // The feet lead the fold, for `SEAT_LEAD`'s reason and by its
+                // number: they go where they are going to be while the body is
+                // still on the way down.
+                Key::new(fold * SEAT_LEAD, seated),
+                Key::new(fold, seated),
+                Key::new(settle, lying),
+                Key::new(1.0, lying),
+            ],
+        )
+        .in_world(),
     ])
 }
 
@@ -855,25 +967,57 @@ mod tests {
                         .iter()
                         .zip(&rest)
                         .fold(0.0f32, |most, (a, b)| most.max(a.distance(*b)));
-                    // **Five millimetres, and the slack is the SOLVE's, not the
-                    // gesture's.** A key of zero asks the limb for exactly where
-                    // it already is, and putting a limb back where it is turns
-                    // out not to be free: the solve reaches the goal but settles
-                    // the bend on the pole's plane rather than on the rest
-                    // arm's, which moves the elbow a little and the hand less.
-                    // Measured across the sweep it is under 2 mm and it is the
-                    // same on every gesture, being a property of
-                    // `solve_contact_toward` rather than of any of them (#262).
+                    // **One millimetre, down from five, and the five was the
+                    // SOLVE's slack rather than any gesture's** (#262). A key
+                    // of zero asks the limb for exactly where it already is,
+                    // and that used not to be free: the solve reached the goal
+                    // and then settled the bend on the pole's plane rather than
+                    // on the rest arm's, moving the elbow a little and the hand
+                    // less, for the same 1.6 mm on every gesture in the roster.
+                    // `solve_contact_toward` now leaves a limb nothing has
+                    // posed alone, so the measured figure here is exactly zero
+                    // on every body of the sweep.
                     //
-                    // What this bound is for is tens of millimetres: an arm left
-                    // up, a hand left out, a gesture with no closing key.
+                    // Left at a millimetre rather than at zero: a gesture that
+                    // legitimately moved the carriage would have its limbs
+                    // solved for real at both ends, and a bound of zero would
+                    // read that as a defect. What this is for is tens of
+                    // millimetres — an arm left up, a hand left out, a gesture
+                    // with no closing key — and it can now catch the 3 mm drift
+                    // it could not before.
                     assert!(
-                        worst < 0.005,
+                        worst < 1e-3,
                         "at time {time} a {height} m body with limb length {limbs} sat {:.1} mm \
                          from rest",
                         worst * 1000.0,
                     );
                 }
+                // **The control, because a guard that reads zero for every
+                // configuration is what a dead one looks like.** The reading
+                // above is now exactly zero, and it would stay exactly zero if
+                // `Clip::apply` stopped applying anything at all — which is a
+                // real failure mode rather than a hypothetical one, since
+                // `solve_contact_toward`'s rest early-out (#262) is what made
+                // it zero. So the same expression is taken over the middle of
+                // the clip and has to read a long way from rest. A hundred
+                // millimetres, an order of magnitude either side: a nod on the
+                // 1.2 m body is the roster's smallest excursion at 28.7 mm, and
+                // a clip that applied nothing would read exactly zero.
+                let moved = (1..20).fold(0.0f32, |most, step| {
+                    let mut peak = Pose::rest(&rig);
+                    clip.apply(&rig, &mut peak, step as f32 / 20.0);
+                    peak.forward(&rig)
+                        .positions
+                        .iter()
+                        .zip(&rest)
+                        .fold(most, |most, (a, b)| most.max(a.distance(*b)))
+                });
+                assert!(
+                    moved > 0.01,
+                    "the gesture moved a {height} m body by only {:.1} mm at its peak, so the \
+                     zero-key reading above proves nothing",
+                    moved * 1000.0,
+                );
             }
         }
     }
@@ -1231,19 +1375,26 @@ mod tests {
     #[test]
     fn a_carriage_stays_on_top_of_the_floor() {
         // A pose that puts a body through the ground is not a pose, and both of
-        // these can: sitting folds a leg past where the foot is, and lying
-        // swings a standing body's feet down through the floor if the turn is
-        // slow enough. Bounded at 25 mm, where the two read -4 and -14 — see
-        // [`SEAT_LEAD`] and [`SLEEP_LEAD`], whose whole job is these numbers.
+        // these can: sitting folds a leg past where the foot is, and lying used
+        // to swing a standing body's feet down through the floor if the turn
+        // was slow enough.
         //
-        // Reintroduced by moving either lead: at a seat lead of 0.9 the sit
-        // sinks 41 mm, and at a tilt lead of 1.0 the lie sinks 139.
+        // **Bounded at 10 mm, down from 25** (#263). The sit reads -4 and is
+        // [`SEAT_LEAD`]'s to keep there. The lie read -14 while it was a
+        // rotation about the pelvis traded against a fling, and reads -5.8
+        // staged — and now reads -5.8 at every schedule the stages can be given,
+        // because the contacts are pinned to the world from the first frame. So
+        // this stopped being a bound on a chosen constant and became one on the
+        // authoring, which is the point of the rewrite rather than a side
+        // effect of it.
+        //
+        // Reintroduced by moving the seat lead: at 0.9 the sit sinks 41 mm.
         for (name, clip) in [("sit", sit()), ("sleep", sleep())] {
             for &(height, limbs, neck, head) in &BODIES {
                 let rig = body(height, limbs, neck, head);
                 let (_, _, sank, _) = carried(&rig, &clip);
                 assert!(
-                    sank > -0.025,
+                    sank > -0.010,
                     "{name} sank a {height} m body {:.0} mm below where it stands",
                     -sank * 1000.0,
                 );
@@ -1282,6 +1433,210 @@ mod tests {
                 ventral.x,
                 ventral.y,
                 ventral.z,
+            );
+        }
+    }
+
+    #[test]
+    fn a_world_contact_goal_stays_in_the_floors_frame_while_the_body_turns_over() {
+        // **The assumption the staged descent is built on, and nothing in the
+        // roster had asked it before** (#263). `sleep` reclines a body through
+        // a quarter turn with its feet driven by a [`Space::World`] track,
+        // which is only sound if a world goal is genuinely in the space the
+        // floor is in rather than in anything the carriage carries.
+        //
+        // So the goal is rebuilt here from the RIG AT REST and the track's own
+        // offset — nothing about the pose enters it — and the heel has to land
+        // on it at every moment of the descent, including the ones where the
+        // body is halfway over. Removing `in_world` from the clip fails this
+        // in the seventeenth of the clip, which is what says the reading is
+        // about the space and not about the solve.
+        //
+        // **And the goal never leaves the floor**, which is the other half of
+        // the authoring: the offsets have no vertical component at all, because
+        // a standing body's heel already rests at its own radius and a world
+        // goal is stated from there. A key that drifted upward would put a
+        // lying body's heels in the air and this would not otherwise notice.
+        for &(height, limbs, neck, head) in &BODIES {
+            let rig = body(height, limbs, neck, head);
+            let clip = sleep();
+            let track = clip
+                .tracks
+                .iter()
+                .find(|track| track.target == Target::Contacts)
+                .expect("sleep drives its contacts");
+            for limb in rig.ground_contacts() {
+                let heel = *rig
+                    .in_zone(Zone::Extremity(limb))
+                    .first()
+                    .expect("a leg ends in a foot");
+                let reach = rig.limb_reach(limb).expect("a leg has a reach");
+                let home = rig.joints[heel].position;
+                for step in 0..=60 {
+                    let time = step as f32 / 60.0;
+                    let goal = home + track.offset_at(time, false).expect("keys") * reach;
+                    assert!(
+                        (goal.y - home.y).abs() < f32::EPSILON,
+                        "at {time:.3} the world goal had left the floor by {:.1} mm",
+                        (goal.y - home.y) * 1000.0,
+                    );
+                    let mut pose = Pose::rest(&rig);
+                    clip.apply(&rig, &mut pose, time);
+                    let miss = pose.forward(&rig).positions[heel].distance(goal);
+                    assert!(
+                        miss < 2e-3,
+                        "at {time:.3} a {height} m body's heel sat {:.1} mm off the world \
+                         goal it was driven to",
+                        miss * 1000.0,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_lying_body_puts_its_heels_on_the_floor_and_straightens_its_legs() {
+        // **What the third stage is for.** A body carried round upright keeps
+        // its legs at the height its pelvis is at — the reference body's heel
+        // floated 128 mm — and a lying body's heels are on the floor beside its
+        // back, which is what the CC0 reference does too.
+        //
+        // The knee is the other half and it is the one that can go wrong
+        // quietly: [`SLEEP_REACH`] is set against the slack a straight leg has,
+        // and asking for a hand's breadth more strains every body of the sweep.
+        // Bounded below at 140 degrees, which a leg still folded from the
+        // recline would fail, and above at 175, which is where the solve is
+        // fighting its own singularity. The CC0 reference reads 158.7.
+        for &(height, limbs, neck, head) in &BODIES {
+            let rig = body(height, limbs, neck, head);
+            let mut pose = Pose::rest(&rig);
+            let strained = sleep().apply(&rig, &mut pose, 1.0);
+            assert!(
+                strained.is_empty(),
+                "a {height} m body strained {strained:?} lying down",
+            );
+            let places = pose.forward(&rig).positions;
+            for limb in rig.ground_contacts() {
+                let heel = *rig
+                    .in_zone(Zone::Extremity(limb))
+                    .first()
+                    .expect("a leg ends in a foot");
+                // Its own rest height is the floor: a standing body's heel
+                // rests at its own radius and nowhere else.
+                let floated = places[heel].y - rig.joints[heel].position.y;
+                assert!(
+                    floated.abs() < 2e-3,
+                    "a {height} m body's lying heel sat {:.0} mm off the floor",
+                    floated * 1000.0,
+                );
+                let [hip, knee, ankle] = rig.limb_chain(limb).expect("a leg");
+                let thigh = (places[hip] - places[knee]).normalize_or_zero();
+                let shin = (places[ankle] - places[knee]).normalize_or_zero();
+                let angle = thigh.angle_between(shin).to_degrees();
+                assert!(
+                    (140.0..175.0).contains(&angle),
+                    "a {height} m body's lying knee held {angle:.1} degrees",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_facing_aims_a_sole_at_the_floor_and_not_a_palm_s_idea_of_one() {
+        // **`Track::facing` is documented as aiming the flat of an extremity,
+        // and on a foot it used to aim something else entirely** (#263). The
+        // derivation it had is the hand builder's — the palm faces `-(Y perp
+        // out)`, where `out` runs from the joint above the contact — and a
+        // foot's contact joint is its HEEL with the ankle above it, so `out`
+        // there points nearly straight down and the expression returns a
+        // near-horizontal vector 77.7 degrees off the sole.
+        //
+        // The control is the standing body, and it is the reading that makes
+        // this a test rather than a tautology: a foot at rest already has its
+        // sole on the floor, so asking for the floor must change nothing at
+        // all. Asking for the ceiling must turn it right over. Both are read
+        // off the RIG — the plan puts heel, ball and toe at one height, so the
+        // rest sole normal is `-Y` by construction — rather than off the
+        // expression under test.
+        for &(height, limbs, neck, head) in &BODIES {
+            let rig = body(height, limbs, neck, head);
+            let limb = *rig
+                .ground_contacts()
+                .first()
+                .expect("a humanoid stands on something");
+            let heel = *rig
+                .in_zone(Zone::Extremity(limb))
+                .first()
+                .expect("a leg ends in a foot");
+            // A goal that barely moves the foot — two hundredths of a reach,
+            // about 14 mm — because the aim ramps with the track's own
+            // excursion and a track of nothing but zero keys engages nothing.
+            // See [`Track::facing`].
+            let toe = *rig
+                .in_zone(Zone::Extremity(limb))
+                .get(3)
+                .expect("the plan builds heel, cap, ball and toe");
+            let along = (rig.joints[toe].position - rig.joints[heel].position).normalize_or_zero();
+            let facing_of = |aim: Option<Vec3>| {
+                let mut track = Track::new(
+                    Target::Just(limb),
+                    [
+                        Key::new(0.0, Vec3::ZERO),
+                        Key::new(1.0, Vec3::new(0.0, 0.0, 0.02)),
+                    ],
+                )
+                .in_world();
+                if let Some(aim) = aim {
+                    track = track.facing(aim);
+                }
+                let mut pose = Pose::rest(&rig);
+                Clip::new([track]).apply(&rig, &mut pose, 1.0);
+                let turn = pose.forward(&rig).rotations[heel];
+                (turn * Vec3::NEG_Y, turn * along)
+            };
+            let sole = |aim: Option<Vec3>| facing_of(aim).0;
+            // The control: the same track with no aim at all. A standing foot
+            // is near the floor already — the solve rotates hip and knee and
+            // leaves the ankle alone, so a 14 mm goal barely turns it — which
+            // is why the CEILING is the reading that cannot be produced by
+            // anything but the aim. Without this, a `face_extremity` that had
+            // quietly become a no-op would pass the floor assertion below.
+            let loose = sole(None);
+            assert!(
+                loose.dot(Vec3::Y) < 0.5,
+                "the unaimed control already faced the ceiling, so the reading below is \
+                 not about the aim",
+            );
+            let down = sole(Some(Vec3::NEG_Y));
+            assert!(
+                down.dot(Vec3::NEG_Y) > 0.999,
+                "asked for the floor, a {height} m body's sole faced ({:.2}, {:.2}, {:.2})",
+                down.x,
+                down.y,
+                down.z,
+            );
+            let up = sole(Some(Vec3::Y));
+            assert!(
+                up.dot(Vec3::Y) > 0.999,
+                "asked for the ceiling, a {height} m body's sole faced ({:.2}, {:.2}, {:.2})",
+                up.x,
+                up.y,
+                up.z,
+            );
+            // **And the foot must not have been SPUN to get there.** Aiming a
+            // normal leaves the part free to roll about it, and a hand takes a
+            // roll that points its fingers as up as the palm allows. A foot
+            // does not: the free turn has to point its length axis along the
+            // leg, which is where the minimal arc has already left it. With the
+            // hand's roll applied instead, this reads a foot yawed 179 degrees
+            // — and on a lying body it put the toe 188 mm under the floor.
+            let (_, along_aimed) = facing_of(Some(Vec3::NEG_Y));
+            let (_, along_loose) = facing_of(None);
+            let spun = along_aimed.angle_between(along_loose).to_degrees();
+            assert!(
+                spun < 1.0,
+                "aiming the sole yawed a {height} m body's foot {spun:.1} degrees off where \
+                 the solve had it",
             );
         }
     }
