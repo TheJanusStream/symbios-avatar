@@ -318,7 +318,7 @@ impl Speed {
 /// second opinion about toe clearance along the way.
 ///
 /// [`Stride::for_body`]: super::gait::Stride::for_body
-const LIFT_OF_STRIDE: f32 = 0.12 / 0.70;
+pub(crate) const LIFT_OF_STRIDE: f32 = 0.12 / 0.70;
 
 /// The reach of the longest leg a body stands on, in metres.
 ///

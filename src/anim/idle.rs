@@ -272,6 +272,36 @@ pub struct Idled {
     pub glance: Option<Vec3>,
 }
 
+/// Where one contact stands, when that is not where it rests.
+///
+/// **Only displaced contacts are recorded**, so a limb absent from the list is
+/// one standing where it belongs — which is what lets the shift pick a leg to
+/// settle ONTO by asking which one is already home.
+#[derive(Clone, Copy, Debug)]
+struct Footing {
+    /// The contact this describes.
+    limb: Limb,
+    /// How far it stands from its rest position, horizontally, in body space.
+    ///
+    /// Horizontal only: the height is [`plant_feet_of`]'s business and an
+    /// offset carrying one would be two stages arguing about the same
+    /// millimetres.
+    offset: Vec3,
+    /// What [`Self::offset`] was when the running shift began.
+    ///
+    /// Recovery eases from here to zero across the shift rather than
+    /// decrementing the live value, so the curve is the shift's own smoothstep
+    /// and not whatever a per-frame decay integrates to.
+    from: Vec3,
+}
+
+/// Below this a contact counts as home, in metres.
+///
+/// A tenth of a millimetre: under what any renderer resolves and over what a
+/// solve's own residual leaves behind, so a foot that has arrived is not kept
+/// awake by its last float.
+const SETTLED: f32 = 1e-4;
+
 /// What a scheduled event is doing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Stage {
@@ -299,6 +329,9 @@ pub struct Idle {
     bearing: Option<Limb>,
     was: Option<Limb>,
     fidget: Stage,
+    /// Contacts standing somewhere other than where they rest, and empty for a
+    /// body nobody walked into. See [`Self::arrive`].
+    stance: Vec<Footing>,
     /// Which way this fidget glances, and how far it rolls the shoulders.
     glance: Vec3,
     roll: f32,
@@ -323,6 +356,7 @@ impl Idle {
             bearing: None,
             was: None,
             fidget,
+            stance: Vec::new(),
             glance: Vec3::ZERO,
             roll: 0.0,
             rng,
@@ -333,6 +367,94 @@ impl Idle {
     #[must_use]
     pub fn seeded(seed: u64) -> Self {
         Self::new(IdleConfig::default(), seed)
+    }
+
+    /// Takes the stance the body arrived in, rather than the one it rests in.
+    ///
+    /// **The fix for a stopping body sliding its feet together** (#276). Left
+    /// to itself an idle solves every contact back to its REST position each
+    /// frame, whatever the body was doing a frame earlier — so a body that
+    /// stops mid-stride drags the foot that was bearing its weight up to a
+    /// third of a metre across the ground to close the stance. That is a skate,
+    /// and it is the largest one this crate measures.
+    ///
+    /// A person stopping mid-stride does not do that. They stop with the feet
+    /// they arrived on and settle afterwards, moving each foot only while it is
+    /// unweighted. This takes the first half of that: `bearing` names the
+    /// contacts that were carrying the body, and those are pinned where they
+    /// stand. Everything else goes home for nothing, because a contact that is
+    /// not bearing weight is pinned by nothing — a foot in mid-swing simply
+    /// finishes its swing.
+    ///
+    /// The second half is automatic: a settling shift is scheduled
+    /// immediately rather than waiting out [`IdleConfig::min_shift`], and each
+    /// shift recovers the legs it is not settling onto.
+    ///
+    /// **Waiting for a good moment to stop is not an alternative to this and
+    /// was measured twice.** Holding a transition until a handoff, and until a
+    /// midstance, both made the skid WORSE than stopping immediately, because a
+    /// body that holds keeps striding while whatever stopped it has stopped —
+    /// the wait is itself a skate. See #266.
+    ///
+    /// Calling it with an empty `bearing` clears the stance, which is the state
+    /// a body that has always been standing is in: an idle nobody walked into
+    /// is untouched by any of this.
+    pub fn arrive(&mut self, rig: &Rig, pose: &Pose, bearing: &[Limb]) {
+        self.stance.clear();
+        if !pose.fits(rig) {
+            return;
+        }
+        let posed = pose.forward(rig);
+        for limb in rig.ground_contacts() {
+            if !bearing.contains(&limb) {
+                continue;
+            }
+            let Some(&joint) = rig.in_zone(Zone::Extremity(limb)).first() else {
+                continue;
+            };
+            let home = rig.joints[joint].position;
+            let at = posed.positions[joint];
+            let offset = Vec3::new(at.x - home.x, 0.0, at.z - home.z);
+            if offset.length() > SETTLED {
+                self.stance.push(Footing {
+                    limb,
+                    offset,
+                    from: offset,
+                });
+            }
+        }
+        if !self.stance.is_empty() {
+            // Now, not in ten to forty seconds. The leisure schedule is what a
+            // body standing about uses; a body that has just stopped walking is
+            // settling, and leaving it splay-legged for up to `max_shift`
+            // seconds would be a longer-lived defect than the one this fixes.
+            self.shift = Stage::Waiting(0.0);
+        }
+    }
+
+    /// Where a contact should stand, as an offset from where it rests.
+    fn offset_of(&self, limb: Limb) -> Vec3 {
+        self.stance
+            .iter()
+            .find(|footing| footing.limb == limb)
+            .map_or(Vec3::ZERO, |footing| footing.offset)
+    }
+
+    /// How far through the running weight shift the body is, eased, or `None`
+    /// when no shift has ever run.
+    ///
+    /// Shared by the sway and by the stance recovery so the two cannot disagree
+    /// about how unloaded a leg is — which is the whole safety argument for
+    /// moving a foot at all.
+    fn shift_share(&self) -> Option<f32> {
+        self.bearing?;
+        Some(match self.shift {
+            Stage::Running(left) => {
+                let done = 1.0 - (left / self.config.shift_time.max(f32::EPSILON)).clamp(0.0, 1.0);
+                done * done * (3.0 - 2.0 * done)
+            }
+            Stage::Waiting(_) => 1.0,
+        })
     }
 
     /// The configuration in force.
@@ -461,15 +583,97 @@ impl Idle {
         // levelled. That is also what softens the free knee: the leg is now
         // nearer its own foot than a straight leg would be, and a solve that
         // reaches a closer goal bends.
+        //
+        // **And each goal is where the body ARRIVED, not where it rests**
+        // (#276), for contacts that were carrying it when it stopped. The
+        // recovery below is what brings them home.
+        //
+        // A foot bearing weight never moves; a foot unloading may be placed.
+        // The shift's own eased share says how unloaded a leg is, so a
+        // recovering contact moves exactly as much as it is free to and the
+        // skate is zero by construction rather than by a tuned rate. The leg
+        // the shift is settling ONTO is taking load and is left alone; it
+        // recovers on the next shift, which `advance` schedules for as long as
+        // anything is still out of place.
+        if let Some(share) = self.shift_share() {
+            let onto = self.bearing;
+            for footing in &mut self.stance {
+                if Some(footing.limb) != onto {
+                    footing.offset = footing.from * (1.0 - share);
+                }
+            }
+        }
+        // **And a body cannot stand tall over a stance it arrived with.** At a
+        // handoff the feet are two thirds of a metre apart and a straight leg
+        // does not span that: without this the solve simply falls short, the
+        // foot is dragged in as far as the leg is long, and the stance the
+        // seeding just went to the trouble of keeping is thrown away at exactly
+        // the phases it matters most.
+        //
+        // So sink far enough that every seeded contact is within its leg's
+        // reach — [`super::gait::sink_needed`], the same relation a stride uses
+        // and for the same reason, rather than a second opinion about how long
+        // a leg is. It needs no decay of its own: the offsets decay as the
+        // stance closes and the sink follows them to nothing, so a body rises
+        // as it brings its feet together. Which is what a person does.
+        let sink = self
+            .stance
+            .iter()
+            .filter_map(|footing| super::gait::sink_needed(rig, footing.limb, footing.offset))
+            .fold(0.0f32, f32::max);
+        // With [`super::gait::CROUCH_MARGIN`], for the reason that constant
+        // exists: a solve sunk to EXACTLY full reach has no slack, so the
+        // bearing foot drifts with the root as the sway moves it. Measured at
+        // 2.12 mm in a single frame without this, against a guard that allows
+        // 2 — and the margin is scaled rather than added precisely so a body
+        // with nothing to reach for does not crouch at all.
+        pose.translation.y -= sink * super::gait::CROUCH_MARGIN;
+        // **A recovering foot STEPS, it does not skim.** Sliding an unweighted
+        // foot along the floor is better than dragging a weighted one, and it
+        // is still a foot sliding on the floor — measured at 127 mm and rising
+        // across one recovery, which is the look this whole issue exists to
+        // remove. So it arcs: lifted by the share of its own travel that
+        // [`super::speed::LIFT_OF_STRIDE`] gives a stride, on a sine that is
+        // zero at both ends, so the foot leaves the ground, travels, and lands.
+        // Reusing the walk's own ratio rather than inventing a clearance means
+        // a recovering step lifts exactly as far as a walking one would for the
+        // same distance.
+        let share = self.shift_share().unwrap_or(0.0);
+        let arc = (share * std::f32::consts::PI).sin();
+        let lift_of = |limb: Limb| {
+            if Some(limb) == self.bearing {
+                return 0.0;
+            }
+            self.stance
+                .iter()
+                .find(|footing| footing.limb == limb)
+                .map_or(0.0, |footing| {
+                    footing.from.length() * super::speed::LIFT_OF_STRIDE * arc
+                })
+        };
         let contacts = rig.ground_contacts();
+        let mut grounded = Vec::with_capacity(contacts.len());
         for &limb in &contacts {
             let Some(&joint) = rig.in_zone(Zone::Extremity(limb)).first() else {
                 continue;
             };
-            solve_contact(rig, pose, limb, rig.joints[joint].position);
+            let lift = lift_of(limb);
+            solve_contact(
+                rig,
+                pose,
+                limb,
+                rig.joints[joint].position + self.offset_of(limb) + Vec3::Y * lift,
+            );
+            if lift <= SETTLED {
+                grounded.push(limb);
+            }
         }
-        if !contacts.is_empty() {
-            plant_feet_of(rig, pose, &contacts, &ground, &FootingConfig::default());
+        // **Plant what is down, not what is stepping** — the same distinction
+        // `gait::Walk::settle` makes when it hands the plant its stance list
+        // alone. Planting a foot in mid-step would seat the sole it has just
+        // lifted straight back onto the floor and undo the arc.
+        if !grounded.is_empty() {
+            plant_feet_of(rig, pose, &grounded, &ground, &FootingConfig::default());
         }
         let fidgeting = self.twitch(rig, pose);
 
@@ -504,19 +708,48 @@ impl Idle {
                 // shifted onto the leg it was already standing on would have
                 // nothing to do, and one that chose at random would sometimes
                 // do it twice in a row.
+                //
+                // **Unless a foot is out of place, in which case onto one that
+                // is not** (#276). Settling onto a leg that is already home is
+                // what unloads the displaced one and lets it recover; settling
+                // onto the displaced one would pin it there for another whole
+                // shift. A limb absent from `stance` is standing where it
+                // belongs, which is what makes this a lookup rather than a
+                // measurement.
                 self.was = self.bearing;
-                self.bearing = Some(match self.bearing {
-                    Some(Limb::HindLeft) => Limb::HindRight,
-                    Some(_) => Limb::HindLeft,
-                    None if rng.random::<bool>() => Limb::HindLeft,
-                    None => Limb::HindRight,
+                let settled = [Limb::HindLeft, Limb::HindRight]
+                    .into_iter()
+                    .find(|limb| self.stance.iter().all(|footing| footing.limb != *limb));
+                self.bearing = Some(match (self.stance.is_empty(), settled) {
+                    (false, Some(limb)) => limb,
+                    _ => match self.bearing {
+                        Some(Limb::HindLeft) => Limb::HindRight,
+                        Some(_) => Limb::HindLeft,
+                        None if rng.random::<bool>() => Limb::HindLeft,
+                        None => Limb::HindRight,
+                    },
                 });
                 Stage::Running(config.shift_time - (dt - left))
             }
             Stage::Waiting(left) => Stage::Waiting(left - dt),
             Stage::Running(left) if left <= dt => {
                 self.was = self.bearing;
-                Stage::Waiting(draw(&mut rng, config.min_shift, config.max_shift) - (dt - left))
+                // What the shift just recovered is home for good; what is left
+                // needs another leg unloaded (#276). Self-terminating: each
+                // shift zeroes every displaced leg it is not settling onto, so
+                // a biped closes in one shift from a single-support stop and
+                // two from a double-support one, and only then does the body go
+                // back to standing about.
+                for footing in &mut self.stance {
+                    footing.from = footing.offset;
+                }
+                self.stance
+                    .retain(|footing| footing.offset.length() > SETTLED);
+                if self.stance.is_empty() {
+                    Stage::Waiting(draw(&mut rng, config.min_shift, config.max_shift) - (dt - left))
+                } else {
+                    Stage::Waiting(0.0)
+                }
             }
             Stage::Running(left) => Stage::Running(left - dt),
         };
@@ -897,6 +1130,241 @@ pub fn glance_config() -> GazeConfig {
 mod tests {
     use super::*;
     use crate::plan::{BodyPlan, HumanoidParams};
+
+    /// A body mid-stride at `cycle`, with the contacts that were bearing it.
+    fn walking(rig: &Rig, cycle: f32) -> (Pose, Vec<Limb>) {
+        let speed = crate::anim::Speed::new(rig, 1.4);
+        let gait = speed.gait(rig);
+        let stride = speed.stride(rig);
+        let mut pose = Pose::rest(rig);
+        // The patch BENEATH the query point. A constant `Ground::level` at the
+        // origin is a patch AT the origin, and the plant seats a foot on
+        // `position` — see `transition`'s own note, which cost a session.
+        let walked = crate::anim::Walk::at(cycle).drive(rig, &mut pose, &gait, &stride, |at| {
+            Some(Ground::level(Vec3::new(at.x, 0.0, at.z)))
+        });
+        (pose, walked.steps.stance.clone())
+    }
+
+    /// Where each hind foot stands in a posed body.
+    fn feet(rig: &Rig, pose: &Pose) -> [Vec3; 2] {
+        let posed = pose.forward(rig);
+        [Limb::HindLeft, Limb::HindRight]
+            .map(|limb| posed.positions[rig.in_zone(Zone::Extremity(limb))[0]])
+    }
+
+    /// One idle frame, driven the way a caller drives it.
+    ///
+    /// **On a FRESH rest pose every frame**, which is what `drive_on` is built
+    /// for: it adds the sway to `pose.translation` rather than assigning it, so
+    /// a caller that hands back last frame's pose accumulates the drift. Doing
+    /// that here walked a body twelve metres sideways in seven seconds and had
+    /// nothing to do with the stance.
+    fn tick(rig: &Rig, idle: &mut Idle) -> (Pose, Idled) {
+        let mut pose = Pose::rest(rig);
+        let idled = idle.drive(rig, &mut pose, 1.0 / 60.0);
+        (pose, idled)
+    }
+
+    /// How far each foot stands from where it rests, horizontally.
+    ///
+    /// Horizontal, because that is what a skate IS. A foot settling downward
+    /// out of a walk's crouch has moved without sliding, and counting that
+    /// would fail a body doing exactly the right thing.
+    fn from_home(rig: &Rig, pose: &Pose) -> [f32; 2] {
+        let posed = pose.forward(rig);
+        let rest = Pose::rest(rig).forward(rig).positions;
+        [Limb::HindLeft, Limb::HindRight].map(|limb| {
+            let joint = rig.in_zone(Zone::Extremity(limb))[0];
+            let (at, home) = (posed.positions[joint], rest[joint]);
+            Vec3::new(at.x - home.x, 0.0, at.z - home.z).length()
+        })
+    }
+
+    #[test]
+    fn an_idle_nobody_walked_into_stands_exactly_where_it_used_to() {
+        // **The identity anchor** (#276). The stance is an input a caller
+        // seeds, not a state the idle invents, so a body that has always been
+        // standing must be untouched by the whole mechanism — to the bit, not
+        // to a tolerance, because there is no arithmetic in the path for a
+        // tolerance to absorb.
+        let rig = body(1.75);
+        let mut untouched = Idle::seeded(11);
+        let mut cleared = Idle::seeded(11);
+        cleared.arrive(&rig, &Pose::rest(&rig), &[]);
+        for frame in 0..600 {
+            let mut one = Pose::rest(&rig);
+            let mut two = Pose::rest(&rig);
+            untouched.drive(&rig, &mut one, 1.0 / 60.0);
+            cleared.drive(&rig, &mut two, 1.0 / 60.0);
+            assert_eq!(
+                one.rotations, two.rotations,
+                "frame {frame}: seeding an empty stance moved a body that was standing"
+            );
+            assert_eq!(one.translation, two.translation, "frame {frame}");
+        }
+    }
+
+    #[test]
+    fn a_body_that_stops_mid_stride_keeps_the_foot_it_was_standing_on() {
+        // The defect itself, at the phase it is worst: at a handoff the legs
+        // are at full split and the idle used to drag BOTH feet home on its
+        // very first frame. Measured against the ARRIVAL pose, because what
+        // must not move is where the foot actually was.
+        let rig = body(1.75);
+        let (walked, bearing) = walking(&rig, 0.0);
+        let arrived = feet(&rig, &walked);
+
+        let mut naive = Idle::seeded(5);
+        let mut seeded = Idle::seeded(5);
+        seeded.arrive(&rig, &walked, &bearing);
+
+        let (one, _) = tick(&rig, &mut naive);
+        let (two, _) = tick(&rig, &mut seeded);
+
+        let dragged = feet(&rig, &one);
+        let held = feet(&rig, &two);
+        let horizontal = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+        let worst_dragged = (0..2)
+            .map(|which| horizontal(dragged[which], arrived[which]))
+            .fold(0.0f32, f32::max);
+        let worst_held = (0..2)
+            .map(|which| horizontal(held[which], arrived[which]))
+            .fold(0.0f32, f32::max);
+        println!(
+            "first idle frame: unseeded slid {:.1} mm, seeded slid {:.1} mm",
+            worst_dragged * 1000.0,
+            worst_held * 1000.0
+        );
+        assert!(
+            worst_held * 10.0 < worst_dragged,
+            "a seeded idle slid a planted foot {:.1} mm on its first frame against {:.1} \
+             unseeded — the stance is not being kept",
+            worst_held * 1000.0,
+            worst_dragged * 1000.0
+        );
+    }
+
+    #[test]
+    fn a_foot_only_ever_moves_while_it_is_unloaded() {
+        // **The guard that makes the others mean something.** Recovering the
+        // stance is only legitimate because a recovering foot is one the body
+        // has taken its weight off; a foot that moved while bearing would be
+        // the same skate in slower motion. Swept over every stopping phase,
+        // because this quantity varied twenty to one when the question was
+        // WHEN to stop and there is no reason to trust one phase now.
+        let rig = body(1.75);
+        for sample in 0..20 {
+            let cycle = sample as f32 / 20.0;
+            let (walked, bearing) = walking(&rig, cycle);
+            let mut idle = Idle::seeded(3);
+            idle.arrive(&rig, &walked, &bearing);
+            let mut before: Option<[Vec3; 2]> = None;
+            for frame in 0..600 {
+                let (pose, idled) = tick(&rig, &mut idle);
+                let after = feet(&rig, &pose);
+                if let (Some(previous), Some(carrying)) = (before, idled.bearing) {
+                    let which = usize::from(carrying == Limb::HindRight);
+                    // Horizontal only, and against the previous frame: the sway
+                    // moves the root under a bearing foot every frame, and
+                    // holding it still against that is exactly what
+                    // `solve_contact` is there for.
+                    let (a, b) = (after[which], previous[which]);
+                    let slid = Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+                    assert!(
+                        slid < 0.002,
+                        "cycle {cycle:.2} frame {frame}: the foot bearing the body slid \
+                         {:.2} mm in one frame",
+                        slid * 1000.0
+                    );
+                }
+                before = Some(after);
+            }
+        }
+    }
+
+    #[test]
+    fn a_recovering_foot_leaves_the_ground_instead_of_skimming_it() {
+        // **Unweighted is not the same as invisible.** Sliding an unweighted
+        // foot along the floor is far better than dragging a weighted one and
+        // it is still a foot sliding on the floor: the overlands harness caught
+        // one travelling 127 mm and rising across a single recovery. A person
+        // lifts and places. So a foot on its way home must actually be off the
+        // ground while it travels, and this asserts the two together —
+        // clearance in the air, and no horizontal travel while it is down.
+        let rig = body(1.75);
+        let (walked, bearing) = walking(&rig, 0.0);
+        let mut idle = Idle::seeded(4);
+        idle.arrive(&rig, &walked, &bearing);
+        let floor = feet(&rig, &Pose::rest(&rig)).map(|foot| foot.y);
+
+        let mut clearance = 0.0f32;
+        let mut skimmed = 0.0f32;
+        let mut before: Option<[Vec3; 2]> = None;
+        for _ in 0..300 {
+            let (pose, _) = tick(&rig, &mut idle);
+            let at = feet(&rig, &pose);
+            for which in 0..2 {
+                let up = at[which].y - floor[which];
+                clearance = clearance.max(up);
+                if up <= 0.001
+                    && let Some(previous) = before
+                {
+                    let (a, b) = (at[which], previous[which]);
+                    skimmed = skimmed.max(Vec3::new(a.x - b.x, 0.0, a.z - b.z).length());
+                }
+            }
+            before = Some(at);
+        }
+        println!(
+            "recovery: {:.1} mm of clearance, worst slide while down {:.2} mm/frame",
+            clearance * 1000.0,
+            skimmed * 1000.0
+        );
+        assert!(
+            clearance > 0.01,
+            "a foot recovering a third of a metre of stance rose only {:.1} mm — it is \
+             skimming the floor rather than stepping",
+            clearance * 1000.0
+        );
+        assert!(
+            skimmed < 0.002,
+            "a foot slid {:.2} mm in one frame while it was on the ground",
+            skimmed * 1000.0
+        );
+    }
+
+    #[test]
+    fn a_stance_closes_itself_within_a_few_seconds() {
+        // A body that kept its arrival stance for ever would be a worse and
+        // longer-lived defect than the one this fixes — in a social space
+        // avatars stand about for minutes at a time. It closes through the
+        // weight shifts, and deliberately NOT on the leisure schedule, whose
+        // `min_shift` is ten seconds and `max_shift` forty.
+        let rig = body(1.75);
+        for sample in 0..20 {
+            let cycle = sample as f32 / 20.0;
+            let (walked, bearing) = walking(&rig, cycle);
+            let mut idle = Idle::seeded(9);
+            idle.arrive(&rig, &walked, &bearing);
+            let mut closed = None;
+            for frame in 0..600 {
+                let (pose, _) = tick(&rig, &mut idle);
+                if from_home(&rig, &pose).iter().all(|&out| out < 0.02) {
+                    closed = Some(frame);
+                    break;
+                }
+            }
+            let frames = closed.unwrap_or_else(|| {
+                panic!("cycle {cycle:.2}: the stance had not closed after ten seconds")
+            });
+            assert!(
+                frames < 300,
+                "cycle {cycle:.2}: the stance took {:.1} s to close",
+                frames as f32 / 60.0
+            );
+        }
+    }
 
     fn body(height: f32) -> Rig {
         Rig::from_skeleton(

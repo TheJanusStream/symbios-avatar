@@ -719,7 +719,7 @@ const SHUFFLE_CLEARANCE: f32 = 0.5;
 /// is the solver holding back from the singularity a rest-pose leg permanently
 /// stands at. Sinking further would be treating a reporting threshold as a
 /// geometry problem. See [`super::ground::CONTACT_STRAIN`].
-fn sink_needed(rig: &Rig, limb: Limb, toward: Vec3) -> Option<f32> {
+pub(crate) fn sink_needed(rig: &Rig, limb: Limb, toward: Vec3) -> Option<f32> {
     let reach = rig.limb_reach(limb)?;
     let chain = rig.limb_chain(limb)?;
     let offset = rig.joints[chain[2]].position - rig.joints[chain[0]].position;
