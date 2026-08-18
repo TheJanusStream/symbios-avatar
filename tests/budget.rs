@@ -1067,6 +1067,43 @@ fn the_hair_ceiling_is_what_the_budget_actually_leaves() {
 }
 
 #[test]
+#[ignore = "probe for #116: where the 676 triangles went"]
+fn probe_where_the_body_got_cheaper() {
+    // The one question that separates a budget improvement from a quality
+    // regression: is the drop in the MESH or in what is DRAWN from it? An
+    // unchanged raw body with a smaller drawn total is suppression; a smaller
+    // raw body is refinement, and a face 676 triangles less resolved is a
+    // defect wearing a saving's clothes.
+    for (seed, name, breadth, length) in [
+        (1i64, "long broad", 1.0f32, 1.0f32),
+        (42, "long broad", 1.0, 1.0),
+    ] {
+        let mut record = AvatarRecord::new("Bald", Archetype::default());
+        record.reroll(seed);
+        if let Archetype::Humanoid(params) = &mut record.archetype {
+            params.head_breadth = breadth;
+            params.face_length = length;
+        }
+        record.hair = HairRecord::bald();
+        record.sanitize();
+        let avatar = Avatar::build(&record).expect("a biped builds");
+        println!(
+            "seed {seed} {name}: raw body {} faces / {} tris, drawn total {} tris",
+            avatar.parts.body.face_count(),
+            avatar.parts.body.triangulated().len(),
+            avatar.budget.tris
+        );
+        for mesh in avatar.drawn(0.0) {
+            println!(
+                "    {:?}: {} tris",
+                mesh.kind,
+                mesh.mesh.triangulated().len()
+            );
+        }
+    }
+}
+
+#[test]
 fn the_tier_bites_only_where_a_record_asks_for_more_than_the_budget_holds() {
     // **The whole claim the tier rests on** (#209). A ceiling that trimmed
     // ordinary heads would be the smaller-counts answer wearing a ceiling's

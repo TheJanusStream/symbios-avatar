@@ -510,7 +510,7 @@ impl PolyMesh {
             }
             let anchor = self.positions[face[0] as usize];
             // The un-normalised cross product is twice the triangle's area, so
-            // summing them weights by area for free.
+            // summing them gives the face's plane and its area together.
             let weighted: Vec3 = (1..face.len() - 1)
                 .map(|corner| {
                     let a = self.positions[face[corner] as usize] - anchor;
@@ -518,8 +518,44 @@ impl PolyMesh {
                     a.cross(b)
                 })
                 .sum();
-            for &index in face {
-                normals[index as usize] += weighted;
+            let Some(plane) = weighted.try_normalize() else {
+                continue;
+            };
+            // **Weighted by the ANGLE the face subtends at each corner, not by
+            // its area** (#116). Area weighting is the cheaper thing and it is
+            // wrong in exactly one place, which happens to be the place that
+            // matters: at a crease, the larger face on one side outvotes the
+            // smaller one on the other, and the average tips until it points
+            // ALONG the crease and so into the material. Measured on the
+            // eight-point cage, twelve vertices of 8,974 were buried inside
+            // their own body at every distance — ten in the crotch notch and
+            // two under the nose, both concave saddles.
+            //
+            // It is not a shading complaint. `Garment::cut` offsets its shells
+            // along these normals, so a garment vertex at the crotch was pushed
+            // INSIDE the skin, which is the whole premise of the dress module
+            // failing exactly where the cloth is. #117 counted 24 to 40 tangled
+            // corners per body from the same crease.
+            //
+            // Angle weighting is the standard remedy and costs a dot product
+            // and an acos per corner. It is also invariant to how a quad
+            // happens to be split, which area weighting is not.
+            let corners = face.len();
+            for (corner, &index) in face.iter().enumerate() {
+                let here = self.positions[index as usize];
+                let before = self.positions[face[(corner + corners - 1) % corners] as usize];
+                let after = self.positions[face[(corner + 1) % corners] as usize];
+                let angle = match (
+                    (before - here).try_normalize(),
+                    (after - here).try_normalize(),
+                ) {
+                    (Some(back), Some(forth)) => back.dot(forth).clamp(-1.0, 1.0).acos(),
+                    // A degenerate corner subtends nothing and votes for
+                    // nothing, rather than voting for whatever the last
+                    // normalisation left in the register.
+                    _ => 0.0,
+                };
+                normals[index as usize] += plane * angle;
             }
         }
         for normal in &mut normals {

@@ -221,12 +221,30 @@ pub struct Sowing<'a> {
 /// REQUEST. Everything under the corner is untouched, bit for bit.
 ///
 /// Provenance: **derived** from the budget. The dearest body the sweep in
-/// `tests/budget.rs` reaches costs 26,670 triangles without any hair on it, and
+/// `tests/budget.rs` reaches costs 25,994 triangles without any hair on it, and
 /// the WebGL2 target is 30,000, so this is what is left over with a little kept
 /// back — and `the_hair_ceiling_is_what_the_budget_actually_leaves` re-measures
 /// the leftover rather than trusting this docstring: a leftover-defined
 /// ceiling taken on faith goes stale the moment the body's own cost moves.
-pub const MAX_TRIANGLES: usize = 3_200;
+///
+/// **Raised from 3,200 under #116** (2026-08-18), which is that test doing the
+/// job it was written for. Angle-weighted vertex normals carve a marginally
+/// different surface, which puts different vertices in each refinement band, so
+/// the dearest bald body fell from 26,670 to 25,994 and the leftover rose to
+/// 4,006.
+///
+/// **The rise was evidenced rather than taken**, because a body that got
+/// cheaper by losing detail would be a regression wearing a saving's clothes
+/// and this constant would lock it in. What the sweep actually shows is the
+/// SPREAD collapsing — seed 42 was the outlier at 10,512 faces against seed 1's
+/// 10,159, and afterwards they are 10,075 and 10,153 — so a body that had been
+/// refining against a tessellation artefact came back to the pack. Angle
+/// weighting is invariant to how a quad is split and area weighting is not,
+/// which is the mechanism. Judged by render on that same seed 42: the
+/// difference is a diffuse shading shift brightest at the eye rims, nostrils,
+/// lips and jawline, about a hundred pixels in a million past a channel delta
+/// of 40, and no feature moved.
+pub const MAX_TRIANGLES: usize = 3_300;
 
 /// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].
 ///

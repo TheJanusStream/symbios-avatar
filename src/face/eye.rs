@@ -156,6 +156,20 @@ pub struct Eye {
     pub upper_joint: Option<usize>,
     /// The joint the lower lid rotates on. See [`Eye::upper_joint`].
     pub lower_joint: Option<usize>,
+    /// The joint the globe itself turns on, once [`Eyes::rig`] has run.
+    ///
+    /// **This is what lets an eye look somewhere its head is not pointing**
+    /// (#235). The iris is baked into the globe as vertex colour, which is what
+    /// makes the pair one draw and costs nothing per frame — but a baked colour
+    /// cannot move, so before this the eye was welded to the skull and a body
+    /// could not glance without turning its whole head. Rotating the globe
+    /// carries the baked iris around with it and needs no mutable mesh, no
+    /// second material and no atlas space: the three routes #235 weighed and
+    /// rejected.
+    ///
+    /// `None` before [`Eyes::rig`], like the lid joints beside it.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub globe_joint: Option<usize>,
     /// Radius of the globe.
     pub radius: f32,
     /// The sign of this eye's `x`, so `+1` for the body's left eye and `-1` for
@@ -547,10 +561,19 @@ impl Eyes {
         // the same walk (see `Eyes::lids`).
         let (left_upper, left_lower) = (hang(self.left.pivot), hang(self.left.pivot));
         let (right_upper, right_lower) = (hang(self.right.pivot), hang(self.right.pivot));
+        // And one per globe, on the same pivot as the lids that close over it,
+        // because an eyeball turns about its own centre and that is where the
+        // pivot already is. Hung after the lids so the four lid joints keep the
+        // indices they have always had — `Eyes::lids` walks them by field
+        // rather than by index, but a rig fingerprint does not.
+        let left_globe = hang(self.left.pivot);
+        let right_globe = hang(self.right.pivot);
         self.left.upper_joint = left_upper;
         self.left.lower_joint = left_lower;
+        self.left.globe_joint = left_globe;
         self.right.upper_joint = right_upper;
         self.right.lower_joint = right_lower;
+        self.right.globe_joint = right_globe;
     }
 
     /// The four lid shells with the joint each rotates on, in one fixed order.
@@ -614,7 +637,95 @@ impl Eyes {
             }
         }
     }
+
+    /// Points both eyes at a target, in body space.
+    ///
+    /// **The half of a gaze the head cannot do** (#235). [`crate::anim::look_at`]
+    /// turns the chain of chest, neck and head; this turns the globes inside the
+    /// head that has just been turned, which is why it is called AFTER it and
+    /// aims at the same target. What each eye then takes is whatever the head
+    /// did not, which is the right composition rather than a convenient one: a
+    /// gaze shift really is led by the eyes and finished by the head, and the
+    /// eyes really do come back toward centre as the head arrives.
+    ///
+    /// Each eye is aimed from where IT is rather than from a point between
+    /// them, so a near target converges the pair and a far one leaves them
+    /// parallel — vergence for free, out of the geometry, with nothing to tune.
+    ///
+    /// Clamped to [`OCULAR_LIMIT`] as a cone about straight ahead. Returns how
+    /// far the further eye had to turn, in radians, and whether both reached
+    /// the target within that limit — a caller aiming a head can use the second
+    /// to decide whether to turn further.
+    ///
+    /// Does nothing before [`Eyes::rig`], and nothing to a pose that is not
+    /// this rig's.
+    pub fn look(&self, rig: &Rig, pose: &mut crate::anim::Pose, target: Vec3) -> (f32, bool) {
+        if !pose.fits(rig) {
+            return (0.0, false);
+        }
+        // The head as it stands THIS frame, after whatever turned it. Read once
+        // rather than per eye: both globes hang off the same head and a second
+        // forward pass would only cost the same answer again.
+        let posed = pose.forward(rig);
+        let mut turned = 0.0f32;
+        let mut reached = true;
+        for eye in [&self.left, &self.right] {
+            let Some(joint) = eye.globe_joint else {
+                return (0.0, false);
+            };
+            let Some(parent) = rig.joints[joint].parent else {
+                continue;
+            };
+            // Into the joint's PARENT space, which is the frame its rotation is
+            // written in. Aiming in body space and assigning the result would
+            // point the eye correctly only on a body whose head happens to face
+            // down +Z.
+            let outer = posed.rotations[parent];
+            let toward = target - posed.positions[joint];
+            let Some(direction) = (outer.inverse() * toward).try_normalize() else {
+                continue;
+            };
+            let aim = Quat::from_rotation_arc(landmark::FORWARD, direction);
+            let (axis, angle) = aim.to_axis_angle();
+            let angle = angle.rem_euclid(std::f32::consts::TAU);
+            // Folded to `-PI..=PI` for the same reason `level_feet` folds its
+            // ankle: `to_axis_angle` reports the short way or the long way
+            // depending on the sign of the scalar part, and a small glance must
+            // never be mistaken for a nearly-full turn.
+            let angle = if angle > std::f32::consts::PI {
+                angle - std::f32::consts::TAU
+            } else {
+                angle
+            };
+            reached &= angle.abs() <= OCULAR_LIMIT;
+            turned = turned.max(angle.abs().min(OCULAR_LIMIT));
+            if let Some(rotation) = pose.rotations.get_mut(joint) {
+                *rotation = Quat::from_axis_angle(axis, angle.clamp(-OCULAR_LIMIT, OCULAR_LIMIT));
+            }
+        }
+        (turned, reached)
+    }
 }
+
+/// Furthest an eye turns from straight ahead before the head takes over, in
+/// radians.
+///
+/// **Thirty degrees, which is a habit rather than a hinge.** The mechanical
+/// range of an eye is nearer 45 degrees, but people do not use it: past about
+/// this angle a gaze shift is taken by the head and the eyes come back toward
+/// centre as it arrives. Clamping at the mechanical limit would draw an eye
+/// swivelled into the corner of its socket and held there, which reads as a
+/// stare rather than as a look.
+///
+/// The clamp is on the whole turn rather than per axis, so a diagonal glance is
+/// limited the same distance as a level one — an eye's range is a cone, not a
+/// box.
+///
+/// Provenance: **looked up**, the customary comfortable ocular range, and it
+/// wants a citation it does not have. The load-bearing claim is the habit
+/// rather than the hinge: that the number to draw is where people stop using
+/// their eyes, not where the eyes stop moving.
+pub const OCULAR_LIMIT: f32 = 0.52;
 
 /// How large this body's eyeball is, in metres.
 ///
@@ -869,6 +980,7 @@ fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
         pivot,
         upper_joint: None,
         lower_joint: None,
+        globe_joint: None,
         radius,
         side,
     }
@@ -914,6 +1026,159 @@ mod tests {
             &HumanoidParams::default().skeleton(&crate::Composites::default()),
             params,
         )
+    }
+
+    /// A rigged pair on a body, with the rig they were hung on.
+    fn rigged() -> (Rig, Eyes) {
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
+        let mut rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let mut pair = eyes(&EyeParams::default());
+        pair.rig(&mut rig);
+        (rig, pair)
+    }
+
+    /// Where the iris centre of each eye points, in HEAD-LOCAL space.
+    ///
+    /// The pupil is the globe's forward pole, so the direction the eye is
+    /// looking IS the forward axis of its own joint carried into the head's
+    /// frame. Read from the pose rather than from the mesh, because the colours
+    /// are baked and the mesh cannot answer.
+    fn iris_aim(rig: &Rig, pair: &Eyes, pose: &crate::anim::Pose) -> [Vec3; 2] {
+        let posed = pose.forward(rig);
+        let head = posed.rotations[pair.head].inverse();
+        [&pair.left, &pair.right].map(|eye| {
+            let joint = eye.globe_joint.expect("a rigged pair");
+            (head * (posed.rotations[joint] * landmark::FORWARD)).normalize()
+        })
+    }
+
+    #[test]
+    fn an_eye_looks_somewhere_its_head_is_not_pointing() {
+        // **The thing that could not happen before #235.** The iris is baked
+        // into the globe as vertex colour, so it was welded to the skull and a
+        // body could not glance without turning its whole face. The guard the
+        // issue asked for is that the iris centre moves in HEAD-LOCAL space
+        // under a change of gaze — head-local, because moving in BODY space
+        // proves only that the head turned.
+        let (rig, pair) = rigged();
+        let head = rig.joints[pair.head].position;
+
+        let mut ahead = crate::anim::Pose::rest(&rig);
+        pair.look(&rig, &mut ahead, head + landmark::FORWARD * 3.0);
+        let straight = iris_aim(&rig, &pair, &ahead);
+
+        let mut aside = crate::anim::Pose::rest(&rig);
+        let (turned, reached) = pair.look(
+            &rig,
+            &mut aside,
+            head + (landmark::FORWARD * 3.0 + Vec3::X * 1.2),
+        );
+        let glanced = iris_aim(&rig, &pair, &aside);
+
+        assert!(
+            reached,
+            "a target 22 degrees off centre is inside the range"
+        );
+        assert!(turned > 0.3, "the eyes turned only {turned:.3} rad");
+        for which in 0..2 {
+            let moved = straight[which].angle_between(glanced[which]);
+            assert!(
+                moved > 0.25,
+                "eye {which} moved {:.1} degrees in head-local space — the gaze is still \
+                 welded to the skull",
+                moved.to_degrees()
+            );
+        }
+    }
+
+    #[test]
+    fn a_near_target_converges_the_pair_and_a_far_one_does_not() {
+        // Vergence, and it is worth a guard precisely because nothing
+        // implements it: each eye is aimed from where IT is, so the convergence
+        // falls out of the geometry. If someone later aims both from a point
+        // between them to save a forward pass, this is what notices.
+        let (rig, pair) = rigged();
+        let head = rig.joints[pair.head].position;
+        let angle_between = |distance: f32| {
+            let mut pose = crate::anim::Pose::rest(&rig);
+            pair.look(&rig, &mut pose, head + landmark::FORWARD * distance);
+            let aim = iris_aim(&rig, &pair, &pose);
+            aim[0].angle_between(aim[1])
+        };
+        let near = angle_between(0.30);
+        let far = angle_between(50.0);
+        println!(
+            "vergence: {:.2} degrees at 300 mm, {:.3} at 50 m",
+            near.to_degrees(),
+            far.to_degrees()
+        );
+        assert!(
+            near > far + 0.05,
+            "a target at 300 mm converged the eyes {:.2} degrees against {:.2} at 50 m",
+            near.to_degrees(),
+            far.to_degrees()
+        );
+        assert!(
+            far < 0.02,
+            "eyes on a target 50 m away should be all but parallel, and are {:.2} degrees \
+             apart",
+            far.to_degrees()
+        );
+    }
+
+    #[test]
+    fn an_eye_stops_at_the_ocular_limit_instead_of_swivelling_into_its_corner() {
+        // A gaze past what an eye does is the head's business. Clamped as a
+        // CONE rather than per axis, so a diagonal target is limited the same
+        // distance as a level one.
+        let (rig, pair) = rigged();
+        let head = rig.joints[pair.head].position;
+        for target in [
+            Vec3::X * 3.0,
+            Vec3::new(1.0, 1.0, 0.2).normalize() * 3.0,
+            -Vec3::Z * 3.0,
+        ] {
+            let mut pose = crate::anim::Pose::rest(&rig);
+            let (turned, reached) = pair.look(&rig, &mut pose, head + target);
+            assert!(
+                !reached,
+                "target {target:?} should be out of an eye's range"
+            );
+            assert!(
+                turned <= OCULAR_LIMIT + 1e-4,
+                "an eye turned {turned:.3} rad past a limit of {OCULAR_LIMIT}"
+            );
+            for aim in iris_aim(&rig, &pair, &pose) {
+                let off = aim.angle_between(landmark::FORWARD);
+                assert!(
+                    off <= OCULAR_LIMIT + 1e-3,
+                    "an eye ended {:.1} degrees off centre against a limit of {:.1}",
+                    off.to_degrees(),
+                    OCULAR_LIMIT.to_degrees()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rigging_the_pair_twice_does_not_hang_a_second_set_of_joints() {
+        // `rig` returns early once the pair is rigged, and the globe joints
+        // must be inside that guard rather than beside it — a second call that
+        // hung two more globes would leave the first pair bound to joints
+        // nothing drives.
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
+        let mut rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let mut pair = eyes(&EyeParams::default());
+        pair.rig(&mut rig);
+        let after_one = rig.joints.len();
+        let joints = [pair.left.globe_joint, pair.right.globe_joint];
+        pair.rig(&mut rig);
+        assert_eq!(rig.joints.len(), after_one, "a second rig hung more joints");
+        assert_eq!(
+            [pair.left.globe_joint, pair.right.globe_joint],
+            joints,
+            "a second rig moved the globes onto different joints"
+        );
     }
 
     #[test]

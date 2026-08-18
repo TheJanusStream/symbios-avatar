@@ -428,13 +428,20 @@ fn containment_is_exact_on_a_closed_body() {
     // **A COUNT now, not a universal, and that is a defect being pinned rather
     // than a rule being softened** (#107, #116). On the four-point cage this
     // held for every one of 7,126 vertices with nothing buried at all. On the
-    // eight-point cage at one subdivision, twelve of 8,974 are buried — six
-    // mirror-symmetric pairs, all of them in the two saddles this comment
-    // already names: ten at the crotch, where three bones meet and the notch
-    // between the thighs closes to a crease, and two under the nose. The
-    // averaged vertex normal at a crease points ALONG it and therefore into the
-    // body, and the coarser the mesh the further into it that goes: two of the
-    // crotch pair never come out at any distance.
+    // eight-point cage at one subdivision, twelve of 8,974 were buried — six
+    // mirror-symmetric pairs in two saddles: ten at the crotch, where three
+    // bones meet and the notch between the thighs closes to a crease, and two
+    // under the nose. An AREA-weighted vertex normal at a crease points ALONG
+    // it and therefore into the body, because the larger face on one side
+    // outvotes the smaller on the other.
+    //
+    // **Four now, and the nose is gone** (#116, 2026-08-18). `vertex_normals`
+    // weights by the ANGLE a face subtends at each corner instead, which is the
+    // standard remedy and is what a crease needs. What survives is two mirror
+    // pairs at the very bottom of the crotch notch — the tightest part of the
+    // crease, where a normal has least room to be right — and driving those to
+    // zero needs resolution there rather than a better average, which is
+    // candidate (b) on the issue.
     //
     // That is real and it has a consequence — `Garment::cut` offsets along
     // these same normals, so a garment vertex there is pushed inside the skin —
@@ -474,10 +481,19 @@ fn containment_is_exact_on_a_closed_body() {
         })
         .map(|(vertex, _)| vertex)
         .collect();
+    println!(
+        "{} of {} vertices buried at every distance to {:.1} mm",
+        buried.len(),
+        body.positions.len(),
+        step * 10.0 * 1000.0
+    );
+    for &vertex in &buried {
+        println!("  vertex {vertex} at {:?}", body.positions[vertex]);
+    }
     assert!(
-        buried.len() <= 12,
+        buried.len() <= 4,
         "{} vertices are still inside the body at every distance to {:.1} mm along \
-         their own normal, against 12 known saddle vertices: {buried:?}",
+         their own normal, against 4 known crotch-crease vertices: {buried:?}",
         buried.len(),
         step * 10.0 * 1000.0
     );

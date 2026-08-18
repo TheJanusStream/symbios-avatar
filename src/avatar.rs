@@ -629,7 +629,6 @@ impl Avatar {
             return Vec::new();
         };
         let to_body = Mat4::from_translation(self.rig.joints[eyes.head].position);
-        let joint = eyes.head as u16;
 
         let _ = closure;
         let mut globes = PolyMesh::new();
@@ -647,6 +646,17 @@ impl Avatar {
                     .map(|&point| face::eye::iris_of(point - eye.pivot, &eyes.params))
                     .collect(),
             );
+            // **Bound to its OWN joint, before the append** (#235). Both globes
+            // used to bind rigidly to the head, which is what welded the baked
+            // iris to the skull: a body could not glance without turning its
+            // whole face. Each globe binds to the joint hung on its own pivot,
+            // so `Eyes::look` turns it and the baked colour rides along —
+            // exactly as the lids' geometry rides their joints.
+            //
+            // Per globe rather than once over the pair, because after this they
+            // are two different bindings inside one mesh, and `bind_rigidly`
+            // assigns every vertex it is given.
+            globe.bind_rigidly(eye.globe_joint.unwrap_or(eyes.head) as u16);
             globes.append(&globe);
         }
 
@@ -654,8 +664,7 @@ impl Avatar {
             return Vec::new();
         }
         globes.set_normals(globes.vertex_normals());
-        let mut placed = globes.transformed(to_body);
-        placed.bind_rigidly(joint);
+        let placed = globes.transformed(to_body);
         vec![AvatarMesh {
             kind: MeshKind::Eye,
             mesh: placed.split_uv_seams(),
@@ -1404,6 +1413,66 @@ mod tests {
             .position(|(kind, _)| *kind == MeshKind::Skin)
             .expect("a body has skin");
         assert_ne!(open[skin].1, shut[skin].1, "the lids did not move");
+    }
+
+    #[test]
+    fn a_glance_moves_the_globes_and_leaves_the_head_alone() {
+        // **The integration half of #235.** `Eyes::look` writing a rotation
+        // onto a joint proves nothing on its own: the globes must be BOUND to
+        // those joints for the pose to reach the drawn mesh, and before this
+        // both were bound rigidly to the head. Each globe is bound before the
+        // pair is appended into one mesh, so the binding has to survive that
+        // append — which is precisely the step a single `bind_rigidly` over the
+        // finished pair would have flattened.
+        let avatar = biped(7);
+        let eyes = avatar.parts.eyes.as_ref().expect("a biped has eyes");
+        let head = avatar.rig.joints[eyes.head].position;
+
+        let globes_of = |target: Vec3| {
+            let mut pose = Pose::rest(&avatar.rig);
+            eyes.look(&avatar.rig, &mut pose, target);
+            avatar
+                .posed(&pose, 0.0)
+                .into_iter()
+                .find(|m| m.kind == MeshKind::Eye)
+                .expect("a biped draws its globes")
+                .mesh
+        };
+        let ahead = globes_of(head + Vec3::new(0.0, 0.0, 3.0));
+        let aside = globes_of(head + Vec3::new(1.2, 0.0, 3.0));
+
+        let moved = ahead
+            .positions
+            .iter()
+            .zip(&aside.positions)
+            .map(|(a, b)| a.distance(*b))
+            .fold(0.0f32, f32::max);
+        println!("a glance moved a globe vertex {:.2} mm", moved * 1000.0);
+        assert!(
+            moved > 0.001,
+            "a glance moved the globes {:.3} mm — the pose is not reaching the mesh, so the \
+             baked iris is still welded to the skull",
+            moved * 1000.0
+        );
+
+        // And it is the GLOBES that moved rather than the whole head: the skin
+        // is untouched by a glance, which is the difference between looking and
+        // turning to look.
+        let skin_of = |target: Vec3| {
+            let mut pose = Pose::rest(&avatar.rig);
+            eyes.look(&avatar.rig, &mut pose, target);
+            avatar
+                .posed(&pose, 0.0)
+                .into_iter()
+                .find(|m| m.kind == MeshKind::Skin)
+                .expect("a body has skin")
+                .mesh
+        };
+        assert_eq!(
+            skin_of(head + Vec3::new(0.0, 0.0, 3.0)).positions,
+            skin_of(head + Vec3::new(1.2, 0.0, 3.0)).positions,
+            "a glance moved the face as well as the eyes"
+        );
     }
 
     #[test]

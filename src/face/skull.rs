@@ -2883,13 +2883,29 @@ mod tests {
         // `the_chin_landmark_lands_on_the_chin_of_the_shipped_face` was rewritten
         // to escape (#108).
         //
-        // The floor is 2 mm. Across these seeds the margin runs 3.1 to 7.7 mm —
-        // seed 13 is the tight one — so the bound sits under the state and over
-        // the failure. Deliberately NOT ratcheted onto the distribution: this
-        // guards a cliff rather than a proportion, and the cliff is at zero.
-        // Taking the amplitude to 0.70 would put seed 13 on this floor, which is
-        // the warning firing one step before the defect rather than after it.
-        const MARGIN: f32 = 0.002;
+        // **The floor is 1.5 mm, and it guards a CLIFF rather than a
+        // proportion — the cliff is at zero.** It is deliberately not ratcheted
+        // onto the distribution: the point is a warning that fires one step
+        // before the defect rather than a bound that tracks whatever the last
+        // change left behind.
+        //
+        // Across the seeds the margin runs 1.79 to 4.45 mm, seed 0 being the
+        // tight one. **The note that used to sit here said 3.1 to 7.7 with seed
+        // 13 tightest, and that had gone stale**: by the time #116 measured it
+        // the distribution had halved and seed 0 was living on FIFTY MICRONS of
+        // the old 2 mm floor. Nobody knew, because a passing test prints
+        // nothing — so this one prints its margins now, which is rule 9 of
+        // `docs/instruments.md` and is how the staleness was found at all.
+        //
+        // **Re-blessed from 2.0 under #116** (owner decision, 2026-08-18).
+        // Angle-weighted vertex normals cost a uniform third of a millimetre of
+        // this margin on every seed — the relief carve offsets along those
+        // normals, so correcting them moves the features — and that was
+        // accepted as the price of a normal that does not point into the body
+        // at a crease. 1.5 rather than 1.7 because 1.7 would leave seed 0 with
+        // ninety microns and reproduce exactly the fragility that hid the drift:
+        // a warning one step from the state it watches is not a warning.
+        const MARGIN: f32 = 0.0015;
         /// A reversal under this is surface ripple and not a feature, the same
         /// reason `examples/neckaudit` counts its turns with a deadband.
         const DEADBAND: f32 = 0.0004;
@@ -2944,6 +2960,14 @@ mod tests {
             margins.push((seed, lip.map_or(f32::MAX, |lip| at_chin - lip)));
         }
 
+        println!(
+            "chin-lip margins: {}",
+            margins
+                .iter()
+                .map(|(seed, margin)| format!("seed {seed} {:+.2} mm", margin * 1000.0))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         let swallowed: Vec<_> = margins
             .iter()
             .filter(|(_, margin)| *margin < MARGIN)
