@@ -123,6 +123,15 @@ enum Focus {
     Head,
     Hand,
     Foot,
+    /// The crotch, framed from under it.
+    ///
+    /// **The one view a contact sheet cannot give.** Front, side, back and
+    /// three-quarter all look at the outside of a leg, and the notch between
+    /// the thighs is behind that from every one of them. #279's defect — the
+    /// cloth of a garment folding INSIDE the body at the crease — lived there
+    /// undetected because nothing had ever looked at it, and a fix for it that
+    /// is judged by a body sheet is not judged at all.
+    Crotch,
     /// One follicle region, framed on the mask itself.
     ///
     /// **A head shot is not close enough to judge a brow**. A brow is
@@ -159,11 +168,12 @@ fn main() {
         Some("head") => Some(Focus::Head),
         Some("hand") => Some(Focus::Hand),
         Some("foot") => Some(Focus::Foot),
+        Some("crotch") => Some(Focus::Crotch),
         Some(other) => match Follicle::ALL.into_iter().find(|it| it.name() == other) {
             Some(follicle) => Some(Focus::Region(follicle)),
             None => {
                 eprintln!(
-                    "unknown --close target {other}: expected head, hand, foot or one of {}",
+                    "unknown --close target {other}: expected head, hand, foot, crotch or one of {}",
                     Follicle::ALL.map(Follicle::name).join(", ")
                 );
                 std::process::exit(1);
@@ -703,6 +713,7 @@ fn main() {
         Some(Focus::Head) => "render_head",
         Some(Focus::Hand) => "render_hand",
         Some(Focus::Foot) => "render_foot",
+        Some(Focus::Crotch) => "render_crotch",
         Some(Focus::Region(follicle)) => &format!("render_{}", follicle.name()),
         None => "render",
     };
@@ -1236,6 +1247,35 @@ impl Subject {
                     }
                 }
             }
+            // The pelvis, and the top of each thigh with it: a crotch framed on
+            // the pelvis alone cuts off at exactly the crease under scrutiny.
+            // Bounded to the upper half of the thighs by height rather than by
+            // zone, because `UpperLimb` runs all the way to the knee and framing
+            // on that zooms back out to a pair of legs.
+            Focus::Crotch => {
+                let deformed =
+                    posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+                let mut floor = f32::MAX;
+                let mut ceiling = f32::MIN;
+                for (vertex, zone) in parts.zones.iter().enumerate() {
+                    if matches!(zone, Zone::Pelvis) {
+                        floor = floor.min(deformed[vertex].y);
+                        ceiling = ceiling.max(deformed[vertex].y);
+                    }
+                }
+                let reach = floor - (ceiling - floor) * 0.5;
+                for (vertex, zone) in parts.zones.iter().enumerate() {
+                    // HIND limbs, not `UpperLimb(_)`: that zone is an upper ARM
+                    // as readily as a thigh, and on a T-pose the arms are a
+                    // body's width apart — enough to zoom the frame straight
+                    // back out to the sheet this view exists to improve on.
+                    let thigh = matches!(zone, Zone::UpperLimb(Limb::HindLeft | Limb::HindRight))
+                        && deformed[vertex].y > reach;
+                    if matches!(zone, Zone::Pelvis) || thigh {
+                        hold(deformed[vertex]);
+                    }
+                }
+            }
             // Every vertex the region has a real claim on, which is the mask
             // deciding the frame. Held above a quarter rather than above zero: a
             // fade's outer tail reaches a long way for very little weight, and
@@ -1279,11 +1319,18 @@ impl Subject {
             centre: (lo + hi) * 0.5,
             span: (hi.x - lo.x).max(hi.y - lo.y).max(hi.z - lo.z) * CLOSE_MARGIN,
         };
+        // The fourth view looks down at every close-up but the crotch, which is
+        // the one part of a body that can only be seen from beneath it.
+        let steep = if matches!(focus, Focus::Crotch) {
+            -OVERHEAD_PITCH
+        } else {
+            OVERHEAD_PITCH
+        };
         let frames = [
             of(0.0, 0.0),
             of(FRAC_PI_4, 0.0),
             of(FRAC_PI_2, 0.0),
-            of(0.0, OVERHEAD_PITCH),
+            of(0.0, steep),
         ];
         Some(self.render(pose, closure, &frames))
     }

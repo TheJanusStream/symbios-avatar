@@ -83,12 +83,18 @@ pub struct Garment {
     pub claim: Vec<u32>,
     /// The body faces this garment hides, a subset of [`claim`](Self::claim).
     ///
-    /// The claim minus the row of faces the hem runs through, and the
-    /// difference is `smooth_hem`'s bill. A hem free to leave the face
-    /// boundaries it was cut along may retreat inside the face it crosses, and
-    /// the skin there then has to be drawn; only the faces further in are
-    /// covered whatever the hem does. Measured at about 274 triangles of the
-    /// 1,490 a default outfit covers (`examples/garmentaudit`).
+    /// The claim minus the faces the garment cannot prove it stands over, and
+    /// there are two of those. Most of the difference is `smooth_hem`'s bill: a
+    /// hem free to leave the face boundaries it was cut along may retreat
+    /// inside the face it crosses, and the skin there then has to be drawn;
+    /// only the faces further in are covered whatever the hem does. Measured at
+    /// about 274 triangles of the 1,490 a default outfit covers
+    /// (`examples/garmentaudit`).
+    ///
+    /// The rest is `stood_off`'s: a column that had to be moved off its own
+    /// normal to leave the body is a column that no longer stands over the
+    /// faces it was cut from. About four faces per body, all at the crotch
+    /// (#279).
     ///
     /// This is the set [`Outfit::covered`](crate::Outfit::covered) unions, and
     /// therefore the set the body does not emit.
@@ -284,13 +290,32 @@ impl Garment {
             .collect();
         smooth_hem(mesh, &rings, &source, &mut at);
 
+        // Where each column's outer shell stands. The body vertex pushed along
+        // its own normal wherever that leaves the body, and a point measured
+        // against the body wherever it does not — see [`stood_off`], which is
+        // the whole of #279.
+        let outer: Vec<Vec3> = source
+            .iter()
+            .enumerate()
+            .map(|(column, &from)| {
+                stood_off(mesh, at[column], normals[from as usize], cut.thickness)
+            })
+            .collect();
+
         let mut garment = PolyMesh::new();
-        for (column, &from) in source.iter().enumerate() {
-            garment.push_vertex(at[column] + normals[from as usize] * cut.thickness);
+        for &point in &outer {
+            garment.push_vertex(point);
         }
         let inner_base = garment.vertex_count() as u32;
+        // The inner shell takes the heading the outer one ended up with, not the
+        // normal it started from. A normal that put the outer shell inside the
+        // skin had the inner shell OUTSIDE it by the same mistake, and a garment
+        // whose two shells are swapped is inside out where it matters most.
         for (column, &from) in source.iter().enumerate() {
-            garment.push_vertex(at[column] - normals[from as usize] * cut.bite);
+            let heading = (outer[column] - at[column])
+                .try_normalize()
+                .unwrap_or(normals[from as usize]);
+            garment.push_vertex(at[column] - heading * cut.bite);
         }
 
         for row in &corner_at {
@@ -314,12 +339,32 @@ impl Garment {
         let claim: Vec<u32> = (0..mesh.faces.len() as u32)
             .filter(|&face| mine.get(face as usize).copied().unwrap_or(false))
             .collect();
-        // What the garment hides: the claim, less the row of faces its hem runs
-        // through, because the hem no longer runs along their edges.
-        let mut on_hem = vec![false; mesh.vertex_count()];
+        // What the garment hides: the claim, less the faces it can no longer
+        // prove it encloses. Two things forfeit that proof, and the second was
+        // measured rather than reasoned about (#279).
+        //
+        // - **The row the hem runs through**, because the hem no longer runs
+        //   along their edges after `smooth_hem` slid it.
+        // - **Any face a repaired column touches.** Suppression rests on every
+        //   garment point being a body point pushed along its own normal, so
+        //   the solid stands over the faces it was cut from; a column
+        //   [`stood_off`] had to move is exactly a column where that stopped
+        //   being true. Measured before it was assumed: with the crotch columns
+        //   repaired and this filter absent, four hidden faces of seed 9 have
+        //   no cloth over them at all — by their own face normal as much as by
+        //   the mean of their corners', so it is the cover that went and not
+        //   the ray that asks. It is about four faces of nine and a half
+        //   thousand per body, and they were only ever covered by cloth that
+        //   was inside the skin.
+        let mut forfeits = vec![false; mesh.vertex_count()];
         for ring in &rings {
             for &column in ring {
-                on_hem[source[column as usize] as usize] = true;
+                forfeits[source[column as usize] as usize] = true;
+            }
+        }
+        for (column, &from) in source.iter().enumerate() {
+            if outer[column] != at[column] + normals[from as usize] * cut.thickness {
+                forfeits[from as usize] = true;
             }
         }
         let hidden: Vec<u32> = claim
@@ -328,7 +373,7 @@ impl Garment {
             .filter(|&face| {
                 !mesh.faces[face as usize]
                     .iter()
-                    .any(|&corner| on_hem[corner as usize])
+                    .any(|&corner| forfeits[corner as usize])
             })
             .collect();
 
@@ -518,6 +563,168 @@ const HEM_PASSES: usize = 8;
 const HEM_SMOOTH: f32 = 0.5;
 const HEM_UNSHRINK: f32 = -0.53;
 
+/// How many stand-offs from the nearest skin the walk is allowed.
+///
+/// Measured over the six-seed sweep: the worst column settles in seven, and
+/// most in one. Twenty-four is a backstop against a body nobody has built yet,
+/// not a working figure — and it IS reached, on an extreme record, which is
+/// why the walk is not the only mechanism here.
+const ESCAPE_STEPS: usize = 24;
+
+/// How many directions the escape sweep tries when the walk does not settle.
+///
+/// **Not a resolution knob, and it was one until the selection was fixed.** A
+/// Fibonacci sphere of `n` points is a different point set for every `n`, so
+/// whether one of them lands in a slit's mouth is luck: while the sweep was
+/// load-bearing, 128 and 256 cleared every column of every record the tests
+/// build and 96 and 192 did not — a constant whose value decided correctness by
+/// chance. It stopped being load-bearing when the walk's own converged POINT
+/// was allowed to be the answer instead of only its direction, and the same
+/// experiment now passes at 32, 96, 192 and 512 alike. Five hundred and twelve
+/// stays because it costs nothing on the columns that never reach it.
+const ESCAPE_DIRECTIONS: usize = 512;
+
+/// How many bisections narrow the escape onto the normal it started from.
+///
+/// Eight halvings is a two-hundred-and-fiftieth of the angle turned, which is
+/// finer than the mesh the direction is asked of.
+const ESCAPE_REFINEMENTS: usize = 8;
+
+/// Where a column's outer shell stands, `thickness` clear of the body.
+///
+/// Returns `seat + heading * thickness` wherever that is already outside the
+/// body, which is every column of a garment but a handful at the crotch. Where
+/// it is not, a position that does leave the body is found — by a walk that
+/// follows the body's own geometry and, where that will not settle, by a sweep
+/// that enumerates — and then turned back toward `heading` as far as the body
+/// allows, so the cloth moves as little as it can.
+///
+/// **A POSITION, not a direction, and the difference is 2 to 6 vertices per
+/// body.** Handing back a heading for the caller to re-apply is only the same
+/// thing while the standoff is; the first version of this walked the point out
+/// to where it stood `thickness` from the nearest SKIN, which at the bottom of
+/// a slit is further from the seat than `thickness`, and then returned the
+/// direction. Re-applying `thickness` to it pulled the vertex back down the
+/// bridge and inside the body again, leaving 2 of the original 6 on three of
+/// six seeds while the probe that judged it read zero — because the probe was
+/// checking the converged point and the code was shipping the heading.
+///
+/// **This is a global question and it was measured before it was answered**
+/// (#279). The premise of an offset garment is that a point of the body pushed
+/// along its own normal leaves the body, and at the crotch it does not: 4 to 14
+/// outer columns per body come back 1.2 to 8.0 mm INSIDE the skin, at the very
+/// bottom of the notch between the thighs, in zone `UpperLimb`, none of them on
+/// a hem and none of them a pinch column. Eight millimetres is the whole
+/// thickness, so the worst of them are offset in exactly the wrong direction.
+/// The verdict is not the crate's own single-ray `contains`, which is unusable
+/// that close to a surface — probing every body face 50 µm either side of its
+/// own plane, 10 to 21% of them deny that the body separates its own sides —
+/// but nine rays that agree, on points 1.2 mm and further in, where they do.
+///
+/// The issue's own three candidates were each measured on the six seeds
+/// `garmentaudit` sweeps, and each is refuted by its number:
+///
+/// - **Clamp the offset to the local concave radius.** It cannot reach the
+///   columns whose direction is wrong at any distance, and of the rest only 0
+///   to 4 per body keep more standoff than [`GarmentCut::bite`] — an outer
+///   shell behind its own inner one.
+/// - **Smooth the offset field before applying it.** One relaxation pass of the
+///   normals clears 2 to 4 of them, four passes 2 to 6; it never reaches zero,
+///   because at a crease that closes to a slit the neighbouring normals are
+///   wrong in the same direction. Smoothing the body's POSITIONS and taking
+///   normals from that is worse still — it raises the count on four of the six
+///   seeds, since a relaxed body is a thinner one.
+/// - **A projection pass.** That is the walk below, and on its own it clears
+///   every column of every seed `garmentaudit` sweeps — but not of every
+///   record a slider can ask for.
+///
+/// Two more were tried and are refuted with them: relaxing the failing columns'
+/// positions into the ones that clear reaches zero on three of six seeds, and
+/// diffusing their headings from the same neighbours on two of six. The crease
+/// is genuinely degenerate — the local data does not contain the answer, and
+/// only the body itself does.
+///
+/// If neither mechanism finds a direction the column is left where its own
+/// normal put it, because a garment that still builds is worth more than one
+/// that refuses a body. `no_garment_stands_inside_the_body_it_was_cut_from` is
+/// what says that has not happened.
+fn stood_off(mesh: &PolyMesh, seat: Vec3, heading: Vec3, thickness: f32) -> Vec3 {
+    let plain = seat + heading * thickness;
+    if !mesh.contains(plain) {
+        return plain;
+    }
+
+    // Every candidate that leaves the body, judged by ONE rule: the least the
+    // cloth has to move. Both mechanisms below can fail on a body the other
+    // handles, and neither ranks above the other — where they both answer, the
+    // nearer answer wins, which is also what keeps the hem where it was.
+    let mut best: Option<Vec3> = None;
+    let mut consider = |point: Vec3| {
+        if mesh.contains(point) {
+            return;
+        }
+        if best.is_none_or(|held| point.distance(plain) < held.distance(plain)) {
+            best = Some(point);
+        }
+    };
+
+    // The walk: stand off the nearest skin, over and over, so each step takes
+    // its direction from the body at the place the cloth actually landed rather
+    // than from the crease it was cut in. One to seven steps settle it on every
+    // seed `garmentaudit` sweeps. It is a fixed-point iteration with no fixed
+    // point in a slit narrower than twice the thickness, where it bounces wall
+    // to wall — hence the cap, and hence the sweep below it.
+    let mut point = plain;
+    for _ in 0..ESCAPE_STEPS {
+        let near = onto_surface(mesh, 0..mesh.faces.len(), point);
+        let out = (near - point).try_normalize().unwrap_or(heading);
+        point = near + out * thickness;
+        if !mesh.contains(point) {
+            consider(point);
+            break;
+        }
+    }
+
+    // The sweep: enumerate, because enumerating cannot fail to terminate. See
+    // [`ESCAPE_DIRECTIONS`] for why its count is not a resolution knob.
+    for index in 0..ESCAPE_DIRECTIONS {
+        consider(seat + spread(index) * thickness);
+    }
+
+    let Some(found) = best else {
+        return plain;
+    };
+
+    // Turn back toward the normal as far as the body allows, holding whatever
+    // standoff the winning candidate has. A column that turns less disturbs the
+    // hem it may be part of less, and the hem is what this must not be paid for.
+    let stand = found.distance(seat);
+    let mut clear = (found - seat) / stand;
+    let mut blocked = heading;
+    for _ in 0..ESCAPE_REFINEMENTS {
+        let Some(between) = (clear + blocked).try_normalize() else {
+            break;
+        };
+        if mesh.contains(seat + between * stand) {
+            blocked = between;
+        } else {
+            clear = between;
+        }
+    }
+    seat + clear * stand
+}
+
+/// The `index`th of [`ESCAPE_DIRECTIONS`] directions spread over the sphere.
+///
+/// The Fibonacci spiral: as even a spacing as a sphere allows without solving
+/// for it, and the only construction here that needs no table.
+fn spread(index: usize) -> Vec3 {
+    let y = 1.0 - (index as f32 + 0.5) / ESCAPE_DIRECTIONS as f32 * 2.0;
+    let radius = (1.0 - y * y).max(0.0).sqrt();
+    let turn = index as f32 * std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+    Vec3::new(turn.cos() * radius, y, turn.sin() * radius)
+}
+
 /// The point of a triangle closest to `point`, by region.
 ///
 /// Ericson's Voronoi-region form: the six cases are the three corners, the
@@ -557,14 +764,17 @@ fn nearest_on_triangle(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
 
 /// The nearest point of `faces` to `point`, as a point of the body's surface.
 ///
-/// Only the faces around the vertex a hem column was cut from are offered,
-/// which is both the fast answer and the right one: [`HEM_SLIDE`] keeps the
-/// slide inside that ring, and a global search could snap a collar onto the
-/// shoulder it happens to be nearest in space.
-fn onto_surface(mesh: &PolyMesh, faces: &[usize], point: Vec3) -> Vec3 {
+/// **Which faces are offered is the caller's decision and it matters.**
+/// [`smooth_hem`] offers only the ring around the vertex a hem column was cut
+/// from, which is both the fast answer and the right one: [`HEM_SLIDE`] keeps
+/// the slide inside that ring, and a global search could snap a collar onto the
+/// shoulder it happens to be nearest in space. [`stood_off`] offers the
+/// whole body, because a column buried in the crotch is buried in the far
+/// thigh as often as in its own and the ring around its seat cannot say so.
+fn onto_surface(mesh: &PolyMesh, faces: impl IntoIterator<Item = usize>, point: Vec3) -> Vec3 {
     let mut nearest = point;
     let mut best = f32::MAX;
-    for &face in faces {
+    for face in faces {
         let corners = &mesh.faces[face];
         for at in 1..corners.len().saturating_sub(1) {
             let (a, b, c) = (
@@ -682,9 +892,9 @@ fn smooth_hem(mesh: &PolyMesh, rings: &[Vec<u32>], source: &[u32], at: &mut [Vec
             // and enough to read as the garment standing off the body by more
             // than its own thickness. The column is a point OF the body, and
             // this is what keeps that true after it moves.
-            at[column as usize] = around
-                .get(&source[column as usize])
-                .map_or(slid, |faces| onto_surface(mesh, faces, slid));
+            at[column as usize] = around.get(&source[column as usize]).map_or(slid, |faces| {
+                onto_surface(mesh, faces.iter().copied(), slid)
+            });
         }
     }
 }

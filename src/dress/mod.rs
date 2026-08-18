@@ -316,6 +316,10 @@ mod tests {
     fn body(seed: i64) -> (PolyMesh, SkinWeights, Vec<Zone>) {
         let mut record = AvatarRecord::new("Worn", Archetype::default());
         record.reroll(seed);
+        body_of(&record)
+    }
+
+    fn body_of(record: &AvatarRecord) -> (PolyMesh, SkinWeights, Vec<Zone>) {
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
@@ -423,6 +427,70 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn no_garment_stands_inside_the_body_it_was_cut_from() {
+        // The premise of the whole module, asked instead of assumed: a garment
+        // cannot intersect the body because every point of it is a body point
+        // pushed outward. At the crotch it did (#279) — 4 to 14 outer columns
+        // per body, 1.2 to 8.0 mm inside the skin, on every seed of
+        // `garmentaudit`'s sweep and on the default body. Eight millimetres is
+        // the whole thickness, so the worst of them were offset backwards.
+        //
+        // **The OUTER shell only, and the reading is worthless without that.**
+        // The inner shell is inside the body on purpose, so measured over the
+        // whole cloth mesh this reads about half the vertices "inside" on a
+        // body with nothing wrong with it. The inner twin of a column is that
+        // column plus half the vertex count.
+        //
+        // **Against an undressed build.** `Outfit::wear` is given the body's
+        // own mesh here, which still carries the faces the clothes cover; a
+        // dressed body does not emit the skin under its clothes, so a ray cast
+        // at one goes through the hole and comes back with a confident wrong
+        // parity.
+        //
+        // The seeds are the three worst of the sweep, plus both ends of the two
+        // composite axes that reshape a torso — the extreme chest is where the
+        // top's own two vertices showed up, and it is not reachable by rerolling.
+        let mut extremes = Vec::new();
+        for (femininity, mass, fat) in [(1.0, 1.0, 0.60f32), (-1.0, 1.0, 0.60), (1.0, -1.0, 0.03)] {
+            let mut record = AvatarRecord::new("Extreme", Archetype::default());
+            record.composites.femininity = femininity;
+            record.composites.mass = mass;
+            record.composites.body_fat = fat;
+            record.sanitize();
+            extremes.push(record);
+        }
+        let mut rolled = Vec::new();
+        for seed in [1i64, 9, 12] {
+            let mut record = AvatarRecord::new("Worn", Archetype::default());
+            record.reroll(seed);
+            rolled.push(record);
+        }
+
+        for record in rolled.iter().chain(&extremes) {
+            let (mesh, weights, zones) = body_of(record);
+            let params = OutfitParams {
+                sleeve: Sleeve::Bare,
+                leg: Leg::Ankle,
+                ..Default::default()
+            };
+            let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
+            for (index, garment) in outfit.garments.iter().enumerate() {
+                let half = garment.mesh.positions.len() / 2;
+                let inside: Vec<usize> = (0..half)
+                    .filter(|&column| mesh.contains(garment.mesh.positions[column]))
+                    .collect();
+                assert!(
+                    inside.is_empty(),
+                    "{}: garment {index} has {} outer columns inside the body, first at {:?}",
+                    record.name,
+                    inside.len(),
+                    garment.mesh.positions[inside[0]]
+                );
             }
         }
     }
