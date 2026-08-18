@@ -67,9 +67,17 @@ judgement is final on one instrument.
 7. **A guard per axis does not guard the product** — see `docs/budget.md`.
    If two tests each pin one axis at its worst, write a third that pins both.
 
-8. **Know what each renderer cannot see.** The software renderer samples only
-   the skin atlas's albedo: every relief change is invisible there *by
-   construction*. Judge relief in the viewer or with numbers.
+8. **Know what each renderer cannot see, and re-ask when it changes.** This
+   rule used to read "the software renderer samples only the skin atlas's
+   albedo, so every relief change is invisible there by construction" — and
+   that was true until #225 and #226 gave it per-texel roughness off `ORM.g`
+   and a per-triangle tangent frame off the UVs. Pores and stubble draw now.
+   What it still cannot see is anything outside the atlas it is handed, and a
+   relief term is only as visible as the light angle chosen for the shot.
+   **The rule that survives its own correction is the general one:** a
+   renderer's blind spots are a fact about today's code, so before concluding
+   that a change is invisible, check whether the thing that made it invisible
+   is still there.
 
 9. **Print the number the test computes.** A test that computes its worst case
    and asserts silently makes the figure obtainable only by breaking the
@@ -84,3 +92,44 @@ judgement is final on one instrument.
 11. **Render before believing.** Quality defects have passed every test this
     crate owns; when a test disagrees with the render, suspect the test. The
     two-renderer rule above decides whose defect it is.
+
+## Goldens: the render tool's own gate, and why it is local
+
+`examples/render` is the instrument every other judgement leans on, and it has
+twice produced a false diagnosis. `--golden` is its insurance: two fixed
+questions — the DEFAULT record's standing sheet and its head close-up —
+rendered through the very path every other run uses and resolved down one
+factor.
+
+```sh
+cargo run --release --example render -- --golden bless   # write the fixtures
+cargo run --release --example render -- --golden check   # compare against them
+```
+
+Run it bare. `--golden` composes with no other flag, because a fixture that
+moves with a flag set is not a fixture. `check` exits nonzero on drift and
+names the worst channel and the share of pixels past
+`GOLDEN_PIXEL_SHARE`; the tolerances are two steps of sRGB per channel and half
+a percent of pixels, sized to sit under what an eye can judge and over the
+float wobble two machines disagree by.
+
+**The fixtures are deliberately NOT committed** (owner decision, 2026-08-18),
+so `tests/golden/` is empty on a fresh clone and there is no `cargo test` gate
+behind this. That makes it a *session-local* instrument, and the workflow it
+needs is different from a committed golden's:
+
+1. **Bless before you change anything**, on the tree as you found it. A golden
+   blessed after a change is a photograph of the change, not a baseline.
+2. **Check after**, and read the number rather than the verdict. A shading
+   change should move a large share of pixels; a geometry change should move a
+   small share in one place. A drift you cannot explain is the finding.
+3. **Re-bless deliberately**, having eyeballed the sheets, when the drift is
+   the change you meant to make.
+4. **Do not trust a green check across a rebuild of the fixtures.** The
+   comparison only means something while both sides came from the same bless.
+
+What this costs, stated plainly so nobody rediscovers it as a surprise: a
+shading change that lands without a bless-and-check has no baseline at all,
+because the previous session's fixtures are gone. The insurance is real but it
+is only as good as the habit, which is the trade the owner took to keep binary
+fixtures out of the repository.

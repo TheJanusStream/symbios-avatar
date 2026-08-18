@@ -2372,14 +2372,19 @@ const GOLDEN_PIXEL_SHARE: f32 = 0.005;
 /// own, having twice produced a false diagnosis. A golden is the cheap
 /// insurance: two fixed questions — the DEFAULT record's standing sheet and its
 /// head close-up — rendered through the very code path every other run uses,
-/// resolved down one factor so the repository carries half a megabyte rather
-/// than two.
+/// resolved down one factor.
 ///
 /// Run it bare: `--golden` composes with no other flag, because a golden that
 /// moves with the flag set is not a fixture. `bless` writes `tests/golden/`;
 /// `check` compares against it and exits nonzero on drift, naming the worst
 /// channel and the share of pixels past tolerance. A missing golden fails
 /// loudly — a check that silently skips is not a check.
+///
+/// **The fixtures are session-local by owner decision (2026-08-18) and are not
+/// committed**, so `tests/golden/` is empty on a fresh clone and no test runs
+/// this. Bless on the tree as you found it, change, then check — a golden
+/// blessed after a change is a photograph of the change rather than a
+/// baseline. `docs/instruments.md` carries the workflow and what it costs.
 fn golden(subject: &Subject, mode: &str) {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     let standing = subject.standing();
@@ -2415,7 +2420,9 @@ fn golden(subject: &Subject, mode: &str) {
                     Ok(golden) => golden.to_rgba8(),
                     Err(error) => {
                         eprintln!(
-                            "no golden at {}: {error}\nrun `--golden bless` once and commit it",
+                            "no golden at {}: {error}\nthe fixtures are session-local and \
+                             not committed — run `--golden bless` on the tree as you found it, \
+                             before the change you mean to judge",
                             path.display()
                         );
                         std::process::exit(1);

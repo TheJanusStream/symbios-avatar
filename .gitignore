@@ -12,3 +12,6 @@ symbios-avatar-primer.sh
 symbios_avatar_primer_*
 .mcp.json
 /exports
+# Render goldens are session-local by decision: bless before a change, check
+# after, never commit. See docs/instruments.md.
+/tests/golden
