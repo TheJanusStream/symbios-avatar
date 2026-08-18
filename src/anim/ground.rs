@@ -437,18 +437,7 @@ where
         // What the ankle must hold locally for the foot to end up there, and
         // then how far that is from leaving it alone, so it can be clamped.
         let local = posed.rotations[parent].inverse() * want;
-        let (axis, angle) = local.to_axis_angle();
-        let angle = angle.rem_euclid(std::f32::consts::TAU);
-        // `to_axis_angle` reports the turn the short way round or the long way
-        // depending on the sign of the scalar part; fold it into `-PI..=PI` so a
-        // small correction is never mistaken for a nearly-full turn.
-        let angle = if angle > std::f32::consts::PI {
-            angle - std::f32::consts::TAU
-        } else {
-            angle
-        };
-        pose.rotations[ankle] =
-            Quat::from_axis_angle(axis, angle.clamp(-config.max_ankle, config.max_ankle));
+        pose.rotations[ankle] = folded_within(local, config.max_ankle);
 
         // **And then put the contact back** (#257). Levelling used to be
         // described here as free, on the grounds that a swinging foot is pinned
@@ -464,6 +453,29 @@ where
         // The two had to land together.
         solve_contact(rig, pose, limb, held);
     }
+}
+
+/// `local` with its turn clamped to `limit`, in radians.
+///
+/// **The fold is the subtle half and it is why this is one function rather than
+/// two copies.** `Quat::to_axis_angle` reports the turn the short way round or
+/// the long way depending on the sign of the scalar part, so a small correction
+/// comes back as a nearly-full turn and a naive clamp then refuses it. Folding
+/// into `-PI..=PI` first is what makes the comparison mean anything.
+///
+/// Two stages clamp the same joint one after the other — [`level_feet`] lays
+/// the sole into the ground and [`super::gait::roll_feet`] takes it off again —
+/// and while they each carried their own copy of this, only one of them had it
+/// (#256).
+pub(crate) fn folded_within(local: Quat, limit: f32) -> Quat {
+    let (axis, angle) = local.to_axis_angle();
+    let angle = angle.rem_euclid(std::f32::consts::TAU);
+    let angle = if angle > std::f32::consts::PI {
+        angle - std::f32::consts::TAU
+    } else {
+        angle
+    };
+    Quat::from_axis_angle(axis, angle.clamp(-limit, limit))
 }
 
 /// Solves one limb so its ground contact lands on `target`.

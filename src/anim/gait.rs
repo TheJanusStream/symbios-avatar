@@ -29,7 +29,7 @@
 use glam::{Quat, Vec3};
 
 use super::gaze::GazeConfig;
-use super::ground::{Footing, FootingConfig, Ground, plant_feet_of, solve_contact};
+use super::ground::{Footing, FootingConfig, Ground, folded_within, plant_feet_of, solve_contact};
 use super::heading::Heading;
 use super::pose::Pose;
 use crate::plan::{Limb, Zone};
@@ -1395,7 +1395,12 @@ impl Walk {
         // After the plant. See the type's own docs for why the order is not a
         // preference — and see [`contact_heading`] for why the stride has to
         // come this far down the sequence rather than stopping at [`step`].
-        roll_feet(rig, pose, gait, stride, self.cycle, &ground);
+        // The same limit levelling used, so the two stages cannot disagree about
+        // what an ankle has (#256). A walk given no footing config has had
+        // nothing levelled and so nothing to agree with — but an ankle is still
+        // an ankle, and the default is where that figure is written down.
+        let footing = self.footing.unwrap_or_default();
+        roll_feet(rig, pose, gait, stride, self.cycle, &ground, &footing);
         walked
     }
 }
@@ -1909,6 +1914,7 @@ pub fn roll_feet<F>(
     stride: &Stride,
     cycle: f32,
     ground: F,
+    config: &FootingConfig,
 ) -> Vec<Limb>
 where
     F: Fn(Vec3) -> Option<Ground>,
@@ -1937,7 +1943,7 @@ where
         if pitch == 0.0 && heading == 0.0 {
             continue;
         }
-        if roll_one(rig, pose, limb, pitch, heading, &ground) == Some(false) {
+        if roll_one(rig, pose, limb, pitch, heading, &ground, config.max_ankle) == Some(false) {
             straining.push(limb);
         }
     }
@@ -1959,6 +1965,7 @@ fn roll_one<F>(
     pitch: f32,
     heading: f32,
     ground: &F,
+    limit: f32,
 ) -> Option<bool>
 where
     F: Fn(Vec3) -> Option<Ground>,
@@ -2034,13 +2041,12 @@ where
         let at = rig.joints[joint].position;
         settled * (Vec3::new(at.x, 0.0, at.z) - rest)
     };
-    let bearing = sole
-        .iter()
-        .map(|&joint| ground(joint))
-        .min_by(|a, b| (roll * *a).dot(up).total_cmp(&(roll * *b).dot(up)))?;
-
-    // Where the contact joint has to go for the bearing point to stay put.
-    let goal = posed.positions[contact] + bearing - roll * bearing;
+    // Every sole point, kept rather than reduced to the one that bears the
+    // weight. Which one that is depends on the attitude the ankle can actually
+    // hold, and that is not known until the loop below — see there.
+    let flat: Vec<Vec3> = sole.iter().map(|&joint| ground(joint)).collect();
+    // Where the contact stands now, which is the thing the roll must not move.
+    let anchor = posed.positions[contact];
     let want = roll * settled;
 
     let mut reached = false;
@@ -2051,8 +2057,28 @@ where
         // the settled attitude every pass instead of piling one roll on the
         // last.
         let outer = pose.forward(rig).rotations[parent];
-        pose.rotations[ankle] = outer.inverse() * want;
-        reached = solve_contact(rig, pose, limb, goal);
+        // **And clamped, to the same limit levelling clamps to** (#256).
+        // Assigning this joint unclamped one stage after `level_feet` refused
+        // to turn it that far undid the refusal: measured over a cycle, the
+        // local ankle fold this left reached 59.1 degrees on a 30% grade and
+        // 25.6 on the flat, against the 40.1 an ankle has.
+        let local = folded_within(outer.inverse() * want, limit);
+        pose.rotations[ankle] = local;
+
+        // **And then the pivot and the goal are derived from what the ankle
+        // GOT, not from what it was asked for**, which is why this is a
+        // restructure and not a one-line clamp. `roll_one` picks the sole point
+        // that bears the weight from the attitude it wanted; clamp the attitude
+        // without moving that choice and the foot pivots about a point that is
+        // no longer the lowest, putting the sole back through the hill. Where
+        // the clamp does not bind, `turned` is exactly the roll that was asked
+        // for and every line below is what it always was.
+        let turned = (outer * local) * settled.inverse();
+        let bearing = flat
+            .iter()
+            .copied()
+            .min_by(|a, b| (turned * *a).dot(up).total_cmp(&(turned * *b).dot(up)))?;
+        reached = solve_contact(rig, pose, limb, anchor + bearing - turned * bearing);
     }
 
     Some(reached)
@@ -3951,6 +3977,93 @@ mod tests {
         }
     }
 
+    /// The angle a joint's local rotation holds, folded into `-PI..=PI`.
+    ///
+    /// `to_axis_angle` reports the turn the short way round or the long way
+    /// depending on the sign of the scalar part, so a small correction reads as
+    /// a nearly-full turn without this — the same fold `level_feet` makes
+    /// before it clamps, and the reason the two can be compared at all.
+    fn ankle_fold(local: Quat) -> f32 {
+        let (_, angle) = local.to_axis_angle();
+        let angle = angle.rem_euclid(std::f32::consts::TAU);
+        if angle > std::f32::consts::PI {
+            angle - std::f32::consts::TAU
+        } else {
+            angle
+        }
+        .abs()
+    }
+
+    #[test]
+    fn a_rolled_ankle_stays_inside_the_ankle_it_has() {
+        // **#256.** `level_feet` clamps the ankle to `FootingConfig::max_ankle`
+        // and its own doc is explicit that the clamp is the difference between
+        // a visibly strained ankle and a broken one. `roll_feet` then ASSIGNED
+        // the same joint one stage later with no clamp of any kind, so whatever
+        // levelling refused to do, the roll did anyway.
+        //
+        // Measured over a whole cycle, worst local ankle fold in the delivered
+        // pose, against a limit of 40.1 degrees:
+        //
+        // ```text
+        //   grade   -0.40   -0.30    0.00   +0.30   +0.40
+        //   before   38.6    32.0    25.6    59.1    62.4
+        //   after    38.6    32.0    25.6    40.1    40.1
+        // ```
+        //
+        // The issue reported 25.6 on the flat and 48.4 at a 30% grade; the flat
+        // still reads 25.6 and the grade reads 59.1, because #254, #255 and
+        // #257 all landed on this stage in between. Re-measured rather than
+        // quoted.
+        //
+        // Nothing shows on the flat — the roll asks 25.6 of an ankle that has
+        // 40.1 — which is why this went unseen: it takes a hill to reach the
+        // clamp, and only an UPHILL one, because climbing is what asks the
+        // ankle to flex further.
+        //
+        // Asked of the pose the consumer is handed, after the whole sequence,
+        // rather than of `roll_one` in isolation: the defect is that a later
+        // stage undoes an earlier one, and only the end of the pipeline can see
+        // that.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let limit = FootingConfig::default().max_ankle;
+
+        let mut report = Vec::new();
+        for grade in [-0.40f32, -0.30, 0.0, 0.30, 0.40] {
+            let ground = |foot: Vec3| {
+                Some(Ground {
+                    position: Vec3::new(foot.x, foot.z * grade, foot.z),
+                    normal: Vec3::new(0.0, 1.0, -grade).normalize(),
+                })
+            };
+            let mut worst = 0.0f32;
+            for sample in 0..64 {
+                let mut pose = Pose::rest(&rig);
+                Walk::at(sample as f32 / 64.0).drive(&rig, &mut pose, &gait, &stride, ground);
+                for &limb in &gait.limbs {
+                    let Some(&ankle) = rig.extremity_joints(limb).first() else {
+                        continue;
+                    };
+                    worst = worst.max(ankle_fold(pose.rotations[ankle]));
+                }
+            }
+            report.push(format!("{grade:+.2}: {:.1}", worst.to_degrees()));
+            assert!(
+                worst <= limit + 0.01,
+                "on a {grade} grade an ankle was left folded {:.1} degrees, against a clamp \
+                 of {:.1}. Worst over the sweep so far: {report:?}",
+                worst.to_degrees(),
+                limit.to_degrees()
+            );
+        }
+        // Printed on the way through, which is `docs/instruments.md` rule 9: a
+        // guard that prints nothing is how a distribution drifts unseen, and
+        // this one is a hair under its limit on every uphill grade.
+        println!("worst local ankle fold by grade — {}", report.join(", "));
+    }
+
     #[test]
     fn a_sole_meets_the_hill_it_lands_on_rather_than_the_flat_it_was_authored_for() {
         // **#250.** `roll_feet` read the attitude to pitch about back off the
@@ -3987,13 +4100,36 @@ mod tests {
             // ankle rather than this fix.** `FootingConfig::max_ankle` gives an
             // ankle 40.1 degrees, and levelling a sole onto a 30% grade already
             // asks 44.1 of it — so above that the foot cannot lie flat and the
-            // sole rides on whichever end the clamp leaves down. That is #256,
+            // sole rides on whichever end the clamp leaves down. That was #256,
             // and it is the honest failure the clamp exists to produce: a
             // visibly strained ankle rather than a broken one.
             //
-            // Measured after #254: -2.6 to -5.4 mm inside 30%, -9.2 at -40%,
-            // -17.1 at +40%, against -0.4 on the flat.
+            // Measured with #256 landed, against -0.4 mm on the flat:
+            //
+            // ```text
+            //   grade   -0.40  -0.30  -0.15  +0.15  +0.30  +0.40
+            //   before   -3.5   -6.0   -3.8   -2.6   -5.4  -16.0
+            //   after    -3.5   -6.0   -3.8   -2.6   -5.7  -16.0
+            // ```
+            //
+            // Three tenths of a millimetre at one grade is the whole bill for
+            // holding the ankle inside its own limit, and it is only that small
+            // because the clamped attitude picks the pivot. Clamping without
+            // that — the one-line version — costs 14.9 mm at +30% and 40.2 at
+            // +40% on `examples/walkaudit`'s swing reading, against 4.8 and 8.4.
+            //
+            // The comment this replaces quoted -9.2 at -40% and -17.1 at +40%,
+            // and neither was true any more: they were measured after #254 and
+            // #255 and #257 both moved them. A passing test prints nothing, so
+            // nobody found out — which is why it prints now.
             let allowed = if grade.abs() > 0.30 { 0.020 } else { 0.012 };
+            // Printed whether it passes or not — rule 9, and how the figures in
+            // the comment above stay honest when a stage below this one moves.
+            println!(
+                "grade {grade:+.2}: worst sole pass {:.1} mm against {:.1} mm on the flat",
+                worst * 1000.0,
+                flat * 1000.0
+            );
             assert!(
                 worst > flat - allowed,
                 "on a {grade} grade the sole passed {:.1} mm below the surface, against \
@@ -4544,7 +4680,15 @@ mod tests {
                     &FootingConfig::default(),
                 );
             }
-            roll_feet(&rig, &mut longhand, &gait, &stride, cycle, ground);
+            roll_feet(
+                &rig,
+                &mut longhand,
+                &gait,
+                &stride,
+                cycle,
+                ground,
+                &FootingConfig::default(),
+            );
 
             let mut driven = Pose::rest(&rig);
             let walked = Walk::at(cycle).drive(&rig, &mut driven, &gait, &stride, ground);
@@ -4594,7 +4738,15 @@ mod tests {
             ground,
             &FootingConfig::default(),
         );
-        roll_feet(&rig, &mut expected, &gait, &stride, cycle, ground);
+        roll_feet(
+            &rig,
+            &mut expected,
+            &gait,
+            &stride,
+            cycle,
+            ground,
+            &FootingConfig::default(),
+        );
         for joint in 0..expected.rotations.len() {
             let apart = apart(bare.rotations[joint], expected.rotations[joint]);
             assert!(
@@ -4624,7 +4776,15 @@ mod tests {
         step(&rig, &mut without, &gait, &stride, cycle, ground);
         swing_arms(&rig, &mut without, &gait, &stride, cycle);
         lean(&rig, &mut without, &gait, &stride);
-        roll_feet(&rig, &mut without, &gait, &stride, cycle, ground);
+        roll_feet(
+            &rig,
+            &mut without,
+            &gait,
+            &stride,
+            cycle,
+            ground,
+            &FootingConfig::default(),
+        );
         for joint in 0..without.rotations.len() {
             let apart = apart(raw.rotations[joint], without.rotations[joint]);
             assert!(
@@ -4703,7 +4863,15 @@ mod tests {
             ground,
             &FootingConfig::default(),
         );
-        let straining = roll_feet(rig, &mut pose, gait, stride, cycle, ground);
+        let straining = roll_feet(
+            rig,
+            &mut pose,
+            gait,
+            stride,
+            cycle,
+            ground,
+            &FootingConfig::default(),
+        );
         (pose, straining)
     }
 
@@ -4800,7 +4968,15 @@ mod tests {
             };
 
             let before: Vec<Vec<Vec3>> = steps.stance.iter().map(|&l| soles(&pose, l)).collect();
-            roll_feet(&rig, &mut pose, &gait, &stride, cycle, ground);
+            roll_feet(
+                &rig,
+                &mut pose,
+                &gait,
+                &stride,
+                cycle,
+                ground,
+                &FootingConfig::default(),
+            );
 
             for (&limb, before) in steps.stance.iter().zip(&before) {
                 let after = soles(&pose, limb);
@@ -4988,7 +5164,15 @@ mod tests {
             }
 
             let planted = pose.clone();
-            let straining = roll_feet(&rig, &mut pose, &gait, &stride, cycle, ground);
+            let straining = roll_feet(
+                &rig,
+                &mut pose,
+                &gait,
+                &stride,
+                cycle,
+                ground,
+                &FootingConfig::default(),
+            );
             assert!(
                 straining.is_empty(),
                 "a foot that cannot roll must not be reported as straining at {cycle:.3}"

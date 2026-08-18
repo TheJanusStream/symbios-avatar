@@ -438,19 +438,35 @@ fn containment_is_exact_on_a_closed_body() {
     // **Four now, and the nose is gone** (#116, 2026-08-18). `vertex_normals`
     // weights by the ANGLE a face subtends at each corner instead, which is the
     // standard remedy and is what a crease needs. What survives is two mirror
-    // pairs at the very bottom of the crotch notch — the tightest part of the
-    // crease, where a normal has least room to be right — and driving those to
-    // zero needs resolution there rather than a better average, which is
-    // candidate (b) on the issue.
+    // pairs at the very bottom of the crotch notch.
     //
-    // That is real and it has a consequence — `Garment::cut` offsets along
-    // these same normals, so a garment vertex there is pushed inside the skin —
-    // and it is not this issue's to fix: widening `hip_x` by 19% only takes the
-    // twelve to eight, so it is the saddle rather than the clearance. Filed as
-    // #116 with the measurements.
+    // **AND FOUR IS NOT FOUR DEFECTIVE NORMALS — this count conflates two
+    // things and the issue's remaining candidate was aimed at the wrong one**
+    // (#116's remainder, 2026-08-18). Measured on the default body, resolution
+    // does not move it and refining the crease multiplies it:
     //
-    // The count is pinned so the tree is green on a known state and any
-    // WORSENING still fails. Driving it to zero is the fix.
+    // ```text
+    //   cage, unsubdivided     11 buried    2 levels     4 buried
+    //   shipped, 1 level        4 buried    3 levels    14 buried
+    // ```
+    //
+    // At three levels the surface crosses itself NOWHERE below the waist and
+    // the count RISES, because every one of those fourteen has a correct normal
+    // that escapes for half a millimetre and then re-enters: the notch between
+    // the thighs has closed to under the probe distance, and no normal can leave
+    // a gap narrower than the ruler. **This metric gets worse as the mesh gets
+    // better**, so it cannot be driven to zero and should not be read as a count
+    // of bad normals. What the four ARE on the shipped body is folded faces —
+    // the cage crosses itself at the crotch, 21 pairs before subdivision and ten
+    // after — and a face on a folded patch has its own normal pointing into the
+    // body whatever the average does.
+    //
+    // The parity-free question is asked by `the_body_is_a_solid_below_the_waist`,
+    // which is where the fix belongs and where the ledger lives. This stays as a
+    // cheap ratchet on the primitive above it, not as the crotch's guard.
+    //
+    // The consequence for cloth is dealt with: `Garment::sew` no longer trusts
+    // these normals, it asks the body where a shell may stand (#279).
     let normals = body.vertex_normals();
     let step = (hi - lo).max_element() * 0.0002;
     let buried: Vec<usize> = body
@@ -969,4 +985,248 @@ fn the_underside_of_the_jaw_does_not_bulge() {
              convex arc and no more; past this it is a lump. All sixteen: {report}"
         );
     }
+}
+
+/// How many crossing triangle pairs the whole sweep may carry below the waist.
+///
+/// A high-water mark, not a target: **the right number is zero and every one of
+/// these is a body that is not a solid.** It is here because nothing measured
+/// this until #116's remainder was worked through, and pinning it is what stops
+/// it getting worse while the cage is fixed. See `the_body_is_a_solid_below_the_waist`
+/// for the per-record ledger and the mechanism.
+const CROSSING_CEILING: usize = 353;
+
+#[test]
+fn the_body_is_a_solid_below_the_waist() {
+    // **The defect under #116, finally named.** That issue counts vertices
+    // buried inside the body along their own normal and blames an averaged
+    // vertex normal at a crease; its remaining candidate was to REFINE the
+    // crotch so the saddle resolves. Measured before building it, on the
+    // default body:
+    //
+    // ```text
+    //   configuration            tris    buried   crossing pairs below the waist
+    //   cage, unsubdivided        748       11       21
+    //   shipped, 1 level       18,712        4       10
+    //   2 levels               75,610        4        0
+    //   3 levels              293,988       14        0
+    //   1 level + 1 crease pass 20,178       21       45
+    //   1 level + 2 crease passes 21,002     73       94
+    // ```
+    //
+    // Candidate (b) is refuted twice over. Four times the resolution everywhere
+    // leaves the buried count exactly where it was, so cell size is not the
+    // mechanism; and refining the crease itself MULTIPLIES it, because
+    // `refine_curved` bows a new point outward and in a notch that tight
+    // outward is through the far wall.
+    //
+    // What the numbers do show is the cage crossing ITSELF at the crotch, 21
+    // pairs before a single subdivision, and one subdivision smoothing that to
+    // ten rather than to none. A face on a folded patch has its own normal
+    // pointing into the body, which is why the four vertices there are buried
+    // whatever weighting the average uses — #116 was reading a symptom.
+    //
+    // **And the buried count is not a normals metric.** At three levels the
+    // surface crosses itself nowhere below the waist and the buried count RISES
+    // to fourteen, every one of them with a correct normal that escapes for
+    // half a millimetre and then re-enters — because the notch between the
+    // thighs has closed to under the probe distance and no normal can leave a
+    // gap narrower than the ruler. It gets worse as the mesh gets better.
+    //
+    // So this asks the parity-free question instead: does the surface cross
+    // itself? No ray, no normal, no averaging — two triangles that share no
+    // vertex either intersect or they do not.
+    //
+    // Below the waist only, because the head carries the mouth, and the mouth
+    // is a sealed pocket whose two surfaces near-touch on purpose (#154).
+    //
+    // The ledger, on the shipped subdivision, `Avatar::build` as it ships:
+    //
+    // ```text
+    //   default        10      seed 9          22
+    //   seed 1          0      seed 12         18
+    //   seed 2          0      fem+1 mass+1    18
+    //   seed 4         12      fem-1 mass+1    22
+    //   seed 7         24      fem+1 mass-1   125
+    //                          fem-1 mass-1   102
+    // ```
+    //
+    // The crotch is not even the worst of it. A LEAN body's toes are: 102 and
+    // 125 pairs at `y` 0.013, where a foot meshed into the leg (#111) folds
+    // through itself once there is no fat to hold it apart. That is a defect
+    // nobody has seen because nothing looked.
+
+    // THE CONTROL, and it runs first, because a crossing sweep that finds pairs
+    // on a surface which has none is measuring its own arithmetic and every
+    // number above would be worthless. A cube subdivided to a ball is convex,
+    // closed, and cannot cross itself at any level.
+    let mut cube = PolyMesh::new();
+    for corner in 0..8 {
+        cube.push_vertex(Vec3::new(
+            if corner & 1 == 0 { -0.5 } else { 0.5 },
+            if corner & 2 == 0 { -0.5 } else { 0.5 },
+            if corner & 4 == 0 { -0.5 } else { 0.5 },
+        ));
+    }
+    for face in [
+        [0u32, 2, 3, 1],
+        [4, 5, 7, 6],
+        [0, 1, 5, 4],
+        [2, 6, 7, 3],
+        [0, 4, 6, 2],
+        [1, 3, 7, 5],
+    ] {
+        cube.push_face(face);
+    }
+    for level in 0..=3 {
+        let ball = symbios_avatar::catmull_clark(&cube, level);
+        assert_eq!(
+            crossings_below_the_waist(&ball, f32::MAX),
+            0,
+            "the control: a subdivided cube at {level} levels cannot cross itself"
+        );
+    }
+
+    let mut records: Vec<(String, AvatarRecord)> =
+        vec![("default".to_string(), AvatarRecord::default())];
+    for seed in [1i64, 2, 4, 7, 9, 12] {
+        let mut record = AvatarRecord::new("Rolled", Archetype::default());
+        record.reroll(seed);
+        records.push((format!("seed {seed}"), record));
+    }
+    // Both ends of the two composite axes that reshape a trunk and a limb. The
+    // lean corners are not reachable by rerolling and they are the worst bodies
+    // this crate builds.
+    for (femininity, mass, fat) in [
+        (1.0f32, 1.0f32, 0.60f32),
+        (-1.0, 1.0, 0.60),
+        (1.0, -1.0, 0.03),
+        (-1.0, -1.0, 0.03),
+    ] {
+        let mut record = AvatarRecord::new("Extreme", Archetype::default());
+        record.composites.femininity = femininity;
+        record.composites.mass = mass;
+        record.composites.body_fat = fat;
+        record.sanitize();
+        records.push((
+            format!("fem {femininity:+.0} mass {mass:+.0} fat {fat:.2}"),
+            record,
+        ));
+    }
+
+    let mut total = 0;
+    let mut report = Vec::new();
+    for (name, record) in &records {
+        let avatar = Avatar::build_with(record, &geometry_only()).expect("builds");
+        let found = crossings_below_the_waist(&avatar.parts.body, 1.0);
+        total += found;
+        report.push(format!("{name}: {found}"));
+    }
+    // Printed whether it passes or not, which is `docs/instruments.md` rule 9:
+    // a passing test that prints nothing is how a distribution drifts unseen.
+    println!(
+        "crossing triangle pairs below the waist — {}",
+        report.join(", ")
+    );
+    assert!(
+        total <= CROSSING_CEILING,
+        "the body surface crosses itself in {total} places below the waist over the sweep, \
+         against a ceiling of {CROSSING_CEILING}: {report:?}"
+    );
+}
+
+/// Pairs of triangles that cross, sharing no vertex, below `ceiling` in `y`.
+///
+/// Binned into a uniform grid first, so this is near-linear in the triangle
+/// count rather than the two hundred million pair tests a body would otherwise
+/// need. Sharing a vertex is excluded because two triangles of the same fan
+/// meet along an edge by construction and that is not a crossing.
+fn crossings_below_the_waist(mesh: &PolyMesh, ceiling: f32) -> usize {
+    let mut tris: Vec<([Vec3; 3], [u32; 3])> = Vec::new();
+    for face in &mesh.faces {
+        for at in 1..face.len().saturating_sub(1) {
+            tris.push((
+                [
+                    mesh.positions[face[0] as usize],
+                    mesh.positions[face[at] as usize],
+                    mesh.positions[face[at + 1] as usize],
+                ],
+                [face[0], face[at], face[at + 1]],
+            ));
+        }
+    }
+    let (lo, hi) = mesh.bounds();
+    let cell = ((hi - lo).max_element() / 96.0).max(f32::EPSILON);
+    let key = |point: Vec3| {
+        (
+            ((point.x - lo.x) / cell) as i32,
+            ((point.y - lo.y) / cell) as i32,
+            ((point.z - lo.z) / cell) as i32,
+        )
+    };
+    let mut bins: std::collections::HashMap<(i32, i32, i32), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (index, (points, _)) in tris.iter().enumerate() {
+        let low = points[0].min(points[1]).min(points[2]);
+        let high = points[0].max(points[1]).max(points[2]);
+        let (a, b) = (key(low), key(high));
+        for x in a.0..=b.0 {
+            for y in a.1..=b.1 {
+                for z in a.2..=b.2 {
+                    bins.entry((x, y, z)).or_default().push(index);
+                }
+            }
+        }
+    }
+    let mut found: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for bucket in bins.values() {
+        for (at, &left) in bucket.iter().enumerate() {
+            for &right in &bucket[at + 1..] {
+                let (first, second) = (left.min(right), left.max(right));
+                if found.contains(&(first, second)) {
+                    continue;
+                }
+                let (a, corners) = &tris[first];
+                let (b, others) = &tris[second];
+                if corners.iter().any(|corner| others.contains(corner)) {
+                    continue;
+                }
+                let height = (a[0].y + a[1].y + a[2].y) / 3.0;
+                if height >= ceiling {
+                    continue;
+                }
+                if pierces(a, b) || pierces(b, a) {
+                    found.insert((first, second));
+                }
+            }
+        }
+    }
+    found.len()
+}
+
+/// Whether any edge of `edges` passes through the triangle `face`.
+fn pierces(edges: &[Vec3; 3], face: &[Vec3; 3]) -> bool {
+    (0..3).any(|at| {
+        let (from, to) = (edges[at], edges[(at + 1) % 3]);
+        let along = to - from;
+        let (first, second) = (face[1] - face[0], face[2] - face[0]);
+        let across = along.cross(second);
+        let det = first.dot(across);
+        if det.abs() < 1e-12 {
+            return false;
+        }
+        let inverse = 1.0 / det;
+        let offset = from - face[0];
+        let u = offset.dot(across) * inverse;
+        if !(0.0..=1.0).contains(&u) {
+            return false;
+        }
+        let q = offset.cross(first);
+        let v = along.dot(q) * inverse;
+        if v < 0.0 || u + v > 1.0 {
+            return false;
+        }
+        let travel = second.dot(q) * inverse;
+        (1e-6..=1.0 - 1e-6).contains(&travel)
+    })
 }
