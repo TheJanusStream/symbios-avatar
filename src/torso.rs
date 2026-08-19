@@ -226,13 +226,21 @@ const GAP_WIDE: f32 = 0.15;
 /// projection, and the projection is what fat buys.
 const FOLD_DEPTH: (f32, f32) = (0.22, 0.10);
 
-/// Where the fold sits below the peak, as a share of the LOWER pole's own span.
+/// Where the fold sits below the YOUNG peak, as a share of the young lower
+/// pole's span.
 ///
 /// **Seated on the lobe's own landmark and not on a constant, which is #182's
 /// lesson verbatim: a constant seat dies quietly when a ruler moves.** The
-/// lower pole's span already carries the peak's height, the lift axis and the
-/// age descent, so a fold written as a share of it travels with the chest
-/// instead of waiting where the reference body's chest used to be.
+/// lower pole's span carries the body's proportions and the lift axis, so a
+/// fold written as a share of it sits where this chest's base is rather than
+/// where the reference body's was.
+///
+/// **But not the age descent, which #286 wrote in and #288 took back out.**
+/// This gives [`ChestTraits::fold`] its value once, off the un-aged geometry,
+/// and ageing never touches it again — because ptosis IS the peak approaching
+/// this line, and a fold that travels with the peak makes that impossible. See
+/// that field for the measurement: derived off the aged peak, the fold fell 56
+/// mm across the age range while the peak fell 52, so the two never met.
 ///
 /// Life puts the fold about 70 mm below the peak on a reference-scale body,
 /// which against this body's own lower span — `span · TALL · POLES.1`, or 50.2
@@ -268,7 +276,35 @@ const FOLD_WIDE: f32 = 1.35;
 /// whole argument: the trunk that settles, the lip that thins and the chest
 /// that descends are one body getting older rather than three timetables that
 /// can disagree.
-const DESCENT: (f32, f32) = (0.10, 0.55);
+///
+/// **The first number went 0.10 → 0.18 at #288, re-tuned against a fold that
+/// finally holds still.** Ptosis is graded by where the peak sits relative to
+/// the inframammary fold (Regnault), and until [`ChestTraits::fold`] was
+/// anchored there was nothing for a descent to be measured against: at
+/// femininity `+1` the peak fell 52 mm across the age range and the fold fell
+/// 56 mm with it. Anchored and re-tuned, the peak closes from 70 mm above its
+/// fold at thirty to 20 mm at eighty, and the delivered pole split goes 42:58
+/// to 29:71 — which is what "the volume stops being held up" looks like when
+/// something is holding it.
+///
+/// **Not further, and the limit is the model rather than the anatomy.** At 0.24
+/// the peak reaches the fold — Regnault grade 1 — and the crease stops being a
+/// crease: the trough is cut at the crest instead of under it, because this
+/// carve has no overhang and cannot put tissue in front of its own fold the way
+/// a body does. Measured with `--profile`, the surface is smooth there rather
+/// than notched, and `examples/chestsection`'s seat reading jumps from 20 mm to
+/// 51 as it goes looking for a concavity that is no longer the fold's. So the
+/// shipped envelope tops out just short of grade 1 by construction, which also
+/// makes "never grade 3" free everywhere except at a negative lift axis, where
+/// `ChestTraits::on` clamps it.
+///
+/// The second number is unchanged at 0.55 and was re-measured rather than
+/// assumed: swept to 0.42 and 0.34 it moved the delivered split by one point
+/// and two, because what shifts the poles on an old body is the PEAK descending
+/// and not the tail slackening. It is kept where it is because it is what holds
+/// the lower pole convex — at 0.34 the eighty-year-old's lower bow goes
+/// negative, and a hollow lower pole is not what age does.
+const DESCENT: (f32, f32) = (0.18, 0.55);
 
 /// What a record's own chest axes ask for, over what the composites derived.
 ///
@@ -331,6 +367,21 @@ pub struct ChestTraits {
     /// How far the volume hangs below its own peak, `0` young and `1` at the
     /// top of the age range.
     pub descent: f32,
+    /// Where the inframammary fold sits, in the same waist-to-girdle span as
+    /// [`ChestTraits::height`].
+    ///
+    /// **Carried rather than derived from the peak, because ageing must not
+    /// move it** (#288). An inframammary fold is a ligamentous structure
+    /// attached to the chest wall: in ptosis the BREAST descends toward the
+    /// fold and the fold stays where it is, which is the whole of what the
+    /// Regnault grades measure. Derived off the peak it did the opposite —
+    /// measured before this landed, at femininity `+1` the peak fell 52 mm
+    /// across the age range and the fold fell 56 mm with it, so the two never
+    /// approached each other and no body was ever ptotic by any definition.
+    ///
+    /// Lift moves it, because a creator asking for a higher chest means the
+    /// whole structure; age does not.
+    pub fold: f32,
     /// How lean this body reads, `0` soft and `1` defined.
     ///
     /// **Carried rather than re-derived**, which is what this whole type is
@@ -366,6 +417,10 @@ impl ChestTraits {
             spread: between(1.0 - 2.0 * definition, SPREAD.0, SPREAD.1),
             height: HEIGHT - DESCENT.0 * ageing,
             descent: ageing,
+            // The young geometry's own fold, which is the anchor: `HEIGHT`
+            // before any descent, less the seat [`FOLD_SEAT`] names, taken
+            // against the lower pole before [`DESCENT`] slackens it.
+            fold: HEIGHT - FOLD_SEAT * TALL * POLES.1,
             definition,
         }
     }
@@ -382,14 +437,31 @@ impl ChestTraits {
     #[must_use]
     pub fn on(self, axes: ChestAxes) -> Self {
         let (stand, spread) = PROJECTION_TRADE;
+        // **Lift refuses the descent once and every consequence of it follows**
+        // (#288), which is what makes this one axis rather than three. The
+        // descent it refuses is the same number that lowers the peak and
+        // slackens the lower pole, so giving back `DESCENT.0` times the
+        // difference raises the peak by exactly the ptosis lift declined — and
+        // the pole balance comes back with it, because that balance IS the
+        // slackening.
+        let descent = (self.descent * (1.0 - LIFT_GAIN.1 * axes.lift)).clamp(0.0, 1.0);
+        let held = self.height + DESCENT.0 * (self.descent - descent) + LIFT_GAIN.0 * axes.lift;
+        let fold = self.fold + LIFT_GAIN.0 * axes.lift;
         Self {
             projection: (self.projection
                 * (1.0 + VOLUME_GAIN * axes.volume)
                 * (1.0 + stand * axes.projection))
                 .max(0.0),
             spread: (self.spread * (1.0 - spread * axes.projection)).max(0.05),
-            height: self.height + LIFT_GAIN.0 * axes.lift,
-            descent: (self.descent * (1.0 - LIFT_GAIN.1 * axes.lift)).clamp(0.0, 1.0),
+            // **Never below its own fold, which is the one Regnault grade a
+            // stylised body cannot wear.** Grades 1 and 2 are the peak reaching
+            // and passing the fold; grade 3 is the peak at the breast's lowest
+            // contour, and on a body this abstract that does not read as age,
+            // it reads as broken. A negative lift axis is what reaches for it —
+            // the roll envelope goes to `-3` — rather than any age.
+            height: held.max(fold),
+            descent,
+            fold,
             ..self
         }
     }
@@ -609,6 +681,11 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
     }
     let peak = column.waist + span * traits.height;
     let reach = traits.projection * column.half;
+    // The fold's own height, and the span its crease is measured in. Both are
+    // taken before [`DESCENT`] slackens anything: an anchor that the ageing it
+    // is the reference for can move is not an anchor.
+    let anchor = column.waist + span * traits.fold;
+    let held = span * TALL * POLES.1;
 
     for point in &mut mesh.positions {
         // The trunk and nothing else. An arm passes through this band and a
@@ -650,11 +727,12 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
         let firm = between(1.0 - 2.0 * traits.definition, FIRMNESS.0, FIRMNESS.1);
         let lobe = reach * (-across.abs().powf(firm) - along.powf(firm)).exp();
 
-        // The inframammary fold: a crescent in azimuth and height seated on the
-        // lobe's own lower edge, cutting IN where the lobe stops. See
-        // [`FOLD_SEAT`] for why it is measured off the lower pole's span rather
-        // than off a height.
-        let seat = (up + FOLD_SEAT * lower) / (FOLD_TALL * lower).max(f32::EPSILON);
+        // The inframammary fold: a crescent in azimuth and height, seated on
+        // [`ChestTraits::fold`] — the body's own anchor, which ageing does not
+        // move. See [`FOLD_SEAT`] for where that anchor comes from and
+        // `ChestTraits::fold` for why the peak has to approach it rather than
+        // carry it.
+        let seat = (point.y - anchor) / (FOLD_TALL * held).max(f32::EPSILON);
         let wide = across / FOLD_WIDE;
         let depth = reach * between(1.0 - 2.0 * traits.definition, FOLD_DEPTH.0, FOLD_DEPTH.1);
         let fold = depth * (-wide * wide - seat * seat).exp();
@@ -1218,6 +1296,86 @@ mod tests {
             "the neutral body's midline moved {:.4} mm against a lean body's {:.4}",
             midline(&neutral) * 1000.0,
             midline(&of(&lean)) * 1000.0,
+        );
+    }
+
+    #[test]
+    fn ptosis_is_the_peak_descending_toward_a_fold_that_does_not_move() {
+        // **The Regnault definition, which is what #288 is for.** Ptosis is
+        // graded by where the nipple sits relative to the INFRAMAMMARY FOLD,
+        // and the fold is a ligamentous structure attached to the chest wall:
+        // it does not descend, the breast descends toward it. What this module
+        // shipped before was pseudoptosis only — the volume bottoming out —
+        // and worse, the fold was derived off the peak, so measured at
+        // femininity `+1` the peak fell 52 mm across the age range and the
+        // fold fell 56 mm with it. Nothing ever approached anything.
+        let at = |age: u32| ChestTraits::of(&body_of(1.0, 0.0, DEFAULT_BODY_FAT, age).composites);
+        let (young, old) = (at(30), at(80));
+
+        assert!(
+            (young.fold - old.fold).abs() < 1e-6,
+            "the fold moved from {:.4} to {:.4} of the band as the body aged, and a fold is \
+             attached to a ribcage",
+            young.fold,
+            old.fold,
+        );
+        assert!(
+            old.height < young.height - 0.05,
+            "the peak sat at {:.3} of the band young and {:.3} old, which is not a descent",
+            young.height,
+            old.height,
+        );
+        // And it CLOSES on the fold rather than merely moving: the two are the
+        // same distance apart on a body that is not ageing at all if the peak
+        // and the fold are both carried by the same term, which is the bug
+        // above wearing a passing test.
+        let (before, after) = (young.height - young.fold, old.height - old.fold);
+        assert!(
+            after < before * 0.6,
+            "the peak stood {:.3} of the band above its fold young and {after:.3} old, which is \
+             not a breast approaching one",
+            before,
+        );
+
+        // **Never grade 3**, which on a stylised body does not read as age but
+        // as broken. The age axis alone does not reach it; a negative lift axis
+        // is what tries, and the roll envelope goes to -3.
+        for age in [30u32, 55, 80] {
+            for lift in [-3.0f32, -1.0, 0.0, 1.0, 3.0] {
+                let traits = at(age).on(ChestAxes {
+                    lift,
+                    ..Default::default()
+                });
+                assert!(
+                    traits.height >= traits.fold,
+                    "at age {age} and lift {lift:+} the peak sat {:.3} of the band against a fold \
+                     at {:.3}, which is Regnault grade 3",
+                    traits.height,
+                    traits.fold,
+                );
+            }
+        }
+
+        // LIFT RESISTS ALL OF IT THROUGH ONE AXIS, which is what keeps this a
+        // body ageing rather than three timetables that can disagree: the
+        // descent it refuses is the same number that lowers the peak and
+        // slackens the lower pole.
+        let lifted = old.on(ChestAxes {
+            lift: 1.0,
+            ..Default::default()
+        });
+        assert!(
+            lifted.descent < old.descent,
+            "lift did not refuse the descent: {:.3} against {:.3}",
+            lifted.descent,
+            old.descent,
+        );
+        assert!(
+            lifted.height > old.height + 0.05,
+            "lift raised an eighty-year-old peak from {:.3} to {:.3}, which is the offset alone \
+             and not the ptosis it declined",
+            old.height,
+            lifted.height,
         );
     }
 
