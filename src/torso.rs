@@ -57,14 +57,53 @@ use crate::texture::Condition;
 /// A male pectoral runs 10 to 20 mm off the chest wall in life and the node is
 /// 150.5 mm on the reference body, so the band is 0.066 to 0.133 radii. The
 /// middle of it, because nothing here is a measurement of one person.
-const PECTORAL: f32 = 0.046;
+///
+/// **It was 0.046 from #271 until #293, which is a third under the floor of the
+/// band the paragraph above derives** — the value and its own stated derivation
+/// never agreed, and `git log -S` says the constant was never edited in
+/// between. What made that survivable for a while is written on this module's
+/// note about relief: the surface was thought to deliver about twice the
+/// authored push, and 6.9 mm doubled reads as 14, inside life's band. #284
+/// refuted the doubling. It came from measuring relief at a fixed `x`, where a
+/// radial carve widens the section and the reading climbs to the silhouette
+/// edge — on the neutral body it reported 42 mm of "relief" at `x = 124` where
+/// the lobe delivers 16.7 at `x = 92`. Measured along the push instead, the
+/// masculine chest's own thickness was 5.8 to 9.7 mm across the WHOLE fat
+/// range, with life's floor at 10.
+///
+/// At this value it reads 12.6 mm authored on a lean body, 15.0 at the shipped
+/// fat fraction and 18.1 at 45% fat — inside the band at every point of the
+/// axis rather than under it at all of them.
+///
+/// **[`FAT_GAIN`] was suspected with it and cleared by measurement.** A
+/// pectoral is muscle, and a lean man's is more visible rather than smaller, so
+/// a chest that thinned with leanness the way a breast does would be wrong. It
+/// does not: the multiplier runs 0.843 at 5% fat to 1.350 at the top of the
+/// range, a factor of 1.6 over the whole axis, and every point of it lands
+/// inside life's band once this constant is right. What a lean body gets
+/// instead is [`FIRMNESS`] and [`GAP_DEPTH`], which is where the visibility
+/// belongs.
+const PECTORAL: f32 = 0.0995;
 
 /// How far a feminine chest stands off its ribcage, in chest-node radii.
 ///
 /// A breast runs 40 to 90 mm from chest wall to nipple, so 0.27 to 0.60 radii;
-/// this is the low-middle of that, at the default fat fraction, with
-/// [`FAT_GAIN`] carrying the rest of the band.
-const BUST: f32 = 0.225;
+/// this is the low end of that, at the default fat fraction, with [`FAT_GAIN`]
+/// carrying the rest of the band.
+///
+/// **It was 0.225 until #293 — under the floor of its own band, for
+/// [`PECTORAL`]'s reason and in the same change.** Both constants were sized
+/// through a factor of two that #284 refuted: the surface was thought to
+/// deliver about twice the authored push, so a value at half of life's figure
+/// read as life's figure. Measured along the push instead, the feminine chest
+/// stood 29.0 mm off its own ribcage at the shipped fat fraction against a life
+/// floor of 40.
+///
+/// At 0.30 the axis maps onto life's band rather than under it: 45 mm authored
+/// at the default fat fraction, 68 at 45% and 84 at the top of the range,
+/// against 40 to 90. A very lean body comes in at 28, which is under the band
+/// and is a very lean body.
+const BUST: f32 = 0.30;
 
 /// What mass does to the chest, as a share of the projection per unit of axis.
 ///
@@ -1387,15 +1426,24 @@ mod tests {
         // that cannot drift back. Life's bands are a pectoral at 10 to 20 mm
         // and a bust at 40 to 90; the midpoint of the two references sits
         // between them.
+        //
+        // **Re-based 14–28 → 24–36 at #293**, with the two constants it is the
+        // midpoint of. `femininity` is 0 at the neutral, so this reading is
+        // exactly `(PECTORAL + BUST) / 2` in millimetres: the mid of a 15 mm
+        // pectoral and a 45 mm bust is 30, and it reads 29.8. The old band was
+        // built on values that sat under both of life's, and on the belief that
+        // a caliper reads about twice the authored push — which #284 refuted by
+        // finding that reading was the flank of a widening section rather than
+        // the lobe. See `PECTORAL` for the whole of it.
         let record = body_of(0.0, 0.0, crate::plan::DEFAULT_BODY_FAT, 30);
         let (plain, carved) = pair(&record);
         let rig = Rig::from_skeleton(&record.skeleton()).expect("rigs");
         let authored = pushed(&plain, &carved, &rig) * 1000.0;
         assert!(
-            (14.0..28.0).contains(&authored),
-            "the neutral body's chest was pushed {authored:.1} mm, which is neither a \
-             pectoral nor a bust — `examples/chestsection` puts the relief a caliper would \
-             read at about twice this",
+            (24.0..36.0).contains(&authored),
+            "the neutral body's chest was pushed {authored:.1} mm, which is not the midpoint of \
+             a pectoral and a bust — `examples/chestsection` reads the thickness a caliper \
+             would take along the push itself",
         );
     }
 

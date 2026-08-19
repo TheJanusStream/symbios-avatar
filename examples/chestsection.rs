@@ -109,10 +109,12 @@
 //! behind it was shallower and how much shallower is not the same above the
 //! peak as below it. Refining the trunk (#285) took the neutral to 55:45 and
 //! the rest is the carve's own asymmetry (#286): today the shipped body reads
-//! **45:55 at femininity 0**, 49:51 at `-1` and 43:57 at `+1`, off an authored
-//! 39:61. That gap between the `authored` row and the top one is the whole
-//! reason `POLES` overshoots, and the reason #286's target was a MEASURED one
-//! rather than `45/55` written into a constant.
+//! **45:55 at femininity 0**, 48:52 at `-1` and 42:58 at `+1`, off an authored
+//! 39:61 — and it holds at life scale: #293 grew every chest by half and the
+//! neutral still reads 45:55 to the digit. That gap between the `authored` row
+//! and the top one is the whole reason `POLES` overshoots, and the reason
+//! #286's target was a MEASURED one rather than `45/55` written into a
+//! constant.
 //!
 //! **Pole bow**, on the cut: the mean signed distance from the silhouette to
 //! the chord across its own pole, positive out. Convex is positive, straight is
@@ -136,9 +138,11 @@
 //! refined it.
 //!
 //! **So the fold this crate now carves is under its own instrument's floor, and
-//! that is the honest reading of it.** The carved rows are 2.0, 1.3 and 5.5 mm
-//! seated 15, 35 and 70 mm below the peak, and on a LEAN body — where
-//! `torso::FOLD_DEPTH` is deepest — 1.0, 2.2 and 2.7 mm seated 71, 63 and 50.
+//! that is the honest reading of it on a SOFT body.** The carved rows are 1.6,
+//! 2.5 and 7.6 mm seated 20, 80 and 70 mm below the peak, all under their own
+//! bare controls. On a LEAN body — where `torso::FOLD_DEPTH` is deepest — they
+//! are 1.9, 2.3 and 3.6 seated 71, 63 and 77 against bare rows of 2.3, 2.2 and
+//! 0.4, and the fold clears its floor at two femininities of three.
 //! The SEAT is the reading that moved:
 //! before #286 the deepest concavity under the lobe sat 3 to 15 mm under the
 //! peak, which is the peak's own shoulder, and now it sits where life puts the
