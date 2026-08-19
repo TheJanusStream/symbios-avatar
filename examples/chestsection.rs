@@ -151,7 +151,9 @@
 //! depth the same body reads 20.2 mm against a bare 13.1 and the crease renders
 //! plainly. The term is right and the cell under it is 15 to 23 mm against a
 //! crease that is 20 to 40 mm wide in life — which is the second refinement
-//! pass #285 costed and the budget refused.
+//! pass #285 costed and the budget refused, and #292 retook with this render in
+//! hand and refused again: it deepens the fold on lean bodies and moves the
+//! pectoral border and `chestSpacing` by nothing.
 //!
 //! **The border's steepness**, on the cut: the largest `|d reach / dy|` inside
 //! the LOWER POLE, over a fixed [`SLOPE_BASE`] baseline. A pectoral's defining
@@ -192,6 +194,7 @@
 //! cargo run --release --example chestsection
 //! cargo run --release --example chestsection -- --femininity 1
 //! cargo run --release --example chestsection -- --volume 1 --projection -1
+//! cargo run --release --example chestsection -- --spacing 1 --fullness -1
 //! cargo run --release --example chestsection -- --lobe 20
 //! cargo run --release --example chestsection -- 7 23 42
 //! cargo run --release --example chestsection -- --band 0,0.95,0.45,0.92
@@ -208,8 +211,9 @@
 //! boundary under-delivers the carve's push and the step between the two sides
 //! is a crease that only a CARVED body has. A refinement band for the chest has
 //! to clear the whole lobe, not just the part of it a section is taken
-//! through — see `torso::refine_chest`, whose floor sits at 0.05 for exactly
-//! this reason and could not afford the −0.10 that was wanted.
+//! through — see `torso::refine_chest`, whose floor is the −0.10 this measured
+//! and wanted: it sat at 0.05 for one day, because #285 could not afford the
+//! hundred triangles, and #292 bought them back out of the hair ceiling.
 //!
 //! Life figures to column against, quoted from general anthropometric knowledge
 //! rather than from a named table, in the same way `face::eye`'s globe is: a
@@ -366,6 +370,8 @@ struct Overrides {
     volume: Option<f32>,
     projection: Option<f32>,
     lift: Option<f32>,
+    spacing: Option<f32>,
+    fullness: Option<f32>,
     lobe: Option<f32>,
     bare: bool,
 }
@@ -441,6 +447,12 @@ fn build(seed: i64, over: &Overrides, bands: &[Band]) -> Option<Body> {
         if let Some(value) = over.lift {
             params.chest_lift = value;
         }
+        if let Some(value) = over.spacing {
+            params.chest_spacing = value;
+        }
+        if let Some(value) = over.fullness {
+            params.chest_fullness = value;
+        }
     }
     record.composites.sanitize();
     record.sanitize();
@@ -500,6 +512,8 @@ fn build(seed: i64, over: &Overrides, bands: &[Band]) -> Option<Body> {
                 volume: params.chest_volume,
                 projection: params.chest_projection,
                 lift: params.chest_lift,
+                spacing: params.chest_spacing,
+                fullness: params.chest_fullness,
             },
             _ => symbios_avatar::torso::ChestAxes::default(),
         };
@@ -542,6 +556,8 @@ fn main() {
         volume: number("--volume"),
         projection: number("--projection"),
         lift: number("--lift"),
+        spacing: number("--spacing"),
+        fullness: number("--fullness"),
         lobe: number("--lobe").map(|mm| mm / 1000.0),
         bare: args.iter().any(|arg| arg == "--bare"),
     };
@@ -813,6 +829,26 @@ fn midline(mesh: &PolyMesh, trunk: &Trunk, stature: f32) {
 }
 
 /// The section across, band by band.
+///
+/// **Every column here is a walk across `x`, and that makes the whole table
+/// blind to where round the section a lobe was PUT** (#289). It was calibrated
+/// against `--lobe` at one spacing and it reads a chest correctly there; move
+/// the pair and it inverts. Measured on the shipped body at femininity 0, the
+/// authored azimuth going 0.395 → 0.57 → 0.72:
+///
+/// | `--spacing` | −1 | 0 | +1 |
+/// |---|---|---|---|
+/// | authored azimuth | 0.42 | 0.57 | 0.72 |
+/// | `apart mm`, this table | 132 | 124 | — one side — |
+/// | crest azimuth, read radially | 0.44 | 0.58 | 0.71 |
+///
+/// So the pair moves APART and this reports it closing, then stops seeing two
+/// of anything at all. The cause is [`radial`]'s note one step on: a radial
+/// push at a large azimuth widens the section instead of standing it off, so
+/// the maxima of `reach(x)` stop being the lobes and become the silhouette's
+/// own shoulder. **Read a spacing off the crest azimuth in the `--profile`
+/// table**, which shares the carve's own direction and tracks it to the
+/// hundredth.
 fn sections(
     mesh: &PolyMesh,
     plain: &PolyMesh,

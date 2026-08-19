@@ -299,6 +299,8 @@ impl Avatar {
                     volume: params.chest_volume,
                     projection: params.chest_projection,
                     lift: params.chest_lift,
+                    spacing: params.chest_spacing,
+                    fullness: params.chest_fullness,
                 },
                 _ => crate::torso::ChestAxes::default(),
             });

@@ -233,14 +233,16 @@ const FACE_REFINEMENT: usize = 10;
 /// One, and it is argued from a measurement on [`torso::refine_chest`]'s own
 /// table rather than here: it lifts the two-sided bound #271 stated, taking the
 /// relief a paired shape needs before a section shows two sides from 30–40 mm
-/// down under 25 — which is a male pectoral's own range. It costs 514 triangles
-/// of skin and 1,036 on a dressed body, because a refined trunk is a refined
-/// GARMENT too.
+/// down under 25 — which is a male pectoral's own range. It costs 1,144
+/// triangles on a dressed body against 514 of skin, because a refined trunk is
+/// a refined GARMENT too.
 ///
-/// A second, tighter pass over the lower half of the lobe was costed and does
-/// not fit; that table records the arithmetic, which comes down to #209's floor
-/// under the hair ceiling. See `tests/budget.rs`'s own ledger for what this one
-/// did to `TRIANGLE_CEILING` and to `hair::clump::MAX_TRIANGLES`.
+/// A second, tighter pass over the lower half of the lobe was costed at #285,
+/// refused for the budget, and retaken at #292 with its own render in hand and
+/// refused again on what it delivers. `torso::CHEST_PASSES` carries both
+/// arguments and the before-and-after; `tests/budget.rs`'s own ledger carries
+/// what this one pass did to `TRIANGLE_CEILING` and to
+/// `hair::clump::MAX_TRIANGLES`, twice.
 const CHEST_REFINEMENT: usize = 1;
 
 /// How many Catmull-Clark passes a body's cage gets.

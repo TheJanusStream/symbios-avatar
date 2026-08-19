@@ -363,6 +363,18 @@ pub trait BodyPlan: Sized {
     /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
 
+    /// Reads parameters from a **version-8** share code.
+    ///
+    /// Version 9 appended `chestSpacing` and `chestFullness` — where a chest's
+    /// volume sits, across the ribcage and up it. Version 8 carries today's
+    /// layout without them, and a code written before an axis existed means
+    /// that axis's neutral rather than a gap to be guessed at.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
+    fn decode_pre_distribution(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
+
     /// Reads parameters from a **version-6 or version-7** share code.
     ///
     /// Version 8 appended the chest axes; those two versions carry today's
@@ -635,6 +647,28 @@ impl Archetype {
         match tag {
             1 => Ok(Archetype::Humanoid(HumanoidParams::decode_legacy(bytes)?)),
             2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_legacy(bytes)?)),
+            other => Err(PlanDecodeError::UnknownArchetype(other)),
+        }
+    }
+
+    /// Reads an archetype from a **version-8** payload.
+    ///
+    /// See [`BodyPlan::decode_pre_distribution`]: today's layout without
+    /// `chestSpacing` and `chestFullness` on the end of the humanoid's.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError`] if the tag is unknown or the payload is short.
+    pub fn decode_pre_distribution(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        let (&tag, rest) = bytes.split_first().ok_or(PlanDecodeError::Truncated)?;
+        *bytes = rest;
+        match tag {
+            1 => Ok(Archetype::Humanoid(
+                HumanoidParams::decode_pre_distribution(bytes)?,
+            )),
+            2 => Ok(Archetype::Quadruped(
+                QuadrupedParams::decode_pre_distribution(bytes)?,
+            )),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }

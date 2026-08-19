@@ -92,6 +92,20 @@
           "minimum": -3000,
           "maximum": 3000,
           "default": 0
+        },
+        "chestSpacing": {
+          "type": "integer",
+          "description": "How far apart the pair sits, over the azimuth the shape derives: negative is close-set, positive wide. An angle about the trunk's own axis rather than a lateral offset, so the separation a body delivers does not depend on how far its chest stands off. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "chestFullness": {
+          "type": "integer",
+          "description": "Where the volume sits between the upper pole and the lower one, over the split the shape derives: positive is a fuller lower pole, negative an evenly divided one, at a fixed volume and projection. Not a second ptosis axis - ageing descends the peak toward a fold that holds still, while this moves the split and the fold under it together. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
         }
       }
     },

@@ -361,6 +361,31 @@ pub struct ChestAxes {
     pub projection: f32,
     /// How high it sits, over what age and fat predict.
     pub lift: f32,
+    /// How far apart the pair sits, over the azimuth this module's `SPACING`
+    /// names.
+    ///
+    /// **MakeHuman's `breast-dist` and Second Life's Cleavage, and it is an
+    /// AZIMUTH like the constant it offsets** (#289) — read that constant's own
+    /// line for why, because the reason is a refutation rather than a
+    /// preference: written as a lateral offset the delivered separation
+    /// depended on the projection, and the same authored spacing put the peaks
+    /// 104 mm apart on a light chest and 192 apart on a heavy one.
+    pub spacing: f32,
+    /// Where the volume sits between the upper pole and the lower one, over
+    /// the split this module's `POLES` derives.
+    ///
+    /// **MakeHuman's `breast-volume-vert`, and a direct offset on the pole
+    /// ratio rather than a second mechanism for it** (#289). Positive is a
+    /// fuller lower pole and negative an evenly divided one; the mean of the
+    /// two poles is held at 1 exactly as `POLES` holds it, so this moves
+    /// where the volume sits without moving how far the chest stands off.
+    ///
+    /// **Not a second ptosis axis, and the distinction is [`ChestTraits::fold`]'s
+    /// own.** Age descends the PEAK toward a fold that stays where it is;
+    /// this moves the pole split and the fold under it together, because
+    /// `FOLD_SEAT` is a share of the lower pole's span and a fold seated on a
+    /// ruler has to travel when the ruler does.
+    pub fullness: f32,
 }
 
 /// What one unit of [`ChestAxes::volume`] does to the projection.
@@ -383,6 +408,94 @@ const PROJECTION_TRADE: (f32, f32) = (0.35, 0.16);
 /// What one unit of [`ChestAxes::lift`] does: how far up the band it moves the
 /// peak, and how much of the age descent it refuses.
 const LIFT_GAIN: (f32, f32) = (0.06, 0.5);
+
+/// What one unit of [`ChestAxes::spacing`] moves the pair, as a share of a
+/// quarter turn.
+///
+/// **Derived on the same section and by the same arithmetic as [`SPACING`]
+/// itself**, which is the point of writing it here rather than picking a round
+/// number: life puts the intermammary distance at 180 to 230 mm, the reference
+/// trunk's ring is 260 mm across and 208 deep, and where [`SPACING`]'s 0.57 of
+/// a quarter turn is that band's LOW end at 183 mm, 0.72 is 224 mm — the wide
+/// end of it. Symmetric, so `-1` lands at 0.42, about 137 mm: closer than life
+/// goes, which is the creator's choice this axis exists to carry and is what
+/// the negative half of every axis on [`ChestAxes`] does.
+///
+/// **0.15 rather than the 0.175 that reaches life's 230 mm exactly, and the
+/// rail is why.** `ChestTraits::on` keeps the crest a spread clear of the
+/// flank, and a soft body's spread is [`SPREAD`]'s own 0.28 — so its ceiling is
+/// 0.72 and a gain that authored 0.745 would be pinned there on every ordinary
+/// body, which is an axis whose last sixth does nothing. At 0.15 the gain and
+/// the rail agree at the positive end instead of fighting, and what a body with
+/// room to spare loses is 6 mm of separation it had no way to show.
+///
+/// **What a moved pair costs, and it is not amplitude**: `SPACING`'s own line
+/// records that 0.57 puts the crest on a surface vertex, and any other value
+/// puts it between two. On `render --bare --close chest` that shows as a flat
+/// facet with a hard highlight at the crest, at every value of this axis but
+/// zero. The lobe is the right size and in the right place — the cell under it
+/// is 19 to 23 mm — so it is the second refinement pass #292 costs and nothing
+/// this axis can fix.
+///
+/// Measured with `examples/chestsection --profile`, whose crest azimuth is
+/// read RADIALLY: on the neutral body the delivered crest sits at 0.44, 0.58
+/// and 0.71 of a quarter turn for `-1`, `0` and `+1`, against authored 0.42,
+/// 0.57 and 0.72 — where each was sent, to the hundredth. At femininity `+1`
+/// the positive end reads 0.68 and stops there however far the axis is pushed,
+/// which is the rail on a body whose spread is 0.32 and is the design working
+/// rather than the axis failing. **The section table's `separation between
+/// them` reads this axis BACKWARDS** and must not be used for it — see that
+/// instrument's own note.
+const SPACING_GAIN: f32 = 0.15;
+
+/// What one unit of [`ChestAxes::fullness`] moves the pole split, as a share of
+/// [`TALL`] shifted from the upper pole to the lower one.
+///
+/// **Stated on the DELIVERED split and measured, not on the authored one**,
+/// which is [`POLES`]'s own lesson: the surface does not deliver what the carve
+/// authors, and a gain written against the authored ratio would land somewhere
+/// nobody chose. The shipped body reads 45:55 at femininity 0 off an authored
+/// 39:61, and an authored 50:50 arrives as 55:45 — so ten delivered points cost
+/// 0.28 of split and five cost 0.14.
+///
+/// `±1` is therefore about six delivered points either side of life's preferred
+/// 45:55, which is the width of the preference band rather than the width of
+/// what a chest can look like. Measured on the shipped body at femininity 0:
+/// **51:49 at `-1`, 45:55 at `0` and 39:61 at `+1`**, off authored splits of
+/// 45:55, 39:61 and 33:67 — and the crest reads 29.5, 29.5 and 29.6 mm across
+/// the three, which is the mean-of-1 invariant holding rather than being
+/// asserted. **Deliberately far short of what age reaches** —
+/// [`DESCENT`] takes the delivered split to 29:71 at eighty — because an offset
+/// that out-swings the composite it corrects is the incoherence the two-tier
+/// contract exists to prevent, and because a pole split that far over IS
+/// ptosis, which the record already has an axis for.
+const FULLNESS_GAIN: f32 = 0.14;
+
+/// How many of the lobe's own spreads the pair stays off the midline.
+///
+/// **Where the mirror stops showing**, which is what makes this rail a
+/// different multiple from the one at the flank. `carve_chest` places the pair
+/// by `from.x.abs()`, so the two halves meet at the sternum and the surface
+/// there carries the lobe's own slope: at one spread the midline holds
+/// `exp(-1)` — a third — of the crest and the meeting is a crease, at 1.5 it
+/// holds a tenth and the two are a pair. Verified on `render --bare --close
+/// chest` at femininity `+1`, which is the sheet a merged pair shows up on and
+/// the section table does not.
+///
+/// It also fixes where the axis's own end lands: on the neutral body, whose
+/// spread is 0.28, `-1` authors 0.42 and this rail sits at 0.42 — so the near
+/// end of [`SPACING_GAIN`] and the near rail agree exactly, as the far end and
+/// the far rail already did.
+const SPACING_FLOOR: f32 = 1.5;
+
+/// The narrowest either pole may be left, as a share of [`TALL`].
+///
+/// A pole is the span of a falloff and a span of zero is a step in the
+/// surface. **It does not bind inside the record's own envelope** — the axes
+/// clamp at `±3` and [`FULLNESS_GAIN`] can take the upper pole no lower than
+/// 0.30 there — so this is a rail for a caller assembling [`ChestAxes`] by
+/// hand, which is a thing a public type allows.
+const POLE_FLOOR: f32 = 0.15;
 
 /// What the chest is shaped like, derived from the composites.
 ///
@@ -421,6 +534,15 @@ pub struct ChestTraits {
     /// Lift moves it, because a creator asking for a higher chest means the
     /// whole structure; age does not.
     pub fold: f32,
+    /// How the lobe's height is shared above the peak and below it, as
+    /// multiples of this module's `TALL` whose mean is 1.
+    ///
+    /// **Carried rather than read off `POLES` at the carve**, because
+    /// [`ChestAxes::fullness`] offsets it and a constant the carve reads
+    /// directly is a constant no record axis can reach. The mean is held at 1
+    /// wherever this is written, so `TALL` goes on meaning what its own line
+    /// says and the crest's amplitude is untouched by the split.
+    pub poles: (f32, f32),
     /// How lean this body reads, `0` soft and `1` defined.
     ///
     /// **Carried rather than re-derived**, which is what this whole type is
@@ -456,13 +578,25 @@ impl ChestTraits {
             spread: between(1.0 - 2.0 * definition, SPREAD.0, SPREAD.1),
             height: HEIGHT - DESCENT.0 * ageing,
             descent: ageing,
+            poles: POLES,
             // The young geometry's own fold, which is the anchor: `HEIGHT`
             // before any descent, less the seat [`FOLD_SEAT`] names, taken
             // against the lower pole before [`DESCENT`] slackens it.
-            fold: HEIGHT - FOLD_SEAT * TALL * POLES.1,
+            fold: fold_seat(POLES),
             definition,
         }
     }
+}
+
+/// Where the fold sits, on the poles it is a share of.
+///
+/// **One derivation read from two places**, which is [`FOLD_SEAT`]'s own
+/// argument taken one step further: that constant is a share of the lower
+/// pole's span so the seat travels when the body's proportions do, and
+/// [`ChestAxes::fullness`] moves that span too. Written out at both sites it
+/// would be two places for the seat to drift from its ruler.
+fn fold_seat(poles: (f32, f32)) -> f32 {
+    HEIGHT - FOLD_SEAT * TALL * poles.1
 }
 
 impl ChestTraits {
@@ -475,7 +609,7 @@ impl ChestTraits {
     /// distance up a band that is already measured in the body's own span.
     #[must_use]
     pub fn on(self, axes: ChestAxes) -> Self {
-        let (stand, spread) = PROJECTION_TRADE;
+        let (stand, trade) = PROJECTION_TRADE;
         // **Lift refuses the descent once and every consequence of it follows**
         // (#288), which is what makes this one axis rather than three. The
         // descent it refuses is the same number that lowers the peak and
@@ -485,13 +619,49 @@ impl ChestTraits {
         // slackening.
         let descent = (self.descent * (1.0 - LIFT_GAIN.1 * axes.lift)).clamp(0.0, 1.0);
         let held = self.height + DESCENT.0 * (self.descent - descent) + LIFT_GAIN.0 * axes.lift;
-        let fold = self.fold + LIFT_GAIN.0 * axes.lift;
+        // **Shifted from one pole to the other rather than added to one of
+        // them**, so their mean stays 1 and [`TALL`] goes on meaning what its
+        // line says: a Gaussian's crest is its coefficient whatever its span
+        // is, so this moves where the volume sits and not how far the chest
+        // stands off. [`POLE_FLOOR`] is a rail for a hand-built [`ChestAxes`]
+        // and does not bind inside the record's own envelope.
+        let shift = FULLNESS_GAIN * axes.fullness;
+        let poles = (
+            (self.poles.0 - shift).max(POLE_FLOOR),
+            (self.poles.1 + shift).max(POLE_FLOOR),
+        );
+        // The fold travels with the pole it is a share of — [`FOLD_SEAT`]'s own
+        // argument, which is why `fullness` moving the lower pole moves the
+        // crease under it while AGE still does not (#288). Written as the move
+        // rather than as a fresh seat, so a fold that already carries a lift is
+        // not silently re-derived without it.
+        let fold = self.fold + fold_seat(poles) - fold_seat(self.poles) + LIFT_GAIN.0 * axes.lift;
+        let spread = (self.spread * (1.0 - trade * axes.projection)).max(0.05);
+        // **Both rails are measured in the lobe's own spread rather than
+        // written as constants** (#182's lesson: a constant rail dies quietly
+        // when the ruler moves), and they are DIFFERENT multiples of it because
+        // the two ends fail differently. At the flank nothing meets and the
+        // lobe simply runs out of body, so one spread inside it is enough. At
+        // the midline the carve MIRRORS — it reads `from.x.abs()` — so the two
+        // lobes meet there, and a crest one spread off centre delivers a third
+        // of itself onto the midline with a slope: rendered at `-3` on a
+        // feminine body that is one narrow mound with a crease down it, not a
+        // close-set pair. At [`SPACING_FLOOR`] spreads it is a pair again.
+        //
+        // Not `clamp`, which panics when the two rails cross — nothing in the
+        // envelope takes a spread past 0.4, and a hand-built axis set that did
+        // should be pinned rather than a panic.
+        let spacing = (self.spacing + SPACING_GAIN * axes.spacing)
+            .max(SPACING_FLOOR * spread)
+            .min(1.0 - spread);
         Self {
             projection: (self.projection
                 * (1.0 + VOLUME_GAIN * axes.volume)
                 * (1.0 + stand * axes.projection))
                 .max(0.0),
-            spread: (self.spread * (1.0 - spread * axes.projection)).max(0.05),
+            spacing,
+            spread,
+            poles,
             // **Never below its own fold, which is the one Regnault grade a
             // stylised body cannot wear.** Grades 1 and 2 are the peak reaching
             // and passing the fold; grade 3 is the peak at the breast's lowest
@@ -606,16 +776,45 @@ impl Column {
 /// pass fits with 188 triangles to spare; two need the 30,000 target to move,
 /// which is the owner's call and was declined on 2026-08-19.
 ///
-/// **And the floor of this band is 0.05 rather than the −0.10 that was
-/// measured and wanted**, for the same 90 triangles the budget did not have.
-/// The risk it takes is a trap #284 measured: a band edge inside the lobe reads
-/// as a fold, because the coarse side of a resolution boundary under-delivers
-/// the push and the step between them is a crease — with the floor at 0.50 the
-/// instrument reported 5.40 mm of notch 44 mm under the peak where the same
-/// body clear of the boundary reports 2.90, and the bare control did not move.
-/// At 0.05 the boundary is under the lobe on every ordinary body and inside its
-/// lower tail only where age and lift together drag the peak down, which is a
-/// corner of the roll envelope rather than the middle of it.
+/// **Retaken the same day and declined again**, and this time on the pass's own
+/// render rather than on the budget — see the note under the band floor below
+/// for the before-and-after, which is a fold 30 to 80% deeper on lean bodies and
+/// nothing at all for the pectoral border or for #289's `chestSpacing`. The
+/// arithmetic above is also softer than it reads: measured again with the pass
+/// actually in, the dearest bald body is 27,628 and the leftover 2,372, so the
+/// target needed 30,378 rather than the 32,278 the first paragraph implies. It
+/// is still a raise, and it still buys one term.
+///
+/// **The floor of this band is −0.10, and it was 0.05 for one day** (#292,
+/// 2026-08-19). #285 measured −0.10, wanted it, and could not afford the 90
+/// triangles; the risk that took is a trap #284 measured: a band edge inside
+/// the lobe reads as a fold, because the coarse side of a resolution boundary
+/// under-delivers the push and the step between them is a crease — with the
+/// floor at 0.50 the instrument reported 5.40 mm of notch 44 mm under the peak
+/// where the same body clear of the boundary reports 2.90, and the bare control
+/// did not move. At 0.05 the boundary sat under the lobe on every ordinary body
+/// and inside its lower tail wherever age and lift together dragged the peak
+/// down, which is a corner of the roll envelope rather than the middle of it —
+/// but it is a corner a record can ask for, so it was bought back the moment
+/// there was a decision open to buy it in.
+///
+/// It cost 108 rather than 90, measured on the dearest bald body (27,032 →
+/// 27,140), and it came out of `hair::clump::MAX_TRIANGLES` — 2,938 → 2,830,
+/// which leaves 80 triangles between that ceiling and #209's floor under it.
+///
+/// **The second pass was retaken at #292 with the fold's render in hand, and
+/// declined again.** What it bought, measured: on a LEAN body the fold went
+/// 1.87/2.26/3.63 mm to 2.59/3.97/4.78 against bare rows of 2.30/2.17/0.80, so
+/// it cleared its own noise floor at three femininities instead of two; on a
+/// soft body 1.63/2.47/7.62 to 2.34/4.46/7.75 against 6.31/11.58/10.50, which
+/// clears at none of them either way. What it did NOT buy, and both were
+/// expected to: the pectoral's inferior border did not move at all
+/// (0.697/0.927/1.006 → 0.680/0.857/1.006), and #289's `chestSpacing` had
+/// nothing to gain, because the flat bright patch a moved lobe shows on a
+/// render is a SPECULAR HIGHLIGHT and not a facet — the normal buffer over it
+/// is smooth, and a third pass over the crest band changed the picture by
+/// nothing for 1,408 triangles. 596 triangles and 600 of `TRIANGLE_TARGET` for
+/// one term's depth on lean bodies was not the trade it was filed as.
 ///
 /// **A tight pass on the sternum column** was in #285's design and is refused
 /// on its own merits rather than on the budget's: it costs 182 triangles and
@@ -625,7 +824,7 @@ impl Column {
 /// the 30 mm lobe's 5.49 against 5.64 — inside the noise and on the wrong side
 /// of it. Worth revisiting at #287, when there is a sternal-gap term for it to
 /// hold.
-const CHEST_PASSES: [(f32, f32, f32, f32); 1] = [(0.0, 1.0, 0.05, 0.99)];
+const CHEST_PASSES: [(f32, f32, f32, f32); 1] = [(0.0, 1.0, -0.10, 0.99)];
 
 /// Gives the chest enough surface to carry a shape, before anything carves one.
 ///
@@ -724,7 +923,7 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
     // taken before [`DESCENT`] slackens anything: an anchor that the ageing it
     // is the reference for can move is not an anchor.
     let anchor = column.waist + span * traits.fold;
-    let held = span * TALL * POLES.1;
+    let held = span * TALL * traits.poles.1;
 
     for point in &mut mesh.positions {
         // The trunk and nothing else. An arm passes through this band and a
@@ -750,11 +949,11 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
         // held up — and it is the FULLER of the two poles before age touches
         // it, which is what [`POLES`] is.
         let up = point.y - peak;
-        let lower = span * TALL * POLES.1 * (1.0 + DESCENT.1 * traits.descent);
+        let lower = span * TALL * traits.poles.1 * (1.0 + DESCENT.1 * traits.descent);
         let tall = if up < 0.0 {
             lower
         } else {
-            span * TALL * POLES.0
+            span * TALL * traits.poles.0
         };
         let along = (up / tall.max(f32::EPSILON)).abs();
         // **C1 at the peak comes free and it is worth saying why**, because a
@@ -1071,9 +1270,12 @@ mod tests {
         };
         let mut wire = Vec::new();
         Archetype::Humanoid(params).encode(&mut wire);
-        // A version-7 payload is a version-8 one with the last three axes cut
-        // off it, which is what "appended" means.
-        let pre_chest = &wire[..wire.len() - 3];
+        // A version-7 payload is today's with the whole chest cut off the end
+        // of it: three axes appended at version 8 and two more at version 9.
+        // A literal rather than something derived from the layout, because it
+        // is precisely what the older arm must NOT read — a count taken from
+        // the encoder would agree with whatever the encoder did next.
+        let pre_chest = &wire[..wire.len() - 5];
         let mut reading = pre_chest;
         let Ok(Archetype::Humanoid(back)) = Archetype::decode_pre_chest(&mut reading) else {
             panic!("a version-7 payload did not decode");
@@ -1084,8 +1286,14 @@ mod tests {
         assert!((back.head_breadth - params.head_breadth).abs() < 0.03);
         assert!((back.extremity_size - params.extremity_size).abs() < 0.03);
         assert_eq!(
-            (back.chest_volume, back.chest_projection, back.chest_lift),
-            (0.0, 0.0, 0.0),
+            (
+                back.chest_volume,
+                back.chest_projection,
+                back.chest_lift,
+                back.chest_spacing,
+                back.chest_fullness,
+            ),
+            (0.0, 0.0, 0.0, 0.0, 0.0),
             "a code written before the chest axes decoded to something other than their neutral",
         );
 
@@ -1094,12 +1302,73 @@ mod tests {
         // has simply stopped reading the axes.
         let mut whole = wire.as_slice();
         let Ok(Archetype::Humanoid(full)) = Archetype::decode(&mut whole) else {
-            panic!("a version-8 payload did not decode");
+            panic!("a version-9 payload did not decode");
         };
         assert!(whole.is_empty(), "the current arm left bytes behind");
         assert!((full.chest_volume - params.chest_volume).abs() < 0.03);
         assert!((full.chest_projection - params.chest_projection).abs() < 0.03);
         assert!((full.chest_lift - params.chest_lift).abs() < 0.03);
+    }
+
+    #[test]
+    fn a_record_written_before_the_distribution_axes_still_means_what_it_meant() {
+        // The same three directions one version on (#289, and #211/#212 for
+        // why three): a version-8 code carries the chest's size and height and
+        // says nothing about where its volume sits, and what it MEANT is the
+        // pair where `SPACING` puts it, split the way `POLES` derives — which
+        // is the neutral offset, not a gap to guess at.
+        use crate::plan::{Archetype, HumanoidParams};
+        let params = HumanoidParams {
+            height: 1.61,
+            hip_width: -0.35,
+            face_length: 0.8,
+            chest_volume: 0.9,
+            chest_projection: -0.7,
+            chest_lift: 0.5,
+            chest_spacing: -1.2,
+            chest_fullness: 0.6,
+            ..Default::default()
+        };
+        let mut wire = Vec::new();
+        Archetype::Humanoid(params).encode(&mut wire);
+
+        // OLD DECODES NEW: version 8 is today's payload without the two axes
+        // version 9 appended.
+        let mut reading = &wire[..wire.len() - 2];
+        let Ok(Archetype::Humanoid(back)) = Archetype::decode_pre_distribution(&mut reading) else {
+            panic!("a version-8 payload did not decode");
+        };
+        assert!(reading.is_empty(), "the version-8 arm left bytes behind");
+        assert!((back.height - params.height).abs() < 0.002);
+        assert!((back.hip_width - params.hip_width).abs() < 0.03);
+        assert!((back.chest_volume - params.chest_volume).abs() < 0.03);
+        assert!((back.chest_lift - params.chest_lift).abs() < 0.03);
+        assert_eq!(
+            (back.chest_spacing, back.chest_fullness),
+            (0.0, 0.0),
+            "a code written before the distribution axes decoded to something other than their \
+             neutral",
+        );
+
+        // NEW DECODES NEW, without which the direction above passes on a
+        // decoder that has simply stopped reading the two axes.
+        let mut whole = wire.as_slice();
+        let Ok(Archetype::Humanoid(full)) = Archetype::decode(&mut whole) else {
+            panic!("a version-9 payload did not decode");
+        };
+        assert!(whole.is_empty(), "the current arm left bytes behind");
+        assert!((full.chest_spacing - params.chest_spacing).abs() < 0.03);
+        assert!((full.chest_fullness - params.chest_fullness).abs() < 0.03);
+
+        // NEW DECODES OLD, which is the direction that catches an arm reading
+        // at the wrong offset: a version-8 payload put through today's arm has
+        // two spans too few and must fail rather than return a body.
+        let mut short = &wire[..wire.len() - 2];
+        assert!(
+            Archetype::decode(&mut short).is_err(),
+            "today's arm read a version-8 payload to the end, which means the two layouts are \
+             not distinguishable by anything but the version byte",
+        );
     }
 
     /// The lobe's own vertical profile as the carve authors it, probed through
@@ -1188,6 +1457,155 @@ mod tests {
              55% and this carve overshoots it to land there on the built surface",
             share * 100.0,
             peak * 1000.0,
+        );
+    }
+
+    #[test]
+    fn the_two_distribution_axes_move_a_chest_without_resizing_it() {
+        // **#289's two axes, and the claim is a NEGATIVE one as much as a
+        // positive**: `spacing` says where the pair sits and `fullness` says
+        // where its volume sits between the poles, and neither may turn into a
+        // second size axis — which is the failure `the_three_axes_say_three
+        // _different_things` exists to catch on the first three.
+        //
+        // Probed through `carve_chest` itself at every azimuth (see
+        // [`authored_at`]), because the reading that matters is WHERE the lobe
+        // came out and no field on the traits can answer that: the same lesson
+        // that cost #285 a session, one axis on. The instrument's own
+        // section-across table reads a moved pair BACKWARDS — its columns are a
+        // walk across `x` and a radial push at a large azimuth widens the
+        // section instead of standing it off — so this shares the carve's
+        // direction rather than trusting a ruler that does not.
+        let record = body_of(0.0, 0.0, crate::plan::DEFAULT_BODY_FAT, 30);
+        let rig = Rig::from_skeleton(&record.skeleton()).expect("rigs");
+        let base = ChestTraits::of(&record.composites);
+        let with = |axes: ChestAxes| base.on(axes);
+        let apart = with(ChestAxes {
+            spacing: 1.0,
+            ..Default::default()
+        });
+        let close = with(ChestAxes {
+            spacing: -1.0,
+            ..Default::default()
+        });
+        let fuller = with(ChestAxes {
+            fullness: 1.0,
+            ..Default::default()
+        });
+        let evener = with(ChestAxes {
+            fullness: -1.0,
+            ..Default::default()
+        });
+
+        // The largest push the carve gives a column at one azimuth.
+        let crest = |traits: &ChestTraits, azimuth: f32| {
+            authored_at(&rig, traits, azimuth)
+                .iter()
+                .map(|&(_, at)| at)
+                .fold(f32::MIN, f32::max)
+        };
+        // And where round the section that push is largest, which is the
+        // delivered spacing rather than the authored one.
+        let sits_at = |traits: &ChestTraits| {
+            let mut best = (f32::MIN, 0.0f32);
+            let mut azimuth = 0.0f32;
+            while azimuth <= 1.0 {
+                let at = crest(traits, azimuth);
+                if at > best.0 {
+                    best = (at, azimuth);
+                }
+                azimuth += 0.01;
+            }
+            best.1
+        };
+
+        // SPACING IS A PLACEMENT. It moves the pair and touches nothing else
+        // the chest is made of — not its size, not its breadth, not its height,
+        // and not the fold, which belongs to the height and not to the azimuth.
+        assert!(apart.spacing > base.spacing && close.spacing < base.spacing);
+        for moved in [apart, close] {
+            assert!((moved.projection - base.projection).abs() < 1e-6);
+            assert!((moved.spread - base.spread).abs() < 1e-6);
+            assert!((moved.height - base.height).abs() < 1e-6);
+            assert!((moved.fold - base.fold).abs() < 1e-6);
+            assert!((moved.poles.0 - base.poles.0).abs() < 1e-6);
+            assert!((moved.poles.1 - base.poles.1).abs() < 1e-6);
+        }
+        for traits in [base, apart, close] {
+            let landed = sits_at(&traits);
+            assert!(
+                (landed - traits.spacing).abs() <= 0.02,
+                "a chest sent to {:.2} of a quarter turn came out at {:.2}",
+                traits.spacing,
+                landed,
+            );
+            assert!(
+                (crest(&traits, traits.spacing) / crest(&base, base.spacing) - 1.0).abs() < 0.01,
+                "moving the pair changed how far it stands off, which makes this a size axis",
+            );
+        }
+
+        // FULLNESS IS A SPLIT. The two poles' mean stays 1 — see [`POLES`] —
+        // so `TALL` goes on meaning what its line says and the crest's own
+        // amplitude cannot move: a Gaussian's crest is its coefficient whatever
+        // its span is.
+        assert!(fuller.poles.1 > base.poles.1 && fuller.poles.0 < base.poles.0);
+        assert!(evener.poles.1 < base.poles.1 && evener.poles.0 > base.poles.0);
+        for moved in [fuller, evener] {
+            assert!(
+                (moved.poles.0 + moved.poles.1 - 2.0).abs() < 1e-6,
+                "the poles' mean moved, so the axis is standing the chest off as well as \
+                 splitting it",
+            );
+            assert!((moved.projection - base.projection).abs() < 1e-6);
+            assert!((moved.spread - base.spread).abs() < 1e-6);
+            assert!((moved.spacing - base.spacing).abs() < 1e-6);
+            assert!(
+                (crest(&moved, moved.spacing) / crest(&base, base.spacing) - 1.0).abs() < 0.01,
+                "the crest moved with the split, which is the one thing the mean-of-1 is for",
+            );
+        }
+
+        // And the split it authors moves the way it was asked to. The share
+        // below the peak is the same reading `the_lobe_carries_more_of_itself
+        // _below_its_peak_than_above` asserts against life's 45:55.
+        let below = |traits: &ChestTraits| {
+            let profile = authored(&rig, traits);
+            let top = profile
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.1.total_cmp(&b.1.1))
+                .expect("a chest has a peak")
+                .0;
+            let lobe: Vec<(f32, f32)> = profile.iter().map(|&(up, at)| (up, at.max(0.0))).collect();
+            let area = |slice: &[(f32, f32)]| -> f32 {
+                slice
+                    .windows(2)
+                    .map(|pair| 0.5 * (pair[0].1 + pair[1].1) * (pair[1].0 - pair[0].0))
+                    .sum()
+            };
+            let (upper, lower) = (area(&lobe[top..]), area(&lobe[..=top]));
+            lower / (upper + lower)
+        };
+        let (even, mid, full) = (below(&evener), below(&base), below(&fuller));
+        assert!(
+            even < mid && mid < full,
+            "the fullness axis authored {:.0}% / {:.0}% / {:.0}% below the peak at -1, 0 and +1, \
+             which is not an ordered axis",
+            even * 100.0,
+            mid * 100.0,
+            full * 100.0,
+        );
+
+        // **And the fold travelled with the pole it is a share of**, which is
+        // the one thing `fullness` does that age must never do (#288): ptosis
+        // is the peak descending toward a fold that holds still, and a creator
+        // asking for a fuller lower pole is asking for the whole structure.
+        assert!(
+            fuller.fold < base.fold && evener.fold > base.fold,
+            "the fold sat at {:.3} of the band whatever the lower pole under it was doing, \
+             which is `FOLD_SEAT` written as a constant seat after all",
+            base.fold,
         );
     }
 
@@ -1467,6 +1885,8 @@ mod tests {
                     volume: params.chest_volume,
                     projection: params.chest_projection,
                     lift: params.chest_lift,
+                    spacing: params.chest_spacing,
+                    fullness: params.chest_fullness,
                 },
                 _ => ChestAxes::default(),
             };
@@ -1481,6 +1901,15 @@ mod tests {
                 "seed {seed} placed its chest at {:.2} of a quarter turn, spread {:.2}",
                 traits.spacing,
                 traits.spread
+            );
+            // And the pair the split is written as: a pole is the span of a
+            // falloff, so a span at or below zero is a step in the surface
+            // rather than a shape (#289).
+            assert!(
+                traits.poles.0 >= POLE_FLOOR && traits.poles.1 >= POLE_FLOOR,
+                "seed {seed} split its lobe {:.2}:{:.2}, which is not a pair of spans",
+                traits.poles.0,
+                traits.poles.1,
             );
         }
         // And the plan the carve rides is untouched by it, which is the whole

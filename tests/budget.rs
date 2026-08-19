@@ -25,6 +25,11 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3};
 /// Triangles a WebGL2-tier avatar may draw.
 ///
 /// The upper end of the 15–30k band the reference games sit in.
+///
+/// **Retaken and left where it is** (#292, 2026-08-19). `torso::refine_chest`'s
+/// second pass wanted this at about 30,600 and the decision went the other way
+/// once the pass was measured rather than argued: see `torso::CHEST_PASSES`,
+/// whose docstring carries what 596 triangles bought and what it did not.
 const TRIANGLE_TARGET: usize = 30_000;
 
 /// Draw calls a WebGL2-tier avatar may cost.
@@ -184,7 +189,23 @@ const MESH_TARGET: usize = 4;
 /// #209's rule that no re-rollable head is ever trimmed, measured at about
 /// 2,750 — is what held the refinement to one pass instead of two, and it
 /// bound long before this ceiling or the owner's cap did.
-const TRIANGLE_CEILING: usize = 28_300;
+///
+/// **Up 100 to 28,400 for the chest band's floor** (#292, 2026-08-19). The
+/// pass itself is unchanged; what moved is where it stops, from 0.05 of the
+/// waist-to-girdle span to −0.10 — the value #285 measured, wanted, and could
+/// not afford. It costs 108 triangles on the dearest bald body (27,032 →
+/// 27,140) and 108 here (28,256 → 28,364), and it is correctness rather than
+/// resolution: a band edge INSIDE a lobe reads as a fold, which #284 measured
+/// at 5.40 mm of false notch, and at 0.05 that edge sits in the lower tail of
+/// any chest that age and lift together drag down.
+///
+/// It was paid for out of hair again — `hair::clump::MAX_TRIANGLES` 2,938 →
+/// 2,830 — rather than out of [`TRIANGLE_TARGET`], which is the choice #292
+/// made when the second pass did not earn the target's raise. The leftover is
+/// 2,860 and #209's floor under that ceiling is about 2,750, so there is 80
+/// triangles of room left there and no more: the NEXT thing the trunk wants
+/// comes out of the target.
+const TRIANGLE_CEILING: usize = 28_400;
 
 /// Draw calls the crate currently costs.
 ///

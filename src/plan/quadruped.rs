@@ -273,6 +273,13 @@ impl BodyPlan for QuadrupedParams {
         Ok(params)
     }
 
+    fn decode_pre_distribution(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // Identical to `decode`, one version on again: the two axes version 9
+        // appends say where a HUMANOID chest's volume sits, across and up. Same
+        // payload since version 4 (#289).
+        Self::decode(bytes)
+    }
+
     fn decode_pre_chest(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
         // Identical to `decode`, for `decode_reserved`'s reason one version on:
         // the three axes version 8 appends are the HUMANOID's chest, and this

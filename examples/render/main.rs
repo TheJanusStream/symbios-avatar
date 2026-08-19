@@ -470,9 +470,10 @@ fn main() {
         record.sanitize();
     }
 
-    // The chest's three axes, in the order they read: how much there is, how
-    // far it stands off against how far it spreads, and how high it sits
-    // (#273). Here for `--skull`'s reason — an axis whose default has to be
+    // The chest's five axes, in the order they read: how much there is, how
+    // far it stands off against how far it spreads, how high it sits (#273),
+    // how far apart the pair sits and where its volume sits between the poles
+    // (#289). Here for `--skull`'s reason — an axis whose default has to be
     // chosen by looking at both ends needs an instrument that can ask for an
     // end — and because a chest is invisible on a DRESSED body: the skin under
     // the clothes is not emitted, so `--bare` is not optional for this one.
@@ -490,6 +491,12 @@ fn main() {
             }
             if let Some(&lift) = given.get(2) {
                 params.chest_lift = lift;
+            }
+            if let Some(&spacing) = given.get(3) {
+                params.chest_spacing = spacing;
+            }
+            if let Some(&fullness) = given.get(4) {
+                params.chest_fullness = fullness;
             }
         }
         record.sanitize();

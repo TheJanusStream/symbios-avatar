@@ -183,6 +183,8 @@ fn the_humanoid_corners_of_the_space_mesh() {
                 chest_volume: value,
                 chest_projection: value,
                 chest_lift: value,
+                chest_spacing: value,
+                chest_fullness: value,
             };
             params.sanitize();
             assert_meshable(
@@ -211,6 +213,8 @@ fn random_humanoids_always_mesh() {
             chest_volume: rng.random_range(-1.0..=1.0),
             chest_projection: rng.random_range(-1.0..=1.0),
             chest_lift: rng.random_range(-1.0..=1.0),
+            chest_spacing: rng.random_range(-1.0..=1.0),
+            chest_fullness: rng.random_range(-1.0..=1.0),
         };
         params.sanitize();
         // **The composites are rolled here too, and that is the epic's rule
@@ -267,6 +271,8 @@ fn the_frame_axis_meshes_against_every_corner_of_the_body() {
                     chest_volume: value,
                     chest_projection: value,
                     chest_lift: value,
+                    chest_spacing: value,
+                    chest_fullness: value,
                 };
                 params.sanitize();
                 assert_meshable(
@@ -313,6 +319,8 @@ fn the_age_axis_meshes_against_every_corner_of_the_body() {
                         chest_volume: value,
                         chest_projection: value,
                         chest_lift: value,
+                        chest_spacing: value,
+                        chest_fullness: value,
                     };
                     params.sanitize();
                     assert_meshable(
@@ -594,6 +602,8 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
                 chest_volume: value,
                 chest_projection: value,
                 chest_lift: value,
+                chest_spacing: value,
+                chest_fullness: value,
             };
             params.sanitize();
             bodies.push((

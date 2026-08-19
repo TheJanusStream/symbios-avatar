@@ -20,6 +20,19 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
+/// **9** — the humanoid payload gains `chestSpacing` and `chestFullness`,
+/// appended (#289). They are where a chest's volume sits — across the ribcage
+/// and up it — over what the trunk's own constants derive, and the pair is the
+/// last of milestone #9's axes. Version 8 stays readable through
+/// `PRE_DISTRIBUTION_VERSION` (private, below), the same layout without the two
+/// bytes: a code minted before them meant a chest sitting where the constants
+/// put it, which IS the neutral offset.
+///
+/// **8** — the humanoid payload gains `chestVolume`, `chestProjection` and
+/// `chestLift`, appended (#273). Version 7 and below stay readable through
+/// `PRE_CHEST_VERSION` (private, below); a code written before the chest axes
+/// existed described the chest its composites came to, which is their neutral.
+///
 /// **7** — the complexion loses its `stubble` byte. It followed exactly
 /// the path `build` and `muscle` took: the thing it drove was replaced — first
 /// by the painted hair layer, then by a density and a colour per follicle
@@ -59,7 +72,7 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 8;
+pub const SHARE_CODE_VERSION: u8 = 9;
 
 /// The oldest format whose codes still decode.
 const OLDEST_VERSION: u8 = 3;
@@ -92,6 +105,15 @@ const PAINTED_STUBBLE_VERSION: u8 = 6;
 /// check: the checksum covers the body, so a short read is not otherwise an
 /// error until the next field is added after it.
 const PRE_CHEST_VERSION: u8 = 7;
+
+/// The last version whose humanoid payload ended at `chestLift`.
+///
+/// Version 9 appends `chestSpacing` and `chestFullness` (#289), and the gate is
+/// here for [`PRE_CHEST_VERSION`]'s reason exactly: the checksum covers the
+/// bytes rather than the fields, so a version-8 code read through today's
+/// layout would run two spans off the end of its own payload and the only thing
+/// that catches it is knowing which layout wrote it.
+const PRE_DISTRIBUTION_VERSION: u8 = 8;
 
 /// Crockford base32 digits.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -176,16 +198,19 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
 
     use crate::plan::{take_signed, take_unit};
 
-    // Four plan layouts are readable and the order of these arms is the order
+    // Five plan layouts are readable and the order of these arms is the order
     // they arrived in: version 3's narrow spans, versions 4 and 5's envelope
     // spans with the retired slots still on the wire, versions 6 and 7's
-    // payload ending at `extremitySize`, and today's with the chest on it.
+    // payload ending at `extremitySize`, version 8's ending at `chestLift`, and
+    // today's with the whole chest on it.
     let archetype = if version <= NARROW_SPAN_VERSION {
         Archetype::decode_legacy(&mut payload)?
     } else if version <= RESERVED_SLOTS_VERSION {
         Archetype::decode_reserved(&mut payload)?
     } else if version <= PRE_CHEST_VERSION {
         Archetype::decode_pre_chest(&mut payload)?
+    } else if version <= PRE_DISTRIBUTION_VERSION {
+        Archetype::decode_pre_distribution(&mut payload)?
     } else {
         Archetype::decode(&mut payload)?
     };
@@ -339,9 +364,20 @@ mod tests {
             &Composites::default(),
             &SkinParams::default(),
         );
-        // Short enough to read aloud or fit a QR code comfortably. Body plus
-        // complexion is about a dozen bytes; the ceiling leaves room to grow.
-        assert!(code.len() <= 48, "code is {} chars: {code}", code.len());
+        // Short enough to read aloud or fit a QR code comfortably. The ceiling
+        // is room to grow rather than a measurement of today: the neutral code
+        // is 50 characters at version 9, and each byte an appended axis costs
+        // is 1.6 base32 digits plus its share of a hyphen — 1.9 characters, so
+        // this leaves about three more axes.
+        //
+        // **It was 48 and version 9 went through it** (#289): the two
+        // distribution axes are two bytes and took the code from 46 to 50.
+        // Raised rather than worked around, because what the bound is FOR is a
+        // string a person can read down a phone line and photograph, and fifty
+        // Crockford digits in ten groups is still both. A code that had to drop
+        // axes to stay under a number would be the one thing this format exists
+        // not to do — a look that changes when it is passed between people.
+        assert!(code.len() <= 56, "code is {} chars: {code}", code.len());
         assert!(code.contains('-'), "grouped for legibility: {code}");
     }
 

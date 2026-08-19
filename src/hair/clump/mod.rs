@@ -264,6 +264,16 @@ pub struct Sowing<'a> {
 /// no number is both. One pass fits, with 188 triangles between this and the
 /// floor.
 ///
+/// **And DOWN again to 2,830 when that pass's band reached its proper floor**
+/// (#292, 2026-08-19). The pass is still one; what moved is where it stops,
+/// 0.05 → −0.10 of the waist-to-girdle span, which is the value #285 measured
+/// and could not afford. The dearest bald body went 27,032 → 27,140 and the
+/// leftover with it, 2,968 → 2,860. **80 triangles between this and the floor
+/// now, where there were 188**, and that is the whole of the room left: the
+/// second pass was retaken at #292 with its render in hand and declined again,
+/// and anything the trunk wants next comes out of `TRIANGLE_TARGET` rather than
+/// out of here.
+///
 /// The premise that made the whole question necessary was wrong for a while and
 /// is worth recording: #283's research put the dearest hair-bearing body at
 /// 27,624 and concluded there were ~2,350 triangles spare, where the real
@@ -275,7 +285,7 @@ pub struct Sowing<'a> {
 /// clump count is a REQUEST and everything under the corner is untouched bit
 /// for bit; a record has to ask for maximum length AND thickness AND density
 /// AND a tail to feel it, and the test above proves no re-roll does.
-pub const MAX_TRIANGLES: usize = 2_938;
+pub const MAX_TRIANGLES: usize = 2_830;
 
 /// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].
 ///

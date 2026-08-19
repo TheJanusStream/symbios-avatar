@@ -181,6 +181,34 @@ pub struct HumanoidParams {
     /// composites' — this says what they got wrong about one body.
     #[serde(with = "super::scaled")]
     pub chest_lift: f32,
+    /// How far apart the pair sits, over the azimuth the trunk's own constant
+    /// names.
+    ///
+    /// **The gap MakeHuman fills with `breast-dist` and Second Life with
+    /// Cleavage** (#289), and until now it was a hard constant — the one
+    /// quantity on the chest a creator could not say anything about. Negative
+    /// is close-set and positive wide. It is an AZIMUTH about the trunk's own
+    /// axis rather than a lateral offset, which `torso::SPACING` records as a
+    /// refutation rather than a preference: written lateral, the delivered
+    /// separation depended on how far the chest stood off.
+    #[serde(with = "super::scaled")]
+    pub chest_spacing: f32,
+    /// Where the volume sits between the upper pole and the lower one, over
+    /// what the shape derives.
+    ///
+    /// **MakeHuman's `breast-volume-vert`**, and a direct offset on
+    /// `torso::POLES` per the two-tier contract: the derivation carries life's
+    /// preferred 45:55 and this carries the choice no formula predicted.
+    /// Positive is a fuller lower pole and negative an evenly divided one, at
+    /// a fixed volume and a fixed projection — a lobe's crest is its
+    /// coefficient whatever its span is.
+    ///
+    /// **Not a second ptosis axis.** Age descends the peak toward a fold that
+    /// holds still, which is what the Regnault grades measure; this moves the
+    /// split and the fold under it together, because that fold is seated as a
+    /// share of the lower pole's own span.
+    #[serde(with = "super::scaled")]
+    pub chest_fullness: f32,
 }
 
 /// Neutral stature, used when a record omits the field.
@@ -203,6 +231,8 @@ impl Default for HumanoidParams {
             chest_volume: 0.0,
             chest_projection: 0.0,
             chest_lift: 0.0,
+            chest_spacing: 0.0,
+            chest_fullness: 0.0,
         }
     }
 }
@@ -240,6 +270,8 @@ impl BodyPlan for HumanoidParams {
             (&mut self.chest_volume, default.chest_volume),
             (&mut self.chest_projection, default.chest_projection),
             (&mut self.chest_lift, default.chest_lift),
+            (&mut self.chest_spacing, default.chest_spacing),
+            (&mut self.chest_fullness, default.chest_fullness),
         ] {
             *axis = super::sanitize_axis(*axis, fallback, signed_envelope());
         }
@@ -604,6 +636,15 @@ impl BodyPlan for HumanoidParams {
                 // third seed, and the composites already place the chest.
                 self.chest_projection = offset("humanoid.chestProjection", 0.7);
                 self.chest_lift = offset("humanoid.chestLift", 0.7);
+                // The same tighter sigma and for the same reason: these two say
+                // where a chest's volume sits rather than how much of it there
+                // is, and a shape axis drawn as wide as its own size axis
+                // caricatures about every third seed. Their streams are new
+                // names, so every stored seed's other axes are untouched — the
+                // property `adding_an_axis_does_not_move_the_axes_beside_it`
+                // holds and `GENERATOR_VERSION` does not move (#289).
+                self.chest_spacing = offset("humanoid.chestSpacing", 0.7);
+                self.chest_fullness = offset("humanoid.chestFullness", 0.7);
             }
             Category::Frame => {
                 self.shoulder_width = offset("humanoid.shoulderWidth", 1.0);
@@ -656,6 +697,13 @@ impl BodyPlan for HumanoidParams {
         put_span(out, self.chest_volume, signed_envelope());
         put_span(out, self.chest_projection, signed_envelope());
         put_span(out, self.chest_lift, signed_envelope());
+        // **Appended again, which is what makes this version 9** (#289), for
+        // the reason the block above already gives: a byte stream has no field
+        // names, so the only safe place for a new axis is the end and the
+        // version gate is what stops an older code being read through this
+        // layout.
+        put_span(out, self.chest_spacing, signed_envelope());
+        put_span(out, self.chest_fullness, signed_envelope());
     }
 
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
@@ -672,6 +720,33 @@ impl BodyPlan for HumanoidParams {
             chest_volume: take_span(bytes, signed_envelope())?,
             chest_projection: take_span(bytes, signed_envelope())?,
             chest_lift: take_span(bytes, signed_envelope())?,
+            chest_spacing: take_span(bytes, signed_envelope())?,
+            chest_fullness: take_span(bytes, signed_envelope())?,
+        };
+        params.sanitize();
+        Ok(params)
+    }
+
+    fn decode_pre_distribution(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // Version 8: today's layout without `chestSpacing` and `chestFullness`
+        // on the end. A code minted before them described a chest sitting where
+        // `torso::SPACING` put it, split the way `torso::POLES` derived — which
+        // IS the neutral offset, exactly as a pre-chest code means the chest
+        // its composites came to.
+        let mut params = Self {
+            height: take_length(bytes)?,
+            shoulder_width: take_span(bytes, signed_envelope())?,
+            hip_width: take_span(bytes, signed_envelope())?,
+            limb_length: take_span(bytes, signed_envelope())?,
+            neck_length: take_span(bytes, signed_envelope())?,
+            head_size: take_span(bytes, signed_envelope())?,
+            head_breadth: take_span(bytes, signed_envelope())?,
+            face_length: take_span(bytes, signed_envelope())?,
+            extremity_size: take_span(bytes, signed_envelope())?,
+            chest_volume: take_span(bytes, signed_envelope())?,
+            chest_projection: take_span(bytes, signed_envelope())?,
+            chest_lift: take_span(bytes, signed_envelope())?,
+            ..Self::default()
         };
         params.sanitize();
         Ok(params)
