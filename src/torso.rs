@@ -124,6 +124,84 @@ const HEIGHT: f32 = 0.65;
 /// How tall each lobe is, as a share of the waist-to-girdle span.
 const TALL: f32 = 0.17;
 
+/// How that height is shared above the peak and below it.
+///
+/// **The mean of the two is 1, so [`TALL`] still means what its own line says**
+/// and the peak's amplitude is untouched either way: a Gaussian's crest is its
+/// coefficient whatever its span is, so widening one side and narrowing the
+/// other moves where the volume sits without moving how far the chest stands
+/// off. That is the whole of what this axis is for.
+///
+/// Life prefers **45:55 upper to lower** — Mallucci's series and the ASPS
+/// studies put the preference at 87 to 94% — and a symmetric Gaussian is 50:50
+/// by construction. A half-Gaussian's area goes as its span, so 45:55 is a
+/// ratio of 1.22 between the two; these are further apart than that, and the
+/// reason is the whole of #285: the SURFACE does not deliver what the carve
+/// authors. Measured with `examples/chestsection`, whose `authored` row probes
+/// the carve itself and whose top row reads the built polygons, an authored
+/// 50:50 arrived as 55:45 on the refined body — so the authored split has to
+/// overshoot to land. These are tuned against the DELIVERED reading, which is
+/// the one a render shows.
+///
+/// **#286's design note asked for the upper falloff to be the slower of the two
+/// and that is the opposite of 45:55, so the measurable target won.** A slower
+/// upper falloff is a taller upper pole and a taller pole has more area under
+/// it; the prose and the ratio cannot both be had from one span pair. What the
+/// anatomy means by a straight upper pole is a matter of the profile's
+/// CURVATURE rather than its extent, which a Gaussian has no knob for — it is
+/// recorded on `examples/chestsection`'s bow reading and left to a later slice
+/// rather than faked here.
+const POLES: (f32, f32) = (0.72, 1.28);
+
+/// How deep the inframammary fold cuts, as a share of the chest's own
+/// projection, soft and defined.
+///
+/// **A share of the projection, so it dies with the chest it belongs to.** A
+/// flat chest has no fold and must not grow one; scaled this way the term goes
+/// to zero exactly as the lobe does, with no threshold to tune and no branch to
+/// get wrong.
+///
+/// Interpolated by [`Condition::definition`] — the same derived read the skin
+/// painter and [`SPREAD`] use — because a fold is a crease and a crease is
+/// sharper on a lean body. Below the projection at which it matters the whole
+/// term is arithmetic on nothing.
+const FOLD_DEPTH: (f32, f32) = (0.10, 0.22);
+
+/// Where the fold sits below the peak, as a share of the LOWER pole's own span.
+///
+/// **Seated on the lobe's own landmark and not on a constant, which is #182's
+/// lesson verbatim: a constant seat dies quietly when a ruler moves.** The
+/// lower pole's span already carries the peak's height, the lift axis and the
+/// age descent, so a fold written as a share of it travels with the chest
+/// instead of waiting where the reference body's chest used to be.
+///
+/// Life puts the fold about 70 mm below the peak on a reference-scale body,
+/// which against this body's own lower span — `span · TALL · POLES.1`, or 50.2
+/// mm on the reference trunk — is 1.4 of it. That is just outside the lobe's
+/// visible edge, where a Gaussian has fallen to a twentieth of its crest, which
+/// is where a breast's base is: the fold is the bottom of the footprint rather
+/// than a groove cut into the lobe.
+const FOLD_SEAT: f32 = 1.4;
+
+/// How tall the crease is, as a share of the lower pole's span.
+///
+/// An inframammary crease runs 20 to 40 mm in life, which on the reference
+/// body's 50.2 mm lower span is 0.4 to 0.8 of it; this is the low end, because
+/// the term is a Gaussian and its visible width is about twice this.
+const FOLD_TALL: f32 = 0.22;
+
+/// How far round the section the crease reaches, as a multiple of the lobe's
+/// own spread.
+///
+/// **Wider than the lobe, because the footprint is.** A breast's root spans the
+/// sternal edge to the mid-axillary line with the axillary tail running
+/// upper-outer, so the base it sits on is broader than the crest above it. It
+/// is a crescent in azimuth and height — the jawline's `border_raise` machinery
+/// (#195–197) rotated onto the trunk — and not a profile of radius against
+/// height, which is the jaw's own lesson: separable height profiles could not
+/// make a mandible and one non-separable border term could.
+const FOLD_WIDE: f32 = 1.35;
+
 /// How far age lowers the peak, as a share of the span, and how much it lets
 /// the volume hang below itself.
 ///
@@ -194,6 +272,14 @@ pub struct ChestTraits {
     /// How far the volume hangs below its own peak, `0` young and `1` at the
     /// top of the age range.
     pub descent: f32,
+    /// How lean this body reads, `0` soft and `1` defined.
+    ///
+    /// **Carried rather than re-derived**, which is what this whole type is
+    /// for: `SPREAD` and `FOLD_DEPTH` both interpolate on it, the skin
+    /// painter draws its striation and crease ink from the same number, and a
+    /// second derivation is a second place for the shape and the ink over it to
+    /// disagree about how lean a body is.
+    pub definition: f32,
 }
 
 impl ChestTraits {
@@ -221,6 +307,7 @@ impl ChestTraits {
             spread: between(1.0 - 2.0 * definition, SPREAD.0, SPREAD.1),
             height: HEIGHT - DESCENT.0 * ageing,
             descent: ageing,
+            definition,
         }
     }
 }
@@ -286,6 +373,158 @@ impl Column {
     }
 }
 
+/// The region each chest-refinement pass covers: how far round the section it
+/// reaches as a share of a quarter turn from dead ahead, then its lowest and
+/// highest point in the waist-to-girdle band [`Column`] is written in.
+///
+/// **Written in the CARVE's own two units and not in `FACE_PASSES`'s**, which
+/// is the one design decision here. The face's bands are a cosine of the
+/// azimuth off an unsectioned head with heights in two different
+/// normalisations either side of a joint; this module places its lobe by
+/// [`SPACING`] — a share of a quarter turn — at a [`HEIGHT`] between the waist
+/// joint and the girdle. A band that has to hold resolution UNDER a shape is
+/// written in the shape's own numbers or the two disagree about where the lobe
+/// is on every body whose proportions differ from the one the band was written
+/// on, which is exactly what `face::band_at` exists to prevent on the face.
+///
+/// # The one pass, and the measurement that says it is needed
+///
+/// It is the whole front of the chest band, and what it buys is the bound #271
+/// stated and could not lift: the trunk's surface ring carries ONE facet
+/// between the midline and the first vertex out, so a paired shape needs 30 to
+/// 40 mm of relief before a section reads as two-sided at all — and a male
+/// pectoral stands 10 to 20. Measured with `examples/chestsection --lobe` on
+/// the default body, before and after:
+///
+/// ```text
+///   synthetic lobe      25 mm            30 mm
+///   before        1 side, dip 0.00   3 sides, dip 0.78 mm
+///   after         3 sides, dip 1.76  3 sides, dip 5.64 mm
+/// ```
+///
+/// The threshold drops below 25 mm and the groove the surface can express at 30
+/// mm goes up sevenfold. That is the difference between a shelf and a chest.
+///
+/// It also moves what the carve DELIVERS toward what it authors: the neutral
+/// body's authored 50:50 pole split arrives at 58:42 on the shipped cell and at
+/// 55:45 after this pass. See [`refine_chest`] for why that is a resolution
+/// finding and not a carve one.
+///
+/// # What the budget refused, and the arithmetic that refused it
+///
+/// **A second, tighter pass over the lower half of the lobe** — where the
+/// inframammary fold (#286) and the pectoral's inferior border (#287) both
+/// live, and where this one leaves 15 to 23 mm cells against creases that are
+/// 20 to 40 mm wide in life. It was costed at `(0.35, 1.0, 0.22, 0.48)`: 252
+/// triangles of skin, 660 on a dressed body, and it halves the cell where it
+/// runs. It is not here because there is nothing to buy it with, and the chain
+/// is worth writing down because #283's research got it wrong by 1,454:
+///
+/// * The binding corner is not the dearest body. It is the PRODUCT of the
+///   dearest head and the greediest legal hair, which `tests/budget.rs` reaches
+///   at 29,078 against a 30,000 target — 922 free, where the research had 2,350.
+/// * `hair::clump::MAX_TRIANGLES` is defined as what the body leaves, so a
+///   dearer body takes it down. That is its documented contract and not a new
+///   decision.
+/// * But #209 put a FLOOR under it that is not negotiable: nothing a re-roll
+///   can produce is ever trimmed, and the dearest re-rollable head costs about
+///   2,750. Bisected 2026-08-19 — the tier test passes at 2,750 and fails at
+///   2,278, reporting a crop at density 1 that costs 2,732.
+///
+/// With the tight pass in, the ceiling has to be at most 2,278 to satisfy the
+/// leftover and at least 2,750 to satisfy the floor, and no number is both. One
+/// pass fits with 188 triangles to spare; two need the 30,000 target to move,
+/// which is the owner's call and was declined on 2026-08-19.
+///
+/// **And the floor of this band is 0.05 rather than the −0.10 that was
+/// measured and wanted**, for the same 90 triangles the budget did not have.
+/// The risk it takes is a trap #284 measured: a band edge inside the lobe reads
+/// as a fold, because the coarse side of a resolution boundary under-delivers
+/// the push and the step between them is a crease — with the floor at 0.50 the
+/// instrument reported 5.40 mm of notch 44 mm under the peak where the same
+/// body clear of the boundary reports 2.90, and the bare control did not move.
+/// At 0.05 the boundary is under the lobe on every ordinary body and inside its
+/// lower tail only where age and lift together drag the peak down, which is a
+/// corner of the roll envelope rather than the middle of it.
+///
+/// **A tight pass on the sternum column** was in #285's design and is refused
+/// on its own merits rather than on the budget's: it costs 182 triangles and
+/// buys nothing measurable, because this pass already starts at dead ahead so
+/// the sternum is refined once before any narrow pass could name it. With it,
+/// the synthetic 25 mm lobe's groove reads 1.61 mm against 1.76 without, and
+/// the 30 mm lobe's 5.49 against 5.64 — inside the noise and on the wrong side
+/// of it. Worth revisiting at #287, when there is a sternal-gap term for it to
+/// hold.
+const CHEST_PASSES: [(f32, f32, f32, f32); 1] = [(0.0, 1.0, 0.05, 0.99)];
+
+/// Gives the chest enough surface to carry a shape, before anything carves one.
+///
+/// **[`carve_chest`]'s sibling, and it runs a long way before it**: this is
+/// resolution and that is shape, and `build_body`'s own comment on the block it
+/// sits in says why the order cannot be the other way round. A carve applied to
+/// a surface with 30 to 50 mm cells delivers what those cells can hold, which
+/// is not what it authored — measured with `examples/chestsection`, the
+/// neutral body's authored 50:50 pole split arrives at 58:42 on the shipped
+/// cell and at 55:45 after this. Refining afterwards would only subdivide the
+/// facets of a shape that had already been flattened.
+///
+/// Selects the way the carve selects: `Zone::Chest | Zone::Abdomen` through
+/// [`Rig::nearest_bone`], because an arm passes through this band and a chest
+/// drawn onto one is a defect nobody would have to look hard for — the carve
+/// solved that exact problem for its vertices and the answer does not change
+/// for a face centroid.
+///
+/// Splits with [`PolyMesh::refine_curved`] for [`refine_face`]'s reason: the
+/// trunk arrives as a lofted ring surface, a plain midpoint sits on one of its
+/// chords, and a linear split would buy the section more vertices and no
+/// curvature at all.
+///
+/// Does nothing to a body with no trunk column, which is the same refusal
+/// `Column::of` gives the carve and costs no special path.
+///
+/// [`refine_face`]: crate::face::refine_face
+#[must_use]
+pub fn refine_chest(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
+    let Some(column) = Column::of(rig) else {
+        return mesh.clone();
+    };
+    let span = column.girdle - column.waist;
+    if levels == 0 || span <= f32::EPSILON {
+        return mesh.clone();
+    }
+
+    let mut refined = mesh.clone();
+    for pass in 0..levels {
+        // Passes past the last named one repeat the tightest region rather than
+        // widening again, which is `refine_face`'s rule and for its reason:
+        // asking for more resolution should never spend it on a flank.
+        let (near, far, low, high) = CHEST_PASSES[pass.min(CHEST_PASSES.len() - 1)];
+        let selected: Vec<bool> = (0..refined.face_count())
+            .map(|face| {
+                let at = refined.face_centroid(face);
+                if !matches!(
+                    rig.joints[rig.nearest_bone(at).joint].zone,
+                    Zone::Chest | Zone::Abdomen
+                ) {
+                    return false;
+                }
+                let up = (at.y - column.waist) / span;
+                if up < low || up > high {
+                    return false;
+                }
+                let from = Vec3::new(at.x - column.axis.x, 0.0, at.z - column.axis.z);
+                if from.length_squared() <= f32::EPSILON {
+                    return false;
+                }
+                let azimuth = from.x.abs().atan2(from.z) / std::f32::consts::FRAC_PI_2;
+                (near..=far).contains(&azimuth)
+            })
+            .collect();
+        refined = refined.refine_curved(&selected);
+    }
+    refined
+}
+
 /// Carves a chest onto a built body.
 ///
 /// **After the cage and before anything measures, binds or charts the
@@ -333,17 +572,33 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
         let across = (azimuth - traits.spacing) / traits.spread;
         // Below the peak the fall is slackened by age, which is what a chest
         // descending is: the volume does not move down so much as stop being
-        // held up.
+        // held up — and it is the FULLER of the two poles before age touches
+        // it, which is what [`POLES`] is.
         let up = point.y - peak;
-        let tall = span
-            * TALL
-            * if up < 0.0 {
-                1.0 + DESCENT.1 * traits.descent
-            } else {
-                1.0
-            };
+        let lower = span * TALL * POLES.1 * (1.0 + DESCENT.1 * traits.descent);
+        let tall = if up < 0.0 {
+            lower
+        } else {
+            span * TALL * POLES.0
+        };
         let along = up / tall.max(f32::EPSILON);
-        *point += out * (reach * (-across * across - along * along).exp());
+        // **C1 at the peak comes free and it is worth saying why**, because a
+        // crest with a kink in it renders as a crease down the middle of the
+        // chest. A Gaussian's slope at its own centre is zero whatever its
+        // span, so the two halves meet flat however far apart [`POLES`] pulls
+        // them, and no blend is needed between them.
+        let lobe = reach * (-across * across - along * along).exp();
+
+        // The inframammary fold: a crescent in azimuth and height seated on the
+        // lobe's own lower edge, cutting IN where the lobe stops. See
+        // [`FOLD_SEAT`] for why it is measured off the lower pole's span rather
+        // than off a height.
+        let seat = (up + FOLD_SEAT * lower) / (FOLD_TALL * lower).max(f32::EPSILON);
+        let wide = across / FOLD_WIDE;
+        let depth = reach * between(1.0 - 2.0 * traits.definition, FOLD_DEPTH.0, FOLD_DEPTH.1);
+        let fold = depth * (-wide * wide - seat * seat).exp();
+
+        *point += out * (lobe - fold);
     }
 }
 
@@ -659,6 +914,146 @@ mod tests {
         assert!((full.chest_volume - params.chest_volume).abs() < 0.03);
         assert!((full.chest_projection - params.chest_projection).abs() < 0.03);
         assert!((full.chest_lift - params.chest_lift).abs() < 0.03);
+    }
+
+    /// The lobe's own vertical profile as the carve authors it, probed through
+    /// [`carve_chest`] itself.
+    ///
+    /// **Through the real function and not by writing its formula out again**,
+    /// which would make the assertion a copy of the thing it asserts. The carve
+    /// reads positions and the rig and nothing else, so a `PolyMesh` carrying
+    /// only a column of probe points is a legal argument to it. The points sit
+    /// on the lobe's own azimuth at the chest node's radius, which is inside
+    /// the trunk and so answers `nearest_bone`'s zone gate the way the body
+    /// does. `examples/chestsection` prints the same profile off the built
+    /// SURFACE; this is what was asked for, and the two differ by what the mesh
+    /// can hold.
+    fn authored(rig: &Rig, traits: &ChestTraits) -> Vec<(f32, f32)> {
+        let Some(column) = Column::of(rig) else {
+            return Vec::new();
+        };
+        let angle = traits.spacing * std::f32::consts::FRAC_PI_2;
+        let out = Vec3::new(angle.sin(), 0.0, angle.cos());
+        let span = column.girdle - column.waist;
+        let mut probe = PolyMesh::new();
+        let steps = 400;
+        for step in 0..=steps {
+            let up = column.waist + span * step as f32 / steps as f32;
+            probe.push_vertex(
+                Vec3::new(column.axis.x, up, column.axis.z) + out * (column.half * 0.5),
+            );
+        }
+        let was = probe.positions.clone();
+        carve_chest(&mut probe, rig, traits);
+        // **Signed along the push, not a distance.** The fold is the one place
+        // this carve pulls a vertex IN, and a magnitude cannot tell that from a
+        // lobe.
+        probe
+            .positions
+            .iter()
+            .zip(&was)
+            .map(|(now, before)| (before.y, (*now - *before).dot(out)))
+            .collect()
+    }
+
+    #[test]
+    fn the_lobe_carries_more_of_itself_below_its_peak_than_above() {
+        // **45:55, which is what milestone #9 is for.** Mallucci's series and
+        // the ASPS studies put the preference for that split at 87 to 94%, and
+        // the symmetric Gaussian this module shipped with was 50:50 by
+        // construction — see [`POLES`], which is the whole change.
+        //
+        // Asserted on what the carve AUTHORS rather than on what a mesh
+        // delivers, because those are two findings and only one of them is this
+        // module's: `examples/chestsection` reads the delivered split and
+        // #285's refinement is what moves it. The authored figure overshoots
+        // 45:55 on purpose and that constant's docstring says by how much.
+        let record = body_of(0.0, 0.0, crate::plan::DEFAULT_BODY_FAT, 30);
+        let rig = Rig::from_skeleton(&record.skeleton()).expect("rigs");
+        let traits = ChestTraits::of(&record.composites);
+        let profile = authored(&rig, &traits);
+        let (top, &(peak, most)) = profile
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.1.total_cmp(&b.1.1))
+            .expect("a chest has a peak");
+        assert!(most > 0.005, "no lobe to split: {:.1} mm", most * 1000.0);
+        let area = |slice: &[(f32, f32)]| -> f32 {
+            slice
+                .windows(2)
+                .map(|pair| 0.5 * (pair[0].1 + pair[1].1) * (pair[1].0 - pair[0].0))
+                .sum()
+        };
+        // The lobe's own area, so the fold's cut below it is not counted as
+        // negative volume: these are two terms and this test is about one.
+        let lobe: Vec<(f32, f32)> = profile.iter().map(|&(up, at)| (up, at.max(0.0))).collect();
+        let (upper, lower) = (area(&lobe[top..]), area(&lobe[..=top]));
+        let share = lower / (upper + lower);
+        assert!(
+            (0.55..0.66).contains(&share),
+            "the lobe carries {:.0}% of itself below its peak at {:.0} mm, where life prefers \
+             55% and this carve overshoots it to land there on the built surface",
+            share * 100.0,
+            peak * 1000.0,
+        );
+    }
+
+    #[test]
+    fn the_fold_sits_under_the_lobe_and_dies_with_it() {
+        // **The seat is the reading, not the depth** (#286). Life anchors the
+        // inframammary fold about 70 mm below the peak on a reference-scale
+        // body, and [`FOLD_SEAT`] is written as a share of the lower pole's own
+        // span so that lift and the age descent carry it with the lobe instead
+        // of leaving it where the reference body's chest used to be — #182's
+        // lesson, which is that a constant seat dies quietly when a ruler
+        // moves.
+        let record = body_of(1.0, 0.0, crate::plan::DEFAULT_BODY_FAT, 30);
+        let rig = Rig::from_skeleton(&record.skeleton()).expect("rigs");
+        let traits = ChestTraits::of(&record.composites);
+        let profile = authored(&rig, &traits);
+        let peak = profile
+            .iter()
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .expect("a chest has a peak")
+            .0;
+        // Found by SIGN and not by a threshold: the fold is the one place this
+        // carve pulls a vertex in rather than pushing it out, so the deepest
+        // negative displacement under the peak is the crease and nothing else
+        // can be mistaken for it.
+        let (seat, deepest) = profile
+            .iter()
+            .filter(|&&(up, _)| up < peak)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|&(up, at)| (peak - up, at))
+            .expect("there is a body below the peak");
+        assert!(
+            deepest < 0.0,
+            "nothing under the lobe pulls in; the deepest reading is {:.2} mm",
+            deepest * 1000.0,
+        );
+        assert!(
+            (0.050..0.095).contains(&seat),
+            "the fold sits {:.0} mm below the peak, where life puts it at about 70; it cuts \
+             {:.2} mm",
+            seat * 1000.0,
+            deepest * 1000.0,
+        );
+
+        // And it dies with the chest it belongs to: a flat chest has no fold,
+        // and it needs no threshold to say so because the depth is a share of
+        // the projection.
+        let flat = ChestTraits {
+            projection: 0.0,
+            ..traits
+        };
+        let none = authored(&rig, &flat);
+        assert!(
+            none.iter().all(|&(_, moved)| moved.abs() <= f32::EPSILON),
+            "a chest with no projection still moved {:.3} mm of trunk",
+            none.iter()
+                .fold(0.0f32, |most, &(_, at)| most.max(at.abs()))
+                * 1000.0,
+        );
     }
 
     #[test]

@@ -244,7 +244,38 @@ pub struct Sowing<'a> {
 /// difference is a diffuse shading shift brightest at the eye rims, nostrils,
 /// lips and jawline, about a hundred pixels in a million past a channel delta
 /// of 40, and no feature moved.
-pub const MAX_TRIANGLES: usize = 3_300;
+/// **And DOWN to 2,938 when the trunk was refined** (#285, 2026-08-19), which
+/// is the same test doing the same job in the other direction — and it is the
+/// largest single move this constant has made. `torso::refine_chest` gives the
+/// front of the trunk two passes, and the dearest bald body in the sweep went
+/// from 26,026 to 27,062, and the leftover is 2,938.
+///
+/// **This constant has a FLOOR as well as a definition, and finding it is what
+/// decided the size of that refinement.** The leftover says what hair MAY have;
+/// #209's `the_tier_bites_only_where_a_record_asks_for_more_than_the_budget_holds`
+/// says what it MUST have, because nothing a re-roll can produce may ever be
+/// trimmed — and the dearest re-rollable head costs about 2,750. Bisected
+/// 2026-08-19: the tier test passes at 2,750 and fails at 2,278, reporting a
+/// crop at density 1 on seed 0 that costs 2,732. So there were never more than
+/// about 550 triangles here to spend, whatever the leftover said.
+///
+/// That is what refused `refine_chest` its second, tighter pass: with it in,
+/// the leftover demands at most 2,278 and the floor demands at least 2,750, and
+/// no number is both. One pass fits, with 188 triangles between this and the
+/// floor.
+///
+/// The premise that made the whole question necessary was wrong for a while and
+/// is worth recording: #283's research put the dearest hair-bearing body at
+/// 27,624 and concluded there were ~2,350 triangles spare, where the real
+/// binding corner is the PRODUCT of the dearest head and the greediest hair at
+/// 29,078 — 922 free.
+///
+/// What the 11% buys is that a chest is a shape rather than a shelf, and what
+/// it costs is borne ONLY at the corner this constant describes, because a
+/// clump count is a REQUEST and everything under the corner is untouched bit
+/// for bit; a record has to ask for maximum length AND thickness AND density
+/// AND a tail to feel it, and the test above proves no re-roll does.
+pub const MAX_TRIANGLES: usize = 2_938;
 
 /// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].
 ///

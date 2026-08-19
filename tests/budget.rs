@@ -159,7 +159,32 @@ const MESH_TARGET: usize = 4;
 /// construction — the dearest bald body plus `hair::clump::MAX_TRIANGLES` — and
 /// `the_hair_ceiling_is_what_the_budget_actually_leaves` re-measures both halves
 /// rather than ratcheting the product.
-const TRIANGLE_CEILING: usize = 27_850;
+/// **Up 1,036 to 28,300 for the chest's refinement pass** (#285,
+/// 2026-08-19), which is the direction this constant's own first paragraph says
+/// needs a reason written beside it. The reason is #271's bound: the trunk's
+/// surface ring carries ONE facet between the midline and the first vertex out,
+/// so a paired chest needed 30 to 40 mm of relief before a section read as
+/// two-sided at all, and a male pectoral stands 10 to 20. Measured with
+/// `examples/chestsection --lobe` on the default body, a 30 mm lobe's sternal
+/// groove went from 0.78 mm to 5.64 and the threshold dropped under 25.
+///
+/// The dearest corner is seed 1 long broad at 28,286 against 27,250 — a spend
+/// of 1,036, well inside the 2,000 the owner capped `torso::refine_chest` at,
+/// and the cap was never what bound it. It is twice what the skin alone costs,
+/// and that factor is the interesting number:
+/// a refined trunk is a refined GARMENT too, because the cloth is cut from the
+/// body's own faces. `examples/chestsection --band` counts the skin and is
+/// exact about it — its perimeter-aware prediction matched the measurement to
+/// the triangle at every band tried — and it cannot see the second half of the
+/// bill. A costing probe on the skin is a lower bound on a dressed body.
+///
+/// It was paid for out of hair rather than out of the target: see
+/// `hair::clump::MAX_TRIANGLES`, which fell 3,300 → 2,938 in the same change
+/// because it is defined as what the body leaves. That constant's own floor —
+/// #209's rule that no re-rollable head is ever trimmed, measured at about
+/// 2,750 — is what held the refinement to one pass instead of two, and it
+/// bound long before this ceiling or the owner's cap did.
+const TRIANGLE_CEILING: usize = 28_300;
 
 /// Draw calls the crate currently costs.
 ///

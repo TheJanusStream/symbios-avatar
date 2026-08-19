@@ -132,6 +132,23 @@ enum Focus {
     /// undetected because nothing had ever looked at it, and a fix for it that
     /// is judged by a body sheet is not judged at all.
     Crotch,
+    /// The chest, framed on the ribcage and the top of the abdomen.
+    ///
+    /// **A chest cannot be judged on the body sheet and milestone #9 needs it
+    /// judged.** On the four-view sheet a bust is about forty pixels tall, and
+    /// #286's whole subject — where the volume sits above and below its peak,
+    /// and whether there is a crease under it — is a matter of the SIDE
+    /// profile at a scale that sheet does not have. The instrument said the
+    /// neutral body's pole split went from 55:45 to 45:55 and the sheet showed
+    /// nothing whatsoever, which is the crotch's own argument (#279) arriving a
+    /// second time: a fix judged by a sheet that cannot resolve it is not
+    /// judged.
+    ///
+    /// The top of the abdomen comes along because the inframammary fold seats
+    /// itself BELOW the lobe, and a chest framed on the ribcage alone crops at
+    /// exactly the crease under scrutiny — which is the trap the crotch view
+    /// documents, in the other direction.
+    Chest,
     /// One follicle region, framed on the mask itself.
     ///
     /// **A head shot is not close enough to judge a brow**. A brow is
@@ -169,11 +186,13 @@ fn main() {
         Some("hand") => Some(Focus::Hand),
         Some("foot") => Some(Focus::Foot),
         Some("crotch") => Some(Focus::Crotch),
+        Some("chest") => Some(Focus::Chest),
         Some(other) => match Follicle::ALL.into_iter().find(|it| it.name() == other) {
             Some(follicle) => Some(Focus::Region(follicle)),
             None => {
                 eprintln!(
-                    "unknown --close target {other}: expected head, hand, foot, crotch or one of {}",
+                    "unknown --close target {other}: expected head, hand, foot, crotch, chest or \
+                     one of {}",
                     Follicle::ALL.map(Follicle::name).join(", ")
                 );
                 std::process::exit(1);
@@ -714,6 +733,7 @@ fn main() {
         Some(Focus::Hand) => "render_hand",
         Some(Focus::Foot) => "render_foot",
         Some(Focus::Crotch) => "render_crotch",
+        Some(Focus::Chest) => "render_chest",
         Some(Focus::Region(follicle)) => &format!("render_{}", follicle.name()),
         None => "render",
     };
@@ -1272,6 +1292,28 @@ impl Subject {
                     let thigh = matches!(zone, Zone::UpperLimb(Limb::HindLeft | Limb::HindRight))
                         && deformed[vertex].y > reach;
                     if matches!(zone, Zone::Pelvis) || thigh {
+                        hold(deformed[vertex]);
+                    }
+                }
+            }
+            // The ribcage, and the top of the abdomen under it so the fold's
+            // own seat is in shot. Bounded by height rather than by taking the
+            // whole abdomen, which reaches the waist and zooms the frame back
+            // out past the thing it is for.
+            Focus::Chest => {
+                let deformed =
+                    posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+                let (mut floor, mut ceiling) = (f32::MAX, f32::MIN);
+                for (vertex, zone) in parts.zones.iter().enumerate() {
+                    if matches!(zone, Zone::Abdomen) {
+                        floor = floor.min(deformed[vertex].y);
+                        ceiling = ceiling.max(deformed[vertex].y);
+                    }
+                }
+                let reach = ceiling - (ceiling - floor) * 0.5;
+                for (vertex, zone) in parts.zones.iter().enumerate() {
+                    let belly = matches!(zone, Zone::Abdomen) && deformed[vertex].y > reach;
+                    if matches!(zone, Zone::Chest) || belly {
                         hold(deformed[vertex]);
                     }
                 }

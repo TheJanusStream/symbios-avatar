@@ -228,6 +228,21 @@ pub use symbios_texture::generator::TextureMap;
 ///   ratchet carries.
 const FACE_REFINEMENT: usize = 10;
 
+/// How many refinement passes the front of the trunk gets.
+///
+/// One, and it is argued from a measurement on [`torso::refine_chest`]'s own
+/// table rather than here: it lifts the two-sided bound #271 stated, taking the
+/// relief a paired shape needs before a section shows two sides from 30–40 mm
+/// down under 25 — which is a male pectoral's own range. It costs 514 triangles
+/// of skin and 1,036 on a dressed body, because a refined trunk is a refined
+/// GARMENT too.
+///
+/// A second, tighter pass over the lower half of the lobe was costed and does
+/// not fit; that table records the arithmetic, which comes down to #209's floor
+/// under the hair ceiling. See `tests/budget.rs`'s own ledger for what this one
+/// did to `TRIANGLE_CEILING` and to `hair::clump::MAX_TRIANGLES`.
+const CHEST_REFINEMENT: usize = 1;
+
 /// How many Catmull-Clark passes a body's cage gets.
 ///
 /// One constant rather than a literal at every call site, because **anything
@@ -270,6 +285,11 @@ pub fn build_body(
         // and the face is sampled finely rather than subdivided after the fact.
         mesh = face::refine_face(&mesh, &rig, FACE_REFINEMENT);
         mesh = face::refine_neck(&mesh, &rig, traits);
+        // And the trunk, for the same reason and in the same block: the chest
+        // is carved onto this surface long after `Avatar::build` has taken it
+        // from here, and a carve delivers what the cells it lands on can hold.
+        // Costs nothing on a body with no trunk column.
+        mesh = torso::refine_chest(&mesh, &rig, CHEST_REFINEMENT);
         face::shape_skull(&mut mesh, &rig, traits);
         // And then the column under it, which spans the junction the skull's
         // own shaping stops at. Second because it measures the surface the
