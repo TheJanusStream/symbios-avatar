@@ -153,8 +153,53 @@ const TALL: f32 = 0.17;
 /// rather than faked here.
 const POLES: (f32, f32) = (0.72, 1.28);
 
+/// How square the lobe's own profile is, lean and soft.
+///
+/// **The exponent of the falloff, and it buys the plateau and the crisp border
+/// with one number** (#287). A pectoral is a PLATE and a breast is a lobe: the
+/// male-breast literature's defining feature is superior fullness turning into
+/// a firm inferior border at the fold's level, which is a flat top and a steep
+/// edge. `exp(-|t|^p)` at `p = 2` is the Gaussian this module has always drawn;
+/// raising `p` flattens the crest and steepens the flank in the same move, so
+/// the plateau and the border are not two terms that can disagree about where
+/// the mass stops.
+///
+/// **Interpolated on [`Condition::definition`], which makes it exactly zero on
+/// the neutral body** — `Condition::default().definition` is 0 — so #286's
+/// re-base is untouched by this and only a body leaner than the default is
+/// shaped by it. That is not a convenience: it is the same axis [`SPREAD`] and
+/// [`FOLD_DEPTH`] run on and the same one the skin painter draws its striation
+/// from, so the shape, the crease and the ink cannot disagree about how lean
+/// this body is.
+///
+/// The pole split survives it: a half of `exp(-|t|^p)` has area `σ · Γ(1+1/p)`,
+/// and with one exponent for both poles that factor cancels out of the ratio
+/// [`POLES`] sets. Measured rather than trusted — `examples/chestsection`
+/// prints the split at every femininity.
+const FIRMNESS: (f32, f32) = (2.8, 2.0);
+
+/// How deep the sternal gap cuts, as a share of the chest's own projection,
+/// lean and soft.
+///
+/// **The depression BETWEEN the pair, so it is scaled by what the pair stands
+/// off**: without two masses there is nothing for a sternum to sit between, and
+/// scaling it this way means a body with no chest grows no groove without a
+/// threshold to tune. Soft is zero — a sternal gap is a leanness reading, which
+/// is #283's own note on what makes a pectoral read as one.
+const GAP_DEPTH: (f32, f32) = (0.30, 0.0);
+
+/// How far round the section the sternal gap reaches, as a share of a quarter
+/// turn.
+///
+/// Narrow, because a sternum is: 0.15 of a quarter turn is 13.5°, which on the
+/// reference trunk's 130 mm half-width puts the groove's own width at about 30
+/// mm. The lobe itself is nothing at this azimuth — [`SPACING`] puts it at 0.57
+/// and a Gaussian three spreads away is two parts in a thousand — so this cuts
+/// into the sternum rather than out of the pair.
+const GAP_WIDE: f32 = 0.15;
+
 /// How deep the inframammary fold cuts, as a share of the chest's own
-/// projection, soft and defined.
+/// projection, lean and soft.
 ///
 /// **A share of the projection, so it dies with the chest it belongs to.** A
 /// flat chest has no fold and must not grow one; scaled this way the term goes
@@ -163,9 +208,23 @@ const POLES: (f32, f32) = (0.72, 1.28);
 ///
 /// Interpolated by [`Condition::definition`] — the same derived read the skin
 /// painter and [`SPREAD`] use — because a fold is a crease and a crease is
-/// sharper on a lean body. Below the projection at which it matters the whole
-/// term is arithmetic on nothing.
-const FOLD_DEPTH: (f32, f32) = (0.10, 0.22);
+/// sharper on a lean body.
+///
+/// **Lean first, which is this module's convention and was got backwards once**
+/// (#287). `between` maps `-1` to the first element and the argument here is
+/// `1 - 2·definition`, so element zero is the LEAN value — the same order
+/// [`SPREAD`] and [`FIRMNESS`] are written in. Landed at #286 as `(0.10, 0.22)`
+/// under a docstring reading "soft and defined", which handed the deep crease
+/// to the soft body and the shallow one to the lean: caught by #287's border
+/// test, which measured a soft chest's lower flank falling 22.2 against a lean
+/// chest's 18.8 per unit of projection and could not be satisfied by any
+/// firmness.
+///
+/// The other reading — that an inframammary fold deepens with VOLUME, a heavier
+/// breast sitting further into its own crease — is not lost by pointing this at
+/// leanness, because it is already carried: the depth is a share of the
+/// projection, and the projection is what fat buys.
+const FOLD_DEPTH: (f32, f32) = (0.22, 0.10);
 
 /// Where the fold sits below the peak, as a share of the LOWER pole's own span.
 ///
@@ -581,13 +640,15 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
         } else {
             span * TALL * POLES.0
         };
-        let along = up / tall.max(f32::EPSILON);
+        let along = (up / tall.max(f32::EPSILON)).abs();
         // **C1 at the peak comes free and it is worth saying why**, because a
         // crest with a kink in it renders as a crease down the middle of the
-        // chest. A Gaussian's slope at its own centre is zero whatever its
-        // span, so the two halves meet flat however far apart [`POLES`] pulls
+        // chest. The slope of `exp(-|t|^p)` at its own centre is zero for every
+        // `p` above 1, whatever the span, so the two halves meet flat however
+        // far apart [`POLES`] pulls them and however square [`FIRMNESS`] makes
         // them, and no blend is needed between them.
-        let lobe = reach * (-across * across - along * along).exp();
+        let firm = between(1.0 - 2.0 * traits.definition, FIRMNESS.0, FIRMNESS.1);
+        let lobe = reach * (-across.abs().powf(firm) - along.powf(firm)).exp();
 
         // The inframammary fold: a crescent in azimuth and height seated on the
         // lobe's own lower edge, cutting IN where the lobe stops. See
@@ -598,7 +659,15 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
         let depth = reach * between(1.0 - 2.0 * traits.definition, FOLD_DEPTH.0, FOLD_DEPTH.1);
         let fold = depth * (-wide * wide - seat * seat).exp();
 
-        *point += out * (lobe - fold);
+        // The sternal gap: a narrow trough on the midline, running the height
+        // of the pair it sits between. See [`GAP_WIDE`] for why this cuts the
+        // sternum rather than the lobes.
+        let midline = azimuth / GAP_WIDE;
+        let gap = reach
+            * between(1.0 - 2.0 * traits.definition, GAP_DEPTH.0, GAP_DEPTH.1)
+            * (-midline * midline - along.powf(firm)).exp();
+
+        *point += out * (lobe - fold - gap);
     }
 }
 
@@ -929,10 +998,17 @@ mod tests {
     /// SURFACE; this is what was asked for, and the two differ by what the mesh
     /// can hold.
     fn authored(rig: &Rig, traits: &ChestTraits) -> Vec<(f32, f32)> {
+        authored_at(rig, traits, traits.spacing)
+    }
+
+    /// The same probe at any azimuth, for the terms that do not live under the
+    /// lobe: [`GAP_DEPTH`] cuts the midline, which the lobe's own column never
+    /// visits.
+    fn authored_at(rig: &Rig, traits: &ChestTraits, spacing: f32) -> Vec<(f32, f32)> {
         let Some(column) = Column::of(rig) else {
             return Vec::new();
         };
-        let angle = traits.spacing * std::f32::consts::FRAC_PI_2;
+        let angle = spacing * std::f32::consts::FRAC_PI_2;
         let out = Vec3::new(angle.sin(), 0.0, angle.cos());
         let span = column.girdle - column.waist;
         let mut probe = PolyMesh::new();
@@ -1007,7 +1083,13 @@ mod tests {
         // of leaving it where the reference body's chest used to be — #182's
         // lesson, which is that a constant seat dies quietly when a ruler
         // moves.
-        let record = body_of(1.0, 0.0, crate::plan::DEFAULT_BODY_FAT, 30);
+        // **On a LEAN body, because that is where a crease is a crease.**
+        // [`FOLD_DEPTH`] follows leanness — see its own note — so on a soft
+        // chest the lobe's own tail still out-reaches the trough and the net
+        // displacement never turns inward, which is a true statement about a
+        // soft body rather than a missing fold. The sign test wants the body
+        // the term is strongest on.
+        let record = body_of(1.0, 0.0, 0.05, 30);
         let rig = Rig::from_skeleton(&record.skeleton()).expect("rigs");
         let traits = ChestTraits::of(&record.composites);
         let profile = authored(&rig, &traits);
@@ -1053,6 +1135,89 @@ mod tests {
             none.iter()
                 .fold(0.0f32, |most, &(_, at)| most.max(at.abs()))
                 * 1000.0,
+        );
+    }
+
+    #[test]
+    fn a_lean_chest_is_firmer_and_carries_a_sternal_gap() {
+        // **#287's two terms, and both are zero on the neutral body by
+        // construction** — `Condition::default().definition` is 0 — so this is
+        // the only place they can be asserted at all. That is deliberate: a
+        // pectoral's defining feature is leanness showing through it, and a
+        // term that acted on the default body would be re-basing every avatar
+        // to say so.
+        let lean = body_of(-1.0, 0.0, 0.05, 30);
+        let soft = body_of(-1.0, 0.0, 0.40, 30);
+        let rig = Rig::from_skeleton(&lean.skeleton()).expect("rigs");
+        let of = |record: &AvatarRecord| ChestTraits::of(&record.composites);
+
+        // THE BORDER. A pectoral's edge is where its mass stops, so the reading
+        // is the steepest fall on the lobe's own lower flank — measured on what
+        // the carve authors, at equal projection, because a bigger chest has a
+        // steeper flank for reasons that are not firmness.
+        let flank = |traits: &ChestTraits| -> f32 {
+            let profile = authored(&rig, traits);
+            let peak = profile
+                .iter()
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .expect("a chest has a peak");
+            let most = peak.1.max(f32::EPSILON);
+            profile
+                .windows(2)
+                .filter(|pair| pair[1].0 <= peak.0)
+                .map(|pair| ((pair[1].1 - pair[0].1) / (pair[1].0 - pair[0].0)).abs() / most)
+                .fold(0.0f32, f32::max)
+        };
+        let (crisp, rise) = (flank(&of(&lean)), flank(&of(&soft)));
+        assert!(
+            crisp > rise * 1.15,
+            "a lean chest's lower border fell at {crisp:.2} against a soft {rise:.2}, per unit of \
+             projection — which is not the difference between an edge and a rise",
+        );
+
+        // THE GAP. A narrow trough on the midline, which is an azimuth the lobe
+        // itself never reaches: [`SPACING`] puts the pair at 0.57 and a
+        // Gaussian three spreads away is two parts in a thousand. So anything
+        // that moves here is this term and nothing else.
+        let midline = |traits: &ChestTraits| -> f32 {
+            authored_at(&rig, traits, 0.0)
+                .iter()
+                .fold(0.0f32, |most, &(_, at)| most.min(at).min(most))
+        };
+        assert!(
+            midline(&of(&lean)) < -1e-4,
+            "a lean chest cut {:.3} mm of sternal gap, which is none",
+            midline(&of(&lean)) * 1000.0,
+        );
+        // A tenth rather than nothing, because `Condition::definition` is a
+        // ramp and not a switch: at 40% fat on a masculine frame it has not
+        // quite reached zero, and asserting an exact zero would be asserting
+        // where that ramp's foot is rather than what this term does.
+        assert!(
+            midline(&of(&soft)) > midline(&of(&lean)) * 0.1,
+            "a soft chest cut {:.3} mm of sternal gap against a lean {:.3}, which is not the \
+             difference between a leanness reading and a body shape",
+            midline(&of(&soft)) * 1000.0,
+            midline(&of(&lean)) * 1000.0,
+        );
+
+        // And the neutral body barely moves here, which is what keeps #286's
+        // re-base the last one. **Barely and not "not at all", and the
+        // difference is a finding**: `Condition::of` reads exactly 0 definition
+        // at the default composites, so [`GAP_DEPTH`] is exactly zero there —
+        // but this probe reads the whole carve at the midline, and what moves
+        // it is [`FOLD_DEPTH`]'s own crescent, which reaches the sternum at a
+        // tenth of its strength because a fold runs inward across the base of
+        // the chest. That is the fold doing its job, so the reading is a ratio
+        // rather than a zero — measured at 13% of the lean body's, and the bar
+        // is a quarter.
+        let neutral =
+            ChestTraits::of(&body_of(0.0, 0.0, crate::plan::DEFAULT_BODY_FAT, 30).composites);
+        assert!(
+            midline(&neutral) > midline(&of(&lean)) * 0.25,
+            "the neutral body's midline moved {:.4} mm against a lean body's {:.4}",
+            midline(&neutral) * 1000.0,
+            midline(&of(&lean)) * 1000.0,
         );
     }
 

@@ -136,8 +136,10 @@
 //! refined it.
 //!
 //! **So the fold this crate now carves is under its own instrument's floor, and
-//! that is the honest reading of it.** The carved rows are 2.0, 1.7 and 8.8 mm
-//! seated 15, 80 and 70 mm below the peak. The SEAT is the reading that moved:
+//! that is the honest reading of it.** The carved rows are 2.0, 1.3 and 5.5 mm
+//! seated 15, 35 and 70 mm below the peak, and on a LEAN body — where
+//! `torso::FOLD_DEPTH` is deepest — 1.0, 2.2 and 2.7 mm seated 71, 63 and 50.
+//! The SEAT is the reading that moved:
 //! before #286 the deepest concavity under the lobe sat 3 to 15 mm under the
 //! peak, which is the peak's own shoulder, and now it sits where life puts the
 //! inframammary fold. The depth does not clear the ribcage's faceting, and
@@ -147,14 +149,21 @@
 //! crease that is 20 to 40 mm wide in life — which is the second refinement
 //! pass #285 costed and the budget refused.
 //!
-//! **The border's steepness**, on the cut: the largest `|d reach / dy|` below
-//! the peak, over a fixed [`SLOPE_BASE`] baseline. A pectoral's defining
+//! **The border's steepness**, on the cut: the largest `|d reach / dy|` inside
+//! the LOWER POLE, over a fixed [`SLOPE_BASE`] baseline. A pectoral's defining
 //! feature is a crisp INFERIOR border and a Gaussian's is its smoothness, so
-//! this is the masculine reading and today's number is the smooth control.
+//! this is the masculine reading and a smooth lobe's number is its own control.
 //!
-//! **The sternal gap** is the section's existing "sternum below the crest",
-//! taken at each of the three femininities rather than only at whichever one
-//! the flags asked for.
+//! **Windowed to the pole rather than to everything below the peak, and the
+//! control is why**: the ribcage falls toward the waist more steeply than a
+//! pectoral stands off it, so the unwindowed reading was the TRUNK's slope on
+//! every body — at femininity `-1` and 5% fat it gave 0.481 for the carved
+//! chest and 0.481 for the bare one under it, identical to the digit.
+//!
+//! **The sternal gap**, twice. The section's existing "sternum below the crest"
+//! is kept because it is a ledger, and a **groove** reading is added beside it
+//! because that one cannot see a masculine gap at all: see [`GROOVE`], where a
+//! 3.75 mm cut into the midline read 0.00 by construction.
 //!
 //! # What a refinement band would cost, before one is written (#285)
 //!
@@ -275,6 +284,25 @@ const CREST_STEP: f32 = 4.0;
 /// own 30 to 50 mm cell, which means this reads the polygon surface rather than
 /// the ring that drew it, exactly as [`STEP`] does across.
 const CUT: f32 = 2.5;
+
+/// Half the chord the sternal groove's depth is measured against, in
+/// millimetres.
+///
+/// **A groove is not a crest, and "sternum below the crest" cannot see one.**
+/// That reading is `crest − midline` across the section, and on a chest whose
+/// lobes have not out-climbed the ribcage's own fall the furthest-forward point
+/// IS the midline — so it reads 0 by construction however deep a sternal gap is
+/// cut. Measured: at femininity `-1` with the gap carving 3.75 mm into the
+/// midline it still read 0.00, because the ribcage's midline stands about 30 mm
+/// proud of the lobe's azimuth and a 12.5 mm pectoral cannot make that up. That
+/// is #271's two-sided bound wearing a different name, and it is why the
+/// masculine reading has to be a local concavity instead.
+///
+/// The pair sits about 91 mm off the midline on the reference trunk and
+/// `torso::GAP_WIDE` puts the groove's own width at about 30 mm, so a chord
+/// spanning 50 mm sits on the sternum's shoulders either side of it and inside
+/// the lobes.
+const GROOVE: f32 = 25.0;
 
 /// Half the chord a fold's depth is measured against, in millimetres.
 ///
@@ -1384,6 +1412,9 @@ struct Cut {
     border: (f32, f32),
     /// How far the crest stands above the midline at the peak's height.
     dip: f32,
+    /// How far the midline sits inside the chord across it, at the peak's
+    /// height — the sternal groove, which [`GROOVE`] explains the need for.
+    groove: f32,
     /// How many sides the section shows there.
     sides: usize,
 }
@@ -1445,8 +1476,16 @@ impl Cut {
                 }
             }
         }
+        // **Inside the lower pole and not merely below the peak, because the
+        // ribcage is steeper than a pectoral is.** Read over the whole cut, the
+        // maximum slope is the trunk's own fall toward the waist: at femininity
+        // -1 and 5% fat the carved body reported 0.481 against a bare 0.481, to
+        // the digit, on a lobe standing 5.7 mm off its own ribcage. A border is
+        // the edge of a mass and it lives at that mass's own lower edge, so the
+        // window is the lower pole — which is where #286's fold sits too, at
+        // 1.4 of the span against a pole ending at 1.5.
         for &(up, _) in &profile {
-            if up >= peak {
+            if !(low..peak).contains(&up) {
                 continue;
             }
             if let (Some(under), Some(over)) = (at(&profile, up - base), at(&profile, up + base)) {
@@ -1458,11 +1497,33 @@ impl Cut {
         }
 
         let section = Section::at(mesh, rig, peak);
+        // The groove, read across the section the way the fold is read down the
+        // cut: how far the surface falls inside a chord laid over it.
+        let across = |at: f32| {
+            section
+                .profile
+                .windows(2)
+                .find(|pair| (pair[0].0..=pair[1].0).contains(&at))
+                .map(|pair| {
+                    let span = pair[1].0 - pair[0].0;
+                    if span <= f32::EPSILON {
+                        pair[0].1
+                    } else {
+                        pair[0].1 + (pair[1].1 - pair[0].1) * (at - pair[0].0) / span
+                    }
+                })
+        };
+        let chord = GROOVE / 1000.0;
+        let groove = match (across(-chord), across(0.0), across(chord)) {
+            (Some(left), Some(middle), Some(right)) => 0.5 * (left + right) - middle,
+            _ => f32::NAN,
+        };
         Self {
             bow: (bow(peak, high), bow(low, peak)),
             fold,
             border,
             dip: (section.crest - section.midline).max(0.0),
+            groove,
             sides: section.peaks.len(),
         }
     }
@@ -1471,13 +1532,14 @@ impl Cut {
     /// by one piece of code and cannot come out in different units.
     fn row(&self) -> String {
         format!(
-            "{:+.2} | {:+.2} | {:.2} | {:.0} | {:.3} | {:.2} | {}",
+            "{:+.2} | {:+.2} | {:.2} | {:.0} | {:.3} | {:.2} | {:.2} | {}",
             self.bow.0 * 1000.0,
             self.bow.1 * 1000.0,
             self.fold.0 * 1000.0,
             self.fold.1 * 1000.0,
             self.border.0,
             self.dip * 1000.0,
+            self.groove * 1000.0,
             self.sides,
         )
     }
@@ -1750,9 +1812,10 @@ fn shape(seed: i64, over: &Overrides, bands: &[Band]) {
     );
     println!(
         "| femininity | crest mm | peak y mm | upper mm | lower mm | poles up:down | upper bow \
-         mm | lower bow mm | fold mm | seat below peak mm | border slope | sternum dip mm | sides |"
+         mm | lower bow mm | fold mm | seat below peak mm | border slope | sternum dip mm | \
+         groove mm | sides |"
     );
-    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     for femininity in CONTROLS {
         let over = Overrides {
             femininity: Some(femininity),
@@ -1780,7 +1843,7 @@ fn shape(seed: i64, over: &Overrides, bands: &[Band]) {
         );
         if let Some(authored) = &shape.authored {
             println!(
-                "| {femininity:+.2} authored | {} | — | — | — | — | — | — |",
+                "| {femininity:+.2} authored | {} | — | — | — | — | — | — | — | — |",
                 authored.row()
             );
         }
