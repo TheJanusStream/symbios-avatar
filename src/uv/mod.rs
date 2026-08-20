@@ -564,6 +564,20 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group) -> Projection {
     // A face straddling the seam has corners at both ends of the wrap. Lifting
     // the low ones by a full turn makes the face continuous again; the vertices
     // they refer to get duplicated when the chart is emitted.
+    //
+    // **Which corners are "the low ones" is decided against the face's own
+    // circular mean, not against the half-turn mark** (#309). The old rule —
+    // lift every corner under 0.5 whenever the span exceeds 0.5 — is the same
+    // answer for a face that really crosses the seam, and the wrong one for a
+    // face that merely sits near the chart's AXIS, where a few millimetres
+    // move a corner's angle by a large fraction of a turn: an armpit quad of
+    // the arm chart got one corner lifted a whole turn, became a sliver
+    // spanning most of the chart, fell outside every filled texel and rendered
+    // black — only once a swelled chest carve had nudged the chart's centroid
+    // enough to tip it. Taking each corner's nearest representative to the
+    // mean keeps such a face compact; it still has no good projection, but
+    // it stays under its neighbours' texels. Shifts are then normalised so
+    // the lowest is zero, which keeps them `+1` lifts exactly as before.
     let mut shifts = Vec::with_capacity(group.faces.len());
     let mut u_range = (f32::INFINITY, f32::NEG_INFINITY);
     for &face_index in &group.faces {
@@ -576,10 +590,30 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group) -> Projection {
             });
         let straddles = group.kind == Kind::Cylindrical && high - low > 0.5;
 
-        let corner_shifts: Vec<u8> = face
-            .iter()
-            .map(|v| u8::from(straddles && angle[v] < 0.5))
-            .collect();
+        let corner_shifts: Vec<u8> = if straddles {
+            let (sin, cos) = face.iter().fold((0.0f32, 0.0f32), |(sin, cos), v| {
+                let turn = angle[v] * std::f32::consts::TAU;
+                (sin + turn.sin(), cos + turn.cos())
+            });
+            let mean = (sin.atan2(cos) / std::f32::consts::TAU).rem_euclid(1.0);
+            let raw: Vec<i8> = face
+                .iter()
+                .map(|v| {
+                    let off = angle[v] - mean;
+                    if off < -0.5 {
+                        1
+                    } else if off > 0.5 {
+                        -1
+                    } else {
+                        0
+                    }
+                })
+                .collect();
+            let floor = raw.iter().copied().min().unwrap_or(0);
+            raw.iter().map(|&shift| (shift - floor) as u8).collect()
+        } else {
+            vec![0; face.len()]
+        };
         for (corner, &shift) in face.iter().zip(&corner_shifts) {
             let u = angle[corner] + f32::from(shift);
             u_range = (u_range.0.min(u), u_range.1.max(u));

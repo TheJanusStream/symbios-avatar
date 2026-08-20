@@ -182,7 +182,24 @@ fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone) {
     }
 }
 
-/// Fills every texel a triangle covers.
+/// How far outside a triangle, in texels, a texel centre may sit and still be
+/// filled by it.
+///
+/// **Conservative on purpose** (#309). A triangle owns every texel it
+/// touches, not only those whose centres it contains: a chart with a
+/// singularity — the arm chart's cylindrical projection at the armpit, where
+/// a face lying across the arm's axis flattens to a sliver a texel tall with
+/// a needle at the vertex on the axis — produced faces that covered no texel
+/// centre at all, and the render sampled the empty gutter under them as
+/// black. Dilation does not reach a needle's tip twenty texels out. Half the
+/// texel diagonal is the smallest margin that guarantees a sliver of any
+/// thickness still lands on the row it crosses; shared edges were already
+/// double-written by the hairline tolerance this replaces, and the overdraw
+/// into a neighbour's texels is the same width the gutter dilation grows
+/// anyway.
+const COVER: f32 = 0.71;
+
+/// Fills every texel a triangle covers or touches — see [`COVER`].
 fn rasterize(
     geometry: &mut AtlasGeometry,
     zone: Zone,
@@ -200,28 +217,38 @@ fn rasterize(
         return;
     }
 
-    let lo = pixels[0].min(pixels[1]).min(pixels[2]);
-    let hi = pixels[0].max(pixels[1]).max(pixels[2]);
+    let lo = pixels[0].min(pixels[1]).min(pixels[2]) - Vec2::splat(COVER);
+    let hi = pixels[0].max(pixels[1]).max(pixels[2]) + Vec2::splat(COVER);
     let x0 = lo.x.floor().max(0.0) as u32;
     let y0 = lo.y.floor().max(0.0) as u32;
     let x1 = (hi.x.ceil() as i64).clamp(0, i64::from(geometry.width)) as u32;
     let y1 = (hi.y.ceil() as i64).clamp(0, i64::from(geometry.height)) as u32;
+    // Each edge function over its edge's length is a signed distance in
+    // texels, which is what the cover margin is measured in.
+    let lengths = [
+        pixels[1].distance(pixels[2]).max(f32::EPSILON),
+        pixels[2].distance(pixels[0]).max(f32::EPSILON),
+        pixels[0].distance(pixels[1]).max(f32::EPSILON),
+    ];
+    let inward = area.signum();
 
     for y in y0..y1 {
         for x in x0..x1 {
             let point = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
-            let mut weights = Vec3::new(
+            let raw = Vec3::new(
                 edge(pixels[1], pixels[2], point),
                 edge(pixels[2], pixels[0], point),
                 edge(pixels[0], pixels[1], point),
-            ) / area;
-
-            // A small tolerance closes the hairline cracks that appear along
-            // shared edges when a sample lands exactly on the boundary.
-            if weights.min_element() < -1e-4 {
+            );
+            let distances = Vec3::new(
+                raw.x * inward / lengths[0],
+                raw.y * inward / lengths[1],
+                raw.z * inward / lengths[2],
+            );
+            if distances.min_element() < -COVER {
                 continue;
             }
-            weights = weights.max(Vec3::ZERO);
+            let mut weights = (raw / area).max(Vec3::ZERO);
             let total = weights.element_sum();
             if total <= 0.0 {
                 continue;

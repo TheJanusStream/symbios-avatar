@@ -405,6 +405,52 @@ const VOLUME_GAIN: f32 = 0.5;
 /// height, and the height term has to be the larger of the two to compensate.
 const PROJECTION_TRADE: (f32, f32) = (0.35, 0.16);
 
+/// How the lobe's footprint grows with its projection, as an exponent on the
+/// projection's ratio to the feminine reference [`BUST`].
+///
+/// **A bigger breast is a bigger breast, not a taller spike** (#309). Every
+/// span the lobe is measured in — [`SPREAD`] across and [`TALL`] times
+/// [`POLES`] up and down — was a constant, while the projection runs with
+/// femininity, fat, mass and two record axes; at femininity +1.5 with volume
+/// and projection both at +1 the crest stood 86 mm off the wall on an upper
+/// pole 22 mm tall, a slope of four, and the render showed a faceted cone
+/// with a crease down its lateral border where neighbouring vertices were
+/// pushed radially by wholly different amounts. A record may ask for three
+/// times that.
+///
+/// So the footprint swells with the height. At `1.0` the lobe would scale in
+/// similarity and keep the reference's own slopes exactly; life's larger
+/// breasts project a little more than they broaden, so this sits under it —
+/// the flank slope grows slowly with size and never approaches vertical.
+/// Only above the reference: a pectoral or a small chest keeps the spans its
+/// constants name, so nothing the composites alone reach is re-shaped by this.
+const SWELL: f32 = 0.85;
+
+/// The most a chest stands off its ribcage, in chest-node radii.
+///
+/// Life's 90 mm is 0.6 radii; this is half again past it, which is a
+/// stylisation and meant to be. Past it the lobes wrap the trunk and hang
+/// below the band however the footprint swells: a record's axes may ask
+/// (`volume` and `projection` run to ±3 in the exploration envelope) and the
+/// carve delivers up to here.
+const PROJECTION_CEILING: f32 = 0.9;
+
+/// How far inside the trunk's claim, in local body radii, the carve reaches
+/// its full push — it is zero where the arm's claim begins.
+///
+/// **A hard ownership cut with a large push is a step** (#309). The carve
+/// moves the vertices the trunk owns and leaves the arm's alone, and a face
+/// on the armpit has corners in both: with the lobe swelled to its footprint
+/// that face was torn between a pushed corner and a fixed one, its UV quad
+/// folded into a bow-tie in the arm's chart, and the render sampled an
+/// unfilled texel as a black patch on the lobe's upper-outer side. The
+/// render found it; no manifold check would have. So the push fades over
+/// this band of the boundary — equidistance between the nearest trunk bone
+/// and the nearest limb bone — instead of stopping at it. Narrow on purpose:
+/// the reference lobe's own tail has all but died by the time it reaches the
+/// armpit, so at the agreed bodies this changes nothing the eye can find.
+const LIMB_FADE: f32 = 0.25;
+
 /// What one unit of [`ChestAxes::lift`] does: how far up the band it moves the
 /// peak, and how much of the age descent it refuses.
 const LIFT_GAIN: (f32, f32) = (0.06, 0.5);
@@ -597,6 +643,14 @@ impl ChestTraits {
 /// would be two places for the seat to drift from its ruler.
 fn fold_seat(poles: (f32, f32)) -> f32 {
     HEIGHT - FOLD_SEAT * TALL * poles.1
+}
+
+/// How far the lobe's spans swell for a projection, per [`SWELL`]: `1` at and
+/// below the feminine reference, more above it.
+fn swell(projection: f32) -> f32 {
+    (projection.min(PROJECTION_CEILING) / BUST)
+        .max(1.0)
+        .powf(SWELL)
 }
 
 impl ChestTraits {
@@ -918,20 +972,30 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
         return;
     }
     let peak = column.waist + span * traits.height;
-    let reach = traits.projection * column.half;
+    let reach = traits.projection.min(PROJECTION_CEILING) * column.half;
+    // The footprint grows with the height — see [`SWELL`]. Every span below
+    // is the trait's own times this, so the lobe keeps its shape as it grows
+    // rather than sharpening into a cone.
+    let swell = swell(traits.projection);
+    let spread = traits.spread * swell;
+    let tall_span = span * TALL * swell;
     // The fold's own height, and the span its crease is measured in. Both are
     // taken before [`DESCENT`] slackens anything: an anchor that the ageing it
-    // is the reference for can move is not an anchor.
-    let anchor = column.waist + span * traits.fold;
-    let held = span * TALL * traits.poles.1;
+    // is the reference for can move is not an anchor. The seat travels down
+    // with the swelled lower pole, which is [`FOLD_SEAT`]'s own rule — it is
+    // a share of that pole — written as the move from the trait's seat so a
+    // fold carrying a lift keeps it.
+    let anchor =
+        column.waist + span * (traits.fold - FOLD_SEAT * TALL * traits.poles.1 * (swell - 1.0));
+    let held = tall_span * traits.poles.1;
 
     for point in &mut mesh.positions {
         // The trunk and nothing else. An arm passes through this band and a
-        // chest drawn onto one is a defect nobody would have to look hard for.
-        if !matches!(
-            rig.joints[rig.nearest_bone(*point).joint].zone,
-            Zone::Chest | Zone::Abdomen
-        ) {
+        // chest drawn onto one is a defect nobody would have to look hard for
+        // — and the push fades toward the arm rather than stopping at its
+        // boundary, see [`LIMB_FADE`].
+        let claim = trunk_claim(rig, *point);
+        if claim <= 0.0 {
             continue;
         }
         let from = Vec3::new(point.x - column.axis.x, 0.0, point.z - column.axis.z);
@@ -943,17 +1007,17 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
         // flank. See [`SPACING`] for why the lobe is placed in this and not in
         // a lateral offset.
         let azimuth = from.x.abs().atan2(from.z) / std::f32::consts::FRAC_PI_2;
-        let across = (azimuth - traits.spacing) / traits.spread;
+        let across = (azimuth - traits.spacing) / spread;
         // Below the peak the fall is slackened by age, which is what a chest
         // descending is: the volume does not move down so much as stop being
         // held up — and it is the FULLER of the two poles before age touches
         // it, which is what [`POLES`] is.
         let up = point.y - peak;
-        let lower = span * TALL * traits.poles.1 * (1.0 + DESCENT.1 * traits.descent);
+        let lower = tall_span * traits.poles.1 * (1.0 + DESCENT.1 * traits.descent);
         let tall = if up < 0.0 {
             lower
         } else {
-            span * TALL * traits.poles.0
+            tall_span * traits.poles.0
         };
         let along = (up / tall.max(f32::EPSILON)).abs();
         // **C1 at the peak comes free and it is worth saying why**, because a
@@ -983,8 +1047,44 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
             * between(1.0 - 2.0 * traits.definition, GAP_DEPTH.0, GAP_DEPTH.1)
             * (-midline * midline - along.powf(firm)).exp();
 
-        *point += out * (lobe - fold - gap);
+        *point += out * ((lobe - fold - gap) * claim);
     }
+}
+
+/// How much of the chest carve a point takes: `1` well inside the trunk's
+/// claim, falling to `0` over [`LIMB_FADE`] radii short of where a limb's
+/// claim begins, and `0` beyond it.
+///
+/// The same question [`Rig::nearest_bone`] answers for the hard cut — which
+/// bone is nearest — asked of the two nearest families at once, so the
+/// answer has a margin and not just a sign.
+fn trunk_claim(rig: &Rig, point: Vec3) -> f32 {
+    let (mut trunk, mut other, mut radius) = (f32::INFINITY, f32::INFINITY, 1.0f32);
+    for joint in rig.surfaced() {
+        let (start, end) = rig.bone(joint);
+        let axis = end - start;
+        let along = if axis.length_squared() <= f32::EPSILON {
+            0.0
+        } else {
+            ((point - start).dot(axis) / axis.length_squared()).clamp(0.0, 1.0)
+        };
+        let distance = point.distance(start + axis * along);
+        if matches!(rig.joints[joint].zone, Zone::Chest | Zone::Abdomen) {
+            if distance < trunk {
+                trunk = distance;
+                let (near, far) = rig.bone_radii(joint);
+                radius = near + (far - near) * along;
+            }
+        } else if distance < other {
+            other = distance;
+        }
+    }
+    if !trunk.is_finite() {
+        return 0.0;
+    }
+    let margin = (other - trunk) / (radius * LIMB_FADE).max(f32::EPSILON);
+    let t = margin.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 #[cfg(test)]
