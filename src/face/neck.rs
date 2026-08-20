@@ -803,7 +803,20 @@ const TRAPEZIUS_DOWN: f32 = 0.6;
 /// crease vertex, which moves diagonally, and the surface crosses itself.
 /// That rendered as a lip with a dark notch under it, the collar back again.
 /// One direction for the whole field cannot fold while the field is smooth.
-const TRAPEZIUS_FLARE: f32 = 1.0;
+///
+/// **0.7, not 1.0**: at a full unit the masculine column's base widened by
+/// the whole stand and read as a collar again from the front; most of a
+/// trapezius's slope is rise, not spread.
+const TRAPEZIUS_FLARE: f32 = 0.7;
+
+/// How far BEHIND the column's axis the fill still reaches, in column depths,
+/// fading from full at the column's back to nothing here.
+///
+/// Without it the fill was full over the whole upper back below the crown,
+/// and at the masculine end pushed it back as one slab with a ledge under
+/// the nape. The trapezius's mass is on the shoulders and the column; down
+/// the back it is a sheet, not a step.
+const TRAPEZIUS_AFT: f32 = 2.5;
 
 /// The band of shoulder the trapezius fill reaches, as a test on a point,
 /// read by [`refine`] so the fill lands on surface fine enough to hold it.
@@ -926,13 +939,24 @@ pub fn trapezius(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         // their hollow. Over two depths rather than one: the fill's front
         // edge is a line across the base of the throat, and over one depth
         // the line was a crease.
-        let fore = smooth((front - (point.z - axis.z)) / (2.0 * front));
-        let w = out * tall * fore;
+        let ahead = point.z - axis.z;
+        let fore = smooth((front - ahead) / (2.0 * front));
+        let aft = smooth((TRAPEZIUS_AFT * front + ahead) / ((TRAPEZIUS_AFT - 1.0) * front));
+        let w = out * tall * fore * aft;
         if w <= 0.0 {
             continue;
         }
-        let side = (point.x - axis.x).signum();
-        *point += Vec3::new(side * TRAPEZIUS_FLARE, 1.0, 0.0) * (stand * w);
+        // **Outward is RADIAL about the column's axis, not lateral.** A plain
+        // sign of `x` flips at the spine, so two vertices either side of the
+        // nape's midline were pushed APART — a pair of lumps flanking a groove
+        // down the back of the neck; and a lateral push that faded to nothing
+        // on the midline folded the flank where it changed direction. The
+        // radial direction is continuous all the way round, so the nape moves
+        // back and up — which is the slope a trapezius gives the rear line of
+        // a neck — and the flanks move out and up.
+        let across = Vec3::new(point.x - axis.x, 0.0, point.z - axis.z);
+        let outward = across.try_normalize().unwrap_or(Vec3::ZERO);
+        *point += (outward * TRAPEZIUS_FLARE + Vec3::Y) * (stand * w);
     }
 }
 

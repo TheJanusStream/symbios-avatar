@@ -1456,12 +1456,16 @@ impl Subject {
         } else {
             OVERHEAD_PITCH
         };
-        let frames = [
-            of(0.0, 0.0),
-            of(FRAC_PI_4, 0.0),
-            of(FRAC_PI_2, 0.0),
-            of(0.0, steep),
-        ];
+        // The throat's fourth view is the rear three-quarter, not the
+        // overhead: from above, the head fills the frame and the nape — where
+        // the trapezius lives and where #302's first fill grew two lumps
+        // either side of the spine — is the one thing out of shot.
+        let fourth = if matches!(focus, Focus::Throat) {
+            of(3.0 * FRAC_PI_4, 0.0)
+        } else {
+            of(0.0, steep)
+        };
+        let frames = [of(0.0, 0.0), of(FRAC_PI_4, 0.0), of(FRAC_PI_2, 0.0), fourth];
         Some(self.render(pose, closure, &frames))
     }
 

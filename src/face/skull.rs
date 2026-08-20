@@ -954,7 +954,12 @@ impl HeadTraits {
             // The frame term on the shoulder slope's fill; see the field. A
             // feminine shoulder still has a trapezius, so it floors well
             // above nothing.
-            trapezius: (1.0 - 0.30 * femininity).max(0.3),
+            //
+            // **A slope of 0.15, not 0.30**: the amplitude is already in
+            // girdle radii, and the girdle grows toward the masculine end
+            // through the girth, so the frame term compounds on it. At 0.30
+            // the −1.5 body's stand was 33 mm and the fill read as a slab.
+            trapezius: (1.0 - 0.15 * femininity).max(0.5),
         }
     }
 

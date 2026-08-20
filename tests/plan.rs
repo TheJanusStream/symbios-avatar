@@ -923,6 +923,14 @@ fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
     // thick-necked heavy body, which `mass` +1 is. The uncarved defect this
     // guards read 0.90 to 1.21, so the guard still holds; what moved is where
     // this ruler's minimum lives, not the waist.
+    //
+    // **0.88 back to 0.83, the same day** (#302, the nape pass). The owner's
+    // eye found two lumps flanking the spine; the fill's outward component
+    // became radial about the column, its flare 0.7 of its rise, its frame
+    // slope halved and an aft fade added — and the worst cell reads 0.813
+    // now (0.799, 0.813, 0.784, 0.770 on the small heads), inside the ceiling
+    // the first fill could not keep. A ceiling that came down is the honest
+    // measure of what the second pass gave back.
     for &head_size in &[-1.0f32, 0.0, 1.0] {
         for &(mass, femininity) in &[(0.0f32, 0.0f32), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)] {
             let mut record = AvatarRecord::new("Column", Archetype::default());
@@ -1014,7 +1022,7 @@ fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
             }
             let ratio = column / skull_wide.max(f32::EPSILON);
             assert!(
-                (0.60..0.88).contains(&ratio),
+                (0.60..0.83).contains(&ratio),
                 "head_size {head_size:+.1}, mass {mass:+.1}, femininity {femininity:+.1}: \
                  the column is {:.1} mm against a skull of {:.1}, a ratio of {ratio:.3}",
                 column * 1000.0,
