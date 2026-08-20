@@ -30,7 +30,13 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3};
 /// second pass wanted this at about 30,600 and the decision went the other way
 /// once the pass was measured rather than argued: see `torso::CHEST_PASSES`,
 /// whose docstring carries what 596 triangles bought and what it did not.
-const TRIANGLE_TARGET: usize = 30_000;
+//
+/// **RELAXED to 31,500 during the junction re-mesh** (milestone #10, owner's
+/// method): geometry is being judged by render, not against this number, and
+/// the reconciliation is #308's wireframe de-densify pass — which re-tightens
+/// this to what the finished body measures. The welded hand (#297/#298) costs
+/// about 1,150 at the dearest corner over the six appended solids it replaced.
+const TRIANGLE_TARGET: usize = 31_500;
 
 /// Draw calls a WebGL2-tier avatar may cost.
 ///
@@ -205,7 +211,10 @@ const MESH_TARGET: usize = 4;
 /// 2,860 and #209's floor under that ceiling is about 2,750, so there is 80
 /// triangles of room left there and no more: the NEXT thing the trunk wants
 /// comes out of the target.
-const TRIANGLE_CEILING: usize = 28_400;
+//
+/// **RELAXED to 29,600 during the junction re-mesh** — see [`TRIANGLE_TARGET`]
+/// and #308. Dearest corner measured 29,508 with the welded hand in.
+const TRIANGLE_CEILING: usize = 29_600;
 
 /// Draw calls the crate currently costs.
 ///

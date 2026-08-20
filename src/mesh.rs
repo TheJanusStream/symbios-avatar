@@ -343,6 +343,57 @@ impl PolyMesh {
         }
     }
 
+    /// Drops every vertex no face uses, renumbering the faces.
+    ///
+    /// A cut — the wrist weld removing the arm's stub surface (#297) — leaves
+    /// its faces' corners behind, and an orphaned vertex still costs its
+    /// position, texture coordinate, normal and four influences in every
+    /// buffer downstream. Channels that are present are filtered in step; ones
+    /// that are empty stay empty.
+    pub fn compact(&mut self) {
+        let mut used = vec![false; self.positions.len()];
+        for face in &self.faces {
+            for &corner in face {
+                used[corner as usize] = true;
+            }
+        }
+        if used.iter().all(|&u| u) {
+            return;
+        }
+        let mut renumbered = vec![0u32; self.positions.len()];
+        let mut kept = 0u32;
+        for (vertex, &used) in used.iter().enumerate() {
+            renumbered[vertex] = kept;
+            kept += u32::from(used);
+        }
+        fn keep<T>(attribute: &mut Vec<T>, used: &[bool]) {
+            let mut index = 0;
+            attribute.retain(|_| {
+                let keep = used[index];
+                index += 1;
+                keep
+            });
+        }
+        keep(&mut self.positions, &used);
+        if !self.uvs.is_empty() {
+            keep(&mut self.uvs, &used);
+        }
+        if !self.normals.is_empty() {
+            keep(&mut self.normals, &used);
+        }
+        if !self.skin.is_empty() {
+            keep(&mut self.skin, &used);
+        }
+        if !self.colours.is_empty() {
+            keep(&mut self.colours, &used);
+        }
+        for face in &mut self.faces {
+            for corner in face {
+                *corner = renumbered[*corner as usize];
+            }
+        }
+    }
+
     /// Appends another mesh, re-indexing its faces.
     ///
     /// Channels are unioned: one the other mesh carries and this one does not is

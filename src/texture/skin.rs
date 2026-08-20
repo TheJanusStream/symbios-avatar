@@ -523,13 +523,27 @@ pub fn paint_skin(
         // read as a full crease everywhere, darkening every one of them by up
         // to 35% (#63).
         let hit = rig.nearest_bone(p);
+        // **On an extremity the bone's own radius is not a flesh reading any
+        // more** (#297): the wrist stub was slimmed so the welded hand could
+        // contain it, and the interpolated radius falling toward that slimmed
+        // end painted the whole hand a step redder than the forearm — a hard
+        // seam at the crease, found by `--pass albedo` with the blush zeroed.
+        // The proximal end of the same bone is the wrist or ankle the limb
+        // actually tapers to, so an extremity reads THAT: continuous where the
+        // two surfaces meet, and the hand no thinner than the wrist it hangs
+        // from.
+        let flesh = if matches!(rig.joints[hit.joint].zone, Zone::Extremity(_)) {
+            rig.bone_radii(hit.joint).0
+        } else {
+            hit.radius
+        };
         // **The band, and it is the whole of #158's caution honoured** — see
         // [`DEFINITION_INK`]. `4c(1−c)` is zero at a flat texel and zero at a
         // saturated fold, so nothing a composite can do reaches the rows that
         // painted as ladders, and a half-strength fold gets the full gain.
         let band = crease_band(texel.crease);
         let crease = texel.crease * CREASE_INK * (1.0 + ink_gain * band);
-        let thinness = (1.0 - hit.radius / stoutest).clamp(0.0, 1.0).powf(0.7);
+        let thinness = (1.0 - flesh / stoutest).clamp(0.0, 1.0).powf(0.7);
         // Melanin sits above the blood and absorbs what would have shown
         // through it, so the same blush axis has to mean less on deeper skin —
         // held at full strength it painted a red cheek onto a complexion that
@@ -770,10 +784,20 @@ fn freckled(zone: Zone) -> bool {
 }
 
 /// How much rougher than average a part of the body is.
+///
+/// **The extremity and the lower limb share one figure, and that is a seam
+/// fix, not a taste** (#297): the two zones meet mid-forearm — wherever the
+/// nearest bone flips to the wrist stub — and a 0.06 roughness step there
+/// rendered as a pale scalloped panel on every arm, the one seam at the wrist
+/// that survived the geometry, the blood and the occlusion all being made
+/// continuous. It was found by elimination through the render's own passes:
+/// absent in `--pass normal`, absent in albedo with the blush zeroed, faint
+/// in `--pass ao`, present in the lit sheet — which leaves the specular
+/// response. Calloused knuckles, if they come back, come back as a smooth
+/// field, not as a zone constant.
 fn roughness_bias(zone: Zone) -> f32 {
     match zone {
-        Zone::Extremity(_) => 0.12,
-        Zone::LowerLimb(_) => 0.06,
+        Zone::Extremity(_) | Zone::LowerLimb(_) => 0.06,
         Zone::Head => -0.08,
         _ => 0.0,
     }

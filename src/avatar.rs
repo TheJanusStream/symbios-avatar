@@ -739,8 +739,20 @@ impl Avatar {
                 // rigidly here would throw them away and glue every finger shut
                 // (#113).
                 placed.bind_rigidly(part.joint as u16);
+                skin.append(&placed.split_uv_seams());
+            } else {
+                // A hand is WELDED, not appended (#297): the arm's stub
+                // surface is cut out of the body and the hand's open weld
+                // ring is bridged into the hole, so the wrist is one surface
+                // rather than two nested ones.
+                crate::extremity::weld(
+                    &mut skin,
+                    &placed.split_uv_seams(),
+                    &self.rig,
+                    part.limb,
+                    part.joint,
+                );
             }
-            skin.append(&placed.split_uv_seams());
         }
         if let Some(features) = &self.parts.features {
             let mut mesh = features.assembled();

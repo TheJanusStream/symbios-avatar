@@ -737,37 +737,42 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// and `--bare --corners 22` against rest, where the feature visibly moves
 /// and nothing outside its field does.
 const FINGERPRINTS: [(&str, u64); 28] = [
-    ("humanoid default", 0xfda39e8725d6726c),
+    ("humanoid default", 0xd05a7f9d56f4f354),
     ("quadruped default", 0x2aabd8cffd3320f0),
-    ("humanoid femininity -1", 0x5d8069e80b3efe1f),
-    ("humanoid femininity +1", 0xd6e4ddb5537eccf6),
-    ("humanoid age 55", 0x7801ac1f56523d7d),
-    ("humanoid age 80", 0x0e7d397d6924d412),
-    ("humanoid corner h=1.2 all=-1", 0x9c611c9fbf0bcceb),
-    ("humanoid corner h=2.2 all=-1", 0x9b4cb2ee865eff70),
-    ("humanoid corner h=1.2 all=0", 0xc28693fb5507066e),
-    ("humanoid corner h=2.2 all=0", 0x8cd2d0b90c22f6f6),
-    ("humanoid corner h=1.2 all=1", 0x3a5771cd6adf5d64),
-    ("humanoid corner h=2.2 all=1", 0x76e2099f3c0ec188),
-    ("humanoid seed 0", 0xa6fc82ac43bc06ae),
+    ("humanoid femininity -1", 0x7778feb29f72e627),
+    ("humanoid femininity +1", 0x3ddd13ca02f9f63a),
+    ("humanoid age 55", 0xcb7698155528402d),
+    ("humanoid age 80", 0xa8a19ae4448f8546),
+    ("humanoid corner h=1.2 all=-1", 0xd41d7cda9cdc8fcf),
+    ("humanoid corner h=2.2 all=-1", 0x58cb1e4208b1ae20),
+    ("humanoid corner h=1.2 all=0", 0x43b4c0cdb5e1a3ea),
+    ("humanoid corner h=2.2 all=0", 0x487acdc7bc6edaa6),
+    ("humanoid corner h=1.2 all=1", 0x675b5bcb99e274b4),
+    ("humanoid corner h=2.2 all=1", 0xbdcf875a371f545c),
+    ("humanoid seed 0", 0xa53681ba23caf38a),
     ("quadruped seed 0", 0x181d22a61a29e06b),
-    ("humanoid seed 1", 0x2b638535885f9474),
+    ("humanoid seed 1", 0x30618e4eeb0257c8),
     ("quadruped seed 1", 0x66b32cdababaf760),
-    ("humanoid seed 2", 0xe29862b521d7ae0c),
+    ("humanoid seed 2", 0x9f0a8ebba9f03fec),
     ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
-    ("humanoid seed 3", 0xa6aeb91910da8553),
+    ("humanoid seed 3", 0x97993972db1b04db),
     ("quadruped seed 3", 0x5fe315cd16d9b52b),
-    ("humanoid seed 4", 0x4188024ffed8b04e),
+    ("humanoid seed 4", 0x5190542cc763acd6),
     ("quadruped seed 4", 0x050364ec7b8118ea),
-    ("humanoid seed 5", 0xb3a4512408e7192f),
+    ("humanoid seed 5", 0x0846908fb977dc77),
     ("quadruped seed 5", 0x2d22051939b73f20),
-    ("humanoid seed 6", 0x3ca964084380360f),
+    ("humanoid seed 6", 0x26259f813794c2d3),
     ("quadruped seed 6", 0x94b5b20cbe08a43a),
-    ("humanoid seed 7", 0xe8a039905d8969e9),
+    ("humanoid seed 7", 0xc15fc80b8060f3b9),
     ("quadruped seed 7", 0xc6b4259ae378e3bb),
 ];
 
 /// Every number the two body plans produce, pinned.
+///
+/// **Humanoid rows re-pinned 2026-08-20 for the wrist stub** (#297): the hand
+/// node was shortened 0.040 → 0.026 and slimmed 0.020 → 0.013 of stature so
+/// the welded hand contains it, judged by `render --bare --close hand` over
+/// eight iterations. Quadruped rows did not move.
 ///
 /// **This test cannot tell a good change from a bad one and is not trying to.**
 /// Every other test in this file asks whether a body meshes or whether one

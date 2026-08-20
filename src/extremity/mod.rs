@@ -121,7 +121,7 @@ impl Extremities {
             if !carries.contains(&limb) {
                 extremities
                     .hands
-                    .push(grow_hand(rig, limb, joint, along, girth));
+                    .push(grow_hand(rig, limb, joint, along, girth, stature));
             } else if extremity.len() < 2 {
                 // **A foot is only a part on a plan that has not got one.** The
                 // humanoid meshes its feet as nodes in the capsule graph — ankle,
@@ -210,7 +210,19 @@ impl Extremities {
 /// The test is `the_two_hands_are_mirrors_of_each_other`, and it now measures
 /// what its name says: every vertex of one hand against the nearest vertex of
 /// the reflected other.
-fn grow_hand(rig: &mut Rig, limb: Limb, joint: usize, along: Vec3, girth: f32) -> Attached {
+fn grow_hand(
+    rig: &mut Rig,
+    limb: Limb,
+    joint: usize,
+    along: Vec3,
+    girth: f32,
+    stature: Option<f32>,
+) -> Attached {
+    // **A hand's length is a share of stature, not of the wrist's girth** —
+    // the foot's own lesson (#110), which the hand repeated: sizing off the
+    // node radius meant slimming the wrist stub shrank the whole hand. Life
+    // and the references put a hand at 10.5–11% of stature.
+    let length = stature.map_or(girth * 5.2, |tall| tall * 0.105);
     // Which side is canonical is a fact about `Hand::build`, not about which
     // limb this is: with `up` on world Y it seats the thumb toward +Z — the
     // body's front, where both reference thumbs are — only when `out.x` is
@@ -223,7 +235,7 @@ fn grow_hand(rig: &mut Rig, limb: Limb, joint: usize, along: Vec3, girth: f32) -
         along
     };
 
-    let hand = Hand::build(girth, canonical.normalize(), Vec3::Y, REST_CURL);
+    let hand = Hand::build(girth, canonical.normalize(), Vec3::Y, REST_CURL, length);
     // The palm starts at the wrist crease, which is behind the joint the part
     // hangs from — otherwise the hand floats off the end of the arm with the
     // limb's own rounded tip showing through between them.
@@ -244,7 +256,7 @@ fn grow_hand(rig: &mut Rig, limb: Limb, joint: usize, along: Vec3, girth: f32) -
     } else {
         place
     };
-    let mesh = hand.mesh().transformed(place);
+    let mesh = hand.mesh.transformed(place);
 
     // The rig's own numbering for the hand's bones, in `Hand::influences`
     // order: the wrist first, then each digit from the knuckle out. Attached
@@ -252,9 +264,9 @@ fn grow_hand(rig: &mut Rig, limb: Limb, joint: usize, along: Vec3, girth: f32) -
     // relies on and the order glTF requires.
     let wrist = rig.joints[joint].position;
     let mut bones = vec![joint];
-    for digit in &hand.digits {
+    for joints in &hand.digits {
         let mut parent = joint;
-        for &local in &digit.joints {
+        for &local in joints {
             let at = wrist + place.transform_point3(local);
             parent = rig
                 .attach(parent, at, Role::Digit)
@@ -344,6 +356,381 @@ fn grow_foot(
     }
 }
 
+/// Welds one hand into the body's skin mesh (#297).
+///
+/// **The owner's ask, taken literally: the wrist is welded, not disguised.**
+/// The arm used to end in a capped stub with the hand's own solid buried over
+/// it, and every arrangement of tucks and cuffs only decided where the two
+/// surfaces' meeting line fell. This removes the meeting: the stub's surface
+/// is cut out of the body, the hand arrives open at its weld ring
+/// ([`Hand::build`] pushes no base cap), and the two boundaries are bridged
+/// with one band of triangles — one surface, one silhouette, no interior
+/// geometry.
+///
+/// `skin` is the charted body in body space; `hand` is the placed hand mesh,
+/// already in body space and already skinned. Works on the charted copy
+/// deliberately: the unwrap, the garments and the painted atlas all read the
+/// uncut body, and cutting here changes only what is drawn.
+///
+/// The hole's ring is walked by POSITION, not by index: the charted body
+/// splits vertices along UV seams, so the ring crosses vertices that exist
+/// twice, and an index walk would stop at the first seam. The bridge then
+/// zips the two rings by angle about the wrist's own axis, which needs no
+/// agreement about counts — the arm ring is whatever the subdivision left,
+/// the hand ring is the cage's twenty.
+pub(crate) fn weld(skin: &mut PolyMesh, hand: &PolyMesh, rig: &Rig, limb: Limb, joint: usize) {
+    use std::collections::BTreeMap;
+    let Some(parent) = rig.joints[joint].parent else {
+        return;
+    };
+    let crease = rig.joints[parent].position;
+    let axis = (rig.joints[joint].position - crease).normalize_or(Vec3::Y);
+
+    // 1. Cut the stub's surface out of the body: every face whose centroid
+    // lies nearest the extremity bone of this limb. The zone runs from the
+    // wrist crease to the stub's cap, which is exactly the surface the hand
+    // replaces.
+    let zone = Zone::Extremity(limb);
+    let (kept, removed): (Vec<Vec<u32>>, Vec<Vec<u32>>) =
+        skin.faces.iter().cloned().partition(|face| {
+            let centre = face
+                .iter()
+                .fold(Vec3::ZERO, |sum, &v| sum + skin.positions[v as usize])
+                / face.len() as f32;
+            rig.joints[rig.nearest_bone(centre).joint].zone != zone
+        });
+    if removed.is_empty() {
+        // Nothing to cut — a plan with no stub keeps its appended hand whole.
+        skin.append(&hand.clone());
+        return;
+    }
+    skin.faces = kept;
+
+    // 2. The hole's rim: the vertices of kept boundary edges standing where a
+    // REMOVED face used to stand — matched by POSITION, and that is
+    // load-bearing twice over. By index it finds nothing: the charts are cut
+    // by zone, so the cut's own edge is a chart boundary whose two sides
+    // never shared vertices, and it was a "boundary edge" before the cut too.
+    // And by proximity it finds too much: a dressed body's sleeve hem is a
+    // boundary near the wrist, and a rim gathered that way would stitch the
+    // hand to a shirt. A hem's positions never coincide with a removed
+    // face's, so the position test excludes it for free.
+    let key = |p: Vec3| {
+        (
+            (p.x * 1e5).round() as i64,
+            (p.y * 1e5).round() as i64,
+            (p.z * 1e5).round() as i64,
+        )
+    };
+    let mut gone = std::collections::BTreeSet::new();
+    for face in &removed {
+        for &vertex in face {
+            gone.insert(key(skin.positions[vertex as usize]));
+        }
+    }
+    let after = edge_counts(skin);
+    let mut arm_rim: Vec<(u32, Vec3)> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (&edge, &uses) in &after {
+        if uses != 1 {
+            continue;
+        }
+        for vertex in [edge.0, edge.1] {
+            let position = skin.positions[vertex as usize];
+            if gone.contains(&key(position)) && seen.insert(vertex) {
+                arm_rim.push((vertex, position));
+            }
+        }
+    }
+
+    // 3. The hand's weld ring: its only boundary, but bounded to the crease's
+    // neighbourhood anyway so the invariant is stated where it is relied on.
+    let hand_rim = rim_positions(hand, crease, rig.joints[parent].radius * 3.0);
+
+    let side = axis.cross(Vec3::Y).normalize_or(Vec3::X);
+    let up = axis.cross(side);
+    let angle = |p: Vec3| {
+        let from = p - crease;
+        from.dot(up).atan2(from.dot(side))
+    };
+
+    // 4. SNAP the hand's ring onto the arm's rim curve before stitching. The
+    // two rings were only ever near each other: the arm's surface is not
+    // round at the crease and the cut's rim jitters between subdivision rows,
+    // so a bridge between free rings rendered as a cliff wherever the radii
+    // disagreed — worst across the top, where the arm stands furthest off its
+    // bone. Interpolating the rim's position at each hand vertex's own angle
+    // puts both boundaries on ONE curve; the bridge that follows is a sliver
+    // that only exists to keep the crack sealed when the wrist bends, because
+    // the two rings answer to different bones.
+    let mut hand = hand.clone();
+    if !arm_rim.is_empty() {
+        let mut curve: Vec<(f32, Vec3)> = arm_rim.iter().map(|&(_, p)| (angle(p), p)).collect();
+        curve.sort_by(|a, b| a.0.total_cmp(&b.0));
+        curve.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-5);
+        let at = |theta: f32| -> Vec3 {
+            let after = curve.iter().position(|&(a, _)| a >= theta).unwrap_or(0);
+            let before = if after == 0 {
+                curve.len() - 1
+            } else {
+                after - 1
+            };
+            let (a0, p0) = curve[before];
+            let (a1, p1) = curve[after];
+            let span = (a1 - a0).rem_euclid(std::f32::consts::TAU);
+            let into = (theta - a0).rem_euclid(std::f32::consts::TAU);
+            let t = if span <= 1e-6 {
+                0.0
+            } else {
+                (into / span).clamp(0.0, 1.0)
+            };
+            p0 + (p1 - p0) * t
+        };
+        for &(vertex, position) in &hand_rim {
+            hand.positions[vertex as usize] = at(angle(position));
+        }
+    }
+    let hand = hand;
+
+    let offset = skin.vertex_count() as u32;
+    skin.append(&hand);
+
+    if arm_rim.is_empty() || hand_rim.is_empty() {
+        return;
+    }
+    let mut arm: Vec<(f32, u32)> = arm_rim.iter().map(|&(v, p)| (angle(p), v)).collect();
+    let mut hand_ring: Vec<(f32, u32)> = hand_rim
+        .iter()
+        .map(|&(v, p)| (angle(p), v + offset))
+        .collect();
+    arm.sort_by(|a, b| a.0.total_cmp(&b.0));
+    hand_ring.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    let mut faces = Vec::new();
+    let (mut a, mut h) = (0usize, 0usize);
+    while a < arm.len() || h < hand_ring.len() {
+        let arm_next = arm.get(a).map_or(f32::INFINITY, |&(angle, _)| angle);
+        let hand_next = hand_ring.get(h).map_or(f32::INFINITY, |&(angle, _)| angle);
+        let arm_at = arm[a.min(arm.len() - 1)].1;
+        let hand_at = hand_ring[h.min(hand_ring.len() - 1)].1;
+        if arm_next <= hand_next {
+            let next = arm[(a + 1) % arm.len()].1;
+            faces.push(vec![arm_at, next, hand_at]);
+            a += 1;
+        } else {
+            let next = hand_ring[(h + 1) % hand_ring.len()].1;
+            faces.push(vec![hand_at, next, arm_at]);
+            h += 1;
+        }
+    }
+
+    // Wound outward by measurement rather than by derivation: which way round
+    // the two rims run depends on the cut, the chirality and the axis frame,
+    // and a radial test settles it face by face.
+    for face in &mut faces {
+        let (p0, p1, p2) = (
+            skin.positions[face[0] as usize],
+            skin.positions[face[1] as usize],
+            skin.positions[face[2] as usize],
+        );
+        let centre = (p0 + p1 + p2) / 3.0;
+        let radial = centre - (crease + axis * (centre - crease).dot(axis));
+        if (p1 - p0).cross(p2 - p0).dot(radial) < 0.0 {
+            face.reverse();
+        }
+    }
+    for face in faces {
+        if face[0] != face[1] && face[1] != face[2] && face[0] != face[2] {
+            skin.push_face(face);
+        }
+    }
+
+    // 5. Fair the junction. The two surfaces now share one rim curve, but
+    // they arrive at it at different slopes — the round forearm stands
+    // further off the bone than the flat back of the hand — and the change
+    // of slope concentrated on one ring reads as a step in the silhouette.
+    // A few Laplacian passes over the crease's neighbourhood spread that
+    // slope change across the band, which is `face::neck::fair`'s move: the
+    // shape "smooth wrist" names is a fairing, not another station.
+    //
+    // **Chart-split copies move as one.** The charted body carries a vertex
+    // once per chart; smoothing each copy by its own adjacency would walk
+    // them apart and open every UV seam in the band, so positions are
+    // grouped by location and re-welded after every pass.
+    let reach = rig.joints[parent].radius * 2.0;
+    let band: Vec<u32> = (0..skin.vertex_count() as u32)
+        .filter(|&v| skin.positions[v as usize].distance(crease) <= reach)
+        .collect();
+    let in_band: std::collections::BTreeSet<u32> = band.iter().copied().collect();
+    let mut around: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for face in &skin.faces {
+        for (index, &v) in face.iter().enumerate() {
+            if !in_band.contains(&v) {
+                continue;
+            }
+            let prev = face[(index + face.len() - 1) % face.len()];
+            let next = face[(index + 1) % face.len()];
+            let entry = around.entry(v).or_default();
+            entry.push(prev);
+            entry.push(next);
+        }
+    }
+    let mut groups: BTreeMap<(i64, i64, i64), Vec<u32>> = BTreeMap::new();
+    for &v in &band {
+        groups
+            .entry(key(skin.positions[v as usize]))
+            .or_default()
+            .push(v);
+    }
+    for _ in 0..3 {
+        let was = skin.positions.clone();
+        for (&v, neighbours) in &around {
+            if neighbours.is_empty() {
+                continue;
+            }
+            let mean = neighbours
+                .iter()
+                .fold(Vec3::ZERO, |sum, &n| sum + was[n as usize])
+                / neighbours.len() as f32;
+            let old = was[v as usize];
+            skin.positions[v as usize] = old + (mean - old) * 0.45;
+        }
+        for members in groups.values() {
+            if members.len() < 2 {
+                continue;
+            }
+            let mean = members
+                .iter()
+                .fold(Vec3::ZERO, |sum, &v| sum + skin.positions[v as usize])
+                / members.len() as f32;
+            for &v in members {
+                skin.positions[v as usize] = mean;
+            }
+        }
+    }
+
+    // 6. Close the crack the fairing opens. Each rim smooths under its own
+    // side's adjacency — the slivers joining them are too thin to couple the
+    // two — so three passes walk the rims apart and the bridge stretches
+    // into a visible groove. The hand's rim is set back onto the arm's
+    // smoothed rim curve, which is the same snap as step 4 with the faired
+    // positions as the target.
+    {
+        let mut curve: Vec<(f32, Vec3)> = arm
+            .iter()
+            .map(|&(_, v)| {
+                let p = skin.positions[v as usize];
+                (angle(p), p)
+            })
+            .collect();
+        curve.sort_by(|a, b| a.0.total_cmp(&b.0));
+        curve.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-5);
+        if !curve.is_empty() {
+            for &(_, v) in &hand_ring {
+                let p = skin.positions[v as usize];
+                let theta = angle(p);
+                let after = curve.iter().position(|&(a, _)| a >= theta).unwrap_or(0);
+                let before = if after == 0 {
+                    curve.len() - 1
+                } else {
+                    after - 1
+                };
+                let (a0, p0) = curve[before];
+                let (a1, p1) = curve[after];
+                let span = (a1 - a0).rem_euclid(std::f32::consts::TAU);
+                let into = (theta - a0).rem_euclid(std::f32::consts::TAU);
+                let t = if span <= 1e-6 {
+                    0.0
+                } else {
+                    (into / span).clamp(0.0, 1.0)
+                };
+                skin.positions[v as usize] = p0 + (p1 - p0) * t;
+            }
+        }
+    }
+
+    // 7. Re-derive the band's normals from the WELDED, faired surface. Each
+    // side kept the normals its own source mesh computed, and the mismatch
+    // rendered as a shading step ringing the wrist — the seam back, in light
+    // instead of geometry. Only the band is touched: a global recompute
+    // would crease every UV seam the body deliberately split.
+    if skin.normals.is_empty() {
+        return;
+    }
+    let touched = in_band;
+    let mut sums: std::collections::BTreeMap<u32, Vec3> = BTreeMap::new();
+    for face in &skin.faces {
+        if !face.iter().any(|v| touched.contains(v)) {
+            continue;
+        }
+        let mut normal = Vec3::ZERO;
+        for (index, &v) in face.iter().enumerate() {
+            let next = skin.positions[face[(index + 1) % face.len()] as usize];
+            let here = skin.positions[v as usize];
+            normal += here.cross(next);
+        }
+        for &v in face {
+            if touched.contains(&v) {
+                *sums.entry(v).or_insert(Vec3::ZERO) += normal;
+            }
+        }
+    }
+    for (vertex, sum) in sums {
+        let normal = sum.normalize_or(skin.normals[vertex as usize]);
+        skin.normals[vertex as usize] = normal;
+    }
+
+    // 8. The cut's faces are gone; their orphaned corners go with them, or
+    // every buffer downstream carries 87 dead vertices per hand — the
+    // `suppressing_the_covered_skin_leaves_no_vertex_behind` guard is what
+    // holds this.
+    skin.compact();
+}
+
+/// Undirected edge → how many faces use it.
+fn edge_counts(mesh: &PolyMesh) -> std::collections::BTreeMap<(u32, u32), usize> {
+    let mut count = std::collections::BTreeMap::new();
+    for face in &mesh.faces {
+        for (index, &a) in face.iter().enumerate() {
+            let b = face[(index + 1) % face.len()];
+            *count.entry((a.min(b), a.max(b))).or_insert(0usize) += 1;
+        }
+    }
+    count
+}
+
+/// A mesh's boundary vertices near `at`, with their positions.
+///
+/// Every directed edge whose reverse is missing is a boundary edge; the rim is
+/// their endpoints, filtered to `reach` of the crease so no other boundary on
+/// the mesh — a garment hem, another limb's weld — can leak in. Deduplicated
+/// by index, not by position: a UV-seam split leaves two vertices in one
+/// place, and BOTH must be stitched or the seam opens under animation.
+fn rim_positions(mesh: &PolyMesh, at: Vec3, reach: f32) -> Vec<(u32, Vec3)> {
+    use std::collections::BTreeMap;
+    let mut count: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+    for face in &mesh.faces {
+        for (index, &a) in face.iter().enumerate() {
+            let b = face[(index + 1) % face.len()];
+            *count.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+        }
+    }
+    let mut rim: Vec<(u32, Vec3)> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (&(a, b), &uses) in &count {
+        if uses != 1 {
+            continue;
+        }
+        for vertex in [a, b] {
+            let position = mesh.positions[vertex as usize];
+            if position.distance(at) <= reach && seen.insert(vertex) {
+                rim.push((vertex, position));
+            }
+        }
+    }
+    rim
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,37 +798,34 @@ mod tests {
     }
 
     #[test]
-    fn hands_and_feet_are_sized_from_the_measured_body_not_the_planned_one() {
-        // If this ever reads the node radius instead, hands come out half again
-        // too big — which is the mistake this crate keeps making.
-        //
-        // Seed re-picked for generator 2 (#160): the premise below — the
-        // measured wrist is thinner than the planned one — holds on a body
-        // whose build and extremity axes agree, and the exploration draw can
-        // hand seed 3 a thick forearm over a small hand, where the surface at
-        // the wrist ring is honestly FATTER than the hand's own node asks.
-        // Seed 29 rolls both axes inside the old range.
+    fn a_hand_is_a_share_of_stature_not_of_the_wrist() {
+        // The foot's lesson (#110) arriving at the hand (#297): a part sized
+        // off the girth of the node it hangs from inherits every reason that
+        // node's radius was tuned, and slimming the wrist stub for the welded
+        // hand shrank the whole hand by a third before this moved to stature.
+        // 10.5% of stature is the reference figure `grow_hand` quotes.
         let (mut rig, surface, ground) = body(29);
+        // The same derivation `Extremities::build` uses: measured crown, not
+        // the node radius the plan asked for.
+        let stature = rig
+            .in_zone(Zone::Head)
+            .first()
+            .map(|&head| rig.joints[head].position.y + surface.widest(head) - ground)
+            .expect("a biped has a head");
         let built = Extremities::build(&mut rig, &surface, ground);
         let hand = &built.hands[0];
-        let planned = rig.joints[hand.joint].radius;
-        let measured = surface.radius(hand.joint, 0.0);
         assert!(
-            measured < planned,
-            "the wrist measured {measured} against a planned {planned}"
-        );
-        // Stated against the shape itself rather than a hard-coded ratio, so
-        // retuning a hand's proportions cannot quietly invalidate the check.
-        let unit = Hand::build(1.0, Vec3::X, Vec3::Y, REST_CURL).length;
-        assert!(
-            (hand.reach - unit * measured).abs() < 1e-4,
-            "reach {} is not {unit} wrists of {measured}",
+            (hand.reach - stature * 0.105).abs() < 1e-4,
+            "reach {} against a stature of {stature}",
             hand.reach
         );
-        assert!(
-            (hand.reach - unit * planned).abs() > 1e-3,
-            "the hand was sized from the planned radius"
-        );
+        // The girth still matters for what it SHOULD decide — the base ring
+        // that has to emerge from the arm — and it stays a MEASURED quantity.
+        // No relation to the planned node radius is asserted any more: the
+        // wrist stub was slimmed for the welded hand (#297) and the surface
+        // there now blends fatter than the stub's own node, which is exactly
+        // the kind of coupling the stature sizing above exists to escape.
+        assert!(surface.radius(hand.joint, 0.0) > 0.0);
     }
 
     #[test]

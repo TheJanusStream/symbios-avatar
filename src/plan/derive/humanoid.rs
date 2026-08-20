@@ -2625,7 +2625,15 @@ impl Dimensions {
         // Provenance: **unsourced**, and note it feeds arm span through
         // `hand_at` below — so the extremity axis moves a figure that `#66`
         // tuned, and nothing connects the two.
-        let hand_len = h * 0.040 * (1.0 + 0.3 * params.extremity_size);
+        //
+        // **Shortened 0.040 → 0.026 for the welded hand** (#297, judged by
+        // render). The stub node's cap used to reach ~93 mm past the wrist
+        // crease on the default body while the palm's knuckle row sits at
+        // ~78 mm, so the ARM stuck out past the hand's own knuckles and its
+        // sides showed through the palm as a collar. At 0.026 the stub's
+        // whole surface ends inside the palm's mid-region, where the part is
+        // at its widest and deepest and can actually contain it.
+        let hand_len = h * 0.026 * (1.0 + 0.3 * params.extremity_size);
         let shoulder_at = Vec3::new(shoulder_x, clavicle_y, 0.0);
         let elbow_at = shoulder_at + arm * upper_arm;
         let wrist_at = elbow_at + arm * forearm;
@@ -2758,7 +2766,17 @@ impl Dimensions {
         // limbs ended in these nodes they were fattened to read as a fist and a
         // boot, and now that real hands and feet hang off them a blob only pokes
         // through the part it is meant to be inside.
-        let hand_r = h * 0.020 * extremity;
+        //
+        // **Slimmed again, 0.020 → 0.013, for the welded hand** (#297). The
+        // palm is ~14 mm deep at its half-depth on the default body and the
+        // old stub's built surface was fatter than that, so it broke through
+        // the palm's top and bottom while the palm's edges broke out of its
+        // sides — each solid wearing the other's silhouette. At 0.013 the
+        // stub's surface (subdivision pulls it well inside the node radius)
+        // stays inside the palm's interior everywhere, and the arm tapers
+        // INTO the wrist instead of ballooning past it, which is the wrist
+        // waist the render was missing.
+        let hand_r = h * 0.013 * extremity;
         let heel_r = foot_r * FOOT_HEEL_WIDE * extremity;
         let cap_r = foot_r * FOOT_CAP_WIDE * extremity;
         let ball_r = foot_r * FOOT_BALL_WIDE * extremity;
