@@ -114,6 +114,30 @@ const FINGERS: [Finger; 4] = [
     },
 ];
 
+/// The knuckle row's transverse arch: lift per palm column, of the distal
+/// station's half-depth, in [`ring_points`]'s column order — the index (and
+/// thumb) edge first, the little finger's edge last. A finger root is the quad
+/// between two columns, so its lift is their mean: index `-0.10`, middle
+/// `+0.05`, ring `-0.04`, little `-0.31`.
+///
+/// **The back of a hand is not a plank.** Seen end-on, the four metacarpal
+/// heads sit on a dome: the middle finger's stands highest, the index's a
+/// little under it, and the ring and little fingers' fall away with the
+/// little finger's the lowest — the ulnar side of the hand rolls down toward
+/// the palm, which is why a relaxed hand's little finger sits lower than its
+/// index. The palm under the row is cupped by the same amount (the transverse
+/// palmar arch). Built flat across, the hand read as a paddle with fingers
+/// pushed into its edge however well the row curved in plan.
+///
+/// The dome is stated as a lift of the crest and a drop at each edge rather
+/// than a circle fitted to anything, so the mirror's little finger rolls the
+/// same way its own does: column order is about the PALM, not the world.
+///
+/// Provenance: **eyeballed** against the Quaternius pair's knuckle rows and
+/// the render; the reference heads span about 0.6 of the palm's depth from
+/// crest to ulnar edge.
+const KNUCKLE_ARCH: [f32; 5] = [-0.25, 0.05, 0.05, -0.12, -0.50];
+
 /// One finger's placement, in the units [`FINGERS`] documents.
 struct Finger {
     /// How far out the knuckle stands, of the furthest knuckle's set-back.
@@ -146,6 +170,12 @@ struct Station {
     /// Distance along `out` from the wrist crease, per column — the knuckle
     /// row curves, so the distal station is not planar.
     along: [f32; 5],
+    /// Lift along `up` per column, as a share of `deep`. The knuckle row is an
+    /// ARCH across the hand as well as a curve along it: the metacarpal heads
+    /// sit on a dome whose crest is the middle finger's, and the palm under
+    /// them is cupped by the same amount. A column's two vertices move
+    /// together, so the section tilts rather than thins.
+    arch: [f32; 5],
     /// Half-width across the palm.
     wide: f32,
     /// Half-depth through it.
@@ -236,30 +266,35 @@ impl Hand {
         let stations = [
             Station {
                 along: [-base * 0.10; 5],
+                arch: [0.0; 5],
                 wide: base,
                 deep: base,
                 flat: 0.0,
             },
             Station {
                 along: [base * 0.45; 5],
+                arch: [0.0; 5],
                 wide: base * 1.02,
                 deep: base * 0.98,
                 flat: 0.10,
             },
             Station {
                 along: [palm_length * 0.30; 5],
+                arch: [0.0; 5],
                 wide: palm_width * 0.82,
                 deep: base.max(palm_depth * 1.3) * 0.80,
                 flat: 0.35,
             },
             Station {
                 along: [palm_length * 0.62; 5],
+                arch: KNUCKLE_ARCH.map(|lift| lift * 0.45),
                 wide: palm_width * 0.95,
                 deep: palm_depth * 1.12,
                 flat: 0.70,
             },
             Station {
                 along: staggered,
+                arch: KNUCKLE_ARCH,
                 wide: palm_width * 0.96,
                 deep: palm_depth * 0.95,
                 flat: 0.85,
@@ -295,6 +330,11 @@ impl Hand {
         // would seal the hand back into a separate solid. Catmull–Clark's
         // boundary rules carry the open ring through subdivision.
 
+        // The thenar mound is raised on the cage BEFORE any digit is
+        // extruded, so each digit reads its root quad as built — the thumb's
+        // wall and the index root both carry a corner of it.
+        thenar(&mut cage, &rings, up, across, palm_depth);
+
         // The distal ring's columns tile its end into four quads — see
         // [`RING`] — and each is a finger's root. Corners run web-side-down,
         // outer-down, outer-up, web-side-up around each root, whichever side
@@ -319,6 +359,7 @@ impl Hand {
                 finger_length * spec.length,
                 &PHALANGES,
                 curl,
+                1.0,
             );
             reaches.push(root_reach(&cage, root));
             digits.push(joints);
@@ -338,15 +379,23 @@ impl Hand {
             rings[THUMB_WALL.0 + 1][(THUMB_WALL.1 + 1) % RING],
             rings[THUMB_WALL.0 + 1][THUMB_WALL.1],
         ];
+        //
+        // It also leaves the palm DOWNWARD, not level with it (#299): the thumb's
+        // base sits on the palm side of the hand, and a thumb extruded level
+        // from the side wall's middle stood clear of the palm like a peg in a
+        // board, with a hollow under it where the thenar mound should be. Its
+        // section is flatter than the wall it grows from, which is the palm's
+        // full depth on edge.
         let thumb = extrude_digit(
             &mut cage,
             [wall[3], wall[0], wall[1], wall[2]],
-            (out * 0.78 - across * 0.63).normalize(),
+            (out * 0.76 - across * 0.62 - up * 0.18).normalize(),
             up,
             across,
             finger_length * 0.66,
             &THUMB_PHALANGES,
             curl * 0.55,
+            0.72,
         );
         reaches.push(root_reach(&cage, wall));
         digits.push(thumb);
@@ -475,9 +524,10 @@ fn ring_points(station: &Station, out: Vec3, up: Vec3, across: Vec3) -> Vec<Vec3
             let sideways = cos + (even - cos) * station.flat;
             let vertical = -sin.signum() * (sin.abs() + (1.0 - sin.abs()) * station.flat);
             let column = ((even + 1.0) * 2.0).round() as usize;
-            out * station.along[column.min(4)]
+            let column = column.min(4);
+            out * station.along[column]
                 + across * (sideways * station.wide)
-                + up * (vertical * station.deep)
+                + up * ((vertical + station.arch[column]) * station.deep)
         })
         .collect()
 }
@@ -489,7 +539,10 @@ fn ring_points(station: &Station, out: Vec3, up: Vec3, across: Vec3) -> Vec<Vec3
 /// shares those vertices, not because anything was sealed afterwards. Each
 /// following ring is a tapered quad in the frame the curl carries along, and
 /// the corner signs are read off the root itself so the tube cannot twist
-/// whichever way round the root was handed over.
+/// whichever way round the root was handed over. `section` scales the depth
+/// of every ring after the root: a digit whose root is deeper than the digit
+/// should be (the thumb, grown from the palm's side wall) flattens to it at
+/// once and the subdivision fairs the step.
 #[allow(clippy::too_many_arguments)]
 fn extrude_digit(
     cage: &mut PolyMesh,
@@ -500,6 +553,7 @@ fn extrude_digit(
     length: f32,
     phalanges: &[f32; JOINTS],
     curl: f32,
+    section: f32,
 ) -> Vec<Vec3> {
     let centre = root
         .iter()
@@ -545,11 +599,20 @@ fn extrude_digit(
     // number it is: the phalanges are of unequal length, so counting rings
     // would step the taper unevenly and pinch the shortest one. Not to a
     // point — a fingertip is rounded, and a cone reads as a claw.
+    //
+    // Width and depth taper SEPARATELY (#299). The root quad is a slice of
+    // the palm's end, so its width is the full knuckle spacing and its depth
+    // the palm's; a finger narrows off that at once — the proximal phalanx
+    // is deeper than it is wide, which is what separates four fingers from
+    // four flutes cut into the palm's end — and its depth holds nearly to the
+    // middle joint before the pad flattens toward the nail. One taper for
+    // both made a finger that was wider than deep all the way down and
+    // square at the end.
     let mut travelled = 0.0;
     let mut rings: Vec<[u32; 4]> = vec![root];
     for (joint, share) in phalanges.iter().enumerate() {
         travelled += share;
-        let taper = 1.0 - 0.26 * travelled;
+        let (narrow, thin) = digit_taper(travelled);
         let segment = (path[joint + 1] - path[joint]).normalize_or(first);
         let side = (across - segment * across.dot(segment)).normalize_or(side);
         let rise = segment.cross(side);
@@ -557,7 +620,9 @@ fn extrude_digit(
             .iter()
             .map(|&(s, r)| {
                 cage.push_vertex(
-                    path[joint + 1] + side * (s * wide * taper) + rise * (r * deep * taper),
+                    path[joint + 1]
+                        + side * (s * wide * narrow)
+                        + rise * (r * deep * thin * section),
                 )
             })
             .collect();
@@ -581,6 +646,24 @@ fn extrude_digit(
     path
 }
 
+/// How much of its root's width and depth a digit keeps, `travelled` of its
+/// length along — `(width, depth)` shares.
+///
+/// Width steps down at once and then eases: a finger at its first joint is
+/// about four fifths of the knuckle spacing, and at the tip three fifths.
+/// Depth is held — a proximal phalanx is as deep as the knuckle it hangs from
+/// — and falls away quadratically, so the fingertip is a flattened pad half
+/// the root's depth rather than a square peg. Both are proportions of the
+/// reference's fingers read off the mesh (first joint 0.80 / 0.92 of the
+/// root; tip 0.60 / 0.50), smoothed to two curves.
+///
+/// Provenance: **looked up**, then rounded.
+fn digit_taper(travelled: f32) -> (f32, f32) {
+    let narrow = 1.0 - 0.22 * travelled.sqrt() - 0.18 * travelled;
+    let thin = 1.0 - 0.50 * travelled * travelled;
+    (narrow, thin)
+}
+
 /// A root quad's larger half-extent, which is the digit's claim radius for
 /// [`Hand::influences`].
 fn root_reach(cage: &PolyMesh, root: [u32; 4]) -> f32 {
@@ -591,6 +674,50 @@ fn root_reach(cage: &PolyMesh, root: [u32; 4]) -> f32 {
     root.iter()
         .map(|&v| cage.positions[v as usize].distance(centre))
         .fold(0.0f32, f32::max)
+}
+
+/// Raises the thenar eminence on the cage: the mound of the palm under the
+/// thumb's base.
+///
+/// Between the thumb and the index finger a hand carries a saddle of mass —
+/// the thenar muscles on the palm side of the thumb's base and the web
+/// between the two digits — and a thumb extruded from a flat side wall has
+/// neither: the wall stays a wall, and the render shows a peg in a board
+/// with a hollow corner against the index root. This is the trapezius's
+/// problem again, a concave corner, and the lesson from the collar (#302)
+/// is that it cannot be filled along the surface's normals — they cross in
+/// the corner and the fill folds. So the fill is made on the CAGE, before
+/// subdivision, with one position-based direction per vertex: the palm-side
+/// vertices of the thumb's edge column on the two stations that carry the
+/// thumb's wall, and the one distal of it, move out and palmward, and the
+/// Catmull–Clark pass that follows fairs the mound into the palm the way it
+/// fairs everything else. The back-of-hand vertices of the same column do
+/// not move: the mound is a palm feature, and the back of the hand over the
+/// thumb is nearly flat.
+fn thenar(cage: &mut PolyMesh, rings: &[Vec<u32>], up: Vec3, across: Vec3, palm_depth: f32) {
+    // Sides 4 and 3 are the thumb's edge column and the one inboard of it on
+    // the palm face — see [`ring_points`]: `-across`, `vertical` negative.
+    // Listed as (station, side, share): the mound is medial and proximal of
+    // the thumb's base, so its crest is the inboard column beside the wall
+    // and the edge vertex on the easing station; the wall's own palm corners
+    // take a third of it, enough that the thumb's base goes down with the
+    // mound instead of stepping above it, and no more — they are the thumb's
+    // root quad, and a thumb extruded from a root a palm deep came out as a
+    // fin (the first try, which moved them by the full share).
+    const MOUND: [(usize, usize, f32); 7] = [
+        (1, 4, 0.55),
+        (1, 3, 0.30),
+        (2, 4, 0.35),
+        (2, 3, 0.80),
+        (3, 4, 0.35),
+        (3, 3, 0.65),
+        (4, 3, 0.20),
+    ];
+    for (station, side, share) in MOUND {
+        let vertex = rings[station][side] as usize;
+        let out_of_palm = if side == 4 { 0.45 } else { 0.0 };
+        cage.positions[vertex] += (-across * out_of_palm - up * 0.90) * (palm_depth * share);
+    }
 }
 
 /// Charts the hand by projection onto the back-of-hand plane.
