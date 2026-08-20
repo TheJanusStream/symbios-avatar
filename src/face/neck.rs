@@ -772,15 +772,6 @@ const TRAPEZIUS_DOWN: f32 = 0.6;
 /// trapezius's slope is rise, not spread.
 const TRAPEZIUS_FLARE: f32 = 0.7;
 
-/// How far BEHIND the column's axis the fill still reaches, in column depths,
-/// fading from full at the column's back to nothing here.
-///
-/// Without it the fill was full over the whole upper back below the crown,
-/// and at the masculine end pushed it back as one slab with a ledge under
-/// the nape. The trapezius's mass is on the shoulders and the column; down
-/// the back it is a sheet, not a step.
-const TRAPEZIUS_AFT: f32 = 2.5;
-
 /// The band of shoulder the trapezius fill reaches, as a test on a point,
 /// read by [`refine`] so the fill lands on surface fine enough to hold it.
 ///
@@ -904,8 +895,23 @@ pub fn trapezius(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         // the line was a crease.
         let ahead = point.z - axis.z;
         let fore = smooth((front - ahead) / (2.0 * front));
-        let aft = smooth((TRAPEZIUS_AFT * front + ahead) / ((TRAPEZIUS_AFT - 1.0) * front));
-        let w = out * tall * fore * aft;
+        let across = Vec3::new(point.x - axis.x, 0.0, point.z - axis.z);
+        let reach = across.length();
+        // **And nothing dead behind** (#302, the owner's third read). The
+        // fill's backward push at the nape was a hump on every heavy
+        // masculine body — the column's back bulging out above the shoulder
+        // line and dropping to it in a step — and with the push gone and only
+        // the settle below, the same nape runs as one line from the occiput
+        // into the back. The back of a neck does not want mass added; the
+        // ring the hull leaves there wants fairing, and that is the settle's
+        // job. So the fill is a SIDES term: full at the flanks, nothing on
+        // the midline behind, and the throat's own fade in front.
+        let behind = if reach <= f32::EPSILON {
+            0.0
+        } else {
+            (-across.z / reach).max(0.0)
+        };
+        let w = out * tall * fore * (1.0 - behind * behind);
         if w <= 0.0 {
             continue;
         }
@@ -914,11 +920,8 @@ pub fn trapezius(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         // nape's midline were pushed APART — a pair of lumps flanking a groove
         // down the back of the neck; and a lateral push that faded to nothing
         // on the midline folded the flank where it changed direction. The
-        // radial direction is continuous all the way round, so the nape moves
-        // back and up — which is the slope a trapezius gives the rear line of
-        // a neck — and the flanks move out and up.
-        let across = Vec3::new(point.x - axis.x, 0.0, point.z - axis.z);
-        let outward = across.try_normalize().unwrap_or(Vec3::ZERO);
+        // radial direction is continuous all the way round.
+        let outward = across / reach;
         *point += (outward * TRAPEZIUS_FLARE + Vec3::Y) * (stand * w);
     }
 
