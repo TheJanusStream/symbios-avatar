@@ -931,6 +931,20 @@ fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
     // now (0.799, 0.813, 0.784, 0.770 on the small heads), inside the ceiling
     // the first fill could not keep. A ceiling that came down is the honest
     // measure of what the second pass gave back.
+    //
+    // **0.83 → 0.90, the third pass** (#302, the owner's read on a heavy
+    // masculine nape). The fill alone left the girdle hull's ring at the
+    // column's foot as a ledge on every body, so the junction band is now
+    // Taubin-faired after it (`SETTLE_PASSES`), and a fairing that blends a
+    // narrow column into a wide girdle pulls the column's foot outward: the
+    // small-head heavy cell reads 0.880 (47.7 mm against 54.2). Judged on
+    // `--close head --head-size -1 --mass 1` with the settle off and on:
+    // off, the ledge ring is back at the base of the neck; on, the neck
+    // flows into a heavy body's shoulders and the waist under the jaw is
+    // untouched. This ruler's minimum lives in that blend now. The uncarved
+    // defect read 0.90 to 1.21, so the ceiling sits at the foot of that
+    // range; a ruler that read the WAIST rather than the foot is #300's to
+    // build.
     for &head_size in &[-1.0f32, 0.0, 1.0] {
         for &(mass, femininity) in &[(0.0f32, 0.0f32), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)] {
             let mut record = AvatarRecord::new("Column", Archetype::default());
@@ -1022,7 +1036,7 @@ fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
             }
             let ratio = column / skull_wide.max(f32::EPSILON);
             assert!(
-                (0.60..0.83).contains(&ratio),
+                (0.60..0.90).contains(&ratio),
                 "head_size {head_size:+.1}, mass {mass:+.1}, femininity {femininity:+.1}: \
                  the column is {:.1} mm against a skull of {:.1}, a ratio of {ratio:.3}",
                 column * 1000.0,

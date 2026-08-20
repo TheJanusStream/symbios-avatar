@@ -662,34 +662,8 @@ pub fn fair(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         return;
     }
 
-    // The neighbour graph, from the faces. Vertices outside the band take part
-    // as anchors — a mean over neighbours that ignored the fixed chin above
-    // would let the band's top edge drift away from the surface it must meet.
-    let mut around: Vec<Vec<u32>> = vec![Vec::new(); mesh.vertex_count()];
-    for face in &mesh.faces {
-        for at in 0..face.len() {
-            let (a, b) = (face[at], face[(at + 1) % face.len()]);
-            around[a as usize].push(b);
-            around[b as usize].push(a);
-        }
-    }
-
-    for _ in 0..FAIR_PASSES {
-        for step in [FAIR_SMOOTH, FAIR_UNSHRINK] {
-            let was = mesh.positions.clone();
-            for (vertex, point) in mesh.positions.iter_mut().enumerate() {
-                let w = weight[vertex];
-                if w <= 0.0 || around[vertex].is_empty() {
-                    continue;
-                }
-                let mean = around[vertex]
-                    .iter()
-                    .fold(Vec3::ZERO, |sum, &other| sum + was[other as usize])
-                    / around[vertex].len() as f32;
-                *point += (mean - *point) * (step * w);
-            }
-        }
-    }
+    let around = neighbours(mesh);
+    taubin(mesh, &around, &weight, FAIR_PASSES);
 
     // **The wattle's pocket, melted rather than faired** — and the distinction
     // is the whole finding. The drip under the chin survived forty-eight
@@ -731,18 +705,7 @@ pub fn fair(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         .collect();
     if pocket.iter().any(|&w| w > 0.0) {
         for _ in 0..MELT_PASSES {
-            let was = mesh.positions.clone();
-            for (vertex, point) in mesh.positions.iter_mut().enumerate() {
-                let w = pocket[vertex];
-                if w <= 0.0 || around[vertex].is_empty() {
-                    continue;
-                }
-                let mean = around[vertex]
-                    .iter()
-                    .fold(Vec3::ZERO, |sum, &other| sum + was[other as usize])
-                    / around[vertex].len() as f32;
-                *point += (mean - *point) * (FAIR_SMOOTH * w);
-            }
+            relax(mesh, &around, &pocket, FAIR_SMOOTH);
         }
     }
 
@@ -892,7 +855,7 @@ pub fn trapezius(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
     let Some(&head) = rig.in_zone(Zone::Head).first() else {
         return;
     };
-    let Some((column, girdle, reach, acromion)) = shoulder(rig) else {
+    let Some((column, girdle, reach_x, acromion)) = shoulder(rig) else {
         return;
     };
     let axis = column.position;
@@ -904,7 +867,7 @@ pub fn trapezius(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         return;
     }
     let base = column.radius * column.scale.x;
-    if reach - base <= f32::EPSILON {
+    if reach_x - base <= f32::EPSILON {
         return;
     }
     let stand = girdle.radius * TRAPEZIUS_RISE * traits.trapezius;
@@ -923,7 +886,7 @@ pub fn trapezius(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         // Out along the shoulder: full over the column, nothing at the
         // acromion, leaving with zero slope and arriving with one.
         let across = (point.x - axis.x).abs();
-        let t = ((across - base) / (reach - base)).clamp(0.0, 1.0);
+        let t = ((across - base) / (reach_x - base)).clamp(0.0, 1.0);
         let out = (1.0 - t) * (1.0 - t);
         // Up and down about the shoulder's own top line, which runs from the
         // crease at the crown to the acromion's top.
@@ -957,6 +920,98 @@ pub fn trapezius(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         let across = Vec3::new(point.x - axis.x, 0.0, point.z - axis.z);
         let outward = across.try_normalize().unwrap_or(Vec3::ZERO);
         *point += (outward * TRAPEZIUS_FLARE + Vec3::Y) * (stand * w);
+    }
+
+    // **And then the junction is faired, because the fill is mass and the
+    // stump is a seam** (#302, the owner's second read). The column's back is
+    // a vertical tube and the girdle hull's back facet leaves it at a hard
+    // ring — a ledge on every body, and a step the size of the gap between
+    // the column's back and the upper back on a heavy masculine one. A fill
+    // that raises the nape above that ring and stops at it sharpens the
+    // ledge; a term that targets the ledge is the knot-by-knot negotiation
+    // the fairing's own docstring records failing. So the band from the
+    // flare's top down into the upper back is faired the way the column is,
+    // all the way round but the throat, and the ledge settles into the slope
+    // the fill put there. Taubin keeps the fill's mass — it is low frequency
+    // — and takes the ring, which is not.
+    let settle: Vec<f32> = mesh
+        .positions
+        .iter()
+        .zip(&mine)
+        .map(|(&point, &mine)| {
+            if !mine {
+                return 0.0;
+            }
+            let across = Vec3::new(point.x - axis.x, 0.0, point.z - axis.z);
+            let reach = across.length();
+            let ahead = if reach <= f32::EPSILON {
+                0.0
+            } else {
+                (across.z / reach).max(0.0)
+            };
+            let t = ((across.x.abs() - base) / (reach_x - base)).clamp(0.0, 1.0);
+            let rise = point.y - (crown + (acromion - crown) * t);
+            let band = if rise >= 0.0 {
+                smooth((up - rise) / (up * 0.5))
+            } else {
+                smooth((down + rise) / (down * 0.5))
+            };
+            band * (1.0 - ahead * ahead) * (1.0 - t)
+        })
+        .collect();
+    if settle.iter().any(|&w| w > 0.0) {
+        let around = neighbours(mesh);
+        taubin(mesh, &around, &settle, SETTLE_PASSES);
+    }
+}
+
+/// How many Taubin pairs the junction band gets after the fill.
+///
+/// Fewer than the column's [`FAIR_PASSES`]: the ring at the column's foot is
+/// two or three rows of mesh, and a pass count that would plane a chin is
+/// more than a ring needs.
+const SETTLE_PASSES: usize = 24;
+
+/// The neighbour graph, from the faces.
+///
+/// Every vertex takes part, banded or not: vertices outside a fairing band
+/// serve as anchors, and a mean over neighbours that ignored the fixed
+/// surface beside a band would let the band's edge drift away from the
+/// surface it must meet.
+fn neighbours(mesh: &PolyMesh) -> Vec<Vec<u32>> {
+    let mut around: Vec<Vec<u32>> = vec![Vec::new(); mesh.vertex_count()];
+    for face in &mesh.faces {
+        for at in 0..face.len() {
+            let (a, b) = (face[at], face[(at + 1) % face.len()]);
+            around[a as usize].push(b);
+            around[b as usize].push(a);
+        }
+    }
+    around
+}
+
+/// One Laplacian step: each weighted vertex moves toward its neighbours'
+/// mean by `step` times its weight. Positive shrinks, negative unshrinks.
+fn relax(mesh: &mut PolyMesh, around: &[Vec<u32>], weight: &[f32], step: f32) {
+    let was = mesh.positions.clone();
+    for (vertex, point) in mesh.positions.iter_mut().enumerate() {
+        let w = weight[vertex];
+        if w <= 0.0 || around[vertex].is_empty() {
+            continue;
+        }
+        let mean = around[vertex]
+            .iter()
+            .fold(Vec3::ZERO, |sum, &other| sum + was[other as usize])
+            / around[vertex].len() as f32;
+        *point += (mean - *point) * (step * w);
+    }
+}
+
+/// Taubin's smooth-then-unshrink pairs, `passes` of them, over a weighted band.
+fn taubin(mesh: &mut PolyMesh, around: &[Vec<u32>], weight: &[f32], passes: usize) {
+    for _ in 0..passes {
+        relax(mesh, around, weight, FAIR_SMOOTH);
+        relax(mesh, around, weight, FAIR_UNSHRINK);
     }
 }
 
