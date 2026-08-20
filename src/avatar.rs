@@ -312,6 +312,11 @@ impl Avatar {
         let mut body =
             crate::build_body(&skeleton, &config.cage, config.subdivisions, &traits).ok()?;
         let mut rig = Rig::from_skeleton(&skeleton).ok()?;
+        // A swelled chest earns its own refinement pass, here because the
+        // chest's traits are this function's and `build_body` knows only the
+        // head's — and before `Skull::measure`, so nothing has read the
+        // surface yet (#311).
+        body = crate::torso::refine_lobe(&body, &rig, &chest_traits);
 
         // The face is carved into the body's own surface, so it has to happen
         // before ANY of what follows: skin weights, texture charts, the garment
@@ -344,6 +349,19 @@ impl Avatar {
         // fits itself to that surface has to run after it (#272). Independent
         // of the face's canon — a body with no head still has a chest — so it
         // is outside the `canon` block rather than inside it.
+        //
+        // **The wall is remembered before the carve, and the skin is BOUND to
+        // the wall** (#313). A breast is chest-wall skin displaced outward,
+        // and it has to move with the wall it came off; bound where it
+        // stands, a large lobe's crest sits two hundred millimetres from the
+        // chest bone and one hundred from the upper arm's, so the falloff
+        // handed it to the arm — vertex by vertex, wherever the two pulls
+        // crossed — and the first pose that lowered the arms shredded the
+        // lobe. The carve moves positions and adds no vertices, and the cut
+        // below only appends, so the snapshot maps onto the bound mesh by
+        // index; every other fitting (charts, the garment cut, the eyes)
+        // still reads the carved surface, as it must.
+        let wall = body.positions.clone();
         crate::torso::carve_chest(&mut body, &rig, &chest_traits);
         // The mouth is cut AFTER the carve — the parting follows the carved
         // groove — and before anything measures, binds or charts the surface,
@@ -357,7 +375,11 @@ impl Avatar {
             .as_ref()
             .map(|canon| Eyes::build(&rig, &body, canon, &record.eyes));
 
-        let mut weights = skin::bind(&body, &rig, &config.skin);
+        let mut weights = {
+            let mut on_the_wall = body.clone();
+            on_the_wall.positions[..wall.len()].copy_from_slice(&wall);
+            skin::bind(&on_the_wall, &rig, &config.skin)
+        };
         // The seam's own vertices leave the field's blend: the parting's two
         // edges are coincident at rest, so the field hands them identical
         // weights and they would never part. The upper edge and the pocket's

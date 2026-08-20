@@ -293,6 +293,9 @@ pub struct Sowing<'a> {
 /// rail fired, as it is meant to when room opens. This took the smallest
 /// step that satisfies it, 2,830 → 2,850; the other ~700 triangles are the
 /// owner's to spend at #307/#308, on the face, on the hair, or on nothing.
+/// (#311 spent them on the swelled chest's own refinement pass; #312 made
+/// that pass select by relief and gave most of them back, and the target
+/// came down to meet it. This stays at 2,850.)
 pub const MAX_TRIANGLES: usize = 2_850;
 
 /// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].

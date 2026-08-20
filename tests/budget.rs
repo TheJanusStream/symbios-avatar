@@ -39,7 +39,13 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3};
 /// **31,500 → 32,000** for the trapezius (#302): the shoulder band is split
 /// once so the fill has surface to hold it, 432 triangles at the dearest
 /// corner; #308 reconciles.
-const TRIANGLE_TARGET: usize = 32_000;
+/// **32,000 → 32,600** for the swelled chest's own refinement pass (#311):
+/// a lobe past 1.4× the reference footprint was split once more over its
+/// steep walls, about 1,200 at the dearest rolled corner. **Back to 32,200**
+/// at #312, when that pass started selecting cells by the relief they carry
+/// rather than by footprint: 44 cells on the dearest rolled body where there
+/// were 470, and the product corner measures 31,554; #308 reconciles.
+const TRIANGLE_TARGET: usize = 32_200;
 
 /// Draw calls a WebGL2-tier avatar may cost.
 ///
@@ -218,6 +224,10 @@ const MESH_TARGET: usize = 4;
 /// **RELAXED to 29,600 during the junction re-mesh** — see [`TRIANGLE_TARGET`]
 /// and #308. Dearest corner measured 29,508 with the welded hand in, and
 /// 29,940 with the trapezius's shoulder band split (#302): **29,600 → 30,000**.
+/// **30,000 → 31,000** for the swelled chest's refinement pass (#311): the
+/// dearest rolled corner measured 30,782 with it. **Back to 30,000** at
+/// #312, with the pass selecting by relief: 29,906 at the dearest corner;
+/// #308 reconciles.
 const TRIANGLE_CEILING: usize = 30_000;
 
 /// Draw calls the crate currently costs.
