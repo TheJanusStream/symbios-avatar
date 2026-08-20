@@ -17,8 +17,120 @@
 
 use glam::{Vec2, Vec3};
 
+use crate::face::smooth;
 use crate::mesh::PolyMesh;
+use crate::plan::{Limb, Zone};
 use crate::prim;
+use crate::rig::Rig;
+
+/// How much lower the toe stands than the ball, as a share of the ball's
+/// height over the sole, and where along the foot the instep starts to fall.
+///
+/// **The cage's foot is a slab, and the slab is the boot** (#306). Every
+/// node of the level run solves its depth to land on the ground, so every
+/// node's TOP sits twice its height above it and the foot is the same
+/// thickness from heel to toe — `footaudit` read 45 mm at 30% along and 43
+/// at 90%. A foot is a wedge: the references' toe stands 0.29 to 0.32 of the
+/// heel's depth, and the instep falls from behind the ball to the tip.
+/// Scaling each section's height about the sole keeps the sole where the
+/// gait plants it and takes the top down.
+///
+/// Provenance: **derived from the references' toe-to-heel depth**, then
+/// judged on `render --bare --close foot`.
+const TOE_TAPER: f32 = 0.40;
+const TAPER_FROM: f32 = 0.40;
+
+/// How far the forefoot shifts toward the body's midline at the tip, as a
+/// share of the foot's half-width, and where along the foot the shift starts.
+///
+/// **A capsule section is symmetric and a forefoot is not.** Life's foot is
+/// widest at the ball and the big-toe side runs nearly straight from heel
+/// to tip while the little-toe side curves in, so the forefoot's axis bends
+/// toward the midline — which is why a sole outline reads as a left or a
+/// right. The shift is a bend of the whole section, not a bulge on one side,
+/// so the sole's outline moves with the top. Chiral by construction: it is
+/// toward the midline on each side, and the two feet stop being mirror
+/// copies of one plan.
+///
+/// Provenance: **sized by render** against the references' sole outlines.
+const MEDIAL_SHIFT: f32 = 0.14;
+const SHIFT_FROM: f32 = 0.35;
+
+/// Shapes the cage's feet into feet, in place.
+///
+/// Runs after the cage and every other carve in `build_body`, before
+/// anything is bound or charted: the sole is the surface everything that
+/// plants a foot reads, and it does not move — every displacement here is
+/// a scaling of height about the ground or a shift across the foot.
+///
+/// The humanoid's foot is nodes in the capsule graph since #111, not the
+/// [`Foot`] this file builds for the attached path; this is the carve for
+/// that foot, and it declines a body that does not walk on two feet.
+pub fn shape(mesh: &mut PolyMesh, rig: &Rig) {
+    if rig.ground_contacts().len() != 2 {
+        return;
+    }
+    for limb in [Limb::HindLeft, Limb::HindRight] {
+        let joints = rig.extremity_joints(limb);
+        let nodes: Vec<usize> = joints
+            .iter()
+            .copied()
+            .filter(|&joint| rig.joints[joint].zone == Zone::Extremity(limb))
+            .collect();
+        if nodes.len() < 3 {
+            continue;
+        }
+        // The foot's run along the body's forward axis, heel to tip, and the
+        // side it is on. Medial is toward the body's midline.
+        let back = nodes
+            .iter()
+            .map(|&joint| rig.joints[joint].position.z - rig.joints[joint].radius)
+            .fold(f32::MAX, f32::min);
+        let front = nodes
+            .iter()
+            .map(|&joint| rig.joints[joint].position.z + rig.joints[joint].radius)
+            .fold(f32::MIN, f32::max);
+        let centre = rig.joints[nodes[0]].position.x;
+        if front - back <= f32::EPSILON || centre.abs() <= f32::EPSILON {
+            continue;
+        }
+        let medial = -centre.signum();
+
+        let mine: Vec<bool> = mesh
+            .positions
+            .iter()
+            .map(|&at| rig.joints[rig.nearest_bone(at).joint].zone == Zone::Extremity(limb))
+            .collect();
+        let ground = mesh
+            .positions
+            .iter()
+            .zip(&mine)
+            .filter(|(_, mine)| **mine)
+            .map(|(at, _)| at.y)
+            .fold(f32::MAX, f32::min);
+        let half_width = mesh
+            .positions
+            .iter()
+            .zip(&mine)
+            .filter(|(_, mine)| **mine)
+            .map(|(at, _)| (at.x - centre).abs())
+            .fold(0.0f32, f32::max);
+        if !ground.is_finite() || half_width <= f32::EPSILON {
+            continue;
+        }
+
+        for (point, mine) in mesh.positions.iter_mut().zip(&mine) {
+            if !*mine {
+                continue;
+            }
+            let along = ((point.z - back) / (front - back)).clamp(0.0, 1.0);
+            let taper = smooth((along - TAPER_FROM) / (1.0 - TAPER_FROM));
+            point.y = ground + (point.y - ground) * (1.0 - TOE_TAPER * taper);
+            let shift = smooth((along - SHIFT_FROM) / (1.0 - SHIFT_FROM));
+            point.x += medial * MEDIAL_SHIFT * half_width * shift;
+        }
+    }
+}
 
 /// Where along the foot the ankle sits, from the heel.
 ///

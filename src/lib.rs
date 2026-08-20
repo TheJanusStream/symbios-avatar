@@ -312,6 +312,10 @@ pub fn build_body(
         // between the column and the shoulder, smooth by construction and so
         // run after the fairing rather than relaxed by it. See `face::neck`.
         face::fill_trapezius(&mut mesh, &rig, traits);
+        // And the feet: the cage's level run is a slab, and the wedge and the
+        // bend toward the big toe are carved onto it (#306). Last, because it
+        // scales height about the ground the sole already stands on.
+        extremity::foot::shape(&mut mesh, &rig);
     }
     Ok(mesh)
 }

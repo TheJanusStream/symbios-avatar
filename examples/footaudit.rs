@@ -31,9 +31,10 @@
 //! ```
 
 use glam::Vec3;
+use symbios_avatar::face::HeadTraits;
 use symbios_avatar::{
     Archetype, AvatarRecord, BODY_SUBDIVISIONS, CageConfig, Limb, Patch, Rig, SkinConfig, Zone,
-    build_cage, catmull_clark, rig::skin,
+    build_body, rig::skin,
 };
 
 /// How close to the lowest point of a sole counts as standing on the ground.
@@ -97,8 +98,19 @@ fn main() {
         record.reroll(seed);
     }
     let skeleton = record.skeleton();
-    let cage = match build_cage(&skeleton, &CageConfig::default()) {
-        Ok(cage) => cage,
+    // **Through `build_body`, not `build_cage` + `catmull_clark`** (#306).
+    // This used to subdivide the cage itself and measure that, which is the
+    // body BEFORE every carve — and the foot's wedge and medial bend are a
+    // carve, so the instrument read the old slab unchanged while the render
+    // showed the new foot. An instrument that reads a surface the body does
+    // not ship is the staleness #304 exists to catch.
+    let mesh = match build_body(
+        &skeleton,
+        &CageConfig::default(),
+        BODY_SUBDIVISIONS,
+        &HeadTraits::of(&record.composites),
+    ) {
+        Ok(mesh) => mesh,
         Err(error) => {
             // Printed rather than swallowed: every one of these errors names the
             // two nodes and the two distances involved, which is the whole of
@@ -107,7 +119,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
     let Ok(rig) = Rig::from_skeleton(&skeleton) else {
         eprintln!("the body would not rig");
         std::process::exit(1);

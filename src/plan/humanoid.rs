@@ -60,6 +60,17 @@ fn height_envelope() -> (f32, f32) {
 /// same seeds at full width.
 const OFFSET_SIGMA: f32 = 1.0 / 3.0;
 
+/// How far each foot's level run turns away from the midline, in radians.
+///
+/// **Seven degrees, which is the low end of a relaxed stance and reads as
+/// standing rather than as a duck** (#306). Measured values for a natural
+/// stance run from about five to fifteen degrees per foot; the plan takes
+/// the quiet end because a rest pose is the pose every still is judged in,
+/// and because every foot-facing goal in the gait reads this direction as
+/// the foot's forward. Sized by render, on the foot close-up's overhead view
+/// and the walk sheets.
+const TOE_OUT: f32 = 7.0_f32.to_radians();
+
 /// How far a rolled stature strays from its centre, in metres.
 ///
 /// **This narrows the stature draw, and it is the one judgement in the reroll
@@ -528,6 +539,17 @@ impl BodyPlan for HumanoidParams {
             // did.
             //
             // [`FOOT_KEPT`]: super::derive::humanoid
+            // **A few degrees of toe-out** (#306): both feet ran dead parallel
+            // and read as stood on rails. The level run turns about the ankle
+            // in the ground plane, toe away from the midline, so the heel
+            // swings in by as much as the toe swings out; the sole stays level
+            // because the turn is about the vertical. `TOE_OUT` is a plan
+            // constant rather than a record axis.
+            let toe_out = |at: Vec3| {
+                let (sin, cos) = (side * TOE_OUT).sin_cos();
+                let x = side * d.foot_x;
+                Vec3::new(x + at.z * sin, at.y, at.z * cos)
+            };
             let sole_section = |at: Vec3, radius: f32, kept: f32| {
                 let reach = at.y / kept;
                 Node::new(at, radius)
@@ -538,7 +560,7 @@ impl BodyPlan for HumanoidParams {
             let heel = skeleton.extend_from(
                 ankle,
                 sole_section(
-                    Vec3::new(side * d.foot_x, d.foot_y, d.heel_z),
+                    toe_out(Vec3::new(0.0, d.foot_y, d.heel_z)),
                     d.heel_r,
                     d.sole_kept,
                 ),
@@ -546,7 +568,7 @@ impl BodyPlan for HumanoidParams {
             skeleton.extend_from(
                 heel,
                 sole_section(
-                    Vec3::new(side * d.foot_x, d.cap_y, d.cap_z),
+                    toe_out(Vec3::new(0.0, d.cap_y, d.cap_z)),
                     d.cap_r,
                     d.cap_kept,
                 ),
@@ -554,7 +576,7 @@ impl BodyPlan for HumanoidParams {
             let ball = skeleton.extend_from(
                 heel,
                 sole_section(
-                    Vec3::new(side * d.foot_x, d.foot_y, d.ball_z),
+                    toe_out(Vec3::new(0.0, d.foot_y, d.ball_z)),
                     d.ball_r,
                     d.sole_kept,
                 ),
@@ -562,7 +584,7 @@ impl BodyPlan for HumanoidParams {
             skeleton.extend_from(
                 ball,
                 sole_section(
-                    Vec3::new(side * d.foot_x, d.foot_y, d.toe_z),
+                    toe_out(Vec3::new(0.0, d.foot_y, d.toe_z)),
                     d.toe_r,
                     d.sole_kept,
                 ),

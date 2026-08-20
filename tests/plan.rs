@@ -737,37 +737,42 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// and `--bare --corners 22` against rest, where the feature visibly moves
 /// and nothing outside its field does.
 const FINGERPRINTS: [(&str, u64); 28] = [
-    ("humanoid default", 0x927c332319f37102),
+    ("humanoid default", 0x9173c75bf766fde2),
     ("quadruped default", 0x2aabd8cffd3320f0),
-    ("humanoid femininity -1", 0x1d5705c27855e7d1),
-    ("humanoid femininity +1", 0x945024b2d4f9c694),
-    ("humanoid age 55", 0xa470c40b546e4d8f),
-    ("humanoid age 80", 0x5c2650b54018bee0),
-    ("humanoid corner h=1.2 all=-1", 0xaa69dbfb9b04c49f),
-    ("humanoid corner h=2.2 all=-1", 0xf35f30df83be2ed4),
-    ("humanoid corner h=1.2 all=0", 0xec40625a9a6e51ce),
-    ("humanoid corner h=2.2 all=0", 0xbb1bb2b1275a1450),
-    ("humanoid corner h=1.2 all=1", 0xb63bbcfa6dbff736),
-    ("humanoid corner h=2.2 all=1", 0x3c206d670f10a842),
-    ("humanoid seed 0", 0xd040077e44dceb22),
+    ("humanoid femininity -1", 0x673e572bbd1d51cd),
+    ("humanoid femininity +1", 0xb3c982009b48dc6a),
+    ("humanoid age 55", 0xba55b8459f1e0c73),
+    ("humanoid age 80", 0xc36f3c80b964d368),
+    ("humanoid corner h=1.2 all=-1", 0xd41c78e714a4f74b),
+    ("humanoid corner h=2.2 all=-1", 0x396b3919243a0132),
+    ("humanoid corner h=1.2 all=0", 0xb001408877c87892),
+    ("humanoid corner h=2.2 all=0", 0x0fd581eb22c0ff94),
+    ("humanoid corner h=1.2 all=1", 0x2b700d85d0f6fd72),
+    ("humanoid corner h=2.2 all=1", 0x5f2db1dd49571664),
+    ("humanoid seed 0", 0x2d4b3ebd6a8c2db8),
     ("quadruped seed 0", 0x181d22a61a29e06b),
-    ("humanoid seed 1", 0x0ab983b250a958a8),
+    ("humanoid seed 1", 0x2d9b6b9e530ad858),
     ("quadruped seed 1", 0x66b32cdababaf760),
-    ("humanoid seed 2", 0xb2badbb7e6d4b4ca),
+    ("humanoid seed 2", 0x02347f5f268e17be),
     ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
-    ("humanoid seed 3", 0xa34a2b0c4af1a195),
+    ("humanoid seed 3", 0x568d9be1418e9cad),
     ("quadruped seed 3", 0x5fe315cd16d9b52b),
-    ("humanoid seed 4", 0xc47bf3e6f07b61de),
+    ("humanoid seed 4", 0x54f8203cc14f8084),
     ("quadruped seed 4", 0x050364ec7b8118ea),
-    ("humanoid seed 5", 0x42cfee67de452bb5),
+    ("humanoid seed 5", 0x9989c9294b7074b9),
     ("quadruped seed 5", 0x2d22051939b73f20),
-    ("humanoid seed 6", 0x05da1f904606642b),
+    ("humanoid seed 6", 0x55df5943e6969883),
     ("quadruped seed 6", 0x94b5b20cbe08a43a),
-    ("humanoid seed 7", 0xcd4963bd7433a8d3),
+    ("humanoid seed 7", 0xdf0bc70e24977d13),
     ("quadruped seed 7", 0xc6b4259ae378e3bb),
 ];
 
 /// Every number the two body plans produce, pinned.
+///
+/// **Humanoid rows re-pinned 2026-08-20 for the toe-out** (#306): the foot's
+/// level run turns seven degrees about the ankle, toe away from the midline.
+/// Judged on `render --bare --close foot` (the overhead view) and the walk
+/// sheets; the gait suites did not move. Quadruped rows did not move.
 ///
 /// **Humanoid rows re-pinned 2026-08-20 for the feet** (#305): `FOOT_KEPT`
 /// re-measured 0.61 → 0.884 (every foot was asked 45% too wide and half
@@ -1459,36 +1464,25 @@ fn the_sole_is_flat_along_the_foot_it_stands_on() {
     let joints = avatar.rig.extremity_joints(Limb::HindLeft);
     assert!(!joints.is_empty(), "the body has no foot to stand on");
     let patch = Patch::held_by(&avatar.parts.body, &avatar.parts.weights, &joints);
-    // **Read the UNDERSIDE, not every vertex of the foot** (#305). A band
-    // that straddles a ring boundary can hold a ring's side vertices and none
-    // of its bottom, and then reports the side's height as a hollow in the
-    // sole. Measured the day the feet narrowed: band 3 read 5.6 mm from a
-    // vertex 28 mm off the centre line, one millimetre past a band edge,
-    // while every band holding sole read within 0.9 mm — and `footaudit`'s
-    // ray cast, which owns the convexity figure, read 2.9 mm at worst. The
-    // sole is the surface whose normal points at the ground; a band with none
-    // of that is empty and is skipped, as the comment below already allows.
-    let normals = avatar.parts.body.vertex_normals();
-    let mut feet: Vec<(f32, f32)> = patch
-        .vertices()
-        .filter(|&vertex| normals[vertex].y < -0.5)
-        .map(|vertex| {
-            let at = avatar.parts.body.positions[vertex];
-            (at.z, at.y)
-        })
-        .collect();
-    assert!(feet.len() > 32, "only {} vertices on the foot", feet.len());
-    feet.sort_by(|a, b| a.0.total_cmp(&b.0));
-
-    let (back, front) = (feet[0].0, feet[feet.len() - 1].0);
+    // **Read the sole by ray cast, not by binning vertices** (#305, #306).
+    // The vertex profile this used to take reported a ring's SIDE row as a
+    // hollow: the sole sections are so shallow that the second row up a ring
+    // still faces the ground, and a band that straddles a ring boundary can
+    // hold that row and none of the bottom — 5.6 mm, from a vertex 28 mm off
+    // the centre line, twice over while every band holding sole read within
+    // 0.9. `Patch::footprint` casts rays up from a grid under the foot and is
+    // the instrument `examples/footaudit` owns the convexity figure with; its
+    // hits are the underside at the grid's points and nothing else.
+    let print = patch.footprint(&avatar.parts.body, 48);
+    let feet: Vec<(f32, f32)> = print.hits().map(|(at, height)| (at.y, height)).collect();
+    assert!(feet.len() > 32, "only {} cells under the foot", feet.len());
+    let back = feet.iter().map(|(z, _)| *z).fold(f32::MAX, f32::min);
+    let front = feet.iter().map(|(z, _)| *z).fold(f32::MIN, f32::max);
     let length = front - back;
     assert!(length > 0.05, "the foot measured {length} m long");
 
     // Bucket by position along the foot and take the lowest in each, which is
-    // the sole's own profile — the same reading `examples/footaudit` prints, at
-    // the resolution this vertex count actually supports. Eight bands: the foot
-    // patch is dense enough for sixteen, which is the resolution
-    // `examples/footaudit` prints its own profile at.
+    // the sole's own profile.
     const BANDS: usize = 10;
     let mut profile = [None; BANDS];
     for (z, y) in feet {
@@ -1501,21 +1495,12 @@ fn the_sole_is_flat_along_the_foot_it_stands_on() {
     // contact patch is what has to be flat.
     let skip = (BANDS as f32 * SOLE_ENDS).round().max(1.0) as usize;
     let _ = Zone::Extremity(Limb::HindLeft);
-    //
-    // Empty bands are skipped rather than treated as a failure: the foot's
-    // vertices clump around its node rings and the long run between heel and
-    // ball carries few, which is why `examples/footaudit` prints its own profile
-    // at 0, 10, 20, 30, 50, 60, 80 and 90 percent and simply has no row at 40 or
-    // 70. A band with no surface in it is not a hole in the foot.
     let contact: Vec<f32> = profile[skip..BANDS - skip]
         .iter()
         .flatten()
         .copied()
         .collect();
-    // Five, not six: the sixth band this used to count was the side vertex
-    // the underside filter above removes, and the heel-to-ball run genuinely
-    // holds sole in five of the eight inner bands.
-    assert!(contact.len() >= 5, "only {} bands held sole", contact.len());
+    assert!(contact.len() >= 6, "only {} bands held sole", contact.len());
 
     let floor = contact.iter().copied().fold(f32::MAX, f32::min);
     let rim = contact.iter().copied().fold(f32::MIN, f32::max);
