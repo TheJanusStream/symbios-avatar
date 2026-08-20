@@ -243,6 +243,30 @@ pub fn refine(mesh: &PolyMesh, rig: &Rig, traits: &HeadTraits) -> PolyMesh {
             .collect();
         refined = refined.refine_curved(&selected);
     }
+
+    // **The shoulder band, split LINEARLY, and the distinction is a streak
+    // across the chest** (#302). The trapezius is drawn on chest-zone surface
+    // the column's own pass excludes, and at the base subdivision the
+    // shoulder's top is facets two to three centimetres wide — a slope drawn
+    // across those is a polygon. But `refine_curved` lifts its new vertices
+    // onto the tangent planes of the corners they come from, and along the
+    // edge of a selection those lifted midpoints bulge out of the unrefined
+    // neighbour's plane: the band's lower edge crossed the curved chest front
+    // and rendered as a pair of diagonal creases under the throat. The fill
+    // is the curvature this band is for, so the split only has to add
+    // sampling, and a linear split's boundary is invisible by construction —
+    // a midpoint on the chord is on the neighbour's edge already.
+    if let Some(band) = shoulder_band(rig) {
+        for _ in 0..REFINEMENT {
+            let selected: Vec<bool> = (0..refined.face_count())
+                .map(|face| {
+                    let at = refined.face_centroid(face);
+                    rig.joints[rig.nearest_bone(at).joint].zone == Zone::Chest && band(at)
+                })
+                .collect();
+            refined = refined.refine(&selected);
+        }
+    }
     refined
 }
 
@@ -737,6 +761,178 @@ pub fn fair(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
         let tall = ((at - LARYNX_AT) / LARYNX_SPREAD).powi(2);
         let wide = ((point.x - axis.x) / (LARYNX_WIDTH * radius)).powi(2);
         point.z += stand * (-(tall + wide)).exp();
+    }
+}
+
+/// How far the trapezius fill stands off the crease between the column and
+/// the shoulder, in GIRDLE radii, on the neutral body.
+///
+/// Girdle radii rather than head radii, because the girdle already carries
+/// the body's mass and frame through the allometric girth — a heavy body's
+/// fill is bigger in millimetres for the same constant — and
+/// [`HeadTraits::trapezius`] puts the frame axis on top of that.
+///
+/// Provenance: **tuned by render**, on `--close throat` across the frame axis.
+const TRAPEZIUS_RISE: f32 = 0.18;
+
+/// How far UP the column the fill still reaches above the crease, as a share
+/// of the column's own run from the mandible's border to the girdle's crown,
+/// and how far BELOW the shoulder's own top line it reaches, in girdle radii.
+///
+/// Up: the fill flares the base of the column into the shoulder, and the
+/// angle of that flare is the fill's height over this reach — a short reach
+/// is a lip, which is the collar #301 removed coming back. **A share of the
+/// run and not of the column's radius**, for the reason [`RAMP`] is: measured
+/// in radii it reached 1.2 of them, which on a small head is past the
+/// column's waist, and `the_neck_is_the_width_of_a_neck_on_every_head_it_carries`
+/// read the waist 0.872 of the skull against a ceiling of 0.83 — the fill was
+/// widening the one section this module exists to narrow. The waist sits at
+/// [`WAIST`] of the run below the border, so anything under `1 − WAIST` of
+/// the run above the crown leaves it alone; this stops well short of that.
+/// Down: the shoulder's top surface is what the fill raises, and the surface
+/// a girdle radius under it is the chest and the back, which it must not.
+const TRAPEZIUS_UP: f32 = 0.6;
+const TRAPEZIUS_DOWN: f32 = 0.6;
+
+/// How far OUT the fill carries for every unit it carries up.
+///
+/// The fill moves every vertex along one diagonal — up and away from the
+/// column's axis — rather than along its own normal. **Along the normals it
+/// folds**: at a concave crease the wall's normal is outward and the top's is
+/// up, so a wall vertex just above the crease moves further out than the
+/// crease vertex, which moves diagonally, and the surface crosses itself.
+/// That rendered as a lip with a dark notch under it, the collar back again.
+/// One direction for the whole field cannot fold while the field is smooth.
+const TRAPEZIUS_FLARE: f32 = 1.0;
+
+/// The band of shoulder the trapezius fill reaches, as a test on a point,
+/// read by [`refine`] so the fill lands on surface fine enough to hold it.
+///
+/// `None` on a body with no girdle or no acromion, which is a body the fill
+/// itself declines.
+fn shoulder_band(rig: &Rig) -> Option<impl Fn(Vec3) -> bool> {
+    let (column, girdle, reach, _) = shoulder(rig)?;
+    let crown = girdle.position.y + girdle.radius;
+    let floor = crown - girdle.radius * TRAPEZIUS_DOWN;
+    let aft = girdle.position.z - girdle.radius * girdle.scale.y;
+    let fore = column.position.z + column.radius * column.scale.y;
+    Some(move |at: Vec3| at.y > floor && at.x.abs() < reach && at.z > aft && at.z < fore)
+}
+
+/// The column, the girdle it stands on, and the acromion's lateral reach and
+/// top height — the landmarks the trapezius fill is drawn between.
+///
+/// The acromion is the girdle's lateral child, which is where the shoulder's
+/// top surface ends and the arm begins. A body with no such child has no
+/// shoulder to slope, and gets `None`.
+fn shoulder(rig: &Rig) -> Option<(&crate::rig::Joint, &crate::rig::Joint, f32, f32)> {
+    if rig.ground_contacts().len() > 2 {
+        return None;
+    }
+    let &neck = rig.in_zone(Zone::Neck).first()?;
+    let parent = rig.joints[neck].parent?;
+    let girdle = &rig.joints[parent];
+    let (reach, acromion) = rig
+        .joints
+        .iter()
+        .enumerate()
+        .filter(|(index, joint)| *index != neck && joint.parent == Some(parent))
+        .map(|(_, joint)| (joint.position.x.abs(), joint.position.y + joint.radius))
+        .filter(|(reach, _)| *reach > girdle.radius * 0.5)
+        .max_by(|a, b| a.0.total_cmp(&b.0))?;
+    Some((&rig.joints[neck], girdle, reach, acromion))
+}
+
+/// Fills the crease between the column and the shoulder with a trapezius.
+///
+/// **The shoulder line ran nearly horizontal and met the column at a hard
+/// crease on every body** (#302). A trapezius is the slope from the base of
+/// the neck out to the acromion, and nothing in the cage can say it: the
+/// module docs on `plan::derive::humanoid` record six refuted constructions
+/// — the girdle cannot carry a fifth socket and the neck cannot carry two —
+/// so the mass has to be a carve on the surface, like the chest's and the
+/// jaw's.
+///
+/// **It lives here and not in `torso`, and that is the ownership decision.**
+/// The trapezius band is chest-zone surface, but `owned` already claims the
+/// chest for the column's release, the frame every junction measurement is
+/// taken in — the column's axis, the girdle's crown — is this module's, and
+/// #301 has just closed a seam between two systems that shared one band of
+/// skin. A `carve_shoulders` beside `carve_chest` would have been the next
+/// one.
+///
+/// The fill is a crescent: full at the crease, fading up the column over
+/// `TRAPEZIUS_UP`, fading out along the shoulder's top to nothing at the
+/// acromion, and fading to nothing toward the front of the column so the
+/// pit of the throat and the clavicles keep their hollow. Every vertex moves
+/// up and outward along one diagonal (`TRAPEZIUS_FLARE`), so the column's
+/// base flares into the shoulder as the shoulder's top rises toward it and
+/// the right angle between them becomes two gentle turns. The raise falls
+/// off as the square of the distance to the acromion rather than as a
+/// smoothstep: a zero slope at the crease is a shelf, and a shelf's edge is
+/// a lip.
+///
+/// Runs last of the column's passes, after [`shape`]: the fill is smooth by
+/// construction and the fairing before it would only relax it. Moves
+/// vertices without adding any.
+pub fn trapezius(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
+    let Some(&head) = rig.in_zone(Zone::Head).first() else {
+        return;
+    };
+    let Some((column, girdle, reach, acromion)) = shoulder(rig) else {
+        return;
+    };
+    let axis = column.position;
+    let crown = girdle.position.y + girdle.radius;
+    // The column's run, border to crown, in metres: the ruler the flare's
+    // reach is a share of.
+    let run = rig.joints[head].position.y + border(rig, head, traits, 1.0) - crown;
+    if run <= f32::EPSILON {
+        return;
+    }
+    let base = column.radius * column.scale.x;
+    if reach - base <= f32::EPSILON {
+        return;
+    }
+    let stand = girdle.radius * TRAPEZIUS_RISE * traits.trapezius;
+    if stand <= 0.0 {
+        return;
+    }
+    let up = run * TRAPEZIUS_UP;
+    let down = girdle.radius * TRAPEZIUS_DOWN;
+    let front = column.radius * column.scale.y;
+
+    let mine = owned(mesh, rig);
+    for (vertex, point) in mesh.positions.iter_mut().enumerate() {
+        if !mine[vertex] {
+            continue;
+        }
+        // Out along the shoulder: full over the column, nothing at the
+        // acromion, leaving with zero slope and arriving with one.
+        let across = (point.x - axis.x).abs();
+        let t = ((across - base) / (reach - base)).clamp(0.0, 1.0);
+        let out = (1.0 - t) * (1.0 - t);
+        // Up and down about the shoulder's own top line, which runs from the
+        // crease at the crown to the acromion's top.
+        let top = crown + (acromion - crown) * t;
+        let rise = point.y - top;
+        let tall = if rise >= 0.0 {
+            smooth((up - rise) / up)
+        } else {
+            smooth((down + rise) / down)
+        };
+        // Fore and aft: full a column's depth behind the axis, gone at the
+        // column's front, so the pit of the throat and the clavicles keep
+        // their hollow. Over two depths rather than one: the fill's front
+        // edge is a line across the base of the throat, and over one depth
+        // the line was a crease.
+        let fore = smooth((front - (point.z - axis.z)) / (2.0 * front));
+        let w = out * tall * fore;
+        if w <= 0.0 {
+            continue;
+        }
+        let side = (point.x - axis.x).signum();
+        *point += Vec3::new(side * TRAPEZIUS_FLARE, 1.0, 0.0) * (stand * w);
     }
 }
 

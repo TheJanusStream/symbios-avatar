@@ -860,6 +860,20 @@ pub struct HeadTraits {
     /// Provenance: **sized by render**, like the ageing jowl beside it —
     /// there is nothing to measure it against; neither mannequin models one.
     pub larynx: f32,
+    /// How much trapezius the shoulders carry, as a factor on the neutral
+    /// body's.
+    ///
+    /// The slope from the base of the neck out to the acromion, which is the
+    /// one line the frame axis moves most in a silhouette: a masculine body
+    /// carries a big trapezius and a short visible neck, a feminine one a
+    /// long visible neck line over a shoulder that falls away. Applied by
+    /// [`super::neck::trapezius`] on the column's own frame; its amplitude is
+    /// a share of the girdle's radius, which already carries mass, so this
+    /// is the frame term alone.
+    ///
+    /// Provenance: **sized by render** against the two CC0 mannequins'
+    /// shoulder lines.
+    pub trapezius: f32,
 }
 
 impl Default for HeadTraits {
@@ -874,6 +888,7 @@ impl Default for HeadTraits {
             frontal: 0.0,
             gonion: GONION,
             larynx: LARYNX_NEUTRAL,
+            trapezius: 1.0,
         }
     }
 }
@@ -936,18 +951,39 @@ impl HeadTraits {
             // No age term, and the field records the measurement that took it
             // back out.
             gonion: GONION + 0.036 * femininity,
+            // The frame term on the shoulder slope's fill; see the field. A
+            // feminine shoulder still has a trapezius, so it floors well
+            // above nothing.
+            trapezius: (1.0 - 0.30 * femininity).max(0.3),
         }
     }
 
     /// How much wider or narrower the lower face is at `height`.
     ///
     /// One at [`Self::jaw_breadth`]'s upper edge and above, full at the angle of
-    /// the jaw and below. The window is the references' own: their half-widths
-    /// disagree by 16% at 0.15 of the head's span, 7.5% at 0.20 and nothing at
-    /// 0.25, which is −0.43, −0.34 and −0.25 in the profile heights here.
+    /// the jaw and through the jaw's body. The window is the references' own:
+    /// their half-widths disagree by 16% at 0.15 of the head's span, 7.5% at
+    /// 0.20 and nothing at 0.25, which is −0.43, −0.34 and −0.25 in the profile
+    /// heights here.
+    ///
+    /// **And it lets go again before the head's floor, which it did not, and
+    /// that was the masculine collar** (#301). Held "at the angle of the jaw
+    /// and below" it was still at full strength on the last ring of head-owned
+    /// surface, a 13% lateral push at femininity −1.5 — and the neck-owned
+    /// ring four millimetres under it moves by nothing, because ownership is
+    /// per vertex. A 10 mm step in half-width at the head/neck boundary, all
+    /// the way round; and on a short masculine neck that boundary sits ON the
+    /// girdle's crown, so the step read as a turtleneck collar with points at
+    /// the lateral corners. [`SETTLED`]'s own rule names it: anything with a
+    /// gradient at [`JUNCTION`] is a seam. Every profile table's last knot is
+    /// identity there; this multiplier is not a table and had no last knot.
+    /// Full through [`MENTON`] — the bigonial breadth is the jaw's body, and
+    /// the body ends at the border — then a smoothstep to one at the junction,
+    /// so the release has zero slope at both ends like the carve's own ramps.
     fn breadth_at(&self, height: f32) -> f32 {
-        let weight = ((-0.25 - height) / 0.18).clamp(0.0, 1.0);
-        1.0 + (self.jaw_breadth - 1.0) * weight
+        let arrive = ((-0.25 - height) / 0.18).clamp(0.0, 1.0);
+        let hold = smooth((height - JUNCTION) / (MENTON - JUNCTION));
+        1.0 + (self.jaw_breadth - 1.0) * arrive * hold
     }
 }
 

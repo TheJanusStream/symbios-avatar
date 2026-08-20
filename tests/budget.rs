@@ -36,7 +36,10 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3};
 /// the reconciliation is #308's wireframe de-densify pass — which re-tightens
 /// this to what the finished body measures. The welded hand (#297/#298) costs
 /// about 1,150 at the dearest corner over the six appended solids it replaced.
-const TRIANGLE_TARGET: usize = 31_500;
+/// **31,500 → 32,000** for the trapezius (#302): the shoulder band is split
+/// once so the fill has surface to hold it, 432 triangles at the dearest
+/// corner; #308 reconciles.
+const TRIANGLE_TARGET: usize = 32_000;
 
 /// Draw calls a WebGL2-tier avatar may cost.
 ///
@@ -213,8 +216,9 @@ const MESH_TARGET: usize = 4;
 /// comes out of the target.
 //
 /// **RELAXED to 29,600 during the junction re-mesh** — see [`TRIANGLE_TARGET`]
-/// and #308. Dearest corner measured 29,508 with the welded hand in.
-const TRIANGLE_CEILING: usize = 29_600;
+/// and #308. Dearest corner measured 29,508 with the welded hand in, and
+/// 29,940 with the trapezius's shoulder band split (#302): **29,600 → 30,000**.
+const TRIANGLE_CEILING: usize = 30_000;
 
 /// Draw calls the crate currently costs.
 ///

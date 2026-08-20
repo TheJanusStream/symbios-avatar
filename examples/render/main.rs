@@ -31,6 +31,7 @@
 //! cargo run --release --example render -- --walk 8     # a walk, one sheet per frame
 //! cargo run --release --example render -- --head       # close up on face and hair
 //! cargo run --release --example render -- --close hand # or head, hand, foot
+//! cargo run --release --example render -- --close throat # the collar and the trapezius line
 //! cargo run --release --example render -- --close brows # or any follicle region
 //! cargo run --release --example render -- --brow thick  # or natural, none
 //! cargo run --release --example render -- --scalp bob 0.8 # crop, bob, long, tied, curly
@@ -61,6 +62,7 @@
 //! cargo run --release --example render -- --face 1,0.5,1,1,0.5,0.5 # nose,noseWidth,brow,mouth,mouthWidth,ears
 //! cargo run --release --example render -- --skull -1,1            # headBreadth,faceLength
 //! cargo run --release --example render -- --femininity 1  # the frame axis, -1 .. +1
+//! cargo run --release --example render -- --head-size -1  # the head's own size axis
 //! cargo run --release --example render -- --mass 1 --fat 0.10  # heavy and lean: muscular
 //! cargo run --release --example render -- --age 80  # the age axis, 18 .. 80 years
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow, roughness
@@ -149,6 +151,18 @@ enum Focus {
     /// exactly the crease under scrutiny — which is the trap the crotch view
     /// documents, in the other direction.
     Chest,
+    /// The throat, framed on the neck column, the chin above it and the top
+    /// of the chest under it.
+    ///
+    /// **The head close-up catches the collar only marginally** (#301): it is
+    /// framed on head plus neck, so the shoulder line where the column meets
+    /// the girdle sits in the bottom margin of the frame and the trapezius is
+    /// out of shot altogether. Milestone #10's throat work is the collar seam
+    /// and the trapezius, both of which live at exactly that edge — the
+    /// chest's #287 argument a third time. The lower part of the head comes
+    /// along so the chin-to-throat profile is in shot, and the upper half of
+    /// the chest so the shoulder slope is.
+    Throat,
     /// One follicle region, framed on the mask itself.
     ///
     /// **A head shot is not close enough to judge a brow**. A brow is
@@ -187,11 +201,12 @@ fn main() {
         Some("foot") => Some(Focus::Foot),
         Some("crotch") => Some(Focus::Crotch),
         Some("chest") => Some(Focus::Chest),
+        Some("throat") => Some(Focus::Throat),
         Some(other) => match Follicle::ALL.into_iter().find(|it| it.name() == other) {
             Some(follicle) => Some(Focus::Region(follicle)),
             None => {
                 eprintln!(
-                    "unknown --close target {other}: expected head, hand, foot, crotch, chest or \
+                    "unknown --close target {other}: expected head, hand, foot, crotch, chest, throat or \
                      one of {}",
                     Follicle::ALL.map(Follicle::name).join(", ")
                 );
@@ -414,6 +429,15 @@ fn main() {
     {
         record.composites.mass = mass;
         record.composites.sanitize();
+    }
+    // The head's own size axis, which is the one the neck-to-skull ratio is
+    // worst at: `face::neck`'s whole subject is a small head on a heavy body,
+    // and a throat judged without that corner in reach is not judged (#302).
+    if let Some(spec) = value("--head-size")
+        && let Ok(head_size) = spec.parse::<f32>()
+        && let Archetype::Humanoid(params) = &mut record.archetype
+    {
+        params.head_size = head_size;
     }
     if let Some(spec) = value("--fat")
         && let Ok(fat) = spec.parse::<f32>()
@@ -741,6 +765,7 @@ fn main() {
         Some(Focus::Foot) => "render_foot",
         Some(Focus::Crotch) => "render_crotch",
         Some(Focus::Chest) => "render_chest",
+        Some(Focus::Throat) => "render_throat",
         Some(Focus::Region(follicle)) => &format!("render_{}", follicle.name()),
         None => "render",
     };
@@ -1325,6 +1350,53 @@ impl Subject {
                     }
                 }
             }
+            // The column, the bottom third of the head above it and the top
+            // of the chest under it — both bounded by height, because the
+            // whole head zooms the frame out to the head shot and the whole
+            // chest zooms it out to the bust.
+            Focus::Throat => {
+                let deformed =
+                    posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+                let bounds = |wanted: Zone| {
+                    let (mut floor, mut ceiling) = (f32::MAX, f32::MIN);
+                    for (vertex, zone) in parts.zones.iter().enumerate() {
+                        if *zone == wanted {
+                            floor = floor.min(deformed[vertex].y);
+                            ceiling = ceiling.max(deformed[vertex].y);
+                        }
+                    }
+                    (floor, ceiling)
+                };
+                let (head_floor, head_ceiling) = bounds(Zone::Head);
+                let (chest_floor, chest_ceiling) = bounds(Zone::Chest);
+                let chin = head_floor + (head_ceiling - head_floor) / 3.0;
+                let girdle = chest_ceiling - (chest_ceiling - chest_floor) * 0.3;
+                // And bounded sideways to the inner two thirds of the chest's
+                // own width, which is about the acromion: the chest zone
+                // carries the arm roots, and on a T-pose those put the frame
+                // a body's width across — the bust shot again, not the throat.
+                let wide = parts
+                    .zones
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, zone)| **zone == Zone::Chest)
+                    .fold(0.0f32, |wide, (vertex, _)| {
+                        wide.max(deformed[vertex].x.abs())
+                    });
+                for (vertex, zone) in parts.zones.iter().enumerate() {
+                    let held = match zone {
+                        Zone::Neck => true,
+                        Zone::Head => deformed[vertex].y < chin,
+                        Zone::Chest => {
+                            deformed[vertex].y > girdle && deformed[vertex].x.abs() < wide * 0.55
+                        }
+                        _ => false,
+                    };
+                    if held {
+                        hold(deformed[vertex]);
+                    }
+                }
+            }
             // Every vertex the region has a real claim on, which is the mask
             // deciding the frame. Held above a quarter rather than above zero: a
             // fade's outer tail reaches a long way for very little weight, and
@@ -1362,11 +1434,20 @@ impl Subject {
             return None;
         }
 
+        // The throat's frame is already bounded to the thing under judgement
+        // on every side, so it takes less margin than a part framed on its
+        // own bounding box: at the standard margin the collar seam is thirty
+        // pixels tall, which is the brow's argument again.
+        let margin = if matches!(focus, Focus::Throat) {
+            CLOSE_MARGIN * 0.8
+        } else {
+            CLOSE_MARGIN
+        };
         let of = |turn: f32, pitch: f32| Frame {
             turn,
             pitch,
             centre: (lo + hi) * 0.5,
-            span: (hi.x - lo.x).max(hi.y - lo.y).max(hi.z - lo.z) * CLOSE_MARGIN,
+            span: (hi.x - lo.x).max(hi.y - lo.y).max(hi.z - lo.z) * margin,
         };
         // The fourth view looks down at every close-up but the crotch, which is
         // the one part of a body that can only be seen from beneath it.

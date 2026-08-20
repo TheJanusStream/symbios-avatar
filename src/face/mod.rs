@@ -40,7 +40,9 @@ pub use expression::Expression;
 pub use eye::{Aperture, Eye, EyeParams, Eyes};
 pub use features::{FaceParams, Features};
 pub use mouth::Mouth;
-pub use neck::{fair as fair_neck, refine as refine_neck, shape as shape_neck};
+pub use neck::{
+    fair as fair_neck, refine as refine_neck, shape as shape_neck, trapezius as fill_trapezius,
+};
 pub use relief::carve as carve_face;
 pub use saccade::{SaccadeConfig, Saccaded, Saccades};
 pub use skull::{HeadTraits, Skull, band_at, refine_face, shape as shape_skull};

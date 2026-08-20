@@ -908,6 +908,21 @@ fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
     // 0.815 with it. That is the whole of the trade: a tenth of a point of
     // width accuracy for a column that is not stepped, on a ruler whose spread
     // was 1.86x before any of this existed and is 1.27x now.
+    //
+    // **0.83 → 0.88, and it is the trapezius** (#302). `face::neck::trapezius`
+    // flares the base of the column into the shoulder over the lower 0.6 of
+    // the column's run, and this ruler takes the NARROWEST section anywhere
+    // from the chin down to the girdle's crown — which on the cage's tube is
+    // the bottom of the carve's plateau, inside the flare. Every cell grew 1
+    // to 3.4 mm, most on the heavy bodies whose girdle sizes the fill: the
+    // small-head cells went 0.792 → 0.839, 0.811 → 0.869, 0.782 → 0.799 and
+    // 0.762 → 0.776. Judged on `--close head --head-size -1 --mass 1` with
+    // the fill on and off: without it that body carries a stepped shelf at
+    // the column's base (the carve's own release, the milder of #301's two
+    // makers); with it the column runs into a trapezius and reads as a
+    // thick-necked heavy body, which `mass` +1 is. The uncarved defect this
+    // guards read 0.90 to 1.21, so the guard still holds; what moved is where
+    // this ruler's minimum lives, not the waist.
     for &head_size in &[-1.0f32, 0.0, 1.0] {
         for &(mass, femininity) in &[(0.0f32, 0.0f32), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)] {
             let mut record = AvatarRecord::new("Column", Archetype::default());
@@ -999,7 +1014,7 @@ fn the_neck_is_the_width_of_a_neck_on_every_head_it_carries() {
             }
             let ratio = column / skull_wide.max(f32::EPSILON);
             assert!(
-                (0.60..0.83).contains(&ratio),
+                (0.60..0.88).contains(&ratio),
                 "head_size {head_size:+.1}, mass {mass:+.1}, femininity {femininity:+.1}: \
                  the column is {:.1} mm against a skull of {:.1}, a ratio of {ratio:.3}",
                 column * 1000.0,
@@ -1266,7 +1281,22 @@ fn the_neck_is_the_length_of_a_neck() {
         // to 60 mm above the girdle's crown, which is the clearance floor
         // scaling with a girdle their composites shrank. Closing either is a
         // cage question.
-        let bound = 0.525;
+        //
+        // **0.525 to 0.535, and it is the collar this ruler was reading**
+        // (#301). `HeadTraits::jaw_breadth` used to hold its lateral multiplier
+        // at full strength down to the head's floor, and on a masculine body
+        // that was a 10 mm step in half-width at the head/neck boundary — the
+        // turtleneck collar #301 removed. This walk stops where the body is
+        // half again as wide as the neck's narrowest, and the step tripped it
+        // early: over the six classic seeds, 6 read 0.524 with the collar and
+        // 0.529 without, 11 read 0.404 and 0.409, and the other four moved by
+        // nothing at four decimals — the two that moved are the two whose
+        // frame axis is masculine enough for the step to be the widest thing
+        // at the collar, and the shoulder line is found a few millimetres
+        // lower once the width rises smoothly. A ruler that reads a seam as a
+        // shoulder is not reading a neck; the bound is the honest state plus
+        // the usual slack.
+        let bound = 0.535;
         let ratio = (chin - y) / (crown - chin);
         assert!(
             ratio < bound,

@@ -308,6 +308,10 @@ pub fn build_body(
         // waist into a surface that has no seams left to sharpen.
         face::fair_neck(&mut mesh, &rig, traits);
         face::shape_neck(&mut mesh, &rig, traits);
+        // And the trapezius, last: a fill of the crease the narrowing leaves
+        // between the column and the shoulder, smooth by construction and so
+        // run after the fairing rather than relaxed by it. See `face::neck`.
+        face::fill_trapezius(&mut mesh, &rig, traits);
     }
     Ok(mesh)
 }

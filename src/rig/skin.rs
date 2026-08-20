@@ -1090,9 +1090,17 @@ mod tests {
                 cranium.3,
                 cranium.1,
             );
+            // **Exactly zero to a hundred-thousandth** (#302). The trapezius
+            // fill flares the base of the column, and on the short face four
+            // head-owned flank vertices at the column's foot rose seven
+            // millimetres into the outermost fringe of the jaw's reach: a
+            // mean hold of 1e-7 over the band and 0.000013 mm of travel. A
+            // real leak — the throat-wedge binding this guards against — is
+            // a few hundredths on a hundred throat vertices, which is 5e-4
+            // over this band and fifty times the tolerance.
             assert!(
-                neck.3 < 0.05 && neck.1 <= 0.0,
-                "{what}: the neck travelled {:.3} mm and is held {:.3} by the jaw — read \
+                neck.3 < 0.05 && neck.1 < 1e-5,
+                "{what}: the neck travelled {:.3} mm and is held {:.6} by the jaw — read \
                  `the_throat_stays_with_the_neck` before touching COVERED",
                 neck.3,
                 neck.1,
