@@ -144,6 +144,227 @@ fn main() {
 
     visible_neck();
     ratio();
+    junction();
+}
+
+/// The frame axis's four stations, and the body that caught the nape.
+///
+/// The first four are the stations every throat render of milestone #10 was
+/// judged at; the fifth is the heavy masculine body on which the owner found
+/// the nape's hump after the first four read clean (#302), which is the
+/// argument for a guard reading more than the axis.
+const JUNCTIONS: [(f32, f32); 5] = [
+    (-1.5, 0.0),
+    (-1.0, 0.0),
+    (0.0, 0.0),
+    (1.0, 0.0),
+    (-1.5, 2.0),
+];
+
+/// The collar and the trapezius, which the column readings above cannot see.
+///
+/// **Every figure here is a silhouette, bisected, read down a height ladder
+/// from the column into the shoulder** — the collar (#301) and the trapezius
+/// (#302) were both judged on exactly that silhouette in the throat close-up,
+/// and a guard that reads the same line is a guard that can disagree with the
+/// render on the render's own terms. `tests/throat.rs` asserts these; this
+/// prints them, with the reasoning the bounds were fitted against.
+///
+/// - OVERHANG, coronal: how much wider the body is at some height than it is
+///   10 mm below that height, at worst, over the band from the column's foot
+///   into the shoulder. A turtleneck collar is a rim — wider above than below
+///   — and reads positive; a shoulder that only widens going down reads at or
+///   under zero. The masculine collar of #301 was about 10 mm of it.
+/// - OVERHANG, sagittal: the same question asked of the back line, which is
+///   where the nape's hump and ledge lived (#302): the back reaching further
+///   behind at some height than 10 mm below it.
+/// - TURN: the sharpest bend in the back line, as the angle between
+///   successive 10 mm segments of it. A ledge is a pair of sharp turns; a
+///   trapezius is a gentle one.
+/// - SLOPE: the angle of the shoulder line against horizontal, from where the
+///   silhouette leaves the column to the acromion. `examples/reference`'s
+///   shoulder table reads the same angle off the CC0 mannequins.
+/// - WAIST: the column's narrowest half-width in the UPPER half of its run,
+///   against the skull's widest. The ratio `ratio()` above prints takes the
+///   narrowest anywhere down to the girdle's crown, and since #302 that
+///   minimum lives in the trapezius's blend at the column's foot — a ruler
+///   that reads the foot and calls it the neck. This one reads the neck.
+fn junction() {
+    println!();
+    println!("the junction: collar, nape and trapezius, by silhouette (#300)");
+    println!("  fem   mass   overhang coronal  overhang sagittal   turn    slope   waist/skull");
+    println!("                 (mm, + is a rim)   (mm, + is a ledge)  (deg)   (deg)");
+    for (femininity, mass) in JUNCTIONS {
+        let mut record = AvatarRecord::new("Junction", Archetype::default());
+        record.composites.femininity = femininity;
+        record.composites.mass = mass;
+        record.composites.sanitize();
+        record.sanitize();
+        let Some(avatar) = Avatar::build(&record) else {
+            continue;
+        };
+        let Some(read) = Junction::measure(&avatar) else {
+            println!("  {femininity:+.1}  {mass:+.1}   no junction measured");
+            continue;
+        };
+        println!(
+            "  {femininity:+.1}  {mass:+.1}   {:15.1}  {:17.1}  {:6.1}  {:6.1}   {:.3}",
+            read.collar * 1000.0,
+            read.nape * 1000.0,
+            read.turn,
+            read.slope,
+            read.waist,
+        );
+    }
+}
+
+/// The junction's five readings. See [`junction`].
+///
+/// **Duplicated in `tests/throat.rs` on purpose**, as `visible_neck` is
+/// duplicated from `tests/plan.rs`: the test is the contract and this is the
+/// instrument, and the day they disagree the instrument is the one that is
+/// wrong — which is only checkable if the numbers can be held side by side.
+struct Junction {
+    collar: f32,
+    nape: f32,
+    turn: f32,
+    slope: f32,
+    waist: f32,
+}
+
+impl Junction {
+    fn measure(avatar: &Avatar) -> Option<Self> {
+        let (mesh, rig) = (&avatar.parts.body, &avatar.rig);
+        let head = *rig.in_zone(Zone::Head).first()?;
+        let neck = rig.joints[head].parent?;
+        let girdle = rig.joints[neck].parent?;
+        let axis = rig.joints[neck].position;
+        let crown = rig.joints[girdle].position.y + rig.joints[girdle].radius;
+        let skull = Skull::measure(mesh, rig)?;
+        let at = rig.joints[head].position;
+        let chin = at.y + skull.chin();
+        // The acromion: the girdle's lateral child.
+        let (reach, acromion) = rig
+            .joints
+            .iter()
+            .enumerate()
+            .filter(|(index, joint)| *index != neck && joint.parent == Some(girdle))
+            .map(|(_, joint)| (joint.position.x.abs(), joint.position.y + joint.radius))
+            .filter(|(reach, _)| *reach > rig.joints[girdle].radius * 0.5)
+            .max_by(|a, b| a.0.total_cmp(&b.0))?;
+
+        // Outward from a point on the column's axis, bisected against the
+        // surface. `None` when the axis point is already outside.
+        let out = |from: Vec3, along: Vec3| -> Option<f32> {
+            if !mesh.contains(from) {
+                return None;
+            }
+            let (mut near, mut far) = (0.0f32, 0.45f32);
+            if mesh.contains(from + along * far) {
+                return None;
+            }
+            for _ in 0..30 {
+                let middle = (near + far) * 0.5;
+                if mesh.contains(from + along * middle) {
+                    near = middle;
+                } else {
+                    far = middle;
+                }
+            }
+            Some(near)
+        };
+        // The widest chord of the section at `y`, swept over its own depth —
+        // the silhouette an eye reads, not a ray from an axis the section
+        // does not sit on.
+        let wide = |y: f32| -> Option<f32> {
+            let from = Vec3::new(axis.x, y, axis.z);
+            let (ahead, behind) = (out(from, Vec3::Z)?, out(from, -Vec3::Z)?);
+            (0..=16)
+                .filter_map(|slice| {
+                    let z = axis.z - behind + (ahead + behind) * slice as f32 / 16.0;
+                    out(Vec3::new(axis.x, y, z), Vec3::X)
+                })
+                .reduce(f32::max)
+        };
+        // How far the back reaches behind the column's axis at `y`.
+        let back = |y: f32| -> Option<f32> { out(Vec3::new(axis.x, y, axis.z), -Vec3::Z) };
+
+        // The ladder: 2 mm steps from 60 mm above the crown to the acromion.
+        const STEP: f32 = 0.002;
+        const LOOK: usize = 5; // 10 mm, in steps
+        let top = crown + 0.06;
+        let mut widths = Vec::new();
+        let mut backs = Vec::new();
+        let mut y = top;
+        while y > acromion - 0.02 {
+            widths.push(wide(y));
+            backs.push(back(y));
+            y -= STEP;
+        }
+        let overhang = |ladder: &[Option<f32>]| -> f32 {
+            ladder
+                .iter()
+                .enumerate()
+                .filter_map(|(i, above)| {
+                    let above = (*above)?;
+                    let below = ladder.get(i + LOOK).copied().flatten()?;
+                    Some(above - below)
+                })
+                .fold(f32::MIN, f32::max)
+        };
+        let collar = overhang(&widths);
+        let nape = overhang(&backs);
+
+        // The back line's sharpest bend: successive 10 mm segments as vectors
+        // in the sagittal plane, the angle between them.
+        let mut turn = 0.0f32;
+        for i in 0..backs.len().saturating_sub(2 * LOOK) {
+            let (Some(a), Some(b), Some(c)) = (backs[i], backs[i + LOOK], backs[i + 2 * LOOK])
+            else {
+                continue;
+            };
+            let rise = STEP * LOOK as f32;
+            let first = glam::Vec2::new(b - a, -rise);
+            let second = glam::Vec2::new(c - b, -rise);
+            turn = turn.max(first.angle_to(second).abs().to_degrees());
+        }
+
+        // The slope: from where the silhouette first stands 10 mm wider than
+        // the column's foot, down to the acromion's top at its reach.
+        let foot = wide(crown + 0.03)?;
+        let leave = widths
+            .iter()
+            .enumerate()
+            .find_map(|(i, w)| (w.is_some_and(|w| w > foot + 0.01)).then_some(i))?;
+        let (leave_y, leave_x) = (top - STEP * leave as f32, widths[leave]?);
+        let slope = ((leave_y - acromion) / (reach - leave_x).max(1e-3))
+            .atan()
+            .to_degrees();
+
+        // The waist, read in the upper half of the run from the chin to the
+        // crown, against the skull's widest above the chin.
+        let mut skull_wide = 0.0f32;
+        let mut y = chin;
+        while y < at.y + skull.throat_and_crown().1 {
+            skull_wide = skull_wide.max(wide(y).unwrap_or(0.0));
+            y += 0.005;
+        }
+        let mut narrowest = f32::MAX;
+        let mut y = chin;
+        while y > chin - (chin - crown) * 0.5 {
+            if let Some(w) = wide(y) {
+                narrowest = narrowest.min(w);
+            }
+            y -= 0.002;
+        }
+        Some(Self {
+            collar,
+            nape,
+            turn,
+            slope,
+            waist: narrowest / skull_wide.max(f32::EPSILON),
+        })
+    }
 }
 
 /// What a neck is worth against the skull it carries, across the axes that move

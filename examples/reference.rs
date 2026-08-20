@@ -211,6 +211,112 @@ fn main() {
     spans(&bodies);
     silhouette(&bodies);
     thickness(&bodies);
+    shoulders(&bodies);
+}
+
+/// The shoulder line's slope, neck base to acromion, against horizontal.
+///
+/// **The reference for `neckaudit`'s junction table and `tests/throat.rs`'s
+/// slope guard** (#300), read the way that instrument reads ours: the
+/// arm-free silhouette's half-width on a fine height ladder, the neck's
+/// narrowest band above the shoulders, the first band below it that stands
+/// 10 mm wider — where the silhouette leaves the column — and the acromion:
+/// the TOP of the shoulder's surface at the shoulder joint's lateral offset.
+/// The slope is the angle of the line between those two.
+///
+/// **Three wrong acromions were measured before this one.** The widest
+/// arm-free band is the chest at the armpits, 146 mm further down, a 63°
+/// "shoulder". The band that reaches the joint's offset is never reached,
+/// because dropping the arm by weight drops the deltoid with it. The joint's
+/// own height reads 60° on both mannequins — and is a landmark 90 mm under
+/// ours, which reads to the top of the clavicle's child. The top of the
+/// surface over the joint is the same landmark on both bodies. `upperarm_l`
+/// is one of the file's own bones and this is the exception to the no-names
+/// rule that the module docs already claim.
+///
+/// Bands a hundredth of stature tall here rather than [`BAND`]'s three: a
+/// shoulder line is thirty or forty millimetres of height, and a 52 mm band
+/// would hold the whole of it in one row.
+fn shoulders(bodies: &[(&str, Body)]) {
+    println!("\nshoulder slope, neck base to acromion, degrees from horizontal");
+    const FINE: f32 = 0.01;
+    for (who, body) in bodies {
+        let arm = body.arms();
+        // Half-width per fine band, from 0.70 of stature up to the crown.
+        let ladder: Vec<(f32, f32, usize)> = (0..28)
+            .map(|band| {
+                let low = 0.70 + band as f32 * FINE;
+                let mut span = (f32::MAX, f32::MIN);
+                let mut count = 0usize;
+                for (vertex, &at) in body.mesh.positions.iter().enumerate() {
+                    let up = (at.y - body.floor) / body.height;
+                    if up < low || up >= low + FINE {
+                        continue;
+                    }
+                    if body.mesh.held_by(vertex, |joint| arm[joint]) > 0.25 {
+                        continue;
+                    }
+                    span = (span.0.min(at.x), span.1.max(at.x));
+                    count += 1;
+                }
+                let half = if count >= 4 {
+                    (span.1 - span.0) * 0.5
+                } else {
+                    f32::NAN
+                };
+                (low + FINE * 0.5, half, count)
+            })
+            .collect();
+        let shoulder = body.at("upperarm_l");
+        let shoulder_up = body.up("upperarm_l");
+        // The top of the shoulder over the joint: the highest vertex within
+        // 15 mm of the joint's lateral offset, arms included — the deltoid's
+        // cap IS the acromion's surface.
+        let acromion_top = body
+            .mesh
+            .positions
+            .iter()
+            .filter(|at| (at.x.abs() - shoulder.x.abs()).abs() < 0.015)
+            .map(|at| at.y)
+            .fold(f32::MIN, f32::max);
+        let acromion_half = shoulder.x.abs();
+        // The neck's narrowest band: the minimum above the shoulder joint.
+        let Some((narrow_at, narrow)) = ladder
+            .iter()
+            .enumerate()
+            .filter(|(_, (up, half, _))| half.is_finite() && *up > shoulder_up)
+            .min_by(|a, b| a.1.1.total_cmp(&b.1.1))
+            .map(|(i, row)| (i, row.1))
+        else {
+            continue;
+        };
+        // Down from the narrowest: where the silhouette leaves the column,
+        // then where it reaches the shoulder joint's offset.
+        let leave = (0..=narrow_at)
+            .rev()
+            .find(|&i| ladder[i].1.is_finite() && ladder[i].1 > narrow + 0.01);
+        let Some(leave) = leave else {
+            println!("{who:>7}: the silhouette never leaves the column");
+            continue;
+        };
+        let (leave_up, leave_half, _) = ladder[leave];
+        let acromion_up = (acromion_top - body.floor) / body.height;
+        let rise = (leave_up - acromion_up) * body.height;
+        let run = acromion_half - leave_half;
+        let slope = (rise / run.max(1e-3)).atan().to_degrees();
+        println!(
+            "{who:>7}: neck narrowest {:.1} mm at {:.2}, leaves the column at {:.2} ({:.1} mm), \
+             acromion {:.1} mm at {:.2}: slope {slope:.1} deg over {:.0} mm of rise and {:.0} of run",
+            narrow * 1000.0,
+            ladder[narrow_at].0,
+            leave_up,
+            leave_half * 1000.0,
+            acromion_half * 1000.0,
+            acromion_up,
+            rise * 1000.0,
+            run * 1000.0
+        );
+    }
 }
 
 /// Prints a row of one figure per body.
