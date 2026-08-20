@@ -49,7 +49,7 @@ use std::collections::BTreeSet;
 use super::Rig;
 use crate::face::skull;
 use crate::mesh::PolyMesh;
-use crate::plan::Zone;
+use crate::plan::{Limb, Zone};
 
 /// How many bones may influence one vertex.
 ///
@@ -378,6 +378,9 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
     let corners = mouth_corners(rig);
 
     let mut dense = vec![0.0f32; vertices * joints];
+    // Which limb each vertex is on, if any — read once for the gate below and
+    // again after the smoothing, which can leak across a seam the gate closed.
+    let mut limbs: Vec<Option<Limb>> = vec![None; vertices];
     for (vertex, &position) in mesh.positions.iter().enumerate() {
         let row = &mut dense[vertex * joints..(vertex + 1) * joints];
         let mut nearest = (f32::INFINITY, first_deforming);
@@ -385,6 +388,7 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
         // [`crate::face::skull::shape`] asks it. See [`owner_of`]: for one bone
         // in the rig the answer decides which end of it turns this vertex.
         let mine = rig.joints[rig.nearest_bone(position).joint].zone;
+        limbs[vertex] = mine.limb();
 
         // Iterated by *segment*, credited to the joint that deforms it. See the
         // module docs: `rig.bone(segment)` runs `parent → segment`, and it is
@@ -399,6 +403,19 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
             let radius = start_radius + (end_radius - start_radius) * along;
             let owner = owner_of(rig, segment, mine, along, start.distance(end), position);
             if !rig.joints[owner].role.deforms() {
+                continue;
+            }
+            // **The cross-limb gate** (#303). Within reach was the only test,
+            // and a distance cannot tell one leg from the other: seed 7 rests
+            // its feet 1.6 mm apart and 80 foot-band vertices carried up to
+            // 0.411 from the OTHER leg's bones — dragged between the feet as
+            // a walk separated them, the fuse-and-release the owner saw.
+            // A bone of one limb may not hold a vertex of another; limb and
+            // trunk stay open, because a thigh legitimately shares the crotch
+            // with the pelvis and a quadruped's shoulder blends into its own
+            // back. Gated BEFORE the nearest-bone fallback, so a vertex beyond
+            // every bone's reach cannot fall back onto the wrong leg either.
+            if crosses(limbs[vertex], rig.joints[owner].zone) {
                 continue;
             }
 
@@ -498,11 +515,43 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
 
     smooth(&mut dense, mesh, joints, config);
 
+    // **Re-gated after the smoothing** (#303). Smoothing averages over mesh
+    // adjacency, and the two legs are one mesh through the crotch — so a
+    // thigh vertex a few edges from the seam picks up a little of the other
+    // thigh's weight from its neighbours, which is the leak the gate exists
+    // to close. Zeroed and renormalised; what a vertex loses goes back to the
+    // bones that legitimately hold it.
+    for (vertex, mine) in limbs.iter().enumerate() {
+        if mine.is_none() {
+            continue;
+        }
+        let row = &mut dense[vertex * joints..(vertex + 1) * joints];
+        let mut leaked = false;
+        for (joint, weight) in row.iter_mut().enumerate() {
+            if *weight > 0.0 && crosses(*mine, rig.joints[joint].zone) {
+                *weight = 0.0;
+                leaked = true;
+            }
+        }
+        if leaked {
+            normalize(row);
+        }
+    }
+
     SkinWeights {
         vertices: (0..vertices)
             .map(|vertex| strongest(&dense[vertex * joints..(vertex + 1) * joints]))
             .collect(),
     }
+}
+
+/// Whether a bone in `zone` is on a different limb from a vertex on `mine`.
+///
+/// Trunk against anything is never a crossing — the trunk has no limb — so
+/// the hips hold the crotch and a quadruped's back holds its shoulders; only
+/// limb against a DIFFERENT limb is. See the gate in [`bind`].
+fn crosses(mine: Option<Limb>, zone: Zone) -> bool {
+    matches!((mine, zone.limb()), (Some(on), Some(bone)) if on != bone)
 }
 
 /// Which joint's rotation turns the bone leading into `segment`, for a vertex

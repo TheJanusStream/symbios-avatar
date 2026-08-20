@@ -61,6 +61,86 @@ fn every_rerolled_body_rigs_and_binds() {
     }
 }
 
+/// How much weight a body's vertices carry from bones of a limb they are not
+/// on: `(vertices carrying any, the worst one)`.
+fn cross_limb_weight(record: &AvatarRecord) -> (usize, f32) {
+    let skeleton = record.skeleton();
+    let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+    let mesh = catmull_clark(&cage, 1);
+    let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+    let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
+    let (mut count, mut worst) = (0usize, 0.0f32);
+    for (vertex, &at) in mesh.positions.iter().enumerate() {
+        let Some(mine) = rig.joints[rig.nearest_bone(at).joint].zone.limb() else {
+            continue;
+        };
+        let cross: f32 = weights.vertices[vertex]
+            .iter()
+            .filter(|held| held.weight > 0.0)
+            .filter(|held| {
+                rig.joints[held.joint as usize]
+                    .zone
+                    .limb()
+                    .is_some_and(|limb| limb != mine)
+            })
+            .map(|held| held.weight)
+            .sum();
+        if cross > 0.0 {
+            count += 1;
+            worst = worst.max(cross);
+        }
+    }
+    (count, worst)
+}
+
+#[test]
+fn no_bone_of_one_limb_holds_a_vertex_of_another() {
+    // #303. `bind` had no cross-limb gate: any deforming bone within
+    // `radius * reach` held any vertex, and a distance cannot tell one leg
+    // from the other. Seed 7 rests its feet 1.6 mm apart and 80 foot-band
+    // vertices carried up to 0.411 from the OTHER leg's bones — dragged
+    // between the feet as a walk separated them, which is the fuse-and-release
+    // overlands saw on every walking body. Seed −1 was worse: 243 vertices,
+    // worst 0.533. The gate closes limb against a different limb in the
+    // falloff, in the nearest-bone fallback, and again after the smoothing,
+    // which leaks across the crotch where the two legs are one mesh.
+    //
+    // Seed 7 is pinned by name because it is the case the owner saw; the
+    // sweep is there because the defect was a product of the REST POSE —
+    // seeds resting their feet 30 mm apart carried nothing — and a guard on
+    // one pose is a guard on one body.
+    let mut seven = AvatarRecord::new("Seven", Archetype::default());
+    seven.reroll(7);
+    let (count, worst) = cross_limb_weight(&seven);
+    assert_eq!(
+        count, 0,
+        "seed 7: {count} vertices carry weight from the other limb, worst {worst:.3} — the \
+         feet will web together as the gait separates them"
+    );
+    for seed in -60..60i64 {
+        let mut biped = AvatarRecord::new("Biped", Archetype::default());
+        biped.reroll(seed);
+        let (count, worst) = cross_limb_weight(&biped);
+        assert_eq!(
+            count, 0,
+            "biped seed {seed}: {count} vertices carry weight from another limb, worst {worst:.3}"
+        );
+        // A quadruped has four limbs in two adjacent pairs, and the gate must
+        // close fore against hind on the same side as readily as left
+        // against right — while leaving every limb open to the trunk it
+        // grows from.
+        let mut beast =
+            AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
+        beast.reroll(seed);
+        let (count, worst) = cross_limb_weight(&beast);
+        assert_eq!(
+            count, 0,
+            "quadruped seed {seed}: {count} vertices carry weight from another limb, worst \
+             {worst:.3}"
+        );
+    }
+}
+
 #[test]
 fn every_zone_a_body_declares_reaches_the_surface() {
     // A zone with no vertices would be a garment slot that covers nothing, and
