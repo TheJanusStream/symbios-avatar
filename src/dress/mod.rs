@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::mesh::PolyMesh;
 use crate::plan::{Limb, Zone, ZoneSet};
-use crate::rig::SkinWeights;
+use crate::rig::{Rig, SkinWeights};
 
 pub use garment::{Garment, GarmentCut, dye};
 
@@ -163,6 +163,7 @@ impl Outfit {
     #[must_use]
     pub fn wear(
         mesh: &PolyMesh,
+        rig: &Rig,
         weights: &SkinWeights,
         zones: &[Zone],
         params: &OutfitParams,
@@ -171,6 +172,7 @@ impl Outfit {
 
         let trousers = GarmentCut {
             zones: leg_zones(&params.leg),
+            partial: leg_partial(&params.leg),
             // Up into the abdomen, so the waist seam belongs to exactly one
             // garment. The faces that straddle it are wholly inside neither the
             // top's zones nor the trousers', and without this neither takes them
@@ -187,8 +189,8 @@ impl Outfit {
         // so a filled notch can never hand one face to both of them. The
         // trousers see the top's raw claim; the top sees the trousers' filled
         // one, which by then is final.
-        let trousers_raw = garment::claimed(mesh, zones, &trousers);
-        let top_raw = garment::claimed(mesh, zones, &top);
+        let trousers_raw = garment::claimed(mesh, rig, zones, &trousers);
+        let top_raw = garment::claimed(mesh, rig, zones, &top);
         let mut trousers_faces = trousers_raw.clone();
         garment::close(mesh, &mut trousers_faces, &top_raw);
         let mut top_faces = top_raw;
@@ -287,6 +289,34 @@ fn top_zones(sleeve: &Sleeve) -> ZoneSet {
     zones
 }
 
+/// How far down the next limb segment each leg cut reaches, as a share of
+/// that segment's bone — see [`GarmentCut::partial`].
+///
+/// Shorts take the thigh to [`SHORTS_THIGH`]; a calf cut takes the shin to
+/// [`CALF_SHIN`]. The ankle cut claims whole zones and needs no share.
+fn leg_partial(leg: &Leg) -> [Option<(Zone, f32)>; 2] {
+    [Limb::HindLeft, Limb::HindRight].map(|limb| match leg.cut() {
+        Leg::Shorts => Some((Zone::UpperLimb(limb), SHORTS_THIGH)),
+        Leg::Calf => Some((Zone::LowerLimb(limb), CALF_SHIN)),
+        Leg::Ankle | Leg::Other(_) => None,
+    })
+}
+
+/// How far down the thigh shorts reach, as a share of the thigh bone.
+///
+/// **Shorts used to be the pelvis and nothing else** (#314), and the pelvis
+/// zone ends where the thigh's bone begins to win the skin — at the crotch —
+/// so the crotch was bare between the hem and the trunk. A third of the
+/// thigh is a short short: the hem clears the crotch by a hand and sits
+/// well above the knee on every body the envelope produces.
+const SHORTS_THIGH: f32 = 0.35;
+
+/// How far down the shin a calf cut reaches, as a share of the shin bone.
+///
+/// "To the calf" claimed the thigh and ended at the knee, which is a knee
+/// length; half the shin is mid-calf.
+const CALF_SHIN: f32 = 0.55;
+
 /// Which zones trousers cover.
 ///
 /// As with [`top_zones`], an unrecognised cut falls back to the default.
@@ -313,26 +343,26 @@ mod tests {
     use crate::{Archetype, AvatarRecord, CageConfig, build_cage, catmull_clark};
     use glam::Vec3;
 
-    fn body(seed: i64) -> (PolyMesh, SkinWeights, Vec<Zone>) {
+    fn body(seed: i64) -> (PolyMesh, Rig, SkinWeights, Vec<Zone>) {
         let mut record = AvatarRecord::new("Worn", Archetype::default());
         record.reroll(seed);
         body_of(&record)
     }
 
-    fn body_of(record: &AvatarRecord) -> (PolyMesh, SkinWeights, Vec<Zone>) {
+    fn body_of(record: &AvatarRecord) -> (PolyMesh, Rig, SkinWeights, Vec<Zone>) {
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
         let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
         let zones = weights.zone_map(&mesh, &rig);
-        (mesh, weights, zones)
+        (mesh, rig, weights, zones)
     }
 
     #[test]
     fn a_body_can_be_dressed() {
-        let (mesh, weights, zones) = body(1);
-        let outfit = Outfit::wear(&mesh, &weights, &zones, &OutfitParams::default());
+        let (mesh, rig, weights, zones) = body(1);
+        let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &OutfitParams::default());
         assert_eq!(outfit.len(), 2, "a top and trousers");
         assert!(!outfit.is_empty());
         assert!(outfit.mesh().face_count() > 100);
@@ -385,7 +415,7 @@ mod tests {
         // thigh — and a test that says otherwise is measuring the offset's
         // degeneracy, not the garment's coverage (`docs/instruments.md` rule 1).
         for seed in [1i64, 9] {
-            let (mesh, weights, zones) = body(seed);
+            let (mesh, rig, weights, zones) = body(seed);
             let normals = mesh.vertex_normals();
             for (sleeve, leg) in [(Sleeve::Bare, Leg::Shorts), (Sleeve::Forearm, Leg::Ankle)] {
                 let params = OutfitParams {
@@ -393,7 +423,7 @@ mod tests {
                     leg,
                     ..Default::default()
                 };
-                let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
+                let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &params);
                 assert!(
                     outfit
                         .covered(mesh.face_count())
@@ -472,13 +502,13 @@ mod tests {
         }
 
         for record in rolled.iter().chain(&extremes) {
-            let (mesh, weights, zones) = body_of(record);
+            let (mesh, rig, weights, zones) = body_of(record);
             let params = OutfitParams {
                 sleeve: Sleeve::Bare,
                 leg: Leg::Ankle,
                 ..Default::default()
             };
-            let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
+            let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &params);
             for (index, garment) in outfit.garments.iter().enumerate() {
                 let half = garment.mesh.positions.len() / 2;
                 let inside: Vec<usize> = (0..half)
@@ -508,8 +538,8 @@ mod tests {
         // symmetric filter and a symmetric clamp cannot tell apart. That is an
         // argument, and this is the measurement.
         for seed in [1i64, 5, 9] {
-            let (mesh, weights, zones) = body(seed);
-            let outfit = Outfit::wear(&mesh, &weights, &zones, &OutfitParams::default());
+            let (mesh, rig, weights, zones) = body(seed);
+            let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &OutfitParams::default());
             let hems: Vec<std::collections::HashMap<u32, Vec<Vec3>>> = outfit
                 .garments
                 .iter()
@@ -566,7 +596,7 @@ mod tests {
         // put four rim quads on one edge. A sleeve-shaped hypothesis tested on a
         // single body is how it stayed filed as a sleeve bug.
         for seed in 1i64..=12 {
-            let (mesh, weights, zones) = body(seed);
+            let (mesh, rig, weights, zones) = body(seed);
             for sleeve in [Sleeve::Bare, Sleeve::Forearm, Sleeve::Wrist] {
                 for leg in [Leg::Shorts, Leg::Calf, Leg::Ankle] {
                     let params = OutfitParams {
@@ -574,7 +604,7 @@ mod tests {
                         leg: leg.clone(),
                         ..Default::default()
                     };
-                    let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
+                    let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &params);
                     for garment in &outfit.garments {
                         assert!(
                             garment.mesh.is_closed_manifold(),
@@ -587,12 +617,16 @@ mod tests {
         }
     }
 
-    /// A seed whose shorts pinch, which is what the guard below needs.
+    /// A seed whose hem pinches, which is what the guard below needs.
     ///
-    /// Named rather than inlined because it has had to move twice — see that
-    /// test. Any body whose waist ring touches itself will do; twenty of the
-    /// first forty seeds did when this was last swept.
-    const PINCHING: i64 = 1;
+    /// Named rather than inlined because it has had to move three times — see
+    /// that test. Any body whose waist ring touches itself will do. Twenty of
+    /// the first forty seeds pinched when this was last swept for #164, and
+    /// sixteen of those were the SHORTS' hem running through the crotch; #314
+    /// moved that hem down the thigh and the crotch pinch with it, which left
+    /// the waist-ring pinch on seeds 17, 24, 36 and 39 — two vertices each, on
+    /// every outfit alike.
+    const PINCHING: i64 = 17;
 
     #[test]
     fn a_pinched_hem_is_cut_into_separate_columns() {
@@ -621,13 +655,13 @@ mod tests {
         // this guard is easy to satisfy and hard to lose by accident. What it
         // is NOT is a guard tied to one body — which is what it was, and what
         // made a change three subsystems away read as a regression here.
-        let (mesh, weights, zones) = body(PINCHING);
+        let (mesh, rig, weights, zones) = body(PINCHING);
         let params = OutfitParams {
             sleeve: Sleeve::Bare,
             leg: Leg::Shorts,
             ..Default::default()
         };
-        let outfit = Outfit::wear(&mesh, &weights, &zones, &params);
+        let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &params);
         let split: usize = outfit
             .garments
             .iter()
@@ -651,14 +685,14 @@ mod tests {
 
     #[test]
     fn longer_cuts_cover_more() {
-        let (mesh, weights, zones) = body(23);
+        let (mesh, rig, weights, zones) = body(23);
         let worn = |sleeve, leg| {
             let params = OutfitParams {
                 sleeve,
                 leg,
                 ..Default::default()
             };
-            Outfit::wear(&mesh, &weights, &zones, &params)
+            Outfit::wear(&mesh, &rig, &weights, &zones, &params)
                 .garments
                 .iter()
                 .map(Garment::vertex_count)
@@ -674,8 +708,8 @@ mod tests {
     fn the_waist_seam_belongs_to_exactly_one_garment() {
         // Two garments meeting have to agree on the ring of faces between them.
         // Left to themselves neither takes it, and a band of bare skin shows.
-        let (mesh, weights, zones) = body(3);
-        let outfit = Outfit::wear(&mesh, &weights, &zones, &OutfitParams::default());
+        let (mesh, rig, weights, zones) = body(3);
+        let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &OutfitParams::default());
 
         let waist: Vec<usize> = (0..mesh.positions.len())
             .filter(|&v| matches!(zones[v], Zone::Abdomen | Zone::Pelvis))
@@ -717,10 +751,11 @@ mod tests {
     fn the_top_and_the_trousers_do_not_claim_the_same_face() {
         // Overlapping garments flicker against each other. The reach that closes
         // the waist must hand the seam to one of them, not to both.
-        let (mesh, _weights, zones) = body(11);
+        let (mesh, rig, _weights, zones) = body(11);
         let params = OutfitParams::default();
         let trousers = GarmentCut {
             zones: leg_zones(&params.leg),
+            partial: leg_partial(&params.leg),
             reach: ZoneSet::default().with(Zone::Abdomen),
             ..Default::default()
         };
@@ -728,17 +763,15 @@ mod tests {
             zones: top_zones(&params.sleeve),
             ..Default::default()
         };
+        // The real claim, not a re-statement of it: #314's first cut at
+        // rescuing hand-zoned hip skin let the top claim down the hips and
+        // the trousers up the belly by bone radius alone, interleaved at the
+        // waist, and a copy of the old zone rule here would not have seen it.
         let claimed = |cut: &GarmentCut| -> Vec<usize> {
-            mesh.faces
+            garment::claimed(&mesh, &rig, &zones, cut)
                 .iter()
                 .enumerate()
-                .filter(|(_, face)| {
-                    face.iter().all(|&c| {
-                        cut.zones.contains(zones[c as usize])
-                            || cut.reach.contains(zones[c as usize])
-                    }) && face.iter().any(|&c| cut.zones.contains(zones[c as usize]))
-                })
-                .map(|(index, _)| index)
+                .filter_map(|(index, &mine)| mine.then_some(index))
                 .collect()
         };
         let below = claimed(&trousers);
@@ -752,11 +785,11 @@ mod tests {
 
     #[test]
     fn clothing_is_reproducible() {
-        let (mesh, weights, zones) = body(13);
+        let (mesh, rig, weights, zones) = body(13);
         let params = OutfitParams::default();
         assert_eq!(
-            Outfit::wear(&mesh, &weights, &zones, &params),
-            Outfit::wear(&mesh, &weights, &zones, &params)
+            Outfit::wear(&mesh, &rig, &weights, &zones, &params),
+            Outfit::wear(&mesh, &rig, &weights, &zones, &params)
         );
     }
 
@@ -796,8 +829,8 @@ mod tests {
     #[test]
     fn every_body_can_be_dressed() {
         for seed in [1, 5, 17, 42, 99] {
-            let (mesh, weights, zones) = body(seed);
-            let outfit = Outfit::wear(&mesh, &weights, &zones, &OutfitParams::default());
+            let (mesh, rig, weights, zones) = body(seed);
+            let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &OutfitParams::default());
             assert_eq!(outfit.len(), 2, "seed {seed} could not be dressed");
         }
     }

@@ -515,7 +515,7 @@ impl Avatar {
 
         // Cut from the body, so charted where the body is charted.
         let mut outfit = if handed && config.dressed {
-            Outfit::wear(&body, &weights, &zones, &record.outfit)
+            Outfit::wear(&body, &rig, &weights, &zones, &record.outfit)
         } else {
             Outfit::default()
         };

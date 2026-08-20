@@ -42,6 +42,7 @@
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
 //! cargo run --release --example render -- --bare --chest 1,-1  # the chest axes; needs --bare
+//! cargo run --release --example render -- --leg shorts --sleeve bare # the outfit's cuts
 //! cargo run --release --example render -- --junction  # tint the skin by which bone deforms it
 //! cargo run --release --example render -- --jawbind   # tint the skin by how the JAW bone holds it
 //! cargo run --release --example render -- --follicles # tint the skin by where hair may grow
@@ -501,6 +502,30 @@ fn main() {
     // chosen by looking at both ends needs an instrument that can ask for an
     // end — and because a chest is invisible on a DRESSED body: the skin under
     // the clothes is not emitted, so `--bare` is not optional for this one.
+    // The outfit's two cuts, by name (#314): the cut is what the hem is
+    // judged on and a hem cannot be read off a default.
+    if let Some(leg) = value("--leg") {
+        record.outfit.leg = match leg.as_str() {
+            "shorts" => symbios_avatar::Leg::Shorts,
+            "calf" => symbios_avatar::Leg::Calf,
+            "ankle" => symbios_avatar::Leg::Ankle,
+            other => {
+                eprintln!("unknown --leg {other}: expected shorts, calf or ankle");
+                std::process::exit(1);
+            }
+        };
+    }
+    if let Some(sleeve) = value("--sleeve") {
+        record.outfit.sleeve = match sleeve.as_str() {
+            "bare" => symbios_avatar::Sleeve::Bare,
+            "forearm" => symbios_avatar::Sleeve::Forearm,
+            "wrist" => symbios_avatar::Sleeve::Wrist,
+            other => {
+                eprintln!("unknown --sleeve {other}: expected bare, forearm or wrist");
+                std::process::exit(1);
+            }
+        };
+    }
     if let Some(spec) = value("--chest") {
         let given: Vec<f32> = spec
             .split(',')

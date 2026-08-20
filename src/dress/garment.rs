@@ -25,7 +25,7 @@ use glam::{Vec2, Vec3};
 
 use crate::mesh::PolyMesh;
 use crate::plan::{Zone, ZoneSet};
-use crate::rig::{Influence, MAX_INFLUENCES, SkinWeights};
+use crate::rig::{Influence, MAX_INFLUENCES, Rig, SkinWeights};
 
 /// How a garment is cut.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -40,6 +40,21 @@ pub struct GarmentCut {
     /// wholly inside neither, so neither takes them. Giving the lower garment a
     /// reach into the upper one's zone hands that ring to exactly one of them.
     pub reach: ZoneSet,
+    /// Zones it claims only PART of the way down: each is taken from where
+    /// its bone leaves the parent joint to this share of the bone's length,
+    /// and no further.
+    ///
+    /// **A zone is the wrong unit for a hem** (#314). Shorts claimed the
+    /// pelvis and nothing else, so they ended exactly where the thigh's bone
+    /// begins to win the skin — at the crotch — and "to just below the hip"
+    /// left the crotch bare. A hem wants to sit a share of the way down a
+    /// limb, and a share of a bone's length is a ring square to the bone,
+    /// which is a cleaner hem than any zone boundary: those wander vertex by
+    /// vertex wherever two bones hold the skin almost equally.
+    ///
+    /// Two slots, one per side of a pair of limbs; a cut with fewer leaves
+    /// the rest `None`.
+    pub partial: [Option<(Zone, f32)>; 2],
     /// How far its outer face stands off the skin, in metres.
     pub thickness: f32,
     /// How far its inner face sits *inside* the skin, in metres.
@@ -53,6 +68,7 @@ pub struct GarmentCut {
 impl Default for GarmentCut {
     fn default() -> Self {
         Self {
+            partial: [None; 2],
             zones: ZoneSet::default(),
             reach: ZoneSet::default(),
             thickness: 0.008,
@@ -113,23 +129,131 @@ pub struct Garment {
     pub colour: [f32; 3],
 }
 
+/// How close to one of a zone's bones, in that bone's radii, a corner has to
+/// lie to count as ON that part whatever the zone map says.
+///
+/// **The zone map is nearest-bone ownership, and a hand hanging beside a hip
+/// owns the hip** (#314): on the masculine frame the arms fall close enough
+/// that the skin over the hips reads `Extremity(ForeLeft)`, and a pair of
+/// shorts claiming the pelvis by zone came out as scattered patches with
+/// bare skin between. The skin of a part sits between two thirds and one
+/// radius out from its bone; a hand beside it sits a hand's thickness
+/// further. Just over one radius takes the part's own skin and not the
+/// hand's. Consulted only for skin the map gave to a limb — see
+/// [`claimed`] — so it can never move trunk skin between trunk garments.
+const ON_BONE: f32 = 1.05;
+
 /// Which faces `cut` claims outright, one flag per face of `mesh`.
 ///
 /// A face is claimed only if *every* corner of it is in the cut's zones or
 /// reach. Taking faces on a majority instead leaves the hem straddling the
 /// boundary, which puts a ragged edge halfway into the neighbouring zone.
+///
+/// A corner is "in" a zone when the zone map says so — or, for skin the map
+/// gave to a limb, when the bone it is nearest in that bone's own radii is
+/// the zone's, within `ON_BONE`. A corner in one of the cut's
+/// [`partial`](GarmentCut::partial) zones counts only within that zone's
+/// share of its principal bone — the longest one, the thigh of an upper leg
+/// rather than the short bone that crosses the hip — measured as a
+/// projection onto that bone, so the hem is a ring square to the limb.
 #[must_use]
-pub fn claimed(mesh: &PolyMesh, zones: &[Zone], cut: &GarmentCut) -> Vec<bool> {
+pub fn claimed(mesh: &PolyMesh, rig: &Rig, zones: &[Zone], cut: &GarmentCut) -> Vec<bool> {
     let zone_of = |corner: u32| zones.get(corner as usize).copied();
+    // Every zone the cut names, with its principal bone — the longest.
+    let named: Vec<Zone> = cut
+        .zones
+        .iter()
+        .chain(cut.reach.iter())
+        .chain(cut.partial.iter().flatten().map(|(zone, _)| *zone))
+        .collect();
+    let principal: HashMap<Zone, Option<usize>> = named
+        .iter()
+        .map(|&zone| {
+            let longest = rig
+                .in_zone(zone)
+                .into_iter()
+                .filter(|&joint| rig.joints[joint].role.deforms())
+                .max_by(|&a, &b| {
+                    let (sa, ea) = rig.bone(a);
+                    let (sb, eb) = rig.bone(b);
+                    sa.distance(ea).total_cmp(&sb.distance(eb))
+                });
+            (zone, longest)
+        })
+        .collect();
+    // Where a corner the map gave to a limb really lies: the zone of the bone
+    // it is nearest in that bone's OWN radii, the mapped limb's bones set
+    // aside, if that is within [`ON_BONE`] — one zone, so the hand-held hip
+    // skin goes to the pelvis or the thigh and never to both the pelvis and
+    // the abdomen at once (a fat trunk bone reaches a long way by radius).
+    let rescued = |corner: u32, mapped: Zone| -> Option<Zone> {
+        let position = mesh.positions[corner as usize];
+        // Skin that really is on its mapped limb keeps its zone: the short
+        // bone across the hip is the upper leg's, and its skin is the hip's.
+        let mut own = f32::INFINITY;
+        let mut best: Option<(f32, Zone)> = None;
+        for joint in rig.surfaced() {
+            let zone = rig.joints[joint].zone;
+            let (start, end) = rig.bone(joint);
+            let axis = end - start;
+            let along = if axis.length_squared() <= f32::EPSILON {
+                0.0
+            } else {
+                ((position - start).dot(axis) / axis.length_squared()).clamp(0.0, 1.0)
+            };
+            let (near, far) = rig.bone_radii(joint);
+            let radius = (near + (far - near) * along).max(f32::EPSILON);
+            let radii = position.distance(start + axis * along) / radius;
+            if zone.limb().is_some() && zone.limb() == mapped.limb() {
+                own = own.min(radii);
+            } else if best.is_none_or(|(held, _)| radii < held) {
+                best = Some((radii, zone));
+            }
+        }
+        if own <= ON_BONE {
+            return Some(mapped);
+        }
+        best.filter(|(radii, _)| *radii <= ON_BONE)
+            .map(|(_, zone)| zone)
+    };
+    // The rescue applies only to skin the map gave to a LIMB — the hand
+    // beside the hip — and never moves trunk skin between trunk zones: the
+    // trunk's bones are fat, and by radius alone the top claimed down the
+    // hips and the trousers up the belly, interleaved at the waist.
+    let member = |corner: u32, zone: Zone| match zone_of(corner) {
+        Some(mapped) if mapped == zone => true,
+        Some(mapped @ (Zone::UpperLimb(_) | Zone::LowerLimb(_) | Zone::Extremity(_))) => {
+            rescued(corner, mapped) == Some(zone)
+        }
+        _ => false,
+    };
+    let in_zones = |corner: u32| cut.zones.iter().any(|zone| member(corner, zone));
+    let in_reach = |corner: u32| cut.reach.iter().any(|zone| member(corner, zone));
+    let in_partial = |corner: u32| -> bool {
+        cut.partial.iter().flatten().any(|&(zone, share)| {
+            if !member(corner, zone) {
+                return false;
+            }
+            let Some(&Some(principal)) = principal.get(&zone) else {
+                return true;
+            };
+            let (start, end) = rig.bone(principal);
+            let axis = end - start;
+            if axis.length_squared() <= f32::EPSILON {
+                return true;
+            }
+            let position = mesh.positions[corner as usize];
+            (position - start).dot(axis) / axis.length_squared() <= share
+        })
+    };
     mesh.faces
         .iter()
         .map(|face| {
-            face.iter().all(|&corner| {
-                zone_of(corner)
-                    .is_some_and(|zone| cut.zones.contains(zone) || cut.reach.contains(zone))
-            }) && face
-                .iter()
-                .any(|&corner| zone_of(corner).is_some_and(|zone| cut.zones.contains(zone)))
+            face.iter()
+                .all(|&corner| in_zones(corner) || in_reach(corner) || in_partial(corner))
+                && face
+                    .iter()
+                    .any(|&corner| in_zones(corner) || in_partial(corner))
         })
         .collect()
 }
@@ -200,12 +324,13 @@ impl Garment {
     #[must_use]
     pub fn cut(
         mesh: &PolyMesh,
+        rig: &Rig,
         weights: &SkinWeights,
         zones: &[Zone],
         cut: &GarmentCut,
         colour: [f32; 3],
     ) -> Option<Self> {
-        let mut mine = claimed(mesh, zones, cut);
+        let mut mine = claimed(mesh, rig, zones, cut);
         close(mesh, &mut mine, &[]);
         Self::sew(mesh, weights, &mine, cut, colour)
     }
@@ -1011,7 +1136,7 @@ mod tests {
     use crate::{Archetype, AvatarRecord, CageConfig, build_cage, catmull_clark};
     use glam::Vec3;
 
-    fn body() -> (PolyMesh, SkinWeights, Vec<Zone>) {
+    fn body() -> (PolyMesh, Rig, SkinWeights, Vec<Zone>) {
         let record = AvatarRecord::new("Dressed", Archetype::default());
         let skeleton = record.skeleton();
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
@@ -1019,7 +1144,7 @@ mod tests {
         let rig = Rig::from_skeleton(&skeleton).expect("rigs");
         let weights = skin::bind(&mesh, &rig, &SkinConfig::default());
         let zones = weights.zone_map(&mesh, &rig);
-        (mesh, weights, zones)
+        (mesh, rig, weights, zones)
     }
 
     fn torso() -> ZoneSet {
@@ -1028,20 +1153,20 @@ mod tests {
 
     #[test]
     fn a_garment_can_be_cut_from_a_body() {
-        let (mesh, weights, zones) = body();
+        let (mesh, rig, weights, zones) = body();
         let cut = GarmentCut {
             zones: torso(),
             ..Default::default()
         };
-        let garment =
-            Garment::cut(&mesh, &weights, &zones, &cut, [0.3, 0.3, 0.4]).expect("a torso exists");
+        let garment = Garment::cut(&mesh, &rig, &weights, &zones, &cut, [0.3, 0.3, 0.4])
+            .expect("a torso exists");
         assert!(garment.vertex_count() > 40);
         assert!(garment.mesh.face_count() > 20);
     }
 
     #[test]
     fn a_cut_that_covers_nothing_makes_no_garment() {
-        let (mesh, weights, zones) = body();
+        let (mesh, rig, weights, zones) = body();
         let cut = GarmentCut {
             // No humanoid has these.
             zones: ZoneSet::default().with(Zone::Extremity(Limb::ForeLeft)),
@@ -1049,7 +1174,7 @@ mod tests {
         };
         // Extremities exist but are a single ring, so this may or may not cover
         // whole faces; what must not happen is a panic or an empty mesh.
-        if let Some(garment) = Garment::cut(&mesh, &weights, &zones, &cut, [0.5; 3]) {
+        if let Some(garment) = Garment::cut(&mesh, &rig, &weights, &zones, &cut, [0.5; 3]) {
             assert!(garment.mesh.face_count() > 0);
         }
 
@@ -1057,19 +1182,19 @@ mod tests {
             zones: ZoneSet::default(),
             ..Default::default()
         };
-        assert!(Garment::cut(&mesh, &weights, &zones, &nothing, [0.5; 3]).is_none());
+        assert!(Garment::cut(&mesh, &rig, &weights, &zones, &nothing, [0.5; 3]).is_none());
     }
 
     #[test]
     fn a_garment_is_a_closed_solid() {
         // Cloth has two faces and a cut edge. A single offset surface vanishes
         // when seen from underneath and reads as a sticker at the hem.
-        let (mesh, weights, zones) = body();
+        let (mesh, rig, weights, zones) = body();
         let cut = GarmentCut {
             zones: torso(),
             ..Default::default()
         };
-        let garment = Garment::cut(&mesh, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
+        let garment = Garment::cut(&mesh, &rig, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
         assert!(
             garment.mesh.is_closed_manifold(),
             "{:?}",
@@ -1083,12 +1208,12 @@ mod tests {
         // read. Two claims: every cut edge is walked exactly once, and every
         // loop closes — a walk that runs off the end of a chain would report a
         // hem shorter than the one that exists and quietly hide the rest.
-        let (mesh, _, zones) = body();
+        let (mesh, rig, _, zones) = body();
         let cut = GarmentCut {
             zones: torso(),
             ..Default::default()
         };
-        let mut mine = claimed(&mesh, &zones, &cut);
+        let mut mine = claimed(&mesh, &rig, &zones, &cut);
         close(&mesh, &mut mine, &[]);
         let covered: Vec<&Vec<u32>> = mesh
             .faces
@@ -1127,12 +1252,12 @@ mod tests {
         // The claim is what lets the body stop emitting the skin underneath, so
         // it has to name the faces the garment actually stands over — not the
         // raw zone claim it started from, which `close` has since grown.
-        let (mesh, weights, zones) = body();
+        let (mesh, rig, weights, zones) = body();
         let cut = GarmentCut {
             zones: torso(),
             ..Default::default()
         };
-        let mut mine = claimed(&mesh, &zones, &cut);
+        let mut mine = claimed(&mesh, &rig, &zones, &cut);
         let raw = mine.iter().filter(|&&mine| mine).count();
         close(&mesh, &mut mine, &[]);
         let garment = Garment::sew(&mesh, &weights, &mine, &cut, [0.5; 3]).expect("a torso");
@@ -1167,14 +1292,14 @@ mod tests {
 
     #[test]
     fn a_garment_stands_off_the_skin_it_was_cut_from() {
-        let (mesh, weights, zones) = body();
+        let (mesh, rig, weights, zones) = body();
         let cut = GarmentCut {
             zones: torso(),
             thickness: 0.01,
             bite: 0.002,
             ..Default::default()
         };
-        let garment = Garment::cut(&mesh, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
+        let garment = Garment::cut(&mesh, &rig, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
 
         // Every garment point is within a hair of the body, and the outer half
         // is outside it: it hugs, and it cannot be inside.
@@ -1201,12 +1326,12 @@ mod tests {
     #[test]
     fn a_garment_wears_the_skin_weights_of_the_body_beneath_it() {
         // The whole reason for cutting one this way: it needs no rigging.
-        let (mesh, weights, zones) = body();
+        let (mesh, rig, weights, zones) = body();
         let cut = GarmentCut {
             zones: torso(),
             ..Default::default()
         };
-        let garment = Garment::cut(&mesh, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
+        let garment = Garment::cut(&mesh, &rig, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
         assert!(garment.mesh.channels_are_consistent());
         assert_eq!(garment.mesh.skin.len(), garment.vertex_count());
         let worn = SkinWeights {
@@ -1230,12 +1355,13 @@ mod tests {
 
     #[test]
     fn a_garment_is_charted_where_the_body_is_charted() {
-        let (mesh, weights, zones) = body();
+        let (mesh, rig, weights, zones) = body();
         let cut = GarmentCut {
             zones: torso(),
             ..Default::default()
         };
-        let mut garment = Garment::cut(&mesh, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
+        let mut garment =
+            Garment::cut(&mesh, &rig, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
         assert!(
             garment.mesh.uvs.is_empty(),
             "a cut garment is not yet charted"
@@ -1255,7 +1381,7 @@ mod tests {
 
     #[test]
     fn a_wider_cut_covers_more() {
-        let (mesh, weights, zones) = body();
+        let (mesh, rig, weights, zones) = body();
         let narrow = GarmentCut {
             zones: torso(),
             ..Default::default()
@@ -1264,8 +1390,9 @@ mod tests {
             zones: torso().with(Zone::Pelvis),
             ..Default::default()
         };
-        let small = Garment::cut(&mesh, &weights, &zones, &narrow, [0.5; 3]).expect("a torso");
-        let large = Garment::cut(&mesh, &weights, &zones, &wide, [0.5; 3]).expect("a torso");
+        let small =
+            Garment::cut(&mesh, &rig, &weights, &zones, &narrow, [0.5; 3]).expect("a torso");
+        let large = Garment::cut(&mesh, &rig, &weights, &zones, &wide, [0.5; 3]).expect("a torso");
         assert!(large.vertex_count() > small.vertex_count());
     }
 
@@ -1274,7 +1401,7 @@ mod tests {
         // Measured against the skin, not against the bounding box. A box grows
         // by whatever the normal at its widest vertex happens to be pointing at,
         // which is not the quantity being set.
-        let (mesh, weights, zones) = body();
+        let (mesh, rig, weights, zones) = body();
         let furthest = |thickness: f32| {
             let cut = GarmentCut {
                 zones: torso(),
@@ -1282,7 +1409,8 @@ mod tests {
                 bite: 0.001,
                 ..Default::default()
             };
-            let garment = Garment::cut(&mesh, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
+            let garment =
+                Garment::cut(&mesh, &rig, &weights, &zones, &cut, [0.5; 3]).expect("a torso");
             garment.mesh.positions[..garment.vertex_count() / 2]
                 .iter()
                 .map(|point| off_the_surface(&mesh, *point))

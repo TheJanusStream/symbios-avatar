@@ -231,6 +231,13 @@ impl ZoneSet {
         self
     }
 
+    /// Every zone in the set, in [`Zone::all`]'s order.
+    pub fn iter(self) -> impl Iterator<Item = Zone> {
+        Zone::all()
+            .into_iter()
+            .filter(move |zone| self.contains(*zone))
+    }
+
     /// Every zone in either set.
     #[must_use]
     pub fn union(self, other: ZoneSet) -> Self {
