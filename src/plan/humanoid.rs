@@ -475,7 +475,9 @@ impl BodyPlan for HumanoidParams {
             );
             let ankle = skeleton.extend_from(
                 knee,
-                Node::new(Vec3::new(side * d.hip_x, d.ankle_y, 0.0), d.ankle_r)
+                // From the ankle down the chain sits at `foot_x`, which is
+                // `hip_x` unless the stance clearance floor binds (#305).
+                Node::new(Vec3::new(side * d.foot_x, d.ankle_y, 0.0), d.ankle_r)
                     .in_zone(Zone::LowerLimb(hind)),
             );
             // **The foot is part of the leg, not a slab hung off its end** (#111).
@@ -536,7 +538,7 @@ impl BodyPlan for HumanoidParams {
             let heel = skeleton.extend_from(
                 ankle,
                 sole_section(
-                    Vec3::new(side * d.hip_x, d.foot_y, d.heel_z),
+                    Vec3::new(side * d.foot_x, d.foot_y, d.heel_z),
                     d.heel_r,
                     d.sole_kept,
                 ),
@@ -544,7 +546,7 @@ impl BodyPlan for HumanoidParams {
             skeleton.extend_from(
                 heel,
                 sole_section(
-                    Vec3::new(side * d.hip_x, d.cap_y, d.cap_z),
+                    Vec3::new(side * d.foot_x, d.cap_y, d.cap_z),
                     d.cap_r,
                     d.cap_kept,
                 ),
@@ -552,7 +554,7 @@ impl BodyPlan for HumanoidParams {
             let ball = skeleton.extend_from(
                 heel,
                 sole_section(
-                    Vec3::new(side * d.hip_x, d.foot_y, d.ball_z),
+                    Vec3::new(side * d.foot_x, d.foot_y, d.ball_z),
                     d.ball_r,
                     d.sole_kept,
                 ),
@@ -560,7 +562,7 @@ impl BodyPlan for HumanoidParams {
             skeleton.extend_from(
                 ball,
                 sole_section(
-                    Vec3::new(side * d.hip_x, d.foot_y, d.toe_z),
+                    Vec3::new(side * d.foot_x, d.foot_y, d.toe_z),
                     d.toe_r,
                     d.sole_kept,
                 ),

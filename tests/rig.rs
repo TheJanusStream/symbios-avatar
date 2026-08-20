@@ -142,6 +142,55 @@ fn no_bone_of_one_limb_holds_a_vertex_of_another() {
 }
 
 #[test]
+fn no_seed_rests_its_feet_touching() {
+    // #305. The foot chain ran at `hip_x`, which is the pelvis's business, so
+    // a narrow-hipped body stood its feet together: over seeds −60..60 twelve
+    // rested them OVERLAPPING at the midline — read as a gap of 0.1 mm by a
+    // nearest-bone split that could only hand the intruding vertices to the
+    // other foot — and the median body kept a quarter of a foot-width between
+    // them. The plan places the ankle and the foot at `foot_x` now: `hip_x`
+    // or the clearance floor, whichever is wider, the floor being a quarter
+    // of the ball's BUILT width — `FOOT_KEPT` of its asked radius, which had
+    // to be re-measured for this to bind where it claimed to.
+    //
+    // The bound is the floor less a little for the subdivision's own
+    // variance: the floor binds at exactly 0.250 on the narrow tail.
+    for seed in -60..60i64 {
+        let mut record = AvatarRecord::new("Stance", Archetype::default());
+        record.reroll(seed);
+        let skeleton = record.skeleton();
+        let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+        let mesh = catmull_clark(&cage, 1);
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let (mut left, mut right) = ((f32::MAX, f32::MIN), (f32::MAX, f32::MIN));
+        for &at in &mesh.positions {
+            match rig.joints[rig.nearest_bone(at).joint].zone {
+                Zone::Extremity(Limb::HindLeft) => left = (left.0.min(at.x), left.1.max(at.x)),
+                Zone::Extremity(Limb::HindRight) => {
+                    right = (right.0.min(at.x), right.1.max(at.x));
+                }
+                _ => {}
+            }
+        }
+        let (inner, outer) = if left.1 < right.0 {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        let gap = outer.0 - inner.1;
+        let width = (inner.1 - inner.0).max(outer.1 - outer.0);
+        assert!(
+            gap > width * 0.22,
+            "seed {seed}: the feet rest {:.1} mm apart on a {:.1} mm wide foot — {:.2} of a \
+             foot-width against a floor of a quarter",
+            gap * 1000.0,
+            width * 1000.0,
+            gap / width
+        );
+    }
+}
+
+#[test]
 fn every_zone_a_body_declares_reaches_the_surface() {
     // A zone with no vertices would be a garment slot that covers nothing, and
     // the skin beneath it would show through.

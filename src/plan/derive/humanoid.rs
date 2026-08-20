@@ -919,6 +919,13 @@ pub(crate) struct Dimensions {
     pub hand_r: f32,
     /// How far out the leg's chain runs, on the `+X` side.
     pub hip_x: f32,
+    /// How far out the ankle and the foot's level run sit, on the `+X` side.
+    ///
+    /// [`Self::hip_x`], or the stance clearance floor, whichever is wider —
+    /// see `FOOT_CLEARANCE`. The hip and the knee stay at `hip_x`, so on a
+    /// body the floor binds the shank leans out by the difference over its
+    /// own length, which is a degree or two.
+    pub foot_x: f32,
     /// Height of the hip socket.
     pub hip_y: f32,
     /// Radius of the hip node.
@@ -2285,7 +2292,17 @@ impl Dimensions {
         // [`Rig::limb_chain`]: crate::rig::Rig::limb_chain
         const FOOT_HEEL_BACK: f32 = 0.07;
         const FOOT_CAP_BACK: f32 = 0.05;
-        const FOOT_CAP_DROP: f32 = 0.05;
+        // **The drop is a share of the sole plane's HEIGHT, not of the foot's
+        // length** (#305). `sole_section` solves each node's depth as
+        // `y / kept`, and `kept` was measured at one depth-to-width aspect;
+        // the level run keeps its aspect whatever the radii do, because its
+        // height is derived from them, but a cap dropped a fixed share of
+        // foot length changed aspect the moment `FOOT_KEPT` brought the radii
+        // down — and landed 5 mm under the ground plane on seed 3, with the
+        // heel end of the sole reading 5.5 mm off flat. 0.42 is what 0.05 of
+        // foot length was on the default body the share was measured on, so
+        // that body is unchanged and every other body keeps the cap's aspect.
+        const FOOT_CAP_DROP: f32 = 0.42;
         let heel_z = -foot_long * FOOT_HEEL_BACK;
         let cap_z = heel_z - foot_long * FOOT_CAP_BACK;
 
@@ -2342,7 +2359,20 @@ impl Dimensions {
         // give it neighbours its own size and the delivered fraction rose to
         // 0.61-0.69 on its own, with no radius changed. Adding nodes bought back
         // what inflating a radius could not.
-        const FOOT_KEPT: f32 = 0.61;
+        //
+        // **0.61 → 0.884, re-measured, and the old figure was the boot** (#305,
+        // on the way to #306). The 0.61 was true when it was taken; the sole
+        // sections have been upright ellipses of full width since #111 and
+        // nothing re-measured what they deliver. Probed over seeds −60..60,
+        // the ball's built half-width is 0.882 to 0.887 of its asked radius
+        // on EVERY seed — so every foot was asked 45% too wide to compensate
+        // a shrink that no longer happens, and `footaudit` read width/length
+        // 0.506 against the references' 0.37 and 0.38. The sole's depth is
+        // tied to this radius through `sole_depth`, so the foot was half
+        // again too thick for the same reason. The clearance floor below
+        // reads this share to place the feet, which is how the staleness was
+        // caught: a floor computed from 0.61 bound and the feet still overlapped.
+        const FOOT_KEPT: f32 = 0.884;
         let foot_r = foot_long * 0.185 / FOOT_KEPT;
         // How thick the foot is against how wide, from the same outlines: the ball
         // is about 20% of foot length deep against 37% wide.
@@ -2390,7 +2420,7 @@ impl Dimensions {
         // out flat and no socket loses a millimetre it had before.
         let sole_depth = foot_r * extremity * FOOT_TOE_WIDE * FOOT_FLAT;
         let foot_y = sole_depth * FOOT_SOLE_KEPT;
-        let cap_y = foot_y - foot_long * FOOT_CAP_DROP;
+        let cap_y = foot_y * (1.0 - FOOT_CAP_DROP);
 
         // The clavicle has to reach past the chest socket's corners before an
         // arm can attach — the single tightest constraint on the whole body.
@@ -2782,6 +2812,28 @@ impl Dimensions {
         let ball_r = foot_r * FOOT_BALL_WIDE * extremity;
         let toe_r = foot_r * FOOT_TOE_WIDE * extremity;
 
+        // **No seed rests its feet touching** (#305). The foot chain ran at
+        // `hip_x`, full stop, and `hip_x` is the pelvis's business — so a
+        // narrow-hipped body with ordinary feet stood them together: probed
+        // over seeds −60..60, twelve rested their feet overlapping at the
+        // midline and the median body kept a quarter of a foot-width between
+        // them. Kissing surfaces are a visual defect and, under the skin's
+        // reach, the fuse #303 gated against; overlapping ones are worse.
+        //
+        // The floor is a share of the foot's own BUILT width rather than a
+        // constant, so wide feet stand wider: the ball's radius delivers
+        // `FOOT_KEPT` of itself as surface, and the gap between the two inner
+        // edges may not fall under `FOOT_CLEARANCE` of the foot's width. A
+        // quarter, because that is where the median body already stands — the
+        // floor lifts the narrow tail onto the population and moves nobody
+        // else. It is a rest-pose re-base on those seeds and nothing of the
+        // record: the composites and the offsets are untouched.
+        //
+        // Provenance: **measured** over the roll envelope, 2026-08-20.
+        const FOOT_CLEARANCE: f32 = 0.25;
+        let foot_half = ball_r * FOOT_KEPT;
+        let foot_x = hip_x.max(foot_half * (1.0 + FOOT_CLEARANCE));
+
         // Both skull nodes carry the same section, so the breadth axis narrows
         // the vault and the face by one factor rather than tapering one into the
         // other. See [`HEAD_BREADTH_SPAN`].
@@ -2870,6 +2922,7 @@ impl Dimensions {
             ball_r,
             toe_z,
             toe_r,
+            foot_x,
         }
     }
 }

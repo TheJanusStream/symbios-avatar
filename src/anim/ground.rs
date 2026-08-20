@@ -758,8 +758,13 @@ mod contact_tests {
                 worst = worst.max(before[foot].distance(after[foot]));
             }
         }
+        // **2.0 → 2.5 mm** (#305): the foot's asked radii came down by a
+        // third when `FOOT_KEPT` was re-measured, the contact's hang off the
+        // ankle changed with them, and the residual the put-back leaves went
+        // from 1.77 mm to 2.04. The put-back still runs; the state moved a
+        // quarter of a millimetre and the bound is the state plus slack.
         assert!(
-            worst < 2e-3,
+            worst < 2.5e-3,
             "levelling dragged a contact {:.1} mm and nothing put it back",
             worst * 1000.0
         );
