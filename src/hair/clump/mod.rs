@@ -285,7 +285,15 @@ pub struct Sowing<'a> {
 /// clump count is a REQUEST and everything under the corner is untouched bit
 /// for bit; a record has to ask for maximum length AND thickness AND density
 /// AND a tail to feel it, and the test above proves no re-roll does.
-pub const MAX_TRIANGLES: usize = 2_830;
+///
+/// **Then the body got cheaper** (#310): `refine_chest` stopped refining
+/// skin within a limb's own radius of its bone — the inner armpit and the
+/// groin, which nothing carves — and the dearest bald body went 29,508 →
+/// 28,438, leaving 3,562 against `TRIANGLE_TARGET`. The budget test's upper
+/// rail fired, as it is meant to when room opens. This took the smallest
+/// step that satisfies it, 2,830 → 2,850; the other ~700 triangles are the
+/// owner's to spend at #307/#308, on the face, on the hair, or on nothing.
+pub const MAX_TRIANGLES: usize = 2_850;
 
 /// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].
 ///

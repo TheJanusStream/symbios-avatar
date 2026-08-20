@@ -435,21 +435,23 @@ const SWELL: f32 = 0.85;
 /// carve delivers up to here.
 const PROJECTION_CEILING: f32 = 0.9;
 
-/// How far inside the trunk's claim, in local body radii, the carve reaches
-/// its full push — it is zero where the arm's claim begins.
+/// Where a limb's claim on the skin ends, in the limb's OWN radii from its
+/// bone: full carve beyond the first, none inside the second.
 ///
-/// **A hard ownership cut with a large push is a step** (#309). The carve
-/// moves the vertices the trunk owns and leaves the arm's alone, and a face
-/// on the armpit has corners in both: with the lobe swelled to its footprint
-/// that face was torn between a pushed corner and a fixed one, its UV quad
-/// folded into a bow-tie in the arm's chart, and the render sampled an
-/// unfilled texel as a black patch on the lobe's upper-outer side. The
-/// render found it; no manifold check would have. So the push fades over
-/// this band of the boundary — equidistance between the nearest trunk bone
-/// and the nearest limb bone — instead of stopping at it. Narrow on purpose:
-/// the reference lobe's own tail has all but died by the time it reaches the
-/// armpit, so at the agreed bodies this changes nothing the eye can find.
-const LIMB_FADE: f32 = 0.25;
+/// **A point is the arm's if it lies on the arm, not if the arm's bone
+/// happens to be the nearest one** (#310). The carve used to take
+/// `Rig::nearest_bone`'s word for ownership, and at feminine shoulders that
+/// answer puts the upper-arm bone nearer than the chest bone across the
+/// upper-outer quadrant of the chest's FRONT — a vertex 104 mm from a 45 mm
+/// arm bone, with the trunk's own bone 120 mm behind it, read as arm. Nothing
+/// carved it, `refine_chest` did not refine it, and every lobe big enough to
+/// reach it was cut off along that line: a concave wedge from the armpit
+/// into the breast, worst with projection, which the owner found on the
+/// dressed body. #309's fade softened the cut and left it. Measured in the
+/// limb's radii instead, the arm's skin sits at one radius and the chest's
+/// front at two and more, and the lobe runs out under the arm the way a
+/// breast's axillary tail does.
+const LIMB_FADE: (f32, f32) = (1.7, 1.15);
 
 /// What one unit of [`ChestAxes::lift`] does: how far up the band it moves the
 /// peak, and how much of the age descent it refuses.
@@ -891,11 +893,12 @@ const CHEST_PASSES: [(f32, f32, f32, f32); 1] = [(0.0, 1.0, -0.10, 0.99)];
 /// cell and at 55:45 after this. Refining afterwards would only subdivide the
 /// facets of a shape that had already been flattened.
 ///
-/// Selects the way the carve selects: `Zone::Chest | Zone::Abdomen` through
-/// [`Rig::nearest_bone`], because an arm passes through this band and a chest
-/// drawn onto one is a defect nobody would have to look hard for — the carve
-/// solved that exact problem for its vertices and the answer does not change
-/// for a face centroid.
+/// Selects the way the carve selects — `trunk_claim`, the trunk's own
+/// bones nearest and no limb's skin — because an arm passes through this
+/// band and a chest drawn onto one is a defect nobody would have to look hard
+/// for; the carve solved that exact problem for its vertices and the answer
+/// does not change for a face centroid. One rule for both, or the carve
+/// reaches skin the refinement left coarse (#310).
 ///
 /// Splits with [`PolyMesh::refine_curved`] for [`refine_face`]'s reason: the
 /// trunk arrives as a lofted ring surface, a plain midpoint sits on one of its
@@ -925,10 +928,7 @@ pub fn refine_chest(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
         let selected: Vec<bool> = (0..refined.face_count())
             .map(|face| {
                 let at = refined.face_centroid(face);
-                if !matches!(
-                    rig.joints[rig.nearest_bone(at).joint].zone,
-                    Zone::Chest | Zone::Abdomen
-                ) {
+                if trunk_claim(rig, at) <= 0.0 {
                     return false;
                 }
                 let up = (at.y - column.waist) / span;
@@ -1051,15 +1051,17 @@ pub fn carve_chest(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
     }
 }
 
-/// How much of the chest carve a point takes: `1` well inside the trunk's
-/// claim, falling to `0` over [`LIMB_FADE`] radii short of where a limb's
-/// claim begins, and `0` beyond it.
+/// How much of the chest carve a point takes: `0` unless the nearest of the
+/// body's own bones (limbs aside) is the trunk's, then `1` clear of every
+/// limb and falling to `0` onto a limb's skin — see [`LIMB_FADE`].
 ///
-/// The same question [`Rig::nearest_bone`] answers for the hard cut — which
-/// bone is nearest — asked of the two nearest families at once, so the
-/// answer has a margin and not just a sign.
-fn trunk_claim(rig: &Rig, point: Vec3) -> f32 {
-    let (mut trunk, mut other, mut radius) = (f32::INFINITY, f32::INFINITY, 1.0f32);
+/// Limbs are kept out of the nearest-bone contest on purpose: that contest
+/// is the right way to tell the chest from the neck or the pelvis, which
+/// share the column, and the wrong way to tell it from an arm, which hangs
+/// beside it at whatever distance the shoulders put it.
+pub(crate) fn trunk_claim(rig: &Rig, point: Vec3) -> f32 {
+    let mut nearest = (f32::INFINITY, false);
+    let mut limb = 1.0f32;
     for joint in rig.surfaced() {
         let (start, end) = rig.bone(joint);
         let axis = end - start;
@@ -1069,22 +1071,22 @@ fn trunk_claim(rig: &Rig, point: Vec3) -> f32 {
             ((point - start).dot(axis) / axis.length_squared()).clamp(0.0, 1.0)
         };
         let distance = point.distance(start + axis * along);
-        if matches!(rig.joints[joint].zone, Zone::Chest | Zone::Abdomen) {
-            if distance < trunk {
-                trunk = distance;
+        match rig.joints[joint].zone {
+            Zone::UpperLimb(_) | Zone::LowerLimb(_) | Zone::Extremity(_) => {
                 let (near, far) = rig.bone_radii(joint);
-                radius = near + (far - near) * along;
+                let radius = (near + (far - near) * along).max(f32::EPSILON);
+                let t = ((distance / radius - LIMB_FADE.1) / (LIMB_FADE.0 - LIMB_FADE.1))
+                    .clamp(0.0, 1.0);
+                limb = limb.min(t * t * (3.0 - 2.0 * t));
             }
-        } else if distance < other {
-            other = distance;
+            zone => {
+                if distance < nearest.0 {
+                    nearest = (distance, matches!(zone, Zone::Chest | Zone::Abdomen));
+                }
+            }
         }
     }
-    if !trunk.is_finite() {
-        return 0.0;
-    }
-    let margin = (other - trunk) / (radius * LIMB_FADE).max(f32::EPSILON);
-    let t = margin.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    if nearest.1 { limb } else { 0.0 }
 }
 
 #[cfg(test)]
