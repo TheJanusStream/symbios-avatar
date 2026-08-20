@@ -140,6 +140,7 @@ fn main() {
         }
         let patch = Patch::held_by(&mesh, &weights, &joints);
         selection(&rig, &mesh, &patch, &joints, limb);
+        frame(&rig, &mesh, limb);
         if limb == Limb::HindLeft {
             shape(&rig, &mesh, &patch, &joints, stature);
             sole(&rig, &mesh, &patch, &joints, grid);
@@ -437,4 +438,129 @@ fn delivered(rig: &Rig, mesh: &symbios_avatar::PolyMesh, patch: &Patch, joints: 
          the number humanoid.rs must divide by, measured rather than assumed)",
         4,
     );
+}
+
+/// The foot in its own frame: the four figures `tests/feet.rs` guards (#304).
+///
+/// Along the heel-to-toe axis the rig places and across it, because a
+/// toed-out foot's width is not its extent in `x`. **Duplicated from the
+/// test on purpose**, as `visible_neck` is from `tests/plan.rs`: the test is
+/// the contract and this is the instrument, and the day they disagree the
+/// instrument is the one that is wrong — which is only checkable if the
+/// numbers can be held side by side.
+fn frame(rig: &Rig, mesh: &symbios_avatar::PolyMesh, limb: Limb) {
+    let Some(foot) = Foot::measure(mesh, rig, limb) else {
+        println!("  {limb:?}: no foot frame to read");
+        return;
+    };
+    println!(
+        "  in its own frame: {:.1} mm long, {:.1} wide ({:.3} of length); toe {:.1} over heel \
+         {:.1} mm ({:.2}); bend {:.1} mm toward the midline; toe-out {:.1} deg",
+        foot.length * 1000.0,
+        foot.width * 1000.0,
+        foot.width / foot.length,
+        foot.toe_top * 1000.0,
+        foot.heel_top * 1000.0,
+        foot.toe_top / foot.heel_top,
+        foot.bend * 1000.0,
+        foot.toe_out
+    );
+}
+
+/// One foot, read in its own frame.
+struct Foot {
+    /// Heel-to-tip length along the foot's axis, metres.
+    length: f32,
+    /// Widest extent across the axis, metres.
+    width: f32,
+    /// The tallest point over the ground in the heel band and the toe band.
+    heel_top: f32,
+    toe_top: f32,
+    /// How far the underside's centre at the toe band sits from the axis
+    /// through the heel band's centre, across the foot: positive toward the
+    /// body's midline.
+    bend: f32,
+    /// The axis's angle from the body's forward, positive away from the
+    /// midline, degrees.
+    toe_out: f32,
+}
+
+impl Foot {
+    fn measure(mesh: &symbios_avatar::PolyMesh, rig: &Rig, limb: Limb) -> Option<Self> {
+        let nodes: Vec<usize> = rig.in_zone(Zone::Extremity(limb));
+        if nodes.len() < 3 {
+            return None;
+        }
+        // The axis: from the rearmost node to the foremost, in the ground plane.
+        let rear = nodes
+            .iter()
+            .map(|&joint| rig.joints[joint].position)
+            .min_by(|a, b| a.z.total_cmp(&b.z))?;
+        let fore = nodes
+            .iter()
+            .map(|&joint| rig.joints[joint].position)
+            .max_by(|a, b| a.z.total_cmp(&b.z))?;
+        let axis = Vec3::new(fore.x - rear.x, 0.0, fore.z - rear.z).try_normalize()?;
+        let across = Vec3::new(-axis.z, 0.0, axis.x);
+        // Medial is toward the body's midline: the side of the across axis
+        // that points against the foot's own `x`. Outward, for the toe-out,
+        // is the foot's own `x`.
+        let medial = if across.x * rear.x < 0.0 { 1.0 } else { -1.0 };
+        let toe_out = axis.x.atan2(axis.z).to_degrees() * rear.x.signum();
+
+        let owned: Vec<Vec3> = mesh
+            .positions
+            .iter()
+            .copied()
+            .filter(|&at| rig.joints[rig.nearest_bone(at).joint].zone == Zone::Extremity(limb))
+            .collect();
+        if owned.len() < 32 {
+            return None;
+        }
+        let ground = owned.iter().map(|at| at.y).fold(f32::MAX, f32::min);
+        let along = |at: Vec3| (at - rear).dot(axis);
+        let (back, front) = owned.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &at| {
+            (lo.min(along(at)), hi.max(along(at)))
+        });
+        let length = front - back;
+        let (left, right) = owned.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &at| {
+            let side = (at - rear).dot(across);
+            (lo.min(side), hi.max(side))
+        });
+        let band = |lo: f32, hi: f32| {
+            owned
+                .iter()
+                .copied()
+                .filter(|&at| {
+                    let t = (along(at) - back) / length;
+                    t >= lo && t < hi
+                })
+                .collect::<Vec<_>>()
+        };
+        let top = |at: &[Vec3]| at.iter().map(|p| p.y - ground).fold(0.0f32, f32::max);
+        // The underside's centre across the foot, in a band.
+        let centre = |at: &[Vec3]| {
+            let sole: Vec<f32> = at
+                .iter()
+                .filter(|p| p.y - ground < 0.012)
+                .map(|&p| (p - rear).dot(across))
+                .collect();
+            if sole.is_empty() {
+                None
+            } else {
+                Some(sole.iter().sum::<f32>() / sole.len() as f32)
+            }
+        };
+        let heel = band(0.0, 0.15);
+        let toe = band(0.85, 1.0);
+        let bend = (centre(&toe)? - centre(&heel)?) * medial;
+        Some(Self {
+            length,
+            width: right - left,
+            heel_top: top(&heel),
+            toe_top: top(&toe),
+            bend,
+            toe_out,
+        })
+    }
 }
