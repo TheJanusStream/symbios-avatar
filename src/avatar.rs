@@ -363,6 +363,7 @@ impl Avatar {
         // still reads the carved surface, as it must.
         let wall = body.positions.clone();
         crate::torso::carve_chest(&mut body, &rig, &chest_traits);
+        crate::torso::carve_taper(&mut body, &rig, &chest_traits);
         // The mouth is cut AFTER the carve — the parting follows the carved
         // groove — and before anything measures, binds or charts the surface,
         // so the pocket is simply more body to all of them (#154). A rig with

@@ -632,6 +632,14 @@ pub struct ChestTraits {
     /// second derivation is a second place for the shape and the ink over it to
     /// disagree about how lean a body is.
     pub definition: f32,
+    /// How much of the V-taper the trunk takes, `0` for none and `1` for
+    /// the leanest, heaviest masculine body the record describes.
+    ///
+    /// **Lean AND massive, multiplied, because neither alone is a taper**
+    /// (#317). A heavy body that is not lean is a barrel; a lean body that is
+    /// slight has the shape but not the mass that makes it read. See
+    /// [`carve_taper`].
+    pub taper: f32,
 }
 
 impl ChestTraits {
@@ -665,6 +673,118 @@ impl ChestTraits {
             // against the lower pole before [`DESCENT`] slackens it.
             fold: fold_seat(POLES),
             definition,
+            // Square-rooted: a taper is most of the way in by the time
+            // definition is half way, since the body it belongs to is the one
+            // whose fat has already left the waist.
+            taper: definition.sqrt()
+                * (TAPER_SLIGHT + (1.0 - TAPER_SLIGHT) * composites.mass.clamp(0.0, 1.0))
+                * between(frame, 1.0, TAPER_FEMININE),
+        }
+    }
+}
+
+/// What share of the taper a lean body keeps at neutral mass.
+///
+/// Provenance: **tuned by render** (#317).
+const TAPER_SLIGHT: f32 = 0.4;
+
+/// What share of the taper the feminine frame takes at the same condition.
+///
+/// The feminine frame's waist already comes in through its own frame factors,
+/// and a lean muscular woman's V is real but narrower-shouldered.
+///
+/// Provenance: **tuned by render** (#317).
+const TAPER_FEMININE: f32 = 0.6;
+
+/// How far the V-taper moves the trunk's flank at full strength, as a share of
+/// the flank's own offset from the axis.
+///
+/// Measured on the muscular masculine corner (`femininity` −1, `mass` +1,
+/// `body_fat` 0.06) with `bodyaudit`, the lower ribcage band read 42% over the
+/// male reference while the band under the armpit read 19% — a bulge below a
+/// dip, where a taper is one slope. About a tenth either way is what turns
+/// the three bands into a line.
+///
+/// Provenance: **tuned by render** (#317).
+const TAPER_GAIN: f32 = 0.16;
+
+/// The taper's profile up the trunk: `(share of the waist-to-girdle span,
+/// signed share of [`TAPER_GAIN`])`, eased between the points.
+///
+/// **The lower ribs come IN and the armpit goes OUT** (#317). The ribcage
+/// node is a sphere, widest at its own centre, and that centre hangs off the
+/// girdle by a socket clearance that grows with the girdle — so on a broad
+/// body it sits at the lower ribs (0.660 of stature against the reference's
+/// 0.701) and the trunk is an egg whose equator is where a man's waist starts.
+/// Moving the node is a change to the girdle's socket geometry, which #106's
+/// record says is not a small edit; the carve delivers the silhouette on the
+/// skin instead, the way the pectoral does. The pull reaches a little below
+/// the waist joint so the flank does not step where the band ends.
+///
+/// The pull is centred where the ribcage node's equator lands on the broad
+/// body — 0.35 to 0.40 of the span — which is what #317 measured rather than
+/// where a waist would be drawn; the push under the armpit is half the pull,
+/// because that band already stands 19% over the reference from the deltoid.
+const TAPER_PROFILE: [(f32, f32); 7] = [
+    (-0.15, 0.0),
+    (0.0, -0.5),
+    (0.35, -1.0),
+    (0.55, 0.0),
+    (0.72, 0.5),
+    (0.92, 0.0),
+    (1.0, 0.0),
+];
+
+/// What share of the lateral pull the depth takes where the flank comes in.
+///
+/// A V is a front-view shape; the lower ribs stand off from the side too,
+/// but the waist's depth is the belly's, and most of it stays.
+///
+/// Provenance: **tuned by render** (#317).
+const TAPER_DEPTH: f32 = 0.4;
+
+/// The taper's signed strength at one height, `t` in waist-to-girdle spans.
+fn taper_at(t: f32) -> f32 {
+    for pair in TAPER_PROFILE.windows(2) {
+        let ((t0, v0), (t1, v1)) = (pair[0], pair[1]);
+        if t >= t0 && t <= t1 {
+            let s = ((t - t0) / (t1 - t0).max(f32::EPSILON)).clamp(0.0, 1.0);
+            return v0 + (v1 - v0) * (s * s * (3.0 - 2.0 * s));
+        }
+    }
+    0.0
+}
+
+/// Tapers the trunk from the armpit to the waist on a lean, massive body.
+///
+/// A lateral scaling of the trunk's own skin about its axis, by
+/// `TAPER_PROFILE` up the waist-to-girdle span and [`ChestTraits::taper`]
+/// in strength; a limb holds its own skin through `trunk_claim` as it does
+/// for the pectoral. Nothing moves on a body whose taper is zero, which is
+/// every body at or above the fat fraction where definition shows.
+pub fn carve_taper(mesh: &mut PolyMesh, rig: &Rig, traits: &ChestTraits) {
+    let Some(column) = Column::of(rig) else {
+        return;
+    };
+    if traits.taper <= 0.0 {
+        return;
+    }
+    let span = (column.girdle - column.waist).max(f32::EPSILON);
+    for point in &mut mesh.positions {
+        let t = (point.y - column.waist) / span;
+        if !(TAPER_PROFILE[0].0..=1.0).contains(&t) {
+            continue;
+        }
+        let claim = trunk_claim(rig, *point);
+        if claim <= 0.0 {
+            continue;
+        }
+        let strength = TAPER_GAIN * traits.taper * taper_at(t) * claim;
+        let across = point.x - column.axis.x;
+        point.x += across * strength;
+        if strength < 0.0 {
+            let forward = point.z - column.axis.z;
+            point.z += forward * strength * TAPER_DEPTH;
         }
     }
 }

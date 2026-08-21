@@ -118,7 +118,12 @@ fn main() {
         record.composites.body_fat = fat;
         record.composites.sanitize();
     }
-    let Some((rig, mesh, weights, height, floor)) = build(&record, &config) else {
+    // Any skinning flag asks for the cage bound that way; otherwise the
+    // shipped body.
+    let cheap = ["--reach", "--falloff", "--smooth", "--strength"]
+        .iter()
+        .any(|flag| args.iter().any(|arg| arg == flag));
+    let Some((rig, mesh, weights, height, floor)) = build(&record, &config, cheap) else {
         eprintln!("the body would not build");
         std::process::exit(1);
     };
@@ -564,14 +569,34 @@ fn silhouette(trunk: &Trunk) {
 fn build(
     record: &AvatarRecord,
     config: &SkinConfig,
+    cheap: bool,
 ) -> Option<(Rig, PolyMesh, SkinWeights, f32, f32)> {
-    let skeleton = record.skeleton();
-    let cage = build_cage(&skeleton, &CageConfig::default()).ok()?;
-    let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
-    let rig = Rig::from_skeleton(&skeleton).ok()?;
-    let weights = skin::bind(&mesh, &rig, config);
+    // **The body `Avatar::build` ships, not the bare subdivided cage** (#317).
+    // This read the cage straight off `catmull_clark` for as long as it
+    // existed, which meant no carve — not the pectoral, not the taper — was
+    // ever in its silhouette table: an instrument measuring a body nobody
+    // renders. The cheap path is kept for the population sweep, where only
+    // the cage's proportions are wanted and a thousand full builds are not —
+    // and for the skinning flags, which bind the cage their own way.
+    if cheap {
+        let skeleton = record.skeleton();
+        let cage = build_cage(&skeleton, &CageConfig::default()).ok()?;
+        let mesh = catmull_clark(&cage, BODY_SUBDIVISIONS);
+        let rig = Rig::from_skeleton(&skeleton).ok()?;
+        let weights = skin::bind(&mesh, &rig, config);
+        let (low, high) = mesh.bounds();
+        return Some((rig, mesh, weights, (high.y - low.y).max(1e-3), low.y));
+    }
+    let avatar = symbios_avatar::Avatar::build(record)?;
+    let mesh = avatar.parts.body;
     let (low, high) = mesh.bounds();
-    Some((rig, mesh, weights, (high.y - low.y).max(1e-3), low.y))
+    Some((
+        avatar.rig,
+        mesh,
+        avatar.parts.weights,
+        (high.y - low.y).max(1e-3),
+        low.y,
+    ))
 }
 
 /// The trunk averaged over the rolled bodies that are plausible bodies.
@@ -616,7 +641,7 @@ fn population(count: usize, config: &SkinConfig) {
             wild += 1;
             continue;
         }
-        match build(&record, config) {
+        match build(&record, config, true) {
             Some((rig, mesh, weights, height, floor)) => {
                 kept.push(Trunk::measure(&rig, &mesh, &weights, height, floor));
             }
