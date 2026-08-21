@@ -59,6 +59,10 @@ struct Hand {
     /// How many faces within the wrist's band are wound against the skin's
     /// own normals — turned inside out.
     folded: usize,
+    /// The same seam kink, read with the hand raised in the crate's own
+    /// greeting — the wrist turned and lifted, which is where a binding
+    /// that drops on one ring shows as a shelf.
+    posed_step: f32,
 }
 
 impl Hand {
@@ -97,7 +101,8 @@ impl Hand {
             return None;
         }
         let wrist = rig.joints[knuckles[0]].parent?;
-        let crease = rig.joints[rig.joints[wrist].parent?].position;
+        let forearm = rig.joints[wrist].parent?;
+        let crease = rig.joints[forearm].position;
         let arm_axis = (rig.joints[wrist].position - crease).try_normalize()?;
         let mut bones: Vec<usize> = digits.clone();
         bones.push(wrist);
@@ -167,31 +172,9 @@ impl Hand {
         // counted: a 4 mm slab of this mesh holds a vertex or two, and a
         // reading off it sat at 0.0 on five hands of six, which is a reading
         // that cannot fail.
-        // The radius is the OUTERMOST hit of a ray from the axis against the
-        // skin's triangles — the silhouette, which is what an eye reads of a
-        // collar and what a nested surface cannot hide under. Not
-        // `PolyMesh::contains`: that bisects on a parity ray cast along +x,
-        // and from the medial side of a wrist that ray crosses the wrist
-        // itself, weld slivers included; one graze miscounted, and the
-        // instrument read a 4 mm bump that no vertex stood anywhere near.
-        let radius = |from: Vec3, dir: Vec3| -> Option<f32> {
-            let mut hit: Option<f32> = None;
-            for face in &skin.faces {
-                let a = skin.positions[face[0] as usize];
-                for corner in 1..face.len() - 1 {
-                    let b = skin.positions[face[corner] as usize];
-                    let c = skin.positions[face[corner + 1] as usize];
-                    if let Some(t) = ray_triangle(from, dir, a, b, c).filter(|&t| t < 0.12) {
-                        hit = Some(hit.map_or(t, |h| h.max(t)));
-                    }
-                }
-            }
-            hit
-        };
-        // Seven rungs two and a half millimetres apart, centred on the
-        // crease, so a kink can be read on the seam and not on the heel —
-        // see below.
-        // 0. Folded faces: every skin face whose centroid lies within the
+        let wrist_step = seam_kink(&skin, crease, arm_axis, across, up);
+
+        // 1a. Folded faces: every skin face whose centroid lies within the
         // wrist's band, its winding's area vector against the mean of its
         // corners' stored normals. A welded surface has none; a band turned
         // inside out has a ring of them (#318).
@@ -229,51 +212,22 @@ impl Hand {
             })
             .count();
 
-        const RUNGS: [f32; 7] = [-0.0075, -0.005, -0.0025, 0.0, 0.0025, 0.005, 0.0075];
-        let mut wrist_step = 0.0f32;
-        for bin in 0..12 {
-            let angle = std::f32::consts::TAU * bin as f32 / 12.0;
-            let dir = across * angle.cos() + up * angle.sin();
-            // Each rung is the median of three rays a millimetre apart: the
-            // weld's bridge triangles lie almost in the surface, and one
-            // parity ray grazing them read a 3.5 mm spike on one rung of one
-            // bin with its neighbours smooth either side.
-            let ladder: Vec<Option<f32>> = RUNGS
-                .iter()
-                .map(|&rung| {
-                    let mut reads: Vec<f32> = [-0.001, 0.0, 0.001]
-                        .iter()
-                        .filter_map(|&jitter| radius(crease + arm_axis * (rung + jitter), dir))
-                        .collect();
-                    reads.sort_by(f32::total_cmp);
-                    (reads.len() == 3).then(|| reads[1])
-                })
-                .collect();
-            // **The ladder's second difference, not its first** (#318). A
-            // step is a KINK: the radius changes slope on one rung. A first
-            // difference cannot tell that from a slope — the heel of the
-            // hand broadens toward the thenar at 2.3 mm a rung on the thumb's
-            // side, which is the hand's own shape and read as 2.26 mm of
-            // "step" the moment the weld stopped replacing the heel with
-            // 23 mm of forearm stub. The collar this guard was written
-            // against kinks on the crease rung and reads the same either way.
-            //
-            // And read ON THE SEAM: the hand's weld ring sits a tenth of
-            // its base behind the crease (about 2.5 mm), so the triples whose
-            // middle rung lies between 5 mm behind the crease and the crease
-            // itself straddle it. The heel of the hand, five millimetres on,
-            // curves at about a 20 mm radius — 0.3 mm of second difference
-            // on these rungs, 1.25 on the old 5 mm ones — and is not a seam.
-            for (middle, triple) in ladder.windows(3).enumerate() {
-                let at = RUNGS[middle + 1];
-                if !(-0.005..=0.0).contains(&at) {
-                    continue;
-                }
-                if let (Some(a), Some(b), Some(c)) = (triple[0], triple[1], triple[2]) {
-                    wrist_step = wrist_step.max(((c - b) - (b - a)).abs());
-                }
-            }
-        }
+        // 1b. And posed (#318): the crate's own greeting at its peak, the
+        // hand raised and the wrist turned. A binding that drops from the
+        // forearm to the hand on one ring meets at rest and shears under a
+        // turn — the hand sat on the forearm with a shelf at the crease in
+        // every raised frame of a wave, and nothing at rest could see it.
+        let posed_step = {
+            let mut pose = symbios_avatar::anim::Pose::rest(rig);
+            symbios_avatar::anim::gesture::wave(limb).apply(rig, &mut pose, 0.4);
+            let posed = pose.forward(rig);
+            let skin = posed.deform_mesh(rig, &skin);
+            let crease = posed.positions[forearm];
+            let axis = (posed.positions[wrist] - crease).try_normalize()?;
+            let across = axis.cross(Vec3::Y).try_normalize().unwrap_or(Vec3::X);
+            let up = axis.cross(across);
+            seam_kink(&skin, crease, axis, across, up)
+        };
 
         // 2. Pieces: faces wholly owned, vertices welded by position, counted
         // by union-find. Charts split the skin by index, so an index walk
@@ -374,6 +328,7 @@ impl Hand {
         Some(Self {
             wrist_step,
             folded,
+            posed_step,
             pieces,
             length,
             width,
@@ -414,6 +369,81 @@ fn hands() -> Vec<(f32, Limb, Hand, f32)> {
 
 /// Reflects one hand onto the other: for every vertex of the left, how far
 /// the nearest vertex of the right is, mirrored across the sagittal plane.
+/// The seam kink: a ladder of stations along `axis` across `crease`, twelve
+/// rays from the axis at each, the largest second difference of the
+/// silhouette's radius on the rungs straddling the seam.
+///
+/// The radius is the OUTERMOST hit of a ray from the axis against the skin's
+/// triangles — the silhouette, which is what an eye reads of a collar and what
+/// a nested surface cannot hide under. Not `PolyMesh::contains`: that bisects
+/// on a parity ray cast along +x, and from the medial side of a wrist that ray
+/// crosses the wrist itself, weld slivers included; one graze miscounted, and
+/// the instrument read a 4 mm bump that no vertex stood anywhere near.
+///
+/// **The ladder's second difference, not its first** (#318). A step is a
+/// KINK: the radius changes slope on one rung. A first difference cannot tell
+/// that from a slope — the heel of the hand broadens toward the thenar at
+/// 2.3 mm a rung on the thumb's side, which is the hand's own shape and read
+/// as 2.26 mm of "step" the moment the weld stopped replacing the heel with
+/// 23 mm of forearm stub. **And read ON THE SEAM**: the hand's weld ring sits
+/// a tenth of its base behind the crease (about 2.5 mm), so the triples whose
+/// middle rung lies between 5 mm behind the crease and the crease itself
+/// straddle it. The heel, five millimetres on, curves at about a 20 mm radius
+/// — 0.3 mm of second difference on these rungs — and is not a seam.
+fn seam_kink(
+    skin: &symbios_avatar::PolyMesh,
+    crease: Vec3,
+    axis: Vec3,
+    across: Vec3,
+    up: Vec3,
+) -> f32 {
+    let radius = |from: Vec3, dir: Vec3| -> Option<f32> {
+        let mut hit: Option<f32> = None;
+        for face in &skin.faces {
+            let a = skin.positions[face[0] as usize];
+            for corner in 1..face.len() - 1 {
+                let b = skin.positions[face[corner] as usize];
+                let c = skin.positions[face[corner + 1] as usize];
+                if let Some(t) = ray_triangle(from, dir, a, b, c).filter(|&t| t < 0.12) {
+                    hit = Some(hit.map_or(t, |h| h.max(t)));
+                }
+            }
+        }
+        hit
+    };
+    const RUNGS: [f32; 7] = [-0.0075, -0.005, -0.0025, 0.0, 0.0025, 0.005, 0.0075];
+    let mut kink = 0.0f32;
+    for bin in 0..12 {
+        let angle = std::f32::consts::TAU * bin as f32 / 12.0;
+        let dir = across * angle.cos() + up * angle.sin();
+        // Each rung is the median of three rays a millimetre apart: the
+        // weld's bridge triangles lie almost in the surface, and one ray
+        // grazing them read a 3.5 mm spike on one rung of one bin with its
+        // neighbours smooth either side.
+        let ladder: Vec<Option<f32>> = RUNGS
+            .iter()
+            .map(|&rung| {
+                let mut reads: Vec<f32> = [-0.001, 0.0, 0.001]
+                    .iter()
+                    .filter_map(|&jitter| radius(crease + axis * (rung + jitter), dir))
+                    .collect();
+                reads.sort_by(f32::total_cmp);
+                (reads.len() == 3).then(|| reads[1])
+            })
+            .collect();
+        for (middle, triple) in ladder.windows(3).enumerate() {
+            let at = RUNGS[middle + 1];
+            if !(-0.005..=0.0).contains(&at) {
+                continue;
+            }
+            if let (Some(a), Some(b), Some(c)) = (triple[0], triple[1], triple[2]) {
+                kink = kink.max(((c - b) - (b - a)).abs());
+            }
+        }
+    }
+    kink
+}
+
 /// `(mean, worst)` in metres.
 fn reflection(left: &Hand, right: &Hand) -> (f32, f32) {
     let mut total = 0.0f32;
@@ -466,6 +496,27 @@ fn no_face_at_the_wrist_is_turned_inside_out() {
             hand.folded, 0,
             "femininity {femininity:+.1} {limb:?}: {} faces at the wrist are turned inside out",
             hand.folded
+        );
+    }
+}
+
+#[test]
+fn the_wrist_has_no_step_when_the_hand_waves() {
+    // **A junction is a binding as much as a surface** (#318). The hand is
+    // bound to its own twenty-one bones and to no other, so the arm's rim
+    // held 0.86 of the forearm and the hand's ring, on the same curve, none
+    // of it: positions met and the weights dropped on one ring. At rest that
+    // is invisible; raised in a wave the wrist sheared and the hand sat on
+    // the forearm with a shelf at the crease. The weld blends the forearm's
+    // hold across the wrist now. Read as the seam kink with the crate's own
+    // greeting applied at its peak.
+    for (femininity, limb, hand, _) in hands() {
+        // Before: 20.9 mm on the default left hand — a shelf; now 1.5 to
+        // 2.2 mm across the six hands, the blended band bending.
+        assert!(
+            hand.posed_step < 0.003,
+            "femininity {femininity:+.1} {limb:?}: with the hand raised in a wave the skin              kinks {:.2} mm at the wrist",
+            hand.posed_step * 1000.0
         );
     }
 }

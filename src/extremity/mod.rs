@@ -620,6 +620,88 @@ pub(crate) fn weld(skin: &mut PolyMesh, hand: &PolyMesh, rig: &Rig, limb: Limb, 
         }
     }
 
+    // 6c. BLEND the binding across the wrist (#318). The arm's rim holds
+    // 0.86 of the forearm and none of the wrist; the hand's ring holds 0.93
+    // of the wrist and none of the forearm — the hand is bound to its own
+    // twenty-one bones and to no other, which is right for every finger and
+    // wrong for the one ring it shares with the arm. Positions met on one
+    // curve, but a wrist rotated sixty degrees sheared the two rims a
+    // centimetre apart and the bridge stretched into a dark wedge: the hand
+    // read as a block set on the forearm in a greeting. A wrist is a band
+    // where the forearm's hold gives way to the hand's, so over
+    // [`WRIST_BLEND`] of the forearm's radius either side of the crease each
+    // vertex's arm-side hold is scaled to the forearm's share and its
+    // hand-side hold to the rest — the digits keep their proportions, a
+    // vertex with no hold on one side is given that side's own joint.
+    if skin.skin.len() == skin.positions.len() {
+        let radius = rig.joints[parent].radius.max(f32::EPSILON);
+        let (from, to) = (WRIST_BLEND.0 * radius, WRIST_BLEND.1 * radius);
+        let hand_side = |bone: u16| {
+            let mut walk = Some(bone as usize);
+            while let Some(at) = walk {
+                if at == joint {
+                    return true;
+                }
+                walk = rig.joints[at].parent;
+            }
+            false
+        };
+        for v in 0..skin.positions.len() {
+            let p = skin.positions[v];
+            if p.distance(crease) > to.max(-from) * 2.0 {
+                continue;
+            }
+            let along = (p - crease).dot(axis);
+            if !(from..=to).contains(&along) {
+                continue;
+            }
+            let t = ((along - from) / (to - from)).clamp(0.0, 1.0);
+            let hand_share = t * t * (3.0 - 2.0 * t);
+            let arm_share = 1.0 - hand_share;
+            let mut arm: Vec<Influence> = Vec::new();
+            let mut hand: Vec<Influence> = Vec::new();
+            for hold in skin.skin[v].iter().filter(|hold| hold.weight > 0.0) {
+                if hand_side(hold.joint) {
+                    hand.push(*hold);
+                } else {
+                    arm.push(*hold);
+                }
+            }
+            let scale = |holds: &mut Vec<Influence>, share: f32, own: usize| {
+                let total: f32 = holds.iter().map(|hold| hold.weight).sum();
+                if total <= f32::EPSILON {
+                    holds.clear();
+                    holds.push(Influence {
+                        joint: own as u16,
+                        weight: share,
+                    });
+                } else {
+                    for hold in holds.iter_mut() {
+                        hold.weight *= share / total;
+                    }
+                }
+            };
+            scale(&mut arm, arm_share, parent);
+            scale(&mut hand, hand_share, joint);
+            let mut all: Vec<Influence> = arm.into_iter().chain(hand).collect();
+            all.sort_by(|a, b| b.weight.total_cmp(&a.weight));
+            all.truncate(crate::rig::skin::MAX_INFLUENCES);
+            let total: f32 = all
+                .iter()
+                .map(|hold| hold.weight)
+                .sum::<f32>()
+                .max(f32::EPSILON);
+            let mut bound: VertexSkin = Default::default();
+            for (slot, hold) in all.into_iter().enumerate() {
+                bound[slot] = Influence {
+                    joint: hold.joint,
+                    weight: hold.weight / total,
+                };
+            }
+            skin.skin[v] = bound;
+        }
+    }
+
     // 7. Re-derive the band's normals from the WELDED, faired surface. Each
     // side kept the normals its own source mesh computed, and the mismatch
     // rendered as a shading step ringing the wrist — the seam back, in light
@@ -752,6 +834,16 @@ pub(crate) fn weld(skin: &mut PolyMesh, hand: &PolyMesh, rig: &Rig, limb: Limb, 
     // holds this.
     skin.compact();
 }
+
+/// The band over which the forearm's hold gives way to the hand's, in
+/// forearm radii either side of the wrist crease: `(behind, ahead)`.
+///
+/// Behind the crease the forearm still owns most of its last ring; ahead,
+/// the heel of the hand is the hand's by the time the thenar begins. Eight
+/// tenths of a radius on is about 20 mm on the default body.
+///
+/// Provenance: **tuned by render** (#318), against the Greeting clip.
+const WRIST_BLEND: (f32, f32) = (-0.4, 0.8);
 
 /// A ring's samples sorted by angle, duplicates at one angle dropped.
 fn sorted_curve(samples: impl Iterator<Item = (f32, Vec3)>) -> Vec<(f32, Vec3)> {

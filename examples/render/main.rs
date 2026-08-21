@@ -224,6 +224,9 @@ fn main() {
     let linear = args.iter().any(|arg| arg == "--linear");
     let bare = args.iter().any(|arg| arg == "--bare");
     let fist = args.iter().any(|arg| arg == "--fist");
+    // The other hand or foot of the pair for a close-up: a one-handed clip
+    // lands on one side, and the framing has to follow it.
+    let other = args.iter().any(|arg| arg == "--other");
     // Which bone holds which patch of skin through the head-to-body junction.
     let junction = args.iter().any(|arg| arg == "--junction");
     // The same question asked of the mandible instead: which skin does the
@@ -736,6 +739,7 @@ fn main() {
         linear,
         bare,
         fist,
+        other,
         junction,
         jawbind,
         follicles,
@@ -797,6 +801,33 @@ fn main() {
 
     if let Some(mode) = value("--golden") {
         golden(&subject, mode);
+        return;
+    }
+
+    // One of the crate's own goal-space gestures, by roster name — what the
+    // viewer plays for a greeting (#318). Sampled over its own length from
+    // the standing pose, the way `gesturing` in the viewer applies it.
+    if let Some(name) = value("--gesture") {
+        let Some(gesture) = symbios_avatar::anim::gesture::by_name(name) else {
+            eprintln!(
+                "unknown gesture {name}: expected one of {}",
+                symbios_avatar::anim::gesture::ROSTER.join(", ")
+            );
+            std::process::exit(1);
+        };
+        let count = clip_frames.max(1);
+        for frame in 0..count {
+            // A gesture's clock runs from 0 to 1 over its own length.
+            let time = frame as f32 / count as f32;
+            let mut pose = subject.standing();
+            gesture.apply(&subject.avatar.rig, &mut pose, time);
+            let Some(sheet) = shoot(&pose, 0.0) else {
+                eprintln!("this body has no such part to frame");
+                std::process::exit(1);
+            };
+            write(&out, &format!("{stem}_gesture_{frame:02}"), &sheet);
+        }
+        println!("rendered {count} frames of {name}");
         return;
     }
 
@@ -953,6 +984,9 @@ struct Show {
     bare: bool,
     /// Whether every finger is curled, to show the hand rig working.
     fist: bool,
+    /// Whether `--close hand` / `--close foot` frames the second of the pair
+    /// rather than the first (#318): the Greeting clip waves the other hand.
+    other: bool,
     /// Whether to tint the skin by which bone deforms it, through the junction
     /// between the head and the body. See [`junction_tint`].
     junction: bool,
@@ -1442,7 +1476,11 @@ impl Subject {
                 } else {
                     &parts.extremities.feet
                 };
-                let part = attached.first()?;
+                let part = if self.show.other {
+                    attached.get(1).or(attached.first())?
+                } else {
+                    attached.first()?
+                };
                 let to_world = Mat4::from_rotation_translation(
                     posed.rotations[part.joint],
                     posed.positions[part.joint],
