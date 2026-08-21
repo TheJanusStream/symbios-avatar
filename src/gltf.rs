@@ -528,7 +528,9 @@ impl Gltf {
                     Some(indices) => {
                         let read = self.integers(indices, 1)?;
                         built.triangles.extend(
-                            read.chunks_exact(3)
+                            read.as_chunks::<3>()
+                                .0
+                                .iter()
                                 .map(|face| [base + face[0], base + face[1], base + face[2]]),
                         );
                     }
@@ -558,8 +560,10 @@ impl Gltf {
         let inverse = match entry.inverse_bind_matrices {
             Some(accessor) => self
                 .floats(accessor, 16)?
-                .chunks_exact(16)
-                .map(Mat4::from_cols_slice)
+                .as_chunks::<16>()
+                .0
+                .iter()
+                .map(Mat4::from_cols_array)
                 .collect(),
             None => vec![Mat4::IDENTITY; entry.joints.len()],
         };
@@ -619,8 +623,10 @@ impl Gltf {
             }
             out.resize(out.len().max(which.len() / 4), Vec::new());
             for (vertex, (which, how_much)) in which
-                .chunks_exact(4)
-                .zip(how_much.chunks_exact(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(how_much.as_chunks::<4>().0.iter())
                 .enumerate()
             {
                 for slot in 0..4 {
@@ -963,18 +969,16 @@ impl Gltf {
     fn vec3s(&self, accessor: usize) -> Result<Vec<Vec3>, GltfError> {
         Ok(self
             .floats(accessor, 3)?
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|v| Vec3::new(v[0], v[1], v[2]))
             .collect())
     }
 
     /// An accessor read as four-vectors — rotations, `xyzw` as glTF stores them.
     fn vec4s(&self, accessor: usize) -> Result<Vec<[f32; 4]>, GltfError> {
-        Ok(self
-            .floats(accessor, 4)?
-            .chunks_exact(4)
-            .map(|v| [v[0], v[1], v[2], v[3]])
-            .collect())
+        Ok(self.floats(accessor, 4)?.as_chunks::<4>().0.to_vec())
     }
 }
 

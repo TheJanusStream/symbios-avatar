@@ -2715,7 +2715,13 @@ fn golden(subject: &Subject, mode: &str) {
 
                 let mut worst = 0i16;
                 let mut past = 0usize;
-                for (theirs, ours) in golden.as_raw().chunks_exact(4).zip(ours.chunks_exact(4)) {
+                for (theirs, ours) in golden
+                    .as_raw()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(ours.as_chunks::<4>().0.iter())
+                {
                     let delta = theirs
                         .iter()
                         .zip(ours)

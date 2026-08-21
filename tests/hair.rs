@@ -480,7 +480,7 @@ fn a_card_is_lit_as_a_round_lock() {
     let normals = &head.hair.mesh.normals;
     let mut flat = 0usize;
     let mut stations = 0usize;
-    for pair in normals.chunks_exact(2) {
+    for pair in normals.as_chunks::<2>().0 {
         stations += 1;
         let apart = pair[0].dot(pair[1]).clamp(-1.0, 1.0).acos();
         if apart < 40f32.to_radians() {

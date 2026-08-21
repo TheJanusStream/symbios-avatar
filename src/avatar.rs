@@ -1618,9 +1618,7 @@ mod tests {
         let avatar = biped(13);
         let mut pose = Pose::rest(&avatar.rig);
         pose.translation = Vec3::new(0.0, 0.5, 0.0);
-        for rotation in &mut pose.rotations {
-            *rotation = Quat::IDENTITY;
-        }
+        pose.rotations.fill(Quat::IDENTITY);
 
         for (rest, moved) in avatar.drawn(0.0).iter().zip(avatar.posed(&pose, 0.0)) {
             assert_eq!(rest.kind, moved.kind);

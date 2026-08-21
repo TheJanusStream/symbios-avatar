@@ -755,7 +755,7 @@ mod tests {
                 // degrees off the face by design. Which way the card faces is
                 // what this test is about, and that is what the two edges
                 // agree on.
-                for pair in one.normals.chunks_exact(2) {
+                for pair in one.normals.as_chunks::<2>().0 {
                     let facing = (pair[0] + pair[1]).normalize_or(Vec3::ZERO).dot(root.out);
                     total += facing;
                     away += usize::from(facing < 0.0);
