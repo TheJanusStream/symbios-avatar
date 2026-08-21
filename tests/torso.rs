@@ -83,10 +83,12 @@ fn a_body_with_no_definition_is_not_tapered() {
         "the default body carries a taper of {:.3}",
         traits.taper
     );
-    let mut heavy = Composites::default();
-    heavy.mass = 1.0;
-    heavy.femininity = -1.0;
-    heavy.body_fat = 0.30;
+    let heavy = Composites {
+        mass: 1.0,
+        femininity: -1.0,
+        body_fat: 0.30,
+        ..Default::default()
+    };
     assert!(
         ChestTraits::of(&heavy).taper == 0.0,
         "a heavy body that is not lean carries a taper"

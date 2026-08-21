@@ -56,6 +56,9 @@ struct Hand {
     thenar: f32,
     /// The hand's vertices in body space, for the reflection test.
     points: Vec<Vec3>,
+    /// How many faces within the wrist's band are wound against the skin's
+    /// own normals — turned inside out.
+    folded: usize,
 }
 
 impl Hand {
@@ -185,7 +188,48 @@ impl Hand {
             }
             hit
         };
-        const RUNGS: [f32; 5] = [-0.010, -0.005, 0.0, 0.005, 0.010];
+        // Seven rungs two and a half millimetres apart, centred on the
+        // crease, so a kink can be read on the seam and not on the heel —
+        // see below.
+        // 0. Folded faces: every skin face whose centroid lies within the
+        // wrist's band, its winding's area vector against the mean of its
+        // corners' stored normals. A welded surface has none; a band turned
+        // inside out has a ring of them (#318).
+        let folded = skin
+            .faces
+            .iter()
+            .filter(|face| {
+                let centre = face
+                    .iter()
+                    .fold(Vec3::ZERO, |sum, &v| sum + skin.positions[v as usize])
+                    / face.len() as f32;
+                (centre - crease).dot(arm_axis).abs() < 0.03 && centre.distance(crease) < 0.06
+            })
+            .filter(|face| {
+                let mut area = Vec3::ZERO;
+                let mut stored = Vec3::ZERO;
+                for (index, &v) in face.iter().enumerate() {
+                    let here = skin.positions[v as usize];
+                    let next = skin.positions[face[(index + 1) % face.len()] as usize];
+                    area += here.cross(next);
+                    stored += skin.normals[v as usize];
+                }
+                // A face that draws nothing has no side: once both rims lie
+                // on one curve the weld's bridge is slivers of a few
+                // hundredths of a square millimetre — a thirtieth of a pixel
+                // at the close-up's 0.86 mm per pixel — and one lying
+                // edge-on to the skin. A tenth of a square millimetre, turned
+                // clearly against, is what a folded face is.
+                let size = area.length() * 0.5;
+                size > 1e-7
+                    && area
+                        .normalize_or(Vec3::ZERO)
+                        .dot(stored.normalize_or(Vec3::ZERO))
+                        < -0.2
+            })
+            .count();
+
+        const RUNGS: [f32; 7] = [-0.0075, -0.005, -0.0025, 0.0, 0.0025, 0.005, 0.0075];
         let mut wrist_step = 0.0f32;
         for bin in 0..12 {
             let angle = std::f32::consts::TAU * bin as f32 / 12.0;
@@ -205,9 +249,28 @@ impl Hand {
                     (reads.len() == 3).then(|| reads[1])
                 })
                 .collect();
-            for pair in ladder.windows(2) {
-                if let (Some(a), Some(b)) = (pair[0], pair[1]) {
-                    wrist_step = wrist_step.max((a - b).abs());
+            // **The ladder's second difference, not its first** (#318). A
+            // step is a KINK: the radius changes slope on one rung. A first
+            // difference cannot tell that from a slope — the heel of the
+            // hand broadens toward the thenar at 2.3 mm a rung on the thumb's
+            // side, which is the hand's own shape and read as 2.26 mm of
+            // "step" the moment the weld stopped replacing the heel with
+            // 23 mm of forearm stub. The collar this guard was written
+            // against kinks on the crease rung and reads the same either way.
+            //
+            // And read ON THE SEAM: the hand's weld ring sits a tenth of
+            // its base behind the crease (about 2.5 mm), so the triples whose
+            // middle rung lies between 5 mm behind the crease and the crease
+            // itself straddle it. The heel of the hand, five millimetres on,
+            // curves at about a 20 mm radius — 0.3 mm of second difference
+            // on these rungs, 1.25 on the old 5 mm ones — and is not a seam.
+            for (middle, triple) in ladder.windows(3).enumerate() {
+                let at = RUNGS[middle + 1];
+                if !(-0.005..=0.0).contains(&at) {
+                    continue;
+                }
+                if let (Some(a), Some(b), Some(c)) = (triple[0], triple[1], triple[2]) {
+                    wrist_step = wrist_step.max(((c - b) - (b - a)).abs());
                 }
             }
         }
@@ -310,6 +373,7 @@ impl Hand {
 
         Some(Self {
             wrist_step,
+            folded,
             pieces,
             length,
             width,
@@ -381,6 +445,27 @@ fn the_wrist_has_no_step() {
             "femininity {femininity:+.1} {limb:?}: the skin steps {:.2} mm across the wrist \
              crease; the welded wrist reads 0.5 mm and the collar read 1.9 mm",
             hand.wrist_step * 1000.0
+        );
+    }
+}
+
+#[test]
+fn no_face_at_the_wrist_is_turned_inside_out() {
+    // **The fold** (#318). The cut's rim is the forearm's last ring, 23 mm
+    // past the crease; the hand's weld ring sits 2 mm behind it and its next
+    // ring 4 mm in front. Snapping the hand's ring out to the rim dragged it
+    // past its own neighbour and turned the hand's base band inside out —
+    // twenty faces wound against the rest of the hand, a notch in the
+    // silhouette and a shading field that broke on the seam however the
+    // normals were summed. The arm's rim comes to the hand now. Read as the
+    // faces in the wrist's band whose winding turns against their own
+    // normals: twenty of the hand's own faces before the weld's compaction,
+    // six that still draw on the skin as shipped, and none on a weld.
+    for (femininity, limb, hand, _) in hands() {
+        assert_eq!(
+            hand.folded, 0,
+            "femininity {femininity:+.1} {limb:?}: {} faces at the wrist are turned inside out",
+            hand.folded
         );
     }
 }

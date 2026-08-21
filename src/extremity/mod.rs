@@ -454,46 +454,37 @@ pub(crate) fn weld(skin: &mut PolyMesh, hand: &PolyMesh, rig: &Rig, limb: Limb, 
         from.dot(up).atan2(from.dot(side))
     };
 
-    // 4. SNAP the hand's ring onto the arm's rim curve before stitching. The
+    // 4. SNAP the arm's rim onto the hand's ring curve before stitching. The
     // two rings were only ever near each other: the arm's surface is not
     // round at the crease and the cut's rim jitters between subdivision rows,
     // so a bridge between free rings rendered as a cliff wherever the radii
     // disagreed — worst across the top, where the arm stands furthest off its
-    // bone. Interpolating the rim's position at each hand vertex's own angle
-    // puts both boundaries on ONE curve; the bridge that follows is a sliver
-    // that only exists to keep the crack sealed when the wrist bends, because
-    // the two rings answer to different bones.
-    let mut hand = hand.clone();
-    if !arm_rim.is_empty() {
-        let mut curve: Vec<(f32, Vec3)> = arm_rim.iter().map(|&(_, p)| (angle(p), p)).collect();
-        curve.sort_by(|a, b| a.0.total_cmp(&b.0));
-        curve.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-5);
-        let at = |theta: f32| -> Vec3 {
-            let after = curve.iter().position(|&(a, _)| a >= theta).unwrap_or(0);
-            let before = if after == 0 {
-                curve.len() - 1
-            } else {
-                after - 1
-            };
-            let (a0, p0) = curve[before];
-            let (a1, p1) = curve[after];
-            let span = (a1 - a0).rem_euclid(std::f32::consts::TAU);
-            let into = (theta - a0).rem_euclid(std::f32::consts::TAU);
-            let t = if span <= 1e-6 {
-                0.0
-            } else {
-                (into / span).clamp(0.0, 1.0)
-            };
-            p0 + (p1 - p0) * t
-        };
-        for &(vertex, position) in &hand_rim {
-            hand.positions[vertex as usize] = at(angle(position));
+    // bone. Interpolating one ring's position at each vertex of the other's
+    // own angle puts both boundaries on ONE curve; the bridge that follows is
+    // a sliver that only exists to keep the crack sealed when the wrist bends,
+    // because the two rings answer to different bones.
+    //
+    // **The ARM comes to the hand, not the hand to the arm** (#318). The
+    // cut's rim is the forearm's last ring, and on the default body that ring
+    // stands 23 mm past the crease — the stub's cap is what the zone removed,
+    // not the stub. The hand's weld ring sits 2 mm behind the crease and its
+    // next ring 4 mm in front, so snapping the hand's ring out to the rim
+    // dragged it 19 mm past its own neighbour and turned the hand's base band
+    // inside out: measured, all twenty of its faces wound against the rest of
+    // the hand. That fold was the discontinuity — a silhouette notch, and a
+    // shading field that broke on the seam however the normals were summed.
+    // The forearm's last band runs from 27 mm behind the crease, so drawing
+    // its rim back to the hand's ring leaves it 25 mm long and tapering to
+    // the wrist, which is what a forearm does.
+    if !hand_rim.is_empty() {
+        let curve = sorted_curve(hand_rim.iter().map(|&(_, p)| (angle(p), p)));
+        for &(vertex, position) in &arm_rim {
+            skin.positions[vertex as usize] = along_curve(&curve, angle(position));
         }
     }
-    let hand = hand;
 
     let offset = skin.vertex_count() as u32;
-    skin.append(&hand);
+    skin.append(hand);
 
     if arm_rim.is_empty() || hand_rim.is_empty() {
         return;
@@ -539,6 +530,7 @@ pub(crate) fn weld(skin: &mut PolyMesh, hand: &PolyMesh, rig: &Rig, limb: Limb, 
             face.reverse();
         }
     }
+    let bridge_from = skin.faces.len();
     for face in faces {
         if face[0] != face[1] && face[1] != face[2] && face[0] != face[2] {
             skin.push_face(face);
@@ -612,39 +604,18 @@ pub(crate) fn weld(skin: &mut PolyMesh, hand: &PolyMesh, rig: &Rig, limb: Limb, 
     // 6. Close the crack the fairing opens. Each rim smooths under its own
     // side's adjacency — the slivers joining them are too thin to couple the
     // two — so three passes walk the rims apart and the bridge stretches
-    // into a visible groove. The hand's rim is set back onto the arm's
-    // smoothed rim curve, which is the same snap as step 4 with the faired
+    // into a visible groove. The arm's rim is set back onto the hand's
+    // smoothed ring curve, which is the same snap as step 4 with the faired
     // positions as the target.
     {
-        let mut curve: Vec<(f32, Vec3)> = arm
-            .iter()
-            .map(|&(_, v)| {
-                let p = skin.positions[v as usize];
-                (angle(p), p)
-            })
-            .collect();
-        curve.sort_by(|a, b| a.0.total_cmp(&b.0));
-        curve.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-5);
+        let curve = sorted_curve(hand_ring.iter().map(|&(_, v)| {
+            let p = skin.positions[v as usize];
+            (angle(p), p)
+        }));
         if !curve.is_empty() {
-            for &(_, v) in &hand_ring {
+            for &(_, v) in &arm {
                 let p = skin.positions[v as usize];
-                let theta = angle(p);
-                let after = curve.iter().position(|&(a, _)| a >= theta).unwrap_or(0);
-                let before = if after == 0 {
-                    curve.len() - 1
-                } else {
-                    after - 1
-                };
-                let (a0, p0) = curve[before];
-                let (a1, p1) = curve[after];
-                let span = (a1 - a0).rem_euclid(std::f32::consts::TAU);
-                let into = (theta - a0).rem_euclid(std::f32::consts::TAU);
-                let t = if span <= 1e-6 {
-                    0.0
-                } else {
-                    (into / span).clamp(0.0, 1.0)
-                };
-                skin.positions[v as usize] = p0 + (p1 - p0) * t;
+                skin.positions[v as usize] = along_curve(&curve, angle(p));
             }
         }
     }
@@ -675,9 +646,104 @@ pub(crate) fn weld(skin: &mut PolyMesh, hand: &PolyMesh, rig: &Rig, limb: Limb, 
             }
         }
     }
-    for (vertex, sum) in sums {
-        let normal = sum.normalize_or(skin.normals[vertex as usize]);
-        skin.normals[vertex as usize] = normal;
+    // **And the two rims share one field** (#318). The arm's rim and the
+    // hand's ring are two sets of vertices on one curve — seventeen against
+    // twenty on the default body, interleaved by angle, so no two coincide —
+    // and summed per vertex each saw only its own side's faces: the arm rim
+    // the forearm's and the slivers, the hand ring the palm's and the
+    // slivers. Two normals met on the curve at an angle, and the normal pass
+    // showed it as two colours meeting on a hard line round the wrist while
+    // the silhouette ran through. So each rim vertex takes the mean of its
+    // own side's normal and the other side's, read at its own angle the way
+    // its position was — which is the one field a welded surface has.
+    //
+    // Position-grouped as well, for the chart-split copies along every UV
+    // seam in the band, as the fairing is.
+    let field = |ring: &[(f32, u32)]| -> Vec<(f32, Vec3)> {
+        let mut field: Vec<(f32, Vec3)> = ring
+            .iter()
+            .filter_map(|&(_, v)| {
+                let p = skin.positions[v as usize];
+                sums.get(&v)
+                    .map(|sum| (angle(p), sum.normalize_or(Vec3::ZERO)))
+            })
+            .collect();
+        field.sort_by(|a, b| a.0.total_cmp(&b.0));
+        field
+    };
+    let read = |field: &[(f32, Vec3)], theta: f32| -> Vec3 {
+        if field.is_empty() {
+            return Vec3::ZERO;
+        }
+        let after = field.iter().position(|&(a, _)| a >= theta).unwrap_or(0);
+        let before = if after == 0 {
+            field.len() - 1
+        } else {
+            after - 1
+        };
+        let (a0, n0) = field[before];
+        let (a1, n1) = field[after];
+        let span = (a1 - a0).rem_euclid(std::f32::consts::TAU);
+        let into = (theta - a0).rem_euclid(std::f32::consts::TAU);
+        let t = if span <= 1e-6 {
+            0.0
+        } else {
+            (into / span).clamp(0.0, 1.0)
+        };
+        (n0 + (n1 - n0) * t).normalize_or(Vec3::ZERO)
+    };
+    let arm_field = field(&arm);
+    let hand_field = field(&hand_ring);
+    let mut shared: BTreeMap<u32, Vec3> = BTreeMap::new();
+    for (ring, other) in [(&arm, &hand_field), (&hand_ring, &arm_field)] {
+        for &(_, v) in ring.iter() {
+            let Some(own) = sums.get(&v) else {
+                continue;
+            };
+            let p = skin.positions[v as usize];
+            let met = own.normalize_or(Vec3::ZERO) + read(other, angle(p));
+            shared.insert(v, met.normalize_or(*own));
+        }
+    }
+    let mut by_position: BTreeMap<(i64, i64, i64), (Vec3, Vec<u32>)> = BTreeMap::new();
+    for (vertex, sum) in &sums {
+        let normal = shared
+            .get(vertex)
+            .copied()
+            .unwrap_or_else(|| sum.normalize_or(Vec3::ZERO));
+        let entry = by_position
+            .entry(key(skin.positions[*vertex as usize]))
+            .or_insert((Vec3::ZERO, Vec::new()));
+        entry.0 += normal;
+        entry.1.push(*vertex);
+    }
+    for (sum, members) in by_position.values() {
+        for &vertex in members {
+            skin.normals[vertex as usize] = sum.normalize_or(skin.normals[vertex as usize]);
+        }
+    }
+
+    // 7b. Wind the bridge again, on the positions it ends up with and by the
+    // normals just derived (#318). Its slivers were wound by the radial test
+    // on the rims as cut; the fairing and the re-snap move both rims, and a
+    // sliver that still holds a few square millimetres can come out of that
+    // turned over — measured, a handful per hand at 3 to 6 mm² wound against
+    // the skin around them. The radial test is not the right referee here
+    // either: on the thumb's side the heel flares and the skin's normal is
+    // not radial about the wrist's axis. The corners' own normals are the
+    // surface's word on which side is out.
+    for face in skin.faces[bridge_from..].iter_mut() {
+        let (p0, p1, p2) = (
+            skin.positions[face[0] as usize],
+            skin.positions[face[1] as usize],
+            skin.positions[face[2] as usize],
+        );
+        let out = skin.normals[face[0] as usize]
+            + skin.normals[face[1] as usize]
+            + skin.normals[face[2] as usize];
+        if (p1 - p0).cross(p2 - p0).dot(out) < 0.0 {
+            face.reverse();
+        }
     }
 
     // 8. The cut's faces are gone; their orphaned corners go with them, or
@@ -685,6 +751,35 @@ pub(crate) fn weld(skin: &mut PolyMesh, hand: &PolyMesh, rig: &Rig, limb: Limb, 
     // `suppressing_the_covered_skin_leaves_no_vertex_behind` guard is what
     // holds this.
     skin.compact();
+}
+
+/// A ring's samples sorted by angle, duplicates at one angle dropped.
+fn sorted_curve(samples: impl Iterator<Item = (f32, Vec3)>) -> Vec<(f32, Vec3)> {
+    let mut curve: Vec<(f32, Vec3)> = samples.collect();
+    curve.sort_by(|a, b| a.0.total_cmp(&b.0));
+    curve.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-5);
+    curve
+}
+
+/// The point of a sorted ring curve at one angle, interpolated between the
+/// two samples either side of it and wrapping round the ring.
+fn along_curve(curve: &[(f32, Vec3)], theta: f32) -> Vec3 {
+    let after = curve.iter().position(|&(a, _)| a >= theta).unwrap_or(0);
+    let before = if after == 0 {
+        curve.len() - 1
+    } else {
+        after - 1
+    };
+    let (a0, p0) = curve[before];
+    let (a1, p1) = curve[after];
+    let span = (a1 - a0).rem_euclid(std::f32::consts::TAU);
+    let into = (theta - a0).rem_euclid(std::f32::consts::TAU);
+    let t = if span <= 1e-6 {
+        0.0
+    } else {
+        (into / span).clamp(0.0, 1.0)
+    };
+    p0 + (p1 - p0) * t
 }
 
 /// Undirected edge → how many faces use it.
