@@ -44,7 +44,7 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use super::super::clump::{LIFT, Root, Shape};
+use super::super::clump::{LIFT, Root, Seating, Shape};
 use super::super::follicle::{Follicle, Follicles};
 use super::{Cut, Style, clumps_for};
 use crate::plan::scaled;
@@ -109,7 +109,11 @@ pub enum ScalpStyle {
 /// Provenance: **tuned by render**, against the anatomy each style is
 /// named for — a crop stops on the head, a bob reaches the jaw, a long reaches
 /// past the shoulder.
-const REACH: [f32; 5] = [0.022, 0.130, 0.330, 0.045, 0.120];
+///
+/// **The tied-back entry is the TAIL's length from the knot** (#316), since
+/// that is the only part of the style that hangs; the hair that is not
+/// gathered lies to the hairline and stops.
+const REACH: [f32; 5] = [0.022, 0.130, 0.330, 0.160, 0.120];
 
 /// How wide a lock is at its root at the coarsest cut, in metres.
 ///
@@ -261,25 +265,15 @@ impl Style for ScalpStyle {
             Self::Long { weight } => (0.45, 1.0 + 0.7 * weight.clamp(0.0, 1.0)),
             // Drawn back, so there is no fringe to speak of and the length is in
             // the tail.
-            Self::TiedBack { .. } => (0.75, 1.0),
-            // A curl has no fringe: it coils out of the way on its own.
-            Self::Curly { .. } => (0.9, 1.0),
+            // Drawn back: what is not gathered lies to the hairline and stops
+            // there, and what is gathered hangs one length from the knot.
+            Self::TiedBack { .. } => (1.0, 1.0),
+            // A curl frames the face: at nine tenths of its reach the
+            // ringlets curtained the eyes (#316), and a coil does not get out
+            // of the way on its own.
+            Self::Curly { .. } => (0.5, 1.0),
         };
-        // Where a tail is knotted, if this style has one: behind the head at a
-        // height its own axis picks.
-        let knot = match self {
-            Self::TiedBack { tail } => {
-                let skull = head.skull();
-                let (throat, crown) = skull.throat_and_crown();
-                let height = throat + (crown - throat) * (0.35 + 0.5 * tail.clamp(0.0, 1.0));
-                Some(Vec3::new(
-                    0.0,
-                    height,
-                    skull.depth_behind(height) * KNOT_STANDOFF,
-                ))
-            }
-            _ => None,
-        };
+        let knot = self.knot(head);
         let curl = match self {
             Self::Curly { curl } => curl.clamp(0.0, 1.0),
             _ => 0.0,
@@ -295,6 +289,10 @@ impl Style for ScalpStyle {
             knot,
             pull: if knot.is_some() { 1.0 } else { 0.0 },
             curl,
+            part: match self {
+                Self::Long { .. } => 1.0,
+                _ => 0.0,
+            },
         }))
     }
 
@@ -317,6 +315,24 @@ impl Style for ScalpStyle {
 }
 
 impl ScalpStyle {
+    /// Where a tail is knotted, if this style has one: behind the head at a
+    /// height its own axis picks, head-local.
+    fn knot(self, head: &Follicles) -> Option<Vec3> {
+        match self {
+            Self::TiedBack { tail } => {
+                let skull = head.skull();
+                let (throat, crown) = skull.throat_and_crown();
+                let height = throat + (crown - throat) * (0.35 + 0.5 * tail.clamp(0.0, 1.0));
+                Some(Vec3::new(
+                    0.0,
+                    height,
+                    skull.depth_behind(height) * KNOT_STANDOFF,
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// Where this style's numbers sit in the tables above, or `None` if it grows
     /// nothing.
     ///
@@ -333,15 +349,6 @@ impl ScalpStyle {
         }
     }
 }
-
-/// Where along a lock the gather into a knot begins.
-///
-/// Late: the walk combs the lock round to the nape on its own, so the knot only
-/// has to close the last of the distance. Starting it earlier is what draws a
-/// chord through the head.
-///
-/// Provenance: **tuned by render**.
-const KNOT_FROM: f32 = 0.55;
 
 /// How far the knot sits off the back of the head, as a share of its reach there.
 ///
@@ -379,6 +386,96 @@ const LOOSE: f32 = 0.045;
 ///
 /// Provenance: **tuned by render**.
 const FAN: f32 = 0.10;
+
+/// How far from the pole a card reaches its full width, in metres.
+///
+/// About the crown's own radius: the cards converge on the whorl and have to
+/// share its circumference, and by this far out the circumference is wide
+/// enough for all of them at full width.
+///
+/// Provenance: **tuned by render** (#316).
+const FAN_OVER: f32 = 0.05;
+
+/// How far the length of a lock's hang varies from card to card, as a share.
+///
+/// **Locks end where they end, not on a line** (#316). Cards that all hang
+/// the same distance past the hairline end on one contour, and the contour
+/// of tapered cards is a sawtooth: the fringe on the starting sheet. Real
+/// locks stagger, and a crop's edge is feathered because its locks do.
+///
+/// Provenance: **tuned by render**.
+const STAGGER: f32 = 0.30;
+
+/// The least that stagger may be, in metres.
+///
+/// A share of a crop's ten-millimetre hang is a millimetre and a half, which
+/// is under what the render resolves; a crop's edge feathers over about a
+/// centimetre.
+///
+/// Provenance: **tuned by render**.
+const STAGGER_LEAST: f32 = 0.008;
+
+/// Over how much of the end of a hang a card tapers to its tip, in metres.
+///
+/// **The taper belongs to the END of a lock, not to its whole hang.** Tapered
+/// from the hairline to the tip, a bob's card was a 46 mm isosceles triangle
+/// 70 mm tall, and a row of those is a row of teeth; a lock keeps its width
+/// and comes to its point over its last few centimetres.
+///
+/// Provenance: **tuned by render** (#316).
+const TIP: f32 = 0.045;
+
+/// How wide the band of mask weight is over which cards leave the scalp.
+///
+/// **A hairline is where locks STOP LYING DOWN, and they do not all stop at
+/// once** (#316). One threshold put every card's first free station on one
+/// contour, and the crop's hairline read as the rim of a cap. Each card
+/// leaves at its own point across the mask's fade, which is the fade doing
+/// for the geometry what it already did for the paint.
+///
+/// Provenance: **derived** from the fade: the middle half of it.
+const EDGE_SPREAD: f32 = 0.5;
+
+/// Where a parted style's front locks are combed to, in radians from dead
+/// ahead.
+///
+/// Just in front of the ear: a lock from the forehead swept to the temple
+/// hangs beside the face, and one swept further hangs behind the ear where
+/// it no longer frames anything.
+///
+/// Provenance: **tuned by render** (#316).
+const PART_TO: f32 = 1.25;
+
+/// How far down the head a parted lock has finished turning, as a share of the
+/// head's height below the crown.
+///
+/// The front hairline is about a third of the way down the head, and the lock
+/// has to have reached the temple by the time it gets there or it hangs off
+/// the forehead after all. Scheduled on the descent, as the comb is, for the
+/// reason [`Sheet::combed`] gives.
+///
+/// Provenance: **derived** from where the hairline sits.
+const PART_BY: f32 = 0.30;
+
+/// How much of the way to the hairline a lock at the parting descends before
+/// it starts to turn, as a share of [`PART_BY`].
+///
+/// Provenance: **tuned by render** (#316).
+const PART_LATE: f32 = 0.6;
+
+/// The cosine of the azimuth behind which a tied-back lock is drawn to the
+/// knot at all.
+///
+/// About 70° off dead ahead — the temple. Forward of it the hair lies to the
+/// hairline as a crop's does.
+///
+/// Provenance: **tuned by render** (#316).
+const PULL_FROM: f32 = 0.35;
+
+/// Over how much of that cosine the pull comes on, behind [`PULL_FROM`].
+///
+/// Provenance: **tuned by render** (#316).
+const PULL_FADE: f32 = 0.5;
 
 /// The azimuths the walk is measured at, in radians from dead ahead.
 ///
@@ -466,6 +563,15 @@ struct Sheet {
     pull: f32,
     /// How tightly it coils.
     curl: f32,
+    /// How far its front locks are parted to either side of the face, `0` a
+    /// fringe and `1` swept clear to the temple.
+    ///
+    /// **Long hair does not hang over the face**: every card rooted in the
+    /// front third of the head fell straight down its own meridian through
+    /// the eyes and the mouth to the chest, which is a curtain and not a
+    /// haircut. A parting is the same comb a tail is — the azimuth turns as
+    /// the lock descends — aimed at the temple instead of the nape.
+    part: f32,
 }
 
 impl Sheet {
@@ -480,11 +586,25 @@ impl Sheet {
     /// of it at the back, so a fringe stops above the eyes while the same style's
     /// sides reach the jaw. Uniform length is what makes hair read as a hood.
     fn fall(&self, root: &Root) -> f32 {
+        // A tied lock either reaches the knot and hangs the tail's length
+        // from it, or lies to the hairline and stops; see [`Self::pulled`].
+        if self.knot.is_some() {
+            let from = Self::azimuth(root);
+            let spread = STAGGER_LEAST * (Self::salt(root, 0) - 0.5);
+            return if Self::pulled(from) >= 0.5 {
+                self.reach + spread
+            } else {
+                (STAGGER_LEAST * 0.5 + spread).max(0.0)
+            };
+        }
         let facing = Self::azimuth(root).cos();
         let front = crate::face::smooth((facing - FRONT) / (1.0 - FRONT));
         let back = crate::face::smooth((-facing - 0.1) / 0.9);
         let share = self.fringe + (1.0 - self.fringe) * (1.0 - front);
-        self.reach * share * (1.0 + (self.behind - 1.0) * back)
+        let hang = self.reach * share * (1.0 + (self.behind - 1.0) * back);
+        // Staggered card by card, so the tips do not draw a contour.
+        let spread = (hang * STAGGER).max(STAGGER_LEAST);
+        (hang + spread * (Self::salt(root, 0) - 0.5)).max(0.0)
     }
 
     /// How far it is from the crown to the hairline down this lock's meridian, in
@@ -526,13 +646,95 @@ impl Sheet {
     /// sides sweep round to the nape in opposite directions and part at the front
     /// rather than crossing over the face.
     fn combed(&self, from: f32, root: f32, height: f32) -> f32 {
-        let Some(knot) = self.knot.filter(|_| self.pull > 0.0) else {
-            return from;
-        };
-        let share = ((root - height) / (root - knot.y).max(f32::EPSILON)).clamp(0.0, 1.0);
         let side = if from < 0.0 { -1.0 } else { 1.0 };
-        let back = std::f32::consts::PI * side;
-        from + (back - from) * (self.pull * share)
+        if let Some(knot) = self.knot.filter(|_| self.pull > 0.0) {
+            let share = ((root - height) / (root - knot.y).max(f32::EPSILON)).clamp(0.0, 1.0);
+            let back = std::f32::consts::PI * side;
+            return from + (back - from) * (self.pull * Self::pulled(from) * share);
+        }
+        if self.part > 0.0 {
+            // Only the locks over the face are parted, and the turn fades
+            // in across the temple so the parted and the unparted meet.
+            let facing = from.cos();
+            let over = crate::face::smooth((facing - FRONT) / (1.0 - FRONT));
+            if over <= 0.0 {
+                return from;
+            }
+            let (throat, _) = self.regions.skull().throat_and_crown();
+            let depth = (root - throat) * PART_BY;
+            // **The midline turns LAST.** Turned together, every front lock
+            // was half-way to the temple half-way down, and nothing was left
+            // over the middle of the forehead: a bare V above the brow from
+            // the parting to the hairline. A lock at the parting stays on its
+            // own meridian until just above the hairline and then sweeps
+            // along it, which is what combed-over hair does; a lock already
+            // near the temple has little to turn and turns from the start.
+            let start = depth * over * PART_LATE;
+            let share =
+                ((root - height - start) / (depth - start).max(f32::EPSILON)).clamp(0.0, 1.0);
+            let to = PART_TO * side;
+            return from + (to - from) * (self.part * over * crate::face::smooth(share));
+        }
+        from
+    }
+
+    /// How much of the way to the knot a lock rooted at `from` is drawn.
+    ///
+    /// **Only the back of the head feeds a tail** (#316). Combed from the
+    /// crown toward the knot whatever its meridian, every front lock had
+    /// turned away from the forehead before it got there, and the sheet
+    /// showed a bare band of scalp above the brow on a head whose hair was
+    /// supposedly drawn back over it. Hair drawn back lies flat to the front
+    /// hairline; what is gathered is the hair behind the ears.
+    fn pulled(from: f32) -> f32 {
+        crate::face::smooth((PULL_FROM - from.cos()) / PULL_FADE)
+    }
+
+    /// A number in `0..1` that is this card's own, by lane.
+    ///
+    /// **Hashed from the root, not drawn from the stream**: a [`Shape`] is
+    /// asked about a card many times over and has to answer the same each
+    /// time, and the scatter's stream has already moved on. Two cards a
+    /// millimetre apart get unrelated numbers, which is the point — stagger
+    /// that correlated with position would be a wave, not a feathering.
+    fn salt(root: &Root, lane: u32) -> f32 {
+        let mut hash = lane.wrapping_mul(0x9E37_79B9);
+        for part in [root.at.x, root.at.y, root.at.z] {
+            hash ^= part.to_bits();
+            hash = hash.wrapping_mul(0x85EB_CA6B);
+            hash ^= hash >> 13;
+        }
+        hash = hash.wrapping_mul(0xC2B2_AE35);
+        hash ^= hash >> 16;
+        (hash >> 8) as f32 / (1u32 << 24) as f32
+    }
+
+    /// The mask weight below which THIS card has left the scalp.
+    ///
+    /// [`EDGE`] spread across the middle of the mask's fade, card by card.
+    fn edge(root: &Root) -> f32 {
+        EDGE + (Self::salt(root, 1) - 0.5) * EDGE_SPREAD
+    }
+
+    /// Which way the envelope faces at one height and azimuth, unit length.
+    ///
+    /// The surface is one of revolution locally — a radius that is a function
+    /// of height — so its normal is the radial direction tilted by the
+    /// radius's own slope: straight up at the pole, where the radius grows
+    /// without bound per unit height, and radial at the head's widest.
+    fn normal(&self, height: f32, azimuth: f32) -> Vec3 {
+        let skull = self.regions.skull();
+        let (throat, crown) = skull.throat_and_crown();
+        let radius = |height: f32| {
+            let at = skull.surface_at(height.clamp(throat, crown), azimuth);
+            (at.x * at.x + at.z * at.z).sqrt()
+        };
+        let step = 0.001;
+        let above = (height + step).min(crown);
+        let below = (height - step).max(throat);
+        let slope = (radius(above) - radius(below)) / (above - below).max(f32::EPSILON);
+        let out = Vec3::new(azimuth.sin(), 0.0, azimuth.cos());
+        (out - Vec3::Y * slope).normalize_or(Vec3::Y)
     }
 
     /// Where the lock is after walking `want` metres from its root.
@@ -636,8 +838,60 @@ impl Sheet {
         // azimuth the lock has reached, which is the same claim measured in the
         // right place.
         let mut crest = top;
+        let edge = Self::edge(root);
+        // How many stations of tail have hung from the knot, once the lock
+        // has reached it.
+        let mut tail: Option<usize> = None;
         for index in 0..STEPS + HANG {
             let height = height_of(index);
+            // **A tied lock hangs from the KNOT, not from the nape** (#316).
+            // The comb brings it round to the back at the knot's height, and
+            // from there it is gathered: it leaves the surface for the knot
+            // and hangs below it. It used to walk on down the back of the head
+            // to the nape hairline and be lerped toward the knot over its last
+            // half — a chord up through the occiput for a high tail, which on
+            // the sheet was a clump floating off the back of the head.
+            if let Some(knot) = self.knot
+                && tail.is_none()
+                && hung.is_none()
+                && begun
+                && height <= knot.y
+                && Self::pulled(from) >= 0.5
+            {
+                tail = Some(0);
+                hung = Some(0.0);
+                cap = Some(gone);
+            }
+            if let (Some(knot), Some(hung_at)) = (self.knot, tail) {
+                if hung_at >= HANG {
+                    break;
+                }
+                let next = if hung_at == 0 {
+                    knot
+                } else {
+                    knot + Vec3::NEG_Y * (self.reach * hung_at as f32 / HANG as f32)
+                };
+                tail = Some(hung_at + 1);
+                let leg = (next - at).length();
+                free += leg;
+                if gone + leg >= want {
+                    let left = if leg > f32::EPSILON {
+                        (want - gone) / leg
+                    } else {
+                        0.0
+                    };
+                    return Walked {
+                        at: at.lerp(next, left.clamp(0.0, 1.0)),
+                        gone: want,
+                        free: (free - leg * (1.0 - left)).max(0.0),
+                        grows: begun,
+                        cap,
+                    };
+                }
+                gone += leg;
+                at = next;
+                continue;
+            }
             // **Turned by how far the lock has TRAVELLED, not by which step this
             // is.** A step is a slice of the descent, and a lock that is combed
             // round the head spends most of its length going sideways — so a comb
@@ -688,7 +942,7 @@ impl Sheet {
             }
             gone += leg;
             at = next;
-            let grows = self.regions.weight(Follicle::Scalp, next) >= EDGE;
+            let grows = self.regions.weight(Follicle::Scalp, next) >= edge;
             begun |= grows;
             if begun && hung.is_none() && !grows {
                 hung = Some(held);
@@ -747,7 +1001,17 @@ impl Shape for Sheet {
         // hairline there is receding, and it is what HANGS that thins out. Square-
         // rooted so a thinning edge keeps some length rather than collapsing over
         // the last tenth.
-        self.cap(root) + self.fall(root) * root.weight.clamp(0.0, 1.0).sqrt()
+        //
+        // Except into a knot: a gathered lock hangs the tail's length from
+        // the knot whatever the mask said where its root happened to sit,
+        // or the tail's tips spread over the thinning of a hairline they
+        // never crossed (#316).
+        let thinned = if self.knot.is_some() && Self::pulled(Self::azimuth(root)) >= 0.5 {
+            1.0
+        } else {
+            root.weight.clamp(0.0, 1.0).sqrt()
+        };
+        self.cap(root) + self.fall(root) * thinned
     }
 
     fn at(&self, root: &Root, along: f32) -> Vec3 {
@@ -761,18 +1025,23 @@ impl Shape for Sheet {
         let azimuth = Self::azimuth(root);
         let out = Vec3::new(azimuth.sin(), 0.0, azimuth.cos());
         let loose = crate::face::smooth(walked.free / LOOSE);
-        at += out * (self.volume * loose) + root.out * LIFT;
-        // Gathered into the knot, if the style has one — and only over the last
-        // part of the travel, because the walk has already combed the lock round
-        // to the nape and the knot is where it arrives rather than where it aims.
-        // A gather that starts at the root is a chord through the skull; see
-        // [`Self::combed`].
-        if let Some(knot) = self.knot {
-            at = at.lerp(
-                knot,
-                crate::face::smooth((along - KNOT_FROM) / (1.0 - KNOT_FROM)),
-            );
-        }
+        // **Lifted along the surface the card is LYING ON, not along its
+        // root's normal** (#316). Every card starts at the crown, and a root
+        // at the nape has a normal pointing back and down — so its card
+        // crossed the whorl with its clearance pointing sideways, and the
+        // chords between its stations cut a millimetre into the back of the
+        // dome. Measured on the default crop: 15% of the stations in the
+        // first third of every card under the mesh, worst 1.1 mm, all at the
+        // back of the crown; on the sheet, slivers of scalp showing through
+        // the cards behind the whorl. The normal of the envelope at the point
+        // reached is what a card needs to clear, and it is the crown's up
+        // at the crown.
+        let lift = if walked.free > 0.0 {
+            out
+        } else {
+            self.normal(walked.at.y, azimuth)
+        };
+        at += out * (self.volume * loose) + lift * LIFT;
         // And coiled, if it is a curl: a wave across its own fall rather than a
         // helix round it. See [`COIL`] for what the helix cost.
         if self.curl > 0.0 {
@@ -786,6 +1055,12 @@ impl Shape for Sheet {
             at += sideways * (swing * phase.sin()) + out * (swing * phase.cos());
         }
         at
+    }
+
+    fn seating(&self) -> Seating {
+        // A root is a meridian here: see [`Seating`], and the bald side of a
+        // tied-back head that found it.
+        Seating::Meridians
     }
 
     fn width(&self, root: &Root) -> (f32, f32) {
@@ -810,6 +1085,31 @@ impl Shape for Sheet {
         Vec3::new(azimuth.cos(), 0.0, -azimuth.sin())
     }
 
+    fn across_at(&self, root: &Root, along: f32) -> Vec3 {
+        // **Across the lock where the lock IS, lying in the surface it is
+        // lying on** (#316). A combed lock is not where it started, and the
+        // one axis that keeps a card flat on a skull wherever its spine is
+        // heading is the surface's normal crossed with that heading. The
+        // heading is read off the curve itself, either side of the station;
+        // the normal is the envelope's where the lock is still on the head
+        // and radial once it hangs. Anything degenerate falls back to the
+        // root's own parallel, which is what every other station has.
+        let along = along.clamp(0.0, 1.0);
+        let step = 0.01;
+        let ahead = self.at(root, (along + step).min(1.0));
+        let behind = self.at(root, (along - step).max(0.0));
+        let heading = (ahead - behind).normalize_or(Vec3::ZERO);
+        let here = self.at(root, along);
+        let azimuth = here.x.atan2(here.z);
+        let walked = self.walked(root, self.length(root) * along);
+        let normal = if walked.free > 0.0 {
+            Vec3::new(azimuth.sin(), 0.0, azimuth.cos())
+        } else {
+            self.normal(here.y, azimuth)
+        };
+        normal.cross(heading).normalize_or(self.across(root))
+    }
+
     fn width_at(&self, root: &Root, along: f32) -> f32 {
         // **A fan on the scalp, a taper off it, and the two are different jobs.**
         //
@@ -829,10 +1129,29 @@ impl Shape for Sheet {
         let along = along.clamp(0.0, 1.0);
         let cap = (self.cap(root) / self.length(root).max(f32::EPSILON)).clamp(0.0, 1.0);
         if along <= cap {
-            let fan = FAN + (1.0 - FAN) * crate::face::smooth(along / cap.max(f32::EPSILON));
+            // **Linear in the travel, not eased** (#316). The circumference a
+            // card has to share grows linearly with its distance from the
+            // pole, and an eased ramp is quadratic at its start: at fifteen
+            // millimetres out it had reached six per cent of the way to full
+            // width, which on a tied-back head of twenty-eight cards is a
+            // five-millimetre card covering a thirteen-degree sector, and the
+            // star of bare wedges between them at the whorl.
+            //
+            // **And in metres from the pole, not in a share of the cap** — a
+            // tied-back card's cap walks round the head and is three times a
+            // crop's, so a share of it reached full width three times further
+            // out, and the tied-back crown kept its wedges after the crop had
+            // lost them. The whorl is the same size whatever the style.
+            let travel = along * self.length(root);
+            let fan = FAN + (1.0 - FAN) * (travel / FAN_OVER).clamp(0.0, 1.0);
             return base * fan;
         }
-        let past = (along - cap) / (1.0 - cap).max(f32::EPSILON);
+        // Full width down the hang, then to the tip over the last [`TIP`]
+        // of it: a lock's point is at its end, not spread over its length.
+        let length = self.length(root);
+        let hang = length * (1.0 - cap);
+        let left = (1.0 - along) * length;
+        let past = 1.0 - (left / TIP.min(hang).max(f32::EPSILON)).clamp(0.0, 1.0);
         base + (tip - base) * past
     }
 }
@@ -904,10 +1223,7 @@ mod tests {
             // every_lock_to_one_knot` is what holds that style. Up to the gather
             // it walks the skull like everything else, and that is what is
             // measured here.
-            let until = match style {
-                ScalpStyle::TiedBack { .. } => KNOT_FROM,
-                _ => 1.0,
-            };
+            let knot = style.knot(&head);
             // And a coil swings off the surface on purpose, so its own swing is
             // added to what it is allowed. Named from the style's own constants
             // rather than picked, so a wider coil cannot quietly widen the bound.
@@ -931,8 +1247,13 @@ mod tests {
                     let mut worst = 0.0f32;
                     let radius = |point: Vec3| (point.x * point.x + point.z * point.z).sqrt();
                     for step in 0..=20 {
-                        let along = step as f32 / 20.0 * until;
+                        let along = step as f32 / 20.0;
                         let at = shape.at(&root, along);
+                        // A tail has left the skull once it is at the knot's
+                        // height: from there it hangs from the knot.
+                        if knot.is_some_and(|knot| at.y <= knot.y + 0.002) {
+                            break;
+                        }
                         // **Only while the head is still holding this lock UP**, which
                         // is what the claim says and is not a fixed share of the head's
                         // height: below the widest band it passes, hair drapes and is
@@ -986,7 +1307,24 @@ mod tests {
                         // correct walk as 12.8 mm of stray. That is the third time in
                         // this milestone that an instrument has measured its own
                         // parameterisation rather than the hair.
-                        worst = worst.max((radius(at) - here).abs());
+                        // **As the distance to the meridian, not the radius at
+                        // the height** (#316). Over the crown the dome is flat,
+                        // so a card lifted its clearance off the surface there
+                        // is a fifth of a millimetre higher and eleven
+                        // millimetres further out at the same height — and a
+                        // station lifted ABOVE the crown has no surface at its
+                        // height at all and was measured against the pole:
+                        // 17.7 mm of "stray" on a crop doing nothing wrong.
+                        // The nearest point of the meridian within a few
+                        // millimetres of height is the claim the test makes.
+                        let nearest = (0..=20)
+                            .map(|step| {
+                                let height = (at.y - 0.006 + 0.012 * step as f32 / 20.0)
+                                    .clamp(throat, crown);
+                                at.distance(head.skull().surface_at(height, azimuth))
+                            })
+                            .fold(f32::MAX, f32::min);
+                        worst = worst.max(nearest);
                         probed += 1;
                     }
                     assert!(
@@ -1116,7 +1454,10 @@ mod tests {
         let head = head();
         let (throat, crown) = head.skull().throat_and_crown();
         let high = crown - (crown - throat) * 0.15;
-        let turns = [0.6f32, 1.4, 2.2, 3.0, -0.6, -1.4];
+        // **Behind the temple**, which is the hair a tail gathers (#316): a
+        // lock over the brow lies to the hairline and stops, and asking it
+        // to meet the knot is asking a tied-back head to have no front.
+        let turns = [1.6f32, 2.2, 3.0, -1.6, -2.2, -2.8];
         let spread = |style: ScalpStyle| {
             let shape = style
                 .shape(&Cut::default(), Follicle::Scalp, &head)

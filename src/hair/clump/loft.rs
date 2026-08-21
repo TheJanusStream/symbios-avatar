@@ -71,6 +71,16 @@ pub const LEAST: usize = 3;
 /// tolerance above.
 const MOST: usize = 96;
 
+/// How far each edge's normal is tilted outward about the spine, in radians.
+///
+/// The angle the side of a cylinder makes with its top: at zero the card is
+/// flat, at a right angle its edges face straight sideways and the middle of
+/// the strip carries all the light. Fifty degrees reads as a rounded lock
+/// without the edges going dark.
+///
+/// Provenance: **tuned by render** (#316).
+const BEVEL: f32 = 0.87;
+
 /// Sweeps one clump and appends it to `into`, gradient and all.
 ///
 /// Returns how many stations it spent, which is what the caller's triangle
@@ -112,7 +122,6 @@ pub(super) fn loft(
     // from the first: a card whose width stayed in one plane would twist wherever
     // its spine turned, and re-squaring costs a dot product. It also cannot drift,
     // which a transported frame can over a curl.
-    let named = shape.across(root).normalize_or(Vec3::ZERO);
     let first = into.positions.len() as u32;
     let mut walked = 0.0;
     for (station, (at, along)) in path.iter().zip(&fractions).enumerate() {
@@ -125,6 +134,9 @@ pub(super) fn loft(
             *at - path[station - 1]
         }
         .normalize_or(root.out);
+        // Asked per station, because a clump that turns has a different
+        // across at its end than at its root; see [`Shape::across_at`].
+        let named = shape.across_at(root, *along).normalize_or(Vec3::ZERO);
         let squared = named - tangent * named.dot(tangent);
         let mut side = squared.normalize_or(
             root.out
@@ -162,7 +174,14 @@ pub(super) fn loft(
         let shade = shade(roots_colour, tips_colour, *along);
         for edge in [-1.0f32, 1.0] {
             into.positions.push(*at + side * (half * edge));
-            into.normals.push(out);
+            // **The normal is rounded across the card though the card is
+            // flat** (#316). A flat card lit flat is a ribbon: one shade
+            // edge to edge, and a head of them reads as a bundle of dark
+            // straps with no body in it. Tilting each edge's normal outward
+            // about the spine shades the strip as the half-cylinder a lock
+            // is, and costs nothing — the rasteriser interpolates it.
+            into.normals
+                .push((out * BEVEL.cos() + side * (BEVEL.sin() * edge)).normalize_or(out));
             into.uvs.push(Vec2::new(
                 (edge + 1.0) * 0.5,
                 walked / length.max(f32::EPSILON),

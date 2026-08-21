@@ -18,6 +18,7 @@ use rand::Rng;
 use rand_pcg::Pcg64Mcg;
 
 use super::super::follicle::{Follicle, Follicles};
+use super::{Bed, Seating};
 use crate::mesh::{PolyMesh, VertexSkin};
 use crate::plan::Zone;
 use crate::rig::Rig;
@@ -167,6 +168,181 @@ pub fn scatter(
         if weight <= f32::EPSILON {
             continue;
         }
+        roots.push(Root {
+            at: seat.0 - origin,
+            out: seat.1,
+            weight,
+            skin: seat.2,
+        });
+    }
+    roots
+}
+
+/// Scatters `count` roots over one region the way `seating` asks.
+///
+/// **The one place the two scatters are told apart**, shared by
+/// [`super::Growth::grow`] and by `tests/budget.rs`, which advances the root
+/// stream past regions it is not costing: both have to draw exactly what the
+/// other draws or the cheap costing and the dear one disagree, which is what
+/// `the_cheap_way_to_cost_a_region_agrees_with_the_dear_one` is for.
+#[must_use]
+pub fn roots(
+    bed: &Bed,
+    follicle: Follicle,
+    seating: Seating,
+    count: usize,
+    stream: &mut Pcg64Mcg,
+) -> Vec<Root> {
+    let Bed {
+        body,
+        rig,
+        weights,
+        follicles,
+    } = *bed;
+    match seating {
+        Seating::Surface => scatter(body, rig, weights, follicles, follicle, count, stream),
+        Seating::Meridians => meridians(body, rig, weights, follicles, follicle, count, stream),
+    }
+}
+
+/// How many more draws a sector gets than a face does, to land inside itself.
+///
+/// A draw inside a face is rejected both by the mask's weight (as in
+/// [`scatter`]) and by whether it fell in the sector, and the second is the
+/// harder test at the back of a head where a face spans a sector and a half.
+///
+/// Provenance: **derived** from the face-to-sector ratio on the default head.
+const SECTOR_TRIES: usize = 4;
+
+/// Scatters `count` roots over one region, one per sector of azimuth.
+///
+/// **For a style whose root is a meridian rather than a point** — see
+/// [`super::Seating`]. The sectors are stratified round the head with a
+/// jitter inside each, exactly as [`scatter`] stratifies area, so the
+/// spacing cannot leave the bald wedge a uniform draw does and cannot comb
+/// into a perfect fan the way a grid does. Within its sector a root is seated
+/// exactly as [`scatter`] seats one — in one of the region's own faces, drawn
+/// by area times the mask's weight and rejection-sampled inside it — so it is
+/// on the built surface by construction and the density across the region's
+/// height still follows the mask.
+///
+/// **In a face and not on a vertex**, because a built head's vertices sit in
+/// columns: seated on the nearest vertex, two sectors in three picked the same
+/// column and the sheet had the same gaps it had before, one card to the
+/// left. A face has extent, so an azimuth inside one is continuous.
+///
+/// Azimuth is measured about the head's own origin, which is what a scalp
+/// style measures it about; a sector that claims no face at all is widened
+/// until it does rather than dropped, because a style that roots by meridian
+/// has already said it wants the whole circumference covered.
+#[must_use]
+pub fn meridians(
+    mesh: &PolyMesh,
+    rig: &Rig,
+    weights: &SkinWeights,
+    follicles: &Follicles,
+    follicle: Follicle,
+    count: usize,
+    stream: &mut Pcg64Mcg,
+) -> Vec<Root> {
+    if count == 0 {
+        return Vec::new();
+    }
+    let origin = follicles.origin();
+    let normals = mesh.shading_normals();
+    // Every face the region touches: its centroid's azimuth, its claim on
+    // the region (area times the mask's mean over its corners), its index.
+    let mut patches: Vec<(f32, f32, usize)> = Vec::new();
+    for face in 0..mesh.face_count() {
+        let corners = &mesh.faces[face];
+        if corners.len() < 3 {
+            continue;
+        }
+        let centre = mesh.face_centroid(face);
+        if rig.joints[rig.nearest_bone(centre).joint].zone != Zone::Head {
+            continue;
+        }
+        let weight = corners
+            .iter()
+            .map(|corner| follicles.weight(follicle, mesh.positions[*corner as usize] - origin))
+            .sum::<f32>()
+            / corners.len() as f32;
+        if weight <= f32::EPSILON {
+            continue;
+        }
+        let claim = area_of(mesh, face) * weight;
+        if claim <= f32::EPSILON {
+            continue;
+        }
+        let local = centre - origin;
+        patches.push((local.x.atan2(local.z), claim, face));
+    }
+    if patches.is_empty() {
+        return Vec::new();
+    }
+    let sector = std::f32::consts::TAU / count as f32;
+    let mut roots = Vec::with_capacity(count);
+    for index in 0..count {
+        let jitter = stream.random_range(-0.5..0.5) * JITTER;
+        let azimuth = sector * (index as f32 + 0.5 + jitter) - std::f32::consts::PI;
+        // The sector's own half-width first, doubled until something is in it.
+        let mut reach = sector * 0.5;
+        let mut within: Vec<&(f32, f32, usize)> = Vec::new();
+        while within.is_empty() && reach < std::f32::consts::PI {
+            within = patches
+                .iter()
+                .filter(|(at, _, _)| {
+                    let apart = (at - azimuth + std::f32::consts::PI)
+                        .rem_euclid(std::f32::consts::TAU)
+                        - std::f32::consts::PI;
+                    apart.abs() <= reach
+                })
+                .collect();
+            reach *= 2.0;
+        }
+        if within.is_empty() {
+            continue;
+        }
+        // The sector is the half-width the search settled on, and the seat
+        // itself has to be in it: a face at the back of a head is 24 mm
+        // across, which is seventeen degrees at the head's radius, so a point
+        // drawn inside a face whose CENTROID is in the sector can land a
+        // sector and a half away — and three of them did, within three
+        // degrees of one another, with a forty-degree gap beside them.
+        let reach = reach * 0.5;
+        let total: f32 = within.iter().map(|(_, claim, _)| claim).sum();
+        let mut seat = None;
+        let mut weight = 0.0;
+        for attempt in 0..RETRIES * SECTOR_TRIES {
+            let mut want = stream.random_range(0.0..1.0) * total;
+            let mut face = within[within.len() - 1].2;
+            for (_, claim, candidate) in &within {
+                if want <= *claim {
+                    face = *candidate;
+                    break;
+                }
+                want -= claim;
+            }
+            let drawn = inside(mesh, &normals, weights, face, stream);
+            let local = drawn.0 - origin;
+            let apart = (local.x.atan2(local.z) - azimuth + std::f32::consts::PI)
+                .rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            let here = follicles.weight(follicle, local);
+            // Every draw is kept as the fallback; the last attempt takes
+            // whatever it drew rather than dropping the sector.
+            let last = attempt + 1 == RETRIES * SECTOR_TRIES;
+            if here > f32::EPSILON
+                && (last || (apart.abs() <= reach && here > stream.random_range(0.0..1.0)))
+            {
+                seat = Some(drawn);
+                weight = here;
+                break;
+            }
+        }
+        let Some(seat) = seat else {
+            continue;
+        };
         roots.push(Root {
             at: seat.0 - origin,
             out: seat.1,

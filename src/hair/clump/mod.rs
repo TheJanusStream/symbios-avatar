@@ -124,6 +124,50 @@ pub trait Shape {
             .cross(Vec3::Y)
             .normalize_or(root.out.cross(Vec3::X).normalize_or(Vec3::X))
     }
+
+    /// Which way the clump's wide axis lies a share of the way along it.
+    ///
+    /// **The default is one axis for the whole clump, and that is enough for
+    /// a clump that goes one way** (#316). A lock combed round the head turns
+    /// up to half a circle from where it started, and an axis that was across
+    /// it at the root is along it at the nape — squared against the local
+    /// tangent, what is left of it points out of the skull, and the card
+    /// stands off the head like a fin. Measured on a tied-back head: every
+    /// card a fin by the time it had turned ninety degrees, and the sheet
+    /// showed a spiked crown where the comb turned fastest. A style whose
+    /// clumps turn answers with the axis at THIS station; everything else
+    /// leaves the default.
+    fn across_at(&self, root: &Root, along: f32) -> Vec3 {
+        let _ = along;
+        self.across(root)
+    }
+
+    /// How this style's clumps want to be rooted over the region.
+    ///
+    /// **Asked of the style because only the style knows what a root IS to
+    /// it.** To a brow or a beard a root is a point: the clump grows from
+    /// where it sits, and a clump every so many square millimetres is what
+    /// density means there. To a scalp card — which starts at the crown
+    /// whatever its root and uses the root only to pick a MERIDIAN — a root
+    /// is an azimuth, and scattering it by area puts the azimuths wherever the
+    /// faces happen to fall (#316). Measured on a tied-back head of 28 cards:
+    /// gaps of 46° and 39° on one side of the head, and a bald side on the
+    /// sheet; and on a crop of 75, about seven gaps over 11° at the crown,
+    /// which is the radial star of bare scalp at the whorl.
+    fn seating(&self) -> Seating {
+        Seating::Surface
+    }
+}
+
+/// How a region's roots are distributed over it. See [`Shape::seating`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Seating {
+    /// A root every so many square millimetres of the region's own surface.
+    #[default]
+    Surface,
+    /// A root every so many degrees round the head, seated on the region
+    /// wherever its mask is strongest in that sector.
+    Meridians,
 }
 
 /// One region's hair, grown.
@@ -388,12 +432,10 @@ impl Growth {
     /// own shape decides what each becomes. `stream` is drawn from the record's
     /// own seed, so a body grows the same hair every time it is built.
     pub fn grow(&mut self, bed: &Bed, sowing: &Sowing, stream: &mut Pcg64Mcg) {
-        let roots = scatter::scatter(
-            bed.body,
-            bed.rig,
-            bed.weights,
-            bed.follicles,
+        let roots = scatter::roots(
+            bed,
             sowing.follicle,
+            sowing.shape.seating(),
             sowing.count,
             stream,
         );
@@ -707,8 +749,14 @@ mod tests {
                 {
                     continue;
                 }
-                for normal in &one.normals {
-                    let facing = normal.dot(root.out);
+                // **The card's FACE, which is the pair's mean** (#316): each
+                // edge's normal is bevelled outward about the spine so a flat
+                // card shades as a round lock, and an edge alone is fifty
+                // degrees off the face by design. Which way the card faces is
+                // what this test is about, and that is what the two edges
+                // agree on.
+                for pair in one.normals.chunks_exact(2) {
+                    let facing = (pair[0] + pair[1]).normalize_or(Vec3::ZERO).dot(root.out);
                     total += facing;
                     away += usize::from(facing < 0.0);
                     vertices += 1;

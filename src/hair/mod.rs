@@ -69,7 +69,7 @@ pub mod follicle;
 pub mod painted;
 pub mod style;
 
-pub use clump::{Grown, Growth, Root, Shape};
+pub use clump::{Grown, Growth, Root, Seating, Shape};
 pub use follicle::{Follicle, FollicleParams, Follicles};
 pub use painted::{Paint, PaintedHair};
 pub use style::{

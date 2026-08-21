@@ -227,8 +227,10 @@ const MESH_TARGET: usize = 4;
 /// **30,000 → 31,000** for the swelled chest's refinement pass (#311): the
 /// dearest rolled corner measured 30,782 with it. **Back to 30,000** at
 /// #312, with the pass selecting by relief: 29,906 at the dearest corner;
-/// #308 reconciles.
-const TRIANGLE_CEILING: usize = 30_000;
+/// #308 reconciles. **30,000 → 30,200** for the hair refinement (#316):
+/// staggered hangs and per-card hairlines lengthen about half the cards a
+/// little, 30,116 at the same corner; #308 reconciles.
+const TRIANGLE_CEILING: usize = 30_200;
 
 /// Draw calls the crate currently costs.
 ///
@@ -624,30 +626,29 @@ impl Head {
             &hair.regions,
         );
         let mut stream = Pcg64Mcg::seed_from_u64(self.record.seed as u64);
+        let bed = Bed {
+            body: &self.avatar.parts.body,
+            rig: &self.avatar.rig,
+            weights: &self.avatar.parts.weights,
+            follicles: &follicles,
+        };
         for earlier in Follicle::ALL {
             let Some(sown) = hair.sowing(earlier, &follicles) else {
                 continue;
             };
             if earlier != follicle {
                 // Discarded on purpose: the roots are not wanted, only the
-                // stream state they leave behind.
-                let _ = symbios_avatar::hair::clump::scatter::scatter(
-                    &self.avatar.parts.body,
-                    &self.avatar.rig,
-                    &self.avatar.parts.weights,
-                    &follicles,
+                // stream state they leave behind — drawn the way the style
+                // seats them, or the two costings disagree (#316).
+                let _ = symbios_avatar::hair::clump::scatter::roots(
+                    &bed,
                     earlier,
+                    sown.shape.seating(),
                     sown.clumps,
                     &mut stream,
                 );
                 continue;
             }
-            let bed = Bed {
-                body: &self.avatar.parts.body,
-                rig: &self.avatar.rig,
-                weights: &self.avatar.parts.weights,
-                follicles: &follicles,
-            };
             let mut growth = Growth::on(follicles.head);
             growth.grow(
                 &bed,
@@ -781,10 +782,23 @@ const GREEDY: Cut = Cut {
 /// — so a budget test that picked whichever variant was written first would be
 /// measuring the order of an enum. #208 hand-picked them from four measurements;
 /// this is the sweep that issue said it owed.
+/// How far under a catalogue's dearest style the greedy record's may cost
+/// before the sweep calls it beaten, as a share.
+///
+/// Three per cent: the spread between two styles whose ranking swaps from
+/// one body to the next, measured at #316 (crop against long, natural brows
+/// against thick). Anything past it is a different style, not a coin toss.
+const CLOSE_ENOUGH: f32 = 0.03;
+
 fn greediest() -> HairRecord {
     HairRecord {
         scalp: Tress {
-            style: ScalpStyle::Curly { curl: 1.0 },
+            // Long, since #316: a ringlet lost a third of its front when the
+            // curly style stopped curtaining the eyes, and on the dearest body
+            // a long back-weighted curtain is the catalogue's bill now — the
+            // crop is within a few per cent of it and wins on the default
+            // head, which is what [`CLOSE_ENOUGH`] is for.
+            style: ScalpStyle::Long { weight: 1.0 },
             cut: GREEDY,
             ..Default::default()
         },
@@ -1030,7 +1044,15 @@ fn the_dearest_variant_of_each_region_is_the_one_the_greedy_record_wears() {
                 .iter()
                 .find(|grown| grown.follicle == follicle)
                 .map_or(0, |grown| grown.tris);
-            if wears < tris {
+            // **Within a margin, because two styles can cost the same to
+            // within noise and then swap places between bodies** (#316). A
+            // crop and a long curtain are within four triangles of each other
+            // on the default head and six per cent apart on the long broad
+            // one, the other way round; no one record wears both, and a test
+            // that demanded it would have no passing answer. What the corner
+            // needs is that nothing in the catalogue costs MATERIALLY more
+            // than what it wears.
+            if (wears as f32) < (tris as f32) * (1.0 - CLOSE_ENOUGH) {
                 beaten.push(format!(
                     "on {} the {} catalogue's dearest style is `{name}` at {tris} triangles \
                      and `greediest` wears one costing {wears}: put `{name}` in it",
