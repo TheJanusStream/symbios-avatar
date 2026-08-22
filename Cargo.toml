@@ -1,6 +1,6 @@
 [package]
 name = "symbios-avatar"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 authors = ["Janus"]
 description = "Engine-agnostic parametric avatar engine: procedural humanoid and creature bodies from small records."
@@ -46,7 +46,7 @@ builtin-clips = []
 serde-avatar = ["dep:serde_bytes"]
 
 [dependencies]
-glam = { version = "0.30.10", features = ["serde"] }
+glam = { version = "0.32", features = ["serde"] }
 # Skin detail must be sampled in *body* space, not atlas space, or every chart
 # boundary shows a seam — which needs 3-D noise. Same version symbios-texture
 # already pulls in, so no new entry in the tree.
