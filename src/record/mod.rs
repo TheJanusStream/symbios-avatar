@@ -178,6 +178,31 @@ pub enum NotPublishable {
     MissingName,
 }
 
+/// A seed, on the wire as a string. See [`AvatarRecord::seed`].
+///
+/// Writes a string always; reads either a string or the bare number older
+/// records carry, so nothing already published becomes undecodable.
+mod seed_as_string {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &i64, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Either {
+            Text(String),
+            Number(i64),
+        }
+        match Either::deserialize(d)? {
+            Either::Text(s) => s.parse::<i64>().map_err(serde::de::Error::custom),
+            Either::Number(n) => Ok(n),
+        }
+    }
+}
+
 /// One avatar: a parametric body plus the state its creator needs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -215,9 +240,36 @@ pub struct AvatarRecord {
     pub outfit: OutfitParams,
     /// Seed of the last re-roll, kept so a look can be reproduced.
     ///
-    /// Signed because AT Protocol integers are signed 64-bit; an unsigned seed
-    /// would serialise to a number some readers cannot represent.
-    #[serde(default)]
+    /// Signed because AT Protocol integers are signed 64-bit — but **written
+    /// as a string**, because 64-bit is not the range that survives the wire.
+    ///
+    /// The AT Protocol data model describes integers as signed 64-bit, and
+    /// every implementation in the ecosystem parses records with JavaScript's
+    /// `JSON.parse`, where a number is an IEEE-754 double. Past 2^53 the parse
+    /// is lossy, and the reference encoder refuses to store the result rather
+    /// than write a value it cannot round-trip:
+    ///
+    /// ```text
+    /// Non-integer numbers (8399497595966615000) are not supported by the AT Data Model
+    /// ```
+    ///
+    /// That throw escapes the PDS's request handler, so a client sees a bare
+    /// `500 Internal Server Error` naming nothing. A re-roll seed is drawn
+    /// full width and clears 2^53 with probability 1 - 2^-11, so in practice
+    /// this record was **never publishable** — which is how it went unnoticed:
+    /// the failure looked like the server having a bad day, not like a record
+    /// this crate could not represent.
+    ///
+    /// A string carries all 64 bits intact, so no look changes. That is also
+    /// the convention the consuming app already uses for its own seeds
+    /// (`u64_as_string` in symbios-overlands), so this brings the wardrobe
+    /// record into line with the records beside it rather than inventing
+    /// anything.
+    ///
+    /// Reading accepts a bare number too — records written before this change
+    /// are small enough to have survived, and refusing them would strand the
+    /// bodies that did publish.
+    #[serde(default, with = "seed_as_string")]
     pub seed: i64,
     /// Categories a re-roll must leave alone.
     #[serde(default)]
@@ -1988,5 +2040,63 @@ mod tests {
     fn a_record_with_a_humanoid_body_names_its_archetype() {
         let record = AvatarRecord::new("Named", Archetype::Humanoid(HumanoidParams::default()));
         assert_eq!(record.archetype.name(), "humanoid");
+    }
+}
+
+#[cfg(test)]
+mod seed_wire_tests {
+    use super::*;
+
+    /// **A full-width seed has to survive the wire, and until now it could
+    /// not** (symbios-overlands #1186).
+    ///
+    /// The AT Protocol data model calls integers signed 64-bit, but every
+    /// implementation parses records with JavaScript's `JSON.parse`, where a
+    /// number is a double. Past 2^53 the value is silently changed by the
+    /// parse, and the reference encoder then refuses to store it — a throw
+    /// that escapes as a bare `500 Internal Server Error`. A re-roll seed is
+    /// drawn full width, so this record was in practice never publishable.
+    ///
+    /// The seed below is the one behind the reported failure, recovered from
+    /// the record key its save tried to create.
+    #[test]
+    fn a_seed_past_two_to_the_fifty_three_round_trips_as_a_string() {
+        // Past 2^53 - 1, or this test proves nothing.
+        const UNSAFE: i64 = 8_399_497_595_966_614_310;
+        const _: () = assert!(UNSAFE > 9_007_199_254_740_991);
+
+        let record = AvatarRecord {
+            seed: UNSAFE,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&record).expect("serialises");
+        assert!(
+            json.contains(&format!("\"seed\":\"{UNSAFE}\"")),
+            "the seed must go out as a string, got: {json}"
+        );
+
+        let back: AvatarRecord = serde_json::from_str(&json).expect("deserialises");
+        assert_eq!(back.seed, UNSAFE, "every bit has to come back");
+    }
+
+    /// Records written before the change carry a bare number. Refusing them
+    /// would strand the bodies that were small enough to publish.
+    #[test]
+    fn a_seed_written_as_a_bare_number_still_reads() {
+        let legacy = r#"{"name":"Wanderer","seed":4500000}"#;
+        let record: AvatarRecord = serde_json::from_str(legacy).expect("legacy record decodes");
+        assert_eq!(record.seed, 4_500_000);
+    }
+
+    /// Negative seeds are legal and must not become unparseable strings.
+    #[test]
+    fn a_negative_seed_round_trips() {
+        let record = AvatarRecord {
+            seed: -8_399_497_595_966_614_310,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&record).expect("serialises");
+        let back: AvatarRecord = serde_json::from_str(&json).expect("deserialises");
+        assert_eq!(back.seed, record.seed);
     }
 }
