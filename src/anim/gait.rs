@@ -1285,6 +1285,20 @@ pub struct Walk {
     /// drawing it: `examples/locomotion` reads the pose before and after this
     /// to say how much work the solve is doing.
     pub footing: Option<FootingConfig>,
+    /// Whether the neck takes the trunk's lean back off to hold the head level.
+    ///
+    /// **On by default, and off is an ablation switch, not a look.** [`lean`]
+    /// pitches the trunk into the walk and the neck takes the whole pitch back
+    /// off so the body looks where it is going — the head-level bargain. At a
+    /// small lean that reads as attention; whether it reads as a craned-neck
+    /// hunch at a large one is a diagnosis question, and it cannot be answered
+    /// while the two halves are welded together. Off leaves the head to go down
+    /// with the trunk, which is what splits the lean's contribution to a
+    /// silhouette from the crane's.
+    ///
+    /// Ignored while [`Self::posture`] is off, because there is then no lean to
+    /// bargain over.
+    pub head_level: bool,
 }
 
 impl Walk {
@@ -1297,6 +1311,7 @@ impl Walk {
             posture: true,
             gaze: None,
             footing: Some(FootingConfig::default()),
+            head_level: true,
         }
     }
 
@@ -1330,7 +1345,7 @@ impl Walk {
         let steps = step(rig, pose, gait, stride, self.cycle, &ground);
         if self.posture {
             swing_arms(rig, pose, gait, stride, self.cycle);
-            lean(rig, pose, gait, stride);
+            lean_with(rig, pose, gait, stride, self.head_level);
         }
         // After the lean, which the neck has just taken back off to hold the
         // head level — a gaze applied first would be levelled away, the same
@@ -2375,6 +2390,17 @@ fn pace_of(rig: &Rig, stride: &Stride) -> f32 {
 /// rather than replacing it — running it twice compounds its own lean, as any
 /// additive layer would.
 pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
+    lean_with(rig, pose, gait, stride, true);
+}
+
+/// [`lean`] with the head-level bargain as a parameter.
+///
+/// `head_level: false` leaves the neck alone, so the head goes down with the
+/// trunk — the ablation [`Walk::head_level`] exists for. Private because the
+/// switch belongs on [`Walk`], where the other ablations live; `lean` keeps the
+/// bargain because every caller of the bare function wants the walk's whole
+/// postural answer, not half of it.
+fn lean_with(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, head_level: bool) {
     if !pose.fits(rig) {
         return;
     }
@@ -2419,7 +2445,9 @@ pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
     let Some((neck, applied)) = incline_trunk(rig, pose, toward, wanted) else {
         return;
     };
-    pose.rotations[neck] *= applied.inverse();
+    if head_level {
+        pose.rotations[neck] *= applied.inverse();
+    }
 }
 
 /// Pitches the whole trunk to an inclination of `wanted` radians, leaning
@@ -4786,6 +4814,71 @@ mod tests {
                 carried - rest
             );
         }
+    }
+
+    #[test]
+    fn the_head_level_bargain_has_an_ablation_switch_and_it_moves_only_the_neck() {
+        // **#328, the strips instrument's ablation.** The diagnosis on the
+        // walking hunch has to split the lean's contribution to a silhouette
+        // from the crane's, and it cannot while the trunk pitch and the neck's
+        // counter are welded together. Off must mean exactly one thing — the
+        // neck keeps its rest rotation and the head goes down with the trunk.
+        // Any other joint moving would make the switch a second gait rather
+        // than an ablation of this one.
+        let rig = biped();
+        let neck = rig.in_zone(Zone::Neck)[0];
+        let girdle = girdle_of(&rig);
+        let Some(&head) = rig.in_zone(Zone::Head).first() else {
+            return;
+        };
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.5);
+
+        let mut levelled = Pose::rest(&rig);
+        lean_with(&rig, &mut levelled, &gait, &stride, true);
+        let mut freed = Pose::rest(&rig);
+        lean_with(&rig, &mut freed, &gait, &stride, false);
+
+        for joint in 0..rig.len() {
+            let moved = apart(levelled.rotations[joint], freed.rotations[joint]);
+            if joint == neck {
+                assert!(moved > SAME_POSE, "the switch did nothing at the neck");
+            } else {
+                assert!(
+                    moved < SAME_POSE,
+                    "the switch moved joint {joint}, which is not the neck"
+                );
+            }
+        }
+
+        // And what the freed head rides is exactly the counter the bargain
+        // would have taken off — the HINGE's rotation, not the trunk's chord.
+        // The two are far apart, and writing this test found the number: at
+        // pace 1.5 the chord delivers its asked 8.25 degrees while the hinge
+        // turns 15.2 to deliver it (the segment below the hinge does not
+        // rotate, so the hinge over-rotates to incline the chord). The neck's
+        // counter is that larger angle, which means the head-level bargain
+        // bends the neck back by nearly TWICE the visible lean.
+        let pitch = |pose: &Pose| {
+            let posed = pose.forward(&rig);
+            let run = posed.positions[head] - posed.positions[neck];
+            run.z.atan2(run.y).to_degrees()
+        };
+        let carried = pitch(&freed) - pitch(&Pose::rest(&rig));
+        let counter = levelled.rotations[neck]
+            .angle_between(freed.rotations[neck])
+            .to_degrees();
+        let delivered = trunk_pitch(&rig, &freed, girdle);
+        assert!(
+            (carried - counter).abs() < 0.05,
+            "the bargain's counter is {counter:.2} deg and the freed head rode {carried:.2}"
+        );
+        assert!(
+            counter > delivered * 1.5,
+            "the counter ({counter:.2} deg) is supposed to dwarf the chord's lean \
+             ({delivered:.2} deg); if these have converged, the hinge geometry changed \
+             and the diagnosis on #325 should hear about it"
+        );
     }
 
     /// How far apart two rotations may be and still count as the same pose.
