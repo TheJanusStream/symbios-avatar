@@ -206,6 +206,9 @@ impl Turn {
             length: speed.metres_per_second(rig) / cadence * duty,
             lift: working.stride(rig).lift,
             yaw: self.yaw_rate / cadence * duty,
+            // From the working contact, like the lift beside it: the outer
+            // foot of a fast turn is the one running.
+            tuck: working.stride(rig).tuck,
         }
     }
 

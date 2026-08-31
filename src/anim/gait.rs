@@ -572,6 +572,18 @@ pub struct Stride {
     /// radius. That ratio is what [`super::Turn`] hands back and what the bank
     /// is derived from.
     pub yaw: f32,
+    /// How much of a run's heel tuck the swing carries, `0..1`.
+    ///
+    /// **The run half of a stride's character** (#331, playbook §2.6): a
+    /// walking swing skims the ground with its height peaking at mid-swing,
+    /// while a running swing kicks the heel up toward the glutes right after
+    /// toe-off — higher, and much earlier. Zero is the walking arc unchanged;
+    /// one raises the peak and pulls it toward the swing's start, and the knee
+    /// flexion a run reads by arrives through the leg's own solve reaching for
+    /// that foot. On a stride derived from speed it rises with the Froude
+    /// number past the walk-run transition; [`Stride::for_body`] maps its pace
+    /// axis to agree at the calibration points.
+    pub tuck: f32,
 }
 
 /// What share of a leg's reach a natural stride covers.
@@ -605,6 +617,13 @@ impl Stride {
             length: reach * STRIDE_OF_REACH * pace.max(0.0),
             lift: reach * LIFT_OF_REACH * pace.max(0.0),
             yaw: 0.0,
+            // Zero through the whole walking band, one by the pace the
+            // consuming app travels at. Chosen to agree with the speed axis's
+            // Froude derivation at the calibration points — pace 1.0 is about
+            // Froude 0.43 (walking, no tuck) and pace 1.5 about 1.81 (a run,
+            // full tuck) — so the two derivations of one quantity cannot
+            // quietly mean different strides.
+            tuck: ((pace - 1.05) / 0.45).clamp(0.0, 1.0),
         }
     }
 
@@ -653,6 +672,7 @@ impl Stride {
             length: 0.0,
             lift: 0.0,
             yaw: 0.0,
+            tuck: 0.0,
         }
     }
 }
@@ -968,12 +988,45 @@ pub fn contact_offset(home: Vec3, stride: &Stride, phase: Phase) -> Vec3 {
         // planted, so `home` is where the contact sits at MIDSTANCE — which is
         // what the old form said too, with its `half` at each end.
         Phase::Stance(t) => carried(home, stride, t - 0.5),
-        Phase::Swing(t) => {
-            carried(home, stride, 0.5 - t)
-                + Vec3::Y * (stride.lift * (t * std::f32::consts::PI).sin())
-        }
+        Phase::Swing(t) => carried(home, stride, 0.5 - t) + Vec3::Y * swing_rise(stride, t),
     }
 }
+
+/// How far above its ground line a swinging contact rides, `t` of the way
+/// through its swing.
+///
+/// **The one definition of the swing's height, on purpose**: both the arc a
+/// foot travels ([`contact_offset`]) and the seat that lifts it over terrain
+/// (`seated_offset`) read this, because two spellings of one profile is how
+/// the flat-ground arc and the hill arc drift apart.
+///
+/// At `tuck` zero this is the walking arc unchanged — a half-sine peaking at
+/// mid-swing. Tuck raises the peak and pulls it toward the swing's start
+/// (`sin(π·t^k)` with `k` shrinking, so the maximum lands early), which is a
+/// run's heel kicking up toward the glutes just after toe-off; the knee
+/// flexion the run reads by arrives through the leg's own solve reaching for
+/// that foot (#331, playbook §2.6).
+fn swing_rise(stride: &Stride, t: f32) -> f32 {
+    let height = stride.lift * (1.0 + stride.tuck * TUCK_RAISE);
+    let skew = 1.0 - stride.tuck * TUCK_SKEW;
+    height * (t.clamp(0.0, 1.0).powf(skew) * std::f32::consts::PI).sin()
+}
+
+/// How much higher a fully tucked swing rides than a walking one, as a share.
+///
+/// One: a run's heel doubles the walking arc's peak. The walking lift is
+/// already a share of the stride, which has itself grown with speed by the
+/// time the tuck reaches one, so the composed height lands in a jog's band
+/// rather than being asked to cover it alone.
+const TUCK_RAISE: f32 = 1.0;
+
+/// How far a full tuck pulls the swing's peak toward its start.
+///
+/// The exponent on the swing's own clock is `1 − tuck·this`; at one third the
+/// fully tucked peak lands around a third of the way through the swing —
+/// heel-up right after toe-off, reaching forward for the rest — instead of at
+/// the middle, which is a walk's shape.
+const TUCK_SKEW: f32 = 0.35;
 
 /// Which way a contact points, relative to the heading it rests at.
 ///
@@ -1686,11 +1739,7 @@ where
     // and adding the highest ground on the path to the apex as well would climb
     // the same stair twice. Measured on a 100 mm flight, taking it out moved
     // nothing — the roof had already made it redundant.
-    Vec3::new(
-        offset.x,
-        base + stride.lift * (t * std::f32::consts::PI).sin(),
-        offset.z,
-    )
+    Vec3::new(offset.x, base + swing_rise(stride, t), offset.z)
 }
 
 /// How many points along a swing the ground is read at, for the roof
@@ -2149,6 +2198,34 @@ const SHOULDER_TWIST: f32 = 0.17;
 /// it in.
 const TRUNK_LEAN: f32 = 0.096;
 
+/// How much of the trunk's inclination the pelvis itself delivers, `0..1`.
+///
+/// **The hip-extension share, and the seat of #329.** A real lean is a
+/// whole-body line — the runner's coaching phrase is "lean from the ankles,
+/// not the waist" — carried substantially by the trailing hip opening while
+/// flexion of the trunk ON the pelvis stays small (playbook §2.4). Delivered
+/// entirely above the pelvis, the same inclination folds at one waist crease,
+/// which is what #325's strips convicted: same magnitude as the reference,
+/// opposite silhouette. Rotating the pelvis carries the legs with it, so this
+/// share leans on the footing tail: `Walk::drive` and every instrument plant
+/// the contacts AFTER the lean, and the stance leg's replant is exactly what
+/// turns a pelvis pitch into hip extension.
+///
+/// Half, as the starting split under the strip loop: enough that the pelvis
+/// segment visibly joins the lean line, while the spine above still curves.
+const ROOT_LEAN_SHARE: f32 = 0.5;
+
+/// The most a walking body will incline its trunk into travel, in radians.
+///
+/// **Twelve degrees, a reference-guided ceiling rather than a tuned term.**
+/// The pace-scaled lean is linear and unbounded, and records allow a
+/// `walk_speed` past anything a body does — while the literature's runners
+/// hold 5–7.5° across 12–20 km/h and elites hold less (playbook §2.4). The
+/// cap sits above every pace the app ships (8.25° at its default travel) and
+/// stops the absurd tail, nothing else. It caps [`lean`]'s walking term only;
+/// [`incline_trunk`] stays uncapped because a bow is supposed to go deep.
+const MAX_LEAN: f32 = 0.21;
+
 /// How far behind the legs the arms run, as a share of the cycle.
 ///
 /// Not zero. Arms driven in lockstep with the legs read as clockwork; the lag is
@@ -2168,6 +2245,21 @@ const ELBOW_REST: f32 = 0.30;
 /// A walking arm folds on the way through and opens again behind, which is most
 /// of what stops the swing reading as a pendulum.
 const ELBOW_SWING: f32 = 0.26;
+
+/// How far the elbow rests folded at a full run, in radians.
+///
+/// **The measured gait split, not a style** (playbook §2.6): humans walk with
+/// elbows near 35 degrees and run with them near 90, and the preference is
+/// strong enough that bent-arm walking costs about 11% more oxygen. Seventy-
+/// five degrees standing, so the swing's own fold tops a pumping arm out
+/// around the measured 90.
+const ELBOW_RUN: f32 = 1.30;
+
+/// How much harder a running shoulder swings than a walking one, as a share.
+///
+/// Modest on purpose: most of what reads as a pump is the fold, and a
+/// shoulder amplitude that doubled would send the hands past the chin.
+const RUN_PUMP: f32 = 0.35;
 
 /// Hangs the arms at the body's sides: the carriage a body has whenever
 /// nothing else is using them.
@@ -2243,6 +2335,15 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycl
     // always was.
     let heading = Heading::toward(stride.direction);
     let travel = heading.along() * heading.reach();
+    // How much of a run this gait is, `0..1`, read off the duty — the share of
+    // flight is what makes a run a run, and duty falls continuously along the
+    // speed axis, so this is a slide and not a gait-label switch (#331). Zero
+    // through the whole walking band (duty at and above one half), one by
+    // [`RUN_DUTY`]. Humans measurably walk with straight arms and run with
+    // bent ones — elbow ≈35° against ≈90° — and bent-arm walking costs about
+    // 11% more oxygen, so the straight arm at a walk is optimal rather than
+    // lazy (playbook §2.6).
+    let run = ((0.5 - gait.duty) / (0.5 - RUN_DUTY)).clamp(0.0, 1.0);
 
     let carries = rig.ground_contacts();
     let mut lead = 0.0;
@@ -2280,8 +2381,11 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycl
         // rotation about X carries a hanging arm backward, so a forward swing is
         // the negative one.
         let side = rig.joints[shoulder].position.x.signum();
+        // The pump: a running arm swings harder from the shoulder as well as
+        // folding, though most of what reads as pumping is the fold below.
+        let swing = ARM_SWING * (1.0 + RUN_PUMP * run);
         pose.rotations[shoulder] *=
-            Quat::from_rotation_x(-ARM_SWING * drive) * Quat::from_rotation_z(-ARM_DROP * side);
+            Quat::from_rotation_x(-swing * drive) * Quat::from_rotation_z(-ARM_DROP * side);
 
         // **The elbow folds forward, about X, and the same way on both arms.**
         // This used to turn about Y with a `side` factor, and both halves of
@@ -2304,8 +2408,13 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycl
         // a hanging arm is a bend and nothing else, and the constants deliver
         // the degrees they are written in.
         let fold = Quat::from_rotation_z(ARM_DROP * side) * Vec3::X;
+        // The elbow's resting bend slides from a walk's to a run's on the same
+        // duty axis as the swing above: at full run the arm carries about 75
+        // degrees of standing fold and the swing tops it up toward the
+        // measured 90.
+        let rest = ELBOW_REST + (ELBOW_RUN - ELBOW_REST) * run;
         pose.rotations[elbow] *=
-            Quat::from_axis_angle(fold, -(ELBOW_REST + ELBOW_SWING * drive.max(0.0)));
+            Quat::from_axis_angle(fold, -(rest + ELBOW_SWING * drive.max(0.0)));
     }
 
     // Shoulders against hips, and then the neck against the shoulders so the
@@ -2363,28 +2472,33 @@ fn pace_of(rig: &Rig, stride: &Stride) -> f32 {
 /// pace rises, and this crate's own figure sits in the middle of that band at
 /// the pace [`Stride::for_body`] calls natural.
 ///
-/// **Pitched rigidly from the lowest spine joint, where the twist is spread
-/// along the whole chain.** The two are opposite on purpose and the anatomy is
-/// the reason: a spine genuinely twists along its length, so the shoulder wind
-/// is shared out; a trunk leans as one piece about the hip, which is the joint
-/// at the bottom of that same chain. Writing the lean the way the twist is
-/// written also makes the constant lie — **spread down the spine it delivered
-/// 2.1 degrees of the 5.5 it asked for**, because local rotations compound but
-/// the trunk's CHORD from pelvis to shoulders ends up a length-weighted average
-/// of them rather than their sum — a
-/// constant nothing is checking against the body it moves. Pitching the base
-/// carries everything above it by the angle written here, and
-/// `examples/walkaudit` reads back what this says.
+/// **Distributed down the body, solved to the chord** (#329, playbook §2.4).
+/// The pelvis takes `ROOT_LEAN_SHARE` of the inclination — hip extension,
+/// the whole body falling forward as one line, which is where a real walker's
+/// lean anatomically lives — and the spine above shares the rest as a curve.
+/// It used to be pitched rigidly from the lowest spine joint, deliberately,
+/// and that deliberateness is what #325's strips convicted: at the same
+/// magnitude as the reference clip the silhouette folded at one waist crease
+/// under a collar kink. The naive spread this doc once warned against —
+/// **2.1 degrees delivered of 5.5 asked**, because the chord is a
+/// length-weighted average of compounding local rotations — is still real,
+/// which is why the distribution is SOLVED to the chord's inclination rather
+/// than sprinkled: `examples/walkaudit` reads back what this says whatever
+/// the weights become.
 ///
-/// **The head is put back level.** The neck takes the whole lean off again, so
-/// a body walking faster looks where it is going instead of at its own feet.
-/// That is the same bargain [`swing_arms`] strikes with the shoulder twist, and
-/// for the same reason: a gaze dragged around by locomotion reads as a body
-/// with no attention of its own. [`super::look_at`] composes on top of this and
-/// is unaffected.
+/// **The head is put back level.** The neck takes the inherited lean off
+/// again, so a body walking faster looks where it is going instead of at its
+/// own feet. That is the same bargain [`swing_arms`] strikes with the shoulder
+/// twist, and for the same reason: a gaze dragged around by locomotion reads
+/// as a body with no attention of its own. Distribution shrank what the neck
+/// pays — the counter is now near the chord's own angle rather than the old
+/// hinge's near-double over-rotation. [`super::look_at`] composes on top of
+/// this and is unaffected.
 ///
-/// Call after [`step`], like [`swing_arms`]; it touches nothing below the
-/// pelvis and so cannot disturb a footing solve.
+/// Call after [`step`] and BEFORE the footing tail, like [`swing_arms`]: the
+/// pelvis share carries the legs, and the plant that runs after is what turns
+/// a pelvis pitch into a stance leg's hip extension. [`Walk::drive`] and every
+/// instrument already run the stages in that order.
 ///
 /// **Rotations are composed, not assigned**, so this stacks with the twist
 /// rather than replacing it — running it twice compounds its own lean, as any
@@ -2437,22 +2551,59 @@ fn lean_with(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, head_leve
     // moves, which is every reading this crate has taken.
     let travel = stride.direction.normalize_or(Vec3::Z);
     let toward = (travel * pitch + Vec3::X * bank).normalize_or_zero();
-    let wanted = (pitch * pitch + bank * bank).sqrt();
+    // Capped, because the pace scaling is linear and unbounded while a real
+    // walker's lean is not — see [`MAX_LEAN`]. The cap lives here rather than
+    // in the solve so a bow can still fold a body double.
+    let wanted = (pitch * pitch + bank * bank).sqrt().min(MAX_LEAN);
     if wanted <= f32::EPSILON || toward == Vec3::ZERO {
         return;
     }
 
-    let Some((neck, applied)) = incline_trunk(rig, pose, toward, wanted) else {
+    let Some((_, applied)) = incline_trunk(rig, pose, toward, wanted) else {
         return;
     };
     if head_level {
-        pose.rotations[neck] *= applied.inverse();
+        relevel_head(rig, pose, applied);
+    }
+}
+
+/// Takes an inherited trunk rotation back off along the cervical chain, so the
+/// head ends up level in space.
+///
+/// **Distributed with the weight at the top, and that distribution is #330.**
+/// Spent whole at the lowest neck joint, the counter kinks the body at the
+/// collar: the neck stands up vertical off a pitched trunk and the chin leads
+/// level — the craned-neck silhouette #325 convicted. A real walker stabilizes
+/// the head IN SPACE (playbook §2.5) but pays for it along seven cervical
+/// vertebrae, most of it in the nod at the very top — so the base of the neck
+/// keeps the trunk's line and the face still arrives level. The weights rise
+/// linearly toward the head, which is the simplest shape with that property;
+/// the strips judge whether it is enough of one.
+///
+/// The counter's total is exactly `inherited.inverse()`, so the head's own
+/// orientation lands level wherever the shares fall — what moved is where the
+/// bend lives, not where the head points.
+fn relevel_head(rig: &Rig, pose: &mut Pose, inherited: Quat) {
+    let mut chain: Vec<usize> = rig.in_zone(Zone::Neck);
+    if let Some(&head) = rig.in_zone(Zone::Head).first() {
+        chain.push(head);
+    }
+    if chain.is_empty() {
+        return;
+    }
+    let (axis, angle) = inherited.inverse().to_axis_angle();
+    #[expect(clippy::cast_precision_loss, reason = "a neck is a handful of joints")]
+    let total: f32 = (chain.len() * (chain.len() + 1)) as f32 * 0.5;
+    for (at, &joint) in chain.iter().enumerate() {
+        #[expect(clippy::cast_precision_loss, reason = "a neck is a handful of joints")]
+        let share = (at + 1) as f32 / total;
+        pose.rotations[joint] *= Quat::from_axis_angle(axis, angle * share);
     }
 }
 
 /// Pitches the whole trunk to an inclination of `wanted` radians, leaning
 /// `toward` — a horizontal direction — and hands back the neck joint and the
-/// rotation put at the hinge.
+/// total rotation everything above the shoulders inherited.
 ///
 /// **The lean's anatomy without the lean's opinion about the head.** [`lean`]
 /// takes the pitch back off again at the neck, because a body walking faster
@@ -2462,6 +2613,21 @@ fn lean_with(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, head_leve
 /// So the counter-rotation is the caller's and everything under it is
 /// shared, which is the only way there is one description of how a trunk
 /// pitches rather than two that drift apart.
+///
+/// **Distributed, not hinged** (#329, playbook §2.4). The pelvis takes
+/// [`ROOT_LEAN_SHARE`] of the inclination — hip extension, the whole body
+/// falling forward as one line — and the spine joints above it share the rest
+/// as a curve. Spent at the single joint above the pelvis, the same
+/// inclination arrives as a waist fold under a collar kink, and the neck's
+/// counter has to pay the hinge's over-rotation (15.2° for an 8.25° chord on
+/// the default body) instead of something near the chord itself.
+///
+/// **The pelvis share leans on the footing tail.** Rotating the root carries
+/// the legs, so this function's contract is the drive sequence's own: the
+/// contacts are planted AFTER the lean — [`Walk::drive`] and every instrument
+/// already do — and the stance leg's replant is what turns a pelvis pitch
+/// into hip extension. A swing foot moves second-order (the leg's downward
+/// vector pitches, so its height changes with the cosine).
 ///
 /// **Composed rather than assigned**, so this stacks onto whatever lean or
 /// twist the pose already carries.
@@ -2486,13 +2652,84 @@ pub(super) fn incline_trunk(
     // convention to keep straight.
     let axis = Vec3::Y.cross(toward);
     let root = rig.joints.iter().position(|joint| joint.parent.is_none())?;
-    let hinge = spine[0];
-    let below = rig.joints[hinge].position - rig.joints[root].position;
-    let above = rig.joints[girdle].position - rig.joints[hinge].position;
-    let turn = trunk_angle_for(below, above, wanted, axis, toward);
-    let applied = Quat::from_axis_angle(axis, turn);
-    pose.rotations[hinge] *= applied;
-    Some((neck, applied))
+
+    // The chain the chord runs along, pelvis first, and the segment above each
+    // rotor. The girdle ends the chord rather than rotating: a rotation there
+    // moves the arms and the neck but not one millimetre of trunk line, so
+    // weight spent on it would be weight the solve cannot see.
+    let nodes: Vec<usize> = std::iter::once(root).chain(spine.iter().copied()).collect();
+    let rotors = nodes.len() - 1;
+    let segments: Vec<Vec3> = (0..rotors)
+        .map(|at| rig.joints[nodes[at + 1]].position - rig.joints[nodes[at]].position)
+        .collect();
+    // The pelvis takes its share; the spine splits the rest evenly. A one-rotor
+    // chain (a body whose girdle sits directly on its pelvis) gives the root
+    // everything, which is the only line it has.
+    #[expect(clippy::cast_precision_loss, reason = "a spine is a handful of joints")]
+    let weights: Vec<f32> = if rotors == 1 {
+        vec![1.0]
+    } else {
+        let spread = (1.0 - ROOT_LEAN_SHARE) / (rotors - 1) as f32;
+        std::iter::once(ROOT_LEAN_SHARE)
+            .chain(std::iter::repeat_n(spread, rotors - 1))
+            .collect()
+    };
+
+    // The same shortfall iteration `trunk_angle_for` ran on one hinge, run on
+    // the distribution's single scale: apply every rotor at `weight * scale`,
+    // read the chord's pitch back through the accumulated rotations, and
+    // correct the scale by the shortfall. Three passes for the same measured
+    // reason as [`TRUNK_PASSES`].
+    let pitch = |run: Vec3| run.dot(toward).atan2(run.y);
+    let rest = pitch(segments.iter().sum());
+    let delivered = |scale: f32| {
+        let mut acc = Quat::IDENTITY;
+        let mut run = Vec3::ZERO;
+        for (weight, segment) in weights.iter().zip(&segments) {
+            acc *= Quat::from_axis_angle(axis, weight * scale);
+            run += acc * *segment;
+        }
+        pitch(run) - rest
+    };
+    let mut scale = wanted;
+    for _ in 0..TRUNK_PASSES {
+        let got = delivered(scale);
+        // A body whose trunk delivers nothing however far it turns cannot
+        // lean; leave it upright rather than divide by its shortfall.
+        if got.abs() <= f32::EPSILON {
+            return None;
+        }
+        scale *= wanted / got;
+    }
+
+    // Everything above the girdle inherits the whole stack, so the counter a
+    // caller may want is the composed product, in order from the pelvis up.
+    let mut inherited = Quat::IDENTITY;
+    for (weight, &node) in weights.iter().zip(&nodes) {
+        let applied = Quat::from_axis_angle(axis, weight * scale);
+        pose.rotations[node] *= applied;
+        inherited *= applied;
+    }
+
+    // **The pelvis share must not carry the limbs.** A rotated root swings
+    // every contact and swing arc [`step`] already authored — which on the
+    // flat is planted-sole slide and on a grade is a swing sole buried in the
+    // hill, both measured by the guards the first draft of this share failed.
+    // So every limb hanging off the root is counter-rotated: the pelvis
+    // SEGMENT joins the lean line while the legs (and any tail) keep exactly
+    // the pose the step gave them. That is not a workaround — a pelvis
+    // pitching against an unmoved femur is what hip extension IS. The counter
+    // pre-multiplies, cancelling the root's appended rotation in the child's
+    // world chain; the joints' own offsets from the root still swing through
+    // the rotation, which at these angles is millimetres and the plant's to
+    // absorb.
+    let counter = Quat::from_axis_angle(axis, weights[0] * scale).inverse();
+    for child in 0..rig.len() {
+        if rig.joints[child].parent == Some(root) && child != nodes[1] {
+            pose.rotations[child] = counter * pose.rotations[child];
+        }
+    }
+    Some((neck, inherited))
 }
 
 /// Where on its own path the body will be `cycles` from now, in body space, at
@@ -2590,9 +2827,9 @@ fn bank_of(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
     (froude * leg * (stride.yaw / stride.length)).atan()
 }
 
-/// How many times [`trunk_angle_for`] refines its guess.
+/// How many times [`incline_trunk`]'s solve refines its guess.
 ///
-/// **Three, measured.** The relation is a chord pitching about a point part way
+/// **Three, measured.** The relation is a chord pitching about points part way
 /// along itself, so the angle asked for and the angle delivered differ by a
 /// factor that itself depends on the angle. One pass lands within about a
 /// tenth of a degree on the default body, two within a thousandth, and three is
@@ -2600,45 +2837,6 @@ fn bank_of(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
 /// there is no reason to run fewer, and the same fixed point [`roll_feet`]
 /// iterates for the same kind of reason.
 const TRUNK_PASSES: usize = 3;
-
-/// The rotation to put at the base of the spine so the whole trunk arrives
-/// inclined by `wanted`, toward `toward`, about `axis`.
-///
-/// **Solved rather than assumed, because the two are not the same angle.** The
-/// trunk's inclination is the pitch of the chord from the pelvis to the
-/// shoulders, which is what the gait literature measures and what
-/// `examples/walkaudit` reads back. But the pelvis cannot be rotated — it
-/// carries the legs, and turning it turns them out from under the footing solve
-/// — so the hinge is the joint above it, and the segment `below` it stays put
-/// while only `above` swings. The chord is then a length-weighted mix of a
-/// still part and a turned one, and it arrives at a fraction of the angle
-/// applied: 3.0 degrees of a 5.5 asked, on the default body.
-///
-/// Rather than let the constant mean a budget nobody can check, this inverts
-/// the relation. `wanted` is the inclination, the return is whatever rotation
-/// delivers it, and the two are the same number only on a body whose pelvis has
-/// no height at all.
-fn trunk_angle_for(below: Vec3, above: Vec3, wanted: f32, axis: Vec3, toward: Vec3) -> f32 {
-    // The inclination of a run, measured in the plane it is being tilted in.
-    // `toward.dot` rather than a named component, so the same solve answers for
-    // a forward pitch, a sideways bank, and the mixture of the two a body
-    // walking round a bend actually holds.
-    let pitch = |run: Vec3| run.dot(toward).atan2(run.y);
-    let rest = pitch(below + above);
-    let mut turn = wanted;
-    for _ in 0..TRUNK_PASSES {
-        let delivered = pitch(below + Quat::from_axis_angle(axis, turn) * above) - rest;
-        // The shortfall, applied to the guess. A body whose trunk is all pelvis
-        // delivers nothing however far it turns, and dividing by that would
-        // spin it; the guard leaves such a body upright, which is the honest
-        // answer for one that cannot lean.
-        if delivered.abs() <= f32::EPSILON {
-            return 0.0;
-        }
-        turn *= wanted / delivered;
-    }
-    turn
-}
 
 /// The spine from the pelvis up to `top`, pelvis end first.
 ///
@@ -2799,6 +2997,7 @@ mod tests {
             length: 0.8,
             lift: 0.1,
             yaw: 0.0,
+            tuck: 0.0,
         }
     }
 
@@ -2883,6 +3082,7 @@ mod tests {
             length: 0.6,
             lift: 0.1,
             yaw: 0.5,
+            tuck: 0.0,
         };
         for home in [Vec3::new(0.09, 0.12, 0.0), Vec3::new(-0.09, 0.12, 0.0)] {
             let planted = |t: f32| {
@@ -2916,6 +3116,7 @@ mod tests {
             length: 0.6,
             lift: 0.1,
             yaw: 0.5,
+            tuck: 0.0,
         };
         let covered = |home: Vec3| {
             let from = home + contact_offset(home, &stride, Phase::Stance(0.0));
@@ -3217,6 +3418,7 @@ mod tests {
             length: 0.0,
             lift: 0.05,
             yaw: 0.6,
+            tuck: 0.0,
         };
         let left = contact_offset(Vec3::new(0.09, 0.12, 0.0), &stride, Phase::Stance(1.0));
         let right = contact_offset(Vec3::new(-0.09, 0.12, 0.0), &stride, Phase::Stance(1.0));
@@ -4788,49 +4990,63 @@ mod tests {
 
     #[test]
     fn the_head_keeps_looking_where_it_is_going() {
-        // The bargain `swing_arms` strikes with the shoulder twist, struck again
-        // for the pitch: the trunk leans and the neck takes it back off, so a
-        // body walking faster looks ahead rather than at its own feet. Without
-        // this a body at a run reads as studying the ground.
+        // The bargain `swing_arms` strikes with the shoulder twist, struck
+        // again for the pitch: the trunk leans and the cervical chain takes it
+        // back off, so a body walking faster looks ahead rather than at its
+        // own feet. Since #330 the level thing is the head's own ORIENTATION,
+        // not the neck-to-head chord: the counter is spent along the chain
+        // with its weight at the top, so the neck's base deliberately keeps
+        // some of the trunk's line — that is the collar kink's fix — while
+        // the face still arrives level in space.
         let rig = biped();
         let neck = rig.in_zone(Zone::Neck)[0];
         let Some(&head) = rig.in_zone(Zone::Head).first() else {
             return;
         };
         let gait = Gait::natural(&rig);
-        let pitch = |pose: &Pose| {
+        let still = Pose::rest(&rig).forward(&rig);
+        let chord = |pose: &Pose| {
             let posed = pose.forward(&rig);
             let run = posed.positions[head] - posed.positions[neck];
             run.z.atan2(run.y).to_degrees()
         };
-        let rest = pitch(&Pose::rest(&rig));
+        let rest_chord = chord(&Pose::rest(&rig));
         for pace in [0.5f32, 1.0, 2.0] {
             let mut pose = Pose::rest(&rig);
             lean(&rig, &mut pose, &gait, &Stride::for_body(&rig, pace));
-            let carried = pitch(&pose);
+            let level = pose.forward(&rig).rotations[head]
+                .angle_between(still.rotations[head])
+                .to_degrees();
             assert!(
-                (carried - rest).abs() < 0.05,
-                "at pace {pace} the lean carried the head {:.2} deg off level",
-                carried - rest
+                level < 0.05,
+                "at pace {pace} the lean carried the head {level:.2} deg off level"
+            );
+            // And the crane is actually gone: the neck's base keeps part of
+            // the trunk's line, so the chord rides forward rather than
+            // standing up vertical off a pitched back.
+            assert!(
+                chord(&pose) - rest_chord > 0.5,
+                "at pace {pace} the neck stood the whole counter up at the collar again"
             );
         }
     }
 
     #[test]
-    fn the_head_level_bargain_has_an_ablation_switch_and_it_moves_only_the_neck() {
+    fn the_head_level_bargain_has_an_ablation_switch_and_it_moves_only_the_cervical_chain() {
         // **#328, the strips instrument's ablation.** The diagnosis on the
         // walking hunch has to split the lean's contribution to a silhouette
-        // from the crane's, and it cannot while the trunk pitch and the neck's
+        // from the crane's, and it cannot while the trunk pitch and its
         // counter are welded together. Off must mean exactly one thing — the
-        // neck keeps its rest rotation and the head goes down with the trunk.
-        // Any other joint moving would make the switch a second gait rather
-        // than an ablation of this one.
+        // cervical chain keeps its rest rotations and the head goes down with
+        // the trunk. Any joint outside the chain moving would make the switch
+        // a second gait rather than an ablation of this one.
         let rig = biped();
-        let neck = rig.in_zone(Zone::Neck)[0];
         let girdle = girdle_of(&rig);
         let Some(&head) = rig.in_zone(Zone::Head).first() else {
             return;
         };
+        let mut chain = rig.in_zone(Zone::Neck);
+        chain.push(head);
         let gait = Gait::natural(&rig);
         let stride = Stride::for_body(&rig, 1.5);
 
@@ -4841,32 +5057,32 @@ mod tests {
 
         for joint in 0..rig.len() {
             let moved = apart(levelled.rotations[joint], freed.rotations[joint]);
-            if joint == neck {
-                assert!(moved > SAME_POSE, "the switch did nothing at the neck");
-            } else {
+            if joint == head {
+                // The top of the chain carries the largest share by design.
+                assert!(moved > SAME_POSE, "the switch did nothing at the head");
+            } else if !chain.contains(&joint) {
                 assert!(
                     moved < SAME_POSE,
-                    "the switch moved joint {joint}, which is not the neck"
+                    "the switch moved joint {joint}, which is not cervical"
                 );
             }
         }
 
         // And what the freed head rides is exactly the counter the bargain
-        // would have taken off — the HINGE's rotation, not the trunk's chord.
-        // The two are far apart, and writing this test found the number: at
-        // pace 1.5 the chord delivers its asked 8.25 degrees while the hinge
-        // turns 15.2 to deliver it (the segment below the hinge does not
-        // rotate, so the hinge over-rotates to incline the chord). The neck's
-        // counter is that larger angle, which means the head-level bargain
-        // bends the neck back by nearly TWICE the visible lean.
-        let pitch = |pose: &Pose| {
-            let posed = pose.forward(&rig);
-            let run = posed.positions[head] - posed.positions[neck];
-            run.z.atan2(run.y).to_degrees()
-        };
-        let carried = pitch(&freed) - pitch(&Pose::rest(&rig));
-        let counter = levelled.rotations[neck]
-            .angle_between(freed.rotations[neck])
+        // would have taken off — the total the chain above the pelvis
+        // inherited, read at the head's own world orientation since #330
+        // spread it along the chain. Writing this test originally found the
+        // diagnosis's number: with the lean spent at one hinge the counter was
+        // 15.2 degrees for an 8.25 degree chord, nearly twice the visible
+        // lean; #329's distribution brought it to 11.6. This guards the
+        // RATIO: if the counter climbs back past 1.5x the chord, the lean has
+        // re-concentrated and the collar kink of #325 is on its way back.
+        let heading = |pose: &Pose| pose.forward(&rig).rotations[head];
+        let counter = heading(&levelled)
+            .angle_between(heading(&freed))
+            .to_degrees();
+        let carried = heading(&freed)
+            .angle_between(Pose::rest(&rig).forward(&rig).rotations[head])
             .to_degrees();
         let delivered = trunk_pitch(&rig, &freed, girdle);
         assert!(
@@ -4874,10 +5090,137 @@ mod tests {
             "the bargain's counter is {counter:.2} deg and the freed head rode {carried:.2}"
         );
         assert!(
-            counter > delivered * 1.5,
-            "the counter ({counter:.2} deg) is supposed to dwarf the chord's lean \
-             ({delivered:.2} deg); if these have converged, the hinge geometry changed \
-             and the diagnosis on #325 should hear about it"
+            counter >= delivered - 0.05 && counter < delivered * 1.5,
+            "the counter ({counter:.2} deg) should sit near the chord's own lean \
+             ({delivered:.2} deg) now that #329 distributes it; past 1.5x the lean \
+             has re-concentrated at a hinge"
+        );
+    }
+
+    #[test]
+    fn the_lean_is_a_whole_body_line_and_the_limbs_do_not_ride_it() {
+        // **#329's two contracts in one frame.** The pelvis carries its share
+        // of the lean — that is the hip extension the reference silhouette
+        // has and the old hinge did not — and every limb hanging off the
+        // pelvis keeps the orientation the step gave it, because a root
+        // rotation that carried the legs is planted-sole slide on the flat
+        // and a sole buried in the hill on a grade (both watched by the sole
+        // guards, which failed on the first draft of this share).
+        let rig = biped();
+        let root = rig
+            .joints
+            .iter()
+            .position(|joint| joint.parent.is_none())
+            .expect("a root");
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.5);
+        let mut pose = Pose::rest(&rig);
+        lean(&rig, &mut pose, &gait, &stride);
+
+        // The pelvis share is real: the root turned.
+        let rest = Pose::rest(&rig);
+        assert!(
+            apart(pose.rotations[root], rest.rotations[root]) > SAME_POSE,
+            "the root carried none of the lean"
+        );
+        // And the limbs did not ride it: every joint hanging off the root
+        // outside the spine holds its WORLD orientation, which is the counter
+        // composing with the root's share to nothing.
+        let posed = pose.forward(&rig);
+        let still = rest.forward(&rig);
+        for child in 0..rig.len() {
+            if rig.joints[child].parent == Some(root) && !rig.joints[child].zone.is_core() {
+                assert!(
+                    apart(posed.rotations[child], still.rotations[child]) < SAME_POSE,
+                    "the lean moved limb joint {child} in the world"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_lean_stops_growing_at_its_ceiling() {
+        // The pace scaling is linear and unbounded while a real walker's lean
+        // is not (playbook §2.4): records allow a walk_speed past anything a
+        // body does, and without the cap the trunk would fold to the horizon.
+        // The ceiling is on the walking term only — a bow still goes deep,
+        // which `gestureaudit`'s 30-degree bow chord shows.
+        let rig = biped();
+        let girdle = girdle_of(&rig);
+        let gait = Gait::natural(&rig);
+        let at = |pace: f32| {
+            let mut pose = Pose::rest(&rig);
+            lean(&rig, &mut pose, &gait, &Stride::for_body(&rig, pace));
+            trunk_pitch(&rig, &pose, girdle)
+        };
+        let ceiling = MAX_LEAN.to_degrees();
+        assert!(
+            (at(4.0) - ceiling).abs() < 0.1 && (at(8.0) - ceiling).abs() < 0.1,
+            "past the cap every pace should deliver the ceiling: {:.2} at 4.0, {:.2} at 8.0, \
+             against {ceiling:.2}",
+            at(4.0),
+            at(8.0)
+        );
+        assert!(
+            at(1.5) < ceiling - 1.0,
+            "the ceiling must sit above the travel band, not in it"
+        );
+    }
+
+    #[test]
+    fn a_run_tucks_its_heel_and_bends_its_elbows() {
+        // **#331's two halves, guarded as relations within one build** (never
+        // absolute thresholds — #1183). A tucked swing must peak EARLIER and
+        // HIGHER than a walking one: the heel kicks up toward the glutes just
+        // after toe-off, and the knee flexion a run reads by follows from the
+        // leg reaching for that foot. And a running arm must rest folded far
+        // past a walking one — the measured split is 35 against 90 degrees,
+        // and it slides on the duty axis rather than switching with a label.
+        let rig = biped();
+
+        let walk = Stride::for_body(&rig, 1.0);
+        let mut run = Stride::for_body(&rig, 1.5);
+        assert!(walk.tuck < 0.05, "a walking stride grew a tuck");
+        assert!(run.tuck > 0.9, "the travel-pace stride did not tuck");
+        // Same lift on both, so the comparison isolates the tuck's own shape.
+        run.lift = walk.lift;
+        let profile = |stride: &Stride| {
+            (0..100)
+                .map(|at| (at as f32 / 99.0, swing_rise(stride, at as f32 / 99.0)))
+                .fold((0.0f32, 0.0f32), |best, (t, rise)| {
+                    if rise > best.1 { (t, rise) } else { best }
+                })
+        };
+        let (walk_peak_at, walk_peak) = profile(&walk);
+        let (run_peak_at, run_peak) = profile(&run);
+        assert!(
+            run_peak_at < walk_peak_at - 0.1,
+            "a tucked swing must peak early: {run_peak_at:.2} against {walk_peak_at:.2}"
+        );
+        assert!(
+            run_peak > walk_peak * 1.5,
+            "a tucked swing must ride high: {run_peak:.3} against {walk_peak:.3}"
+        );
+
+        // The elbows, through the real entry point so the duty comes from the
+        // gait the way a consumer's does.
+        let elbow =
+            |gait: &Gait, stride: &Stride| {
+                let mut pose = Pose::rest(&rig);
+                swing_arms(&rig, &mut pose, gait, stride, 0.25);
+                let [_, joint, _] = rig.limb_chain(Limb::ForeLeft).expect("an arm");
+                2.0 * pose.rotations[joint].w.clamp(-1.0, 1.0).acos().min(
+                    std::f32::consts::TAU - 2.0 * pose.rotations[joint].w.clamp(-1.0, 1.0).acos(),
+                )
+            };
+        let walking = elbow(&Gait::natural(&rig), &walk);
+        let running = elbow(&Gait::running(&rig), &Stride::for_body(&rig, 1.5));
+        assert!(
+            running > walking + 0.5,
+            "a running elbow must fold far past a walking one: \
+             {:.1} against {:.1} degrees",
+            running.to_degrees(),
+            walking.to_degrees()
         );
     }
 

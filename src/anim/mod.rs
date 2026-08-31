@@ -1,5 +1,12 @@
 //! Making a body move.
 //!
+//! **Before touching any gait term, read `docs/locomotion-playbook.md`.** It
+//! holds the target magnitudes a real walker measures, the craft vocabulary a
+//! strip is judged in, and the method decisions of milestone #11
+//! (reference-guided, strips-first) — every posture change cites the section
+//! it acts on, and the precedent for why is recorded there: five verified
+//! fixes once moved a render by nothing.
+//!
 //! Motion here is described by **goals** rather than by joint angles, because a
 //! joint angle bakes in the skeleton it was authored on. A body whose
 //! proportions come from a record has no fixed skeleton, so the only description

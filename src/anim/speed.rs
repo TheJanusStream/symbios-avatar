@@ -57,6 +57,14 @@ pub const GRAVITY: f32 = 9.81;
 /// for a child and an adult, and it would not be if it were a speed in metres.
 pub const FROUDE_TRANSITION: f32 = 0.5;
 
+/// The Froude number by which a run carries its full heel tuck.
+///
+/// The band from the transition to here is where a jog's character arrives —
+/// the heel kicking up and back after toe-off ([`Stride::tuck`]). One and a
+/// half sits a plain jog's speed on the default body; the consuming app's
+/// default travel (4.0 m/s, Froude ≈ 1.8) lands past it, fully tucked.
+const TUCK_FROUDE: f32 = 1.5;
+
 /// Grieve's coefficient: relative step length at unit dimensionless speed.
 pub const GRIEVE_ALPHA: f32 = 1.22;
 
@@ -258,6 +266,12 @@ impl Speed {
             // is what fills this in, and it takes the speed as its argument
             // for exactly that reason.
             yaw: 0.0,
+            // The heel tuck rises from nothing at the walk-run transition to
+            // its whole self by a plain run's Froude — continuously, on the
+            // same axis as everything else here, which is what keeps the run's
+            // character from being a gait-label switch (#331).
+            tuck: ((self.froude - FROUDE_TRANSITION) / (TUCK_FROUDE - FROUDE_TRANSITION))
+                .clamp(0.0, 1.0),
         }
     }
 
