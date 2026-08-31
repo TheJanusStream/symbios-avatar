@@ -10,38 +10,113 @@ env:
     CARGO_TERM_COLOR: always
 
 jobs:
-    build:
+    fmt:
+        name: Formatting
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+            - run: cargo fmt -- --check
 
-            - name: Check Formatting
-              run: cargo fmt -- --check
+    # `default` is empty here, so before this matrix existed neither optional
+    # feature was compiled by CI at all — including `serde-avatar`, which is
+    # the whole worker boundary a consuming app builds bodies across. A wire
+    # format nothing builds is a wire format nothing checks.
+    #
+    # Clippy rather than `build`, because `--all-targets` type-checks the tests
+    # and examples too and this is the cheap half of the gate; the suite itself
+    # runs below, where it only has to be paid twice.
+    #
+    # --all-features is not a substitute for the single-feature entries. A
+    # module that compiles only because some *other* feature happens to be on
+    # with it is exactly the failure this is here to find.
+    features:
+        name: Compile ${{ matrix.name }}
+        runs-on: ubuntu-latest
+        strategy:
+            # Report every broken combination in one run rather than stopping
+            # at the first.
+            fail-fast: false
+            matrix:
+                include:
+                    - name: default (no features)
+                      flags: ""
+                    - name: serde-avatar
+                      flags: "--features serde-avatar"
+                    - name: builtin-clips
+                      flags: "--features builtin-clips"
+                    - name: all features
+                      flags: "--all-features"
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Cache cargo registry and target dir
+              uses: Swatinem/rust-cache@v2
+              with:
+                  key: ${{ matrix.name }}
 
             # --all-targets, so examples and tests are linted too. The render
             # tool is the instrument every quality judgement here is made with;
             # letting it rot behind a lint gate that does not cover it is how it
             # stops being trustworthy.
             - name: Clippy (Linting)
-              run: cargo clippy --all-targets -- -D warnings
+              run: cargo clippy ${{ matrix.flags }} --all-targets -- -D warnings
+
+    # Two runs, not four. The suite builds whole bodies and takes about seven
+    # minutes for the library alone, so every entry here is real time: `default`
+    # is what a plain consumer gets, `--all-features` is the only configuration
+    # that compiles the feature-gated tests at all. The matrix above already
+    # proves the two features in between compile.
+    test:
+        name: Test ${{ matrix.name }}
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: default (no features)
+                      flags: ""
+                    - name: all features
+                      flags: "--all-features"
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Cache cargo registry and target dir
+              uses: Swatinem/rust-cache@v2
+              with:
+                  key: test-${{ matrix.name }}
 
             - name: Build
-              run: cargo build --verbose
+              run: cargo build --verbose ${{ matrix.flags }}
 
             - name: Run Tests
-              run: cargo test --verbose
+              run: cargo test --verbose ${{ matrix.flags }}
 
-            # Documentation is the design record for this crate; a warning here
-            # is usually a link gone stale against a rename.
+    # Documentation is the design record for this crate; a warning here is
+    # usually a link gone stale against a rename. Run with every feature on, or
+    # the gate cannot see a doc comment on feature-gated code — which is where
+    # the format of anything crossing a process boundary gets written down.
+    doc:
+        name: Documentation
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Cache cargo registry and target dir
+              uses: Swatinem/rust-cache@v2
+              with:
+                  key: doc
+
             - name: Documentation
-              run: cargo doc --no-deps --document-private-items
+              run: cargo doc --no-deps --document-private-items --all-features
               env:
                   RUSTDOCFLAGS: -D warnings
 
     # The first consuming application is wasm32 on WebGL2. Finding out that the
     # engine does not build for it after a Bevy integration has been written
-    # against a native-only API is the expensive order to discover it in.
+    # against a native-only API is the expensive order to discover it in. With
+    # every feature on, because `serde-avatar` exists *for* that target.
     wasm:
+        name: wasm32 check
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -49,7 +124,12 @@ jobs:
             - name: Add the wasm target
               run: rustup target add wasm32-unknown-unknown
 
+            - name: Cache cargo registry and target dir
+              uses: Swatinem/rust-cache@v2
+              with:
+                  key: wasm32
+
             # `.cargo/config.toml` carries the getrandom backend flag this
             # needs; see the note there for why it is required at all.
             - name: Check for wasm32
-              run: cargo check --target wasm32-unknown-unknown --lib --verbose
+              run: cargo check --target wasm32-unknown-unknown --lib --all-features --verbose

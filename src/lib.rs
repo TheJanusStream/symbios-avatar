@@ -122,6 +122,10 @@ pub mod gltf;
 pub mod hair;
 pub mod hull;
 pub mod mesh;
+/// Hand-written `serde` impls for [`mesh::PolyMesh`]; see the module for why a
+/// derived one is not good enough across a worker boundary.
+#[cfg(feature = "serde-avatar")]
+pub mod mesh_serde;
 pub mod plan;
 pub mod prim;
 pub mod record;
