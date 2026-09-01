@@ -45,6 +45,7 @@
 //!
 //! [`Clip`]: super::clip::Clip
 
+use crate::det;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -162,7 +163,7 @@ impl Curve {
                 }
                 let a = unpack(values[before.min(values.len() - 1)]);
                 let b = unpack(values[after.min(values.len() - 1)]);
-                a.slerp(b, blend)
+                det::slerp(a, b, blend)
             }
         }
     }
@@ -596,6 +597,7 @@ fn component_distance(a: Quat, b: Quat) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::det::Rot;
     use crate::plan::Limb;
 
     /// A rig to resolve slots against.
@@ -606,7 +608,7 @@ mod tests {
     /// A clip turning one joint from rest to a quarter turn over four frames.
     fn turning(zone: Zone, looping: bool) -> PoseClip {
         let samples: Vec<Quat> = (0..4)
-            .map(|frame| Quat::from_rotation_z(frame as f32 / 3.0 * std::f32::consts::FRAC_PI_2))
+            .map(|frame| Rot::z(frame as f32 / 3.0 * std::f32::consts::FRAC_PI_2))
             .collect();
         PoseClip {
             name: "Turn".into(),
@@ -629,9 +631,7 @@ mod tests {
     /// costs exactly what any other frame does.
     fn spinning(frames: usize) -> PoseClip {
         let samples: Vec<Quat> = (0..frames)
-            .map(|frame| {
-                Quat::from_rotation_z(frame as f32 / frames as f32 * std::f32::consts::TAU)
-            })
+            .map(|frame| Rot::z(frame as f32 / frames as f32 * std::f32::consts::TAU))
             .collect();
         PoseClip {
             name: "Spin".into(),
@@ -673,7 +673,7 @@ mod tests {
         // more, so the extra frame lands back on the start.
         let mut clip = spinning(24);
         let samples: Vec<Quat> = (0..=24)
-            .map(|frame| Quat::from_rotation_z(frame as f32 / 24.0 * std::f32::consts::TAU))
+            .map(|frame| Rot::z(frame as f32 / 24.0 * std::f32::consts::TAU))
             .collect();
         clip.frames = 25;
         clip.tracks[0].rotation = Curve::bake(&samples, 1e-4);
@@ -700,10 +700,10 @@ mod tests {
         // and `Reject` 6.0 at frame 79 of 114.
         let mut clip = spinning(24);
         let mut samples: Vec<Quat> = (0..24)
-            .map(|frame| Quat::from_rotation_z(frame as f32 / 24.0 * std::f32::consts::TAU))
+            .map(|frame| Rot::z(frame as f32 / 24.0 * std::f32::consts::TAU))
             .collect();
         // One frame thrown a quarter turn off the path it was on.
-        samples[10] = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2) * samples[10];
+        samples[10] = Rot::x(std::f32::consts::FRAC_PI_2) * samples[10];
         clip.tracks[0].rotation = Curve::bake(&samples, 1e-4);
         let read = clip.continuity(&rig());
         assert!(
@@ -758,7 +758,7 @@ mod tests {
 
         let moving = Curve::bake(
             &(0..30)
-                .map(|frame| Quat::from_rotation_x(frame as f32 * 0.05))
+                .map(|frame| Rot::x(frame as f32 * 0.05))
                 .collect::<Vec<_>>(),
             1e-4,
         );
@@ -791,7 +791,7 @@ mod tests {
         for step in 0..360 {
             let angle = (step as f32).to_radians();
             for axis in [Vec3::X, Vec3::Y, Vec3::Z, Vec3::ONE.normalize()] {
-                let original = Quat::from_axis_angle(axis, angle);
+                let original = Rot::axis_angle(axis, angle);
                 let restored = unpack(pack(original));
                 // Compared as a rotation rather than component-wise: the
                 // question is how far a point moves, not how far a number did.
@@ -819,14 +819,13 @@ mod tests {
         let elsewhere = Slot::new(Zone::UpperLimb(Limb::HindLeft), 0)
             .resolve(&rig)
             .expect("a thigh");
-        let marked = Quat::from_rotation_x(0.3);
+        let marked = Rot::x(0.3);
         pose.rotations[elsewhere] = marked;
         pose.translation = Vec3::new(0.0, 1.0, 0.0);
 
         clip.apply(&rig, &mut pose, clip.duration());
         assert!(
-            pose.rotations[chest].angle_between(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
-                < 1e-3,
+            pose.rotations[chest].angle_between(Rot::z(std::f32::consts::FRAC_PI_2)) < 1e-3,
             "the clip's own joint did not land on its last frame"
         );
         assert_eq!(
@@ -844,7 +843,7 @@ mod tests {
     fn a_one_shot_stops_at_its_last_frame_and_a_loop_wraps() {
         let rig = rig();
         let chest = Slot::new(Zone::Chest, 0).resolve(&rig).expect("a chest");
-        let quarter = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let quarter = Rot::z(std::f32::consts::FRAC_PI_2);
 
         // A one-shot: four frames at 3 fps is one second, and it holds there.
         let shot = turning(Zone::Chest, false);

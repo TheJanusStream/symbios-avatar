@@ -16,6 +16,7 @@
 //! onto the rotation already there so a limb's existing twist survives being
 //! reached with.
 
+use crate::det::{self, DetMath};
 use glam::{Quat, Vec3};
 
 use super::pose::Pose;
@@ -93,9 +94,9 @@ pub fn two_bone(rig: &Rig, pose: &mut Pose, chain: [usize; 3], target: Vec3, pol
     // target.
     let cosine = ((upper * upper + solved * solved - lower * lower) / (2.0 * upper * solved))
         .clamp(-1.0, 1.0);
-    let angle = cosine.acos();
+    let angle = cosine.det_acos();
 
-    let bent_mid = root + (direction * angle.cos() + bend * angle.sin()) * upper;
+    let bent_mid = root + (direction * angle.det_cos() + bend * angle.det_sin()) * upper;
     let bent_tip = root + direction * solved;
 
     retarget(
@@ -284,7 +285,7 @@ pub(crate) fn retarget(
             continue;
         }
 
-        let turn = Quat::from_rotation_arc(carried * was, wants);
+        let turn = det::from_rotation_arc(carried * was, wants);
         let world = turn * carried * world_rotations[chain[index]];
         pose.rotations[chain[index]] = parent_world.inverse() * world;
 

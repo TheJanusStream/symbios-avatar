@@ -31,6 +31,7 @@
 //! drop supplies. The ground vanishing under a walking body is not a different
 //! motion, and giving it one would mean two things to keep in agreement.
 
+use crate::det::DetMath;
 use glam::Vec3;
 
 use super::ground::{FootingConfig, Ground, plant_feet_of, solve_contact_toward};
@@ -255,7 +256,7 @@ impl Leap {
         match self.stage_at(rig, elapsed) {
             // Down and back up: a half turn of the spring, which puts full
             // compression at the middle and nothing at either end.
-            Stage::WindUp(t) => -squash * (t * std::f32::consts::PI).sin(),
+            Stage::WindUp(t) => -squash * (t * std::f32::consts::PI).det_sin(),
             Stage::Flight(t) => {
                 // The parabola gravity draws, in seconds from takeoff. It ends
                 // at `-drop` by construction, because that is the root
@@ -266,7 +267,7 @@ impl Leap {
             // Measured from the floor the body landed ON, which is `drop` below
             // the one it left. A jump makes those the same and a fall does not,
             // and forgetting the difference put a half-metre step at the seam.
-            Stage::Landing(t) => -self.drop - squash * (t * std::f32::consts::PI).sin(),
+            Stage::Landing(t) => -self.drop - squash * (t * std::f32::consts::PI).det_sin(),
             Stage::Standing => -self.drop,
         }
     }
@@ -337,7 +338,7 @@ impl Leap {
     /// wherever the tuck happened to be.
     fn tuck(&self, rig: &Rig, pose: &mut Pose, through: f32, leapt: &mut Leapt) {
         let reach = leg_of(rig);
-        let lift = reach * TUCK_OF_REACH * (through * std::f32::consts::PI).sin();
+        let lift = reach * TUCK_OF_REACH * (through * std::f32::consts::PI).det_sin();
         if lift <= f32::EPSILON {
             return;
         }
@@ -609,7 +610,7 @@ mod tests {
                     .normalize_or(Vec3::NEG_Y)
                     .dot(Vec3::NEG_Y)
                     .clamp(-1.0, 1.0)
-                    .acos()
+                    .det_acos()
             })
             .fold(0.0f32, f32::max);
         assert!(

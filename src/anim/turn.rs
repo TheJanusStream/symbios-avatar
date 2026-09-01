@@ -25,6 +25,7 @@
 //! `direction`, which this leaves at forward — that axis belongs to
 //! [`super::Heading`], and the arc construction runs around it unchanged.
 
+use crate::det::DetMath;
 use glam::Vec3;
 
 use super::gait::{Gait, Stride};
@@ -116,7 +117,7 @@ impl Turn {
     /// centripetal demand to answer — it is not going round anything.
     #[must_use]
     pub fn bank(self, rig: &Rig, speed: Speed) -> f32 {
-        (speed.metres_per_second(rig) * self.yaw_rate / GRAVITY).atan()
+        (speed.metres_per_second(rig) * self.yaw_rate / GRAVITY).det_atan()
     }
 
     /// How fast the hardest-working contact is travelling over the ground.
@@ -287,7 +288,7 @@ mod tests {
                 let bank = turn.bank(&rig, speed);
                 let centripetal = metres * degrees.to_radians();
                 assert!(
-                    (bank.tan() - centripetal / GRAVITY).abs() < 1e-5,
+                    (bank.det_tan() - centripetal / GRAVITY).abs() < 1e-5,
                     "at {metres} m/s and {degrees} deg/s the body leaned {} rad",
                     bank
                 );

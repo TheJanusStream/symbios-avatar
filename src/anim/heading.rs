@@ -56,6 +56,7 @@
 //! while — is smooth but cuts every diagonal, including the ones the stance
 //! never threatened: a 60-degree stride to 102 mm where 323 was safe (#258).
 
+use crate::det::DetMath;
 use glam::Vec3;
 
 /// How far a body steps backwards, against how far it steps forwards.
@@ -129,7 +130,7 @@ impl Heading {
         if direction.x == 0.0 && direction.z == 0.0 {
             return Self::FORWARD;
         }
-        Self::new(direction.x.atan2(direction.z))
+        Self::new(direction.x.det_atan2(direction.z))
     }
 
     /// The angle off forward, in radians.
@@ -141,7 +142,7 @@ impl Heading {
     /// The direction of travel in body space, as a unit vector.
     #[must_use]
     pub fn direction(self) -> Vec3 {
-        Vec3::new(self.angle.sin(), 0.0, self.angle.cos())
+        Vec3::new(self.angle.det_sin(), 0.0, self.angle.det_cos())
     }
 
     /// How much of the travel is fore-and-aft: `+1` forward, `-1` backwards,
@@ -157,13 +158,13 @@ impl Heading {
     /// diagonal.
     #[must_use]
     pub fn along(self) -> f32 {
-        self.angle.cos()
+        self.angle.det_cos()
     }
 
     /// How much of the travel is sideways: `+1` to the body's left.
     #[must_use]
     pub fn across(self) -> f32 {
-        self.angle.sin()
+        self.angle.det_sin()
     }
 
     /// What share of a forward stride a body takes going this way.

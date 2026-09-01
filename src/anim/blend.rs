@@ -16,6 +16,7 @@
 //! For a system whose motion is mostly generated rather than played back, that
 //! matters more than it would for a clip-driven one.
 
+use crate::det::{self, Rot};
 use glam::{Quat, Vec3};
 
 use super::pose::Pose;
@@ -220,8 +221,7 @@ impl Inertializer {
             }
             let angle = turn.angle.at(self.elapsed);
             if angle.abs() > 1e-6 {
-                out.rotations[index] =
-                    Quat::from_axis_angle(turn.axis, angle) * out.rotations[index];
+                out.rotations[index] = Rot::axis_angle(turn.axis, angle) * out.rotations[index];
             }
         }
         out.translation += Vec3::new(
@@ -245,7 +245,7 @@ fn signed_axis_angle(rotation: Quat) -> (Vec3, f32) {
     } else {
         rotation
     };
-    let (axis, angle) = rotation.to_axis_angle();
+    let (axis, angle) = det::to_axis_angle(rotation);
     if angle > std::f32::consts::PI {
         (axis, angle - std::f32::consts::TAU)
     } else {
@@ -267,7 +267,7 @@ mod tests {
     /// A pose with one joint turned by `angle` about Z.
     fn turned(rig: &Rig, joint: usize, angle: f32) -> Pose {
         let mut pose = Pose::rest(rig);
-        pose.rotations[joint] = Quat::from_rotation_z(angle);
+        pose.rotations[joint] = Rot::z(angle);
         pose
     }
 
@@ -281,7 +281,7 @@ mod tests {
         let transition = Inertializer::start(&previous, &current, &target, 1.0 / 60.0, 0.25);
         let applied = transition.apply(&target);
 
-        let angle = applied.rotations[3].to_axis_angle().1;
+        let angle = det::to_axis_angle(applied.rotations[3]).1;
         assert!(
             (angle - 0.5).abs() < 1e-3,
             "should start at the outgoing pose, got {angle}"
@@ -311,7 +311,7 @@ mod tests {
         let mut transition = Inertializer::start(&pose, &pose, &target, 1.0 / 60.0, 0.3);
         let mut last = f32::INFINITY;
         for _ in 0..35 {
-            let angle = transition.apply(&target).rotations[3].to_axis_angle().1;
+            let angle = det::to_axis_angle(transition.apply(&target).rotations[3]).1;
             assert!(
                 angle <= last + 1e-4,
                 "the offset grew: {angle} after {last}"
@@ -340,7 +340,7 @@ mod tests {
         let mut peak: f32 = 0.0;
         let mut last = f32::INFINITY;
         for _ in 0..40 {
-            last = transition.apply(&target).rotations[3].to_axis_angle().1;
+            last = det::to_axis_angle(transition.apply(&target).rotations[3]).1;
             peak = peak.max(last);
             transition.advance(0.01);
         }
@@ -373,7 +373,7 @@ mod tests {
 
         let sample = |mut transition: Inertializer| {
             transition.advance(1.0 / 60.0);
-            transition.apply(&target).rotations[3].to_axis_angle().1
+            det::to_axis_angle(transition.apply(&target).rotations[3]).1
         };
         assert!(
             sample(moving) > sample(still),

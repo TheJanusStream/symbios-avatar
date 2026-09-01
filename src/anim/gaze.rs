@@ -16,6 +16,7 @@
 //! behind a body should turn it as far as it goes and leave it there, not wind
 //! the head around backwards.
 
+use crate::det::{self, Rot};
 use glam::{Quat, Vec3};
 
 use super::pose::Pose;
@@ -109,15 +110,15 @@ pub fn look_at(rig: &Rig, pose: &mut Pose, target: Vec3, config: &GazeConfig) ->
         }
 
         // Clamp against the turn from rest, not from wherever this joint starts.
-        let (axis, angle) = Quat::from_rotation_arc(rest_facing, toward).to_axis_angle();
+        let (axis, angle) = det::to_axis_angle(det::from_rotation_arc(rest_facing, toward));
         reached = angle <= config.limit + 1e-4;
         let goal = if reached {
             toward
         } else {
-            Quat::from_axis_angle(axis, config.limit) * rest_facing
+            Rot::axis_angle(axis, config.limit) * rest_facing
         };
 
-        let needed = Quat::from_rotation_arc(facing, goal);
+        let needed = det::from_rotation_arc(facing, goal);
         let share = config
             .shares
             .get(index + config.shares.len() - chain.len())
@@ -129,7 +130,7 @@ pub fn look_at(rig: &Rig, pose: &mut Pose, target: Vec3, config: &GazeConfig) ->
         let take = if index + 1 == chain.len() {
             needed
         } else {
-            Quat::IDENTITY.slerp(needed, share)
+            det::slerp(Quat::IDENTITY, needed, share)
         };
         if take.is_near_identity() {
             continue;
@@ -204,7 +205,7 @@ mod tests {
         let neck = rig.joints[head].parent.expect("a neck");
         let girdle = rig.joints[neck].parent.expect("a girdle");
         for (name, joint) in [("head", head), ("neck", neck), ("girdle", girdle)] {
-            let angle = pose.rotations[joint].to_axis_angle().1;
+            let angle = det::to_axis_angle(pose.rotations[joint]).1;
             assert!(
                 angle > 0.02,
                 "the {name} should carry part of the turn, has {angle:.3}"

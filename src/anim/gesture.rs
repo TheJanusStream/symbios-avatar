@@ -730,6 +730,7 @@ mod tests {
     use super::*;
     use crate::anim::Pose;
     use crate::anim::clip::gaze_config;
+    use crate::det::DetMath;
     use crate::plan::{BodyPlan, Composites, HumanoidParams, QuadrupedParams, Zone};
     use crate::rig::Rig;
 
@@ -799,7 +800,7 @@ mod tests {
         let chest = rig.in_zone(Zone::Chest);
         let rested = Pose::rest(rig).forward(rig).rotations;
         let pitch = |from: Vec3, to: Vec3| {
-            let angle = |run: Vec3| run.y.atan2(run.z.hypot(run.x));
+            let angle = |run: Vec3| run.y.det_atan2(run.z.hypot(run.x));
             (angle(from) - angle(to)).to_degrees()
         };
         let times = (0..=SWEEP).map(|frame| frame as f32 / SWEEP as f32).chain(
@@ -1165,7 +1166,7 @@ mod tests {
             .expect("a rig has a root");
         let resting = Pose::rest(rig).forward(rig);
         let pitch = |from: Vec3, to: Vec3| {
-            let angle = |run: Vec3| run.y.atan2(run.z.hypot(run.x));
+            let angle = |run: Vec3| run.y.det_atan2(run.z.hypot(run.x));
             (angle(from) - angle(to)).to_degrees()
         };
         let times = (0..=SWEEP).map(|frame| frame as f32 / SWEEP as f32).chain(
@@ -1234,7 +1235,7 @@ mod tests {
         // trunk's own inclination, so the neck contributes and the head is
         // neither slack nor held level. Reintroduced by dropping `in_world`
         // from the track.
-        let wanted = BOW_GAZE.atan().to_degrees();
+        let wanted = BOW_GAZE.det_atan().to_degrees();
         for &(height, limbs, neck, head) in &BODIES {
             let rig = body(height, limbs, neck, head);
             let (dip, girdle) = (dipped(&rig, &bow()).0, inclined(&rig, &bow()).1);
@@ -1730,7 +1731,7 @@ mod tests {
         // And it is the angle that was asked for, not merely a consistent one:
         // a gesture that agreed with itself at the wrong depth on every body
         // would pass the spread and still be the wrong gesture.
-        let wanted = NOD_DIP.atan().to_degrees();
+        let wanted = NOD_DIP.det_atan().to_degrees();
         assert!(
             (low - wanted).abs() < 0.5,
             "the nod asked for {wanted:.2} degrees and delivered {low:.2}",
@@ -1745,7 +1746,7 @@ mod tests {
         // the tangent a gaze key is stated in. Move that limit and this becomes
         // a different fraction of a different neck without a line of it
         // changing, which is exactly how the elbow constant went wrong in #223.
-        let third = (gaze_config().limit / 3.0).tan();
+        let third = (gaze_config().limit / 3.0).det_tan();
         assert!(
             (NOD_DIP - third).abs() < 1e-4,
             "the nod dips {NOD_DIP}, a third of the neck's range is {third}",
@@ -1789,7 +1790,7 @@ mod tests {
             Rig::from_skeleton(&QuadrupedParams::default().skeleton(&Composites::default()))
                 .expect("the plan builds a quadruped");
         let (dip, chest) = dipped(&quadruped, &nod());
-        let wanted = NOD_DIP.atan().to_degrees();
+        let wanted = NOD_DIP.det_atan().to_degrees();
         // A fifth of a degree, and the tenth of it that is not zero is
         // [`GAZE_AHEAD`]'s measured residual on exactly this body.
         assert!(

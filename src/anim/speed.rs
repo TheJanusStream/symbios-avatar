@@ -32,6 +32,7 @@
 //! published figure or a consequence of one, and the two that are neither —
 //! the duty at each end of a walk — are named and anchored rather than dialled.
 
+use crate::det::DetMath;
 use glam::Vec3;
 
 use super::gait::{Gait, RUN_DUTY, Stride};
@@ -174,7 +175,7 @@ impl Speed {
         if self.froude <= 0.0 || leg <= f32::EPSILON {
             return 0.0;
         }
-        leg * GRIEVE_ALPHA * self.froude.sqrt().powf(GRIEVE_BETA)
+        leg * GRIEVE_ALPHA * self.froude.sqrt().det_powf(GRIEVE_BETA)
     }
 
     /// What share of the cycle a contact spends on the ground at this speed.
@@ -318,7 +319,7 @@ impl Speed {
         }
         let relative = step / (leg * GRIEVE_ALPHA);
         Self {
-            froude: relative.powf(2.0 / GRIEVE_BETA),
+            froude: relative.det_powf(2.0 / GRIEVE_BETA),
         }
     }
 }
@@ -388,7 +389,7 @@ mod tests {
         // step is about 0.72. The other reading gives 0.49 m.
         let leg = 0.9f32;
         let froude = 1.4 * 1.4 / (GRAVITY * leg);
-        let step = leg * GRIEVE_ALPHA * froude.sqrt().powf(GRIEVE_BETA);
+        let step = leg * GRIEVE_ALPHA * froude.sqrt().det_powf(GRIEVE_BETA);
         assert!(
             (step - 0.72).abs() < 0.05,
             "a 0.9 m leg at 1.4 m/s took a {step:.3} m step; an adult takes about 0.72"

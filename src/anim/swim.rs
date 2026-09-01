@@ -77,6 +77,7 @@
 //! in the sibling `bevy_symbios_avatar`, whose motion picker carries a swim
 //! beside the walk and a slider for the one axis.
 
+use crate::det::{self, DetMath, Rot};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use glam::{Quat, Vec3};
@@ -347,8 +348,8 @@ fn arm_turn(phase: f32, effort: f32, rest: Vec3) -> Quat {
     // At full effort the axis is `+X` and this is `+Z`, and a right angle about
     // `+Z` carries `+X` to `+Y`.
     let out = axis.cross(Vec3::Y).normalize_or(Vec3::Z);
-    let start = Quat::from_axis_angle(out, radius) * axis;
-    Quat::from_axis_angle(axis, phase * TAU) * Quat::from_rotation_arc(rest, start)
+    let start = Rot::axis_angle(out, radius) * axis;
+    Rot::axis_angle(axis, phase * TAU) * det::from_rotation_arc(rest, start)
 }
 
 /// The axis the hand circles, for the body's left arm.
@@ -415,7 +416,7 @@ fn stroke(rig: &Rig, pose: &mut Pose, cycle: f32, effort: f32) {
             // of the loop and peaks in the middle of the recovery, so the fold
             // arrives where the hand is furthest from the water and nowhere
             // else.
-            let recovery = (-(phase * TAU).sin()).max(0.0);
+            let recovery = (-(phase * TAU).det_sin()).max(0.0);
             let bend = TREAD_ELBOW * (1.0 - effort) + RECOVERY_ELBOW * effort * recovery;
 
             // **About the body's lateral axis, expressed in the elbow's own
@@ -440,7 +441,7 @@ fn stroke(rig: &Rig, pose: &mut Pose, cycle: f32, effort: f32) {
             // the loop's axis, so the windmill is unchanged; at rest it is the
             // axis that carries a hanging forearm forward, which is where a
             // scull works.
-            let fold = Quat::from_axis_angle(turn.inverse() * Vec3::X, -bend);
+            let fold = Rot::axis_angle(turn.inverse() * Vec3::X, -bend);
 
             pose.rotations[shoulder] *= if right { mirrored(turn) } else { turn };
             pose.rotations[elbow] *= if right { mirrored(fold) } else { fold };
@@ -457,18 +458,18 @@ fn kick(rig: &Rig, pose: &mut Pose, cycle: f32, effort: f32) {
         // The two legs in antiphase, at a whole number of kicks to the stroke.
         let phase = cycle * KICKS_PER_ARM * TAU + if limb == Limb::HindLeft { 0.0 } else { PI };
         let swing = TREAD_KICK * (1.0 - effort) + FLUTTER * effort;
-        pose.rotations[hip] *= Quat::from_rotation_x(swing * phase.sin());
+        pose.rotations[hip] *= Rot::x(swing * phase.det_sin());
 
         // **The knee trails the hip**, which is the whole look of a flutter: the
         // thigh leads, the shin follows a beat behind, and the foot finishes the
         // kick as the knee straightens. A quarter cycle of lag is that beat.
-        let trail = ((phase - PI / 2.0).sin() + 1.0) / 2.0;
+        let trail = ((phase - PI / 2.0).det_sin() + 1.0) / 2.0;
         let bend = TREAD_KNEE * (1.0 - effort) + FLUTTER_KNEE * effort * trail;
-        pose.rotations[knee] *= Quat::from_rotation_x(bend);
+        pose.rotations[knee] *= Rot::x(bend);
 
         // A swimmer's foot is a fin. Held pointed rather than cycled, because
         // the ankle is loose in the water and follows the shin.
-        pose.rotations[ankle] *= Quat::from_rotation_x(-POINTED * effort);
+        pose.rotations[ankle] *= Rot::x(-POINTED * effort);
     }
 }
 
@@ -481,21 +482,21 @@ fn carry(rig: &Rig, pose: &mut Pose, cycle: f32, length: f32, swum: Swum) -> Swu
     // **Once per stroke, and toward the arm that is pulling.** The body rolls
     // onto the side whose hand is under it, which is what gives that arm its
     // reach and lifts the other shoulder clear.
-    let roll = ROLL * swum.effort * (cycle * TAU).sin();
+    let roll = ROLL * swum.effort * (cycle * TAU).det_sin();
     // Twice per stroke: two arms, two pulls, two lifts.
-    let surge = SURGE_OF_LENGTH * length * swum.effort * (cycle * 2.0 * TAU).sin();
+    let surge = SURGE_OF_LENGTH * length * swum.effort * (cycle * 2.0 * TAU).det_sin();
 
     // **Roll first, then pitch.** The roll is about the body's own long axis,
     // which in the rest skeleton is `+Y`; composing it inside the pitch is what
     // keeps it that axis rather than the world's vertical once the body is
     // lying down.
-    pose.rotations[root] = Quat::from_rotation_x(pitch) * Quat::from_rotation_y(roll);
+    pose.rotations[root] = Rot::x(pitch) * Rot::y(roll);
     pose.translation.y += surge;
 
     // The head comes back toward the line of travel, so a swimming body is
     // looking where it is going rather than at the bottom.
     if let Some(&neck) = rig.in_zone(Zone::Neck).first() {
-        pose.rotations[neck] *= Quat::from_rotation_x(-pitch * 0.25);
+        pose.rotations[neck] *= Rot::x(-pitch * 0.25);
     }
 
     Swum {

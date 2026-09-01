@@ -115,6 +115,7 @@ pub mod anim;
 pub mod avatar;
 pub mod cage;
 pub mod demo;
+pub(crate) mod det;
 pub mod dress;
 pub mod extremity;
 pub mod face;

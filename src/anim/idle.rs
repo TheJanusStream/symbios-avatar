@@ -55,7 +55,8 @@
 //! strategy at the hips, so it is a translation and it shares the weight
 //! shift's path and its footing solve.
 
-use glam::{Quat, Vec3};
+use crate::det::{DetMath, Rot};
+use glam::Vec3;
 use noise::{NoiseFn, Simplex};
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
@@ -639,7 +640,7 @@ impl Idle {
         // a recovering step lifts exactly as far as a walking one would for the
         // same distance.
         let share = self.shift_share().unwrap_or(0.0);
-        let arc = (share * std::f32::consts::PI).sin();
+        let arc = (share * std::f32::consts::PI).det_sin();
         let lift_of = |limb: Limb| {
             if Some(limb) == self.bearing {
                 return 0.0;
@@ -790,7 +791,7 @@ impl Idle {
         if wanted <= 0.0 {
             return;
         }
-        let wave = |phase: f32| (phase * std::f32::consts::TAU).sin();
+        let wave = |phase: f32| (phase * std::f32::consts::TAU).det_sin();
         let chest_wave = wave(breath);
         // The diaphragm moves first and the ribcage follows.
         let belly_wave = wave(breath + BREATH_LEAD);
@@ -821,9 +822,8 @@ impl Idle {
         // Extension at the abdomen and a counter-flexion at the chest, so the
         // trunk lengthens through its middle without the head nodding — the
         // same bargain `super::gait::lean` strikes with the neck.
-        pose.rotations[hinge] *= Quat::from_rotation_x(-extension * belly_wave * BREATH_ABDOMEN);
-        pose.rotations[chest] *=
-            Quat::from_rotation_x(extension * chest_wave * (1.0 - BREATH_ABDOMEN));
+        pose.rotations[hinge] *= Rot::x(-extension * belly_wave * BREATH_ABDOMEN);
+        pose.rotations[chest] *= Rot::x(extension * chest_wave * (1.0 - BREATH_ABDOMEN));
 
         // The shoulders, which is the cue that actually carries a breath on a
         // rig with no per-joint translation. Mirrored, so the two rise together
@@ -841,7 +841,7 @@ impl Idle {
             }
             let side = if limb == Limb::ForeLeft { 1.0 } else { -1.0 };
             let lift = wanted * BREATH_SHOULDER / arm;
-            pose.rotations[chain[0]] *= Quat::from_rotation_z(-lift * chest_wave * side);
+            pose.rotations[chain[0]] *= Rot::z(-lift * chest_wave * side);
         }
     }
 
@@ -910,7 +910,7 @@ impl Idle {
         // `fore` is `fore/height` — not `fore` over the centre of mass, which
         // is where the pendulum's PERIOD comes from but not its geometry.
         let angle = (fore / height).clamp(-0.2, 0.2);
-        let tip = Quat::from_rotation_x(angle);
+        let tip = Rot::x(angle);
         // Rotating about the root and then moving the root by the amount the
         // pivot would otherwise have travelled is a rotation about the pivot,
         // exactly.
@@ -1012,13 +1012,13 @@ impl Idle {
         if trunk <= f32::EPSILON {
             return Some(bearing);
         }
-        let back = (across / trunk).clamp(-0.5, 0.5).asin();
+        let back = (across / trunk).clamp(-0.5, 0.5).det_asin();
         // At the joint above the pelvis, for the reason `lean` gives: the
         // pelvis carries the legs, and turning it turns them out from under the
         // solve that is about to hold the feet.
         if let Some(&hinge) = rig.in_zone(Zone::Abdomen).first() {
-            pose.rotations[hinge] *= Quat::from_rotation_z(back);
-            pose.rotations[neck] *= Quat::from_rotation_z(-back);
+            pose.rotations[hinge] *= Rot::z(back);
+            pose.rotations[neck] *= Rot::z(-back);
         }
         Some(bearing)
     }
@@ -1038,13 +1038,13 @@ impl Idle {
         let done = (1.0 - left / time).clamp(0.0, 1.0);
         // One rise and fall over the fidget, so it begins and ends at nothing
         // and cannot step when it starts or stops.
-        let amount = (done * std::f32::consts::PI).sin() * self.roll * SHOULDER_ROLL;
+        let amount = (done * std::f32::consts::PI).det_sin() * self.roll * SHOULDER_ROLL;
         for limb in [Limb::ForeLeft, Limb::ForeRight] {
             let Some(chain) = rig.limb_chain(limb) else {
                 continue;
             };
             let side = if limb == Limb::ForeLeft { 1.0 } else { -1.0 };
-            pose.rotations[chain[0]] *= Quat::from_rotation_z(-amount * side);
+            pose.rotations[chain[0]] *= Rot::z(-amount * side);
         }
         true
     }
@@ -1401,7 +1401,7 @@ mod tests {
                     .normalize_or(Vec3::NEG_Y)
                     .dot(Vec3::NEG_Y)
                     .clamp(-1.0, 1.0)
-                    .acos()
+                    .det_acos()
             })
             .fold(0.0f32, f32::max)
     }

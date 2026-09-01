@@ -1,6 +1,6 @@
 [package]
 name = "symbios-avatar"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 authors = ["Janus"]
 description = "Engine-agnostic parametric avatar engine: procedural humanoid and creature bodies from small records."
@@ -47,6 +47,11 @@ serde-avatar = ["dep:serde_bytes"]
 
 [dependencies]
 glam = { version = "0.32", features = ["serde"] }
+# The anim path's transcendentals route through `det`, not the platform libm:
+# Rust documents f32::sin/cos/powf/exp as platform-dependent, and #323 measured
+# the same deterministic stop reading 25.4/35.2/50.1 mm on three builds of the
+# same source. Pure Rust, same bits on every target, wasm included.
+libm = "0.2"
 # Skin detail must be sampled in *body* space, not atlas space, or every chart
 # boundary shows a seam — which needs 3-D noise. Same version symbios-texture
 # already pulls in, so no new entry in the tree.

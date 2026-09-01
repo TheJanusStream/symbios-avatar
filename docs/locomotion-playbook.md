@@ -43,10 +43,18 @@ made it:
   pace 1.5 ≈ Froude 1.81 — a run, held constantly while a player travels
   (walkaudit: pace 1.4 → 3.57 m/s, 1.8 → 5.49). A term that only looks right
   at pace 1.0 is not done.
-- **Instruments stay convergence-shaped** (#1183): the same source reads
-  25–50 mm across build environments through `f32` transcendentals, so a
-  guard asserts "the step halves at 2× sampling" or compares two runs of the
-  SAME build — never a millimetre threshold across builds.
+- **Instruments stay convergence-shaped — except inside this crate's own
+  anim path, which is exact since 0.5.1** (#1183, then #323/#324): the same
+  source once read 25–50 mm across build environments through `f32`
+  transcendentals. `src/det.rs` now routes the whole of `anim/` through the
+  pure-Rust `libm`, so a measurement that stays within this crate's
+  locomotion arithmetic is the same bits on every build — `det.rs` asserts
+  its goldens exactly, and a gait retune regenerates them once, on any box.
+  Anything that crosses code the routing cannot reach — the body build, or a
+  consuming app's full pipeline through `bevy_math`/`avian` — still carries
+  the spread, and its guards stay convergence-shaped: "the step halves at 2×
+  sampling", or two runs of the SAME build, never a millimetre threshold
+  across builds.
 
 ## 2. What a real walker measurably does
 

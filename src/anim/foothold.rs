@@ -41,7 +41,8 @@
 //! answer rather than lunged for. [`Footholds::reset`] exists for the caller
 //! that knows a warp happened and wants no frame of doubt.
 
-use glam::{Quat, Vec3};
+use crate::det::Rot;
+use glam::Vec3;
 
 use super::gait::{Gait, Phase, Stride, Walk, Walked, contact_offset, home_of};
 use super::ground::Ground;
@@ -106,10 +107,10 @@ impl Footholds {
         F: Fn(Vec3) -> Option<Ground>,
     {
         let into_world = |body: Vec3| {
-            let world = at + Quat::from_rotation_y(facing) * body;
+            let world = at + Rot::y(facing) * body;
             Vec3::new(world.x, 0.0, world.z)
         };
-        let into_body = |world: Vec3| Quat::from_rotation_y(-facing) * (world - at);
+        let into_body = |world: Vec3| Rot::y(-facing) * (world - at);
 
         let mut anchors: Vec<(Limb, Vec3)> = Vec::new();
         for (index, &limb) in gait.limbs.iter().enumerate() {

@@ -26,6 +26,7 @@
 //! question about the world — speed, terrain, intent — and this crate does not
 //! know about any of that.
 
+use crate::det::{self, DetMath, Rot};
 use glam::{Quat, Vec3};
 
 use super::gaze::GazeConfig;
@@ -973,7 +974,7 @@ pub fn compression_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f3
         .fold(0.0f32, f32::max);
     let deepest = (0..gait.len())
         .filter_map(|index| match gait.phase(index, cycle) {
-            Phase::Stance(t) => Some((t * std::f32::consts::PI).sin()),
+            Phase::Stance(t) => Some((t * std::f32::consts::PI).det_sin()),
             Phase::Swing(_) => None,
         })
         .fold(0.0f32, f32::max);
@@ -1100,7 +1101,7 @@ pub fn contact_offset(home: Vec3, stride: &Stride, phase: Phase) -> Vec3 {
 fn swing_rise(stride: &Stride, t: f32) -> f32 {
     let height = stride.lift * (1.0 + stride.tuck * TUCK_RAISE);
     let skew = 1.0 - stride.tuck * TUCK_SKEW;
-    height * (t.clamp(0.0, 1.0).powf(skew) * std::f32::consts::PI).sin()
+    height * (t.clamp(0.0, 1.0).det_powf(skew) * std::f32::consts::PI).det_sin()
 }
 
 /// How much higher a fully tucked swing rides than a walking one, as a share.
@@ -1178,13 +1179,13 @@ fn carried(home: Vec3, stride: &Stride, share: f32) -> Vec3 {
         // closed forms are well conditioned.
         (1.0 - angle * angle / 6.0, angle * 0.5)
     } else {
-        (angle.sin() / angle, (1.0 - angle.cos()) / angle)
+        (angle.det_sin() / angle, (1.0 - angle.det_cos()) / angle)
     };
     let travelled = stride.length * share;
     let body = forward * (travelled * along_shape) + across * (travelled * across_shape);
     // Where the body has got to, undone: the plant point seen from the frame
     // the body occupies `share` of a stance later.
-    Quat::from_rotation_y(-angle) * (home - body) - home
+    Rot::y(-angle) * (home - body) - home
 }
 
 /// What one step of a gait did.
@@ -2285,7 +2286,7 @@ where
     let mut bends = 0.0;
     for middle in 1..heights.len() - 1 {
         let bend = (heights[middle + 1] - 2.0 * heights[middle] + heights[middle - 1]).abs();
-        let window = (std::f32::consts::PI * middle as f32 / (heights.len() - 1) as f32).sin();
+        let window = (std::f32::consts::PI * middle as f32 / (heights.len() - 1) as f32).det_sin();
         // A riser between two probes bends the sequence at both of them, so
         // the half makes the sum read each feature's height once.
         bends += bend * window * 0.5;
@@ -2532,7 +2533,7 @@ where
     // into the surface. Correcting the up axis rather than rebuilding the
     // rotation keeps the heading the leg gave it — a foot points where the leg
     // swung it, and only its tilt is the ground's business.
-    let settled = Quat::from_rotation_arc((placed * Vec3::Y).normalize_or(Vec3::Y), up) * placed;
+    let settled = det::from_rotation_arc((placed * Vec3::Y).normalize_or(Vec3::Y), up) * placed;
 
     // **And then turned to face where it was planted** (#241). About the
     // surface's own normal rather than about `+Y`, which is what keeps the sole
@@ -2547,7 +2548,7 @@ where
     let settled = if heading == 0.0 {
         settled
     } else {
-        Quat::from_axis_angle(up, heading) * settled
+        Rot::axis_angle(up, heading) * settled
     };
 
     // The foot's run, rearmost sole joint to foremost, carried into the pose.
@@ -2558,7 +2559,7 @@ where
     let fore = *sole.iter().max_by(|a, b| along(a).total_cmp(&along(b)))?;
     let run = settled * (rig.joints[fore].position - rig.joints[rear].position);
     let axis = run.cross(up).try_normalize()?;
-    let roll = Quat::from_axis_angle(axis, pitch);
+    let roll = Rot::axis_angle(axis, pitch);
 
     // Each sole point, as an offset from the contact joint. The point is
     // directly beneath its joint at rest height zero, which is where the build
@@ -2735,9 +2736,9 @@ pub fn hang_arms(rig: &Rig, pose: &mut Pose) {
             continue;
         };
         let side = rig.joints[shoulder].position.x.signum();
-        pose.rotations[shoulder] *= Quat::from_rotation_z(-ARM_DROP * side);
-        let fold = Quat::from_rotation_z(ARM_DROP * side) * Vec3::X;
-        pose.rotations[elbow] *= Quat::from_axis_angle(fold, -ELBOW_REST);
+        pose.rotations[shoulder] *= Rot::z(-ARM_DROP * side);
+        let fold = Rot::z(ARM_DROP * side) * Vec3::X;
+        pose.rotations[elbow] *= Rot::axis_angle(fold, -ELBOW_REST);
     }
 }
 
@@ -2814,7 +2815,7 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycl
         let drive = if gait.duty >= 1.0 {
             0.0
         } else {
-            ((cycle - offset + ARM_LAG) * std::f32::consts::TAU).sin() * travel
+            ((cycle - offset + ARM_LAG) * std::f32::consts::TAU).det_sin() * travel
         };
         if limb == Limb::ForeLeft {
             lead = drive;
@@ -2827,8 +2828,7 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycl
         // The pump: a running arm swings harder from the shoulder as well as
         // folding, though most of what reads as pumping is the fold below.
         let swing = ARM_SWING * (1.0 + RUN_PUMP * run);
-        pose.rotations[shoulder] *=
-            Quat::from_rotation_x(-swing * drive) * Quat::from_rotation_z(-ARM_DROP * side);
+        pose.rotations[shoulder] *= Rot::x(-swing * drive) * Rot::z(-ARM_DROP * side);
 
         // **The elbow folds forward, about X, and the same way on both arms.**
         // This used to turn about Y with a `side` factor, and both halves of
@@ -2850,14 +2850,13 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycl
         // drop in the axis puts the fold back on world X, where a fold ahead of
         // a hanging arm is a bend and nothing else, and the constants deliver
         // the degrees they are written in.
-        let fold = Quat::from_rotation_z(ARM_DROP * side) * Vec3::X;
+        let fold = Rot::z(ARM_DROP * side) * Vec3::X;
         // The elbow's resting bend slides from a walk's to a run's on the same
         // duty axis as the swing above: at full run the arm carries about 75
         // degrees of standing fold and the swing tops it up toward the
         // measured 90.
         let rest = ELBOW_REST + (ELBOW_RUN - ELBOW_REST) * run;
-        pose.rotations[elbow] *=
-            Quat::from_axis_angle(fold, -(rest + ELBOW_SWING * drive.max(0.0)));
+        pose.rotations[elbow] *= Rot::axis_angle(fold, -(rest + ELBOW_SWING * drive.max(0.0)));
     }
 
     // Shoulders against hips, and then the neck against the shoulders so the
@@ -2881,9 +2880,9 @@ pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycl
         let total: f32 = (1..=spine.len()).map(|rank| rank as f32).sum();
         for (rank, &joint) in spine.iter().enumerate() {
             let share = (rank + 1) as f32 / total.max(1.0);
-            pose.rotations[joint] *= Quat::from_rotation_y(SHOULDER_TWIST * lead * share);
+            pose.rotations[joint] *= Rot::y(SHOULDER_TWIST * lead * share);
         }
-        pose.rotations[neck] *= Quat::from_rotation_y(-SHOULDER_TWIST * lead);
+        pose.rotations[neck] *= Rot::y(-SHOULDER_TWIST * lead);
     }
 }
 
@@ -3034,13 +3033,13 @@ fn relevel_head(rig: &Rig, pose: &mut Pose, inherited: Quat) {
     if chain.is_empty() {
         return;
     }
-    let (axis, angle) = inherited.inverse().to_axis_angle();
+    let (axis, angle) = det::to_axis_angle(inherited.inverse());
     #[expect(clippy::cast_precision_loss, reason = "a neck is a handful of joints")]
     let total: f32 = (chain.len() * (chain.len() + 1)) as f32 * 0.5;
     for (at, &joint) in chain.iter().enumerate() {
         #[expect(clippy::cast_precision_loss, reason = "a neck is a handful of joints")]
         let share = (at + 1) as f32 / total;
-        pose.rotations[joint] *= Quat::from_axis_angle(axis, angle * share);
+        pose.rotations[joint] *= Rot::axis_angle(axis, angle * share);
     }
 }
 
@@ -3123,13 +3122,13 @@ pub(super) fn incline_trunk(
     // read the chord's pitch back through the accumulated rotations, and
     // correct the scale by the shortfall. Three passes for the same measured
     // reason as [`TRUNK_PASSES`].
-    let pitch = |run: Vec3| run.dot(toward).atan2(run.y);
+    let pitch = |run: Vec3| run.dot(toward).det_atan2(run.y);
     let rest = pitch(segments.iter().sum());
     let delivered = |scale: f32| {
         let mut acc = Quat::IDENTITY;
         let mut run = Vec3::ZERO;
         for (weight, segment) in weights.iter().zip(&segments) {
-            acc *= Quat::from_axis_angle(axis, weight * scale);
+            acc *= Rot::axis_angle(axis, weight * scale);
             run += acc * *segment;
         }
         pitch(run) - rest
@@ -3149,7 +3148,7 @@ pub(super) fn incline_trunk(
     // caller may want is the composed product, in order from the pelvis up.
     let mut inherited = Quat::IDENTITY;
     for (weight, &node) in weights.iter().zip(&nodes) {
-        let applied = Quat::from_axis_angle(axis, weight * scale);
+        let applied = Rot::axis_angle(axis, weight * scale);
         pose.rotations[node] *= applied;
         inherited *= applied;
     }
@@ -3166,7 +3165,7 @@ pub(super) fn incline_trunk(
     // world chain; the joints' own offsets from the root still swing through
     // the rotation, which at these angles is millimetres and the plant's to
     // absorb.
-    let counter = Quat::from_axis_angle(axis, weights[0] * scale).inverse();
+    let counter = Rot::axis_angle(axis, weights[0] * scale).inverse();
     for child in 0..rig.len() {
         if rig.joints[child].parent == Some(root) && child != nodes[1] {
             pose.rotations[child] = counter * pose.rotations[child];
@@ -3198,7 +3197,7 @@ pub fn path_ahead(rig: &Rig, gait: &Gait, stride: &Stride, cycles: f32) -> Vec3 
     let (along, across) = if angle.abs() < 1e-4 {
         (1.0 - angle * angle / 6.0, angle * 0.5)
     } else {
-        (angle.sin() / angle, (1.0 - angle.cos()) / angle)
+        (angle.det_sin() / angle, (1.0 - angle.det_cos()) / angle)
     };
     let forward = stride.direction.normalize_or(Vec3::Z);
     let sideways = Vec3::Y.cross(forward);
@@ -3267,7 +3266,7 @@ fn bank_of(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
         .filter_map(|limb| rig.limb_reach(limb))
         .fold(0.0f32, f32::max);
     let froude = super::speed::Speed::of(rig, gait, stride).froude();
-    (froude * leg * (stride.yaw / stride.length)).atan()
+    (froude * leg * (stride.yaw / stride.length)).det_atan()
 }
 
 /// How many times [`incline_trunk`]'s solve refines its guess.
@@ -3480,7 +3479,7 @@ mod tests {
             );
             let swing = contact_offset(home(), &stride, Phase::Swing(t));
             let along = Vec3::Z * (stride.length * t - half);
-            let lift = Vec3::Y * (stride.lift * (t * std::f32::consts::PI).sin());
+            let lift = Vec3::Y * (stride.lift * (t * std::f32::consts::PI).det_sin());
             assert!(swing.distance(along + lift) < 1e-6, "swing {t}: {swing:?}");
         }
     }
@@ -3534,12 +3533,12 @@ mod tests {
                 let (along, across) = if angle.abs() < 1e-4 {
                     (1.0, angle * 0.5)
                 } else {
-                    (angle.sin() / angle, (1.0 - angle.cos()) / angle)
+                    (angle.det_sin() / angle, (1.0 - angle.det_cos()) / angle)
                 };
                 let travelled = stride.length * share;
                 let origin = Vec3::Z * (travelled * along) + Vec3::X * (travelled * across);
                 let at = home + contact_offset(home, &stride, Phase::Stance(t));
-                origin + Quat::from_rotation_y(angle) * at
+                origin + Rot::y(angle) * at
             };
             let anchor = planted(0.5);
             for at in 0..=20 {
@@ -3617,8 +3616,8 @@ mod tests {
             let run = posed.positions[girdle] - posed.positions[root];
             let rest = rig.joints[girdle].position - rig.joints[root].position;
             (
-                run.z.atan2(run.y).to_degrees() - rest.z.atan2(rest.y).to_degrees(),
-                run.x.atan2(run.y).to_degrees() - rest.x.atan2(rest.y).to_degrees(),
+                run.z.det_atan2(run.y).to_degrees() - rest.z.det_atan2(rest.y).to_degrees(),
+                run.x.det_atan2(run.y).to_degrees() - rest.x.det_atan2(rest.y).to_degrees(),
             )
         };
 
@@ -3699,7 +3698,7 @@ mod tests {
                 },
             );
             let forward = pose.forward(&rig).rotations[head] * Vec3::Z;
-            forward.x.atan2(forward.z).to_degrees()
+            forward.x.det_atan2(forward.z).to_degrees()
         };
         let looking = Walk {
             gaze: Some(GazeConfig::default()),
@@ -3742,7 +3741,7 @@ mod tests {
         let (heel, toe) = (joints[1], joints[joints.len() - 1]);
         let rest = {
             let run = rig.joints[toe].position - rig.joints[heel].position;
-            run.y.atan2((run.x * run.x + run.z * run.z).sqrt())
+            run.y.det_atan2((run.x * run.x + run.z * run.z).sqrt())
         };
         let pitch_at = |heading: Heading, cycle: f32| {
             let stride = Stride::for_body(&rig, 1.0).toward(&rig, heading);
@@ -3755,7 +3754,7 @@ mod tests {
             });
             let posed = pose.forward(&rig);
             let run = posed.positions[toe] - posed.positions[heel];
-            (run.y.atan2((run.x * run.x + run.z * run.z).sqrt()) - rest).to_degrees()
+            (run.y.det_atan2((run.x * run.x + run.z * run.z).sqrt()) - rest).to_degrees()
         };
         // At the strike, which is the start of this contact's stance.
         let forward = pitch_at(Heading::FORWARD, 0.0);
@@ -4024,7 +4023,7 @@ mod tests {
         let posed = pose.forward(rig);
         let upper = (posed.positions[shoulder] - posed.positions[elbow]).normalize_or_zero();
         let fore = (posed.positions[wrist] - posed.positions[elbow]).normalize_or_zero();
-        180.0 - upper.dot(fore).clamp(-1.0, 1.0).acos().to_degrees()
+        180.0 - upper.dot(fore).clamp(-1.0, 1.0).det_acos().to_degrees()
     }
 
     #[test]
@@ -4133,7 +4132,7 @@ mod tests {
         for &joint in &spine {
             let angle = (posed.rotations[joint] * Vec3::X)
                 .z
-                .atan2((posed.rotations[joint] * Vec3::X).x)
+                .det_atan2((posed.rotations[joint] * Vec3::X).x)
                 .to_degrees();
             assert!(
                 angle.abs() > turned,
@@ -4327,7 +4326,7 @@ mod tests {
             assert_eq!(steps.crouch, 0.0, "a standing body has nothing to sink for");
             for rotation in &pose.rotations {
                 assert!(
-                    rotation.to_axis_angle().1 < 0.02,
+                    det::to_axis_angle(*rotation).1 < 0.02,
                     "a standing body moved at cycle {}: {rotation:?}",
                     frame as f32 / 20.0
                 );
@@ -4943,7 +4942,7 @@ mod tests {
     /// a nearly-full turn without this — the same fold `level_feet` makes
     /// before it clamps, and the reason the two can be compared at all.
     fn ankle_fold(local: Quat) -> f32 {
-        let (_, angle) = local.to_axis_angle();
+        let (_, angle) = det::to_axis_angle(local);
         let angle = angle.rem_euclid(std::f32::consts::TAU);
         if angle > std::f32::consts::PI {
             angle - std::f32::consts::TAU
@@ -5611,7 +5610,7 @@ mod tests {
             .position(|joint| joint.parent.is_none())
             .expect("a root");
         let posed = pose.forward(rig);
-        let pitch = |run: Vec3| run.z.atan2(run.y).to_degrees();
+        let pitch = |run: Vec3| run.z.det_atan2(run.y).to_degrees();
         pitch(posed.positions[girdle] - posed.positions[root])
             - pitch(rig.joints[girdle].position - rig.joints[root].position)
     }
@@ -5703,7 +5702,7 @@ mod tests {
         let chord = |pose: &Pose| {
             let posed = pose.forward(&rig);
             let run = posed.positions[head] - posed.positions[neck];
-            run.z.atan2(run.y).to_degrees()
+            run.z.det_atan2(run.y).to_degrees()
         };
         let rest_chord = chord(&Pose::rest(&rig));
         for pace in [0.5f32, 1.0, 2.0] {
@@ -5899,15 +5898,14 @@ mod tests {
 
         // The elbows, through the real entry point so the duty comes from the
         // gait the way a consumer's does.
-        let elbow =
-            |gait: &Gait, stride: &Stride| {
-                let mut pose = Pose::rest(&rig);
-                swing_arms(&rig, &mut pose, gait, stride, 0.25);
-                let [_, joint, _] = rig.limb_chain(Limb::ForeLeft).expect("an arm");
-                2.0 * pose.rotations[joint].w.clamp(-1.0, 1.0).acos().min(
-                    std::f32::consts::TAU - 2.0 * pose.rotations[joint].w.clamp(-1.0, 1.0).acos(),
-                )
-            };
+        let elbow = |gait: &Gait, stride: &Stride| {
+            let mut pose = Pose::rest(&rig);
+            swing_arms(&rig, &mut pose, gait, stride, 0.25);
+            let [_, joint, _] = rig.limb_chain(Limb::ForeLeft).expect("an arm");
+            2.0 * pose.rotations[joint].w.clamp(-1.0, 1.0).det_acos().min(
+                std::f32::consts::TAU - 2.0 * pose.rotations[joint].w.clamp(-1.0, 1.0).det_acos(),
+            )
+        };
         let walking = elbow(&Gait::natural(&rig), &walk);
         let running = elbow(&Gait::running(&rig), &Stride::for_body(&rig, 1.5));
         assert!(
@@ -6123,7 +6121,7 @@ mod tests {
             // solver holds a fraction of a degree back from that singularity on
             // purpose. Well under a degree is standing still.
             assert!(
-                rotation.to_axis_angle().1 < 0.02,
+                det::to_axis_angle(*rotation).1 < 0.02,
                 "a still body should not move: {rotation:?}"
             );
         }
@@ -6149,7 +6147,7 @@ mod tests {
             .expect("a foot");
         let angle = |run: Vec3| {
             run.y
-                .atan2((run.x * run.x + run.z * run.z).sqrt())
+                .det_atan2((run.x * run.x + run.z * run.z).sqrt())
                 .to_degrees()
         };
         let posed = pose.forward(rig);

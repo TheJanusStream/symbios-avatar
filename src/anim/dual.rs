@@ -142,6 +142,7 @@ pub fn blend(parts: impl IntoIterator<Item = (DualQuat, f32)>) -> DualQuat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::det::Rot;
     use std::f32::consts::{FRAC_PI_2, PI};
 
     fn about(a: Vec3, b: Vec3) -> bool {
@@ -157,7 +158,7 @@ mod tests {
 
     #[test]
     fn a_rigid_transform_survives_the_round_trip() {
-        let rotation = Quat::from_rotation_y(FRAC_PI_2);
+        let rotation = Rot::y(FRAC_PI_2);
         let translation = Vec3::new(1.0, 2.0, -3.0);
         let dq = DualQuat::from_rotation_translation(rotation, translation);
 
@@ -173,10 +174,7 @@ mod tests {
 
     #[test]
     fn blending_one_transform_reproduces_it() {
-        let dq = DualQuat::from_rotation_translation(
-            Quat::from_rotation_x(0.7),
-            Vec3::new(-0.2, 0.4, 0.9),
-        );
+        let dq = DualQuat::from_rotation_translation(Rot::x(0.7), Vec3::new(-0.2, 0.4, 0.9));
         let point = Vec3::new(1.0, 0.0, 0.0);
         assert!(about(
             blend([(dq, 1.0)]).transform_point(point),
@@ -192,8 +190,8 @@ mod tests {
 
     #[test]
     fn weights_need_not_sum_to_one() {
-        let a = DualQuat::from_rotation_translation(Quat::from_rotation_z(0.4), Vec3::X);
-        let b = DualQuat::from_rotation_translation(Quat::from_rotation_z(-0.4), Vec3::Y);
+        let a = DualQuat::from_rotation_translation(Rot::z(0.4), Vec3::X);
+        let b = DualQuat::from_rotation_translation(Rot::z(-0.4), Vec3::Y);
         let point = Vec3::new(0.6, 0.2, -0.1);
         assert!(about(
             blend([(a, 0.5), (b, 0.5)]).transform_point(point),
@@ -205,8 +203,8 @@ mod tests {
     fn a_blend_of_rotations_is_still_a_rotation() {
         // The whole point. Averaging the matrices of these two shrinks whatever
         // sits between them; averaging the dual quaternions does not.
-        let a = DualQuat::from_rotation_translation(Quat::from_rotation_y(-1.2), Vec3::ZERO);
-        let b = DualQuat::from_rotation_translation(Quat::from_rotation_y(1.2), Vec3::ZERO);
+        let a = DualQuat::from_rotation_translation(Rot::y(-1.2), Vec3::ZERO);
+        let b = DualQuat::from_rotation_translation(Rot::y(1.2), Vec3::ZERO);
         let blended = blend([(a, 0.5), (b, 0.5)]);
         assert!((blended.real.length() - 1.0).abs() < 1e-5);
 
@@ -224,7 +222,7 @@ mod tests {
     #[test]
     fn a_blend_beats_a_matrix_average_for_keeping_length() {
         let turn = 1.4f32;
-        let (a, b) = (Quat::from_rotation_z(-turn), Quat::from_rotation_z(turn));
+        let (a, b) = (Rot::z(-turn), Rot::z(turn));
         let point = Vec3::X;
 
         let dual = blend([
@@ -251,7 +249,7 @@ mod tests {
         // The same rotation written both ways round. Summed naively these
         // annihilate and the vertex ends up wherever the zero quaternion sends
         // it, which is nowhere near the body.
-        let rotation = Quat::from_rotation_x(0.9);
+        let rotation = Rot::x(0.9);
         let same = DualQuat {
             real: -rotation,
             dual: -DualQuat::from_rotation_translation(rotation, Vec3::ZERO).dual,
@@ -272,7 +270,7 @@ mod tests {
         // The one case dual quaternion blending is known to handle badly. It
         // must not produce a NaN, whatever else it does.
         let a = DualQuat::from_rotation_translation(Quat::IDENTITY, Vec3::ZERO);
-        let b = DualQuat::from_rotation_translation(Quat::from_rotation_y(PI), Vec3::ZERO);
+        let b = DualQuat::from_rotation_translation(Rot::y(PI), Vec3::ZERO);
         let moved = blend([(a, 0.5), (b, 0.5)]).transform_point(Vec3::new(1.0, 0.5, 0.0));
         assert!(moved.is_finite(), "{moved:?}");
     }

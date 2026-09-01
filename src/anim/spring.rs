@@ -18,6 +18,7 @@
 //! tail and a coat hem are the same code — which is the point of [`Role`]
 //! existing at all.
 
+use crate::det::DetMath;
 use glam::Vec3;
 
 use super::ik;
@@ -237,7 +238,7 @@ impl Springs {
         // anchor's truth and the shape the springs are pulled back toward, so a
         // chain that is not moving sits exactly where the pose says.
         let posed = pose.forward(rig);
-        let keep = (-config.drag.max(0.0) * dt).exp();
+        let keep = (-config.drag.max(0.0) * dt).det_exp();
 
         for chain in &self.chains {
             let anchored = posed.positions[chain.joints[0]];
@@ -302,8 +303,8 @@ impl Springs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::det::Rot;
     use crate::plan::{BodyPlan, HumanoidParams, Zone};
-    use glam::Quat;
 
     /// A humanoid with a four-link chain hanging off the head, of the kind a
     /// lock of hair or a long ear would want.
@@ -389,7 +390,7 @@ mod tests {
 
         // Turn the head, hard.
         let mut turned = Pose::rest(&rig);
-        turned.rotations[head] = Quat::from_rotation_y(1.2);
+        turned.rotations[head] = Rot::y(1.2);
         let rigid = at(&rig, &turned)[tip];
 
         let mut sprung_pose = turned.clone();
@@ -439,7 +440,7 @@ mod tests {
         for frame in 0..90 {
             let mut pose = Pose::rest(&rig);
             // Shake it, so the solver is never near its comfortable answer.
-            pose.rotations[head] = Quat::from_rotation_z((frame as f32 * 0.7).sin() * 1.1);
+            pose.rotations[head] = Rot::z((frame as f32 * 0.7).det_sin() * 1.1);
             springs.advance(&rig, &mut pose, None, 1.0 / 60.0, &SpringConfig::default());
 
             let world = at(&rig, &pose);
@@ -502,7 +503,7 @@ mod tests {
             springs.advance(&rig, &mut pose, None, 1.0 / 60.0, &config);
 
             let mut turned = Pose::rest(&rig);
-            turned.rotations[head] = Quat::from_rotation_y(1.0);
+            turned.rotations[head] = Rot::y(1.0);
             let rigid = at(&rig, &turned)[tip];
             // How far it still is from home after half a second.
             let mut last = turned.clone();
@@ -551,11 +552,11 @@ mod tests {
         let head = *rig.in_zone(Zone::Head).first().expect("a head");
         let mut springs = Springs::of(&rig);
         let mut pose = Pose::rest(&rig);
-        pose.rotations[head] = Quat::from_rotation_y(1.4);
+        pose.rotations[head] = Rot::y(1.4);
 
         for _ in 0..20 {
             let mut next = Pose::rest(&rig);
-            next.rotations[head] = Quat::from_rotation_y(1.4);
+            next.rotations[head] = Rot::y(1.4);
             // A third of a second: twenty frames' worth, in one.
             springs.advance(&rig, &mut next, None, 0.33, &SpringConfig::default());
             pose = next;
@@ -596,7 +597,7 @@ mod tests {
             let mut pose = Pose::rest(&rig);
             for frame in 0..40 {
                 let mut next = Pose::rest(&rig);
-                next.rotations[head] = Quat::from_rotation_x((frame as f32 * 0.3).sin());
+                next.rotations[head] = Rot::x((frame as f32 * 0.3).det_sin());
                 springs.advance(&rig, &mut next, None, 1.0 / 60.0, &SpringConfig::default());
                 pose = next;
             }

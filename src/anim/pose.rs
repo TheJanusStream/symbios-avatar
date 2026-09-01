@@ -11,6 +11,7 @@
 //! parent is simply the difference of their rest positions — so an identity
 //! rotation everywhere reproduces the rest pose exactly.
 
+use crate::det;
 use glam::{Mat4, Quat, Vec3};
 
 use crate::anim::dual::{self, DualQuat};
@@ -96,7 +97,7 @@ impl Pose {
                 .rotations
                 .iter()
                 .zip(&other.rotations)
-                .map(|(a, b)| a.slerp(*b, t))
+                .map(|(a, b)| det::slerp(*a, *b, t))
                 .collect(),
             translation: self.translation.lerp(other.translation, t),
         }
@@ -253,6 +254,7 @@ impl Posed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::det::Rot;
     use crate::plan::{BodyPlan, HumanoidParams, Limb, Zone};
 
     fn rig() -> Rig {
@@ -280,7 +282,7 @@ mod tests {
         let hand = rig.in_zone(Zone::Extremity(Limb::ForeLeft))[0];
 
         let mut pose = Pose::rest(&rig);
-        pose.rotations[shoulder] = Quat::from_rotation_z(0.5);
+        pose.rotations[shoulder] = Rot::z(0.5);
         let posed = pose.forward(&rig);
 
         let rest = Pose::rest(&rig).forward(&rig);
@@ -341,13 +343,13 @@ mod tests {
         let rig = rig();
         let rest = Pose::rest(&rig);
         let mut turned = rest.clone();
-        turned.rotations[0] = Quat::from_rotation_y(1.0);
+        turned.rotations[0] = Rot::y(1.0);
         turned.translation = Vec3::Y;
 
         assert_eq!(rest.lerp(&turned, 0.0), rest);
         let half = rest.lerp(&turned, 0.5);
         assert!((half.translation.y - 0.5).abs() < 1e-5);
-        let angle = half.rotations[0].to_axis_angle().1;
+        let angle = det::to_axis_angle(half.rotations[0]).1;
         assert!((angle - 0.5).abs() < 1e-4, "half the rotation, got {angle}");
     }
 }

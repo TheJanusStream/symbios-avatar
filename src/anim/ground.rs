@@ -30,6 +30,7 @@
 //! 121 mm under. A swinging foot is no better: at its lowest it is 101 mm
 //! below the floor it is supposed to be swinging over.
 
+use crate::det::{self, Rot};
 use glam::{Quat, Vec3};
 
 use super::ik::two_bone;
@@ -432,7 +433,7 @@ where
         // on a slope those are a step apart, and the sole is what has to lie
         // flat.
         let up = beneath(posed.positions[foot]).map_or(Vec3::Y, |ground| ground.normal);
-        let want = Quat::from_rotation_arc(Vec3::Y, up.normalize_or(Vec3::Y));
+        let want = det::from_rotation_arc(Vec3::Y, up.normalize_or(Vec3::Y));
 
         // What the ankle must hold locally for the foot to end up there, and
         // then how far that is from leaving it alone, so it can be clamped.
@@ -468,14 +469,14 @@ where
 /// and while they each carried their own copy of this, only one of them had it
 /// (#256).
 pub(crate) fn folded_within(local: Quat, limit: f32) -> Quat {
-    let (axis, angle) = local.to_axis_angle();
+    let (axis, angle) = det::to_axis_angle(local);
     let angle = angle.rem_euclid(std::f32::consts::TAU);
     let angle = if angle > std::f32::consts::PI {
         angle - std::f32::consts::TAU
     } else {
         angle
     };
-    Quat::from_axis_angle(axis, angle.clamp(-limit, limit))
+    Rot::axis_angle(axis, angle.clamp(-limit, limit))
 }
 
 /// Solves one limb so its ground contact lands on `target`.
@@ -654,7 +655,9 @@ const CONTACT_TOLERANCE: f32 = 5e-4;
 #[cfg(test)]
 mod contact_tests {
     use super::*;
+
     use crate::anim::gait::{self, Gait, Stride};
+    use crate::det::DetMath;
     use crate::plan::{BodyPlan, HumanoidParams, Zone};
     use crate::rig::Rig;
 
@@ -728,7 +731,7 @@ mod contact_tests {
         let inside = home + Vec3::Y * (0.15 * reach);
         let outside = home + Vec3::Z * (0.80 * reach);
         let contact_at = |t: f32| {
-            let goal = inside.lerp(outside, (t * std::f32::consts::PI).sin());
+            let goal = inside.lerp(outside, (t * std::f32::consts::PI).det_sin());
             let mut pose = Pose::rest(&rig);
             solve_contact(&rig, &mut pose, limb, goal);
             pose.forward(&rig).positions[contact]
@@ -950,7 +953,7 @@ mod tests {
             .copied()
             .expect("a leg");
         let mut raised = Pose::rest(&rig);
-        raised.rotations[hip] = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+        raised.rotations[hip] = Rot::x(-std::f32::consts::FRAC_PI_2);
 
         let down = contacts_in(&rig, &raised);
         assert!(
@@ -963,6 +966,7 @@ mod tests {
         );
     }
     use super::*;
+    use crate::det::DetMath;
     use crate::plan::{BodyPlan, HumanoidParams, QuadrupedParams};
 
     fn biped() -> Rig {
@@ -1118,7 +1122,7 @@ mod tests {
         let posed = pose.forward(rig);
         // Where the foot's own up axis has ended up, against the world's.
         let up = posed.rotations[joints[0]] * Vec3::Y;
-        up.dot(Vec3::Y).clamp(-1.0, 1.0).acos().to_degrees()
+        up.dot(Vec3::Y).clamp(-1.0, 1.0).det_acos().to_degrees()
     }
 
     #[test]
@@ -1184,7 +1188,7 @@ mod tests {
         };
         plant_feet(&rig, &mut pose, ramp, &FootingConfig::default());
 
-        let want = normal.dot(Vec3::Y).acos().to_degrees();
+        let want = normal.dot(Vec3::Y).det_acos().to_degrees();
         for limb in [Limb::HindLeft, Limb::HindRight] {
             let tilt = foot_tilt(&rig, &pose, limb);
             assert!(

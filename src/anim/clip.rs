@@ -29,6 +29,7 @@
 //! trade: this format can express what a movement *is* for, and cannot express
 //! motion that only means something on one particular skeleton.
 
+use crate::det::{self, Rot};
 use glam::{Quat, Vec3};
 
 use super::gait::incline_trunk;
@@ -735,7 +736,7 @@ fn tilt_body(rig: &Rig, pose: &mut Pose, offset: Vec3) {
     // The axis that carries `+Y` toward `toward`, written as a cross product
     // for `incline_trunk`'s reason: naming it would need one convention per
     // direction a body can tip in.
-    pose.rotations[root] *= Quat::from_axis_angle(Vec3::Y.cross(toward), wanted);
+    pose.rotations[root] *= Rot::axis_angle(Vec3::Y.cross(toward), wanted);
 }
 
 /// A rotation key read: which way it tips the part, and how far in radians.
@@ -853,7 +854,7 @@ fn face_extremity(rig: &Rig, pose: &mut Pose, limb: Limb, toward: Vec3, engaged:
 
     let posed = pose.forward(rig);
     let showing = posed.rotations[contact] * flat;
-    let turn = Quat::from_rotation_arc(showing, toward);
+    let turn = det::from_rotation_arc(showing, toward);
 
     // **The fingers follow, and which way they point is a convention rather
     // than a field.** Aiming the normal leaves the hand free to roll about it,
@@ -883,7 +884,7 @@ fn face_extremity(rig: &Rig, pose: &mut Pose, limb: Limb, toward: Vec3, engaged:
             if up.length() > 0.2 { up } else { flatwise }.normalize_or_zero()
         };
         if fingers != Vec3::ZERO && wanted != Vec3::ZERO {
-            Quat::from_rotation_arc(fingers, wanted)
+            det::from_rotation_arc(fingers, wanted)
         } else {
             Quat::IDENTITY
         }
@@ -892,7 +893,7 @@ fn face_extremity(rig: &Rig, pose: &mut Pose, limb: Limb, toward: Vec3, engaged:
     let parent_world = posed.rotations[parent];
     // Composed in the world and written back in the joint's own frame, scaled
     // by how far the track is into its excursion.
-    let eased = Quat::IDENTITY.slerp(roll * turn, engaged.clamp(0.0, 1.0));
+    let eased = det::slerp(Quat::IDENTITY, roll * turn, engaged.clamp(0.0, 1.0));
     pose.rotations[contact] = parent_world.inverse() * eased * posed.rotations[contact];
 }
 
@@ -1174,7 +1175,7 @@ mod tests {
     fn carried(rig: &Rig, sink: f32, yaw: f32) -> Pose {
         let mut pose = Pose::rest(rig);
         pose.translation.y -= sink;
-        pose.rotations[0] = Quat::from_rotation_y(yaw);
+        pose.rotations[0] = Rot::y(yaw);
         gait::lean(
             rig,
             &mut pose,
@@ -1305,8 +1306,8 @@ mod tests {
         let rest = Frame::carrying(&rig, &Pose::rest(&rig), Limb::ForeLeft);
 
         let mut swung = Pose::rest(&rig);
-        swung.rotations[chain[0]] = Quat::from_rotation_x(-0.6);
-        swung.rotations[chain[1]] = Quat::from_rotation_x(0.4);
+        swung.rotations[chain[0]] = Rot::x(-0.6);
+        swung.rotations[chain[1]] = Rot::x(0.4);
         assert_eq!(
             Frame::carrying(&rig, &swung, Limb::ForeLeft),
             rest,
