@@ -618,6 +618,17 @@ fn turning_one_joint_leaves_the_bone_before_it_alone() {
 /// `onset` — the change's phase is the sweep axis, because three phases read
 /// 7.3 mm next to 92.5 — and the tracked window is the two seconds after it.
 fn slide_changing_speed(from: f32, to: f32, onset: f32) -> f32 {
+    slide_driven(from, to, onset, false)
+}
+
+/// The same walk driven through [`symbios_avatar::Footholds`] — the #277 fix:
+/// each planted contact held at the world point it went down at, fed the same
+/// travel the instrument integrates.
+fn slide_held(from: f32, to: f32, onset: f32) -> f32 {
+    slide_driven(from, to, onset, true)
+}
+
+fn slide_driven(from: f32, to: f32, onset: f32, held: bool) -> f32 {
     let rig = Rig::from_skeleton(&AvatarRecord::new("Slider", Archetype::default()).skeleton())
         .expect("rigs");
     let feet: Vec<(symbios_avatar::Limb, usize, Vec<usize>)> = [
@@ -644,6 +655,7 @@ fn slide_changing_speed(from: f32, to: f32, onset: f32) -> f32 {
     let mut changing = false;
     let mut track: Vec<Vec<Vec<Vec3>>> = Vec::new();
     let mut down: Vec<Vec<bool>> = Vec::new();
+    let mut ledger = symbios_avatar::Footholds::new();
 
     for _ in 0..(8.0 * FPS) as usize {
         if changing {
@@ -666,7 +678,20 @@ fn slide_changing_speed(from: f32, to: f32, onset: f32) -> f32 {
         }
 
         let mut pose = Pose::rest(&rig);
-        let walked = symbios_avatar::Walk::at(cycle).drive(&rig, &mut pose, &gait, &stride, ground);
+        let walked = if held {
+            ledger.drive(
+                symbios_avatar::Walk::at(cycle),
+                &rig,
+                &mut pose,
+                &gait,
+                &stride,
+                Vec3::Z * travel,
+                0.0,
+                ground,
+            )
+        } else {
+            symbios_avatar::Walk::at(cycle).drive(&rig, &mut pose, &gait, &stride, ground)
+        };
         if !changing && (from - to).abs() > f32::EPSILON {
             continue;
         }
@@ -750,4 +775,42 @@ fn probe_the_slide_a_speed_change_costs_at_every_phase() {
             sweeps.join(" ")
         );
     }
+}
+
+#[test]
+fn a_speed_change_does_not_slide_a_foot_the_footholds_hold() {
+    // **#277's acceptance, and every figure is a relation within one build**
+    // (#1183). The stateless walk slides a planted sole 91.3 mm worst-case
+    // through the chassis's real speed profile against a 1.9 mm steady
+    // control — the ignored probe above is that measurement. Driven through
+    // `Footholds`, the slide must sit with the controls: the held point IS
+    // the stateless answer at every constant speed, so anything the sweep
+    // adds over the controls is the ledger failing at exactly the moments it
+    // exists for.
+    let steady = slide_held(1.4, 1.4, 0.0).max(slide_held(0.7, 0.7, 0.0));
+    let mut worst = 0.0f32;
+    for direction in [(1.4f32, 0.7f32), (0.7, 1.4)] {
+        for at in 0..12 {
+            let onset = at as f32 / 12.0;
+            worst = worst.max(slide_held(direction.0, direction.1, onset));
+        }
+    }
+    println!(
+        "held: steady control {:.1} mm, worst over the sweep {:.1} mm",
+        steady * 1000.0,
+        worst * 1000.0
+    );
+    assert!(
+        steady < 0.02,
+        "the held steady control itself reads {:.1} mm — the ledger is disturbing a \
+         constant-speed walk, which it must never do",
+        steady * 1000.0
+    );
+    assert!(
+        worst < steady * 3.0 + 0.002,
+        "a speed change slid a held sole {:.1} mm against a {:.1} mm steady control — \
+         the stateless defect read 91.3 mm here, and the ledger exists for exactly this",
+        worst * 1000.0,
+        steady * 1000.0
+    );
 }

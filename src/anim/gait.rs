@@ -1194,10 +1194,41 @@ pub fn step<F>(
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
+    step_anchored(rig, pose, gait, stride, cycle, ground, &[])
+}
+
+/// [`step`], with some stance contacts held to a remembered point (#277).
+///
+/// `anchors` carries, per limb, the **horizontal** body-frame offset from that
+/// limb's rest contact where a foothold ledger says the foot was actually
+/// planted — [`super::Footholds`] is the one caller, and the plumbing is
+/// crate-internal so the public surface stays the stateless one. An anchored
+/// stance takes its horizontal from the anchor and its vertical from the
+/// ground beneath it, exactly as an unanchored stance seats itself; swings are
+/// never anchored. An empty slice is [`step`] to the bit.
+pub(crate) fn step_anchored<F>(
+    rig: &Rig,
+    pose: &mut Pose,
+    gait: &Gait,
+    stride: &Stride,
+    cycle: f32,
+    ground: F,
+    anchors: &[(Limb, Vec3)],
+) -> Steps
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
     let mut steps = Steps::default();
     if !pose.fits(rig) {
         return steps;
     }
+
+    let anchored = |limb: Limb| {
+        anchors
+            .iter()
+            .find(|&&(of, _)| of == limb)
+            .map(|&(_, offset)| offset)
+    };
 
     // Every contact's goal for this instant, seated on the ground beneath it,
     // computed once because the crouch and the solve must agree about where the
@@ -1218,6 +1249,17 @@ where
             // caller need not remember to zero it.
             let offset = if gait.duty >= 1.0 {
                 Vec3::ZERO
+            } else if let (Phase::Stance(_), Some(anchor)) = (phase, anchored(limb)) {
+                // A held stance ignores the stride's march entirely: the
+                // stride and the cadence are both re-derived from the current
+                // speed, so under a changing speed the derived offset slides
+                // out from under a planted foot (#277) — the anchor is where
+                // the foot actually went down, and the seat re-derives the
+                // height beneath it every frame exactly as the derived stance
+                // does.
+                let level = Vec3::new(anchor.x, 0.0, anchor.z);
+                let beneath = ground(home + level).map_or(0.0, |there| there.position.y);
+                level + Vec3::Y * beneath
             } else {
                 // Along the stride, because a foot's length only matters in the
                 // direction it is travelling: a body shuffling sideways swings
@@ -1264,6 +1306,12 @@ where
             // never lifts a contact expresses no stride, and `contact_offset`
             // asked here directly would sink a standing body for one (#230).
             let envelope = if gait.duty >= 1.0 {
+                offset
+            } else if phase.is_stance() && anchored(limb).is_some() {
+                // An anchored stance's goal IS where the foot stands; the sink
+                // must cover it, not the horizontal the stride would have
+                // derived — a body decelerating over a held foot owes the
+                // reach that hold now costs (#277).
                 offset
             } else {
                 let level = contact_offset(home_of(rig, limb)?, stride, phase);
@@ -1478,7 +1526,26 @@ impl Walk {
     where
         F: Fn(Vec3) -> Option<Ground>,
     {
-        let steps = step(rig, pose, gait, stride, self.cycle, &ground);
+        self.drive_anchored(rig, pose, gait, stride, ground, &[])
+    }
+
+    /// [`Self::drive`], with stance contacts held to a foothold ledger's
+    /// points — [`super::Footholds`] is the caller, and the reason this is
+    /// not public: the anchors only mean something to the state that recorded
+    /// them. An empty slice is [`Self::drive`] exactly.
+    pub(crate) fn drive_anchored<F>(
+        &self,
+        rig: &Rig,
+        pose: &mut Pose,
+        gait: &Gait,
+        stride: &Stride,
+        ground: F,
+        anchors: &[(Limb, Vec3)],
+    ) -> Walked
+    where
+        F: Fn(Vec3) -> Option<Ground>,
+    {
+        let steps = step_anchored(rig, pose, gait, stride, self.cycle, &ground, anchors);
         if self.posture {
             swing_arms(rig, pose, gait, stride, self.cycle);
             lean_with(rig, pose, gait, stride, self.head_level);
@@ -3000,7 +3067,7 @@ fn spine_to(rig: &Rig, top: usize) -> Vec<usize> {
 }
 
 /// Where a limb's contact rests when the body is standing.
-fn home_of(rig: &Rig, limb: Limb) -> Option<Vec3> {
+pub(crate) fn home_of(rig: &Rig, limb: Limb) -> Option<Vec3> {
     let joint = *rig.in_zone(crate::plan::Zone::Extremity(limb)).first()?;
     Some(rig.joints[joint].position)
 }
