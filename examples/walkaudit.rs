@@ -208,6 +208,10 @@ struct Moment {
     /// What each contact asked the body to sink for, and the goal it asked for
     /// it for — the crouch's own argument list, in the gait's order.
     asked: Vec<(Limb, Vec3, f32)>,
+    /// How doubtful each contact read its own footing, zero to one, in the
+    /// gait's order (#260). The engine's inference, reported so the stance
+    /// reading below can be explained rather than only observed.
+    doubt: Vec<(Limb, f32)>,
 }
 
 fn main() {
@@ -651,6 +655,7 @@ fn main() {
             crouch: (steps.crouch, sank_for),
             straining,
             asked,
+            doubt: steps.doubt.clone(),
         }
     };
 
@@ -1044,6 +1049,45 @@ fn main() {
          rather than on the instrument: the travel comes from the stride's own excursion \
          divided by the duty, so a reading here says the two disagree)"
     );
+    // **The stance width, off the planted contacts, and the doubt that widens
+    // it (#260).** Read at double support — the only moments both contacts
+    // are on the ground — as the separation across the travel, in the world.
+    // On smooth ground it is the body's own stance; on broken ground
+    // (`--step`) the engine widens each foot by its own footing doubt, and
+    // the doubt maxima are printed beside the width so the reading carries
+    // its explanation.
+    {
+        let mut widths: Vec<f32> = Vec::new();
+        for moment in &sweep {
+            if moment.planted.iter().all(|&(down, _, _)| down) && moment.planted.len() >= 2 {
+                let gap = moment.planted[0].1 - moment.planted[1].1;
+                widths.push((gap - facing * gap.dot(facing)).length());
+            }
+        }
+        let doubted = |limb: Limb| {
+            sweep
+                .iter()
+                .flat_map(|moment| &moment.doubt)
+                .filter(|&&(who, _)| who == limb)
+                .map(|&(_, doubt)| doubt)
+                .fold(0.0f32, f32::max)
+        };
+        if let (Some(low), Some(high)) = (
+            widths.iter().copied().reduce(f32::min),
+            widths.iter().copied().reduce(f32::max),
+        ) {
+            println!(
+                "  stance: planted feet stood {:.1} to {:.1} mm apart across the travel at \
+                 double support; footing doubt peaked at {:.2} left, {:.2} right \
+                 (0 = certain, 1 = a hole; smooth ground and any plain grade must read 0.00, \
+                 and the width then answers to the rig alone)",
+                low * 1000.0,
+                high * 1000.0,
+                doubted(Limb::HindLeft),
+                doubted(Limb::HindRight),
+            );
+        }
+    }
     // **The heading sweep** (#242): the acceptance test asks for a
     // walkaudit-style read of sole penetration and clearance in every
     // direction, and for no pop crossing from forward to diagonal. The pop is a
@@ -1107,6 +1151,136 @@ fn main() {
             "          (worst mm is the lowest a SWINGING sole passed above the body's own \
              standing depth — negative is a scuff. skid is how far a planted contact moved in \
              the world across one stance, which must not care which way the body is going)"
+        );
+
+        // **The diagonal band, finely (#258).** The 30-degree table above
+        // strides straight past the corner at 60 degrees where the stance's
+        // clearance bound engages, and the corner is the whole question: the
+        // exact bound is unbounded below it and 153 mm just past it, so
+        // whatever blends it is judged here — per-degree stride steps for the
+        // pop (#242's criterion: the largest step against the typical one),
+        // and the measured closest approach of the two feet against the
+        // clearance the stance contract asks for. The two rejected answers are
+        // printed beside the live one so the choice stays measured rather than
+        // argued: "fold" is what shipped before #258 (the stance limit folded
+        // into the ellipse's semi-axis, which cut every diagonal), and "ramp"
+        // is the other candidate the issue names (SHUFFLE_CLEARANCE ramping
+        // with |across|, still folded) — longer strides near sideways, bought
+        // by letting the feet inside the clearance, which the gap column
+        // convicts.
+        let homes: Vec<Vec3> = gait
+            .limbs
+            .iter()
+            .map(|&limb| rig.joints[rig.in_zone(symbios_avatar::Zone::Extremity(limb))[0]].position)
+            .collect();
+        let stance_width = homes
+            .iter()
+            .flat_map(|a| homes.iter().map(move |b| (a.x - b.x).abs()))
+            .fold(0.0f32, f32::max);
+        // Self-calibrating: the clearance share is read back off the crate's
+        // own pure-sideways answer rather than restating the constant.
+        let full = Stride::for_body(rig, pace).length.max(f32::EPSILON);
+        let clearance = 1.0
+            - Stride::for_body(rig, pace)
+                .toward(rig, Heading::LEFT)
+                .length
+                / stance_width;
+        let closest_at = |stride: &Stride| -> f32 {
+            let mut closest = f32::MAX;
+            for at in 0..SWEEP {
+                let cycle = at as f32 / SWEEP as f32;
+                let spots: Vec<Vec3> = homes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, &home)| {
+                        home + gait::contact_offset(home, stride, gait.phase(index, cycle))
+                    })
+                    .collect();
+                for (index, a) in spots.iter().enumerate() {
+                    for b in spots.iter().skip(index + 1) {
+                        closest = closest
+                            .min((Vec3::new(a.x, 0.0, a.z) - Vec3::new(b.x, 0.0, b.z)).length());
+                    }
+                }
+            }
+            closest
+        };
+        let smoothstep = |t: f32| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let lateral_reach = Heading::LEFT.reach();
+        let corner = (1.0 - clearance * clearance).sqrt();
+        let folded = |limit: f32| {
+            move |heading: Heading| {
+                let semi = lateral_reach.min(limit / full);
+                full * heading.reach_within(semi)
+            }
+        };
+        let fold = folded(stance_width * (1.0 - clearance));
+        let ramp = |heading: Heading| {
+            let x = heading.across().abs();
+            let eased = clearance * smoothstep((x - corner) / (1.0 - corner));
+            folded(stance_width * (1.0 - eased))(heading)
+        };
+        println!(
+            "\n{:>8} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
+            "heading",
+            "stride mm",
+            "anatomy",
+            "fold mm",
+            "ramp mm",
+            "gap mm",
+            "ramp gap",
+            "contract"
+        );
+        for degrees in [30, 45, 50, 55, 60, 65, 70, 75, 90] {
+            let heading = Heading::degrees(degrees as f32);
+            let swept = Stride::for_body(rig, pace).toward(rig, heading);
+            let mut rival = swept;
+            rival.length = ramp(heading);
+            println!(
+                "{:>7}\u{00b0} {:>10.1} {:>10.1} {:>10.1} {:>10.1} {:>10.1} {:>10.1} {:>10.1}",
+                degrees,
+                swept.length * 1000.0,
+                full * heading.reach() * 1000.0,
+                fold(heading) * 1000.0,
+                rival.length * 1000.0,
+                closest_at(&swept) * 1000.0,
+                closest_at(&rival) * 1000.0,
+                stance_width * clearance * 1000.0,
+            );
+        }
+        let lengths: Vec<f32> = (0..=360)
+            .map(|degrees| {
+                Stride::for_body(rig, pace)
+                    .toward(rig, Heading::degrees(degrees as f32))
+                    .length
+            })
+            .collect();
+        let steps: Vec<f32> = lengths
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .collect();
+        let mut sorted = steps.clone();
+        sorted.sort_by(f32::total_cmp);
+        let median = sorted[sorted.len() / 2];
+        let (worst_at, worst) = steps
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .expect("a sweep");
+        println!(
+            "          pop: the stride's largest one-degree step is {:.1} mm at {worst_at}\u{00b0}, \
+             against a typical {:.1} mm ({:.1}x)",
+            worst * 1000.0,
+            median * 1000.0,
+            worst / median.max(f32::EPSILON),
+        );
+        println!(
+            "          (gap is the closest the feet pass in the ground plane over a cycle at that \
+             stride; the contract is the stance's clearance share. fold is pre-#258, ramp is the \
+             rejected candidate — read its gap column against the contract)"
         );
     }
 

@@ -46,12 +46,15 @@
 //! So a sideways stride carries a second bound that a forward one does not, and
 //! it is geometric rather than anatomical: **the feet have to stay apart**. On
 //! the default body that bound is 88 mm against an anatomical reach of 298, so
-//! it is very much the one that binds — which is why it cannot live in
-//! [`Heading::reach`], a pure function of an angle. It arrives through
-//! [`Heading::reach_within`], which [`super::Stride::toward`] calls with the
-//! body's own stance, and it goes into the ellipse's **semi-axis** rather than
-//! being applied over the top of it. Clipping afterwards was tried and pops;
-//! the axis keeps the ellipse smooth.
+//! near sideways it is very much the one that binds — which is why it cannot
+//! live in [`Heading::reach`], a pure function of an angle. It is applied by
+//! [`super::Stride::toward`], over the ellipse rather than inside it, and only
+//! in the band around sideways where it genuinely binds — see `shuffle_bound`
+//! in the gait module for the geometry. Two other homes were tried and
+//! measured out: clipping with a hard `min` pops (#242), and folding the
+//! stance limit into the ellipse's **semi-axis** — this module's answer for a
+//! while — is smooth but cuts every diagonal, including the ones the stance
+//! never threatened: a 60-degree stride to 102 mm where 323 was safe (#258).
 
 use glam::Vec3;
 
@@ -194,20 +197,19 @@ impl Heading {
     /// As [`Self::reach`], with the sideways semi-axis given rather than taken
     /// from [`LATERAL_REACH`].
     ///
-    /// **This is where a body's own geometry gets in**, and it goes into the
-    /// axis rather than being applied afterwards. A sideways stride is bounded
-    /// by more than the hip: two feet at opposite points of the cycle can pass
-    /// each other, and how far they may travel before they do is a property of
-    /// the stance — see `super::gait::Stride::toward`, which is what calls
-    /// this.
-    ///
-    /// **Taking the smaller of the two afterwards is the obvious alternative
-    /// and it pops.** Measured: a hard `min` against the geometric limit cut a
-    /// 30-degree diagonal from 414 mm to 177 and put a step at 60 degrees where
-    /// the bound stopped binding, because a clearance is a hard constraint and
-    /// hard constraints have corners. Moving it into the semi-axis keeps the
-    /// ellipse an ellipse, so a diagonal is interpolated rather than clipped
-    /// and the sweep stays smooth all the way round.
+    /// **A history, kept because both of its lessons still bind.** This
+    /// parameter existed for `super::gait::Stride::toward` to fold the
+    /// stance's foot-clearance limit into the axis, after a hard `min` over
+    /// the top was measured popping — a clearance is a hard constraint and
+    /// hard constraints have corners (#242). The fold kept the sweep smooth
+    /// and #258 then measured its price: shrinking the semi-axis reshapes the
+    /// whole ellipse, so every diagonal was cut — 102 mm at 60 degrees where
+    /// 323 was safe — including the headings the stance bound never touches.
+    /// The clearance now lives in the gait module's `shuffle_bound`, eased
+    /// through its corner instead of folded or clipped, and `toward` calls
+    /// this with [`LATERAL_REACH`] unchanged. The parameter stays because the
+    /// instruments (walkaudit's heading sweep) use it to print the rejected
+    /// shapes beside the live one.
     #[must_use]
     pub fn reach_within(self, lateral: f32) -> f32 {
         let (along, across) = (self.along(), self.across());

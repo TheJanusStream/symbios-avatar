@@ -642,23 +642,31 @@ impl Stride {
     ///
     /// **The rig is here for the second bound**, which is geometric and which
     /// only a body can answer: a sideways stride long enough drives one foot
-    /// past the other. See `shuffle_limit` — and see `Heading`'s own docs for
+    /// past the other. See `shuffle_bound` — and see `Heading`'s own docs for
     /// how that was found, which was by a guard refuting the claim it had been
     /// written to confirm.
     #[must_use]
     pub fn toward(self, rig: &Rig, heading: Heading) -> Self {
-        // The sideways semi-axis is the smaller of what the hip allows and what
-        // the stance does — folded into the ellipse rather than clipped over
-        // it, so a diagonal stays interpolated. See `Heading::reach_within`.
-        let lateral = if self.length > f32::EPSILON {
-            crate::anim::heading::LATERAL_REACH.min(shuffle_limit(rig) / self.length)
+        // The hip's bound first: the ellipse, untouched, with its anatomical
+        // sideways semi-axis. The stance's bound is applied over it by
+        // `shuffle_bound` — not folded into the semi-axis, which #258 measured
+        // cutting every diagonal the stance never threatened (a 60-degree
+        // stride to 102 mm where 323 was safe), and not hard-clipped either,
+        // which #242 measured popping. It engages only in the band around
+        // sideways where it genuinely binds.
+        let anatomical = self.length * heading.reach_within(crate::anim::heading::LATERAL_REACH);
+        let length = shuffle_bound(rig, heading, anatomical);
+        // The lift shrinks in the stride's own proportion, so a shorter step
+        // lifts its foot less — a toe clearance is a share of the ground being
+        // covered.
+        let scale = if self.length > f32::EPSILON {
+            length / self.length
         } else {
-            crate::anim::heading::LATERAL_REACH
+            heading.reach_within(crate::anim::heading::LATERAL_REACH)
         };
-        let scale = heading.reach_within(lateral);
         Self {
             direction: heading.direction(),
-            length: self.length * scale,
+            length,
             lift: self.lift * scale,
             ..self
         }
@@ -677,27 +685,81 @@ impl Stride {
     }
 }
 
-/// The longest stride this body can take toward `heading` without putting one
-/// foot through the other, in metres.
+/// The longest stride this body can take toward `heading` without bringing one
+/// foot inside its clearance of the other, in metres — `anatomical` wherever
+/// that bound is slack.
 ///
 /// **A sideways step is bounded by the stance, not only by the hip.** Two feet
-/// at opposite points of the cycle differ in their offsets by most of a
-/// stride's length — one is sliding back through its stance while the other
-/// swings forward — so a lateral stride wider than the feet stand apart crosses
-/// them. Measured before this existed: strafing left on the default body put
-/// the left foot 72 mm to the RIGHT of the right one, which is the
+/// at opposite points of the cycle differ in their offsets by up to a stride's
+/// length along the travel — one is sliding back through its stance while the
+/// other swings forward — so a lateral stride wider than the feet stand apart
+/// crosses them. Measured before this existed: strafing left on the default
+/// body put the left foot 72 mm to the RIGHT of the right one, which is the
 /// self-intersection a shuffle is chosen over a crossover to avoid.
 ///
-/// Returned as a **distance**, which the caller turns into a share of its own
-/// forward stride and hands to `Heading::reach_within` as the ellipse's
-/// sideways semi-axis. A purely fore-and-aft heading never reaches it, because
-/// two feet side by side have nothing to cross when they both travel down the
-/// body's length — which is why every forward and backward reading in this
-/// crate is untouched.
+/// # The geometry, exactly (#258)
 ///
-/// The margin is [`SHUFFLE_CLEARANCE`]. The bound scales with the body, because
-/// the stance does.
-fn shuffle_limit(rig: &Rig) -> f32 {
+/// Feet a stance `W` apart travelling along unit `D` are separated by
+/// `W·X̂ + δ·D` with `δ` up to a stride either way, and the closest that comes
+/// over a cycle is `W·|along|` — reached only when the stride is long enough
+/// for `δ` to get there. So the clearance `W·c` (`c` = [`SHUFFLE_CLEARANCE`])
+/// splits the headings in two:
+///
+/// * **Within 60 degrees of fore-and-aft** (`|along| ≥ c`, for `c` of a half),
+///   the floor `W·|along|` clears `W·c` at ANY stride length. No bound exists
+///   to apply, and this returns `anatomical` untouched — the whole of what
+///   #258 recovers, since the shipped fold cut a 60-degree stride to 102 mm
+///   where 323 was safe.
+/// * **In the band around sideways**, the stride must stop `δ` short of the
+///   floor, and the largest that keeps `|W·X̂ + δ·D| ≥ W·c` for every
+///   `|δ| ≤ stride` is the quadratic's root,
+///   `W·(|across| − √(across² − 1 + c²))` — `W·(1 − c)` at pure sideways,
+///   which is the same 88 mm the fold allowed there, so the shuffle itself is
+///   unchanged.
+///
+/// # Why not the exact bound alone
+///
+/// It has a cliff: unbounded at 60 degrees and `0.866·W` (153 mm default
+/// body) just past it, with infinite slope at the corner — a hard constraint
+/// arriving all at once, which is the pop #242's acceptance rules out. Two
+/// eases, both strictly conservative:
+///
+/// * [`CORNER_EASE`] pads the discriminant, which rounds the corner's
+///   infinite slope into a finite one. Padding alone would also shave the
+///   pure-sideways limit, so the constant shift that restores `W·(1 − c)` at
+///   `|across| = 1` is added back — safe everywhere, because `√(u + ε) − √u`
+///   only grows as `u` falls below `c²`.
+/// * The bound **engages over [`SHUFFLE_ENGAGE_BAND`]** rather than switching
+///   on: a smoothstep in `|across|` fades the cap in across the approach to
+///   the corner, where the geometry above says every stride is already safe —
+///   so the fade trades nothing but the sweep's steepness.
+///
+/// The worst-case `δ` of a full stride is itself conservative: with the wave
+/// gait's duty the offsets differ by `0.83` of a stride at most, which is the
+/// measured headroom the clearance sweep reads over the contract.
+fn shuffle_bound(rig: &Rig, heading: Heading, anatomical: f32) -> f32 {
+    let Some(stance) = stance_width(rig) else {
+        return anatomical;
+    };
+    let across = heading.across().abs();
+    let c = SHUFFLE_CLEARANCE;
+    // The corner: where `|along|` falls to `c` and the floor stops clearing.
+    let corner = (1.0 - c * c).sqrt();
+    let engaged = smoothstep((across - (corner - SHUFFLE_ENGAGE_BAND)) / SHUFFLE_ENGAGE_BAND);
+    if engaged <= 0.0 {
+        return anatomical;
+    }
+    let eased = (across * across - 1.0 + c * c + CORNER_EASE)
+        .max(0.0)
+        .sqrt();
+    let restored = (c * c + CORNER_EASE).sqrt() - c;
+    let cap = stance * (across - eased + restored);
+    anatomical - engaged * (anatomical - cap).max(0.0)
+}
+
+/// How far apart this body's ground contacts stand, across the body, in
+/// metres — `None` for a body whose stance has no width to cross.
+fn stance_width(rig: &Rig) -> Option<f32> {
     let sides: Vec<f32> = rig
         .ground_contacts()
         .into_iter()
@@ -707,9 +769,9 @@ fn shuffle_limit(rig: &Rig) -> f32 {
     let low = sides.iter().copied().fold(f32::MAX, f32::min);
     let high = sides.iter().copied().fold(f32::MIN, f32::max);
     if sides.len() < 2 || high <= low {
-        return f32::INFINITY;
+        return None;
     }
-    (high - low) * (1.0 - SHUFFLE_CLEARANCE)
+    Some(high - low)
 }
 
 /// How much of its standing separation a shuffling body keeps between its feet.
@@ -721,6 +783,35 @@ fn shuffle_limit(rig: &Rig) -> f32 {
 /// clearance that matters and which this crate cannot ask for directly because
 /// a foot's width is a mesh question and this is a rig one.
 const SHUFFLE_CLEARANCE: f32 = 0.5;
+
+/// How much of the heading's sideways component the shuffle bound fades in
+/// over, ending at the corner where the exact bound begins to bind.
+///
+/// In units of `|across|`, so the band's width in degrees depends on where it
+/// sits: at a clearance of a half the corner is `|across| = 0.866` (60
+/// degrees) and this reaches back to `0.706` — 45 degrees, so the fade spans
+/// the 15 degrees before the bound is real. Below the band a diagonal takes
+/// its full anatomical stride. **Must stay positive**: it divides the
+/// smoothstep's argument, so zero is not "no fade", it is a NaN at the corner
+/// — shrink it to A/B the fade, don't zero it. Chosen against the heading
+/// sweep's pop reading (#258): wider trades reach in the 45–60 band for a
+/// gentler sweep, and this width keeps the steepest one-degree step in
+/// family with its own neighbours (2.07x, the pop guard's reading).
+const SHUFFLE_ENGAGE_BAND: f32 = 0.16;
+
+/// Padding under the exact clearance bound's square root, which rounds the
+/// corner where its slope would otherwise be infinite.
+///
+/// The exact bound arrives with infinite slope at the corner — the
+/// discriminant crosses zero — and a sweep through it steps 20 mm in a single
+/// degree on the default body. Padding the discriminant by this much caps the
+/// slope near the corner (at `1 − corner/√ε` in `|across|`), at the price of
+/// riding under the exact bound through the band — strictly conservative, so
+/// the clearance contract cannot lose by it. The shift that would shave the
+/// pure-sideways limit is restored by construction in [`shuffle_bound`].
+/// Chosen against the same sweep as [`SHUFFLE_ENGAGE_BAND`]; zero puts the
+/// corner back and a value of one flattens the bound into uselessness.
+const CORNER_EASE: f32 = 0.04;
 
 /// How far one limb must sink for its chain to reach a goal `toward` its rest
 /// contact, before any margin.
@@ -1136,6 +1227,17 @@ pub struct Steps {
     /// How far the body was carried above its stance height while airborne, in
     /// metres. Zero for anything but a run, and zero at both ends of a flight.
     pub rise: f32,
+    /// How doubtful each contact's own footing read this instant, zero to one
+    /// (#260).
+    ///
+    /// The ground closure can only say present or absent, so this is inferred
+    /// — the spread of the clearance probes the swing already takes; see
+    /// `footing_doubt` for the reading and its currency. What it bought is in
+    /// the pose already: a doubtful limb's goals walk outward by
+    /// `SPREAD_ON_DOUBT` of its own lateral offset and its entry in
+    /// [`Self::asked`] carries a `CROUCH_ON_DOUBT` compliance term, so this
+    /// field is the instrument's view of why, not a lever.
+    pub doubt: Vec<(Limb, f32)>,
     /// Where each swing contact's joint ended up when [`step`] finished, in
     /// the pose's own space.
     ///
@@ -1234,13 +1336,33 @@ where
     // computed once because the crouch and the solve must agree about where the
     // feet are going. Deriving the sink from level offsets and then solving
     // against seated ones would sink the body for a stride it is not taking.
-    let goals: Vec<(Limb, Phase, Vec3, Vec3)> = gait
+    //
+    // `offset` is from the limb's REST contact throughout, doubt widening
+    // included, so `asked` keeps meaning what it says.
+    let goals: Vec<(Limb, Phase, Vec3, Vec3, f32)> = gait
         .limbs
         .iter()
         .enumerate()
         .filter_map(|(index, &limb)| {
             let home = home_of(rig, limb)?;
             let phase = gait.phase(index, cycle);
+            // Along the stride, because a foot's length only matters in the
+            // direction it is travelling: a body shuffling sideways swings
+            // its feet across their own width, not along their length.
+            let foot = rig
+                .extremity_extent(limb, stride.direction)
+                .unwrap_or((0.0, 0.0));
+            // How doubtful this limb's own footing is (#260), and the stance
+            // it buys: the home walks outward by a share of its own lateral
+            // offset, for the swing AND the stance — a landing widened and a
+            // stance that then pulled back inward would be a pop at every
+            // plant. Phase-stable by construction; see [`footing_doubt`].
+            let doubt = if gait.duty >= 1.0 {
+                0.0
+            } else {
+                footing_doubt(home, foot, stride, gait.duty, &ground)
+            };
+            let widen = Vec3::X * (home.x * SPREAD_ON_DOUBT * doubt);
             // A gait that never lifts a contact has no stride to express: at
             // duty 1.0 every phase is a stance whose offset would slide the
             // whole stride and WRAP — every foot teleport-hopping in lockstep
@@ -1256,20 +1378,15 @@ where
                 // out from under a planted foot (#277) — the anchor is where
                 // the foot actually went down, and the seat re-derives the
                 // height beneath it every frame exactly as the derived stance
-                // does.
+                // does. No widening either: the anchor already IS the widened
+                // point the doubtful swing planted at.
                 let level = Vec3::new(anchor.x, 0.0, anchor.z);
                 let beneath = ground(home + level).map_or(0.0, |there| there.position.y);
                 level + Vec3::Y * beneath
             } else {
-                // Along the stride, because a foot's length only matters in the
-                // direction it is travelling: a body shuffling sideways swings
-                // its feet across their own width, not along their length.
-                let foot = rig
-                    .extremity_extent(limb, stride.direction)
-                    .unwrap_or((0.0, 0.0));
-                seated_offset(home, foot, stride, phase, gait.duty, &ground)
+                seated_offset(home + widen, foot, stride, phase, gait.duty, &ground) + widen
             };
-            Some((limb, phase, offset, home + offset))
+            Some((limb, phase, offset, home + offset, doubt))
         })
         .collect();
 
@@ -1301,7 +1418,7 @@ where
     // path the gait no longer walks.
     steps.asked = goals
         .iter()
-        .filter_map(|&(limb, phase, offset, _)| {
+        .filter_map(|&(limb, phase, offset, _, doubt)| {
             // The same duty gate the goals themselves passed: a gait that
             // never lifts a contact expresses no stride, and `contact_offset`
             // asked here directly would sink a standing body for one (#230).
@@ -1314,10 +1431,20 @@ where
                 // reach that hold now costs (#277).
                 offset
             } else {
-                let level = contact_offset(home_of(rig, limb)?, stride, phase);
+                // About the widened home the goal itself walks around, then
+                // expressed from the rest contact like every offset here.
+                let home = home_of(rig, limb)?;
+                let widen = Vec3::X * (home.x * SPREAD_ON_DOUBT * doubt);
+                let level = contact_offset(home + widen, stride, phase) + widen;
                 Vec3::new(level.x, offset.y, level.z)
             };
-            Some((limb, offset, sink_needed(rig, limb, envelope)?))
+            // The compliance term rides in the doubtful limb's own entry of
+            // the crouch's ledger (#260): landing bent is how a body takes a
+            // height its probes may have under-read, and putting it here
+            // rather than on the fold keeps the attribution — an instrument
+            // tracing the crouch sees whose doubt deepened it.
+            let compliance = doubt * CROUCH_ON_DOUBT * rig.limb_reach(limb).unwrap_or(0.0);
+            Some((limb, offset, sink_needed(rig, limb, envelope)? + compliance))
         })
         .collect();
     steps.crouch = steps
@@ -1337,15 +1464,16 @@ where
     steps.crouch += compression_at(rig, gait, stride, cycle);
     pose.translation.y -= steps.crouch;
 
-    for &(limb, phase, _, _) in &goals {
+    for &(limb, phase, _, _, doubt) in &goals {
         if phase.is_stance() {
             steps.stance.push(limb);
         } else {
             steps.swing.push(limb);
         }
+        steps.doubt.push((limb, doubt));
     }
 
-    for &(limb, phase, _, target) in &goals {
+    for &(limb, phase, _, target, _) in &goals {
         // A swing mid-overshoot falls short BY DESIGN since #265: the eased
         // flight reaches past every stance position, the envelope fold
         // declines to sink for the difference, and the soft reach limit
@@ -2080,6 +2208,112 @@ const HEEL_PEEL: f32 = 0.55;
 /// and it has to be re-swept whenever that thing changes (see
 /// [`super::ground::solve_contact_toward`]).
 const ROLL_PASSES: usize = 4;
+
+/// How doubtful the footing along one limb's flight path is: nothing at zero,
+/// a hole at one (#260).
+///
+/// **The closure cannot say "doubtful", so the body infers it** — this is the
+/// issue's cheap answer, tried first as directed and sufficient. The ground
+/// closure is `Fn(Vec3) -> Option<Ground>`: present or absent, nothing
+/// between, so a probe over a kerb's nosing and one on a flat tread answer
+/// with the same confidence. What the closure cannot express, the *spread* of
+/// answers along a path can: this reads the ground at the same resolution and
+/// over the same span as the swing's own roof ([`clearance_probes`], the full
+/// drifted flight window), and measures how far the answers bend.
+///
+/// # The reading is curvature, not deviation, and the difference is a slope
+///
+/// The first shape tried — deviation from the straight line between the
+/// span's ends — pumps: on a staircase the *ends* land on different treads,
+/// the line they define jumps as either end crosses a riser, and every
+/// deviation against it jumps with them. Second differences read each
+/// feature's own height instead: a riser between two probes contributes its
+/// rise wherever it sits, a smooth grade contributes exactly nothing (the
+/// heights are linear in the probe positions), and a smooth hill contributes
+/// at the square of the probe spacing — vanishing, which is what "smooth" is.
+/// The window (a half-sine over the span) fades a feature's contribution in
+/// as the walking body's span slides over it, so doubt rises as trouble
+/// approaches rather than stepping when it crosses a probe.
+///
+/// # The currency is the swing's own lift
+///
+/// A bend the arc already clears is not doubt, so the sum is priced against
+/// [`Stride::lift`]: rubble at a quarter of the lift reads as a wary quarter,
+/// anything the arc cannot absorb saturates. A missing answer anywhere on the
+/// path — a hole — is full doubt at once, which is the one thing `None` was
+/// always able to say.
+///
+/// **Phase-independent on purpose.** A per-swing reading would widen the
+/// landing and then yank the planted foot back inward the moment stance
+/// begins; one span for the limb regardless of phase keeps the widened plant
+/// and the widened stance the same point. The cost is that a stance limb pays
+/// a probe pass the swing was already paying; the drift as the span slides is
+/// continuous, and a caller driving [`super::Footholds`] pins the planted
+/// horizontal regardless.
+fn footing_doubt<F>(home: Vec3, foot: (f32, f32), stride: &Stride, duty: f32, ground: &F) -> f32
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    if stride.length <= f32::EPSILON || duty >= 1.0 {
+        return 0.0;
+    }
+    let drift = if duty > f32::EPSILON {
+        (1.0 - duty) / duty
+    } else {
+        0.0
+    };
+    let leaving = carried(home, stride, 0.5 + drift);
+    let arriving = carried(home, stride, -0.5 - drift);
+    let probes = clearance_probes(foot, (arriving - leaving).length());
+    let answers: Vec<Option<f32>> = (0..=probes)
+        .map(|probe| {
+            let at = probe as f32 / probes as f32;
+            ground(home + leaving.lerp(arriving, at)).map(|there| there.position.y)
+        })
+        .collect();
+    // A hole is a `None` where ground otherwise answers. A closure that
+    // answers `None` EVERYWHERE is a caller with no terrain at all — the
+    // documented way to walk the rest plane — and a body with no ground
+    // information has nothing to be doubtful against: flat ground and no
+    // ground must stay bit-identical.
+    if answers.iter().all(Option::is_none) {
+        return 0.0;
+    }
+    let Some(heights) = answers.into_iter().collect::<Option<Vec<f32>>>() else {
+        return 1.0;
+    };
+    let mut bends = 0.0;
+    for middle in 1..heights.len() - 1 {
+        let bend = (heights[middle + 1] - 2.0 * heights[middle] + heights[middle - 1]).abs();
+        let window = (std::f32::consts::PI * middle as f32 / (heights.len() - 1) as f32).sin();
+        // A riser between two probes bends the sequence at both of them, so
+        // the half makes the sum read each feature's height once.
+        bends += bend * window * 0.5;
+    }
+    (bends / stride.lift.max(1e-3)).clamp(0.0, 1.0)
+}
+
+/// How much of its own lateral stance offset a limb adds on fully doubtful
+/// ground.
+///
+/// A third and a bit: people asked to walk on uneven or unpredictable ground
+/// measurably widen their step — the base of support buys lateral balance
+/// margin — and the reported increases sit in the tens of percent, not the
+/// halves. Applied to the limb's own resting `x`, so it scales with the body
+/// and widens each side independently: a kerb under one foot wary-widens that
+/// foot alone ([`footing_doubt`] is per-limb).
+const SPREAD_ON_DOUBT: f32 = 0.35;
+
+/// How much of its reach a limb sinks for on fully doubtful ground, beyond
+/// what its goals demand.
+///
+/// A touch — landing bent is compliance, the knee absorbing whatever height
+/// the probe resolution under-read, and it is deliberately a small term: the
+/// real vertical demand of rough ground already arrives through each goal's
+/// own seat, and this only buys the flexed knee to take it with. Added to the
+/// doubtful limb's own term of the crouch's ledger, so an instrument tracing
+/// the crouch sees whose doubt deepened it.
+const CROUCH_ON_DOUBT: f32 = 0.03;
 
 /// A Hermite ramp, `0..1`, flat at both ends.
 fn smoothstep(t: f32) -> f32 {
@@ -3617,6 +3851,107 @@ mod tests {
     }
 
     #[test]
+    fn a_diagonal_walk_keeps_its_feet_apart_at_every_heading() {
+        // The crossing guard above, taken all the way round (#258): the
+        // clearance contract is not a property of the pure strafe, it is a
+        // property of every heading the stance bound engages at — and the
+        // rejected ramp candidate is exactly a design that passes at 90
+        // degrees while putting the feet inside the clearance at 65 (measured
+        // 74.6 mm against an 86.2 contract; walkaudit --headings prints the
+        // table). Planar distance rather than the strafe guard's x-gap,
+        // because on a diagonal the feet close along the travel as much as
+        // across it.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let home = |limb: Limb| rig.joints[rig.in_zone(Zone::Extremity(limb))[0]].position;
+        let (left, right) = (home(Limb::HindLeft), home(Limb::HindRight));
+        let apart = (left.x - right.x).abs();
+        for degrees in (0..360).step_by(3) {
+            let heading = Heading::degrees(degrees as f32);
+            let stride = Stride::for_body(&rig, 1.0).toward(&rig, heading);
+            let mut closest = f32::MAX;
+            for at in 0..240 {
+                let cycle = at as f32 / 240.0;
+                let one = left + contact_offset(left, &stride, gait.phase(0, cycle));
+                let other = right + contact_offset(right, &stride, gait.phase(1, cycle));
+                closest = closest.min(Vec3::new(one.x - other.x, 0.0, one.z - other.z).length());
+            }
+            assert!(
+                closest > apart * (1.0 - SHUFFLE_CLEARANCE),
+                "at {degrees} deg the feet closed to {:.1} mm of a {:.1} mm stance",
+                closest * 1000.0,
+                apart * 1000.0
+            );
+        }
+    }
+
+    #[test]
+    fn a_gentle_diagonal_takes_its_full_anatomical_stride() {
+        // **The recovery #258 exists for.** Below the engagement band the
+        // stance bound has nothing to say — the feet's floor separation
+        // clears the contract at ANY stride length — so the stride must be
+        // the ellipse's own answer, untouched. The shipped fold failed this
+        // by 2.5x: folding the stance limit into the sideways semi-axis cut a
+        // 30-degree stride to 165 mm where the ellipse allows 414.
+        let rig = biped();
+        for degrees in [15.0f32, 30.0, 40.0, 140.0, 165.0, -30.0] {
+            let heading = Heading::degrees(degrees);
+            let full = Stride::for_body(&rig, 1.0);
+            let anatomical = full.length * heading.reach();
+            let taken = full.toward(&rig, heading).length;
+            assert!(
+                (taken - anatomical).abs() < anatomical * 1e-5,
+                "at {degrees} deg the stride took {:.1} mm of an anatomical {:.1}",
+                taken * 1000.0,
+                anatomical * 1000.0
+            );
+        }
+    }
+
+    #[test]
+    fn the_stance_bound_arrives_gradually_rather_than_switching_on() {
+        // **The pop guard for the bound itself (#258), and why it is not
+        // #242's.** The acceptance sweep in `heading.rs` bounds the largest
+        // step against the global median, which fits a curve whose honest
+        // range is 1.0 to 0.6. This curve legitimately spans 414 mm to 86 —
+        // the exact clearance bound it blends has a genuine cliff at 60
+        // degrees — so its steep stretch is intrinsic, and a global median
+        // would convict the geometry rather than a defect (measured: the
+        // honest curve steps 22 mm in its band against a 1.4 mm median).
+        // What a POP is, is a step unlike its NEIGHBOURS — #242's own words —
+        // so that is what is asked, locally: no one-degree step may stand
+        // out from the ten degrees around it. The bound is two and a half:
+        // the eased blend's steepest step measures 2.07x its neighbourhood —
+        // a smoothstep's peak slope against its own shoulders, which is the
+        // shape being smooth, not a defect — while reintroducing the corner
+        // (CORNER_EASE and the engagement band to zero) puts a lone step at
+        // ten times its neighbours. A ratio between those two is the guard.
+        let rig = biped();
+        let lengths: Vec<f32> = (0..=360)
+            .map(|degrees| {
+                Stride::for_body(&rig, 1.0)
+                    .toward(&rig, Heading::degrees(degrees as f32))
+                    .length
+            })
+            .collect();
+        let steps: Vec<f32> = lengths
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .collect();
+        for (at, &step) in steps.iter().enumerate() {
+            let from = at.saturating_sub(5);
+            let to = (at + 6).min(steps.len());
+            let around: f32 = (steps[from..to].iter().sum::<f32>() - step) / (to - from - 1) as f32;
+            assert!(
+                step < (around * 2.5).max(0.001),
+                "the stride stepped {:.1} mm at {at} deg against neighbours averaging {:.1} mm",
+                step * 1000.0,
+                around * 1000.0
+            );
+        }
+    }
+
+    #[test]
     fn a_pivot_counter_rotates_the_feet_about_a_body_going_nowhere() {
         // `length = 0` with a yaw: the body turns on the spot, so a foot is
         // carried round the body's centre and the two feet go opposite ways.
@@ -4164,6 +4499,157 @@ mod tests {
             hung.rotations, swung.rotations,
             "hang_arms and swing_arms disagree about a standing body's arms"
         );
+    }
+
+    #[test]
+    fn smooth_ground_raises_no_doubt() {
+        // **The acquittals #260 needs before it may convict anything.** Doubt
+        // is inferred from the spread of the clearance probes, and three
+        // grounds must read as certain: the flat (nothing to spread), a plain
+        // grade (the heights are linear in the probe positions, and a slope
+        // that widened the stance would widen every hillside walk), and no
+        // ground at all (an all-`None` closure is a caller without terrain,
+        // not a hole — flat and no-ground must stay bit-identical, which the
+        // suite's own #221 guard also holds). And with no doubt there is no
+        // widening: every goal's lateral is its rest contact's.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let flat = |at: Vec3| Some(Ground::level(Vec3::new(at.x, 0.0, at.z)));
+        let grade = |at: Vec3| Some(Ground::level(Vec3::new(at.x, at.z * 0.3, at.z)));
+        let bare = |_: Vec3| None;
+        let sweep = |ground: &dyn Fn(Vec3) -> Option<Ground>| {
+            for at in 0..24 {
+                let mut pose = Pose::rest(&rig);
+                let steps = step(&rig, &mut pose, &gait, &stride, at as f32 / 24.0, ground);
+                for &(limb, doubt) in &steps.doubt {
+                    assert!(
+                        doubt < 1e-3,
+                        "{limb:?} doubted smooth ground: {doubt} at cycle {at}/24"
+                    );
+                }
+                for &(limb, offset, _) in &steps.asked {
+                    assert!(
+                        offset.x.abs() < 1e-4,
+                        "{limb:?} widened on smooth ground: {} mm at cycle {at}/24",
+                        offset.x * 1000.0
+                    );
+                }
+            }
+        };
+        sweep(&flat);
+        sweep(&grade);
+        sweep(&bare);
+    }
+
+    /// Flat ground with two bands of potholes placed where only the clearance
+    /// probes go: beyond every goal's own horizontal but inside the drifted
+    /// flight span, so the goals a body walks are the flat's — any change in
+    /// what the gait does is doubt's alone. `side` narrows the rough ground
+    /// to one half of the body's width; `f32::MIN` roughens both.
+    fn potholed(side: f32) -> impl Fn(Vec3) -> Option<Ground> + Copy {
+        move |at: Vec3| {
+            let hole = (0.40..0.50).contains(&at.z.abs()) && at.x > side;
+            let depth = if hole { -0.08 } else { 0.0 };
+            Some(Ground::level(Vec3::new(at.x, depth, at.z)))
+        }
+    }
+
+    #[test]
+    fn broken_ground_widens_the_stance_and_bends_the_knees() {
+        // **What #260 buys, isolated from what terrain demands.** Rough
+        // ground changes the goals themselves — every seat moves — so a
+        // stairs-against-flat comparison conflates the terrain's real
+        // vertical demand with the wary response. The potholed closure
+        // separates them: its holes live where only the probes travel, so
+        // every goal seats on the same flat ground, and the readings are
+        // judged at double support, where both feet are in stance and no
+        // swing's ramp has drifted an end into a hole. What remains is
+        // exactly the two consumers the issue names: the stance walks
+        // outward, and the crouch deepens by the compliance term.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        let mut compared = 0;
+        for at in 0..48 {
+            let cycle = at as f32 / 48.0;
+            if gait.grounded(cycle) < gait.len() {
+                continue;
+            }
+            compared += 1;
+            let mut level = Pose::rest(&rig);
+            let calm = step(&rig, &mut level, &gait, &stride, cycle, |at: Vec3| {
+                Some(Ground::level(Vec3::new(at.x, 0.0, at.z)))
+            });
+            let mut wary = Pose::rest(&rig);
+            let doubted = step(&rig, &mut wary, &gait, &stride, cycle, potholed(f32::MIN));
+            for &(limb, doubt) in &doubted.doubt {
+                assert!(
+                    doubt > 0.5,
+                    "{limb:?} read the potholes as {doubt} at cycle {cycle}"
+                );
+            }
+            for (&(limb, calm_offset, _), &(_, wary_offset, _)) in
+                calm.asked.iter().zip(&doubted.asked)
+            {
+                let home = home_of(&rig, limb).expect("a biped foot");
+                let outward = (wary_offset.x - calm_offset.x) * home.x.signum();
+                assert!(
+                    outward > home.x.abs() * SPREAD_ON_DOUBT * 0.5,
+                    "{limb:?} widened by only {:.1} mm of a {:.1} mm stance offset",
+                    outward * 1000.0,
+                    home.x.abs() * 1000.0
+                );
+            }
+            assert!(
+                doubted.crouch > calm.crouch,
+                "doubt did not deepen the crouch: {:.1} mm against {:.1} at cycle {cycle}",
+                doubted.crouch * 1000.0,
+                calm.crouch * 1000.0
+            );
+        }
+        assert!(compared >= 4, "only {compared} double-support samples seen");
+    }
+
+    #[test]
+    fn doubt_belongs_to_the_foot_that_reads_it() {
+        // Per-limb, which is the point of inferring rather than being told: a
+        // kerb under one foot is that foot's problem. The potholes here live
+        // only on the left foot's side of the body, and the readings must
+        // part company — the left wary, the right walking exactly as it does
+        // on the flat.
+        let rig = biped();
+        let gait = Gait::natural(&rig);
+        let stride = Stride::for_body(&rig, 1.0);
+        for at in 0..24 {
+            let mut pose = Pose::rest(&rig);
+            let steps = step(
+                &rig,
+                &mut pose,
+                &gait,
+                &stride,
+                at as f32 / 24.0,
+                potholed(0.03),
+            );
+            let of = |limb: Limb| {
+                steps
+                    .doubt
+                    .iter()
+                    .find(|&&(who, _)| who == limb)
+                    .map(|&(_, doubt)| doubt)
+                    .expect("both feet report")
+            };
+            assert!(
+                of(Limb::HindLeft) > 0.5,
+                "the left foot missed its potholes: {}",
+                of(Limb::HindLeft)
+            );
+            assert!(
+                of(Limb::HindRight) < 1e-3,
+                "the right foot caught doubt from the left's ground: {}",
+                of(Limb::HindRight)
+            );
+        }
     }
 
     #[test]
