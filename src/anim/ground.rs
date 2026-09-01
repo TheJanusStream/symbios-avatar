@@ -599,8 +599,16 @@ pub(crate) fn solve_contact_toward(
     // tenths of a millimetre, measured — never closes the last of the distance.
     //
     // A limb missing by [`CONTACT_STRAIN`] is not straining; one missing by
-    // centimetres is, and that is the case worth reporting.
-    reached || pose.forward(rig).positions[foot].distance(target) <= CONTACT_STRAIN
+    // centimetres is, and that is the case worth reporting. Since #282 the
+    // hold-back is limb-relative: the soft reach limit withholds up to half
+    // of [`super::ik::SOFT_ZONE`] of the chain's own span from a goal at full
+    // extension, so the verdict allows the whole zone — the deliberate half,
+    // and as much again for the hang wobbling across the limit — before it
+    // cries strain. On the default leg that is 7.1 mm against the old flat 5.
+    let joint = |index: usize| rig.joints[chain[index]].position;
+    let span = joint(0).distance(joint(1)) + joint(1).distance(joint(2));
+    let allowed = CONTACT_STRAIN.max(span * super::ik::SOFT_ZONE);
+    reached || pose.forward(rig).positions[foot].distance(target) <= allowed
 }
 
 /// How far a joint may be turned and still count as unposed, in radians.
@@ -689,6 +697,72 @@ mod contact_tests {
     }
 
     #[test]
+    fn a_goal_crossing_the_reach_limit_moves_the_contact_smoothly() {
+        // **#282.** When a goal crosses in and out of reach, the solved contact
+        // must keep moving at a finite rate. It did not: the clamp to full
+        // extension is where `two_bone`'s knee angle goes as `acos`, whose
+        // derivative is unbounded at the straight-leg limit, and the contact
+        // joint hangs off the ankle and swings with the shin — so a goal
+        // sliding smoothly past the limit teleported the foot.
+        //
+        // Asked the only way a discontinuity can be told from a fast motion
+        // (`crossing_the_walk_run_boundary` is the template, and this is
+        // #1183-proof for the same reason: every figure is a relation within
+        // one build): sample twice as finely and see whether the largest step
+        // shrinks with the sampling. Under the hard clamp the largest contact
+        // step read 7.94 / 5.06 / 3.72 mm at 240 / 480 / 960 samples, pinned
+        // to the two reach crossings — shrinking at 0.64 and 0.74 per
+        // doubling, heading for a floor no sampling removes. With the soft
+        // limit it reads 7.94 / 4.26 / 2.44, the worst step moves OFF the
+        // crossings to where the goal is genuinely fastest, and the decay is
+        // 0.54 and 0.57.
+        let rig = biped();
+        let limb = Limb::HindLeft;
+        let contact = rig.in_zone(Zone::Extremity(limb))[0];
+        let home = rig.joints[contact].position;
+        let reach = rig.limb_reach(limb).expect("reach");
+
+        // A path shaped like an overshooting swing: from a raised point well
+        // inside reach, out past the limit along the direction of travel, and
+        // back — crossing the reach sphere once outbound and once home.
+        let inside = home + Vec3::Y * (0.15 * reach);
+        let outside = home + Vec3::Z * (0.80 * reach);
+        let contact_at = |t: f32| {
+            let goal = inside.lerp(outside, (t * std::f32::consts::PI).sin());
+            let mut pose = Pose::rest(&rig);
+            solve_contact(&rig, &mut pose, limb, goal);
+            pose.forward(&rig).positions[contact]
+        };
+        let worst_step = |samples: usize| {
+            (1..=samples).fold(0.0f32, |worst, at| {
+                let a = contact_at((at - 1) as f32 / samples as f32);
+                let b = contact_at(at as f32 / samples as f32);
+                worst.max(a.distance(b))
+            })
+        };
+
+        let steps: Vec<f32> = [240, 480, 960].map(worst_step).to_vec();
+        // Six tenths rather than a half on the first doubling, as the template
+        // test says: halving is what a smooth motion does exactly, and the
+        // slack is for two samplings straddling the peak differently. Seven
+        // tenths on the second, because by 960 samples the largest step is
+        // within reach of the solver's own noise floor — the early-break pass
+        // count flips between neighbouring goals and moves the answer by the
+        // iterate gap at the tolerance, ~0.8 mm, which predates #282 and is
+        // not what this test convicts.
+        for (pair, allowed) in steps.windows(2).zip([0.6f32, 0.7]) {
+            assert!(
+                pair[1] <= pair[0] * allowed,
+                "the contact stepped {:.1} mm and then {:.1} mm at twice the sampling — \
+                 a step that does not shrink when the sampling doubles is a cliff at the \
+                 reach limit, not a fast foot",
+                pair[0] * 1000.0,
+                pair[1] * 1000.0,
+            );
+        }
+    }
+
+    #[test]
     fn a_stance_foot_lands_the_same_distance_from_the_floor_at_every_pace() {
         // **#254 on the gait, which shares the solver.** The miss is the hang
         // the solve did not re-read, so it grew with how far the leg had to
@@ -745,7 +819,8 @@ mod contact_tests {
         let stride = Stride::for_body(&rig, 1.0);
         let ground = |point: Vec3| Some(Ground::level(Vec3::new(point.x, 0.0, point.z)));
 
-        let mut worst = 0.0f32;
+        let mut worst_stance = 0.0f32;
+        let mut worst_swing = 0.0f32;
         for sample in 0..120 {
             let cycle = sample as f32 / 120.0;
             let mut pose = Pose::rest(&rig);
@@ -753,9 +828,13 @@ mod contact_tests {
             let before = pose.forward(&rig).positions;
             level_feet(&rig, &mut pose, ground, &FootingConfig::default());
             let after = pose.forward(&rig).positions;
-            for &limb in steps.swing.iter().chain(&steps.stance) {
+            for &limb in &steps.stance {
                 let foot = rig.in_zone(Zone::Extremity(limb))[0];
-                worst = worst.max(before[foot].distance(after[foot]));
+                worst_stance = worst_stance.max(before[foot].distance(after[foot]));
+            }
+            for &limb in &steps.swing {
+                let foot = rig.in_zone(Zone::Extremity(limb))[0];
+                worst_swing = worst_swing.max(before[foot].distance(after[foot]));
             }
         }
         // **2.0 → 2.5 mm** (#305): the foot's asked radii came down by a
@@ -764,9 +843,22 @@ mod contact_tests {
         // from 1.77 mm to 2.04. The put-back still runs; the state moved a
         // quarter of a millimetre and the bound is the state plus slack.
         assert!(
-            worst < 2.5e-3,
-            "levelling dragged a contact {:.1} mm and nothing put it back",
-            worst * 1000.0
+            worst_stance < 2.5e-3,
+            "levelling dragged a stance contact {:.1} mm and nothing put it back",
+            worst_stance * 1000.0
+        );
+        // **The put-back's promise is bounded by reach** (#265): a swing leg
+        // mid-overshoot rides at the soft reach limit, and a leg at its limit
+        // cannot fully answer for an ankle the levelling just turned — the
+        // put-back recovers what the leg has, 10.1 mm measured at the worst
+        // overshoot moment against 41.7 unrecovered before #257. The tail the
+        // real sequences run re-solves the swing leg toward its own goal right
+        // after the plant, which is where the rest of this comes back.
+        assert!(
+            worst_swing < 12e-3,
+            "levelling dragged a swing contact {:.1} mm and the put-back plus the reach \
+             limit should hold it near 10",
+            worst_swing * 1000.0
         );
     }
 
@@ -786,6 +878,15 @@ mod contact_tests {
         // to `two_bone` moves every pass as the hang is re-read, so its verdict
         // straddles the limit. How far the contact is from where the gait sent
         // it is what #254 is about and what a body shows.
+        // **Asked of `Steps::asked`, not re-derived** (#264, #265): the gait
+        // eases a swing between its flight's world ends now, so a test that
+        // rebuilds the goal from `contact_offset` measures the easing, not a
+        // defect — it read 80.2 mm of pure construction gap. And **stance
+        // contacts only**: a swing mid-overshoot is *designed* to fall short —
+        // the envelope fold declines to sink for the easing's overshoot and
+        // the soft reach limit degrades it (#282) — while a stance goal is
+        // inside the envelope by construction, so a stance miss is still
+        // exactly the #254 class this test exists to catch.
         let rig = biped();
         for gait in [Gait::wave(&rig), Gait::natural(&rig)] {
             let stride = Stride::for_body(&rig, 1.0);
@@ -793,21 +894,29 @@ mod contact_tests {
             for sample in 0..240 {
                 let cycle = sample as f32 / 240.0;
                 let mut pose = Pose::rest(&rig);
-                gait::step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
+                let steps = gait::step(&rig, &mut pose, &gait, &stride, cycle, |_| None);
                 let posed = pose.forward(&rig);
-                for (index, &limb) in gait.limbs.iter().enumerate() {
+                for &(limb, offset, _) in &steps.asked {
+                    if !steps.stance.contains(&limb) {
+                        continue;
+                    }
                     let foot = rig.in_zone(Zone::Extremity(limb))[0];
-                    let home = rig.joints[foot].position;
-                    let goal = home + gait::contact_offset(home, &stride, gait.phase(index, cycle));
+                    let goal = rig.joints[foot].position + offset;
                     worst = worst.max(posed.positions[foot].distance(goal));
                 }
             }
             // **41.72 mm before this, 2.42 mm after** — the worst any contact
             // lands from where the gait sent it, over a whole cycle on level
             // ground. The remainder is the solver's own hold-back at full
-            // extension, which a rest-pose leg is permanently at.
+            // extension, which a rest-pose leg is permanently at — and which
+            // #282 deliberately widened: the soft reach limit compresses the
+            // last [`crate::anim::ik`] `SOFT_ZONE` of the extension, so a goal
+            // riding exactly at full extension lands half the zone short, 4.7 mm
+            // measured. The bound sits above that and still an order of
+            // magnitude under the 41.72 mm regression this test exists to
+            // catch.
             assert!(
-                worst < 3e-3,
+                worst < 6e-3,
                 "a contact ended {:.1} mm from where the gait sent it on level ground",
                 worst * 1000.0
             );

@@ -75,10 +75,13 @@ pub fn two_bone(rig: &Rig, pose: &mut Pose, chain: [usize; 3], target: Vec3, pol
     let direction = to_target / reach;
 
     // A chain can neither stretch past its length nor fold below the gap between
-    // its bones; clamping keeps the triangle solvable either way.
+    // its bones; clamping keeps the triangle solvable either way. The long end
+    // is soft where the short end is hard — see [`soft_reach`] — because full
+    // extension is a singularity a goal can cross and the folded limit is not a
+    // place any gait sends a goal through at speed.
     let longest = upper + lower - EPSILON;
     let shortest = (upper - lower).abs() + EPSILON;
-    let solved = reach.clamp(shortest, longest);
+    let solved = soft_reach(reach, longest).max(shortest);
 
     // The bend plane: toward the pole, falling back to the bend the limb already
     // has, and finally to any perpendicular if the limb is dead straight.
@@ -109,6 +112,67 @@ pub fn two_bone(rig: &Rig, pose: &mut Pose, chain: [usize; 3], target: Vec3, pol
     // reporting that as out of reach would call every rest pose a failure.
     reach <= upper + lower + EPSILON
 }
+
+/// The distance a chain is actually solved to, for a goal asking `reach` of a
+/// chain whose bones sum to `longest` — full extension approached smoothly
+/// rather than met (#282).
+///
+/// **Full extension is a singularity, and a hard clamp parks the chain exactly
+/// on it.** The bend angle comes from an `acos`, whose derivative is unbounded
+/// as the chain straightens, so a goal gliding across the reach limit swings
+/// the shin — and the contact hanging off it — at a rate no sampling makes
+/// finite; and [`super::ground`]'s re-aim iteration, which reads the hang off
+/// the pose it is correcting, stops contracting when a millimetre of hang
+/// swings the answer by more than a millimetre. Measured on `walkaudit` with
+/// goals driven past the limit, the furthest a contact moved between two
+/// samples would not shrink as the sampling doubled — the definition of a
+/// cliff rather than a speed. [`crate::anim::gait`]'s `CROUCH_MARGIN` has
+/// always named this fact and sunk the body to stay away from it; this meets
+/// it in the solver instead, for every goal a crouch does not cover.
+///
+/// The shape: exact until [`SOFT_ZONE`] of the span short of full extension,
+/// then a quadratic ease whose slope falls from one to nought, flat from the
+/// limit onward at half the zone short of it. C1 everywhere, so the solved
+/// distance loses its speed smoothly as a goal leaves reach — a goal a
+/// millimetre past the zone's start moves the chain's tip almost exactly a
+/// millimetre, one at the limit moves it barely at all — and the chain never
+/// straightens past the point where the iteration above it stops converging.
+///
+/// What it costs, and where that cost already lived: a goal exactly at full
+/// extension lands half the zone short. A rest-pose leg stands at exactly full
+/// extension, which is why the crate already carries [`super::ground`]'s
+/// `CONTACT_STRAIN` — "a limb at full extension cannot meet the tolerance even
+/// when its goal is inside its reach" — and the zone is sized so the new
+/// hold-back stays under that report threshold and inside what the footing
+/// pass absorbs.
+fn soft_reach(reach: f32, longest: f32) -> f32 {
+    let zone = longest * SOFT_ZONE;
+    let excess = reach - (longest - zone);
+    if excess <= 0.0 {
+        return reach;
+    }
+    // `x - x²/(2·zone)` rises with slope 1 at the zone's start and crests flat
+    // at `x = zone`, which is exactly full extension; past that the excess is
+    // held at the crest rather than fed on through the parabola's far side.
+    let excess = excess.min(zone);
+    longest - zone + excess - excess * excess / (2.0 * zone)
+}
+
+/// How much of a chain's straight length the soft limit compresses, as a share.
+///
+/// `pub(crate)` because the strain verdict in [`super::ground`] is calibrated
+/// against it: a limb whose goal rides exactly at full extension now lands
+/// half this zone short *by design*, so what counts as a strain has to sit
+/// above what the soft limit deliberately withholds.
+///
+/// **One percent.** On the reference body's leg that is a 7 mm zone and a
+/// 3.6 mm hold-back at exactly full extension — under [`super::ground`]'s
+/// 5 mm strain-report threshold, so a rest leg solved to its own stance does
+/// not read as straining, and small enough that the footing pass settles what
+/// it costs a planted sole. Wider reads smoother still at the limit but makes
+/// every standing leg visibly short; narrower brings back the cliff at coarse
+/// sampling, because the crossing fits between two samples again.
+pub(crate) const SOFT_ZONE: f32 = 0.01;
 
 /// Reaches a chain of any length toward `target`, iteratively.
 ///

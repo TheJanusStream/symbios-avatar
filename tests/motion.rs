@@ -600,3 +600,154 @@ fn turning_one_joint_leaves_the_bone_before_it_alone() {
         );
     }
 }
+
+/// How far a planted sole slides while the body's speed changes, engine-side
+/// (#277) — the walk driven the way a consumer drives it, with the speed fed
+/// through the same exponential approach overlands' chassis applies
+/// (`v += (target - v) · rate · dt`, rate 12/s — the measured profile; a
+/// player crosses the whole walking band in two frames of it).
+///
+/// The instrument carries #277's three hard-won corrections verbatim: the
+/// SOLE POINTS, not the ankle (a rolling foot translates its ankle over a
+/// sole that has not moved) and not the sole joints either (they sit above
+/// the sole and pitch with it, #1082); a point is judged only while the gait
+/// says its FOOT bears AND its own height says that point is the one down;
+/// and each point is anchored against itself, never the argmin of the moment.
+///
+/// Warm-up runs at the starting speed until the cycle wraps twice and reaches
+/// `onset` — the change's phase is the sweep axis, because three phases read
+/// 7.3 mm next to 92.5 — and the tracked window is the two seconds after it.
+fn slide_changing_speed(from: f32, to: f32, onset: f32) -> f32 {
+    let rig = Rig::from_skeleton(&AvatarRecord::new("Slider", Archetype::default()).skeleton())
+        .expect("rigs");
+    let feet: Vec<(symbios_avatar::Limb, usize, Vec<usize>)> = [
+        symbios_avatar::Limb::HindLeft,
+        symbios_avatar::Limb::HindRight,
+    ]
+    .into_iter()
+    .filter_map(|limb| {
+        let joints = rig.extremity_joints(limb);
+        let (&ankle, sole) = (joints.first()?, joints.get(1..)?);
+        Some((limb, ankle, sole.to_vec()))
+    })
+    .collect();
+
+    const FPS: f32 = 60.0;
+    const RATE: f32 = 12.0;
+    let dt = 1.0 / FPS;
+    let ground = |p: Vec3| Some(Ground::level(Vec3::new(p.x, 0.0, p.z)));
+
+    let mut cycle = 0.0f32;
+    let mut travel = 0.0f32;
+    let mut wraps = 0usize;
+    let mut speed = from;
+    let mut changing = false;
+    let mut track: Vec<Vec<Vec<Vec3>>> = Vec::new();
+    let mut down: Vec<Vec<bool>> = Vec::new();
+
+    for _ in 0..(8.0 * FPS) as usize {
+        if changing {
+            speed += (to - speed) * (RATE * dt).min(1.0);
+        }
+        let at = symbios_avatar::anim::Speed::new(&rig, speed);
+        let gait = at.gait(&rig);
+        let stride = at.stride(&rig);
+        let next = cycle + at.cadence(&rig) * dt;
+        if next >= 1.0 {
+            wraps += 1;
+        }
+        let before = cycle;
+        cycle = next.rem_euclid(1.0);
+        travel += speed * dt;
+        // The change starts the first frame the cycle passes `onset` after two
+        // full warm-up cycles, so the sweep's axis is the gait's own clock.
+        if !changing && wraps >= 2 && (before <= onset && next >= onset) {
+            changing = true;
+        }
+
+        let mut pose = Pose::rest(&rig);
+        let walked = symbios_avatar::Walk::at(cycle).drive(&rig, &mut pose, &gait, &stride, ground);
+        if !changing && (from - to).abs() > f32::EPSILON {
+            continue;
+        }
+        if track.len() >= 120 {
+            break;
+        }
+        let posed = pose.forward(&rig);
+        track.push(
+            feet.iter()
+                .map(|(_, ankle, sole)| {
+                    sole.iter()
+                        .map(|&joint| {
+                            let rest = rig.joints[joint].position;
+                            Vec3::Z * travel
+                                + posed.positions[*ankle]
+                                + posed.rotations[*ankle]
+                                    * (Vec3::new(rest.x, 0.0, rest.z) - rig.joints[*ankle].position)
+                        })
+                        .collect()
+                })
+                .collect(),
+        );
+        down.push(
+            feet.iter()
+                .map(|(limb, _, _)| walked.steps.stance.contains(limb))
+                .collect(),
+        );
+    }
+
+    const CLEARANCE: f32 = 0.005;
+    let mut skate = 0.0f32;
+    for which in 0..feet.len() {
+        for point in 0..feet[which].2.len() {
+            let floor = track
+                .iter()
+                .map(|frame| frame[which][point].y)
+                .fold(f32::MAX, f32::min);
+            let mut anchor: Option<Vec3> = None;
+            for (frame, stance) in track.iter().zip(&down) {
+                let world = frame[which][point];
+                if stance[which] && world.y - floor <= CLEARANCE {
+                    let from = *anchor.get_or_insert(world);
+                    skate = skate.max(Vec3::new(world.x - from.x, 0.0, world.z - from.z).length());
+                } else {
+                    anchor = None;
+                }
+            }
+        }
+    }
+    skate
+}
+
+#[test]
+#[ignore = "probe for #277: sweep the change's onset phase under the real chassis profile"]
+fn probe_the_slide_a_speed_change_costs_at_every_phase() {
+    let steady_fast = slide_changing_speed(1.4, 1.4, 0.0);
+    let steady_slow = slide_changing_speed(0.7, 0.7, 0.0);
+    println!(
+        "STEADY 1.4 {:.1} mm | 0.7 {:.1} mm",
+        steady_fast * 1000.0,
+        steady_slow * 1000.0
+    );
+    for direction in [(1.4f32, 0.7f32), (0.7, 1.4)] {
+        let mut worst = (0.0f32, 0.0f32);
+        let sweeps: Vec<String> = (0..24)
+            .map(|at| {
+                let onset = at as f32 / 24.0;
+                let slide = slide_changing_speed(direction.0, direction.1, onset);
+                if slide > worst.0 {
+                    worst = (slide, onset);
+                }
+                format!("{:.0}", slide * 1000.0)
+            })
+            .collect();
+        println!(
+            "{} -> {} m/s at rate 12/s: worst {:.1} mm at onset {:.3} | per-phase mm: {}",
+            direction.0,
+            direction.1,
+            worst.0 * 1000.0,
+            worst.1,
+            sweeps.join(" ")
+        );
+    }
+}

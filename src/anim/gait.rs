@@ -1103,7 +1103,12 @@ pub struct Steps {
     pub stance: Vec<Limb>,
     /// Contacts currently in the air.
     pub swing: Vec<Limb>,
-    /// Contacts whose goal was out of reach.
+    /// Stance contacts whose goal was out of reach.
+    ///
+    /// Stance only since #265: a swing mid-overshoot falls short by design —
+    /// the eased flight reaches past every stance position and the envelope
+    /// fold declines to sink for it — so a swing shortfall is the gait's own
+    /// arrangement with the soft reach limit (#282), not a defect to report.
     pub straining: Vec<Limb>,
     /// How far the body sank to keep its stride within reach, in metres.
     pub crouch: f32,
@@ -1131,6 +1136,16 @@ pub struct Steps {
     /// How far the body was carried above its stance height while airborne, in
     /// metres. Zero for anything but a run, and zero at both ends of a flight.
     pub rise: f32,
+    /// Where each swing contact's joint ended up when [`step`] finished, in
+    /// the pose's own space.
+    ///
+    /// [`Walk::settle`]'s swing re-aim reads this: after the plant settles the
+    /// pelvis for the stance legs, a swing leg solved before that settlement
+    /// is re-solved toward the same goal — but only if its contact still sits
+    /// where this says [`step`] left it, because a layered clip or a gesture
+    /// that moved the leg in between owns it now (#262's rule, applied at the
+    /// tail).
+    pub placed: Vec<(Limb, Vec3)>,
 }
 
 impl Steps {
@@ -1223,9 +1238,39 @@ where
     // Kept per contact rather than folded away, so an instrument can see the
     // terms as well as their maximum (#264). The depth is the fold's to the
     // last bit — every term of it is a sink, and a sink is never negative.
+    // **The crouch's term is the envelope's, not the eased flight's** (#265).
+    // The eased swing legitimately reaches past every stance position — that
+    // is what a foot at rest in the world at take-off means — and a crouch
+    // that covers the overshoot never releases: measured, it cost the walk's
+    // pelvis its band (46.9 → 63.9 mm) and the run its crest entirely (a
+    // running body that never rose above standing height). So each term pairs
+    // `contact_offset`'s horizontal — the stance envelope the crouch has
+    // always planned around — with the seated goal's vertical, which is the
+    // terrain's demand and is not the easing's to refuse. On the flat the
+    // pair IS the linear goal, so every vertical reading is the baseline's to
+    // the bit. The overshoot the fold declines to cover is the soft reach
+    // limit's to degrade (#282), and the swing re-aim in [`Walk::settle`] is
+    // what keeps that foot world-smooth where terrain steps.
+    //
+    // `asked` reports the goal each contact was actually sent — the seated,
+    // eased one — beside the sink the envelope charged for it, so an
+    // instrument following the crouch sees the terms of the fold and a test
+    // asking where the gait sent a foot asks this rather than re-deriving a
+    // path the gait no longer walks.
     steps.asked = goals
         .iter()
-        .filter_map(|&(limb, _, offset, _)| Some((limb, offset, sink_needed(rig, limb, offset)?)))
+        .filter_map(|&(limb, phase, offset, _)| {
+            // The same duty gate the goals themselves passed: a gait that
+            // never lifts a contact expresses no stride, and `contact_offset`
+            // asked here directly would sink a standing body for one (#230).
+            let envelope = if gait.duty >= 1.0 {
+                offset
+            } else {
+                let level = contact_offset(home_of(rig, limb)?, stride, phase);
+                Vec3::new(level.x, offset.y, level.z)
+            };
+            Some((limb, offset, sink_needed(rig, limb, envelope)?))
+        })
         .collect();
     steps.crouch = steps
         .asked
@@ -1252,8 +1297,15 @@ where
         }
     }
 
-    for &(limb, _, _, target) in &goals {
-        if !solve_contact(rig, pose, limb, target) {
+    for &(limb, phase, _, target) in &goals {
+        // A swing mid-overshoot falls short BY DESIGN since #265: the eased
+        // flight reaches past every stance position, the envelope fold
+        // declines to sink for the difference, and the soft reach limit
+        // degrades it smoothly (#282). Reporting that as a strain would make
+        // every eased walk on the flat cry wolf, so the report is the
+        // stance's, where a goal is inside the envelope by construction and a
+        // miss is still a defect a caller can act on.
+        if !solve_contact(rig, pose, limb, target) && phase.is_stance() {
             steps.straining.push(limb);
         }
     }
@@ -1264,6 +1316,20 @@ where
     // legs reaching back down for goals that had stayed on the floor.
     steps.rise = flight_rise(rig, gait, stride, cycle);
     pose.translation.y += steps.rise;
+
+    // Where each swing contact actually ended up, for [`Walk::settle`]'s
+    // re-aim: the tail may only re-solve a leg nothing else has re-authored
+    // since, and "nothing moved it" is a comparison against where this left
+    // it, not against a goal a straining leg never reached.
+    let placed = pose.forward(rig);
+    steps.placed = steps
+        .swing
+        .iter()
+        .filter_map(|&limb| {
+            let foot = *rig.in_zone(Zone::Extremity(limb)).first()?;
+            Some((limb, placed.positions[foot]))
+        })
+        .collect();
 
     steps
 }
@@ -1288,7 +1354,11 @@ where
 /// 1. [`step`] places the contacts and sinks the body to reach them.
 /// 2. [`swing_arms`] swings the arms against the legs and winds the spine.
 /// 3. [`lean`] pitches the trunk into the walk and holds the head level.
-/// 4. [`plant_feet_of`] settles the stance contacts onto the real ground.
+/// 4. [`plant_feet_of`] settles the stance contacts onto the real ground —
+///    and then each swing leg the gait still owns is re-solved toward the
+///    goal [`step`] sent it, because the plant may have moved the pelvis out
+///    from under a leg that was solved before it (#265; the gate is
+///    `Walk::SWING_KEPT`).
 /// 5. [`roll_feet`] rolls the ankles — **after** the plant, because the plant
 ///    lays every sole flat and a roll applied before it is simply levelled
 ///    away.
@@ -1368,6 +1438,19 @@ impl Walk {
         }
     }
 
+    /// How far a swing contact may sit from where [`step`] left it and still
+    /// count as the gait's own, in metres — the gate on [`Self::settle`]'s
+    /// swing re-aim.
+    ///
+    /// **Two centimetres.** Between the head and the tail run the posture
+    /// layer — whose lean counter-rotates the limbs precisely so the legs keep
+    /// the pose the step authored, leaving millimetres of residual — and
+    /// whatever a caller layered in between, a clip or a gesture, which moves
+    /// a leg by the centimetres-to-decimetres of an authored motion. The gate
+    /// sits between the two: wide enough that posture residual never disables
+    /// the re-aim, narrow enough that an authored leg is left to its author.
+    const SWING_KEPT: f32 = 0.02;
+
     /// How far ahead down its own path a walk looks, in cycles.
     ///
     /// **One cycle, which is one full step per leg**, and it is a horizon
@@ -1412,7 +1495,7 @@ impl Walk {
             );
         }
 
-        let mut walked = self.settle(rig, pose, gait, stride, &steps.stance, ground);
+        let mut walked = self.settle(rig, pose, gait, stride, &steps, ground);
         walked.steps = steps;
         walked
     }
@@ -1434,13 +1517,14 @@ impl Walk {
         pose: &mut Pose,
         gait: &Gait,
         stride: &Stride,
-        stance: &[Limb],
+        steps: &Steps,
         ground: F,
     ) -> Walked
     where
         F: Fn(Vec3) -> Option<Ground>,
     {
         let mut walked = Walked::default();
+        let stance = &steps.stance;
         if let Some(config) = self.footing
             && !stance.is_empty()
         {
@@ -1457,6 +1541,42 @@ impl Walk {
             for &limb in stance {
                 for &joint in &rig.extremity_joints(limb) {
                     walked.lift = walked.lift.max(before[joint].distance(after[joint]));
+                }
+            }
+
+            // **The swing re-aim** (#265, and the tail of #282's chain). The
+            // plant above settles the PELVIS for the stance legs; every swing
+            // leg was solved before that settlement. On the flat the
+            // settlement is millimetres and this is a no-op, but where the
+            // terrain's demand steps between two frames — a staircase — the
+            // envelope fold deliberately under-sinks (its refusal is the
+            // overshoot's, see [`step`]) and the difference lands on the
+            // plant. A swing foot left out of reach at the crouch stage then
+            // follows the BODY through the step instead of its own goal, and
+            // the goal is the world-smooth one — measured, a 26.7 mm contact
+            // teleport at 240 samples that no sampling shrank. Re-solving the
+            // swing legs toward the same goals [`step`] sent them, from the
+            // settled body, puts them back on the smooth path. Toward their
+            // own AIRBORNE goals — never the ground; the contract that a
+            // swinging foot is not dragged to the floor it travels over
+            // stands.
+            //
+            // Only a leg nothing else has re-authored: a layered clip or a
+            // gesture between the head and this tail owns the limbs it moved
+            // (#262's rule), and "moved" is judged against where [`step`]
+            // left the contact, within [`SWING_KEPT`].
+            let posed = pose.forward(rig);
+            for &(limb, was) in &steps.placed {
+                let Some(&foot) = rig.in_zone(Zone::Extremity(limb)).first() else {
+                    continue;
+                };
+                if posed.positions[foot].distance(was) > Self::SWING_KEPT {
+                    continue;
+                }
+                if let Some((_, offset, _)) = steps.asked.iter().find(|&&(of, _, _)| of == limb)
+                    && let Some(home) = home_of(rig, limb)
+                {
+                    solve_contact(rig, pose, limb, home + offset);
                 }
             }
         }
@@ -1690,8 +1810,30 @@ where
     // - It **collapses to nothing on flat ground**, to the last decimal, since
     //   a cone laid over level ground can only reach the level it started at.
     //   A walk on the flat is the walk it was before this existed.
+    // **The flight's horizontal is eased between its world ends, not walked
+    // linearly in phase** (#265). `contact_offset` moves a swing at constant
+    // speed — the foot leaves the ground at full swing speed and stops dead on
+    // landing, where a real foot is at rest at both ends and fastest in the
+    // middle. Easing between `leaving` and `arriving` with the same smoothstep
+    // the vertical uses is C1 with the stance on either side: at `t = 0` the
+    // whole of the motion is the take-off point's own drift, which is exactly
+    // the speed the stance was moving the foot at. Two lines, no constant, and
+    // it is what takes the stair out of the swing — the toe crosses the nosing
+    // at rest instead of at 1.5× body speed (#259's last 11.7 mm).
+    //
+    // The price is an overshoot, and it is not a choice of easing: a foot at
+    // rest in the world at take-off is `u'(0) = drift > 0` in body share, the
+    // foot moving PAST the stance's own extreme — so the leg is asked to reach
+    // further than any stance position. What happens to that overshoot is the
+    // envelope fold in [`step`] and the soft reach limit (#282); see both.
+    let travel = leaving.lerp(arriving, smoothstep(t));
+
     let along_stride = stride.direction;
-    let here = Vec3::new(offset.x, 0.0, offset.z);
+    // The sole span and the end cones are geometry about where the foot
+    // actually is, so `here` reads the eased horizontal too — seating the
+    // eased path under the linear one's roof would lift the foot for ground it
+    // is no longer over.
+    let here = Vec3::new(travel.x, 0.0, travel.z);
     // The sole's own span at this instant: `foot` is how far the extremity
     // reaches behind and ahead of the joint being seated, projected on the way
     // the body is going (`Rig::extremity_extent`), so a body shuffling sideways
@@ -1739,7 +1881,7 @@ where
     // and adding the highest ground on the path to the apex as well would climb
     // the same stair twice. Measured on a 100 mm flight, taking it out moved
     // nothing — the roof had already made it redundant.
-    Vec3::new(offset.x, base + swing_rise(stride, t), offset.z)
+    Vec3::new(travel.x, base + swing_rise(stride, t), travel.z)
 }
 
 /// How many points along a swing the ground is read at, for the roof
@@ -4327,7 +4469,7 @@ mod tests {
                     &mut pose,
                     &gait,
                     &stride,
-                    &walked.steps.stance,
+                    &walked.steps,
                     ground,
                 );
                 let posed = pose.forward(&rig);
@@ -5278,6 +5420,23 @@ mod tests {
                     ground,
                     &FootingConfig::default(),
                 );
+                // The swing re-aim, which is part of the tail since #265: the
+                // plant settled the pelvis for the stance legs, so each swing
+                // leg the sequence still owns is re-solved toward the goal the
+                // step sent it.
+                let posed = longhand.forward(&rig);
+                for &(limb, was) in &expected.placed {
+                    let foot = rig.in_zone(Zone::Extremity(limb))[0];
+                    if posed.positions[foot].distance(was) > Walk::SWING_KEPT {
+                        continue;
+                    }
+                    if let Some(&(_, offset, _)) =
+                        expected.asked.iter().find(|&&(of, _, _)| of == limb)
+                    {
+                        let home = rig.joints[foot].position;
+                        solve_contact(&rig, &mut longhand, limb, home + offset);
+                    }
+                }
             }
             roll_feet(
                 &rig,
