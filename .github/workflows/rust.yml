@@ -79,11 +79,17 @@ jobs:
             - name: Clippy (Linting)
               run: cargo clippy ${{ matrix.flags }} --all-targets -- -D warnings
 
-    # Two runs, not four. The suite builds whole bodies and takes about seven
-    # minutes for the library alone, so every entry here is real time: `default`
-    # is what a plain consumer gets, `--all-features` is the only configuration
-    # that compiles the feature-gated tests at all. The matrix above already
-    # proves the two features in between compile.
+    # Two runs, not four. The suite builds whole bodies — 895 tests, 17 to 24
+    # serial CPU-minutes under `[profile.test]` at opt-level 3 (#332; it was
+    # 247 before that profile existed, which on a 4-vCPU runner was the CI
+    # hour) — so every entry here is real time: `default` is what a plain
+    # consumer gets, `--all-features` is the only configuration that compiles
+    # the feature-gated tests at all. The matrix above already proves the two
+    # features in between compile.
+    #
+    # Plain `cargo test`, not nextest, on purpose: it runs the one integration
+    # target in one process, which is the gate that can see shared state
+    # (`tests/main.rs` says which tests may not live there for that reason).
     test:
         name: Test ${{ matrix.name }}
         runs-on: ubuntu-latest

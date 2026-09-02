@@ -1,6 +1,6 @@
 [package]
 name = "symbios-avatar"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 authors = ["Janus"]
 description = "Engine-agnostic parametric avatar engine: procedural humanoid and creature bodies from small records."
@@ -9,6 +9,14 @@ readme = "README.md"
 repository = "https://github.com/TheJanusStream/symbios-avatar"
 keywords = ["avatar", "procedural", "character", "mesh", "generative"]
 categories = ["simulation", "game-development", "graphics"]
+# Test targets are declared, not discovered (#332).
+#
+# Every `tests/*.rs` used to be a `[[test]]` target of its own — fifteen
+# binaries, each a separate codegen and link of everything it pulls from the
+# crate, now at opt-level 3. They are modules of one `integration` harness
+# instead; see `tests/main.rs` for the rule that comes with that and what it
+# changes about running them.
+autotests = false
 
 # docs.rs builds with every feature on, so the feature-gated API is documented.
 [package.metadata.docs.rs]
@@ -92,3 +100,42 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # Examples only — writing atlas PNGs to look at. The library itself emits raw
 # pixel buffers and never encodes an image.
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+# The one integration-test target. Every file under `tests/` is a `mod` of
+# `tests/main.rs`; nextest still runs every test in its own process, so
+# parallelism and isolation are unchanged there — plain `cargo test` shares
+# one process across them, which the header of that file is about.
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+# The test profile, measured (#332).
+#
+# There was no `[profile]` section here at all, so CI's bare `cargo test` ran
+# the suite at opt-level 0, and this crate's tests build whole bodies: about a
+# hundred face, hair and budget tests carried 95% of a 247 serial-CPU-minute
+# run, at a measured 27-50x penalty against release (the worst single test,
+# `the_eye_opens_on_the_gaze`, 568.6 s debug against 13.0 s release). On a
+# 4-vCPU runner that is the CI hour, per matrix entry, before compile.
+#
+# Same suite, same bare-`cargo test` semantics, with release codegen:
+# 247 -> 24 CPU-minutes, a 75 s run behind a 1m16s crate compile, all 895
+# green — the `det` goldens and locomotion digests included, because IEEE ops
+# do not change with opt level and rustc keeps strict FP.
+#
+# `debug-assertions` and `overflow-checks` stay ON, because `test` inherits
+# `dev`. That is overlands' #1147 lesson mirrored: their `test-release` adds
+# assertions to release codegen; this adds release codegen to the asserting
+# profile. Two gates that disagree about what the code asserts is worse than
+# one slow gate.
+#
+# The `"*"` line reaches dependencies only — cargo's glob never matches the
+# workspace member — so glam, noise and the rest are optimised under every
+# dev-profile build too (the examples' bodies get faster for free), while
+# this crate's own dev codegen is untouched. The `render` instrument still
+# wants `--release`, for the crate's own code.
+[profile.test]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 3

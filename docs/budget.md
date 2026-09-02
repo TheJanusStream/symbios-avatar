@@ -31,7 +31,7 @@ still name what pays for it.
 ## How to measure
 
 ```text
-cargo test --release --test budget -- --nocapture
+cargo test --release --test integration budget:: -- --nocapture
     prints: the default body, the dearest sweep corner, the greedy-hair body,
     and the dearest product corner — the four numbers any proposal is argued against.
 
