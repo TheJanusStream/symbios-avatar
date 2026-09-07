@@ -14,6 +14,13 @@
 //! is on the ground at this place, this hand is on that handle. Solvers turn
 //! those goals into a pose for whatever body is actually present.
 //!
+//! [`Driver`] is the layer above all of them, and the one an application
+//! wants: it decides which of them is running this frame, keeps the clocks
+//! that outlive a frame, and joins two of them when the answer changes. It is
+//! fed a chassis — a velocity, a place, a heading — rather than a choice of
+//! motion. Everything below it stays usable on its own, for a caller that
+//! wants one stage rather than a body.
+//!
 //! Three layers, each usable on its own:
 //!
 //! * [`Pose`] — local rotations per joint, resolved to world space by forward
@@ -75,6 +82,7 @@
 
 pub mod blend;
 pub mod clip;
+pub mod driver;
 pub mod dual;
 pub mod foothold;
 pub mod gait;
@@ -96,6 +104,10 @@ pub mod turn;
 
 pub use blend::Inertializer;
 pub use clip::{Clip, Key, Scale, Space, Target, Track};
+pub use driver::{
+    Airborne, Carriage, Driven, Driver, DriverConfig, Hold, Inputs, Showing, Source, WalkFlags,
+    level_ground, velocity_of,
+};
 pub use foothold::Footholds;
 pub use gait::{Gait, Phase, Steps, Stride, Walk, Walked};
 pub use gaze::{Gaze, GazeConfig, look_at};

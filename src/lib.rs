@@ -139,10 +139,11 @@ pub mod torso;
 pub mod uv;
 
 pub use anim::{
-    Clip, ClipLibrary, Continuity, Curve, Footholds, Footing, FootingConfig, Gait, Gaze,
-    GazeConfig, Ground, Heading, Idle, IdleConfig, Idled, Inertializer, JointTrack, Key, Leap,
-    Leapt, LibraryError, Play, Pose, PoseClip, Posed, Scale, Slot, Space, Speed, Stride, Swim,
-    Swum, Target, Track, Turn, Walk, Walked, contacts_in, look_at, plant_feet,
+    Airborne, Carriage, Clip, ClipLibrary, Continuity, Curve, Driven, Driver, DriverConfig,
+    Footholds, Footing, FootingConfig, Gait, Gaze, GazeConfig, Ground, Heading, Hold, Idle,
+    IdleConfig, Idled, Inertializer, JointTrack, Key, Leap, Leapt, LibraryError, Play, Pose,
+    PoseClip, Posed, Scale, Showing, Slot, Source, Space, Speed, Stride, Swim, Swum, Target, Track,
+    Turn, Walk, Walked, contacts_in, look_at, plant_feet,
 };
 pub use avatar::{Avatar, AvatarConfig, AvatarMesh, Budget, MeshKind, Parts};
 pub use cage::{CageConfig, CageError, build_cage};
