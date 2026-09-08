@@ -1,6 +1,6 @@
 [package]
 name = "symbios-avatar"
-version = "0.5.3"
+version = "0.6.0"
 edition = "2024"
 authors = ["Janus"]
 description = "Engine-agnostic parametric avatar engine: procedural humanoid and creature bodies from small records."
@@ -80,7 +80,7 @@ serde_json = "1.0"
 # Procedural-generation primitives — noise fields, cosine palettes, the
 # TextureMap pixel container, and height-to-normal conversion — shared with the
 # rest of the symbios ecosystem rather than reimplemented here.
-symbios-texture = "0.4"
+symbios-texture = "0.5"
 thiserror = "2.0.17"
 
 # Browsers are the first platform this engine ships to, and `getrandom` refuses
