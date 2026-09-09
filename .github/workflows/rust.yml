@@ -189,7 +189,10 @@ jobs:
               with:
                   key: wasm32
 
-            # `.cargo/config.toml` carries the getrandom backend flag this
-            # needs; see the note there for why it is required at all.
+            # No getrandom backend flag, on purpose. Nothing in this crate's
+            # graph asks for OS entropy any more -- 0.7.0 dropped the shim
+            # that answered `symbios-texture`'s old `rand` defaults -- so a
+            # `getrandom` requirement coming back through any dependency
+            # fails here, which is what this job is for.
             - name: Check for wasm32
               run: cargo check --target wasm32-unknown-unknown --lib --all-features --verbose

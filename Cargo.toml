@@ -1,6 +1,6 @@
 [package]
 name = "symbios-avatar"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 authors = ["Janus"]
 description = "Engine-agnostic parametric avatar engine: procedural humanoid and creature bodies from small records."
@@ -80,21 +80,8 @@ serde_json = "1.0"
 # Procedural-generation primitives — noise fields, cosine palettes, the
 # TextureMap pixel container, and height-to-normal conversion — shared with the
 # rest of the symbios ecosystem rather than reimplemented here.
-symbios-texture = "0.5"
+symbios-texture = "0.7"
 thiserror = "2.0.17"
-
-# Browsers are the first platform this engine ships to, and `getrandom` refuses
-# to build for `wasm32-unknown-unknown` unless it is told where entropy comes
-# from. Nothing here wants entropy — see the note on `rand` above — but
-# `symbios-texture` pulls `rand` with its defaults on and Cargo unifies features
-# across the graph, so the requirement arrives anyway.
-#
-# Declared here rather than left to the consumer because it is half of a
-# two-part answer: the feature turns the backend on, and `.cargo/config.toml`
-# carries the `--cfg` that selects it. A consuming application still needs the
-# second half; getting the first for free is one less way to be stuck.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 # Examples only — writing atlas PNGs to look at. The library itself emits raw
