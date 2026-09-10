@@ -33,13 +33,33 @@
 //! it is the one asterisk on the identical-pose-from-record-and-clock story,
 //! and it is why the ledger holds nothing that feeds back into the clock.
 //!
+//! # Turns, and a body that outruns its feet
+//!
+//! Two things a hold must not do, both found through a consumer whose chassis
+//! assigns its velocity and steers its facing (#337). A body that TURNS over a
+//! planted foot would swing that foot sideways through itself if the foot were
+//! held to the world, so holds are carried round with every change of facing:
+//! the stance keeps its shape in the body, and only the travel is held against
+//! the world. And a body that travels much faster than the stride it is
+//! walking, or in a direction it does not face, would leave a held foot
+//! receding without limit — the crouch then sinks the body to reach it, and the
+//! legs are forced apart — so each hold may stand only so far from the
+//! stride's own answer, along the stride and across it. Past either bound the
+//! foot yields continuously, dragged along the bound's edge: it slides by as
+//! little as the bound allows, and nothing is re-planted, so nothing pops. Both
+//! are traded against placement on purpose — the owner of that consumer asked
+//! for smoothness over it — and neither touches a straight walk at the speed
+//! changes the ledger was built for.
+//!
 //! # Warps
 //!
 //! A held point is only meaningful while the body is somewhere near it. A
 //! teleport self-heals: a hold whose body-frame answer lands further from the
 //! stride's own than the leg could ever reach is re-planted at the stride's
-//! answer rather than lunged for. [`Footholds::reset`] exists for the caller
-//! that knows a warp happened and wants no frame of doubt.
+//! answer rather than lunged for. No continuous motion reaches that any more —
+//! the bounds above yield long before it — so it answers for warps alone.
+//! [`Footholds::reset`] exists for the caller that knows a warp happened and
+//! wants no frame of doubt.
 
 use crate::det::Rot;
 use glam::Vec3;
@@ -61,6 +81,61 @@ pub struct Footholds {
     /// One hold per contact the gait has shown this ledger, by limb: the
     /// world point the foot went down at, or `None` while it is in the air.
     held: Vec<(Limb, Option<Vec3>)>,
+    /// The facing the holds were last served under, or `None` before the first
+    /// frame — kept so a body that turns carries its holds round with it.
+    facing: Option<f32>,
+}
+
+/// How far along the stride a hold may stand from the stride's own answer
+/// before the foot yields, as a share of the leg's reach.
+///
+/// **The bound that keeps #277 and stops the collapse** (#337). A change of
+/// speed moves the stride's derivation out from under a planted foot along the
+/// line of travel, and holding it there is the ledger's whole job: measured at
+/// the consuming application's real chassis profile, walk speeds 1.4 <-> 0.7
+/// m/s at 12/s, the stateless walk slides a sole 91.3 mm — 0.129 of the default
+/// body's 709.5 mm reach — so the bound stands just clear of that. But the same
+/// chassis starts a body from standing at up to 39 m/s^2 while the gait is
+/// still built from a pace that has not caught up, and there the held foot
+/// recedes behind the stride without limit: the crouch sinks the body to reach
+/// it until `sink_needed` saturates at the hip's whole height, a pelvis 741.6
+/// mm down one stance after the key.
+///
+/// Measured through the consumer's chassis (the replica in `tests/driver.rs`,
+/// its stop-instrument body, a start from standing at a walk and a run),
+/// against #277's own acceptance sweep:
+///
+/// ```text
+///   bound       unbounded  0.25   0.20   0.15   0.10
+///   start, mm   -741.6    -232.8 -196.0 -170.1 -156.3   (walk; steady bob -113.3)
+///   start, mm   -735.3    -171.1 -142.1 -116.5 -100.8   (run;  steady bob  -64.4)
+///   #277, mm       2.9       2.9    2.9    2.9   18.0   (sweep worst; control 2.4)
+/// ```
+///
+/// 0.10 gives #277's sweep back most of the slide the ledger exists to remove;
+/// 0.15 is the smallest bound tried that leaves it exactly where it was.
+const HOLD_ALONG: f32 = 0.15;
+
+/// How far across the stride a hold may stand from the stride's own answer
+/// before the foot yields, as a share of the limb's own lateral offset from
+/// the body's midline.
+///
+/// **Tight, because no straight walk ever needs any** (#337). A change of
+/// speed moves a planted foot's derivation only along the line of travel; a
+/// gap across it comes from a body travelling in a direction it does not face,
+/// which is the consuming application's facing lagging its velocity through
+/// every turn it makes — and a hold kept there reads as legs forced apart, up
+/// to 297.9 mm on a quarter turn at a walk, where the owner of that app asked
+/// for smoothness over placement. Half the limb's own offset lets each foot
+/// stand at most a quarter of the stance's width out of line: 25.8 mm through
+/// the same quarter turn on that body.
+const HOLD_ACROSS: f32 = 0.5;
+
+/// An angle folded into `(-PI, PI]`, so a turn is carried the short way round.
+fn wrapped(angle: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let folded = (angle + PI).rem_euclid(TAU) - PI;
+    if folded <= -PI { folded + TAU } else { folded }
 }
 
 impl Footholds {
@@ -77,6 +152,7 @@ impl Footholds {
     /// of the foot answering for a point that no longer makes sense.
     pub fn reset(&mut self) {
         self.held.clear();
+        self.facing = None;
     }
 
     /// One frame of a walk with its planted feet held: advance the ledger,
@@ -111,6 +187,35 @@ impl Footholds {
             Vec3::new(world.x, 0.0, world.z)
         };
         let into_body = |world: Vec3| Rot::y(-facing) * (world - at);
+
+        // **A body that turns carries its planted feet round with it** (#337).
+        // A hold served at its world point through a yaw swings the foot
+        // sideways in the body by `2 * |offset| * sin(yaw / 2)` — tenths of a
+        // metre over a quarter turn, which no guard below is sized for — and a
+        // stride that is not told about the turn keeps walking straight ahead
+        // under it. So the holds are turned about the body by whatever it
+        // turned since the last frame: the stance keeps its shape in the body,
+        // and the travel alone is held against the world. A straight walk never
+        // turns, so this costs every straight-line hold nothing.
+        if let Some(last) = self.facing {
+            let turned = wrapped(facing - last);
+            if turned != 0.0 {
+                let pivot = Vec3::new(at.x, 0.0, at.z);
+                let turn = Rot::y(turned);
+                for (_, hold) in &mut self.held {
+                    if let Some(point) = hold {
+                        *point = pivot + turn * (*point - pivot);
+                    }
+                }
+            }
+        }
+        self.facing = Some(facing);
+
+        // The stride's own axes, which the two bounds below are taken along.
+        let along = Vec3::new(stride.direction.x, 0.0, stride.direction.z)
+            .try_normalize()
+            .unwrap_or(Vec3::Z);
+        let across = Vec3::new(along.z, 0.0, -along.x);
 
         let mut anchors: Vec<(Limb, Vec3)> = Vec::new();
         for (index, &limb) in gait.limbs.iter().enumerate() {
@@ -147,15 +252,34 @@ impl Footholds {
                 Some(point) => {
                     let served = into_body(point) - home;
                     let served = Vec3::new(served.x, 0.0, served.z);
+                    let gap = served - derived;
                     // The self-heal: a hold further from the stride's own
                     // answer than the leg is long is a warp's leftover, not a
                     // stance — no legitimate speed change moves the two apart
                     // by more than a fraction of a stride.
-                    if served.distance(derived) > reach {
+                    if gap.length() > reach {
                         *hold = Some(into_world(home + derived));
                         derived
                     } else {
-                        served
+                        // **The yield** (#337): past either bound the foot
+                        // gives, dragged along the bound's edge rather than
+                        // re-planted, so the slide is as small as the bound
+                        // allows and nothing pops. The world point moves with
+                        // it, so the next frame holds from where it gave.
+                        let (way, side) = (gap.dot(along), gap.dot(across));
+                        let bound_along = reach * HOLD_ALONG;
+                        let bound_across = home.x.abs() * HOLD_ACROSS;
+                        let kept = (
+                            way.clamp(-bound_along, bound_along),
+                            side.clamp(-bound_across, bound_across),
+                        );
+                        if kept == (way, side) {
+                            served
+                        } else {
+                            let yielded = derived + along * kept.0 + across * kept.1;
+                            *hold = Some(into_world(home + yielded));
+                            yielded
+                        }
                     }
                 }
                 None => {
@@ -293,6 +417,183 @@ mod tests {
                 a.positions[foot].distance(b.positions[foot]) * 1000.0
             );
         }
+    }
+
+    /// The widest any contact joint of `a` stands from the same joint of `b`.
+    fn apart(rig: &Rig, a: &Pose, b: &Pose) -> f32 {
+        let (a, b) = (a.forward(rig), b.forward(rig));
+        [Limb::HindLeft, Limb::HindRight]
+            .into_iter()
+            .map(|limb| {
+                let foot = rig.in_zone(Zone::Extremity(limb))[0];
+                a.positions[foot].distance(b.positions[foot])
+            })
+            .fold(0.0f32, f32::max)
+    }
+
+    #[test]
+    fn a_steady_walk_that_turns_is_the_stateless_walk() {
+        // **#337.** A body turning over a planted foot, the foot held at its
+        // world point, sees that foot swing sideways through the body by
+        // `2 * |offset| * sin(yaw / 2)` — legs forced apart through every turn,
+        // which is what the consuming app's owner saw. Carried round with the
+        // body instead, the stance keeps its shape: at a constant speed along
+        // a steady curve the held walk is the stateless walk again, exactly as
+        // it is on a straight line. The body here steps along the facing it
+        // had, then turns — the order in which one frame's travel and one
+        // frame's turn compose with no remainder.
+        //
+        // Measured over two seconds of turning at 1.5 rad/s: the held feet
+        // stood 90.6 mm from the stateless walk's on the ledger as shipped at
+        // 0.7.0, and 0.6 mm carried round.
+        let rig = rig();
+        let speed = Speed::new(&rig, 1.4);
+        let (gait, stride) = (speed.gait(&rig), speed.stride(&rig));
+        let cadence = speed.cadence(&rig);
+        let dt = 1.0 / 60.0;
+        let mut ledger = Footholds::new();
+        let (mut at, mut facing) = (Vec3::ZERO, 0.0f32);
+        let mut worst = 0.0f32;
+        for frame in 0..120 {
+            let cycle = (cadence * frame as f32 * dt).rem_euclid(1.0);
+            if frame > 0 {
+                at += Rot::y(facing) * Vec3::Z * (1.4 * dt);
+                facing += 1.5 * dt;
+            }
+            let mut stateless = Pose::rest(&rig);
+            Walk::at(cycle).drive(&rig, &mut stateless, &gait, &stride, flat);
+            let mut held = Pose::rest(&rig);
+            ledger.drive(
+                Walk::at(cycle),
+                &rig,
+                &mut held,
+                &gait,
+                &stride,
+                at,
+                facing,
+                flat,
+            );
+            worst = worst.max(apart(&rig, &stateless, &held));
+        }
+        println!(
+            "turning steady walk: held feet {:.1} mm from the stateless walk's",
+            worst * 1000.0
+        );
+        assert!(
+            worst < 1e-3,
+            "a steady walk along a curve held its feet {:.1} mm from the stateless walk's — \
+             the ledger is holding the turn against the world",
+            worst * 1000.0
+        );
+    }
+
+    #[test]
+    fn a_body_outrunning_its_planted_foot_is_not_pulled_to_the_floor() {
+        // **#337.** The stride is built for 0.7 m/s and the body travels at
+        // 1.6: a start from standing, where a chassis that assigns its velocity
+        // outruns a gait built from a pace that has not caught up yet. Held to
+        // its world point, a planted foot recedes past the leg's horizontal
+        // reach, and the crouch that must cover an anchored stance sinks the
+        // body toward the hip's whole height. Bounded, the foot yields and the
+        // crouch stays near the stride's own.
+        //
+        // Measured, deepest crouch over the stateless walk's (the same stride,
+        // no ledger): 779.2 mm on the ledger as shipped at 0.7.0, 62.3 mm
+        // bounded. The ceiling sits between the two.
+        let rig = rig();
+        let slow = Speed::new(&rig, 0.7);
+        let (gait, stride) = (slow.gait(&rig), slow.stride(&rig));
+        let cadence = slow.cadence(&rig);
+        let dt = 1.0 / 60.0;
+        let mut ledger = Footholds::new();
+        let mut excess = 0.0f32;
+        for frame in 0..120 {
+            let elapsed = frame as f32 * dt;
+            let cycle = (cadence * elapsed).rem_euclid(1.0);
+            let mut stateless = Pose::rest(&rig);
+            let unheld = Walk::at(cycle).drive(&rig, &mut stateless, &gait, &stride, flat);
+            let mut held = Pose::rest(&rig);
+            let holding = ledger.drive(
+                Walk::at(cycle),
+                &rig,
+                &mut held,
+                &gait,
+                &stride,
+                Vec3::Z * (1.6 * elapsed),
+                0.0,
+                flat,
+            );
+            excess = excess.max(holding.steps.crouch - unheld.steps.crouch);
+        }
+        println!(
+            "outrun stance: {:.1} mm deeper than the stride's own crouch",
+            excess * 1000.0
+        );
+        assert!(
+            excess < 0.15,
+            "outrun by its body, a held stance crouched {:.1} mm deeper than the stride's own \
+             — the hold is dragging the body to the floor",
+            excess * 1000.0
+        );
+    }
+
+    #[test]
+    fn a_hold_across_the_stride_yields_at_its_bound() {
+        // **#337.** A body travelling in a direction it does not face — the
+        // consuming app's chassis while its facing catches up with a turn —
+        // leaves a planted foot receding sideways through the body, and a hold
+        // kept there is legs forced apart. No straight walk ever opens a gap
+        // across the stride, so the bound there is tight: the foot yields at
+        // half its own lateral offset and never stands further from the
+        // stride's answer than that. Measured: 495.1 mm across on the ledger as
+        // shipped at 0.7.0; 43.2 mm bounded, against a 43.1 mm bound.
+        let rig = rig();
+        let speed = Speed::new(&rig, 1.0);
+        let (gait, stride) = (speed.gait(&rig), speed.stride(&rig));
+        let cadence = speed.cadence(&rig);
+        let dt = 1.0 / 60.0;
+        let mut ledger = Footholds::new();
+        let mut widest = 0.0f32;
+        let mut bound = 0.0f32;
+        for frame in 0..120 {
+            let elapsed = frame as f32 * dt;
+            let cycle = (cadence * elapsed).rem_euclid(1.0);
+            let mut stateless = Pose::rest(&rig);
+            Walk::at(cycle).drive(&rig, &mut stateless, &gait, &stride, flat);
+            let mut held = Pose::rest(&rig);
+            // Facing +Z, travelling +X: the whole of the travel is across.
+            ledger.drive(
+                Walk::at(cycle),
+                &rig,
+                &mut held,
+                &gait,
+                &stride,
+                Vec3::X * (1.0 * elapsed),
+                0.0,
+                flat,
+            );
+            let (a, b) = (stateless.forward(&rig), held.forward(&rig));
+            for limb in [Limb::HindLeft, Limb::HindRight] {
+                let foot = rig.in_zone(Zone::Extremity(limb))[0];
+                widest = widest.max((a.positions[foot].x - b.positions[foot].x).abs());
+                bound =
+                    bound.max(home_of(&rig, limb).map_or(0.0, |home| home.x.abs()) * HOLD_ACROSS);
+            }
+        }
+        println!(
+            "sideways travel: widest {:.1} mm across, bound {:.1} mm",
+            widest * 1000.0,
+            bound * 1000.0
+        );
+        // The contact joint answers to its goal through a leg the settle also
+        // moves, so the reading gets a millimetre and a half on the bound.
+        assert!(
+            widest < bound + 0.0015,
+            "a foot the body travelled sideways over stood {:.1} mm across from the stride's \
+             answer, past the {:.1} mm bound",
+            widest * 1000.0,
+            bound * 1000.0
+        );
     }
 
     #[test]

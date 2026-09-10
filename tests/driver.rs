@@ -1262,3 +1262,363 @@ fn a_body_walking_on_the_spot_is_carried_by_its_own_gait() {
         widest * 1000.0
     );
 }
+
+// ---------------------------------------------------------------------------
+// The consuming application's chassis, turning (#337, overlands #1323)
+// ---------------------------------------------------------------------------
+
+/// The consuming application's fixed step, which its chassis controller runs
+/// at and which its harness drives the body at.
+const CONTROLLER_STEP: f32 = 1.0 / 64.0;
+
+/// The consuming application's humanoid chassis, as its controller moves it.
+///
+/// **A replica, and that is the one thing this file otherwise refuses to do.**
+/// Every other instrument here drives the real thing; this crate cannot run the
+/// application's controller, and the question it answers — what a planted foot
+/// does when the body turns and accelerates under it the way a player's does —
+/// cannot be asked without one. So its arithmetic is copied, with the
+/// application's defaults (overlands `apply_humanoid_walk`, record defaults
+/// 2026-09-10): the planar velocity is ASSIGNED each step, an exponential
+/// approach toward the keys' direction at `acceleration` while any is held and
+/// a decay at `stop_damping` when none is; the facing turns toward the
+/// velocity's own direction at `turn_rate` whenever the body moves faster than
+/// 0.1 m/s; and the position integrates the velocity, which is all the
+/// application's physics does to it on flat open ground. The walk is the
+/// application's own derivation, [`WALK_FROUDE`] on the speed axis; the run is
+/// its default travel speed.
+///
+/// Its whole claim to be the application's chassis is that it reproduces the
+/// application's readings on the same body, seed and script — see
+/// `probe_what_a_turn_does_to_the_stance`.
+struct Controller {
+    velocity: Vec3,
+    facing: f32,
+    at: Vec3,
+}
+
+/// The consuming application's velocity approach and decay rates, per second,
+/// and its facing rate — its humanoid record's defaults.
+const ACCELERATION: f32 = 12.0;
+const STOP_DAMPING: f32 = 20.0;
+const TURN_RATE: f32 = 12.0;
+/// The Froude number the consuming application walks at unshifted.
+const WALK_FROUDE: f32 = 0.43;
+/// The consuming application's default travel speed, which its run key asks
+/// for, in m/s.
+const RUN: f32 = 4.0;
+
+/// An angle folded into `(-PI, PI]`.
+///
+/// **The half-open side is the application's.** A reversal asks the facing
+/// for an exact half turn, and which way round it goes is decided by a tie:
+/// the application's quaternion slerp breaks it toward positive yaw, so a fold
+/// into `[-PI, PI)` turns every reversal the other way and reads its splay
+/// mirrored.
+fn wrapped(angle: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let folded = (angle + PI).rem_euclid(TAU) - PI;
+    if folded <= -PI { folded + TAU } else { folded }
+}
+
+impl Controller {
+    /// Standing at the origin, facing world `-Z` — the application's chassis at
+    /// rest, whose forward is Bevy's.
+    fn standing() -> Self {
+        Self {
+            velocity: Vec3::ZERO,
+            facing: std::f32::consts::PI,
+            at: Vec3::ZERO,
+        }
+    }
+
+    /// One fixed step with the keys asking for `toward` (world, unnormalised,
+    /// zero for no key) at `speed`.
+    fn step(&mut self, toward: Vec3, speed: f32) {
+        let dt = CONTROLLER_STEP;
+        let planar = Vec3::new(self.velocity.x, 0.0, self.velocity.z);
+        self.velocity = if toward == Vec3::ZERO {
+            planar * (-STOP_DAMPING * dt).exp()
+        } else {
+            planar.lerp(
+                toward.normalize() * speed,
+                (ACCELERATION * dt).clamp(0.0, 1.0),
+            )
+        };
+        if self.velocity.length_squared() > 0.01 {
+            let target = self.velocity.x.atan2(self.velocity.z);
+            let alpha = (TURN_RATE * dt).clamp(0.0, 1.0);
+            self.facing = wrapped(self.facing + wrapped(target - self.facing) * alpha);
+        }
+        self.at += self.velocity * dt;
+    }
+}
+
+/// A key script: the world direction the keys ask for over consecutive spans,
+/// and whether the run key is held through each, after a second of standing.
+/// The application's camera orbits freely, so its keys are camera-fixed: W is
+/// world `-Z`, S `+Z`, D `+X`.
+struct Script {
+    name: &'static str,
+    spans: &'static [(f32, Vec3, bool)],
+}
+
+const STAND_SECS: f32 = 1.0;
+const SCRIPT_SECS: f32 = 4.0;
+const W: Vec3 = Vec3::new(0.0, 0.0, -1.0);
+const S: Vec3 = Vec3::new(0.0, 0.0, 1.0);
+const D: Vec3 = Vec3::new(1.0, 0.0, 0.0);
+const W_D: Vec3 = Vec3::new(1.0, 0.0, -1.0);
+
+const SCRIPTS: [Script; 7] = [
+    Script {
+        name: "straight W (control)",
+        spans: &[(SCRIPT_SECS, W, false)],
+    },
+    Script {
+        name: "W 2 s then W+D (45 deg)",
+        spans: &[(2.0, W, false), (2.0, W_D, false)],
+    },
+    Script {
+        name: "W 2 s then D (90 deg)",
+        spans: &[(2.0, W, false), (2.0, D, false)],
+    },
+    Script {
+        name: "W 2 s then S (reversal)",
+        spans: &[(2.0, W, false), (2.0, S, false)],
+    },
+    Script {
+        name: "D from standing",
+        spans: &[(SCRIPT_SECS, D, false)],
+    },
+    Script {
+        name: "W 2 s then Shift (walk to run)",
+        spans: &[(2.0, W, false), (2.0, W, true)],
+    },
+    Script {
+        name: "Shift+W 2 s then W (run to walk)",
+        spans: &[(2.0, W, true), (2.0, W, false)],
+    },
+];
+
+impl Script {
+    /// The direction asked for at `t`, and whether the run key is held.
+    fn keys(&self, t: f32) -> (Vec3, bool) {
+        let mut from = STAND_SECS;
+        if t < from {
+            return (Vec3::ZERO, false);
+        }
+        for &(secs, toward, shift) in self.spans {
+            if t < from + secs {
+                return (toward, shift);
+            }
+            from += secs;
+        }
+        (Vec3::ZERO, false)
+    }
+}
+
+/// One frame of a turning run, read off the drawn pose.
+struct Stance {
+    t: f32,
+    source: Source,
+    /// The feet's lateral separation less its rest value, body frame, metres:
+    /// the splay.
+    splay: f32,
+    /// The feet's fore-aft separation, body frame, metres.
+    split: f32,
+    /// The pelvis less its standing height, metres.
+    root: f32,
+    strained: bool,
+    /// Every sole point of each foot, in the WORLD, left foot first: the
+    /// joint's rest position dropped to the ground plane and carried by the
+    /// ankle, which is how the roll models a sole (#1082) — the only point of
+    /// a planted foot that is pinned, so the only one a slide can be read off.
+    soles: [Vec<Vec3>; 2],
+    /// Whether the gait the driver ran this frame has each foot in stance.
+    down: [bool; 2],
+}
+
+/// Drives `script` through the replica chassis and a driver configured by
+/// `config`, with the run key held throughout if `run`, reading every frame.
+fn turned(rig: &Rig, script: &Script, run: bool, config: DriverConfig) -> Vec<Stance> {
+    let mut driver = Driver::new(config, INSTRUMENT_SEED);
+    let mut chassis = Controller::standing();
+    let walk = Speed::from_froude(WALK_FROUDE).metres_per_second(rig);
+    let pelvis = rig
+        .joints
+        .iter()
+        .position(|joint| joint.parent.is_none())
+        .expect("a root joint");
+    let standing = rig.joints[pelvis].position.y;
+    let feet = feet(rig);
+    let rest = (rig.joints[feet[0]].position.x - rig.joints[feet[1]].position.x).abs();
+    let limbs = [Limb::HindLeft, Limb::HindRight];
+    let soles = limbs.map(|limb| {
+        let joints = rig.extremity_joints(limb);
+        (joints[0], joints[1..].to_vec())
+    });
+    let frames = ((STAND_SECS + SCRIPT_SECS) / CONTROLLER_STEP).round() as usize;
+    (0..frames)
+        .map(|frame| {
+            let t = frame as f32 * CONTROLLER_STEP;
+            let (toward, shift) = script.keys(t);
+            chassis.step(toward, if run || shift { RUN } else { walk });
+            let driven = driver
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: CONTROLLER_STEP,
+                        velocity: chassis.velocity,
+                        at: chassis.at,
+                        facing: chassis.facing,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed");
+            let posed = driven.pose.forward(rig);
+            let (left, right) = (posed.positions[feet[0]], posed.positions[feet[1]]);
+            let into_world = |body: Vec3| {
+                chassis.at + symbios_avatar::Quat::from_rotation_y(chassis.facing) * body
+            };
+            let gait = driver.speed().map(|speed| speed.gait(rig));
+            Stance {
+                t,
+                source: driven.source,
+                splay: (left.x - right.x) - rest,
+                split: left.z - right.z,
+                root: posed.positions[pelvis].y - standing,
+                strained: driven.strained,
+                soles: soles.clone().map(|(ankle, sole)| {
+                    sole.iter()
+                        .map(|&joint| {
+                            let at_rest = rig.joints[joint].position;
+                            into_world(
+                                posed.positions[ankle]
+                                    + posed.rotations[ankle]
+                                        * (Vec3::new(at_rest.x, 0.0, at_rest.z)
+                                            - rig.joints[ankle].position),
+                            )
+                        })
+                        .collect()
+                }),
+                down: limbs.map(|limb| {
+                    gait.as_ref().is_some_and(|gait| {
+                        gait.limbs
+                            .iter()
+                            .position(|&of| of == limb)
+                            .is_some_and(|index| gait.phase(index, driver.cycle()).is_stance())
+                    })
+                }),
+            }
+        })
+        .collect()
+}
+
+/// The extremes of a window of frames: splay low and high, the widest split,
+/// the lowest pelvis, and the frames strained.
+fn extremes(frames: &[&Stance]) -> (f32, f32, f32, f32, usize) {
+    frames.iter().fold(
+        (f32::MAX, f32::MIN, 0.0f32, f32::MAX, 0usize),
+        |(lo, hi, split, root, strained), frame| {
+            (
+                lo.min(frame.splay),
+                hi.max(frame.splay),
+                split.max(frame.split.abs()),
+                root.min(frame.root),
+                strained + usize::from(frame.strained),
+            )
+        },
+    )
+}
+
+/// The furthest any sole point slid through the world while it was down, in
+/// metres, over a window of frames.
+///
+/// **Each point against itself, inside its own stance episode** — #277's
+/// ruler: a point counts as down while the gait has its foot in stance AND
+/// its own height is within 5 mm of the lowest it gets in the window (contact
+/// passes heel to toe, and a heel that lifts has moved without sliding), and
+/// the episode's anchor is where it first came down. Horizontal only.
+fn slide(frames: &[&Stance]) -> f32 {
+    const CLEARANCE: f32 = 0.005;
+    let mut worst = 0.0f32;
+    for foot in 0..2 {
+        let points = frames.first().map_or(0, |frame| frame.soles[foot].len());
+        for point in 0..points {
+            let floor = frames
+                .iter()
+                .map(|frame| frame.soles[foot][point].y)
+                .fold(f32::MAX, f32::min);
+            let mut anchor: Option<Vec3> = None;
+            for frame in frames {
+                let world = frame.soles[foot][point];
+                if frame.down[foot] && world.y - floor <= CLEARANCE {
+                    let from = *anchor.get_or_insert(world);
+                    worst = worst.max(Vec3::new(world.x - from.x, 0.0, world.z - from.z).length());
+                } else {
+                    anchor = None;
+                }
+            }
+        }
+    }
+    worst
+}
+
+#[test]
+#[ignore = "probe for #337: prints the turning tables through the replica chassis"]
+fn probe_what_a_turn_does_to_the_stance() {
+    let avatar = body_of("did:plc:stop-test");
+    let rig = avatar.rig.clone();
+    let configs = [
+        ("driver default", DriverConfig::default()),
+        (
+            "pace_response 0",
+            DriverConfig {
+                pace_response: 0.0,
+                ..DriverConfig::default()
+            },
+        ),
+        (
+            "Carriage::Own",
+            DriverConfig {
+                carriage: Carriage::Own,
+                ..DriverConfig::default()
+            },
+        ),
+    ];
+    for (label, config) in configs {
+        for script in &SCRIPTS {
+            for run in [false, true] {
+                let frames = turned(&rig, script, run, config);
+                for (window, from, to) in [
+                    ("start", STAND_SECS, STAND_SECS + 2.0),
+                    ("change", STAND_SECS + 2.0, STAND_SECS + SCRIPT_SECS),
+                ] {
+                    let within: Vec<&Stance> = frames
+                        .iter()
+                        .filter(|frame| frame.t >= from && frame.t < to)
+                        .collect();
+                    let (lo, hi, split, root, strained) = extremes(&within);
+                    let idled = within
+                        .iter()
+                        .filter(|frame| frame.source != Source::Gait)
+                        .count();
+                    println!(
+                        "{label} | {} | {} | {window}: splay {:+.1}..{:+.1} mm; |split| max {:.1} mm; root \
+                     {:+.1} mm; slide {:.1} mm; strained {strained}/{}; not-gait {idled}",
+                        script.name,
+                        if run { "run" } else { "walk" },
+                        lo * 1000.0,
+                        hi * 1000.0,
+                        split * 1000.0,
+                        root * 1000.0,
+                        slide(&within) * 1000.0,
+                        within.len(),
+                    );
+                }
+            }
+        }
+    }
+}

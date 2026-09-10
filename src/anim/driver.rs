@@ -58,7 +58,10 @@
 //! * **A change of duty carries the cycle, not the number**
 //!   ([`transition::carry_cycle`]).
 //! * **A planted foot is held at the world point it went down at**
-//!   ([`Footholds`]), whenever something else is carrying the body.
+//!   ([`Footholds`]), whenever something else is carrying the body — turned
+//!   round with the body when it turns, and yielding rather than holding once
+//!   the stride has moved too far from it, because a hold kept through a turn
+//!   splays the legs and one the body outruns drags the body to the floor.
 //!
 //! # The one thing a caller must still decide
 //!
@@ -79,6 +82,7 @@ use glam::{Vec2, Vec3};
 
 use crate::det::DetMath;
 use crate::face::{Expression, Eyes};
+use crate::plan::Limb;
 use crate::rig::Rig;
 
 use super::blend::Inertializer;
@@ -632,8 +636,28 @@ pub struct Driven {
     ///
     /// One flag rather than a list, because what a caller does with it is count
     /// frames: a body that strains occasionally is a body on hard ground, and
-    /// one that strains constantly is a body whose goals are wrong.
+    /// one that strains constantly is a body whose goals are wrong. Exactly
+    /// [`Self::straining`] above zero.
     pub strained: bool,
+    /// How many contacts could not reach their goal this frame, each counted
+    /// once whichever stage found it — the stride's own solve, the footing
+    /// solve that settles it, or a leap's.
+    ///
+    /// **The count beside the flag** (#334): a body with one leg reaching for a
+    /// hole and a body with both legs out of reach are the same `true`, and
+    /// they are not the same body.
+    pub straining: usize,
+    /// How far the footing solve had to move any one joint of a contact this
+    /// frame, in metres — [`super::gait::Walked::lift`], as the walk's own
+    /// settle reported it.
+    ///
+    /// The readout a locomotion question is settled on rather than on taste: a
+    /// pose whose feet already land where the ground is needs no correction,
+    /// and one whose do not is being held together by the solve. Zero on a
+    /// frame the walk did not carry — the idle plants its own feet, a leap
+    /// places its own contacts and a swimming body has none — because no
+    /// footing solve ran there to cost anything.
+    pub lift: f32,
     /// Whether a gesture aimed the head this frame.
     ///
     /// A caller with a gaze layer of its own stands aside when this is set: a
@@ -642,6 +666,16 @@ pub struct Driven {
     pub aimed: bool,
     /// What the idle reported, if the idle ran.
     pub idled: Option<Idled>,
+}
+
+/// Adds each of `limbs` to `into` that is not already there — one frame's
+/// straining contacts, counted once however many stages found them.
+fn count_straining(into: &mut Vec<Limb>, limbs: &[Limb]) {
+    for &limb in limbs {
+        if !into.contains(&limb) {
+            into.push(limb);
+        }
+    }
 }
 
 /// A gesture in progress on one body.
@@ -713,6 +747,9 @@ pub struct Driver {
     /// than the caller's, so a driver is comparable between an application with
     /// a wall clock and an instrument stepping a fixed delta.
     elapsed: f32,
+    /// Whether the caller has asked the next driven frame to blend in, through
+    /// [`Self::blend_now`].
+    blend_asked: bool,
 }
 
 impl Driver {
@@ -735,6 +772,7 @@ impl Driver {
             gesture: None,
             gestured_at: None,
             elapsed: 0.0,
+            blend_asked: false,
         }
     }
 
@@ -819,6 +857,23 @@ impl Driver {
     pub fn warped(&mut self) {
         self.footholds.reset();
         self.paced = None;
+    }
+
+    /// Blend the next driven frame in from the last one drawn, whatever
+    /// carries it (#334).
+    ///
+    /// The driver starts a transition on its own when what carries the body
+    /// changes. A caller whose own layer is what changed — an authored clip
+    /// laid over the walk through [`Inputs::over_locomotion`], swapped for
+    /// another — has no source to change, so without this the swap snaps. This
+    /// starts the same inertialized transition on the caller's say-so, from the
+    /// two poses the driver already keeps, over [`DriverConfig::blend`].
+    ///
+    /// A request, not a state: one call is one transition, taken by the next
+    /// frame that is actually driven. A driver that has drawn fewer than two
+    /// frames has nothing to blend from and lets the request go.
+    pub fn blend_now(&mut self) {
+        self.blend_asked = true;
     }
 
     /// One frame: decide what is carrying the body, run it, and hand back the
@@ -991,7 +1046,12 @@ impl Driver {
 
         let mut pose = Pose::rest(rig);
         let mut steps = Steps::default();
-        let mut strained = false;
+        // Every contact some stage could not get to its goal, each once: the
+        // stride's own solve, a leap's, and the footing solve that settles the
+        // walk all report the same kind of failure, and a leg found out of
+        // reach twice in one frame is still one leg (#334).
+        let mut straining: Vec<Limb> = Vec::new();
+        let mut lift = 0.0f32;
         // Kept past the match so the contacts can be settled and the ankles
         // rolled AFTER whatever is laid over the locomotion: the plant lays
         // every sole flat and a roll applied before it is simply levelled away.
@@ -1018,7 +1078,7 @@ impl Driver {
             Source::Gait => {
                 let (gait, stride, walked) =
                     self.walk_frame(rig, inputs, travelling, &mut pose, ground);
-                strained |= !walked.steps.straining.is_empty();
+                count_straining(&mut straining, &walked.steps.straining);
                 steps = walked.steps;
                 walking = Some((gait, stride));
             }
@@ -1043,7 +1103,7 @@ impl Driver {
                 };
                 if let Some((leap, elapsed)) = leaping {
                     let leapt = leap.drive(rig, &mut pose, elapsed, ground);
-                    strained |= !leapt.straining.is_empty();
+                    count_straining(&mut straining, &leapt.straining);
                     if leapt.stage.is_grounded() {
                         steps.stance = rig.ground_contacts();
                     } else if config.carriage == Carriage::Chassis {
@@ -1088,7 +1148,10 @@ impl Driver {
             let walked = self
                 .walk_at(inputs, inputs.walk.footing)
                 .settle(rig, &mut pose, gait, stride, &steps, ground);
-            strained |= walked.straining() > 0;
+            if let Some(footing) = &walked.footing {
+                count_straining(&mut straining, &footing.straining);
+            }
+            lift = walked.lift;
         }
 
         // **The idle's glance, and only where nothing is aiming the head on
@@ -1105,9 +1168,12 @@ impl Driver {
 
         // Inertialize source switches so a walk does not snap into a stand —
         // but only where the two are different activities. Within locomotion
-        // the answer is no: see `Source::family`.
+        // the answer is no: see `Source::family`. Or wherever the caller asked
+        // for one, because what changed was theirs (#334); the request is taken
+        // here whether or not there is anything to blend from.
+        let asked = std::mem::take(&mut self.blend_asked);
         if config.blend > 0.0
-            && self.source.needs_blend(source)
+            && (asked || self.source.needs_blend(source))
             && let (Some(previous), Some(current)) = (&self.previous, &self.current)
         {
             self.transition = Some(Inertializer::start(
@@ -1141,7 +1207,9 @@ impl Driver {
             pose: posed,
             closure,
             source,
-            strained,
+            strained: !straining.is_empty(),
+            straining: straining.len(),
+            lift,
             aimed,
             idled,
         })
@@ -1342,6 +1410,8 @@ impl Driver {
             closure,
             source: Source::Rest,
             strained: false,
+            straining: 0,
+            lift: 0.0,
             aimed: false,
             idled: None,
         }
@@ -1378,5 +1448,204 @@ mod tests {
         let ground = level_ground(Vec3::new(3.0, 9.0, -4.0)).expect("a level floor answers");
         assert_eq!(ground.position, Vec3::new(3.0, 0.0, -4.0));
         assert_eq!(ground.normal, Vec3::Y);
+    }
+
+    /// One frame at sixty a second.
+    const STEP: f32 = 1.0 / 60.0;
+
+    fn rig() -> Rig {
+        Rig::from_skeleton(&crate::AvatarRecord::default().skeleton())
+            .expect("the default body rigs")
+    }
+
+    /// A floor that falls away under the body's left side, further than any
+    /// leg reaches: a left contact planted there cannot get down to it.
+    fn a_hole_to_the_left(point: Vec3) -> Option<Ground> {
+        let depth = if point.x > 0.02 { -1.5 } else { 0.0 };
+        Some(Ground::level(Vec3::new(point.x, depth, point.z)))
+    }
+
+    /// Walks a body straight ahead at 1.4 m/s from its first frame for two
+    /// seconds, over `ground`, and hands back every frame it drove.
+    fn walked_over<F>(ground: F) -> Vec<Driven>
+    where
+        F: Fn(Vec3) -> Option<Ground> + Copy,
+    {
+        let rig = rig();
+        let mut driver = Driver::seeded(7);
+        (0..120)
+            .map(|frame| {
+                driver
+                    .drive(
+                        &rig,
+                        &Inputs {
+                            delta: STEP,
+                            velocity: Vec3::Z * 1.4,
+                            at: Vec3::Z * (1.4 * STEP * frame as f32),
+                            ..Inputs::default()
+                        },
+                        ground,
+                    )
+                    .expect("an unheld body is posed")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_driven_frame_reports_what_its_settle_cost() {
+        // **#334.** The walk's settle reports how far its footing solve had to
+        // move a contact, and the driver used to swallow that into one bool.
+        // Even on the flat the solve has work every step — it lays a sole that
+        // lands toe-up flat before the roll pitches it again — so the reading
+        // follows the cycle. Measured on this rig at 1.4 m/s: about 130 mm at
+        // each touchdown, down to a millimetre at midstance.
+        let walked = walked_over(level_ground);
+        let lifts: Vec<f32> = walked
+            .iter()
+            .filter(|driven| driven.source == Source::Gait)
+            .map(|driven| driven.lift)
+            .collect();
+        let most = lifts.iter().copied().fold(0.0f32, f32::max);
+        let least = lifts.iter().copied().fold(f32::MAX, f32::min);
+        assert!(
+            most > 0.0,
+            "a body walked two seconds and no frame reported its footing solve moving a contact"
+        );
+        // A correction longer than the leg making it is not a correction: it
+        // is a world coordinate or a unit leaking into the figure.
+        let reach = rig()
+            .limb_reach(crate::plan::Limb::HindLeft)
+            .expect("a leg");
+        assert!(
+            most < reach,
+            "the flat cost a {:.1} mm correction on a {:.1} mm leg",
+            most * 1000.0,
+            reach * 1000.0
+        );
+        // And it is THIS frame's figure: a value carried over from an earlier
+        // frame, or set once, does not fall to a sliver at midstance.
+        assert!(
+            least < most * 0.1,
+            "the reading barely moves through the cycle ({:.1} to {:.1} mm) — a stale figure",
+            least * 1000.0,
+            most * 1000.0
+        );
+
+        // A standing body is planted by its idle, not by a footing solve, so it
+        // has nothing to report — zero rather than whatever the last walk cost.
+        let rig = rig();
+        let mut standing = Driver::seeded(7);
+        for _ in 0..60 {
+            let driven = standing
+                .drive(
+                    &rig,
+                    &Inputs {
+                        delta: STEP,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed");
+            assert_eq!(driven.source, Source::Idle);
+            assert_eq!(
+                driven.lift, 0.0,
+                "an idle frame reported a settle it never ran"
+            );
+        }
+    }
+
+    #[test]
+    fn the_straining_count_is_the_flag_counted() {
+        // **#334.** `strained` is one bit and `straining` says how many — so
+        // the two must agree on every frame, and on ground a leg cannot reach
+        // the count must actually rise, or the invariant holds vacuously.
+        let mut counted = 0usize;
+        for driven in walked_over(a_hole_to_the_left)
+            .iter()
+            .chain(&walked_over(level_ground))
+        {
+            assert_eq!(
+                driven.strained,
+                driven.straining > 0,
+                "the flag and the count disagree: strained {} with {} straining",
+                driven.strained,
+                driven.straining
+            );
+            assert!(
+                driven.straining <= 2,
+                "a biped cannot strain {} contacts",
+                driven.straining
+            );
+            counted = counted.max(driven.straining);
+        }
+        assert!(
+            counted >= 1,
+            "a body walking beside a hole deeper than its leg never counted a contact straining"
+        );
+    }
+
+    #[test]
+    fn a_blend_asked_for_joins_a_layer_that_changed() {
+        // **#334.** A caller swapping the layer it lays over the motion has no
+        // source to change, so the driver never blends it: the swap lands in
+        // one frame. Asked for, the same swap arrives through the transition
+        // the driver already keeps for its own switches — and it is a
+        // transition, not a different pose: once it has run, the two bodies
+        // stand identically.
+        let rig = rig();
+        let arm = rig
+            .limb_chain(crate::plan::Limb::ForeLeft)
+            .expect("a humanoid has an arm");
+        let (shoulder, wrist) = (arm[0], arm[2]);
+        let raised = move |_: &Rig, pose: &mut Pose| {
+            pose.rotations[shoulder] = glam::Quat::from_rotation_z(1.0);
+        };
+        let lowered = move |_: &Rig, pose: &mut Pose| {
+            pose.rotations[shoulder] = glam::Quat::from_rotation_z(-1.0);
+        };
+        let frame = |driver: &mut Driver, layer: Layer<'_>| {
+            driver
+                .drive(
+                    &rig,
+                    &Inputs {
+                        delta: STEP,
+                        over_locomotion: Some(layer),
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed")
+                .pose
+                .forward(&rig)
+                .positions[wrist]
+        };
+
+        let (mut snapped, mut blended) = (Driver::seeded(7), Driver::seeded(7));
+        let mut before = Vec3::ZERO;
+        for _ in 0..30 {
+            before = frame(&mut snapped, &raised);
+            frame(&mut blended, &raised);
+        }
+        blended.blend_now();
+        let snap = frame(&mut snapped, &lowered).distance(before);
+        let blend = frame(&mut blended, &lowered).distance(before);
+        assert!(
+            blend < snap * 0.5,
+            "asked to blend, the wrist still jumped {:.1} mm in one frame against {:.1} unasked",
+            blend * 1000.0,
+            snap * 1000.0
+        );
+
+        let blend_frames = (DriverConfig::default().blend / STEP).ceil() as usize + 2;
+        let (mut settled_snap, mut settled_blend) = (Vec3::ZERO, Vec3::ONE);
+        for _ in 0..blend_frames {
+            settled_snap = frame(&mut snapped, &lowered);
+            settled_blend = frame(&mut blended, &lowered);
+        }
+        assert!(
+            settled_snap.distance(settled_blend) < 1e-4,
+            "the blend left a lasting difference of {:.3} mm — a request must be a transition",
+            settled_snap.distance(settled_blend) * 1000.0
+        );
     }
 }
