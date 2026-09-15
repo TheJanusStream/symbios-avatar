@@ -18,10 +18,12 @@
 //! **One guard here is a construction rather than a look**: which lane of the
 //! strand mask a card is cut from (#340). That is arithmetic, never something
 //! to agree by eye, and it is read off the built mesh all the same.
+use std::collections::HashMap;
 use std::ops::Range;
 
 use symbios_avatar::face::{Canon, Skull};
 use symbios_avatar::hair::mask::{LANES, StrandMask};
+use symbios_avatar::hair::strand_mask;
 use symbios_avatar::hair::{
     BrowStyle, ChinStyle, FlankStyle, Follicles, MoustacheStyle, ScalpStyle,
 };
@@ -39,6 +41,8 @@ struct Head {
     skull: Skull,
     /// The space in front of the face no scalp hair may hang in.
     clearance: symbios_avatar::hair::follicle::scalp::Clearance,
+    /// Where each kind of hair grows on this head, and is painted.
+    follicles: Follicles,
 }
 
 impl Head {
@@ -72,6 +76,7 @@ impl Head {
             origin: follicles.origin(),
             skull,
             clearance: follicles.clearance(),
+            follicles,
         })
     }
 
@@ -155,13 +160,17 @@ impl Head {
 /// them.
 ///
 /// A card is quads `[s, s+1, s+3, s+2]` with `s` stepping by two; a new card
-/// begins wherever the step does not.
+/// begins wherever the step does not. Any other face is not a card's - a
+/// tail's knot lump (#342) - and is passed over.
 fn cards_of(faces: &[Vec<u32>]) -> Vec<Range<usize>> {
     let mut cards = Vec::new();
     let mut start: Option<u32> = None;
     let mut last = 0u32;
     for face in faces {
         let first = face[0];
+        if !is_card(face) {
+            continue;
+        }
         match start {
             None => start = Some(first),
             Some(_) if first == last + 2 => {}
@@ -494,18 +503,32 @@ fn a_tail_gathers_the_back_and_leaves_the_front() {
     // the tips: a front card's tip is in front of the head's centre, on the
     // forehead; a back card's tip is behind it, under the knot.
     let head = Head::wearing(ScalpStyle::TiedBack { tail: 0.8 });
+    let (crown, _) = head.crown_and_throat();
     let mut front_tips_behind = 0usize;
     let mut front = 0usize;
     let mut back_tips_ahead = 0usize;
     let mut back = 0usize;
     let mut tail: Vec<Vec3> = Vec::new();
     for card in head.cards() {
-        let facing = head.azimuth(&card).cos();
+        // **Which way a card faces is read below the crown's whorl** (#342):
+        // a tied-back card turns round the pole as it leaves it, so its
+        // second station is up to a whorl's turn from its own meridian, and
+        // read there a front card counted as a back one. Five centimetres
+        // down, the turn is done; a card rising from the nape starts below.
+        let below = (0..Head::stations(&card))
+            .map(|index| head.station(&card, index))
+            .find(|at| at.y < crown - 0.05)
+            .unwrap_or_else(|| head.station(&card, Head::stations(&card) - 1));
+        let facing = below.x.atan2(below.z).cos();
+        // And that far down the comb has begun turning a side card toward
+        // the back whether or not it is gathered: a card from 82 degrees, pulled
+        // a little under half-way, reads 111 degrees there and ends at the side
+        // hairline. Back is therefore read further round than before.
         let tip = head.station(&card, Head::stations(&card) - 1);
         if facing > 0.5 {
             front += 1;
             front_tips_behind += usize::from(tip.z < 0.0);
-        } else if facing < -0.3 {
+        } else if facing < -0.6 {
             back += 1;
             back_tips_ahead += usize::from(tip.z > 0.0);
             tail.push(tip);
@@ -535,6 +558,245 @@ fn a_tail_gathers_the_back_and_leaves_the_front() {
         tail.len(),
         spread * 1000.0
     );
+}
+
+/// How much of the scalp painted at full strength behind the temple plane no
+/// card covers, in square metres: `(painted, bare)`.
+///
+/// **Covered means a card within 3 mm of the column straight out of the skin,
+/// up to 24 mm out** (#342), which is what a viewer looking at that patch of
+/// skin sees in front of it. The nearest card within 3 mm of the skin itself was
+/// the first reading, and it failed its control: a crop, which the render shows
+/// wholly covered, read 36% bare, because a card lies its lift and the envelope's
+/// offset off the body and a card crossing others rides higher still.
+///
+/// Sampled over the body's own faces at about two millimetres, where the scalp
+/// mask the painter uses is at 0.9 or more. With `cards` false the hair is
+/// ignored, which is the instrument's liveness: it must read everything bare.
+fn uncovered(head: &Head, cards: bool) -> (f32, f32) {
+    const REACH: f32 = 0.003;
+    const COLUMN: f32 = 0.024;
+    const CELL: f32 = 0.008;
+    const SPACING: f32 = 0.002;
+    let key = |at: Vec3| {
+        (
+            (at.x / CELL).floor() as i32,
+            (at.y / CELL).floor() as i32,
+            (at.z / CELL).floor() as i32,
+        )
+    };
+    let mesh = &head.hair.mesh;
+    let mut grid: HashMap<(i32, i32, i32), Vec<[Vec3; 3]>> = HashMap::new();
+    if cards {
+        for face in &mesh.faces {
+            for fan in 1..face.len() - 1 {
+                let tri = [face[0], face[fan], face[fan + 1]].map(|at| mesh.positions[at as usize]);
+                let low = key(tri[0].min(tri[1]).min(tri[2]) - Vec3::splat(REACH));
+                let high = key(tri[0].max(tri[1]).max(tri[2]) + Vec3::splat(REACH));
+                for x in low.0..=high.0 {
+                    for y in low.1..=high.1 {
+                        for z in low.2..=high.2 {
+                            grid.entry((x, y, z)).or_default().push(tri);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let near = |at: Vec3| {
+        grid.get(&key(at)).is_some_and(|tris| {
+            tris.iter()
+                .any(|[a, b, c]| closest_on_triangle(at, *a, *b, *c).0.distance(at) <= REACH)
+        })
+    };
+    let body = &head.body;
+    let normals = body.shading_normals();
+    let front = head.clearance.front;
+    let (mut painted, mut bare) = (0.0f32, 0.0f32);
+    for face in &body.faces {
+        let local: Vec<Vec3> = face
+            .iter()
+            .map(|at| body.positions[*at as usize] - head.origin)
+            .collect();
+        if local.iter().all(|at| at.length() > 0.25 || at.z >= front) {
+            continue;
+        }
+        for fan in 1..local.len() - 1 {
+            let (a, b, c) = (local[0], local[fan], local[fan + 1]);
+            let (na, nb, nc) = (
+                normals[face[0] as usize],
+                normals[face[fan] as usize],
+                normals[face[fan + 1] as usize],
+            );
+            let longest = a.distance(b).max(b.distance(c)).max(c.distance(a));
+            let steps = ((longest / SPACING).ceil() as usize).clamp(1, 60);
+            let area = (b - a).cross(c - a).length() * 0.5 / (steps * steps) as f32;
+            for i in 0..steps {
+                for j in 0..steps - i {
+                    for (u, v) in [(1.0 / 3.0, 1.0 / 3.0), (2.0 / 3.0, 2.0 / 3.0)] {
+                        if u > 0.5 && i + j + 1 >= steps {
+                            continue;
+                        }
+                        let (u, v) = ((i as f32 + u) / steps as f32, (j as f32 + v) / steps as f32);
+                        let at = a + (b - a) * u + (c - a) * v;
+                        if at.z >= front
+                            || head
+                                .follicles
+                                .weight(symbios_avatar::hair::Follicle::Scalp, at)
+                                < 0.9
+                        {
+                            continue;
+                        }
+                        painted += area;
+                        let out = (na + (nb - na) * u + (nc - na) * v).normalize_or(Vec3::Y);
+                        let reached =
+                            (0..=8).any(|step| near(at + out * (COLUMN * step as f32 / 8.0)));
+                        if !reached {
+                            bare += area;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (painted, bare)
+}
+
+/// Whether a face is a card's quad, `[s, s+1, s+3, s+2]`: see [`cards_of`].
+fn is_card(face: &[u32]) -> bool {
+    face.len() == 4 && face[1] == face[0] + 1 && face[2] == face[0] + 3 && face[3] == face[0] + 2
+}
+
+#[test]
+fn a_tied_back_head_covers_its_painted_scalp_behind_the_temples() {
+    // **Bare temples and a V of paint under the tail** (#342). A tied-back
+    // head's gathered cards all start at the crown and leave the scalp for
+    // the knot at the knot's height, so the scalp behind the ear, and all of
+    // it between the knot and the nape's hairline, had nothing on it: the
+    // sheets showed painted scalp there in both renderers. Measured before
+    // #342 on the default head at the default density of 0.6, read as below:
+    // 10.3%, 16.6% and 27.3% of the full-strength paint behind the temple
+    // plane bare at tails of 0.3, 0.6 and 0.9. Wider cards and back cards that
+    // rise to the knot from the nape bring it to the bound below.
+    //
+    // The instrument is checked both ways first: with no cards it reads every
+    // sample bare, and on a crop, which the render shows covered, none.
+    let crop = Head::wearing(ScalpStyle::Crop);
+    let (painted, bare) = uncovered(&crop, false);
+    assert!(
+        painted > 0.03 && (bare - painted).abs() < 1e-9,
+        "the coverage reading does not see a head with no hair on it as bare: {bare} of {painted}"
+    );
+    let (painted, bare) = uncovered(&crop, true);
+    assert!(
+        bare == 0.0,
+        "a crop reads {:.1} cm2 of {:.1} cm2 bare, so the reading is not what the render shows",
+        bare * 1e4,
+        painted * 1e4
+    );
+    for tail in [0.3f32, 0.6, 0.9] {
+        let head = Head::wearing(ScalpStyle::TiedBack { tail });
+        let (painted, bare) = uncovered(&head, true);
+        let share = bare / painted;
+        println!(
+            "tail {tail}: {:.1} cm2 of {:.1} cm2 bare ({:.1}%)",
+            bare * 1e4,
+            painted * 1e4,
+            share * 100.0
+        );
+        assert!(
+            share <= BARE_BEHIND_THE_TEMPLES,
+            "a tied-back head at tail {tail} leaves {:.1}% of its painted scalp behind the \
+             temples with no card over it",
+            share * 100.0
+        );
+    }
+}
+
+/// The most of a tied-back head's full-strength painted scalp behind the temple
+/// plane that may have no card over it; see
+/// `a_tied_back_head_covers_its_painted_scalp_behind_the_temples`.
+///
+/// Measured at #342: 6.3%, 3.6% and 5.0% at tails of 0.3, 0.6 and 0.9. Not
+/// zero, as the issue asked: what is left is a strip along the nape's hairline
+/// and one behind the ear, and which cards cover them moves with the seating,
+/// so a count change of a fifth moved the middle tail from 3.8% to 11.4%.
+const BARE_BEHIND_THE_TEMPLES: f32 = 0.07;
+
+#[test]
+fn a_tail_is_knotted_by_a_closed_lump_the_budget_pays_for() {
+    // **A tail's knot is a lump, not the cards passing through it** (#342).
+    // Every gathered card meets at one point behind the head, and from the
+    // side that point was the edges of the cards: nothing to tie. A tied-back
+    // head draws one small closed solid there, and it has to be what a
+    // budget counts - it is geometry a renderer draws - so it is counted with
+    // the region's triangles, which are counted from the mesh.
+    //
+    // Read off the built mesh: the faces that are not a card's quads.
+    let crop = Head::wearing(ScalpStyle::Crop);
+    assert!(
+        crop.hair.mesh.faces.iter().all(|face| is_card(face)),
+        "a crop has a face that is not a card's: only a tail is knotted"
+    );
+    for tail in [0.3f32, 0.6, 0.9] {
+        let head = Head::wearing(ScalpStyle::TiedBack { tail });
+        let mesh = &head.hair.mesh;
+        let lump: Vec<&Vec<u32>> = mesh.faces.iter().filter(|face| !is_card(face)).collect();
+        let tris: usize = lump.iter().map(|face| face.len() - 2).sum();
+        assert!(
+            (40..=60).contains(&tris),
+            "tail {tail}: the knot is {tris} triangles, where a lump is 40 to 60"
+        );
+        // In the ledger: the region's count is every face the mesh draws.
+        let drawn: usize = mesh.faces.iter().map(|face| face.len() - 2).sum();
+        let counted: usize = head.hair.grown.iter().map(|grown| grown.tris).sum();
+        assert_eq!(
+            counted, drawn,
+            "tail {tail}: the scalp's ledger says {counted} triangles and the mesh draws {drawn}"
+        );
+        // Closed: every edge is shared by exactly two of its faces.
+        let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
+        for face in &lump {
+            for (index, from) in face.iter().enumerate() {
+                let to = face[(index + 1) % face.len()];
+                *edges.entry((*from.min(&to), *from.max(&to))).or_default() += 1;
+            }
+        }
+        assert!(
+            edges.values().all(|count| *count == 2),
+            "tail {tail}: the knot is not a closed solid"
+        );
+        // Wound outward, about its own middle.
+        let corners: Vec<u32> = edges.keys().flat_map(|(a, b)| [*a, *b]).collect();
+        let centre = corners
+            .iter()
+            .fold(Vec3::ZERO, |sum, at| sum + mesh.positions[*at as usize])
+            / corners.len() as f32;
+        for face in &lump {
+            let [a, b, c] = [0, 1, 2].map(|at| mesh.positions[face[at] as usize]);
+            let middle = face
+                .iter()
+                .fold(Vec3::ZERO, |sum, at| sum + mesh.positions[*at as usize])
+                / face.len() as f32;
+            assert!(
+                (b - a).cross(c - a).dot(middle - centre) > 0.0,
+                "tail {tail}: a face of the knot turns into it"
+            );
+        }
+        // Solid under the strand mask a renderer cuts the hair out of.
+        for at in &corners {
+            let alpha = strand_mask().alpha(mesh.uvs[*at as usize]);
+            assert!(
+                alpha >= 0.5,
+                "tail {tail}: the knot is cut away by the strand mask (alpha {alpha})"
+            );
+        }
+        // Behind the head, where the tail hangs from.
+        assert!(
+            centre.z < -head.skull.depth_behind(centre.y).abs() * 0.8,
+            "tail {tail}: the knot sits at {centre:?}, not behind the head"
+        );
+    }
 }
 
 #[test]

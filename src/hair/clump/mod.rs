@@ -174,6 +174,29 @@ pub trait Shape {
         let _ = (root, along);
         1.0
     }
+
+    /// A closed solid this style draws once beside its clumps, if it has one.
+    ///
+    /// **For the one place a style's clumps meet**, which no card can draw
+    /// (#342): every lock of a tail is gathered to one knot, and a knot seen
+    /// from anywhere is a lump, not the edges of the cards passing through it.
+    /// Drawn in the roots' colour and counted with the region's own triangles,
+    /// so the tier and every ledger pay for it as they pay for a card. The
+    /// default is none, which is every style but a tied-back one.
+    fn lump(&self) -> Option<Lump> {
+        None
+    }
+}
+
+/// A small closed solid a style asks for beside its clumps. See [`Shape::lump`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lump {
+    /// Where its middle is, head-local.
+    pub centre: Vec3,
+    /// Its half-extents along the head's own axes, in metres.
+    pub radii: Vec3,
+    /// How much of the roots' colour it keeps.
+    pub shade: f32,
 }
 
 /// How a region's roots are distributed over it. See [`Shape::seating`].
@@ -470,6 +493,13 @@ impl Growth {
             {
                 clumps += 1;
             }
+        }
+        // A style's lump is drawn only where it grew clumps to meet in it, and
+        // before the count below, so it is paid for as they are.
+        if clumps > 0
+            && let Some(lump) = sowing.shape.lump()
+        {
+            loft::lump(&mut self.mesh, &lump, self.head as u16, sowing.roots);
         }
         // Counted from the mesh rather than predicted from the stations,
         // because the two have disagreed before: a sweep drops a degenerate

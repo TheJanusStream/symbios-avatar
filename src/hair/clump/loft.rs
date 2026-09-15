@@ -230,6 +230,89 @@ pub(super) fn loft(
     stations
 }
 
+/// How many segments a lump has round its middle.
+///
+/// Provenance: **derived** from the triangle count #342 allows a knot: eight
+/// round and three rings between the poles is forty-eight triangles.
+const LUMP_SEGMENTS: usize = 8;
+
+/// How many rings of vertices a lump has between its two poles.
+///
+/// Provenance: **derived**, with [`LUMP_SEGMENTS`].
+const LUMP_RINGS: usize = 3;
+
+/// Which row of the strand mask a lump's texture coordinates sit on.
+///
+/// Inside the part of every lane the mask keeps whole, so a cut-out material
+/// draws the lump solid (see [`crate::hair::mask`]).
+///
+/// Provenance: **derived** from the mask, whose lanes are whole to 60%.
+const LUMP_ROW: f32 = 0.25;
+
+/// Draws one lump and appends it to `into`: a closed ellipsoid, bound to the
+/// head, in `colour` darkened by the lump's own shade.
+///
+/// Returns how many triangles it spent.
+pub(super) fn lump(into: &mut PolyMesh, lump: &super::Lump, head: u16, colour: Vec3) -> usize {
+    use std::f32::consts::{PI, TAU};
+    let first = into.positions.len() as u32;
+    let (lane_from, lane_to) = StrandMask::lane_span(0);
+    let uv = Vec2::new((lane_from + lane_to) * 0.5, LUMP_ROW);
+    let mut skin = VertexSkin::default();
+    skin[0] = crate::rig::Influence {
+        joint: head,
+        weight: 1.0,
+    };
+    let shade = (colour * lump.shade).clamp(Vec3::ZERO, Vec3::ONE);
+    let radii = lump.radii.max(Vec3::splat(f32::EPSILON));
+    let mut push = |unit: Vec3| {
+        into.positions.push(lump.centre + unit * radii);
+        // The ellipsoid's own gradient, which is the unit sphere's normal
+        // squashed the other way.
+        into.normals.push((unit / radii).normalize_or(unit));
+        into.uvs.push(uv);
+        into.colours.push(shade);
+        into.skin.push(skin);
+    };
+    push(Vec3::Y);
+    for ring in 1..=LUMP_RINGS {
+        let polar = PI * ring as f32 / (LUMP_RINGS + 1) as f32;
+        for segment in 0..LUMP_SEGMENTS {
+            let turn = TAU * segment as f32 / LUMP_SEGMENTS as f32;
+            push(Vec3::new(
+                polar.sin() * turn.sin(),
+                polar.cos(),
+                polar.sin() * turn.cos(),
+            ));
+        }
+    }
+    push(Vec3::NEG_Y);
+    let at = |ring: usize, segment: usize| {
+        first + 1 + (ring * LUMP_SEGMENTS + segment % LUMP_SEGMENTS) as u32
+    };
+    let bottom = first + 1 + (LUMP_RINGS * LUMP_SEGMENTS) as u32;
+    let before = into.faces.len();
+    // Wound so each face turns out of the lump: down the meridian, then round.
+    for segment in 0..LUMP_SEGMENTS {
+        into.faces
+            .push(vec![first, at(0, segment), at(0, segment + 1)]);
+        for ring in 0..LUMP_RINGS - 1 {
+            into.faces.push(vec![
+                at(ring, segment),
+                at(ring + 1, segment),
+                at(ring + 1, segment + 1),
+                at(ring, segment + 1),
+            ]);
+        }
+        into.faces.push(vec![
+            at(LUMP_RINGS - 1, segment),
+            bottom,
+            at(LUMP_RINGS - 1, segment + 1),
+        ]);
+    }
+    into.faces[before..].iter().map(|face| face.len() - 2).sum()
+}
+
 /// Samples a clump's spine only as finely as its own curvature needs.
 ///
 /// Bisects the fractions where the drawn line strays furthest from the curve,
