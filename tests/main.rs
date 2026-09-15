@@ -31,8 +31,11 @@
 //! process-global state, and the #332 audit is what says these do: every file
 //! here builds bodies from seeded records, reads a checked-in artifact, or
 //! measures a mesh — nothing installs a hook, arms a `OnceLock` with a
-//! test-specific value, or asserts on a process-wide counter. The crate has no
-//! process-global to share; every draw comes from a `Pcg64Mcg` the test seeds.
+//! test-specific value, or asserts on a process-wide counter. The crate's one
+//! process-global is the strand mask (#340), and it is immutable: painted from
+//! constants the first time it is asked for, so every test that reads it reads
+//! the same bytes and none can arm it with a value of its own. Every draw comes
+//! from a `Pcg64Mcg` the test seeds.
 //!
 //! The line is worth stating for whatever is added next. A test that needs a
 //! private copy of a process-global — one that installs a panic hook, sets an

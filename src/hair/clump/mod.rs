@@ -157,6 +157,23 @@ pub trait Shape {
     fn seating(&self) -> Seating {
         Seating::Surface
     }
+
+    /// How much of the record's colour this clump keeps a share of the way
+    /// along it, as a factor on the sRGB shade the loft lerps from roots to
+    /// tips.
+    ///
+    /// **Where a mass of flat cards gets an interior, and the default gives
+    /// none** (#339). Two colours and a fade are what somebody picked; they
+    /// cannot say that one lock sits a shade apart from the lock beside it, or
+    /// that the part of a card lying under the cards that cross it is in their
+    /// shadow and the part hanging free of them is not. Only the style knows
+    /// which part of its card is which, so it is asked here. A style that says
+    /// nothing is drawn in exactly the colours the record asked for, which is
+    /// what every region but the scalp still is.
+    fn shade_at(&self, root: &Root, along: f32) -> f32 {
+        let _ = (root, along);
+        1.0
+    }
 }
 
 /// How a region's roots are distributed over it. See [`Shape::seating`].

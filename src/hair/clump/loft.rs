@@ -26,11 +26,17 @@
 //! - **The gradient is vertex colour**, so a root-to-tip fade costs nothing: no
 //!   texture, no second material, no atlas space. It is the whole reason the
 //!   two-colour model is affordable at this triangle count.
+//! - **The outline is not the geometry's** (#340). A card is a rectangle whose
+//!   texture coordinates run edge to edge across one lane of the strand mask
+//!   and root to tip down it, and the mask's alpha is what cuts a lock with a
+//!   frayed end out of the rectangle (see [`crate::hair::mask`]): the one
+//!   texture hair spends, shared by every card of every avatar.
 
 use glam::{Vec2, Vec3};
 
 use super::Shape;
 use super::scatter::Root;
+use crate::hair::mask::{self, StrandMask};
 use crate::mesh::{PolyMesh, VertexSkin};
 
 /// How far a clump's drawn spine may stray from the curve it stands for, in
@@ -123,11 +129,11 @@ pub(super) fn loft(
     // its spine turned, and re-squaring costs a dot product. It also cannot drift,
     // which a transported frame can over a curl.
     let first = into.positions.len() as u32;
-    let mut walked = 0.0;
+    // **One lane of the strand mask for the whole card, picked by a hash of its
+    // root** (#340): cards side by side end in different locks, and a card that
+    // changed lane along its length would tear its own silhouette in two.
+    let (lane_from, lane_to) = StrandMask::lane_span(mask::lane_of(root.at));
     for (station, (at, along)) in path.iter().zip(&fractions).enumerate() {
-        if station > 0 {
-            walked += path[station].distance(path[station - 1]);
-        }
         let tangent = if station + 1 < path.len() {
             path[station + 1] - *at
         } else {
@@ -171,7 +177,12 @@ pub(super) fn loft(
         // would run backwards over the curl. And by how far along the curve a
         // station is, not by its index (#205) — adaptive sampling puts stations
         // where a clump bends, so an index is not a share of the way down a hair.
-        let shade = shade(roots_colour, tips_colour, *along);
+        // And the style's own say about this station's light (#339): a card a
+        // shade apart from its neighbour, a stretch of it lying in the others'
+        // shadow. Clamped, because a factor over one on a pale colour is a
+        // channel past white.
+        let shade = (shade(roots_colour, tips_colour, *along) * shape.shade_at(root, *along))
+            .clamp(Vec3::ZERO, Vec3::ONE);
         for edge in [-1.0f32, 1.0] {
             into.positions.push(*at + side * (half * edge));
             // **The normal is rounded across the card though the card is
@@ -182,9 +193,12 @@ pub(super) fn loft(
             // is, and costs nothing — the rasteriser interpolates it.
             into.normals
                 .push((out * BEVEL.cos() + side * (BEVEL.sin() * edge)).normalize_or(out));
+            // Across the card's lane of the strand mask edge to edge, and down
+            // it by the same share of the way the width and the shade are
+            // asked at, so the lock the mask cuts tapers where the card does.
             into.uvs.push(Vec2::new(
-                (edge + 1.0) * 0.5,
-                walked / length.max(f32::EPSILON),
+                lane_from + (lane_to - lane_from) * (edge + 1.0) * 0.5,
+                along.clamp(0.0, 1.0),
             ));
             into.colours.push(shade);
             // **Bound like the skin it grew out of at the root, and like the

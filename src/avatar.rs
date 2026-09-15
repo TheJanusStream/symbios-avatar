@@ -645,6 +645,17 @@ impl Avatar {
         Some(avatar)
     }
 
+    /// The strand mask every hair card's texture coordinates index (#340).
+    ///
+    /// **Beside [`Self::skin`] rather than a field beside it.** One image serves
+    /// every body - see [`crate::hair::mask`] - so it is the process's and not
+    /// this avatar's: it adds nothing to what crosses the worker boundary, and a
+    /// consumer binds the same one to every hair material it builds.
+    #[must_use]
+    pub fn strand_mask(&self) -> &'static crate::hair::StrandMask {
+        crate::hair::strand_mask()
+    }
+
     /// Everything to draw: the merged skinned meshes and the eye globes.
     ///
     /// `closure` runs `0` for open to `1` for shut, and is passed through to
@@ -1421,6 +1432,76 @@ mod tests {
             "only {between} of {} hair vertices are anywhere between the two colours: the \
              gradient is two flat ends rather than a walk",
             alongs.len()
+        );
+
+        // **And ACROSS the locks, not only down each one** (#339). A head of
+        // cards drawn in the record's two colours is a gradient laid over one
+        // flat mass: every card is the same colour at the same share of its
+        // length, and at any distance that reads as a helmet with a fade on it.
+        // So the scalp's cards are read at their first station, where every one
+        // of them is at the same share of its length and lies under the same
+        // shadow, and what is left between them is each card's own tone.
+        let growth = avatar.parts.hair.as_ref().expect("a biped grows hair");
+        let scalp = growth
+            .grown
+            .first()
+            .filter(|grown| grown.follicle == crate::hair::Follicle::Scalp)
+            .expect("this seed grows a scalp, and the scalp is grown first");
+        let origin = avatar.rig.joints[growth.head].position;
+        let shade = |colour: Vec3| colour.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+        // A card is a run of quads [s, s+1, s+3, s+2] with s stepping by two,
+        // and the merge keeps the loft's order: a new card begins wherever the
+        // step does not.
+        let mut cards: Vec<(f32, f32)> = Vec::new();
+        let mut previous: Option<u32> = None;
+        for face in &hair.mesh.faces[..scalp.tris / 2] {
+            let first = face[0];
+            if previous.is_none_or(|previous| first != previous + 2) {
+                let root = first as usize;
+                // Its azimuth one station out of the pole, where every scalp
+                // card is still on its own meridian.
+                let out =
+                    (hair.mesh.positions[root + 2] + hair.mesh.positions[root + 3]) * 0.5 - origin;
+                cards.push((out.x.atan2(out.z), shade(hair.mesh.colours[root])));
+            }
+            previous = Some(first);
+        }
+        assert!(
+            cards.len() >= 16,
+            "only {} scalp cards to compare",
+            cards.len()
+        );
+        let (low, high) = cards.iter().fold((f32::MAX, f32::MIN), |span, (_, tone)| {
+            (span.0.min(*tone), span.1.max(*tone))
+        });
+        let mean = cards.iter().map(|(_, tone)| tone).sum::<f32>() / cards.len() as f32;
+        // The style's tone is six per cent either way, so a spread under half
+        // of that whole range is a tone that is not reaching the vertices.
+        assert!(
+            high - low > mean * 0.06,
+            "the scalp's {} cards span only {:.1}% of their mean shade at their roots, so \
+             neighbouring locks cannot separate",
+            cards.len(),
+            (high - low) / mean * 100.0
+        );
+        // **Correlated with nothing**: round the head, a card's step from its
+        // neighbour is about as big as its step from the card opposite. A tone
+        // that followed position would be a stripe, and a stripe is a pattern
+        // rather than an interior.
+        cards.sort_by(|one, two| one.0.total_cmp(&two.0));
+        let count = cards.len();
+        let step = |apart: usize| {
+            (0..count)
+                .map(|at| (cards[at].1 - cards[(at + apart) % count].1).abs())
+                .sum::<f32>()
+                / count as f32
+        };
+        assert!(
+            step(1) > step(count / 2) * 0.5,
+            "neighbouring cards differ by {:.4} and opposite ones by {:.4}: the tone follows \
+             position round the head",
+            step(1),
+            step(count / 2)
         );
     }
 

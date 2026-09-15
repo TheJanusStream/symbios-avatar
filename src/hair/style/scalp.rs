@@ -149,13 +149,21 @@ const WIDTH: [f32; 5] = [0.034, 0.046, 0.056, 0.036, 0.070];
 /// Real hair gathers: locks that fall exactly as they were rooted stay parallel
 /// all the way down and read as a comb.
 ///
-/// **Nearly to a point, because a card's END is a flat cap**. At a third of
-/// the width the fringe was a row of square teeth over the forehead — the caps
-/// themselves, 14 mm across and facing the camera. Only the hanging part tapers
-/// (see `Sheet::width_at`), so this is what the fringe line is made of.
+/// **Half, on every style, because the point is the strand mask's now**
+/// (#340). The geometry used to make it: a card's END is a flat cap, and at a
+/// third of the width the fringe was a row of square teeth over the forehead -
+/// the caps themselves, 14 mm across and facing the camera - so every lock was
+/// tapered nearly to a point, and every style's ends went thin getting there.
+/// The mask cuts each card's end into strands that come to points of their
+/// own, so there is no cap left to hide and the width goes back into the lock.
+/// Rendered with the mask at the old taper, a third and a half, each step wider
+/// read fuller with the ends still feathered, and a half hid the most of the
+/// painted layer where the cut uncovers it. Only the hanging part tapers (see
+/// `Sheet::width_at`).
 ///
-/// Provenance: **carried** in spirit from the shell's gather, **tuned by render**.
-const TAPER: [f32; 5] = [0.10, 0.16, 0.14, 0.14, 0.30];
+/// Provenance: **carried** in spirit from the shell's gather, **tuned by render**
+/// (#340: 0.10 to 0.30 by style before the mask, then a third and a half).
+const TAPER: [f32; 5] = [0.5, 0.5, 0.5, 0.5, 0.5];
 
 /// How many locks each style asks for at full density, as a share of the shared
 /// count.
@@ -523,6 +531,37 @@ const CROWN_STEPS: usize = 12;
 ///
 /// Provenance: **derived** from what a straight line needs.
 const HANG: usize = 4;
+
+/// How far one card's shade sits from its neighbour's, either way, as a share
+/// of its colour.
+///
+/// **Per card and correlated with nothing** (#339). Every card of a head used
+/// to be drawn in exactly the record's two colours, so at any distance the mass
+/// was one shade with a torn rim; real hair is never one tone, and the eye
+/// separates locks by the step in shade between them before it resolves their
+/// edges. Hashed from the root like the stagger, in a lane of its own, so the
+/// step is a feathering and not a stripe.
+///
+/// Provenance: **tuned by render**, from the issue's six per cent. Sheeted on
+/// its own, it separated a curtain into locks and moved nothing else.
+const TONE: f32 = 0.06;
+
+/// How much darker a card is where it lies on the scalp than where it hangs
+/// free, as a share of its colour.
+///
+/// **The part of a card lying on the scalp lies under the cards that cross it,
+/// and the part hanging past the hairline is the outside of the mass** (#339).
+/// Read off the card's own walk - how far past the hairline a station is, eased
+/// over the same [`LOOSE`] the volume and the coil are - rather than searched
+/// for among the other cards, so it costs nothing a loft does not already know.
+///
+/// **Halved from 0.30 at the first look**: over every scalp-lying station of a
+/// crop - which is nearly all of one - a record's blond rendered brown and a
+/// light long head read as dark roots, and the colour somebody picked is not
+/// this constant's to change.
+///
+/// Provenance: **tuned by render**.
+const SHADOW: f32 = 0.15;
 
 /// A lock the skull holds up, and which hangs once it does not.
 ///
@@ -1061,6 +1100,18 @@ impl Shape for Sheet {
         // A root is a meridian here: see [`Seating`], and the bald side of a
         // tied-back head that found it.
         Seating::Meridians
+    }
+
+    fn shade_at(&self, root: &Root, along: f32) -> f32 {
+        // A lane of its own, so the tone is correlated with neither the length
+        // stagger (lane 0) nor where the card leaves the hairline (lane 1).
+        let tone = 1.0 + TONE * (2.0 * Self::salt(root, 2) - 1.0);
+        // How far past the hairline this station hangs, eased the way the
+        // volume and the coil are: lying on the scalp is lying under the cards
+        // that cross it, and hanging free is the outside of the mass.
+        let walked = self.walked(root, self.length(root) * along.clamp(0.0, 1.0));
+        let lying = 1.0 - crate::face::smooth(walked.free / LOOSE);
+        tone * (1.0 - SHADOW * lying)
     }
 
     fn width(&self, root: &Root) -> (f32, f32) {

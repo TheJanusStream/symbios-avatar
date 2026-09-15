@@ -9,6 +9,7 @@
 //! eye that a form is solid.
 
 use glam::{Mat4, Vec2, Vec3};
+use symbios_avatar::StrandMask;
 
 /// How a surface responds to light.
 #[derive(Clone, Copy, Debug)]
@@ -129,8 +130,42 @@ pub struct Item<'a> {
     /// atlas and every shading cue that says what shape it is. Tinting keeps
     /// the render the render and puts the classification on top of it.
     pub tint: Option<&'a [Vec3]>,
+    /// Where the surface is cut away, for one that is: hair's cards, cut out of
+    /// the library's strand mask (#340).
+    ///
+    /// **Honoured by the shadow pass as well as the colour pass**, because the
+    /// alpha mask a consuming engine binds does both, and a card that drew its
+    /// lock but cast its rectangle would be the hedgehog shadow the mask exists
+    /// to end.
+    pub cutout: Option<Cutout<'a>>,
     /// How it responds to light.
     pub material: Material,
+}
+
+/// A cut: texture coordinates into a mask whose alpha says whether the surface
+/// is there at all.
+pub struct Cutout<'a> {
+    /// Texture coordinates, one per vertex.
+    pub uvs: &'a [Vec2],
+    /// The mask they index.
+    pub mask: &'a StrandMask,
+}
+
+impl Cutout<'_> {
+    /// The alpha at and above which a cut surface is drawn: the threshold of the
+    /// alpha mask the adapter binds on hair, `AlphaMode::Mask(0.5)`.
+    const KEPT: f32 = 0.5;
+
+    /// Whether the surface is there at a point of a triangle.
+    fn keeps(&self, tri: [u32; 3], bary: Vec3) -> bool {
+        let uv = tri
+            .iter()
+            .zip(bary.to_array())
+            .fold(Vec2::ZERO, |sum, (&index, weight)| {
+                sum + self.uvs[index as usize] * weight
+            });
+        self.mask.alpha(uv) >= Self::KEPT
+    }
 }
 
 /// One orthographic view: where it looks from, at what, and how close.
@@ -309,6 +344,15 @@ impl GBuffer {
                 if depth >= self.depth[pixel] {
                     continue;
                 }
+                // Cut before anything is written, so a clear texel leaves what
+                // is behind it exactly as it was.
+                if item
+                    .cutout
+                    .as_ref()
+                    .is_some_and(|cut| !cut.keeps(tri, bary))
+                {
+                    continue;
+                }
 
                 let point = world[0] * bary.x + world[1] * bary.y + world[2] * bary.z;
                 let (albedo, rough, uv) = match &item.paint {
@@ -431,7 +475,9 @@ impl GBuffer {
                             let depth =
                                 clip[0].z * bary.x + clip[1].z * bary.y + clip[2].z * bary.z;
                             let pixel = y * self.width + x;
-                            if depth < self.depth[pixel] {
+                            if depth < self.depth[pixel]
+                                && item.cutout.as_ref().is_none_or(|cut| cut.keeps(tri, bary))
+                            {
                                 self.depth[pixel] = depth;
                             }
                         }

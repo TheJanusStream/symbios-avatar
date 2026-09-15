@@ -22,7 +22,10 @@
 //!   geometry: a shaved jaw, a drawn-on brow.
 //! - **Grown** ([`clump`]) — low-poly cards rooted on the mask and lofted along
 //!   a guide curve. A region's [`Style`] chooses the curve; the record's
-//!   [`Cut`] says how long, how thick, how many and how far they hang.
+//!   [`Cut`] says how long, how thick, how many and how far they hang. Each
+//!   card is cut out of the [`StrandMask`], the one image every card of every
+//!   avatar shares, so its end frays into strands rather than stopping on a
+//!   line (#340).
 //!
 //! Both layers read the same mask, so the paint and the cards agree about where
 //! hair is by construction rather than by two sets of numbers being kept in
@@ -66,11 +69,13 @@
 
 pub mod clump;
 pub mod follicle;
+pub mod mask;
 pub mod painted;
 pub mod style;
 
 pub use clump::{Grown, Growth, Root, Seating, Shape};
 pub use follicle::{Follicle, FollicleParams, Follicles};
+pub use mask::{StrandMask, strand_mask};
 pub use painted::{Paint, PaintedHair};
 pub use style::{
     BrowStyle, ChinStyle, Cut, FlankStyle, HairRecord, MoustacheStyle, ScalpStyle, Sown, Style,

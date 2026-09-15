@@ -1278,15 +1278,21 @@ const CONTROLLER_STEP: f32 = 1.0 / 64.0;
 /// application's controller, and the question it answers — what a planted foot
 /// does when the body turns and accelerates under it the way a player's does —
 /// cannot be asked without one. So its arithmetic is copied, with the
-/// application's defaults (overlands `apply_humanoid_walk`, record defaults
-/// 2026-09-10): the planar velocity is ASSIGNED each step, an exponential
-/// approach toward the keys' direction at `acceleration` while any is held and
-/// a decay at `stop_damping` when none is; the facing turns toward the
-/// velocity's own direction at `turn_rate` whenever the body moves faster than
-/// 0.1 m/s; and the position integrates the velocity, which is all the
+/// application's defaults (overlands `apply_humanoid_walk` as shipped by
+/// overlands #1323, 2026-09-11): the planar velocity is ASSIGNED each step,
+/// an exponential approach toward the keys' direction at `acceleration` while
+/// any is held and a decay at `stop_damping` when none is, and that step is
+/// then held to the application's ramp ([`ramped`]); the facing turns toward
+/// the velocity's own direction at `turn_rate` whenever the body moves faster
+/// than 0.1 m/s; and the position integrates the velocity, which is all the
 /// application's physics does to it on flat open ground. The walk is the
 /// application's own derivation, [`WALK_FROUDE`] on the speed axis; the run is
 /// its default travel speed.
+///
+/// Until overlands #1323 this replica carried the 0.7.0-era chassis (walk
+/// Froude 0.43, run 4.0 m/s, no ramp), and was validated against the
+/// application's harness within 0.2 mm on it; it moved with the application
+/// and was re-validated against the same harness.
 ///
 /// Its whole claim to be the application's chassis is that it reproduces the
 /// application's readings on the same body, seed and script — see
@@ -1303,10 +1309,36 @@ const ACCELERATION: f32 = 12.0;
 const STOP_DAMPING: f32 = 20.0;
 const TURN_RATE: f32 = 12.0;
 /// The Froude number the consuming application walks at unshifted.
-const WALK_FROUDE: f32 = 0.43;
+const WALK_FROUDE: f32 = 0.49;
 /// The consuming application's default travel speed, which its run key asks
 /// for, in m/s.
-const RUN: f32 = 4.0;
+const RUN: f32 = 5.0;
+/// The consuming application's ramp: the most its planar velocity may speed
+/// up and slow down, in m/s² (overlands `SPEED_UP_LIMIT`, `SLOW_DOWN_LIMIT`).
+const SPEED_UP_LIMIT: f32 = 9.0;
+const SLOW_DOWN_LIMIT: f32 = 13.5;
+
+/// One step of the planar velocity held to the application's ramp: the step
+/// the controller proposed, with its part ALONG the current velocity capped at
+/// [`SPEED_UP_LIMIT`] and [`SLOW_DOWN_LIMIT`] and its part across it — the
+/// turn — left as asked. Under 0.1 m/s the along axis is the keys' own
+/// direction. Along the velocity rather than on the speed, as the application
+/// does it, because a cap on the magnitude alone flips a reversal at its zero
+/// crossing.
+fn ramped(current: Vec3, proposed: Vec3, toward: Vec3, dt: f32) -> Vec3 {
+    let axis = if current.length_squared() > 0.01 {
+        current.normalize()
+    } else {
+        toward.normalize_or_zero()
+    };
+    if axis == Vec3::ZERO {
+        return proposed;
+    }
+    let change = proposed - current;
+    let along = change.dot(axis);
+    let across = change - axis * along;
+    current + axis * along.clamp(-SLOW_DOWN_LIMIT * dt, SPEED_UP_LIMIT * dt) + across
+}
 
 /// An angle folded into `(-PI, PI]`.
 ///
@@ -1337,7 +1369,7 @@ impl Controller {
     fn step(&mut self, toward: Vec3, speed: f32) {
         let dt = CONTROLLER_STEP;
         let planar = Vec3::new(self.velocity.x, 0.0, self.velocity.z);
-        self.velocity = if toward == Vec3::ZERO {
+        let proposed = if toward == Vec3::ZERO {
             planar * (-STOP_DAMPING * dt).exp()
         } else {
             planar.lerp(
@@ -1345,6 +1377,7 @@ impl Controller {
                 (ACCELERATION * dt).clamp(0.0, 1.0),
             )
         };
+        self.velocity = ramped(planar, proposed, toward, dt);
         if self.velocity.length_squared() > 0.01 {
             let target = self.velocity.x.atan2(self.velocity.z);
             let alpha = (TURN_RATE * dt).clamp(0.0, 1.0);

@@ -47,6 +47,7 @@
 //! cargo run --release --example render -- --jawbind   # tint the skin by how the JAW bone holds it
 //! cargo run --release --example render -- --follicles # tint the skin by where hair may grow
 //! cargo run --release --example render -- --clumps    # grow the new clump engine on all five regions
+//! cargo run --release --example render -- --strand-mask # the image every hair card is cut out of
 //! cargo run --release --example render -- --jaw 20    # open the mouth this many degrees
 //! cargo run --release --example render -- --brows 8   # raise the brows this many degrees
 //! cargo run --release --example render -- --corners 12 # smile this many degrees (negative frowns)
@@ -79,7 +80,7 @@ use glam::{Mat4, Quat, Vec3};
 use light::Image;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
-use scene::{Frame, GBuffer, Item, Material, Paint, ShadowMap};
+use scene::{Cutout, Frame, GBuffer, Item, Material, Paint, ShadowMap};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, Category, Expression,
     EyeParams, FaceParams, FootingConfig, Gait, GazeConfig, Ground, Influence, Limb,
@@ -376,6 +377,24 @@ fn main() {
     if let Err(error) = std::fs::create_dir_all(&out) {
         eprintln!("cannot create {}: {error}", out.display());
         std::process::exit(1);
+    }
+
+    // The strand mask itself (#340): the one image the library ships for every
+    // head of hair, written out to be looked at rather than inferred from the
+    // heads it cuts. Its alpha as grey on black, each texel a 3x3 block.
+    if args.iter().any(|arg| arg == "--strand-mask") {
+        let mask = symbios_avatar::strand_mask();
+        let side = mask.side * 3;
+        let picture = image::RgbaImage::from_fn(side, side, |x, y| {
+            let alpha = mask.rgba[((y / 3 * mask.side + x / 3) * 4 + 3) as usize];
+            image::Rgba([alpha, alpha, alpha, 255])
+        });
+        let path = out.join("strand_mask.png");
+        match picture.save(&path) {
+            Ok(()) => println!("wrote the strand mask to {}", path.display()),
+            Err(error) => eprintln!("cannot write {}: {error}", path.display()),
+        }
+        return;
     }
 
     // Both archetypes, because everything on a body is shared between them and
@@ -2558,6 +2577,7 @@ fn items<'a>(
         normals: None,
         paint: Paint::Flat,
         tint: None,
+        cutout: None,
         material: Material {
             albedo: Vec3::new(0.30, 0.31, 0.35),
             roughness: 1.0,
@@ -2586,12 +2606,20 @@ fn items<'a>(
             },
             _ => Paint::Vertex(&drawn.mesh.colours),
         };
+        // Hair is cut out of the strand mask the library ships (#340), as the
+        // adapter's alpha-masked hair material cuts it: this instrument has to
+        // draw the locks a consumer draws, not the rectangles under them.
+        let cutout = matches!(drawn.kind, MeshKind::Hair).then(|| Cutout {
+            uvs: &drawn.mesh.uvs,
+            mask: symbios_avatar::strand_mask(),
+        });
         items.push(Item {
             positions: &drawn.mesh.positions,
             faces: &drawn.mesh.faces,
             normals: Some(&drawn.mesh.normals),
             paint,
             tint: tint.as_deref(),
+            cutout,
             material,
         });
     }

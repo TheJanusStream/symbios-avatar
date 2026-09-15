@@ -14,13 +14,18 @@
 //! isolation, because the instrument that reads a shape has been wrong about
 //! what the render showed before (#210, #313). A card here is the run of
 //! quads the loft emits for one clump, two vertices a station, in order.
+//!
+//! **One guard here is a construction rather than a look**: which lane of the
+//! strand mask a card is cut from (#340). That is arithmetic, never something
+//! to agree by eye, and it is read off the built mesh all the same.
 use std::ops::Range;
 
 use symbios_avatar::face::{Canon, Skull};
+use symbios_avatar::hair::mask::{LANES, StrandMask};
 use symbios_avatar::hair::{
     BrowStyle, ChinStyle, FlankStyle, Follicles, MoustacheStyle, ScalpStyle,
 };
-use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3};
+use symbios_avatar::{Archetype, Avatar, AvatarRecord, MeshKind, Vec3};
 
 /// The default body wearing one scalp style and nothing else on its head.
 struct Head {
@@ -68,29 +73,8 @@ impl Head {
     }
 
     /// Each card's run of vertices, in the order the loft emitted them.
-    ///
-    /// A card is quads `[s, s+1, s+3, s+2]` with `s` stepping by two; a new
-    /// card begins wherever the step does not.
     fn cards(&self) -> Vec<Range<usize>> {
-        let mut cards = Vec::new();
-        let mut start: Option<u32> = None;
-        let mut last = 0u32;
-        for face in &self.hair.mesh.faces {
-            let first = face[0];
-            match start {
-                None => start = Some(first),
-                Some(_) if first == last + 2 => {}
-                Some(begun) => {
-                    cards.push(begun as usize..(last + 4) as usize);
-                    start = Some(first);
-                }
-            }
-            last = first;
-        }
-        if let Some(begun) = start {
-            cards.push(begun as usize..(last + 4) as usize);
-        }
-        cards
+        cards_of(&self.hair.mesh.faces)
     }
 
     /// Station `index` of a card: the midpoint of its two vertices.
@@ -156,6 +140,33 @@ impl Head {
         }
         best
     }
+}
+
+/// Each card's run of vertices in a mesh of cards, in the order the loft emitted
+/// them.
+///
+/// A card is quads `[s, s+1, s+3, s+2]` with `s` stepping by two; a new card
+/// begins wherever the step does not.
+fn cards_of(faces: &[Vec<u32>]) -> Vec<Range<usize>> {
+    let mut cards = Vec::new();
+    let mut start: Option<u32> = None;
+    let mut last = 0u32;
+    for face in faces {
+        let first = face[0];
+        match start {
+            None => start = Some(first),
+            Some(_) if first == last + 2 => {}
+            Some(begun) => {
+                cards.push(begun as usize..(last + 4) as usize);
+                start = Some(first);
+            }
+        }
+        last = first;
+    }
+    if let Some(begun) = start {
+        cards.push(begun as usize..(last + 4) as usize);
+    }
+    cards
 }
 
 /// The closest point of a triangle to `p`, and the triangle's normal.
@@ -491,4 +502,80 @@ fn a_card_is_lit_as_a_round_lock() {
         flat == 0,
         "{flat} of {stations} card stations are lit flat across their width"
     );
+}
+
+#[test]
+fn every_card_is_cut_from_one_lane_of_the_strand_mask() {
+    // #340. The strand mask carries its locks side by side, and a card's
+    // texture coordinates have to cover exactly one of them, edge to edge, at
+    // every station: a card straddling two would draw half of each lock with a
+    // gutter down its middle, one off every lane would draw nothing, and one
+    // on a strip of a lane would draw a lock with no edges. Down the card, the
+    // root has to be the mask's first row and the tip its last, clear one, or
+    // the lock frays somewhere other than at its end.
+    //
+    // Read off the mesh a renderer is handed, with all five regions grown, on
+    // every scalp style. And every lane has to be in use: a hash that sent
+    // every card to one lane would pass the rest of this and cut one lock
+    // everywhere.
+    let spans: Vec<(f32, f32)> = (0..LANES).map(StrandMask::lane_span).collect();
+    for style in [
+        ScalpStyle::Crop,
+        ScalpStyle::Bob { fringe: 0.8 },
+        ScalpStyle::Long { weight: 0.8 },
+        ScalpStyle::TiedBack { tail: 0.8 },
+        ScalpStyle::Curly { curl: 0.8 },
+    ] {
+        let mut record = AvatarRecord::new("Laned", Archetype::default());
+        record.hair.scalp.style = style;
+        record.hair.brows.style = BrowStyle::Thick;
+        record.hair.moustache.style = MoustacheStyle::Handlebar { sweep: 0.9 };
+        record.hair.chin.style = ChinStyle::Full;
+        record.hair.flanks.style = FlankStyle::FullConnect { reach: 0.7 };
+        let avatar = Avatar::build(&record).expect("a biped builds");
+        let hair = avatar
+            .drawn(0.0)
+            .into_iter()
+            .find(|mesh| mesh.kind == MeshKind::Hair)
+            .expect("a head of hair is drawn");
+        let mesh = &hair.mesh;
+        assert_eq!(
+            mesh.uvs.len(),
+            mesh.positions.len(),
+            "{style:?}: the hair is not mapped"
+        );
+        let mut used = [false; LANES as usize];
+        for card in cards_of(&mesh.faces) {
+            let uvs = &mesh.uvs[card];
+            let Some(lane) = spans
+                .iter()
+                .position(|(from, _)| (uvs[0].x - from).abs() < 1e-5)
+            else {
+                panic!(
+                    "{style:?}: a card's edge is at u {}, which is no lane's edge",
+                    uvs[0].x
+                );
+            };
+            let (from, to) = spans[lane];
+            used[lane] = true;
+            for station in uvs.chunks_exact(2) {
+                assert!(
+                    (station[0].x - from).abs() < 1e-5 && (station[1].x - to).abs() < 1e-5,
+                    "{style:?}: a card cut from lane {lane} ({from}..{to}) has a station across \
+                     u {}..{}",
+                    station[0].x,
+                    station[1].x
+                );
+            }
+            let (root, tip) = (uvs[0].y, uvs[uvs.len() - 1].y);
+            assert!(
+                root.abs() < 1e-6 && (tip - 1.0).abs() < 1e-6,
+                "{style:?}: a card runs down the mask from v {root} to v {tip}, not root to tip"
+            );
+        }
+        assert!(
+            used.iter().all(|in_use| *in_use),
+            "{style:?}: the lanes in use are {used:?}"
+        );
+    }
 }
