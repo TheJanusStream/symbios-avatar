@@ -723,6 +723,168 @@ fn a_tied_back_head_covers_its_painted_scalp_behind_the_temples() {
 /// so a count change of a fifth moved the middle tail from 3.8% to 11.4%.
 const BARE_BEHIND_THE_TEMPLES: f32 = 0.07;
 
+/// A ribbon of cards read segment by segment, by area: all of it, where a
+/// segment's two stations put its edges on opposite sides of the spine (a
+/// bow-tie: the card turned over between two stations), and where either edge
+/// runs backwards against the spine (a fold). A segment of no length - a seam
+/// (#343) - has no area and is passed over.
+fn creases(positions: &[Vec3], cards: &[Range<usize>]) -> (f32, f32, f32) {
+    let (mut area, mut crossed, mut folded) = (0.0f32, 0.0f32, 0.0f32);
+    for card in cards {
+        for station in 0..(card.len() / 2).saturating_sub(1) {
+            let at = card.start + station * 2;
+            let (l0, r0) = (positions[at], positions[at + 1]);
+            let (l1, r1) = (positions[at + 2], positions[at + 3]);
+            let spine = (l1 + r1 - l0 - r0) * 0.5;
+            if spine.length() < 1e-6 {
+                continue;
+            }
+            let piece = ((r0 - l0).length() + (r1 - l1).length()) * 0.5 * spine.length();
+            area += piece;
+            if (r0 - l0).dot(r1 - l1) < 0.0 {
+                crossed += piece;
+            } else if (l1 - l0).dot(spine) <= 0.0 || (r1 - r0).dot(spine) <= 0.0 {
+                folded += piece;
+            }
+        }
+    }
+    (area, crossed, folded)
+}
+
+/// One synthetic card round a 20 mm circle, 35 mm either side of its spine,
+/// whose creases are known: its width in the circle's own plane (every edge
+/// of it runs backwards on the inside), along the circle's axis (none), or
+/// along the axis and turned over at every other station (all bow-ties).
+fn hoop(width: Hoop) -> (Vec<Vec3>, Range<usize>) {
+    const STATIONS: usize = 24;
+    let mut positions = Vec::new();
+    for station in 0..STATIONS {
+        let turn = std::f32::consts::TAU * station as f32 / STATIONS as f32;
+        let radial = Vec3::new(turn.cos(), 0.0, turn.sin());
+        let side = match width {
+            Hoop::InPlane => radial,
+            Hoop::OnAxis => Vec3::Y,
+            Hoop::TurnedOver => Vec3::Y * if station % 2 == 0 { 1.0 } else { -1.0 },
+        } * 0.035;
+        positions.push(radial * 0.020 - side);
+        positions.push(radial * 0.020 + side);
+    }
+    (positions, 0..STATIONS * 2)
+}
+
+/// Which way a [`hoop`]'s width lies.
+#[derive(Clone, Copy)]
+enum Hoop {
+    InPlane,
+    OnAxis,
+    TurnedOver,
+}
+
+#[test]
+fn a_ringlet_neither_folds_nor_turns_over() {
+    // **Torn paper close up and a black shard cloud at distance** (#343). A
+    // ringlet is a flat card following a coil, and it was not edge-on that
+    // drew the paper - measured on the ring of level cameras a curl's ribbon
+    // was edge-on 27% of the time against a straight curtain's 23% - but the
+    // card creasing itself: across the head's normal its width lay in the
+    // coil's own plane for part of every turn, where the coil's 23 mm radius
+    // is less than the card's 35 mm half-width and the inner edge ran
+    // backwards; and it turned over between two stations wherever its face
+    // passed the skin's side. Measured before #343 on the default head, the
+    // hanging ribbon creased so: 10%, 19%, 26% and 27% at curls of 0.3, 0.6,
+    // 0.8 and 0.9, 34% at a full curl cut full length, 22% on rolled seed 177.
+    // A ringlet's width now lies along its coil's binormal, is seamed where it
+    // turns over, and is held under the bend it goes round.
+    //
+    // The reading is checked both ways first, on cards whose creases are known.
+    for (width, crossed, folded, what) in [
+        (
+            Hoop::InPlane,
+            0.0,
+            1.0,
+            "a card wider than its bend in the bend's plane",
+        ),
+        (
+            Hoop::OnAxis,
+            0.0,
+            0.0,
+            "a card whose width is on its hoop's axis",
+        ),
+        (
+            Hoop::TurnedOver,
+            1.0,
+            0.0,
+            "a card turned over at every station",
+        ),
+    ] {
+        let (positions, card) = hoop(width);
+        let (area, bowtie, fold) = creases(&positions, &[card]);
+        assert!(
+            area > 0.0
+                && (bowtie / area - crossed).abs() < 0.01
+                && (fold / area - folded).abs() < 0.01,
+            "the crease reading gets {what} wrong: {:.0}% turned over and {:.0}% folded",
+            bowtie / area * 100.0,
+            fold / area * 100.0
+        );
+    }
+    let mut heads: Vec<(String, Head)> = [0.3f32, 0.6, 0.9]
+        .into_iter()
+        .map(|curl| {
+            (
+                format!("curl {curl}"),
+                Head::wearing(ScalpStyle::Curly { curl }),
+            )
+        })
+        .collect();
+    for (label, cut) in [
+        ("a full curl at full length", (1.0, 0.5, 0.6, 0.5)),
+        ("a full curl at the greediest cut", (1.0, 1.0, 1.0, 1.0)),
+    ] {
+        let mut record = AvatarRecord::new("Hair", Archetype::default());
+        record.hair.scalp.style = ScalpStyle::Curly { curl: 1.0 };
+        let scalp = &mut record.hair.scalp.cut;
+        (scalp.length, scalp.thickness, scalp.density, scalp.droop) = cut;
+        heads.push((
+            label.to_string(),
+            Head::of(record).expect("a curl grows hair"),
+        ));
+    }
+    let mut rolled = AvatarRecord::new("Rolled", Archetype::default());
+    rolled.reroll(177);
+    assert!(
+        matches!(rolled.hair.scalp.style, ScalpStyle::Curly { .. }),
+        "rolled seed 177 is no longer a curl, so it is not the control it is named as"
+    );
+    heads.push((
+        "rolled seed 177".to_string(),
+        Head::of(rolled).expect("a curl grows hair"),
+    ));
+    for (label, head) in &heads {
+        let (area, bowtie, fold) = creases(&head.hair.mesh.positions, &head.cards());
+        println!(
+            "{label}: {:.0} cm2 of card, {:.2}% turned over, {:.2}% folded",
+            area * 1e4,
+            bowtie / area * 100.0,
+            fold / area * 100.0
+        );
+        assert!(
+            (bowtie + fold) <= CREASED * area,
+            "{label}: {:.1}% of its ribbon is turned over or folded",
+            (bowtie + fold) / area * 100.0
+        );
+    }
+}
+
+/// The most of a curl's card area that may be turned over or folded; see
+/// `a_ringlet_neither_folds_nor_turns_over`.
+///
+/// Measured at #343: none, on all six heads, the greediest cut among them. A
+/// ringlet whose width lies on its coil's binormal, seamed where it turns over
+/// and held under its bend, has no crease by construction, so the bound is the
+/// construction's.
+const CREASED: f32 = 0.0;
+
 #[test]
 fn a_tail_is_knotted_by_a_closed_lump_the_budget_pays_for() {
     // **A tail's knot is a lump, not the cards passing through it** (#342).
@@ -865,6 +1027,7 @@ fn every_card_is_cut_from_one_lane_of_the_strand_mask() {
         );
         let mut used = [false; LANES as usize];
         for card in cards_of(&mesh.faces) {
+            let corners = &mesh.positions[card.clone()];
             let uvs = &mesh.uvs[card];
             let Some(lane) = spans
                 .iter()
@@ -877,14 +1040,35 @@ fn every_card_is_cut_from_one_lane_of_the_strand_mask() {
             };
             let (from, to) = spans[lane];
             used[lane] = true;
-            for station in uvs.chunks_exact(2) {
+            // **Either way round, but only turned round at a seam** (#343). A
+            // ringlet that turns over is seamed there - the station drawn twice
+            // at the same two points, once each way - and its lane follows
+            // where an edge IS, so a strand runs on across the seam. So a
+            // station may run its lane backwards, and the way round may change
+            // only between two stations that are the same two points swapped.
+            let mut last: Option<(bool, [Vec3; 2])> = None;
+            for (index, station) in uvs.chunks_exact(2).enumerate() {
+                let forward =
+                    (station[0].x - from).abs() < 1e-5 && (station[1].x - to).abs() < 1e-5;
+                let turned = (station[0].x - to).abs() < 1e-5 && (station[1].x - from).abs() < 1e-5;
                 assert!(
-                    (station[0].x - from).abs() < 1e-5 && (station[1].x - to).abs() < 1e-5,
+                    forward || turned,
                     "{style:?}: a card cut from lane {lane} ({from}..{to}) has a station across \
                      u {}..{}",
                     station[0].x,
                     station[1].x
                 );
+                let at = [corners[index * 2], corners[index * 2 + 1]];
+                if let Some((was, before)) = last
+                    && was != turned
+                {
+                    assert!(
+                        at[0].distance(before[1]) < 1e-6 && at[1].distance(before[0]) < 1e-6,
+                        "{style:?}: a card turns its lane round at station {index} without a \
+                         seam there"
+                    );
+                }
+                last = Some((turned, at));
             }
             let (root, tip) = (uvs[0].y, uvs[uvs.len() - 1].y);
             assert!(

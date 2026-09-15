@@ -186,6 +186,21 @@ pub trait Shape {
     fn lump(&self) -> Option<Lump> {
         None
     }
+
+    /// Whether a card whose face turns past the skin's side part-way along
+    /// it is seamed there, rather than flipped between two stations.
+    ///
+    /// **A card is turned to face out of the skin at every station** (see the
+    /// loft), and a card whose face keeps turning - a ringlet's, which goes
+    /// round with its coil - turns past the skin's side part-way along. Flipped
+    /// between two stations, the quad joining them has its two edges crossed:
+    /// a bow-tie, which on the sheet is a sheet of crumpled paper (#343).
+    /// Seamed, the station is drawn twice, once each way round, and the quad
+    /// between the two has no area. The default is no seam, which costs
+    /// nothing and is right for every card that does not turn over.
+    fn seamed(&self) -> bool {
+        false
+    }
 }
 
 /// A small closed solid a style asks for beside its clumps. See [`Shape::lump`].

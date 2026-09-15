@@ -251,6 +251,56 @@ const SWING: [f32; 2] = [0.007, 0.017];
 /// Provenance: **derived** with [`SWING`], from what a station costs.
 const WAVE: [f32; 2] = [0.105, 0.062];
 
+/// How far a ringlet's width is turned from lying across the head to lying
+/// along its coil's binormal, as a share (#343).
+///
+/// **A flat card following a coil folds itself, twice a turn.** Across the
+/// head's own normal, a ringlet's width lay in the coil's plane for part of
+/// every turn, and at the tightest coil the curve's radius there is 23 mm
+/// against a 35 mm half-width: the inner edge runs backwards, and the card
+/// flips over between two stations. Turned with the coil, the width stays
+/// along the coil's binormal, the edges are coils of their own, and the
+/// ringlet is a spiral band with a body from any side.
+///
+/// Provenance: **derived** from the coil: one turn a turn.
+const TWIST: f32 = 1.0;
+
+/// Whether a ringlet is seamed where its face turns over; see
+/// [`Shape::seamed`] (#343).
+///
+/// Provenance: **derived**: a card that turns with its coil turns over twice
+/// a turn.
+const SEAMED: bool = true;
+
+/// What multiple of its reach a curl hangs at the back of the head (#343).
+///
+/// **The nape a curl used to cover with ringlet ends.** The strand mask cuts
+/// a card's end into points (#340) and a ringlet held clear of its own bend
+/// is narrower on its turns, so at the reach every side hangs, the neck under
+/// the nape's hairline showed from behind. Longer ringlets at the back hang
+/// over it, as a bob's and a long head's back do, and no card lies under them.
+///
+/// Provenance: **tuned by render**.
+const CURL_BEHIND: f32 = 1.5;
+
+/// What share of the radius a ringlet bends through, in the plane its width
+/// lies in, its half-width may be (#343).
+///
+/// **An edge of a card runs backwards where the card is wider than the bend
+/// it is going round**: at a half-width `h` over a bend of curvature `k` in
+/// the width's own plane, the inner edge moves `1 - h k` as far as the spine.
+/// On its binormal a ringlet's width is clear of the bend where the coil is a
+/// helix, but the swing grows over [`LOOSE`] and there it is not one.
+///
+/// Provenance: **derived** from the edge's own speed, with a fifth kept.
+const FOLD_CAP: f32 = 0.8;
+
+/// How far either side of a station the bend is read, in metres.
+///
+/// Provenance: **derived** from the sampler: a few millimetres is under a
+/// tenth of the tightest wave and over the loft's own tolerance.
+const FOLD_STEP: f32 = 0.003;
+
 impl Style for ScalpStyle {
     fn grows(&self) -> bool {
         !matches!(self, Self::None)
@@ -283,7 +333,7 @@ impl Style for ScalpStyle {
             // A curl frames the face: at nine tenths of its reach the
             // ringlets curtained the eyes (#316), and a coil does not get out
             // of the way on its own.
-            Self::Curly { .. } => (0.5, 1.0),
+            Self::Curly { .. } => (0.5, CURL_BEHIND),
         };
         let knot = self.knot(head);
         let curl = match self {
@@ -829,6 +879,41 @@ impl Sheet {
             .clamp(0.0, 1.0)
             .powf(WHORL_POW);
         self.whorl * (share - 1.0)
+    }
+
+    /// The most of `half` a ringlet keeps a share `along` of the way down it
+    /// without an edge running backwards: [`FOLD_CAP`] of the radius the drawn
+    /// lock bends through in the plane its width lies in (#343). Every other
+    /// style, and a curl's very ends, keep `half` as it is.
+    fn unfolded(&self, root: &Root, along: f32, half: f32) -> f32 {
+        if FOLD_CAP <= 0.0 || self.curl <= 0.0 {
+            return half;
+        }
+        let step = FOLD_STEP / self.length(root).max(f32::EPSILON);
+        if along - step < 0.0 || along + step > 1.0 {
+            return half;
+        }
+        let (behind, here, ahead) = (
+            self.at(root, along - step),
+            self.at(root, along),
+            self.at(root, along + step),
+        );
+        let (one, two) = (here - behind, ahead - here);
+        let travel = 0.5 * (one.length() + two.length());
+        if travel <= f32::EPSILON {
+            return half;
+        }
+        // How fast the heading turns, per metre of the lock: the curvature,
+        // pointing into the bend.
+        let bend = (two.normalize_or(Vec3::ZERO) - one.normalize_or(Vec3::ZERO)) / travel;
+        let heading = (ahead - behind).normalize_or(Vec3::ZERO);
+        let named = self.across_at(root, along);
+        let side = (named - heading * named.dot(heading)).normalize_or(Vec3::ZERO);
+        let inside = side.dot(bend).abs();
+        if inside <= f32::EPSILON {
+            return half;
+        }
+        half.min(FOLD_CAP / inside)
     }
 
     /// Whether this card's end is a tail's: gathered to a knot.
@@ -1618,6 +1703,49 @@ impl Shape for Sheet {
             self.normal(here.y, azimuth)
         };
         let across = normal.cross(heading).normalize_or(self.across(root));
+        // **A ringlet's width lies along its coil's binormal** (#343): across
+        // the coil's own radial and the way the drawn lock is heading, so the
+        // width never lies in the plane the coil turns in and neither edge runs
+        // backwards (see [`TWIST`]). The coil's frame is [`Self::dress`]'s.
+        //
+        // **As an angle about the spine that never jumps.** Measured from the
+        // card's lying axis, the binormal's angle IS the coil's phase, give or
+        // take how far the drawn lock is from an ideal helix. So the turn is
+        // the phase wound in as the swing comes on (the smooth ramp over
+        // [`LOOSE`], integrated), plus that small departure and a constant for
+        // where on the coil this card left the scalp, both brought in with the
+        // swing and each taken as an axis. Once the swing is full the width is
+        // on the binormal; nowhere does it flip between two stations, which a
+        // blend of two axes did wherever they were square.
+        if TWIST > 0.0 && self.curl > 0.0 && walked.free > 0.0 && heading != Vec3::ZERO {
+            use std::f32::consts::{FRAC_PI_2, PI, TAU};
+            // Into (-a quarter turn, a quarter turn]: a width is an axis.
+            let axis = |angle: f32| angle - PI * (angle / PI).round();
+            let wave = WAVE[0] + (WAVE[1] - WAVE[0]) * self.curl;
+            let travel = self.length(root) * along;
+            let phase = travel * TAU / wave;
+            let from = Self::azimuth(root);
+            let out = Vec3::new(from.sin(), 0.0, from.cos());
+            let sideways = out.cross(Vec3::Y).normalize_or(Vec3::X);
+            let coil = sideways * phase.sin() + out * phase.cos();
+            let wound = coil.cross(heading);
+            let beside = heading.cross(across);
+            let departure = axis(wound.dot(beside).atan2(wound.dot(across)) - phase);
+            // The phase wound in over the ramp: the integral of the smooth
+            // step, x^3 - x^4 / 2 over it and a half short of x past it.
+            let loose = walked.free / LOOSE;
+            let ramped = if loose <= 1.0 {
+                loose.powi(3) - 0.5 * loose.powi(4)
+            } else {
+                loose - 0.5
+            };
+            let per = TAU / wave;
+            let left = axis((travel - walked.free) * per + 0.5 * LOOSE * per);
+            let share = crate::face::smooth(loose);
+            let turn = TWIST.min(1.0) * (LOOSE * per * ramped + share * (departure + left));
+            debug_assert!(departure.abs() <= FRAC_PI_2 + 1e-3);
+            return Quat::from_axis_angle(heading, turn) * across;
+        }
         // **A tail is a bundle, turned about itself card by card** (#342).
         // Every gathered card hangs from one knot facing straight back, so
         // from the side the tail was every card edge-on: a rope. Turned by
@@ -1704,7 +1832,7 @@ impl Shape for Sheet {
         let past = 1.0 - (left / span.min(hang).max(f32::EPSILON)).clamp(0.0, 1.0);
         let width = base + (tip - base) * past;
         if !tailed {
-            return width;
+            return self.unfolded(root, along, width);
         }
         let below = (along - cap) * length;
         width * (GATHER + (TAIL_WIDTH - GATHER) * crate::face::smooth(below / GATHER_OVER))
@@ -1718,6 +1846,11 @@ impl Shape for Sheet {
             radii: Vec3::from_array(LUMP),
             shade: LUMP_SHADE,
         })
+    }
+
+    fn seamed(&self) -> bool {
+        // A ringlet turns over with its coil: see [`Shape::seamed`].
+        SEAMED && self.curl > 0.0
     }
 }
 

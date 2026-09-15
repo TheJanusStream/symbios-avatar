@@ -104,7 +104,6 @@ pub(super) fn loft(
         return 0;
     }
     let (fractions, path) = sample(root, shape);
-    let stations = path.len();
     // A path that doubled back on itself or collapsed would sweep an inside-out
     // tube; a style that does that is a bug in the style, and the sweep is not
     // the place to discover it.
@@ -133,6 +132,12 @@ pub(super) fn loft(
     // root** (#340): cards side by side end in different locks, and a card that
     // changed lane along its length would tear its own silhouette in two.
     let (lane_from, lane_to) = StrandMask::lane_span(mask::lane_of(root.at));
+    // Whether this card is seamed where it turns over, which way round the
+    // last station faced, and whether the card has turned over an odd number
+    // of times (see [`Shape::seamed`]).
+    let seamed = shape.seamed();
+    let mut was: Option<bool> = None;
+    let mut over = false;
     for (station, (at, along)) in path.iter().zip(&fractions).enumerate() {
         let tangent = if station + 1 < path.len() {
             path[station + 1] - *at
@@ -168,7 +173,8 @@ pub(super) fn loft(
         // cross-product's handedness, not a fact about hair — so it is not asked.
         // The width axis is flipped with the face so the quad's winding still
         // agrees with its normal.
-        if out.dot(root.out) < 0.0 {
+        let flipped = out.dot(root.out) < 0.0;
+        if flipped {
             out = -out;
             side = -side;
         }
@@ -183,46 +189,64 @@ pub(super) fn loft(
         // channel past white.
         let shade = (shade(roots_colour, tips_colour, *along) * shape.shade_at(root, *along))
             .clamp(Vec3::ZERO, Vec3::ONE);
-        for edge in [-1.0f32, 1.0] {
-            into.positions.push(*at + side * (half * edge));
-            // **The normal is rounded across the card though the card is
-            // flat** (#316). A flat card lit flat is a ribbon: one shade
-            // edge to edge, and a head of them reads as a bundle of dark
-            // straps with no body in it. Tilting each edge's normal outward
-            // about the spine shades the strip as the half-cylinder a lock
-            // is, and costs nothing — the rasteriser interpolates it.
-            into.normals
-                .push((out * BEVEL.cos() + side * (BEVEL.sin() * edge)).normalize_or(out));
-            // Across the card's lane of the strand mask edge to edge, and down
-            // it by the same share of the way the width and the shade are
-            // asked at, so the lock the mask cuts tapers where the card does.
-            into.uvs.push(Vec2::new(
-                lane_from + (lane_to - lane_from) * (edge + 1.0) * 0.5,
-                along.clamp(0.0, 1.0),
-            ));
-            into.colours.push(shade);
-            // **Bound like the skin it grew out of at the root, and like the
-            // head at the tip** (#207). The whole crop used to bind rigidly to
-            // the head joint, which is right for a scalp and wrong for a face:
-            // with the jaw open, the chin's own skin moves 44.7 mm and hair on
-            // the head moves nothing at all, so a beard stays where the closed
-            // mouth was.
-            //
-            // And the other way round is wrong too. Bound entirely by its root,
-            // a beard is rigid to the mandible — which swings DOWN AND BACK
-            // about the condyle, so the hanging part of it goes into the neck as
-            // soon as somebody speaks. What a beard does instead is hang: the
-            // hair leaves the chin and then belongs to nothing in particular,
-            // which is what this says. The patch owns the root and lets go over
-            // the free length.
-            //
-            // It is a no-op wherever the skin is already the head's, which is
-            // the scalp, the brows and the upper lip — three of the five regions
-            // move not at all.
-            into.skin.push(handed_over(root.skin, head, *along));
+        // **Seamed where a turning card turns over** (#343): the station is
+        // drawn first the way the last one faced, so the quad from it has no
+        // crossed edges, and then this way, which leaves a quad of no area
+        // between the two. The mask's lane runs across the card by where an
+        // edge IS rather than by which way round it was drawn, so a strand
+        // does not jump sides at the seam.
+        let turns = seamed && was.is_some_and(|facing| facing != flipped);
+        was = Some(flipped);
+        let drawn: &[(Vec3, Vec3, bool)] = if turns {
+            &[(-side, -out, over), (side, out, !over)]
+        } else {
+            &[(side, out, over)]
+        };
+        over ^= turns;
+        for &(side, out, over) in drawn {
+            let lane = if over { -1.0f32 } else { 1.0 };
+            for edge in [-1.0f32, 1.0] {
+                into.positions.push(*at + side * (half * edge));
+                // **The normal is rounded across the card though the card is
+                // flat** (#316). A flat card lit flat is a ribbon: one shade
+                // edge to edge, and a head of them reads as a bundle of dark
+                // straps with no body in it. Tilting each edge's normal outward
+                // about the spine shades the strip as the half-cylinder a lock
+                // is, and costs nothing — the rasteriser interpolates it.
+                into.normals
+                    .push((out * BEVEL.cos() + side * (BEVEL.sin() * edge)).normalize_or(out));
+                // Across the card's lane of the strand mask edge to edge, and down
+                // it by the same share of the way the width and the shade are
+                // asked at, so the lock the mask cuts tapers where the card does.
+                into.uvs.push(Vec2::new(
+                    lane_from + (lane_to - lane_from) * (edge * lane + 1.0) * 0.5,
+                    along.clamp(0.0, 1.0),
+                ));
+                into.colours.push(shade);
+                // **Bound like the skin it grew out of at the root, and like the
+                // head at the tip** (#207). The whole crop used to bind rigidly to
+                // the head joint, which is right for a scalp and wrong for a face:
+                // with the jaw open, the chin's own skin moves 44.7 mm and hair on
+                // the head moves nothing at all, so a beard stays where the closed
+                // mouth was.
+                //
+                // And the other way round is wrong too. Bound entirely by its root,
+                // a beard is rigid to the mandible — which swings DOWN AND BACK
+                // about the condyle, so the hanging part of it goes into the neck as
+                // soon as somebody speaks. What a beard does instead is hang: the
+                // hair leaves the chin and then belongs to nothing in particular,
+                // which is what this says. The patch owns the root and lets go over
+                // the free length.
+                //
+                // It is a no-op wherever the skin is already the head's, which is
+                // the scalp, the brows and the upper lip — three of the five regions
+                // move not at all.
+                into.skin.push(handed_over(root.skin, head, *along));
+            }
         }
     }
     // One quad a segment, which the mesh counts as the two triangles it is.
+    let stations = (into.positions.len() - first as usize) / 2;
     for segment in 0..stations.saturating_sub(1) {
         let step = first + segment as u32 * 2;
         into.faces.push(vec![step, step + 1, step + 3, step + 2]);
