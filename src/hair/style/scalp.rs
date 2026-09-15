@@ -67,10 +67,14 @@ pub enum ScalpStyle {
     /// The one style with no axis of its own: a crop is what the shared four
     /// already describe, and its whole character is that it stays on the head.
     Crop,
-    /// A curtain to about the jaw, with a fringe over the brow.
+    /// A curtain to about the jaw, with a fringe over the brow or the front
+    /// swept aside.
     Bob {
-        /// How much shorter the front is than the sides, `0` an even curtain and
-        /// `1` a fringe well above the brow.
+        /// What the front does: `0` sweeps it to the temples, parted as a long
+        /// head is, so it hangs beside the face at the sides' length; a little
+        /// more is a fringe ending just above the brow, and `1` a fringe well
+        /// above it. Never a curtain: a fringe's length is a share of the
+        /// forehead it hangs over, not of the cut (#341).
         #[serde(with = "crate::plan::scaled")]
         fringe: f32,
     },
@@ -299,7 +303,13 @@ impl Style for ScalpStyle {
             curl,
             part: match self {
                 Self::Long { .. } => 1.0,
+                // A bob with no fringe is swept, not a curtain: see [`SWEPT`].
+                Self::Bob { fringe } => 1.0 - crate::face::smooth(fringe.clamp(0.0, 1.0) / SWEPT),
                 _ => 0.0,
+            },
+            room: match self {
+                Self::Bob { fringe } => ROOM[0] + (ROOM[1] - ROOM[0]) * fringe.clamp(0.0, 1.0),
+                _ => ROOM[0],
             },
         }))
     }
@@ -471,6 +481,68 @@ const PART_BY: f32 = 0.30;
 /// Provenance: **tuned by render** (#316).
 const PART_LATE: f32 = 0.6;
 
+/// Under what `fringe` a bob is swept rather than fringed.
+///
+/// **A bob's `fringe` of `0` used to be an even curtain** (#341): the front as
+/// long as the sides, which at a full cut is 130 mm hanging straight over the
+/// eyes, and the axis documented it as exactly that. Nobody asks for a curtain
+/// over the face; the bob without a fringe is the one parted at the front and
+/// swept to the temples, so that is what `0` is now. The sweep eases off over
+/// the bottom of the axis, so a record just above it is a long fringe and not a
+/// jump.
+///
+/// Provenance: **tuned by render**.
+const SWEPT: f32 = 0.25;
+
+/// How far a lock hanging in front of the face may fall, as a share of the room
+/// between where it leaves the scalp and the brow: at a bob's `fringe` of `0`
+/// and of `1`. The first is every other style's.
+///
+/// **A fringe is a height, not a length** (#341). It was a share of the cut's
+/// reach, so a bob cut long grew a fringe to the nose whatever its own axis
+/// said: rolled seed 42 is a bob at `fringe` 0.73 - "well above the brow" - and
+/// it hung eleven front locks 40 to 60 mm under the brow. A share of the
+/// forehead reaches the same anatomy on any cut and any head, and it only ever
+/// shortens what the reach asked for.
+///
+/// The top end leaves the stagger its room: on the default head's 50 mm of
+/// forehead, 0.85 grown by half of [`STAGGER_LEAST`] is 0.93 of the way down,
+/// so a lock ends on the forehead. On a forehead short enough that it would
+/// not, the walk's floor stops it at the clearance instead.
+///
+/// Provenance: **derived** (the top end, from the stagger), **tuned by render**
+/// (the bottom end).
+const ROOM: [f32; 2] = [0.85, 0.30];
+
+/// Over how far inside the temple walls a lock goes from the reach's length to
+/// the forehead's, in metres.
+///
+/// A lock a hair outside the face hangs its whole length and one a hair inside
+/// it stops above the brow, and a step that sharp between two neighbours is a
+/// notch at the temple. A centimetre is about a quarter of a card.
+///
+/// Provenance: **tuned by render**.
+const OVER: f32 = 0.012;
+
+/// How finely a leg of the walk is checked against the face, in metres.
+///
+/// A hanging leg is a straight line, but the lock drawn along it coils, and at
+/// the tightest [`SWING`] and [`WAVE`] the coil turns through a whole wave
+/// inside one leg. It is a helix of 17 mm radius and 10 mm pitch per radian,
+/// curving at 0.044 per millimetre, so chords of two millimetres of travel
+/// (eight of arc) sag 0.09 mm from it: inside [`CLEAR`].
+///
+/// Provenance: **derived** from the coil's own curvature.
+const CHECK: f32 = 0.002;
+
+/// How far outside the face a check keeps the chords of a drawn lock, in
+/// metres.
+///
+/// Provenance: **derived**: over the sag [`CHECK`] leaves, with room for the
+/// walk's own float arithmetic, which a lock stopped exactly on a wall would
+/// otherwise cross.
+const CLEAR: f32 = 0.0005;
+
 /// The cosine of the azimuth behind which a tied-back lock is drawn to the
 /// knot at all.
 ///
@@ -611,6 +683,9 @@ struct Sheet {
     /// haircut. A parting is the same comb a tail is — the azimuth turns as
     /// the lock descends — aimed at the temple instead of the nape.
     part: f32,
+    /// What share of the room between where it leaves the scalp and the brow a
+    /// lock hanging in front of the face may fall; see [`ROOM`].
+    room: f32,
 }
 
 impl Sheet {
@@ -624,7 +699,13 @@ impl Sheet {
     /// **The curtain lesson**: a share of the reach at the front and a multiple
     /// of it at the back, so a fringe stops above the eyes while the same style's
     /// sides reach the jaw. Uniform length is what makes hair read as a hood.
-    fn fall(&self, root: &Root) -> f32 {
+    ///
+    /// **And over the face, a share of the forehead** (#341): a lock whose hang
+    /// lands between the temples takes the lesser of the reach's length and
+    /// [`Self::room`] of the way from where it left the scalp down to the brow,
+    /// eased in over [`OVER`] inside the temple walls. `walked` is this lock's
+    /// walk to the end, which is what says where it left.
+    fn fall(&self, root: &Root, walked: &Walked) -> f32 {
         // A tied lock either reaches the knot and hangs the tail's length
         // from it, or lies to the hairline and stops; see [`Self::pulled`].
         if self.knot.is_some() {
@@ -643,7 +724,73 @@ impl Sheet {
         let hang = self.reach * share * (1.0 + (self.behind - 1.0) * back);
         // Staggered card by card, so the tips do not draw a contour.
         let spread = (hang * STAGGER).max(STAGGER_LEAST);
-        (hang + spread * (Self::salt(root, 0) - 0.5)).max(0.0)
+        let reached = (hang + spread * (Self::salt(root, 0) - 0.5)).max(0.0);
+        let Some(left) = walked.left else {
+            return reached;
+        };
+        // Where this lock hangs once it is level with the brow: the radius it
+        // left the scalp with, at the azimuth the comb has turned it to by then.
+        // A parted lock has left the face by that height, and one going straight
+        // down is still where it left.
+        let face = self.regions.clearance();
+        let (_, crown) = self.regions.skull().throat_and_crown();
+        let azimuth = self.combed(Self::azimuth(root), crown, face.brow);
+        let held = (left.x * left.x + left.z * left.z).sqrt();
+        let inside =
+            (face.side - (held * azimuth.sin()).abs()).min(held * azimuth.cos() - face.front);
+        let over = crate::face::smooth(inside / OVER);
+        if over <= 0.0 {
+            return reached;
+        }
+        // Staggered exactly as the reach is - the same lane, so a fringe keeps
+        // the order its locks had, and the same least spread, because a share
+        // of a short fringe is under what the render resolves and its tips
+        // went back to ending on one line without it.
+        let forehead = (left.y - face.brow).max(0.0) * self.room;
+        let spread = (forehead * STAGGER).max(STAGGER_LEAST);
+        let forehead = (forehead + spread * (Self::salt(root, 0) - 0.5)).max(0.0);
+        reached - (reached - reached.min(forehead)) * over
+    }
+
+    /// How far a drawn lock can stand off its own walk sideways, in metres: its
+    /// volume, its lift, its coil, and the margin a check keeps.
+    ///
+    /// The coil swings round the fall in a circle, so either horizontal axis can
+    /// carry up to the whole swing of both its terms: a root two of it.
+    fn stray(&self) -> f32 {
+        let swing = if self.curl > 0.0 {
+            SWING[0] + (SWING[1] - SWING[0]) * self.curl
+        } else {
+            0.0
+        };
+        self.volume + LIFT + std::f32::consts::SQRT_2 * swing + CLEAR
+    }
+
+    /// Where a lock is drawn, given where its walk is: `walked` after `travel`
+    /// metres, `free` of them past the hairline, lifted along `lift`.
+    ///
+    /// **One place, because two readers need it**: [`Shape::at`], which draws
+    /// the lock, and the walk's check against the face, which has to keep the
+    /// DRAWN lock clear and not merely its spine (#341). A coil swings a curly
+    /// lock 17 mm off its walk, which is two thirds of the way across a temple
+    /// wall's margin.
+    fn dress(&self, walked: Vec3, out: Vec3, travel: f32, free: f32, lift: Vec3) -> Vec3 {
+        let mut at = walked;
+        let loose = crate::face::smooth(free / LOOSE);
+        at += out * (self.volume * loose) + lift * LIFT;
+        // And coiled, if it is a curl: a wave across its own fall rather than a
+        // helix round it. See [`COIL`] for what the helix cost.
+        if self.curl > 0.0 {
+            let swing = (SWING[0] + (SWING[1] - SWING[0]) * self.curl) * loose;
+            let wave = WAVE[0] + (WAVE[1] - WAVE[0]) * self.curl;
+            // Around the fall rather than across it, so a ringlet reads as one
+            // from any angle: a wave in one plane is a kink from the side and
+            // nothing at all from the front.
+            let phase = travel * std::f32::consts::TAU / wave;
+            let sideways = out.cross(Vec3::Y).normalize_or(Vec3::X);
+            at += sideways * (swing * phase.sin()) + out * (swing * phase.cos());
+        }
+        at
     }
 
     /// How far it is from the crown to the hairline down this lock's meridian, in
@@ -656,11 +803,6 @@ impl Sheet {
     fn cap(&self, root: &Root) -> f32 {
         let walked = self.walked(root, f32::MAX);
         walked.cap.unwrap_or(walked.gone)
-    }
-
-    /// Whether hair grows anywhere down this lock's meridian.
-    fn grows(&self, root: &Root) -> bool {
-        self.walked(root, f32::MAX).grows
     }
 
     /// Which way round the head this lock is heading, having descended to
@@ -881,6 +1023,47 @@ impl Sheet {
         // How many stations of tail have hung from the knot, once the lock
         // has reached it.
         let mut tail: Option<usize> = None;
+        // Where the lock left the scalp, once it has.
+        let mut left_scalp: Option<Vec3> = None;
+        // **The face is kept clear by construction** (#341): the travel at
+        // which this lock, as drawn, would first enter the space in front of
+        // the face. A lock's length stops there (see [`Shape::length`]), so no
+        // point of it is ever inside, however long the cut, the fringe or the
+        // coil - where a test bounding a SHARE of the hair in front of the face
+        // passed while a bob's fringe hung to its nose.
+        let face = self.regions.clearance();
+        let out = Vec3::new(from.sin(), 0.0, from.cos());
+        let stray = self.stray();
+        let mut floor: Option<f32> = None;
+        // One leg, `gone` metres and `free` of them hanging at its start. A leg
+        // nowhere near the face is passed over on its spine, grown by how far a
+        // drawn lock can stray from it; a leg near it is checked as drawn, in
+        // chords [`CHECK`] long, since a coil swings a whole wave inside one
+        // hanging leg.
+        let enters = |from: Vec3, to: Vec3, gone: f32, free: f32, hanging: bool| -> Option<f32> {
+            face.entry(from, to, stray)?;
+            let leg = from.distance(to);
+            let pieces = (leg / CHECK).ceil().max(1.0) as usize;
+            let drawn = |share: f32| {
+                let free = if hanging { free + leg * share } else { free };
+                let walked = from.lerp(to, share);
+                let lift = if free > 0.0 {
+                    out
+                } else {
+                    self.normal(walked.y, Self::azimuth(root))
+                };
+                self.dress(walked, out, gone + leg * share, free, lift)
+            };
+            let mut before = drawn(0.0);
+            for piece in 1..=pieces {
+                let after = drawn(piece as f32 / pieces as f32);
+                if let Some(into) = face.entry(before, after, CLEAR) {
+                    return Some(gone + leg * ((piece - 1) as f32 + into) / pieces as f32);
+                }
+                before = after;
+            }
+            None
+        };
         for index in 0..STEPS + HANG {
             let height = height_of(index);
             // **A tied lock hangs from the KNOT, not from the nape** (#316).
@@ -900,6 +1083,7 @@ impl Sheet {
                 tail = Some(0);
                 hung = Some(0.0);
                 cap = Some(gone);
+                left_scalp = Some(at);
             }
             if let (Some(knot), Some(hung_at)) = (self.knot, tail) {
                 if hung_at >= HANG {
@@ -925,7 +1109,12 @@ impl Sheet {
                         free: (free - leg * (1.0 - left)).max(0.0),
                         grows: begun,
                         cap,
+                        left: left_scalp,
+                        floor,
                     };
+                }
+                if floor.is_none() {
+                    floor = enters(at, next, gone, free - leg, true);
                 }
                 gone += leg;
                 at = next;
@@ -977,7 +1166,14 @@ impl Sheet {
                     // of a walk to the end.
                     grows: begun,
                     cap,
+                    left: left_scalp,
+                    floor,
                 };
+            }
+            if floor.is_none() {
+                let hanging = hung.is_some();
+                let from_free = if hanging { free - leg } else { free };
+                floor = enters(at, next, gone, from_free, hanging);
             }
             gone += leg;
             at = next;
@@ -986,6 +1182,7 @@ impl Sheet {
             if begun && hung.is_none() && !grows {
                 hung = Some(held);
                 cap = Some(gone);
+                left_scalp = Some(next);
             }
         }
         Walked {
@@ -994,6 +1191,8 @@ impl Sheet {
             free,
             grows: begun,
             cap,
+            left: left_scalp,
+            floor,
         }
     }
 }
@@ -1025,14 +1224,24 @@ struct Walked {
     /// on past the head so that a fall has somewhere to go — so every lock became
     /// a 300 mm dreadlock hanging past the chin and cost 84 triangles.
     cap: Option<f32>,
+    /// Where it crossed the hairline, head-local, if it did: what a lock over
+    /// the face measures the room above the brow from (#341).
+    left: Option<Vec3>,
+    /// How far it had travelled when the lock, as drawn, would first have
+    /// entered the space in front of the face, if it would (#341).
+    floor: Option<f32>,
 }
 
 impl Shape for Sheet {
     fn length(&self, root: &Root) -> f32 {
+        // One walk to the end answers all of it: whether hair grows here, where
+        // the cap ends, where the lock left the scalp and where it would reach
+        // the face.
+        let walked = self.walked(root, f32::MAX);
         // Nothing at all where no hair grows down this meridian: see
         // [`Walked::grows`]. This is what [`Shape::length`]'s zero is for, and it
         // hands the triangles back rather than spending them on a slab.
-        if !self.grows(root) {
+        if !walked.grows {
             return 0.0;
         }
         // The scalp it covers plus what hangs past the hairline. Only the fall is
@@ -1050,20 +1259,20 @@ impl Shape for Sheet {
         } else {
             root.weight.clamp(0.0, 1.0).sqrt()
         };
-        self.cap(root) + self.fall(root) * thinned
+        let reached = walked.cap.unwrap_or(walked.gone) + self.fall(root, &walked) * thinned;
+        // And never into the face: see [`Walked::floor`].
+        walked.floor.map_or(reached, |floor| reached.min(floor))
     }
 
     fn at(&self, root: &Root, along: f32) -> Vec3 {
         let along = along.clamp(0.0, 1.0);
         let length = self.length(root);
         let walked = self.walked(root, length * along);
-        let mut at = walked.at;
         // Standing off the skull, but only once it is off the head: this is what
         // `droop` gives up. Radially, because that is the direction a head pushes
         // hair. A card lying on a scalp has no volume to give.
         let azimuth = Self::azimuth(root);
         let out = Vec3::new(azimuth.sin(), 0.0, azimuth.cos());
-        let loose = crate::face::smooth(walked.free / LOOSE);
         // **Lifted along the surface the card is LYING ON, not along its
         // root's normal** (#316). Every card starts at the crown, and a root
         // at the nape has a normal pointing back and down — so its card
@@ -1080,20 +1289,7 @@ impl Shape for Sheet {
         } else {
             self.normal(walked.at.y, azimuth)
         };
-        at += out * (self.volume * loose) + lift * LIFT;
-        // And coiled, if it is a curl: a wave across its own fall rather than a
-        // helix round it. See [`COIL`] for what the helix cost.
-        if self.curl > 0.0 {
-            let swing = (SWING[0] + (SWING[1] - SWING[0]) * self.curl) * loose;
-            let wave = WAVE[0] + (WAVE[1] - WAVE[0]) * self.curl;
-            // Around the fall rather than across it, so a ringlet reads as one
-            // from any angle: a wave in one plane is a kink from the side and
-            // nothing at all from the front.
-            let phase = length * along * std::f32::consts::TAU / wave;
-            let sideways = out.cross(Vec3::Y).normalize_or(Vec3::X);
-            at += sideways * (swing * phase.sin()) + out * (swing * phase.cos());
-        }
-        at
+        self.dress(walked.at, out, length * along, walked.free, lift)
     }
 
     fn seating(&self) -> Seating {

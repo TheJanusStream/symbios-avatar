@@ -677,7 +677,7 @@
         },
         "fringe": {
           "type": "integer",
-          "description": "BOB only: how much shorter the front is than the sides. 0 an even curtain, 1000 a fringe well above the brow.",
+          "description": "BOB only: what the front does. 0 swept to the temples, parted, hanging beside the face; a little more a fringe ending just above the brow; 1000 a fringe well above it. A fringe's length is a share of the forehead, never of the cut, so no value hangs over the face.",
           "minimum": 0,
           "maximum": 1000
         },

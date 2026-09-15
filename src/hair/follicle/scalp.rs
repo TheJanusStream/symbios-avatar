@@ -4,6 +4,7 @@
 //! only one whose boundary a person can name: a hairline is read at conversation
 //! distance and is most of what says how old somebody is.
 
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::{At, Region, band};
@@ -206,5 +207,150 @@ impl Region for Scalp {
             self.crown + self.fade,
             self.fade,
         )
+    }
+}
+
+/// The space in front of a face that no scalp hair may hang in (#341).
+///
+/// A box: from the brow line down to the chin's tip, forward of the coronal
+/// plane through the two temples, and between them. A temple here is the
+/// skull's surface at the brow's height at `TEMPLE_AT`, the azimuth the
+/// hairline's own bays are centred on - so the box is the front of the face
+/// between the two corners a receding hairline goes back at, which is the part
+/// of a head a person looks at when they look somebody in the eye.
+///
+/// **A construction and not a tolerance.** A curtain over the face used to be
+/// read by a test as a share of the hair in a narrower box, and a bob with a
+/// long cut hung its fringe to the nose while that share stayed under its bound.
+/// The scalp styles walk this box instead: a lock stops before it would enter,
+/// so the count of hair inside is zero by construction rather than small by
+/// measurement.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Clearance {
+    /// The brow line, in head-local metres: the brow ridge's mean level.
+    pub brow: f32,
+    /// The chin's tip, likewise.
+    pub chin: f32,
+    /// How far in front of the head joint the temple plane stands.
+    pub front: f32,
+    /// How far either temple stands from the midline.
+    pub side: f32,
+}
+
+impl Clearance {
+    /// Cuts the box from a measured head and the height its brows run at.
+    #[must_use]
+    pub(super) fn of(skull: &Skull, canon: &Canon, brow: f32) -> Self {
+        let temple = skull.surface_at(brow, TEMPLE_AT.acos());
+        Self {
+            brow,
+            chin: canon.chin(),
+            front: temple.z,
+            side: temple.x.abs(),
+        }
+    }
+
+    /// Whether a head-local point is inside the box.
+    ///
+    /// Open on every side: a point on a wall is outside, so a lock stopped at
+    /// the wall is a lock that did not enter.
+    #[must_use]
+    pub fn contains(&self, at: Vec3) -> bool {
+        at.y < self.brow && at.y > self.chin && at.z > self.front && at.x.abs() < self.side
+    }
+
+    /// Where a straight run from `from` to `to` first enters the box grown by
+    /// `margin` on every side, as a share of the run: `Some(0.0)` if it starts
+    /// inside, `None` if it never enters.
+    ///
+    /// Clipped against the box's five walls one half-space at a time (the
+    /// temple plane has no back wall: behind it is the head). A run can enter
+    /// and leave between its two ends, so testing the ends alone would miss a
+    /// lock cutting the corner of the box.
+    #[must_use]
+    pub(crate) fn entry(&self, from: Vec3, to: Vec3, margin: f32) -> Option<f32> {
+        let run = to - from;
+        let mut enter = 0.0f32;
+        let mut exit = 1.0f32;
+        // Each wall as `along * t < room`: how fast the run closes on it, and
+        // how far it has to go.
+        for (along, room) in [
+            (run.y, self.brow + margin - from.y),
+            (-run.y, from.y - self.chin + margin),
+            (-run.z, from.z - self.front + margin),
+            (run.x, self.side + margin - from.x),
+            (-run.x, from.x + self.side + margin),
+        ] {
+            if along.abs() <= f32::EPSILON {
+                if room <= 0.0 {
+                    return None;
+                }
+                continue;
+            }
+            let at = room / along;
+            if along < 0.0 {
+                enter = enter.max(at);
+            } else {
+                exit = exit.min(at);
+            }
+            if enter >= exit {
+                return None;
+            }
+        }
+        Some(enter)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clearance() -> Clearance {
+        Clearance {
+            brow: 0.02,
+            chin: -0.10,
+            front: 0.05,
+            side: 0.06,
+        }
+    }
+
+    #[test]
+    fn a_run_enters_the_face_where_it_crosses_the_first_wall() {
+        let face = clearance();
+        // Straight down the midline in front of the face: enters at the brow.
+        let down = face.entry(Vec3::new(0.0, 0.06, 0.08), Vec3::new(0.0, -0.02, 0.08), 0.0);
+        assert!((down.expect("enters") - 0.5).abs() < 1e-5, "{down:?}");
+        // Already inside.
+        assert_eq!(
+            face.entry(Vec3::new(0.0, 0.0, 0.08), Vec3::new(0.0, -0.01, 0.08), 0.0),
+            Some(0.0)
+        );
+        // Beside the face at the temple, and behind the temple plane: never.
+        assert_eq!(
+            face.entry(
+                Vec3::new(0.07, 0.06, 0.08),
+                Vec3::new(0.07, -0.2, 0.08),
+                0.0
+            ),
+            None
+        );
+        assert_eq!(
+            face.entry(Vec3::new(0.0, 0.06, 0.04), Vec3::new(0.0, -0.2, 0.04), 0.0),
+            None
+        );
+        // The same run beside the face, grown by a margin that reaches it.
+        assert!(
+            face.entry(
+                Vec3::new(0.07, 0.06, 0.08),
+                Vec3::new(0.07, -0.2, 0.08),
+                0.02
+            )
+            .is_some()
+        );
+        // Cutting the corner: both ends outside, the middle inside.
+        let corner = face.entry(Vec3::new(0.10, 0.0, 0.08), Vec3::new(0.0, 0.04, 0.08), 0.0);
+        let at = corner.expect("cuts the corner");
+        let point = Vec3::new(0.10, 0.0, 0.08).lerp(Vec3::new(0.0, 0.04, 0.08), at + 1e-3);
+        assert!(face.contains(point), "{at} lands at {point}");
     }
 }

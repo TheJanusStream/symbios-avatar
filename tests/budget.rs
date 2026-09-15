@@ -691,8 +691,9 @@ fn ledger(label: &str, growth: &Growth) {
 /// How far along its own axis each parametric style is costed.
 ///
 /// Ends and middle. An axis does not have to be monotone in what it costs — a
-/// bob's fringe at zero is an even curtain, which is the LONGER of its two ends —
-/// so sampling one end would be picking a corner again with more steps.
+/// bob's fringe at zero is swept to the temples at the sides' length, which is
+/// the LONGER of its two ends and the one that turns (#341) — so sampling one
+/// end would be picking a corner again with more steps.
 const AXES: [f32; 3] = [0.0, 0.5, 1.0];
 
 /// Every scalp style a record may ask for, costed one at a time.
@@ -793,12 +794,15 @@ const CLOSE_ENOUGH: f32 = 0.03;
 fn greediest() -> HairRecord {
     HairRecord {
         scalp: Tress {
-            // Long, since #316: a ringlet lost a third of its front when the
-            // curly style stopped curtaining the eyes, and on the dearest body
-            // a long back-weighted curtain is the catalogue's bill now — the
-            // crop is within a few per cent of it and wins on the default
-            // head, which is what [`CLOSE_ENOUGH`] is for.
-            style: ScalpStyle::Long { weight: 1.0 },
+            // A bob with no fringe, since #341: swept to the temples rather
+            // than hanging as a curtain, its front locks turn round the head,
+            // and a turn costs stations - 1746 triangles on the default head
+            // against the long back-weighted curtain's 1618, and within half a
+            // per cent of it on the long broad one. Long had been the bill
+            // since #316, when a ringlet lost a third of its front; the crop
+            // is still within a few per cent and wins on some heads, which is
+            // what [`CLOSE_ENOUGH`] is for.
+            style: ScalpStyle::Bob { fringe: 0.0 },
             cut: GREEDY,
             ..Default::default()
         },

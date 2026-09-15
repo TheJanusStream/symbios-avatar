@@ -226,6 +226,7 @@ pub struct Follicles {
     moustache: moustache::Moustache,
     chin: chin::Chin,
     flanks: flanks::Flanks,
+    clearance: scalp::Clearance,
 }
 
 impl Follicles {
@@ -241,15 +242,17 @@ impl Follicles {
         canon: &Canon,
         params: &FollicleParams,
     ) -> Self {
+        let brows = brows::Brows::of(canon, &params.brows);
         Self {
             head: skull.head,
             origin: rig.joints[skull.head].position,
             skull: skull.clone(),
             scalp: scalp::Scalp::of(skull, canon, &params.scalp),
-            brows: brows::Brows::of(canon, &params.brows),
+            brows,
             moustache: moustache::Moustache::of(canon, &params.moustache),
             chin: chin::Chin::of(skull, canon, &params.chin),
             flanks: flanks::Flanks::of(skull, canon, &params.flanks),
+            clearance: scalp::Clearance::of(skull, canon, brows.ridge().level),
         }
     }
 
@@ -332,6 +335,17 @@ impl Follicles {
     #[must_use]
     pub fn jawline(&self, facing: f32) -> f32 {
         Self::border(&self.skull, facing)
+    }
+
+    /// The space in front of this face that no scalp hair may hang in.
+    ///
+    /// The last of the handed-out landmarks, and the only one that says where
+    /// hair may NOT be (#341). Cut once, from the brow ridge the brows grow on
+    /// and the temples the hairline recedes at, so the scalp styles that stop
+    /// short of it and any instrument that checks them read the same box.
+    #[must_use]
+    pub fn clearance(&self) -> scalp::Clearance {
+        self.clearance
     }
 
     /// How much of `follicle` may grow at a head-local point, `0` to `1`.

@@ -37,12 +37,20 @@ struct Head {
     origin: Vec3,
     /// The measured skull.
     skull: Skull,
+    /// The space in front of the face no scalp hair may hang in.
+    clearance: symbios_avatar::hair::follicle::scalp::Clearance,
 }
 
 impl Head {
     fn wearing(style: ScalpStyle) -> Self {
         let mut record = AvatarRecord::new("Hair", Archetype::default());
         record.hair.scalp.style = style;
+        Self::of(record).expect("a scalp style grows hair")
+    }
+
+    /// A record's own body and scalp, every other region stripped, or `None`
+    /// if its scalp grows nothing.
+    fn of(mut record: AvatarRecord) -> Option<Self> {
         record.hair.brows.style = BrowStyle::None;
         record.hair.moustache.style = MoustacheStyle::None;
         record.hair.chin.style = ChinStyle::None;
@@ -51,19 +59,20 @@ impl Head {
         let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
         let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
         let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
-        let hair = avatar.parts.hair.clone().expect("a scalp style grows hair");
+        let hair = avatar.parts.hair.clone()?;
         assert!(
             hair.grown
                 .iter()
                 .all(|grown| grown.follicle == symbios_avatar::hair::Follicle::Scalp),
             "only the scalp is dressed here"
         );
-        Self {
+        Some(Self {
             hair,
             body: avatar.parts.body.clone(),
             origin: follicles.origin(),
             skull,
-        }
+            clearance: follicles.clearance(),
+        })
     }
 
     /// The crown and the throat, head-local.
@@ -352,42 +361,90 @@ fn long_hair_does_not_hang_over_the_face() {
     // reason, a fringe share that let its ringlets curtain the eyes.
     // Before: 0.8% of the long hair's length and 2.1% of the curly's in the
     // box; now none and 0.4%.
-    for (style, allowed) in [
-        (ScalpStyle::Long { weight: 0.9 }, 0.002),
-        (ScalpStyle::Curly { curl: 0.8 }, 0.010),
+    //
+    // **And then the render disagreed with it, and the render was right**
+    // (#341). That box was three centimetres either side of the midline and a
+    // share of the hair was allowed in it, so it passed at Long 0.9 while a
+    // bob cut long hung its fringe to the nose - rolled seed 42 - and a bob at
+    // fringe 0 was a curtain over the eyes by design. Measured on the tree
+    // before #341 against the box below: 109 of 300 rolled records put hair in
+    // front of the face, every one a bob or a curl; seed 42, 22 stations; a
+    // bob at fringe 0 and length 0.35, 22; a curl at 0.8 and 0.35, 5.
+    //
+    // Now the box is the engine's own landmark, [`Follicles::clearance`] - brow
+    // to chin, forward of the temple plane and between the temples - and the
+    // walk stops a lock before it enters, so the bound is ZERO stations. The
+    // corners are the ones #341 names, seed 42 is the control, and a sweep of
+    // rolled records covers what nobody named.
+    let mut heads: Vec<(String, Head)> = Vec::new();
+    for (style, length) in [
+        (ScalpStyle::Long { weight: 1.0 }, 1.0),
+        (ScalpStyle::Long { weight: 0.9 }, 0.35),
+        (ScalpStyle::Bob { fringe: 0.0 }, 1.0),
+        (ScalpStyle::Bob { fringe: 0.0 }, 0.35),
+        (ScalpStyle::Bob { fringe: 0.8 }, 1.0),
+        (ScalpStyle::Curly { curl: 1.0 }, 1.0),
+        (ScalpStyle::Curly { curl: 0.8 }, 0.35),
     ] {
-        let head = Head::wearing(style);
-        let (crown, throat) = head.crown_and_throat();
-        let span = crown - throat;
-        let eyes = crown - span * 0.32;
-        let chin = crown - span * 0.85;
-        // **Sampled along the cards, not counted at their vertices**: a
-        // straight strap is two or three stations however far it falls,
-        // and the quads between them are what hang over the face.
-        let mut total = 0usize;
-        let mut over_the_face = 0usize;
+        let mut record = AvatarRecord::new("Hair", Archetype::default());
+        record.hair.scalp.style = style;
+        record.hair.scalp.cut.length = length;
+        let head = Head::of(record).expect("a scalp style grows hair");
+        heads.push((format!("{style:?} at length {length}"), head));
+    }
+    for seed in std::iter::once(42).chain(0..40) {
+        let mut record = AvatarRecord::new("Rolled", Archetype::default());
+        record.reroll(seed);
+        if let Some(head) = Head::of(record) {
+            heads.push((format!("rolled seed {seed}"), head));
+        }
+    }
+    let mut inside = Vec::new();
+    // **And that the box is where the hair goes** (#341): a box sitting
+    // somewhere no lock reaches passes this at zero for nothing. The lowest a
+    // station comes above the brow while in front of the face, over them all.
+    let mut closest = f32::MAX;
+    for (label, head) in &heads {
+        let face = head.clearance;
+        assert!(
+            face.brow > face.chin && face.front > 0.0 && face.side > 0.0,
+            "{label}: the clearance is not a box in front of a face: {face:?}"
+        );
+        let mut count = 0usize;
+        let mut stations = 0usize;
         for card in head.cards() {
-            for index in 1..Head::stations(&card) {
-                let from = head.station(&card, index - 1);
-                let to = head.station(&card, index);
-                let steps = (from.distance(to) / 0.002).ceil().max(1.0) as usize;
-                for step in 0..steps {
-                    let at = from.lerp(to, step as f32 / steps as f32);
-                    total += 1;
-                    if at.y < eyes && at.y > chin && at.x.abs() < 0.030 && at.z > 0.0 {
-                        over_the_face += 1;
-                    }
+            for index in 0..Head::stations(&card) {
+                let at = head.station(&card, index);
+                stations += 1;
+                if face.contains(at) {
+                    count += 1;
+                } else if at.y >= face.brow && at.z > face.front && at.x.abs() < face.side {
+                    closest = closest.min(at.y - face.brow);
                 }
             }
         }
-        let share = over_the_face as f32 / total as f32;
-        assert!(
-            share <= allowed,
-            "{style:?}: {over_the_face} of {total} samples along the hair ({:.1}%) hang in front of the \
-             face between the eyes and the chin",
-            share * 100.0
-        );
+        if count > 0 {
+            inside.push(format!("{label}: {count} of {stations} stations"));
+        }
     }
+    println!(
+        "closest station above the brow in front of the face: {:.1} mm",
+        closest * 1000.0
+    );
+    assert!(
+        inside.is_empty(),
+        "scalp hair hangs in front of the face:\n{}",
+        inside.join("\n")
+    );
+    // Measured at #341: 0.5 mm, the check's own margin - somewhere in this
+    // set the walk's floor is what stopped a lock, which is the construction
+    // being exercised rather than never reached. Two millimetres is the bound.
+    assert!(
+        closest <= 0.002,
+        "no station comes within {:.1} mm of the brow in front of the face, so the clearance is \
+         not being tested against any hair",
+        closest * 1000.0
+    );
 }
 
 #[test]
