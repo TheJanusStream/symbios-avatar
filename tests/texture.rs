@@ -162,3 +162,112 @@ fn painting_does_not_bloat_the_record() {
         "a whole avatar is {size} bytes, and should still be a couple of kilobytes"
     );
 }
+
+#[test]
+fn a_beard_painted_at_full_density_is_its_own_colour() {
+    // **The painted layer under a beard read as a brown shadow on the jaw**
+    // (#344): a beard region's density was how much of the colour the paint
+    // reached and its grain how much skin showed through, so at a density of
+    // one the paint went on average 44% of the way from the skin to the hair's
+    // colour. Density is coverage now. Read on the built atlas, texel by texel,
+    // as how far a painted texel has gone from its own unpainted colour toward
+    // the hair's, where the chin's or the flanks' mask is whole: at a density of
+    // one that is all the way, and at a half it is half.
+    use symbios_avatar::face::{Canon, Skull};
+    use symbios_avatar::hair::{ChinStyle, FlankStyle, Follicle, Follicles, MoustacheStyle, Paint};
+    use symbios_avatar::{Avatar, AvatarConfig, Vec3};
+    let dressed = |density: f32, colour: [f32; 3]| {
+        let mut record = AvatarRecord::new("Painted", Archetype::default());
+        record.hair.chin.style = ChinStyle::None;
+        record.hair.flanks.style = FlankStyle::None;
+        record.hair.moustache.style = MoustacheStyle::None;
+        record.hair.chin.skin = Paint { density, colour };
+        record.hair.flanks.skin = Paint { density, colour };
+        let avatar = Avatar::build(&record).expect("a biped builds");
+        let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
+        let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+        let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
+        (avatar, follicles)
+    };
+    for colour in [[0.13, 0.075, 0.043], [0.42, 0.30, 0.17]] {
+        let (bare, follicles) = dressed(0.0, colour);
+        let (full, _) = dressed(1.0, colour);
+        let (half, _) = dressed(0.5, colour);
+        let body = &bare.parts.body;
+        let geometry = texture::bake(
+            body,
+            &bare.parts.unwrap,
+            &[],
+            &vec![0.0; body.vertex_count()],
+            AvatarConfig::default().atlas,
+        );
+        assert_eq!(
+            geometry.texels.len() * 4,
+            bare.skin.albedo.len(),
+            "the atlas baked here is not the shape of the one the body was painted on"
+        );
+        let hair = Vec3::from_array(colour) * 255.0;
+        let rgb = |map: &symbios_texture::generator::TextureMap, at: usize| {
+            Vec3::new(
+                f32::from(map.albedo[at * 4]),
+                f32::from(map.albedo[at * 4 + 1]),
+                f32::from(map.albedo[at * 4 + 2]),
+            )
+        };
+        for follicle in [Follicle::Chin, Follicle::Flanks] {
+            let (mut shares, mut halves) = (Vec::new(), Vec::new());
+            for (at, texel) in geometry.texels.iter().enumerate() {
+                let Some(texel) = texel else { continue };
+                if follicles.weight(follicle, texel.position - follicles.origin()) < 0.99 {
+                    continue;
+                }
+                let skin = rgb(&bare.skin, at);
+                let toward = hair - skin;
+                if toward.length_squared() < 1.0 {
+                    continue;
+                }
+                let gone = |map| (rgb(map, at) - skin).dot(toward) / toward.length_squared();
+                shares.push(gone(&full.skin));
+                halves.push(gone(&half.skin));
+            }
+            assert!(
+                shares.len() > 500,
+                "only {} {} texels are under a whole mask",
+                shares.len(),
+                follicle.name()
+            );
+            let mean = |all: &[f32]| all.iter().sum::<f32>() / all.len() as f32;
+            shares.sort_by(f32::total_cmp);
+            let lowest = shares[shares.len() / 10];
+            println!(
+                "{} in {colour:?}: density 1 goes {:.3} of the way (the lowest tenth {lowest:.3}), \
+                 density 0.5 {:.3}",
+                follicle.name(),
+                mean(&shares),
+                mean(&halves)
+            );
+            assert!(
+                (mean(&shares) - 1.0).abs() <= PAINTED_SLACK && lowest >= 1.0 - 2.0 * PAINTED_SLACK,
+                "the {} painted at a density of one goes {:.2} of the way to its colour, the lowest \
+                 tenth {lowest:.2}",
+                follicle.name(),
+                mean(&shares)
+            );
+            assert!(
+                (mean(&halves) - 0.5).abs() <= 2.0 * PAINTED_SLACK,
+                "the {} painted at a density of a half goes {:.2} of the way to its colour",
+                follicle.name(),
+                mean(&halves)
+            );
+        }
+    }
+}
+
+/// How far a beard region's painted texels may miss the share of the way to
+/// their colour their density asks for; see
+/// `a_beard_painted_at_full_density_is_its_own_colour`.
+///
+/// Measured at #344: 1.003 on average at a density of one, the lowest tenth at
+/// 0.979 in a light brown and 0.998 in a dark one - the grain's swing in the
+/// hair's own shade, and a texel's byte rounding.
+const PAINTED_SLACK: f32 = 0.025;

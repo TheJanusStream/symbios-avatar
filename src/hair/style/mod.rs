@@ -204,6 +204,24 @@ pub trait Style: Copy + Default {
 /// card.
 const FULL: [usize; 5] = [104, 40, 78, 84, 116];
 
+/// A number in `[0, 1)` drawn from where one root sits, one per `lane`.
+///
+/// **So a style can give a share of its roots a role without a second
+/// stream** (#344). A root's position is fixed by the record's own seed, so the
+/// same root draws the same number on every build, and two lanes of one root
+/// are independent. The same hash the scalp's cards draw their salt from.
+pub(super) fn salt(root: &super::clump::Root, lane: u32) -> f32 {
+    let mut hash = lane.wrapping_mul(0x9E37_79B9);
+    for part in [root.at.x, root.at.y, root.at.z] {
+        hash ^= part.to_bits();
+        hash = hash.wrapping_mul(0x85EB_CA6B);
+        hash ^= hash >> 13;
+    }
+    hash = hash.wrapping_mul(0xC2B2_AE35);
+    hash ^= hash >> 16;
+    (hash >> 8) as f32 / (1u32 << 24) as f32
+}
+
 /// How many clumps one region grows at a given density.
 ///
 /// Shared by every style, because how many clumps a region can afford is a

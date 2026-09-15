@@ -157,6 +157,96 @@ const LEAST_WORTH: f32 = 0.08;
 /// render** for a region that tiles rather than rows.
 const ENDS: f32 = 0.58;
 
+/// Whether a sideburn is a strip from the beard line down to its drop.
+///
+/// **A sideburn was two dashes** (#344): its clumps comb down the flank by the
+/// flanks' own short reach and stop part-way to the jaw, so the few that are not
+/// declined as too short are tabs beside the ear. A strip is every one of them
+/// running the whole height, gathered into a band in front of the ear, so three
+/// or four overlap across it.
+///
+/// Provenance: **the owner's brief** for #344.
+const STRIP: bool = true;
+
+/// Where a sideburn strip's middle sits round the head, in the azimuth's cosine.
+///
+/// Between the region's back edge, which is behind the ear, and
+/// [`BURNS_FRONT`]. At a tenth the strip lay over the ear's own front edge.
+///
+/// Provenance: **tuned by render** (#344).
+const STRIP_AT: f32 = 0.20;
+
+/// How far either side of that middle a strip's cards are spread, in metres
+/// along the skin.
+///
+/// Provenance: **tuned by render** (#344).
+const STRIP_HALF: f32 = 0.010;
+
+/// How wide one of a strip's cards is at the root, in metres, before the cut's
+/// own coarseness.
+///
+/// Provenance: **tuned by render** (#344), against [`STRIP_HALF`]: three or four
+/// of them overlap across the band.
+const STRIP_WIDTH: f32 = 0.013;
+
+/// How far below the beard line a strip card's top may start, in metres.
+///
+/// Staggered by the card's own salt, so the strip's top is a ragged edge of
+/// several ends rather than one ruled line.
+///
+/// Provenance: **tuned by render** (#344).
+const STRIP_STAGGER: f32 = 0.006;
+
+/// What share of a full connection's clumps run along the jawline instead of
+/// down the cheek.
+///
+/// **The flanks and the chin met under the jaw with bare skin between**
+/// (#344): every flank clump combs down and stops ON the jawline, which draws
+/// the line and nothing past it, and the chin's own corners give up their hang.
+/// A row of cards lying along the mandible's border, from wherever each is
+/// rooted toward the chin, crosses that edge and carries the flank into the
+/// chin's patch.
+///
+/// Provenance: **the owner's brief** for #344, **tuned by render**.
+const JAW_ROW: f32 = 0.20;
+
+/// How far one of those runs along the jaw at full length, in metres.
+///
+/// Provenance: **tuned by render** (#344).
+const JAW_RUN: f32 = 0.034;
+
+/// How wide one is at the root, in metres, before the cut's own coarseness.
+///
+/// **Narrow, because it lies across a crease.** A card is a tangent plane, so
+/// its edges stand off a curve of radius `R` by `w^2 / 2R`: at 6 mm a side over
+/// a border some 10 mm round, under 2 mm - where the flanks' own 21 mm cards
+/// would stand 5 mm off it.
+///
+/// Provenance: **derived** from that standoff, **tuned by render** (#344).
+const JAW_WIDTH: f32 = 0.012;
+
+/// How far under the jawline a jaw card's spine rides, as a share of the
+/// style's own ride under it.
+///
+/// Provenance: **tuned by render** (#344).
+const JAW_UNDER: f32 = 0.5;
+
+/// How far forward a jaw card may run, in the azimuth's cosine: the chin's
+/// own patch is past it.
+///
+/// Provenance: **tuned by render** (#344).
+const JAW_FRONT: f32 = 0.97;
+
+/// The salt lane a full connection's roles are drawn from.
+///
+/// Provenance: **derived**: any lane no other draw in this file uses.
+const ROLE_SALT: u32 = 5;
+
+/// The salt lane a strip card's staggered top is drawn from.
+///
+/// Provenance: **derived**, likewise.
+const STAGGER_SALT: u32 = 6;
+
 impl Style for FlankStyle {
     fn grows(&self) -> bool {
         !matches!(self, Self::None)
@@ -194,6 +284,10 @@ impl Style for FlankStyle {
             front,
             down,
             rides,
+            strip: STRIP && matches!(self, Self::Sideburns { .. }),
+            connect: matches!(self, Self::FullConnect { .. }),
+            stretch: length,
+            coarse,
         }))
     }
 
@@ -250,9 +344,132 @@ struct Flank {
     down: f32,
     /// How far below the jawline it may ride, in metres.
     rides: f32,
+    /// Whether this is a sideburn drawn as a strip. See [`STRIP`].
+    strip: bool,
+    /// Whether this is a full connection, whose roots take roles. See
+    /// [`JAW_ROW`].
+    connect: bool,
+    /// The cut's own length factor, which a jaw card's run scales by.
+    stretch: f32,
+    /// The cut's own coarseness, which a jaw or strip card's width scales by.
+    coarse: f32,
+}
+
+/// What one root of a flank grows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Role {
+    /// A clump combing down the cheek from where it is rooted.
+    Comb,
+    /// A card along the mandible's border. See [`JAW_ROW`].
+    Jaw,
+    /// A card down a sideburn strip. See [`STRIP`].
+    Strip,
 }
 
 impl Flank {
+    /// What this root grows.
+    fn role(&self, root: &Root) -> Role {
+        if self.strip {
+            return Role::Strip;
+        }
+        if !self.connect {
+            return Role::Comb;
+        }
+        if super::salt(root, ROLE_SALT) < JAW_ROW {
+            Role::Jaw
+        } else {
+            Role::Comb
+        }
+    }
+
+    /// The skull's own surface at a height and an azimuth, head-local.
+    fn skin(&self, height: f32, azimuth: f32) -> Vec3 {
+        self.regions.skull().surface_at(height, azimuth)
+    }
+
+    /// Which way that surface faces, out of the head.
+    ///
+    /// Across the surface's two directions, round and up, which on either side
+    /// of the head is outward by the order they are taken in.
+    fn normal(&self, height: f32, azimuth: f32) -> Vec3 {
+        const STEP: f32 = 0.001;
+        let round = self.skin(height, azimuth + STEP) - self.skin(height, azimuth - STEP);
+        let up = self.skin(height + STEP, azimuth) - self.skin(height - STEP, azimuth);
+        let at = self.skin(height, azimuth);
+        round
+            .cross(up)
+            .normalize_or(Vec3::new(at.x, 0.0, at.z).normalize_or(Vec3::Z))
+    }
+
+    /// Where a jaw or strip card's station sits: its height and signed azimuth.
+    fn station(&self, root: &Root, along: f32) -> (f32, f32) {
+        let along = along.clamp(0.0, 1.0);
+        let side = if root.at.x < 0.0 { -1.0 } else { 1.0 };
+        let from = root.at.x.atan2(root.at.z).abs();
+        let reach = (root.at.x * root.at.x + root.at.z * root.at.z)
+            .sqrt()
+            .max(0.02);
+        if self.role(root) == Role::Jaw {
+            // Toward the chin, or away from it for a root already in front of
+            // where the row stops.
+            let turn = JAW_RUN * self.stretch / reach;
+            let front = JAW_FRONT.clamp(-1.0, 1.0).acos();
+            let to = if from - turn >= front {
+                from - turn
+            } else {
+                from + turn
+            };
+            let azimuth = side * (from + (to - from) * along);
+            (
+                self.regions.jawline(azimuth.cos()) - self.rides * JAW_UNDER,
+                azimuth,
+            )
+        } else {
+            let (azimuth, top, bottom) = self.strip_span(root);
+            (top + (bottom - top) * along, azimuth)
+        }
+    }
+
+    /// A strip card's signed azimuth, its top and its bottom, in head-local
+    /// metres.
+    fn strip_span(&self, root: &Root) -> (f32, f32, f32) {
+        let side = if root.at.x < 0.0 { -1.0 } else { 1.0 };
+        let from = root.at.x.atan2(root.at.z).abs();
+        let reach = (root.at.x * root.at.x + root.at.z * root.at.z)
+            .sqrt()
+            .max(0.02);
+        let middle = STRIP_AT.clamp(-1.0, 1.0).acos();
+        let azimuth =
+            side * (middle + ((from - middle) * reach).clamp(-STRIP_HALF, STRIP_HALF) / reach);
+        let facing = azimuth.cos();
+        // A fade under the line, where the mask is whole: started ON the line,
+        // a strip's top stood where its own region's weight is nothing.
+        let top = self.line.top(facing)
+            - self.line.fade
+            - STRIP_STAGGER * super::salt(root, STAGGER_SALT);
+        (azimuth, top, self.floor_at(facing))
+    }
+
+    /// How long a combing clump from this root is.
+    fn comb_length(&self, root: &Root) -> f32 {
+        let share = self.share(root);
+        // Never past the crease: the tips arrive at the line together, whatever
+        // height they grew from, which is what makes a beard's edge an edge.
+        let room = (root.at.y - self.floor(root)).max(0.0);
+        let length = (self.reach * share).min(room);
+        if length < self.reach * LEAST_WORTH {
+            return 0.0;
+        }
+        length
+    }
+
+    /// A point on a combing clump from this root.
+    fn comb_at(&self, root: &Root, along: f32) -> Vec3 {
+        let along = along.clamp(0.0, 1.0);
+        let travel = self.comb_length(root) * along;
+        root.at + root.out * LIFT + self.run(root) * travel
+    }
+
     /// How far round the head a root sits, as a cosine of its azimuth.
     ///
     /// The same reading the mask takes, so a style and the paint under it agree
@@ -286,7 +503,11 @@ impl Flank {
     /// read as an edge rather than as a fringe of whatever length each clump
     /// happened to have.
     fn floor(&self, root: &Root) -> f32 {
-        let facing = Self::facing(root);
+        self.floor_at(Self::facing(root))
+    }
+
+    /// The same at one azimuth's cosine.
+    fn floor_at(&self, facing: f32) -> f32 {
         let border = self.regions.jawline(facing) - self.rides;
         // A sideburn stops part of the way down instead, on its own axis.
         let top = self.line.top(facing);
@@ -311,21 +532,33 @@ impl Flank {
 
 impl Shape for Flank {
     fn length(&self, root: &Root) -> f32 {
-        let share = self.share(root);
-        // Never past the crease: the tips arrive at the line together, whatever
-        // height they grew from, which is what makes a beard's edge an edge.
-        let room = (root.at.y - self.floor(root)).max(0.0);
-        let length = (self.reach * share).min(room);
-        if length < self.reach * LEAST_WORTH {
-            return 0.0;
+        match self.role(root) {
+            Role::Comb => self.comb_length(root),
+            // A card along the jaw or down a strip is as long as its run, and
+            // declined only where the style declines the root at all.
+            Role::Jaw | Role::Strip if self.share(root) < LEAST_WORTH => 0.0,
+            Role::Jaw => JAW_RUN * self.stretch,
+            Role::Strip => {
+                let (_, top, bottom) = self.strip_span(root);
+                let length = top - bottom;
+                if length < self.reach * LEAST_WORTH {
+                    return 0.0;
+                }
+                length
+            }
         }
-        length
     }
 
     fn at(&self, root: &Root, along: f32) -> Vec3 {
-        let along = along.clamp(0.0, 1.0);
-        let travel = self.length(root) * along;
-        root.at + root.out * LIFT + self.run(root) * travel
+        match self.role(root) {
+            Role::Comb => self.comb_at(root, along),
+            // On the skull's own surface station by station, because a card
+            // this long on a face this curved would cut a chord into it.
+            Role::Jaw | Role::Strip => {
+                let (height, azimuth) = self.station(root, along);
+                self.skin(height, azimuth) + self.normal(height, azimuth) * LIFT
+            }
+        }
     }
 
     fn width_at(&self, root: &Root, along: f32) -> f32 {
@@ -336,13 +569,33 @@ impl Shape for Flank {
     }
 
     fn width(&self, root: &Root) -> (f32, f32) {
-        let base = self.width * 0.5 * self.share(root);
+        let full = match self.role(root) {
+            Role::Comb => self.width,
+            Role::Jaw => JAW_WIDTH * self.coarse,
+            Role::Strip => STRIP_WIDTH * self.coarse,
+        };
+        let base = full * 0.5 * self.share(root);
         (base, base * self.taper.clamp(0.0, 1.0))
     }
 
     fn across(&self, root: &Root) -> Vec3 {
         // The card lies IN the plane of the skin, its width across the comb.
         root.out.cross(self.run(root))
+    }
+
+    fn across_at(&self, root: &Root, along: f32) -> Vec3 {
+        match self.role(root) {
+            Role::Comb => self.across(root),
+            // In the plane of the skin at this station, across the card's own
+            // run: over the jaw's border that is up and down the crease.
+            Role::Jaw | Role::Strip => {
+                const STEP: f32 = 0.02;
+                let (height, azimuth) = self.station(root, along);
+                let tangent =
+                    self.at(root, (along + STEP).min(1.0)) - self.at(root, (along - STEP).max(0.0));
+                self.normal(height, azimuth).cross(tangent)
+            }
+        }
     }
 }
 
@@ -415,9 +668,18 @@ mod tests {
                         continue;
                     }
                     measured += 1;
-                    let floor = head.jawline(facing) - RIDES[1];
                     for step in 0..=12 {
                         let at = shape.at(&root, step as f32 / 12.0);
+                        // At the station's own azimuth, because the jawline is a
+                        // function of azimuth and a card that runs along the jaw
+                        // (#344) is not where its root is.
+                        let reach = (at.x * at.x + at.z * at.z).sqrt();
+                        let here = if reach > f32::EPSILON {
+                            at.z / reach
+                        } else {
+                            1.0
+                        };
+                        let floor = head.jawline(here) - RIDES[1];
                         assert!(
                             at.y >= floor - 0.0005,
                             "a {style:?} clump at facing {facing}, {down} down reaches {:.1} mm \

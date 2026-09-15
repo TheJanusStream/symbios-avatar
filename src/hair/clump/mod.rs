@@ -201,6 +201,19 @@ pub trait Shape {
     fn seamed(&self) -> bool {
         false
     }
+
+    /// Whether the card's width turns fast enough that the sampler has to
+    /// follow the turn as well as the spine.
+    ///
+    /// **The sampler earns stations by how far a spine strays from its chord,
+    /// and a width that turns about a nearly straight spine earns none** (#344):
+    /// a rope's strand still close to its axis turned a third of a circle across
+    /// one segment and drew a bow-tie there. Asked, the loft also splits any
+    /// segment across which [`Self::across_at`] turns more than a set angle. The
+    /// default is no, which samples exactly as before.
+    fn turns(&self) -> bool {
+        false
+    }
 }
 
 /// A small closed solid a style asks for beside its clumps. See [`Shape::lump`].

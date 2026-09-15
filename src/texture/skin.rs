@@ -634,6 +634,18 @@ pub fn paint_skin(
                 // cells of checkerboard. See [`Grain`].
                 let grain = crate::hair::painted::Grain::of(follicle);
                 let speckle = noise3(&stubble_field, p, grain.cells) * 0.5 + 0.5;
+                // **A beard region's paint is coverage** (#344): at a density of
+                // one the texel is the hair's colour, with the grain in the
+                // coverage and the shade rather than in skin showing through.
+                // See [`crate::hair::painted::Cover`].
+                if let Some(cover) = crate::hair::painted::Cover::of(follicle) {
+                    let resolved = resolvable(grain.cells);
+                    let hair = (paint.tone() * cover.shade(speckle, resolved))
+                        .clamp(Vec3::ZERO, Vec3::ONE);
+                    colour = colour.lerp(hair, cover.amount(held, speckle, resolved));
+                    painted = (painted + held).min(1.0);
+                    continue;
+                }
                 let broken = grain.at(speckle, resolvable(grain.cells));
                 // Toward the hair's own colour, darkened by the skin under it
                 // rather than replacing it: a hair painted on skin is a hair

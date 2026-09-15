@@ -92,6 +92,26 @@ const WIDTH: [f32; 3] = [0.0115, 0.0135, 0.0155];
 /// Provenance: **tuned by render**.
 const TAPER: [f32; 3] = [0.26, 0.22, 0.55];
 
+/// How much wider a full beard's clumps are than [`WIDTH`] says.
+///
+/// **A full beard at its old width was a fringe of separate blades** (#344):
+/// a clump hangs free below the menton, where a card's width costs nothing, and
+/// the strand mask cuts whatever end it has into points. Costed against the
+/// chin before it was rendered: a card is a tangent plane, so its edges stand
+/// off a curve of radius `R` by `w^2 / 2R`, and the part of a clump still on the
+/// chin is under half its width (see [`ENDS`]) - at this factor about 8 mm a
+/// side on a chin whose front is some 40 mm round, under a millimetre off, inside
+/// the [`STAND`] it already keeps.
+///
+/// Provenance: **tuned by render** (#344).
+const WIDEN: f32 = 1.6;
+
+/// What share of a full beard's width is left at its tip, where [`TAPER`]'s
+/// own entry says a fifth.
+///
+/// Provenance: **tuned by render** (#344), with the strand mask cutting the end.
+const FULL_TAPER: f32 = 0.45;
+
 /// How much of the way to the hanging line a clump is drawn over its own fall.
 ///
 /// **The throat clearance and the beard's own silhouette are the same number.**
@@ -147,6 +167,49 @@ const CROWD: [f32; 3] = [1.0, 1.0, 0.34];
 ///
 /// Provenance: **derived** from the sampler's own tolerance, **tuned by render**.
 const TWIST: [f32; 2] = [6.0, 16.0];
+
+/// Whether a braid is a rope of three strands wound round one axis.
+///
+/// **A braid was one flat ribbon per clump, knotted on itself** (#344): each
+/// clump converged three quarters of the way to the hanging line and turned
+/// about it whole, so the hang was a few ribbons crossing and turning edge-on.
+/// A rope gathers every clump onto the line, deals it to one of three strands a
+/// third of a turn apart, and winds the strands round the line, each card lying
+/// on the rope's own surface.
+///
+/// Provenance: **the owner's brief** for #344.
+const ROPE: bool = true;
+
+/// How far a strand's middle sits off the rope's axis, in metres.
+///
+/// **What a rope's stations cost is decided here and not by how fast it
+/// winds.** The sampler holds a drawn spine within a millimetre of its curve,
+/// and a helix of radius `r` earns a station every `sqrt(8 x 0.001 x r)` of its
+/// own arc turn - about eighty degrees of winding a station at four
+/// millimetres, whatever the rate.
+///
+/// Provenance: **derived** from the sampler's tolerance, **tuned by render**
+/// (#344).
+const ROPE_RADIUS: f32 = 0.006;
+
+/// How fast the strands wind round the axis over a metre of fall, in radians,
+/// at each end of the braid's own axis.
+///
+/// Provenance: **tuned by render** (#344).
+const ROPE_TURN: [f32; 2] = [30.0, 70.0];
+
+/// How wide a strand is once it is on the rope, half-width in metres, before
+/// the cut's own coarseness.
+///
+/// A third of the rope's girth and a little over, so the three overlap.
+///
+/// Provenance: **derived** from [`ROPE_RADIUS`], **tuned by render** (#344).
+const ROPE_WIDTH: f32 = 0.006;
+
+/// The salt lane a clump's strand is drawn from.
+///
+/// Provenance: **derived**: any lane no other draw in this file uses.
+const STRAND_SALT: u32 = 7;
 
 /// How much shorter the outer clumps are than the middle at a `point` of one.
 ///
@@ -269,8 +332,8 @@ impl Style for ChinStyle {
         Some(Box::new(Beard {
             pad,
             reach: REACH[slot] * length,
-            width: WIDTH[slot] * coarse,
-            taper: TAPER[slot],
+            width: WIDTH[slot] * coarse * if slot == 1 { WIDEN } else { 1.0 },
+            taper: if slot == 1 { FULL_TAPER } else { TAPER[slot] },
             gather: GATHER[slot],
             // Either side of the style's own hang, so a record can ask for a
             // beard held out or one combed flat without either end reading as a
@@ -278,6 +341,14 @@ impl Style for ChinStyle {
             droop: DROOP[slot] * (0.6 + 0.8 * cut.droop.clamp(0.0, 1.0)),
             point,
             twist,
+            rope: ROPE && matches!(self, Self::Braided { .. }),
+            turn: match self {
+                Self::Braided { twist } => {
+                    ROPE_TURN[0] + (ROPE_TURN[1] - ROPE_TURN[0]) * twist.clamp(0.0, 1.0)
+                }
+                _ => 0.0,
+            },
+            coarse,
         }))
     }
 
@@ -330,6 +401,12 @@ struct Beard {
     point: f32,
     /// How far it turns about the hanging line over a metre, in radians.
     twist: f32,
+    /// Whether it is a strand of a rope. See [`ROPE`].
+    rope: bool,
+    /// How fast a rope's strands wind round its axis, in radians a metre.
+    turn: f32,
+    /// The cut's own coarseness, which a strand's width scales by.
+    coarse: f32,
 }
 
 impl Beard {
@@ -403,18 +480,55 @@ impl Beard {
         // instead of back.
         Vec3::new(leaves.x, leaves.y, leaves.z.max(0.0)).normalize_or(Vec3::NEG_Y)
     }
-}
 
-impl Shape for Beard {
-    fn length(&self, root: &Root) -> f32 {
-        let length = self.reach * self.share(root);
-        if length < self.reach * LEAST_WORTH {
-            return 0.0;
-        }
-        length
+    /// Which of a rope's three strands this clump is dealt to, as the angle
+    /// round the axis it starts at.
+    fn strand(root: &Root) -> f32 {
+        (super::salt(root, STRAND_SALT) * 3.0).floor().min(2.0) * std::f32::consts::TAU / 3.0
     }
 
-    fn at(&self, root: &Root, along: f32) -> Vec3 {
+    /// How much of a rope the clump is a share of the way along it, `0` to `1`:
+    /// the square of how far below the patch it has fallen, as [`Self::placed`]
+    /// schedules the gather.
+    fn roped(&self, root: &Root, along: f32) -> f32 {
+        let along = along.clamp(0.0, 1.0);
+        let travel = self.length(root) * along;
+        let heading = (self.leaves(root) + Vec3::NEG_Y * (self.droop * along * along))
+            .normalize_or(self.leaves(root));
+        let off = Vec3::new(root.out.x, root.out.y, root.out.z.max(0.0)).normalize_or(root.out);
+        let height = root.at.y
+            + off.y * (LIFT + STAND * crate::face::smooth(along / LEAVE))
+            + heading.y * travel;
+        let below =
+            ((self.pad.under - height) / (self.reach * FALLEN).max(f32::EPSILON)).clamp(0.0, 1.0);
+        below * below
+    }
+
+    /// How far a strand has wound by a share of the way along it, in metres of
+    /// rope: the travel, counted only as far as the clump is a rope.
+    ///
+    /// **An integral and not a product** (#344, the lesson #343's ringlet paid
+    /// for). Travel times how much of a rope the clump is jumps by the whole of
+    /// the travel so far as the rope comes on, which turned a strand a third of
+    /// a circle across one segment.
+    fn wound(&self, root: &Root, along: f32) -> f32 {
+        const STEPS: usize = 24;
+        let along = along.clamp(0.0, 1.0);
+        let step = self.length(root) * along / STEPS as f32;
+        let mut last = self.roped(root, 0.0);
+        let mut wound = 0.0;
+        for index in 1..=STEPS {
+            let here = self.roped(root, along * index as f32 / STEPS as f32);
+            wound += (last + here) * 0.5 * step;
+            last = here;
+        }
+        wound
+    }
+
+    /// A point on the clump, how far it has fallen and how much of a rope it is
+    /// there (`0` still a clump, `1` a strand), and the strand's angle round
+    /// the rope's axis.
+    fn placed(&self, root: &Root, along: f32) -> (Vec3, f32, f32) {
         let along = along.clamp(0.0, 1.0);
         let travel = self.length(root) * along;
         // Out of the skin, then increasingly toward the ground: the bend is
@@ -468,13 +582,31 @@ impl Shape for Beard {
         // still had a seventh of itself applied a centimetre under it, which on
         // the outer jaw is enough to walk a rope back into the neck: the surface
         // there comes forward four millimetres for every three the hair moves in.
-        let closed = self.gather * below * below;
+        let rope = below * below;
+        // **A rope closes all the way** (#344): every clump comes onto the
+        // line and the strands are what stand off it.
+        let closed = if self.rope {
+            rope
+        } else {
+            self.gather * below * below
+        };
         at.x += (hang.x - at.x) * closed;
         at.z += (hang.z - at.z) * closed;
-        // And turned about that line, if this style is a rope. A turn and not a
-        // helix: the radius is whatever the gather has left, so the rope closes
-        // and winds at once, which is what a braid does.
-        if self.twist > 0.0 {
+        let phase = if self.rope {
+            Self::strand(root) - self.turn * self.wound(root, along)
+        } else {
+            0.0
+        };
+        if self.rope {
+            // Wound round the line on the same schedule it closed on, so a
+            // strand is lying against the chin where it grew and on the rope
+            // by the time it is one.
+            at.x += ROPE_RADIUS * rope * phase.sin();
+            at.z += ROPE_RADIUS * rope * phase.cos();
+        } else if self.twist > 0.0 {
+            // And turned about that line, if this style is a rope. A turn and
+            // not a helix: the radius is whatever the gather has left, so the
+            // rope closes and winds at once, which is what a braid does.
             // **Turning only once it is a rope**, on the same schedule the
             // convergence runs on. A twist applied from the root turns the clump
             // about the hanging line while it is still lying against the jaw,
@@ -486,7 +618,21 @@ impl Shape for Beard {
             at.x = hang.x + from.x * cos - from.z * sin;
             at.z = hang.z + from.x * sin + from.z * cos;
         }
-        at
+        (at, rope, phase)
+    }
+}
+
+impl Shape for Beard {
+    fn length(&self, root: &Root) -> f32 {
+        let length = self.reach * self.share(root);
+        if length < self.reach * LEAST_WORTH {
+            return 0.0;
+        }
+        length
+    }
+
+    fn at(&self, root: &Root, along: f32) -> Vec3 {
+        self.placed(root, along).0
     }
 
     fn width_at(&self, root: &Root, along: f32) -> f32 {
@@ -494,11 +640,48 @@ impl Shape for Beard {
         // so the ragged end of the mass is at the bottom where a beard's is.
         let (base, tip) = self.width(root);
         let along = along.clamp(0.0, 1.0);
-        if along < 0.45 {
-            return base * (ENDS + (1.0 - ENDS) * (along / 0.45));
+        let leaf = if along < 0.45 {
+            base * (ENDS + (1.0 - ENDS) * (along / 0.45))
+        } else {
+            base + (tip - base) * ((along - 0.45) / 0.55)
+        };
+        if !self.rope {
+            return leaf;
         }
-        let past = (along - 0.45) / 0.55;
-        base + (tip - base) * past
+        // A strand once it is on the rope, the clump's own leaf before.
+        let (_, rope, _) = self.placed(root, along);
+        leaf + (ROPE_WIDTH * self.coarse * self.share(root).sqrt() - leaf) * rope
+    }
+
+    fn across_at(&self, root: &Root, along: f32) -> Vec3 {
+        let leaving = self.across(root);
+        if !self.rope {
+            return leaving;
+        }
+        // **On the rope's own surface, as one continuous angle** (#344, the
+        // lesson #343 paid for: two axes lerped into one another jump where
+        // they are square). Both are level, so each is an angle round the
+        // vertical. The strand's axis is square to where it sits round the rope,
+        // a quarter turn on from its phase; the clump comes onto that axis by
+        // the shortest way round as it becomes a rope, and turns with the strand
+        // from there, so the angle never jumps.
+        use std::f32::consts::{FRAC_PI_2, PI};
+        let (_, rope, phase) = self.placed(root, along);
+        let start = Self::strand(root);
+        let leaving = leaving.x.atan2(leaving.z);
+        let departure = (start + FRAC_PI_2 - leaving + FRAC_PI_2).rem_euclid(PI) - FRAC_PI_2;
+        let angle = leaving + departure * rope + (phase - start);
+        Vec3::new(angle.sin(), 0.0, angle.cos())
+    }
+
+    fn seamed(&self) -> bool {
+        // A strand's face goes round the rope with it, and past the skin's side
+        // twice a turn.
+        self.rope
+    }
+
+    fn turns(&self) -> bool {
+        self.rope
     }
 
     fn width(&self, root: &Root) -> (f32, f32) {

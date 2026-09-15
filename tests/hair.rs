@@ -885,6 +885,246 @@ fn a_ringlet_neither_folds_nor_turns_over() {
 /// construction's.
 const CREASED: f32 = 0.0;
 
+/// The default body growing one chin style and one flank style and nothing else
+/// on its head.
+struct Beard {
+    /// The hair, head-local, as the renderer gets it.
+    hair: Option<symbios_avatar::hair::Growth>,
+    /// The body's faces near the jaw, head-local, as triangles.
+    skin: Vec<[Vec3; 3]>,
+    /// The measured skull.
+    skull: Skull,
+    /// Where each kind of hair grows on this head.
+    follicles: Follicles,
+}
+
+impl Beard {
+    fn wearing(chin: ChinStyle, flanks: FlankStyle) -> Self {
+        let mut record = AvatarRecord::new("Beard", Archetype::default());
+        record.hair.scalp.style = ScalpStyle::None;
+        record.hair.brows.style = BrowStyle::None;
+        record.hair.moustache.style = MoustacheStyle::None;
+        record.hair.chin.style = chin;
+        record.hair.flanks.style = flanks;
+        let avatar = Avatar::build(&record).expect("a biped builds");
+        let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
+        let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+        let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
+        let origin = follicles.origin();
+        let body = &avatar.parts.body;
+        let (low, high) = (skull.chin() - 0.06, canon.mouth_line() + 0.02);
+        let skin = body
+            .faces
+            .iter()
+            .flat_map(|face| {
+                let local: Vec<Vec3> = face
+                    .iter()
+                    .map(|at| body.positions[*at as usize] - origin)
+                    .collect();
+                (1..local.len() - 1)
+                    .map(move |fan| [local[0], local[fan], local[fan + 1]])
+                    .collect::<Vec<_>>()
+            })
+            .filter(|[a, _, _]| a.y > low && a.y < high && a.length() < 0.25)
+            .collect();
+        Self {
+            hair: avatar.parts.hair.clone(),
+            skin,
+            skull,
+            follicles,
+        }
+    }
+
+    /// The hair's triangles.
+    fn triangles(&self) -> Vec<[Vec3; 3]> {
+        let Some(hair) = &self.hair else {
+            return Vec::new();
+        };
+        let mesh = &hair.mesh;
+        mesh.faces
+            .iter()
+            .flat_map(|face| {
+                (1..face.len() - 1).map(move |fan| {
+                    [face[0], face[fan], face[fan + 1]].map(|at| mesh.positions[at as usize])
+                })
+            })
+            .collect()
+    }
+}
+
+/// How many of a beard's jawline points, from the angle of the jaw round to the
+/// menton on both sides, are further than [`JAWLINE_REACH`] from any card; how
+/// many were read; and the furthest any point is, with its signed facing (the
+/// side's sign on the azimuth's cosine).
+fn bare_jawline(beard: &Beard) -> (usize, usize, (f32, f32)) {
+    const STEPS: usize = 40;
+    let hair = beard.triangles();
+    let (mut bare, mut read, mut worst) = (0usize, 0usize, (0.0f32, 0.0f32));
+    for step in 0..=STEPS {
+        let facing = step as f32 / STEPS as f32;
+        let on = beard
+            .skull
+            .surface_at(beard.follicles.jawline(facing), facing.acos());
+        for side in [1.0f32, -1.0] {
+            if step == STEPS && side < 0.0 {
+                continue;
+            }
+            // On the built skin, not on the skull's own profile of it.
+            let wanted = Vec3::new(on.x * side, on.y, on.z);
+            let point = beard
+                .skin
+                .iter()
+                .map(|[a, b, c]| closest_on_triangle(wanted, *a, *b, *c).0)
+                .min_by(|one, two| one.distance(wanted).total_cmp(&two.distance(wanted)))
+                .unwrap_or(wanted);
+            let apart = hair
+                .iter()
+                .map(|[a, b, c]| closest_on_triangle(point, *a, *b, *c).0.distance(point))
+                .fold(f32::MAX, f32::min);
+            read += 1;
+            if apart.min(1.0) > worst.0 {
+                worst = (apart.min(1.0), facing * side);
+            }
+            if apart > JAWLINE_REACH {
+                bare += 1;
+            }
+        }
+    }
+    (bare, read, worst)
+}
+
+/// How far a jawline point may be from a card, in metres; see
+/// `a_full_beard_draws_its_whole_jawline`.
+const JAWLINE_REACH: f32 = 0.004;
+
+#[test]
+fn a_full_beard_draws_its_whole_jawline() {
+    // **The flanks and the chin met without the jaw between them** (#344).
+    // The issue's reading, as it asked for it: at full flanks and a full chin,
+    // no point of the jawline from the angle of the jaw to the menton more than
+    // 4 mm from a card. It PASSED before the fix all but for the menton (two of
+    // 81 points, the worst 4.3 mm there): a flank clump combs down and stops ON
+    // the jawline, so its tip touches every point of it. What the sheet showed
+    // bare was under the jaw, and paint as coverage is what closed it. So this
+    // holds the line at none, which the jaw row along the border does, and its
+    // liveness is a chin with its flanks shaved.
+    let shaved = bare_jawline(&Beard::wearing(ChinStyle::Full, FlankStyle::None));
+    println!("flanks shaved: {} of {} bare", shaved.0, shaved.1);
+    assert!(
+        shaved.0 * 2 > shaved.1,
+        "a full chin with its flanks shaved reads only {} of {} jawline points bare, so the \
+         reading does not see a missing flank",
+        shaved.0,
+        shaved.1
+    );
+    for reach in [0.0f32, 0.7, 1.0] {
+        let (bare, read, worst) = bare_jawline(&Beard::wearing(
+            ChinStyle::Full,
+            FlankStyle::FullConnect { reach },
+        ));
+        println!(
+            "full flanks {reach}: {bare} of {read} bare, the furthest {:.2} mm at facing {:+.3}",
+            worst.0 * 1000.0,
+            worst.1
+        );
+        assert!(
+            bare == 0,
+            "at full flanks {reach} and a full chin {bare} of {read} jawline points are more than \
+             {:.0} mm from a card, the furthest {:.2} mm at facing {:+.3}",
+            JAWLINE_REACH * 1000.0,
+            worst.0 * 1000.0,
+            worst.1
+        );
+    }
+}
+
+#[test]
+fn a_braided_rope_neither_folds_nor_turns_over() {
+    // **A braid was a ribbon knotted on itself, and its first rope was crumpled
+    // foil** (#344). Measured on the default head, a braid's cards were 4% to
+    // 6% turned over before it was a rope, and the first rope 9% to 11%: its
+    // strands' width turned a third of a circle across a segment the sampler
+    // never split, the spine there being nearly straight. A strand winds by
+    // the integral of how much of a rope it is, the loft follows the width's
+    // turn where a card asks, and none of it creases. The reading is the
+    // ringlet's own, checked on its hoops there.
+    for twist in [0.0f32, 0.5, 1.0] {
+        let beard = Beard::wearing(ChinStyle::Braided { twist }, FlankStyle::None);
+        let hair = beard.hair.as_ref().expect("a braid grows hair");
+        let cards = cards_of(&hair.mesh.faces);
+        let (area, bowtie, fold) = creases(&hair.mesh.positions, &cards);
+        println!(
+            "braid {twist}: {} cards, {:.0} cm2, {:.2}% turned over, {:.2}% folded",
+            cards.len(),
+            area * 1e4,
+            bowtie / area * 100.0,
+            fold / area * 100.0
+        );
+        assert!(
+            area > 0.0 && (bowtie + fold) <= CREASED * area,
+            "a braid at twist {twist}: {:.1}% of its cards are turned over or folded",
+            (bowtie + fold) / area.max(f32::EPSILON) * 100.0
+        );
+    }
+}
+
+#[test]
+fn a_sideburn_is_a_strip_down_to_its_drop() {
+    // **A sideburn was two dashes** (#344): its clumps combed down by the
+    // flanks' own short reach and most were declined as too short, so a
+    // sideburn at a full drop was six tabs by the ear. It is a strip now: every
+    // clump runs from under the beard line to the drop's floor. Read off the
+    // built mesh, per side: how many cards, and how much of the height from the
+    // beard line to the jawline at its own azimuth each one spans.
+    for drop in [0.5f32, 1.0] {
+        let beard = Beard::wearing(ChinStyle::None, FlankStyle::Sideburns { drop });
+        let hair = beard.hair.as_ref().expect("a sideburn grows hair");
+        let line = beard.follicles.beard_line();
+        for side in [1.0f32, -1.0] {
+            let mut spans: Vec<f32> = Vec::new();
+            for card in cards_of(&hair.mesh.faces) {
+                let points = &hair.mesh.positions[card];
+                let middle =
+                    points.iter().fold(Vec3::ZERO, |sum, at| sum + *at) / points.len() as f32;
+                if middle.x * side <= 0.0 {
+                    continue;
+                }
+                let facing = middle.z / (middle.x * middle.x + middle.z * middle.z).sqrt();
+                let (low, high) = points.iter().fold((f32::MAX, f32::MIN), |(low, high), at| {
+                    (low.min(at.y), high.max(at.y))
+                });
+                spans.push((high - low) / (line.top(facing) - beard.follicles.jawline(facing)));
+            }
+            spans.sort_by(|one, two| two.total_cmp(one));
+            println!("drop {drop}, side {side}: spans {spans:.2?}");
+            let long = spans
+                .iter()
+                .filter(|span| **span >= STRIP_SPAN * drop)
+                .count();
+            assert!(
+                long >= STRIP_CARDS,
+                "a sideburn at drop {drop} has {long} cards on one side spanning {:.0}% of the \
+                 height from its line to the jawline, where a strip has {STRIP_CARDS}: {spans:.2?}",
+                STRIP_SPAN * drop * 100.0
+            );
+        }
+    }
+}
+
+/// How many of a sideburn's cards a side runs the strip's height; see
+/// `a_sideburn_is_a_strip_down_to_its_drop`.
+const STRIP_CARDS: usize = 3;
+
+/// What share of the height from the beard line to the jawline a strip card
+/// spans at a drop of one, and that share of it at a shorter drop; see
+/// `a_sideburn_is_a_strip_down_to_its_drop`.
+///
+/// Measured at #344 on the default head: four and five cards a side, spanning
+/// 0.84 to 0.92 of it at a drop of one and 0.48 to 0.55 at a half. Before, a
+/// sideburn's clumps combed down by the flanks' own reach of about 21 mm, and
+/// the few not declined as too short were tabs.
+const STRIP_SPAN: f32 = 0.8;
+
 #[test]
 fn a_tail_is_knotted_by_a_closed_lump_the_budget_pays_for() {
     // **A tail's knot is a lump, not the cards passing through it** (#342).

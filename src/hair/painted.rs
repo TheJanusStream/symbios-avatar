@@ -133,7 +133,9 @@ impl Grain {
                 reach: 0.90,
                 cells: 700.0,
             },
-            // Stubble, all three of them, at the term this replaced.
+            // Stubble, all three of them, at the term this replaced. Since #344
+            // the painter reads only its `cells` for these three - how fine a
+            // hair's grain is - and lays the paint itself as a [`Cover`].
             Follicle::Moustache | Follicle::Chin | Follicle::Flanks => Self {
                 shows: 1.0,
                 reach: 0.8,
@@ -153,6 +155,84 @@ impl Grain {
         let broken = 1.0 - self.shows * (1.0 - speckle.clamp(0.0, 1.0));
         let mean = 1.0 - self.shows * 0.5;
         mean + (broken - mean) * resolved.clamp(0.0, 1.0)
+    }
+}
+
+/// Whether the three beard regions paint as coverage (#344).
+///
+/// Provenance: **the owner's brief** for #344 - density is coverage and
+/// nothing else.
+const COVERS: bool = true;
+
+/// How far the grain moves a beard region's coverage either side of its mean,
+/// as a share of `held x (1 - held)`.
+///
+/// Provenance: **tuned by render** (#344).
+const SPREAD: f32 = 0.6;
+
+/// How far the grain moves a beard region's own colour either side of it, as a
+/// share.
+///
+/// Provenance: **tuned by render** (#344).
+const TONE: f32 = 0.12;
+
+/// How one of the beard regions lays its paint, where it lays it as hair.
+///
+/// **Density is coverage and nothing else** (#344). The grain used to be
+/// how much skin showed between the hairs, so at full density and a full mask
+/// a beard region reached only four tenths of its own colour on average - a
+/// stubble term that read on a full beard as a brown shadow on the jaw, not as
+/// the hair under the cards. Here the paint covers exactly as much skin as it
+/// is asked to: at a density of one the texel IS the hair's colour, and the
+/// grain lives in two places that leave that mean alone - a swing in coverage
+/// that vanishes at both ends, and a swing in the hair's own shade.
+///
+/// The scalp and the brows keep [`Grain`]'s own arithmetic, which #205 tuned
+/// for a region under a head of hair.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cover {
+    /// How far the grain moves the coverage either side of what was asked, as a
+    /// share of `held x (1 - held)`, `0` to `1`.
+    pub spread: f32,
+    /// How far the grain moves the hair's own colour either side of it, as a
+    /// share.
+    pub tone: f32,
+}
+
+impl Cover {
+    /// How one region lays its paint, or `None` where [`Grain`] still decides.
+    #[must_use]
+    pub fn of(follicle: Follicle) -> Option<Self> {
+        match follicle {
+            Follicle::Moustache | Follicle::Chin | Follicle::Flanks if COVERS => Some(Self {
+                spread: SPREAD,
+                tone: TONE,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The share of a texel the hair covers, where `held` is the mask's weight
+    /// times the density, `speckle` the noise field there (`0` to `1`) and
+    /// `resolved` how much of the grain the atlas can carry.
+    ///
+    /// Its mean over the speckle is `held`, and it is exactly `held` where the
+    /// grain cannot be drawn and at either end of the range.
+    #[must_use]
+    pub fn amount(&self, held: f32, speckle: f32, resolved: f32) -> f32 {
+        let held = held.clamp(0.0, 1.0);
+        let swing = (speckle.clamp(0.0, 1.0) - 0.5)
+            * 2.0
+            * self.spread.clamp(0.0, 1.0)
+            * resolved.clamp(0.0, 1.0);
+        (held + swing * held * (1.0 - held)).clamp(0.0, 1.0)
+    }
+
+    /// The factor on the hair's own colour at one sample of the grain: darker
+    /// where the hair is denser, with a mean of one.
+    #[must_use]
+    pub fn shade(&self, speckle: f32, resolved: f32) -> f32 {
+        1.0 - (speckle.clamp(0.0, 1.0) - 0.5) * 2.0 * self.tone * resolved.clamp(0.0, 1.0)
     }
 }
 
@@ -300,8 +380,9 @@ mod tests {
             assert!(grain.at(2.0, 1.0) <= 1.0 && grain.at(-1.0, 1.0) >= 1.0 - grain.shows);
         }
         // The three stubble regions are the term this replaced, unchanged: bare
-        // skin at the thinnest, so a mean of one half. That is what keeps a
-        // beard's painted strength exactly what #200 judged.
+        // skin at the thinnest, so a mean of one half. The painter lays a beard
+        // region as a [`Cover`] since #344 and reads only these regions' grain
+        // size from here; the numbers are kept for whatever still asks.
         for follicle in [Follicle::Moustache, Follicle::Chin, Follicle::Flanks] {
             let grain = Grain::of(follicle);
             assert_eq!(
@@ -315,6 +396,49 @@ mod tests {
         // And a brow is dense hair rather than a shave, which is the whole point.
         assert!(Grain::of(Follicle::Brows).shows < Grain::of(Follicle::Chin).shows);
         assert!(Grain::of(Follicle::Brows).cells > Grain::of(Follicle::Chin).cells);
+    }
+
+    #[test]
+    fn a_beard_region_covers_exactly_what_its_density_asks() {
+        // **Density is coverage and nothing else** (#344). At a density of one
+        // a beard region's texel is its colour whatever the grain says, at
+        // nothing it is the skin, and between the two the grain moves where the
+        // hair is without moving how much of it there is: its mean is the
+        // density, and where the atlas cannot draw the grain it is the density
+        // exactly. The shade's swing likewise keeps the colour's own mean.
+        let speckles = [0.0f32, 0.25, 0.5, 0.75, 1.0];
+        for follicle in [Follicle::Moustache, Follicle::Chin, Follicle::Flanks] {
+            let cover = Cover::of(follicle)
+                .unwrap_or_else(|| panic!("the {} does not paint as coverage", follicle.name()));
+            for speckle in speckles {
+                for resolved in [0.0f32, 0.5, 1.0] {
+                    assert!(
+                        (cover.amount(1.0, speckle, resolved) - 1.0).abs() < 1e-6
+                            && cover.amount(0.0, speckle, resolved).abs() < 1e-6,
+                        "the {} paints other than its colour at a density of one or other than \
+                         skin at none",
+                        follicle.name()
+                    );
+                }
+                assert!(
+                    (cover.amount(0.4, speckle, 0.0) - 0.4).abs() < 1e-6,
+                    "the {} paints other than its density where the grain cannot be drawn",
+                    follicle.name()
+                );
+            }
+            let mean = |of: &dyn Fn(f32) -> f32| {
+                speckles.iter().map(|at| of(*at)).sum::<f32>() / speckles.len() as f32
+            };
+            let covered = mean(&|at| cover.amount(0.4, at, 1.0));
+            let shade = mean(&|at| cover.shade(at, 1.0));
+            assert!(
+                (covered - 0.4).abs() < 1e-5 && (shade - 1.0).abs() < 1e-5,
+                "the {}'s grain moves how much it covers ({covered}) or its colour ({shade})",
+                follicle.name()
+            );
+        }
+        // And a scalp or a brow keeps the grain #205 tuned.
+        assert!(Cover::of(Follicle::Scalp).is_none() && Cover::of(Follicle::Brows).is_none());
     }
 
     #[test]

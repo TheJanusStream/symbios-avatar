@@ -58,6 +58,16 @@ use crate::mesh::{PolyMesh, VertexSkin};
 /// Provenance: **derived** from the render's own resolution.
 const FLATNESS: f32 = 0.001;
 
+/// How far a turning card's width may turn between two stations, in radians,
+/// where the card asks the sampler to follow it (see [`Shape::turns`]).
+///
+/// A quad whose two edges are more than a right angle apart is a bow-tie, and
+/// one well short of it is a visibly twisted strip; a third of that keeps the
+/// strip reading as one surface.
+///
+/// Provenance: **derived** from the bow-tie's right angle (#344).
+const TURN: f32 = 0.5;
+
 /// The fewest stations any clump gets, however short it is.
 ///
 /// Two is a straight line with no bend at all, so three is the floor for
@@ -353,14 +363,31 @@ fn sample(root: &Root, shape: &dyn Shape) -> (Vec<f32>, Vec<Vec3>) {
         .map(|station| station as f32 / (LEAST - 1) as f32)
         .collect();
     let mut points: Vec<Vec3> = fractions.iter().map(|at| shape.at(root, *at)).collect();
+    let turns = shape.turns();
+    // How far the width turns across a gap, as a stray the loop below weighs
+    // like any other: nothing under [`TURN`], and past it more than
+    // [`FLATNESS`] by as much as the turn is past it (see [`Shape::turns`]).
+    let turned = |from: f32, to: f32| {
+        let one = shape.across_at(root, from).normalize_or(Vec3::ZERO);
+        let two = shape.across_at(root, to).normalize_or(Vec3::ZERO);
+        let angle = one.dot(two).clamp(-1.0, 1.0).acos();
+        if angle > TURN {
+            FLATNESS * angle / TURN
+        } else {
+            0.0
+        }
+    };
     while points.len() < MOST {
         // The gap whose midpoint is furthest off the chord that spans it.
         let mut worst = (0.0f32, 0usize);
         for gap in 0..points.len() - 1 {
             let middle = (fractions[gap] + fractions[gap + 1]) * 0.5;
-            let strays = shape
+            let mut strays = shape
                 .at(root, middle)
                 .distance(points[gap].lerp(points[gap + 1], 0.5));
+            if turns {
+                strays = strays.max(turned(fractions[gap], fractions[gap + 1]));
+            }
             if strays > worst.0 {
                 worst = (strays, gap);
             }

@@ -355,6 +355,13 @@ fn main() {
                 .collect()
         })
         .unwrap_or_default();
+    let roots: Vec<f32> = value("--roots")
+        .map(|spec| {
+            spec.split(',')
+                .filter_map(|a| a.trim().parse().ok())
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Four numbers, in the order the axes are declared: melanin, undertone,
     // blush, freckles. It was five and the fifth was stubble, which stopped
@@ -626,6 +633,13 @@ fn main() {
                 ] {
                     paint.density = 0.0;
                 }
+            }
+            // The hair's own colour, root and tip alike, before the facial flags
+            // below copy it: `--roots 0.42,0.30,0.17` sheets a light head, and a
+            // defect that only a light head shows is one a dark sheet hides.
+            if roots.len() == 3 {
+                hair.scalp.roots = [roots[0], roots[1], roots[2]];
+                hair.scalp.tips = hair.scalp.roots;
             }
             if let Some(style) = brow {
                 hair.brows.style = style;
