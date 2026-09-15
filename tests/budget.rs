@@ -680,10 +680,19 @@ fn ledger(label: &str, growth: &Growth) {
     println!("{label}: {} triangles of hair", growth.tris());
     for follicle in Follicle::ALL {
         let grown = growth.grown.iter().find(|grown| grown.follicle == follicle);
-        let (clumps, tris) = grown.map_or((0, 0), |grown| (grown.clumps, grown.tris));
+        let (clumps, tris, shell) =
+            grown.map_or((0, 0, 0), |grown| (grown.clumps, grown.tris, grown.shell));
+        // **The shell as its own line** (#345): it is most of what a helmet
+        // style costs, and a region's total cannot say whether its triangles
+        // went on the solid or on the cards that break its rim.
         println!(
-            "  {:<10} {clumps:>4} clumps {tris:>6} triangles",
-            follicle.name()
+            "  {:<10} {clumps:>4} clumps {tris:>6} triangles{}",
+            follicle.name(),
+            if shell > 0 {
+                format!(" ({shell} of them its shell)")
+            } else {
+                String::new()
+            }
         );
     }
 }
@@ -1101,6 +1110,54 @@ fn the_cheap_way_to_cost_a_region_agrees_with_the_dear_one() {
                 head.at
             );
         }
+    }
+}
+
+#[test]
+fn the_shell_prototype_costs_what_the_hair_ceiling_allows() {
+    // **The helmet family's foundation, costed the way every other head of hair
+    // here is** (#345). A shell is not something a record can ask for - the Cap
+    // prototype is worn through `AvatarConfig::helmet` until the catalogue names
+    // it (#346) - so it moves none of the figures above; what it needs is a line
+    // of its own saying the solid fits in the room the body leaves.
+    //
+    // Measured when it landed: 1,656 triangles of shell and about 190 of rim
+    // cards, 1,836 to 1,852 in all, against a ceiling of 2,850. The bound is the
+    // ceiling itself rather than those figures, because what matters is that a
+    // helmet fits beside everything else a head wears.
+    for (seed, at) in [(0i64, "the default body"), (42, "seed 42"), (7, "seed 7")] {
+        let mut record = AvatarRecord::new("Helmet", Archetype::default());
+        record.reroll(seed);
+        record.sanitize();
+        let config = symbios_avatar::AvatarConfig {
+            helmet: Some(symbios_avatar::hair::Cap::default()),
+            ..Default::default()
+        };
+        let avatar = Avatar::build_with(&record, &config).expect("a biped builds");
+        let hair = avatar
+            .parts
+            .hair
+            .as_ref()
+            .expect("a capped head grows hair");
+        ledger(&format!("{at} in a cap"), hair);
+        let shell: usize = hair.grown.iter().map(|grown| grown.shell).sum();
+        assert!(
+            shell > 0,
+            "{at} wore the prototype and drew no shell at all"
+        );
+        assert!(
+            hair.tris() <= symbios_avatar::hair::clump::MAX_TRIANGLES,
+            "{at} in a cap costs {} triangles of hair against a ceiling of {}",
+            hair.tris(),
+            symbios_avatar::hair::clump::MAX_TRIANGLES
+        );
+        // And the whole body with it on, which is the figure the target is
+        // written against.
+        assert!(
+            avatar.budget.tris <= TRIANGLE_TARGET,
+            "{at} in a cap costs {} triangles against a budget of {TRIANGLE_TARGET}",
+            avatar.budget.tris
+        );
     }
 }
 

@@ -71,12 +71,14 @@ pub mod clump;
 pub mod follicle;
 pub mod mask;
 pub mod painted;
+pub mod shell;
 pub mod style;
 
 pub use clump::{Grown, Growth, Lump, Root, Seating, Shape};
 pub use follicle::{Follicle, FollicleParams, Follicles};
 pub use mask::{StrandMask, strand_mask};
 pub use painted::{Paint, PaintedHair};
+pub use shell::{Cap, Shell};
 pub use style::{
     BrowStyle, ChinStyle, Cut, FlankStyle, HairRecord, MoustacheStyle, ScalpStyle, Sown, Style,
     Tress,

@@ -433,8 +433,12 @@ const KNOT_STANDOFF: f32 = 1.15;
 /// this only has to say which side of it a point is on, and the middle of the
 /// fade is the honest place to put that.
 ///
+/// **The shell generator's rim is this same weight** (#345), taken from here
+/// rather than copied: where a card stops lying on the scalp is where the hair
+/// ends, and a shell that ended anywhere else would end somewhere no card does.
+///
 /// Provenance: **derived** from the mask's own fade.
-const EDGE: f32 = 0.35;
+pub(crate) const EDGE: f32 = 0.35;
 
 /// Over how much free hang a lock takes up its full volume and coil, in metres.
 ///

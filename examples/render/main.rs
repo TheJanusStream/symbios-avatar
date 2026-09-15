@@ -348,6 +348,31 @@ fn main() {
             }
         }
     });
+    // Which sculpted shell to wear in place of the scalp's cards, by name
+    // (#345). The generator has no style name on the wire until the catalogue
+    // gives it one (#346), so this is the instrument that sheets it: `--helmet
+    // cap` is the prototype, and `--helmet cap 0.07` sets the crown's own
+    // thickness, which is the axis a shell is judged on first.
+    let helmet = value("--helmet").map(|name| {
+        let axis = args
+            .iter()
+            .position(|arg| arg == "--helmet")
+            .and_then(|at| args.get(at + 2))
+            .and_then(|it| it.parse::<f32>().ok());
+        match name.as_str() {
+            "cap" => {
+                let mut cap = symbios_avatar::hair::Cap::default();
+                if let Some(crown) = axis {
+                    cap.shell.crown = crown;
+                }
+                cap
+            }
+            other => {
+                eprintln!("unknown --helmet style {other}: expected cap");
+                std::process::exit(1);
+            }
+        }
+    });
     let overridden: Vec<f32> = value("--hair")
         .map(|spec| {
             spec.split(',')
@@ -699,6 +724,7 @@ fn main() {
         // the cloth mesh out of the merge leaves a torso with its middle
         // missing — which is what this flag did until the body it was pointed
         // at stopped drawing that skin.
+        helmet,
         dressed: !bare,
         ..Default::default()
     };

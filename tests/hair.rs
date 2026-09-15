@@ -1201,6 +1201,398 @@ fn a_tail_is_knotted_by_a_closed_lump_the_budget_pays_for() {
     }
 }
 
+/// A body wearing the #345 shell prototype, and the pieces the guards below
+/// read it with.
+///
+/// **Through `AvatarConfig::helmet`, which is the door both renderers use**: the
+/// generator has no style name on the wire until the catalogue gives it one
+/// (#346), so a guard that reached past the config would be testing a path
+/// nothing draws.
+struct Capped {
+    hair: symbios_avatar::hair::Growth,
+    body: symbios_avatar::PolyMesh,
+    normals: Vec<Vec3>,
+    origin: Vec3,
+    follicles: Follicles,
+}
+
+impl Capped {
+    /// `cap` of `None` builds the same body with the record's own hair, which is
+    /// every guard's liveness: a head with no shell on it.
+    fn of(seed: Option<i64>, cap: Option<symbios_avatar::hair::Cap>) -> Self {
+        let mut record = AvatarRecord::new("Helmet", Archetype::default());
+        if let Some(seed) = seed {
+            record.reroll(seed);
+        }
+        record.sanitize();
+        let config = symbios_avatar::AvatarConfig {
+            helmet: cap,
+            ..Default::default()
+        };
+        let avatar = Avatar::build_with(&record, &config).expect("a biped builds");
+        let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
+        let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+        let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
+        Self {
+            hair: avatar.parts.hair.clone().expect("a head of hair"),
+            normals: avatar.parts.body.shading_normals(),
+            body: avatar.parts.body.clone(),
+            origin: follicles.origin(),
+            follicles,
+        }
+    }
+
+    /// The faces the shell drew: everything that is not a card's quad.
+    ///
+    /// The same split `cards_of` makes, and the only one there is - a cap draws
+    /// no knot lump, which is the other thing that is not a card.
+    fn shell(&self) -> Vec<&Vec<u32>> {
+        self.hair
+            .mesh
+            .faces
+            .iter()
+            .filter(|face| !is_card(face))
+            .collect()
+    }
+
+    /// The faces its rim cards drew.
+    fn cards(&self) -> Vec<&Vec<u32>> {
+        self.hair
+            .mesh
+            .faces
+            .iter()
+            .filter(|face| is_card(face))
+            .collect()
+    }
+
+    /// The signed height of a head-local point over the body's own surface, in
+    /// metres: negative under the skin.
+    fn over_skin(&self, point: Vec3) -> f32 {
+        let mut best = (f32::MAX, 0.0f32);
+        for face in &self.body.faces {
+            let first = self.body.positions[face[0] as usize] - self.origin;
+            if first.distance_squared(point) > 0.09 * 0.09 {
+                continue;
+            }
+            for fan in 1..face.len() - 1 {
+                let b = self.body.positions[face[fan] as usize] - self.origin;
+                let c = self.body.positions[face[fan + 1] as usize] - self.origin;
+                let (nearest, _) = closest_on_triangle(point, first, b, c);
+                let apart = nearest.distance_squared(point);
+                if apart < best.0 {
+                    let normal = (self.normals[face[0] as usize]
+                        + self.normals[face[fan] as usize]
+                        + self.normals[face[fan + 1] as usize])
+                        .normalize_or(Vec3::Y);
+                    best = (apart, (point - nearest).dot(normal).signum() * apart.sqrt());
+                }
+            }
+        }
+        best.1
+    }
+
+    /// The signed distance from a point to its shell, positive outside it.
+    fn over_shell(&self, point: Vec3) -> f32 {
+        let mesh = &self.hair.mesh;
+        let mut best = (f32::MAX, 0.0f32);
+        for face in self.shell() {
+            for fan in 1..face.len() - 1 {
+                let [a, b, c] =
+                    [face[0], face[fan], face[fan + 1]].map(|at| mesh.positions[at as usize]);
+                let (nearest, _) = closest_on_triangle(point, a, b, c);
+                let apart = nearest.distance_squared(point);
+                if apart < best.0 {
+                    let normal = (b - a).cross(c - a).normalize_or(Vec3::Y);
+                    best = (apart, (point - nearest).dot(normal).signum() * apart.sqrt());
+                }
+            }
+        }
+        best.1
+    }
+
+    /// How much of the scalp the mask paints at full strength its SHELL does not
+    /// cover, as a share: the #342 column reading, which is what a viewer
+    /// looking at that patch of skin sees in front of it.
+    fn bare_under_the_shell(&self) -> f32 {
+        const REACH: f32 = 0.003;
+        const COLUMN: f32 = 0.024;
+        const SPACING: f32 = 0.003;
+        let mesh = &self.hair.mesh;
+        let mut tris: Vec<[Vec3; 3]> = Vec::new();
+        for face in self.shell() {
+            for fan in 1..face.len() - 1 {
+                tris.push(
+                    [face[0], face[fan], face[fan + 1]].map(|at| mesh.positions[at as usize]),
+                );
+            }
+        }
+        let near = |at: Vec3| {
+            tris.iter()
+                .any(|[a, b, c]| closest_on_triangle(at, *a, *b, *c).0.distance(at) <= REACH)
+        };
+        let (mut painted, mut bare) = (0.0f32, 0.0f32);
+        for face in &self.body.faces {
+            let local: Vec<Vec3> = face
+                .iter()
+                .map(|at| self.body.positions[*at as usize] - self.origin)
+                .collect();
+            if local.iter().all(|at| at.length() > 0.25) {
+                continue;
+            }
+            for fan in 1..local.len() - 1 {
+                let (a, b, c) = (local[0], local[fan], local[fan + 1]);
+                let (na, nb, nc) = (
+                    self.normals[face[0] as usize],
+                    self.normals[face[fan] as usize],
+                    self.normals[face[fan + 1] as usize],
+                );
+                let longest = a.distance(b).max(b.distance(c)).max(c.distance(a));
+                let steps = ((longest / SPACING).ceil() as usize).clamp(1, 40);
+                let area = (b - a).cross(c - a).length() * 0.5 / (steps * steps) as f32;
+                for i in 0..steps {
+                    for j in 0..steps - i {
+                        let (u, v) = (
+                            (i as f32 + 1.0 / 3.0) / steps as f32,
+                            (j as f32 + 1.0 / 3.0) / steps as f32,
+                        );
+                        let at = a + (b - a) * u + (c - a) * v;
+                        if self
+                            .follicles
+                            .weight(symbios_avatar::hair::Follicle::Scalp, at)
+                            < 0.9
+                        {
+                            continue;
+                        }
+                        painted += area;
+                        let out = (na + (nb - na) * u + (nc - na) * v).normalize_or(Vec3::Y);
+                        if !(0..=8).any(|step| near(at + out * (COLUMN * step as f32 / 8.0))) {
+                            bare += area;
+                        }
+                    }
+                }
+            }
+        }
+        bare / painted.max(f32::EPSILON)
+    }
+}
+
+#[test]
+fn a_shell_is_a_closed_solid_the_head_cannot_come_through() {
+    // **The one thing a flat card cannot be** (#345): the helmet family's mass
+    // is a closed sculpted solid, because a layer of cards cannot lie under
+    // another layer of cards (#339 measured a double-width bed standing 16 mm
+    // outside the hair it was meant to back).
+    //
+    // Three claims, each of which the first build of this generator broke or
+    // nearly broke. CLOSED: every edge shared by exactly two faces - the crown
+    // is a pole where every column starts at the same walked point, and left as
+    // a ring of coincident vertices it leaves 72 of 1,764 edges belonging to one
+    // face each (measured; the discarded 2026-08 shell welded its crown for the
+    // same reason). WOUND CONSISTENTLY: every directed edge traversed once each
+    // way, and the volume it encloses positive - read this way rather than as
+    // faces turning away from some middle, because a shell's INNER surface faces
+    // the head by design and half of it turns inward about any centre you pick.
+    // ON the head: no vertex of it under the skin, since a solid with the skull
+    // through it is worse than any card ever was.
+    for seed in [None, Some(42), Some(7)] {
+        let head = Capped::of(seed, Some(symbios_avatar::hair::Cap::default()));
+        let shell = head.shell();
+        let mesh = &head.hair.mesh;
+        assert!(
+            shell.len() > 100,
+            "seed {seed:?}: the cap drew {} shell faces",
+            shell.len()
+        );
+        let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
+        let mut directed: HashMap<(u32, u32), usize> = HashMap::new();
+        for face in &shell {
+            for (index, from) in face.iter().enumerate() {
+                let to = face[(index + 1) % face.len()];
+                *edges.entry((*from.min(&to), *from.max(&to))).or_default() += 1;
+                *directed.entry((*from, to)).or_default() += 1;
+            }
+        }
+        let open = edges.values().filter(|count| **count != 2).count();
+        assert_eq!(
+            open,
+            0,
+            "seed {seed:?}: {open} of the shell's {} edges are not shared by two faces",
+            edges.len()
+        );
+        let clashing = directed
+            .iter()
+            .filter(|((from, to), count)| **count > 1 || !directed.contains_key(&(*to, *from)))
+            .count();
+        assert_eq!(
+            clashing, 0,
+            "seed {seed:?}: {clashing} of the shell's directed edges are not a clean pair, so it \
+             is not consistently wound"
+        );
+        let volume: f32 = shell
+            .iter()
+            .flat_map(|face| {
+                (1..face.len() - 1).map(move |fan| [face[0], face[fan], face[fan + 1]])
+            })
+            .map(|tri| {
+                let [a, b, c] = tri.map(|at| mesh.positions[at as usize]);
+                a.dot(b.cross(c)) / 6.0
+            })
+            .sum();
+        assert!(
+            volume > 0.0,
+            "seed {seed:?}: the shell encloses {:.1} cm3, so it is wound inside out",
+            volume * 1_000_000.0
+        );
+        // Every vertex of it outside the skin, and the reading proved able to
+        // say otherwise: the same vertices pulled 5 mm toward the head read
+        // under it.
+        let mut corners: Vec<u32> = shell.iter().flat_map(|face| face.iter().copied()).collect();
+        corners.sort_unstable();
+        corners.dedup();
+        let (mut under, mut worst) = (0usize, 0.0f32);
+        let mut sunk = 0usize;
+        for at in &corners {
+            let point = mesh.positions[*at as usize];
+            let over = head.over_skin(point);
+            if over < 0.0 {
+                under += 1;
+                worst = worst.min(over);
+            }
+            let inward = point - point.normalize_or(Vec3::Y) * (over + 0.005);
+            sunk += usize::from(head.over_skin(inward) < 0.0);
+        }
+        assert_eq!(
+            under,
+            0,
+            "seed {seed:?}: {under} of the shell's {} vertices are under the skin, worst {:.2} mm",
+            corners.len(),
+            worst * 1000.0
+        );
+        assert!(
+            sunk * 4 >= corners.len() * 3,
+            "seed {seed:?}: only {sunk} of {} shell vertices read as under the skin when sunk 5 mm \
+             into it, so the reading cannot see one that is",
+            corners.len()
+        );
+        // And the ledger's shell line is the shell the mesh drew.
+        let drawn: usize = shell.iter().map(|face| face.len() - 2).sum();
+        let counted: usize = head.hair.grown.iter().map(|grown| grown.shell).sum();
+        assert_eq!(
+            counted, drawn,
+            "seed {seed:?}: the ledger says {counted} triangles of shell and the mesh draws {drawn}"
+        );
+    }
+}
+
+#[test]
+fn a_shell_covers_the_scalp_its_own_mask_paints() {
+    // **What a shell is FOR**: the mass of the hair, where a card system spends
+    // its coverage on width and still shows scalp between locks. Read as the
+    // #342 column - painted scalp at full strength with no shell within 3 mm of
+    // the column straight out of the skin, up to 24 mm - because a shell stands
+    // its own lift and thickness off the body and a nearest-surface reading
+    // calls that bare.
+    //
+    // Measured on the tree this shipped from: 0.0% on all three heads, against
+    // a head with no shell at 99-100% and the rim's cards alone at 89-93%. The
+    // bound is a per cent, which is a shell that covers everything the paint
+    // claims with room for a head the sweep has not seen.
+    for seed in [None, Some(42)] {
+        let capped = Capped::of(seed, Some(symbios_avatar::hair::Cap::default()));
+        let bare = capped.bare_under_the_shell();
+        assert!(
+            bare <= 0.01,
+            "seed {seed:?}: {:.1}% of the painted scalp has no shell over it",
+            bare * 100.0
+        );
+    }
+    // The liveness, and it is the same reading on the same body: with no shell
+    // on it, nearly all of that scalp is bare.
+    let none = Capped::of(None, None);
+    let open = none.bare_under_the_shell();
+    assert!(
+        open > 0.90,
+        "with no shell at all the reading still finds only {:.1}% of the painted scalp bare, so it \
+         is not measuring the shell",
+        open * 100.0
+    );
+}
+
+#[test]
+fn a_rim_card_keeps_its_edges_outside_the_shell_it_breaks() {
+    // **#339's rule, costed before anything was drawn and checked after**: a
+    // card is a tangent plane whose edges stand off a curve by about w^2/2R, so
+    // a layer laid over the shell must keep its edges outside it everywhere or
+    // it draws the shell's colour through itself. The tightest parallel a rim
+    // crosses is the temple's, measured at 27-44 mm, which is what sized the
+    // rim card's own width at 20 mm: at that width it stands at most 1.9 mm
+    // proud, where the scalp's coarsest 70 mm would stand 20 mm off.
+    //
+    // It took two measured steps to hold: at the loft's own 1.5 mm of lift four
+    // of 294 rim vertices read 0.53 mm INSIDE the shell, and at 3 mm the default
+    // head still had two. The shell's rows are a polyline through a walk, so its
+    // surface bulges between them by as much as a card's chords sag, and the two
+    // tolerances add.
+    for seed in [None, Some(42), Some(7)] {
+        let head = Capped::of(seed, Some(symbios_avatar::hair::Cap::default()));
+        let mesh = &head.hair.mesh;
+        let mut corners: Vec<u32> = head
+            .cards()
+            .iter()
+            .flat_map(|face| face.iter().copied())
+            .collect();
+        corners.sort_unstable();
+        corners.dedup();
+        assert!(
+            corners.len() > 40,
+            "seed {seed:?}: the rim drew only {} vertices of cards",
+            corners.len()
+        );
+        // **Asked of the shell as the closed solid it is**, rather than by the
+        // sign of a distance to its nearest face. The wall is one to four
+        // millimetres thick, so a point stepped "inward" from outside can pass
+        // clean through it - measured, a 2 mm step landed inside for only 12 of
+        // 294 vertices, which failed the liveness of the reading and not the
+        // claim.
+        let mut solid = symbios_avatar::PolyMesh::new();
+        solid.positions = mesh.positions.clone();
+        solid.faces = head.shell().into_iter().cloned().collect();
+        let (mut inside, mut nearest) = (0usize, f32::MAX);
+        for at in &corners {
+            let point = mesh.positions[*at as usize];
+            inside += usize::from(solid.contains(point));
+            nearest = nearest.min(head.over_shell(point).abs());
+        }
+        assert_eq!(
+            inside,
+            0,
+            "seed {seed:?}: {inside} of the rim's {} card vertices are inside the shell (the \
+             nearest any of them comes to its surface is {:.2} mm)",
+            corners.len(),
+            nearest * 1000.0
+        );
+        // The liveness, in the one place a point is certainly inside: the middle
+        // of the wall itself, a third of the way from each face into the solid.
+        let mut walls = 0usize;
+        let sampled: Vec<&Vec<u32>> = head.shell().into_iter().step_by(7).collect();
+        for face in &sampled {
+            let [a, b, c] = [0, 1, 2].map(|at| mesh.positions[face[at] as usize]);
+            let middle = face
+                .iter()
+                .fold(Vec3::ZERO, |sum, at| sum + mesh.positions[*at as usize])
+                / face.len() as f32;
+            let normal = (b - a).cross(c - a).normalize_or(Vec3::Y);
+            walls += usize::from(solid.contains(middle - normal * 0.0004));
+        }
+        assert!(
+            walls * 4 >= sampled.len() * 3,
+            "seed {seed:?}: only {walls} of {} points inside the shell's own wall read as inside \
+             it, so the reading cannot see a card that is",
+            sampled.len()
+        );
+    }
+}
+
 #[test]
 fn a_card_is_lit_as_a_round_lock() {
     // **A flat card lit flat is a ribbon** (#316). Classified by the normal

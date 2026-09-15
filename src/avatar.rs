@@ -140,6 +140,14 @@ pub struct AvatarConfig {
     pub ground: f32,
     /// Hair parameters replacing the record's, for walking the axes by eye.
     pub hair: Option<HairRecord>,
+    /// A sculpted shell worn in place of whatever scalp style the record asks
+    /// for, for judging the shell generator (#345).
+    ///
+    /// **A build setting rather than a record field, and only until the
+    /// catalogue names it** (#346): the generator has no name on the wire yet,
+    /// and a prototype that a record could ask for is a style the network would
+    /// have to be told about. It is how both renderers wear a cap.
+    pub helmet: Option<crate::hair::shell::Cap>,
     /// Complexion replacing the record's, for the same reason. Named apart from
     /// `skin` above, which is how the mesh is bound rather than what colour it
     /// is. A complexion is judged by looking at it under light, not by reading a
@@ -167,6 +175,7 @@ impl Default for AvatarConfig {
             atlas: 1024,
             ground: 0.0,
             hair: None,
+            helmet: None,
             complexion: None,
             dressed: true,
         }
@@ -590,9 +599,18 @@ impl Avatar {
             let sown: Vec<_> = crate::hair::Follicle::ALL
                 .into_iter()
                 .filter_map(|follicle| {
-                    hair_record
-                        .sowing(follicle, follicles)
-                        .map(|sown| (follicle, sown))
+                    // **The helmet prototype wears the scalp** in place of the
+                    // style the record asked for (#345), through the one
+                    // function `tests/budget.rs` costs it with - a second copy
+                    // of this would be a second opinion about what the body
+                    // draws.
+                    let sown = match (follicle, config.helmet) {
+                        (crate::hair::Follicle::Scalp, Some(cap)) => {
+                            Some(cap.sowing(&hair_record.scalp, follicles))
+                        }
+                        _ => hair_record.sowing(follicle, follicles),
+                    };
+                    sown.map(|sown| (follicle, sown))
                 })
                 .collect();
             let sowings: Vec<_> = sown

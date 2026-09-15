@@ -278,10 +278,13 @@ const LUMP_RINGS: usize = 3;
 /// Which row of the strand mask a lump's texture coordinates sit on.
 ///
 /// Inside the part of every lane the mask keeps whole, so a cut-out material
-/// draws the lump solid (see [`crate::hair::mask`]).
+/// draws the lump solid (see [`crate::hair::mask`]). The shell generator takes
+/// the same row for the same reason, and takes it from here rather than
+/// choosing its own: two rows chosen separately are two chances to fall outside
+/// what the mask keeps.
 ///
 /// Provenance: **derived** from the mask, whose lanes are whole to 60%.
-const LUMP_ROW: f32 = 0.25;
+pub(crate) const LUMP_ROW: f32 = 0.25;
 
 /// Draws one lump and appends it to `into`: a closed ellipsoid, bound to the
 /// head, in `colour` darkened by the lump's own shade.

@@ -214,6 +214,19 @@ pub trait Shape {
     fn turns(&self) -> bool {
         false
     }
+
+    /// A closed sculpted solid this style draws once beside its clumps, if it
+    /// has one.
+    ///
+    /// **The helmet family's foundation** (#345), and the one thing a flat card
+    /// cannot be: a card is a tangent plane, so a layer of cards cannot lie
+    /// under another layer of them (#339). A shell is lofted on the follicle
+    /// envelope by [`crate::hair::shell`] and counted with the region's own
+    /// triangles as a lump is, so the tier and every ledger pay for it. The
+    /// default is none, which is every card style there is.
+    fn shell(&self) -> Option<crate::hair::shell::Shell> {
+        None
+    }
 }
 
 /// A small closed solid a style asks for beside its clumps. See [`Shape::lump`].
@@ -247,6 +260,12 @@ pub struct Grown {
     pub clumps: usize,
     /// What they cost, in triangles.
     pub tris: usize,
+    /// How many of those triangles its shell spent, if it drew one.
+    ///
+    /// **Its own line in every ledger** (#345): a shell is most of what a
+    /// helmet style costs, and a region's total cannot say whether its
+    /// triangles went on the solid or on the cards that break its rim.
+    pub shell: usize,
 }
 
 /// Every region's hair, in one mesh.
@@ -529,6 +548,21 @@ impl Growth {
         {
             loft::lump(&mut self.mesh, &lump, self.head as u16, sowing.roots);
         }
+        // **A shell is drawn wherever its region was asked for at all**, grown
+        // clumps or none: the solid IS the hair and the cards only break its
+        // edge, so a rim whose every card was declined is still a head of hair
+        // (#345). Before the count below, so it is paid for as the cards are.
+        let shell = match sowing.shape.shell() {
+            Some(shell) if sowing.count > 0 => super::shell::loft(
+                &mut self.mesh,
+                bed.follicles,
+                &shell,
+                self.head as u16,
+                sowing.roots,
+                sowing.tips,
+            ),
+            _ => 0,
+        };
         // Counted from the mesh rather than predicted from the stations,
         // because the two have disagreed before: a sweep drops a degenerate
         // ring silently, and an accounting that trusts its own arithmetic
@@ -536,11 +570,12 @@ impl Growth {
         let tris: usize = (before..self.mesh.face_count())
             .map(|face| self.mesh.faces[face].len().saturating_sub(2))
             .sum();
-        if clumps > 0 {
+        if clumps > 0 || shell > 0 {
             self.grown.push(Grown {
                 follicle: sowing.follicle,
                 clumps,
                 tris,
+                shell,
             });
         }
     }
