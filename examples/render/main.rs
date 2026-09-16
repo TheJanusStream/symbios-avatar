@@ -277,9 +277,15 @@ fn main() {
             "long" => symbios_avatar::hair::ScalpStyle::Long { weight: axis },
             "tied" => symbios_avatar::hair::ScalpStyle::TiedBack { tail: axis },
             "curly" => symbios_avatar::hair::ScalpStyle::Curly { curl: axis },
+            // The helmet family (#346): shells rather than cards, each with one
+            // axis of its own like every other entry in the catalogue.
+            "cap" => symbios_avatar::hair::ScalpStyle::Cap { fringe: axis },
+            "slick" => symbios_avatar::hair::ScalpStyle::SlickBack { volume: axis },
+            "bell" => symbios_avatar::hair::ScalpStyle::Bell { length: axis },
             other => {
                 eprintln!(
-                    "unknown --scalp style {other}: expected none, crop, bob, long, tied or curly"
+                    "unknown --scalp style {other}: expected none, crop, bob, long, tied, curly, \
+                     cap, slick or bell"
                 );
                 std::process::exit(1);
             }
@@ -344,31 +350,6 @@ fn main() {
             "full" => symbios_avatar::hair::FlankStyle::FullConnect { reach: axis },
             other => {
                 eprintln!("unknown --flanks style {other}: expected none, sideburns or full");
-                std::process::exit(1);
-            }
-        }
-    });
-    // Which sculpted shell to wear in place of the scalp's cards, by name
-    // (#345). The generator has no style name on the wire until the catalogue
-    // gives it one (#346), so this is the instrument that sheets it: `--helmet
-    // cap` is the prototype, and `--helmet cap 0.07` sets the crown's own
-    // thickness, which is the axis a shell is judged on first.
-    let helmet = value("--helmet").map(|name| {
-        let axis = args
-            .iter()
-            .position(|arg| arg == "--helmet")
-            .and_then(|at| args.get(at + 2))
-            .and_then(|it| it.parse::<f32>().ok());
-        match name.as_str() {
-            "cap" => {
-                let mut cap = symbios_avatar::hair::Cap::default();
-                if let Some(crown) = axis {
-                    cap.shell.crown = crown;
-                }
-                cap
-            }
-            other => {
-                eprintln!("unknown --helmet style {other}: expected cap");
                 std::process::exit(1);
             }
         }
@@ -724,7 +705,6 @@ fn main() {
         // the cloth mesh out of the merge leaves a torso with its middle
         // missing — which is what this flag did until the body it was pointed
         // at stopped drawing that skin.
-        helmet,
         dressed: !bare,
         ..Default::default()
     };

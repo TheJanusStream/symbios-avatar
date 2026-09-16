@@ -553,7 +553,12 @@ impl Growth {
         // edge, so a rim whose every card was declined is still a head of hair
         // (#345). Before the count below, so it is paid for as the cards are.
         let shell = match sowing.shape.shell() {
-            Some(shell) if sowing.count > 0 => super::shell::loft(
+            // **However many cards it asked for, including none** (#346): a
+            // slicked head grows no rim at all, and the count that would have
+            // stood for "this region was asked for" is zero on the one style
+            // whose edge is the solid's own. A shape that answers `shell` wants
+            // one drawn.
+            Some(shell) => super::shell::loft(
                 &mut self.mesh,
                 bed.follicles,
                 &shell,

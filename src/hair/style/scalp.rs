@@ -46,6 +46,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::clump::{LIFT, Lump, Root, Seating, Shape};
 use super::super::follicle::{Follicle, Follicles};
+use super::super::shell::Cap;
 use super::{Cut, Style, clumps_for};
 use crate::plan::scaled;
 
@@ -96,6 +97,36 @@ pub enum ScalpStyle {
         /// How tight the coil is, `0` a loose wave and `1` a tight curl.
         #[serde(with = "crate::plan::scaled")]
         curl: f32,
+    },
+    /// A sculpted low-poly crop: a faceted bowl to the hairline, with a notch
+    /// over the brow and wisps at the fringe and the nape.
+    ///
+    /// **The first of the helmet family** (#338, #346): the mass is a closed
+    /// solid rather than a layer of cards, because flat cards cannot lie under
+    /// flat cards - see [`hair::shell`](crate::hair::shell). A shell covers the
+    /// whole scalp mask, so the painted layer under one is invisible.
+    Cap {
+        /// How deep the fringe notch is cut back over the brow, `0` at the
+        /// hairline and `1` a notch 22 mm behind it.
+        #[serde(with = "crate::plan::scaled")]
+        fringe: f32,
+    },
+    /// Swept back off the brow as one smooth shell, with a pompadour at the
+    /// front and no cards anywhere: the one style whose edge is the solid's own.
+    SlickBack {
+        /// How much the front rises over the forehead, `0` combed flat and `1` a
+        /// full pompadour.
+        #[serde(with = "crate::plan::scaled")]
+        volume: f32,
+    },
+    /// A bob as one smooth bell, with a notch over the face and wisps
+    /// everywhere the notch is not.
+    Bell {
+        /// How far the hem falls, `0` just past the hairline and `1` to the
+        /// jawline - in the head's own radii, since three measured heads
+        /// disagree by half about how many millimetres that is.
+        #[serde(with = "crate::plan::scaled")]
+        length: f32,
     },
 }
 
@@ -307,6 +338,13 @@ impl Style for ScalpStyle {
     }
 
     fn shape(&self, cut: &Cut, _follicle: Follicle, head: &Follicles) -> Option<Box<dyn Shape>> {
+        // **A helmet style is a solid, so it never reaches the tables below**
+        // (#346): its geometry is a `Shell` description and its cards are its
+        // rim's, both sized in `hair::shell` against the measured head. One
+        // place, because `tests/budget.rs` costs a style through the same call.
+        if let Some(cap) = self.helmet(head) {
+            return Some(cap.shape(cut, head));
+        }
         let slot = self.slot()?;
         let length = 0.25 + 0.75 * cut.length.clamp(0.0, 1.0);
         let coarse = 0.65 + 0.7 * cut.thickness.clamp(0.0, 1.0);
@@ -334,6 +372,10 @@ impl Style for ScalpStyle {
             // ringlets curtained the eyes (#316), and a coil does not get out
             // of the way on its own.
             Self::Curly { .. } => (0.5, CURL_BEHIND),
+            // Unreachable: a helmet style returned its own shape above, and the
+            // match is written out rather than caught by a wildcard so the next
+            // style added has to answer here too.
+            Self::Cap { .. } | Self::SlickBack { .. } | Self::Bell { .. } => return None,
         };
         let knot = self.knot(head);
         let curl = match self {
@@ -366,6 +408,12 @@ impl Style for ScalpStyle {
     }
 
     fn clumps(&self, cut: &Cut, follicle: Follicle) -> usize {
+        // A helmet's count is its rim's, and the rim is a fixed ring of
+        // meridians rather than a density: the solid is the mass, so a thinner
+        // cut thins nothing and a denser one has nothing to fill.
+        if let Some(cards) = self.rim_cards() {
+            return cards;
+        }
         let Some(slot) = self.slot() else {
             return 0;
         };
@@ -379,6 +427,9 @@ impl Style for ScalpStyle {
             Self::Long { weight } => *weight = scaled::quantize(weight.clamp(0.0, 1.0)),
             Self::TiedBack { tail } => *tail = scaled::quantize(tail.clamp(0.0, 1.0)),
             Self::Curly { curl } => *curl = scaled::quantize(curl.clamp(0.0, 1.0)),
+            Self::Cap { fringe } => *fringe = scaled::quantize(fringe.clamp(0.0, 1.0)),
+            Self::SlickBack { volume } => *volume = scaled::quantize(volume.clamp(0.0, 1.0)),
+            Self::Bell { length } => *length = scaled::quantize(length.clamp(0.0, 1.0)),
         }
     }
 }
@@ -415,6 +466,38 @@ impl ScalpStyle {
             Self::Long { .. } => Some(2),
             Self::TiedBack { .. } => Some(3),
             Self::Curly { .. } => Some(4),
+            // A helmet has no row in the tables above: they describe a card's
+            // reach, width, taper and crowd, and a shell has none of those. See
+            // [`Self::helmet`].
+            Self::Cap { .. } | Self::SlickBack { .. } | Self::Bell { .. } => None,
+        }
+    }
+
+    /// The solid this style wears, if it is one of the helmet family (#346).
+    ///
+    /// **One place the catalogue's three shells are described**, so a style is a
+    /// variant here and a handful of numbers in `hair::shell` rather than a
+    /// second opinion in every caller. `tests/budget.rs` costs a helmet through
+    /// the same call the body draws it with.
+    pub(crate) fn helmet(self, head: &Follicles) -> Option<Cap> {
+        match self {
+            Self::Cap { fringe } => Some(Cap::crop(fringe)),
+            Self::SlickBack { volume } => Some(Cap::slicked(volume)),
+            Self::Bell { length } => Some(Cap::bell(length, head)),
+            _ => None,
+        }
+    }
+
+    /// How many meridians a helmet style's rim is seated on, if it is one.
+    ///
+    /// Read without a measured head, which `Style::clumps` has none of: a rim's
+    /// count is a ring and not a shape, so it does not need one.
+    fn rim_cards(self) -> Option<usize> {
+        match self {
+            Self::Cap { .. } => Some(Cap::crop(0.0).rim_cards),
+            Self::SlickBack { .. } => Some(Cap::slicked(0.0).rim_cards),
+            Self::Bell { .. } => Some(Cap::default().rim_cards),
+            _ => None,
         }
     }
 }

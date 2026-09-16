@@ -1219,16 +1219,31 @@ struct Capped {
 impl Capped {
     /// `cap` of `None` builds the same body with the record's own hair, which is
     /// every guard's liveness: a head with no shell on it.
-    fn of(seed: Option<i64>, cap: Option<symbios_avatar::hair::Cap>) -> Self {
+    ///
+    /// **Worn as a scalp STYLE since #346**, which is where the helmet family
+    /// went on the wire and `AvatarConfig::helmet` came out.
+    ///
+    /// **And the other four regions are shaved**, which the readings below need
+    /// and #345's copy of this did not have: "a rim card inside the shell" has
+    /// to mean a RIM card, and a default record also grows brows - which sit at
+    /// the brow line, exactly where a bell's rim comes down. Read over the whole
+    /// head of hair, the probe called 18 of seed 42's brow vertices rim cards
+    /// 13 mm inside the shell, which is a true statement about brows and no
+    /// statement at all about a rim.
+    fn of(seed: Option<i64>, cap: Option<ScalpStyle>) -> Self {
         let mut record = AvatarRecord::new("Helmet", Archetype::default());
         if let Some(seed) = seed {
             record.reroll(seed);
         }
+        if let Some(style) = cap {
+            record.hair.scalp.style = style;
+            record.hair.brows.style = BrowStyle::None;
+            record.hair.moustache.style = MoustacheStyle::None;
+            record.hair.chin.style = ChinStyle::None;
+            record.hair.flanks.style = FlankStyle::None;
+        }
         record.sanitize();
-        let config = symbios_avatar::AvatarConfig {
-            helmet: cap,
-            ..Default::default()
-        };
+        let config = symbios_avatar::AvatarConfig::default();
         let avatar = Avatar::build_with(&record, &config).expect("a biped builds");
         let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
         let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
@@ -1244,8 +1259,11 @@ impl Capped {
 
     /// The faces the shell drew: everything that is not a card's quad.
     ///
-    /// The same split `cards_of` makes, and the only one there is - a cap draws
-    /// no knot lump, which is the other thing that is not a card.
+    /// The same split `cards_of` makes, and the only one there is - a helmet
+    /// draws no knot lump, which is the other thing that is not a card. A
+    /// faceted shell's faces are split copies and so are not cards either: a
+    /// card's quad is `[s, s+1, s+3, s+2]` and a split face is `[s, s+1, s+2,
+    /// s+3]`, which is why the facets did not have to change this split.
     fn shell(&self) -> Vec<&Vec<u32>> {
         self.hair
             .mesh
@@ -1376,6 +1394,52 @@ impl Capped {
     }
 }
 
+/// Every helmet style at both ends of its own axis, on every measured head
+/// (#346): the corners every shell guard is asked at.
+///
+/// Written out rather than iterated off the enum, for the reason
+/// `every_hair_style_the_crate_can_write_is_declared_with_its_axis` gives: a
+/// list that derived itself from the catalogue could not catch a style added
+/// without a thought for what a shell has to be.
+fn helmets() -> Vec<(Option<i64>, ScalpStyle)> {
+    let mut all = Vec::new();
+    for seed in [None, Some(42), Some(7)] {
+        for style in [
+            ScalpStyle::Cap { fringe: 0.0 },
+            ScalpStyle::Cap { fringe: 1.0 },
+            ScalpStyle::SlickBack { volume: 0.0 },
+            ScalpStyle::SlickBack { volume: 1.0 },
+            ScalpStyle::Bell { length: 0.0 },
+            ScalpStyle::Bell { length: 1.0 },
+        ] {
+            all.push((seed, style));
+        }
+    }
+    all
+}
+
+/// The shell's faces with their corners WELDED by position.
+///
+/// **Because "closed" is a claim about the SURFACE and not about the index
+/// buffer** (#346). A faceted shell gives every face its own copies of its
+/// corners so it can carry its own normal, and read by index every one of its
+/// edges then belongs to exactly one face - which says nothing at all about
+/// whether the solid is closed. The copies are exact, so this weld is exact and
+/// no tolerance is being chosen here.
+fn welded(mesh: &symbios_avatar::PolyMesh, faces: &[&Vec<u32>]) -> Vec<Vec<u32>> {
+    let mut weld: HashMap<[u32; 3], u32> = HashMap::new();
+    let mut at: Vec<u32> = Vec::with_capacity(mesh.positions.len());
+    for point in &mesh.positions {
+        let key = [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()];
+        let next = weld.len() as u32;
+        at.push(*weld.entry(key).or_insert(next));
+    }
+    faces
+        .iter()
+        .map(|face| face.iter().map(|corner| at[*corner as usize]).collect())
+        .collect()
+}
+
 #[test]
 fn a_shell_is_a_closed_solid_the_head_cannot_come_through() {
     // **The one thing a flat card cannot be** (#345): the helmet family's mass
@@ -1394,15 +1458,23 @@ fn a_shell_is_a_closed_solid_the_head_cannot_come_through() {
     // the head by design and half of it turns inward about any centre you pick.
     // ON the head: no vertex of it under the skin, since a solid with the skull
     // through it is worse than any card ever was.
-    for seed in [None, Some(42), Some(7)] {
-        let head = Capped::of(seed, Some(symbios_avatar::hair::Cap::default()));
-        let shell = head.shell();
+    for (roll, style) in helmets() {
+        let seed = format!("seed {roll:?} wearing {style:?}");
+        let head = Capped::of(roll, Some(style));
+        let unwelded = head.shell();
         let mesh = &head.hair.mesh;
         assert!(
-            shell.len() > 100,
-            "seed {seed:?}: the cap drew {} shell faces",
-            shell.len()
+            unwelded.len() > 100,
+            "{seed}: the helmet drew {} shell faces",
+            unwelded.len()
         );
+        // **Welded before the edges are counted**, so a faceted style's split
+        // corners do not read as an open surface: see [`welded`]. The readings
+        // that want POSITIONS - the volume, and how far each vertex is off the
+        // skin - go back to the mesh's own faces, since the weld is a fresh
+        // numbering and not an index into it.
+        let held = welded(mesh, &unwelded);
+        let shell: Vec<&Vec<u32>> = held.iter().collect();
         let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
         let mut directed: HashMap<(u32, u32), usize> = HashMap::new();
         for face in &shell {
@@ -1416,7 +1488,7 @@ fn a_shell_is_a_closed_solid_the_head_cannot_come_through() {
         assert_eq!(
             open,
             0,
-            "seed {seed:?}: {open} of the shell's {} edges are not shared by two faces",
+            "{seed}: {open} of the shell's {} edges are not shared by two faces",
             edges.len()
         );
         let clashing = directed
@@ -1425,10 +1497,11 @@ fn a_shell_is_a_closed_solid_the_head_cannot_come_through() {
             .count();
         assert_eq!(
             clashing, 0,
-            "seed {seed:?}: {clashing} of the shell's directed edges are not a clean pair, so it \
+            "{seed}: {clashing} of the shell's directed edges are not a clean pair, so it \
              is not consistently wound"
         );
-        let volume: f32 = shell
+        let unwelded = head.shell();
+        let volume: f32 = unwelded
             .iter()
             .flat_map(|face| {
                 (1..face.len() - 1).map(move |fan| [face[0], face[fan], face[fan + 1]])
@@ -1440,13 +1513,16 @@ fn a_shell_is_a_closed_solid_the_head_cannot_come_through() {
             .sum();
         assert!(
             volume > 0.0,
-            "seed {seed:?}: the shell encloses {:.1} cm3, so it is wound inside out",
+            "{seed}: the shell encloses {:.1} cm3, so it is wound inside out",
             volume * 1_000_000.0
         );
         // Every vertex of it outside the skin, and the reading proved able to
         // say otherwise: the same vertices pulled 5 mm toward the head read
         // under it.
-        let mut corners: Vec<u32> = shell.iter().flat_map(|face| face.iter().copied()).collect();
+        let mut corners: Vec<u32> = unwelded
+            .iter()
+            .flat_map(|face| face.iter().copied())
+            .collect();
         corners.sort_unstable();
         corners.dedup();
         let (mut under, mut worst) = (0usize, 0.0f32);
@@ -1464,23 +1540,261 @@ fn a_shell_is_a_closed_solid_the_head_cannot_come_through() {
         assert_eq!(
             under,
             0,
-            "seed {seed:?}: {under} of the shell's {} vertices are under the skin, worst {:.2} mm",
+            "{seed}: {under} of the shell's {} vertices are under the skin, worst {:.2} mm",
             corners.len(),
             worst * 1000.0
         );
         assert!(
             sunk * 4 >= corners.len() * 3,
-            "seed {seed:?}: only {sunk} of {} shell vertices read as under the skin when sunk 5 mm \
+            "{seed}: only {sunk} of {} shell vertices read as under the skin when sunk 5 mm \
              into it, so the reading cannot see one that is",
             corners.len()
         );
         // And the ledger's shell line is the shell the mesh drew.
-        let drawn: usize = shell.iter().map(|face| face.len() - 2).sum();
+        let drawn: usize = unwelded.iter().map(|face| face.len() - 2).sum();
         let counted: usize = head.hair.grown.iter().map(|grown| grown.shell).sum();
         assert_eq!(
             counted, drawn,
-            "seed {seed:?}: the ledger says {counted} triangles of shell and the mesh draws {drawn}"
+            "{seed}: the ledger says {counted} triangles of shell and the mesh draws {drawn}"
         );
+    }
+}
+
+#[test]
+fn a_helmet_rim_never_reaches_the_face() {
+    // **#341's construction, asked of the family that moves the rim** (#346).
+    // `long_hair_does_not_hang_over_the_face` holds every CARD style at zero
+    // stations inside `Follicles::clearance`; a shell is not a card, and two of
+    // these three styles move the rim the box is about. A bell carries its hem
+    // past the hairline, and measured on the default head a rim 40 mm past it at
+    // the temple sits 8 mm BELOW the brow and 59 mm off the midline - inside the
+    // box. So the walk stops at the box and a rim card's length stops at it too,
+    // and this is what says both still do.
+    //
+    // Read off the BUILT mesh rather than off the construction's own walk, which
+    // is the whole lesson of #345's first reading: a probe that reuses the
+    // surface it is checking proves only that it agrees with itself.
+    for (roll, style) in helmets() {
+        let seed = format!("seed {roll:?} wearing {style:?}");
+        let head = Capped::of(roll, Some(style));
+        let face = head.follicles.clearance();
+        let mut inside = (0usize, 0.0f32, 0usize);
+        for point in &head.hair.mesh.positions {
+            inside.2 += 1;
+            if face.contains(*point) {
+                inside.0 += 1;
+                inside.1 = inside.1.max(face.brow - point.y);
+            }
+        }
+        assert_eq!(
+            inside.0,
+            0,
+            "{seed}: {} of the {} vertices of its hair are inside the face box, worst {:.1} mm \
+             under the brow",
+            inside.0,
+            inside.2,
+            inside.1 * 1000.0
+        );
+        // **The liveness, taken with the same box on the same head**: every
+        // vertex of this hair lowered to just under the brow at the midline is
+        // inside, so a reading that could not see an intruder fails here rather
+        // than passing quietly. Lowered rather than invented, so the point it
+        // asks about is a point the style actually drew.
+        let sunk = head
+            .hair
+            .mesh
+            .positions
+            .iter()
+            .filter(|point| {
+                face.contains(Vec3::new(
+                    point.x.clamp(-face.side * 0.5, face.side * 0.5),
+                    face.brow - 0.010,
+                    face.front + 0.010,
+                ))
+            })
+            .count();
+        assert_eq!(
+            sunk,
+            head.hair.mesh.positions.len(),
+            "{seed}: only {sunk} of this hair's {} vertices read as inside the face box when they \
+             are put 10 mm inside it, so the box cannot see an intruder",
+            head.hair.mesh.positions.len()
+        );
+    }
+}
+
+#[test]
+fn a_faceted_shell_costs_no_triangle_and_splits_no_surface() {
+    // **What a facet IS, and what it is not** (#346). A face can only carry its
+    // own normal by stopping sharing its corners, so the faceted crop's loft
+    // splits every one of them - and the two things that must not follow are
+    // that the solid stops being closed (it does not: `welded` reads the surface
+    // rather than the index buffer, and the closed-solid guard asks it) and that
+    // the style costs more to draw (it does not: the same faces, the same
+    // triangles, more vertices).
+    //
+    // Measured: the smooth shell is 830 vertices and 864 faces; the faceted one
+    // is 3,384 vertices and the same 864 faces, 1,656 triangles either way. So a
+    // facet is paid for in vertices and not in the budget every rail in
+    // `tests/budget.rs` is written against.
+    for roll in [None, Some(42), Some(7)] {
+        let faceted = Capped::of(roll, Some(ScalpStyle::Cap { fringe: 0.0 }));
+        let smooth = Capped::of(roll, Some(ScalpStyle::SlickBack { volume: 0.0 }));
+        let (sharp, plain) = (faceted.shell(), smooth.shell());
+        assert_eq!(
+            sharp.len(),
+            plain.len(),
+            "seed {roll:?}: the faceted shell drew {} faces and the smooth one {}",
+            sharp.len(),
+            plain.len()
+        );
+        let sharp_tris: usize = sharp.iter().map(|face| face.len() - 2).sum();
+        let plain_tris: usize = plain.iter().map(|face| face.len() - 2).sum();
+        assert_eq!(
+            sharp_tris, plain_tris,
+            "seed {roll:?}: the faceted shell costs {sharp_tris} triangles and the smooth one \
+             {plain_tris}"
+        );
+        // And the facets are actually there: no two faces of the faceted shell
+        // share a corner, where the smooth one shares nearly all of them.
+        let corners = |faces: &[&Vec<u32>]| -> usize {
+            let mut all: Vec<u32> = faces.iter().flat_map(|face| face.iter().copied()).collect();
+            all.sort_unstable();
+            all.dedup();
+            all.len()
+        };
+        let (split, shared) = (corners(&sharp), corners(&plain));
+        assert!(
+            split > shared * 3,
+            "seed {roll:?}: the faceted shell has {split} distinct corners against the smooth \
+             one's {shared}, so its faces are still sharing normals and it is not faceted"
+        );
+        // The liveness: the smooth shell, read the same way, must NOT look
+        // split - otherwise this is measuring something every shell has.
+        assert!(
+            shared * 2 < sharp.len() * 4,
+            "seed {roll:?}: the smooth shell already has {shared} distinct corners over \
+             {} faces, so this reading cannot tell a faceted shell from a smooth one",
+            sharp.len()
+        );
+    }
+}
+
+#[test]
+fn a_helmet_style_wears_the_shell_its_name_says() {
+    // **Three names, three shapes, and each one its own** (#346). The catalogue
+    // convention is that a style carries one axis of its own and that moving it
+    // moves the body: a variant that renders the same at both ends of its axis
+    // is a name with nothing behind it, which is what the slick's first build
+    // was - its rise reached the description and never the grid, because a
+    // region asking for no cards at all never reached the clump engine.
+    //
+    // **And each axis is read by the thing it is about**, which the first cut of
+    // this was not: asked as the hair's bounding box, a pompadour moved it 1.8 mm,
+    // because a rise sits in the FRONT of the vault, under the crown and behind
+    // the rim, and a box that holds the whole shell cannot see inside it. That
+    // is #345's own lesson about fitting a reading to what it measures, and it
+    // cost the same half hour twice.
+    let head = |style: ScalpStyle| Capped::of(None, Some(style));
+    // A NOTCH is where the hair's front edge sits over the brow: the lowest hair
+    // there is, down the middle of the forehead.
+    let notch = |style: ScalpStyle| -> f32 {
+        let head = head(style);
+        let face = head.follicles.clearance();
+        head.hair
+            .mesh
+            .positions
+            .iter()
+            .filter(|at| at.x.abs() < 0.020 && at.z > face.front)
+            .map(|at| at.y)
+            .fold(f32::MAX, f32::min)
+    };
+    // MASS is the volume the solid encloses, which is what a pompadour adds and
+    // a bell's fall adds more of.
+    let mass = |style: ScalpStyle| -> f32 {
+        let head = head(style);
+        let mesh = &head.hair.mesh;
+        head.shell()
+            .iter()
+            .flat_map(|face| {
+                (1..face.len() - 1).map(move |fan| [face[0], face[fan], face[fan + 1]])
+            })
+            .map(|tri| {
+                let [a, b, c] = tri.map(|at| mesh.positions[at as usize]);
+                a.dot(b.cross(c)) / 6.0
+            })
+            .sum()
+    };
+    // A HEM is how far down the hair reaches at all.
+    let hem = |style: ScalpStyle| -> f32 {
+        head(style)
+            .hair
+            .mesh
+            .positions
+            .iter()
+            .map(|at| at.y)
+            .fold(f32::MAX, f32::min)
+    };
+    // A deeper notch takes the front edge back off the brow: 19 mm measured on
+    // the default head, for a 22 mm cut along the arc.
+    let (shut, open) = (
+        notch(ScalpStyle::Cap { fringe: 0.0 }),
+        notch(ScalpStyle::Cap { fringe: 1.0 }),
+    );
+    assert!(
+        open - shut >= 0.008,
+        "the Cap's fringe took its front edge back only {:.1} mm between its axis's ends",
+        (open - shut) * 1000.0
+    );
+    // A pompadour adds mass to the front of the vault: 97 cm3 to 156 measured.
+    let (flat, risen) = (
+        mass(ScalpStyle::SlickBack { volume: 0.0 }),
+        mass(ScalpStyle::SlickBack { volume: 1.0 }),
+    );
+    assert!(
+        risen >= flat * 1.25,
+        "the SlickBack's volume grew the solid from {:.1} to {:.1} cm3, under the quarter again \
+         a pompadour is",
+        flat * 1_000_000.0,
+        risen * 1_000_000.0
+    );
+    // And a bell falls: nine tenths of a head radius between its axis's ends,
+    // which is 65 mm on the default head.
+    let (short, long) = (
+        hem(ScalpStyle::Bell { length: 0.0 }),
+        hem(ScalpStyle::Bell { length: 1.0 }),
+    );
+    assert!(
+        short - long >= 0.030,
+        "the Bell's length dropped its hem only {:.1} mm between its axis's ends",
+        (short - long) * 1000.0
+    );
+    // And the three are three shapes and not one. Asked as "every reading
+    // separates every pair" this failed, and rightly: a cap at a half notch and
+    // a bell at a half length both stop within 1.5 mm of the hairline down the
+    // middle of the forehead, because a bell's front is a notch too. What makes
+    // them different styles is that SOMETHING separates each pair - so that is
+    // what is asked, and the failure names the pair rather than the reading.
+    let middling = [
+        ("Cap", ScalpStyle::Cap { fringe: 0.5 }),
+        ("SlickBack", ScalpStyle::SlickBack { volume: 0.5 }),
+        ("Bell", ScalpStyle::Bell { length: 0.5 }),
+    ];
+    let seen = middling.map(|(_, style)| [notch(style), hem(style), mass(style) * 100.0]);
+    for one in 0..middling.len() {
+        for two in one + 1..middling.len() {
+            let apart = (0..3)
+                .map(|read| (seen[one][read] - seen[two][read]).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                apart > 0.004,
+                "{} and {} draw hair within {:.2} mm of each other by its notch, its hem and its \
+                 mass alike, so they are one style with two names",
+                middling[one].0,
+                middling[two].0,
+                apart * 1000.0
+            );
+        }
     }
 }
 
@@ -1494,16 +1808,30 @@ fn a_shell_covers_the_scalp_its_own_mask_paints() {
     // calls that bare.
     //
     // Measured on the tree this shipped from: 0.0% on all three heads, against
-    // a head with no shell at 99-100% and the rim's cards alone at 89-93%. The
-    // bound is a per cent, which is a shell that covers everything the paint
-    // claims with room for a head the sweep has not seen.
-    for seed in [None, Some(42)] {
-        let capped = Capped::of(seed, Some(symbios_avatar::hair::Cap::default()));
+    // a head with no shell at 99-100% and the rim's cards alone at 89-93%.
+    //
+    // **And what "covers" means is a style's own** (#346). A shell whose rim
+    // sits at the hairline covers everything the paint claims - Cap at fringe 0
+    // and Bell at both ends read 0.0% on all three heads. A style that CUTS its
+    // rim back bares exactly what it cut: the Cap's fringe notch leaves 3.5% of
+    // the default head and 4.7% of seed 42 bare at its axis's top, and the
+    // slick's fixed 14 mm sweep 0.8 to 1.9%. Those are the notch and the sweep,
+    // not a hole - so the bound is six per cent where a style cuts and one where
+    // it does not, and a shell that stopped covering the crown would blow either.
+    for (roll, style) in helmets() {
+        let cuts = matches!(
+            style,
+            ScalpStyle::Cap { fringe } if fringe > 0.0
+        ) || matches!(style, ScalpStyle::SlickBack { .. });
+        let bound = if cuts { 0.06 } else { 0.01 };
+        let capped = Capped::of(roll, Some(style));
         let bare = capped.bare_under_the_shell();
         assert!(
-            bare <= 0.01,
-            "seed {seed:?}: {:.1}% of the painted scalp has no shell over it",
-            bare * 100.0
+            bare <= bound,
+            "seed {roll:?} wearing {style:?}: {:.1}% of the painted scalp has no shell over it, \
+             past the {:.0}% this style cuts back",
+            bare * 100.0,
+            bound * 100.0
         );
     }
     // The liveness, and it is the same reading on the same body: with no shell
@@ -1533,8 +1861,9 @@ fn a_rim_card_keeps_its_edges_outside_the_shell_it_breaks() {
     // head still had two. The shell's rows are a polyline through a walk, so its
     // surface bulges between them by as much as a card's chords sag, and the two
     // tolerances add.
-    for seed in [None, Some(42), Some(7)] {
-        let head = Capped::of(seed, Some(symbios_avatar::hair::Cap::default()));
+    for (roll, style) in helmets() {
+        let seed = format!("seed {roll:?} wearing {style:?}");
+        let head = Capped::of(roll, Some(style));
         let mesh = &head.hair.mesh;
         let mut corners: Vec<u32> = head
             .cards()
@@ -1543,9 +1872,22 @@ fn a_rim_card_keeps_its_edges_outside_the_shell_it_breaks() {
             .collect();
         corners.sort_unstable();
         corners.dedup();
+        // **Except the one style whose rim is not broken at all** (#346): a
+        // slicked head grows no cards, and the solid is still the hair. It is
+        // skipped here rather than excused, so the count below stays a claim
+        // about every style that HAS a rim.
+        if matches!(style, ScalpStyle::SlickBack { .. }) {
+            assert!(
+                corners.is_empty(),
+                "{seed}: a slicked head grew {} card vertices, and its whole point is an edge \
+                 that is the solid's own",
+                corners.len()
+            );
+            continue;
+        }
         assert!(
             corners.len() > 40,
-            "seed {seed:?}: the rim drew only {} vertices of cards",
+            "{seed}: the rim drew only {} vertices of cards",
             corners.len()
         );
         // **Asked of the shell as the closed solid it is**, rather than by the
@@ -1566,7 +1908,7 @@ fn a_rim_card_keeps_its_edges_outside_the_shell_it_breaks() {
         assert_eq!(
             inside,
             0,
-            "seed {seed:?}: {inside} of the rim's {} card vertices are inside the shell (the \
+            "{seed}: {inside} of the rim's {} card vertices are inside the shell (the \
              nearest any of them comes to its surface is {:.2} mm)",
             corners.len(),
             nearest * 1000.0
@@ -1586,7 +1928,7 @@ fn a_rim_card_keeps_its_edges_outside_the_shell_it_breaks() {
         }
         assert!(
             walls * 4 >= sampled.len() * 3,
-            "seed {seed:?}: only {walls} of {} points inside the shell's own wall read as inside \
+            "{seed}: only {walls} of {} points inside the shell's own wall read as inside \
              it, so the reading cannot see a card that is",
             sampled.len()
         );

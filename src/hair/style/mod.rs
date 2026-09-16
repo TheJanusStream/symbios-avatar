@@ -496,7 +496,12 @@ impl HairRecord {
             ),
         };
         let shape = shape?;
-        (clumps > 0).then_some(Sown {
+        // **A shell with no rim is still a head of hair** (#346). The count
+        // that stands for "this region grows something" is a count of CARDS,
+        // and the slicked-back helmet grows none at all - its whole point is an
+        // edge that is the solid's own. Asked of the shape rather than of the
+        // style, so it is the same question the clump engine draws the solid by.
+        (clumps > 0 || shape.shell().is_some()).then_some(Sown {
             shape,
             clumps,
             roots,

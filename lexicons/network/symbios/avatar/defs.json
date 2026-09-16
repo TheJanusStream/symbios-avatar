@@ -671,13 +671,28 @@
             "bob",
             "long",
             "tied_back",
-            "curly"
+            "curly",
+            "cap",
+            "slick_back",
+            "bell"
           ],
           "default": "none"
         },
         "fringe": {
           "type": "integer",
-          "description": "BOB only: what the front does. 0 swept to the temples, parted, hanging beside the face; a little more a fringe ending just above the brow; 1000 a fringe well above it. A fringe's length is a share of the forehead, never of the cut, so no value hangs over the face.",
+          "description": "BOB: what the front does. 0 swept to the temples, parted, hanging beside the face; a little more a fringe ending just above the brow; 1000 a fringe well above it. A fringe's length is a share of the forehead, never of the cut, so no value hangs over the face. CAP: how deep the sculpted notch over the brow is cut back, 0 at the hairline and 1000 about 22 mm behind it.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "volume": {
+          "type": "integer",
+          "description": "SLICK_BACK only: how much the front rises over the forehead. 0 combed flat, 1000 a full pompadour.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "length": {
+          "type": "integer",
+          "description": "BELL only: how far the hem falls. 0 just past the hairline, 1000 to the jawline - measured in the head's own radii, since heads disagree by half about how many millimetres that is.",
           "minimum": 0,
           "maximum": 1000
         },

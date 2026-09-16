@@ -1366,6 +1366,16 @@ mod tests {
                 ScalpStyle::TiedBack { .. } => 3,
                 ScalpStyle::Curly { .. } => 4,
                 ScalpStyle::None => panic!("a re-roll shaved a head"),
+                // **A re-roll draws no helmet yet** (#346's acceptance): the
+                // three shell styles are in the catalogue and on the wire, and
+                // what share of a rolled population should wear one is a
+                // decision with the owner at the release slice (#351). Until
+                // then `reroll_hair` picks from the five card styles by their
+                // own weights, and a helmet here means someone changed that
+                // without changing this.
+                ScalpStyle::Cap { .. } | ScalpStyle::SlickBack { .. } | ScalpStyle::Bell { .. } => {
+                    panic!("a re-roll drew a helmet, which is #351's decision to make")
+                }
             };
             worn[slot] += 1;
         }
@@ -1396,6 +1406,9 @@ mod tests {
                 ScalpStyle::Long { weight } => weight,
                 ScalpStyle::TiedBack { tail } => tail,
                 ScalpStyle::Curly { curl } => curl,
+                ScalpStyle::Cap { fringe } => fringe,
+                ScalpStyle::SlickBack { volume } => volume,
+                ScalpStyle::Bell { length } => length,
                 ScalpStyle::Crop | ScalpStyle::None => continue,
             };
             seen.push((axis * 1000.0).round() as i32);

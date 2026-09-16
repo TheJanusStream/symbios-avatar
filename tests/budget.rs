@@ -713,6 +713,17 @@ fn scalp_catalogue() -> Vec<(String, ScalpStyle)> {
         all.push((format!("long {axis}"), ScalpStyle::Long { weight: axis }));
         all.push((format!("tied {axis}"), ScalpStyle::TiedBack { tail: axis }));
         all.push((format!("curly {axis}"), ScalpStyle::Curly { curl: axis }));
+        // **And the helmet family, which is on the wire since #346**: a record
+        // can ask for one, so the sweep has to cost one. A shell is most of what
+        // a helmet costs and it is a fixed grid, so these land within a few
+        // triangles of each other whatever their axes say - which is exactly why
+        // they had to be costed rather than assumed cheap.
+        all.push((format!("cap {axis}"), ScalpStyle::Cap { fringe: axis }));
+        all.push((
+            format!("slick {axis}"),
+            ScalpStyle::SlickBack { volume: axis },
+        ));
+        all.push((format!("bell {axis}"), ScalpStyle::Bell { length: axis }));
     }
     all
 }
@@ -1115,49 +1126,56 @@ fn the_cheap_way_to_cost_a_region_agrees_with_the_dear_one() {
 
 #[test]
 fn the_shell_prototype_costs_what_the_hair_ceiling_allows() {
-    // **The helmet family's foundation, costed the way every other head of hair
-    // here is** (#345). A shell is not something a record can ask for - the Cap
-    // prototype is worn through `AvatarConfig::helmet` until the catalogue names
-    // it (#346) - so it moves none of the figures above; what it needs is a line
-    // of its own saying the solid fits in the room the body leaves.
+    // **The helmet family, costed the way every other head of hair here is**
+    // (#345, and #346 which put it on the wire). A shell is a scalp STYLE since
+    // #346 - `AvatarConfig::helmet` is gone - so it is asked for through the
+    // record like anything else, and the sweep above already ranks it against
+    // the card catalogue. What this line adds is that every named shell fits in
+    // the room the body leaves, on every measured head.
     //
-    // Measured when it landed: 1,656 triangles of shell and about 190 of rim
-    // cards, 1,836 to 1,852 in all, against a ceiling of 2,850. The bound is the
-    // ceiling itself rather than those figures, because what matters is that a
-    // helmet fits beside everything else a head wears.
+    // Measured when the generator landed: 1,656 triangles of shell and about
+    // 190 of rim cards, 1,836 to 1,852 in all, against a ceiling of 2,850. The
+    // bound is the ceiling itself rather than those figures, because what
+    // matters is that a helmet fits beside everything else a head wears.
     for (seed, at) in [(0i64, "the default body"), (42, "seed 42"), (7, "seed 7")] {
-        let mut record = AvatarRecord::new("Helmet", Archetype::default());
-        record.reroll(seed);
-        record.sanitize();
-        let config = symbios_avatar::AvatarConfig {
-            helmet: Some(symbios_avatar::hair::Cap::default()),
-            ..Default::default()
-        };
-        let avatar = Avatar::build_with(&record, &config).expect("a biped builds");
-        let hair = avatar
-            .parts
-            .hair
-            .as_ref()
-            .expect("a capped head grows hair");
-        ledger(&format!("{at} in a cap"), hair);
-        let shell: usize = hair.grown.iter().map(|grown| grown.shell).sum();
-        assert!(
-            shell > 0,
-            "{at} wore the prototype and drew no shell at all"
-        );
-        assert!(
-            hair.tris() <= symbios_avatar::hair::clump::MAX_TRIANGLES,
-            "{at} in a cap costs {} triangles of hair against a ceiling of {}",
-            hair.tris(),
-            symbios_avatar::hair::clump::MAX_TRIANGLES
-        );
-        // And the whole body with it on, which is the figure the target is
-        // written against.
-        assert!(
-            avatar.budget.tris <= TRIANGLE_TARGET,
-            "{at} in a cap costs {} triangles against a budget of {TRIANGLE_TARGET}",
-            avatar.budget.tris
-        );
+        for style in [
+            ScalpStyle::Cap { fringe: 0.0 },
+            ScalpStyle::Cap { fringe: 1.0 },
+            ScalpStyle::SlickBack { volume: 0.0 },
+            ScalpStyle::SlickBack { volume: 1.0 },
+            ScalpStyle::Bell { length: 0.0 },
+            ScalpStyle::Bell { length: 1.0 },
+        ] {
+            let at = &format!("{at} in {style:?}");
+            let mut record = AvatarRecord::new("Helmet", Archetype::default());
+            record.reroll(seed);
+            record.hair.scalp.style = style;
+            record.hair.scalp.cut = GREEDY;
+            record.sanitize();
+            let avatar = Avatar::build_with(&record, &symbios_avatar::AvatarConfig::default())
+                .expect("a biped builds");
+            let hair = avatar
+                .parts
+                .hair
+                .as_ref()
+                .expect("a helmeted head grows hair");
+            ledger(at, hair);
+            let shell: usize = hair.grown.iter().map(|grown| grown.shell).sum();
+            assert!(shell > 0, "{at} wore a helmet and drew no shell at all");
+            assert!(
+                hair.tris() <= symbios_avatar::hair::clump::MAX_TRIANGLES,
+                "{at} costs {} triangles of hair against a ceiling of {}",
+                hair.tris(),
+                symbios_avatar::hair::clump::MAX_TRIANGLES
+            );
+            // And the whole body with it on, which is the figure the target is
+            // written against.
+            assert!(
+                avatar.budget.tris <= TRIANGLE_TARGET,
+                "{at} costs {} triangles against a budget of {TRIANGLE_TARGET}",
+                avatar.budget.tris
+            );
+        }
     }
 }
 
