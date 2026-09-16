@@ -423,9 +423,42 @@ impl<'a> Skin<'a> {
 /// heads is a flank's back edge, under 130 mm out.
 const REACH: f32 = 0.25;
 
+/// How far outside a triangle, in barycentric shares, a ray may pass and still
+/// count as meeting it.
+///
+/// **Because a ray fanned along the body's midline must not fall through it**
+/// (found on CI after #351). The body's midline vertices sit a few nanometres
+/// off the plane x = 0 rather than on it, and the chin's middle column fans its
+/// rays exactly in that plane, so each ray passes through a sliver the width of
+/// that error between the triangles either side. Tested strictly, whether it
+/// met one of them was decided by the last bit of the `sin` that turned the
+/// ray, and when it met neither the walk lost a row and dropped the whole chin.
+/// glibc 2.39's `sinf` (CI) and 2.43's round that bit differently, so seed 42's
+/// chin was missing on CI and present here; nudging `sinf` or `acosf` one ulp
+/// up reproduced CI's five failures exactly, and the two rays that fell through
+/// missed their nearest triangle by 5.2e-7 and 4.8e-7 of a share (captured in
+/// this module's test).
+///
+/// Twenty times that, so a libm a few ulps further off still lands: a share of
+/// 1e-5 is under 40 nanometres across a 3.6 mm face cell, a ten-thousandth of
+/// anything a facial solid draws. A ray within it of an edge meets the triangle
+/// there at the point the edge would have given.
+const EDGE_SLACK: f32 = 1e-5;
+
 /// Möller-Trumbore: how far along a unit ray it meets a triangle, and where in
-/// the triangle, if it does.
+/// the triangle, if it does - including a ray along one of its edges, within
+/// [`EDGE_SLACK`].
 fn moller(origin: Vec3, ray: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<(f32, f32, f32)> {
+    moller_within(origin, ray, [a, b, c], EDGE_SLACK)
+}
+
+/// [`moller`] with the slack given, so a test can ask what the strict test did.
+fn moller_within(
+    origin: Vec3,
+    ray: Vec3,
+    [a, b, c]: [Vec3; 3],
+    slack: f32,
+) -> Option<(f32, f32, f32)> {
     let (one, two) = (b - a, c - a);
     let p = ray.cross(two);
     let det = one.dot(p);
@@ -435,12 +468,12 @@ fn moller(origin: Vec3, ray: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<(f32, f3
     let inverse = 1.0 / det;
     let t = origin - a;
     let u = t.dot(p) * inverse;
-    if !(0.0..=1.0).contains(&u) {
+    if !(-slack..=1.0 + slack).contains(&u) {
         return None;
     }
     let q = t.cross(one);
     let v = ray.dot(q) * inverse;
-    if v < 0.0 || u + v > 1.0 {
+    if v < -slack || u + v > 1.0 + slack {
         return None;
     }
     let distance = two.dot(q) * inverse;
@@ -1238,5 +1271,58 @@ impl Patch for BrowPatch {
         // Both sides' columns run from the inner end to the tail.
         let tail = 1.0 - (1.0 - BROW_TAIL) * u;
         station.past(cx.radius * BROW_THICK * (1.0 - s) * tail)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bits(v: [u32; 3]) -> Vec3 {
+        Vec3::new(
+            f32::from_bits(v[0]),
+            f32::from_bits(v[1]),
+            f32::from_bits(v[2]),
+        )
+    }
+
+    #[test]
+    fn a_ray_fanned_along_the_midline_does_not_fall_through_it() {
+        // The two rays CI's glibc sent between the body's triangles on seed 42's
+        // chin, captured bit for bit off the built body with `sinf` nudged one
+        // ulp up (which reproduced CI's failures), each with the triangle it
+        // came nearest to meeting. Strictly, each misses; with the slack, each
+        // meets it. Pure arithmetic on stored bits, so the same on every libm.
+        let centre = bits([0x0, 0xbdb2_9466, 0x3d56_09f4]);
+        let cases = [
+            (
+                bits([0x0, 0x3f67_6491, 0x3edb_0748]),
+                [
+                    bits([0xbafb_6c0c, 0x3adc_3c00, 0x3dc1_7004]),
+                    bits([0x313b_ea84, 0x3adf_b400, 0x3dc1_ec99]),
+                    bits([0x2efc_b260, 0x3b8b_f100, 0x3dbf_72bc]),
+                ],
+            ),
+            (
+                bits([0x1, 0x3e8a_6a80, 0x3f76_77b1]),
+                [
+                    bits([0x3a0c_ef46, 0xbd9b_c440, 0x3dbc_105e]),
+                    bits([0xae9d_32c0, 0xbd9b_b140, 0x3dbc_1001]),
+                    bits([0xb086_5d3e, 0xbda0_1a10, 0x3dbd_872a]),
+                ],
+            ),
+        ];
+        for (at, (ray, triangle)) in cases.into_iter().enumerate() {
+            // Liveness: the strict test really drops this ray.
+            assert!(
+                moller_within(centre, ray, triangle, 0.0).is_none(),
+                "case {at}: the strict test meets this ray, so it is no longer the crack"
+            );
+            let (distance, u, v) = moller(centre, ray, triangle[0], triangle[1], triangle[2])
+                .unwrap_or_else(|| {
+                    panic!("case {at}: a ray along the midline fell between the body's triangles")
+                });
+            assert!(distance > 0.0 && u > -EDGE_SLACK && v > -EDGE_SLACK);
+        }
     }
 }

@@ -428,7 +428,18 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
                 // a joint's hold on a vertex is the strongest of them rather
                 // than their sum, which would give a crotch vertex twice the
                 // pull of a thigh one for no reason but the topology above it.
-                let pull = (1.0 - distance / span).max(0.0).powf(config.falloff);
+                let base = (1.0 - distance / span).max(0.0);
+                // **An integral falloff is multiplied, not raised** (found on
+                // CI after #351). `powf` is the platform's libm, and one ulp of
+                // it on these weights moved the jaw's binding far enough to
+                // fold a sculpted chin at jaw 20; the default falloff is 2, and
+                // a product is IEEE-exact everywhere - and the same bits a
+                // correctly rounded `powf` gives, so no body moved.
+                let pull = if config.falloff.fract() == 0.0 && config.falloff.abs() <= 8.0 {
+                    base.powi(config.falloff as i32)
+                } else {
+                    base.powf(config.falloff)
+                };
                 row[owner] = row[owner].max(pull);
             }
         }
