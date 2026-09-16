@@ -3635,3 +3635,740 @@ const HANG_SPAN: f32 = 0.030;
 /// as a share of it: 1.41 measured on the three heads, against 0.99 to 1.00 at
 /// no flare (#349).
 const FLARE_REACH: f32 = 1.2;
+
+// ---------------------------------------------------------------------------
+// #350: the far tier. A build asked for it hands back a second head of hair -
+// the scalp as its helmet twin on the far grid, every other region's cards
+// unchanged - beside the meshes and never among them.
+// ---------------------------------------------------------------------------
+
+/// A head's follicle regions, measured off the body `record` builds.
+fn regions_of(record: &AvatarRecord) -> Follicles {
+    let avatar = Avatar::build(record).expect("a biped builds");
+    let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
+    let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+    Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions)
+}
+
+#[test]
+fn every_card_scalp_style_has_a_helmet_twin_and_the_twin_is_a_shell() {
+    // **The twin map, written out by name rather than iterated off the enum**
+    // (#350), so a scalp style added without a thought for its far tier fails
+    // here instead of quietly drawing whatever a wildcard gave it. Each pairing
+    // is the one the built mesh measured against the built body (probe350 map):
+    // a bob's and a curl's bell is as long as the CUT is, a long head is a bell
+    // at the jaw, a tail is a bun at the tail's own height.
+    use symbios_avatar::hair::{Cut, Follicle, HairRecord};
+    let follicles = regions_of(&AvatarRecord::new("Twin", Archetype::default()));
+    let cut = |length: f32| Cut {
+        length,
+        ..Cut::default()
+    };
+    let map: Vec<(ScalpStyle, f32, ScalpStyle)> = vec![
+        (ScalpStyle::None, 0.35, ScalpStyle::None),
+        (ScalpStyle::Crop, 0.0, ScalpStyle::Cap { fringe: 0.0 }),
+        (ScalpStyle::Crop, 1.0, ScalpStyle::Cap { fringe: 0.0 }),
+        (
+            ScalpStyle::Bob { fringe: 0.0 },
+            0.0,
+            ScalpStyle::Bell { length: 0.0 },
+        ),
+        (
+            ScalpStyle::Bob { fringe: 1.0 },
+            0.25,
+            ScalpStyle::Bell { length: 0.5 },
+        ),
+        (
+            ScalpStyle::Bob { fringe: 0.5 },
+            0.5,
+            ScalpStyle::Bell { length: 1.0 },
+        ),
+        (
+            ScalpStyle::Bob { fringe: 0.0 },
+            1.0,
+            ScalpStyle::Bell { length: 1.0 },
+        ),
+        (
+            ScalpStyle::Long { weight: 0.0 },
+            0.0,
+            ScalpStyle::Bell { length: 1.0 },
+        ),
+        (
+            ScalpStyle::Long { weight: 1.0 },
+            1.0,
+            ScalpStyle::Bell { length: 1.0 },
+        ),
+        (
+            ScalpStyle::TiedBack { tail: 0.0 },
+            0.35,
+            ScalpStyle::Bun { height: 0.0 },
+        ),
+        (
+            ScalpStyle::TiedBack { tail: 1.0 },
+            0.35,
+            ScalpStyle::Bun { height: 1.0 },
+        ),
+        (
+            ScalpStyle::Curly { curl: 0.0 },
+            0.0,
+            ScalpStyle::Bell { length: 0.0 },
+        ),
+        (
+            ScalpStyle::Curly { curl: 1.0 },
+            1.0,
+            ScalpStyle::Bell { length: 1.0 },
+        ),
+        // The helmet family is its own twin.
+        (
+            ScalpStyle::Cap { fringe: 1.0 },
+            0.35,
+            ScalpStyle::Cap { fringe: 1.0 },
+        ),
+        (
+            ScalpStyle::SlickBack { volume: 1.0 },
+            0.35,
+            ScalpStyle::SlickBack { volume: 1.0 },
+        ),
+        (
+            ScalpStyle::Bell { length: 0.5 },
+            0.35,
+            ScalpStyle::Bell { length: 0.5 },
+        ),
+        (
+            ScalpStyle::Bun { height: 1.0 },
+            0.35,
+            ScalpStyle::Bun { height: 1.0 },
+        ),
+        (
+            ScalpStyle::Crest { height: 1.0 },
+            0.35,
+            ScalpStyle::Crest { height: 1.0 },
+        ),
+        (
+            ScalpStyle::Afro { size: 1.0 },
+            0.35,
+            ScalpStyle::Afro { size: 1.0 },
+        ),
+        (
+            ScalpStyle::Braids { rows: 0.5 },
+            0.35,
+            ScalpStyle::Braids { rows: 0.5 },
+        ),
+    ];
+    for (style, length, twin) in map {
+        let at = format!("{style:?} at cut length {length}");
+        assert_eq!(style.twin(&cut(length)), twin, "{at}: the wrong twin");
+        let mut hair = HairRecord::bald();
+        hair.scalp.style = style;
+        hair.scalp.cut = cut(length);
+        let far = hair.far_sowing(Follicle::Scalp, &follicles);
+        if style == ScalpStyle::None {
+            assert!(far.is_none(), "{at}: a bald scalp has a far stand-in");
+            continue;
+        }
+        let far = far.unwrap_or_else(|| panic!("{at}: no far stand-in"));
+        assert!(
+            far.shape.shell().is_some(),
+            "{at}: the far stand-in is not a shell"
+        );
+        assert_eq!(far.clumps, 0, "{at}: the far stand-in roots rim cards");
+        // Liveness: a CARD style's own near shape is no shell, so a map that
+        // handed a card style back as its own twin fails the line above.
+        let near = hair
+            .sowing(Follicle::Scalp, &follicles)
+            .expect("a scalp style grows");
+        let card = matches!(
+            style,
+            ScalpStyle::Crop
+                | ScalpStyle::Bob { .. }
+                | ScalpStyle::Long { .. }
+                | ScalpStyle::TiedBack { .. }
+                | ScalpStyle::Curly { .. }
+        );
+        assert_eq!(
+            near.shape.shell().is_none(),
+            card,
+            "{at}: a card style's near shape is a shell, or a helmet's is not"
+        );
+    }
+    // **And no facial region has a stand-in at all** (the owner's decision on
+    // #350's measurements): the far tier carries its near cards, sculpted or
+    // not. Every facial style written out.
+    let mut hair = HairRecord::default();
+    for brows in [BrowStyle::Natural, BrowStyle::Thick, BrowStyle::Sculpted] {
+        hair.brows.style = brows;
+        assert!(
+            hair.far_sowing(Follicle::Brows, &follicles).is_none(),
+            "{brows:?}"
+        );
+    }
+    for moustache in [
+        MoustacheStyle::Chevron,
+        MoustacheStyle::Handlebar { sweep: 1.0 },
+        MoustacheStyle::Pencil { ride: 1.0 },
+        MoustacheStyle::Sculpted { flare: 1.0 },
+    ] {
+        hair.moustache.style = moustache;
+        assert!(
+            hair.far_sowing(Follicle::Moustache, &follicles).is_none(),
+            "{moustache:?}"
+        );
+    }
+    for chin in [
+        ChinStyle::Goatee { point: 1.0 },
+        ChinStyle::Full,
+        ChinStyle::Braided { twist: 1.0 },
+        ChinStyle::Sculpted { length: 1.0 },
+    ] {
+        hair.chin.style = chin;
+        assert!(
+            hair.far_sowing(Follicle::Chin, &follicles).is_none(),
+            "{chin:?}"
+        );
+    }
+    for flanks in [
+        FlankStyle::Sideburns { drop: 1.0 },
+        FlankStyle::FullConnect { reach: 1.0 },
+        FlankStyle::Sculpted,
+    ] {
+        hair.flanks.style = flanks;
+        assert!(
+            hair.far_sowing(Follicle::Flanks, &follicles).is_none(),
+            "{flanks:?}"
+        );
+    }
+}
+
+/// Records the far-tier identity guards build, each with a reason to be here.
+fn tier_records() -> Vec<(&'static str, AvatarRecord)> {
+    let mut all = Vec::new();
+    let mut plain = |label: &'static str, seed: Option<i64>, edit: &dyn Fn(&mut AvatarRecord)| {
+        let mut record = AvatarRecord::new("Tiered", Archetype::default());
+        if let Some(seed) = seed {
+            record.reroll(seed);
+        }
+        edit(&mut record);
+        record.sanitize();
+        all.push((label, record));
+    };
+    plain("the default record", None, &|_| {});
+    plain("seed 42 as rolled", Some(42), &|_| {});
+    // The #344 beard set under a crop, on the dark long face.
+    plain("seed 7, a crop and a full beard", Some(7), &|record| {
+        record.hair.scalp.style = ScalpStyle::Crop;
+        record.hair.brows.style = BrowStyle::Thick;
+        record.hair.moustache.style = MoustacheStyle::Handlebar { sweep: 0.9 };
+        record.hair.chin.style = ChinStyle::Full;
+        record.hair.flanks.style = FlankStyle::FullConnect { reach: 0.7 };
+    });
+    // A tail over sideburns, a goatee and a pencil: the three faces a sculpted
+    // twin would have changed.
+    plain(
+        "seed 42, a tail over sideburns, goatee and pencil",
+        Some(42),
+        &|record| {
+            record.hair.scalp.style = ScalpStyle::TiedBack { tail: 0.6 };
+            record.hair.moustache.style = MoustacheStyle::Pencil { ride: 0.5 };
+            record.hair.chin.style = ChinStyle::Goatee { point: 1.0 };
+            record.hair.flanks.style = FlankStyle::Sideburns { drop: 1.0 };
+        },
+    );
+    // A helmet over the sculpted facial set: every solid the family draws.
+    plain(
+        "the default body, a bun and the sculpted face",
+        None,
+        &|record| {
+            record.hair.scalp.style = ScalpStyle::Bun { height: 0.0 };
+            record.hair.brows.style = BrowStyle::Sculpted;
+            record.hair.moustache.style = MoustacheStyle::Sculpted { flare: 1.0 };
+            record.hair.chin.style = ChinStyle::Sculpted { length: 1.0 };
+            record.hair.flanks.style = FlankStyle::Sculpted;
+        },
+    );
+    // A short curl whose cards are cheaper than any far shell, so its far tier
+    // keeps them.
+    plain("seed 7, a short curl", Some(7), &|record| {
+        record.hair.scalp.style = ScalpStyle::Curly { curl: 0.0 };
+        record.hair.scalp.cut.length = 0.2;
+    });
+    plain("the default body, long at full length", None, &|record| {
+        record.hair.scalp.style = ScalpStyle::Long { weight: 1.0 };
+        record.hair.scalp.cut.length = 1.0;
+    });
+    all
+}
+
+#[test]
+fn the_near_tier_is_the_same_bytes_whether_or_not_a_far_tier_is_asked_for() {
+    // **#350's acceptance**: a build with the tier request draws a near mesh
+    // bit-identical to a build without it. Every channel a renderer reads -
+    // positions, faces, normals, uvs, colours, skin - of every mesh, the budget,
+    // and the grown hair with its ledger, compared with `==` and not within a
+    // tolerance.
+    for (label, record) in tier_records() {
+        let plain = Avatar::build(&record).expect("a biped builds");
+        let tiered = Avatar::build_with(
+            &record,
+            &symbios_avatar::AvatarConfig {
+                far_hair: true,
+                ..Default::default()
+            },
+        )
+        .expect("a biped builds");
+        assert!(
+            plain.far_hair.is_none(),
+            "{label}: a far tier nobody asked for"
+        );
+        assert_eq!(
+            plain.meshes, tiered.meshes,
+            "{label}: the near meshes moved"
+        );
+        assert_eq!(plain.budget, tiered.budget, "{label}: the budget moved");
+        assert_eq!(
+            plain.parts.hair, tiered.parts.hair,
+            "{label}: the near hair moved"
+        );
+        assert_eq!(
+            plain.drawn(0.0),
+            tiered.drawn(0.0),
+            "{label}: what is drawn moved"
+        );
+        // Liveness: the far tier is really there, and it is not the near hair
+        // again - unless its scalp kept its cards, which only the short curl
+        // does.
+        let far = tiered.far_hair.as_ref().expect("a far tier was asked for");
+        let near = plain
+            .meshes
+            .iter()
+            .find(|mesh| mesh.kind == MeshKind::Hair)
+            .expect("the near tier draws hair");
+        assert_eq!(far.kind, MeshKind::Hair, "{label}");
+        let kept = label.contains("short curl");
+        assert_eq!(
+            far.mesh == near.mesh,
+            kept,
+            "{label}: the far tier {} the near hair",
+            if kept { "is not" } else { "is" }
+        );
+    }
+}
+
+/// Every corner of a region's faces, in order: position, colour, and the skin's
+/// joints and weights (the weights as bits, so `==` is exact).
+type Corners = Vec<(Vec3, Vec3, [u16; 4], [u32; 4])>;
+
+/// One head of hair split back into its regions, in the order they were grown:
+/// each region's faces, as the channels of their corners in order.
+fn regions(
+    growth: &symbios_avatar::hair::Growth,
+) -> Vec<(symbios_avatar::hair::Follicle, Corners)> {
+    let mesh = &growth.mesh;
+    let mut faces = mesh.faces.iter();
+    let mut out = Vec::new();
+    for grown in &growth.grown {
+        let (mut tris, mut corners) = (0usize, Vec::new());
+        while tris < grown.tris {
+            let face = faces.next().expect("the ledger counts faces the mesh has");
+            tris += face.len() - 2;
+            for at in face {
+                let at = *at as usize;
+                let skin = mesh.skin[at];
+                corners.push((
+                    mesh.positions[at],
+                    mesh.colours[at],
+                    skin.map(|influence| influence.joint),
+                    skin.map(|influence| influence.weight.to_bits()),
+                ));
+            }
+        }
+        assert_eq!(tris, grown.tris, "a region's faces overran its ledger line");
+        out.push((grown.follicle, corners));
+    }
+    assert!(
+        faces.next().is_none(),
+        "the mesh has faces no region's ledger counts"
+    );
+    out
+}
+
+#[test]
+fn a_far_tier_carries_the_near_tiers_facial_cards_to_the_bit() {
+    // **The owner's decision on #350**: a far tier grows only the scalp
+    // differently, and every facial region is the near tier's own cards - grown
+    // from the same roots, so the same bytes. Read region by region off the
+    // ledger's own face counts: every corner's position, colour and skin.
+    use symbios_avatar::hair::Follicle;
+    for (label, record) in tier_records() {
+        let avatar = Avatar::build_with(
+            &record,
+            &symbios_avatar::AvatarConfig {
+                far_hair: true,
+                ..Default::default()
+            },
+        )
+        .expect("a biped builds");
+        let near = regions(avatar.parts.hair.as_ref().expect("near hair"));
+        let far = regions(avatar.parts.far_hair.as_ref().expect("far hair"));
+        let facial = |split: &[(Follicle, Vec<_>)]| -> Vec<(Follicle, usize)> {
+            split
+                .iter()
+                .filter(|(follicle, _)| *follicle != Follicle::Scalp)
+                .map(|(follicle, corners)| (*follicle, corners.len()))
+                .collect()
+        };
+        assert_eq!(
+            facial(&near),
+            facial(&far),
+            "{label}: different facial regions"
+        );
+        let mut compared = 0;
+        for ((follicle, near), (_, far)) in near
+            .iter()
+            .filter(|(follicle, _)| *follicle != Follicle::Scalp)
+            .zip(
+                far.iter()
+                    .filter(|(follicle, _)| *follicle != Follicle::Scalp),
+            )
+        {
+            assert!(
+                near == far,
+                "{label}: the far tier's {} is not the near tier's",
+                follicle.name()
+            );
+            compared += near.len();
+        }
+        // Liveness: the same reading tells two different growths apart - the
+        // far scalp from the near one, wherever the far tier drew a shell.
+        let scalp = |split: &[(Follicle, Corners)]| {
+            split
+                .iter()
+                .find(|(follicle, _)| *follicle == Follicle::Scalp)
+                .map(|(_, corners)| corners.clone())
+        };
+        if !label.contains("short curl") {
+            assert!(
+                scalp(&near) != scalp(&far),
+                "{label}: the reading cannot tell the far scalp from the near one"
+            );
+        }
+        println!("{label}: {compared} facial corners identical in both tiers");
+    }
+}
+
+/// The built body as a signed-distance field, bucketed so a guard over many
+/// sample points finishes: head-local, posed or not.
+struct SkinField {
+    tris: Vec<[Vec3; 3]>,
+    normals: Vec<Vec3>,
+    cells: HashMap<(i32, i32, i32), Vec<usize>>,
+}
+
+impl SkinField {
+    const CELL: f32 = 0.010;
+    const RINGS: i32 = 8;
+
+    fn key(at: Vec3) -> (i32, i32, i32) {
+        (
+            (at.x / Self::CELL).floor() as i32,
+            (at.y / Self::CELL).floor() as i32,
+            (at.z / Self::CELL).floor() as i32,
+        )
+    }
+
+    fn of(body: &symbios_avatar::PolyMesh, normals: &[Vec3]) -> Self {
+        let mut field = Self {
+            tris: Vec::new(),
+            normals: Vec::new(),
+            cells: HashMap::new(),
+        };
+        for tri in body.triangulated() {
+            let points = tri.map(|at| body.positions[at as usize]);
+            if points.iter().all(|at| at.length() > 0.35) {
+                continue;
+            }
+            let index = field.tris.len();
+            field.tris.push(points);
+            field.normals.push(
+                (normals[tri[0] as usize] + normals[tri[1] as usize] + normals[tri[2] as usize])
+                    .normalize_or(Vec3::Y),
+            );
+            let (lo, hi) = (
+                Self::key(points[0].min(points[1]).min(points[2])),
+                Self::key(points[0].max(points[1]).max(points[2])),
+            );
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        field.cells.entry((x, y, z)).or_default().push(index);
+                    }
+                }
+            }
+        }
+        field
+    }
+
+    /// Signed height over the skin, negative under it, and the skin's normal
+    /// there. FAR OUTSIDE where nothing is within reach (#348's lesson).
+    fn over(&self, point: Vec3) -> (f32, Vec3) {
+        let at = Self::key(point);
+        let mut best = (f32::MAX, 0usize, Vec3::ZERO);
+        for ring in 0..=Self::RINGS {
+            for x in -ring..=ring {
+                for y in -ring..=ring {
+                    for z in -ring..=ring {
+                        if x.abs().max(y.abs()).max(z.abs()) != ring {
+                            continue;
+                        }
+                        for &tri in self
+                            .cells
+                            .get(&(at.0 + x, at.1 + y, at.2 + z))
+                            .into_iter()
+                            .flatten()
+                        {
+                            let [a, b, c] = self.tris[tri];
+                            let (nearest, _) = closest_on_triangle(point, a, b, c);
+                            let apart = nearest.distance_squared(point);
+                            if apart < best.0 {
+                                best = (apart, tri, nearest);
+                            }
+                        }
+                    }
+                }
+            }
+            if best.0 < ((ring - 1).max(0) as f32 * Self::CELL).powi(2) {
+                break;
+            }
+        }
+        if best.0 == f32::MAX {
+            return (Self::RINGS as f32 * Self::CELL, Vec3::Y);
+        }
+        let normal = self.normals[best.1];
+        (
+            (point - best.2).dot(normal).signum() * best.0.sqrt(),
+            normal,
+        )
+    }
+}
+
+/// Every corner the far solid guard asks: each card scalp style its far tier
+/// draws a shell for, and every helmet at both ends, on three heads - the face
+/// bald, so the solids read are the scalp's.
+fn far_corners() -> Vec<(Option<i64>, ScalpStyle)> {
+    let mut all = Vec::new();
+    for seed in [None, Some(42), Some(7)] {
+        for style in [
+            ScalpStyle::Crop,
+            ScalpStyle::Bob { fringe: 0.0 },
+            ScalpStyle::Bob { fringe: 1.0 },
+            ScalpStyle::Long { weight: 0.0 },
+            ScalpStyle::Long { weight: 1.0 },
+            ScalpStyle::TiedBack { tail: 0.0 },
+            ScalpStyle::TiedBack { tail: 1.0 },
+            ScalpStyle::Curly { curl: 1.0 },
+        ] {
+            all.push((seed, style));
+        }
+    }
+    all.extend(helmets());
+    all
+}
+
+/// How far an OUTWARD-facing chord of a far solid may sag under the skin, in
+/// metres: 2.76 mm measured at 18 x 7 over every scalp style on three heads
+/// (#350), where 18 x 6 sagged 7.1 and the committed 36 x 12 0.15.
+const FAR_SAG: f32 = 0.0035;
+
+#[test]
+fn a_far_tier_is_a_closed_solid_off_the_skin_with_the_jaw_shut_and_open() {
+    // **#345's closed-solid guard asked of the far tier** (#350), plus the one
+    // thing a coarse grid breaks that a vertex reading cannot see: a chord
+    // sagging INTO the head between two rows. Read on points spread over every
+    // outward-facing face - an inward face's chord is inside the solid and
+    // nobody sees it - and bounded at [`FAR_SAG`]. Posed at the jaw's 20
+    // degrees as the facial guards are; a scalp shell is rigid to the head, so
+    // the posed reading is the rest one moved, and the body under it is not.
+    use symbios_avatar::Quat;
+    use symbios_avatar::anim::Pose;
+    const CREASE: f32 = -0.3;
+    for (roll, style) in far_corners() {
+        let mut record = AvatarRecord::new("Far", Archetype::default());
+        if let Some(seed) = roll {
+            record.reroll(seed);
+        }
+        let regions = record.hair.regions;
+        record.hair = symbios_avatar::hair::HairRecord {
+            regions,
+            scalp: record.hair.scalp,
+            ..symbios_avatar::hair::HairRecord::bald()
+        };
+        record.hair.scalp.style = style;
+        record.sanitize();
+        let avatar = Avatar::build_with(
+            &record,
+            &symbios_avatar::AvatarConfig {
+                far_hair: true,
+                ..Default::default()
+            },
+        )
+        .expect("a biped builds");
+        let far = avatar.far_hair.as_ref().expect("a far tier");
+        let growth = avatar.parts.far_hair.as_ref().expect("a far growth");
+        let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head");
+        let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+        let origin = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions).origin();
+        let rig = &avatar.rig;
+        let pivot = {
+            let tip = (0..rig.len())
+                .find(|&tip| {
+                    rig.joints[tip].marker
+                        && rig.joints[tip]
+                            .parent
+                            .is_some_and(|at| rig.joints[at].marker)
+                })
+                .expect("a humanoid has a jaw");
+            rig.joints[tip].parent.expect("the tip hangs off the pivot")
+        };
+        for degrees in JAW {
+            let corner = format!("seed {roll:?} wearing {style:?}, jaw {degrees}");
+            let mut pose = Pose::rest(rig);
+            pose.rotations[pivot] = Quat::from_rotation_x(degrees.to_radians());
+            let posed = pose.forward(rig);
+            let mut body = avatar.parts.body.clone();
+            body.skin = avatar.parts.weights.vertices.clone();
+            let mut body = posed.deform_mesh(rig, &body);
+            let mut hair = posed.deform_mesh(rig, &far.mesh);
+            for at in body.positions.iter_mut().chain(hair.positions.iter_mut()) {
+                *at -= origin;
+            }
+            let field = SkinField::of(&body, &body.shading_normals());
+            let every: Vec<&Vec<u32>> = hair.faces.iter().collect();
+            let held = welded(&hair, &every);
+            let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
+            let mut directed: HashMap<(u32, u32), usize> = HashMap::new();
+            for face in &held {
+                for (at, from) in face.iter().enumerate() {
+                    let to = face[(at + 1) % face.len()];
+                    *edges.entry((*from.min(&to), *from.max(&to))).or_default() += 1;
+                    *directed.entry((*from, to)).or_default() += 1;
+                }
+            }
+            let open = edges.values().filter(|count| **count != 2).count();
+            assert_eq!(open, 0, "{corner}: {open} open edges");
+            let clashing = directed
+                .iter()
+                .filter(|((from, to), count)| **count > 1 || !directed.contains_key(&(*to, *from)))
+                .count();
+            assert_eq!(
+                clashing, 0,
+                "{corner}: {clashing} directed edges are not a clean pair"
+            );
+            let volume: f32 = hair
+                .triangulated()
+                .into_iter()
+                .map(|tri| {
+                    let [a, b, c] = tri.map(|at| hair.positions[at as usize]);
+                    a.dot(b.cross(c)) / 6.0
+                })
+                .sum();
+            assert!(volume > 0.0, "{corner}: encloses {:.1} cm3", volume * 1e6);
+            // No crease past 107 degrees, but the crest's own at the crown
+            // (#348's veto point (a), named in `a_shell_never_folds_over_itself`).
+            if !matches!(style, ScalpStyle::Crest { .. }) {
+                let normals: Vec<Vec3> = hair
+                    .faces
+                    .iter()
+                    .map(|face| facing_and_area(&hair, face).0)
+                    .collect();
+                let (sharp, worst) = folds(&normals, &held, CREASE);
+                assert_eq!(
+                    sharp,
+                    0,
+                    "{corner}: {sharp} edges turn past 107 degrees, the sharpest {:.0}",
+                    worst.clamp(-1.0, 1.0).acos().to_degrees()
+                );
+            }
+            // Every vertex off the skin, and the reading able to say otherwise.
+            let mut corners: Vec<u32> = hair.faces.iter().flatten().copied().collect();
+            corners.sort_unstable();
+            corners.dedup();
+            let (mut under, mut worst, mut sunk) = (0usize, f32::MAX, 0usize);
+            for at in &corners {
+                let point = hair.positions[*at as usize];
+                let (over, normal) = field.over(point);
+                worst = worst.min(over);
+                under += usize::from(over < 0.0);
+                sunk += usize::from(field.over(point - normal * (over + 0.003)).0 < 0.0);
+            }
+            assert_eq!(
+                under,
+                0,
+                "{corner}: {under} of {} vertices under the skin, worst {:.2} mm",
+                corners.len(),
+                worst * 1000.0
+            );
+            assert!(
+                sunk * 4 >= corners.len() * 3,
+                "{corner}: only {sunk} of {} vertices sunk 3 mm read under the skin",
+                corners.len()
+            );
+            // The chords: points over every outward face. Outward is read
+            // against the solid's own middle, which is inside the skull for
+            // every shell.
+            let middle = corners
+                .iter()
+                .map(|at| hair.positions[*at as usize])
+                .sum::<Vec3>()
+                / corners.len() as f32;
+            let (mut deepest, mut samples, mut seen) = (f32::MAX, 0usize, 0usize);
+            for tri in hair.triangulated() {
+                let [a, b, c] = tri.map(|at| hair.positions[at as usize]);
+                if (b - a).cross(c - a).dot((a + b + c) / 3.0 - middle) <= 0.0 {
+                    continue;
+                }
+                for i in 0..=6 {
+                    for j in 0..=(6 - i) {
+                        let point = a + (b - a) * (i as f32 / 6.0) + (c - a) * (j as f32 / 6.0);
+                        let (over, normal) = field.over(point);
+                        deepest = deepest.min(over);
+                        // Liveness: the same point sunk past the bound reads a
+                        // sag the bound would refuse.
+                        samples += 1;
+                        seen += usize::from(
+                            field.over(point - normal * (over + FAR_SAG + 0.001)).0 < -FAR_SAG,
+                        );
+                    }
+                }
+            }
+            println!("{corner}: {seen} of {samples} chord points sunk past the bound read a sag");
+            assert!(
+                seen * 2 >= samples,
+                "{corner}: only {seen} of {samples} chord points sunk past the bound read a sag"
+            );
+            // **Except the crest, whose own crown already sags** (#347's stubs,
+            // the same geometry `a_shell_never_folds_over_itself` names): on
+            // seed 7 its outward chords dip 7.94 mm under the skin at the
+            // committed 36 x 12 grid, measured, and 8.61 at the far grid. That is
+            // the crest's to fix and not the far tier's.
+            assert!(
+                deepest >= -FAR_SAG || matches!(style, ScalpStyle::Crest { .. }),
+                "{corner}: an outward chord sags {:.2} mm under the skin",
+                -deepest * 1000.0
+            );
+            println!(
+                "{corner}: closed, {:.0} cm3, nearest vertex {:+.2} mm, deepest outward chord {:+.2} mm, {sunk}/{} sunk read under",
+                volume * 1e6,
+                worst * 1000.0,
+                deepest * 1000.0,
+                corners.len()
+            );
+            if degrees == 0.0 {
+                let counted: usize = growth.grown.iter().map(|grown| grown.tris).sum();
+                assert_eq!(
+                    counted,
+                    hair.triangulated().len(),
+                    "{corner}: the far ledger and the far mesh disagree"
+                );
+            }
+        }
+    }
+}

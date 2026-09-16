@@ -70,6 +70,9 @@
 //! cargo run --release --example render -- --age 80  # the age axis, 18 .. 80 years
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow, roughness
 //! cargo run --release --example render -- --quadruped
+//! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
+//! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
+//! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
 //! cargo run --release --example render -- --budget    # what one avatar costs
 //! cargo run --release --example render -- --cost      # and what it costs to build
 //! ```
@@ -121,6 +124,14 @@ const MARGIN: f32 = 1.12;
 const CLOSE_MARGIN: f32 = 1.5;
 /// How far the overhead view tilts over, in radians.
 const OVERHEAD_PITCH: f32 = 1.0;
+/// Pixels one metre covers one metre from a camera, for `--far`: 1080 lines
+/// over a 60-degree vertical field, `1080 / (2 tan 30)`.
+///
+/// **What a peer across a room is drawn at** (#350). A view framed for a
+/// close-up covers its span in [`VIEW`] pixels; a head `d` metres off a
+/// 1080-line camera covers the same span in `span * FAR_PIXELS / d`, which at
+/// 12 m is about thirty.
+const FAR_PIXELS: f32 = 935.3;
 
 /// Which part of the body a close-up frames.
 #[derive(Clone, Copy, PartialEq)]
@@ -243,6 +254,22 @@ fn main() {
     let clumps = args.iter().any(|arg| arg == "--clumps");
     // Which stage to show instead of the finished picture.
     let pass = value("--pass").cloned();
+    // Which hair tier to draw (#350): `near` builds the far tier too and draws
+    // the near one - the control that asking for a far tier moves no byte of
+    // the near - and `far` draws the far tier in the hair's place.
+    let tier = match value("--tier").map(String::as_str) {
+        None => None,
+        Some("near") => Some(false),
+        Some("far") => Some(true),
+        Some(other) => {
+            eprintln!("unknown --tier {other}: expected near or far");
+            std::process::exit(1);
+        }
+    };
+    // The framing a peer twelve metres off gets (#350). See [`FAR_PIXELS`].
+    let far = value("--far")
+        .and_then(|metres| metres.parse::<f32>().ok())
+        .filter(|metres| *metres > 0.0);
     // Six numbers, in the order the axes are declared: length, volume,
     // coverage, part, wave, shade, and optionally the group count after them.
     // For walking the parameter space by eye, which is the only way any of it
@@ -727,6 +754,7 @@ fn main() {
         // missing — which is what this flag did until the body it was pointed
         // at stopped drawing that skin.
         dressed: !bare,
+        far_hair: tier.is_some(),
         ..Default::default()
     };
 
@@ -815,6 +843,8 @@ fn main() {
         corners,
         expression,
         viseme,
+        far,
+        far_tier: tier == Some(true),
     };
     if clumps {
         grow_clumps(&mut avatar, &record);
@@ -1026,6 +1056,15 @@ fn report(avatar: &Avatar) {
             drawn.mesh.vertex_count(),
         );
     }
+    // The far tier's own line (#350): drawn in the hair's place, never beside it.
+    if let Some(far) = &avatar.far_hair {
+        println!(
+            "{:<8} {:>7} tris  {:>6} verts",
+            "far hair",
+            far.mesh.triangulated().len(),
+            far.mesh.vertex_count(),
+        );
+    }
 }
 
 /// What a sheet is asked to show, beyond the body itself.
@@ -1075,6 +1114,12 @@ struct Show {
     expression: Option<Expression>,
     /// A mouth shape from the lipsync vocabulary, if any.
     viseme: Option<Viseme>,
+    /// How many metres off to draw each view from, if not close (#350): the
+    /// same frame at the pixels a 1080-line camera spends on it at that
+    /// distance, scaled back up square-by-square so a sheet stitches.
+    far: Option<f32>,
+    /// Whether the FAR tier's hair is drawn in the near hair's place (#350).
+    far_tier: bool,
 }
 
 /// The mandible, as the rig carries it.
@@ -1647,7 +1692,18 @@ impl Subject {
             let toward = frame.to_world(light::KEY);
             let shadow = ShadowMap::cast(&items, toward, frame.centre, frame.span, 1024);
 
+            // Far off, the same frame at the pixels that distance spends on it
+            // (#350); close, exactly what it always drew.
+            let pixels = self
+                .show
+                .far
+                .map(|metres| ((frame.span * FAR_PIXELS / metres).round() as usize).clamp(1, VIEW));
+            let side = pixels.map_or(side, |pixels| pixels * SUPERSAMPLE);
             let mut buffer = GBuffer::new(side, side);
+            if pixels.is_some() {
+                let share = side as f32 / (VIEW * SUPERSAMPLE) as f32;
+                buffer.floor = share * share;
+            }
             buffer.draw(&items, frame);
             let ao = light::occlusion(&buffer, frame);
             let shaded = match &self.show.pass {
@@ -1655,6 +1711,10 @@ impl Subject {
                 None => light::shade(&buffer, &ao, frame, &shadow),
             };
             let view = light::resolve(&shaded, SUPERSAMPLE);
+            let view = match pixels {
+                Some(pixels) => light::enlarge(&view, pixels, VIEW),
+                None => view,
+            };
             sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
         }
         sheet
@@ -1679,6 +1739,27 @@ impl Subject {
                 .filter(|drawn| !self.show.bare || drawn.kind != MeshKind::Hair)
                 .collect()
         };
+        if self.show.far_tier {
+            // The far tier in the hair's place, posed as `Avatar::posed`
+            // poses everything: through the blink, then forward.
+            let mut blinking = pose.clone();
+            if let Some(eyes) = &self.avatar.parts.eyes {
+                eyes.blink(&mut blinking, closure);
+            }
+            let posed = blinking.forward(&self.avatar.rig);
+            let far = self.avatar.far_hair.as_ref().map(|far| AvatarMesh {
+                kind: far.kind,
+                mesh: posed.deform_mesh(&self.avatar.rig, &far.mesh),
+            });
+            return bare(
+                self.avatar
+                    .posed(pose, closure)
+                    .into_iter()
+                    .filter(|drawn| drawn.kind != MeshKind::Hair)
+                    .chain(far)
+                    .collect(),
+            );
+        }
         if !self.show.linear {
             return bare(self.avatar.posed(pose, closure));
         }

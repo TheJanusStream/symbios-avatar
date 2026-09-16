@@ -51,6 +51,11 @@
 //! bevelled band at the rim. The count is the head's own and not a record's: a
 //! shell costs what the head's size dictates, which is what made the discarded
 //! one affordable and is why nothing here is a wire field.
+//!
+//! A head twelve metres off draws the same solid on [`FAR_COLUMNS`] by
+//! [`FAR_ROWS`] ([`Shell::far`], #350): 468 triangles where the near grid is
+//! 1,656, which is what lets a card style's helmet twin cost less than its
+//! cards - on the near grid it costs more.
 
 pub mod face;
 
@@ -86,6 +91,37 @@ pub const COLUMNS: usize = 36;
 /// Provenance: **derived** from the budget, **checked by the stray** a column
 /// of this many rows leaves (#345).
 pub const ROWS: usize = 12;
+
+/// How many columns the far tier's shell is swept with (#350).
+///
+/// **The owner's decision, on the cost table**: as committed, a helmet twin
+/// costs more than the cards it stands for at an ordinary cut (196 to 1,346
+/// triangles more over three heads), and the grid is what a far tier has to
+/// spend less of. At twelve metres a head is about thirty pixels tall and a
+/// column of the near grid is under half of one.
+///
+/// Eighteen by seven is 468 triangles and about 250 vertices of shell, against
+/// 1,656 and 830. **What a coarse grid breaks is not the vertices but the
+/// chords between them**: every vertex of every far solid stays outside the
+/// skin at every grid tried, but a quad spanning two rows sags into the head
+/// between them, and where two neighbouring columns differ in length - the
+/// face notch - it sags furthest. Read on points spread over every
+/// OUTWARD-facing face, on three heads and every scalp style: 36 x 12 dips at
+/// most 0.15 mm under the skin, 24 x 8 1.0, 18 x 8 2.1, 18 x 7 2.8, 18 x 6
+/// 7.1, 20 x 7 6.9 and 16 x 7 8.6 - so the column count matters as much as the
+/// row count, by where the columns fall against the notch. At the far framing
+/// the three 18-column grids render alike; at the near one 18 x 6 shows a fleck
+/// of skin at the temple on seed 7 and 18 x 7 does not.
+///
+/// Provenance: **measured** (the chord sag above), **judged by render** at the
+/// far framing and at the near one.
+pub const FAR_COLUMNS: usize = 18;
+
+/// How many rows the far tier's shell is lofted with, crown to rim. See
+/// [`FAR_COLUMNS`] for why seven.
+///
+/// Provenance: **measured**, **judged by render**.
+pub const FAR_ROWS: usize = 7;
 
 /// How far off the sagittal line a band's cut has not begun at all, in the sine
 /// of the azimuth: the strip's own half-width.
@@ -419,6 +455,20 @@ pub struct Shell {
     /// A catalogue constant and never a record axis (the owner's decision):
     /// faceted, painterly or smooth is what a named style IS.
     pub facets: Facets,
+    /// How many columns the solid is swept with, round the whole head:
+    /// [`COLUMNS`] for every style in the catalogue.
+    ///
+    /// **The far tier's knob, and nothing else's** (#350, the owner's
+    /// decision). A shell is the same grid whatever it is asked, which is the
+    /// whole of why the helmet twin of a card style costs MORE than its cards
+    /// at an ordinary cut - measured, 196 to 1,346 triangles more on three
+    /// heads. [`Shell::far`] is what a head twelve metres off draws, and the
+    /// grid is what it spends less of. A coarser grid for a NEAR shell was
+    /// refuted at #346 and is not what this is for.
+    pub columns: usize,
+    /// How many rows each column is lofted with, crown to rim: [`ROWS`] for
+    /// every style in the catalogue. See [`Shell::columns`].
+    pub rows: usize,
 }
 
 /// How a shell is coloured from the record's roots and tips.
@@ -485,6 +535,34 @@ pub enum Facets {
 // The bell is smooth, and the mode is gone rather than kept at a value that
 // buys nothing - which is #345's veto point (f) the other way round.
 
+impl Shell {
+    /// The same solid as a head twelve metres off draws it (#350): on the far
+    /// grid, smooth, with no cornrow ridges.
+    ///
+    /// **Smooth, because a facet is below a pixel there and costs a vertex
+    /// per corner of every face** - a faceted cap is 4,280 vertices where a
+    /// smooth one of the same grid is under a thousand (measured, #350). **No
+    /// ridges**, because ten ridges need twenty columns to sample at all (see
+    /// `ridged`) and a cornrow is seven millimetres tall, half a pixel at that
+    /// distance. Everything else - the thickness, the cuts, the roll, the round
+    /// mass, the fin - is the style's own, so the far solid is the near one's
+    /// silhouette on fewer points.
+    #[must_use]
+    pub fn far(self) -> Self {
+        Self {
+            columns: FAR_COLUMNS,
+            rows: FAR_ROWS,
+            facets: match self.facets {
+                Facets::All => Facets::Smooth,
+                smooth => smooth,
+            },
+            ridges: 0,
+            ridge: 0.0,
+            ..self
+        }
+    }
+}
+
 impl Default for Shell {
     fn default() -> Self {
         Self {
@@ -503,6 +581,8 @@ impl Default for Shell {
             ridge: 0.0,
             tone: Tone::Crown,
             facets: Facets::Smooth,
+            columns: COLUMNS,
+            rows: ROWS,
         }
     }
 }
@@ -1063,6 +1143,19 @@ impl Cap {
         }
     }
 
+    /// The same helmet as a head twelve metres off draws it (#350): its solid
+    /// on the far grid ([`Shell::far`]), its ball if it has one, and no rim
+    /// cards - a card is a sub-pixel sliver at that distance, and the rim is
+    /// what the far tier is for not drawing.
+    #[must_use]
+    pub fn far(self) -> Self {
+        Self {
+            shell: self.shell.far(),
+            rim_cards: 0,
+            ..self
+        }
+    }
+
     /// The one head's worth of helmet this description grows, as a [`Shape`].
     ///
     /// Split out of [`Cap::sowing`] because `ScalpStyle::shape` wants the shape
@@ -1528,7 +1621,7 @@ fn at_share(walk: &[Vec3], arc: &[f32], share: f32) -> Vec3 {
 /// The shell's grid: the inner and outer point of every row of every column,
 /// and the way the surface faces there.
 struct Grid {
-    /// Column-major: `COLUMNS * ROWS` of each.
+    /// Column-major: [`Shell::columns`] times [`Shell::rows`] of each.
     inner: Vec<Vec3>,
     outer: Vec<Vec3>,
     normals: Vec<Vec3>,
@@ -1538,25 +1631,30 @@ struct Grid {
     /// Where each row sits, as a share of every column's own arc: the one
     /// schedule the grid was lofted on.
     shares: Vec<f32>,
+    /// How many columns and rows it has: the shell's own.
+    columns: usize,
+    rows: usize,
 }
 
 impl Grid {
     /// Where one row of one column sits in the grid, wrapping round the head.
-    fn at(column: usize, row: usize) -> usize {
-        (column % COLUMNS) * ROWS + row
+    fn at(&self, column: usize, row: usize) -> usize {
+        cell(self.columns, self.rows, column, row)
     }
 
     /// Lofts the grid over a measured head.
     fn of(head: &Follicles, shell: &Shell) -> Self {
+        let (columns, rows_down) = (shell.columns, shell.rows);
+        let at = |column: usize, row: usize| cell(columns, rows_down, column, row);
         let radius = head_radius(head);
         let (crown, rim) = (radius * shell.crown, radius * shell.rim);
         // Every column walked first, because the rows are scheduled against all
         // of them at once: see [`schedule`] for the chevrons a per-column
         // schedule draws.
-        let walks: Vec<Vec<Vec3>> = (0..COLUMNS)
-            .map(|column| walk(head, TAU * column as f32 / COLUMNS as f32, shell))
+        let walks: Vec<Vec<Vec3>> = (0..columns)
+            .map(|column| walk(head, TAU * column as f32 / columns as f32, shell))
             .collect();
-        let rows = schedule(&walks, ROWS, shell.even);
+        let rows = schedule(&walks, rows_down, shell.even);
         // A row schedule measured in ARC rather than in shares was tried here
         // and REFUTED (#347), and it is the lever of the slice for what it cost
         // to find out. The premise was sound and is still true: the schedule is
@@ -1590,26 +1688,28 @@ impl Grid {
         // The catalogue's thin edge, which a rolled rim comes down to.
         let edge = radius * THICKNESS[1];
         let mut grid = Self {
-            inner: Vec::with_capacity(COLUMNS * ROWS),
-            outer: Vec::with_capacity(COLUMNS * ROWS),
-            normals: Vec::with_capacity(COLUMNS * ROWS),
+            inner: Vec::with_capacity(columns * rows_down),
+            outer: Vec::with_capacity(columns * rows_down),
+            normals: Vec::with_capacity(columns * rows_down),
             outer_normals: Vec::new(),
             shares: rows.clone(),
+            columns,
+            rows: rows_down,
         };
-        for column in 0..COLUMNS {
-            for row in 0..ROWS {
-                let point = walked[Self::at(column, row)];
+        for column in 0..columns {
+            for row in 0..rows_down {
+                let point = walked[at(column, row)];
                 // **The surface's normal read off the GRID, not off one
                 // column's own walk.** A normal taken from the walk's
                 // neighbours a few millimetres away follows every wobble the
                 // drape puts in a single meridian; the surface the shell
                 // actually has is the one its own rows and columns describe,
                 // and that is what a quad is shaded by.
-                let up = walked[Self::at(column, row.saturating_sub(1))];
-                let down = walked[Self::at(column, (row + 1).min(ROWS - 1))];
-                let left = walked[Self::at((column + COLUMNS - 1) % COLUMNS, row)];
-                let right = walked[Self::at(column + 1, row)];
-                let azimuth = TAU * column as f32 / COLUMNS as f32;
+                let up = walked[at(column, row.saturating_sub(1))];
+                let down = walked[at(column, (row + 1).min(rows_down - 1))];
+                let left = walked[at((column + columns - 1) % columns, row)];
+                let right = walked[at(column + 1, row)];
+                let azimuth = TAU * column as f32 / columns as f32;
                 let out = Vec3::new(azimuth.sin(), 0.0, azimuth.cos());
                 let mut normal = (right - left).cross(down - up).normalize_or(Vec3::Y);
                 if normal.dot(out) < 0.0 && row > 0 {
@@ -1620,7 +1720,7 @@ impl Grid {
                 if row == 0 {
                     normal = Vec3::Y;
                 }
-                let share = row as f32 / (ROWS - 1) as f32;
+                let share = row as f32 / (rows_down - 1) as f32;
                 // **A pompadour is a thickness that varies by azimuth** (#346):
                 // the front of the crown carries the rise over the rest, peaked
                 // part-way down the front column rather than at the pole,
@@ -1671,13 +1771,13 @@ impl Grid {
             // where the head bends and the roll is a shape of its own.
             if shell.roll > 0.0 {
                 let arc = *along(&walks[column]).last().unwrap_or(&0.0);
-                let rim_at = Self::at(column, ROWS - 1);
+                let rim_at = at(column, rows_down - 1);
                 let rim_edge = grid.inner[rim_at] + grid.normals[rim_at] * edge;
                 let gap = grid.outer[rim_at].distance(rim_edge);
                 let over =
                     (shell.roll * gap / arc.max(f32::EPSILON)).clamp(f32::EPSILON, ROLL_MOST);
                 for (row, share) in rows.iter().enumerate() {
-                    let at = Self::at(column, row);
+                    let at = at(column, row);
                     let edge_point = grid.inner[at] + grid.normals[at] * edge;
                     let into = ((share - (1.0 - over)) / over).clamp(0.0, 1.0);
                     let kept = (1.0 - into * into).max(0.0).sqrt();
@@ -1690,21 +1790,21 @@ impl Grid {
         // off its own grid above: the neighbours round and down, turned to face
         // the way the head's own normal does.
         grid.outer_normals = match shell.facets {
-            Facets::Relief => (0..COLUMNS)
-                .flat_map(|column| (0..ROWS).map(move |row| (column, row)))
+            Facets::Relief => (0..columns)
+                .flat_map(|column| (0..rows_down).map(move |row| (column, row)))
                 .map(|(column, row)| {
-                    let at = Self::at(column, row);
+                    let here = at(column, row);
                     if row == 0 {
                         return Vec3::Y;
                     }
-                    let up = grid.outer[Self::at(column, row - 1)];
-                    let down = grid.outer[Self::at(column, (row + 1).min(ROWS - 1))];
-                    let left = grid.outer[Self::at((column + COLUMNS - 1) % COLUMNS, row)];
-                    let right = grid.outer[Self::at(column + 1, row)];
+                    let up = grid.outer[at(column, row - 1)];
+                    let down = grid.outer[at(column, (row + 1).min(rows_down - 1))];
+                    let left = grid.outer[at((column + columns - 1) % columns, row)];
+                    let right = grid.outer[at(column + 1, row)];
                     let normal = (right - left)
                         .cross(down - up)
-                        .normalize_or(grid.normals[at]);
-                    if normal.dot(grid.normals[at]) < 0.0 {
+                        .normalize_or(grid.normals[here]);
+                    if normal.dot(grid.normals[here]) < 0.0 {
                         -normal
                     } else {
                         normal
@@ -1715,6 +1815,12 @@ impl Grid {
         };
         grid
     }
+}
+
+/// Where one row of one column sits in a grid of `columns` by `rows`,
+/// column-major, wrapping round the head.
+fn cell(columns: usize, rows: usize, column: usize, row: usize) -> usize {
+    (column % columns) * rows + row
 }
 
 /// The soft ellipsoid a round mass of hair is placed on (#348).
@@ -1831,7 +1937,7 @@ fn ridged(shell: &Shell, azimuth: f32, share: f32) -> f32 {
         return 0.0;
     }
     let count = shell.ridges as f32;
-    let top = (count * std::f32::consts::PI / COLUMNS as f32).cos();
+    let top = (count * std::f32::consts::PI / shell.columns as f32).cos();
     let profile =
         crate::face::smooth((((count * azimuth).cos() + top) / (2.0 * top)).clamp(0.0, 1.0));
     let fade = crate::face::smooth((share / RIDGE_FADE).clamp(0.0, 1.0));
@@ -1885,9 +1991,10 @@ pub(super) fn loft(
     // belonging to one face each - a solid that is not closed, which is 72 of
     // its 1,764 edges on a default head, measured. One apex a surface, and the
     // rows below it are a fan.
+    let (columns, rows_down) = (grid.columns, grid.rows);
     let apex = |points: &[Vec3]| {
-        let sum: Vec3 = (0..COLUMNS).map(|column| points[Grid::at(column, 0)]).sum();
-        sum / COLUMNS as f32
+        let sum: Vec3 = (0..columns).map(|column| points[grid.at(column, 0)]).sum();
+        sum / columns as f32
     };
     let (apex_out, apex_in) = (apex(&grid.outer), apex(&grid.inner));
     // Four blocks - the outer apex and its rows, the inner apex and its rows,
@@ -1902,11 +2009,11 @@ pub(super) fn loft(
             into.skin.push(skin);
         };
         push(apex_out, Vec3::Y, tips);
-        for column in 0..COLUMNS {
-            let azimuth = TAU * column as f32 / COLUMNS as f32;
-            for row in 1..ROWS {
-                let at = Grid::at(column, row);
-                let down = row as f32 / (ROWS - 1) as f32;
+        for column in 0..columns {
+            let azimuth = TAU * column as f32 / columns as f32;
+            for row in 1..rows_down {
+                let at = grid.at(column, row);
+                let down = row as f32 / (rows_down - 1) as f32;
                 let colour = match shell.tone {
                     // The tips' colour at the crown falling to the roots' at
                     // the rim, which is the way round a mass of hair is lit:
@@ -1930,14 +2037,14 @@ pub(super) fn loft(
             }
         }
         push(apex_in, Vec3::NEG_Y, under);
-        for column in 0..COLUMNS {
-            for row in 1..ROWS {
-                let at = Grid::at(column, row);
+        for column in 0..columns {
+            for row in 1..rows_down {
+                let at = grid.at(column, row);
                 push(grid.inner[at], -grid.normals[at], under);
             }
         }
-        for column in 0..COLUMNS {
-            let at = Grid::at(column, ROWS - 1);
+        for column in 0..columns {
+            let at = grid.at(column, rows_down - 1);
             let (outer, inner) = (grid.outer[at], grid.inner[at]);
             // **Down the head, not down the outer surface, once that surface
             // rolls** (#348, measured): a rolled rim's last outer step points
@@ -1946,9 +2053,9 @@ pub(super) fn loft(
             // own height on every afro past close-cropped. The inner surface
             // still runs down the head there.
             let heading = if shell.roll > 0.0 {
-                (inner - grid.inner[Grid::at(column, ROWS - 2)]).normalize_or(Vec3::NEG_Y)
+                (inner - grid.inner[grid.at(column, rows_down - 2)]).normalize_or(Vec3::NEG_Y)
             } else {
-                (outer - grid.outer[Grid::at(column, ROWS - 2)]).normalize_or(Vec3::NEG_Y)
+                (outer - grid.outer[grid.at(column, rows_down - 2)]).normalize_or(Vec3::NEG_Y)
             };
             let across = (outer - inner).normalize_or(grid.normals[at]);
             let thick = outer.distance(inner);
@@ -1959,23 +2066,23 @@ pub(super) fn loft(
             );
         }
     }
-    let rows = (ROWS - 1) as u32;
+    let rows = (rows_down - 1) as u32;
     let outer_apex = first;
-    let inner_apex = first + 1 + COLUMNS as u32 * rows;
+    let inner_apex = first + 1 + columns as u32 * rows;
     let outer =
-        |column: usize, row: usize| first + 1 + (column % COLUMNS) as u32 * rows + (row as u32 - 1);
+        |column: usize, row: usize| first + 1 + (column % columns) as u32 * rows + (row as u32 - 1);
     let inner = |column: usize, row: usize| {
-        inner_apex + 1 + (column % COLUMNS) as u32 * rows + (row as u32 - 1)
+        inner_apex + 1 + (column % columns) as u32 * rows + (row as u32 - 1)
     };
-    let bevel = |column: usize| inner_apex + 1 + COLUMNS as u32 * rows + (column % COLUMNS) as u32;
-    for column in 0..COLUMNS {
+    let bevel = |column: usize| inner_apex + 1 + columns as u32 * rows + (column % columns) as u32;
+    for column in 0..columns {
         let next = column + 1;
         // The crown's fan, wound as the quads below it are.
         into.faces
             .push(vec![outer_apex, outer(column, 1), outer(next, 1)]);
         into.faces
             .push(vec![inner_apex, inner(next, 1), inner(column, 1)]);
-        for row in 1..ROWS - 1 {
+        for row in 1..rows_down - 1 {
             into.faces.push(vec![
                 outer(column, row),
                 outer(column, row + 1),
@@ -1992,15 +2099,15 @@ pub(super) fn loft(
         }
         // The rim, closed through the bevel ring and wound out of the solid.
         into.faces.push(vec![
-            outer(column, ROWS - 1),
+            outer(column, rows_down - 1),
             bevel(column),
             bevel(next),
-            outer(next, ROWS - 1),
+            outer(next, rows_down - 1),
         ]);
         into.faces.push(vec![
             bevel(column),
-            inner(column, ROWS - 1),
-            inner(next, ROWS - 1),
+            inner(column, rows_down - 1),
+            inner(next, rows_down - 1),
             bevel(next),
         ]);
     }

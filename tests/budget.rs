@@ -603,6 +603,59 @@ impl Head {
         symbios_avatar::hair::clump::grow_head(&bed, &sowings, self.record.seed, ceiling)
     }
 
+    /// Grows both tiers of one head of hair on it, through the same call
+    /// `Avatar::build_with` makes when a far tier is asked for (#350).
+    ///
+    /// Untiered like a catalogue sweep: what is compared is what each tier ASKS
+    /// for. `the_two_tiers_regrown_are_the_two_tiers_the_body_ships` holds this
+    /// copy of the build's own loop to the shipped article.
+    fn tiers_under(&self, hair: &HairRecord, ceiling: usize) -> (Growth, Growth) {
+        let follicles = symbios_avatar::Follicles::of(
+            &self.avatar.rig,
+            &self.skull,
+            &self.canon,
+            &hair.regions,
+        );
+        let bed = Bed {
+            body: &self.avatar.parts.body,
+            rig: &self.avatar.rig,
+            weights: &self.avatar.parts.weights,
+            follicles: &follicles,
+        };
+        let sown: Vec<_> = Follicle::ALL
+            .into_iter()
+            .filter_map(|follicle| {
+                hair.sowing(follicle, &follicles)
+                    .map(|sown| (follicle, sown))
+            })
+            .collect();
+        fn sowing(follicle: Follicle, sown: &symbios_avatar::hair::Sown) -> Sowing<'_> {
+            Sowing {
+                follicle,
+                count: sown.clumps,
+                shape: sown.shape.as_ref(),
+                roots: Vec3::from_array(sown.roots),
+                tips: Vec3::from_array(sown.tips),
+            }
+        }
+        let far_sown: Vec<_> = sown
+            .iter()
+            .filter_map(|(follicle, _)| {
+                hair.far_sowing(*follicle, &follicles)
+                    .map(|far| (*follicle, far))
+            })
+            .collect();
+        let sowings: Vec<_> = sown.iter().map(|(f, s)| sowing(*f, s)).collect();
+        let stand_ins: Vec<_> = far_sown.iter().map(|(f, s)| sowing(*f, s)).collect();
+        symbios_avatar::hair::clump::grow_tiers(
+            &bed,
+            &sowings,
+            &stand_ins,
+            self.record.seed,
+            ceiling,
+        )
+    }
+
     /// What one region of a head of hair costs on this body.
     ///
     /// **Only the region asked for is lofted, and the regions before it are
@@ -1409,4 +1462,183 @@ fn the_tier_bites_only_where_a_record_asks_for_more_than_the_budget_holds() {
     );
     ledger("the dearest legal hair", &free);
     ledger("the same, squeezed to half", &squeezed);
+}
+
+#[test]
+fn the_two_tiers_regrown_are_the_two_tiers_the_body_ships() {
+    // The instrument check for the far-tier rail below, and for the same
+    // reason `the_regrown_hair_is_the_hair_the_body_ships` exists: a copy of
+    // the build's loop is a second opinion (#350).
+    for head in [Head::of(0, None), Head::of(7, None)] {
+        for (what, hair) in [
+            ("its own hair", head.record.hair),
+            ("the greediest", greediest()),
+            ("a short curl", {
+                let mut hair = head.record.hair;
+                hair.scalp.style = ScalpStyle::Curly { curl: 0.0 };
+                hair.scalp.cut.length = 0.2;
+                hair
+            }),
+        ] {
+            let mut record = head.record.clone();
+            record.hair = hair;
+            record.sanitize();
+            let shipped = Avatar::build_with(
+                &record,
+                &symbios_avatar::AvatarConfig {
+                    far_hair: true,
+                    ..Default::default()
+                },
+            )
+            .expect("a biped builds");
+            let (near, far) =
+                head.tiers_under(&record.hair, symbios_avatar::hair::clump::MAX_TRIANGLES);
+            assert_eq!(
+                Some(&near.grown),
+                shipped.parts.hair.as_ref().map(|growth| &growth.grown),
+                "regrowing {what}'s near tier on {} is not what the body ships",
+                head.at
+            );
+            assert_eq!(
+                Some(&far),
+                shipped.parts.far_hair.as_ref(),
+                "regrowing {what}'s far tier on {} is not what the body ships",
+                head.at
+            );
+        }
+    }
+}
+
+#[test]
+fn a_far_tier_never_costs_more_than_the_near_tier_it_stands_for() {
+    // **The issue's premise, turned into a rail** (#350). It said a helmet twin
+    // "costs nothing visually and saves the cards", and measured it did not: on
+    // the committed 36 x 12 grid a twin costs 196 to 1,346 triangles MORE than
+    // a crop's, a bob's or a curl's cards at an ordinary cut. So the far grid is
+    // coarse (`hair::shell::FAR_COLUMNS` by `FAR_ROWS`), and a region whose
+    // cards are still cheaper than its stand-in keeps them. What this holds is
+    // the owner's rule: a far tier is never dearer, in triangles or in
+    // vertices, than the near tier it replaces - over every scalp style in the
+    // catalogue, at each head's own cut and at the greediest, on three heads.
+    //
+    // And the ledger prints BOTH tiers, which is the acceptance's other half.
+    let mut dearest_far = (String::new(), 0usize);
+    for head in [Head::of(0, None), Head::of(42, None), Head::of(7, None)] {
+        for (name, style) in scalp_catalogue() {
+            for greedy in [false, true] {
+                let mut hair = head.record.hair;
+                hair.scalp.style = style;
+                if greedy {
+                    hair.scalp.cut = GREEDY;
+                }
+                hair.sanitize();
+                let at = format!(
+                    "{name} on {} at {} cut",
+                    head.at,
+                    if greedy { "the greediest" } else { "its own" }
+                );
+                let (near, far) = head.tiers_under(&hair, usize::MAX);
+                if head.record.seed == 0 && !greedy {
+                    ledger(&format!("{at}, near tier"), &near);
+                    ledger(&format!("{at}, far tier"), &far);
+                }
+                assert!(
+                    far.tris() <= near.tris(),
+                    "{at}: the far tier costs {} triangles against the near tier's {}",
+                    far.tris(),
+                    near.tris()
+                );
+                assert!(
+                    far.mesh.vertex_count() <= near.mesh.vertex_count(),
+                    "{at}: the far tier costs {} vertices against the near tier's {}",
+                    far.mesh.vertex_count(),
+                    near.mesh.vertex_count()
+                );
+                if far.tris() > dearest_far.1 {
+                    dearest_far = (at, far.tris());
+                }
+            }
+        }
+    }
+    println!(
+        "the dearest far tier: {} triangles, {}",
+        dearest_far.1, dearest_far.0
+    );
+    // Liveness: the same reading refuses a far tier on the COMMITTED grid - a
+    // crop's twin at 36 x 12, grown alone on the default head, against the
+    // crop's own cards there.
+    use symbios_avatar::hair::shell::Cap;
+    let head = Head::of(0, None);
+    let mut hair = head.record.hair;
+    hair.scalp.style = ScalpStyle::Crop;
+    let follicles =
+        symbios_avatar::Follicles::of(&head.avatar.rig, &head.skull, &head.canon, &hair.regions);
+    let mut committed = Cap::crop(0.0).far();
+    committed.shell.columns = symbios_avatar::hair::shell::COLUMNS;
+    committed.shell.rows = symbios_avatar::hair::shell::ROWS;
+    let sown = committed.sowing(&hair.scalp, &follicles);
+    let bed = Bed {
+        body: &head.avatar.parts.body,
+        rig: &head.avatar.rig,
+        weights: &head.avatar.parts.weights,
+        follicles: &follicles,
+    };
+    let mut twin = Growth::on(follicles.head);
+    twin.grow(
+        &bed,
+        &Sowing {
+            follicle: Follicle::Scalp,
+            count: sown.clumps,
+            shape: sown.shape.as_ref(),
+            roots: Vec3::from_array(sown.roots),
+            tips: Vec3::from_array(sown.tips),
+        },
+        &mut Pcg64Mcg::seed_from_u64(0),
+    );
+    let cards = head.region(&hair, Follicle::Scalp);
+    assert!(
+        twin.tris() > cards,
+        "a crop's twin on the committed grid costs {} against its cards' {cards}, so the rail \
+         above could not see a dearer far tier",
+        twin.tris()
+    );
+}
+
+#[test]
+fn a_far_tier_is_no_extra_draw() {
+    // **Beside the meshes and never among them** (#350). A consumer draws every
+    // entry of `Avatar::meshes`, so a far tier there would be drawn on top of
+    // the near one and cost a fifth draw; `budget.meshes` keeps meaning the
+    // near tier, which is what is drawn at any one time.
+    let mut record = AvatarRecord::new("Far", Archetype::default());
+    record.reroll(42);
+    let avatar = Avatar::build_with(
+        &record,
+        &symbios_avatar::AvatarConfig {
+            far_hair: true,
+            ..Default::default()
+        },
+    )
+    .expect("a biped builds");
+    assert!(
+        avatar.budget.meshes <= MESH_TARGET,
+        "{} draws against a budget of {MESH_TARGET}",
+        avatar.budget.meshes
+    );
+    let drawn = avatar.drawn(0.0);
+    assert_eq!(drawn.len(), avatar.budget.meshes);
+    assert_eq!(
+        drawn
+            .iter()
+            .filter(|mesh| mesh.kind == symbios_avatar::MeshKind::Hair)
+            .count(),
+        1,
+        "a far tier was handed back among the drawn meshes"
+    );
+    let far = avatar.far_hair.as_ref().expect("a far tier was asked for");
+    assert_eq!(far.kind, symbios_avatar::MeshKind::Hair);
+    assert!(
+        far.mesh.channels_are_consistent() && far.mesh.skin.len() == far.mesh.vertex_count(),
+        "the far tier is not drawable as the near hair is"
+    );
 }

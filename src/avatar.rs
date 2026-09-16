@@ -155,6 +155,14 @@ pub struct AvatarConfig {
     /// garment covers stops existing, and only a body built without the
     /// garment has it.
     pub dressed: bool,
+    /// Whether the build also grows the hair a head twelve metres off draws,
+    /// handed back as [`Avatar::far_hair`] (#350).
+    ///
+    /// **A build setting and not a record field**: what tier a peer is drawn at
+    /// is the viewer's business, and a default on a published record field
+    /// moves nothing an owner sees. Off, the build does no extra work and is
+    /// what it always was; on, the near tier is the same bytes either way.
+    pub far_hair: bool,
 }
 
 impl Default for AvatarConfig {
@@ -169,6 +177,7 @@ impl Default for AvatarConfig {
             hair: None,
             complexion: None,
             dressed: true,
+            far_hair: false,
         }
     }
 }
@@ -206,6 +215,13 @@ pub struct Parts {
     /// Its hair, grown in its head joint's own space.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub hair: Option<Growth>,
+    /// Its far tier's hair, if [`AvatarConfig::far_hair`] asked for one: the
+    /// same head of hair with the scalp drawn as its helmet twin on the far
+    /// grid, and every other region's cards unchanged (#350). A scalp whose own
+    /// cards cost fewer triangles than that stand-in keeps them - see
+    /// [`crate::hair::clump::grow_tiers`].
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
+    pub far_hair: Option<Growth>,
     /// Its hands and feet.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub extremities: Extremities,
@@ -240,7 +256,27 @@ pub struct Avatar {
     #[cfg_attr(feature = "serde-avatar", serde(with = "crate::texture::atlas_serde"))]
     pub skin: TextureMap,
     /// What it all costs.
+    ///
+    /// The NEAR tier: what [`Self::drawn`] hands back, which is what is drawn
+    /// at any one time. [`Self::far_hair`] is costed on its own ledger line.
     pub budget: Budget,
+    /// The hair a head twelve metres off draws in place of the [`MeshKind::Hair`]
+    /// entry of [`Self::meshes`], if the build asked for it (#350).
+    ///
+    /// **Beside the meshes and never among them.** A consumer draws every entry
+    /// of `meshes`, so a far tier there is drawn ON TOP of the near one by every
+    /// consumer that does not know about tiers, and counts as a fifth draw.
+    /// Here, a consumer that knows spawns it with the hair material it already
+    /// has and swaps the two by distance; one that does not draws exactly what
+    /// it always drew. Placed and bound as the near hair is: the scalp's solid
+    /// rigidly to the head, every facial card as the skin it grew out of.
+    ///
+    /// **Never dearer than the hair it replaces**, in triangles or vertices, on
+    /// every catalogue corner (`tests/budget.rs` holds it): the scalp's stand-in
+    /// is on the far grid ([`crate::hair::shell::FAR_COLUMNS`]) and a region
+    /// cheaper than its stand-in keeps its cards.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub far_hair: Option<AvatarMesh>,
     /// The parts the merge was made from.
     pub parts: Parts,
 }
@@ -612,21 +648,60 @@ impl Avatar {
                     tips: Vec3::from_array(sown.tips),
                 })
                 .collect();
-            crate::hair::clump::grow_head(
+            if !config.far_hair {
+                return (
+                    crate::hair::clump::grow_head(
+                        &bed,
+                        &sowings,
+                        record.seed,
+                        crate::hair::clump::MAX_TRIANGLES,
+                    ),
+                    None,
+                );
+            }
+            // **The far tier, asked for** (#350): the scalp's stand-in, and the
+            // near tier's own roots for every other region.
+            let far_sown: Vec<_> = sown
+                .iter()
+                .filter_map(|(follicle, _)| {
+                    hair_record
+                        .far_sowing(*follicle, follicles)
+                        .map(|far| (*follicle, far))
+                })
+                .collect();
+            let stand_ins: Vec<_> = far_sown
+                .iter()
+                .map(|(follicle, far)| crate::hair::clump::Sowing {
+                    follicle: *follicle,
+                    count: far.clumps,
+                    shape: far.shape.as_ref(),
+                    roots: Vec3::from_array(far.roots),
+                    tips: Vec3::from_array(far.tips),
+                })
+                .collect();
+            let (near, far) = crate::hair::clump::grow_tiers(
                 &bed,
                 &sowings,
+                &stand_ins,
                 record.seed,
                 crate::hair::clump::MAX_TRIANGLES,
-            )
+            );
+            (near, Some(far))
         });
+        let (hair, far_hair) = match hair {
+            Some((near, far)) => (Some(near), far),
+            None => (None, None),
+        };
         // A region that grew nothing leaves no part behind. The merge keys off
         // this, and a `Some` holding an empty mesh would be a part whose draw
         // call went missing — the half-removal `a_hair_length_of_zero_grows_no_hair_at_all`
         // exists to catch.
         let hair = hair.filter(|growth| growth.mesh.face_count() > 0);
+        let far_hair = far_hair.filter(|growth| growth.mesh.face_count() > 0);
 
         let parts = Parts {
             hair,
+            far_hair,
             features,
             extremities,
             outfit,
@@ -643,11 +718,17 @@ impl Avatar {
         let mut avatar = Self {
             meshes: Vec::new(),
             budget: Budget::default(),
+            far_hair: None,
             skin: painted,
             rig,
             parts,
         };
         avatar.meshes = avatar.merge();
+        avatar.far_hair = avatar
+            .parts
+            .far_hair
+            .as_ref()
+            .map(|far| avatar.placed_hair(far));
         avatar.budget = avatar.measure();
         Some(avatar)
     }
@@ -836,20 +917,7 @@ impl Avatar {
             .as_ref()
             .filter(|growth| growth.mesh.face_count() > 0)
         {
-            let to_body = Mat4::from_translation(self.rig.joints[growth.head].position);
-            let mut placed = growth.mesh.transformed(to_body);
-            placed.set_normals(placed.vertex_normals());
-            // **Not bound rigidly to the head, which is what it used to be**
-            // (#207). Every clump already carries the binding of the skin it
-            // grew out of, so a moustache rides the upper lip, a chin beard
-            // rides the JAW, and a flank hair crossing the jawline blends across
-            // it the way the skin under it does. Rigid to the head, a beard
-            // stayed where the closed mouth was while the chin dropped 44.7 mm
-            // out from under it.
-            merged.push(AvatarMesh {
-                kind: MeshKind::Hair,
-                mesh: placed,
-            });
+            merged.push(self.placed_hair(growth));
         }
 
         if !self.parts.outfit.is_empty() {
@@ -866,6 +934,25 @@ impl Avatar {
         }
 
         merged
+    }
+
+    /// One head of hair, moved from its head joint's space into the body's and
+    /// ready to draw: the near tier's and the far tier's alike (#350).
+    fn placed_hair(&self, growth: &Growth) -> AvatarMesh {
+        let to_body = Mat4::from_translation(self.rig.joints[growth.head].position);
+        let mut placed = growth.mesh.transformed(to_body);
+        placed.set_normals(placed.vertex_normals());
+        // **Not bound rigidly to the head, which is what it used to be**
+        // (#207). Every clump already carries the binding of the skin it
+        // grew out of, so a moustache rides the upper lip, a chin beard
+        // rides the JAW, and a flank hair crossing the jawline blends across
+        // it the way the skin under it does. Rigid to the head, a beard
+        // stayed where the closed mouth was while the chin dropped 44.7 mm
+        // out from under it.
+        AvatarMesh {
+            kind: MeshKind::Hair,
+            mesh: placed,
+        }
     }
 
     /// The body, unwrapped into the atlas and ready to draw.

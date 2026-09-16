@@ -228,6 +228,15 @@ pub struct GBuffer {
     pub finish: Vec<Vec3>,
     /// Whether anything was drawn at all.
     pub covered: Vec<bool>,
+    /// The least doubled screen area, in square pixels, a triangle has to
+    /// have to be drawn. See [`Self::triangle`].
+    ///
+    /// **One pixel at the framing every sheet is drawn at**, and the square of
+    /// the resolution's share of that below it (#350): the floor is there for
+    /// a plane seen edge-on, which is a property of the WORLD, and a floor held
+    /// at one pixel on a buffer a sixteenth the size drops every face of a
+    /// 3.6 mm cell - the whole face, seen from above, opening onto the mouth.
+    pub floor: f32,
 }
 
 impl GBuffer {
@@ -243,6 +252,7 @@ impl GBuffer {
             world: vec![Vec3::ZERO; pixels],
             finish: vec![Vec3::new(1.0, 0.0, 0.0); pixels],
             covered: vec![false; pixels],
+            floor: 1.0,
         }
     }
 
@@ -285,7 +295,7 @@ impl GBuffer {
         // the triangle across its whole bounding box. That is how a floor
         // rendered as a black band the width of the frame.
         let doubled = edge(screen[0], screen[1], screen[2]);
-        if doubled.abs() < 1.0 {
+        if doubled.abs() < self.floor {
             return;
         }
 

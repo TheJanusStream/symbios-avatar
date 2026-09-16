@@ -561,6 +561,34 @@ impl HairRecord {
             tips,
         })
     }
+
+    /// What one region grows in the FAR tier, if it grows something other than
+    /// its near tier there (#350).
+    ///
+    /// **Only the scalp does, by the owner's decision.** A scalp style grows
+    /// its [`ScalpStyle::twin`]'s solid on the far grid with no rim cards
+    /// ([`Cap::far`](super::shell::Cap::far)); a helmet style is its own twin.
+    /// Every facial region answers `None` - the far tier carries its near
+    /// cards unchanged - because measured, a sculpted twin saves nothing at an
+    /// ordinary cut, and sideburns, a goatee and a pencil line each become a
+    /// different face as one. `None` too for a scalp that grows nothing.
+    #[must_use]
+    pub fn far_sowing(&self, follicle: Follicle, head: &Follicles) -> Option<Sown> {
+        match follicle {
+            Follicle::Scalp => {
+                let twin = self.scalp.style.twin(&self.scalp.cut);
+                let cap = twin.helmet(head)?.far();
+                Some(cap.sowing(
+                    &Tress {
+                        style: twin,
+                        ..self.scalp
+                    },
+                    head,
+                ))
+            }
+            Follicle::Brows | Follicle::Moustache | Follicle::Chin | Follicle::Flanks => None,
+        }
+    }
 }
 
 /// What one region of a record turns into, ready for the clump engine.

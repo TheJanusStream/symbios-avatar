@@ -288,6 +288,19 @@ fn to_linear_channel(value: f32) -> f32 {
     }
 }
 
+/// Scales a `from`-pixel square view up to `to` pixels, each pixel a square
+/// block: what a far-off head is drawn at, made big enough to see (#350).
+pub fn enlarge(image: &Image, from: usize, to: usize) -> Image {
+    let mut out = Image::new(to, to);
+    for y in 0..to {
+        for x in 0..to {
+            let (sx, sy) = ((x * from / to).min(from - 1), (y * from / to).min(from - 1));
+            out.colour[y * to + x] = image.colour[sy * image.width + sx];
+        }
+    }
+    out
+}
+
 /// Averages each block of `factor` pixels down to one.
 pub fn resolve(image: &Image, factor: usize) -> Image {
     if factor <= 1 {

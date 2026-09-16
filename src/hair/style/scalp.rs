@@ -563,6 +563,49 @@ impl ScalpStyle {
         }
     }
 
+    /// The helmet style that stands for this one at a distance (#350): the
+    /// shell a far tier draws in its place.
+    ///
+    /// **Read off the built mesh against the built body, not chosen by name**
+    /// (#350's twin map, probe350 map: skin covered along its own normal by
+    /// one, the other or both, over three heads, every cut length and axis):
+    ///
+    /// - a crop is a cap with its notch at the hairline (12 per cent of the
+    ///   union either side, 2 per cent grown where the crop grows none);
+    /// - a bob is a bell whose LENGTH is the cut's length - a bell 0 at length
+    ///   0 and a bell 1 from length one half - and not its fringe, which a bell
+    ///   has no axis for since it always notches the face;
+    /// - a long head is a bell 1, and it loses the curtain past the jaw that a
+    ///   bell cannot reach (34 to 45 per cent of the union at length one half
+    ///   and one) - the owner's veto point, not a fit;
+    /// - a tied-back head is a bun seated at the tail's own height, which loses
+    ///   the tail's hang;
+    /// - a curly head is a BELL by the cut's length, as a bob is, and not the
+    ///   afro #338 named: the ringlets hang to the jaw and past it, and an afro
+    ///   left 34 per cent of the union bare where a bell left 20.
+    ///
+    /// A helmet style is its own twin, and `None` is `None`.
+    #[must_use]
+    pub fn twin(self, cut: &Cut) -> Self {
+        // A bell's length from the cut's: at length 0 a bob's hem is a bell
+        // 0's, and from one half on it is past what a bell 1 reaches.
+        let bell = (2.0 * cut.length.clamp(0.0, 1.0)).min(1.0);
+        match self {
+            Self::None => Self::None,
+            Self::Crop => Self::Cap { fringe: 0.0 },
+            Self::Bob { .. } | Self::Curly { .. } => Self::Bell { length: bell },
+            Self::Long { .. } => Self::Bell { length: 1.0 },
+            Self::TiedBack { tail } => Self::Bun { height: tail },
+            Self::Cap { .. }
+            | Self::SlickBack { .. }
+            | Self::Bell { .. }
+            | Self::Bun { .. }
+            | Self::Crest { .. }
+            | Self::Afro { .. }
+            | Self::Braids { .. } => self,
+        }
+    }
+
     /// The painted density this style GUARANTEES on the scalp it does not
     /// cover, if it is a style that shaves.
     ///

@@ -472,6 +472,78 @@ const TIER_AIM: f32 = 0.98;
 /// head the stream happened to visit last.
 #[must_use]
 pub fn grow_head(bed: &Bed, sowings: &[Sowing], seed: i64, ceiling: usize) -> Growth {
+    tiered(bed, sowings, seed, ceiling).0
+}
+
+/// Grows a whole head of hair twice: the near tier exactly as [`grow_head`]
+/// grows it, and a FAR tier in which each region `far` names is drawn by its
+/// stand-in instead (#350).
+///
+/// **Every region `far` does not name is grown from the very roots the near
+/// tier grew it from**, so its geometry is the near tier's to the bit - the
+/// owner's decision that a far tier carries the facial cards unchanged. The
+/// roots come off one stream in region order, so a stand-in cannot simply be
+/// sown in its region's place: a scalp shell roots no cards where a crop roots
+/// a hundred, and every region after it would draw from a different point of
+/// the stream. So the stream is advanced over the region exactly as the near
+/// tier's scatter advanced it, at the near tier's own tiered count, and the
+/// stand-in is grown aside from it.
+///
+/// **And a stand-in that would cost MORE triangles than the region it stands
+/// for is not used** (#350, the owner's rule that a far tier is never dearer
+/// than what it replaces): that region keeps its near cards, grown from the
+/// same roots. A far scalp shell is a fixed grid and a short curl is cheaper
+/// than it - measured, 310 to 356 triangles of cards against 468 of shell.
+///
+/// The far tier is not tiered again: its stand-ins are what a far tier is for
+/// spending less on, and every other region is already at the count the near
+/// tier was granted.
+#[must_use]
+pub fn grow_tiers(
+    bed: &Bed,
+    sowings: &[Sowing],
+    far: &[Sowing],
+    seed: i64,
+    ceiling: usize,
+) -> (Growth, Growth) {
+    let (near, share) = tiered(bed, sowings, seed, ceiling);
+    let mut stream = Pcg64Mcg::seed_from_u64(seed as u64);
+    let mut growth = Growth::on(bed.follicles.head);
+    for sowing in sowings {
+        let count = counted(sowing.count, share);
+        let near_tris = near
+            .grown
+            .iter()
+            .find(|grown| grown.follicle == sowing.follicle)
+            .map_or(0, |grown| grown.tris);
+        let cheaper = far
+            .iter()
+            .find(|stand_in| stand_in.follicle == sowing.follicle)
+            .filter(|stand_in| {
+                let mut trial = Growth::on(growth.head);
+                trial.grow(bed, stand_in, &mut Pcg64Mcg::seed_from_u64(seed as u64));
+                trial.tris() <= near_tris
+            });
+        match cheaper {
+            Some(stand_in) => {
+                let _ = scatter::roots(
+                    bed,
+                    sowing.follicle,
+                    sowing.shape.seating(),
+                    count,
+                    &mut stream,
+                );
+                growth.grow(bed, stand_in, &mut Pcg64Mcg::seed_from_u64(seed as u64));
+            }
+            None => growth.grow(bed, &Sowing { count, ..*sowing }, &mut stream),
+        }
+    }
+    (near, growth)
+}
+
+/// [`grow_head`]'s loop, handing back the share of every region's count the
+/// tier settled on as well, so [`grow_tiers`] can replay it.
+fn tiered(bed: &Bed, sowings: &[Sowing], seed: i64, ceiling: usize) -> (Growth, f32) {
     let mut grown = sow(bed, sowings, seed, 1.0);
     let mut share = 1.0;
     for _ in 0..TIER_PASSES {
@@ -482,7 +554,21 @@ pub fn grow_head(bed: &Bed, sowings: &[Sowing], seed: i64, ceiling: usize) -> Gr
         share *= (ceiling as f32 / tris as f32) * TIER_AIM;
         grown = sow(bed, sowings, seed, share);
     }
-    grown
+    (grown, share)
+}
+
+/// How many clumps a region asking for `count` roots once the tier has
+/// granted `share`.
+///
+/// A region that grows keeps growing, however hard the tier bites: a ceiling
+/// that can shave a region out of existence is a second way of saying `None`
+/// that no reader of the record would see coming.
+fn counted(count: usize, share: f32) -> usize {
+    if count == 0 {
+        0
+    } else {
+        ((count as f32) * share).round().max(1.0) as usize
+    }
 }
 
 /// Grows every region once, with each region's count scaled by `share`.
@@ -490,14 +576,7 @@ fn sow(bed: &Bed, sowings: &[Sowing], seed: i64, share: f32) -> Growth {
     let mut stream = Pcg64Mcg::seed_from_u64(seed as u64);
     let mut growth = Growth::on(bed.follicles.head);
     for sowing in sowings {
-        // A region that grows keeps growing, however hard the tier bites: a
-        // ceiling that can shave a region out of existence is a second way of
-        // saying `None` that no reader of the record would see coming.
-        let count = if sowing.count == 0 {
-            0
-        } else {
-            ((sowing.count as f32) * share).round().max(1.0) as usize
-        };
+        let count = counted(sowing.count, share);
         growth.grow(bed, &Sowing { count, ..*sowing }, &mut stream);
     }
     growth
