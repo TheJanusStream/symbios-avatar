@@ -541,13 +541,6 @@ impl Growth {
                 clumps += 1;
             }
         }
-        // A style's lump is drawn only where it grew clumps to meet in it, and
-        // before the count below, so it is paid for as they are.
-        if clumps > 0
-            && let Some(lump) = sowing.shape.lump()
-        {
-            loft::lump(&mut self.mesh, &lump, self.head as u16, sowing.roots);
-        }
         // **A shell is drawn wherever its region was asked for at all**, grown
         // clumps or none: the solid IS the hair and the cards only break its
         // edge, so a rim whose every card was declined is still a head of hair
@@ -568,6 +561,27 @@ impl Growth {
             ),
             _ => 0,
         };
+        // **A style's lump is drawn wherever its region drew any hair at all**,
+        // cards or a shell, and before the count below so it is paid for as
+        // they are.
+        //
+        // Gated on the CARDS alone this was #346's bug over again: a region
+        // asking for no clumps never reached the engine, and a slicked head
+        // drew no shell (#346, found because a lever changed nothing). A bun is
+        // a shell plus a sphere whose rim may grow no cards on a head that
+        // seats none, and gated on clumps it would draw no bun (#347). A shape
+        // that ANSWERS `lump` wants one drawn - the same sentence `shell` above
+        // is drawn by - and the gate is only there so a region with no hair in
+        // it at all has no lone knot floating behind the head.
+        //
+        // Drawn after the shell so `shell` is known here, which is also why
+        // every style that existed before is byte-identical under it: no style
+        // has both a lump and a shell until this one, so nothing reorders.
+        if (clumps > 0 || shell > 0)
+            && let Some(lump) = sowing.shape.lump()
+        {
+            loft::lump(&mut self.mesh, &lump, self.head as u16, sowing.roots);
+        }
         // Counted from the mesh rather than predicted from the stations,
         // because the two have disagreed before: a sweep drops a degenerate
         // ring silently, and an accounting that trusts its own arithmetic

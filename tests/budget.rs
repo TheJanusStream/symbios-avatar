@@ -724,6 +724,11 @@ fn scalp_catalogue() -> Vec<(String, ScalpStyle)> {
             ScalpStyle::SlickBack { volume: axis },
         ));
         all.push((format!("bell {axis}"), ScalpStyle::Bell { length: axis }));
+        // And #347's two, which are a shell plus an appendage: a bun's ball is
+        // 48 triangles on top of the shell and a crest's fin is free, being
+        // thickness on a grid that is the same size whatever it is asked for.
+        all.push((format!("bun {axis}"), ScalpStyle::Bun { height: axis }));
+        all.push((format!("crest {axis}"), ScalpStyle::Crest { height: axis }));
     }
     all
 }
@@ -814,15 +819,29 @@ const CLOSE_ENOUGH: f32 = 0.03;
 fn greediest() -> HairRecord {
     HairRecord {
         scalp: Tress {
-            // A bob with no fringe, since #341: swept to the temples rather
-            // than hanging as a curtain, its front locks turn round the head,
-            // and a turn costs stations - 1746 triangles on the default head
-            // against the long back-weighted curtain's 1618, and within half a
-            // per cent of it on the long broad one. Long had been the bill
-            // since #316, when a ringlet lost a third of its front; the crop
-            // is still within a few per cent and wins on some heads, which is
-            // what [`CLOSE_ENOUGH`] is for.
-            style: ScalpStyle::Bob { fringe: 0.0 },
+            // **A nape bun, since #347, and the first time a HELMET is the
+            // bill.** A shell is a fixed grid of 1,656 triangles whatever it is
+            // asked for, and a bun hangs a closed ball of 48 more off it: 1,852
+            // triangles on the default head and 1,744 on the long broad one,
+            // against the swept bob's 1,746 and 1,666. That is 6 per cent past
+            // the bob on the head the sweep costs everything at, well outside
+            // [`CLOSE_ENOUGH`], so it is not a coin toss between two styles -
+            // it is a different bill, and the sweep's own remedy is to wear it.
+            //
+            // #346 saw this coming and said so: cap 1 already beat the bob on
+            // the long broad head by 2.3 per cent, inside the tolerance, and
+            // the note there was that the next style even slightly dearer moves
+            // the product corner. It did. What the rails read now is below, and
+            // the reconciliation - whether the helmet family's shell grid is
+            // the right size for what the budget has to buy - is #351's, with
+            // the owner, per the #308 rule that a rail is relaxed with a note
+            // rather than fought.
+            //
+            // Before this, since #341: a bob with no fringe, swept to the
+            // temples rather than hanging as a curtain, its front locks turning
+            // round the head and a turn costing stations. Before that, long,
+            // since #316.
+            style: ScalpStyle::Bun { height: 0.0 },
             cut: GREEDY,
             ..Default::default()
         },
@@ -1145,6 +1164,10 @@ fn the_shell_prototype_costs_what_the_hair_ceiling_allows() {
             ScalpStyle::SlickBack { volume: 1.0 },
             ScalpStyle::Bell { length: 0.0 },
             ScalpStyle::Bell { length: 1.0 },
+            ScalpStyle::Bun { height: 0.0 },
+            ScalpStyle::Bun { height: 1.0 },
+            ScalpStyle::Crest { height: 0.0 },
+            ScalpStyle::Crest { height: 1.0 },
         ] {
             let at = &format!("{at} in {style:?}");
             let mut record = AvatarRecord::new("Helmet", Archetype::default());
@@ -1324,14 +1347,37 @@ fn the_tier_bites_only_where_a_record_asks_for_more_than_the_budget_holds() {
     // So what is checked is that it still WORKS, against a ceiling set low
     // enough to bite, and that every region shrinks together rather than one
     // being shaved out.
+    //
+    // **And what the tier can squeeze is the CARDS, because a shell is a fixed
+    // grid** (#347). The tier trims a region by rooting fewer clumps; a helmet's
+    // solid is `COLUMNS x ROWS` whatever anybody asks for, so a greedy record
+    // wearing one carries 1,656 triangles no count can touch, plus a bun's 48.
+    // Since #347 the greedy record DOES wear one - a bun is the dearest scalp
+    // style there is - so asked for half of everything this read 2,118 against
+    // a half of 3,390 and failed, which is true and is not a defect in the tier.
+    //
+    // So the claim is the one the tier can actually make: it halves what it can
+    // reach. A shell that a tier could thin would be #350's LOD twin, and
+    // whether the grid is the right size for what the budget has to buy is
+    // #351's, with the owner.
     let head = Head::of(42, Some((1.0, 1.0)));
     let free = head.regrow_under(&greediest(), usize::MAX);
+    let solid: usize = free.grown.iter().map(|grown| grown.shell).sum();
     let squeezed = head.regrow_under(&greediest(), free.tris() / 2);
+    let reachable = free.tris().saturating_sub(solid);
     assert!(
-        squeezed.tris() <= free.tris() / 2,
-        "squeezed to half of {}, a head of hair still costs {}",
+        squeezed.tris() <= solid + reachable / 2,
+        "squeezed to half of {}, a head of hair still costs {} - of which {solid} is a shell no \
+         count can thin, so the {reachable} triangles the tier can reach should have come to at \
+         most {}",
         free.tris(),
-        squeezed.tris()
+        squeezed.tris(),
+        reachable / 2
+    );
+    assert!(
+        solid == 0 || squeezed.tris() < free.tris(),
+        "the tier took nothing at all off a head of hair costing {}",
+        free.tris()
     );
     assert_eq!(
         squeezed.grown.len(),

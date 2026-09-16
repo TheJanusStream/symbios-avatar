@@ -34,7 +34,8 @@
 //! cargo run --release --example render -- --close throat # the collar and the trapezius line
 //! cargo run --release --example render -- --close brows # or any follicle region
 //! cargo run --release --example render -- --brow thick  # or natural, none
-//! cargo run --release --example render -- --scalp bob 0.8 # crop, bob, long, tied, curly
+//! cargo run --release --example render -- --scalp bob 0.8 # crop, bob, long, tied,
+//!                                                       # curly, cap, slick, bell, bun, crest
 //! cargo run --release --example render -- --moustache handlebar 0.9 # chevron, handlebar, pencil
 //! cargo run --release --example render -- --chin braided 0.8 # goatee, full, braided
 //! cargo run --release --example render -- --flanks full 0.7 # sideburns, full
@@ -282,10 +283,14 @@ fn main() {
             "cap" => symbios_avatar::hair::ScalpStyle::Cap { fringe: axis },
             "slick" => symbios_avatar::hair::ScalpStyle::SlickBack { volume: axis },
             "bell" => symbios_avatar::hair::ScalpStyle::Bell { length: axis },
+            // A shell PLUS an appendage (#347): a closed ball at the back, and
+            // a shaved head with a fin along its midline.
+            "bun" => symbios_avatar::hair::ScalpStyle::Bun { height: axis },
+            "crest" => symbios_avatar::hair::ScalpStyle::Crest { height: axis },
             other => {
                 eprintln!(
                     "unknown --scalp style {other}: expected none, crop, bob, long, tied, curly, \
-                     cap, slick or bell"
+                     cap, slick, bell, bun or crest"
                 );
                 std::process::exit(1);
             }

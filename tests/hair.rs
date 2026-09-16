@@ -25,7 +25,7 @@ use symbios_avatar::face::{Canon, Skull};
 use symbios_avatar::hair::mask::{LANES, StrandMask};
 use symbios_avatar::hair::strand_mask;
 use symbios_avatar::hair::{
-    BrowStyle, ChinStyle, FlankStyle, Follicles, MoustacheStyle, ScalpStyle,
+    BrowStyle, ChinStyle, FlankStyle, Follicles, MoustacheStyle, Paint, ScalpStyle,
 };
 use symbios_avatar::{Archetype, Avatar, AvatarRecord, MeshKind, Vec3};
 
@@ -1257,20 +1257,66 @@ impl Capped {
         }
     }
 
-    /// The faces the shell drew: everything that is not a card's quad.
+    /// The solid pieces this head of hair drew, biggest first: every face that
+    /// is not a card's quad, split into the SURFACES they belong to.
     ///
-    /// The same split `cards_of` makes, and the only one there is - a helmet
-    /// draws no knot lump, which is the other thing that is not a card. A
-    /// faceted shell's faces are split copies and so are not cards either: a
-    /// card's quad is `[s, s+1, s+3, s+2]` and a split face is `[s, s+1, s+2,
-    /// s+3]`, which is why the facets did not have to change this split.
+    /// **Because a helmet can now draw two solids** (#347). #345 and #346 could
+    /// say "not a card" and mean "the shell", since a helmet drew no lump and a
+    /// lump style drew no shell. A bun is a shell PLUS a closed ball, and a
+    /// reading over both at once would count the ball's 48 triangles as the
+    /// shell's and fail the ledger - #346's own lesson, where a reading over
+    /// the whole head of hair called brow cards rim cards.
+    ///
+    /// Split by connected component over corners welded EXACTLY, which needs no
+    /// threshold and no face count written down a second place. A faceted
+    /// shell's faces are split copies and so are not cards either: a card's
+    /// quad is `[s, s+1, s+3, s+2]` and a split face is `[s, s+1, s+2, s+3]`,
+    /// which is why the facets did not have to change this split.
+    fn solids(&self) -> Vec<Vec<&Vec<u32>>> {
+        let mesh = &self.hair.mesh;
+        let mut weld: HashMap<[u32; 3], u32> = HashMap::new();
+        let mut at: Vec<u32> = Vec::with_capacity(mesh.positions.len());
+        for point in &mesh.positions {
+            let key = [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()];
+            let next = weld.len() as u32;
+            at.push(*weld.entry(key).or_insert(next));
+        }
+        let faces: Vec<&Vec<u32>> = mesh.faces.iter().filter(|face| !is_card(face)).collect();
+        let mut parent: Vec<u32> = (0..weld.len() as u32).collect();
+        fn root(parent: &mut [u32], of: u32) -> u32 {
+            let mut here = of;
+            while parent[here as usize] != here {
+                parent[here as usize] = parent[parent[here as usize] as usize];
+                here = parent[here as usize];
+            }
+            here
+        }
+        for face in &faces {
+            let corners: Vec<u32> = face.iter().map(|corner| at[*corner as usize]).collect();
+            for pair in corners.windows(2) {
+                let (one, two) = (root(&mut parent, pair[0]), root(&mut parent, pair[1]));
+                parent[one as usize] = two;
+            }
+        }
+        let mut parts: HashMap<u32, Vec<&Vec<u32>>> = HashMap::new();
+        for face in faces {
+            let key = root(&mut parent, at[face[0] as usize]);
+            parts.entry(key).or_default().push(face);
+        }
+        let mut parts: Vec<Vec<&Vec<u32>>> = parts.into_values().collect();
+        parts.sort_by_key(|faces| std::cmp::Reverse(faces.len()));
+        parts
+    }
+
+    /// The faces the shell drew: the biggest solid piece.
     fn shell(&self) -> Vec<&Vec<u32>> {
-        self.hair
-            .mesh
-            .faces
-            .iter()
-            .filter(|face| !is_card(face))
-            .collect()
+        self.solids().into_iter().next().unwrap_or_default()
+    }
+
+    /// The faces a bun's ball drew, if this style hangs one off its shell: the
+    /// solid pieces that are not the shell.
+    fn ball(&self) -> Vec<&Vec<u32>> {
+        self.solids().into_iter().skip(1).flatten().collect()
     }
 
     /// The faces its rim cards drew.
@@ -1395,7 +1441,7 @@ impl Capped {
 }
 
 /// Every helmet style at both ends of its own axis, on every measured head
-/// (#346): the corners every shell guard is asked at.
+/// (#346, and #347's two): the corners every shell guard is asked at.
 ///
 /// Written out rather than iterated off the enum, for the reason
 /// `every_hair_style_the_crate_can_write_is_declared_with_its_axis` gives: a
@@ -1411,6 +1457,11 @@ fn helmets() -> Vec<(Option<i64>, ScalpStyle)> {
             ScalpStyle::SlickBack { volume: 1.0 },
             ScalpStyle::Bell { length: 0.0 },
             ScalpStyle::Bell { length: 1.0 },
+            // #347's two, which are a shell PLUS an appendage.
+            ScalpStyle::Bun { height: 0.0 },
+            ScalpStyle::Bun { height: 1.0 },
+            ScalpStyle::Crest { height: 0.0 },
+            ScalpStyle::Crest { height: 1.0 },
         ] {
             all.push((seed, style));
         }
@@ -1682,7 +1733,7 @@ fn a_faceted_shell_costs_no_triangle_and_splits_no_surface() {
 
 #[test]
 fn a_helmet_style_wears_the_shell_its_name_says() {
-    // **Three names, three shapes, and each one its own** (#346). The catalogue
+    // **Five names, five shapes, and each one its own** (#346, and #347's two). The catalogue
     // convention is that a style carries one axis of its own and that moving it
     // moves the body: a variant that renders the same at both ends of its axis
     // is a name with nothing behind it, which is what the slick's first build
@@ -1769,6 +1820,58 @@ fn a_helmet_style_wears_the_shell_its_name_says() {
         "the Bell's length dropped its hem only {:.1} mm between its axis's ends",
         (short - long) * 1000.0
     );
+    // A BUN'S AXIS is where its ball is, which is the ball's OWN height and not
+    // the hair's (#347, and the same lesson a third time): read as the hair's
+    // bounding box a top knot and a nape bun differ by whatever the shell does,
+    // and the shell does not move at all. Measured, the ball's middle runs from
+    // 38 mm below the head joint to 138 mm above it on the default head.
+    let ball_at = |style: ScalpStyle| -> f32 {
+        let head = head(style);
+        let mesh = &head.hair.mesh;
+        let ys: Vec<f32> = head
+            .ball()
+            .iter()
+            .flat_map(|face| face.iter().map(|at| mesh.positions[*at as usize].y))
+            .collect();
+        assert!(!ys.is_empty(), "{style:?} drew no ball at all");
+        ys.iter().sum::<f32>() / ys.len() as f32
+    };
+    let (nape, knot) = (
+        ball_at(ScalpStyle::Bun { height: 0.0 }),
+        ball_at(ScalpStyle::Bun { height: 1.0 }),
+    );
+    assert!(
+        knot - nape >= 0.080,
+        "the Bun's height moved its ball only {:.0} mm between its axis's ends, and a nape bun \
+         and a top knot are the two ends of a head",
+        (knot - nape) * 1000.0
+    );
+    // A CREST'S AXIS is how far the fin stands over the crown, which is the
+    // highest hair there is against the skull's own crown - not the mass, since
+    // a fin is a ridge and the solid it rises out of is a strip either way.
+    let fin = |style: ScalpStyle| -> f32 {
+        let head = head(style);
+        let (_, crown) = head.follicles.skull().throat_and_crown();
+        head.hair
+            .mesh
+            .positions
+            .iter()
+            .map(|at| at.y)
+            .fold(f32::MIN, f32::max)
+            - crown
+    };
+    let (low, tall) = (
+        fin(ScalpStyle::Crest { height: 0.0 }),
+        fin(ScalpStyle::Crest { height: 1.0 }),
+    );
+    assert!(
+        tall - low >= 0.015,
+        "the Crest's height raised its fin only {:.1} mm over the crown between its axis's ends, \
+         from {:.1} to {:.1}",
+        (tall - low) * 1000.0,
+        low * 1000.0,
+        tall * 1000.0
+    );
     // And the three are three shapes and not one. Asked as "every reading
     // separates every pair" this failed, and rightly: a cap at a half notch and
     // a bell at a half length both stop within 1.5 mm of the hairline down the
@@ -1799,6 +1902,270 @@ fn a_helmet_style_wears_the_shell_its_name_says() {
 }
 
 #[test]
+fn a_bun_is_a_closed_ball_that_sits_on_its_shell() {
+    // **The first style that is a shell PLUS an appendage** (#347), and the
+    // three things the first build of it got wrong, each measured.
+    //
+    // DRAWN AT ALL. `Growth::grow` gated a style's lump on `clumps > 0` - the
+    // cards it grew - which is #346's bug over again: a slicked head asking for
+    // no cards never reached the engine, and a bun whose rim seated no card
+    // would have drawn no bun. A shape that ANSWERS `lump` wants one drawn, so
+    // the gate is now the region having drawn any hair at all, cards or shell.
+    //
+    // SEATED ON THE SHELL. The issue asks for the tied-back's own seating at
+    // `KNOT_STANDOFF`, which is a share of `depth_behind` - the SKULL's profile.
+    // The skull stops describing the body at the throat, which is where a nape
+    // bun sits: read off the built body that seat is 0.41 mm off the default
+    // head's skin, 3.5 mm INSIDE seed 42's and 24.7 mm inside seed 7's, and 22
+    // to 44 mm inside the shell the ball hangs off. Seated on the shell's own
+    // back column instead and pushed out by its radius less what it sinks in,
+    // the ball touches the solid it gathers: measured 0.4 to 6.7 mm from the
+    // nearest shell vertex, where a standoff applied the other way up left it
+    // hanging in the air, rendered.
+    //
+    // CLOSED, AND OUT OF THE HEAD. Forty-eight triangles, every edge shared by
+    // two faces, every directed edge a clean pair, no vertex under the skin and
+    // none inside the face box.
+    let mut seen = 0usize;
+    for (roll, style) in helmets() {
+        let ScalpStyle::Bun { height } = style else {
+            // And every style that is NOT a bun draws no ball at all, which is
+            // the other half of the claim: the gate opened, it did not vanish.
+            let other = Capped::of(roll, Some(style));
+            let stray = other.ball();
+            assert!(
+                stray.is_empty(),
+                "seed {roll:?} wearing {style:?}: drew {} faces of a solid that is neither its \
+                 shell nor a card",
+                stray.len()
+            );
+            continue;
+        };
+        seen += 1;
+        let seed = format!("seed {roll:?} wearing a bun at {height}");
+        let head = Capped::of(roll, Some(style));
+        let mesh = &head.hair.mesh;
+        let ball = head.ball();
+        let tris: usize = ball.iter().map(|face| face.len() - 2).sum();
+        assert_eq!(
+            tris, 48,
+            "{seed}: the ball drew {tris} triangles, and `hair::Lump` is 48"
+        );
+        let held = welded(mesh, &ball);
+        let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
+        let mut directed: HashMap<(u32, u32), usize> = HashMap::new();
+        for face in &held {
+            for (index, from) in face.iter().enumerate() {
+                let to = face[(index + 1) % face.len()];
+                *edges.entry((*from.min(&to), *from.max(&to))).or_default() += 1;
+                *directed.entry((*from, to)).or_default() += 1;
+            }
+        }
+        let open = edges.values().filter(|count| **count != 2).count();
+        assert_eq!(
+            open,
+            0,
+            "{seed}: {open} of the ball's {} edges are not shared by two faces",
+            edges.len()
+        );
+        let clashing = directed
+            .iter()
+            .filter(|((from, to), count)| **count > 1 || !directed.contains_key(&(*to, *from)))
+            .count();
+        assert_eq!(
+            clashing, 0,
+            "{seed}: {clashing} of the ball's directed edges are not a clean pair"
+        );
+        let mut corners: Vec<u32> = ball.iter().flat_map(|face| face.iter().copied()).collect();
+        corners.sort_unstable();
+        corners.dedup();
+        let (mut under, mut worst, mut sunk) = (0usize, f32::MAX, 0usize);
+        let face_box = head.follicles.clearance();
+        let mut in_face = 0usize;
+        for at in &corners {
+            let point = mesh.positions[*at as usize];
+            let over = head.over_skin(point);
+            worst = worst.min(over);
+            under += usize::from(over < 0.0);
+            in_face += usize::from(face_box.contains(point));
+            // The liveness: the same vertex pulled 10 mm toward the head must
+            // read as under the skin, or the reading cannot see one that is.
+            let inward = point - point.normalize_or(Vec3::Y) * (over + 0.010);
+            sunk += usize::from(head.over_skin(inward) < 0.0);
+        }
+        assert_eq!(
+            under,
+            0,
+            "{seed}: {under} of the ball's vertices are under the skin, worst {:.2} mm",
+            worst * 1000.0
+        );
+        assert_eq!(
+            in_face, 0,
+            "{seed}: {in_face} of the ball's vertices are inside `Follicles::clearance`"
+        );
+        assert!(
+            sunk * 4 >= corners.len() * 3,
+            "{seed}: only {sunk} of {} ball vertices read as under the skin when sunk 10 mm into \
+             it, so the reading cannot see one that is",
+            corners.len()
+        );
+        // And it TOUCHES the shell it hangs off, which is what the seat is for:
+        // the first build stood it off and it floated, in both renderers.
+        let shell: Vec<Vec3> = {
+            let mut points: Vec<Vec3> = head
+                .shell()
+                .iter()
+                .flat_map(|face| face.iter().map(|at| mesh.positions[*at as usize]))
+                .collect();
+            points.dedup();
+            points
+        };
+        let near = corners
+            .iter()
+            .map(|at| {
+                let point = mesh.positions[*at as usize];
+                shell
+                    .iter()
+                    .map(|on| point.distance(*on))
+                    .fold(f32::MAX, f32::min)
+            })
+            .fold(f32::MAX, f32::min);
+        assert!(
+            near <= 0.012,
+            "{seed}: the ball's nearest vertex is {:.1} mm from the shell, so it is hanging in \
+             the air rather than sitting on the hair it gathers",
+            near * 1000.0
+        );
+        // The ledger pays for it as it pays for a card: the region's triangles
+        // are the mesh's, and the shell line is the shell's alone.
+        let shell_tris: usize = head.shell().iter().map(|face| face.len() - 2).sum();
+        let counted: usize = head.hair.grown.iter().map(|grown| grown.shell).sum();
+        assert_eq!(
+            counted, shell_tris,
+            "{seed}: the ledger says {counted} triangles of shell and the shell draws \
+             {shell_tris} - the ball's 48 are not the shell's"
+        );
+        assert_eq!(
+            head.hair.tris(),
+            head.hair
+                .mesh
+                .faces
+                .iter()
+                .map(|face| face.len() - 2)
+                .sum::<usize>(),
+            "{seed}: the ledger's total is not the mesh's, so the ball is not counted"
+        );
+        // And the axis moves it: `0` is a nape bun and `1` a top knot.
+        let height_of = |axis: f32| {
+            let head = Capped::of(roll, Some(ScalpStyle::Bun { height: axis }));
+            let mesh = &head.hair.mesh;
+            let ball = head.ball();
+            let ys: Vec<f32> = ball
+                .iter()
+                .flat_map(|face| face.iter().map(|at| mesh.positions[*at as usize].y))
+                .collect();
+            ys.iter().sum::<f32>() / ys.len().max(1) as f32
+        };
+        let (low, high) = (height_of(0.0), height_of(1.0));
+        assert!(
+            high - low > 0.080,
+            "seed {roll:?}: the bun's axis moves the ball only {:.0} mm, from {:+.0} to {:+.0} - \
+             a nape bun and a top knot are the two ends of a head",
+            (high - low) * 1000.0,
+            low * 1000.0,
+            high * 1000.0
+        );
+    }
+    assert!(seen >= 6, "the sweep asked about only {seen} buns");
+}
+
+#[test]
+fn a_crest_shaves_what_its_shell_does_not_cover() {
+    // **The one style whose PAINT is its own business** (#347's acceptance: the
+    // paint and the shell agree by construction). A crest's shell is a strip
+    // along the sagittal line, so half the painted scalp has no hair over it -
+    // measured, 48 to 54 per cent on the three heads. What covers that is
+    // stubble, and a style that leaves it to a record's own `Paint` is a style
+    // that reads as bald on every record that did not happen to ask for one.
+    //
+    // **A FLOOR and not a default**, which is the trap this is written against:
+    // a default on a published record field moves nothing an owner already
+    // holds, because their record carries whatever it carried. So the style
+    // says what its own shave is, `HairRecord::painted` raises the scalp to it,
+    // and a record that asked for MORE keeps exactly what it asked for - a
+    // style may describe its own shave and may not overrule an owner.
+    let shaved = ScalpStyle::Crest { height: 0.5 }
+        .shaved()
+        .expect("a crest shaves");
+    assert!(
+        (0.0..=1.0).contains(&shaved) && shaved > 0.0,
+        "a crest's own shave is {shaved}, which is not a density"
+    );
+    let mut record = AvatarRecord::new("Crested", Archetype::default());
+    record.hair.scalp.roots = [0.30, 0.18, 0.09];
+    // A record that asks for NO paint at all still comes out shaved.
+    record.hair.scalp.style = ScalpStyle::Crest { height: 0.5 };
+    record.hair.scalp.skin = Paint {
+        density: 0.0,
+        colour: [0.0, 0.0, 0.0],
+    };
+    record.sanitize();
+    let painted = record.hair.painted();
+    assert!(
+        painted.scalp.density >= shaved,
+        "a crest on a record painting nothing draws its sides at {:.2}, under its own {shaved:.2}",
+        painted.scalp.density
+    );
+    assert_eq!(
+        painted.scalp.colour, record.hair.scalp.roots,
+        "the shave is painted in some colour other than the hair's own roots"
+    );
+    // A record that asks for MORE keeps it, colour and all.
+    let mine = Paint {
+        density: 0.95,
+        colour: [0.11, 0.07, 0.05],
+    };
+    record.hair.scalp.skin = mine;
+    record.sanitize();
+    let painted = record.hair.painted();
+    assert_eq!(
+        (painted.scalp.density, painted.scalp.colour),
+        (mine.density, mine.colour),
+        "a crest overruled an owner who asked for denser paint than its own floor"
+    );
+    // And the floor is the CREST's: no other style raises anything, which is
+    // what stops this being a change to the painted layer itself.
+    for style in [
+        ScalpStyle::None,
+        ScalpStyle::Crop,
+        ScalpStyle::Bob { fringe: 0.5 },
+        ScalpStyle::Long { weight: 0.5 },
+        ScalpStyle::TiedBack { tail: 0.5 },
+        ScalpStyle::Curly { curl: 0.5 },
+        ScalpStyle::Cap { fringe: 0.5 },
+        ScalpStyle::SlickBack { volume: 0.5 },
+        ScalpStyle::Bell { length: 0.5 },
+        ScalpStyle::Bun { height: 0.5 },
+    ] {
+        assert!(
+            style.shaved().is_none(),
+            "{style:?} claims a shave of its own, and only a crest has one"
+        );
+        record.hair.scalp.style = style;
+        record.hair.scalp.skin = Paint {
+            density: 0.0,
+            colour: [0.0, 0.0, 0.0],
+        };
+        record.sanitize();
+        assert_eq!(
+            record.hair.painted().scalp.density,
+            0.0,
+            "{style:?} painted a scalp the record asked to leave bare"
+        );
+    }
+}
+
+#[test]
 fn a_shell_covers_the_scalp_its_own_mask_paints() {
     // **What a shell is FOR**: the mass of the hair, where a card system spends
     // its coverage on width and still shows scalp between locks. Read as the
@@ -1818,12 +2185,27 @@ fn a_shell_covers_the_scalp_its_own_mask_paints() {
     // slick's fixed 14 mm sweep 0.8 to 1.9%. Those are the notch and the sweep,
     // not a hole - so the bound is six per cent where a style cuts and one where
     // it does not, and a shell that stopped covering the crown would blow either.
+    //
+    // **And a crest bares MOST of it, which is the style and not a hole**
+    // (#347). Its shell is a strip along the sagittal line and everything else
+    // is shaved: measured, 54.1% of the default head's painted scalp, 53.0 at
+    // the top of its axis, and 49.1 to 48.4 on seed 7. What covers that is the
+    // PAINT, which the style itself guarantees at a floor of its own - see
+    // `a_crest_shaves_what_its_shell_does_not_cover`, which is the other half
+    // of this one and is why the bound here may be loose for that style alone.
     for (roll, style) in helmets() {
         let cuts = matches!(
             style,
             ScalpStyle::Cap { fringe } if fringe > 0.0
         ) || matches!(style, ScalpStyle::SlickBack { .. });
-        let bound = if cuts { 0.06 } else { 0.01 };
+        let bound = match style {
+            // Sixty per cent, against 48 to 54 measured: a crest that covered
+            // much more than it bares would not be a crest, and one that bared
+            // the lot would have lost its fin.
+            ScalpStyle::Crest { .. } => 0.60,
+            _ if cuts => 0.06,
+            _ => 0.01,
+        };
         let capped = Capped::of(roll, Some(style));
         let bare = capped.bare_under_the_shell();
         assert!(
@@ -1833,6 +2215,16 @@ fn a_shell_covers_the_scalp_its_own_mask_paints() {
             bare * 100.0,
             bound * 100.0
         );
+        // A ceiling alone would pass a style that drew no shell at all, which
+        // is exactly what a crest looks like from this reading's point of view.
+        if matches!(style, ScalpStyle::Crest { .. }) {
+            assert!(
+                bare >= 0.25,
+                "seed {roll:?} wearing {style:?}: only {:.1}% of the painted scalp is bare, so \
+                 the crest is not shaved at the sides at all",
+                bare * 100.0
+            );
+        }
     }
     // The liveness, and it is the same reading on the same body: with no shell
     // on it, nearly all of that scalp is bare.
@@ -1872,15 +2264,20 @@ fn a_rim_card_keeps_its_edges_outside_the_shell_it_breaks() {
             .collect();
         corners.sort_unstable();
         corners.dedup();
-        // **Except the one style whose rim is not broken at all** (#346): a
-        // slicked head grows no cards, and the solid is still the hair. It is
-        // skipped here rather than excused, so the count below stays a claim
-        // about every style that HAS a rim.
-        if matches!(style, ScalpStyle::SlickBack { .. }) {
+        // **Except the styles whose rim is not broken at all** (#346's slick,
+        // and #347's crest): a slicked head grows no cards because its whole
+        // point is an unbroken edge, and a crest grows none because its band
+        // has taken the rim off the sides altogether and a hem at the two ends
+        // of a strip is two wisps rather than a fringe. Both are ASSERTED to
+        // grow none rather than skipped quietly, so the count below stays a
+        // claim about every style that has a rim.
+        if matches!(
+            style,
+            ScalpStyle::SlickBack { .. } | ScalpStyle::Crest { .. }
+        ) {
             assert!(
                 corners.is_empty(),
-                "{seed}: a slicked head grew {} card vertices, and its whole point is an edge \
-                 that is the solid's own",
+                "{seed}: {style:?} grew {} card vertices, and its edge is the solid's own",
                 corners.len()
             );
             continue;

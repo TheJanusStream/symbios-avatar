@@ -56,7 +56,7 @@ use std::f32::consts::TAU;
 
 use glam::{Vec2, Vec3};
 
-use super::clump::{Root, Seating, Shape};
+use super::clump::{Lump, Root, Seating, Shape};
 use super::follicle::{Follicle, Follicles};
 use super::mask::{self, StrandMask};
 use super::style::{Cut, ScalpStyle, Sown, Tress};
@@ -84,6 +84,65 @@ pub const COLUMNS: usize = 36;
 /// Provenance: **derived** from the budget, **checked by the stray** a column
 /// of this many rows leaves (#345).
 pub const ROWS: usize = 12;
+
+/// How far off the sagittal line a band's cut has not begun at all, in the sine
+/// of the azimuth: the strip's own half-width.
+///
+/// **A ramp that starts at the line itself leaves a strip ONE COLUMN wide**
+/// (#347, rendered and then measured). The sine is zero dead ahead, so the
+/// midline column is uncut and its neighbour ten degrees away already takes 50
+/// of the 80 mm - the default head's rim goes from 110 mm of arc to 47 over one
+/// column, and the shell comes out as a triangle from the forehead to the pole
+/// rather than as a strip running front to back. A crest's strip is a few
+/// columns wide and every one of them is FULL length.
+///
+/// Nought point two six is a sine of 0.26, which is 15 degrees off the line:
+/// with [`BAND_OVER`] at 0.42 the columns at the midline and either side of it
+/// keep their whole column, the next pair is part cut, and everything past 25
+/// degrees is shaved.
+///
+/// Provenance: **derived** from the measured column, **tuned by render**.
+const BAND_INSIDE: f32 = 0.26;
+
+/// How far off the sagittal line a band's cut comes fully down, in the sine of
+/// the azimuth.
+///
+/// **A bare sine is an HOURGLASS and not a strip** (#347, rendered). The sine
+/// is zero dead ahead AND dead behind, so a cut weighted by it alone leaves the
+/// front and the nape columns their whole length and pinches only the sides:
+/// the shell came out as a swept mass over the crown running down to a point
+/// over the forehead, a quiff rather than a crest, in both renderers. A crest
+/// is a strip of a few degrees either side of the midline with everything else
+/// shaved, so the cut has to be FULL a little way off the line rather than
+/// creeping up to it.
+///
+/// Nought point four two is a sine of 0.42, 25 degrees off the midline, which
+/// with [`BAND_INSIDE`] at 0.26 gives a strip of three columns at full length
+/// with one part-cut column either side of it.
+///
+/// Provenance: **derived** from the defect, **tuned by render**.
+const BAND_OVER: f32 = 0.42;
+
+/// How sharply a fin's thickness falls away from the sagittal line, as the
+/// power its cosine is raised to.
+///
+/// **Two, as [`RISE_ROUND`] is, and for the same reason**: at one the cosine
+/// still carries a third of the fin at the temple, which is a thick shell with
+/// a bulge rather than a fin on a shaved head. Squared it is down to a ninth
+/// there and the mass is on the strip the band left.
+///
+/// Provenance: **derived** from the cosine, with [`RISE_ROUND`].
+const FIN_ROUND: f32 = 2.0;
+
+/// How sharply a fin falls away DOWN its own column, likewise.
+///
+/// A fin is tallest at the crown and gone by the rim, which is where the band
+/// has already taken the shell away - so this only has to reach the few rows a
+/// banded shell has left. One and a half rather than two: squared, the fin was
+/// already half gone by the second row and read as a bump at the pole.
+///
+/// Provenance: **tuned by render**.
+const FIN_POW: f32 = 1.5;
 
 /// How far a shell's inner surface stands off the walked envelope, in metres.
 ///
@@ -266,6 +325,40 @@ pub struct Shell {
     /// and says how much. A smooth style leaves this at zero and is what #345
     /// built, point for point.
     pub even: f32,
+    /// How far the rim is cut back weighted by the azimuth's own SINE, with no
+    /// ramp, in metres: what shrinks the shell to a band along the sagittal
+    /// line.
+    ///
+    /// **[`Shell::side`] cannot do this, and its own numbers are why** (#347,
+    /// measured on three heads). That term is held off by the notch ramp until
+    /// the column is clear of the face box's temple corner - 0.88 rad on all
+    /// three - so at every value from 20 mm to 200 the default head's columns
+    /// from dead ahead to 50 degrees off it are untouched: 110, 110, 112, 113,
+    /// 112, 111 mm of arc, the same to the millimetre at 200 mm as at zero. A
+    /// shell cut by `side` as far as it will go is a bowl over the whole front
+    /// quadrant with its back and sides shaved - a monk's fringe, not a crest.
+    /// The ramp cannot be taken out of `side`, because keeping a hem off the
+    /// face is the thing it is there for.
+    ///
+    /// So this is the same weighting without it. Safe against the face by
+    /// construction rather than by tolerance, for a reason `side` does not
+    /// have: this cut only ever moves a rim UP the column, and the front rim of
+    /// the three measured heads already sits 16 to 58 mm above the brow (#346)
+    /// - the walk's own face-box break is still there and is still never asked.
+    pub band: f32,
+    /// How much thickness the MIDLINE carries over the rest, as a share of the
+    /// head's own half-width, peaked at the crown: a fin.
+    ///
+    /// **Neither [`Shell::crown`] nor [`Shell::rise`] is this** (#347). `crown`
+    /// is the same thickness for every column, and every column's first row is
+    /// the welded pole, so raising it raises the whole apex: a thicker dome.
+    /// `rise` does vary by azimuth, but it is weighted `cos(az).max(0)` and
+    /// peaked 0.6 of the way down the FRONT column, which is a pompadour over
+    /// the forehead - a fin runs front to back and is tallest at the crown.
+    ///
+    /// Measured on the default head: 0.20 head radii is 14.4 mm of fin over the
+    /// crown, 0.35 is 25.2 and 0.50 is 36.0.
+    pub fin: f32,
     /// How its normals are read: one continuous surface, one per face, or
     /// smooth over the vault and faceted over the rim band.
     ///
@@ -317,6 +410,8 @@ impl Default for Shell {
             nape: 0.0,
             side: 0.0,
             rise: 0.0,
+            band: 0.0,
+            fin: 0.0,
             even: 0.0,
             facets: Facets::Smooth,
         }
@@ -345,6 +440,14 @@ pub struct Cap {
     /// (`RIM_AT`); a bell is a hem all the way round with a notch over the
     /// face, which is the same window turned inside out.
     pub breaks: [f32; 2],
+    /// A closed solid this style hangs off the shell, if it has one: a bun.
+    ///
+    /// **The tied-back's own lump, moved and resized** (#342's `hair::Lump` and
+    /// `Shape::lump`, 48 triangles, drawn in the roots' colour and counted with
+    /// the region), rather than a second kind of solid - a bun IS that
+    /// ellipsoid on a different seat. Where the seat is, and why it is not the
+    /// knot's own, is [`Cap::bun`].
+    pub lump: Option<Lump>,
 }
 
 impl Default for Cap {
@@ -353,6 +456,7 @@ impl Default for Cap {
             shell: Shell::default(),
             rim_cards: RIM_CARDS,
             breaks: RIM_AT,
+            lump: None,
         }
     }
 }
@@ -436,6 +540,88 @@ const RIM_AT: [f32; 2] = [0.55, -0.45];
 /// Provenance: **derived** from the loft's tolerance and the shell's own row
 /// stray, **measured** against the built rim.
 const RIM_LIFT: f32 = 0.004;
+
+/// How big a bun is, as a share of the head's own half-width.
+///
+/// **In head radii and not in millimetres**, for [`BELL_DROP`]'s reason: the
+/// three measured heads' half-widths are 72.1, 57.9 and 83.3 mm, so a bun cut
+/// in millimetres is a knot on one head and a melon on another. Nought point
+/// three five is 25 mm of radius on a default head, a 50 mm ball, which is what
+/// a gathered bun of hair is; measured, every head clears its own body by 3.9
+/// to 13.8 mm at the nape and 5.4 at the crown at this size.
+///
+/// Provenance: **derived** from the measured clearance, **tuned by render**.
+const BUN_RADIUS: f32 = 0.35;
+
+/// How much wider than tall a bun is.
+///
+/// A gathered bun is a little flattened against the head it is pinned to, which
+/// is the axis the sphere is squashed on. The tied-back's own knot is
+/// 14 x 11 x 9, which is the same idea at a sixth the size.
+///
+/// Provenance: **tuned by render**, **carried** from the knot's own proportions.
+const BUN_SQUASH: [f32; 3] = [1.0, 0.86, 0.78];
+
+/// How much of the roots' colour a bun keeps.
+///
+/// The knot's own [`super::style::scalp::LUMP_SHADE`] taken from there rather
+/// than chosen again: a gathered mass of the same hair is the same colour, and
+/// two shades chosen separately are two chances to disagree on one head.
+const BUN_SHADE: f32 = super::style::scalp::LUMP_SHADE;
+
+/// How far a bun sinks INTO the shell it is seated on, as a share of its own
+/// radius.
+///
+/// **The seat is a contact, not a standoff, and the first cut got that the
+/// wrong way round** (#347). The issue asks for the tied-back's own seating at
+/// [`super::style::scalp::KNOT_STANDOFF`], and that constant is a share of a
+/// DEPTH: `depth_behind(height) x 1.15`, a point pushed out past the back of
+/// the head. Read off the built body it does not work for a bun at all - it
+/// puts the axis's low end 0.41 mm off the default head's skin, 3.5 mm INSIDE
+/// seed 42's and 24.7 mm inside seed 7's, and 22 to 44 mm inside the shell the
+/// ball hangs off, because `depth_behind` is the SKULL's profile and the skull
+/// stops describing the body at the throat, which is where a nape bun sits. The
+/// knot gets away with it at 14 mm across with half of itself buried in a
+/// gather. A bun is the style.
+///
+/// Applied as a standoff from the shell's own outer surface instead, the ball
+/// came out DETACHED - a sphere hanging in the air behind the head at the nape
+/// and floating over the crown at the top knot, in both renderers, which is
+/// what named this. A bun is pinned INTO the hair it gathers, so the seat is
+/// the shell's outer surface and the sphere sinks this share of itself into it.
+///
+/// What bounds it is the skin, not the shell: a ball resting on the middle of
+/// the occiput swings its lower quadrant toward a head that is curving away
+/// under it, so the worst point of the sphere is not the one it is seated at.
+/// Measured on the BUILT ball rather than on an ideal one, and the guard
+/// `a_bun_is_a_closed_ball_that_sits_on_its_shell` is what holds it.
+///
+/// Provenance: **derived** from the defect, **bounded by the measured skin**.
+const BUN_EMBED: f32 = 0.20;
+
+/// How far the crest cuts its rim back at the sides, in metres.
+///
+/// **What makes the shell a band**, measured against the column it eats
+/// (#347): at 80 mm the default head's side column is down from 134 mm of arc
+/// to 17, which is one row and is the floor a column cannot go below; at 60 mm
+/// it keeps 65 mm and reads as short sides rather than as shaved ones. Eighty
+/// is where all three heads have taken their sides to the floor while the
+/// midline still has its whole column: 110 mm on the default head, 102 on seed
+/// 42, 95 on seed 7 - untouched, because the band's weighting is the sine and
+/// the sine is zero dead ahead.
+///
+/// Provenance: **derived** from the measured column, **tuned by render**.
+const CREST_BAND: f32 = 0.080;
+
+/// How tall the crest's fin is at its axis's top, as a share of the head's own
+/// half-width.
+///
+/// Measured on the default head: 0.20 head radii is 14.4 mm over the crown,
+/// 0.35 is 25.2 and 0.50 is 36.0 - and a fin is read against the head it is on,
+/// which is why this is in radii like everything else the catalogue sizes.
+///
+/// Provenance: **tuned by render** against the measured height.
+const CREST_FIN: [f32; 2] = [0.10, 0.50];
 
 /// How far a [`ScalpStyle::Cap`]'s fringe notch
 /// cuts the rim back over the brow at its axis's top, in metres.
@@ -573,6 +759,74 @@ impl Cap {
         }
     }
 
+    /// The catalogue's bun: a Cap-like shell with a closed sphere seated on its
+    /// own back column, `height` running `0` a nape bun to `1` a top knot.
+    ///
+    /// Faceted like the crop, since the sphere is 48 triangles and a smooth
+    /// shell beside a faceted ball reads as two materials.
+    ///
+    /// **The seat is the SHELL'S back column, not the knot's own arithmetic**,
+    /// and the module constant BUN_EMBED is where the measurement that says so is written
+    /// down. The axis is the share of that column, walked from its crown to its
+    /// nape rim, so `0` puts the sphere at the rim and `1` at the pole and
+    /// every head gets its own two ends rather than a height in millimetres.
+    #[must_use]
+    pub fn bun(height: f32, head: &Follicles) -> Self {
+        let shell = Shell {
+            even: CAP_EVEN,
+            facets: Facets::All,
+            ..Shell::default()
+        };
+        let radius = head_radius(head) * BUN_RADIUS;
+        // The back column the sphere is seated on: the shell's own, so the two
+        // cannot disagree about where the back of this head is.
+        let back = walk(head, std::f32::consts::PI, &shell);
+        let arc = along(&back);
+        // `0` at the rim and `1` at the pole, which is the axis's own two ends.
+        let on = at_share(&back, &arc, 1.0 - height.clamp(0.0, 1.0));
+        let last = back.len() - 1;
+        let at = ((1.0 - height.clamp(0.0, 1.0)) * last as f32).round() as usize;
+        let out = facing(&back, at.max(1), std::f32::consts::PI);
+        // Out of the shell's OUTER surface by the standoff's share of the
+        // sphere, so the ball rests on the solid rather than in it.
+        let thick = head_radius(head) * shell.rim;
+        let centre = on + out * (STAND + thick + radius * (1.0 - BUN_EMBED));
+        Self {
+            shell,
+            lump: Some(Lump {
+                centre,
+                radii: Vec3::from_array(BUN_SQUASH) * radius,
+                shade: BUN_SHADE,
+            }),
+            ..Self::default()
+        }
+    }
+
+    /// The catalogue's crest: the shell cut back to a band along the sagittal
+    /// line, with a faceted fin along it whose height is `height`.
+    ///
+    /// The sides are SHAVED rather than bare - the painted layer at the density
+    /// [`ScalpStyle::shaved`] guarantees, which is what makes the paint and the
+    /// shell agree by construction rather than by a record's own choice (#347).
+    ///
+    /// No rim cards: a fin's edge is the solid's own, as a slicked head's is.
+    /// The band has taken the rim off the sides altogether, and a hem card at
+    /// the two ends of a strip is two wisps and not a fringe.
+    #[must_use]
+    pub fn crest(height: f32) -> Self {
+        Self {
+            shell: Shell {
+                band: CREST_BAND,
+                fin: CREST_FIN[0] + (CREST_FIN[1] - CREST_FIN[0]) * height.clamp(0.0, 1.0),
+                even: CAP_EVEN,
+                facets: Facets::All,
+                ..Shell::default()
+            },
+            rim_cards: 0,
+            ..Self::default()
+        }
+    }
+
     /// What this prototype grows on one head, ready for the clump engine.
     ///
     /// **One place, because two callers need it**: `Avatar::build_with`, which
@@ -602,6 +856,7 @@ impl Cap {
             shell: self.shell,
             cut: *cut,
             breaks: self.breaks,
+            lump: self.lump,
         })
     }
 }
@@ -621,6 +876,8 @@ pub struct Helmet {
     cut: Cut,
     /// Where its rim is broken by cards. See [`Cap::breaks`].
     breaks: [f32; 2],
+    /// The solid it hangs off the shell, if it has one. See [`Cap::lump`].
+    lump: Option<Lump>,
 }
 
 impl Helmet {
@@ -736,6 +993,13 @@ impl Shape for Helmet {
 
     fn shell(&self) -> Option<Shell> {
         Some(self.shell)
+    }
+
+    fn lump(&self) -> Option<Lump> {
+        // A bun's sphere, which `Growth::grow` draws beside the shell and
+        // counts with it - the tied-back's own lump on a different seat, and
+        // drawn by the same loft (#347, and #342's `Shape::lump`).
+        self.lump
     }
 }
 
@@ -867,9 +1131,20 @@ fn walk(head: &Follicles, azimuth: f32, shell: &Shell) -> Vec<Vec3> {
     let off = facing.clamp(-1.0, 1.0).acos();
     let notch =
         crate::face::smooth(((off - face.side.atan2(face.front)) / NOTCH_OVER).clamp(0.0, 1.0));
+    // **And the band term carries the same sine with NO ramp** (#347): a crest
+    // shrinks the shell to a strip along the sagittal line, which means cutting
+    // the rim back dead ahead as much as at the temple - the one place the
+    // ramp above holds `side` at zero, measured, at every value it was asked.
+    // Safe without it for a reason `side` does not have: this cut only ever
+    // moves a rim UP its own column, and the front rim of the three measured
+    // heads sits 16 to 58 mm above the brow before it is cut at all.
     let cut = shell.fringe * facing.max(0.0)
         + shell.nape * (-facing).max(0.0)
-        + shell.side * azimuth.sin().abs() * notch;
+        + shell.side * azimuth.sin().abs() * notch
+        + shell.band
+            * crate::face::smooth(
+                ((azimuth.sin().abs() - BAND_INSIDE) / (BAND_OVER - BAND_INSIDE)).clamp(0.0, 1.0),
+            );
     // **The face notch is the face box, not a number** (#346). A rim carried
     // past the hairline descends, and at the front quarter of a default head a
     // rim 40 mm past it sits 8 mm BELOW the brow and 59 mm off the midline -
@@ -1057,6 +1332,24 @@ impl Grid {
             .map(|column| walk(head, TAU * column as f32 / COLUMNS as f32, shell))
             .collect();
         let rows = schedule(&walks, ROWS, shell.even);
+        // A row schedule measured in ARC rather than in shares was tried here
+        // and REFUTED (#347), and it is the lever of the slice for what it cost
+        // to find out. The premise was sound and is still true: the schedule is
+        // shared but it is in shares of each column's OWN arc, so row five of a
+        // banded shell's 110 mm midline column sits 55 mm down the head while
+        // row five of its 17 mm side column sits 8 mm down, and the quads
+        // spanning the two are sheared.
+        //
+        // Measured in arc and clamped at each column's end, the shear does go -
+        // and every one of a cut column's rows then lands ON its rim, at the
+        // same position. That is not a shading defect, it is a broken solid:
+        // the faces between two coincident rows are degenerate, and welded by
+        // position the shell came out with 630 distinct vertices where a cap
+        // has 830, 63 of 1,339 edges belonging to one face, and 14 vertices
+        // 1.3 mm under the skin. `a_shell_is_a_closed_solid_the_head_cannot
+        // _come_through` is what said so. It also looked worse (sheets347/level
+        // - the fin drew as a blocky wedge with a notch out of it), but the
+        // guard is why the knob is gone rather than tuned.
         let walked: Vec<Vec3> = walks
             .iter()
             .flat_map(|walk| {
@@ -1104,7 +1397,16 @@ impl Grid {
                 let front = azimuth.cos().max(0.0).powf(RISE_ROUND);
                 let along = 1.0 - ((share - RISE_AT) / RISE_OVER).clamp(-1.0, 1.0).abs();
                 let rise = radius * shell.rise * front * crate::face::smooth(along);
-                let thick = rim + (crown - rim) * (1.0 - share).powf(THICKNESS_POW) + rise;
+                // **And a FIN is the same idea along the midline** (#347):
+                // thickness carried by the azimuth's cosine either way round,
+                // front AND back, and peaked at the crown rather than part-way
+                // down a column - which is what makes it a crest and not a
+                // pompadour. Falls over the column by its own power, so the
+                // fin is tallest at the pole and gone by the rim, which is
+                // where the band has already taken the shell away.
+                let midline = azimuth.cos().abs().powf(FIN_ROUND);
+                let fin = radius * shell.fin * midline * (1.0 - share).powf(FIN_POW);
+                let thick = rim + (crown - rim) * (1.0 - share).powf(THICKNESS_POW) + rise + fin;
                 grid.inner.push(point + normal * STAND);
                 grid.outer.push(point + normal * (STAND + thick));
                 grid.normals.push(normal);

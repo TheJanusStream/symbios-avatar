@@ -674,7 +674,9 @@
             "curly",
             "cap",
             "slick_back",
-            "bell"
+            "bell",
+            "bun",
+            "crest"
           ],
           "default": "none"
         },
@@ -711,6 +713,12 @@
         "curl": {
           "type": "integer",
           "description": "CURLY only: how tight the coil is. 0 a loose wave, 1000 a tight curl.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "height": {
+          "type": "integer",
+          "description": "BUN: where the ball of gathered hair sits, as a share of the back of the head. 0 a bun at the nape, 1000 a top knot on the crown. CREST: how tall the fin along the midline is, 0 a low ridge and 1000 a full crest - the sides are shaved either way.",
           "minimum": 0,
           "maximum": 1000
         }

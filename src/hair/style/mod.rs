@@ -439,10 +439,32 @@ impl HairRecord {
     }
 
     /// The painted layer this record describes.
+    ///
+    /// **A style may raise the floor under its own region's paint, and may not
+    /// lower it** (#347). A crest is shaved at the sides: the shell ends at the
+    /// midline and what is left of the scalp is stubble, not bare skin - so the
+    /// style says so, through [`ScalpStyle::shaved`], rather than leaning on a
+    /// record having asked for stubble. The floor is in the tress's own roots
+    /// colour, and a record already painting denser keeps exactly what it
+    /// asked for: a style may describe its own shave and may not overrule an
+    /// owner who wanted more.
+    ///
+    /// Nothing on the wire changes - the record still carries the paint it
+    /// carried, and this is read on the way to the painter.
     #[must_use]
     pub fn painted(&self) -> super::painted::PaintedHair {
+        let mut scalp = self.scalp.skin;
+        if let Some(floor) = self.scalp.style.shaved()
+            && scalp.density < floor
+        {
+            scalp.density = floor;
+            // The roots' colour, not the record's paint colour: where the paint
+            // was not asked for at all its colour is whatever a default left
+            // there, and a shave is the same hair as the fin above it.
+            scalp.colour = self.scalp.roots;
+        }
         super::painted::PaintedHair {
-            scalp: self.scalp.skin,
+            scalp,
             brows: self.brows.skin,
             moustache: self.moustache.skin,
             chin: self.chin.skin,

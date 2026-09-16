@@ -128,6 +128,31 @@ pub enum ScalpStyle {
         #[serde(with = "crate::plan::scaled")]
         length: f32,
     },
+    /// A shell gathered into a closed ball at the back: a bun at the nape, or a
+    /// top knot on the crown.
+    ///
+    /// **The first helmet style that is a shell PLUS an appendage** (#347). The
+    /// ball is the tied-back's own knot lump on a different seat - the shell's
+    /// back column rather than the skull's depth, which is measured and is not
+    /// the same thing (see [`hair::shell::Cap::bun`](crate::hair::shell::Cap::bun)).
+    Bun {
+        /// Where the ball sits, as the share of the shell's own back column it
+        /// is seated at: `0` a bun at the nape and `1` a top knot on the crown.
+        #[serde(with = "crate::plan::scaled")]
+        height: f32,
+    },
+    /// Shaved at the sides with a thick faceted fin along the midline: a crest.
+    ///
+    /// **The one style whose PAINT is its own business** (#347). The sides are
+    /// not bare skin, they are the painted layer at the density
+    /// [`ScalpStyle::shaved`] guarantees - so the shell and the paint agree
+    /// because the same style said both, rather than because a record happened
+    /// to ask for stubble.
+    Crest {
+        /// How tall the fin is, `0` a low ridge and `1` a full crest.
+        #[serde(with = "crate::plan::scaled")]
+        height: f32,
+    },
 }
 
 /// How far a lock hangs PAST the hairline at full length, in metres.
@@ -375,7 +400,11 @@ impl Style for ScalpStyle {
             // Unreachable: a helmet style returned its own shape above, and the
             // match is written out rather than caught by a wildcard so the next
             // style added has to answer here too.
-            Self::Cap { .. } | Self::SlickBack { .. } | Self::Bell { .. } => return None,
+            Self::Cap { .. }
+            | Self::SlickBack { .. }
+            | Self::Bell { .. }
+            | Self::Bun { .. }
+            | Self::Crest { .. } => return None,
         };
         let knot = self.knot(head);
         let curl = match self {
@@ -430,6 +459,9 @@ impl Style for ScalpStyle {
             Self::Cap { fringe } => *fringe = scaled::quantize(fringe.clamp(0.0, 1.0)),
             Self::SlickBack { volume } => *volume = scaled::quantize(volume.clamp(0.0, 1.0)),
             Self::Bell { length } => *length = scaled::quantize(length.clamp(0.0, 1.0)),
+            Self::Bun { height } | Self::Crest { height } => {
+                *height = scaled::quantize(height.clamp(0.0, 1.0));
+            }
         }
     }
 }
@@ -469,7 +501,11 @@ impl ScalpStyle {
             // A helmet has no row in the tables above: they describe a card's
             // reach, width, taper and crowd, and a shell has none of those. See
             // [`Self::helmet`].
-            Self::Cap { .. } | Self::SlickBack { .. } | Self::Bell { .. } => None,
+            Self::Cap { .. }
+            | Self::SlickBack { .. }
+            | Self::Bell { .. }
+            | Self::Bun { .. }
+            | Self::Crest { .. } => None,
         }
     }
 
@@ -484,6 +520,39 @@ impl ScalpStyle {
             Self::Cap { fringe } => Some(Cap::crop(fringe)),
             Self::SlickBack { volume } => Some(Cap::slicked(volume)),
             Self::Bell { length } => Some(Cap::bell(length, head)),
+            Self::Bun { height } => Some(Cap::bun(height, head)),
+            Self::Crest { height } => Some(Cap::crest(height)),
+            _ => None,
+        }
+    }
+
+    /// The painted density this style GUARANTEES on the scalp it does not
+    /// cover, if it is a style that shaves.
+    ///
+    /// **The one place a style has an opinion about the painted layer** (#347),
+    /// and the crest is the only style that needs one: its sides are shaved,
+    /// which is stubble and not bare skin, and a shell that ends at the
+    /// midline leaves the rest of the scalp mask to the paint. The acceptance
+    /// asks that the paint and the shell agree BY CONSTRUCTION, and this is the
+    /// construction: the same style says both.
+    ///
+    /// **Not a record field and not a mask change**, and both were considered.
+    /// A default on a published record field moves nothing the owner sees, and
+    /// the scalp's `skin` is a `Paint` the record owns - a record written by a
+    /// 0.8 client carries whatever density it carried, and a new default would
+    /// reach no existing one. A mask change is worse: the scalp mask is what
+    /// every shell's rim is read from, so moving it moves the rim of every
+    /// style in the catalogue.
+    ///
+    /// So this is a FLOOR, raised in
+    /// [`HairRecord::painted`](super::HairRecord::painted), in the tress's own
+    /// roots colour. A record that already paints denser keeps exactly what it
+    /// asked for: a style may say what its own shave looks like and may not
+    /// overrule an owner who asked for more.
+    #[must_use]
+    pub fn shaved(self) -> Option<f32> {
+        match self {
+            Self::Crest { .. } => Some(SHAVED),
             _ => None,
         }
     }
@@ -497,10 +566,27 @@ impl ScalpStyle {
             Self::Cap { .. } => Some(Cap::crop(0.0).rim_cards),
             Self::SlickBack { .. } => Some(Cap::slicked(0.0).rim_cards),
             Self::Bell { .. } => Some(Cap::default().rim_cards),
+            // A bun's rim is a crop's, and a crest has none at all - the band
+            // has taken the rim off the sides and a hem at the two ends of a
+            // strip is two wisps rather than a fringe.
+            Self::Bun { .. } => Some(Cap::crop(0.0).rim_cards),
+            Self::Crest { .. } => Some(Cap::crest(0.0).rim_cards),
             _ => None,
         }
     }
 }
+
+/// How dense the paint is on a crest's shaved sides.
+///
+/// Stubble rather than a shave: the issue's own word, and what a clipped side
+/// is. [`Paint::density`](crate::hair::Paint::density) is a share of the skin
+/// covered, not an opacity, so between nought and one the grain shows through -
+/// which is what makes it read as cut hair rather than as a painted panel. Two
+/// thirds is where the grain still carries and the scalp does not read as bald
+/// under the fin.
+///
+/// Provenance: **tuned by render**.
+const SHAVED: f32 = 0.66;
 
 /// How far the knot sits off the back of the head, as a share of its reach there.
 ///
@@ -508,7 +594,7 @@ impl ScalpStyle {
 /// it, and the locks arriving have somewhere to meet.
 ///
 /// Provenance: **tuned by render**.
-const KNOT_STANDOFF: f32 = 1.15;
+pub(crate) const KNOT_STANDOFF: f32 = 1.15;
 
 /// The mask weight below which a card has left the scalp and is hanging.
 ///
@@ -805,7 +891,7 @@ const LUMP_AT: f32 = 0.93;
 /// How much of the roots' colour the lump keeps.
 ///
 /// Provenance: **tuned by render**.
-const LUMP_SHADE: f32 = 0.85;
+pub(crate) const LUMP_SHADE: f32 = 0.85;
 
 /// What share of its width a tail card opens to below the knot (#342).
 ///

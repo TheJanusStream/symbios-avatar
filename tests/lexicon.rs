@@ -445,6 +445,8 @@ fn every_hair_style_the_crate_can_write_is_declared_with_its_axis() {
                 json(ScalpStyle::Cap { fringe: 0.8 }),
                 json(ScalpStyle::SlickBack { volume: 0.8 }),
                 json(ScalpStyle::Bell { length: 0.8 }),
+                json(ScalpStyle::Bun { height: 0.8 }),
+                json(ScalpStyle::Crest { height: 0.8 }),
             ],
         ),
         (
