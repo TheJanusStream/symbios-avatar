@@ -48,9 +48,12 @@
 //! # What it costs
 //!
 //! [`COLUMNS`] by [`ROWS`] over two surfaces, plus a fan at the crown and a
-//! bevelled band at the rim. The count is the head's own and not a record's: a
-//! shell costs what the head's size dictates, which is what made the discarded
-//! one affordable and is why nothing here is a wire field.
+//! bevelled band at the rim. The count is the grid's and not a record's: a
+//! shell costs the same whatever head or cut it is grown for, which is what
+//! made the discarded one affordable, why nothing here is a wire field, and why
+//! the hair ceiling's tier cannot squeeze one - it roots fewer CARDS (#347). A
+//! faceted solid splits its corners and costs vertices for it, and ships none
+//! that no face references (#351).
 //!
 //! A head twelve metres off draws the same solid on [`FAR_COLUMNS`] by
 //! [`FAR_ROWS`] ([`Shell::far`], #350): 468 triangles where the near grid is
@@ -541,7 +544,8 @@ impl Shell {
     ///
     /// **Smooth, because a facet is below a pixel there and costs a vertex
     /// per corner of every face** - a faceted cap is 4,280 vertices where a
-    /// smooth one of the same grid is under a thousand (measured, #350). **No
+    /// smooth one of the same grid is under a thousand (measured, #350; 3,450
+    /// since #351 stopped shipping the 830 the split left behind). **No
     /// ridges**, because ten ridges need twenty columns to sample at all (see
     /// `ridged`) and a cornrow is seven millimetres tall, half a pixel at that
     /// distance. Everything else - the thickness, the cuts, the roll, the round
@@ -2132,7 +2136,22 @@ pub(super) fn loft(
 /// The face's own normal is Newell's, taken from the winding, so the outer
 /// surface's faces face out and the inner surface's face the head exactly as the
 /// smooth ones they replace did.
+///
+/// **And the vertices the split leaves behind are removed** (#351, owner call).
+/// Until then every corner was copied and the original stayed in the buffer
+/// referenced by no face: 830 of a faceted cap's, bun's or crest's 4,214 to
+/// 4,312 vertices (#350's census), uploaded by every consumer for nothing. Only
+/// a vertex the faceted faces used AND no face uses afterwards goes, and every
+/// index past it moves down, so no other region's geometry is touched and the
+/// triangles drawn are the same triangles.
 fn facet(into: &mut PolyMesh, faces: std::ops::Range<usize>) {
+    let split_from = into.positions.len();
+    let mut used = vec![false; split_from];
+    for face in faces.clone() {
+        for at in &into.faces[face] {
+            used[*at as usize] = true;
+        }
+    }
     for face in faces {
         let corners = into.faces[face].clone();
         let mut normal = Vec3::ZERO;
@@ -2153,4 +2172,47 @@ fn facet(into: &mut PolyMesh, faces: std::ops::Range<usize>) {
         }
         into.faces[face] = (0..corners.len() as u32).map(|step| first + step).collect();
     }
+    // What the faceted faces used and nothing references any more.
+    for face in &into.faces {
+        for at in face {
+            if let Some(slot) = used.get_mut(*at as usize) {
+                *slot = false;
+            }
+        }
+    }
+    let Some(lowest) = used.iter().position(|orphan| *orphan) else {
+        return;
+    };
+    // Each vertex's index once the orphans before it are gone.
+    let mut remap = Vec::with_capacity(into.positions.len());
+    let mut kept = 0u32;
+    for at in 0..into.positions.len() {
+        remap.push(kept);
+        if !used.get(at).copied().unwrap_or(false) {
+            kept += 1;
+        }
+    }
+    let keep = |at: &usize| !used.get(*at).copied().unwrap_or(false);
+    fn retain<T>(channel: &mut Vec<T>, keep: impl Fn(&usize) -> bool) {
+        let mut at = 0;
+        channel.retain(|_| {
+            let kept = keep(&at);
+            at += 1;
+            kept
+        });
+    }
+    retain(&mut into.positions, keep);
+    retain(&mut into.normals, keep);
+    retain(&mut into.uvs, keep);
+    retain(&mut into.colours, keep);
+    retain(&mut into.skin, keep);
+    for face in &mut into.faces[..] {
+        for at in face.iter_mut() {
+            *at = remap[*at as usize];
+        }
+    }
+    debug_assert!(
+        lowest < split_from,
+        "an orphan is one of the faceted copies"
+    );
 }

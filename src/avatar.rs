@@ -17,6 +17,12 @@
 //! separate clumps of hair is ninety draws. Merging costs nothing in fidelity —
 //! [`PolyMesh::colours`] carries what used to be a colour per draw.
 //!
+//! One thing comes out beside them rather than among them: the far hair tier,
+//! [`Avatar::far_hair`], when [`AvatarConfig::far_hair`] asks for it (#350). A
+//! renderer that swaps hair by distance draws it with the hair's own material
+//! and skin; one that does not know about tiers never sees it, so
+//! `budget.meshes` and [`Avatar::drawn`] still describe what is drawn at once.
+//!
 //! ```rust
 //! use symbios_avatar::{Avatar, AvatarRecord};
 //!
@@ -494,7 +500,7 @@ impl Avatar {
         // A limb the body does not stand on is a hand, and a body with hands is
         // the kind that wears things. See the note above.
         let handed = rig.ground_contacts().len() < Limb::ALL.len();
-        let hair_record = config.hair.unwrap_or(record.hair);
+        let hair_record = config.hair.as_ref().unwrap_or(&record.hair);
 
         // Measured from the body that was built, not from the plan that asked
         // for it: the two differ by about a third at the head, and by a
@@ -1471,6 +1477,11 @@ mod tests {
         // reads as a helmet, so the walk over brightness has to survive.
         let mut record = AvatarRecord::new("Built", Archetype::default());
         record.reroll(3);
+        // **The crop seed 3 rolled until generation 6** (#351): the helmet coin
+        // lands on this seed, and a one-tone shell has no walk from roots to
+        // tips to keep. What this reads is a head of CARDS through the merge,
+        // so it wears the one it always measured, every other axis as rolled.
+        record.hair.scalp.style = crate::hair::ScalpStyle::Crop;
         let avatar = Avatar::build(&record).expect("a biped builds");
         let hair = avatar
             .drawn(0.0)

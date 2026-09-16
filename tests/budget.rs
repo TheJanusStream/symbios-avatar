@@ -45,6 +45,22 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3};
 /// at #312, when that pass started selecting cells by the relief they carry
 /// rather than by footprint: 44 cells on the dearest rolled body where there
 /// were 470, and the product corner measures 31,554; #308 reconciles.
+///
+/// **RECONCILED AT THE HAIR OVERHAUL'S RELEASE SLICE and left at 32,200**
+/// (#351, 2026-09-16). Re-measured on this file's own heads: the product
+/// corner is 31,962 with `hair::clump::MAX_TRIANGLES` at its new 3,300 (it was
+/// 31,668 at 2,850), the greedy-hair body 30,314, the default body 28,444. The
+/// hair overhaul (#338-#350) spent nothing here that a rolled body pays: a
+/// helmet is a record's choice, and the tenth of re-rolls that now draw one
+/// cost about 50 triangles of mean hair per tenth.
+///
+/// **And what this target does not see**, found on the same run and filed as
+/// #353: the six seeds every sweep here visits are not the dearest bodies a
+/// re-roll makes. Over 300 rolled seeds, 3 bodies as rolled and 6 on the long
+/// broad head exceed this target, the dearest 33,224 (seed 175) and 34,112
+/// (seed 237 long broad) - in the BODY, whose bald cost reaches 31,722 and
+/// 32,408. This constant holds against the corners the file measures; #353
+/// decides what the file should measure.
 const TRIANGLE_TARGET: usize = 32_200;
 
 /// Draw calls a WebGL2-tier avatar may cost.
@@ -230,6 +246,21 @@ const MESH_TARGET: usize = 4;
 /// #308 reconciles. **30,000 → 30,200** for the hair refinement (#316):
 /// staggered hangs and per-card hairlines lengthen about half the cards a
 /// little, 30,116 at the same corner; #308 reconciles.
+///
+/// **RECONCILED AT THE HAIR OVERHAUL'S RELEASE SLICE and left at 30,200**
+/// (#351, 2026-09-16). The dearest corner is still 30,116 at seed 1 long
+/// broad, 84 under, because nothing a re-roll draws on these six seeds moved:
+/// #338's helmet and sculpted styles are a record's choice, and the tenth of
+/// re-rolls #351 gave a helmet is a coin on its own stream that lands on none
+/// of seeds 1, 7, 23, 29, 42 or 99. Measured on the same bodies, a helmet on
+/// the dearest of them would read 30,568 (a bun) against 30,534 for the
+/// dearest card style put there.
+///
+/// **That is also this ratchet's blind spot, and it is a bigger one than a
+/// helmet** (#353): the six seeds are not the dearest bodies a re-roll makes.
+/// Over 300 rolled seeds, 14 bodies as rolled and 65 on the long broad head
+/// exceed this ceiling, the dearest 33,224 and 34,112. A ratchet that moves
+/// with the measurement is only as good as what it measures.
 const TRIANGLE_CEILING: usize = 30_200;
 
 /// Draw calls the crate currently costs.
@@ -905,7 +936,10 @@ fn greediest() -> HairRecord {
             // the reconciliation - whether the helmet family's shell grid is
             // the right size for what the budget has to buy - is #351's, with
             // the owner, per the #308 rule that a rail is relaxed with a note
-            // rather than fought.
+            // rather than fought. #351 kept the grid and moved the hair
+            // ceiling to 3,300 instead: this record's head of hair is 3,390 on
+            // seed 42 long broad and 3,474 at its dearest (seed 29 long
+            // broad), and the product corner reads 31,962.
             //
             // Before this, since #341: a bob with no fringe, swept to the
             // temples rather than hanging as a curtain, its front locks turning
@@ -1130,7 +1164,7 @@ fn the_dearest_variant_of_each_region_is_the_one_the_greedy_record_wears() {
                 let follicle = $follicle;
                 let mut best = (String::new(), 0usize);
                 for (name, style) in $catalogue {
-                    let mut hair = wearing;
+                    let mut hair = wearing.clone();
                     hair.$field.style = style;
                     hair.sanitize();
                     let tris = head.region(&hair, follicle);
@@ -1409,6 +1443,43 @@ fn the_tier_bites_only_where_a_record_asks_for_more_than_the_budget_holds() {
         }
     }
 
+    // **And on a ROLLED face, since a re-roll draws helmets** (#351). The loop
+    // above wears one fixed beard, and a re-roll does not: a seed's own cut and
+    // facial hair under a helmet reach further than that set does. Seed 102 as
+    // rolled is the dearest face #351 measured over 300 rolled seeds - a bun on
+    // its own cut and beard costs 3,276 untiered, which is what put
+    // `MAX_TRIANGLES` at 3,300 - so every scalp style is grown on it here. At
+    // the old 2,850 a cap, a bell and a bun on this face were all trimmed.
+    let rolled = Head::of(102, None);
+    for (name, style) in scalp_catalogue() {
+        let mut hair = rolled.record.hair.clone();
+        hair.scalp.style = style;
+        hair.sanitize();
+        let free = rolled.regrow_under(&hair, usize::MAX);
+        let tiered = rolled.regrow(&hair);
+        assert_eq!(
+            tiered.grown,
+            free.grown,
+            "the tier trimmed a `{name}` on {}'s own rolled face, which costs {} against a \
+             ceiling of {}",
+            rolled.at,
+            free.tris(),
+            symbios_avatar::hair::clump::MAX_TRIANGLES
+        );
+    }
+    // Liveness: that face under a bun really is dearer than the old ceiling,
+    // so the corner above is one a smaller ceiling would fail.
+    let mut bun = rolled.record.hair.clone();
+    bun.scalp.style = ScalpStyle::Bun { height: 0.0 };
+    bun.sanitize();
+    let bun_tris = rolled.regrow_under(&bun, usize::MAX).tris();
+    assert!(
+        bun_tris > 2_850,
+        "a bun on {}'s rolled face costs only {bun_tris}; the corner no longer reaches past \
+         the ceiling #351 moved",
+        rolled.at
+    );
+
     // **And it is a backstop with nothing to reach it, which is the state it is
     // meant to be in.** The dearest legal record costs about 3,050 triangles of
     // hair against a 3,200 ceiling, because #209 sized the scalp's counts by
@@ -1432,8 +1503,9 @@ fn the_tier_bites_only_where_a_record_asks_for_more_than_the_budget_holds() {
     //
     // So the claim is the one the tier can actually make: it halves what it can
     // reach. A shell that a tier could thin would be #350's LOD twin, and
-    // whether the grid is the right size for what the budget has to buy is
-    // #351's, with the owner.
+    // whether the grid is the right size for what the budget has to buy was
+    // #351's, with the owner: the grid stayed, and the ceiling rose to 3,300
+    // so no measured rolled head reaches it.
     let head = Head::of(42, Some((1.0, 1.0)));
     let free = head.regrow_under(&greediest(), usize::MAX);
     let solid: usize = free.grown.iter().map(|grown| grown.shell).sum();
@@ -1471,10 +1543,10 @@ fn the_two_tiers_regrown_are_the_two_tiers_the_body_ships() {
     // the build's loop is a second opinion (#350).
     for head in [Head::of(0, None), Head::of(7, None)] {
         for (what, hair) in [
-            ("its own hair", head.record.hair),
+            ("its own hair", head.record.hair.clone()),
             ("the greediest", greediest()),
             ("a short curl", {
-                let mut hair = head.record.hair;
+                let mut hair = head.record.hair.clone();
                 hair.scalp.style = ScalpStyle::Curly { curl: 0.0 };
                 hair.scalp.cut.length = 0.2;
                 hair
@@ -1526,7 +1598,7 @@ fn a_far_tier_never_costs_more_than_the_near_tier_it_stands_for() {
     for head in [Head::of(0, None), Head::of(42, None), Head::of(7, None)] {
         for (name, style) in scalp_catalogue() {
             for greedy in [false, true] {
-                let mut hair = head.record.hair;
+                let mut hair = head.record.hair.clone();
                 hair.scalp.style = style;
                 if greedy {
                     hair.scalp.cut = GREEDY;
@@ -1569,7 +1641,7 @@ fn a_far_tier_never_costs_more_than_the_near_tier_it_stands_for() {
     // crop's own cards there.
     use symbios_avatar::hair::shell::Cap;
     let head = Head::of(0, None);
-    let mut hair = head.record.hair;
+    let mut hair = head.record.hair.clone();
     hair.scalp.style = ScalpStyle::Crop;
     let follicles =
         symbios_avatar::Follicles::of(&head.avatar.rig, &head.skull, &head.canon, &hair.regions);

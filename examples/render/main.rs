@@ -667,7 +667,7 @@ fn main() {
             // The scalp's own four axes, in the order `Cut` declares them, plus
             // a fifth that silences every region — which is what `--mane 0` on
             // the viewer does and what a bald judgement shot wants.
-            let mut hair = record.hair;
+            let mut hair = record.hair.clone();
             hair.scalp.cut.length = axis(0, hair.scalp.cut.length);
             hair.scalp.cut.thickness = axis(1, hair.scalp.cut.thickness);
             hair.scalp.cut.density = axis(2, hair.scalp.cut.density);

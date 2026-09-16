@@ -180,6 +180,31 @@ pub enum ScalpStyle {
     },
 }
 
+impl ScalpStyle {
+    /// Every name this build writes, in declaration order.
+    ///
+    /// **What a reader checks a name against before it trusts one** (#351). A
+    /// record from a newer build can name a style this one has never heard
+    /// of, and [`crate::hair::HairRecord`] reads such a name as `none` and
+    /// keeps it for the rewrite rather than refusing the whole avatar.
+    /// `tests/lexicon.rs` holds this list to the lexicon's knownValues.
+    pub const NAMES: &'static [&'static str] = &[
+        "none",
+        "crop",
+        "bob",
+        "long",
+        "tied_back",
+        "curly",
+        "cap",
+        "slick_back",
+        "bell",
+        "bun",
+        "crest",
+        "afro",
+        "braids",
+    ];
+}
+
 /// How far a lock hangs PAST the hairline at full length, in metres.
 ///
 /// One entry per style, in the order the enum declares them, and the whole

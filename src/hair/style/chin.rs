@@ -77,6 +77,17 @@ pub enum ChinStyle {
     },
 }
 
+impl ChinStyle {
+    /// Every name this build writes, in declaration order.
+    ///
+    /// **What a reader checks a name against before it trusts one** (#351). A
+    /// record from a newer build can name a style this one has never heard
+    /// of, and [`crate::hair::HairRecord`] reads such a name as `none` and
+    /// keeps it for the rewrite rather than refusing the whole avatar.
+    /// `tests/lexicon.rs` holds this list to the lexicon's knownValues.
+    pub const NAMES: &'static [&'static str] = &["none", "goatee", "full", "braided", "sculpted"];
+}
+
 /// How far a clump hangs past its root at full length, in metres.
 ///
 /// One entry per style, in the order the enum declares them.

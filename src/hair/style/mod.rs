@@ -19,11 +19,18 @@
 //! the scalp; natural and thick brows; chevron, handlebar and pencil
 //! moustaches; goatee, full and braided chins; sideburns and full-connect
 //! flanks. And the helmet family draws closed solids rather than cards: cap,
-//! slick, bell, bun, crest, afro and braids on the scalp (`hair::shell`), and a
+//! slick-back, bell, bun, crest, afro and braids on the scalp (`hair::shell`), and a
 //! sculpted brow, moustache, chin and flanks (`hair::shell::face`, #349).
 //! Nothing is declared ahead of its curve and mapped to something else
 //! in the meantime — a variant that exists and does not do what it says is
 //! worse than one that does not exist.
+//!
+//! # A name from a newer build draws nothing
+//!
+//! The catalogues grow additively on the wire, so a record can name a style
+//! this build has never heard of. It reads as that region's `None` and the name
+//! is written back unchanged ([`HairRecord`], `wire`, #351) - where 0.8.1
+//! refused the whole avatar.
 
 use std::f32::consts::TAU;
 
@@ -38,12 +45,14 @@ pub mod chin;
 pub mod flanks;
 pub mod moustache;
 pub mod scalp;
+mod wire;
 
 pub use brows::BrowStyle;
 pub use chin::ChinStyle;
 pub use flanks::FlankStyle;
 pub use moustache::MoustacheStyle;
 pub use scalp::ScalpStyle;
+pub use wire::Unrecognised;
 
 /// How the clumps of one region are cut.
 ///
@@ -377,8 +386,26 @@ pub fn greyed(colour: [f32; 3], grey: f32) -> [f32; 3] {
 /// **Per region, because one set of scalars cannot describe a head of hair.**
 /// A single sculpted mass with locks cut into its rim cannot say
 /// that a face has eyebrows.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+///
+/// **A style name this build does not know draws nothing, and survives a
+/// rewrite** (#351). The catalogues grow additively - #346 to #349 added eleven
+/// names without a generation bump - so a record written by a newer build can
+/// name a style this one has never heard of. It is read as that region's
+/// `None`, which is what the lexicon asks of a reader ("draw nothing rather
+/// than substitute another style"), with the region's cut, colours and paint
+/// kept, and the style object is held verbatim in [`Self::unrecognised`] and
+/// written back in its place for as long as the region still wears `None`. So
+/// an older client editing somebody's avatar neither refuses it nor deletes a
+/// haircut it could not draw.
+///
+/// **Builds before 0.9.0 do not do this.** A 0.8 reader REFUSES THE WHOLE
+/// RECORD when any region names a style it does not know (measured on the
+/// published 0.8.1: serde reports an unknown variant, and the avatar fails to
+/// load). Every helmet and sculpted name is new in 0.9.0, so a record wearing
+/// one does not load on a 0.8 client at all.
+///
+/// Not `Copy` since #351, because the kept style objects are not.
+#[derive(Clone, Debug, PartialEq)]
 pub struct HairRecord {
     /// Where each kind of hair may grow, which both layers obey.
     ///
@@ -396,6 +423,14 @@ pub struct HairRecord {
     pub chin: Tress<ChinStyle>,
     /// The jaw's flanks.
     pub flanks: Tress<FlankStyle>,
+    /// The style objects this record named that this build does not know, by
+    /// region, each read as that region's `None`.
+    ///
+    /// Never written as a field of its own: serialising puts each back as its
+    /// region's style while that region's style is still `None`, and drops it
+    /// once somebody has chosen a style there. Empty on every record this
+    /// build wrote itself.
+    pub unrecognised: Unrecognised,
 }
 
 impl Default for HairRecord {
@@ -444,6 +479,7 @@ impl Default for HairRecord {
             moustache: Tress::default(),
             chin: Tress::default(),
             flanks: Tress::default(),
+            unrecognised: Unrecognised::default(),
         }
     }
 }
@@ -466,6 +502,7 @@ impl HairRecord {
             moustache: Tress::default(),
             chin: Tress::default(),
             flanks: Tress::default(),
+            unrecognised: Unrecognised::default(),
         }
     }
 
@@ -648,7 +685,7 @@ mod tests {
             ..HairRecord::default()
         };
         record.sanitize();
-        let once = record;
+        let once = record.clone();
         record.sanitize();
         assert_eq!(
             once, record,

@@ -25,7 +25,11 @@
 //!   [`Cut`] says how long, how thick, how many and how far they hang. Each
 //!   card is cut out of the [`StrandMask`], the one image every card of every
 //!   avatar shares, so its end frays into strands rather than stopping on a
-//!   line (#340).
+//!   line (#340). Or, for the HELMET family, a closed low-poly solid
+//!   ([`shell`]) lofted on the same mask - cap, slick-back, bell, bun, crest,
+//!   afro and braids on the scalp, and a sculpted brow, moustache, chin and
+//!   flanks on the face (#345-#349) - deliberately stylised rather than an
+//!   attempt at realistic hair.
 //!
 //! Both layers read the same mask, so the paint and the cards agree about where
 //! hair is by construction rather than by two sets of numbers being kept in
@@ -57,15 +61,20 @@
 //! [`style`]) are derived from the budget and the measured cost of a card, each
 //! style's share of them is granted so that a dear style spends what a crop
 //! spends (`CROWD`, per region), and the whole catalogue at its greediest is
-//! held under [`clump::MAX_TRIANGLES`] — a ceiling `tests/budget.rs`
-//! re-measures rather than quotes. Coverage is bought with **width** before count,
+//! costed against [`clump::MAX_TRIANGLES`] - a ceiling `tests/budget.rs`
+//! re-measures rather than quotes, which trims a record asking for more by
+//! rooting fewer cards and cannot thin a helmet's solid, a fixed grid (#347).
+//! A build may also grow a FAR tier for distance (#350): the scalp's helmet
+//! twin on a coarse grid, handed back beside the near tier and never dearer
+//! than it (`AvatarConfig::far_hair`). Coverage is bought with **width** before count,
 //! because width is free and a card is four triangles: the flanks hold 7.5% of
 //! a head's surface against the moustache's 0.5, and that arithmetic is what
 //! says whether a region wants bigger cards or more of them.
 //!
 //! Everything is built in head-local space, as the eyes are, so a renderer
 //! parents it to the head joint and the hair follows the body for free — except
-//! where a beard hangs, which hands its binding over as it leaves the skin.
+//! where a card beard hangs, which hands its binding over as it leaves the
+//! skin. (A sculpted chin does not: it is bound rigidly to the jaw, #349.)
 
 pub mod clump;
 pub mod follicle;

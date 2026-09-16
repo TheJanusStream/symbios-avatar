@@ -75,7 +75,7 @@ Three things shape the record and are worth knowing before adding fields:
   Unknown fields are kept rather than ignored, so an older client rewriting a
   newer client's record cannot delete what it did not understand, and an
   unrecognised `$type` or token degrades to a stand-in instead of failing the
-  whole avatar.
+  whole avatar. Hair style names do this since 0.9.0; see [Hair](#hair).
 - **A seed reproduces a look.** Each axis draws from its own stream keyed on its
   name, so adding an axis cannot shift the others, and `generator` records which
   generation of the draw produced the parameters.
@@ -245,20 +245,45 @@ skin.
 
 ## Hair
 
-Hair is five regions of the head — scalp, brows, moustache, chin, and the
-flanks of the jaw — in two layers that agree about where hair may grow: a
-painted layer in the skin atlas, and low-poly card geometry standing off it.
-The follicle masks are measured from the built surface rather than the plan,
-so a beard's boundary lands on the jaw that was actually meshed.
+Hair is five regions of the head - scalp, brows, moustache, chin, and the
+flanks of the jaw - in two layers that agree about where hair may grow: a
+painted layer in the skin atlas, and low-poly geometry standing off it. The
+follicle masks are measured from the built surface rather than the plan, so a
+beard's boundary lands on the jaw that was actually meshed.
 
-Each region wears a style from its own catalogue — crop, bob, long, tied-back
-or curly on a scalp; goatee, full or braided on a chin — with a cut (length,
-thickness, density, droop) and a root-to-tip sRGB pair faded along each card
-as vertex colour, so grey and dyed hair cost no texture and no draw. The whole
-catalogue at its greediest fits under a triangle ceiling the budget suite
-re-measures rather than quotes; a record that asks for more hair than the
-budget holds is thinned to fit, and everything under the ceiling builds bit
-for bit as asked.
+Each region wears a style from its own catalogue, with a cut (length,
+thickness, density, droop) and a root-to-tip sRGB pair faded along the
+geometry as vertex colour, so grey and dyed hair cost no texture and no draw.
+The catalogue has two families:
+
+- **Cards** - crop, bob, long, tied-back or curly on a scalp; natural or thick
+  brows; chevron, handlebar or pencil moustaches; goatee, full or braided
+  chins; sideburns or full-connect flanks. Flat cards rooted on the mask, each
+  cut out of one shared strand mask so its end frays into strands.
+- **Helmets** - deliberately stylised closed solids: cap, slick-back, bell,
+  bun, crest, afro and braids on a scalp, and a sculpted brow, moustache, chin
+  and flanks on a face. A scalp helmet may break its rim with a few cards.
+
+A re-roll draws a card style nine times in ten and a helmet the tenth, and
+never a sculpted face; the editor reaches every style.
+
+A build can also grow a **far tier** (`AvatarConfig::far_hair`): the head of
+hair a renderer swaps in past about twelve metres, handed back as
+`Avatar::far_hair` beside the meshes rather than among them. Its scalp is the
+style's helmet twin on a coarse grid and its face is the near tier's own
+cards; it never costs more than the near tier it replaces, and the near tier
+is the same bytes whether or not it is asked for.
+
+The whole catalogue at its greediest is costed by the budget suite, which
+re-measures its ceiling rather than quoting it. A record that asks for more
+hair than the budget holds is thinned to fit - its cards, since a helmet's
+solid is a fixed grid - and a rolled head builds bit for bit as asked (the
+suite and a 600-body survey find none that is thinned).
+
+Style names are additive on the wire. A reader that does not know a name draws
+nothing in that region and writes the name back unchanged; **clients before
+0.9.0 refuse the whole record instead**, so an avatar wearing any helmet or
+sculpted style does not load on a 0.8 client.
 
 ## Motion
 

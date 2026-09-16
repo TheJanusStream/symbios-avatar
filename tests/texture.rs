@@ -153,12 +153,14 @@ fn painting_does_not_bloat_the_record() {
     // chest axes (#273): measured, 1898 -> 1902, which is two bytes and three
     // field names — the cheapest thing this ratchet has ever been moved for,
     // and moved rather than widened because a ratchet that is not tight is not
-    // a ratchet.
+    // a ratchet. Raised 1950 -> 1960 when a tenth of re-rolls started wearing a
+    // helmet (#351): the coin lands on seed 3, whose scalp was a crop, and a
+    // helmet writes a longer name and an axis - measured, 1954.
     // Report the size, because "by how much" is the only useful thing to know
     // when a ratchet fires.
     let size = record.serialized_size().expect("serialises");
     assert!(
-        size < 1950,
+        size < 1960,
         "a whole avatar is {size} bytes, and should still be a couple of kilobytes"
     );
 }

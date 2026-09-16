@@ -31,7 +31,10 @@
 //!   them, so an older client editing a newer client's record writes back what
 //!   it did not understand instead of deleting it.
 //! * **Unknown `$type`s and unknown tokens degrade rather than fail.** See
-//!   [`crate::plan::Archetype`] and [`crate::dress::Sleeve`].
+//!   [`crate::plan::Archetype`], [`crate::dress::Sleeve`] and, since 0.9.0,
+//!   the hair styles: [`HairRecord`] reads a style name it does not know as
+//!   that region's `None` and writes it back. Before 0.9.0 an unknown hair
+//!   style name failed the whole record (#351).
 //!
 //! ## Budget
 //!
@@ -78,6 +81,17 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// [`crate::plan::Rolls`]) mean adding or removing an axis no longer disturbs
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
+///
+/// **6** - a tenth of re-rolled scalps wear a helmet (#351, owner call). A
+/// coin on a NEW stream, `hair.helmet`, is drawn before the card table, and
+/// where it lands the scalp is one of the seven helmet styles (`hair.helmet.style`,
+/// even) with a uniform axis (`hair.helmet.axis`). No existing stream moved and
+/// no existing stream's draw changed: a seed the coin misses - nine in ten,
+/// and every one of seeds 0, 1, 7, 23, 29, 42 and 99 - rebuilds its hair and
+/// everything else bit-identically, and a seed it lands on keeps every axis
+/// but its scalp style. That is still a different head of hair for one stored
+/// seed in ten, which is what this number exists to say, and generation 5 was
+/// bumped for a change of the same kind. No migration: see `HAIR_GENERATION`.
 ///
 /// **5** — the hair priors. Every axis a re-roll draws for hair changed
 /// distribution at once, and none of them changed name:
@@ -136,7 +150,7 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 5;
+pub const GENERATOR_VERSION: u32 = 6;
 
 /// The generation whose hair a record has to be re-rolled to reach.
 ///
@@ -162,6 +176,8 @@ pub const GENERATOR_VERSION: u32 = 5;
 /// colours the current build understands perfectly, and re-drawing its hair
 /// because the priors behind it have improved would restyle somebody's avatar
 /// to fix nothing. This moves only when a record's hair cannot be read at all.
+/// It stayed at 4 for generation 6 (#351) for the same reason: a helmet is a
+/// style this build reads on a record of any generation from 4 on.
 const HAIR_GENERATION: u32 = 4;
 
 /// A field the lexicon requires that this record does not carry.
@@ -233,6 +249,13 @@ pub struct AvatarRecord {
     #[serde(default)]
     pub face: FaceParams,
     /// The hair grown on its head.
+    ///
+    /// **Style names are additive, and a reader older than a name does not
+    /// draw it.** A region naming a style this build does not know draws
+    /// nothing and keeps the name for the rewrite (see [`HairRecord`]). A 0.8
+    /// client does not do even that: it refuses the whole record, so an avatar
+    /// wearing any style new in 0.9.0 - the helmet family and the sculpted
+    /// facial styles - does not load on one (#351, measured on 0.8.1).
     #[serde(default)]
     pub hair: HairRecord,
     /// What it is wearing.
@@ -708,6 +731,12 @@ fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, rolls: &Rolls) {
     eyes.ring = eyes.outer.map(|channel| channel * 0.41);
 }
 
+/// The share of re-rolled heads that wear a helmet scalp style.
+///
+/// Drawn on its own stream, before and apart from the card styles' weights;
+/// see `reroll_hair` (#351, owner call).
+const HELMET_SHARE: f64 = 0.10;
+
 /// Draws a fresh head of hair.
 ///
 /// Its own category. Hair is the loudest thing about a head and the
@@ -758,20 +787,48 @@ fn reroll_hair(hair: &mut HairRecord, rolls: &Rolls, composites: &crate::Composi
     //
     // Provenance: **owner call** for the absence of coupling, **sized by eye**
     // against the render sheet of a rolled population.
-    hair.scalp.style = match rolls.pick("hair.style", &[35.0, 20.0, 20.0, 15.0, 10.0]) {
-        1 => ScalpStyle::Bob {
-            fringe: rolls.range("hair.fringe", 0.0, 1.0),
-        },
-        2 => ScalpStyle::Long {
-            weight: rolls.range("hair.weight", 0.0, 1.0),
-        },
-        3 => ScalpStyle::TiedBack {
-            tail: rolls.range("hair.tail", 0.0, 1.0),
-        },
-        4 => ScalpStyle::Curly {
-            curl: rolls.range("hair.curl", 0.2, 1.0),
-        },
-        _ => ScalpStyle::Crop,
+    //
+    // **A tenth of a rolled population wears a helmet** (#351, owner call), and
+    // the coin is on a stream of its own. Appending the seven helmets to the
+    // card table would have re-drawn every seed: `pick` scales one draw by the
+    // table's total, so measured over 100,000 seeds a tenth of helmets that way
+    // changed the style of 36% of them, a quarter to ANOTHER CARD, and moved
+    // control seed 7. The coin changes exactly the seeds it lands on - none of
+    // seeds 0, 1, 7, 23, 29, 42 or 99 - and every other seed keeps the hair it
+    // had to the byte. Which helmet is an even pick, and its axis is uniform,
+    // for the reason a card style's is. Uncoupled, like the card pick.
+    //
+    // Provenance: **owner call** for the share, the evenness and the coin,
+    // on #351's measurement of what a rolled helmet costs (about 50 triangles
+    // of mean hair per tenth; the dearest measured rolled helmet head, 3,276,
+    // set `hair::clump::MAX_TRIANGLES`).
+    hair.scalp.style = if rolls.chance("hair.helmet", HELMET_SHARE) {
+        let axis = rolls.range("hair.helmet.axis", 0.0, 1.0);
+        match rolls.pick("hair.helmet.style", &[1.0; 7]) {
+            0 => ScalpStyle::Cap { fringe: axis },
+            1 => ScalpStyle::SlickBack { volume: axis },
+            2 => ScalpStyle::Bell { length: axis },
+            3 => ScalpStyle::Bun { height: axis },
+            4 => ScalpStyle::Crest { height: axis },
+            5 => ScalpStyle::Afro { size: axis },
+            _ => ScalpStyle::Braids { rows: axis },
+        }
+    } else {
+        match rolls.pick("hair.style", &[35.0, 20.0, 20.0, 15.0, 10.0]) {
+            1 => ScalpStyle::Bob {
+                fringe: rolls.range("hair.fringe", 0.0, 1.0),
+            },
+            2 => ScalpStyle::Long {
+                weight: rolls.range("hair.weight", 0.0, 1.0),
+            },
+            3 => ScalpStyle::TiedBack {
+                tail: rolls.range("hair.tail", 0.0, 1.0),
+            },
+            4 => ScalpStyle::Curly {
+                curl: rolls.range("hair.curl", 0.2, 1.0),
+            },
+            _ => ScalpStyle::Crop,
+        }
     };
     hair.scalp.cut.length = rolls.range("hair.length", 0.0, 1.0);
     hair.scalp.cut.density = rolls.range("hair.density", 0.35, 1.0);
@@ -1358,6 +1415,7 @@ mod tests {
         // at #204 until this issue: five styles shipped and a re-roll could
         // reach one of them.
         let mut worn = [0usize; 5];
+        let mut helmets = [0usize; 7];
         for record in population(600, 0.0, 30) {
             let slot = match record.hair.scalp.style {
                 ScalpStyle::Crop => 0,
@@ -1366,23 +1424,36 @@ mod tests {
                 ScalpStyle::TiedBack { .. } => 3,
                 ScalpStyle::Curly { .. } => 4,
                 ScalpStyle::None => panic!("a re-roll shaved a head"),
-                // **A re-roll draws no helmet yet** (#346's acceptance, and
-                // #347's and #348's): the SEVEN shell styles are in the
-                // catalogue and on the wire, and what share of a rolled population should wear
-                // one is a decision with the owner at the release slice
-                // (#351). Until then `reroll_hair` picks from the five card
-                // styles by their own weights, and a helmet here means someone
-                // changed that without changing this. Written out rather than
-                // caught by a wildcard, so the next helmet added has to answer
-                // here too.
-                ScalpStyle::Cap { .. }
-                | ScalpStyle::SlickBack { .. }
-                | ScalpStyle::Bell { .. }
-                | ScalpStyle::Bun { .. }
-                | ScalpStyle::Crest { .. }
-                | ScalpStyle::Afro { .. }
-                | ScalpStyle::Braids { .. } => {
-                    panic!("a re-roll drew a helmet, which is #351's decision to make")
+                // **And a tenth wear a helmet** (#351, owner call). Written out
+                // rather than caught by a wildcard, so the next style added
+                // has to answer here too.
+                ScalpStyle::Cap { .. } => {
+                    helmets[0] += 1;
+                    continue;
+                }
+                ScalpStyle::SlickBack { .. } => {
+                    helmets[1] += 1;
+                    continue;
+                }
+                ScalpStyle::Bell { .. } => {
+                    helmets[2] += 1;
+                    continue;
+                }
+                ScalpStyle::Bun { .. } => {
+                    helmets[3] += 1;
+                    continue;
+                }
+                ScalpStyle::Crest { .. } => {
+                    helmets[4] += 1;
+                    continue;
+                }
+                ScalpStyle::Afro { .. } => {
+                    helmets[5] += 1;
+                    continue;
+                }
+                ScalpStyle::Braids { .. } => {
+                    helmets[6] += 1;
+                    continue;
                 }
             };
             worn[slot] += 1;
@@ -1399,6 +1470,66 @@ mod tests {
             worn[0] == *worn.iter().max().expect("five styles"),
             "a crop is no longer the commonest rolled style: {worn:?}"
         );
+        // A tenth of 600 is 60, with a two-sigma band of about 15; written
+        // wide. Every helmet turns up, since each is a seventieth.
+        let helmeted: usize = helmets.iter().sum();
+        assert!(
+            (35..=90).contains(&helmeted),
+            "{helmeted} of 600 rolls wore a helmet, against a share of a tenth: {helmets:?}"
+        );
+        assert!(
+            helmets.iter().all(|count| *count > 0),
+            "a helmet style never turned up in 600 rolls: {helmets:?}"
+        );
+    }
+
+    #[test]
+    fn a_helmet_coin_leaves_every_other_seed_as_it_was() {
+        // The coin's whole claim (#351): the seeds it misses draw exactly the
+        // card style and axis the card table alone would draw. Read against a
+        // copy of that table, since the claim is about what the table would
+        // have done.
+        let mut missed = 0;
+        for seed in 0..2_000 {
+            let rolls = Rolls::new(seed);
+            let mut hair = HairRecord::default();
+            reroll_hair(&mut hair, &rolls, &Composites::default());
+            if rolls.chance("hair.helmet", HELMET_SHARE) {
+                continue;
+            }
+            missed += 1;
+            let alone = match rolls.pick("hair.style", &[35.0, 20.0, 20.0, 15.0, 10.0]) {
+                1 => ScalpStyle::Bob {
+                    fringe: rolls.range("hair.fringe", 0.0, 1.0),
+                },
+                2 => ScalpStyle::Long {
+                    weight: rolls.range("hair.weight", 0.0, 1.0),
+                },
+                3 => ScalpStyle::TiedBack {
+                    tail: rolls.range("hair.tail", 0.0, 1.0),
+                },
+                4 => ScalpStyle::Curly {
+                    curl: rolls.range("hair.curl", 0.2, 1.0),
+                },
+                _ => ScalpStyle::Crop,
+            };
+            assert_eq!(
+                hair.scalp.style, alone,
+                "seed {seed} changed style without its coin"
+            );
+        }
+        assert!(
+            missed > 1_500,
+            "the coin landed on {} of 2,000 seeds",
+            2_000 - missed
+        );
+        // And the named control seeds the whole suite leans on are among them.
+        for seed in [0, 1, 7, 23, 29, 42, 99] {
+            assert!(
+                !Rolls::new(seed).chance("hair.helmet", HELMET_SHARE),
+                "control seed {seed} now rolls a helmet"
+            );
+        }
     }
 
     #[test]
@@ -1698,7 +1829,7 @@ mod tests {
     fn colouring_and_hair_lock_apart_from_each_other() {
         let mut record = AvatarRecord::new("Apart", Archetype::default());
         record.reroll(41);
-        let hair = record.hair;
+        let hair = record.hair.clone();
         let skin = record.skin;
 
         record.locks = LockSet::NONE.with(Category::Hair);
@@ -1895,7 +2026,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 5,
+            GENERATOR_VERSION, 6,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {

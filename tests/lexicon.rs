@@ -523,6 +523,51 @@ fn every_hair_style_the_crate_can_write_is_declared_with_its_axis() {
             "{fragment} lists a name twice"
         );
     }
+
+    // **And the list a reader trusts a name by is the lexicon's own** (#351).
+    // A name missing from `NAMES` would be set aside as unknown on the way in
+    // and the region drawn bald, silently, on a record this build wrote itself;
+    // a name in `NAMES` the lexicon does not declare is the drift above.
+    for (fragment, names) in [
+        ("scalpStyle", ScalpStyle::NAMES),
+        ("browStyle", BrowStyle::NAMES),
+        ("moustacheStyle", MoustacheStyle::NAMES),
+        ("chinStyle", ChinStyle::NAMES),
+        ("flankStyle", FlankStyle::NAMES),
+    ] {
+        assert_eq!(
+            known(fragment),
+            names
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>(),
+            "{fragment}: the names a reader checks against are not the lexicon's"
+        );
+    }
+}
+
+#[test]
+fn a_record_naming_a_style_from_a_newer_build_still_loads_and_keeps_it() {
+    // **What 0.8.1 did not do** (#351, measured): a record naming a style the
+    // reader did not know failed to decode at all, and the whole avatar with
+    // it. The lexicon has always asked a reader to draw nothing instead. Read
+    // through the full record, since that is the thing a client fetches.
+    let mut value = serde_json::to_value(AvatarRecord::default()).expect("serialises");
+    let from_later = serde_json::json!({ "name": "mohawk", "height": 800 });
+    value["hair"]["scalp"]["style"] = from_later.clone();
+    value["hair"]["chin"]["style"] = serde_json::json!({ "name": "forked" });
+    let mut record: AvatarRecord = serde_json::from_value(value).expect("the avatar still loads");
+    record.sanitize();
+    assert_eq!(record.hair.scalp.style, ScalpStyle::None);
+    assert_eq!(record.hair.chin.style, ChinStyle::None);
+    let back = serde_json::to_value(&record).expect("serialises");
+    assert_eq!(back["hair"]["scalp"]["style"], from_later);
+    assert_eq!(back["hair"]["chin"]["style"]["name"], "forked");
+    // Control: a record this build wrote comes back as exactly what it wrote.
+    let own = AvatarRecord::default();
+    let written = serde_json::to_value(&own).expect("serialises");
+    let reread: AvatarRecord = serde_json::from_value(written.clone()).expect("loads");
+    assert_eq!(serde_json::to_value(&reread).expect("serialises"), written);
 }
 
 /// One style, as the record writes it.

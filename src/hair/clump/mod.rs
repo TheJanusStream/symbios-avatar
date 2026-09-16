@@ -30,7 +30,12 @@
 //!
 //! [`Growth::grown`] carries a per-region count of clumps and triangles, because
 //! hair can quietly become most of a triangle budget, and the way that
-//! happens is nobody being able to say which part of it is expensive.
+//! happens is nobody being able to say which part of it is expensive. A
+//! region's closed solids - a helmet's shell, a sculpted face, a knot's lump -
+//! are drawn here beside its cards and counted on the same line, the shell on
+//! a line of its own (#345). [`grow_head`] tiers the whole head under
+//! [`MAX_TRIANGLES`] by thinning cards; [`grow_tiers`] grows the far tier as
+//! well, from the same root stream (#350).
 
 pub mod loft;
 pub mod scatter;
@@ -439,7 +444,36 @@ pub struct Sowing<'a> {
 /// (#311 spent them on the swelled chest's own refinement pass; #312 made
 /// that pass select by relief and gave most of them back, and the target
 /// came down to meet it. This stays at 2,850.)
-pub const MAX_TRIANGLES: usize = 2_850;
+///
+/// **RECONCILED AT THE RELEASE SLICE, 2,850 -> 3,300** (#351, 2026-09-16,
+/// owner call on measurement). The hair overhaul (#338) relaxed nothing here,
+/// per the #308 rule that a rail moves once at the end, and what it did to the
+/// FLOOR is the reason this moved. Three things were re-measured rather than
+/// quoted:
+///
+/// - **The floor had crept to 18 triangles under the constant.** A helmet's
+///   shell is a fixed grid no tier can thin (#347), so the dearest head #209's
+///   tier test grows is now a nape bun under the full beard set at 2,832 (seed
+///   0, density 0, where a density cannot reach the shell).
+/// - **The test's fixed face is not the dearest a re-roll makes.** Over 300
+///   rolled seeds, a helmet on a seed's OWN rolled cut and beard reaches 3,276
+///   (seed 102 as rolled, a bun) - and since #351 a tenth of re-rolls draw a
+///   helmet. At 2,850 the tier would have thinned 108 of 6,300 such heads and
+///   at 3,200 24 on two bodies; card styles on the same faces never pass
+///   3,148. 3,300 clears the dearest measured by 24, and the tier test now
+///   grows seed 102's own face beside its fixed one.
+/// - **The leftover is 3,492** (dearest bald body 28,708 at seed 1 long broad,
+///   unchanged since #347), so this is inside it and inside the upper rail's
+///   four fifths. The dearest legal hair is 3,474 untiered (seed 29 long broad;
+///   the 3,390 quoted since #347 was seed 42's, the head the test prints), and
+///   the product corner under this ceiling is 31,962 against a 32,200 target.
+///
+/// What that leftover does NOT say, found on the same run and filed as #353:
+/// the six seeds every budget sweep visits are not the dearest bodies. Rolled
+/// bald bodies reach 31,722 (seed 175) and 32,408 on a long broad head (seed
+/// 237), where the leftover under the target is negative. Until #353 widens
+/// the sweep, this constant is the leftover over the six seeds and says so.
+pub const MAX_TRIANGLES: usize = 3_300;
 
 /// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].
 ///

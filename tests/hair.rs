@@ -4372,3 +4372,88 @@ fn a_far_tier_is_a_closed_solid_off_the_skin_with_the_jaw_shut_and_open() {
         }
     }
 }
+
+#[test]
+fn a_faceted_solid_ships_no_vertex_that_no_face_references() {
+    // **The orphans #350 found and #351 removed.** `facet` gives each face of a
+    // faceted solid its own corners and, until #351, left the originals in the
+    // buffer referenced by nothing: 830 on every faceted cap, bun and crest, and
+    // 72, 134, 154 and 240 on the sculpted brows, moustache, chin and flanks,
+    // on all three measured heads - uploaded by every consumer for nothing.
+    // Read off the hair the body ships, whole, since a vertex an index buffer
+    // does not reach is invisible to every other guard here.
+    let styles: Vec<(&str, AvatarRecord)> = {
+        let with = |name: &'static str, set: &dyn Fn(&mut AvatarRecord)| {
+            let mut record = AvatarRecord::new("Orphans", Archetype::default());
+            set(&mut record);
+            (name, record)
+        };
+        vec![
+            with("cap", &|r| {
+                r.hair.scalp.style = ScalpStyle::Cap { fringe: 0.0 }
+            }),
+            with("bun", &|r| {
+                r.hair.scalp.style = ScalpStyle::Bun { height: 0.0 }
+            }),
+            with("crest", &|r| {
+                r.hair.scalp.style = ScalpStyle::Crest { height: 1.0 }
+            }),
+            with("sculpted face", &|r| {
+                r.hair.scalp.style = ScalpStyle::None;
+                r.hair.brows.style = BrowStyle::Sculpted;
+                r.hair.moustache.style = MoustacheStyle::Sculpted { flare: 1.0 };
+                r.hair.chin.style = ChinStyle::Sculpted { length: 1.0 };
+                r.hair.flanks.style = FlankStyle::Sculpted;
+            }),
+            // Controls: a smooth shell and a card style never had any.
+            with("bell", &|r| {
+                r.hair.scalp.style = ScalpStyle::Bell { length: 1.0 }
+            }),
+            with("crop", &|r| r.hair.scalp.style = ScalpStyle::Crop),
+        ]
+    };
+    for seed in [None, Some(42), Some(7)] {
+        for (name, template) in &styles {
+            let mut record = template.clone();
+            if let Some(seed) = seed {
+                let hair = record.hair.clone();
+                record.reroll(seed);
+                record.hair = hair;
+            }
+            record.sanitize();
+            let avatar = Avatar::build(&record).expect("a biped builds");
+            let hair = &avatar.parts.hair.as_ref().expect("grows hair").mesh;
+            let mut used = vec![false; hair.vertex_count()];
+            for face in &hair.faces {
+                for at in face {
+                    used[*at as usize] = true;
+                }
+            }
+            let orphans = used.iter().filter(|used| !**used).count();
+            assert_eq!(
+                orphans,
+                0,
+                "{name} on seed {seed:?} ships {orphans} of {} hair vertices no face references",
+                hair.vertex_count()
+            );
+            // Liveness: a faceted solid really was split - it carries more
+            // vertices than distinct positions - so the reading above is of a
+            // mesh `facet` ran on, not one it skipped.
+            if !matches!(*name, "bell" | "crop") {
+                let mut distinct: Vec<[u32; 3]> = hair
+                    .positions
+                    .iter()
+                    .map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()])
+                    .collect();
+                distinct.sort_unstable();
+                distinct.dedup();
+                assert!(
+                    hair.vertex_count() > distinct.len() * 2,
+                    "{name} on seed {seed:?}: {} vertices over {} positions is not a faceted solid",
+                    hair.vertex_count(),
+                    distinct.len()
+                );
+            }
+        }
+    }
+}

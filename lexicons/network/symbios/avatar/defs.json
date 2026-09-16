@@ -664,7 +664,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none. They should still load the rest of the record, and keep the unrecognised style object as it was when they write the record back unless the owner has chosen another style.",
           "knownValues": [
             "none",
             "crop",
@@ -747,7 +747,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none. They should still load the rest of the record, and keep the unrecognised style object as it was when they write the record back unless the owner has chosen another style.",
           "knownValues": [
             "none",
             "natural",
@@ -767,7 +767,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none. They should still load the rest of the record, and keep the unrecognised style object as it was when they write the record back unless the owner has chosen another style.",
           "knownValues": [
             "none",
             "chevron",
@@ -806,7 +806,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none. They should still load the rest of the record, and keep the unrecognised style object as it was when they write the record back unless the owner has chosen another style.",
           "knownValues": [
             "none",
             "goatee",
@@ -845,7 +845,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none.",
+          "description": "Which style. Readers that do not recognise a value should draw nothing rather than substitute another style: a haircut nobody chose is worse than none. They should still load the rest of the record, and keep the unrecognised style object as it was when they write the record back unless the owner has chosen another style.",
           "knownValues": [
             "none",
             "sideburns",

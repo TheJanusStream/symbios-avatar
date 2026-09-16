@@ -9,24 +9,36 @@ budget figures have a history of being true on the day and wrong within a week.
 
 | constant | value | where |
 | --- | --- | --- |
-| `TRIANGLE_TARGET` | 30,000 | `tests/budget.rs` — the number the engine is judged by (WebGL2 tier) |
-| `TRIANGLE_CEILING` | 27,850 | `tests/budget.rs` — the ratchet: today's high-water mark, not a goal |
-| `MESH_TARGET` / `MESH_CEILING` | 4 draws | `tests/budget.rs` — skin, hair, cloth, eye; each justified by a material the others cannot provide |
-| `hair::clump::MAX_TRIANGLES` | 3,200 | `src/hair/clump/mod.rs` — what is left for hair once everything else is paid for, measured at the *dearest* body, not the default, and re-measured by a test rather than quoted |
+| `TRIANGLE_TARGET` | 32,200 | `tests/budget.rs` - the number the engine is judged by (WebGL2 tier) |
+| `TRIANGLE_CEILING` | 30,200 | `tests/budget.rs` - the ratchet: today's high-water mark, not a goal |
+| `MESH_TARGET` / `MESH_CEILING` | 4 draws | `tests/budget.rs` - skin, hair, cloth, eye; each justified by a material the others cannot provide |
+| `hair::clump::MAX_TRIANGLES` | 3,300 | `src/hair/clump/mod.rs` - what is left for hair once everything else is paid for, measured at the *dearest* body, not the default, and re-measured by a test rather than quoted; it also has a *floor*, the dearest head a re-roll can grow, which the tier must never trim |
 
-The current figures (stale the moment anything lands — re-run):
+The figures as reconciled at the 0.9.0 release slice (#351, 2026-09-16)  - 
+stale the moment anything lands, re-run:
 
-- default body: **25,726**
-- dearest head-axis corner: **27,786** (seed 42, long broad)
-- dearest bald body: **26,670** (seed 42, long broad) — what the hair ceiling is
-  the leftover of
-- dearest *product* corner — greediest legal hair on the dearest head: **29,856**
+- default body: **28,444**
+- dearest head-axis corner: **30,116** (seed 1, long broad)
+- dearest bald body: **28,708** (seed 1, long broad) - leaving 3,492 under the
+  target, which is what the hair ceiling is the leftover of
+- greedy-hair body: **30,314**
+- dearest *product* corner - greediest legal hair on the dearest head:
+  **31,962** (seed 1, long broad)
+- dearest legal hair, untiered: **3,474** (seed 29, long broad); the test prints
+  seed 42's, 3,390
+- the hair ceiling's floor: a helmet on a rolled face, **3,276** (seed 102 as
+  rolled, a bun); on the tier test's fixed beard, 2,832
+- the far hair tier (`AvatarConfig::far_hair`, #350): at most **664** on a
+  rolled face, **2,232** under the greediest face and cut; never more than the
+  near tier it stands for, and not counted against `MAX_TRIANGLES`
 
-So the working headroom is about 144 against the target at the product corner and
-64 against the ratchet at the sweep corner. The product corner is now bounded by
-construction rather than by a ratchet: the dearest bald body plus the hair
-ceiling, both of which a test re-measures. Anything that spends geometry must
-still name what pays for it.
+**What these figures do not cover** (#353, open): every sweep in
+`tests/budget.rs` visits six seeds, and they are not the dearest bodies a
+re-roll makes. Over 300 rolled seeds, bald bodies reach **31,722** as rolled
+(seed 175) and **32,408** on a long broad head (seed 237); built as rolled, 14
+of 300 exceed the ceiling and 3 the target (65 and 6 at long broad), the
+dearest **33,224** and **34,112**. It is the body, not the hair. Until #353
+lands, the constants above hold against the corners the suite measures.
 
 ## How to measure
 
@@ -85,6 +97,20 @@ target while every budget test in this file passed**. The fix is that
 `the_dearest_variant_of_each_region_is_the_one_the_greedy_record_wears` costs
 every style in every catalogue on two bodies and fails naming the winner, so the
 corner is derived rather than picked. Any new catalogue anywhere owes the same.
+
+**A sweep of six seeds is six bodies, not the population.** The head's axes
+are pinned to their dear ends because a seed draws them timidly (#61), and the
+same was never done for the rest of a body: #351 rolled 300 seeds and found
+bald bodies 3,700 triangles past the dearest the six reach (#353). Before a
+ratchet is trusted, roll a population and compare its tail with the sweep's
+corner.
+
+**A tier cannot squeeze a fixed grid.** The hair ceiling trims a region by
+rooting fewer clumps, and a helmet's shell is `COLUMNS x ROWS` whatever it is
+asked for (#347). So once a helmet can be worn, the floor under
+`MAX_TRIANGLES` is the shell plus everything a re-roll can put beside it, and a
+tier test that grows one fixed beard under it measures a smaller floor than a
+rolled face does (2,832 against 3,276, #351).
 
 **A count is set in cards and paid for in triangles.** Four of the five hair
 regions have had their counts re-set for exactly this reason, and the scalp's

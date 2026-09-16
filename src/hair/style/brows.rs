@@ -62,6 +62,17 @@ pub enum BrowStyle {
     Sculpted,
 }
 
+impl BrowStyle {
+    /// Every name this build writes, in declaration order.
+    ///
+    /// **What a reader checks a name against before it trusts one** (#351). A
+    /// record from a newer build can name a style this one has never heard
+    /// of, and [`crate::hair::HairRecord`] reads such a name as `none` and
+    /// keeps it for the rewrite rather than refusing the whole avatar.
+    /// `tests/lexicon.rs` holds this list to the lexicon's knownValues.
+    pub const NAMES: &'static [&'static str] = &["none", "natural", "thick", "sculpted"];
+}
+
 /// How long a streak is at full length, as a share of the ridge's own span.
 ///
 /// **A share rather than millimetres**, for the reason every boundary in the
