@@ -52,6 +52,8 @@
 //! shell costs what the head's size dictates, which is what made the discarded
 //! one affordable and is why nothing here is a wire field.
 
+pub mod face;
+
 use std::f32::consts::TAU;
 
 use glam::{Vec2, Vec3};
@@ -1856,8 +1858,8 @@ const RIDGE_FADE: f32 = 0.60;
 /// cost in triangles.
 ///
 /// **Rigid to the head joint**: a scalp shell moves with nothing else, which is
-/// what every scalp card's tip already does. A facial shell hands its binding
-/// over as a beard's cards do, and that is #349's.
+/// what every scalp card's tip already does. A facial solid is bound as the skin
+/// it covers is (#349, see [`face`]).
 pub(super) fn loft(
     into: &mut PolyMesh,
     regions: &Follicles,

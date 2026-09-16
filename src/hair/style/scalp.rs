@@ -493,6 +493,10 @@ impl Style for ScalpStyle {
             Self::Braids { rows } => *rows = scaled::quantize(rows.clamp(0.0, 1.0)),
         }
     }
+
+    fn paint_floor(&self) -> Option<f32> {
+        self.shaved()
+    }
 }
 
 impl ScalpStyle {

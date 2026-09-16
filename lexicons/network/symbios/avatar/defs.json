@@ -751,7 +751,8 @@
           "knownValues": [
             "none",
             "natural",
-            "thick"
+            "thick",
+            "sculpted"
           ],
           "default": "none"
         }
@@ -771,7 +772,8 @@
             "none",
             "chevron",
             "handlebar",
-            "pencil"
+            "pencil",
+            "sculpted"
           ],
           "default": "none"
         },
@@ -784,6 +786,12 @@
         "ride": {
           "type": "integer",
           "description": "PENCIL only: how high the line sits. 0 on the lip's own border, 1000 halfway to the nostrils.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "flare": {
+          "type": "integer",
+          "description": "SCULPTED only: how far the solid's ends flare past the mouth's corners. 0 a chevron, 1000 a handlebar turned up.",
           "minimum": 0,
           "maximum": 1000
         }
@@ -803,7 +811,8 @@
             "none",
             "goatee",
             "full",
-            "braided"
+            "braided",
+            "sculpted"
           ],
           "default": "none"
         },
@@ -816,6 +825,12 @@
         "twist": {
           "type": "integer",
           "description": "BRAIDED only: how tightly the rope turns. 0 a loose rope, 1000 a hard twist.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "length": {
+          "type": "integer",
+          "description": "SCULPTED only: how far the solid mass hangs below the chin. 0 a short boxed beard, 1000 a long spade.",
           "minimum": 0,
           "maximum": 1000
         }
@@ -834,7 +849,8 @@
           "knownValues": [
             "none",
             "sideburns",
-            "full_connect"
+            "full_connect",
+            "sculpted"
           ],
           "default": "none"
         },

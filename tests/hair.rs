@@ -2827,3 +2827,811 @@ fn every_card_is_cut_from_one_lane_of_the_strand_mask() {
         );
     }
 }
+
+/// A body wearing #349's SCULPTED facial styles and nothing else on its head,
+/// and the pieces the facial guards read it with.
+///
+/// **Bald but for the regions asked for, and the scalp too**, for #346's
+/// reason: a guard about a chin's solid has to be reading the chin's, and a
+/// scalp shell would be the biggest solid on the head.
+struct Sculpted {
+    avatar: Avatar,
+    follicles: Follicles,
+    origin: Vec3,
+}
+
+/// Which sculpted styles one corner wears, by region.
+#[derive(Clone, Copy, Debug)]
+struct Wears {
+    brows: BrowStyle,
+    moustache: MoustacheStyle,
+    chin: ChinStyle,
+    flanks: FlankStyle,
+}
+
+impl Wears {
+    const NONE: Self = Self {
+        brows: BrowStyle::None,
+        moustache: MoustacheStyle::None,
+        chin: ChinStyle::None,
+        flanks: FlankStyle::None,
+    };
+
+    /// How many solids these styles draw: one a region, two for the regions
+    /// that come in pairs.
+    fn solids(&self) -> usize {
+        usize::from(self.brows != BrowStyle::None) * 2
+            + usize::from(self.moustache != MoustacheStyle::None)
+            + usize::from(self.chin != ChinStyle::None)
+            + usize::from(self.flanks != FlankStyle::None) * 2
+    }
+}
+
+impl Sculpted {
+    fn wearing(seed: Option<i64>, wears: Wears) -> Self {
+        let mut record = AvatarRecord::new("Sculpted", Archetype::default());
+        if let Some(seed) = seed {
+            record.reroll(seed);
+        }
+        let regions = record.hair.regions;
+        let mut hair = symbios_avatar::hair::HairRecord {
+            regions,
+            ..symbios_avatar::hair::HairRecord::bald()
+        };
+        hair.brows.style = wears.brows;
+        hair.moustache.style = wears.moustache;
+        hair.chin.style = wears.chin;
+        hair.flanks.style = wears.flanks;
+        record.hair = hair;
+        record.sanitize();
+        let avatar = Avatar::build(&record).expect("a biped builds");
+        let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
+        let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+        let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
+        Self {
+            origin: follicles.origin(),
+            avatar,
+            follicles,
+        }
+    }
+
+    /// The jaw's pivot: `head -> pivot -> tip`, the tip and its parent both
+    /// markers - the chin catalogue's own lookup.
+    fn pivot(&self) -> usize {
+        let rig = &self.avatar.rig;
+        let tip = (0..rig.len())
+            .find(|&tip| {
+                rig.joints[tip].marker
+                    && rig.joints[tip]
+                        .parent
+                        .is_some_and(|at| rig.joints[at].marker)
+            })
+            .expect("a humanoid has a jaw");
+        rig.joints[tip].parent.expect("the tip hangs off the pivot")
+    }
+
+    /// The body and the hair with the jaw opened `degrees`, both head-local, and
+    /// the posed body's own shading normals.
+    fn posed(&self, degrees: f32) -> Posed {
+        use symbios_avatar::Quat;
+        use symbios_avatar::anim::Pose;
+        let rig = &self.avatar.rig;
+        let mut pose = Pose::rest(rig);
+        pose.rotations[self.pivot()] = Quat::from_rotation_x(degrees.to_radians());
+        let mut body = self.avatar.parts.body.clone();
+        body.skin = self.avatar.parts.weights.vertices.clone();
+        let mut body = pose.forward(rig).deform_mesh(rig, &body);
+        let mut hair = self
+            .avatar
+            .posed(&pose, 0.0)
+            .into_iter()
+            .find(|mesh| mesh.kind == MeshKind::Hair)
+            .expect("a sculpted style draws hair")
+            .mesh;
+        for at in body.positions.iter_mut().chain(hair.positions.iter_mut()) {
+            *at -= self.origin;
+        }
+        Posed {
+            normals: body.shading_normals(),
+            body,
+            hair,
+            rest: self
+                .avatar
+                .parts
+                .body
+                .positions
+                .iter()
+                .map(|at| *at - self.origin)
+                .collect(),
+            follicles: self.follicles.clone(),
+        }
+    }
+}
+
+/// One posed corner: the body, its normals, and the hair, head-local, with the
+/// body's rest positions and the head's regions to ask a mask at.
+struct Posed {
+    body: symbios_avatar::PolyMesh,
+    normals: Vec<Vec3>,
+    hair: symbios_avatar::PolyMesh,
+    rest: Vec<Vec3>,
+    follicles: Follicles,
+}
+
+impl Posed {
+    /// The hair's solids as face lists, split by connected component over
+    /// corners welded exactly, in the order they were DRAWN - which is
+    /// `Follicle::ALL`'s: brows, moustache, chin, flanks.
+    fn solids(&self) -> Vec<Vec<&Vec<u32>>> {
+        let mesh = &self.hair;
+        let every: Vec<&Vec<u32>> = mesh.faces.iter().collect();
+        let held = welded(mesh, &every);
+        let mut parent: Vec<u32> = (0..mesh.positions.len() as u32).collect();
+        fn root(parent: &mut [u32], of: u32) -> u32 {
+            let mut here = of;
+            while parent[here as usize] != here {
+                parent[here as usize] = parent[parent[here as usize] as usize];
+                here = parent[here as usize];
+            }
+            here
+        }
+        for face in &held {
+            for pair in face.windows(2) {
+                let (one, two) = (root(&mut parent, pair[0]), root(&mut parent, pair[1]));
+                parent[one as usize] = two;
+            }
+        }
+        let mut parts: Vec<(u32, Vec<&Vec<u32>>)> = Vec::new();
+        for (index, face) in mesh.faces.iter().enumerate() {
+            let key = root(&mut parent, held[index][0]);
+            match parts.iter_mut().find(|(at, _)| *at == key) {
+                Some((_, faces)) => faces.push(face),
+                None => parts.push((key, vec![face])),
+            }
+        }
+        parts.into_iter().map(|(_, faces)| faces).collect()
+    }
+
+    /// The signed height of a head-local point over the posed body, and the
+    /// body's normal where it is nearest: FAR OUTSIDE where nothing is within
+    /// 200 mm (#348's lesson for every "nearest within" reading).
+    fn skin(&self, point: Vec3) -> (f32, Vec3) {
+        const REACH: f32 = 0.200;
+        let mut best = (f32::MAX, REACH, Vec3::Y);
+        for face in &self.body.faces {
+            let first = self.body.positions[face[0] as usize];
+            if first.distance_squared(point) > REACH * REACH {
+                continue;
+            }
+            for fan in 1..face.len() - 1 {
+                let b = self.body.positions[face[fan] as usize];
+                let c = self.body.positions[face[fan + 1] as usize];
+                let (nearest, _) = closest_on_triangle(point, first, b, c);
+                let apart = nearest.distance_squared(point);
+                if apart < best.0 {
+                    let normal = (self.normals[face[0] as usize]
+                        + self.normals[face[fan] as usize]
+                        + self.normals[face[fan + 1] as usize])
+                        .normalize_or(Vec3::Y);
+                    best = (
+                        apart,
+                        (point - nearest).dot(normal).signum() * apart.sqrt(),
+                        normal,
+                    );
+                }
+            }
+        }
+        (best.1, best.2)
+    }
+}
+
+/// Every sculpted facial style at both ends of its own axis, one region at a
+/// time, on every measured head (#349): the corners the facial guards ask.
+fn sculpted_corners() -> Vec<(Option<i64>, Wears)> {
+    let mut all = Vec::new();
+    for seed in [None, Some(42), Some(7)] {
+        for wears in [
+            Wears {
+                brows: BrowStyle::Sculpted,
+                ..Wears::NONE
+            },
+            Wears {
+                moustache: MoustacheStyle::Sculpted { flare: 0.0 },
+                ..Wears::NONE
+            },
+            Wears {
+                moustache: MoustacheStyle::Sculpted { flare: 1.0 },
+                ..Wears::NONE
+            },
+            Wears {
+                chin: ChinStyle::Sculpted { length: 0.0 },
+                ..Wears::NONE
+            },
+            Wears {
+                chin: ChinStyle::Sculpted { length: 1.0 },
+                ..Wears::NONE
+            },
+            Wears {
+                flanks: FlankStyle::Sculpted,
+                ..Wears::NONE
+            },
+        ] {
+            all.push((seed, wears));
+        }
+    }
+    all
+}
+
+/// The jaw angles the facial guards pose: shut, and the acceptance's 20 degrees.
+const JAW: [f32; 2] = [0.0, 20.0];
+
+#[test]
+fn a_sculpted_facial_solid_is_closed_and_off_the_skin_with_the_jaw_shut_and_open() {
+    // **#345's closed-solid guard, asked of the facial family and given a POSED
+    // corner** (#349). A facial solid is bound as the skin it covers is - the
+    // chin's to the mandible, a flank's from the head at its beard line to the
+    // jaw under it - so a solid that is closed and clear at rest is a claim
+    // about rest only. The jaw opened twenty degrees is the acceptance's own
+    // pose, and it is where the first builds went wrong: a hang handed over to
+    // the head sheared through itself (175-degree creases, half its volume),
+    // and a bevel bound to the skin half way down the hang's back wall swung
+    // 37 mm into the neck.
+    //
+    // CONTROL, measured before any solid was trusted with this reading: the
+    // body's OWN chin and flank skin lifted 3 mm off itself and posed with it
+    // stays outside the posed body at 0, 12, 16 and 20 degrees on all three
+    // heads - so a solid that reads under the skin posed is the solid's fault
+    // and not the jaw's.
+    for (roll, wears) in sculpted_corners() {
+        let sculpted = Sculpted::wearing(roll, wears);
+        let growth = sculpted
+            .avatar
+            .parts
+            .hair
+            .as_ref()
+            .expect("a sculpted style grows");
+        for degrees in JAW {
+            let corner = format!("seed {roll:?} wearing {wears:?}, jaw {degrees}");
+            let posed = sculpted.posed(degrees);
+            let solids = posed.solids();
+            assert_eq!(
+                solids.len(),
+                wears.solids(),
+                "{corner}: {} solids drawn",
+                solids.len()
+            );
+            for (index, faces) in solids.iter().enumerate() {
+                let held = welded(&posed.hair, faces);
+                let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
+                let mut directed: HashMap<(u32, u32), usize> = HashMap::new();
+                for face in &held {
+                    for (at, from) in face.iter().enumerate() {
+                        let to = face[(at + 1) % face.len()];
+                        *edges.entry((*from.min(&to), *from.max(&to))).or_default() += 1;
+                        *directed.entry((*from, to)).or_default() += 1;
+                    }
+                }
+                let open = edges.values().filter(|count| **count != 2).count();
+                assert_eq!(open, 0, "{corner}: solid {index} has {open} open edges");
+                let clashing = directed
+                    .iter()
+                    .filter(|((from, to), count)| {
+                        **count > 1 || !directed.contains_key(&(*to, *from))
+                    })
+                    .count();
+                assert_eq!(
+                    clashing, 0,
+                    "{corner}: solid {index} has {clashing} directed edges that are not a clean pair"
+                );
+                let volume: f32 = faces
+                    .iter()
+                    .flat_map(|face| {
+                        (1..face.len() - 1).map(move |fan| [face[0], face[fan], face[fan + 1]])
+                    })
+                    .map(|tri| {
+                        let [a, b, c] = tri.map(|at| posed.hair.positions[at as usize]);
+                        a.dot(b.cross(c)) / 6.0
+                    })
+                    .sum();
+                assert!(
+                    volume > 0.0,
+                    "{corner}: solid {index} encloses {:.2} cm3, so it is wound inside out",
+                    volume * 1e6
+                );
+                let mut corners: Vec<u32> =
+                    faces.iter().flat_map(|face| face.iter().copied()).collect();
+                corners.sort_unstable();
+                corners.dedup();
+                let (mut under, mut worst, mut sunk) = (0usize, f32::MAX, 0usize);
+                for at in &corners {
+                    let point = posed.hair.positions[*at as usize];
+                    let (over, normal) = posed.skin(point);
+                    worst = worst.min(over);
+                    under += usize::from(over < 0.0);
+                    // Liveness: the same vertex sunk 3 mm past the skin reads
+                    // under it.
+                    let inward = point - normal * (over + 0.003);
+                    sunk += usize::from(posed.skin(inward).0 < 0.0);
+                }
+                println!(
+                    "{corner}: solid {index} closed, {:.2} cm3, nearest the skin {:+.2} mm, {sunk} of {} sunk read under",
+                    volume * 1e6,
+                    worst * 1000.0,
+                    corners.len()
+                );
+                assert_eq!(
+                    under,
+                    0,
+                    "{corner}: {under} of solid {index}'s {} vertices are under the skin, worst {:.2} mm",
+                    corners.len(),
+                    worst * 1000.0
+                );
+                assert!(
+                    sunk * 4 >= corners.len() * 3,
+                    "{corner}: only {sunk} of {} vertices sunk 3 mm read under the skin, so the \
+                     reading cannot see one that is",
+                    corners.len()
+                );
+            }
+            if degrees == 0.0 {
+                let drawn: usize = posed.hair.faces.iter().map(|face| face.len() - 2).sum();
+                let counted: usize = growth.grown.iter().map(|grown| grown.shell).sum();
+                assert_eq!(
+                    counted, drawn,
+                    "{corner}: the ledger says {counted} triangles of solid and the mesh draws {drawn}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_sculpted_facial_solid_never_folds_over_itself() {
+    // **#348's fold guard, asked of the facial family** (#349), which has more
+    // ways to fold than a scalp shell: every surface is walked along rays so a
+    // column cannot fold, but a hang, a flare and a bevel can. The first builds
+    // folded all three ways - a bevel turned level on the moustache's bottom
+    // edge (up to 180 degrees), a hang turned toward down along a direction
+    // still nearly level (up to 176), and a hang handed over to the head
+    // shearing through itself with the jaw open (up to 175).
+    //
+    // A low-poly facial solid has a boxed edge where a smooth scalp shell has a
+    // bevel, so its sharpest honest turn is higher than a scalp shell's 105:
+    // see FACIAL_CREASE for what was measured. Asked shut and open, because the
+    // flanks shear with the skin and the chin moves with the mandible.
+    for (roll, wears) in sculpted_corners() {
+        let sculpted = Sculpted::wearing(roll, wears);
+        for degrees in JAW {
+            let corner = format!("seed {roll:?} wearing {wears:?}, jaw {degrees}");
+            let posed = sculpted.posed(degrees);
+            for (index, faces) in posed.solids().iter().enumerate() {
+                let normals: Vec<Vec3> = faces
+                    .iter()
+                    .map(|face| facing_and_area(&posed.hair, face).0)
+                    .collect();
+                let held = welded(&posed.hair, faces);
+                let (sharp, worst) = folds(&normals, &held, FACIAL_CREASE);
+                println!(
+                    "{corner}: solid {index} sharpest turn {:.0} degrees",
+                    worst.clamp(-1.0, 1.0).acos().to_degrees()
+                );
+                assert_eq!(
+                    sharp,
+                    0,
+                    "{corner}: {sharp} edges of solid {index} turn past {:.0} degrees, the sharpest \
+                     {:.0} - the solid folds over itself",
+                    FACIAL_CREASE.acos().to_degrees(),
+                    worst.clamp(-1.0, 1.0).acos().to_degrees()
+                );
+                // Liveness: a face turned over reads as the fold it is. Tried at
+                // four faces rather than one, because a face whose neighbours
+                // already meet it square (a boxed edge's) turns them square the
+                // other way and reads no sharper.
+                let live = [0usize, 1, 2, 3].iter().any(|quarter| {
+                    let mut turned = normals.clone();
+                    let at = turned.len() * quarter / 4;
+                    turned[at] = -turned[at];
+                    folds(&turned, &held, FACIAL_CREASE).0 > 0
+                });
+                assert!(
+                    live,
+                    "{corner}: no face turned over reads a crease, so the reading cannot see a fold"
+                );
+            }
+        }
+    }
+}
+
+/// How sharply two faces of a sculpted facial solid may turn at an edge, as the
+/// cosine of the angle between their normals: 148 degrees.
+///
+/// Measured on every corner shut and open, the sharpest honest turn anywhere is
+/// 144 degrees, at a chin's boxed corner where the hang's front meets its side
+/// wall - against a scalp shell's bevelled 105, since a low-poly beard has a
+/// corner where a smooth cap has a lip. The folds the first builds had were 173
+/// to 180 (#349).
+const FACIAL_CREASE: f32 = -0.85;
+
+#[test]
+fn a_sculpted_chin_lies_over_the_flanks_with_neither_inside_the_other() {
+    // **Two shells must meet** (#349's brief, and #339/#345's rule for any layer
+    // over another): the chin's solid and each flank's overlap at the patch edge
+    // so the seam is hidden, and neither may poke through the other. Read with
+    // `PolyMesh::contains` against the closed solid itself, with the liveness
+    // points IN the wall (0.3 mm inside each face; every wall is at least the
+    // thin edge, 1.1 mm and more) - #345's lesson that a step-and-see through a
+    // thin wall misses it.
+    //
+    // What it caught: on seed 42 the chin's side-back corner sat inside a flank
+    // and a flank's front corner inside the chin, at both ends of the axis,
+    // because the chin's lift over the flanks was eased in by a weight the
+    // flanks' solid already starts at, and because a stand taken along a ray
+    // that grazes the jaw is a few millimetres of ray under one of skin.
+    for roll in [None, Some(42), Some(7)] {
+        for length in [0.0f32, 1.0] {
+            let wears = Wears {
+                chin: ChinStyle::Sculpted { length },
+                flanks: FlankStyle::Sculpted,
+                ..Wears::NONE
+            };
+            let sculpted = Sculpted::wearing(roll, wears);
+            for degrees in JAW {
+                let corner = format!("seed {roll:?} chin length {length}, jaw {degrees}");
+                let posed = sculpted.posed(degrees);
+                let solids = posed.solids();
+                assert_eq!(solids.len(), 3, "{corner}: {} solids", solids.len());
+                let meshes: Vec<symbios_avatar::PolyMesh> = solids
+                    .iter()
+                    .map(|faces| symbios_avatar::PolyMesh {
+                        positions: posed.hair.positions.clone(),
+                        faces: faces.iter().map(|face| (*face).clone()).collect(),
+                        ..Default::default()
+                    })
+                    .collect();
+                let vertices = |faces: &Vec<&Vec<u32>>| {
+                    let mut all: Vec<u32> =
+                        faces.iter().flat_map(|face| face.iter().copied()).collect();
+                    all.sort_unstable();
+                    all.dedup();
+                    all
+                };
+                for (one, two) in [(0usize, 1usize), (0, 2), (1, 0), (2, 0)] {
+                    let inside = vertices(&solids[one])
+                        .iter()
+                        .filter(|at| meshes[two].contains(posed.hair.positions[**at as usize]))
+                        .count();
+                    assert_eq!(
+                        inside, 0,
+                        "{corner}: {inside} vertices of solid {one} are inside solid {two}"
+                    );
+                    let (mut live, mut asked) = (0usize, 0usize);
+                    for face in &meshes[two].faces {
+                        let (normal, _) = facing_and_area(&meshes[two], face);
+                        let middle = face
+                            .iter()
+                            .map(|at| meshes[two].positions[*at as usize])
+                            .sum::<Vec3>()
+                            / face.len() as f32;
+                        asked += 1;
+                        live += usize::from(meshes[two].contains(middle - normal * 0.0003));
+                    }
+                    assert!(
+                        live * 2 >= asked,
+                        "{corner}: only {live} of {asked} points inside solid {two}'s walls read inside it"
+                    );
+                }
+                // **And the seam is HIDDEN**: #342's column reading over the skin
+                // where both regions grow, which is what a viewer looking at
+                // that patch of jaw sees in front of it. The first cut of this
+                // read how far the chin reached past each flank's front edge,
+                // and moved the wrong way on seed 7 under a change that closed
+                // the seam on the other two heads - a lateral reach is not what
+                // hides skin.
+                let bare = seam_left_bare(&posed, &solids);
+                println!("{corner}: {:.1} per cent of the seam is bare", bare * 100.0);
+                assert!(
+                    bare <= SEAM_BARE,
+                    "{corner}: {:.1} per cent of the skin where chin and flanks meet shows between them",
+                    bare * 100.0
+                );
+                if degrees == 0.0 && length == 0.0 {
+                    // Liveness: the chin alone leaves that seam bare.
+                    let alone = Sculpted::wearing(
+                        roll,
+                        Wears {
+                            chin: ChinStyle::Sculpted { length },
+                            ..Wears::NONE
+                        },
+                    )
+                    .posed(0.0);
+                    let alone_solids = alone.solids();
+                    let without = seam_left_bare(&alone, &alone_solids);
+                    println!(
+                        "{corner}: without the flanks {:.1} per cent is bare",
+                        without * 100.0
+                    );
+                    assert!(
+                        without > SEAM_BARE * 3.0,
+                        "{corner}: without the flanks only {:.1} per cent of the seam reads bare, so the \
+                         reading cannot see a seam",
+                        without * 100.0
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// How much of the skin where chin and flanks both grow no solid covers, as a
+/// share: the #342 column reading (a column off the skin along its own normal,
+/// 24 mm long, passing within 3 mm of any solid's triangle).
+fn seam_left_bare(posed: &Posed, solids: &[Vec<&Vec<u32>>]) -> f32 {
+    use symbios_avatar::hair::Follicle;
+    const REACH: f32 = 0.003;
+    const COLUMN: f32 = 0.024;
+    const MEET: f32 = 0.3;
+    let tris: Vec<[Vec3; 3]> = solids
+        .iter()
+        .flatten()
+        .flat_map(|face| (1..face.len() - 1).map(move |fan| [face[0], face[fan], face[fan + 1]]))
+        .map(|tri| tri.map(|at| posed.hair.positions[at as usize]))
+        .collect();
+    let near = |at: Vec3| {
+        tris.iter()
+            .any(|[a, b, c]| closest_on_triangle(at, *a, *b, *c).0.distance(at) <= REACH)
+    };
+    // Read on the REST body's mask: a region is where hair may grow on the
+    // head as built, and the posed skin is asked at the same vertices.
+    let (mut seam, mut bare) = (0usize, 0usize);
+    for (index, at) in posed.rest.iter().enumerate() {
+        if at.length() > 0.2
+            || posed.follicles.weight(Follicle::Chin, *at) < MEET
+            || posed.follicles.weight(Follicle::Flanks, *at) < MEET
+        {
+            continue;
+        }
+        seam += 1;
+        let (point, out) = (posed.body.positions[index], posed.normals[index]);
+        if !(0..=8).any(|step| near(point + out * (COLUMN * step as f32 / 8.0))) {
+            bare += 1;
+        }
+    }
+    bare as f32 / seam.max(1) as f32
+}
+
+/// How much of the skin where chin and flanks meet may show between their
+/// solids, as a share: see `a_sculpted_chin_lies_over_the_flanks_with_neither_inside_the_other`.
+///
+/// Measured 0.0, 0.0 and 0.8 per cent on the three heads at both lengths, shut
+/// and open, against 100 per cent with the chin worn alone; it read 19 per cent
+/// on the default head and 25 on seed 7 before a flank ran on under the jaw
+/// where the chin's patch is (#349).
+const SEAM_BARE: f32 = 0.02;
+
+#[test]
+fn a_sculpted_face_keeps_clear_of_the_mouth_and_the_eyes() {
+    // **The facial equivalent of `Follicles::clearance`** (#349), which is the
+    // SCALP's box - brow to chin, in front of the temples - and inside which the
+    // whole moustache and the top of the chin lie by construction. What a face's
+    // solids must keep clear of instead, measured before anything was built: the
+    // mouth (the moustache's floor is the vermilion, 8 to 11 mm over the
+    // parting, and is its own unit test; the chin's top is the lower lip's foot,
+    // 16 to 21 mm under it), and the eyes (a brow band's floor is -1.6 to 5.6 mm
+    // over the upper lid's top, the lid recessed 8 to 10 mm behind the ridge).
+    for roll in [None, Some(42), Some(7)] {
+        let wears = Wears {
+            brows: BrowStyle::Sculpted,
+            chin: ChinStyle::Sculpted { length: 1.0 },
+            flanks: FlankStyle::Sculpted,
+            ..Wears::NONE
+        };
+        let sculpted = Sculpted::wearing(roll, wears);
+        let posed = sculpted.posed(0.0);
+        let solids = posed.solids();
+        let points = |index: usize| -> Vec<Vec3> {
+            solids[index]
+                .iter()
+                .flat_map(|face| face.iter().map(|at| posed.hair.positions[*at as usize]))
+                .collect()
+        };
+        let pad = sculpted.follicles.pad();
+        // The chin: nothing above the lower lip's foot.
+        let top = points(2).iter().map(|at| at.y).fold(f32::MIN, f32::max);
+        println!(
+            "seed {roll:?}: the chin's solid tops out {:+.1} mm over the lip's foot",
+            (top - pad.lip) * 1000.0
+        );
+        assert!(
+            top <= pad.lip,
+            "seed {roll:?}: the chin's solid reaches {:.1} mm over the lower lip's foot",
+            (top - pad.lip) * 1000.0
+        );
+        // The mouth's corners: the flanks keep clear of the parting's ends.
+        let mouth = sculpted
+            .avatar
+            .parts
+            .mouth
+            .as_ref()
+            .expect("an openable mouth");
+        let seam: Vec<Vec3> = mouth
+            .upper
+            .iter()
+            .map(|at| sculpted.avatar.parts.body.positions[*at as usize] - sculpted.origin)
+            .collect();
+        let widest = seam.iter().map(|at| at.x.abs()).fold(0.0f32, f32::max);
+        let ends: Vec<Vec3> = seam
+            .iter()
+            .copied()
+            .filter(|at| at.x.abs() > widest - 0.002)
+            .collect();
+        let flank_to_mouth = [3usize, 4]
+            .iter()
+            .flat_map(|index| points(*index))
+            .map(|at| {
+                ends.iter()
+                    .map(|end| end.distance(at))
+                    .fold(f32::MAX, f32::min)
+            })
+            .fold(f32::MAX, f32::min);
+        println!(
+            "seed {roll:?}: the flanks keep {:.1} mm from the mouth's corners",
+            flank_to_mouth * 1000.0
+        );
+        assert!(
+            flank_to_mouth >= FLANKS_FROM_THE_MOUTH,
+            "seed {roll:?}: a flank's solid comes {:.1} mm from the mouth's corner",
+            flank_to_mouth * 1000.0
+        );
+        // The eyes: every brow vertex outside each globe by a margin.
+        let eyes = sculpted
+            .avatar
+            .parts
+            .eyes
+            .as_ref()
+            .expect("a humanoid has eyes");
+        let brow_to_eye = [0usize, 1]
+            .iter()
+            .flat_map(|index| points(*index))
+            .map(|at| {
+                [&eyes.left, &eyes.right]
+                    .iter()
+                    .map(|eye| at.distance(eye.pivot) - eye.radius)
+                    .fold(f32::MAX, f32::min)
+            })
+            .fold(f32::MAX, f32::min);
+        println!(
+            "seed {roll:?}: the brows keep {:.1} mm off the globes",
+            brow_to_eye * 1000.0
+        );
+        assert!(
+            brow_to_eye >= BROWS_FROM_THE_EYES,
+            "seed {roll:?}: a brow's solid comes {:.1} mm from an eye's globe",
+            brow_to_eye * 1000.0
+        );
+    }
+}
+
+/// How far a flank's solid keeps from the mouth's corners, in metres: 8.9 to
+/// 27.9 mm measured on the three heads (#349).
+const FLANKS_FROM_THE_MOUTH: f32 = 0.006;
+
+/// How far a brow's solid keeps outside the eye's globe, in metres: 8.9 to
+/// 15.5 mm measured on the three heads (#349).
+const BROWS_FROM_THE_EYES: f32 = 0.006;
+
+#[test]
+fn a_sculpted_style_wears_the_solid_its_axis_asks() {
+    // **Each axis read by what it is ABOUT** (#347's lesson, paid for three
+    // times): a chin's length is how far its mass hangs below the menton, read
+    // at the solid's lowest point; a moustache's flare is how far its ends
+    // reach past the lip's own half-width and how far they turn up. The flanks
+    // and the brows carry no axis. And the paint each sculpted style floors its
+    // region at is full density, where a record that asks for none keeps none
+    // under a card style.
+    for roll in [None, Some(42), Some(7)] {
+        let hang = |length: f32| {
+            let sculpted = Sculpted::wearing(
+                roll,
+                Wears {
+                    chin: ChinStyle::Sculpted { length },
+                    ..Wears::NONE
+                },
+            );
+            let posed = sculpted.posed(0.0);
+            let lowest = posed
+                .hair
+                .positions
+                .iter()
+                .map(|at| at.y)
+                .fold(f32::MAX, f32::min);
+            sculpted.follicles.pad().menton - lowest
+        };
+        let (short, long) = (hang(0.0), hang(1.0));
+        println!(
+            "seed {roll:?}: the chin hangs {:.1} mm below the menton at 0 and {:.1} at 1",
+            short * 1000.0,
+            long * 1000.0
+        );
+        assert!(
+            long - short >= HANG_SPAN,
+            "seed {roll:?}: the length axis takes the chin's hang from {:.1} to {:.1} mm",
+            short * 1000.0,
+            long * 1000.0
+        );
+        let ends = |flare: f32| {
+            let sculpted = Sculpted::wearing(
+                roll,
+                Wears {
+                    moustache: MoustacheStyle::Sculpted { flare },
+                    ..Wears::NONE
+                },
+            );
+            let posed = sculpted.posed(0.0);
+            let lip = sculpted.follicles.lip();
+            let widest = posed
+                .hair
+                .positions
+                .iter()
+                .map(|at| at.x.abs())
+                .fold(0.0f32, f32::max);
+            let highest_end = posed
+                .hair
+                .positions
+                .iter()
+                .filter(|at| at.x.abs() > widest - 0.003)
+                .map(|at| at.y)
+                .fold(f32::MIN, f32::max);
+            (widest / lip.half, highest_end - lip.nostrils)
+        };
+        let (chevron, handlebar) = (ends(0.0), ends(1.0));
+        println!(
+            "seed {roll:?}: the moustache reaches {:.2} of its half-width at flare 0 and {:.2} at 1; its ends top out {:+.1} and {:+.1} mm against the nostrils",
+            chevron.0,
+            handlebar.0,
+            chevron.1 * 1000.0,
+            handlebar.1 * 1000.0
+        );
+        assert!(
+            chevron.0 <= 1.0 && handlebar.0 >= FLARE_REACH,
+            "seed {roll:?}: the flare axis takes the moustache's ends from {:.2} to {:.2} of its half-width",
+            chevron.0,
+            handlebar.0
+        );
+        assert!(
+            handlebar.1 > chevron.1,
+            "seed {roll:?}: a full flare does not turn the ends up"
+        );
+    }
+    // The paint floor, in the record's own terms.
+    let mut record = symbios_avatar::hair::HairRecord::bald();
+    record.chin.style = ChinStyle::Sculpted { length: 0.5 };
+    record.flanks.style = FlankStyle::FullConnect { reach: 0.5 };
+    record.moustache.style = MoustacheStyle::Sculpted { flare: 0.5 };
+    record.brows.style = BrowStyle::Sculpted;
+    let painted = record.painted();
+    for (region, paint) in [
+        ("chin", painted.chin),
+        ("moustache", painted.moustache),
+        ("brows", painted.brows),
+    ] {
+        assert!(
+            paint.density >= 1.0,
+            "a sculpted {region} paints its region at {:.2}, not full density",
+            paint.density
+        );
+    }
+    assert!(
+        painted.flanks.density <= 0.0,
+        "a card style's region was painted at {:.2} on a record asking for none",
+        painted.flanks.density
+    );
+}
+
+/// How much further a full length hangs the chin than none, in metres: 41 to
+/// 46 mm measured on the three heads (#349).
+const HANG_SPAN: f32 = 0.030;
+
+/// How far past the lip's half-width a full flare carries the moustache's ends,
+/// as a share of it: 1.41 measured on the three heads, against 0.99 to 1.00 at
+/// no flare (#349).
+const FLARE_REACH: f32 = 1.2;

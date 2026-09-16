@@ -40,13 +40,20 @@
 //! [`MoustacheStyle::Pencil`] is the same gathered hard onto a line just above
 //! the vermilion, thin and few. The handlebar is this milestone's first style
 //! whose guides leave the surface on purpose, and its own axis is how far.
+//!
+//! [`MoustacheStyle::Sculpted`] keeps the same one rule as a solid chevron
+//! drawn by the helmet family's facial walk (`hair::shell::face`, #349): every
+//! ray it is walked along leaves from its rim's own floor, so no vertex is
+//! below the vermilion, and its `flare` carries its ends past the corners and
+//! turns them up.
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::super::clump::{LIFT, Root, Shape};
 use super::super::follicle::{Follicle, Follicles, moustache::Lip};
-use super::{Cut, Style, clumps_for};
+use super::super::shell::face::{Sculpt, Sculpted};
+use super::{Cut, SCULPTED_PAINT, Style, clumps_for};
 use crate::plan::scaled;
 
 /// The base styles of the upper lip.
@@ -74,6 +81,13 @@ pub enum MoustacheStyle {
         /// to the nostrils.
         #[serde(with = "crate::plan::scaled")]
         ride: f32,
+    },
+    /// A solid sculpted chevron riding the upper lip, never below the
+    /// vermilion (#349).
+    Sculpted {
+        /// How far its ends flare, `0` a chevron and `1` a handlebar turned up.
+        #[serde(with = "crate::plan::scaled")]
+        flare: f32,
     },
 }
 
@@ -242,6 +256,9 @@ impl Style for MoustacheStyle {
     }
 
     fn shape(&self, cut: &Cut, _follicle: Follicle, head: &Follicles) -> Option<Box<dyn Shape>> {
+        if let Self::Sculpted { flare } = self {
+            return Some(Box::new(Sculpted(Sculpt::Moustache { flare: *flare })));
+        }
         let slot = self.slot()?;
         let lip = head.lip();
         // **A narrow length axis, as the brows have** (#205): a moustache hair
@@ -285,7 +302,12 @@ impl Style for MoustacheStyle {
             Self::None | Self::Chevron => {}
             Self::Handlebar { sweep } => *sweep = scaled::quantize(sweep.clamp(0.0, 1.0)),
             Self::Pencil { ride } => *ride = scaled::quantize(ride.clamp(0.0, 1.0)),
+            Self::Sculpted { flare } => *flare = scaled::quantize(flare.clamp(0.0, 1.0)),
         }
+    }
+
+    fn paint_floor(&self) -> Option<f32> {
+        matches!(self, Self::Sculpted { .. }).then_some(SCULPTED_PAINT)
     }
 }
 
@@ -297,7 +319,7 @@ impl MoustacheStyle {
     /// here, and one entry in each table rather than seven chances to misalign.
     fn slot(self) -> Option<usize> {
         match self {
-            Self::None => None,
+            Self::None | Self::Sculpted { .. } => None,
             Self::Chevron => Some(0),
             Self::Handlebar { .. } => Some(1),
             Self::Pencil { .. } => Some(2),
@@ -729,6 +751,146 @@ mod tests {
                 lo * 1000.0,
                 hi * 1000.0
             );
+        }
+    }
+
+    /// How far over the vermilion a sculpted moustache's lowest point may sit and
+    /// still be riding the lip, in metres: 1.1 to 1.5 mm measured on three heads
+    /// (#349), and a floor further off than this would guard nothing.
+    const RIDES_THE_LIP: f32 = 0.003;
+
+    #[test]
+    fn a_sculpted_moustache_stays_out_of_the_mouth_it_grows_over() {
+        // **The module's one rule, asked of the SOLID** (#349): nothing below
+        // the vermilion. A card whisker keeps it by sweeping a share of its own
+        // room; the sculpted chevron keeps it by construction - every ray it is
+        // walked along leaves from the rim's own floor, raised by the most its
+        // bottom bevel can carry, so no vertex is lower than the vermilion plus
+        // half the mask's fade. Asked of the built mesh on three heads at every
+        // flare, against the vermilion (stricter than the seam, which sits 8 to
+        // 11 mm below it) AND against the mouth's own cut seam.
+        //
+        // **And with the jaw open, because this is the region the acceptance
+        // says must NOT open** (the beard does, the moustache does not). A card
+        // moustache binds to the head; the solid binds as the skin under it
+        // does, which measured is the head's on every vertex - so the posed
+        // solid is asserted to be the rest one.
+        use crate::anim::Pose;
+        use glam::Quat;
+        for seed in [None, Some(42), Some(7)] {
+            for flare in [0.0f32, 0.5, 1.0] {
+                let mut record = AvatarRecord::new("Sculpted", Archetype::default());
+                if let Some(seed) = seed {
+                    record.reroll(seed);
+                }
+                let regions = record.hair.regions;
+                record.hair = crate::hair::HairRecord {
+                    regions,
+                    moustache: crate::hair::Tress {
+                        style: MoustacheStyle::Sculpted { flare },
+                        ..Default::default()
+                    },
+                    ..crate::hair::HairRecord::bald()
+                };
+                record.sanitize();
+                let avatar = Avatar::build(&record).expect("a biped builds");
+                let mouth = avatar.parts.mouth.as_ref().expect("an openable mouth");
+                let skull =
+                    Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
+                let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
+                let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
+                let lip = follicles.lip();
+                let origin = follicles.origin();
+                let hair = avatar
+                    .parts
+                    .hair
+                    .as_ref()
+                    .expect("a sculpted moustache grows");
+                let positions = &hair.mesh.positions;
+                assert!(
+                    positions.len() > 100,
+                    "seed {seed:?} flare {flare}: the solid has {} vertices",
+                    positions.len()
+                );
+                let lowest = positions.iter().map(|at| at.y).fold(f32::MAX, f32::min);
+                assert!(
+                    lowest >= lip.vermilion,
+                    "seed {seed:?} flare {flare}: the solid reaches {:.2} mm below the vermilion",
+                    (lip.vermilion - lowest) * 1000.0
+                );
+                let seam: Vec<Vec3> = mouth
+                    .upper
+                    .iter()
+                    .map(|at| avatar.parts.body.positions[*at as usize] - origin)
+                    .collect();
+                let mut checked = 0usize;
+                for at in positions {
+                    let Some(under) = seam
+                        .iter()
+                        .filter(|point| (point.x - at.x).abs() < 0.002)
+                        .map(|point| point.y)
+                        .reduce(f32::max)
+                    else {
+                        continue;
+                    };
+                    checked += 1;
+                    assert!(
+                        at.y > under,
+                        "seed {seed:?} flare {flare}: the solid hangs {:.2} mm below the mouth's \
+                         cut at x {:+.1} mm",
+                        (under - at.y) * 1000.0,
+                        at.x * 1000.0
+                    );
+                }
+                assert!(
+                    checked > 40,
+                    "seed {seed:?} flare {flare}: only {checked} vertices had any mouth under them"
+                );
+                // And that the rule BINDS: the solid rides the lip down to within
+                // a few millimetres of the vermilion (1.1 to 1.5 mm measured),
+                // so a floor asserted over it is not a floor over thin air.
+                let spare = lowest - lip.vermilion;
+                assert!(
+                    spare < RIDES_THE_LIP,
+                    "seed {seed:?} flare {flare}: the solid's lowest point is {:.2} mm over the \
+                     vermilion, which is not riding the lip",
+                    spare * 1000.0
+                );
+                // The jaw opens and the moustache does not move.
+                let tip = (0..avatar.rig.len())
+                    .find(|&tip| {
+                        avatar.rig.joints[tip].marker
+                            && avatar.rig.joints[tip]
+                                .parent
+                                .is_some_and(|at| avatar.rig.joints[at].marker)
+                    })
+                    .expect("a humanoid has a jaw");
+                let pivot = avatar.rig.joints[tip]
+                    .parent
+                    .expect("the tip hangs off the pivot");
+                let mut open = Pose::rest(&avatar.rig);
+                open.rotations[pivot] = Quat::from_rotation_x(20f32.to_radians());
+                let posed = |pose: &Pose| {
+                    avatar
+                        .posed(pose, 0.0)
+                        .into_iter()
+                        .find(|mesh| mesh.kind == crate::MeshKind::Hair)
+                        .expect("the moustache is drawn")
+                        .mesh
+                        .positions
+                };
+                let (rest, opened) = (posed(&Pose::rest(&avatar.rig)), posed(&open));
+                let moved = rest
+                    .iter()
+                    .zip(&opened)
+                    .map(|(one, two)| one.distance(*two))
+                    .fold(0.0f32, f32::max);
+                assert!(
+                    moved < 0.0001,
+                    "seed {seed:?} flare {flare}: the jaw at 20 degrees moved the moustache {:.2} mm",
+                    moved * 1000.0
+                );
+            }
         }
     }
 

@@ -457,6 +457,9 @@ fn every_hair_style_the_crate_can_write_is_declared_with_its_axis() {
                 json(BrowStyle::None),
                 json(BrowStyle::Natural),
                 json(BrowStyle::Thick),
+                // #349's sculpted facial family: one name a region, the chin's
+                // and the moustache's carrying an axis of their own.
+                json(BrowStyle::Sculpted),
             ],
         ),
         (
@@ -466,6 +469,7 @@ fn every_hair_style_the_crate_can_write_is_declared_with_its_axis() {
                 json(MoustacheStyle::Chevron),
                 json(MoustacheStyle::Handlebar { sweep: 0.8 }),
                 json(MoustacheStyle::Pencil { ride: 0.8 }),
+                json(MoustacheStyle::Sculpted { flare: 0.8 }),
             ],
         ),
         (
@@ -475,6 +479,7 @@ fn every_hair_style_the_crate_can_write_is_declared_with_its_axis() {
                 json(ChinStyle::Goatee { point: 0.8 }),
                 json(ChinStyle::Full),
                 json(ChinStyle::Braided { twist: 0.8 }),
+                json(ChinStyle::Sculpted { length: 0.8 }),
             ],
         ),
         (
@@ -483,6 +488,7 @@ fn every_hair_style_the_crate_can_write_is_declared_with_its_axis() {
                 json(FlankStyle::None),
                 json(FlankStyle::Sideburns { drop: 0.8 }),
                 json(FlankStyle::FullConnect { reach: 0.8 }),
+                json(FlankStyle::Sculpted),
             ],
         ),
     ];

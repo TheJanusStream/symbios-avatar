@@ -28,13 +28,18 @@
 //! whole bet of the hair system**, and the brow is the smallest region to test
 //! it on, so it is the one where a wider ribbon has to do the work a longer
 //! clump list would have done.
+//!
+//! [`BrowStyle::Sculpted`] is neither: a closed wedge along the ridge, drawn by
+//! the helmet family's facial walk (`hair::shell::face`, #349) rather than by
+//! cards, costing its own grid.
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::super::clump::{LIFT, Root, Shape};
 use super::super::follicle::{Follicle, Follicles, brows::Ridge};
-use super::{Cut, Style, clumps_for};
+use super::super::shell::face::{Sculpt, Sculpted};
+use super::{Cut, SCULPTED_PAINT, Style, clumps_for};
 
 /// The base styles of the eyebrows.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -52,6 +57,9 @@ pub enum BrowStyle {
     /// A fuller, blunter one: coarser clumps lying less flat, and a tail that
     /// keeps most of its width.
     Thick,
+    /// A solid sculpted wedge along the ridge (#349): the low-poly brow. No
+    /// axis of its own.
+    Sculpted,
 }
 
 /// How long a streak is at full length, as a share of the ridge's own span.
@@ -190,6 +198,7 @@ impl Style for BrowStyle {
             Self::None => return None,
             Self::Natural => 0,
             Self::Thick => 1,
+            Self::Sculpted => return Some(Box::new(Sculpted(Sculpt::Brows))),
         };
         let ridge = head.brow_ridge();
         // **A narrow axis, unlike every other region's** (#205): brow hairs are
@@ -213,13 +222,18 @@ impl Style for BrowStyle {
 
     fn clumps(&self, cut: &Cut, follicle: Follicle) -> usize {
         match self {
-            Self::None => 0,
+            // A sculpted brow grows no cards: its solid is the hair (#349).
+            Self::None | Self::Sculpted => 0,
             // **Both styles the same count, deliberately** (#205). Thick is
             // fuller by section rather than by number, so choosing it costs the
             // budget nothing and the greediest legal record has no dearer brow
             // to pick.
             Self::Natural | Self::Thick => clumps_for(cut, follicle),
         }
+    }
+
+    fn paint_floor(&self) -> Option<f32> {
+        matches!(self, Self::Sculpted).then_some(SCULPTED_PAINT)
     }
 }
 
@@ -420,7 +434,9 @@ mod tests {
         let slot = match style {
             BrowStyle::Natural => 0,
             BrowStyle::Thick => 1,
-            BrowStyle::None => unreachable!("a bare brow has no shape to test"),
+            BrowStyle::None | BrowStyle::Sculpted => {
+                unreachable!("only a card brow has a streak to test")
+            }
         };
         let ridge = ridge();
         Box::new(Brow {

@@ -33,12 +33,12 @@
 //! cargo run --release --example render -- --close hand # or head, hand, foot
 //! cargo run --release --example render -- --close throat # the collar and the trapezius line
 //! cargo run --release --example render -- --close brows # or any follicle region
-//! cargo run --release --example render -- --brow thick  # or natural, none
-//! cargo run --release --example render -- --scalp bob 0.8 # crop, bob, long, tied,
-//!                                                       # curly, cap, slick, bell, bun, crest
-//! cargo run --release --example render -- --moustache handlebar 0.9 # chevron, handlebar, pencil
-//! cargo run --release --example render -- --chin braided 0.8 # goatee, full, braided
-//! cargo run --release --example render -- --flanks full 0.7 # sideburns, full
+//! cargo run --release --example render -- --brow thick  # or natural, sculpted, none
+//! cargo run --release --example render -- --scalp bob 0.8 # crop, bob, long, tied, curly,
+//!                                                       # cap, slick, bell, bun, crest, afro, braids
+//! cargo run --release --example render -- --moustache handlebar 0.9 # chevron, handlebar, pencil, sculpted
+//! cargo run --release --example render -- --chin braided 0.8 # goatee, full, braided, sculpted
+//! cargo run --release --example render -- --flanks full 0.7 # sideburns, full, sculpted
 //! cargo run --release --example render -- --close hand --fist  # every finger curled
 //! cargo run --release --example render -- --gaze 40  # look this many degrees to one side
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
@@ -256,8 +256,10 @@ fn main() {
         "none" => symbios_avatar::hair::BrowStyle::None,
         "natural" => symbios_avatar::hair::BrowStyle::Natural,
         "thick" => symbios_avatar::hair::BrowStyle::Thick,
+        // The sculpted facial family (#349): a solid wedge along the ridge.
+        "sculpted" => symbios_avatar::hair::BrowStyle::Sculpted,
         other => {
-            eprintln!("unknown --brow style {other}: expected none, natural or thick");
+            eprintln!("unknown --brow style {other}: expected none, natural, thick or sculpted");
             std::process::exit(1);
         }
     });
@@ -317,10 +319,12 @@ fn main() {
             "chevron" => symbios_avatar::hair::MoustacheStyle::Chevron,
             "handlebar" => symbios_avatar::hair::MoustacheStyle::Handlebar { sweep: axis },
             "pencil" => symbios_avatar::hair::MoustacheStyle::Pencil { ride: axis },
+            // A solid chevron flaring to a handlebar (#349).
+            "sculpted" => symbios_avatar::hair::MoustacheStyle::Sculpted { flare: axis },
             other => {
                 eprintln!(
-                    "unknown --moustache style {other}: expected none, chevron, handlebar or \
-                     pencil"
+                    "unknown --moustache style {other}: expected none, chevron, handlebar, \
+                     pencil or sculpted"
                 );
                 std::process::exit(1);
             }
@@ -339,8 +343,12 @@ fn main() {
             "goatee" => symbios_avatar::hair::ChinStyle::Goatee { point: axis },
             "full" => symbios_avatar::hair::ChinStyle::Full,
             "braided" => symbios_avatar::hair::ChinStyle::Braided { twist: axis },
+            // A closed mass hanging from the menton (#349).
+            "sculpted" => symbios_avatar::hair::ChinStyle::Sculpted { length: axis },
             other => {
-                eprintln!("unknown --chin style {other}: expected none, goatee, full or braided");
+                eprintln!(
+                    "unknown --chin style {other}: expected none, goatee, full, braided or sculpted"
+                );
                 std::process::exit(1);
             }
         }
@@ -357,8 +365,12 @@ fn main() {
             "none" => symbios_avatar::hair::FlankStyle::None,
             "sideburns" => symbios_avatar::hair::FlankStyle::Sideburns { drop: axis },
             "full" => symbios_avatar::hair::FlankStyle::FullConnect { reach: axis },
+            // A closed band from the beard line to the crease (#349).
+            "sculpted" => symbios_avatar::hair::FlankStyle::Sculpted,
             other => {
-                eprintln!("unknown --flanks style {other}: expected none, sideburns or full");
+                eprintln!(
+                    "unknown --flanks style {other}: expected none, sideburns, full or sculpted"
+                );
                 std::process::exit(1);
             }
         }

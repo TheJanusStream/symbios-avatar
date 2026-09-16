@@ -742,6 +742,9 @@ fn brow_catalogue() -> Vec<(String, BrowStyle)> {
     vec![
         ("natural".to_string(), BrowStyle::Natural),
         ("thick".to_string(), BrowStyle::Thick),
+        // #349's sculpted wedge: a solid on a grid sized from the brow's own
+        // measured extent, costed like any card style.
+        ("sculpted".to_string(), BrowStyle::Sculpted),
     ]
 }
 
@@ -757,6 +760,11 @@ fn moustache_catalogue() -> Vec<(String, MoustacheStyle)> {
             format!("pencil {axis}"),
             MoustacheStyle::Pencil { ride: axis },
         ));
+        // #349: the flare adds a column at each end, so the axis is costed.
+        all.push((
+            format!("sculpted {axis}"),
+            MoustacheStyle::Sculpted { flare: axis },
+        ));
     }
     all
 }
@@ -769,6 +777,10 @@ fn chin_catalogue() -> Vec<(String, ChinStyle)> {
         all.push((
             format!("braided {axis}"),
             ChinStyle::Braided { twist: axis },
+        ));
+        all.push((
+            format!("sculpted {axis}"),
+            ChinStyle::Sculpted { length: axis },
         ));
     }
     all
@@ -787,6 +799,7 @@ fn flank_catalogue() -> Vec<(String, FlankStyle)> {
             FlankStyle::FullConnect { reach: axis },
         ));
     }
+    all.push(("sculpted".to_string(), FlankStyle::Sculpted));
     all
 }
 

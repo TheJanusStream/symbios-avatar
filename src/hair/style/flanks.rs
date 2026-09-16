@@ -16,12 +16,18 @@
 //! rather than where its own length runs out. That is what makes the edge a
 //! LINE: the tips arrive at the crease together, from wherever they grew.
 //!
+//! [`FlankStyle::Sculpted`] draws the same band as one closed solid a side
+//! (`hair::shell::face`, #349), from the beard line to the crease - and on in
+//! under the jaw where the chin's patch is, beneath a sculpted chin's solid, so
+//! the seam between the two is covered.
+//!
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::super::clump::{LIFT, Root, Shape};
 use super::super::follicle::{Follicle, Follicles, flanks::Line};
-use super::{Cut, Style, clumps_for};
+use super::super::shell::face::{Sculpt, Sculpted};
+use super::{Cut, SCULPTED_PAINT, Style, clumps_for};
 use crate::plan::scaled;
 
 /// The base styles of the jaw's flanks.
@@ -45,6 +51,10 @@ pub enum FlankStyle {
         #[serde(with = "crate::plan::scaled")]
         reach: f32,
     },
+    /// A closed sculpted band over each flank from the beard line to the
+    /// mandible's crease, meeting a sculpted chin under the jaw (#349). No axis
+    /// of its own.
+    Sculpted,
 }
 
 /// How far one clump combs down the flank at full length, in metres.
@@ -253,11 +263,14 @@ impl Style for FlankStyle {
     }
 
     fn shape(&self, cut: &Cut, _follicle: Follicle, head: &Follicles) -> Option<Box<dyn Shape>> {
+        if matches!(self, Self::Sculpted) {
+            return Some(Box::new(Sculpted(Sculpt::Flanks)));
+        }
         let slot = self.slot()?;
         let length = 0.6 + 0.8 * cut.length.clamp(0.0, 1.0);
         let coarse = 0.7 + 0.6 * cut.thickness.clamp(0.0, 1.0);
         let (front, down, rides) = match self {
-            Self::None => return None,
+            Self::None | Self::Sculpted => return None,
             Self::Sideburns { drop } => {
                 let drop = drop.clamp(0.0, 1.0);
                 (
@@ -300,10 +313,14 @@ impl Style for FlankStyle {
 
     fn sanitize(&mut self) {
         match self {
-            Self::None => {}
+            Self::None | Self::Sculpted => {}
             Self::Sideburns { drop } => *drop = scaled::quantize(drop.clamp(0.0, 1.0)),
             Self::FullConnect { reach } => *reach = scaled::quantize(reach.clamp(0.0, 1.0)),
         }
+    }
+
+    fn paint_floor(&self) -> Option<f32> {
+        matches!(self, Self::Sculpted).then_some(SCULPTED_PAINT)
     }
 }
 
@@ -312,7 +329,7 @@ impl FlankStyle {
     /// nothing.
     fn slot(self) -> Option<usize> {
         match self {
-            Self::None => None,
+            Self::None | Self::Sculpted => None,
             Self::Sideburns { .. } => Some(0),
             Self::FullConnect { .. } => Some(1),
         }

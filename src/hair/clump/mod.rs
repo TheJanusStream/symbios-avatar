@@ -227,6 +227,18 @@ pub trait Shape {
     fn shell(&self) -> Option<crate::hair::shell::Shell> {
         None
     }
+
+    /// A sculpted solid over one FACIAL region this style draws, if it has one.
+    ///
+    /// **Not a [`Self::shell`]**, because a facial region is not a cap over a
+    /// pole (#349): it is a patch walked as sections of the built body, which
+    /// is why it is drawn with the whole [`Bed`] in hand rather than the regions
+    /// alone. Counted with the region's own triangles and on the ledger's shell
+    /// line, as a scalp shell is. The default is none, which is every style but
+    /// the four sculpted facial ones.
+    fn sculpt(&self) -> Option<crate::hair::shell::face::Sculpt> {
+        None
+    }
 }
 
 /// A small closed solid a style asks for beside its clumps. See [`Shape::lump`].
@@ -561,6 +573,20 @@ impl Growth {
             ),
             _ => 0,
         };
+        // **And a sculpted FACIAL solid the same way** (#349): the solid is the
+        // hair, drawn because the region was asked for, and on the same ledger
+        // line. After the shell so a scalp region's bytes are what they were.
+        let shell = shell
+            + match sowing.shape.sculpt() {
+                Some(sculpt) => super::shell::face::loft(
+                    &mut self.mesh,
+                    bed,
+                    &sculpt,
+                    sowing.roots,
+                    sowing.tips,
+                ),
+                None => 0,
+            };
         // **A style's lump is drawn wherever its region drew any hair at all**,
         // cards or a shell, and before the count below so it is paid for as
         // they are.

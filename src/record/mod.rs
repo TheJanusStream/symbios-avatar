@@ -1402,6 +1402,60 @@ mod tests {
     }
 
     #[test]
+    fn a_rolled_population_draws_no_sculpted_facial_hair() {
+        // **A re-roll draws no sculpted facial style yet** (#349), for the
+        // reason it draws no helmet: the four names are on the wire, and what
+        // share of a rolled population should wear one is the owner's decision
+        // at the release slice (#351). Every variant of the four facial
+        // catalogues is written out rather than caught by a wildcard, so the
+        // next one added has to answer here. Rolled across the composites,
+        // because a beard is gated on them and a neutral population rolls few.
+        use crate::hair::{BrowStyle, ChinStyle, FlankStyle, MoustacheStyle};
+        let mut bearded = 0usize;
+        for (femininity, age) in [(-1.0, 45), (-0.6, 60), (0.0, 30), (0.8, 25)] {
+            for record in population(300, femininity, age) {
+                match record.hair.brows.style {
+                    BrowStyle::None | BrowStyle::Natural | BrowStyle::Thick => {}
+                    BrowStyle::Sculpted => {
+                        panic!("a re-roll drew a sculpted brow, which is #351's decision")
+                    }
+                }
+                match record.hair.moustache.style {
+                    MoustacheStyle::None => {}
+                    MoustacheStyle::Chevron
+                    | MoustacheStyle::Handlebar { .. }
+                    | MoustacheStyle::Pencil { .. } => bearded += 1,
+                    MoustacheStyle::Sculpted { .. } => {
+                        panic!("a re-roll drew a sculpted moustache, which is #351's decision")
+                    }
+                }
+                match record.hair.chin.style {
+                    ChinStyle::None => {}
+                    ChinStyle::Goatee { .. } | ChinStyle::Full | ChinStyle::Braided { .. } => {
+                        bearded += 1;
+                    }
+                    ChinStyle::Sculpted { .. } => {
+                        panic!("a re-roll drew a sculpted chin, which is #351's decision")
+                    }
+                }
+                match record.hair.flanks.style {
+                    FlankStyle::None => {}
+                    FlankStyle::Sideburns { .. } | FlankStyle::FullConnect { .. } => bearded += 1,
+                    FlankStyle::Sculpted => {
+                        panic!("a re-roll drew sculpted flanks, which is #351's decision")
+                    }
+                }
+            }
+        }
+        // And that it looked at beards at all: a population that rolled none
+        // asserts nothing about what a beard may be.
+        assert!(
+            bearded > 100,
+            "only {bearded} facial regions grew in 1200 rolls"
+        );
+    }
+
+    #[test]
     fn a_rolled_style_carries_a_rolled_axis() {
         // Every parametric variant in every catalogue has an axis, all of them
         // were sanitized and quantised from the day they shipped, and until this

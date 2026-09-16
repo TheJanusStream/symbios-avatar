@@ -18,7 +18,10 @@
 //! with a curve of its own: crop, bob, long, tied-back and curly on
 //! the scalp; natural and thick brows; chevron, handlebar and pencil
 //! moustaches; goatee, full and braided chins; sideburns and full-connect
-//! flanks. Nothing is declared ahead of its curve and mapped to something else
+//! flanks. And the helmet family draws closed solids rather than cards: cap,
+//! slick, bell, bun, crest, afro and braids on the scalp (`hair::shell`), and a
+//! sculpted brow, moustache, chin and flanks (`hair::shell::face`, #349).
+//! Nothing is declared ahead of its curve and mapped to something else
 //! in the meantime — a variant that exists and does not do what it says is
 //! worse than one that does not exist.
 
@@ -126,6 +129,24 @@ impl<S: Style> Tress<S> {
         self.skin.sanitize();
     }
 
+    /// The paint this tress lays down, raised to its style's own floor.
+    ///
+    /// The roots' colour where the floor bites, not the record's paint colour:
+    /// where the paint was not asked for at all its colour is whatever a default
+    /// left there, and a shave or a beard's underpaint is the same hair as the
+    /// geometry above it (#347, #349).
+    #[must_use]
+    pub fn floored(&self) -> Paint {
+        let mut paint = self.skin;
+        if let Some(floor) = self.style.paint_floor()
+            && paint.density < floor
+        {
+            paint.density = floor;
+            paint.colour = self.roots;
+        }
+        paint
+    }
+
     /// The clump shape this tress grows, if it grows any.
     #[must_use]
     pub fn shape(&self, follicle: Follicle, head: &Follicles) -> Option<Box<dyn Shape>> {
@@ -169,7 +190,27 @@ pub trait Style: Copy + Default {
     /// put anything in the ones that do, and every other number in a record is
     /// clamped and snapped to the wire's precision before it is used.
     fn sanitize(&mut self) {}
+
+    /// The least painted density this style guarantees on its region, if it
+    /// guarantees one.
+    ///
+    /// **A style may raise the floor under its own paint and may not lower it**
+    /// (#347's crest, and #349's sculpted facial styles): see
+    /// [`HairRecord::painted`]. `None` for every style that leaves the paint to
+    /// the record.
+    fn paint_floor(&self) -> Option<f32> {
+        None
+    }
 }
+
+/// The painted density a sculpted facial style floors its region at.
+///
+/// **Full, so no skin shows at a solid's rim** (#349's brief): the rim sits at
+/// the mask's one half, and at full density the painted fade from there to
+/// nothing is outside the solid, carrying its edge onto the face.
+///
+/// Provenance: **from the issue**.
+pub(super) const SCULPTED_PAINT: f32 = 1.0;
 
 /// How many clumps a region gets at full density.
 ///
@@ -453,22 +494,12 @@ impl HairRecord {
     /// carried, and this is read on the way to the painter.
     #[must_use]
     pub fn painted(&self) -> super::painted::PaintedHair {
-        let mut scalp = self.scalp.skin;
-        if let Some(floor) = self.scalp.style.shaved()
-            && scalp.density < floor
-        {
-            scalp.density = floor;
-            // The roots' colour, not the record's paint colour: where the paint
-            // was not asked for at all its colour is whatever a default left
-            // there, and a shave is the same hair as the fin above it.
-            scalp.colour = self.scalp.roots;
-        }
         super::painted::PaintedHair {
-            scalp,
-            brows: self.brows.skin,
-            moustache: self.moustache.skin,
-            chin: self.chin.skin,
-            flanks: self.flanks.skin,
+            scalp: self.scalp.floored(),
+            brows: self.brows.floored(),
+            moustache: self.moustache.floored(),
+            chin: self.chin.floored(),
+            flanks: self.flanks.floored(),
         }
     }
 
@@ -523,7 +554,7 @@ impl HairRecord {
         // and the slicked-back helmet grows none at all - its whole point is an
         // edge that is the solid's own. Asked of the shape rather than of the
         // style, so it is the same question the clump engine draws the solid by.
-        (clumps > 0 || shape.shell().is_some()).then_some(Sown {
+        (clumps > 0 || shape.shell().is_some() || shape.sculpt().is_some()).then_some(Sown {
             shape,
             clumps,
             roots,

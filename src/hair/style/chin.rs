@@ -30,13 +30,21 @@
 //! [`ChinStyle::Full`] carries on down the submental band and hangs. And
 //! [`ChinStyle::Braided`] gathers the whole hang into one rope and turns it,
 //! which is the style that proves a twist can be a record axis at all.
+//!
+//! [`ChinStyle::Sculpted`] is a fourth that grows no clump: a closed mass over
+//! the patch hanging from the menton to its length, drawn by the helmet
+//! family's facial walk (`hair::shell::face`, #349). Its hang is not handed over
+//! to the head as a clump's is - measured posed, every way of doing that sheared
+//! the solid - so it moves with the mandible, and its underside slopes up to the
+//! back of the patch so nothing swings into the throat.
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::super::clump::{LIFT, Root, Shape};
 use super::super::follicle::{Follicle, Follicles, chin::Pad};
-use super::{Cut, Style, clumps_for};
+use super::super::shell::face::{Sculpt, Sculpted};
+use super::{Cut, SCULPTED_PAINT, Style, clumps_for};
 use crate::plan::scaled;
 
 /// The base styles of the chin.
@@ -59,6 +67,13 @@ pub enum ChinStyle {
         /// How tightly the rope turns, `0` a loose rope and `1` a hard twist.
         #[serde(with = "crate::plan::scaled")]
         twist: f32,
+    },
+    /// A closed sculpted mass over the patch, hanging from the menton (#349):
+    /// the helmet family's low-poly beard.
+    Sculpted {
+        /// How far the mass hangs, `0` a short boxed beard and `1` a long spade.
+        #[serde(with = "crate::plan::scaled")]
+        length: f32,
     },
 }
 
@@ -317,6 +332,9 @@ impl Style for ChinStyle {
     }
 
     fn shape(&self, cut: &Cut, _follicle: Follicle, head: &Follicles) -> Option<Box<dyn Shape>> {
+        if let Self::Sculpted { length } = self {
+            return Some(Box::new(Sculpted(Sculpt::Chin { length: *length })));
+        }
         let slot = self.slot()?;
         let pad = head.pad();
         let length = 0.35 + 0.9 * cut.length.clamp(0.0, 1.0);
@@ -364,16 +382,21 @@ impl Style for ChinStyle {
             Self::None | Self::Full => {}
             Self::Goatee { point } => *point = scaled::quantize(point.clamp(0.0, 1.0)),
             Self::Braided { twist } => *twist = scaled::quantize(twist.clamp(0.0, 1.0)),
+            Self::Sculpted { length } => *length = scaled::quantize(length.clamp(0.0, 1.0)),
         }
+    }
+
+    fn paint_floor(&self) -> Option<f32> {
+        matches!(self, Self::Sculpted { .. }).then_some(SCULPTED_PAINT)
     }
 }
 
 impl ChinStyle {
     /// Where this style's numbers sit in the tables above, or `None` if it grows
-    /// nothing.
+    /// nothing - or grows a sculpted solid, which has no cards to size.
     fn slot(self) -> Option<usize> {
         match self {
-            Self::None => None,
+            Self::None | Self::Sculpted { .. } => None,
             Self::Goatee { .. } => Some(0),
             Self::Full => Some(1),
             Self::Braided { .. } => Some(2),
