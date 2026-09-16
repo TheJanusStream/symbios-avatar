@@ -676,7 +676,9 @@
             "slick_back",
             "bell",
             "bun",
-            "crest"
+            "crest",
+            "afro",
+            "braids"
           ],
           "default": "none"
         },
@@ -719,6 +721,18 @@
         "height": {
           "type": "integer",
           "description": "BUN: where the ball of gathered hair sits, as a share of the back of the head. 0 a bun at the nape, 1000 a top knot on the crown. CREST: how tall the fin along the midline is, 0 a low ridge and 1000 a full crest - the sides are shaved either way.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "size": {
+          "type": "integer",
+          "description": "AFRO only: how far the mass stands off the head. 0 close-cropped coils at the hairline, 1000 a full crown that comes down over the ears - measured in the head's own radii.",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "rows": {
+          "type": "integer",
+          "description": "BRAIDS only: how many cornrows run down the head. 0 four broad ones, 1000 ten.",
           "minimum": 0,
           "maximum": 1000
         }

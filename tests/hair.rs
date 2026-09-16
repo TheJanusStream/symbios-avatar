@@ -1331,11 +1331,26 @@ impl Capped {
 
     /// The signed height of a head-local point over the body's own surface, in
     /// metres: negative under the skin.
+    ///
+    /// **Reaching 200 mm, and far outside where nothing is that near** (#348).
+    /// It reached 90 mm and answered ZERO past that - on the skin - which no
+    /// shell before an afro ever stood far enough off to find: a full afro's
+    /// outer surface is 80 mm and more off seed 7's head, and read as lying on
+    /// it the closed-solid guard's own liveness could not sink those vertices
+    /// back under the skin (567 of 830). The probe that measured the afro had
+    /// the same bug first, and #347's before it.
     fn over_skin(&self, point: Vec3) -> f32 {
-        let mut best = (f32::MAX, 0.0f32);
+        self.skin(point).0
+    }
+
+    /// [`Capped::over_skin`], and the body's own shading normal where it is
+    /// nearest (straight up where nothing is within reach).
+    fn skin(&self, point: Vec3) -> (f32, Vec3) {
+        const REACH: f32 = 0.200;
+        let mut best = (f32::MAX, REACH, Vec3::Y);
         for face in &self.body.faces {
             let first = self.body.positions[face[0] as usize] - self.origin;
-            if first.distance_squared(point) > 0.09 * 0.09 {
+            if first.distance_squared(point) > REACH * REACH {
                 continue;
             }
             for fan in 1..face.len() - 1 {
@@ -1348,11 +1363,15 @@ impl Capped {
                         + self.normals[face[fan] as usize]
                         + self.normals[face[fan + 1] as usize])
                         .normalize_or(Vec3::Y);
-                    best = (apart, (point - nearest).dot(normal).signum() * apart.sqrt());
+                    best = (
+                        apart,
+                        (point - nearest).dot(normal).signum() * apart.sqrt(),
+                        normal,
+                    );
                 }
             }
         }
-        best.1
+        (best.1, best.2)
     }
 
     /// The signed distance from a point to its shell, positive outside it.
@@ -1441,7 +1460,7 @@ impl Capped {
 }
 
 /// Every helmet style at both ends of its own axis, on every measured head
-/// (#346, and #347's two): the corners every shell guard is asked at.
+/// (#346, #347's two and #348's two): the corners every shell guard is asked at.
 ///
 /// Written out rather than iterated off the enum, for the reason
 /// `every_hair_style_the_crate_can_write_is_declared_with_its_axis` gives: a
@@ -1462,6 +1481,11 @@ fn helmets() -> Vec<(Option<i64>, ScalpStyle)> {
             ScalpStyle::Bun { height: 1.0 },
             ScalpStyle::Crest { height: 0.0 },
             ScalpStyle::Crest { height: 1.0 },
+            // #348's two: a round mass whose rim rolls in, and cornrows.
+            ScalpStyle::Afro { size: 0.0 },
+            ScalpStyle::Afro { size: 1.0 },
+            ScalpStyle::Braids { rows: 0.0 },
+            ScalpStyle::Braids { rows: 1.0 },
         ] {
             all.push((seed, style));
         }
@@ -1872,6 +1896,18 @@ fn a_helmet_style_wears_the_shell_its_name_says() {
         low * 1000.0,
         tall * 1000.0
     );
+    // An AFRO'S AXIS is its size, which is the mass it encloses (#348): from
+    // close-cropped coils lying on the head to a full crown.
+    let (close, full) = (
+        mass(ScalpStyle::Afro { size: 0.0 }),
+        mass(ScalpStyle::Afro { size: 1.0 }),
+    );
+    assert!(
+        full >= close * 2.0,
+        "the Afro's size grew the solid only from {:.1} to {:.1} cm3",
+        close * 1_000_000.0,
+        full * 1_000_000.0
+    );
     // And the three are three shapes and not one. Asked as "every reading
     // separates every pair" this failed, and rightly: a cap at a half notch and
     // a bell at a half length both stop within 1.5 mm of the hairline down the
@@ -2146,6 +2182,8 @@ fn a_crest_shaves_what_its_shell_does_not_cover() {
         ScalpStyle::SlickBack { volume: 0.5 },
         ScalpStyle::Bell { length: 0.5 },
         ScalpStyle::Bun { height: 0.5 },
+        ScalpStyle::Afro { size: 0.5 },
+        ScalpStyle::Braids { rows: 0.5 },
     ] {
         assert!(
             style.shaved().is_none(),
@@ -2265,15 +2303,20 @@ fn a_rim_card_keeps_its_edges_outside_the_shell_it_breaks() {
         corners.sort_unstable();
         corners.dedup();
         // **Except the styles whose rim is not broken at all** (#346's slick,
-        // and #347's crest): a slicked head grows no cards because its whole
-        // point is an unbroken edge, and a crest grows none because its band
-        // has taken the rim off the sides altogether and a hem at the two ends
-        // of a strip is two wisps rather than a fringe. Both are ASSERTED to
-        // grow none rather than skipped quietly, so the count below stays a
-        // claim about every style that has a rim.
+        // #347's crest and #348's two): a slicked head grows no cards because
+        // its whole point is an unbroken edge, a crest grows none because its
+        // band has taken the rim off the sides altogether and a hem at the two
+        // ends of a strip is two wisps rather than a fringe, an afro none
+        // because its acceptance is that it HAS no visible edge, and cornrows
+        // none because their edge is neat. All are ASSERTED to grow none rather
+        // than skipped quietly, so the count below stays a claim about every
+        // style that has a rim.
         if matches!(
             style,
-            ScalpStyle::SlickBack { .. } | ScalpStyle::Crest { .. }
+            ScalpStyle::SlickBack { .. }
+                | ScalpStyle::Crest { .. }
+                | ScalpStyle::Afro { .. }
+                | ScalpStyle::Braids { .. }
         ) {
             assert!(
                 corners.is_empty(),
@@ -2328,6 +2371,337 @@ fn a_rim_card_keeps_its_edges_outside_the_shell_it_breaks() {
             "{seed}: only {walls} of {} points inside the shell's own wall read as inside \
              it, so the reading cannot see a card that is",
             sampled.len()
+        );
+    }
+}
+
+/// The Newell normal of one face of the hair, and half its area vector's
+/// length: the face's own area.
+fn facing_and_area(mesh: &symbios_avatar::PolyMesh, face: &[u32]) -> (Vec3, f32) {
+    let points: Vec<Vec3> = face.iter().map(|at| mesh.positions[*at as usize]).collect();
+    let mut sum = Vec3::ZERO;
+    for (index, here) in points.iter().enumerate() {
+        sum += here.cross(points[(index + 1) % points.len()]);
+    }
+    (sum.normalize_or(Vec3::ZERO), sum.length() * 0.5)
+}
+
+/// How many edges of a set of welded faces turn past `crease` (a cosine)
+/// between the two faces sharing them, and the sharpest turn there is.
+fn folds(normals: &[Vec3], welded: &[Vec<u32>], crease: f32) -> (usize, f32) {
+    let mut edges: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    for (index, face) in welded.iter().enumerate() {
+        for (at, from) in face.iter().enumerate() {
+            let to = face[(at + 1) % face.len()];
+            if *from != to {
+                edges
+                    .entry((*from.min(&to), *from.max(&to)))
+                    .or_default()
+                    .push(index);
+            }
+        }
+    }
+    let (mut sharp, mut worst) = (0usize, 1.0f32);
+    for faces in edges.values() {
+        if let [one, two] = faces[..] {
+            let turn = normals[one].dot(normals[two]);
+            worst = worst.min(turn);
+            sharp += usize::from(turn < crease);
+        }
+    }
+    (sharp, worst)
+}
+
+#[test]
+fn a_shell_never_folds_over_itself() {
+    // **What a THICK shell does that a thin one never could** (#348). Stood off
+    // along the walk's own normal, an afro 0.8 head radii thick FOLDED where its
+    // sides come down past the face notch: one column there is tens of
+    // millimetres longer than its neighbour, so a row at the same share of each
+    // sits at a different height and a 58 mm offset turns that shear into a
+    // fold - 16 to 26 edges of the built solid creased past 107 degrees, up to
+    // 175, on all three heads, rendered as dark folded patches over the crown.
+    // Placed on its fitted ellipsoid instead (`Shell::round`) those went, and a
+    // second family came from the rim: a bevel carried along a ROLLED outer
+    // surface's last step pointed back into the head and folded over it, 10 to
+    // 30 edges at the rim's own height, until it was carried down the inner
+    // surface.
+    //
+    // A crease, not a sign: two faces sharing an edge, and the angle between
+    // their own normals. Nothing here knows what "outward" is, which is how the
+    // first cut of this reading failed its control (it called 110 of a bell's
+    // 378 faces folded). Measured on every corner: the sharpest turn anywhere is
+    // the bevelled rim's, 101 to 105 degrees, so a fold is anything past 107.
+    //
+    // **EXCEPT THE CREST, and this guard is what found it** (#348). #347's
+    // crest cuts its sides to a stub of a column that meets the welded pole,
+    // and those stubs crease where they meet the strip: 4 to 44 edges past 107
+    // degrees on the three heads, up to 177, all within a few centimetres of
+    // the crown - the seam #347's veto point (e) saw from above, measured. The
+    // crest renders byte-identically to the tree it was committed on, so it is
+    // #347's geometry and not this slice's, and it is left named here rather
+    // than tuned into passing.
+    const CREASE: f32 = -0.3;
+    for (roll, style) in helmets() {
+        if matches!(style, ScalpStyle::Crest { .. }) {
+            continue;
+        }
+        let seed = format!("seed {roll:?} wearing {style:?}");
+        let head = Capped::of(roll, Some(style));
+        let mesh = &head.hair.mesh;
+        let shell = head.shell();
+        let normals: Vec<Vec3> = shell
+            .iter()
+            .map(|face| facing_and_area(mesh, face).0)
+            .collect();
+        let held = welded(mesh, &shell);
+        let (sharp, worst) = folds(&normals, &held, CREASE);
+        assert_eq!(
+            sharp,
+            0,
+            "{seed}: {sharp} edges of the shell turn past 107 degrees, the sharpest {:.0} - the \
+             solid folds over itself",
+            worst.clamp(-1.0, 1.0).acos().to_degrees()
+        );
+        // The liveness, on the same faces: one face turned over reads as the
+        // fold it is.
+        let mut turned = normals.clone();
+        let middle = turned.len() / 2;
+        turned[middle] = -turned[middle];
+        assert!(
+            folds(&turned, &held, CREASE).0 > 0,
+            "{seed}: a face turned over reads no crease, so the reading cannot see a fold"
+        );
+    }
+}
+
+#[test]
+fn an_afro_rim_rolls_in_so_no_lip_shows() {
+    // **The afro's acceptance: its rim is nowhere visible** (#348), and the
+    // first helmet style that cannot use the rim every shell before it ends at.
+    // A shell's cut rim, however thin, is a band of hair surface lying a few
+    // millimetres off the skin while still facing AWAY from it - a lip - and
+    // that is what reads as a helmet's edge from every side. A rim that rolls
+    // in turns its surface before it comes near the skin, and the surface that
+    // does lie near the skin is the inner one, facing it.
+    //
+    // **Read off the built hair against the built BODY's own normal**, not off
+    // the construction: nothing here knows which faces are the rim, the roll or
+    // the ellipsoid. Three camera readings were tried first and none separated
+    // a thin rim from a rolled one, because at pixel scale a hair's last pixel
+    // grazes past the head whatever the rim is.
+    //
+    // Measured: outward-facing surface within 8 mm of the skin, 0.5 to 1.9 cm2
+    // on every afro at 0, 0.5 and 1 on all three heads, against 328 to 414 cm2
+    // for a Cap, 311 to 414 for a Bell or a slick.
+    const NEAR: f32 = 0.008;
+    const LIP: f32 = 0.0005;
+    let lip = |head: &Capped| -> f32 {
+        let mesh = &head.hair.mesh;
+        head.shell()
+            .iter()
+            .map(|face| {
+                let (normal, area) = facing_and_area(mesh, face);
+                let middle = face
+                    .iter()
+                    .map(|at| mesh.positions[*at as usize])
+                    .sum::<Vec3>()
+                    / face.len() as f32;
+                let (over, skin) = head.skin(middle);
+                if over < NEAR && normal.dot(skin) > 0.7 {
+                    area
+                } else {
+                    0.0
+                }
+            })
+            .sum()
+    };
+    for roll in [None, Some(42), Some(7)] {
+        for size in [0.0, 0.5, 1.0] {
+            let head = Capped::of(roll, Some(ScalpStyle::Afro { size }));
+            let area = lip(&head);
+            assert!(
+                area <= LIP,
+                "seed {roll:?}, an afro of size {size}: {:.1} cm2 of its surface lies within 8 mm \
+                 of the skin facing away from it, which is a lip and reads as a rim",
+                area * 10_000.0
+            );
+        }
+        // The liveness: a Cap on the same head, whose cut rim is exactly that.
+        let cap = lip(&Capped::of(roll, Some(ScalpStyle::Cap { fringe: 0.0 })));
+        assert!(
+            cap >= 0.010,
+            "seed {roll:?}: a Cap reads only {:.1} cm2 of lip, so the reading cannot see a rim",
+            cap * 10_000.0
+        );
+    }
+}
+
+#[test]
+fn an_afro_is_one_tone_with_only_its_underside_darker() {
+    // **A gradient on an afro reads as a highlight painted on** (#348's
+    // brief). Every shell before it is coloured tips at the crown to roots at
+    // the rim, baked into the loft; an afro asks for `Tone::One`. So on a
+    // record whose roots and tips DIFFER: every vertex of its hair that faces
+    // up is the tips' colour exactly, and the whole head of hair is at most
+    // three colours - the tips, the underside's shade, and the bevel's roots.
+    let grow = |style: ScalpStyle| {
+        let mut record = AvatarRecord::new("Toned", Archetype::default());
+        record.hair.scalp.style = style;
+        record.hair.scalp.roots = [0.10, 0.06, 0.04];
+        record.hair.scalp.tips = [0.45, 0.30, 0.18];
+        record.hair.brows.style = BrowStyle::None;
+        record.hair.moustache.style = MoustacheStyle::None;
+        record.hair.chin.style = ChinStyle::None;
+        record.hair.flanks.style = FlankStyle::None;
+        record.sanitize();
+        let tips = Vec3::from_array(record.hair.scalp.tips);
+        let avatar = Avatar::build_with(&record, &symbios_avatar::AvatarConfig::default())
+            .expect("a biped builds");
+        (avatar.parts.hair.expect("a head of hair"), tips)
+    };
+    let tones = |hair: &symbios_avatar::hair::Growth| {
+        let mut seen: Vec<[u32; 3]> = hair
+            .mesh
+            .colours
+            .iter()
+            .map(|c| [c.x.to_bits(), c.y.to_bits(), c.z.to_bits()])
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen.len()
+    };
+    for size in [0.0, 1.0] {
+        let (hair, tips) = grow(ScalpStyle::Afro { size });
+        let count = tones(&hair);
+        assert!(
+            count <= 3,
+            "an afro of size {size} is drawn in {count} colours, so it carries a gradient"
+        );
+        let off = hair
+            .mesh
+            .normals
+            .iter()
+            .zip(&hair.mesh.colours)
+            .filter(|(normal, colour)| normal.y > 0.3 && colour.distance(tips) > 1e-6)
+            .count();
+        assert_eq!(
+            off, 0,
+            "an afro of size {size}: {off} upward-facing vertices are not the tips' colour"
+        );
+    }
+    // The liveness: a Cap on the same record keeps its crown-to-rim gradient.
+    let (cap, _) = grow(ScalpStyle::Cap { fringe: 0.0 });
+    assert!(
+        tones(&cap) > 6,
+        "a Cap on a record with different roots and tips is drawn in only {} colours, so the \
+         reading cannot see a gradient",
+        tones(&cap)
+    );
+}
+
+#[test]
+fn braids_draw_as_many_cornrows_as_their_axis_asks() {
+    // **The braids' acceptance: the ridge count matches the axis** (#348),
+    // four at `0` and ten at `1`. Read off the BUILT shell as the solid's own
+    // THICKNESS round the head: from every vertex of its inner surface, along
+    // that surface's own normal, to the outer surface - the most of it over the
+    // lower part of each of the grid's columns, away from the crown where the
+    // ridges melt into a smooth mean. A crest reads the ridge's full height and
+    // a parting the thin shell under it, so the count is the runs of columns
+    // over the middle of the two. Every crest and parting of every count holds
+    // a column by construction (the ridge's plateau is exactly the columns'
+    // sampling error), which is why a count and not a fit.
+    //
+    // Thickness and not height off the skin, which the first cut read: how far
+    // the lower part of a column stands off the body runs 7.5 to 22.5 mm round
+    // a default head with the drape at the nape, and a 4.3 mm ridge vanished in
+    // it. And by the column's own vertices rather than by a height, since a
+    // default head's front rim is only 57 mm under its crown.
+    let count = |roll: Option<i64>, style: ScalpStyle| -> usize {
+        let head = Capped::of(roll, Some(style));
+        let mesh = &head.hair.mesh;
+        let shell = head.shell();
+        let tris: Vec<[Vec3; 3]> = shell
+            .iter()
+            .flat_map(|face| {
+                (1..face.len() - 1).map(move |fan| [face[0], face[fan], face[fan + 1]])
+            })
+            .map(|tri| tri.map(|at| mesh.positions[at as usize]))
+            .collect();
+        let mut corners: Vec<u32> = shell.iter().flat_map(|f| f.iter().copied()).collect();
+        corners.sort_unstable();
+        corners.dedup();
+        let mut columns: Vec<Vec<(f32, f32)>> = vec![Vec::new(); 36];
+        for at in corners {
+            let point = mesh.positions[at as usize];
+            let normal = mesh.normals[at as usize];
+            // The inner surface's own vertices: facing the head.
+            if point.x.hypot(point.z) < 0.010 || normal.dot(head.skin(point).1) > -0.5 {
+                continue;
+            }
+            let out = -normal;
+            let thick = tris
+                .iter()
+                .filter_map(|[a, b, c]| {
+                    let (e1, e2) = (*b - *a, *c - *a);
+                    let p = out.cross(e2);
+                    let det = e1.dot(p);
+                    if det.abs() < 1e-12 {
+                        return None;
+                    }
+                    let q = (point - *a).cross(e1);
+                    let (u, v) = ((point - *a).dot(p) / det, out.dot(q) / det);
+                    let t = e2.dot(q) / det;
+                    (u >= 0.0 && v >= 0.0 && u + v <= 1.0 && t > 0.0005).then_some(t)
+                })
+                .fold(f32::MAX, f32::min);
+            if thick == f32::MAX {
+                continue;
+            }
+            let column = ((point.x.atan2(point.z) / std::f32::consts::TAU * 36.0).round() as i32)
+                .rem_euclid(36) as usize;
+            columns[column].push((point.y, thick));
+        }
+        let tallest: Vec<f32> = columns
+            .iter_mut()
+            .map(|column| {
+                column.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let lower = (column.len() * 2 / 5).max(1);
+                column[..lower.min(column.len())]
+                    .iter()
+                    .map(|(_, thick)| *thick)
+                    .fold(f32::MIN, f32::max)
+            })
+            .collect();
+        let (low, high) = tallest
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), t| (lo.min(*t), hi.max(*t)));
+        // A ridge has to BE one: measured, a crest stands 3.5 to 5.0 mm over
+        // its partings on the three heads, and a plain Cap's own thickness
+        // wanders 0.2 to 0.5 mm round the head - enough to cross a midline.
+        if high - low < 0.002 {
+            return 0;
+        }
+        let middle = (low + high) * 0.5;
+        (0..36)
+            .filter(|c| tallest[*c] > middle && tallest[(*c + 35) % 36] <= middle)
+            .count()
+    };
+    for roll in [None, Some(42), Some(7)] {
+        for (rows, want) in [(0.0, 4usize), (0.5, 7), (1.0, 10)] {
+            let got = count(roll, ScalpStyle::Braids { rows });
+            assert_eq!(
+                got, want,
+                "seed {roll:?}: braids at {rows} draw {got} cornrows round the head, not {want}"
+            );
+        }
+        // The liveness: a smooth Cap reads no count that a braid could be
+        // mistaken for.
+        let plain = count(roll, ScalpStyle::Cap { fringe: 0.0 });
+        assert!(
+            ![4, 7, 10].contains(&plain),
+            "seed {roll:?}: a plain Cap reads as {plain} cornrows, so the reading cannot tell"
         );
     }
 }

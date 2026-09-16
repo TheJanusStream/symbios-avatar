@@ -153,6 +153,31 @@ pub enum ScalpStyle {
         #[serde(with = "crate::plan::scaled")]
         height: f32,
     },
+    /// One round soft mass standing off the whole scalp, in one tone, with its
+    /// rim rolled in so there is no edge to see from any side.
+    ///
+    /// **The first helmet style that cannot use the rim** (#348). Every shell
+    /// before it ends at the scalp mask's own edge closed through a bevelled
+    /// ring, and that ring is an edge; an afro's comes down the head at full
+    /// thickness and turns in to meet it (see
+    /// [`hair::shell::Shell::roll`](crate::hair::shell::Shell::roll)). Tight
+    /// coils are the one thing the card system cannot draw at this budget - a
+    /// ringlet is 218 triangles a lock.
+    Afro {
+        /// How far the mass stands off the head, `0` close-cropped coils and `1`
+        /// a full crown - in the head's own radii.
+        #[serde(with = "crate::plan::scaled")]
+        size: f32,
+    },
+    /// Cornrows: a close shell with braided ridges running down the head and
+    /// darker partings between them, meeting in a smooth crown.
+    ///
+    /// Hanging braids are not this style.
+    Braids {
+        /// How many cornrows, `0` four broad ones and `1` ten.
+        #[serde(with = "crate::plan::scaled")]
+        rows: f32,
+    },
 }
 
 /// How far a lock hangs PAST the hairline at full length, in metres.
@@ -404,7 +429,9 @@ impl Style for ScalpStyle {
             | Self::SlickBack { .. }
             | Self::Bell { .. }
             | Self::Bun { .. }
-            | Self::Crest { .. } => return None,
+            | Self::Crest { .. }
+            | Self::Afro { .. }
+            | Self::Braids { .. } => return None,
         };
         let knot = self.knot(head);
         let curl = match self {
@@ -462,6 +489,8 @@ impl Style for ScalpStyle {
             Self::Bun { height } | Self::Crest { height } => {
                 *height = scaled::quantize(height.clamp(0.0, 1.0));
             }
+            Self::Afro { size } => *size = scaled::quantize(size.clamp(0.0, 1.0)),
+            Self::Braids { rows } => *rows = scaled::quantize(rows.clamp(0.0, 1.0)),
         }
     }
 }
@@ -505,13 +534,15 @@ impl ScalpStyle {
             | Self::SlickBack { .. }
             | Self::Bell { .. }
             | Self::Bun { .. }
-            | Self::Crest { .. } => None,
+            | Self::Crest { .. }
+            | Self::Afro { .. }
+            | Self::Braids { .. } => None,
         }
     }
 
     /// The solid this style wears, if it is one of the helmet family (#346).
     ///
-    /// **One place the catalogue's three shells are described**, so a style is a
+    /// **One place the catalogue's shells are described**, so a style is a
     /// variant here and a handful of numbers in `hair::shell` rather than a
     /// second opinion in every caller. `tests/budget.rs` costs a helmet through
     /// the same call the body draws it with.
@@ -522,6 +553,8 @@ impl ScalpStyle {
             Self::Bell { length } => Some(Cap::bell(length, head)),
             Self::Bun { height } => Some(Cap::bun(height, head)),
             Self::Crest { height } => Some(Cap::crest(height)),
+            Self::Afro { size } => Some(Cap::afro(size, head)),
+            Self::Braids { rows } => Some(Cap::braids(rows)),
             _ => None,
         }
     }
@@ -571,6 +604,14 @@ impl ScalpStyle {
             // strip is two wisps rather than a fringe.
             Self::Bun { .. } => Some(Cap::crop(0.0).rim_cards),
             Self::Crest { .. } => Some(Cap::crest(0.0).rim_cards),
+            // Neither grows a card: an afro's whole point is that it has no
+            // edge, and a cornrow's is neat (#348).
+            // `Cap::afro` wants a measured head for its drop and a rim's count is
+            // not a shape; the count it builds is none, and
+            // `a_rim_card_keeps_its_edges_outside_the_shell_it_breaks` holds
+            // the two to each other.
+            Self::Afro { .. } => Some(0),
+            Self::Braids { .. } => Some(Cap::braids(0.0).rim_cards),
             _ => None,
         }
     }

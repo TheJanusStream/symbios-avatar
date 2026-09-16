@@ -359,12 +359,82 @@ pub struct Shell {
     /// Measured on the default head: 0.20 head radii is 14.4 mm of fin over the
     /// crown, 0.35 is 25.2 and 0.50 is 36.0.
     pub fin: f32,
+    /// How long the outer surface's roll IN to the rim is, as a multiple of the
+    /// gap it closes there: `1` a quarter circle from the thickness the column
+    /// carries down to the catalogue's thin edge at the rim itself, more a
+    /// gentler slope, `0` no roll.
+    ///
+    /// **What an afro needs and neither `crown` nor `rim` can give** (#348).
+    /// Squared from a thick crown to a thin rim is a cone with thin sides; a
+    /// thick rim is a slab, and the slab the bevel ring closes is the edge that
+    /// reads as a helmet (#345's veto point (a)). A mass of hair that comes down
+    /// the head at full thickness and then turns in to meet it has no edge to
+    /// see from any side.
+    ///
+    /// Down to the thin edge and not to nothing, because a rim of no thickness
+    /// puts the outer row, the bevel ring and the inner row at one position, and
+    /// a solid welded by position there is not closed. Measured, the roll has at
+    /// least 3.0 mm of room past the shell's inner surface on all three heads
+    /// (seed 7 dead ahead), 5.0 and 5.75 on the other two, and 9 to 18 mm at the
+    /// nape, where the drape holds the column off the neck - so a roll that
+    /// ends at the shell's own inner surface cannot reach the skin.
+    pub roll: f32,
+    /// How far the outer surface is placed on a soft ELLIPSOID fitted round the
+    /// head rather than stood off along the walk's own normal, `0` not at all
+    /// and `1` wholly: an afro's round mass.
+    ///
+    /// **What a thick mass needs and a thickness cannot give** (#348,
+    /// measured). Stood off along the walk's normal, an afro 0.8 head radii
+    /// thick FOLDED where its sides come down: 16 to 26 edges of the built
+    /// solid creased past 107 degrees, up to 175, all at 0.9 to 1.3 radians
+    /// round the head - the notch ramp, where one column is tens of millimetres
+    /// longer than its neighbour, so a row at the same share of each sits at a
+    /// different height and a 58 mm offset turns that shear into a fold. A bell
+    /// at the same ramp, 1.2 mm thick, has none. Along the ray from the
+    /// ellipsoid's own middle nothing can fold however the rows are sheared,
+    /// and the surface is round, which is what the issue asks an afro to be.
+    ///
+    /// The ellipsoid is stood off the head by [`Shell::crown`]'s thickness.
+    pub round: f32,
+    /// How many cornrow ridges run down the head, round the whole of it: `0`
+    /// draws none.
+    ///
+    /// **The same mechanism as [`Shell::rise`] and [`Shell::fin`]** - a
+    /// thickness that varies by azimuth - with a term that is PERIODIC, which
+    /// neither of those is: rise is weighted `cos.max(0)` and fin `cos^2`
+    /// (#348). See [`Shell::ridge`] for how tall.
+    pub ridges: usize,
+    /// How tall a cornrow ridge stands over its partings, as a share of the
+    /// head's own half-width.
+    pub ridge: f32,
+    /// How the solid is coloured from the record's roots and tips.
+    ///
+    /// A catalogue constant, like [`Shell::facets`]: what a named style IS.
+    pub tone: Tone,
     /// How its normals are read: one continuous surface, one per face, or
     /// smooth over the vault and faceted over the rim band.
     ///
     /// A catalogue constant and never a record axis (the owner's decision):
     /// faceted, painterly or smooth is what a named style IS.
     pub facets: Facets,
+}
+
+/// How a shell is coloured from the record's roots and tips.
+///
+/// **A style's own and not the record's** (#348). Every shell was drawn with
+/// the tips' colour at the crown falling to the roots' at the rim, baked into
+/// the loft; an afro wants none of that, since a gradient over one round mass
+/// of coils reads as a highlight painted on. A default on a published record
+/// field would move nothing an owner sees, and the loft is handed a [`Shell`]
+/// and nothing else, so the choice lives here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tone {
+    /// The tips' colour at the crown falling to the roots' at the rim.
+    #[default]
+    Crown,
+    /// One tone, the tips' - the outside of a mass of coils is its ends - with
+    /// only the underside darker.
+    One,
 }
 
 /// How a shell's normals are read.
@@ -389,6 +459,18 @@ pub enum Facets {
     Smooth,
     /// Every face carries its own normal.
     All,
+    /// One continuous surface, with the OUTER surface's normals read off the
+    /// outer surface's own grid rather than copied from the walk's.
+    ///
+    /// **A thickness that varies is invisible to [`Facets::Smooth`]** (#348).
+    /// That mode reads a normal off the walked grid and gives it to both
+    /// surfaces, so the outer surface is shaded as the head is: a rolled rim
+    /// shades as if it did not roll and a cornrow ridge does not shade at all.
+    /// A faceted shell never had the problem, since its normals are taken off
+    /// the positions (which is why the crest's fin reads). Kept separate from
+    /// `Smooth` so every style built before it draws point for point as it
+    /// did.
+    Relief,
 }
 
 // A third mode - smooth over the vault and FACETED OVER THE RIM BAND, the
@@ -413,17 +495,25 @@ impl Default for Shell {
             band: 0.0,
             fin: 0.0,
             even: 0.0,
+            roll: 0.0,
+            round: 0.0,
+            ridges: 0,
+            ridge: 0.0,
+            tone: Tone::Crown,
             facets: Facets::Smooth,
         }
     }
 }
 
-/// The helmet family's prototype: a plain cap of hair.
+/// One helmet style's whole description: the solid, the cards that break its
+/// rim, and the ball it hangs off the shell if it has one.
 ///
-/// **Not a style on the wire.** #345 is the generator and the catalogue is
-/// #346, so this is asked for through `AvatarConfig::helmet` and nothing a
-/// record can say reaches it. It is what the generator is sheeted and judged
-/// on, in both renderers.
+/// **Not a thing on the wire.** A record asks for a named
+/// [`ScalpStyle`], and `ScalpStyle::helmet` is the one place that turns a name
+/// and its axis into one of these (#346 removed the `AvatarConfig::helmet` door
+/// #345 sheeted the prototype through). The catalogue's constructors -
+/// [`Cap::crop`], [`Cap::slicked`], [`Cap::bell`], [`Cap::bun`], [`Cap::crest`],
+/// [`Cap::afro`] and [`Cap::braids`] - are what the styles are.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cap {
     /// The solid it wears.
@@ -623,6 +713,77 @@ const CREST_BAND: f32 = 0.080;
 /// Provenance: **tuned by render** against the measured height.
 const CREST_FIN: [f32; 2] = [0.10, 0.50];
 
+/// How thick an afro is at the crown at each end of its axis, as shares of the
+/// head's own half-width.
+///
+/// Measured before it was built (#348): no even thickness from 10 to 80 mm put
+/// a single outer point inside `Follicles::clearance` on any of three heads,
+/// because at the front the surface faces up and forward and a thicker mass is
+/// a higher one. So what bounds an afro is the look and not the face.
+///
+/// Provenance: **tuned by render**.
+const AFRO_THICK: [f32; 2] = [0.15, 0.80];
+
+/// How much of the crown's thickness an afro carries at its sides, before the
+/// roll takes it in.
+///
+/// Provenance: **tuned by render**.
+const AFRO_SIDES: f32 = 0.8;
+
+/// How far an afro carries its rim past the hairline at the sides and the back,
+/// at each end of its axis, as shares of the head's own half-width.
+///
+/// **A mass whose bottom is the hairline is a mushroom** (#348, rendered): the
+/// first afro kept the scalp mask's own rim, which runs level across the front
+/// and above the ear, so the rolled underside drew a flat shelf round the head
+/// at the top of the ear in both the front and the side views. Close-cropped
+/// coils stay at the hairline; a full crown comes down over the ears and to the
+/// nape.
+///
+/// Provenance: **carried** from `BELL_DROP`'s measured drop to the gonion,
+/// **tuned by render**.
+const AFRO_DROP: [f32; 2] = [0.0, 0.35];
+
+/// How long an afro's roll is against the gap it closes: `1` a quarter circle.
+/// See [`Shell::roll`].
+///
+/// Provenance: **derived** (a quarter circle), **tuned by render**.
+const AFRO_ROLL: f32 = 2.0;
+
+/// How far an afro is placed on its ellipsoid at each end of its axis. See
+/// [`Shell::round`].
+///
+/// **Close-cropped coils follow the head** (#348, rendered): wholly round at
+/// the axis's low end, the ellipsoid fitted through a head's own bounds stood a
+/// short crop far off the forehead and the temples, and the style read as a
+/// bowler hat.
+///
+/// Provenance: **tuned by render**.
+const AFRO_ROUND: [f32; 2] = [0.0, 1.0];
+
+/// How many cornrow ridges braids have at each end of their axis.
+///
+/// **From the issue**: four to ten. Measured, that is one ridge every 9 to 3.6
+/// columns, 108 to 43 mm apart at the middle of a default head's column.
+const BRAID_RIDGES: [usize; 2] = [4, 10];
+
+/// How thick a cornrow shell is under its ridges, crown and rim alike, as a share
+/// of the head's own half-width.
+///
+/// **Cornrows lie ON the scalp** (#348, rendered): on the Cap's own crown of
+/// 0.055 the ridges stood on a bowl and the style read as a pleated helmet. The
+/// catalogue's thin rim edge all over, so the partings are the scalp's own
+/// shape.
+///
+/// Provenance: **carried** from the thin edge, **tuned by render**.
+const BRAID_THICK: f32 = THICKNESS[1];
+
+/// How tall a cornrow ridge stands over its partings, as a share of the head's
+/// own half-width: seven millimetres on a default head.
+///
+/// Provenance: **tuned by render**.
+const BRAID_DEPTH: f32 = 0.06;
+
 /// How far a [`ScalpStyle::Cap`]'s fringe notch
 /// cuts the rim back over the brow at its axis's top, in metres.
 ///
@@ -820,6 +981,62 @@ impl Cap {
                 fin: CREST_FIN[0] + (CREST_FIN[1] - CREST_FIN[0]) * height.clamp(0.0, 1.0),
                 even: CAP_EVEN,
                 facets: Facets::All,
+                ..Shell::default()
+            },
+            rim_cards: 0,
+            ..Self::default()
+        }
+    }
+
+    /// The catalogue's afro: one round mass standing off the whole scalp mask,
+    /// smooth, in one tone, with its rim rolled in so there is no edge to see.
+    ///
+    /// `size` runs the mass from close-cropped coils to a full crown, in the
+    /// head's own radii (`AFRO_THICK`) for `BELL_DROP`'s reason, and carries
+    /// the rim down past the hairline at the sides and the back as it grows
+    /// (`AFRO_DROP`), by the bell's own two terms and so past the face box's own
+    /// notch.
+    ///
+    /// No rim cards: a card is an edge, and the whole acceptance is that there
+    /// is none.
+    #[must_use]
+    pub fn afro(size: f32, head: &Follicles) -> Self {
+        let size = size.clamp(0.0, 1.0);
+        let crown = AFRO_THICK[0] + (AFRO_THICK[1] - AFRO_THICK[0]) * size;
+        let drop = head_radius(head) * (AFRO_DROP[0] + (AFRO_DROP[1] - AFRO_DROP[0]) * size);
+        Self {
+            shell: Shell {
+                crown,
+                rim: crown * AFRO_SIDES,
+                nape: -drop,
+                side: -drop,
+                roll: AFRO_ROLL,
+                round: AFRO_ROUND[0] + (AFRO_ROUND[1] - AFRO_ROUND[0]) * size,
+                tone: Tone::One,
+                facets: Facets::Relief,
+                ..Shell::default()
+            },
+            rim_cards: 0,
+            ..Self::default()
+        }
+    }
+
+    /// The catalogue's cornrows: a close shell with braided ridges running down
+    /// the meridians and darker partings between them, `rows` running four
+    /// ridges to ten (`BRAID_RIDGES`).
+    ///
+    /// No rim cards: a cornrow's edge is neat, and a loose wisp at the fringe
+    /// is a different head of hair.
+    #[must_use]
+    pub fn braids(rows: f32) -> Self {
+        let span = (BRAID_RIDGES[1] - BRAID_RIDGES[0]) as f32;
+        Self {
+            shell: Shell {
+                crown: BRAID_THICK,
+                rim: BRAID_THICK,
+                ridges: BRAID_RIDGES[0] + (span * rows.clamp(0.0, 1.0)).round() as usize,
+                ridge: BRAID_DEPTH,
+                facets: Facets::Relief,
                 ..Shell::default()
             },
             rim_cards: 0,
@@ -1313,6 +1530,12 @@ struct Grid {
     inner: Vec<Vec3>,
     outer: Vec<Vec3>,
     normals: Vec<Vec3>,
+    /// The outer surface's own: the walk's normals copied, unless the style
+    /// reads them off the outer surface (see [`Facets::Relief`]).
+    outer_normals: Vec<Vec3>,
+    /// Where each row sits, as a share of every column's own arc: the one
+    /// schedule the grid was lofted on.
+    shares: Vec<f32>,
 }
 
 impl Grid {
@@ -1359,10 +1582,17 @@ impl Grid {
                     .collect::<Vec<_>>()
             })
             .collect();
+        // The ellipsoid a round mass is placed on, fitted to every point the
+        // grid is lofted through and stood off by the crown's thickness.
+        let round = (shell.round > 0.0).then(|| Round::fitted(&walked, radius * shell.crown));
+        // The catalogue's thin edge, which a rolled rim comes down to.
+        let edge = radius * THICKNESS[1];
         let mut grid = Self {
             inner: Vec::with_capacity(COLUMNS * ROWS),
             outer: Vec::with_capacity(COLUMNS * ROWS),
             normals: Vec::with_capacity(COLUMNS * ROWS),
+            outer_normals: Vec::new(),
+            shares: rows.clone(),
         };
         for column in 0..COLUMNS {
             for row in 0..ROWS {
@@ -1406,15 +1636,221 @@ impl Grid {
                 // where the band has already taken the shell away.
                 let midline = azimuth.cos().abs().powf(FIN_ROUND);
                 let fin = radius * shell.fin * midline * (1.0 - share).powf(FIN_POW);
-                let thick = rim + (crown - rim) * (1.0 - share).powf(THICKNESS_POW) + rise + fin;
+                // **And a cornrow is the same idea again, periodic** (#348):
+                // the ridges' own profile, which melts into the crown's mean
+                // rather than surviving to a pole every column shares.
+                let ridge = radius * shell.ridge * ridged(shell, azimuth, rows[row]);
+                let thick =
+                    rim + (crown - rim) * (1.0 - share).powf(THICKNESS_POW) + rise + fin + ridge;
+                let outer = if shell.roll > 0.0 || shell.round > 0.0 {
+                    let mut full = point + normal * (STAND + thick);
+                    // **And a ROUND mass is placed on its ellipsoid rather than
+                    // stood off along the walk's normal** (#348, and see
+                    // [`Shell::round`]): along the ray from the ellipsoid's own
+                    // middle, which cannot fold however the rows are sheared.
+                    if let Some(round) = &round {
+                        full = full.lerp(round.through(point, STAND + edge), shell.round);
+                    }
+                    full
+                } else {
+                    point + normal * (STAND + thick)
+                };
                 grid.inner.push(point + normal * STAND);
-                grid.outer.push(point + normal * (STAND + thick));
+                grid.outer.push(outer);
                 grid.normals.push(normal);
             }
+            // **An afro's rim rolls IN** (#348, and see [`Shell::roll`]): the
+            // outer surface comes down to the thin edge over a length of the
+            // column's own ARC that is a multiple of the gap it closes, so at
+            // one it is a quarter circle whatever the mass stands off by - a
+            // roll shorter than its gap is a shelf, and a share of the arc was
+            // (a 34 mm roll closing 45 mm at the front drew a brim over the
+            // brow). By arc rather than by row, because the rows are scheduled
+            // where the head bends and the roll is a shape of its own.
+            if shell.roll > 0.0 {
+                let arc = *along(&walks[column]).last().unwrap_or(&0.0);
+                let rim_at = Self::at(column, ROWS - 1);
+                let rim_edge = grid.inner[rim_at] + grid.normals[rim_at] * edge;
+                let gap = grid.outer[rim_at].distance(rim_edge);
+                let over =
+                    (shell.roll * gap / arc.max(f32::EPSILON)).clamp(f32::EPSILON, ROLL_MOST);
+                for (row, share) in rows.iter().enumerate() {
+                    let at = Self::at(column, row);
+                    let edge_point = grid.inner[at] + grid.normals[at] * edge;
+                    let into = ((share - (1.0 - over)) / over).clamp(0.0, 1.0);
+                    let kept = (1.0 - into * into).max(0.0).sqrt();
+                    grid.outer[at] = edge_point + (grid.outer[at] - edge_point) * kept;
+                }
+            }
         }
+        // **Relief reads the OUTER surface's normals off the outer surface**
+        // (#348, and see [`Facets::Relief`]), the same way the walk's are read
+        // off its own grid above: the neighbours round and down, turned to face
+        // the way the head's own normal does.
+        grid.outer_normals = match shell.facets {
+            Facets::Relief => (0..COLUMNS)
+                .flat_map(|column| (0..ROWS).map(move |row| (column, row)))
+                .map(|(column, row)| {
+                    let at = Self::at(column, row);
+                    if row == 0 {
+                        return Vec3::Y;
+                    }
+                    let up = grid.outer[Self::at(column, row - 1)];
+                    let down = grid.outer[Self::at(column, (row + 1).min(ROWS - 1))];
+                    let left = grid.outer[Self::at((column + COLUMNS - 1) % COLUMNS, row)];
+                    let right = grid.outer[Self::at(column + 1, row)];
+                    let normal = (right - left)
+                        .cross(down - up)
+                        .normalize_or(grid.normals[at]);
+                    if normal.dot(grid.normals[at]) < 0.0 {
+                        -normal
+                    } else {
+                        normal
+                    }
+                })
+                .collect(),
+            _ => grid.normals.clone(),
+        };
         grid
     }
 }
+
+/// The soft ellipsoid a round mass of hair is placed on (#348).
+///
+/// **Fitted to the head it covers and not chosen**: its middle and its six
+/// half-axes - front and back, up and down, and one across, since a head is
+/// neither symmetric front to back nor top to bottom - are the bounds of every
+/// point the grid is lofted through, scaled until all of them are inside it,
+/// and then stood off by the style's own thickness. So the smallest mass is a
+/// close round cap and the largest a ball, on every head.
+struct Round {
+    middle: Vec3,
+    /// `[across, up, down, front, back]`.
+    axes: [f32; 5],
+}
+
+impl Round {
+    fn fitted(points: &[Vec3], standoff: f32) -> Self {
+        let (lo, hi) = points.iter().fold(
+            (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+            |(lo, hi), at| (lo.min(*at), hi.max(*at)),
+        );
+        let middle = Vec3::new(
+            0.0,
+            hi.y - (hi.y - lo.y) * ROUND_MIDDLE,
+            (hi.z + lo.z) * 0.5,
+        );
+        let axes = [
+            lo.x.abs().max(hi.x.abs()),
+            hi.y - middle.y,
+            middle.y - lo.y,
+            hi.z - middle.z,
+            middle.z - lo.z,
+        ]
+        .map(|axis| axis.max(0.01));
+        let mut fitted = Self { middle, axes };
+        // Scaled until every point is inside: an ellipsoid through the bounds
+        // alone cuts the corners of a head between them.
+        let widest = points
+            .iter()
+            .map(|at| fitted.norm(*at - middle))
+            .fold(1.0f32, f32::max);
+        fitted.axes = fitted.axes.map(|axis| axis * widest + standoff);
+        // **But the underside comes in to the lowest rim and no further**
+        // (#348, measured): scaled and stood off like the rest, the lower
+        // half-axis put the mass's bottom far below the nape rim, so at the back
+        // the full surface hung BELOW the rim it had to roll up into - 24 to 32
+        // edges creased past 107 degrees at the nape and the low sides, up to
+        // 174 - and from the side the ball's underside read as a shelf.
+        fitted.axes[2] = (middle.y - lo.y) * ROUND_DOWN;
+        fitted
+    }
+
+    /// How far out along its own direction a point is, `1` on the surface.
+    fn norm(&self, from_middle: Vec3) -> f32 {
+        let [across, up, down, front, back] = self.axes;
+        let y = if from_middle.y >= 0.0 { up } else { down };
+        let z = if from_middle.z >= 0.0 { front } else { back };
+        ((from_middle.x / across).powi(2)
+            + (from_middle.y / y).powi(2)
+            + (from_middle.z / z).powi(2))
+        .sqrt()
+    }
+
+    /// Where the ray from the middle through `point` meets the surface - or
+    /// `least` metres past `point` along it, if that is further out.
+    fn through(&self, point: Vec3, least: f32) -> Vec3 {
+        let from = point - self.middle;
+        let reach = from.length();
+        let direction = from.normalize_or(Vec3::Y);
+        let on = 1.0 / self.norm(direction).max(f32::EPSILON);
+        self.middle + direction * on.max(reach + least)
+    }
+}
+
+/// The most of a column's arc a roll may take, however far the mass stands off.
+///
+/// A roll longer than the column leaves no mass above it; past two thirds the
+/// quarter circle has become a slope from the crown.
+///
+/// Provenance: **tuned by render**.
+const ROLL_MOST: f32 = 0.66;
+
+/// How far below its middle a round mass's underside reaches, as a share of the
+/// distance down to the grid's lowest point: `1` closes it at the lowest rim.
+///
+/// Provenance: **derived** from the fold it removes, **tuned by render**.
+const ROUND_DOWN: f32 = 1.0;
+
+/// Where a round mass's middle sits, as a share of the grid's height down from
+/// its top.
+///
+/// Provenance: **tuned by render**.
+const ROUND_MIDDLE: f32 = 0.45;
+
+/// How much of a cornrow ridge stands at one point of a shell, `0` in a
+/// parting and `1` on a braid's crest.
+///
+/// **A cosine with a PLATEAU exactly as wide as the columns sample it** (#348,
+/// measured before it was built). A crest of `n` ridges only draws at full
+/// height where a column lands on it, and at 5, 7, 8 and 10 ridges none does
+/// for some of them: 36 columns draw the worst crest at 0.94, 0.87, 0.77 and
+/// 0.77 of its height, which is uneven braids. Held flat for the half a column
+/// either side of the crest - `cos(n pi / COLUMNS)` - every crest and every
+/// parting of every count contains a column and draws whole.
+///
+/// **And melted into the crown rather than carried to it.** Every column meets
+/// at one welded apex, so the pole cannot be thicker on one column than on the
+/// next, and a ten-ridge period is 10 mm at a tenth of the way down a default
+/// head - narrower than the ridge is tall. So the profile eases to its own mean
+/// over [`RIDGE_FADE`] of the column: radial cornrows meeting a smooth crown.
+fn ridged(shell: &Shell, azimuth: f32, share: f32) -> f32 {
+    if shell.ridges == 0 {
+        return 0.0;
+    }
+    let count = shell.ridges as f32;
+    let top = (count * std::f32::consts::PI / COLUMNS as f32).cos();
+    let profile =
+        crate::face::smooth((((count * azimuth).cos() + top) / (2.0 * top)).clamp(0.0, 1.0));
+    let fade = crate::face::smooth((share / RIDGE_FADE).clamp(0.0, 1.0));
+    0.5 + (profile - 0.5) * fade
+}
+
+/// How much of its colour a cornrow's parting keeps, against a braid's crest.
+///
+/// A parting is where the scalp shows between two braids and the braids shade
+/// each other, so it is the darkest line on the head - but a parting drawn at
+/// the roots' own under-shade reads as a painted stripe rather than as a gap.
+///
+/// Provenance: **tuned by render**.
+const PARTING: f32 = 0.35;
+
+/// Over what share of a column, down from the crown, cornrow ridges come up out
+/// of the crown's smooth mean.
+///
+/// Provenance: **derived** from the measured ridge period near the pole (10 mm
+/// at a tenth of the way down at ten ridges), **tuned by render**.
+const RIDGE_FADE: f32 = 0.60;
 
 /// Draws one shell into `into`, bound rigidly to `head`, and returns what it
 /// cost in triangles.
@@ -1465,13 +1901,30 @@ pub(super) fn loft(
         };
         push(apex_out, Vec3::Y, tips);
         for column in 0..COLUMNS {
+            let azimuth = TAU * column as f32 / COLUMNS as f32;
             for row in 1..ROWS {
                 let at = Grid::at(column, row);
-                // The tips' colour at the crown falling to the roots' at the
-                // rim, which is the way round a mass of hair is lit: the rim is
-                // the part in its own shadow.
                 let down = row as f32 / (ROWS - 1) as f32;
-                push(grid.outer[at], grid.normals[at], tips.lerp(roots, down));
+                let colour = match shell.tone {
+                    // The tips' colour at the crown falling to the roots' at
+                    // the rim, which is the way round a mass of hair is lit:
+                    // the rim is the part in its own shadow.
+                    Tone::Crown => tips.lerp(roots, down),
+                    // **One tone, and only the underside darker** (#348): a
+                    // gradient over one round mass reads as a highlight
+                    // painted on.
+                    Tone::One => tips,
+                };
+                // **The partings between cornrows are darker, on the ridge's
+                // own profile** (#348), so the stripe and the ridge agree by
+                // construction rather than by two numbers kept in step.
+                let colour = if shell.ridges > 0 {
+                    let crest = ridged(shell, azimuth, grid.shares[row]);
+                    colour * (PARTING + (1.0 - PARTING) * crest)
+                } else {
+                    colour
+                };
+                push(grid.outer[at], grid.outer_normals[at], colour);
             }
         }
         push(apex_in, Vec3::NEG_Y, under);
@@ -1484,8 +1937,17 @@ pub(super) fn loft(
         for column in 0..COLUMNS {
             let at = Grid::at(column, ROWS - 1);
             let (outer, inner) = (grid.outer[at], grid.inner[at]);
-            let above = grid.outer[Grid::at(column, ROWS - 2)];
-            let heading = (outer - above).normalize_or(Vec3::NEG_Y);
+            // **Down the head, not down the outer surface, once that surface
+            // rolls** (#348, measured): a rolled rim's last outer step points
+            // back INTO the head, so a bevel carried along it folded back over
+            // the rim - 10 to 30 edges creased past 107 degrees at the rim's
+            // own height on every afro past close-cropped. The inner surface
+            // still runs down the head there.
+            let heading = if shell.roll > 0.0 {
+                (inner - grid.inner[Grid::at(column, ROWS - 2)]).normalize_or(Vec3::NEG_Y)
+            } else {
+                (outer - grid.outer[Grid::at(column, ROWS - 2)]).normalize_or(Vec3::NEG_Y)
+            };
             let across = (outer - inner).normalize_or(grid.normals[at]);
             let thick = outer.distance(inner);
             push(
@@ -1541,7 +2003,7 @@ pub(super) fn loft(
         ]);
     }
     match shell.facets {
-        Facets::Smooth => {}
+        Facets::Smooth | Facets::Relief => {}
         Facets::All => facet(into, before..into.faces.len()),
     }
     into.faces[before..].iter().map(|face| face.len() - 2).sum()

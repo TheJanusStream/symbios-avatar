@@ -1367,8 +1367,8 @@ mod tests {
                 ScalpStyle::Curly { .. } => 4,
                 ScalpStyle::None => panic!("a re-roll shaved a head"),
                 // **A re-roll draws no helmet yet** (#346's acceptance, and
-                // #347's): the FIVE shell styles are in the catalogue and on
-                // the wire, and what share of a rolled population should wear
+                // #347's and #348's): the SEVEN shell styles are in the
+                // catalogue and on the wire, and what share of a rolled population should wear
                 // one is a decision with the owner at the release slice
                 // (#351). Until then `reroll_hair` picks from the five card
                 // styles by their own weights, and a helmet here means someone
@@ -1379,7 +1379,9 @@ mod tests {
                 | ScalpStyle::SlickBack { .. }
                 | ScalpStyle::Bell { .. }
                 | ScalpStyle::Bun { .. }
-                | ScalpStyle::Crest { .. } => {
+                | ScalpStyle::Crest { .. }
+                | ScalpStyle::Afro { .. }
+                | ScalpStyle::Braids { .. } => {
                     panic!("a re-roll drew a helmet, which is #351's decision to make")
                 }
             };
@@ -1416,6 +1418,8 @@ mod tests {
                 ScalpStyle::SlickBack { volume } => volume,
                 ScalpStyle::Bell { length } => length,
                 ScalpStyle::Bun { height } | ScalpStyle::Crest { height } => height,
+                ScalpStyle::Afro { size } => size,
+                ScalpStyle::Braids { rows } => rows,
                 ScalpStyle::Crop | ScalpStyle::None => continue,
             };
             seen.push((axis * 1000.0).round() as i32);

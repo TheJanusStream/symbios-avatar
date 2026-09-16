@@ -287,10 +287,14 @@ fn main() {
             // a shaved head with a fin along its midline.
             "bun" => symbios_avatar::hair::ScalpStyle::Bun { height: axis },
             "crest" => symbios_avatar::hair::ScalpStyle::Crest { height: axis },
+            // A volume shell and a ridged one (#348): one round mass with its
+            // rim rolled in, and cornrows.
+            "afro" => symbios_avatar::hair::ScalpStyle::Afro { size: axis },
+            "braids" => symbios_avatar::hair::ScalpStyle::Braids { rows: axis },
             other => {
                 eprintln!(
                     "unknown --scalp style {other}: expected none, crop, bob, long, tied, curly, \
-                     cap, slick, bell, bun or crest"
+                     cap, slick, bell, bun, crest, afro or braids"
                 );
                 std::process::exit(1);
             }

@@ -729,6 +729,10 @@ fn scalp_catalogue() -> Vec<(String, ScalpStyle)> {
         // thickness on a grid that is the same size whatever it is asked for.
         all.push((format!("bun {axis}"), ScalpStyle::Bun { height: axis }));
         all.push((format!("crest {axis}"), ScalpStyle::Crest { height: axis }));
+        // And #348's two, a round mass and a ridged one: both the same grid
+        // again and neither grows a card, so they cost the shell and no more.
+        all.push((format!("afro {axis}"), ScalpStyle::Afro { size: axis }));
+        all.push((format!("braids {axis}"), ScalpStyle::Braids { rows: axis }));
     }
     all
 }
@@ -1168,6 +1172,10 @@ fn the_shell_prototype_costs_what_the_hair_ceiling_allows() {
             ScalpStyle::Bun { height: 1.0 },
             ScalpStyle::Crest { height: 0.0 },
             ScalpStyle::Crest { height: 1.0 },
+            ScalpStyle::Afro { size: 0.0 },
+            ScalpStyle::Afro { size: 1.0 },
+            ScalpStyle::Braids { rows: 0.0 },
+            ScalpStyle::Braids { rows: 1.0 },
         ] {
             let at = &format!("{at} in {style:?}");
             let mut record = AvatarRecord::new("Helmet", Archetype::default());
