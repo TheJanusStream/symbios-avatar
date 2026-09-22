@@ -104,3 +104,52 @@ pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Texture
         mip_level_count: wire.mip_level_count,
     })
 }
+
+/// The same adapter for an atlas that may not exist — the cloth atlas, which
+/// a body in plain colours does not paint (#357).
+pub mod optional {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use symbios_texture::generator::TextureMap;
+
+    /// The atlas under the parent module's own adapter, borrowed.
+    struct Borrowed<'a>(&'a TextureMap);
+
+    impl Serialize for Borrowed<'_> {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            super::serialize(self.0, serializer)
+        }
+    }
+
+    /// And owned, for the way back.
+    struct Owned(TextureMap);
+
+    impl<'de> Deserialize<'de> for Owned {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            super::deserialize(deserializer).map(Owned)
+        }
+    }
+
+    /// Serialize an atlas that may be absent.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the serializer's own failures.
+    pub fn serialize<S: Serializer>(
+        map: &Option<TextureMap>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        map.as_ref().map(Borrowed).serialize(serializer)
+    }
+
+    /// Deserialize an atlas that may be absent, with the parent's checks on
+    /// one that is present.
+    ///
+    /// # Errors
+    ///
+    /// As [`super::deserialize`], for a present atlas.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<TextureMap>, D::Error> {
+        Ok(Option::<Owned>::deserialize(deserializer)?.map(|owned| owned.0))
+    }
+}

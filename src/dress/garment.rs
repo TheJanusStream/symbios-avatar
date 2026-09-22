@@ -23,9 +23,11 @@ use std::collections::HashMap;
 
 use glam::{Vec2, Vec3};
 
+use super::surface::GarmentTexture;
 use crate::mesh::PolyMesh;
-use crate::plan::{Zone, ZoneSet};
+use crate::plan::{Limb, Zone, ZoneSet};
 use crate::rig::{Influence, MAX_INFLUENCES, Rig, SkinWeights};
+use crate::uv::UvUnwrap;
 
 /// How a garment is cut.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -40,9 +42,8 @@ pub struct GarmentCut {
     /// wholly inside neither, so neither takes them. Giving the lower garment a
     /// reach into the upper one's zone hands that ring to exactly one of them.
     pub reach: ZoneSet,
-    /// Zones it claims only PART of the way down: each is taken from where
-    /// its bone leaves the parent joint to this share of the bone's length,
-    /// and no further.
+    /// Limbs it runs down part of the way: the limb, and how far, as a share
+    /// of the limb — `0` its root, `½` its middle joint, `1` its end.
     ///
     /// **A zone is the wrong unit for a hem** (#314). Shorts claimed the
     /// pelvis and nothing else, so they ended exactly where the thigh's bone
@@ -52,9 +53,21 @@ pub struct GarmentCut {
     /// which is a cleaner hem than any zone boundary: those wander vertex by
     /// vertex wherever two bones hold the skin almost equally.
     ///
+    /// **The whole limb, not one of its zones** (#356). Taking the upper zone
+    /// whole and a share of the lower one's bone put a jump in the middle of
+    /// the range: the upper zone's skin runs past the elbow, so a hem moving
+    /// down through the elbow leapt a third of the forearm. Measured as a
+    /// position along the limb's two principal bones instead, every corner of
+    /// either zone has one place on one continuous axis, and the hem moves as
+    /// smoothly as the length does. See [`Chain`].
+    ///
+    /// A share of `1` or more takes both zones whole, which is exactly what
+    /// the old wrist and ankle cuts took. A share of `0` or less takes none of
+    /// the limb, and a cut that wants none should leave the slot `None`.
+    ///
     /// Two slots, one per side of a pair of limbs; a cut with fewer leaves
     /// the rest `None`.
-    pub partial: [Option<(Zone, f32)>; 2],
+    pub limbs: [Option<(Limb, f32)>; 2],
     /// How far its outer face stands off the skin, in metres.
     pub thickness: f32,
     /// How far its inner face sits *inside* the skin, in metres.
@@ -68,7 +81,7 @@ pub struct GarmentCut {
 impl Default for GarmentCut {
     fn default() -> Self {
         Self {
-            partial: [None; 2],
+            limbs: [None; 2],
             zones: ZoneSet::default(),
             reach: ZoneSet::default(),
             thickness: 0.008,
@@ -125,8 +138,26 @@ pub struct Garment {
     /// Outer-shell vertices; the inner shell's twin of a column is that column
     /// plus half the vertex count.
     pub hem: Vec<Vec<u32>>,
+    /// The body face and the corner of it that every corner of every face of
+    /// [`mesh`](Self::mesh) was cut from, face for face.
+    ///
+    /// What charts a garment exactly. [`source`](Self::source) names a body
+    /// VERTEX, and a body vertex on a chart boundary sits in the atlas more
+    /// than once, so a garment charted by vertex takes whichever copy came
+    /// first and a face across the boundary spans the atlas — harmless while
+    /// a garment was one flat colour, and a smear across the shirt the moment
+    /// it is textured. A corner names the face it belongs to, and a face is in
+    /// exactly one chart. See [`Garment::charted`].
+    pub corner_source: Vec<Vec<(u32, u8)>>,
+    /// The limbs it runs down, the ones its cut named.
+    ///
+    /// What the cloth atlas lays a sleeve or a trouser leg's panel along; a
+    /// garment wraps its trunk panel whatever this holds.
+    pub limbs: Vec<Limb>,
     /// The colour it should be shaded.
     pub colour: [f32; 3],
+    /// What it is made of, if not plain dyed cloth.
+    pub texture: Option<GarmentTexture>,
 }
 
 /// How close to one of a zone's bones, in that bone's radii, a corner has to
@@ -151,35 +182,22 @@ const ON_BONE: f32 = 1.05;
 ///
 /// A corner is "in" a zone when the zone map says so — or, for skin the map
 /// gave to a limb, when the bone it is nearest in that bone's own radii is
-/// the zone's, within `ON_BONE`. A corner in one of the cut's
-/// [`partial`](GarmentCut::partial) zones counts only within that zone's
-/// share of its principal bone — the longest one, the thigh of an upper leg
-/// rather than the short bone that crosses the hip — measured as a
-/// projection onto that bone, so the hem is a ring square to the limb.
+/// the zone's, within `ON_BONE`. A corner of one of the cut's
+/// [`limbs`](GarmentCut::limbs) counts only up to that limb's share, measured
+/// as its position along the limb's [`Chain`], so the hem is a ring square to
+/// the limb wherever it lands.
 #[must_use]
 pub fn claimed(mesh: &PolyMesh, rig: &Rig, zones: &[Zone], cut: &GarmentCut) -> Vec<bool> {
     let zone_of = |corner: u32| zones.get(corner as usize).copied();
-    // Every zone the cut names, with its principal bone — the longest.
-    let named: Vec<Zone> = cut
-        .zones
+    // Each named limb's reach, with its chain. A limb this body has no
+    // chain for — no bone in one of its zones — is taken whole: the zones
+    // are all a cut can go by there, and they are what the old cuts took.
+    let limbs: Vec<(Limb, f32, Option<Chain>)> = cut
+        .limbs
         .iter()
-        .chain(cut.reach.iter())
-        .chain(cut.partial.iter().flatten().map(|(zone, _)| *zone))
-        .collect();
-    let principal: HashMap<Zone, Option<usize>> = named
-        .iter()
-        .map(|&zone| {
-            let longest = rig
-                .in_zone(zone)
-                .into_iter()
-                .filter(|&joint| rig.joints[joint].role.deforms())
-                .max_by(|&a, &b| {
-                    let (sa, ea) = rig.bone(a);
-                    let (sb, eb) = rig.bone(b);
-                    sa.distance(ea).total_cmp(&sb.distance(eb))
-                });
-            (zone, longest)
-        })
+        .flatten()
+        .filter(|(_, reach)| *reach > 0.0)
+        .map(|&(limb, reach)| (limb, reach, Chain::of(rig, limb)))
         .collect();
     // Where a corner the map gave to a limb really lies: the zone of the bone
     // it is nearest in that bone's OWN radii, the mapped limb's bones set
@@ -229,33 +247,132 @@ pub fn claimed(mesh: &PolyMesh, rig: &Rig, zones: &[Zone], cut: &GarmentCut) -> 
     };
     let in_zones = |corner: u32| cut.zones.iter().any(|zone| member(corner, zone));
     let in_reach = |corner: u32| cut.reach.iter().any(|zone| member(corner, zone));
-    let in_partial = |corner: u32| -> bool {
-        cut.partial.iter().flatten().any(|&(zone, share)| {
-            if !member(corner, zone) {
-                return false;
-            }
-            let Some(&Some(principal)) = principal.get(&zone) else {
-                return true;
-            };
-            let (start, end) = rig.bone(principal);
-            let axis = end - start;
-            if axis.length_squared() <= f32::EPSILON {
-                return true;
-            }
-            let position = mesh.positions[corner as usize];
-            (position - start).dot(axis) / axis.length_squared() <= share
+    // Which of the cut's limbs a corner is skin of, by its index in `limbs`.
+    let limb_of = |corner: u32| {
+        limbs.iter().position(|(limb, _, _)| {
+            member(corner, Zone::UpperLimb(*limb)) || member(corner, Zone::LowerLimb(*limb))
         })
     };
     mesh.faces
         .iter()
         .map(|face| {
-            face.iter()
-                .all(|&corner| in_zones(corner) || in_reach(corner) || in_partial(corner))
-                && face
-                    .iter()
-                    .any(|&corner| in_zones(corner) || in_partial(corner))
+            // Every corner somewhere the cut may go, and at least one where it
+            // goes on its own; a limb's corners gathered by limb, with where
+            // along it each lies.
+            let mut anchored = false;
+            let mut along: Vec<(usize, f32)> = Vec::new();
+            for &corner in face {
+                if in_zones(corner) {
+                    anchored = true;
+                } else if let Some(index) = limb_of(corner) {
+                    anchored = true;
+                    let (_, reach, chain) = &limbs[index];
+                    if let Some(chain) = chain.filter(|_| *reach < 1.0) {
+                        along.push((index, chain.position(mesh.positions[corner as usize])));
+                    }
+                } else if !in_reach(corner) {
+                    return false;
+                }
+            }
+            // **Rounded to the nearer ring, not cut at it** (#356). A limb's
+            // face is taken when the middle of its span along the limb is
+            // within reach — so the claim's hem lands on whichever ring is
+            // nearer the length, and `place_hems` has at most half a row to
+            // slide it the rest of the way. A limb carries only four rows or
+            // so per segment, and a hem that could only sit on a ring moved
+            // in jumps of a sixth of the limb.
+            anchored
+                && limbs.iter().enumerate().all(|(index, (_, reach, _))| {
+                    let (low, high) = along.iter().filter(|(limb, _)| *limb == index).fold(
+                        (f32::INFINITY, f32::NEG_INFINITY),
+                        |(low, high), &(_, at)| (low.min(at), high.max(at)),
+                    );
+                    low > high || 0.5 * (low + high) <= *reach
+                })
         })
         .collect()
+}
+
+/// A limb as one axis: its upper and lower principal bones, end to end.
+///
+/// The axis a hem is placed on (#356). A position on it is a share of the
+/// limb with its middle joint at `½` — `0` the shoulder or hip, `1` the wrist
+/// or ankle — so a length names the same landmark on every body, and each
+/// half moves along its own bone at the rate that bone's length sets.
+///
+/// **Each principal bone is its zone's longest**, the rule the old
+/// per-zone share used: the thigh of an upper leg rather than the short bone
+/// that crosses the hip, whose skin sits above the thigh's start and so at the
+/// very top of the axis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Chain {
+    /// The upper segment, root to middle joint.
+    pub upper: (Vec3, Vec3),
+    /// The lower segment, middle joint to end.
+    pub lower: (Vec3, Vec3),
+}
+
+impl Chain {
+    /// The chain of `limb`, if this body has a bone in both of its zones.
+    #[must_use]
+    pub fn of(rig: &Rig, limb: Limb) -> Option<Self> {
+        let principal = |zone: Zone| {
+            rig.in_zone(zone)
+                .into_iter()
+                .filter(|&joint| rig.joints[joint].role.deforms() && !rig.joints[joint].marker)
+                .max_by(|&a, &b| {
+                    let (sa, ea) = rig.bone(a);
+                    let (sb, eb) = rig.bone(b);
+                    sa.distance(ea).total_cmp(&sb.distance(eb))
+                })
+                .map(|joint| rig.bone(joint))
+        };
+        Some(Self {
+            upper: principal(Zone::UpperLimb(limb))?,
+            lower: principal(Zone::LowerLimb(limb))?,
+        })
+    }
+
+    /// The point on the limb's axis at `position` along it, `0` the root and
+    /// `1` the end, the middle joint at `½`.
+    #[must_use]
+    pub fn point(&self, position: f32) -> Vec3 {
+        let (segment, share) = if position <= 0.5 {
+            (self.upper, 2.0 * position)
+        } else {
+            (self.lower, 2.0 * position - 1.0)
+        };
+        segment.0 + (segment.1 - segment.0) * share.clamp(0.0, 1.0)
+    }
+
+    /// Where along the limb `point` lies, `0` at the root and `1` at the end.
+    ///
+    /// Taken on whichever segment the point is nearer, as that segment's own
+    /// share, clamped to it: near the middle joint the two segments' answers
+    /// meet at `½`, and skin past the root — a shoulder's cap, the hip's —
+    /// reads as the root itself.
+    #[must_use]
+    pub fn position(&self, point: Vec3) -> f32 {
+        let (upper_distance, upper_share) = along(self.upper, point);
+        let (lower_distance, lower_share) = along(self.lower, point);
+        if upper_distance <= lower_distance {
+            0.5 * upper_share
+        } else {
+            0.5 + 0.5 * lower_share
+        }
+    }
+}
+
+/// How far `point` is from a segment, and where along it the nearest spot
+/// lies as a share clamped to the segment.
+fn along((start, end): (Vec3, Vec3), point: Vec3) -> (f32, f32) {
+    let axis = end - start;
+    let share = if axis.length_squared() <= f32::EPSILON {
+        0.0
+    } else {
+        ((point - start).dot(axis) / axis.length_squared()).clamp(0.0, 1.0)
+    };
+    (point.distance(start + axis * share), share)
 }
 
 /// Fills the notches in a claim's hem, in place.
@@ -332,16 +449,22 @@ impl Garment {
     ) -> Option<Self> {
         let mut mine = claimed(mesh, rig, zones, cut);
         close(mesh, &mut mine, &[]);
-        Self::sew(mesh, weights, &mine, cut, colour)
+        Self::sew(mesh, rig, weights, zones, &mine, cut, colour)
     }
 
     /// Builds the garment solid over the faces `mine` marks.
+    ///
+    /// `rig` and `zones` are what places a limb's hem where its length says
+    /// (#356): the claim puts the hem on the ring nearest the length, and the
+    /// hem's columns are slid along the limb the rest of the way.
     ///
     /// Returns `None` when the claim covers nothing.
     #[must_use]
     pub fn sew(
         mesh: &PolyMesh,
+        rig: &Rig,
         weights: &SkinWeights,
+        zones: &[Zone],
         mine: &[bool],
         cut: &GarmentCut,
         colour: [f32; 3],
@@ -413,7 +536,9 @@ impl Garment {
                     .collect()
             })
             .collect();
-        smooth_hem(mesh, &rings, &source, &mut at);
+        let near = Neighbourhood::of(mesh, &rings, &source);
+        smooth_hem(mesh, &near, &rings, &source, &mut at);
+        place_hems(mesh, rig, zones, cut, &near, &rings, &source, &mut at);
 
         // Where each column's outer shell stands. The body vertex pushed along
         // its own normal wherever that leaves the body, and a point measured
@@ -443,27 +568,47 @@ impl Garment {
             garment.push_vertex(at[column] - heading * cut.bite);
         }
 
-        for row in &corner_at {
+        // The body faces covered, in the order `covered` holds them: both are
+        // the claim read in face order, so `claim[i]` is `covered[i]`'s face.
+        let claim: Vec<u32> = (0..mesh.faces.len() as u32)
+            .filter(|&face| mine.get(face as usize).copied().unwrap_or(false))
+            .collect();
+
+        let mut corner_source: Vec<Vec<(u32, u8)>> =
+            Vec::with_capacity(corner_at.len() * 2 + hem.len());
+        for (row, &body_face) in corner_at.iter().zip(&claim) {
             let outer: Vec<u32> = row.clone();
             // The inner shell faces the other way, so its winding is reversed.
             let inner: Vec<u32> = outer.iter().rev().map(|&v| v + inner_base).collect();
+            let corners = row.len();
+            corner_source.push(
+                (0..corners)
+                    .map(|corner| (body_face, corner as u8))
+                    .collect(),
+            );
+            corner_source.push(
+                (0..corners)
+                    .rev()
+                    .map(|corner| (body_face, corner as u8))
+                    .collect(),
+            );
             garment.push_face(outer);
             garment.push_face(inner);
         }
 
         for &(face, at) in &hem {
             let row = &corner_at[face];
-            let (a, b) = (row[at], row[(at + 1) % row.len()]);
+            let next = (at + 1) % row.len();
+            let (a, b) = (row[at], row[next]);
             // Reversed against the outer shell's use of the same edge. Every
             // edge of a closed solid is traversed once each way; the rim shares
             // one edge with the outer shell and one with the inner, so it must
             // run against both of them.
             garment.push_face([b, a, a + inner_base, b + inner_base]);
+            // Both shells' ends of a rim are cut from the edge's two corners.
+            let (from, to) = ((claim[face], at as u8), (claim[face], next as u8));
+            corner_source.push(vec![to, from, from, to]);
         }
-
-        let claim: Vec<u32> = (0..mesh.faces.len() as u32)
-            .filter(|&face| mine.get(face as usize).copied().unwrap_or(false))
-            .collect();
         // What the garment hides: the claim, less the faces it can no longer
         // prove it encloses. Two things forfeit that proof, and the second was
         // measured rather than reasoned about (#279).
@@ -520,7 +665,16 @@ impl Garment {
             claim,
             hidden,
             hem: rings,
+            corner_source,
+            limbs: cut
+                .limbs
+                .iter()
+                .flatten()
+                .filter(|(_, reach)| *reach > 0.0)
+                .map(|&(limb, _)| limb)
+                .collect(),
             colour,
+            texture: None,
         })
     }
 
@@ -530,11 +684,15 @@ impl Garment {
         self.mesh.vertex_count()
     }
 
-    /// Charts the garment against the body's atlas.
+    /// Charts the garment against the body's atlas, one coordinate per
+    /// vertex.
     ///
     /// `body_uvs` is one coordinate per *body* vertex — the unwrap's first copy
-    /// of each, which is enough because a garment is shaded rather than painted
-    /// with detail that would show a seam.
+    /// of each. **An approximation**, and one that is wrong on every face that
+    /// crosses a chart boundary, where the first copy can belong to the chart
+    /// next door; it is kept because it is what a garment's own
+    /// [`mesh`](Self::mesh) can carry without being split. What is drawn goes
+    /// through [`Self::charted`], which is exact.
     pub fn chart(&mut self, body_uvs: &[Vec2]) {
         self.mesh.set_uvs(
             self.source
@@ -543,6 +701,142 @@ impl Garment {
                 .collect(),
         );
     }
+
+    /// The garment split along the body's chart seams, every corner charted
+    /// where the body face it was cut from is charted.
+    ///
+    /// The mesh to DRAW a garment with once anything samples its atlas: a
+    /// vertex carries one coordinate, a body vertex on a seam carries several,
+    /// so a garment vertex is copied once per chart it is cut into — the same
+    /// split the body's own draw mesh takes. Positions, normals, weights and
+    /// colours follow each copy unchanged; normals are taken over the unsplit
+    /// garment first, so the seams stay smooth.
+    ///
+    /// `face_of` maps a body face to its face in `unwrap`, as
+    /// [`charted_faces`] builds it. A corner whose body face is not in the
+    /// unwrap keeps the per-vertex coordinate [`Self::chart`] gave it.
+    ///
+    /// A rim is charted [`RIM_INSET`] of the way into the face its hem edge
+    /// bounds rather than on the edge itself — see there.
+    #[must_use]
+    pub fn charted(&self, unwrap: &UvUnwrap, face_of: &[Option<u32>]) -> PolyMesh {
+        let normals = if self.mesh.normals.len() == self.mesh.vertex_count() {
+            self.mesh.normals.clone()
+        } else {
+            self.mesh.vertex_normals()
+        };
+        let mut copies: HashMap<(u32, u32), u32> = HashMap::new();
+        // A rim's corners are keyed by the face they were cut from as well:
+        // one vertex is drawn into a different face beside each rim it joins.
+        let mut rim_copies: HashMap<(u32, u32, u8), u32> = HashMap::new();
+        // Each covered face pushed its outer and its inner face; the rims
+        // come after all of them.
+        let rims = self.claim.len() * 2;
+        let mut mesh = PolyMesh::new();
+        let (mut uvs, mut normal_of, mut skin, mut colours) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut copy = |at: usize, uv: Vec2| {
+            uvs.push(uv);
+            normal_of.push(normals[at]);
+            if let Some(influences) = self.mesh.skin.get(at) {
+                skin.push(*influences);
+            }
+            if let Some(colour) = self.mesh.colours.get(at) {
+                colours.push(*colour);
+            }
+            mesh.push_vertex(self.mesh.positions[at])
+        };
+        let mut faces = Vec::with_capacity(self.mesh.faces.len());
+        for (index, (face, corners)) in self.mesh.faces.iter().zip(&self.corner_source).enumerate()
+        {
+            let mut charted = Vec::with_capacity(face.len());
+            for (&vertex, &(body_face, corner)) in face.iter().zip(corners) {
+                let ring = face_of
+                    .get(body_face as usize)
+                    .copied()
+                    .flatten()
+                    .and_then(|index| unwrap.faces.get(index as usize));
+                let unwrapped = ring.and_then(|corners| corners.get(usize::from(corner)).copied());
+                let at = vertex as usize;
+                let inset = ring
+                    .zip(unwrapped)
+                    .filter(|_| index >= rims)
+                    .and_then(|(ring, unwrapped)| rim_uv(unwrap, ring, unwrapped));
+                let charted_at = match inset {
+                    Some(uv) => *rim_copies
+                        .entry((vertex, body_face, corner))
+                        .or_insert_with(|| copy(at, uv)),
+                    // A corner the unwrap does not chart shares one copy per
+                    // vertex, keyed past every unwrapped index.
+                    None => *copies
+                        .entry((vertex, unwrapped.unwrap_or(u32::MAX)))
+                        .or_insert_with(|| {
+                            copy(
+                                at,
+                                unwrapped.map_or_else(
+                                    || self.mesh.uvs.get(at).copied().unwrap_or(Vec2::ZERO),
+                                    |index| unwrap.uvs[index as usize],
+                                ),
+                            )
+                        }),
+                };
+                charted.push(charted_at);
+            }
+            faces.push(charted);
+        }
+        for face in faces {
+            mesh.push_face(face);
+        }
+        mesh.set_uvs(uvs);
+        mesh.set_normals(normal_of);
+        if skin.len() == mesh.vertex_count() {
+            mesh.set_skin(skin);
+        }
+        if colours.len() == mesh.vertex_count() {
+            mesh.set_colours(colours);
+        }
+        mesh
+    }
+}
+
+/// How far a rim is charted from its hem edge toward the middle of the face
+/// that edge bounds, as a share of the way.
+///
+/// A rim spans no area in the atlas, so charted on its hem edge it samples
+/// the texels either side of that edge — and at the waist the far side is
+/// the other garment's: on seed 7, 232 of 3,248 samples along the trousers'
+/// rims landed on the top's cloth (#357). Halfway in, a rim samples only
+/// cloth its own face painted.
+pub const RIM_INSET: f32 = 0.5;
+
+/// Where a rim corner is charted: [`RIM_INSET`] of the way from `corner`,
+/// one of `ring`'s unwrapped corners, toward the middle of `ring`.
+fn rim_uv(unwrap: &UvUnwrap, ring: &[u32], corner: u32) -> Option<Vec2> {
+    let points: Vec<Vec2> = ring
+        .iter()
+        .filter_map(|&at| unwrap.uvs.get(at as usize).copied())
+        .collect();
+    if points.is_empty() {
+        return None;
+    }
+    let middle = points.iter().copied().sum::<Vec2>() / points.len() as f32;
+    Some(unwrap.uvs.get(corner as usize)?.lerp(middle, RIM_INSET))
+}
+
+/// Which face of `unwrap` each body face became, one entry per body face.
+///
+/// The index [`Garment::charted`] and the cloth atlas look a body face's
+/// corners up through. `None` for a face the unwrap does not hold, which a
+/// complete unwrap never leaves.
+#[must_use]
+pub fn charted_faces(unwrap: &UvUnwrap, body_faces: usize) -> Vec<Option<u32>> {
+    let mut face_of = vec![None; body_faces];
+    for (index, &from) in unwrap.source_face.iter().enumerate() {
+        if let Some(slot) = face_of.get_mut(from as usize) {
+            *slot = Some(index as u32);
+        }
+    }
+    face_of
 }
 
 /// The influences of one body vertex.
@@ -948,45 +1242,13 @@ fn onto_surface(mesh: &PolyMesh, faces: impl IntoIterator<Item = usize>, point: 
 /// claim. A column with no such neighbour cannot be bounded and does not move,
 /// which is why a two-ring band like a pair of shorts keeps its staircase:
 /// every one of its vertices is on a hem.
-fn smooth_hem(mesh: &PolyMesh, rings: &[Vec<u32>], source: &[u32], at: &mut [Vec3]) {
-    let mut on_hem = vec![false; mesh.vertex_count()];
-    for ring in rings {
-        for &column in ring {
-            on_hem[source[column as usize] as usize] = true;
-        }
-    }
-    // How far each hem body vertex may travel: it must not reach a vertex that
-    // is off the hem, because that is the vertex holding the first face this
-    // garment expects to hide.
-    let mut room: HashMap<u32, f32> = HashMap::new();
-    for face in &mesh.faces {
-        for at in 0..face.len() {
-            let here = face[at];
-            if !on_hem[here as usize] {
-                continue;
-            }
-            for &other in face {
-                if other == here || on_hem[other as usize] {
-                    continue;
-                }
-                let span = mesh.positions[here as usize].distance(mesh.positions[other as usize]);
-                let reach = room.entry(here).or_insert(f32::MAX);
-                *reach = reach.min(span);
-            }
-        }
-    }
-
-    // The faces around each hem vertex, which are the ones a slid column can
-    // land on.
-    let mut around: HashMap<u32, Vec<usize>> = HashMap::new();
-    for (index, face) in mesh.faces.iter().enumerate() {
-        for &corner in face {
-            if on_hem[corner as usize] {
-                around.entry(corner).or_default().push(index);
-            }
-        }
-    }
-
+fn smooth_hem(
+    mesh: &PolyMesh,
+    near: &Neighbourhood,
+    rings: &[Vec<u32>],
+    source: &[u32],
+    at: &mut [Vec3],
+) {
     for ring in rings {
         if ring.len() < 4 {
             continue;
@@ -1004,7 +1266,7 @@ fn smooth_hem(mesh: &PolyMesh, rings: &[Vec<u32>], source: &[u32], at: &mut [Vec
         }
         for (index, &column) in ring.iter().enumerate() {
             let from = at[column as usize];
-            let limit = room.get(&source[column as usize]).copied().unwrap_or(0.0) * HEM_SLIDE;
+            let limit = near.room(mesh, source[column as usize]) * HEM_SLIDE;
             let moved = smoothed[index] - from;
             let slid = if moved.length() > limit {
                 from + moved.normalize_or_zero() * limit
@@ -1017,9 +1279,156 @@ fn smooth_hem(mesh: &PolyMesh, rings: &[Vec<u32>], source: &[u32], at: &mut [Vec
             // and enough to read as the garment standing off the body by more
             // than its own thickness. The column is a point OF the body, and
             // this is what keeps that true after it moves.
-            at[column as usize] = around.get(&source[column as usize]).map_or(slid, |faces| {
-                onto_surface(mesh, faces.iter().copied(), slid)
-            });
+            at[column as usize] = near.onto(mesh, source[column as usize], slid);
+        }
+    }
+}
+
+/// What surrounds each hem vertex on the body: the faces its column may land
+/// on when it slides, and the vertices beside it that bound how far.
+struct Neighbourhood {
+    /// The faces round each hem vertex.
+    around: HashMap<u32, Vec<usize>>,
+    /// The body vertices sharing a face with each hem vertex that are not on
+    /// a hem themselves — the ones holding the first face a garment hides.
+    beside: HashMap<u32, Vec<u32>>,
+}
+
+impl Neighbourhood {
+    /// The neighbourhood of every vertex on `rings`' hems.
+    fn of(mesh: &PolyMesh, rings: &[Vec<u32>], source: &[u32]) -> Self {
+        let mut on_hem = vec![false; mesh.vertex_count()];
+        for ring in rings {
+            for &column in ring {
+                on_hem[source[column as usize] as usize] = true;
+            }
+        }
+        let mut around: HashMap<u32, Vec<usize>> = HashMap::new();
+        let mut beside: HashMap<u32, Vec<u32>> = HashMap::new();
+        for (index, face) in mesh.faces.iter().enumerate() {
+            for &here in face {
+                if !on_hem[here as usize] {
+                    continue;
+                }
+                around.entry(here).or_default().push(index);
+                let next = beside.entry(here).or_default();
+                for &other in face {
+                    if other != here && !on_hem[other as usize] && !next.contains(&other) {
+                        next.push(other);
+                    }
+                }
+            }
+        }
+        Self { around, beside }
+    }
+
+    /// How far a hem vertex's column may travel in any direction before it
+    /// reaches a vertex that is off the hem. Zero with no such vertex.
+    fn room(&self, mesh: &PolyMesh, vertex: u32) -> f32 {
+        let here = mesh.positions[vertex as usize];
+        self.beside
+            .get(&vertex)
+            .into_iter()
+            .flatten()
+            .map(|&other| here.distance(mesh.positions[other as usize]))
+            .reduce(f32::min)
+            .unwrap_or(0.0)
+    }
+
+    /// How far it may travel along `direction`: the least advance along that
+    /// direction that reaches a vertex off the hem. Zero with none that way.
+    fn room_along(&self, mesh: &PolyMesh, vertex: u32, direction: Vec3) -> f32 {
+        let here = mesh.positions[vertex as usize];
+        self.beside
+            .get(&vertex)
+            .into_iter()
+            .flatten()
+            .map(|&other| (mesh.positions[other as usize] - here).dot(direction))
+            .filter(|&ahead| ahead > 0.0)
+            .reduce(f32::min)
+            .unwrap_or(0.0)
+    }
+
+    /// `point` put back on the skin round a hem vertex.
+    fn onto(&self, mesh: &PolyMesh, vertex: u32, point: Vec3) -> Vec3 {
+        self.around.get(&vertex).map_or(point, |faces| {
+            onto_surface(mesh, faces.iter().copied(), point)
+        })
+    }
+}
+
+/// How far a hem column may slide to meet its length, as a share of the way
+/// to the next ring in the direction it moves.
+///
+/// The claim rounds to the nearer ring, so no hem needs more than about half
+/// a row; this is the backstop, and it stays under one for the reason
+/// [`HEM_SLIDE`] stays under a half — a column that reached the next ring
+/// inward would uncover the first face the garment hides.
+const PLACE_SLIDE: f32 = 0.9;
+
+/// Slides each limb's hem along the limb onto the ring its length names
+/// (#356).
+///
+/// The claim takes whole faces, and a limb carries about four rows of them
+/// per segment, so a hem left where the claim put it sat on one of a handful
+/// of rings and a length moved it in jumps of a sixth of the limb. Sliding the
+/// columns the rest of the way — at most half a row, since the claim rounds to
+/// the nearer ring — puts the hem where the length says on every body,
+/// between rings as readily as on one, and invents nothing: the columns stay
+/// points of the body, charted and weighted by the vertices they were cut
+/// from, as [`smooth_hem`]'s do.
+///
+/// A ring is a limb's hem when most of its columns were cut from that limb's
+/// skin: a hand hanging beside a thigh zones a little of it as the hand, and
+/// the hem round the thigh is still the leg's.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the sew's own context, passed through; a struct for one call site is ceremony"
+)]
+fn place_hems(
+    mesh: &PolyMesh,
+    rig: &Rig,
+    zones: &[Zone],
+    cut: &GarmentCut,
+    near: &Neighbourhood,
+    rings: &[Vec<u32>],
+    source: &[u32],
+    at: &mut [Vec3],
+) {
+    let targets: Vec<(Limb, f32, Chain)> = cut
+        .limbs
+        .iter()
+        .flatten()
+        .filter(|(_, reach)| *reach > 0.0 && *reach < 1.0)
+        .filter_map(|&(limb, reach)| Some((limb, reach, Chain::of(rig, limb)?)))
+        .collect();
+    for ring in rings {
+        let owner = targets.iter().find(|(limb, _, _)| {
+            let own = ring
+                .iter()
+                .filter(|&&column| {
+                    matches!(
+                        zones.get(source[column as usize] as usize),
+                        Some(Zone::UpperLimb(of) | Zone::LowerLimb(of)) if of == limb
+                    )
+                })
+                .count();
+            own * 2 > ring.len()
+        });
+        let Some((_, reach, chain)) = owner else {
+            continue;
+        };
+        let goal = chain.point(*reach);
+        for &column in ring {
+            let vertex = source[column as usize];
+            let from = at[column as usize];
+            let shift = goal - chain.point(chain.position(from));
+            let Some(direction) = shift.try_normalize() else {
+                continue;
+            };
+            let limit = near.room_along(mesh, vertex, direction) * PLACE_SLIDE;
+            let moved = from + direction * shift.length().min(limit);
+            at[column as usize] = near.onto(mesh, vertex, moved);
         }
     }
 }
@@ -1260,7 +1669,8 @@ mod tests {
         let mut mine = claimed(&mesh, &rig, &zones, &cut);
         let raw = mine.iter().filter(|&&mine| mine).count();
         close(&mesh, &mut mine, &[]);
-        let garment = Garment::sew(&mesh, &weights, &mine, &cut, [0.5; 3]).expect("a torso");
+        let garment =
+            Garment::sew(&mesh, &rig, &weights, &zones, &mine, &cut, [0.5; 3]).expect("a torso");
         assert_eq!(
             garment.claim.len(),
             mine.iter().filter(|&&mine| mine).count()

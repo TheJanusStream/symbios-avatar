@@ -687,8 +687,9 @@ impl BodyPlan for HumanoidParams {
                 self.head_breadth = offset("humanoid.headBreadth", 0.7);
                 self.face_length = offset("humanoid.faceLength", 0.7);
             }
-            // Nothing on the body plan is a colour, a hair or an age.
-            Category::Colouring | Category::Hair | Category::Age => {}
+            // Nothing on the body plan is a colour, a hair, an age or a
+            // garment.
+            Category::Colouring | Category::Hair | Category::Age | Category::Outfit => {}
         }
     }
 

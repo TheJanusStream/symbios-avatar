@@ -240,8 +240,9 @@ impl BodyPlan for QuadrupedParams {
             Category::Head => {
                 self.head_size = rolls.shape("quadruped.headSize", 0.0, 1.0, signed);
             }
-            // Nothing on this plan is a colour, a hair or an age (#53).
-            Category::Colouring | Category::Hair | Category::Age => {}
+            // Nothing on this plan is a colour, a hair, an age or a garment
+            // (#53, #358).
+            Category::Colouring | Category::Hair | Category::Age | Category::Outfit => {}
         }
     }
 

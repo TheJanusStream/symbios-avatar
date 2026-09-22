@@ -261,6 +261,24 @@ pub struct Avatar {
     /// The painted skin atlas.
     #[cfg_attr(feature = "serde-avatar", serde(with = "crate::texture::atlas_serde"))]
     pub skin: TextureMap,
+    /// The painted cloth atlas, if the outfit wears a texture (#357).
+    ///
+    /// Laid out like [`Self::skin`] — the [`MeshKind::Cloth`] mesh carries the
+    /// same atlas coordinates the skin under it does — at
+    /// [`crate::dress::cloth::side`] of its size. When it is `Some`, the cloth
+    /// mesh's vertex colours are white and this carries every garment's
+    /// colour, relief and finish; when it is `None`, the vertex colours carry
+    /// the colours and the cloth is plain, as it always was. A renderer binds
+    /// it to the cloth material the way it binds the skin atlas to the skin's.
+    ///
+    /// **It carries its mip chain**, appended after the base level, where the
+    /// skin's atlas carries none: see [`crate::dress::cloth::paint`]. A
+    /// renderer that reads only the base level reads it unchanged.
+    #[cfg_attr(
+        feature = "serde-avatar",
+        serde(default, with = "crate::texture::atlas_serde::optional")
+    )]
+    pub cloth: Option<TextureMap>,
     /// What it all costs.
     ///
     /// The NEAR tier: what [`Self::drawn`] hands back, which is what is drawn
@@ -566,6 +584,18 @@ impl Avatar {
         for garment in &mut outfit.garments {
             garment.chart(&body_uvs);
         }
+        // A textured outfit's cloth atlas, laid out like the skin's (#357).
+        // Painted here, beside the skin, because both read the same charts;
+        // an outfit in plain colours paints nothing and draws from its
+        // vertex colours as it always did.
+        let face_of = crate::dress::charted_faces(&charts, body.face_count());
+        let cloth = crate::dress::cloth::paint(
+            &outfit,
+            &rig,
+            &charts,
+            &face_of,
+            crate::dress::cloth::side(config.atlas),
+        );
 
         // Baked in body space, which is where a painter wants them: a nose is
         // then painted by the same complexion arithmetic as the cheek beside it.
@@ -726,6 +756,7 @@ impl Avatar {
             budget: Budget::default(),
             far_hair: None,
             skin: painted,
+            cloth,
             rig,
             parts,
         };
@@ -927,11 +958,20 @@ impl Avatar {
         }
 
         if !self.parts.outfit.is_empty() {
+            // Charted exactly, corner by corner, where the body under each
+            // garment is charted: the per-vertex coordinates a garment's own
+            // mesh carries are wrong across every chart seam, which only
+            // stopped mattering while nothing sampled them (#357).
+            let face_of =
+                crate::dress::charted_faces(&self.parts.unwrap, self.parts.body.face_count());
             let mut cloth = PolyMesh::new();
             for garment in &self.parts.outfit.garments {
-                let mut worn = garment.mesh.clone();
-                worn.set_normals(worn.vertex_normals());
-                cloth.append(&worn);
+                cloth.append(&garment.charted(&self.parts.unwrap, &face_of));
+            }
+            // The atlas carries the colours when there is one, and white
+            // vertex colours leave them to it, the way the skin's do.
+            if self.cloth.is_some() {
+                cloth.paint(Vec3::ONE);
             }
             merged.push(AvatarMesh {
                 kind: MeshKind::Cloth,
@@ -1052,10 +1092,16 @@ impl Avatar {
                 .sum(),
             meshes: drawn.len(),
             joints: self.rig.len(),
-            texture_bytes: self.skin.albedo.len()
-                + self.skin.normal.len()
-                + self.skin.roughness.len()
-                + self.skin.emissive.as_ref().map_or(0, Vec::len),
+            texture_bytes: [Some(&self.skin), self.cloth.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(|map| {
+                    map.albedo.len()
+                        + map.normal.len()
+                        + map.roughness.len()
+                        + map.emissive.as_ref().map_or(0, Vec::len)
+                })
+                .sum(),
         }
     }
 }
@@ -1339,7 +1385,15 @@ mod tests {
         // exact identity rather than as a threshold: every claimed face, and
         // only those, and nothing else in the merge moved.
         for seed in [1i64, 7, 42] {
-            let dressed = biped(seed);
+            // In long sleeves and full trousers, whatever the seed rolls: the
+            // comparison below is against the same body with its sleeves
+            // taken off, and a roll that is already sleeveless compares a
+            // body with itself (#358).
+            let mut record = AvatarRecord::new("Built", Archetype::default());
+            record.reroll(seed);
+            record.outfit.top.length = 1.0;
+            record.outfit.trousers.length = 1.0;
+            let dressed = Avatar::build(&record).expect("a biped builds");
             let hidden = dressed
                 .parts
                 .outfit
@@ -1355,9 +1409,8 @@ mod tests {
                 "seed {seed}: only {owed} triangles were covered"
             );
 
-            let mut bare = AvatarRecord::new("Built", Archetype::default());
-            bare.reroll(seed);
-            bare.outfit.sleeve = crate::dress::Sleeve::Bare;
+            let mut bare = record.clone();
+            bare.outfit.top.length = 0.0;
             let undressed = Avatar::build(&bare).expect("a biped builds");
             let skin = |avatar: &Avatar| {
                 avatar

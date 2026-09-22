@@ -307,7 +307,8 @@ impl Composites {
             | Category::Proportions
             | Category::Head
             | Category::Colouring
-            | Category::Hair => {}
+            | Category::Hair
+            | Category::Outfit => {}
         }
     }
 

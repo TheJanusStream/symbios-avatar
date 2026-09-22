@@ -147,7 +147,9 @@ pub use anim::{
 };
 pub use avatar::{Avatar, AvatarConfig, AvatarMesh, Budget, MeshKind, Parts};
 pub use cage::{CageConfig, CageError, build_cage};
-pub use dress::{Garment, GarmentCut, Leg, Outfit, OutfitParams, Sleeve};
+pub use dress::{
+    Garment, GarmentCut, GarmentParams, GarmentTexture, Outfit, OutfitParams, SurfaceConfig,
+};
 pub use extremity::{Attached, Extremities, Foot, Hand};
 pub use face::{
     Aperture, Blink, Canon, Expression, EyeParams, Eyes, FaceParams, Features, HeadTraits,

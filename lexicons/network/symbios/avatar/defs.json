@@ -326,55 +326,112 @@
     },
     "outfit": {
       "type": "object",
-      "description": "What a body is wearing. Close-fitting garments are cut from the body's own surface a few millimetres outside it, so they fit any wearer without being re-cut and cannot intersect the body. Colour axes are thousandths, as elsewhere: the AT Protocol data model has no floating-point type.",
+      "description": "What a body is wearing: a top and a pair of trousers, close-fitting garments cut from the body's own surface a few millimetres outside it, so they fit any wearer without being re-cut and cannot intersect the body. Records written before symbios-avatar 0.10 carried the fields sleeve and leg (cut names) and topHue, topShade, legHue and legShade (thousandths) instead; a reader of such a record should read the cut names bare, forearm and wrist as sleeve lengths 0, 600 and 1000, shorts, calf and ankle as trouser lengths 175, 775 and 1000 (an unknown name as the garment's default length), and the hue and shade as the colour the reference implementation's dye function makes of them. Nothing writes those fields any more.",
       "properties": {
-        "sleeve": {
-          "type": "string",
-          "description": "How far down the arm the top's sleeves run. Named for where the hem lands, not for a tailoring term: a cut follows the body's zones and an arm carries two of them, so 'forearm' ends about 70% of the way down and 'wrist' at 93%. Readers that do not recognise a value should fall back to 'forearm'.",
-          "knownValues": [
-            "bare",
-            "forearm",
-            "wrist"
-          ],
-          "default": "forearm"
+        "top": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#top",
+          "description": "The top. Its length is how far its sleeves run."
         },
-        "leg": {
-          "type": "string",
-          "description": "How far down the leg the trousers run. As with the sleeve, named for where the hem lands: the middle cut finishes below the knee rather than at it. Readers that do not recognise a value should fall back to 'ankle'.",
-          "knownValues": [
-            "shorts",
-            "calf",
-            "ankle"
-          ],
-          "default": "ankle"
+        "trousers": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#trousers",
+          "description": "The trousers. Their length is how far their legs run."
+        }
+      }
+    },
+    "top": {
+      "type": "object",
+      "description": "A top: the chest and the abdomen, and each arm as far as its length.",
+      "properties": {
+        "colour": {
+          "type": "array",
+          "description": "The colour it is dyed, in sRGB thousandths. Free rather than a point on a ramp, as hair colours are. A texture is multiplied by it, so white shows a texture as its generator paints it.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            787,
+            403,
+            503
+          ]
         },
-        "topHue": {
+        "length": {
           "type": "integer",
-          "description": "The top's colour around the wheel. Thousandths, 0 to 1000.",
+          "description": "How far down the limbs it runs, in thousandths of the limb: 0 the limb's root, 500 its middle joint, 1000 its end. Each half is a share of that segment's own bone, so a value names the same landmark on every body, and the hem is a ring square to the limb. For a top: 0 is sleeveless, 500 to the elbow, 1000 to the wrist.",
           "minimum": 0,
           "maximum": 1000,
-          "default": 40
+          "default": 600
         },
-        "topShade": {
-          "type": "integer",
-          "description": "How light the top is. Thousandths, 0 to 1000.",
-          "minimum": 0,
-          "maximum": 1000,
-          "default": 620
+        "texture": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#garmentTexture",
+          "description": "What it is made of, if not plain dyed cloth. Absent for plain cloth."
+        }
+      }
+    },
+    "trousers": {
+      "type": "object",
+      "description": "A pair of trousers: the pelvis, and each leg as far as its length.",
+      "properties": {
+        "colour": {
+          "type": "array",
+          "description": "The colour it is dyed, in sRGB thousandths, as the top's is.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            133,
+            512,
+            267
+          ]
         },
-        "legHue": {
+        "length": {
           "type": "integer",
-          "description": "The trousers' colour around the wheel. Thousandths, 0 to 1000.",
-          "minimum": 0,
+          "description": "How far down the limbs it runs, in thousandths of the limb: 0 the limb's root, 500 its middle joint, 1000 its end. Each half is a share of that segment's own bone, so a value names the same landmark on every body, and the hem is a ring square to the limb. For trousers: 500 is the knee and 1000 the ankle. The floor, 175, is shorts a third of the way down the thigh; any shorter bares the crotch.",
+          "minimum": 175,
           "maximum": 1000,
-          "default": 610
+          "default": 1000
         },
-        "legShade": {
+        "texture": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#garmentTexture",
+          "description": "What they are made of, if not plain dyed cloth. Absent for plain cloth."
+        }
+      }
+    },
+    "garmentTexture": {
+      "type": "object",
+      "description": "A tileable surface from symbios-texture laid over a garment, multiplied by the garment's colour and baked into the avatar's cloth atlas.",
+      "required": [
+        "surface"
+      ],
+      "properties": {
+        "surface": {
+          "type": "unknown",
+          "description": "The surface generator's configuration in the ecosystem's texture wire form, the same symbios-overlands writes into its material records: the generator's name under $type (one of the registry's tileable surfaces - Fabric, Metal, Chitin, Truchet and the rest; never a card or a sprite), the config's own field names, and every float as an integer in ten-thousandths. A field left out takes the generator's default. A reader that does not know the $type should keep the object as it is and draw the garment in its plain colour."
+        },
+        "scale": {
           "type": "integer",
-          "description": "How light the trousers are. Thousandths, 0 to 1000.",
-          "minimum": 0,
-          "maximum": 1000,
-          "default": 200
+          "description": "How many times the tile repeats per metre of cloth, in thousandths: 4000 lays a 25 cm tile.",
+          "minimum": 250,
+          "maximum": 50000,
+          "default": 4000
+        },
+        "rotation": {
+          "type": "integer",
+          "description": "How far the pattern is turned, in thousandths of a degree, counter-clockwise as the garment is seen from outside.",
+          "minimum": -180000,
+          "maximum": 180000,
+          "default": 0
         }
       }
     },

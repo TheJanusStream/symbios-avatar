@@ -693,3 +693,115 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
         }
     }
 }
+
+#[test]
+fn the_outfit_matches_its_schema_in_every_direction() {
+    // **The one block none of the checks above reached** (#355-#358). The
+    // outfit went from hue, shade and cut names to two garments of colour,
+    // length and texture, and the lexicon went on declaring the old fields
+    // with every test green, because no list above names `outfit`. So every
+    // direction here, over all four of its fragments: what is written is
+    // declared, what is declared is written, the promised defaults are the
+    // written ones, and the declared bounds are the ones `sanitize` enforces.
+    use symbios_avatar::dress::surface::{ROTATION_RANGE, SCALE_RANGE};
+    use symbios_avatar::dress::{SLEEVE_RANGE, TROUSER_RANGE};
+    use symbios_avatar::{GarmentTexture, OutfitParams, SurfaceConfig};
+
+    let defs = lexicon("defs");
+    let woven = || {
+        Some(GarmentTexture::new(
+            SurfaceConfig::named("Fabric").expect("Fabric is a surface"),
+        ))
+    };
+    let mut dressed = OutfitParams::default();
+    dressed.top.texture = woven();
+    dressed.trousers.texture = woven();
+    let written = serde_json::to_value(&dressed).expect("serialises");
+    for (fragment, value) in [
+        ("outfit", &written),
+        ("top", &written["top"]),
+        ("trousers", &written["trousers"]),
+        ("garmentTexture", &written["top"]["texture"]),
+    ] {
+        let declared = property_names(&defs["defs"][fragment]);
+        let fields: Vec<String> = value
+            .as_object()
+            .expect("a fragment serialises to an object")
+            .keys()
+            .cloned()
+            .collect();
+        for field in &fields {
+            assert!(
+                declared.contains(field),
+                "{fragment} writes `{field}`, which its schema does not declare"
+            );
+        }
+        for field in &declared {
+            assert!(
+                fields.contains(field),
+                "the lexicon declares `{fragment}#{field}` and the crate writes no such field"
+            );
+        }
+        for field in required_names(&defs["defs"][fragment]) {
+            assert!(
+                fields.contains(&field),
+                "the lexicon requires `{fragment}#{field}`, which the crate does not write"
+            );
+        }
+    }
+
+    // The scalar defaults a reader that omits a field is promised.
+    let plain = serde_json::to_value(OutfitParams::default()).expect("serialises");
+    for fragment in ["top", "trousers"] {
+        for (field, value) in plain[fragment].as_object().expect("an object") {
+            assert_eq!(
+                &defs["defs"][fragment]["properties"][field]["default"], value,
+                "{fragment}#{field}: the lexicon promises a different default"
+            );
+        }
+    }
+    for field in ["scale", "rotation"] {
+        assert_eq!(
+            defs["defs"]["garmentTexture"]["properties"][field]["default"],
+            written["top"]["texture"][field],
+            "garmentTexture#{field}: the lexicon promises a different default"
+        );
+    }
+
+    // The bounds `sanitize` clamps to.
+    let thousandths = |value: f32| Some((value * 1000.0).round() as i64);
+    for (fragment, field, range) in [
+        ("top", "length", SLEEVE_RANGE),
+        ("trousers", "length", TROUSER_RANGE),
+        ("garmentTexture", "scale", SCALE_RANGE),
+        ("garmentTexture", "rotation", ROTATION_RANGE),
+    ] {
+        let schema = &defs["defs"][fragment]["properties"][field];
+        assert_eq!(
+            schema["minimum"].as_i64(),
+            thousandths(range.0),
+            "{fragment}#{field}: the declared floor disagrees with the crate"
+        );
+        assert_eq!(
+            schema["maximum"].as_i64(),
+            thousandths(range.1),
+            "{fragment}#{field}: the declared ceiling disagrees with the crate"
+        );
+    }
+
+    // And a textured outfit is integers all the way down, its surface config
+    // included — a generator config is nothing but floats in Rust.
+    fn floats(value: &Value) -> usize {
+        match value {
+            Value::Number(number) => usize::from(number.is_f64()),
+            Value::Array(items) => items.iter().map(floats).sum(),
+            Value::Object(fields) => fields.values().map(floats).sum(),
+            _ => 0,
+        }
+    }
+    assert_eq!(
+        floats(&written),
+        0,
+        "a textured outfit wrote a float: {written}"
+    );
+}

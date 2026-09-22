@@ -155,12 +155,18 @@ fn painting_does_not_bloat_the_record() {
     // and moved rather than widened because a ratchet that is not tight is not
     // a ratchet. Raised 1950 -> 1960 when a tenth of re-rolls started wearing a
     // helmet (#351): the coin lands on seed 3, whose scalp was a crop, and a
-    // helmet writes a longer name and an axis - measured, 1954.
+    // helmet writes a longer name and an axis - measured, 1954. Raised
+    // 1960 -> 1965 when the outfit became two garments of an sRGB triple and a
+    // length each (#355, #356) and a re-roll started dressing the body
+    // (#358): measured, 1961 — the outfit block is 96 bytes where hue, shade
+    // and two cut names wrote 89. Seed 3's roll wears no texture; one that
+    // does carries its whole generator config, a few hundred bytes, which is
+    // the record's budget's business and not this ratchet's.
     // Report the size, because "by how much" is the only useful thing to know
     // when a ratchet fires.
     let size = record.serialized_size().expect("serialises");
     assert!(
-        size < 1960,
+        size < 1965,
         "a whole avatar is {size} bytes, and should still be a couple of kilobytes"
     );
 }

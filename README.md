@@ -81,8 +81,8 @@ Three things shape the record and are worth knowing before adding fields:
   generation of the draw produced the parameters.
 
 Re-rolling draws each category — stature, build, frame, proportions, head,
-colouring, hair, age — from its own seed stream, so locking one category never
-reshuffles another. A look also renders as a short share code:
+colouring, hair, age, outfit — from its own seed stream, so locking one category
+never reshuffles another. A look also renders as a short share code:
 
 ```text
 0W0Y2-1BBFX-V812W-CH1YC-A5G7P-7BPH6-R0K0
@@ -170,6 +170,28 @@ let shoulders = marks.span(
 Garments declare the zones they cover as a `ZoneSet`, and the body suppresses
 those zones underneath — poke-through is avoided by not emitting the geometry
 rather than by hiding it.
+
+An outfit is a top and a pair of trousers, each an sRGB colour, a length and
+optionally a texture. A length is a share of the limb — `0` its root, `0.5` the
+elbow or knee, `1` the wrist or ankle — and the hem is a ring square to the limb
+wherever it lands. A texture is one of `symbios-texture`'s tileable surfaces,
+multiplied by the garment's colour and baked with the rest of the outfit into a
+cloth atlas laid out like the skin's, so a textured outfit still draws in one
+call:
+
+```rust
+use symbios_avatar::{Avatar, AvatarRecord, GarmentTexture, SurfaceConfig};
+
+let mut record = AvatarRecord::default();
+record.outfit.top.colour = [0.8, 0.2, 0.15];
+record.outfit.top.length = 0.3;
+record.outfit.trousers.texture =
+    SurfaceConfig::named("Fabric").map(GarmentTexture::new);
+record.sanitize();
+
+let avatar = Avatar::build(&record).expect("a default body builds");
+assert!(avatar.cloth.is_some(), "a textured outfit paints a cloth atlas");
+```
 
 ## Texture atlas
 

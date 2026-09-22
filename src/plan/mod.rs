@@ -122,11 +122,19 @@ pub enum Category {
     /// them — age moves the body, the skull and the skin together — so folding
     /// it into any one of them would make that lock a lie about the other two.
     Age,
+    /// What it is wearing: each garment's colour, length and texture.
+    ///
+    /// Its own bit, and the plainest case of the rule this enum is drawn by: an
+    /// outfit is the thing on a body most often kept while the body under it
+    /// is re-rolled, and the thing most often re-rolled on a body somebody has
+    /// finished (#358). Last in the list, so every bit before it keeps its
+    /// place in a stored lock set.
+    Outfit,
 }
 
 impl Category {
     /// Every category, in creator-panel order.
-    pub const ALL: [Category; 8] = [
+    pub const ALL: [Category; 9] = [
         Category::Stature,
         Category::Build,
         Category::Frame,
@@ -135,6 +143,7 @@ impl Category {
         Category::Colouring,
         Category::Hair,
         Category::Age,
+        Category::Outfit,
     ];
 
     /// The bit this category occupies in a lock set.

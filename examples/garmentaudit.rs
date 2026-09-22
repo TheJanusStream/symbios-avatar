@@ -34,15 +34,14 @@
 //! ```text
 //! cargo run --release --example garmentaudit
 //! cargo run --release --example garmentaudit -- 7 42      # named seeds
-//! cargo run --release --example garmentaudit -- --cuts    # every sleeve x leg
+//! cargo run --release --example garmentaudit -- --cuts    # a sweep of sleeve x leg lengths
 //! ```
 
 use std::collections::HashMap;
 
 use symbios_avatar::dress::garment::hem_loops;
-use symbios_avatar::{
-    Archetype, Avatar, AvatarRecord, Garment, Leg, MeshKind, PolyMesh, Sleeve, Vec3,
-};
+use symbios_avatar::dress::{CALF, FOREARM, SHORTS};
+use symbios_avatar::{Archetype, Avatar, AvatarRecord, Garment, MeshKind, PolyMesh, Vec3};
 
 /// Seeds swept when none are named, matching `every_garment_is_a_closed_solid`.
 const SWEPT: [i64; 6] = [1, 2, 4, 7, 9, 12];
@@ -65,26 +64,29 @@ fn main() {
     } else {
         seeds
     };
-    let cuts: Vec<(Sleeve, Leg)> = if every_cut {
-        [Sleeve::Bare, Sleeve::Forearm, Sleeve::Wrist]
+    // The lengths the old named cuts read as, and one hem mid-segment each:
+    // a ring cut half-way down a bone is the case the old cuts never made.
+    let cuts: Vec<(f32, f32)> = if every_cut {
+        [0.0, 0.25, FOREARM, 1.0]
             .into_iter()
             .flat_map(|sleeve| {
-                [Leg::Shorts, Leg::Calf, Leg::Ankle]
+                [SHORTS, 0.35, CALF, 1.0]
                     .into_iter()
-                    .map(move |leg| (sleeve.clone(), leg))
+                    .map(move |leg| (sleeve, leg))
             })
             .collect()
     } else {
-        vec![(Sleeve::default(), Leg::default())]
+        let defaults = symbios_avatar::OutfitParams::default();
+        vec![(defaults.top.length, defaults.trousers.length)]
     };
 
     let mut suppressed = Vec::new();
     for seed in seeds {
-        for (sleeve, leg) in &cuts {
+        for &(sleeve, leg) in &cuts {
             let mut record = AvatarRecord::new("Dressed", Archetype::default());
             record.reroll(seed);
-            record.outfit.sleeve = sleeve.clone();
-            record.outfit.leg = leg.clone();
+            record.outfit.top.length = sleeve;
+            record.outfit.trousers.length = leg;
             let avatar = Avatar::build(&record).expect("a biped builds");
             suppressed.push(report(&avatar, seed, sleeve, leg));
         }
@@ -100,7 +102,7 @@ fn main() {
 }
 
 /// Audits one built avatar. Returns the share of body triangles it could drop.
-fn report(avatar: &Avatar, seed: i64, sleeve: &Sleeve, leg: &Leg) -> f32 {
+fn report(avatar: &Avatar, seed: i64, sleeve: f32, leg: f32) -> f32 {
     let body = &avatar.parts.body;
     let body_tris = body.triangulated().len();
     let cloth_tris: usize = avatar
@@ -110,7 +112,9 @@ fn report(avatar: &Avatar, seed: i64, sleeve: &Sleeve, leg: &Leg) -> f32 {
         .map(|mesh| mesh.mesh.triangulated().len())
         .sum();
 
-    println!("\nseed {seed}  {sleeve:?}/{leg:?}   body {body_tris} tris   cloth {cloth_tris} tris");
+    println!(
+        "\nseed {seed}  sleeve {sleeve:.3}/leg {leg:.3}   body {body_tris} tris   cloth {cloth_tris} tris"
+    );
     println!(
         "  {:<9} {:>6} {:>7} {:>5} {:>6} {:>9} {:>8} {:>7} {:>10} {:>6} {:>5}",
         "garment",

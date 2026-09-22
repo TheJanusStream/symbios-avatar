@@ -133,12 +133,15 @@ measured off the *built* skull — a deeper nose resampled hair at +40 triangles
 on the default and +96 on the greedy record.
 
 **A garment is paid for twice unless the body stops drawing what it covers.**
-Cloth is about 3,200 triangles on a default outfit and the skin
-beneath it was another 1,490 that no camera could reach. Suppression is whole
-faces — the cut takes whole faces — less the row the hem runs through, which has
-to stay because the hem is smoothed off the boundaries it was cut along. The
-saving follows the cut: 664 claimed for bare sleeves and shorts, 1,618 for
-wrists and ankles, so the *dearest* outfit is also the one that gives most back.
+Cloth is about 4,700 triangles on a default outfit and the skin beneath it
+another 1,860 that no camera could reach (seed 1, `garmentaudit`, re-measured
+for #356). Suppression is whole faces — the cut takes whole faces — less the
+row the hem runs through, which has to stay because the hem is smoothed and
+placed off the boundaries it was cut along. The saving follows the length: cloth
+runs from 3,944 triangles sleeveless in the shortest shorts to 5,096 at the
+wrists and ankles, and the skin it hides from 1,480 to 2,052, so the *dearest*
+outfit is also the one that gives most back. A texture costs no triangles: it
+is baked into the cloth atlas, which is texture bytes, not geometry.
 
 **Where the levers are** (in order of size):
 

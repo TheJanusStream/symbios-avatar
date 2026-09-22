@@ -31,10 +31,15 @@
 //!   them, so an older client editing a newer client's record writes back what
 //!   it did not understand instead of deleting it.
 //! * **Unknown `$type`s and unknown tokens degrade rather than fail.** See
-//!   [`crate::plan::Archetype`], [`crate::dress::Sleeve`] and, since 0.9.0,
-//!   the hair styles: [`HairRecord`] reads a style name it does not know as
-//!   that region's `None` and writes it back. Before 0.9.0 an unknown hair
-//!   style name failed the whole record (#351).
+//!   [`crate::plan::Archetype`], [`crate::dress::SurfaceConfig`] — a garment
+//!   texture naming a surface this build does not know is kept and drawn as
+//!   plain cloth — and, since 0.9.0, the hair styles: [`HairRecord`] reads a
+//!   style name it does not know as that region's `None` and writes it back.
+//!   Before 0.9.0 an unknown hair style name failed the whole record (#351).
+//! * **A block whose shape changed is read in both shapes.** The outfit was
+//!   hue, shade and cut names until 0.10 and is two garments of colour,
+//!   length and texture since; [`crate::dress::OutfitParams`] reads a record
+//!   written either way and writes only the new shape.
 //!
 //! ## Budget
 //!
@@ -81,6 +86,16 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// [`crate::plan::Rolls`]) mean adding or removing an axis no longer disturbs
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
+///
+/// **7** - a re-roll dresses the body (#358, owner call). The outfit had been
+/// the one block a roll never touched, so every body a seed described wore
+/// the same top over the same trousers; it is a category of its own now,
+/// [`Category::Outfit`], drawn from streams named `outfit.*`. No existing
+/// stream moved and no existing draw changed, so a stored seed rebuilds its
+/// body, face, skin and hair bit-identically - what it describes differently
+/// is its clothes, on every seed, which is what this number exists to say.
+/// No migration: a stored record keeps the outfit it was saved with, because
+/// nothing re-rolls a record that is only being read.
 ///
 /// **6** - a tenth of re-rolled scalps wear a helmet (#351, owner call). A
 /// coin on a NEW stream, `hair.helmet`, is drawn before the card table, and
@@ -150,7 +165,7 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 6;
+pub const GENERATOR_VERSION: u32 = 7;
 
 /// The generation whose hair a record has to be re-rolled to reach.
 ///
@@ -489,6 +504,11 @@ impl AvatarRecord {
                 Category::Head => reroll_face(&mut self.eyes, &mut self.face, &rolls),
                 Category::Colouring => reroll_skin(&mut self.skin, &rolls),
                 Category::Hair => reroll_hair(&mut self.hair, &rolls, &self.composites),
+                // Last in `Category::ALL`, so the complexion it keeps clear
+                // of is the one this roll just drew — or the locked one.
+                Category::Outfit => {
+                    crate::dress::roll::reroll_outfit(&mut self.outfit, &rolls, &self.skin);
+                }
                 _ => {}
             }
         }
@@ -1960,16 +1980,45 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_garment_cut_is_worn_as_the_default() {
-        use crate::dress::{Leg, Sleeve};
-        let json = r#"{"name":"Dressed","outfit":{"sleeve":"cape","leg":"culottes"}}"#;
-        let record: AvatarRecord = serde_json::from_str(json).expect("loads unknown tokens");
-        assert_eq!(record.outfit.sleeve, Sleeve::Other("cape".into()));
-        assert_eq!(record.outfit.leg.cut(), Leg::default());
+    fn an_outfit_written_before_0_10_loads_with_its_colours_and_cuts() {
+        // The record-level half of `dress::params`'s migration: a published
+        // avatar in the old outfit shape loads, keeps its dyed colours, reads
+        // its cuts as lengths — and an old cut name this build never knew,
+        // which the old reader wore as its default, is worn as the default.
+        let json = r#"{"name":"Dressed","outfit":{"sleeve":"cape","leg":"calf","topHue":250}}"#;
+        let record: AvatarRecord = serde_json::from_str(json).expect("loads the old shape");
+        let defaults = crate::dress::OutfitParams::default();
+        assert_eq!(record.outfit.top.length, defaults.top.length);
+        assert_eq!(record.outfit.trousers.length, crate::dress::CALF);
+        assert_eq!(
+            record.outfit.top.colour,
+            crate::dress::dye(0.25, 0.62).map(crate::plan::scaled::quantize)
+        );
 
-        // And the token survives a rewrite, so a newer client's cape is intact.
+        // And it is written back in the new shape only.
         let back = serde_json::to_value(&record).expect("serialises");
-        assert_eq!(back["outfit"]["sleeve"], "cape");
+        assert!(back["outfit"].get("sleeve").is_none());
+        assert_eq!(back["outfit"]["trousers"]["length"], 775);
+    }
+
+    #[test]
+    fn a_reroll_dresses_the_body_and_a_lock_keeps_the_outfit() {
+        let mut record = AvatarRecord::new("Dressed", Archetype::default());
+        record.reroll(5);
+        let dressed = record.outfit.clone();
+        assert_ne!(
+            dressed,
+            crate::dress::OutfitParams::default(),
+            "a rolled body wears a rolled outfit"
+        );
+
+        record.locks = LockSet::NONE.with(Category::Outfit);
+        record.reroll(6);
+        assert_eq!(record.outfit, dressed, "a locked outfit stays on");
+
+        record.locks = LockSet::NONE;
+        record.reroll(6);
+        assert_ne!(record.outfit, dressed, "an unlocked one does not");
     }
 
     #[test]
@@ -2026,7 +2075,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 6,
+            GENERATOR_VERSION, 7,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {
@@ -2075,6 +2124,9 @@ mod tests {
         // If a future change to hair moves this column, that is not a bug in
         // this table — it is the table saying that whatever moved was not
         // confined to the axes it was supposed to be.
+        //
+        // Generation 7 (#358) dresses the body, and the table is unchanged
+        // by it on every seed: the outfit draws from `outfit.*` streams alone.
         //
         // Generation 2 (#160) was the exploration distributions; generation 1
         // the first numbered draw.

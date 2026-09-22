@@ -44,6 +44,9 @@
 //! cargo run --release --example render -- --bare      # no hair or clothes, to see the body
 //! cargo run --release --example render -- --bare --chest 1,-1  # the chest axes; needs --bare
 //! cargo run --release --example render -- --leg shorts --sleeve bare # the outfit's cuts
+//! cargo run --release --example render -- --leg 0.6 --sleeve 0.3  # or any length: 0.5 is the knee, the elbow
+//! cargo run --release --example render -- --top-colour 0.9,0.2,0.2 --trousers-colour 0.1,0.1,0.3
+//! cargo run --release --example render -- --top-texture Fabric,6 --trousers-texture Truchet,3,45 # surface,tiles/m,degrees; none drops one
 //! cargo run --release --example render -- --junction  # tint the skin by which bone deforms it
 //! cargo run --release --example render -- --jawbind   # tint the skin by how the JAW bone holds it
 //! cargo run --release --example render -- --follicles # tint the skin by where hair may grow
@@ -585,30 +588,90 @@ fn main() {
     // chosen by looking at both ends needs an instrument that can ask for an
     // end — and because a chest is invisible on a DRESSED body: the skin under
     // the clothes is not emitted, so `--bare` is not optional for this one.
-    // The outfit's two cuts, by name (#314): the cut is what the hem is
-    // judged on and a hem cannot be read off a default.
-    if let Some(leg) = value("--leg") {
-        record.outfit.leg = match leg.as_str() {
-            "shorts" => symbios_avatar::Leg::Shorts,
-            "calf" => symbios_avatar::Leg::Calf,
-            "ankle" => symbios_avatar::Leg::Ankle,
-            other => {
-                eprintln!("unknown --leg {other}: expected shorts, calf or ankle");
+    // The outfit's two lengths (#314, #356): the cut is what the hem is
+    // judged on and a hem cannot be read off a default. A length is a share
+    // of the limb, `0.5` the elbow or the knee; the old cut names still read,
+    // as the lengths a record written with them reads as.
+    let length = |flag: &str, names: &[(&str, f32)]| -> Option<f32> {
+        let given = value(flag)?;
+        let named = names
+            .iter()
+            .find(|(name, _)| name == given)
+            .map(|(_, l)| *l);
+        let length = named.or_else(|| given.parse::<f32>().ok());
+        if length.is_none() {
+            let known: Vec<&str> = names.iter().map(|(name, _)| *name).collect();
+            eprintln!("unknown {flag} {given}: expected a length or one of {known:?}");
+            std::process::exit(1);
+        }
+        length
+    };
+    use symbios_avatar::dress::{CALF, FOREARM, SHORTS};
+    if let Some(leg) = length(
+        "--leg",
+        &[("shorts", SHORTS), ("calf", CALF), ("ankle", 1.0)],
+    ) {
+        record.outfit.trousers.length = leg;
+    }
+    if let Some(sleeve) = length(
+        "--sleeve",
+        &[("bare", 0.0), ("forearm", FOREARM), ("wrist", 1.0)],
+    ) {
+        record.outfit.top.length = sleeve;
+    }
+    // Each garment's colour, sRGB, and its texture (#355, #357): a surface by
+    // its wire name, then optionally its tiles per metre and its turn in
+    // degrees, comma-separated — `--top-texture Fabric,6,45`. `none` takes a
+    // rolled texture off, for judging what the texture adds to a seed.
+    let colour = |flag: &str| -> Option<[f32; 3]> {
+        let given: Vec<f32> = value(flag)?
+            .split(',')
+            .filter_map(|channel| channel.trim().parse().ok())
+            .collect();
+        match given[..] {
+            [r, g, b] => Some([r, g, b]),
+            _ => {
+                eprintln!("{flag} takes three sRGB channels, r,g,b");
                 std::process::exit(1);
             }
+        }
+    };
+    let texture = |flag: &str| -> Option<Option<symbios_avatar::GarmentTexture>> {
+        let given = value(flag)?;
+        let mut parts = given.split(',');
+        let name = parts.next().unwrap_or_default().trim();
+        if name == "none" {
+            return Some(None);
+        }
+        let Some(surface) = symbios_avatar::SurfaceConfig::named(name) else {
+            eprintln!(
+                "unknown {flag} {name}: expected one of {:?}",
+                symbios_avatar::SurfaceConfig::NAMES
+            );
+            std::process::exit(1);
         };
+        let mut texture = symbios_avatar::GarmentTexture::new(surface);
+        if let Some(scale) = parts.next().and_then(|s| s.trim().parse().ok()) {
+            texture.scale = scale;
+        }
+        if let Some(rotation) = parts.next().and_then(|s| s.trim().parse().ok()) {
+            texture.rotation = rotation;
+        }
+        Some(Some(texture))
+    };
+    if let Some(colour) = colour("--top-colour") {
+        record.outfit.top.colour = colour;
     }
-    if let Some(sleeve) = value("--sleeve") {
-        record.outfit.sleeve = match sleeve.as_str() {
-            "bare" => symbios_avatar::Sleeve::Bare,
-            "forearm" => symbios_avatar::Sleeve::Forearm,
-            "wrist" => symbios_avatar::Sleeve::Wrist,
-            other => {
-                eprintln!("unknown --sleeve {other}: expected bare, forearm or wrist");
-                std::process::exit(1);
-            }
-        };
+    if let Some(colour) = colour("--trousers-colour") {
+        record.outfit.trousers.colour = colour;
     }
+    if let Some(texture) = texture("--top-texture") {
+        record.outfit.top.texture = texture;
+    }
+    if let Some(texture) = texture("--trousers-texture") {
+        record.outfit.trousers.texture = texture;
+    }
+    record.sanitize();
     if let Some(spec) = value("--chest") {
         let given: Vec<f32> = spec
             .split(',')
@@ -1684,6 +1747,7 @@ impl Subject {
                 self.avatar.skin.roughness.as_slice(),
                 self.avatar.skin.normal.as_slice(),
                 self.atlas(),
+                self.avatar.cloth.as_ref(),
                 &tints,
             );
             // The key light is written in the camera's frame, so its shadow has
@@ -2684,6 +2748,10 @@ fn segment_distance(point: Vec3, from: Vec3, to: Vec3) -> f32 {
 /// One item per merged mesh, which is the whole argument for merging: what used
 /// to be a draw per lock of hair and a draw per garment is now a draw per
 /// material, and the colours that distinguished them ride on the vertices.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "two atlases and the draw list: splitting them apart is the only other way"
+)]
 fn items<'a>(
     built: &'a [AvatarMesh],
     wall: &'a PolyMesh,
@@ -2691,6 +2759,7 @@ fn items<'a>(
     orm: &'a [u8],
     relief: &'a [u8],
     atlas: u32,
+    cloth: Option<&'a symbios_avatar::TextureMap>,
     tints: &'a [Option<Vec<Vec3>>],
 ) -> Vec<Item<'a>> {
     let mut items = vec![Item {
@@ -2715,16 +2784,26 @@ fn items<'a>(
             MeshKind::Cloth => Material::cloth(Vec3::ONE),
             MeshKind::Eye => Material::glossy(Vec3::ONE),
         };
-        // Skin is the only thing the atlas covers; everything else carries the
-        // colour it wants on its vertices. See the note in `symbios_avatar::avatar`
-        // about attached parts, which are mapped to one texel of it for now.
-        let paint = match drawn.kind {
-            MeshKind::Skin => Paint::Atlas {
+        // The skin takes its atlas, and so does the cloth when the outfit wears
+        // a texture (#357) — the cloth atlas is laid out like the skin's, at
+        // its own side. Everything else carries the colour it wants on its
+        // vertices, as does a cloth in plain colours. The cloth's metal, if a
+        // garment is made of it, is lost here as the skin's would be: this
+        // renderer reads roughness from an ORM map and nothing else.
+        let paint = match (drawn.kind, cloth) {
+            (MeshKind::Skin, _) => Paint::Atlas {
                 uvs: &drawn.mesh.uvs,
                 pixels: albedo,
                 orm: Some(orm),
                 normals: Some(relief),
                 side: atlas,
+            },
+            (MeshKind::Cloth, Some(cloth)) => Paint::Atlas {
+                uvs: &drawn.mesh.uvs,
+                pixels: &cloth.albedo,
+                orm: Some(&cloth.roughness),
+                normals: Some(&cloth.normal),
+                side: cloth.width,
             },
             _ => Paint::Vertex(&drawn.mesh.colours),
         };

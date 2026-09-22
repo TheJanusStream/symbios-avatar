@@ -5,149 +5,27 @@
 //! clothing — anything that hangs rather than clings, a skirt or a coat — is a
 //! different construction and is not here yet.
 //!
-//! An outfit is a small ordered set of garments, each with its own cut. Cuts are
-//! **named** rather than continuous. A sleeve is short or long, not 0.62 of the
-//! way down the arm: real clothing comes in cuts, and a slider between them
-//! would spend most of its range on hems that land mid-forearm and look like a
-//! mistake.
+//! An outfit is a top and a pair of trousers, each with an explicit colour, a
+//! length and optionally a texture ([`params`]). A length is continuous: a
+//! sleeve runs any share of the way from the shoulder to the wrist and a
+//! trouser leg from high on the thigh to the ankle, the hem a ring square to
+//! the limb wherever it lands. A texture is one of `symbios-texture`'s
+//! tileable surfaces ([`surface`]), baked with the rest of the outfit into one
+//! cloth atlas ([`cloth`]), so a textured outfit still costs one draw.
 
+pub mod cloth;
 pub mod garment;
-
-use serde::{Deserialize, Serialize};
+pub mod params;
+pub(crate) mod roll;
+pub mod surface;
 
 use crate::mesh::PolyMesh;
 use crate::plan::{Limb, Zone, ZoneSet};
 use crate::rig::{Rig, SkinWeights};
 
-pub use garment::{Garment, GarmentCut, dye};
-
-/// How far down the arm a top's sleeves run.
-///
-/// Named for where the hem actually lands, which was worth measuring rather
-/// than assuming. A cut follows the body's zones, and an arm carries only two of
-/// them, so there is no cut that stops at the elbow: the shorter of these ends
-/// about 70% of the way down the arm and the longer at 93%. Calling the first
-/// one "short" would have been a lie in the record and in the lexicon.
-///
-/// An open union, like every other token in these records: a cut this build has
-/// never heard of is kept as [`Sleeve::Other`] and worn as the default, rather
-/// than failing the whole avatar. See [`Sleeve::cut`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Sleeve {
-    /// No sleeve at all.
-    Bare,
-    /// To the middle of the forearm.
-    #[default]
-    Forearm,
-    /// To the wrist.
-    Wrist,
-    /// A cut added after this build, kept verbatim.
-    #[serde(untagged)]
-    Other(String),
-}
-
-impl Sleeve {
-    /// The cut to actually wear: this one, or the default if it is unknown.
-    #[must_use]
-    pub fn cut(&self) -> Sleeve {
-        match self {
-            Sleeve::Other(_) => Sleeve::default(),
-            known => known.clone(),
-        }
-    }
-}
-
-/// How far down the leg a pair of trousers runs.
-///
-/// As with [`Sleeve`], named for where the hem lands. The middle cut finishes
-/// below the knee rather than at it, and an unknown cut is worn as the default.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Leg {
-    /// To just below the hip.
-    Shorts,
-    /// To the calf.
-    Calf,
-    /// To the ankle.
-    #[default]
-    Ankle,
-    /// A cut added after this build, kept verbatim.
-    #[serde(untagged)]
-    Other(String),
-}
-
-impl Leg {
-    /// The cut to actually wear: this one, or the default if it is unknown.
-    #[must_use]
-    pub fn cut(&self) -> Leg {
-        match self {
-            Leg::Other(_) => Leg::default(),
-            known => known.clone(),
-        }
-    }
-}
-
-/// What a body is wearing.
-///
-/// Not `Copy`: a cut may be an unrecognised token this build is preserving, and
-/// preserving it means owning the string it came in as.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct OutfitParams {
-    /// How far the top's sleeves run.
-    pub sleeve: Sleeve,
-    /// How far the trousers run.
-    pub leg: Leg,
-    /// The top's colour around the wheel.
-    #[serde(with = "crate::plan::scaled")]
-    pub top_hue: f32,
-    /// How light the top is.
-    #[serde(with = "crate::plan::scaled")]
-    pub top_shade: f32,
-    /// The trousers' colour around the wheel.
-    #[serde(with = "crate::plan::scaled")]
-    pub leg_hue: f32,
-    /// How light the trousers are.
-    #[serde(with = "crate::plan::scaled")]
-    pub leg_shade: f32,
-}
-
-impl Default for OutfitParams {
-    fn default() -> Self {
-        Self {
-            sleeve: Sleeve::default(),
-            leg: Leg::default(),
-            // Far enough apart on the wheel to read as two garments. Neighbouring
-            // hues at similar lightness come out as one bodysuit.
-            top_hue: 0.04,
-            top_shade: 0.62,
-            leg_hue: 0.61,
-            leg_shade: 0.20,
-        }
-    }
-}
-
-impl OutfitParams {
-    /// Clamps every axis into range. Idempotent.
-    pub fn sanitize(&mut self) {
-        use crate::plan::scaled::quantize;
-        for axis in [
-            &mut self.top_hue,
-            &mut self.top_shade,
-            &mut self.leg_hue,
-            &mut self.leg_shade,
-        ] {
-            // Infinities clamp like any other out-of-range value; only a NaN
-            // has no position on the axis at all and needs replacing.
-            *axis = quantize(if axis.is_nan() {
-                0.5
-            } else {
-                axis.clamp(0.0, 1.0)
-            });
-        }
-    }
-}
+pub use garment::{Chain, Garment, GarmentCut, charted_faces, dye};
+pub use params::{CALF, FOREARM, GarmentParams, OutfitParams, SHORTS, SLEEVE_RANGE, TROUSER_RANGE};
+pub use surface::{GarmentTexture, SurfaceConfig};
 
 /// Everything a body is wearing, outermost last.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -170,20 +48,8 @@ impl Outfit {
     ) -> Self {
         let mut garments = Vec::with_capacity(2);
 
-        let trousers = GarmentCut {
-            zones: leg_zones(&params.leg),
-            partial: leg_partial(&params.leg),
-            // Up into the abdomen, so the waist seam belongs to exactly one
-            // garment. The faces that straddle it are wholly inside neither the
-            // top's zones nor the trousers', and without this neither takes them
-            // — leaving a ring of bare skin at the waist.
-            reach: ZoneSet::default().with(Zone::Abdomen),
-            ..Default::default()
-        };
-        let top = GarmentCut {
-            zones: top_zones(&params.sleeve),
-            ..Default::default()
-        };
+        let trousers = trouser_cut(params.trousers.length);
+        let top = top_cut(params.top.length);
 
         // Each garment's claim is smoothed with the other's held out of reach,
         // so a filled notch can never hand one face to both of them. The
@@ -196,23 +62,16 @@ impl Outfit {
         let mut top_faces = top_raw;
         garment::close(mesh, &mut top_faces, &trousers_faces);
 
-        if let Some(worn) = Garment::sew(
-            mesh,
-            weights,
-            &trousers_faces,
-            &trousers,
-            dye(params.leg_hue, params.leg_shade),
-        ) {
-            garments.push(worn);
-        }
-        if let Some(worn) = Garment::sew(
-            mesh,
-            weights,
-            &top_faces,
-            &top,
-            dye(params.top_hue, params.top_shade),
-        ) {
-            garments.push(worn);
+        for (faces, cut, worn) in [
+            (&trousers_faces, &trousers, &params.trousers),
+            (&top_faces, &top, &params.top),
+        ] {
+            if let Some(mut garment) =
+                Garment::sew(mesh, rig, weights, zones, faces, cut, worn.colour)
+            {
+                garment.texture.clone_from(&worn.texture);
+                garments.push(garment);
+            }
         }
 
         Self { garments }
@@ -256,6 +115,18 @@ impl Outfit {
         hidden
     }
 
+    /// Whether any garment wears a texture this build can draw — whether a
+    /// build paints a cloth atlas at all.
+    #[must_use]
+    pub fn is_textured(&self) -> bool {
+        self.garments.iter().any(|garment| {
+            garment
+                .texture
+                .as_ref()
+                .is_some_and(|texture| texture.surface.is_known())
+        })
+    }
+
     /// How many pieces are being worn.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -269,71 +140,34 @@ impl Outfit {
     }
 }
 
-/// Which zones a top covers.
-///
-/// An unrecognised cut is worn as the default one — see [`Sleeve::cut`] — so a
-/// record written by a newer build dresses rather than going bare.
-fn top_zones(sleeve: &Sleeve) -> ZoneSet {
-    let mut zones = ZoneSet::default().with(Zone::Chest).with(Zone::Abdomen);
-    for limb in [Limb::ForeLeft, Limb::ForeRight] {
-        match sleeve.cut() {
-            Sleeve::Forearm => zones = zones.with(Zone::UpperLimb(limb)),
-            Sleeve::Wrist => {
-                zones = zones
-                    .with(Zone::UpperLimb(limb))
-                    .with(Zone::LowerLimb(limb));
-            }
-            Sleeve::Bare | Sleeve::Other(_) => {}
-        }
+/// How a top is cut: the chest and the abdomen, and each arm `length` of the
+/// way down — none of it at all at `0`, the whole of both arm zones at `1`.
+fn top_cut(length: f32) -> GarmentCut {
+    GarmentCut {
+        zones: ZoneSet::default().with(Zone::Chest).with(Zone::Abdomen),
+        limbs: limbs([Limb::ForeLeft, Limb::ForeRight], length),
+        ..Default::default()
     }
-    zones
 }
 
-/// How far down the next limb segment each leg cut reaches, as a share of
-/// that segment's bone — see [`GarmentCut::partial`].
-///
-/// Shorts take the thigh to [`SHORTS_THIGH`]; a calf cut takes the shin to
-/// [`CALF_SHIN`]. The ankle cut claims whole zones and needs no share.
-fn leg_partial(leg: &Leg) -> [Option<(Zone, f32)>; 2] {
-    [Limb::HindLeft, Limb::HindRight].map(|limb| match leg.cut() {
-        Leg::Shorts => Some((Zone::UpperLimb(limb), SHORTS_THIGH)),
-        Leg::Calf => Some((Zone::LowerLimb(limb), CALF_SHIN)),
-        Leg::Ankle | Leg::Other(_) => None,
-    })
+/// How trousers are cut: the pelvis, and each leg `length` of the way down.
+fn trouser_cut(length: f32) -> GarmentCut {
+    GarmentCut {
+        zones: ZoneSet::default().with(Zone::Pelvis),
+        limbs: limbs([Limb::HindLeft, Limb::HindRight], length),
+        // Up into the abdomen, so the waist seam belongs to exactly one
+        // garment. The faces that straddle it are wholly inside neither the
+        // top's zones nor the trousers', and without this neither takes them
+        // — leaving a ring of bare skin at the waist.
+        reach: ZoneSet::default().with(Zone::Abdomen),
+        ..Default::default()
+    }
 }
 
-/// How far down the thigh shorts reach, as a share of the thigh bone.
-///
-/// **Shorts used to be the pelvis and nothing else** (#314), and the pelvis
-/// zone ends where the thigh's bone begins to win the skin — at the crotch —
-/// so the crotch was bare between the hem and the trunk. A third of the
-/// thigh is a short short: the hem clears the crotch by a hand and sits
-/// well above the knee on every body the envelope produces.
-const SHORTS_THIGH: f32 = 0.35;
-
-/// How far down the shin a calf cut reaches, as a share of the shin bone.
-///
-/// "To the calf" claimed the thigh and ended at the knee, which is a knee
-/// length; half the shin is mid-calf.
-const CALF_SHIN: f32 = 0.55;
-
-/// Which zones trousers cover.
-///
-/// As with [`top_zones`], an unrecognised cut falls back to the default.
-fn leg_zones(leg: &Leg) -> ZoneSet {
-    let mut zones = ZoneSet::default().with(Zone::Pelvis);
-    for limb in [Limb::HindLeft, Limb::HindRight] {
-        match leg.cut() {
-            Leg::Calf => zones = zones.with(Zone::UpperLimb(limb)),
-            Leg::Ankle => {
-                zones = zones
-                    .with(Zone::UpperLimb(limb))
-                    .with(Zone::LowerLimb(limb));
-            }
-            Leg::Shorts | Leg::Other(_) => {}
-        }
-    }
-    zones
+/// A pair of limbs run `length` of the way down, or neither at a length of
+/// nothing.
+fn limbs(pair: [Limb; 2], length: f32) -> [Option<(Limb, f32)>; 2] {
+    pair.map(|limb| (length > 0.0).then_some((limb, length)))
 }
 
 #[cfg(test)]
@@ -358,6 +192,19 @@ mod tests {
         let zones = weights.zone_map(&mesh, &rig);
         (mesh, rig, weights, zones)
     }
+
+    /// An outfit at the given lengths, in the default colours.
+    fn cut(sleeve: f32, leg: f32) -> OutfitParams {
+        let mut params = OutfitParams::default();
+        params.top.length = sleeve;
+        params.trousers.length = leg;
+        params
+    }
+
+    /// The lengths the old named cuts read as, sleeve then leg: the corners
+    /// every sweep here covers, and the middles between them.
+    const SLEEVES: [f32; 5] = [0.0, 0.25, 0.5, FOREARM, 1.0];
+    const LEGS: [f32; 5] = [SHORTS, 0.35, 0.5, CALF, 1.0];
 
     #[test]
     fn a_body_can_be_dressed() {
@@ -414,15 +261,14 @@ mod tests {
         // it. The skin is not visible — it is under both the cloth and the far
         // thigh — and a test that says otherwise is measuring the offset's
         // degeneracy, not the garment's coverage (`docs/instruments.md` rule 1).
+        //
+        // Swept over lengths as well as the two old extremes (#356): a hem
+        // mid-limb is the case the old named cuts never produced.
         for seed in [1i64, 9] {
             let (mesh, rig, weights, zones) = body(seed);
             let normals = mesh.vertex_normals();
-            for (sleeve, leg) in [(Sleeve::Bare, Leg::Shorts), (Sleeve::Forearm, Leg::Ankle)] {
-                let params = OutfitParams {
-                    sleeve,
-                    leg,
-                    ..Default::default()
-                };
+            for (sleeve, leg) in [(0.0, SHORTS), (FOREARM, 1.0), (0.35, 0.6)] {
+                let params = cut(sleeve, leg);
                 let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &params);
                 assert!(
                     outfit
@@ -453,7 +299,7 @@ mod tests {
                         let from = mesh.face_centroid(face as usize) + out * 1e-4;
                         assert!(
                             under_cloth(&cloth, from, out, 0.05),
-                            "seed {seed}: face {face} is not drawn and nothing covers it"
+                            "seed {seed} {sleeve}/{leg}: face {face} is not drawn and nothing covers it"
                         );
                     }
                 }
@@ -503,11 +349,7 @@ mod tests {
 
         for record in rolled.iter().chain(&extremes) {
             let (mesh, rig, weights, zones) = body_of(record);
-            let params = OutfitParams {
-                sleeve: Sleeve::Bare,
-                leg: Leg::Ankle,
-                ..Default::default()
-            };
+            let params = cut(0.0, 1.0);
             let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &params);
             for (index, garment) in outfit.garments.iter().enumerate() {
                 let half = garment.mesh.positions.len() / 2;
@@ -595,20 +437,20 @@ mod tests {
         // top of a pair of shorts touches itself, and every vertex where it does
         // put four rim quads on one edge. A sleeve-shaped hypothesis tested on a
         // single body is how it stayed filed as a sleeve bug.
+        //
+        // Swept over lengths since #356: the old three cuts per garment, and a
+        // hem in the middle of each segment, which is new ground for the fan
+        // split — a ring cut mid-limb is a boundary no zone ever drew.
         for seed in 1i64..=12 {
             let (mesh, rig, weights, zones) = body(seed);
-            for sleeve in [Sleeve::Bare, Sleeve::Forearm, Sleeve::Wrist] {
-                for leg in [Leg::Shorts, Leg::Calf, Leg::Ankle] {
-                    let params = OutfitParams {
-                        sleeve: sleeve.clone(),
-                        leg: leg.clone(),
-                        ..Default::default()
-                    };
+            for sleeve in SLEEVES {
+                for leg in LEGS {
+                    let params = cut(sleeve, leg);
                     let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &params);
                     for garment in &outfit.garments {
                         assert!(
                             garment.mesh.is_closed_manifold(),
-                            "seed {seed} {sleeve:?}/{leg:?}: {:?}",
+                            "seed {seed} {sleeve}/{leg}: {:?}",
                             garment.mesh.manifold_report()
                         );
                     }
@@ -656,11 +498,7 @@ mod tests {
         // is NOT is a guard tied to one body — which is what it was, and what
         // made a change three subsystems away read as a regression here.
         let (mesh, rig, weights, zones) = body(PINCHING);
-        let params = OutfitParams {
-            sleeve: Sleeve::Bare,
-            leg: Leg::Shorts,
-            ..Default::default()
-        };
+        let params = cut(0.0, SHORTS);
         let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &params);
         let split: usize = outfit
             .garments
@@ -687,21 +525,114 @@ mod tests {
     fn longer_cuts_cover_more() {
         let (mesh, rig, weights, zones) = body(23);
         let worn = |sleeve, leg| {
-            let params = OutfitParams {
-                sleeve,
-                leg,
-                ..Default::default()
-            };
-            Outfit::wear(&mesh, &rig, &weights, &zones, &params)
+            Outfit::wear(&mesh, &rig, &weights, &zones, &cut(sleeve, leg))
                 .garments
                 .iter()
                 .map(Garment::vertex_count)
                 .sum::<usize>()
         };
-        assert!(worn(Sleeve::Forearm, Leg::Ankle) > worn(Sleeve::Bare, Leg::Ankle));
-        assert!(worn(Sleeve::Wrist, Leg::Ankle) > worn(Sleeve::Forearm, Leg::Ankle));
-        assert!(worn(Sleeve::Wrist, Leg::Calf) > worn(Sleeve::Wrist, Leg::Shorts));
-        assert!(worn(Sleeve::Wrist, Leg::Ankle) > worn(Sleeve::Wrist, Leg::Calf));
+        assert!(worn(FOREARM, 1.0) > worn(0.0, 1.0));
+        assert!(worn(1.0, 1.0) > worn(FOREARM, 1.0));
+        assert!(worn(1.0, CALF) > worn(1.0, SHORTS));
+        assert!(worn(1.0, 1.0) > worn(1.0, CALF));
+    }
+
+    /// Where along `chain` a garment's hem lies nearest `want`: the mean
+    /// position of the hem ring whose columns sit nearest that point of the
+    /// limb, and how far round the ring the position strays either way.
+    fn hem_at(garment: &Garment, chain: &Chain, want: f32) -> (f32, f32) {
+        let goal = chain.point(want);
+        garment
+            .hem
+            .iter()
+            .map(|ring| {
+                let points: Vec<Vec3> = ring
+                    .iter()
+                    .map(|&column| garment.mesh.positions[column as usize])
+                    .collect();
+                let middle = points.iter().copied().sum::<Vec3>() / points.len() as f32;
+                let along: Vec<f32> = points.iter().map(|&p| chain.position(p)).collect();
+                let mean = along.iter().sum::<f32>() / along.len() as f32;
+                let spread = along
+                    .iter()
+                    .map(|at| (at - mean).abs())
+                    .fold(0.0f32, f32::max);
+                (middle.distance(goal), mean, spread)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, mean, spread)| (mean, spread))
+            .expect("a garment has a hem")
+    }
+
+    #[test]
+    fn a_hem_lands_where_its_length_says() {
+        // What "any length" has to mean (#356): the DELIVERED hem — after the
+        // claim, the smoothing and the placement — sits at the length along
+        // the limb, on every length, and moves as the length does. The claim
+        // alone cannot say it: a limb carries about four rows of faces per
+        // segment, so a hem left on the rings the claim cut along sat at one
+        // of a handful of places and a length moved it in jumps of a sixth of
+        // the limb (measured over 400 lengths, before the placement).
+        for seed in [1i64, 9] {
+            let (mesh, rig, weights, zones) = body(seed);
+            let arm = Chain::of(&rig, Limb::ForeLeft).expect("an arm");
+            let leg = Chain::of(&rig, Limb::HindLeft).expect("a leg");
+            let mut last = (0.0f32, 0.0f32);
+            for step in 1..20 {
+                let length = step as f32 / 20.0;
+                let (sleeve, trouser) = (length, length.max(SHORTS));
+                let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &cut(sleeve, trouser));
+                let [trousers, top] = &outfit.garments[..] else {
+                    panic!("seed {seed} at {length}: a top and trousers");
+                };
+                let (on_arm, arm_spread) = hem_at(top, &arm, sleeve);
+                let (on_leg, leg_spread) = hem_at(trousers, &leg, trouser);
+                for (what, want, got, spread) in [
+                    ("sleeve", sleeve, on_arm, arm_spread),
+                    ("trouser", trouser, on_leg, leg_spread),
+                ] {
+                    assert!(
+                        (got - want).abs() < 0.03,
+                        "seed {seed}: a {what} of {want:.3} delivered its hem at {got:.3} (spread {spread:.3})"
+                    );
+                }
+                assert!(
+                    on_arm >= last.0 - 1e-3 && on_leg >= last.1 - 1e-3,
+                    "seed {seed} at {length}: a hem moved back up the limb"
+                );
+                last = (on_arm, on_leg);
+            }
+        }
+    }
+
+    #[test]
+    fn the_whole_length_takes_both_limb_zones_as_the_old_long_cuts_did() {
+        // A share of one is the old wrist and ankle cut exactly: both of the
+        // limb's zones, whole. What a record written as "wrist" reads as.
+        let (mesh, rig, _, zones) = body(3);
+        let whole = GarmentCut {
+            zones: ZoneSet::default()
+                .with(Zone::Chest)
+                .with(Zone::Abdomen)
+                .with(Zone::UpperLimb(Limb::ForeLeft))
+                .with(Zone::LowerLimb(Limb::ForeLeft))
+                .with(Zone::UpperLimb(Limb::ForeRight))
+                .with(Zone::LowerLimb(Limb::ForeRight)),
+            ..Default::default()
+        };
+        assert_eq!(
+            garment::claimed(&mesh, &rig, &zones, &top_cut(1.0)),
+            garment::claimed(&mesh, &rig, &zones, &whole)
+        );
+        // And nothing of the arm at all is the old bare cut.
+        let bare = GarmentCut {
+            zones: ZoneSet::default().with(Zone::Chest).with(Zone::Abdomen),
+            ..Default::default()
+        };
+        assert_eq!(
+            garment::claimed(&mesh, &rig, &zones, &top_cut(0.0)),
+            garment::claimed(&mesh, &rig, &zones, &bare)
+        );
     }
 
     #[test]
@@ -753,16 +684,6 @@ mod tests {
         // the waist must hand the seam to one of them, not to both.
         let (mesh, rig, _weights, zones) = body(11);
         let params = OutfitParams::default();
-        let trousers = GarmentCut {
-            zones: leg_zones(&params.leg),
-            partial: leg_partial(&params.leg),
-            reach: ZoneSet::default().with(Zone::Abdomen),
-            ..Default::default()
-        };
-        let top = GarmentCut {
-            zones: top_zones(&params.sleeve),
-            ..Default::default()
-        };
         // The real claim, not a re-statement of it: #314's first cut at
         // rescuing hand-zoned hip skin let the top claim down the hips and
         // the trousers up the belly by bone radius alone, interleaved at the
@@ -774,8 +695,8 @@ mod tests {
                 .filter_map(|(index, &mine)| mine.then_some(index))
                 .collect()
         };
-        let below = claimed(&trousers);
-        let above = claimed(&top);
+        let below = claimed(&trouser_cut(params.trousers.length));
+        let above = claimed(&top_cut(params.top.length));
         assert!(!below.is_empty() && !above.is_empty());
         assert!(
             below.iter().all(|face| !above.contains(face)),
@@ -794,36 +715,24 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_clamps_and_is_idempotent() {
-        let mut params = OutfitParams {
-            top_hue: 9.0,
-            top_shade: -3.0,
-            leg_hue: f32::NAN,
-            leg_shade: f32::INFINITY,
-            ..Default::default()
+    fn each_garment_wears_its_own_colour_and_texture() {
+        let (mesh, rig, weights, zones) = body(2);
+        let mut params = OutfitParams::default();
+        params.top.colour = [0.9, 0.1, 0.1];
+        params.trousers.colour = [0.1, 0.1, 0.9];
+        params.trousers.texture = Some(GarmentTexture::new(
+            SurfaceConfig::named("Fabric").expect("a surface"),
+        ));
+        let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &params);
+        let [trousers, top] = &outfit.garments[..] else {
+            panic!("a top and trousers");
         };
-        params.sanitize();
-        assert_eq!(params.top_hue, 1.0);
-        assert_eq!(params.top_shade, 0.0);
-        assert_eq!(params.leg_hue, 0.5);
-        assert_eq!(params.leg_shade, 1.0);
-
-        let once = params.clone();
-        params.sanitize();
-        assert_eq!(once, params, "sanitize must reach a fixpoint");
-    }
-
-    #[test]
-    fn an_outfit_survives_a_round_trip_through_json() {
-        let params = OutfitParams::default();
-        let text = serde_json::to_string(&params).expect("serialises");
-        assert_eq!(
-            params,
-            serde_json::from_str::<OutfitParams>(&text).expect("deserialises")
-        );
-        // Cuts are named, so they travel as names rather than as magic numbers.
-        assert!(text.contains("forearm"), "{text}");
-        assert!(text.contains("ankle"), "{text}");
+        assert_eq!(top.colour, [0.9, 0.1, 0.1]);
+        assert_eq!(trousers.colour, [0.1, 0.1, 0.9]);
+        assert!(top.texture.is_none());
+        assert!(trousers.texture.is_some());
+        assert!(outfit.is_textured());
+        assert_eq!(trousers.limbs, vec![Limb::HindLeft, Limb::HindRight]);
     }
 
     #[test]
