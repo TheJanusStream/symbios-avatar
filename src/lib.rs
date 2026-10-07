@@ -102,8 +102,7 @@
 //! other reason this matters: a crate that claims to ship no encumbered data
 //! should be able to say where every number in it came from.
 
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 /// The README's code blocks, compiled and run as doctests so they cannot
 /// drift from the API the way un-checked examples always eventually do.

@@ -1,6 +1,6 @@
 [package]
 name = "symbios-avatar"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2024"
 authors = ["Janus"]
 description = "Engine-agnostic parametric avatar engine: procedural humanoid and creature bodies from small records."
@@ -18,9 +18,19 @@ categories = ["simulation", "game-development", "graphics"]
 # changes about running them.
 autotests = false
 
-# docs.rs builds with every feature on, so the feature-gated API is documented.
+# docs.rs builds with every feature on, so the feature-gated API is documented,
+# and with `--cfg docsrs`, which turns on `doc_cfg` in `lib.rs` so each gated
+# item carries its feature badge.
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+# Crate-wide policy, applied to tests, benches and examples too - moved here
+# from two `lib.rs` attributes so that the family has one mechanism for it.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
 
 [features]
 default = []
@@ -80,7 +90,7 @@ serde_json = "1.0"
 # Procedural-generation primitives — noise fields, cosine palettes, the
 # TextureMap pixel container, and height-to-normal conversion — shared with the
 # rest of the symbios ecosystem rather than reimplemented here.
-symbios-texture = "0.7"
+symbios-texture = "0.8"
 thiserror = "2.0.17"
 
 [dev-dependencies]
