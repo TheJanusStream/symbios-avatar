@@ -708,24 +708,50 @@ fn a_stop_does_not_skate() {
     // foot only ever moving while it is unloaded and off the ground.
     //
     // **The figure is pinned, and it is the check on the port.** The consuming
-    // application reads 57.85 mm from this instrument on this body and this
+    // application reads 79.94 mm from this instrument on this body and this
     // seed, in every process context. A reading a millimetre or two away is an
     // arithmetic site that has not been routed through the crate's own
-    // deterministic maths; the high 50s to 80s is a body standing on an
-    // unpinned idle seed; the regime this guard exists to catch reads hundreds.
+    // deterministic maths; anything from the high 50s to the high 80s is the
+    // knife edge below, or a body standing on an unpinned idle seed; the
+    // regime this guard exists to catch reads hundreds.
+    //
+    // **And the worst phase is a knife edge** (#363). It is the stop after 127
+    // frames, where the hand-over to the idle is chaotic in the moment it
+    // lands: on 0.12.0 it read 55.69 mm, under the 57.85 of the stop after
+    // 103 frames that was then the worst, and walking up to six parts in a
+    // million faster or slower read anything from 56 to 87 mm there. Since
+    // #363 the walk's clock carries the instrument's velocity, differenced
+    // from positions in floating point, a few millionths of a cycle away by
+    // the stop, and that phase reads 79.94 where the other thirty move by
+    // about half a millimetre at most. A change that moves the figure inside
+    // that band has moved the sample, not the stop — so the median of the
+    // thirty-one stops is held as well, which a regression lifting the
+    // ordinary phases moves and a knife edge cannot: 19.07 mm.
     let avatar = body_of("did:plc:stop-test");
     let rig = avatar.rig.clone();
-    let worst = (100..=130)
+    let mut skids: Vec<f32> = (100..=130)
         .map(|frames| skid_through_a_stop(&rig, frames))
-        .fold(0.0f32, f32::max);
+        .collect();
+    let worst = skids.iter().copied().fold(0.0f32, f32::max);
+    skids.sort_by(f32::total_cmp);
+    let median = skids[skids.len() / 2];
     // Printed as well as judged, so every run records its figure rather than
     // only its verdict.
-    println!("worst stop skid: {:.2} mm", worst * 1000.0);
+    println!(
+        "worst stop skid: {:.2} mm, median {:.2} mm",
+        worst * 1000.0,
+        median * 1000.0
+    );
     assert!(
-        worst < 0.06,
-        "a foot standing on the ground slid {:.1} mm through a stop, against 57.85 mm downstream \
+        worst < 0.082,
+        "a foot standing on the ground slid {:.1} mm through a stop, against 79.94 mm downstream \
          on the same body and seed",
         worst * 1000.0
+    );
+    assert!(
+        median < 0.03,
+        "the median stop slid a standing foot {:.1} mm, against 19.07 mm on the same body and seed",
+        median * 1000.0
     );
 }
 
@@ -1391,9 +1417,9 @@ impl Controller {
 /// and whether the run key is held through each, after a second of standing.
 /// The application's camera orbits freely, so its keys are camera-fixed: W is
 /// world `-Z`, S `+Z`, D `+X`.
-struct Script {
+struct Script<'a> {
     name: &'static str,
-    spans: &'static [(f32, Vec3, bool)],
+    spans: &'a [(f32, Vec3, bool)],
 }
 
 const STAND_SECS: f32 = 1.0;
@@ -1403,7 +1429,7 @@ const S: Vec3 = Vec3::new(0.0, 0.0, 1.0);
 const D: Vec3 = Vec3::new(1.0, 0.0, 0.0);
 const W_D: Vec3 = Vec3::new(1.0, 0.0, -1.0);
 
-const SCRIPTS: [Script; 7] = [
+const SCRIPTS: [Script<'static>; 7] = [
     Script {
         name: "straight W (control)",
         spans: &[(SCRIPT_SECS, W, false)],
@@ -1434,7 +1460,7 @@ const SCRIPTS: [Script; 7] = [
     },
 ];
 
-impl Script {
+impl Script<'_> {
     /// The direction asked for at `t`, and whether the run key is held.
     fn keys(&self, t: f32) -> (Vec3, bool) {
         let mut from = STAND_SECS;
@@ -1557,16 +1583,22 @@ impl Reader {
 /// Drives `script` through the replica chassis and a driver configured by
 /// `config`, with the run key held throughout if `run`, reading every frame.
 fn turned(rig: &Rig, script: &Script, run: bool, config: DriverConfig) -> Vec<Stance> {
+    let walk = Speed::from_froude(WALK_FROUDE).metres_per_second(rig);
+    turned_at(rig, script, if run { RUN } else { walk }, config)
+}
+
+/// As [`turned`], with the keys asking for `speed` wherever the script does
+/// not hold the run key, and [`RUN`] where it does.
+fn turned_at(rig: &Rig, script: &Script, speed: f32, config: DriverConfig) -> Vec<Stance> {
     let mut driver = Driver::new(config, INSTRUMENT_SEED);
     let mut chassis = Controller::standing();
-    let walk = Speed::from_froude(WALK_FROUDE).metres_per_second(rig);
     let reader = Reader::of(rig);
     let frames = ((STAND_SECS + SCRIPT_SECS) / CONTROLLER_STEP).round() as usize;
     (0..frames)
         .map(|frame| {
             let t = frame as f32 * CONTROLLER_STEP;
             let (toward, shift) = script.keys(t);
-            chassis.step(toward, if run || shift { RUN } else { walk });
+            chassis.step(toward, if shift { RUN } else { speed });
             let driven = driver
                 .drive(
                     rig,
@@ -1688,6 +1720,143 @@ fn probe_what_a_turn_does_to_the_stance() {
                     );
                 }
             }
+        }
+    }
+}
+
+/// The orbit's changes of keys at every moment of the stride: `first` held a
+/// little longer each time, over more than a walk's whole cycle, then `second`
+/// for two seconds — each with whether the run key is held. The orbit's twin
+/// of [`swept`].
+fn swept_orbit(
+    first: (Vec3, bool),
+    second: (Vec3, bool),
+) -> impl Iterator<Item = [(f32, Vec3, bool); 2]> {
+    (0..16).map(move |step| {
+        [
+            (0.8 + step as f32 * 0.05, first.0, first.1),
+            (2.0, second.0, second.1),
+        ]
+    })
+}
+
+/// The worst of a window of an orbit run, read by [`worst_of`].
+#[derive(Clone, Copy)]
+struct Worst {
+    /// The furthest a planted sole slid, metres ([`slide`]).
+    slide: f32,
+    /// The widest splay either way, metres.
+    splay: f32,
+    /// The lowest the pelvis went against its standing height, metres.
+    root: f32,
+    /// The frames a leg strained in.
+    strained: usize,
+}
+
+/// The worst of a window, for the orbit's probe and guard.
+fn worst_of(frames: &[&Stance]) -> Worst {
+    let (lo, hi, _, root, strained) = extremes(frames);
+    Worst {
+        slide: slide(frames),
+        splay: lo.abs().max(hi.abs()),
+        root,
+        strained,
+    }
+}
+
+#[test]
+#[ignore = "probe for #363: prints what each orbit change costs at every moment of the stride"]
+fn probe_what_the_orbit_costs_at_every_moment() {
+    // A start from standing begins at cycle 0 whatever the stand, so it is
+    // swept by the speed the keys ask for; a change of keys by the moment of
+    // the stride it lands at.
+    let rig = body_of("did:plc:stop-test").rig;
+    // Each reading is what it was swept by - a speed or a lead span - and
+    // the worst of its window.
+    let summary = |name: &str, readings: &[(f32, Worst)]| {
+        let mean =
+            readings.iter().map(|(_, worst)| worst.slide).sum::<f32>() / readings.len() as f32;
+        let (at, worst) = readings.iter().map(|&(at, worst)| (at, worst.slide)).fold(
+            (0.0, 0.0f32),
+            |kept, reading| {
+                if reading.1 > kept.1 { reading } else { kept }
+            },
+        );
+        let splay = readings
+            .iter()
+            .map(|(_, worst)| worst.splay)
+            .fold(0.0f32, f32::max);
+        let root = readings
+            .iter()
+            .map(|(_, worst)| worst.root)
+            .fold(f32::MAX, f32::min);
+        let strained: usize = readings.iter().map(|(_, worst)| worst.strained).sum();
+        println!(
+            "SWEPT {name}: slide mean {:.1} mm, worst {:.1} mm (at {at:.2}); |splay| max {:.1} mm; \
+             root min {:+.1} mm; strained {strained}",
+            mean * 1000.0,
+            worst * 1000.0,
+            splay * 1000.0,
+            root * 1000.0,
+        );
+    };
+    for (pace, speeds) in [("walk", (1.0f32, 1.95f32)), ("run", (2.0, 6.0))] {
+        let readings: Vec<_> = (0..16)
+            .map(|step| {
+                let speed = speeds.0 + (speeds.1 - speeds.0) * step as f32 / 15.0;
+                let script = Script {
+                    name: "W from standing",
+                    spans: &[(2.0, W, false)],
+                };
+                let frames = turned_at(&rig, &script, speed, DriverConfig::default());
+                let start: Vec<&Stance> = frames
+                    .iter()
+                    .filter(|frame| frame.t >= STAND_SECS && frame.t < STAND_SECS + 2.0)
+                    .collect();
+                (speed, worst_of(&start))
+            })
+            .collect();
+        summary(
+            &format!(
+                "W from standing | {pace} {:.2}..{:.2} m/s",
+                speeds.0, speeds.1
+            ),
+            &readings,
+        );
+    }
+    let walk = Speed::from_froude(WALK_FROUDE).metres_per_second(&rig);
+    for (name, first, second) in [
+        ("W then W+D (45 deg)", (W, false), (W_D, false)),
+        ("W then D (90 deg)", (W, false), (D, false)),
+        ("W then S (reversal)", (W, false), (S, false)),
+        ("W then Shift (walk to run)", (W, false), (W, true)),
+        ("Shift+W then W (run to walk)", (W, true), (W, false)),
+    ] {
+        for run in [false, true] {
+            let readings: Vec<_> = swept_orbit(first, second)
+                .map(|spans| {
+                    let script = Script {
+                        name,
+                        spans: &spans,
+                    };
+                    let frames = turned_at(
+                        &rig,
+                        &script,
+                        if run { RUN } else { walk },
+                        DriverConfig::default(),
+                    );
+                    let change = STAND_SECS + spans[0].0;
+                    let after: Vec<&Stance> = frames
+                        .iter()
+                        .filter(|frame| frame.t >= change && frame.t < change + 2.0)
+                        .collect();
+                    (spans[0].0, worst_of(&after))
+                })
+                .collect();
+            summary(
+                &format!("{name} | {}", if run { "run" } else { "walk" }),
+                &readings,
+            );
         }
     }
 }
@@ -2556,9 +2725,10 @@ fn a_heading_steps_the_ground_the_body_covers() {
     // stepped at the pace's cadence covers the pace's ground while the body
     // covers its own. Stepped so, a first-person walk set off from standing
     // slid its planted soles 365 mm and a run 529 — the orbit body's own
-    // start, which it keeps — and setting off ahead from a turn slid them 390
-    // mm at worst walking and 665 running. Stepped at the ground the body
-    // covers: 163 from standing, and 103 at worst from a turn.
+    // start too, until #363 stepped it the same way — and setting off ahead
+    // from a turn slid them 390 mm at worst walking and 665 running. Stepped
+    // at the ground the body covers: 163 from standing, and 103 at worst from
+    // a turn.
     let rig = body_of("did:plc:stop-test").rig;
     for run in [false, true] {
         let pace = if run { "run" } else { "walk" };
@@ -2589,6 +2759,100 @@ fn a_heading_steps_the_ground_the_body_covers() {
             );
         }
     }
+}
+
+#[test]
+fn a_body_with_no_heading_steps_the_ground_it_covers_too() {
+    // **The orbit's own starts and changes of pace** (#363). A body handed no
+    // heading kept its pace's cadence through 0.12.0, so its stance covered
+    // the eased pace's ground while the consuming application's chassis
+    // ramped away from it: setting off from standing slid its planted soles
+    // 316 mm on average and 394 at worst over the walking speeds, 506 and 529
+    // over the running ones, and a change of pace 160 at a walk into a run
+    // and 114 out of one. Stepped at the ground the body covers, as a
+    // heading's stride is: 164 from standing at any speed, and 19 at worst
+    // through a change of pace.
+    let rig = body_of("did:plc:stop-test").rig;
+    // A start from standing begins at cycle 0 whatever the stand, so it is
+    // swept by the speed the keys ask for, from a slow walk to a fast run.
+    for step in 0..16 {
+        let speed = 1.0 + 5.0 * step as f32 / 15.0;
+        let script = Script {
+            name: "W from standing",
+            spans: &[(2.0, W, false)],
+        };
+        let frames = turned_at(&rig, &script, speed, DriverConfig::default());
+        let start: Vec<&Stance> = frames
+            .iter()
+            .filter(|frame| frame.t >= STAND_SECS && frame.t < STAND_SECS + 2.0)
+            .collect();
+        let slid = slide(&start);
+        assert!(
+            slid < 0.2,
+            "{speed:.2} m/s set off from standing: the planted soles slid {:.1} mm",
+            slid * 1000.0
+        );
+    }
+    // A change of pace, at every moment of the stride.
+    let walk = Speed::from_froude(WALK_FROUDE).metres_per_second(&rig);
+    for (name, first, second) in [
+        ("W then Shift", (W, false), (W, true)),
+        ("Shift+W then W", (W, true), (W, false)),
+    ] {
+        for spans in swept_orbit(first, second) {
+            let script = Script {
+                name,
+                spans: &spans,
+            };
+            let frames = turned_at(&rig, &script, walk, DriverConfig::default());
+            let change = STAND_SECS + spans[0].0;
+            let after: Vec<&Stance> = frames
+                .iter()
+                .filter(|frame| frame.t >= change && frame.t < change + 2.0)
+                .collect();
+            let slid = slide(&after);
+            assert!(
+                slid < 0.05,
+                "{name}, the keys changing at {:.2} s: the planted soles slid {:.1} mm",
+                spans[0].0,
+                slid * 1000.0
+            );
+        }
+    }
+    // **And the quarter turn the consuming application agreed (#1323) no
+    // worse for it**, which was the condition of the change: at every moment
+    // of the stride a walk turned 313 mm on average and 455 at worst on the
+    // pace's cadence, and 317 and 466 on the ground's. Its one agreed moment
+    // is the application's own guard.
+    let readings: Vec<f32> = swept_orbit((W, false), (D, false))
+        .map(|spans| {
+            let script = Script {
+                name: "W then D",
+                spans: &spans,
+            };
+            let frames = turned_at(&rig, &script, walk, DriverConfig::default());
+            let change = STAND_SECS + spans[0].0;
+            let after: Vec<&Stance> = frames
+                .iter()
+                .filter(|frame| frame.t >= change && frame.t < change + 2.0)
+                .collect();
+            let worst = worst_of(&after);
+            assert_eq!(
+                worst.strained, 0,
+                "the quarter turn at {:.2} s strained {} frames",
+                spans[0].0, worst.strained
+            );
+            worst.slide
+        })
+        .collect();
+    let mean = readings.iter().sum::<f32>() / readings.len() as f32;
+    let worst = readings.iter().copied().fold(0.0f32, f32::max);
+    assert!(
+        mean < 0.33 && worst < 0.48,
+        "the quarter turn slid {:.1} mm on average and {:.1} at worst",
+        mean * 1000.0,
+        worst * 1000.0
+    );
 }
 
 #[test]

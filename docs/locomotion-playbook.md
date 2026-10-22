@@ -144,7 +144,7 @@ height, with kicked-up swing-leg heels to match. Both should ride the speed
 axis continuously (elbow flexion and heel lift as functions of Froude), not
 switch with a gait label.
 
-### 2.7 Sideways, backwards, and turning on the spot *(cited by #361, #362)*
+### 2.7 Sideways, backwards, and turning on the spot *(cited by #361, #362, #363)*
 
 **The strafe is a crossover in a split stance, not a shuffle.** The CC0
 reference (mesh2motion's `human-addon-animations.glb`, `Strafe_left` and
@@ -193,6 +193,18 @@ strafe 0.46 m, and turned a strafe at walking pace into a run. Taking the
 cadence from the speed alone (0.11's way) is a stride shorter than the travel,
 and a foot held to the ground under it slides the difference.
 
+**The ground the body covers, not its eased pace's.** The pace eases behind a
+change of speed so the posture does not snap (§4), but the legs step the
+ground the body actually covers: the cadence is scaled by the raw speed over
+the eased pace, so a stance covers what the body covers while the pace catches
+up — through a start, a change of pace, the tail of a stop. A first-person
+body has stepped so since #362 and every body since #363. On overlands' orbit
+chassis, swept, a start from standing slid 316 mm on average at a walk and 506
+at a run, and slides 164; a change of pace slid 160 and 114, and slides 3; the
+quarter turn overlands agreed by eye (#1323) slid 313 on average, and slides
+317. The postural terms stay the pace's, so a step in the raw speed kinks the
+clock's rate and jumps no pose.
+
 **A turn on the spot is a gait, bounded by the hip.** Healthy adults turn
 180° standing in 2–3 steps in about 1.5 s (s41598-023-49201-2), so 60–90° a
 step. What bounds it is how far a body can rotate over a planted foot: the
@@ -205,7 +217,7 @@ from one — or stopping into one — takes the stride from nothing to the
 crossing speed's in a frame: the one jump inside locomotion, which the driver
 blends as it blends a start from the idle.
 
-### 2.8 Instruments for the three *(cited by #361, #362)*
+### 2.8 Instruments for the three *(cited by #361, #362, #363)*
 
 Overlands' turning harness (`player::humanoid::turning`) drives the real
 chassis and the real rig: the planted soles' slide over a second held, and
@@ -213,16 +225,20 @@ strained frames, per key held in first person — guarded there, walking and
 running, by `in_the_eyes_every_key_keeps_its_planted_soles` and
 `in_the_eyes_a_body_turning_where_it_stands_steps_round`. This crate's
 `tests/driver.rs` carries a replica of that chassis looking out of its eyes
-(`looked`), for the same readings without the application.
+(`looked`), for the same readings without the application, and in the orbit
+(`turned`).
 
 **Sweep the moment a change lands, or measure luck.** What a change of keys,
 a start or a stop costs a planted foot depends mostly on where in its stride
 the body is when it comes: on the default body at a walk a change into a
 strafe slides 183 mm on average across the cycle and 381 at worst, where a
 single script's moment read 145. A guard on a transition runs it at every
-moment of a cycle (`swept` in the replica), and a comparison between two
-rules compares the sweeps — single moments flipped the verdict twice while
-#362's cadence was chosen.
+moment of a cycle (`swept` in the replica, `swept_orbit` in the orbit; a
+start from standing begins at cycle 0 whatever the stand, so it is swept by
+its speed), and a comparison between two rules compares the sweeps — single
+moments flipped the verdict twice while #362's cadence was chosen, and once
+more for #363: one moment of the orbit's reversal read 2 mm before and 167
+after, where the sweep reads 308 on average before and 286 after.
 
 The viewer films the same motions for strips (`--heading DEG`,
 `--turn DEG_PER_S` on the synthetic chassis).
@@ -296,6 +312,7 @@ the Disney principles):
 | overlands #1192 | pace smoothing at the consumer | §4 (springs) |
 | #361 turning on the spot | a pivot as a gait, the stance's yaw bounded by the hip | §2.7, §2.8 |
 | #362 the sidestep | a heading's cadence, a crossover in a split stance | §2.7, §2.8 |
+| #363 the orbit's cadence | the ground covered, for a body with no heading | §2.7, §2.8 |
 
 ## 6. Traps already paid for
 

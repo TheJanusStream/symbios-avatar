@@ -510,7 +510,9 @@ pub struct Inputs<'a> {
     /// [`None`] is not merely the zero angle: it leaves the stride exactly as
     /// the speed axis built it, which is what a caller wants when its facing
     /// and its travel are kept in step by something else. A caller whose body
-    /// can strafe or back up derives one and passes it.
+    /// can strafe or back up derives one and passes it. Either way the stride
+    /// is stepped at the cadence that covers the ground the body covers
+    /// (#362, #363).
     pub heading: Option<Heading>,
     /// Whether the body is in water deep enough to swim in.
     ///
@@ -1363,7 +1365,8 @@ impl Driver {
     /// over it where the body turns (#361). The stride is then taken toward
     /// the heading, which shortens it by the reach that way; [`Self::stepping`]
     /// is what makes the shorter stride cover the same ground — `travel` of
-    /// it, the body's own travel over the pace's.
+    /// it, the body's own travel over the pace's. A body handed no heading
+    /// walks the stride as built, stepped the same way (#363).
     fn walking(
         rig: &Rig,
         inputs: &Inputs<'_>,
@@ -1380,10 +1383,12 @@ impl Driver {
             turn.stride(rig, pace)
         };
         let cadence = turn.cadence(rig, pace);
-        let Some(heading) = inputs.heading else {
-            return (gait, built, cadence);
+        // No heading is straight ahead on the stride exactly as built, and it
+        // steps the ground the body covers all the same (#363).
+        let (heading, mut stride) = match inputs.heading {
+            Some(heading) => (heading, built.toward(rig, heading)),
+            None => (Heading::FORWARD, built),
         };
-        let mut stride = built.toward(rig, heading);
         let cadence = Self::stepping(
             rig,
             heading,
@@ -1424,11 +1429,23 @@ impl Driver {
     /// at the pace's cadence, setting off ahead from a turn slid the planted
     /// soles 213 mm on average walking and 435 running, and a start from
     /// standing 365 and 529; stepped at the ground covered, 45 and 44, and 163
-    /// either way — and no change of keys slides more for it. A body handed no
-    /// heading is the orbit's, measured and agreed at its pace's cadence (the
-    /// consuming application's #1323), and keeps it; a body held at one speed
-    /// has `travel` one to the bit, so a heading straight ahead is exactly no
-    /// heading at all.
+    /// either way — and no change of keys slides more for it. **A body handed
+    /// no heading is stepped so too** (#363): the orbit's, whose stance the
+    /// consuming application agreed by eye at its pace's cadence (its #1323).
+    /// On that chassis, swept the same way, a start from standing slid 316 mm
+    /// on average over the walking speeds and 506 over the running ones, and
+    /// slides 164 at any speed; a change of pace slid 160 into a run and 114
+    /// out of one, and slides 3; and the quarter turn agreed by eye slid 313
+    /// on average and slides 317. A body that has only ever been handed one
+    /// speed has `travel` one to the bit, so a heading straight ahead is
+    /// exactly no heading at all and a walk measured that way is the walk it
+    /// was. Anywhere else `travel` is one to within float rounding, not to
+    /// the bit: the eased pace settles a few ULPs short of a new speed, and a
+    /// speed differenced from positions, or one whose direction turns,
+    /// carries their rounding into the clock — a few millionths of a cycle
+    /// over a few seconds' walk. And a caller that hands its own gait
+    /// ([`Inputs::gait`]) and turns hard enough for the turn's floor to bind
+    /// is held to that gait's duty, as a headed stride always was.
     ///
     /// Held **up to a ceiling**: the faster of the legs' sprint cadence and
     /// the heading's own for whichever is more, the ground the body covers or
