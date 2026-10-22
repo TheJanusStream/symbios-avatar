@@ -273,6 +273,7 @@ impl Speed {
             // character from being a gait-label switch (#331).
             tuck: ((self.froude - FROUDE_TRANSITION) / (TUCK_FROUDE - FROUDE_TRANSITION))
                 .clamp(0.0, 1.0),
+            split: 0.0,
         }
     }
 
@@ -342,7 +343,7 @@ pub(crate) const LIFT_OF_STRIDE: f32 = 0.12 / 0.70;
 /// since the same height can be mostly leg or mostly torso.
 ///
 /// [`Stride::for_body`]: super::gait::Stride::for_body
-fn leg_of(rig: &Rig) -> f32 {
+pub(crate) fn leg_of(rig: &Rig) -> f32 {
     rig.ground_contacts()
         .into_iter()
         .filter_map(|limb| rig.limb_reach(limb))

@@ -144,6 +144,89 @@ height, with kicked-up swing-leg heels to match. Both should ride the speed
 axis continuously (elbow flexion and heel lift as functions of Froude), not
 switch with a gait label.
 
+### 2.7 Sideways, backwards, and turning on the spot *(cited by #361, #362)*
+
+**The strafe is a crossover in a split stance, not a shuffle.** The CC0
+reference (mesh2motion's `human-addon-animations.glb`, `Strafe_left` and
+`Strafe_right`, read by forward kinematics over the source's own bones; the
+two names are mirrored in that export, so read a clip's travel off its
+planted feet, not its name):
+
+- **The feet never share a depth.** The foot on the trailing side stands
+  about 0.40 m in FRONT of the leading one for the whole cycle — about 0.45 of
+  the leg — so every swing passes the planted foot at another depth: the
+  trailing foot crosses in front, the leading foot steps out from behind. A
+  crossover is how a sideways step gets its length; the split is what makes
+  it safe. The engine stands half the leg (`SPLIT_OF_REACH`), a touch more,
+  because the split also sets where its fade lines the feet up on a backward
+  diagonal, and at 0.45 that comes forward into the gentle diagonals. Only a
+  stride too long for the square stance needs a split at all, so the engine
+  grows it with the stride from nothing (`split_needed`): a turn's short steps
+  and a pivot's, which go nowhere, stand square.
+- **A walk's timing, sideways.** One cycle a second at about 0.7 m/s, each
+  foot down about 55% of it, the feet half a cycle apart; about 0.35 m of
+  lateral travel a stance and 0.12–0.15 m of lift at the ankle; a 3 cm pelvis
+  bob, two per cycle.
+- **Quiet arms, an open chest.** The hands move about 3 cm (an arm swing
+  answers fore-and-aft excursion, and there is none); the shoulders turn
+  about 20° toward the travel and the pelvis about 3.5° on average, with the
+  steps' own ±10° about it.
+
+The literature has both patterns at ordinary speeds — young adults' long
+sidesteps and crossovers run 0.70 and 0.73 m with the same peak lateral
+speed, about 0.84 m/s (Table 2 of PMC4362666) — and both well inside
+running loads at 3 m/s (lateral sidestepping and crossover stepping, badminton
+players). The reference chose the crossover, and the reference wins (§1).
+
+**A sideways or backward step is shorter, so the same travel is more
+steps — and the gait stays the speed's.** The heading's reach
+(`Heading::reach`: 1 forward, 0.75 back, 0.6 sideways) is anatomical. The
+stride a heading allows is the speed's own times that reach, and the legs step
+it at the cadence that makes each stance cover exactly the ground the body
+does, `v · duty / length`. Walking and running do not change with the heading:
+they are the leg vaulting over its foot (§2.1's Froude number), and the leg
+vaults at the speed the body goes, whichever way it goes. Both references bear
+that out — the back-up steps at 1.0 Hz where this gives 1.03, and the
+strafe's 0.36 m stance is this to the centimetre — where building the gait
+from a faster "working" speed `v / reach` gave the back-up 0.87 Hz and the
+strafe 0.46 m, and turned a strafe at walking pace into a run. Taking the
+cadence from the speed alone (0.11's way) is a stride shorter than the travel,
+and a foot held to the ground under it slides the difference.
+
+**A turn on the spot is a gait, bounded by the hip.** Healthy adults turn
+180° standing in 2–3 steps in about 1.5 s (s41598-023-49201-2), so 60–90° a
+step. What bounds it is how far a body can rotate over a planted foot: the
+hip turns about 40° in and 40° out, so a stance can carry about 80° of turn —
+±40° either side of midstance, where the foot points along the body. A turn
+faster than that steps faster; one faster than the legs can step (their
+sprint cadence) spins on its feet, as a body turning that fast does. A pivot's
+stride goes nowhere, so a heading handed to it changes nothing, and setting off
+from one — or stopping into one — takes the stride from nothing to the
+crossing speed's in a frame: the one jump inside locomotion, which the driver
+blends as it blends a start from the idle.
+
+### 2.8 Instruments for the three *(cited by #361, #362)*
+
+Overlands' turning harness (`player::humanoid::turning`) drives the real
+chassis and the real rig: the planted soles' slide over a second held, and
+strained frames, per key held in first person — guarded there, walking and
+running, by `in_the_eyes_every_key_keeps_its_planted_soles` and
+`in_the_eyes_a_body_turning_where_it_stands_steps_round`. This crate's
+`tests/driver.rs` carries a replica of that chassis looking out of its eyes
+(`looked`), for the same readings without the application.
+
+**Sweep the moment a change lands, or measure luck.** What a change of keys,
+a start or a stop costs a planted foot depends mostly on where in its stride
+the body is when it comes: on the default body at a walk a change into a
+strafe slides 183 mm on average across the cycle and 381 at worst, where a
+single script's moment read 145. A guard on a transition runs it at every
+moment of a cycle (`swept` in the replica), and a comparison between two
+rules compares the sweeps — single moments flipped the verdict twice while
+#362's cadence was chosen.
+
+The viewer films the same motions for strips (`--heading DEG`,
+`--turn DEG_PER_S` on the synthetic chassis).
+
 ## 3. What makes a walk READ
 
 Not the same question as what a walker does. The craft vocabulary for judging
@@ -211,6 +294,8 @@ the Disney principles):
 | #330 head-level bargain | partial counter along the cervical chain | §2.5 |
 | #331 run character | elbow pump, heel lift, on the speed axis | §2.6, §2.2, §3 (airborne) |
 | overlands #1192 | pace smoothing at the consumer | §4 (springs) |
+| #361 turning on the spot | a pivot as a gait, the stance's yaw bounded by the hip | §2.7, §2.8 |
+| #362 the sidestep | a heading's cadence, a crossover in a split stance | §2.7, §2.8 |
 
 ## 6. Traps already paid for
 

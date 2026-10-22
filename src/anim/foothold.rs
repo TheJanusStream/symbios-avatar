@@ -158,15 +158,18 @@ impl Footholds {
     /// One frame of a walk with its planted feet held: advance the ledger,
     /// then run [`Walk::drive`]'s whole sequence with the holds applied.
     ///
-    /// `at` and `facing` are the body's placement in the caller's world — the
-    /// origin the pose will be rendered under (only its horizontal is read;
-    /// the vertical belongs to the ground closure) and the yaw about `+Y`
-    /// carrying the body's `+Z` onto its world heading. `ground` answers in
-    /// the body's frame, exactly as [`Walk::drive`] takes it.
+    /// `advanced` is how far the walk's cycle moved on since the last frame,
+    /// in cycles — the clock's own step, which a stride's yaw is swept over
+    /// (#361). `at` and `facing` are the body's placement in the caller's
+    /// world — the origin the pose will be rendered under (only its
+    /// horizontal is read; the vertical belongs to the ground closure) and the
+    /// yaw about `+Y` carrying the body's `+Z` onto its world heading.
+    /// `ground` answers in the body's frame, exactly as [`Walk::drive`] takes
+    /// it.
     //
-    // The count is `Walk::drive`'s own shape plus the two transform terms the
-    // ledger exists to be fed; a struct invented to appease the lint would
-    // have no second use.
+    // The count is `Walk::drive`'s own shape plus the clock's step and the two
+    // transform terms the ledger exists to be fed; a struct invented to
+    // appease the lint would have no second use.
     #[allow(clippy::too_many_arguments)]
     pub fn drive<F>(
         &mut self,
@@ -175,6 +178,7 @@ impl Footholds {
         pose: &mut Pose,
         gait: &Gait,
         stride: &Stride,
+        advanced: f32,
         at: Vec3,
         facing: f32,
         ground: F,
@@ -197,8 +201,31 @@ impl Footholds {
         // turned since the last frame: the stance keeps its shape in the body,
         // and the travel alone is held against the world. A straight walk never
         // turns, so this costs every straight-line hold nothing.
+        //
+        // **Except the turn the stride was told about** (#361). A stride with a
+        // yaw sweeps each planted contact the other way round the body across
+        // its stance, which is that foot standing still in the world — and a
+        // hold carried round as well would be dragged by the very turn the
+        // stride already took. So the holds are carried by the rest: what the
+        // body turned, less the stride's own yaw over the stretch of cycle
+        // this frame advanced (the stance's yaw over the duty, a cycle at a
+        // time). A pivot then plants its feet, and a turn faster than the
+        // stance can carry spins them by the difference. A stride with no yaw
+        // accounts for nothing, and carries exactly what it carried before.
+        //
+        // **The clock's step is handed in, not read off two cycle values**: a
+        // cycle is a fraction, so a step of more than half of one — a hitch at
+        // a pivot's sprint cadence — reads the short way round as a step back,
+        // and a stance that had turned would be carried round by its own turn.
+        // Forward only, for a caller handing in the difference of a clock it
+        // holds: a step back turned no stride.
+        let accounted = if stride.yaw == 0.0 || gait.duty <= 0.0 {
+            0.0
+        } else {
+            stride.yaw / gait.duty * advanced.max(0.0)
+        };
         if let Some(last) = self.facing {
-            let turned = wrapped(facing - last);
+            let turned = wrapped(facing - last) - accounted;
             if turned != 0.0 {
                 let pivot = Vec3::new(at.x, 0.0, at.z);
                 let turn = Rot::y(turned);
@@ -342,6 +369,7 @@ mod tests {
                 &mut held,
                 &gait,
                 &stride,
+                cadence * dt,
                 travel,
                 0.0,
                 flat,
@@ -381,6 +409,7 @@ mod tests {
                 &mut pose,
                 &gait,
                 &stride,
+                cadence * dt,
                 Vec3::Z * (1.4 * elapsed),
                 0.0,
                 flat,
@@ -397,6 +426,7 @@ mod tests {
             &mut warped,
             &gait,
             &stride,
+            cadence * dt,
             Vec3::new(100.0, 0.0, 100.0),
             0.0,
             flat,
@@ -469,6 +499,7 @@ mod tests {
                 &mut held,
                 &gait,
                 &stride,
+                cadence * dt,
                 at,
                 facing,
                 flat,
@@ -519,6 +550,7 @@ mod tests {
                 &mut held,
                 &gait,
                 &stride,
+                cadence * dt,
                 Vec3::Z * (1.6 * elapsed),
                 0.0,
                 flat,
@@ -568,6 +600,7 @@ mod tests {
                 &mut held,
                 &gait,
                 &stride,
+                cadence * dt,
                 Vec3::X * (1.0 * elapsed),
                 0.0,
                 flat,
@@ -610,6 +643,7 @@ mod tests {
             &mut pose,
             &walking.gait(&rig),
             &walking.stride(&rig),
+            0.0,
             Vec3::ZERO,
             0.0,
             flat,
@@ -627,6 +661,7 @@ mod tests {
             &mut pose,
             &standing,
             &walking.stride(&rig),
+            0.05,
             Vec3::ZERO,
             0.0,
             flat,
@@ -634,6 +669,76 @@ mod tests {
         assert!(
             ledger.held.iter().all(|(_, hold)| hold.is_none()),
             "a standing gait left holds in the ledger"
+        );
+    }
+
+    #[test]
+    fn a_pivot_through_a_hitch_keeps_its_planted_foot() {
+        // **The clock's step is handed in** (#361). A stride's yaw sweeps a
+        // planted contact round the body across its stance, and the ledger
+        // carries its holds by only the turn the stance did not take — which
+        // takes the clock's step to know. The first cut of 0.12 read it off
+        // two cycle values, a fraction, so a frame stepping more than half a
+        // cycle read as a step back: the holds were carried by the whole turn
+        // the stance had already taken, and the planted foot went round with
+        // the body. A hitch at a pivot's cadence is that frame.
+        let rig = rig();
+        let turn = crate::anim::turn::Turn::new(1.5);
+        let (gait, stride) = (
+            turn.gait(&rig, Speed::STILL),
+            turn.stride(&rig, Speed::STILL),
+        );
+        let step = 0.55;
+        assert!(
+            gait.duty > step + 0.05,
+            "the pivot's stance outlasts the hitch"
+        );
+        let start = (0..1000)
+            .map(|at| at as f32 / 1000.0)
+            .find(|&cycle| matches!(gait.phase(0, cycle), Phase::Stance(t) if t < 0.02))
+            .expect("the first contact goes down");
+        let limb = gait.limbs[0];
+        let held = |ledger: &Footholds| {
+            ledger
+                .held
+                .iter()
+                .find(|(of, _)| *of == limb)
+                .and_then(|(_, hold)| *hold)
+        };
+
+        let mut ledger = Footholds::new();
+        let mut pose = Pose::rest(&rig);
+        ledger.drive(
+            Walk::at(start),
+            &rig,
+            &mut pose,
+            &gait,
+            &stride,
+            0.0,
+            Vec3::ZERO,
+            0.0,
+            flat,
+        );
+        let before = held(&ledger).expect("the contact planted");
+        // The body turned by exactly what the stance swept over the hitch: the
+        // planted foot stands where it stood.
+        let mut pose = Pose::rest(&rig);
+        ledger.drive(
+            Walk::at((start + step).fract()),
+            &rig,
+            &mut pose,
+            &gait,
+            &stride,
+            step,
+            Vec3::ZERO,
+            stride.yaw / gait.duty * step,
+            flat,
+        );
+        let after = held(&ledger).expect("the contact is still down");
+        assert!(
+            after.distance(before) < 1e-3,
+            "a hitch of {step} cycles moved the planted foot {:.1} mm",
+            after.distance(before) * 1000.0
         );
     }
 }

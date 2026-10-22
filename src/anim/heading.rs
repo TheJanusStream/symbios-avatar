@@ -14,7 +14,7 @@
 //! around [`super::Stride::direction`], so the *geometry* of
 //! travelling sideways or backwards already works — a foot planted on the floor
 //! stays planted whichever way the body is going over it. What a heading adds
-//! is the three things that are not geometry:
+//! is the four things that are not geometry:
 //!
 //! * **How far the body can step that way**, which is [`Heading::reach`]. A
 //!   backward step is shorter than a forward one and a sideways step is shorter
@@ -24,37 +24,44 @@
 //!   the sole comes down flat. All three fall out of scaling the roll by the
 //!   heading's forward component — see [`Heading::along`].
 //! * **How much the arms swing.** The arm swing answers the legs' fore-and-aft
-//!   excursion, because that is what it counterbalances; a body shuffling
-//!   sideways has none and swings its arms not at all.
+//!   excursion, because that is what it counterbalances; a body stepping
+//!   sideways has none and swings its arms not at all — the reference strafe's
+//!   hands move about 3 cm.
+//! * **How fast the legs step for it.** A shorter step covering the same
+//!   ground is more steps: the driver steps a heading's stride at the cadence
+//!   that makes each stance cover exactly the travel. The gait — walking or
+//!   running — stays the speed's, since it is the leg vaulting over its foot
+//!   at the speed the body goes, whichever way that is (#362, the driver's
+//!   `stepping`).
 //!
-//! # The shuffle does NOT come free, and the test is what said so
+//! # A strafe crosses over, in a split stance (#362)
 //!
-//! A lateral step sequence wants a shuffle rather than a crossover, on the
-//! grounds that a crossover risks the feet intersecting. It is tempting to
-//! claim that is not a choice available to get wrong —
-//! [`super::gait::contact_offset`] moves every contact by the same screw, so
-//! surely two feet keep the separation they start with.
+//! **The CC0 reference settles what a body does sideways, and it is not a
+//! shuffle** (playbook §2.7). The strafe in mesh2motion's library stands its
+//! trailing foot about 0.40 m in front of its leading one for the whole cycle,
+//! and every swing carries one foot past the other at that other depth. The
+//! crossover is where a sideways step gets its length; the split is what makes
+//! it safe.
 //!
-//! **They do not, and the guard written to confirm the claim refutes it
-//! instead.** The two feet are at different points of the cycle: one is sliding
-//! back through its stance while the other is swinging forward, so their
-//! offsets differ by most of a stride's length rather than by nothing. Strafing
-//! left on the default body, the left foot ends up 72 mm to the RIGHT of the
-//! right one — a crossover, arrived at by accident, and exactly the
-//! self-intersection the shuffle exists to avoid.
-//!
-//! So a sideways stride carries a second bound that a forward one does not, and
-//! it is geometric rather than anatomical: **the feet have to stay apart**. On
-//! the default body that bound is 88 mm against an anatomical reach of 298, so
-//! near sideways it is very much the one that binds — which is why it cannot
-//! live in [`Heading::reach`], a pure function of an angle. It is applied by
-//! [`super::Stride::toward`], over the ellipse rather than inside it, and only
-//! in the band around sideways where it genuinely binds — see `shuffle_bound`
-//! in the gait module for the geometry. Two other homes were tried and
-//! measured out: clipping with a hard `min` pops (#242), and folding the
-//! stance limit into the ellipse's **semi-axis** — this module's answer for a
-//! while — is smooth but cuts every diagonal, including the ones the stance
-//! never threatened: a 60-degree stride to 102 mm where 323 was safe (#258).
+//! This module used to answer otherwise, and the history is worth keeping
+//! because its measurements still stand. A lateral step sequence was taken to
+//! want a shuffle rather than a crossover, on the grounds that a crossover
+//! risks the feet intersecting — and it was tempting to claim the shuffle came
+//! free, since [`super::gait::contact_offset`] moves every contact by the same
+//! screw. **It does not, and the guard written to confirm the claim refuted
+//! it.** The two feet are at different points of the cycle, so their offsets
+//! differ by most of a stride's length: strafing left on the default body, the
+//! left foot ended up 72 mm to the RIGHT of the right one, at one depth — a
+//! crossover arrived at by accident, which is a collision. So a shuffle needs
+//! a second bound, the feet kept apart: 88 mm on the default body against an
+//! anatomical 298. **And no cadence makes 88 mm cover a walk** — Overlands
+//! measured its first-person strafe sliding its planted soles 533 mm a second
+//! (#362) — which is what retired it on two feet. The bound still stands for a
+//! body on four (`shuffle_bound` in the gait module, with its geometry, and
+//! the two other homes tried and measured out: a hard `min` pops (#242), and
+//! folding the limit into the ellipse's **semi-axis** cuts every diagonal,
+//! 102 mm at 60 degrees where 323 was safe (#258)). On two feet the same band
+//! carries the split instead (`Stride::split`).
 
 use crate::det::DetMath;
 use glam::Vec3;

@@ -29,9 +29,26 @@ use crate::det::DetMath;
 use glam::Vec3;
 
 use super::gait::{Gait, Stride};
-use super::speed::{GRAVITY, Speed};
+use super::speed::{FROUDE_SPRINT, GRAVITY, Speed};
 use crate::plan::Zone;
 use crate::rig::Rig;
+
+/// How far a body turns over one planted foot, in radians: the most yaw one
+/// stance can carry — 80 degrees (#361, playbook §2.7).
+///
+/// **The hip's rotation range, both ways.** A hip turns about 40 degrees in
+/// and 40 out, and a stance runs its foot from one end of that to the other:
+/// half the stance's turn ahead of the body where it lands, half behind where
+/// it leaves, pointing along the body at midstance. A turn that would carry a
+/// stance further steps faster instead — see [`Turn::cadence`] — which is what
+/// a body turning on the spot does. Anatomical like
+/// [`super::heading::LATERAL_REACH`], and like it a consequence waiting for
+/// joint limits.
+///
+/// Checked against the literature rather than fitted to it: healthy adults
+/// turn 180 degrees standing in two to three steps in about a second and a
+/// half, and this turns one in three at that rate.
+pub const TURN_REACH: f32 = 1.396_263_4;
 
 /// How sharply a body is turning.
 ///
@@ -176,9 +193,27 @@ impl Turn {
     /// the length a foot going that fast takes. The body's centre then covers
     /// whatever the geometry says it does, which on a turn is less — and that
     /// difference, spread between the two feet, *is* the differential stride.
+    ///
+    /// **Raised, where the turn needs it, so no stance turns further than
+    /// [`TURN_REACH`]** (#361). The working contact alone gives a pivot almost
+    /// nothing: a foot a tenth of a metre from the centre moves a tenth of the
+    /// yaw rate, so the cadence collapses and each stance would have to carry
+    /// the body 80 degrees round at half a radian a second and 170 at two — no
+    /// foot stays planted through that. The cadence that holds a stance to the
+    /// hip's range is the yaw rate times the duty over the reach, and the body
+    /// steps at whichever is faster. **Never past the legs' own sprint
+    /// cadence**: a turn faster than a body can step spins it on its feet,
+    /// which [`Self::stride`] leaves to whatever carries the body round.
     #[must_use]
     pub fn cadence(self, rig: &Rig, speed: Speed) -> f32 {
-        self.working(rig, speed).cadence(rig)
+        let working = self.working(rig, speed);
+        let walking = working.cadence(rig);
+        if self.yaw_rate == 0.0 {
+            return walking;
+        }
+        let fastest = Speed::from_froude(FROUDE_SPRINT).cadence(rig);
+        let turning = (self.yaw_rate.abs() * working.duty() / TURN_REACH).min(fastest);
+        walking.max(turning)
     }
 
     /// The stride a body of this shape takes turning this sharply at this
@@ -194,10 +229,16 @@ impl Turn {
     ///
     /// **Identical to [`Speed::stride`] at [`Self::STRAIGHT`]**, term for term
     /// rather than nearly: the working contact is then the body itself.
+    ///
+    /// The yaw never passes [`TURN_REACH`]: below the legs' sprint cadence
+    /// [`Self::cadence`] has already stepped fast enough to keep it there, and
+    /// past it the stance turns the hip's range and no more — the rest of the
+    /// turn is the body spinning on its feet, which a caller holding planted
+    /// feet to the world carries round with it (`Footholds`).
     #[must_use]
     pub fn stride(self, rig: &Rig, speed: Speed) -> Stride {
         let working = self.working(rig, speed);
-        let cadence = working.cadence(rig);
+        let cadence = self.cadence(rig, speed);
         if cadence <= f32::EPSILON {
             return Stride::still();
         }
@@ -206,10 +247,11 @@ impl Turn {
             direction: Vec3::Z,
             length: speed.metres_per_second(rig) / cadence * duty,
             lift: working.stride(rig).lift,
-            yaw: self.yaw_rate / cadence * duty,
+            yaw: (self.yaw_rate / cadence * duty).clamp(-TURN_REACH, TURN_REACH),
             // From the working contact, like the lift beside it: the outer
             // foot of a fast turn is the one running.
             tuck: working.stride(rig).tuck,
+            split: 0.0,
         }
     }
 
@@ -328,6 +370,77 @@ mod tests {
             (home + gait::contact_offset(home, &stride, gait::Phase::Stance(1.0))).z - home.z
         };
         assert!(swept(left) * swept(right) < 0.0);
+    }
+
+    #[test]
+    fn no_stance_turns_further_than_a_hip_does() {
+        // **The pivot `Turn` described before #361 was not one a foot could
+        // stand on.** A pivot's working contact is a foot a tenth of a metre
+        // from the centre, moving a tenth of the yaw rate, so its cadence
+        // collapsed and each stance had to carry the body round 80 degrees at
+        // half a radian a second and 170 at two. Now the cadence rises to keep
+        // every stance inside [`TURN_REACH`] — exactly, below the legs' sprint
+        // cadence, with no clamp doing the work — and only past that does the
+        // clamp hold the stance while the body spins on its feet.
+        // Reintroducing the defect means taking the cadence from the working
+        // contact alone, which fails the first assertion at two radians a
+        // second.
+        let rig = biped();
+        let fastest = Speed::from_froude(FROUDE_SPRINT).cadence(&rig);
+        for metres in [0.0f32, 0.6, 1.4] {
+            let speed = Speed::new(&rig, metres);
+            for rate in [0.2f32, 0.5, 1.0, 2.0, 4.0, 8.0, 20.0, 60.0] {
+                for sign in [1.0f32, -1.0] {
+                    let turn = Turn::new(rate * sign);
+                    let stride = turn.stride(&rig, speed);
+                    let cadence = turn.cadence(&rig, speed);
+                    assert!(
+                        stride.yaw.abs() <= TURN_REACH + 1e-6,
+                        "{metres} m/s at {rate} rad/s: a stance turned {:.0} degrees",
+                        stride.yaw.abs().to_degrees()
+                    );
+                    if cadence < fastest {
+                        let unclamped = turn.yaw_rate() / cadence * turn.gait(&rig, speed).duty;
+                        assert!(
+                            (stride.yaw - unclamped).abs() < 1e-6,
+                            "{metres} m/s at {rate} rad/s: the clamp, not the cadence, held it"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_brisk_standing_turn_takes_the_steps_people_take() {
+        // The literature's check on [`TURN_REACH`], which it was not fitted
+        // to: healthy adults turn 180 degrees standing in two to three steps
+        // in about a second and a half (playbook §2.7).
+        let rig = biped();
+        let turn = Turn::new(std::f32::consts::PI / 1.5);
+        let footfalls = turn.gait(&rig, Speed::STILL).footfalls() as f32;
+        let steps = 1.5 * turn.cadence(&rig, Speed::STILL) * footfalls;
+        assert!(
+            (2.0..=3.5).contains(&steps),
+            "a half turn in a second and a half took {steps:.1} steps"
+        );
+    }
+
+    #[test]
+    fn a_turn_faster_than_the_legs_step_spins_on_them() {
+        // Past the legs' sprint cadence a stance carries the hip's range and
+        // no more; the rest of the turn is the body spinning on its feet,
+        // which `Footholds` carries round rather than holding against. Twenty
+        // radians a second: the working foot is still slower than a sprint, so
+        // it is the turn that would ask the legs past one.
+        let rig = biped();
+        let turn = Turn::new(20.0);
+        assert_eq!(
+            turn.cadence(&rig, Speed::STILL),
+            Speed::from_froude(FROUDE_SPRINT).cadence(&rig)
+        );
+        assert_eq!(turn.stride(&rig, Speed::STILL).yaw, TURN_REACH);
+        assert_eq!(Turn::new(-20.0).stride(&rig, Speed::STILL).yaw, -TURN_REACH);
     }
 
     #[test]

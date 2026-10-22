@@ -685,6 +685,7 @@ fn slide_driven(from: f32, to: f32, onset: f32, held: bool) -> f32 {
                 &mut pose,
                 &gait,
                 &stride,
+                at.cadence(&rig) * dt,
                 Vec3::Z * travel,
                 0.0,
                 ground,

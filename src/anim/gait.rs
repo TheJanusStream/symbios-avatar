@@ -585,6 +585,18 @@ pub struct Stride {
     /// number past the walk-run transition; [`Stride::for_body`] maps its pace
     /// axis to agree at the calibration points.
     pub tuck: f32,
+    /// How far apart fore-and-aft the stance's two sides stand, in metres —
+    /// the trailing side's contacts half of it in front of their homes, the
+    /// leading side's half of it behind.
+    ///
+    /// **What lets a sideways step cross over** (#362, playbook §2.7). A
+    /// strafe takes its length from crossing one foot past the other, and two
+    /// feet at one depth cannot do that without meeting; at two depths they
+    /// pass. The CC0 reference strafe stands this way for its whole cycle, the
+    /// foot on the trailing side in front. [`Stride::toward`] sets it, for a
+    /// two-footed body in the band around sideways; zero is a stance square to
+    /// the body, and every other stride is exactly what it was.
+    pub split: f32,
 }
 
 /// What share of a leg's reach a natural stride covers.
@@ -625,6 +637,7 @@ impl Stride {
             // full tuck) — so the two derivations of one quantity cannot
             // quietly mean different strides.
             tuck: ((pace - 1.05) / 0.45).clamp(0.0, 1.0),
+            split: 0.0,
         }
     }
 
@@ -641,34 +654,77 @@ impl Stride {
     /// its foot less: a toe clearance is a share of the ground being covered
     /// and a sideways shuffle covers little.
     ///
-    /// **The rig is here for the second bound**, which is geometric and which
-    /// only a body can answer: a sideways stride long enough drives one foot
-    /// past the other. See `shuffle_bound` — and see `Heading`'s own docs for
-    /// how that was found, which was by a guard refuting the claim it had been
-    /// written to confirm.
+    /// **The rig is here for the stance**, which only a body can answer: a
+    /// sideways stride long enough drives one foot past the other. A
+    /// two-footed body crosses over in a split stance, the CC0 strafe's answer
+    /// (#362, [`Stride::split`]), and takes its whole anatomical stride; any
+    /// other body still shuffles, its stride held under `shuffle_bound` — see
+    /// `Heading`'s own docs for how that bound was found, which was by a guard
+    /// refuting the claim it had been written to confirm.
+    ///
+    /// **The length is a share of the stride handed in, so the caller decides
+    /// how it covers the travel.** A stride built for the body's own speed
+    /// comes out shorter than the ground the body covers at that speed's
+    /// cadence; the driver steps it faster, at the cadence that makes each
+    /// stance cover exactly the travel (#362).
     #[must_use]
     pub fn toward(self, rig: &Rig, heading: Heading) -> Self {
+        self.toward_split(rig, heading, Self::split_toward(rig, heading))
+    }
+
+    /// The split stance a body stands in stepping toward `heading`, in metres
+    /// (#362) — what [`Self::toward`] stands in on a stride long enough to need
+    /// all of it, which every walking stride is (`split_needed` grows it from
+    /// nothing on a shorter one), and zero for a body that shuffles rather than
+    /// crossing over and for a heading close enough to fore-and-aft that its
+    /// stance stands square. Continuous in the heading; see `split_stance` for
+    /// its shape.
+    #[must_use]
+    pub fn split_toward(rig: &Rig, heading: Heading) -> f32 {
+        split_stance(rig, heading)
+    }
+
+    /// As [`Self::toward`], standing in `split` rather than in the heading's
+    /// own (#362) — for an instrument asking what a stance part-way between
+    /// two would do.
+    ///
+    /// The stride is bounded for the split it is given (`split_bound`), so the
+    /// feet keep their clearance whatever split it stands in; a body that
+    /// shuffles rather than crossing over stands square whatever it is given,
+    /// and so does a stride short enough to take square (`split_needed`).
+    ///
+    /// **A stride that goes nowhere has no heading to take**, and comes back
+    /// as it went in: a pivot's (#361), whose lift and whose footholds' bounds
+    /// — taken along the stride's direction — a heading appearing mid-turn
+    /// would otherwise swing about under its planted feet.
+    #[must_use]
+    pub fn toward_split(self, rig: &Rig, heading: Heading, split: f32) -> Self {
+        if self.length <= f32::EPSILON {
+            return self;
+        }
         // The hip's bound first: the ellipse, untouched, with its anatomical
-        // sideways semi-axis. The stance's bound is applied over it by
-        // `shuffle_bound` — not folded into the semi-axis, which #258 measured
-        // cutting every diagonal the stance never threatened (a 60-degree
-        // stride to 102 mm where 323 was safe), and not hard-clipped either,
-        // which #242 measured popping. It engages only in the band around
-        // sideways where it genuinely binds.
+        // sideways semi-axis. A shuffling body's stance bound is applied over
+        // it by `shuffle_bound` — not folded into the semi-axis, which #258
+        // measured cutting every diagonal the stance never threatened (a
+        // 60-degree stride to 102 mm where 323 was safe), and not hard-clipped
+        // either, which #242 measured popping. It engages only in the band
+        // around sideways where it genuinely binds; on two feet `split_bound`
+        // is the same bound with the split in it.
         let anatomical = self.length * heading.reach_within(crate::anim::heading::LATERAL_REACH);
-        let length = shuffle_bound(rig, heading, anatomical);
+        let (split, length) = if crosses_over(rig) {
+            let split = split.max(0.0) * split_needed(rig, anatomical);
+            (split, split_bound(rig, heading, split, anatomical))
+        } else {
+            (0.0, shuffle_bound(rig, heading, anatomical))
+        };
         // The lift shrinks in the stride's own proportion, so a shorter step
         // lifts its foot less — a toe clearance is a share of the ground being
         // covered.
-        let scale = if self.length > f32::EPSILON {
-            length / self.length
-        } else {
-            heading.reach_within(crate::anim::heading::LATERAL_REACH)
-        };
         Self {
             direction: heading.direction(),
             length,
-            lift: self.lift * scale,
+            lift: self.lift * (length / self.length),
+            split,
             ..self
         }
     }
@@ -682,6 +738,7 @@ impl Stride {
             lift: 0.0,
             yaw: 0.0,
             tuck: 0.0,
+            split: 0.0,
         }
     }
 }
@@ -744,9 +801,7 @@ fn shuffle_bound(rig: &Rig, heading: Heading, anatomical: f32) -> f32 {
     };
     let across = heading.across().abs();
     let c = SHUFFLE_CLEARANCE;
-    // The corner: where `|along|` falls to `c` and the floor stops clearing.
-    let corner = (1.0 - c * c).sqrt();
-    let engaged = smoothstep((across - (corner - SHUFFLE_ENGAGE_BAND)) / SHUFFLE_ENGAGE_BAND);
+    let engaged = sideways_engaged(heading);
     if engaged <= 0.0 {
         return anatomical;
     }
@@ -757,6 +812,197 @@ fn shuffle_bound(rig: &Rig, heading: Heading, anatomical: f32) -> f32 {
     let cap = stance * (across - eased + restored);
     anatomical - engaged * (anatomical - cap).max(0.0)
 }
+
+/// How far into the band around sideways a heading is, `0..1`: nothing within
+/// the headings whose feet clear each other at any stride, all of it from the
+/// corner where they stop, a smoothstep between (#258).
+///
+/// **One band for both answers to a sideways stride**: the shuffle's bound
+/// engages over it, and on two feet the split stance that replaces the bound
+/// (#362) — so a two-footed body has crossed into its full split exactly where
+/// a shuffling one would have had its feet meet.
+fn sideways_engaged(heading: Heading) -> f32 {
+    let c = SHUFFLE_CLEARANCE;
+    // The corner: where `|along|` falls to `c` and the floor stops clearing.
+    let corner = (1.0 - c * c).sqrt();
+    smoothstep((heading.across().abs() - (corner - SHUFFLE_ENGAGE_BAND)) / SHUFFLE_ENGAGE_BAND)
+}
+
+/// Whether this body crosses its feet over to step sideways (#362): one with
+/// two contacts on opposite sides, which the CC0 strafe is. Four feet would
+/// need a crossover the reference does not show, so they keep the shuffle.
+///
+/// **Opposite sides of the midline, not merely apart**: `split_of` moves each
+/// foot by the side it stands on, so two feet on one side — or one on the
+/// midline — would split the same way or not at all, and `split_bound`'s
+/// account of how far apart the split stands them would not hold.
+fn crosses_over(rig: &Rig) -> bool {
+    let contacts = rig.ground_contacts();
+    let sides: Vec<f32> = contacts
+        .iter()
+        .filter_map(|&limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
+        .map(|joint| rig.joints[joint].position.x)
+        .collect();
+    contacts.len() == 2
+        && sides.len() == 2
+        && sides[0].min(sides[1]) < 0.0
+        && sides[0].max(sides[1]) > 0.0
+}
+
+/// How much of its split stance a stride `anatomical` long needs, `0..1`
+/// (#362): none for one the square stance can take sideways — the shuffle's
+/// own bound there, `W·(1 − c)` for a stance `W` wide and the clearance `c` —
+/// all of it by one as long as the feet stand apart, and a smoothstep between.
+///
+/// **A split is what lets a stride too long for the square stance pass its
+/// feet**, so a stride short enough stands square: one a turn has stepped to
+/// a cadence that leaves it a few centimetres long, say, and in the limit one
+/// that goes nowhere at all. Without this the split arrived whole with the
+/// stride's first millimetre — a foot moved 94-124 mm in one frame when a
+/// pivoting body's heading appeared — and with it the split grows with the
+/// stride, which grows with the eased pace. Every stride the speed axis builds
+/// for a travelling body on the default body is long enough for all of it, so
+/// this changes no walk that was measured.
+fn split_needed(rig: &Rig, anatomical: f32) -> f32 {
+    let Some(stance) = stance_width(rig) else {
+        return 0.0;
+    };
+    let c = SHUFFLE_CLEARANCE;
+    smoothstep((anatomical / stance - (1.0 - c)) / c)
+}
+
+/// The fore-and-aft split a body stands in to step toward `heading`, in
+/// metres (#362): [`SPLIT_OF_REACH`] of its leg wherever the stance needs it,
+/// and none at all for a body that does not cross over.
+///
+/// **Faded in on the forward side, held round through sideways, and faded out
+/// only close to straight back.** Stepping forward and sideways the split adds
+/// to the room the feet already have — the trailing foot is the one the stance
+/// width already puts behind the travel line, and the split moves it further —
+/// so it fades in over the band [`sideways_engaged`] names, where the square
+/// stance's own room runs out. Stepping back and sideways it works against the
+/// stance width instead, and no split written in the heading can fade out of
+/// a backward diagonal without passing a heading at which the two feet stand
+/// in line along the travel: a stance turned from square to split and back to
+/// square across a half turn of headings has to line its feet up somewhere on
+/// the way. So it is held whole across the backward diagonals, where it keeps
+/// the feet further apart than the square stance would (at 135 degrees about
+/// twice as far, the probe's reading), and fades out over the last
+/// [`BACKWARD_SPLIT_FADE`], which puts that heading far enough back that the
+/// feet stand a long way apart along it — at about 154 degrees on the default
+/// body, 0.39 m — and [`split_bound`] keeps them so.
+///
+/// Keeping the same foot in front through 90 degrees is not optional either:
+/// swapping it there would pop the stance, and a body strafing at exactly 90
+/// would swap it every frame its velocity jittered.
+fn split_stance(rig: &Rig, heading: Heading) -> f32 {
+    if !crosses_over(rig) {
+        return 0.0;
+    }
+    let engaged = if heading.along() >= 0.0 {
+        sideways_engaged(heading)
+    } else {
+        smoothstep(heading.across().abs() / BACKWARD_SPLIT_FADE)
+    };
+    SPLIT_OF_REACH * super::speed::leg_of(rig) * engaged
+}
+
+/// How far from straight back, in `|across|`, the split stance fades out over —
+/// thirty degrees (#362).
+///
+/// See [`split_stance`] for why it is held that long: the fade passes a
+/// heading where the split stance stands its feet in line, and the further
+/// back that heading falls the further apart they stand there. Thirty degrees
+/// holds the split whole to where that heading falls on the default body,
+/// and is wide enough that the stance bound it brings arrives gradually
+/// (`the_stance_bound_arrives_gradually_rather_than_switching_on`). Must stay
+/// positive: it divides.
+const BACKWARD_SPLIT_FADE: f32 = 0.5;
+
+/// The longest stride a split stance can take toward `heading` without one
+/// foot coming inside its clearance of the other, in metres — `anatomical`
+/// wherever that bound is slack (#362).
+///
+/// **`shuffle_bound`'s geometry with the split in it**, and exactly that
+/// bound at no split. The feet stand `sep` apart — the stance's width across
+/// the body and the split along it — and travelling along `D` they are
+/// separated by `sep + δ·D` with `δ` up to a stride either way, so the closest
+/// they come is `sep`'s distance from the travel line, `perp`, wherever a
+/// stride reaches far enough for `δ` to get there. A stride is free while
+/// `perp` clears the clearance; inside it, the largest stride that keeps
+/// `|sep + δ·D|` clear for every `|δ| ≤ stride` is the quadratic's root,
+/// `|sep·D| − √(clearance² − perp²)`. On a square stance `perp` is `|along|`
+/// and `|sep·D|` is `|across|`, and the corner ease and the engagement band
+/// below are `shuffle_bound`'s own, read through them — so the bound is
+/// continuous as a split eases away to nothing.
+///
+/// On the forward side `perp` only grows with the split, so this never binds
+/// there; at a strafe the split IS the separation and it never binds either.
+/// It binds on a backward diagonal close to where the split's fade stands the
+/// feet in line, and only for a stride longer than they stand apart there.
+fn split_bound(rig: &Rig, heading: Heading, split: f32, anatomical: f32) -> f32 {
+    if split <= 0.0 {
+        return shuffle_bound(rig, heading, anatomical);
+    }
+    let Some(stance) = stance_width(rig) else {
+        return anatomical;
+    };
+    let c = SHUFFLE_CLEARANCE;
+    let travel = heading.direction();
+    // Left foot less right, as `split_of` places them: the leading side's
+    // contact stands back, the trailing side's forward.
+    let behind = if travel.x > 0.0 { -split } else { split };
+    let reach_along = (stance * travel.x + behind * travel.z).abs() / stance;
+    let perp = (stance * travel.z - behind * travel.x).abs() / stance;
+    // `shuffle_bound`'s engagement, read on the distance from the travel line:
+    // on a square stance `√(1 − perp²)` is `|across|`, so on the forward side
+    // this is that band exactly. On the backward side the bound arrives where
+    // the split's own fade lines the feet up, which happens over far fewer
+    // degrees, so it is faded in from further out — [`SPLIT_ENGAGE_BACK`] of
+    // the stance width from the travel line — and arrives as gradually.
+    let corner = (1.0 - c * c).sqrt();
+    let engaged = if heading.along() >= 0.0 {
+        let across = (1.0 - perp * perp).max(0.0).sqrt();
+        smoothstep((across - (corner - SHUFFLE_ENGAGE_BAND)) / SHUFFLE_ENGAGE_BAND)
+    } else {
+        smoothstep((SPLIT_ENGAGE_BACK - perp) / (SPLIT_ENGAGE_BACK - c))
+    };
+    if engaged <= 0.0 {
+        return anatomical;
+    }
+    let eased = (c * c - perp * perp + CORNER_EASE).max(0.0).sqrt();
+    let restored = (c * c + CORNER_EASE).sqrt() - c;
+    let cap = stance * (reach_along - eased + restored);
+    anatomical - engaged * (anatomical - cap).max(0.0)
+}
+
+/// How far from the travel line, in stance widths, [`split_bound`] begins to
+/// fade its bound in on a backward diagonal (#362).
+///
+/// **Wider than the forward band's 0.708**, which it would otherwise share,
+/// because there the bound arrives with the stance width alone, over fifteen
+/// degrees of heading, and here it arrives with the split's fade, over far
+/// fewer. Chosen on the heading sweep's pop reading: 0.9 keeps the steepest
+/// one-degree step of a walk's stride under two and a half times its
+/// neighbours (2.36x), where the forward band's own width read 3.4x.
+const SPLIT_ENGAGE_BACK: f32 = 0.9;
+
+/// How far apart fore-and-aft a body stands to step sideways, as a share of its
+/// leg's reach (#362).
+///
+/// **Half: the reference's, rounded up for the backward diagonals.** The CC0
+/// strafe stands its trailing foot about 0.40 m in front of its leading one for
+/// the whole cycle (playbook §2.7) — 0.45 of its leg, measured as this crate
+/// measures one — which is well past what the feet need to pass each other (a
+/// foot's length) and is the stance that reads as a strafe; a split near the
+/// minimum that clears would be a different look. Half rather than 0.45
+/// because the split also decides where its fade lines the feet up on a
+/// backward diagonal (`split_stance`): at 0.45 that heading comes far enough
+/// forward that a gentle 140-degree diagonal loses 9% of its stride to the
+/// bound, and the bound arrives in a 10.9 mm step at 138 degrees against
+/// neighbours of 3.9 — past both guards — where half keeps that diagonal
+/// whole and the bound gradual.
+const SPLIT_OF_REACH: f32 = 0.5;
 
 /// How far apart this body's ground contacts stand, across the body, in
 /// metres — `None` for a body whose stance has no width to cross.
@@ -876,7 +1122,7 @@ pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
             // hip and only the further extreme matters.
             [0.5f32, -0.5]
                 .into_iter()
-                .filter_map(|share| sink_needed(rig, limb, carried(home, stride, share)))
+                .filter_map(|share| sink_needed(rig, limb, traced(home, stride, share)))
                 .fold(f32::NEG_INFINITY, f32::max)
                 .into()
         })
@@ -1073,15 +1319,59 @@ pub fn flight_rise(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
 /// that and it is also, exactly, what the straight-line version did: a slide
 /// from `+half` to `−half` and a swing from `−half` to `+half` are one segment
 /// walked twice. The lift is added on top, unchanged.
+///
+/// # A split stance
+///
+/// A stride with a [`Stride::split`] walks each contact round the same screw
+/// from a home moved fore-and-aft by its side's half of the split (#362), so a
+/// sideways stride can carry one foot past the other at another depth. Both
+/// halves of the cycle keep the depth: the swing retraces the stance at it, so
+/// a crossing foot passes in front of the planted one or behind it, never
+/// through it.
 #[must_use]
 pub fn contact_offset(home: Vec3, stride: &Stride, phase: Phase) -> Vec3 {
+    // A stance square to the body is the expression this always was, taken
+    // without the split's arithmetic so every such stride stays the same to
+    // the bit, signed zeros and all.
     match phase {
         // The stance is parameterised either side of the moment the foot was
         // planted, so `home` is where the contact sits at MIDSTANCE — which is
         // what the old form said too, with its `half` at each end.
-        Phase::Stance(t) => carried(home, stride, t - 0.5),
-        Phase::Swing(t) => carried(home, stride, 0.5 - t) + Vec3::Y * swing_rise(stride, t),
+        Phase::Stance(t) => traced(home, stride, t - 0.5),
+        Phase::Swing(t) => traced(home, stride, 0.5 - t) + Vec3::Y * swing_rise(stride, t),
     }
+}
+
+/// [`carried`] for a contact resting at `home`, standing in the stride's split
+/// (#362): the screw walked from the home the split moves it to, and expressed
+/// from `home` as every offset is.
+///
+/// **Every stage that asks where a contact goes asks this**, because a stage
+/// that asked [`carried`] about the bare home would place that contact at the
+/// square stance's depth — the eased flight did, and every swing of a strafe
+/// crossed back through the middle at the one depth the split exists to keep
+/// it off. A stance square to the body takes no split arithmetic at all, so
+/// every such stride stays the same to the bit, signed zeros and all.
+fn traced(home: Vec3, stride: &Stride, share: f32) -> Vec3 {
+    if stride.split == 0.0 {
+        return carried(home, stride, share);
+    }
+    let split = split_of(home, stride);
+    split + carried(home + split, stride, share)
+}
+
+/// How far the split stance moves a contact resting at `home` (#362): half
+/// the split forward on the side the body travels away from, half of it back
+/// on the side it travels toward — the CC0 strafe's own arrangement, its
+/// trailing foot in front — and nothing on the midline, or for a stride with
+/// no sideways travel to take a side from.
+fn split_of(home: Vec3, stride: &Stride) -> Vec3 {
+    let toward = stride.direction.x;
+    if home.x == 0.0 || toward == 0.0 {
+        return Vec3::ZERO;
+    }
+    let leading = (home.x > 0.0) == (toward > 0.0);
+    Vec3::Z * (if leading { -0.5 } else { 0.5 } * stride.split)
 }
 
 /// How far above its ground line a swinging contact rides, `t` of the way
@@ -1968,8 +2258,8 @@ where
     } else {
         0.0
     };
-    let leaving = carried(home, stride, 0.5 + drift * t);
-    let arriving = carried(home, stride, -0.5 - drift * (1.0 - t));
+    let leaving = traced(home, stride, 0.5 + drift * t);
+    let arriving = traced(home, stride, -0.5 - drift * (1.0 - t));
     let (from, to) = (beneath(leaving), beneath(arriving));
 
     // Smoothstep rather than a straight line, so the foot leaves and arrives
@@ -2022,7 +2312,20 @@ where
     // foot moving PAST the stance's own extreme — so the leg is asked to reach
     // further than any stance position. What happens to that overshoot is the
     // envelope fold in [`step`] and the soft reach limit (#282); see both.
-    let travel = leaving.lerp(arriving, smoothstep(t));
+    //
+    // **Along the arc where the body turns, not across its chord** (#361). On
+    // a straight stride the two ends lie on one line and the lerp IS the path;
+    // on a turn they lie on the arc the stance walks, and the chord between
+    // them cuts inside it toward the other foot — on a pivot, whose swing
+    // spans a hundred degrees of its own small circle, far enough to bring
+    // the two feet inside their clearance. Easing the SHARE instead keeps the
+    // flight on the arc with the same timing.
+    let travel = if stride.yaw == 0.0 {
+        leaving.lerp(arriving, smoothstep(t))
+    } else {
+        let (from, to) = (0.5 + drift * t, -0.5 - drift * (1.0 - t));
+        traced(home, stride, from + (to - from) * smoothstep(t))
+    };
 
     let along_stride = stride.direction;
     // The sole span and the end cones are geometry about where the foot
@@ -2263,8 +2566,8 @@ where
     } else {
         0.0
     };
-    let leaving = carried(home, stride, 0.5 + drift);
-    let arriving = carried(home, stride, -0.5 - drift);
+    let leaving = traced(home, stride, 0.5 + drift);
+    let arriving = traced(home, stride, -0.5 - drift);
     let probes = clearance_probes(foot, (arriving - leaving).length());
     let answers: Vec<Option<f32>> = (0..=probes)
         .map(|probe| {
@@ -3440,6 +3743,7 @@ mod tests {
             lift: 0.1,
             yaw: 0.0,
             tuck: 0.0,
+            split: 0.0,
         }
     }
 
@@ -3525,6 +3829,7 @@ mod tests {
             lift: 0.1,
             yaw: 0.5,
             tuck: 0.0,
+            split: 0.0,
         };
         for home in [Vec3::new(0.09, 0.12, 0.0), Vec3::new(-0.09, 0.12, 0.0)] {
             let planted = |t: f32| {
@@ -3559,6 +3864,7 @@ mod tests {
             lift: 0.1,
             yaw: 0.5,
             tuck: 0.0,
+            split: 0.0,
         };
         let covered = |home: Vec3| {
             let from = home + contact_offset(home, &stride, Phase::Stance(0.0));
@@ -3816,37 +4122,59 @@ mod tests {
     }
 
     #[test]
-    fn a_sideways_walk_shuffles_and_never_crosses_its_feet() {
-        // **This guard refuted the claim it was written to confirm**, which is
-        // why it is worth having. The module said a shuffle came free — every
-        // contact moves by the same screw, so surely the feet keep the
-        // separation they start with. They do not: the two are at different
-        // points of the cycle, so their offsets differ by most of a stride, and
-        // strafing left put the LEFT foot 72 mm to the right of the right one.
+    fn a_sideways_walk_crosses_over_in_a_split_stance() {
+        // **The CC0 reference's strafe, on the default body** (#362, playbook
+        // §2.7): the trailing foot stands in front for the whole cycle, every
+        // swing carries one foot past the other at that other depth — a
+        // crossover — and the feet never come inside their clearance.
         //
-        // The bound is `shuffle_limit`, and what is asserted here is its
-        // contract: the feet keep at least `SHUFFLE_CLEARANCE` of the stance
-        // they stand in. Reintroducing the defect means dropping that bound
-        // from `Stride::toward`, which puts the reading back to −72 mm.
+        // This guard used to assert the opposite and was right to: a strafe
+        // at one depth put the left foot 72 mm to the RIGHT of the right one,
+        // a crossover arrived at by accident and a collision, and the shuffle
+        // bound held the stride to 88 mm to stop it. No cadence makes 88 mm
+        // cover a walk, so the feet now cross on purpose, apart in depth.
+        // Reintroducing the shuffle on two feet (`crosses_over` false) fails
+        // the first assertion; dropping the split fails the last.
         let rig = biped();
         let gait = Gait::natural(&rig);
-        let stride = Stride::for_body(&rig, 1.0).toward(&rig, Heading::LEFT);
         let home = |limb: Limb| rig.joints[rig.in_zone(Zone::Extremity(limb))[0]].position;
         let (left, right) = (home(Limb::HindLeft), home(Limb::HindRight));
         let apart = (left.x - right.x).abs();
-        let mut closest = f32::MAX;
-        for at in 0..240 {
-            let cycle = at as f32 / 240.0;
-            let one = left + contact_offset(left, &stride, gait.phase(0, cycle));
-            let other = right + contact_offset(right, &stride, gait.phase(1, cycle));
-            closest = closest.min(one.x - other.x);
+        for pace in [1.0f32, 1.5] {
+            for (heading, leading_is_left) in [(Heading::LEFT, true), (Heading::RIGHT, false)] {
+                let stride = Stride::for_body(&rig, pace).toward(&rig, heading);
+                let (mut crossed, mut closest, mut trailing_ahead) = (false, f32::MAX, true);
+                for at in 0..240 {
+                    let cycle = at as f32 / 240.0;
+                    let one = left + contact_offset(left, &stride, gait.phase(0, cycle));
+                    let other = right + contact_offset(right, &stride, gait.phase(1, cycle));
+                    let (leading, trailing) = if leading_is_left {
+                        (one, other)
+                    } else {
+                        (other, one)
+                    };
+                    // Leading is the foot on the side the body travels to: past
+                    // the trailing one, it has crossed over.
+                    let toward = heading.direction().x.signum();
+                    crossed |= (leading.x - trailing.x) * toward < 0.0;
+                    trailing_ahead &= trailing.z > leading.z;
+                    closest =
+                        closest.min(Vec3::new(one.x - other.x, 0.0, one.z - other.z).length());
+                }
+                let way = heading.describe();
+                assert!(crossed, "pace {pace}, {way}: the feet never crossed over");
+                assert!(
+                    trailing_ahead,
+                    "pace {pace}, {way}: the trailing foot did not stand in front all cycle"
+                );
+                assert!(
+                    closest > apart * (1.0 - SHUFFLE_CLEARANCE),
+                    "pace {pace}, {way}: the feet closed to {:.1} mm of a {:.1} mm stance",
+                    closest * 1000.0,
+                    apart * 1000.0
+                );
+            }
         }
-        assert!(
-            closest > apart * (1.0 - SHUFFLE_CLEARANCE),
-            "the feet closed to {:.1} mm of a {:.1} mm stance",
-            closest * 1000.0,
-            apart * 1000.0
-        );
     }
 
     #[test]
@@ -3860,27 +4188,53 @@ mod tests {
         // table). Planar distance rather than the strafe guard's x-gap,
         // because on a diagonal the feet close along the travel as much as
         // across it.
+        //
+        // And for every stance on the way to the one a heading settles into
+        // (#362): the driver eases the split across the backward corner, where
+        // the split stance stops, so a stride may stand in any split between
+        // none and whole — and a stance part-way out of a split on a backward
+        // diagonal is exactly the one that lines the feet up along the travel.
+        // `split_bound` is what keeps this; take it out and the feet meet at a
+        // half split near 135 degrees.
         let rig = biped();
         let gait = Gait::natural(&rig);
         let home = |limb: Limb| rig.joints[rig.in_zone(Zone::Extremity(limb))[0]].position;
         let (left, right) = (home(Limb::HindLeft), home(Limb::HindRight));
         let apart = (left.x - right.x).abs();
-        for degrees in (0..360).step_by(3) {
-            let heading = Heading::degrees(degrees as f32);
-            let stride = Stride::for_body(&rig, 1.0).toward(&rig, heading);
-            let mut closest = f32::MAX;
-            for at in 0..240 {
-                let cycle = at as f32 / 240.0;
-                let one = left + contact_offset(left, &stride, gait.phase(0, cycle));
-                let other = right + contact_offset(right, &stride, gait.phase(1, cycle));
-                closest = closest.min(Vec3::new(one.x - other.x, 0.0, one.z - other.z).length());
+        let whole = Stride::split_toward(&rig, Heading::LEFT);
+        for pace in [1.0f32, 1.5] {
+            for share in [
+                None,
+                Some(0.0f32),
+                Some(0.25),
+                Some(0.5),
+                Some(0.75),
+                Some(1.0),
+            ] {
+                for degrees in (0..360).step_by(3) {
+                    let heading = Heading::degrees(degrees as f32);
+                    let full = Stride::for_body(&rig, pace);
+                    let stride = match share {
+                        None => full.toward(&rig, heading),
+                        Some(share) => full.toward_split(&rig, heading, whole * share),
+                    };
+                    let mut closest = f32::MAX;
+                    for at in 0..240 {
+                        let cycle = at as f32 / 240.0;
+                        let one = left + contact_offset(left, &stride, gait.phase(0, cycle));
+                        let other = right + contact_offset(right, &stride, gait.phase(1, cycle));
+                        closest =
+                            closest.min(Vec3::new(one.x - other.x, 0.0, one.z - other.z).length());
+                    }
+                    assert!(
+                        closest > apart * (1.0 - SHUFFLE_CLEARANCE),
+                        "pace {pace}, split {share:?}: at {degrees} deg the feet closed to \
+                         {:.1} mm of a {:.1} mm stance",
+                        closest * 1000.0,
+                        apart * 1000.0
+                    );
+                }
             }
-            assert!(
-                closest > apart * (1.0 - SHUFFLE_CLEARANCE),
-                "at {degrees} deg the feet closed to {:.1} mm of a {:.1} mm stance",
-                closest * 1000.0,
-                apart * 1000.0
-            );
         }
     }
 
@@ -3892,8 +4246,12 @@ mod tests {
         // the ellipse's own answer, untouched. The shipped fold failed this
         // by 2.5x: folding the stance limit into the sideways semi-axis cut a
         // 30-degree stride to 165 mm where the ellipse allows 414.
+        //
+        // Forward and sideways, and back as far as the split stance holds
+        // its feet clear of each other; nearer straight back its fade can
+        // line them up, and `split_bound` shortens the stride there (#362).
         let rig = biped();
-        for degrees in [15.0f32, 30.0, 40.0, 140.0, 165.0, -30.0] {
+        for degrees in [15.0f32, 30.0, 40.0, 140.0, -30.0] {
             let heading = Heading::degrees(degrees);
             let full = Stride::for_body(&rig, 1.0);
             let anatomical = full.length * heading.reach();
@@ -3925,27 +4283,169 @@ mod tests {
         // shape being smooth, not a defect — while reintroducing the corner
         // (CORNER_EASE and the engagement band to zero) puts a lone step at
         // ten times its neighbours. A ratio between those two is the guard.
+        //
+        // **On four feet the shuffle is what it always was; on two, the split
+        // stance's bound** (#362), which arrives on a backward diagonal where
+        // the split's fade toward straight back stands the feet in line. It is
+        // faded in over a wider band there (`SPLIT_ENGAGE_BACK`) because the
+        // fade sweeps the feet's separation across it in fewer degrees; the
+        // forward band's own width read 3.4x.
+        fn pops(rig: &Rig, seams: &[usize]) {
+            let lengths: Vec<f32> = (0..=360)
+                .map(|degrees| {
+                    Stride::for_body(rig, 1.0)
+                        .toward(rig, Heading::degrees(degrees as f32))
+                        .length
+                })
+                .collect();
+            let at_seam = |at: usize| seams.iter().any(|&seam| at + 1 >= seam && at <= seam);
+            let steps: Vec<Option<f32>> = lengths
+                .windows(2)
+                .enumerate()
+                .map(|(at, pair)| (!at_seam(at)).then(|| (pair[1] - pair[0]).abs()))
+                .collect();
+            for (at, step) in steps.iter().enumerate() {
+                let Some(step) = *step else {
+                    continue;
+                };
+                let from = at.saturating_sub(5);
+                let to = (at + 6).min(steps.len());
+                let others: Vec<f32> = (from..to)
+                    .filter(|&other| other != at)
+                    .filter_map(|other| steps[other])
+                    .collect();
+                let around = others.iter().sum::<f32>() / others.len().max(1) as f32;
+                assert!(
+                    step < (around * 2.5).max(0.001),
+                    "the stride stepped {:.1} mm at {at} deg against neighbours averaging {:.1} mm",
+                    step * 1000.0,
+                    around * 1000.0
+                );
+            }
+        }
+        pops(&quadruped(), &[]);
+        pops(&biped(), &[]);
+    }
+
+    #[test]
+    fn the_split_stance_moves_smoothly_through_every_heading() {
+        // **A split that jumped would be a pop no stride could hide** (#362):
+        // the feet's homes move with it. Round every heading the split a body
+        // stands in moves by no more than its fades' own steepest tenth of a
+        // degree — and in particular keeps the same foot in front through 90
+        // degrees, where swapping it would pop the stance every frame a
+        // strafing body's velocity jittered across the line.
         let rig = biped();
-        let lengths: Vec<f32> = (0..=360)
-            .map(|degrees| {
-                Stride::for_body(&rig, 1.0)
-                    .toward(&rig, Heading::degrees(degrees as f32))
-                    .length
-            })
-            .collect();
-        let steps: Vec<f32> = lengths
-            .windows(2)
-            .map(|pair| (pair[1] - pair[0]).abs())
-            .collect();
-        for (at, &step) in steps.iter().enumerate() {
-            let from = at.saturating_sub(5);
-            let to = (at + 6).min(steps.len());
-            let around: f32 = (steps[from..to].iter().sum::<f32>() - step) / (to - from - 1) as f32;
+        let whole = Stride::split_toward(&rig, Heading::LEFT);
+        assert!(whole > 0.0, "a two-footed body stands split to strafe");
+        // Square fore and aft — to a float's resolution at straight back,
+        // whose `sin(PI)` is not quite nothing.
+        assert_eq!(Stride::split_toward(&rig, Heading::FORWARD), 0.0);
+        assert!(Stride::split_toward(&rig, Heading::BACKWARD) < 1e-9);
+        assert_eq!(
+            Stride::split_toward(&quadruped(), Heading::LEFT),
+            0.0,
+            "four feet shuffle"
+        );
+        let split = |degrees: f32| Stride::split_toward(&rig, Heading::degrees(degrees));
+        let steepest = (0..3600)
+            .map(|tenth| (split((tenth + 1) as f32 / 10.0) - split(tenth as f32 / 10.0)).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            steepest < whole * 0.02,
+            "the split moved {:.1} mm in a tenth of a degree",
+            steepest * 1000.0
+        );
+    }
+
+    #[test]
+    fn a_stride_that_goes_nowhere_takes_no_heading() {
+        // **A pivot's stride, handed a heading** (#361, #362). The consuming
+        // application hands a first-person body its heading from a tenth of a
+        // metre a second and its gait starts at three tenths, so a body
+        // looking round as it sets off or stops walks its pivot under a
+        // heading. The first cut of 0.12 took the pivot's stride toward it:
+        // the whole split stance arrived on a stride of no length, the lift
+        // shrank to the heading's reach, and the footholds' bounds — taken
+        // along the stride's direction — swung round under the planted feet.
+        // A foot moved 126-141 mm in one frame as the heading appeared.
+        let rig = biped();
+        let pivot = Stride {
+            direction: Vec3::Z,
+            length: 0.0,
+            lift: 0.03,
+            yaw: 0.4,
+            tuck: 0.0,
+            split: 0.0,
+        };
+        for degrees in [0.0f32, 45.0, 90.0, 135.0, 180.0, 270.0] {
+            assert_eq!(
+                pivot.toward(&rig, Heading::degrees(degrees)),
+                pivot,
+                "a stride of no length taken toward {degrees} degrees"
+            );
+        }
+    }
+
+    #[test]
+    fn a_split_grows_with_the_stride_from_nothing() {
+        // A split is what lets a stride too long for the square stance pass
+        // its feet (#362), so a short stride stands square and a longer one
+        // splits as far as it needs — continuously, so a stride growing with
+        // the pace never pops the stance. A walk's stride needs all of it.
+        let rig = biped();
+        let whole = Stride::split_toward(&rig, Heading::LEFT);
+        let walking = Stride::for_body(&rig, 1.0);
+        let split = |length: f32| {
+            Stride { length, ..walking }
+                .toward(&rig, Heading::LEFT)
+                .split
+        };
+        assert_eq!(split(0.05), 0.0, "a 5 cm stride stood split");
+        assert_eq!(
+            split(walking.length),
+            whole,
+            "a walk's stride stood part-split"
+        );
+        let (mut last, mut steepest) = (0.0f32, 0.0f32);
+        for millimetres in 0..=1000 {
+            let now = split(millimetres as f32 / 1000.0);
             assert!(
-                step < (around * 2.5).max(0.001),
-                "the stride stepped {:.1} mm at {at} deg against neighbours averaging {:.1} mm",
-                step * 1000.0,
-                around * 1000.0
+                now >= last,
+                "the split shrank as the stride grew to {millimetres} mm"
+            );
+            steepest = steepest.max(now - last);
+            last = now;
+        }
+        assert!(
+            steepest < whole * 0.02,
+            "the split jumped {:.1} mm in a millimetre of stride",
+            steepest * 1000.0
+        );
+    }
+
+    #[test]
+    fn two_feet_on_one_side_never_split() {
+        // `split_of` moves each foot by the side of the midline it stands on,
+        // so feet both on one side — or one on the midline — would split the
+        // same way or not at all, and the bound that keeps a split stance's
+        // feet apart would be counting on a separation that is not there.
+        // Such a body shuffles.
+        let mut rig = biped();
+        let right = rig.in_zone(Zone::Extremity(Limb::HindRight))[0];
+        for x in [0.0f32, 0.05] {
+            rig.joints[right].position.x = x;
+            assert_eq!(
+                Stride::split_toward(&rig, Heading::LEFT),
+                0.0,
+                "the right foot at x = {x}"
+            );
+            assert_eq!(
+                Stride::for_body(&rig, 1.0)
+                    .toward(&rig, Heading::LEFT)
+                    .split,
+                0.0,
+                "the right foot at x = {x}"
             );
         }
     }
@@ -3962,6 +4462,7 @@ mod tests {
             lift: 0.05,
             yaw: 0.6,
             tuck: 0.0,
+            split: 0.0,
         };
         let left = contact_offset(Vec3::new(0.09, 0.12, 0.0), &stride, Phase::Stance(1.0));
         let right = contact_offset(Vec3::new(-0.09, 0.12, 0.0), &stride, Phase::Stance(1.0));

@@ -1463,6 +1463,9 @@ struct Stance {
     /// The pelvis less its standing height, metres.
     root: f32,
     strained: bool,
+    /// Each ankle in the WORLD, left foot first — where the feet are, for the
+    /// question of whether they meet.
+    feet: [Vec3; 2],
     /// Every sole point of each foot, in the WORLD, left foot first: the
     /// joint's rest position dropped to the ground plane and carried by the
     /// ankle, which is how the roll models a sole (#1082) — the only point of
@@ -1472,25 +1475,92 @@ struct Stance {
     down: [bool; 2],
 }
 
+/// What every frame of a replica run is read with: the body's own landmarks,
+/// taken once.
+struct Reader {
+    pelvis: usize,
+    standing: f32,
+    feet: Vec<usize>,
+    rest: f32,
+    soles: [(usize, Vec<usize>); 2],
+}
+
+impl Reader {
+    fn of(rig: &Rig) -> Self {
+        let pelvis = rig
+            .joints
+            .iter()
+            .position(|joint| joint.parent.is_none())
+            .expect("a root joint");
+        let feet = feet(rig);
+        Self {
+            pelvis,
+            standing: rig.joints[pelvis].position.y,
+            rest: (rig.joints[feet[0]].position.x - rig.joints[feet[1]].position.x).abs(),
+            feet,
+            soles: [Limb::HindLeft, Limb::HindRight].map(|limb| {
+                let joints = rig.extremity_joints(limb);
+                (joints[0], joints[1..].to_vec())
+            }),
+        }
+    }
+
+    /// One frame, read off the pose `driven` drew a body at `at` facing
+    /// `facing` in.
+    fn read(
+        &self,
+        rig: &Rig,
+        driver: &Driver,
+        driven: &Driven,
+        t: f32,
+        at: Vec3,
+        facing: f32,
+    ) -> Stance {
+        let posed = driven.pose.forward(rig);
+        let (left, right) = (posed.positions[self.feet[0]], posed.positions[self.feet[1]]);
+        let into_world = |body: Vec3| at + symbios_avatar::Quat::from_rotation_y(facing) * body;
+        let gait = driver.speed().map(|speed| speed.gait(rig));
+        let limbs = [Limb::HindLeft, Limb::HindRight];
+        Stance {
+            t,
+            source: driven.source,
+            splay: (left.x - right.x) - self.rest,
+            split: left.z - right.z,
+            root: posed.positions[self.pelvis].y - self.standing,
+            strained: driven.strained,
+            feet: [into_world(left), into_world(right)],
+            soles: self.soles.clone().map(|(ankle, sole)| {
+                sole.iter()
+                    .map(|&joint| {
+                        let at_rest = rig.joints[joint].position;
+                        into_world(
+                            posed.positions[ankle]
+                                + posed.rotations[ankle]
+                                    * (Vec3::new(at_rest.x, 0.0, at_rest.z)
+                                        - rig.joints[ankle].position),
+                        )
+                    })
+                    .collect()
+            }),
+            down: limbs.map(|limb| {
+                gait.as_ref().is_some_and(|gait| {
+                    gait.limbs
+                        .iter()
+                        .position(|&of| of == limb)
+                        .is_some_and(|index| gait.phase(index, driver.cycle()).is_stance())
+                })
+            }),
+        }
+    }
+}
+
 /// Drives `script` through the replica chassis and a driver configured by
 /// `config`, with the run key held throughout if `run`, reading every frame.
 fn turned(rig: &Rig, script: &Script, run: bool, config: DriverConfig) -> Vec<Stance> {
     let mut driver = Driver::new(config, INSTRUMENT_SEED);
     let mut chassis = Controller::standing();
     let walk = Speed::from_froude(WALK_FROUDE).metres_per_second(rig);
-    let pelvis = rig
-        .joints
-        .iter()
-        .position(|joint| joint.parent.is_none())
-        .expect("a root joint");
-    let standing = rig.joints[pelvis].position.y;
-    let feet = feet(rig);
-    let rest = (rig.joints[feet[0]].position.x - rig.joints[feet[1]].position.x).abs();
-    let limbs = [Limb::HindLeft, Limb::HindRight];
-    let soles = limbs.map(|limb| {
-        let joints = rig.extremity_joints(limb);
-        (joints[0], joints[1..].to_vec())
-    });
+    let reader = Reader::of(rig);
     let frames = ((STAND_SECS + SCRIPT_SECS) / CONTROLLER_STEP).round() as usize;
     (0..frames)
         .map(|frame| {
@@ -1510,41 +1580,7 @@ fn turned(rig: &Rig, script: &Script, run: bool, config: DriverConfig) -> Vec<St
                     level_ground,
                 )
                 .expect("an unheld body is posed");
-            let posed = driven.pose.forward(rig);
-            let (left, right) = (posed.positions[feet[0]], posed.positions[feet[1]]);
-            let into_world = |body: Vec3| {
-                chassis.at + symbios_avatar::Quat::from_rotation_y(chassis.facing) * body
-            };
-            let gait = driver.speed().map(|speed| speed.gait(rig));
-            Stance {
-                t,
-                source: driven.source,
-                splay: (left.x - right.x) - rest,
-                split: left.z - right.z,
-                root: posed.positions[pelvis].y - standing,
-                strained: driven.strained,
-                soles: soles.clone().map(|(ankle, sole)| {
-                    sole.iter()
-                        .map(|&joint| {
-                            let at_rest = rig.joints[joint].position;
-                            into_world(
-                                posed.positions[ankle]
-                                    + posed.rotations[ankle]
-                                        * (Vec3::new(at_rest.x, 0.0, at_rest.z)
-                                            - rig.joints[ankle].position),
-                            )
-                        })
-                        .collect()
-                }),
-                down: limbs.map(|limb| {
-                    gait.as_ref().is_some_and(|gait| {
-                        gait.limbs
-                            .iter()
-                            .position(|&of| of == limb)
-                            .is_some_and(|index| gait.phase(index, driver.cycle()).is_stance())
-                    })
-                }),
-            }
+            reader.read(rig, &driver, &driven, t, chassis.at, chassis.facing)
         })
         .collect()
 }
@@ -1652,6 +1688,1004 @@ fn probe_what_a_turn_does_to_the_stance() {
                     );
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The consuming application's chassis, looking out of its own eyes (#361, #362)
+// ---------------------------------------------------------------------------
+
+/// Under this travel the consuming application hands the driver no heading, in
+/// m/s (overlands `HEADING_MIN_SPEED`).
+const HEADING_MIN_SPEED: f32 = 0.1;
+
+impl Controller {
+    /// One fixed step looking out of the body's own eyes (overlands #1746): the
+    /// keys ask for `keys` in the BODY's frame — `+Z` forward, `+X` left —
+    /// turned onto the world by where the eyes look, `look`; the velocity
+    /// approaches that exactly as [`Self::step`]'s does, held to the same ramp;
+    /// and the facing turns toward the eyes at [`TURN_RATE`] every step, moving
+    /// or not, rather than toward the travel.
+    fn step_looking(&mut self, keys: Vec3, speed: f32, look: f32) {
+        let dt = CONTROLLER_STEP;
+        let toward = symbios_avatar::Quat::from_rotation_y(look) * keys;
+        let planar = Vec3::new(self.velocity.x, 0.0, self.velocity.z);
+        let proposed = if toward == Vec3::ZERO {
+            planar * (-STOP_DAMPING * dt).exp()
+        } else {
+            planar.lerp(
+                toward.normalize() * speed,
+                (ACCELERATION * dt).clamp(0.0, 1.0),
+            )
+        };
+        self.velocity = ramped(planar, proposed, toward, dt);
+        let alpha = (TURN_RATE * dt).clamp(0.0, 1.0);
+        self.facing = wrapped(self.facing + wrapped(look - self.facing) * alpha);
+        self.at += self.velocity * dt;
+    }
+}
+
+/// A first-person script: spans of keys held in the body's own frame, the run
+/// key, and how fast the eyes turn, in radians a second positive toward the
+/// body's left, after a second of standing.
+struct Looking<'a> {
+    name: &'static str,
+    spans: &'a [(f32, Vec3, bool, f32)],
+}
+
+const AHEAD: Vec3 = Vec3::new(0.0, 0.0, 1.0);
+const BACK: Vec3 = Vec3::new(0.0, 0.0, -1.0);
+const LEFTWARD: Vec3 = Vec3::new(1.0, 0.0, 0.0);
+const RIGHTWARD: Vec3 = Vec3::new(-1.0, 0.0, 0.0);
+const BACK_LEFT: Vec3 = Vec3::new(1.0, 0.0, -1.0);
+const AHEAD_RIGHT: Vec3 = Vec3::new(-1.0, 0.0, 1.0);
+const STILL: Vec3 = Vec3::ZERO;
+
+/// How long a first-person run goes on standing still after its script, in
+/// seconds: long enough for a turn to hand back to the idle.
+const TAIL_SECS: f32 = 1.5;
+
+impl Looking<'_> {
+    /// When the script's last span ends.
+    fn length(&self) -> f32 {
+        STAND_SECS + self.spans.iter().map(|span| span.0).sum::<f32>()
+    }
+
+    /// The keys, the run key and the eyes' turn at `t`.
+    fn at(&self, t: f32) -> (Vec3, bool, f32) {
+        let mut from = STAND_SECS;
+        if t < from {
+            return (STILL, false, 0.0);
+        }
+        for &(secs, keys, shift, rate) in self.spans {
+            if t < from + secs {
+                return (keys, shift, rate);
+            }
+            from += secs;
+        }
+        (STILL, false, 0.0)
+    }
+}
+
+/// Drives `script` looking out of the body's eyes through the replica chassis,
+/// a driver configured by `config`, and the inputs the consuming application
+/// gives a first-person body: the heading its travel makes against its facing,
+/// and the turn its facing makes, read every frame.
+fn looked(rig: &Rig, script: &Looking, run: bool, config: DriverConfig) -> Vec<Stance> {
+    let mut driver = Driver::new(config, INSTRUMENT_SEED);
+    let mut chassis = Controller::standing();
+    let mut look = chassis.facing;
+    let walk = Speed::from_froude(WALK_FROUDE).metres_per_second(rig);
+    let reader = Reader::of(rig);
+    let frames = ((script.length() + TAIL_SECS) / CONTROLLER_STEP).round() as usize;
+    (0..frames)
+        .map(|frame| {
+            let t = frame as f32 * CONTROLLER_STEP;
+            let (keys, shift, rate) = script.at(t);
+            look = wrapped(look + rate * CONTROLLER_STEP);
+            let before = chassis.facing;
+            chassis.step_looking(keys, if run || shift { RUN } else { walk }, look);
+            let planar = Vec3::new(chassis.velocity.x, 0.0, chassis.velocity.z);
+            let heading = (planar.length() >= HEADING_MIN_SPEED).then(|| {
+                symbios_avatar::Heading::toward(
+                    symbios_avatar::Quat::from_rotation_y(-chassis.facing) * planar,
+                )
+            });
+            let driven = driver
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: CONTROLLER_STEP,
+                        velocity: chassis.velocity,
+                        at: chassis.at,
+                        facing: chassis.facing,
+                        heading,
+                        turn: wrapped(chassis.facing - before) / CONTROLLER_STEP,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed");
+            reader.read(rig, &driver, &driven, t, chassis.at, chassis.facing)
+        })
+        .collect()
+}
+
+/// How close the two ankles came to each other across a window, in metres.
+fn closest_feet(frames: &[&Stance]) -> f32 {
+    frames
+        .iter()
+        .map(|frame| {
+            let gap = frame.feet[0] - frame.feet[1];
+            Vec3::new(gap.x, 0.0, gap.z).length()
+        })
+        .fold(f32::MAX, f32::min)
+}
+
+const LOOKS: [Looking<'static>; 17] = [
+    Looking {
+        name: "W (control)",
+        spans: &[(2.0, AHEAD, false, 0.0)],
+    },
+    Looking {
+        name: "A (strafe left)",
+        spans: &[(2.0, LEFTWARD, false, 0.0)],
+    },
+    Looking {
+        name: "D (strafe right)",
+        spans: &[(2.0, RIGHTWARD, false, 0.0)],
+    },
+    Looking {
+        name: "S (back up)",
+        spans: &[(2.0, BACK, false, 0.0)],
+    },
+    Looking {
+        name: "S+A (back and left)",
+        spans: &[(2.0, BACK_LEFT, false, 0.0)],
+    },
+    Looking {
+        name: "W+D (ahead and right)",
+        spans: &[(2.0, AHEAD_RIGHT, false, 0.0)],
+    },
+    Looking {
+        name: "A then S+A (the backward corner)",
+        spans: &[(1.0, LEFTWARD, false, 0.0), (1.5, BACK_LEFT, false, 0.0)],
+    },
+    Looking {
+        name: "look round standing, 90 deg/s",
+        spans: &[(2.0, STILL, false, std::f32::consts::FRAC_PI_2)],
+    },
+    Looking {
+        name: "look round standing, 360 deg/s",
+        spans: &[(1.0, STILL, false, std::f32::consts::TAU)],
+    },
+    Looking {
+        name: "look round standing, 5 deg/s",
+        spans: &[(2.0, STILL, false, 0.087_266_46)],
+    },
+    Looking {
+        name: "W looking round, 60 deg/s",
+        spans: &[(2.0, AHEAD, false, std::f32::consts::FRAC_PI_3)],
+    },
+    Looking {
+        name: "W then A (into a strafe)",
+        spans: &[(1.0, AHEAD, false, 0.0), (1.5, LEFTWARD, false, 0.0)],
+    },
+    Looking {
+        name: "W then W+D (into a diagonal)",
+        spans: &[(1.0, AHEAD, false, 0.0), (1.5, AHEAD_RIGHT, false, 0.0)],
+    },
+    Looking {
+        name: "A then W (out of a strafe)",
+        spans: &[(1.0, LEFTWARD, false, 0.0), (1.5, AHEAD, false, 0.0)],
+    },
+    Looking {
+        name: "looking round, then A (setting off)",
+        spans: &[
+            (1.0, STILL, false, std::f32::consts::FRAC_PI_2),
+            (1.5, LEFTWARD, false, std::f32::consts::FRAC_PI_2),
+        ],
+    },
+    Looking {
+        name: "looking round, then W (setting off)",
+        spans: &[
+            (1.0, STILL, false, std::f32::consts::FRAC_PI_2),
+            (1.5, AHEAD, false, std::f32::consts::FRAC_PI_2),
+        ],
+    },
+    Looking {
+        name: "A looking round, then stopping",
+        spans: &[
+            (1.5, LEFTWARD, false, std::f32::consts::FRAC_PI_2),
+            (1.0, STILL, false, std::f32::consts::FRAC_PI_2),
+        ],
+    },
+];
+
+/// The furthest a planted ankle moved through the world between two frames it
+/// was down in, and the furthest any ankle did, in metres, over a window.
+fn jumps(frames: &[&Stance]) -> (f32, f32) {
+    let (mut planted, mut any) = (0.0f32, 0.0f32);
+    for pair in frames.windows(2) {
+        for foot in 0..2 {
+            let moved = pair[1].feet[foot] - pair[0].feet[foot];
+            let moved = Vec3::new(moved.x, 0.0, moved.z).length();
+            any = any.max(moved);
+            if pair[0].down[foot] && pair[1].down[foot] {
+                planted = planted.max(moved);
+            }
+        }
+    }
+    (planted, any)
+}
+
+#[test]
+#[ignore = "probe for #361 and #362: prints what a pivot does setting off, stopping and drifting"]
+fn probe_what_a_pivot_does_at_its_edges() {
+    let avatar = body_of("did:plc:stop-test");
+    let rig = avatar.rig.clone();
+    let steady = looked(&rig, &LOOKS[7], false, DriverConfig::default());
+    let (planted, any) = jumps(&held(&steady, &LOOKS[7]));
+    println!(
+        "steady pivot, 90 deg/s: per frame a planted ankle {:.1} mm, any {:.1} mm",
+        planted * 1000.0,
+        any * 1000.0
+    );
+    for script in [&LOOKS[0], &LOOKS[1]] {
+        for run in [false, true] {
+            let frames = looked(&rig, script, run, DriverConfig::default());
+            let onset: Vec<&Stance> = frames
+                .iter()
+                .filter(|frame| frame.t >= STAND_SECS - 0.25 && frame.t < STAND_SECS + 1.0)
+                .collect();
+            let (planted, any) = jumps(&onset);
+            println!(
+                "{} | {}: setting off from standing, slide {:.1} mm; per frame a planted ankle \
+                 {:.1} mm, any {:.1} mm",
+                script.name,
+                if run { "run" } else { "walk" },
+                slide(&onset) * 1000.0,
+                planted * 1000.0,
+                any * 1000.0,
+            );
+        }
+    }
+    for script in &LOOKS[14..] {
+        for run in [false, true] {
+            let frames = looked(&rig, script, run, DriverConfig::default());
+            let across = changing(&frames, script);
+            let (planted, any) = jumps(&across);
+            println!(
+                "{} | {}: slide {:.1} mm; per frame a planted ankle {:.1} mm, any {:.1} mm; feet \
+                 {:.1} mm apart at closest",
+                script.name,
+                if run { "run" } else { "walk" },
+                slide(&across) * 1000.0,
+                planted * 1000.0,
+                any * 1000.0,
+                closest_feet(&across) * 1000.0,
+            );
+        }
+    }
+    for rate in [0.5f32, 0.75, 1.0] {
+        for drift in [0.15f32, 0.2, 0.25] {
+            let frames = drifting(&rig, rate, drift);
+            let (before, _) = jumps(
+                &frames
+                    .iter()
+                    .filter(|frame| frame.t >= 1.0 && frame.t < DRIFT_FROM)
+                    .collect::<Vec<_>>(),
+            );
+            let (planted, any) = jumps(&appearing(&frames));
+            println!(
+                "pivot {rate} rad/s drifting left {drift} m/s: as the heading appears, per frame \
+                 a planted ankle {:.1} mm (before it {:.1}), any {:.1} mm",
+                planted * 1000.0,
+                before * 1000.0,
+                any * 1000.0,
+            );
+        }
+    }
+}
+
+/// When a [`drifting`] body starts to drift, in seconds.
+const DRIFT_FROM: f32 = 2.0;
+
+/// A body stepping round on the spot at `rate` that starts drifting to its
+/// left at `drift` m/s after [`DRIFT_FROM`] — under the gait's threshold, and
+/// handed the heading its drift makes as the consuming application hands one
+/// from a tenth of a metre a second.
+fn drifting(rig: &Rig, rate: f32, drift: f32) -> Vec<Stance> {
+    let reader = Reader::of(rig);
+    let mut driver = Driver::new(DriverConfig::default(), INSTRUMENT_SEED);
+    let (mut facing, mut at) = (0.0f32, Vec3::ZERO);
+    (0..((DRIFT_FROM + 1.0) / CONTROLLER_STEP) as usize)
+        .map(|frame| {
+            let t = frame as f32 * CONTROLLER_STEP;
+            facing = wrapped(facing + rate * CONTROLLER_STEP);
+            let drifting = t >= DRIFT_FROM;
+            let velocity = if drifting {
+                symbios_avatar::Quat::from_rotation_y(facing) * Vec3::X * drift
+            } else {
+                Vec3::ZERO
+            };
+            at += velocity * CONTROLLER_STEP;
+            let driven = driver
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: CONTROLLER_STEP,
+                        velocity,
+                        at,
+                        facing,
+                        heading: drifting.then_some(symbios_avatar::Heading::LEFT),
+                        turn: rate,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed");
+            reader.read(rig, &driver, &driven, t, at, facing)
+        })
+        .collect()
+}
+
+/// The frames of a [`drifting`] run around the one its heading appears on.
+fn appearing(frames: &[Stance]) -> Vec<&Stance> {
+    frames
+        .iter()
+        .filter(|frame| frame.t >= DRIFT_FROM - 0.1 && frame.t < DRIFT_FROM + 0.2)
+        .collect()
+}
+
+#[test]
+#[ignore = "probe for #361 and #362: prints the first-person tables through the replica chassis"]
+fn probe_what_first_person_does_to_the_stance() {
+    let avatar = body_of("did:plc:stop-test");
+    let rig = avatar.rig.clone();
+    for script in &LOOKS {
+        for run in [false, true] {
+            let frames = looked(&rig, script, run, DriverConfig::default());
+            let end = script.length();
+            for (window, from, to) in [
+                ("held", (end - 1.0).max(STAND_SECS), end),
+                ("across", STAND_SECS + 0.5, end),
+                ("after", end + 1.0, end + TAIL_SECS),
+            ] {
+                let within: Vec<&Stance> = frames
+                    .iter()
+                    .filter(|frame| frame.t >= from && frame.t < to)
+                    .collect();
+                let (lo, hi, split, root, strained) = extremes(&within);
+                let gait = within
+                    .iter()
+                    .filter(|frame| frame.source == Source::Gait)
+                    .count();
+                println!(
+                    "{} | {} | {window}: slide {:.1} mm; feet {:.1} mm apart at closest; splay \
+                     {:+.1}..{:+.1} mm; |split| max {:.1} mm; root {:+.1} mm; strained {strained}/{}; \
+                     gait {gait}",
+                    script.name,
+                    if run { "run" } else { "walk" },
+                    slide(&within) * 1000.0,
+                    closest_feet(&within) * 1000.0,
+                    lo * 1000.0,
+                    hi * 1000.0,
+                    split * 1000.0,
+                    root * 1000.0,
+                    within.len(),
+                );
+            }
+        }
+    }
+}
+
+/// The frames of a first-person run inside its script's last second.
+fn held<'a>(frames: &'a [Stance], script: &Looking) -> Vec<&'a Stance> {
+    let end = script.length();
+    frames
+        .iter()
+        .filter(|frame| frame.t >= (end - 1.0).max(STAND_SECS) && frame.t < end)
+        .collect()
+}
+
+/// The nearest a body's feet may come to each other: half the width they
+/// stand at, the gait's own clearance contract (`SHUFFLE_CLEARANCE`).
+fn clearance(rig: &Rig) -> f32 {
+    let feet = feet(rig);
+    (rig.joints[feet[0]].position.x - rig.joints[feet[1]].position.x).abs() * 0.5
+}
+
+#[test]
+fn a_strafe_keeps_its_planted_soles_and_its_feet_apart() {
+    // **The defect #362 was filed for**, on the consuming application's own
+    // chassis and body. Through 0.11 a strafe at the application's walk slid
+    // its planted soles 533 mm over a second held — 331 at the run — and its
+    // feet passed within a millimetre of each other: the shuffle held the
+    // stride to 88 mm on the default body while the cadence came from the
+    // body's whole speed. Now the stride is the heading's working one, a
+    // crossover in a split stance: the soles hold as a forward walk's do, and
+    // the feet pass each other a split's depth apart.
+    let avatar = body_of("did:plc:stop-test");
+    let rig = avatar.rig.clone();
+    let apart = clearance(&rig);
+    let control: Vec<Stance> = looked(&rig, &LOOKS[0], false, DriverConfig::default());
+    let walked = slide(&held(&control, &LOOKS[0]));
+    assert!(
+        walked < 0.005,
+        "control: the forward walk itself slid {:.1} mm",
+        walked * 1000.0
+    );
+    for script in [&LOOKS[1], &LOOKS[2]] {
+        for run in [false, true] {
+            let frames = looked(&rig, script, run, DriverConfig::default());
+            let window = held(&frames, script);
+            let pace = if run { "run" } else { "walk" };
+            assert!(
+                window.iter().all(|frame| frame.source == Source::Gait),
+                "{} at a {pace}: the body stopped walking",
+                script.name
+            );
+            let slid = slide(&window);
+            assert!(
+                slid < 0.005,
+                "{} at a {pace}: the planted soles slid {:.1} mm (the forward walk: {:.1})",
+                script.name,
+                slid * 1000.0,
+                walked * 1000.0
+            );
+            let closest = closest_feet(&window);
+            assert!(
+                closest > apart,
+                "{} at a {pace}: the feet passed {:.1} mm apart, inside the {:.1} mm clearance",
+                script.name,
+                closest * 1000.0,
+                apart * 1000.0
+            );
+            assert!(
+                window.iter().all(|frame| !frame.strained),
+                "{} at a {pace}: a leg strained",
+                script.name
+            );
+            // The trailing foot stands in front for the whole cycle, swing and
+            // flight included: a crossing swing passes the planted foot at
+            // its own depth. The eased flight once took its path from the
+            // square stance's homes, and every swing crossed back through
+            // the middle — with the planted feet split, and the clearance
+            // above still held.
+            let leading_left = std::ptr::eq(script, &LOOKS[1]);
+            let behind = window
+                .iter()
+                .map(|frame| {
+                    if leading_left {
+                        -frame.split
+                    } else {
+                        frame.split
+                    }
+                })
+                .fold(f32::MAX, f32::min);
+            assert!(
+                behind > apart,
+                "{} at a {pace}: the trailing foot stood only {:.1} mm in front at one frame",
+                script.name,
+                behind * 1000.0
+            );
+        }
+    }
+}
+
+#[test]
+fn a_back_up_and_the_diagonals_keep_their_planted_soles() {
+    // The other half of #362: every heading's stride is the working one, so a
+    // body backing up or going diagonally covers exactly the ground it treads.
+    // Through 0.11 the stride was the reach's share of the travel at the
+    // cadence of the whole: S slid 91 mm a second held, S+A 148, W+D 106.
+    let avatar = body_of("did:plc:stop-test");
+    let rig = avatar.rig.clone();
+    for script in [&LOOKS[3], &LOOKS[4], &LOOKS[5]] {
+        for run in [false, true] {
+            let frames = looked(&rig, script, run, DriverConfig::default());
+            let window = held(&frames, script);
+            let slid = slide(&window);
+            assert!(
+                slid < 0.005,
+                "{} at a {}: the planted soles slid {:.1} mm",
+                script.name,
+                if run { "run" } else { "walk" },
+                slid * 1000.0
+            );
+        }
+    }
+}
+
+#[test]
+fn a_strafe_turning_into_a_backward_diagonal_keeps_its_stance() {
+    // **The heading the split stance is held through** (#362). A strafe and a
+    // backward diagonal both stand split — the same foot in front, the same
+    // depth between the feet — so the change between them re-arranges
+    // nothing: the feet stay a split apart and only the travel turns. Through
+    // 0.11 the same keys slid the soles 299 mm walking and 170 running, and
+    // passed the feet 3-4 cm apart; a square backward diagonal passes them at
+    // half its stance width (72 mm on this body) where the split keeps 150.
+    // Across every moment of the stride the keys can change at: 23 mm on
+    // average at a walk and 48 at worst, a millimetre or two at a run.
+    let avatar = body_of("did:plc:stop-test");
+    let rig = avatar.rig.clone();
+    let apart = clearance(&rig);
+    for spans in swept((LEFTWARD, 0.0), (BACK_LEFT, 0.0)) {
+        let script = Looking {
+            name: "A then S+A",
+            spans: &spans,
+        };
+        for run in [false, true] {
+            let frames = looked(&rig, &script, run, DriverConfig::default());
+            let across = changing(&frames, &script);
+            let pace = if run { "run" } else { "walk" };
+            let slid = slide(&across);
+            assert!(
+                slid < 0.06,
+                "at a {pace}, keys changing at {:.2} s: the planted soles slid {:.1} mm crossing \
+                 from the strafe",
+                spans[0].0,
+                slid * 1000.0
+            );
+            let closest = closest_feet(&across);
+            assert!(
+                closest > apart,
+                "at a {pace}, keys changing at {:.2} s: the feet passed {:.1} mm apart, inside \
+                 the {:.1} mm clearance",
+                spans[0].0,
+                closest * 1000.0,
+                apart * 1000.0
+            );
+        }
+    }
+}
+
+/// The frames of a first-person run from a quarter second before its keys
+/// change to the end of its script: the change, and what it settles into.
+fn changing<'a>(frames: &'a [Stance], script: &Looking) -> Vec<&'a Stance> {
+    let change = STAND_SECS + script.spans[0].0;
+    frames
+        .iter()
+        .filter(|frame| frame.t >= change - 0.25 && frame.t < script.length())
+        .collect()
+}
+
+/// A change of keys at every moment of the stride: the two-span script
+/// `first` then `second` — keys and the eyes' turn — with its first span held
+/// a little longer each time, over more than a walk's whole cycle. Where in
+/// its stride a body is when the keys change decides most of what the change
+/// costs it, so a guard on one moment is a guard on luck.
+fn swept(
+    first: (Vec3, f32),
+    second: (Vec3, f32),
+) -> impl Iterator<Item = [(f32, Vec3, bool, f32); 2]> {
+    (0..16).map(move |step| {
+        [
+            (0.8 + step as f32 * 0.05, first.0, false, first.1),
+            (1.5, second.0, false, second.1),
+        ]
+    })
+}
+
+#[test]
+fn a_change_of_heading_slides_less_than_the_turn_the_stance_agreed() {
+    // **What a change of keys costs, written down rather than fixed** (#362).
+    // A planted foot was put down for the travel the body had; when the keys
+    // turn it, the stride the foot is held against turns with them, and the
+    // footholds' bounds — tight across the stride, for the orbit body's
+    // lagging facing (#337) — let it give the difference. How much depends on
+    // where in its stride the body is when the keys change, so every moment
+    // is tried: on this body at a walk, into a strafe 183 mm on average and
+    // 381 at worst, out of one 123 and 254, into a diagonal 54 and 116; at a
+    // run 46 and 163 at most. The ruler is the one the consuming application
+    // agreed for a quarter turn in the orbit (#1323): that turn slides 339 mm
+    // against a 420 mm ceiling.
+    let avatar = body_of("did:plc:stop-test");
+    let rig = avatar.rig.clone();
+    for (name, first, second) in [
+        ("W then A", AHEAD, LEFTWARD),
+        ("W then W+D", AHEAD, AHEAD_RIGHT),
+        ("A then W", LEFTWARD, AHEAD),
+    ] {
+        for spans in swept((first, 0.0), (second, 0.0)) {
+            let script = Looking {
+                name,
+                spans: &spans,
+            };
+            for run in [false, true] {
+                let frames = looked(&rig, &script, run, DriverConfig::default());
+                let slid = slide(&changing(&frames, &script));
+                assert!(
+                    slid < 0.42,
+                    "{name} at a {}, keys changing at {:.2} s: the planted soles slid {:.1} mm \
+                     through the change",
+                    if run { "run" } else { "walk" },
+                    spans[0].0,
+                    slid * 1000.0
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_body_turning_where_it_stands_steps_round_on_planted_feet() {
+    // **#361.** A body looking round on the spot used to idle under its own
+    // turn: the idle poses its feet in the body, so they went round on the
+    // floor with it. Now it walks a pivot — a stride of no length whose
+    // stances turn — and its planted feet stay where they are while the other
+    // steps round. Held at 90 degrees a second, and handed back to the idle
+    // once the turn stops.
+    let avatar = body_of("did:plc:stop-test");
+    let rig = avatar.rig.clone();
+    let apart = clearance(&rig);
+    let script = &LOOKS[7];
+    let frames = looked(&rig, script, false, DriverConfig::default());
+    let window = held(&frames, script);
+    assert!(
+        window.iter().all(|frame| frame.source == Source::Gait),
+        "a body turning where it stands did not step"
+    );
+    // It steps: each foot is down at some frame and up at another.
+    for foot in 0..2 {
+        assert!(
+            window.iter().any(|frame| frame.down[foot])
+                && window.iter().any(|frame| !frame.down[foot]),
+            "foot {foot} never stepped"
+        );
+    }
+    let slid = slide(&window);
+    assert!(
+        slid < 0.005,
+        "the planted feet slid {:.1} mm",
+        slid * 1000.0
+    );
+    let closest = closest_feet(&window);
+    assert!(
+        closest > apart,
+        "the feet passed {:.1} mm apart, inside the {:.1} mm clearance",
+        closest * 1000.0,
+        apart * 1000.0
+    );
+    assert!(window.iter().all(|frame| !frame.strained), "a leg strained");
+    let end = script.length();
+    assert!(
+        frames
+            .iter()
+            .filter(|frame| frame.t >= end + 1.0)
+            .all(|frame| frame.source == Source::Idle),
+        "a second after the turn stopped, the body was not idling"
+    );
+
+    // The control on the threshold: a look round under `PIVOT_FROM` is the
+    // idle's, and never steps.
+    let slow = &LOOKS[9];
+    let frames = looked(&rig, slow, false, DriverConfig::default());
+    assert!(
+        frames.iter().all(|frame| frame.source != Source::Gait),
+        "a body turning five degrees a second stepped"
+    );
+}
+
+#[test]
+fn a_walk_turning_with_its_eyes_keeps_its_feet() {
+    // A body walking ahead while its eyes turn sixty degrees a second turns
+    // its stride with them (#361): the stance's yaw holds each planted foot's
+    // bearing and the ledger stops carrying it round, and a turning swing
+    // eases along its arc rather than across the chord, which cut toward the
+    // other foot. Through 0.11, fed the same turn, the walk slid its soles
+    // 45.5 mm a second and passed its feet 0.8 mm apart.
+    let avatar = body_of("did:plc:stop-test");
+    let rig = avatar.rig.clone();
+    let apart = clearance(&rig);
+    let script = &LOOKS[10];
+    for run in [false, true] {
+        let frames = looked(&rig, script, run, DriverConfig::default());
+        let window = held(&frames, script);
+        let pace = if run { "run" } else { "walk" };
+        let slid = slide(&window);
+        assert!(
+            slid < 0.015,
+            "at a {pace}: the planted soles slid {:.1} mm",
+            slid * 1000.0
+        );
+        let closest = closest_feet(&window);
+        assert!(
+            closest > apart,
+            "at a {pace}: the feet passed {:.1} mm apart, inside the {:.1} mm clearance",
+            closest * 1000.0,
+            apart * 1000.0
+        );
+    }
+}
+
+#[test]
+fn a_pivot_whose_heading_appears_keeps_its_planted_feet() {
+    // **The heading arrives before the gait does** (#361, #362). The consuming
+    // application hands a first-person body its heading from a tenth of a
+    // metre a second and the gait starts at three tenths, so a body looking
+    // round as it begins to drift walks its pivot under a heading. The first
+    // cut of 0.12 took the pivot's stride of no length toward it, split stance
+    // and all, and a planted foot moved 126-141 mm in the frame the heading
+    // appeared; the drift itself moves one about 4 mm a frame.
+    let rig = body_of("did:plc:stop-test").rig;
+    for rate in [0.5f32, 0.75, 1.0] {
+        for drift in [0.15f32, 0.2, 0.25] {
+            let frames = drifting(&rig, rate, drift);
+            let (planted, _) = jumps(&appearing(&frames));
+            assert!(
+                planted < 0.01,
+                "turning {rate} rad/s, drifting {drift} m/s: a planted foot moved {:.1} mm in \
+                 one frame as the heading appeared",
+                planted * 1000.0
+            );
+        }
+    }
+}
+
+#[test]
+fn setting_off_from_a_pivot_blends_as_setting_off_from_standing_does() {
+    // **The one change inside locomotion where the stride jumps** (#361): a
+    // pivot's has no length and a walk's starts at the crossing speed's, so
+    // setting off from a turn moves every contact at once, and so does
+    // stopping into one. Through the first cut of 0.12 nothing blended it and
+    // a planted foot moved up to 157 mm in one frame; blended, as the idle's
+    // start is, the worst frame at any moment of the stride is 41 mm setting
+    // off and 75 stopping, where a walk set off from standing moves one 38.
+    let rig = body_of("did:plc:stop-test").rig;
+    let turning = std::f32::consts::FRAC_PI_2;
+    for (name, first, second) in [
+        ("looking round, then A", STILL, LEFTWARD),
+        ("looking round, then W", STILL, AHEAD),
+        ("A looking round, then stopping", LEFTWARD, STILL),
+    ] {
+        for spans in swept((first, turning), (second, turning)) {
+            let script = Looking {
+                name,
+                spans: &spans,
+            };
+            for run in [false, true] {
+                let frames = looked(&rig, &script, run, DriverConfig::default());
+                let (planted, _) = jumps(&changing(&frames, &script));
+                assert!(
+                    planted < 0.08,
+                    "{name} at a {}, keys changing at {:.2} s: a planted foot moved {:.1} mm in \
+                     one frame",
+                    if run { "run" } else { "walk" },
+                    spans[0].0,
+                    planted * 1000.0
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_turn_that_ends_hands_back_the_straight_walk() {
+    // **The turn is eased like the pace, and the ease lands** (#361). A lag
+    // closes a share of its gap every frame, so on its own it never closes
+    // it: the first cut of 0.12 stalled 1.3e-44 short of zero, and a body
+    // that had once turned walked a turning stride ever after — 5.4 mm from
+    // the straight walk at a joint ninety seconds on, which is every
+    // first-person body in the consuming application that ever looked round.
+    // Two bodies on one clock, one of them told a second's turn: once the
+    // turn has eased out and each foot has stepped since, they are one body
+    // to the bit.
+    let rig = body_of("did:plc:stop-test").rig;
+    let cadence = Speed::new(&rig, 1.4).cadence(&rig);
+    let (mut turned, mut straight) = (
+        Driver::seeded(INSTRUMENT_SEED),
+        Driver::seeded(INSTRUMENT_SEED),
+    );
+    for frame in 0..(12.0 / STEP) as usize {
+        let t = frame as f32 * STEP;
+        let inputs = |turn: f32| Inputs {
+            delta: STEP,
+            velocity: Vec3::Z * 1.4,
+            at: Vec3::Z * (1.4 * t),
+            cycle: Some((cadence * t).fract()),
+            turn,
+            ..Inputs::default()
+        };
+        let told = if (1.0..2.0).contains(&t) { 1.5 } else { 0.0 };
+        let a = turned
+            .drive(&rig, &inputs(told), level_ground)
+            .expect("an unheld body is posed");
+        let b = straight
+            .drive(&rig, &inputs(0.0), level_ground)
+            .expect("an unheld body is posed");
+        if t >= 8.0 {
+            assert!(
+                a == b,
+                "{t:.2} s: the body that stopped turning at 2 s walks differently"
+            );
+        }
+    }
+    assert_eq!(turned.turning(), 0.0, "the eased turn never landed");
+}
+
+#[test]
+fn a_heading_straight_ahead_is_no_heading_at_all() {
+    // A first-person body walking ahead is handed a heading straight ahead
+    // where an orbit body is handed none, and at a steady pace the two are
+    // one walk to the bit — the orbit's, which every measurement here was
+    // taken on. The first cut of 0.12 stepped a heading's stride at a cadence
+    // of its own spelling, which at a steady pace is the speed axis's to a
+    // float's resolution and no closer: at most of these speeds the clocks
+    // drifted apart by a ULP a frame, a millimetre at a joint by the end.
+    let rig = body_of("did:plc:stop-test").rig;
+    for speed in [0.4f32, 0.5, 0.9, 1.1, 1.4, 1.6, 1.8, 2.0, 2.9, 3.6, 4.0] {
+        let (mut ahead, mut none) = (
+            Driver::seeded(INSTRUMENT_SEED),
+            Driver::seeded(INSTRUMENT_SEED),
+        );
+        for frame in 0..(4.0 / STEP) as usize {
+            let t = frame as f32 * STEP;
+            let inputs = |heading| Inputs {
+                delta: STEP,
+                velocity: Vec3::Z * speed,
+                at: Vec3::Z * (speed * t),
+                heading,
+                ..Inputs::default()
+            };
+            let a = ahead
+                .drive(
+                    &rig,
+                    &inputs(Some(symbios_avatar::Heading::FORWARD)),
+                    level_ground,
+                )
+                .expect("an unheld body is posed");
+            let b = none
+                .drive(&rig, &inputs(None), level_ground)
+                .expect("an unheld body is posed");
+            assert!(
+                a == b,
+                "{speed} m/s, {t:.2} s: the heading straight ahead walked differently"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_heading_steps_the_ground_the_body_covers() {
+    // **Not the ground its pace covers** (#362). The pace eases behind a
+    // change of speed so the posture does not snap, and a heading's stance
+    // stepped at the pace's cadence covers the pace's ground while the body
+    // covers its own. Stepped so, a first-person walk set off from standing
+    // slid its planted soles 365 mm and a run 529 — the orbit body's own
+    // start, which it keeps — and setting off ahead from a turn slid them 390
+    // mm at worst walking and 665 running. Stepped at the ground the body
+    // covers: 163 from standing, and 103 at worst from a turn.
+    let rig = body_of("did:plc:stop-test").rig;
+    for run in [false, true] {
+        let pace = if run { "run" } else { "walk" };
+        let frames = looked(&rig, &LOOKS[0], run, DriverConfig::default());
+        let start: Vec<&Stance> = frames
+            .iter()
+            .filter(|frame| frame.t >= STAND_SECS - 0.25 && frame.t < STAND_SECS + 1.0)
+            .collect();
+        let slid = slide(&start);
+        assert!(
+            slid < 0.25,
+            "a {pace} set off from standing: the planted soles slid {:.1} mm",
+            slid * 1000.0
+        );
+        let turning = std::f32::consts::FRAC_PI_2;
+        for spans in swept((STILL, turning), (AHEAD, turning)) {
+            let script = Looking {
+                name: "looking round, then W",
+                spans: &spans,
+            };
+            let frames = looked(&rig, &script, run, DriverConfig::default());
+            let slid = slide(&changing(&frames, &script));
+            assert!(
+                slid < 0.15,
+                "a {pace} set off from a turn at {:.2} s: the planted soles slid {:.1} mm",
+                spans[0].0,
+                slid * 1000.0
+            );
+        }
+    }
+}
+
+#[test]
+fn a_jittering_velocity_is_stepped_at_its_mean() {
+    // A heading's stance covers the ground the body covers, read off the
+    // velocity it is handed (#362) — and a velocity differenced from a peer's
+    // smoothed transform jitters. Stepped as often above its mean as below
+    // it, the jitter costs the cadence nothing: a fifth of noise steps a walk
+    // ahead 0.5% more cycles than none and a strafe at 3 m/s 0.7%. Floored at
+    // the pace's own cadence, as the first cut of 0.12 was, the walk ahead
+    // stepped 7% fast; capped at the pace's own heading cadence, the strafe
+    // 4.6% slow.
+    let rig = body_of("did:plc:stop-test").rig;
+    let stepped = |heading: symbios_avatar::Heading, speed: f32, noise: f32| {
+        let mut driver = Driver::seeded(INSTRUMENT_SEED);
+        let toward = heading.direction();
+        let (mut seed, mut at) = (12_345u32, Vec3::ZERO);
+        let (mut cycles, mut last) = (0.0f32, 0.0f32);
+        for _ in 0..(6.0 / CONTROLLER_STEP) as usize {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let jitter = (seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0;
+            at += toward * (speed * CONTROLLER_STEP);
+            driver
+                .drive(
+                    &rig,
+                    &Inputs {
+                        delta: CONTROLLER_STEP,
+                        velocity: toward * (speed * (1.0 + noise * jitter)),
+                        at,
+                        heading: Some(heading),
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed");
+            cycles += (driver.cycle() - last).rem_euclid(1.0);
+            last = driver.cycle();
+        }
+        cycles
+    };
+    for (heading, speed) in [
+        (symbios_avatar::Heading::FORWARD, 1.4),
+        (symbios_avatar::Heading::LEFT, 3.0),
+    ] {
+        let (steady, jittered) = (stepped(heading, speed, 0.0), stepped(heading, speed, 0.2));
+        assert!(
+            (jittered / steady - 1.0).abs() < 0.015,
+            "{} at {speed} m/s: a fifth of velocity noise stepped {:+.1}% the cycles",
+            heading.describe(),
+            (jittered / steady - 1.0) * 100.0
+        );
+    }
+}
+
+#[test]
+fn a_squeezed_stride_steps_no_faster_than_its_heading_or_a_sprint() {
+    // **The ceiling on a heading's cadence** (#362). Where a split stance
+    // lines its feet up — the backward diagonals near 150-165 degrees on this
+    // body — the stance bound shortens the stride to a few centimetres, and
+    // covering the travel in steps that short would cycle the legs as fast
+    // as the stride is short: without the ceiling a walk there stepped 4.55
+    // cycles a second and a run 6.02, twice what the heading's own reach
+    // asks. Held to the faster of that and the legs' sprint cadence, the
+    // stance covers what it can and the planted foot gives the rest.
+    let rig = body_of("did:plc:stop-test").rig;
+    let sprint = Speed::from_froude(symbios_avatar::anim::speed::FROUDE_SPRINT).cadence(&rig);
+    for speed in [1.4f32, 4.0] {
+        for degrees in 90..=180 {
+            let heading = symbios_avatar::Heading::degrees(degrees as f32);
+            let toward = heading.direction();
+            let mut driver = Driver::seeded(INSTRUMENT_SEED);
+            let (mut cycles, mut last) = (0.0f32, 0.0f32);
+            for frame in 0..(2.0 / STEP) as usize {
+                let t = frame as f32 * STEP;
+                driver
+                    .drive(
+                        &rig,
+                        &Inputs {
+                            delta: STEP,
+                            velocity: toward * speed,
+                            at: toward * (speed * t),
+                            heading: Some(heading),
+                            ..Inputs::default()
+                        },
+                        level_ground,
+                    )
+                    .expect("an unheld body is posed");
+                cycles += (driver.cycle() - last).rem_euclid(1.0);
+                last = driver.cycle();
+            }
+            let stepped = cycles / 2.0;
+            let ceiling = (Speed::new(&rig, speed).cadence(&rig) / heading.reach()).max(sprint);
+            assert!(
+                stepped < ceiling * 1.01,
+                "{speed} m/s at {degrees} degrees: stepped {stepped:.2} cycles a second, past \
+                 the {ceiling:.2} its heading and a sprint allow"
+            );
         }
     }
 }

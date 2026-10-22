@@ -94,10 +94,32 @@ use super::heading::Heading;
 use super::idle::{Idle, IdleConfig, Idled};
 use super::leap::{Leap, Stage};
 use super::pose::Pose;
-use super::speed::{GRAVITY, Speed};
+use super::speed::{FROUDE_SPRINT, GRAVITY, Speed};
 use super::swim::Swim;
 use super::transition::{self, Family};
+use super::turn::{TURN_REACH, Turn};
 use super::{Target, gesture};
+
+/// The yaw rate a body standing still must turn at to step round rather than
+/// idle, in radians a second — about nine degrees a second (#361).
+///
+/// **Slow enough that a look round steps.** Below it a standing body idles,
+/// and the idle poses its feet in the body, so they turn with it: at this rate
+/// a foot a tenth of a metre out goes round by 15 mm a second, under the
+/// idle's own weight shifts. Above it the body walks a pivot, a gait of no
+/// length whose stances turn instead ([`Turn`]), and its planted feet stay
+/// where they are. A body already stepping keeps stepping down to half of it,
+/// so a turn easing off near the line does not flicker between the two.
+pub const PIVOT_FROM: f32 = 0.15;
+
+/// How close the eased turn comes to the turn asked for before it is that
+/// turn, in radians a second (#361).
+///
+/// **A ten-thousandth, which no stance can show**: at a walk's cadence it
+/// turns a stance by a few thousandths of a degree. What it buys is a lag that
+/// lands — on exactly the turn asked for, and so on exactly zero when a turn
+/// ends, which is the straight stride to the bit.
+const TURN_SETTLED: f32 = 1e-4;
 
 /// A layer a caller lays over the body part-way through a driven frame.
 ///
@@ -364,7 +386,9 @@ pub struct DriverConfig {
     /// what an instrument wants when it is looking at the rest pose itself — a
     /// body that is breathing has no frame that *is* the rest pose.
     pub idle: bool,
-    /// Below this horizontal speed the body idles, in m/s.
+    /// Below this horizontal speed the body idles, in m/s — unless it is
+    /// turning faster than [`PIVOT_FROM`], when it steps round where it stands
+    /// (#361).
     pub idle_below: f32,
     /// How long the gait takes to believe a change of speed, in seconds.
     ///
@@ -530,6 +554,17 @@ pub struct Inputs<'a> {
     /// joins them — the body's own, recovered from the stride it is walking,
     /// rather than named beside it. A turn asserted independently of the legs
     /// is a turn the feet are not taking.
+    ///
+    /// **Read whether or not the body is travelling** (#361): eased through
+    /// [`DriverConfig::pace_response`], it sets the gait, the cadence and the
+    /// stride's yaw through [`Turn`], so no stance carries the body round
+    /// further than a hip turns ([`super::turn::TURN_REACH`]), and a body under
+    /// [`DriverConfig::idle_below`] turning past [`PIVOT_FROM`] steps round
+    /// where it stands rather than idling. A caller holding planted feet to
+    /// the world ([`Carriage::Chassis`]) keeps them still through the part of
+    /// a turn this reports. Zero is a body going straight, exactly as before,
+    /// and a turn that ends hands that body back to the bit once its ease has
+    /// landed.
     pub turn: f32,
     /// Hold the lids at this point of a blink, `0` open and `1` shut, instead of
     /// blinking.
@@ -719,6 +754,14 @@ pub struct Driver {
     /// is not carrying the body — the next walk eases from its own first frame
     /// rather than from a stale speed.
     paced: Option<f32>,
+    /// The eased yaw rate, in radians a second, positive toward the body's
+    /// left — [`Inputs::turn`] through the same lag as the pace (#361), so a
+    /// turn arriving all at once reaches the stride, the cadence and the bank
+    /// as a body would carry it out.
+    turning: f32,
+    /// Whether the gait last frame was a pivot (#361) — kept so a change
+    /// between stepping round and walking off blends.
+    pivoted: bool,
     /// The leap in progress, or [`None`] while the body is on the ground.
     airborne: Option<Airborne>,
     /// The frame before last, as drawn — the velocity a transition carries
@@ -762,6 +805,8 @@ impl Driver {
             source: Source::Rest,
             gaiting: None,
             paced: None,
+            turning: 0.0,
+            pivoted: false,
             airborne: None,
             previous: None,
             current: None,
@@ -825,6 +870,14 @@ impl Driver {
         self.gaiting
     }
 
+    /// The turn the stride was last built from, in radians a second positive
+    /// toward the body's left: [`Inputs::turn`] eased (#361), and exactly zero
+    /// once a turn has ended.
+    #[must_use]
+    pub fn turning(&self) -> f32 {
+        self.turning
+    }
+
     /// The leap in progress, or [`None`] while the body is on the ground.
     #[must_use]
     pub fn airborne(&self) -> Option<Airborne> {
@@ -857,6 +910,7 @@ impl Driver {
     pub fn warped(&mut self) {
         self.footholds.reset();
         self.paced = None;
+        self.turning = 0.0;
     }
 
     /// Blend the next driven frame in from the last one drawn, whatever
@@ -939,6 +993,62 @@ impl Driver {
             planar
         };
         let travelling = (planar >= config.idle_below).then(|| Speed::new(rig, paced));
+        // How far the body actually travels for the pace its stride is built
+        // from — one at a steady pace, and more or less while the pace eases
+        // after a change of speed (#362, `stepping`).
+        let travel = if travelling.is_some() && paced > f32::EPSILON {
+            planar / paced
+        } else {
+            1.0
+        };
+
+        // **The turn, eased as the pace is** (#361): the stride's yaw, the
+        // cadence a turn needs and the bank are all functions of it, so it
+        // reaches them through the same lag rather than as a step.
+        let asked = if inputs.turn.is_finite() {
+            inputs.turn
+        } else {
+            0.0
+        };
+        let eased = if config.pace_response > 0.0 {
+            self.turning
+                + (asked - self.turning) * (1.0 - (-delta / config.pace_response).det_exp())
+        } else {
+            asked
+        };
+        // **And landed on, not approached for ever.** A lag closes a share of
+        // its gap each frame, so on its own it never closes it: the gap falls
+        // through the subnormals and stalls a few of them short of zero, and a
+        // straight stride is a turn of exactly zero — a body that had ever
+        // turned would never again walk the stride everything here was
+        // measured on.
+        self.turning = if (asked - eased).abs() < TURN_SETTLED {
+            asked
+        } else {
+            eased
+        };
+        let turn = Turn::new(self.turning);
+        // **A body turning where it stands steps round** (#361). The idle poses
+        // its feet in the body, so a body yawing over them would carry them
+        // round on the floor; past `PIVOT_FROM` it walks a pivot instead — a
+        // stride of no length whose stances turn — and keeps walking it until
+        // the turn falls to half of that, or the body sets off.
+        let pivoting = travelling.is_none()
+            && self.turning.abs()
+                >= if self.gaiting.is_some() {
+                    PIVOT_FROM * 0.5
+                } else {
+                    PIVOT_FROM
+                };
+        // **The speed the gait is built from**: the body's own, or none at all
+        // for a body stepping round where it stands. `effort` is the speed
+        // whose gait the legs walk, which a turn makes the outer foot's
+        // (`Turn::working`, #361) — kept to carry a change of gait across and
+        // to hand the idle its arrival. A heading changes the stride, not the
+        // gait: walking and running is the leg vaulting over its foot, at the
+        // speed the body goes whichever way it goes (#362, `stepping`).
+        let pacing = travelling.or_else(|| pivoting.then_some(Speed::STILL));
+        let effort = pacing.map(|speed| turn.working(rig, speed));
 
         // **The stroke's clock, which the swim leaves to its caller.** Both
         // ends are derived: at speed one cycle carries the body a fixed number
@@ -956,12 +1066,16 @@ impl Driver {
         // mid-stride and mid-air at once, and pretending otherwise is how a
         // jump ends up with a walk cycle running underneath it.
         let showing_leap = matches!(inputs.showing, Some(Showing::Leap(_)));
+        // The gait, the stride and the cadence the legs would walk this frame,
+        // built once: the clock below runs at the cadence, and the walk walks
+        // the rest.
+        let legs = pacing.map(|speed| Self::walking(rig, inputs, speed, turn, travel));
         let (locomotion, derived_cadence) = if swimming {
             (Source::Swim, stroke_rate())
         } else if showing_leap || airborne {
             (Source::Leap, 0.0)
-        } else if let Some(speed) = travelling {
-            (Source::Gait, speed.cadence(rig))
+        } else if let Some((_, _, cadence)) = legs.as_ref() {
+            (Source::Gait, *cadence)
         } else if config.idle {
             (Source::Idle, 0.0)
         } else {
@@ -1009,7 +1123,8 @@ impl Driver {
         // is no boundary to detect: the duty moves continuously as well as
         // stepping, and where it has not moved the map is the identity to the
         // bit.
-        if let (Some(speed), Some(before)) = (travelling, self.gaiting)
+        let last = self.cycle;
+        if let (Some(speed), Some(before)) = (effort, self.gaiting)
             && before != speed
         {
             let into = speed.gait(rig);
@@ -1019,13 +1134,22 @@ impl Driver {
             };
             self.cycle = transition::carry_cycle(&from, &into, self.cycle);
         }
-        self.gaiting = travelling;
+        self.gaiting = effort;
 
-        if let Some(held) = inputs.cycle {
+        // How far the clock steps, for the footholds' account of a stride's
+        // turn (#361): the step itself, which a carried cycle is not — the
+        // carry keeps the moment of the step and turns no stance. A clock the
+        // caller holds is read off its two values, forward and the short way
+        // round.
+        let advanced = if let Some(held) = inputs.cycle {
             self.cycle = held;
+            ((held - last + 0.5).rem_euclid(1.0) - 0.5).max(0.0)
         } else if !airborne || swimming {
             self.cycle = (self.cycle + delta * cadence).fract();
-        }
+            delta * cadence
+        } else {
+            0.0
+        };
 
         self.start_gesture(inputs.gesture);
         // Advanced and retired before the pose is built, so a gesture that
@@ -1076,8 +1200,11 @@ impl Driver {
                 idled = Some(self.idler.drive_on(rig, &mut pose, delta, ground));
             }
             Source::Gait => {
-                let (gait, stride, walked) =
-                    self.walk_frame(rig, inputs, travelling, &mut pose, ground);
+                let (gait, stride, _) = legs.unwrap_or_else(|| {
+                    Self::walking(rig, inputs, pacing.unwrap_or(Speed::STILL), turn, travel)
+                });
+                let walked =
+                    self.walk_frame(rig, inputs, &gait, &stride, advanced, &mut pose, ground);
                 count_straining(&mut straining, &walked.steps.straining);
                 steps = walked.steps;
                 walking = Some((gait, stride));
@@ -1171,9 +1298,20 @@ impl Driver {
         // the answer is no: see `Source::family`. Or wherever the caller asked
         // for one, because what changed was theirs (#334); the request is taken
         // here whether or not there is anything to blend from.
+        //
+        // **And between a pivot and a walk** (#361), the one change inside
+        // locomotion where the stride itself jumps: a pivot's has no length
+        // and a walk's starts at the crossing speed's, a third of a metre, so
+        // setting off from a turn moves every contact at once, as setting off
+        // from the idle does — measured, a planted foot 70 mm in one frame
+        // walking off ahead and 155 mm into a strafe, where the idle's blend
+        // holds the same start to 41.
         let asked = std::mem::take(&mut self.blend_asked);
+        let pivot_edge =
+            self.source == Source::Gait && source == Source::Gait && self.pivoted != pivoting;
+        self.pivoted = pivoting;
         if config.blend > 0.0
-            && (asked || self.source.needs_blend(source))
+            && (asked || pivot_edge || self.source.needs_blend(source))
             && let (Some(previous), Some(current)) = (&self.previous, &self.current)
         {
             self.transition = Some(Inertializer::start(
@@ -1215,38 +1353,148 @@ impl Driver {
         })
     }
 
+    /// The gait and the stride a body at `pace` walks, toward the heading and
+    /// turning as the inputs say, and the cadence it walks them at.
+    ///
+    /// **One number in, everything out.** The gait pattern, its duty, the
+    /// stride length, the foot lift and the cadence all come from how fast the
+    /// body is travelling, expressed as a Froude number so the same relation
+    /// fits a child, a giant and a quadruped — with the turn's working contact
+    /// over it where the body turns (#361). The stride is then taken toward
+    /// the heading, which shortens it by the reach that way; [`Self::stepping`]
+    /// is what makes the shorter stride cover the same ground — `travel` of
+    /// it, the body's own travel over the pace's.
+    fn walking(
+        rig: &Rig,
+        inputs: &Inputs<'_>,
+        pace: Speed,
+        turn: Turn,
+        travel: f32,
+    ) -> (Gait, Stride, f32) {
+        let gait = inputs.gait.cloned().unwrap_or_else(|| turn.gait(rig, pace));
+        // A straight stride is the speed axis's own, to the bit: everything
+        // this crate measured was measured on it.
+        let built = if turn.is_straight() {
+            pace.stride(rig)
+        } else {
+            turn.stride(rig, pace)
+        };
+        let cadence = turn.cadence(rig, pace);
+        let Some(heading) = inputs.heading else {
+            return (gait, built, cadence);
+        };
+        let mut stride = built.toward(rig, heading);
+        let cadence = Self::stepping(
+            rig,
+            heading,
+            turn,
+            &gait,
+            (&built, &mut stride),
+            cadence,
+            travel,
+        );
+        (gait, stride, cadence)
+    }
+
+    /// How many cycles a second a body steps `stride` — `built` taken toward
+    /// `heading` — when `built` is stepped at `cadence` and the body travels
+    /// `travel` of the pace `built` was built from, and `stride`'s turn
+    /// re-stated for that cadence.
+    ///
+    /// `cadence` is [`Turn::cadence`], which is the speed axis's own for a
+    /// body going straight — **and this is faster wherever a heading's stride
+    /// is shorter than the travel** (#362, playbook §2.7). A sideways or
+    /// backward step is shorter, so the same ground is more steps, at the
+    /// cadence that makes a stance cover exactly the ground the body covers:
+    /// `planar · duty / length`, which is the two lengths' ratio over
+    /// `cadence`, by `travel`. The gait itself stays the speed's, because
+    /// walking and running is the leg vaulting over its foot at the speed the
+    /// body goes, whichever way it goes. Against the CC0 references this is
+    /// the reading that fits: the back-up steps at 1.0 Hz where this gives
+    /// 1.03, and the strafe's 0.36 m stance is this to the centimetre — where
+    /// building the gait from a faster "working" speed instead gave the
+    /// back-up 0.87 Hz and the strafe 0.46 m, and turned a strafe at walking
+    /// pace into a run.
+    ///
+    /// **The ground the body covers, not the pace's.** The pace eases behind
+    /// a change of speed so the posture does not snap, and a stance stepped at
+    /// the pace's cadence covers the pace's ground while the body covers its
+    /// own. Measured on the consuming application's chassis looking out of
+    /// its eyes, at every moment of the stride a change can land at: stepped
+    /// at the pace's cadence, setting off ahead from a turn slid the planted
+    /// soles 213 mm on average walking and 435 running, and a start from
+    /// standing 365 and 529; stepped at the ground covered, 45 and 44, and 163
+    /// either way — and no change of keys slides more for it. A body handed no
+    /// heading is the orbit's, measured and agreed at its pace's cadence (the
+    /// consuming application's #1323), and keeps it; a body held at one speed
+    /// has `travel` one to the bit, so a heading straight ahead is exactly no
+    /// heading at all.
+    ///
+    /// Held **up to a ceiling**: the faster of the legs' sprint cadence and
+    /// the heading's own for whichever is more, the ground the body covers or
+    /// its pace's. A stance bound can shorten a stride to a few centimetres
+    /// where a split stance is easing through the feet's line (`split_bound`),
+    /// and covering the travel in steps that short would cycle the legs at a
+    /// dozen strides a second; past the ceiling the stance covers what it can
+    /// and the planted foot gives the rest, as a turn too fast to step spins
+    /// on its feet. The heading's cadence alone would clip a strafe, which
+    /// steps at exactly it, every frame its body ran ahead of its pace: 4.6%
+    /// slow under a fifth of velocity noise at 3 m/s. And **down to the turn's
+    /// own need**, the yaw rate times the duty over [`TURN_REACH`] that
+    /// [`Turn::cadence`] raises its cadence to: stepped slower, a stance would
+    /// turn further than a hip does. The pace's cadence is no floor — a body slowing steps
+    /// slower, and a jittering velocity is stepped as often above its mean as
+    /// below it, where a floor at the pace's cadence stepped a straight-ahead
+    /// walk 7% fast under a fifth of noise.
+    ///
+    /// A turn's stance is its yaw over the stance, so a stride stepped at
+    /// another cadence than it was built for turns another amount in each:
+    /// re-stated here, still inside [`TURN_REACH`], so a planted foot's
+    /// bearing and the footholds' account of the turn agree with the cadence
+    /// the body actually walks.
+    fn stepping(
+        rig: &Rig,
+        heading: Heading,
+        turn: Turn,
+        gait: &Gait,
+        (built, stride): (&Stride, &mut Stride),
+        cadence: f32,
+        travel: f32,
+    ) -> f32 {
+        if stride.length <= f32::EPSILON || built.length <= f32::EPSILON {
+            return cadence;
+        }
+        let sprint = Speed::from_froude(FROUDE_SPRINT).cadence(rig);
+        let ceiling = (cadence * travel.max(1.0) / heading.reach().max(f32::EPSILON)).max(sprint);
+        let floor = (turn.yaw_rate().abs() * gait.duty / TURN_REACH).min(sprint);
+        let stepped =
+            (cadence * (built.length / stride.length) * travel).clamp(floor, ceiling.max(floor));
+        if stepped != cadence && !turn.is_straight() {
+            stride.yaw = (turn.yaw_rate() / stepped * gait.duty).clamp(-TURN_REACH, TURN_REACH);
+        }
+        stepped
+    }
+
     /// One frame of the walk: the head of the engine's drive sequence, with the
     /// footing left off because something may be laid over it before the
-    /// contacts are settled.
+    /// contacts are settled. `advanced` is how far the clock stepped this
+    /// frame.
+    #[allow(clippy::too_many_arguments)]
     fn walk_frame<F>(
         &mut self,
         rig: &Rig,
         inputs: &Inputs<'_>,
-        travelling: Option<Speed>,
+        gait: &Gait,
+        stride: &Stride,
+        advanced: f32,
         pose: &mut Pose,
         ground: F,
-    ) -> (Gait, Stride, super::gait::Walked)
+    ) -> super::gait::Walked
     where
         F: Fn(Vec3) -> Option<Ground> + Copy,
     {
-        // **One number in, everything out.** The gait pattern, its duty, the
-        // stride length, the foot lift and the cadence all come from how fast
-        // the body is travelling, expressed as a Froude number so the same
-        // relation fits a child, a giant and a quadruped.
-        let speed = travelling.unwrap_or(Speed::STILL);
-        let gait = inputs.gait.cloned().unwrap_or_else(|| speed.gait(rig));
-        let mut stride = match inputs.heading {
-            Some(heading) => speed.stride(rig).toward(rig, heading),
-            None => speed.stride(rig),
-        };
-        if inputs.turn != 0.0 {
-            let cadence = Speed::of(rig, &gait, &stride).cadence(rig);
-            if cadence > f32::EPSILON {
-                stride.yaw = inputs.turn / cadence * gait.duty;
-            }
-        }
         let walk = self.walk_at(inputs, None);
-        let walked = match self.config.carriage {
+        match self.config.carriage {
             // Through the ledger: the same sequence with each planted contact
             // held to the world point it went down at, which is what keeps a
             // stance still while the body's speed changes underneath it.
@@ -1254,15 +1502,15 @@ impl Driver {
                 walk,
                 rig,
                 pose,
-                &gait,
-                &stride,
+                gait,
+                stride,
+                advanced,
                 inputs.at,
                 inputs.facing,
                 ground,
             ),
-            Carriage::Own => walk.drive(rig, pose, &gait, &stride, ground),
-        };
-        (gait, stride, walked)
+            Carriage::Own => walk.drive(rig, pose, gait, stride, ground),
+        }
     }
 
     /// This frame's [`Walk`], with the footing the caller asked for.
