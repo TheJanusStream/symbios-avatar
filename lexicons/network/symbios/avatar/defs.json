@@ -225,6 +225,93 @@
           "minimum": -3000,
           "maximum": 3000,
           "default": 0
+        },
+        "muzzleBreadth": {
+          "type": "integer",
+          "description": "How broad the muzzle is, from a narrow wedge at the bottom to a broad box at the top: wider at the nose than at the stop, and squarer in section as it widens. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "stop": {
+          "type": "integer",
+          "description": "How the muzzle is set into the skull: a Roman nose, the bridge raised to the forehead's line and bowed, at the bottom; a straight profile in the middle; a deep stop under a high brow at the top. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "eyeSet": {
+          "type": "integer",
+          "description": "How the eyes are set: to the front of a flat face at the bottom, looking where the animal goes; on the sides of the skull at the top, watching around it. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "pupil": {
+          "type": "string",
+          "description": "The pupils' shape: round, a vertical slit, or a horizontal bar held level. A part rather than a centre, so it is kept whatever a reader makes of `family`; a value a reader does not recognise reads as round.",
+          "knownValues": [
+            "round",
+            "slit",
+            "bar"
+          ],
+          "default": "round"
+        },
+        "earSize": {
+          "type": "integer",
+          "description": "How large the ears are against the head. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "earPoint": {
+          "type": "integer",
+          "description": "How the ears end: round-tipped leaves at the bottom, pointed triangles at the top. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "earCarriage": {
+          "type": "integer",
+          "description": "How the ears are carried: dropped and hanging beside the face at the bottom, folded back in a rose in the middle, pricked up at the top. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "nose": {
+          "type": "string",
+          "description": "What the nose is: a bare leather pad at the muzzle's tip with its nostrils cut into its front, or the soft muzzle a horse breathes through open nostrils. A part rather than a centre, kept whatever a reader makes of `family`; a value a reader does not recognise reads as leather.",
+          "knownValues": [
+            "leather",
+            "soft"
+          ],
+          "default": "leather"
+        },
+        "feet": {
+          "type": "string",
+          "description": "What the legs stand on: paws with their claws showing, paws with them sheathed, or hooves. A part rather than a centre, kept whatever a reader makes of `family`, and not read off `stance`, which is how the leg stands; a value a reader does not recognise reads as clawed paws.",
+          "knownValues": [
+            "claws",
+            "pads",
+            "hooves"
+          ],
+          "default": "claws"
+        },
+        "whiskers": {
+          "type": "integer",
+          "description": "How long the whiskers are: none at the bottom, a long fan at the top. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "horn": {
+          "type": "string",
+          "description": "A horn on the forehead: none, or one spiralled horn. Never rolled - a creator gives it, and a re-roll of the head takes it off - and left off the record when there is none; a value a reader does not recognise reads as none.",
+          "knownValues": [
+            "none",
+            "unicorn"
+          ],
+          "default": "none"
         }
       }
     },

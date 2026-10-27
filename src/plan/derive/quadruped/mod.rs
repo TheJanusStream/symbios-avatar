@@ -1,17 +1,20 @@
 //! Every dimension the four-legged cage is built from.
 //!
-//! Twelve semantic axes and three composites in, one flat [`Dimensions`] out,
-//! and [`crate::plan::quadruped`] does nothing afterwards but hang nodes on
-//! it. See [`super`] for why this layer exists at all and what a refactor of
-//! it has to prove.
+//! Nineteen semantic axes, the head's stored parts and three composites in,
+//! one flat [`Dimensions`] out, and [`crate::plan::quadruped`] does nothing
+//! afterwards but hang nodes on it and stamp the [`head`] it declares on the
+//! skeleton. See [`super`] for why this layer exists at all and what a
+//! refactor of it has to prove.
 //!
 //! **This plan's girth is the composites', spent at sites of its own** (#178):
 //! `mass` says how much body there is, `bodyFat` how it is spent, age what the
 //! legs lose, and legginess slims all of it. See [`Girth`].
 
+mod head;
+
 use glam::{Quat, Vec2, Vec3};
 
-use crate::plan::{Composites, DEFAULT_BODY_FAT, QuadrupedParams};
+use crate::plan::{BeastHead, Composites, DEFAULT_BODY_FAT, QuadrupedParams};
 
 /// Cross-sections of the trunk, as `(lateral, vertical)` multiples of the node's
 /// radius.
@@ -101,6 +104,9 @@ pub(crate) struct Dimensions {
     pub nose_at: Vec3,
     /// Radius of the nose.
     pub nose_r: f32,
+    /// The head these nodes carry: the shape the build projects the head's
+    /// surface onto, and seats the eyes against (#367). See [`head`].
+    pub head: BeastHead,
     /// Each tail node from the croup outward, with its radius.
     pub tail: [(Vec3, f32); TAIL_NODES],
     /// The hind leg's nodes from the body down, on the `+X` side: where it
@@ -198,6 +204,9 @@ const CANNON: Site = (0.20, 0.0);
 const PAD: Site = (0.15, 0.0);
 /// The tail.
 const TAIL: Site = (0.30, 0.15);
+/// The cheeks (#367): soft tissue over a bony face, where a fat cat's face
+/// goes round.
+const CHEEK: Site = (0.30, 0.70);
 
 impl Girth {
     /// Reads the composites and legginess into the budgets.
@@ -327,6 +336,17 @@ impl Dimensions {
         let muzzle_at = head_at + nod * Vec3::new(0.0, -head_r * 0.30, ahead * 1.15);
         let nose_r = head_r * 0.40;
         let nose_at = muzzle_at + nod * Vec3::new(0.0, -head_r * 0.10, ahead * 0.75);
+        let head = head::head(
+            &head::Chain {
+                nod,
+                occiput: (occiput_at, occiput_r),
+                cranium: (head_at, head_r),
+                nose: (nose_at, nose_r),
+            },
+            params,
+            appeal,
+            girth.at(CHEEK),
+        );
 
         // The tail is set high on the croup and carried as `tailCarriage`
         // says: hanging, out and down in a sabre curve, or raised and curled
@@ -498,6 +518,7 @@ impl Dimensions {
             muzzle_r,
             nose_at,
             nose_r,
+            head,
             tail,
             hind,
             fore,

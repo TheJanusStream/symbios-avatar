@@ -23,6 +23,69 @@ use super::{
 use crate::cage::limb::HALF_SEGMENT;
 use crate::skeleton::{Node, Skeleton};
 
+/// What every choice a quadruped stores by name shares (#366, #367): its
+/// list, its name both ways, its share-code byte both ways, and its serde as
+/// the name. Each is a fieldless enum whose default is the plan's own, and a
+/// name or byte this build does not know reads as that default, so a record
+/// from a newer build keeps everything else whole.
+macro_rules! named {
+    ($kind:ident: $($variant:ident => $name:literal),+ $(,)?) => {
+        impl $kind {
+            /// Every choice, in the order their share-code bytes run.
+            pub const ALL: [$kind; named!(@count $($variant)+)] = [$($kind::$variant),+];
+
+            /// Its name, as written in a record.
+            #[must_use]
+            pub fn name(self) -> &'static str {
+                match self {
+                    $($kind::$variant => $name),+
+                }
+            }
+
+            /// The choice a record's name says, or the default for one this
+            /// build does not know.
+            #[must_use]
+            pub fn named(name: &str) -> Self {
+                Self::ALL
+                    .into_iter()
+                    .find(|choice| choice.name() == name)
+                    .unwrap_or_default()
+            }
+
+            /// Its byte on a share code.
+            fn code(self) -> u8 {
+                Self::ALL
+                    .iter()
+                    .position(|&choice| choice == self)
+                    .unwrap_or(0) as u8
+            }
+
+            /// The choice a share-code byte names, or the default for one
+            /// this build does not know.
+            fn from_code(code: u8) -> Self {
+                Self::ALL.get(code as usize).copied().unwrap_or_default()
+            }
+        }
+
+        impl Serialize for $kind {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(self.name())
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $kind {
+            fn deserialize<D: serde::Deserializer<'de>>(
+                deserializer: D,
+            ) -> Result<Self, D::Error> {
+                let name = String::deserialize(deserializer)?;
+                Ok(Self::named(&name))
+            }
+        }
+    };
+    (@count $($variant:ident)+) => { 0 $(+ named!(@one $variant))+ };
+    (@one $variant:ident) => { 1 };
+}
+
 /// Smallest and largest back height this plan accepts, in metres.
 pub const HEIGHT_RANGE: (f32, f32) = (0.25, 1.8);
 
@@ -50,57 +113,118 @@ pub enum Family {
     Horse,
 }
 
-impl Family {
-    /// Every family, in the order their share-code bytes run.
-    pub const ALL: [Family; 3] = [Family::Dog, Family::Cat, Family::Horse];
+named!(Family: Dog => "dog", Cat => "cat", Horse => "horse");
 
-    /// Its name, as written in a record.
+/// The shape of a quadruped's pupils (#367): round on a dog, a vertical slit
+/// on a cat, a horizontal bar on a horse.
+///
+/// **Stored rather than read off the family**, as a part is: a record keeps
+/// its eyes whatever a reader makes of its family, and a cross can take
+/// either parent's. A re-roll gives a body its family's, and a cross the
+/// family it is blended toward as often as its blend says.
+///
+/// Written as its lowercase name. A name or share-code byte this build does
+/// not know reads as round, for [`Family`]'s reason.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Pupil {
+    /// Round: a dog's, and a person's.
+    #[default]
+    Round,
+    /// A vertical slit: a cat's.
+    Slit,
+    /// A horizontal bar, held level: a horse's.
+    Bar,
+}
+
+named!(Pupil: Round => "round", Slit => "slit", Bar => "bar");
+
+impl Pupil {
+    /// A family's own.
     #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Family::Dog => "dog",
-            Family::Cat => "cat",
-            Family::Horse => "horse",
+    pub fn of(family: Family) -> Self {
+        match family {
+            Family::Dog => Pupil::Round,
+            Family::Cat => Pupil::Slit,
+            Family::Horse => Pupil::Bar,
         }
     }
+}
 
-    /// The family a record's name says, or a dog for one this build does not
-    /// know.
+/// What a quadruped's nose is (#367): a bare leather pad, a dog's or a
+/// cat's, or the soft muzzle a horse breathes through open nostrils.
+///
+/// A stored part, for [`Pupil`]'s reason. Written as its lowercase name; a
+/// name or share-code byte this build does not know reads as leather.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Nose {
+    /// A leather pad at the muzzle's tip, its nostrils cut into its front.
+    #[default]
+    Leather,
+    /// No pad: the muzzle's own soft end, with nostrils open on its front.
+    Soft,
+}
+
+named!(Nose: Leather => "leather", Soft => "soft");
+
+impl Nose {
+    /// A family's own.
     #[must_use]
-    pub fn named(name: &str) -> Self {
-        Self::ALL
-            .into_iter()
-            .find(|family| family.name() == name)
-            .unwrap_or_default()
-    }
-
-    /// Its byte on a share code.
-    fn code(self) -> u8 {
-        Self::ALL
-            .iter()
-            .position(|&family| family == self)
-            .unwrap_or(0) as u8
-    }
-
-    /// The family a share-code byte names, or a dog for one this build does
-    /// not know.
-    fn from_code(code: u8) -> Self {
-        Self::ALL.get(code as usize).copied().unwrap_or_default()
+    pub fn of(family: Family) -> Self {
+        match family {
+            Family::Dog | Family::Cat => Nose::Leather,
+            Family::Horse => Nose::Soft,
+        }
     }
 }
 
-impl Serialize for Family {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.name())
+/// What a quadruped stands on (#367): paws with their claws showing, a
+/// dog's; paws with them sheathed, a cat's; or hooves, a horse's.
+///
+/// A stored part, for [`Pupil`]'s reason, and not read off `stance`, which
+/// is how the leg stands rather than what it stands on: a cross may walk on
+/// its toes in hooves. Written as its lowercase name; a name or share-code
+/// byte this build does not know reads as a clawed paw.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Feet {
+    /// Paws on four toes, the claws showing at their tips.
+    #[default]
+    Claws,
+    /// Paws on four rounder toes, the claws sheathed.
+    Pads,
+    /// Hooves: a wall of horn round a flat sole.
+    Hooves,
+}
+
+named!(Feet: Claws => "claws", Pads => "pads", Hooves => "hooves");
+
+impl Feet {
+    /// A family's own.
+    #[must_use]
+    pub fn of(family: Family) -> Self {
+        match family {
+            Family::Dog => Feet::Claws,
+            Family::Cat => Feet::Pads,
+            Family::Horse => Feet::Hooves,
+        }
     }
 }
 
-impl<'de> Deserialize<'de> for Family {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        Ok(Self::named(&name))
-    }
+/// A horn on the forehead (#367): none, or one spiralled horn, a unicorn's.
+///
+/// **Never rolled**: a creator gives a beast its horn, and a re-roll of its
+/// head takes it off again, so a seeded world's beasts are the animals they
+/// were rolled as. Written as its lowercase name; a name or share-code byte
+/// this build does not know reads as none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Horn {
+    /// No horn.
+    #[default]
+    None,
+    /// One spiralled horn, rising forward from the forehead.
+    Unicorn,
 }
+
+named!(Horn: None => "none", Unicorn => "unicorn");
 
 /// The share of re-rolled quadrupeds that come out a cross of two families
 /// (#366: hybrids are in, the owner's call). Drawn on its own stream.
@@ -183,6 +307,53 @@ pub struct QuadrupedParams {
     /// of. A re-roll leans it cute, the owner's call.
     #[serde(with = "super::scaled")]
     pub appeal: f32,
+    /// How broad the muzzle is: a borzoi's wedge at the bottom, a boxer's
+    /// box at the top (#367). Wider at the nose than at the stop, and
+    /// squarer in section as it widens.
+    #[serde(with = "super::scaled")]
+    pub muzzle_breadth: f32,
+    /// How the muzzle is set into the skull: a Roman nose, the bridge
+    /// raised to the forehead's line and bowed, at the bottom; a straight
+    /// profile in the middle; a deep stop under a high brow at the top - a
+    /// horse's face, a hound's, a cat's (#367).
+    #[serde(with = "super::scaled")]
+    pub stop: f32,
+    /// How the eyes are set: to the front of a flat face at the bottom, a
+    /// cat's, which look where it is going; on the sides of the skull at the
+    /// top, a horse's, which watch around it (#367).
+    #[serde(with = "super::scaled")]
+    pub eye_set: f32,
+    /// The pupils' shape (#367). See [`Pupil`].
+    pub pupil: Pupil,
+    /// How large the ears are against the head (#367).
+    #[serde(with = "super::scaled")]
+    pub ear_size: f32,
+    /// How the ears end: round-tipped leaves at the bottom, pointed
+    /// triangles at the top (#367).
+    #[serde(with = "super::scaled")]
+    pub ear_point: f32,
+    /// How the ears are carried: dropped and hanging beside the face at the
+    /// bottom, folded back in a rose in the middle, pricked up at the top
+    /// (#367).
+    #[serde(with = "super::scaled")]
+    pub ear_carriage: f32,
+    /// What the nose is (#367). See [`Nose`].
+    pub nose: Nose,
+    /// What the legs stand on (#367). See [`Feet`].
+    pub feet: Feet,
+    /// How long the whiskers are: none at the bottom, a cat's long fan at
+    /// the top (#367).
+    #[serde(with = "super::scaled")]
+    pub whiskers: f32,
+    /// A horn on the forehead (#367). See [`Horn`].
+    #[serde(skip_serializing_if = "is_hornless")]
+    pub horn: Horn,
+}
+
+/// Whether a record writes no horn: the default, left off the wire.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_hornless(horn: &Horn) -> bool {
+    *horn == Horn::None
 }
 
 /// Neutral back height, used when a record omits the field.
@@ -262,6 +433,13 @@ struct Anchor {
     tail_carriage: Draw,
     chest_depth: Draw,
     appeal: Draw,
+    muzzle_breadth: Draw,
+    stop: Draw,
+    eye_set: Draw,
+    ear_size: Draw,
+    ear_point: Draw,
+    ear_carriage: Draw,
+    whiskers: Draw,
     /// Where the family's [`Composites::mass`] centres (#178).
     mass: Draw,
     /// The family's body fat at neutral mass and age.
@@ -291,6 +469,16 @@ impl Anchor {
                 tail_carriage: Draw::at(0.3, 0.45),
                 chest_depth: Draw::at(0.1, 0.35),
                 appeal: Draw::at(CUTE, 0.3),
+                muzzle_breadth: Draw::at(0.0, 0.55),
+                stop: Draw::at(0.1, 0.5),
+                eye_set: Draw::at(-0.1, 0.3),
+                // A dog's ears are anything: every carriage, size and tip.
+                ear_size: Draw::at(0.0, 0.5),
+                ear_point: Draw::at(-0.1, 0.55),
+                ear_carriage: Draw::at(0.0, 0.7),
+                // Fewer and shorter than a cat's: a fan is half of what
+                // tells a cat's face from a dog's.
+                whiskers: Draw::at(-0.8, 0.3),
                 mass: Draw::at(0.0, 0.6),
                 body_fat: DEFAULT_BODY_FAT,
                 age: Draw::at(32.0, 12.0),
@@ -308,6 +496,13 @@ impl Anchor {
                 tail_carriage: Draw::at(0.55, 0.35),
                 chest_depth: Draw::at(-0.2, 0.2),
                 appeal: Draw::at(CUTE, 0.3),
+                muzzle_breadth: Draw::at(0.3, 0.25),
+                stop: Draw::at(0.7, 0.25),
+                eye_set: Draw::at(-0.8, 0.15),
+                ear_size: Draw::at(0.3, 0.25),
+                ear_point: Draw::at(0.6, 0.2),
+                ear_carriage: Draw::at(0.9, 0.1),
+                whiskers: Draw::at(0.6, 0.25),
                 mass: Draw::at(-0.4, 0.4),
                 body_fat: DEFAULT_BODY_FAT + 0.02,
                 age: Draw::at(32.0, 12.0),
@@ -325,6 +520,13 @@ impl Anchor {
                 tail_carriage: Draw::at(-0.9, 0.1),
                 chest_depth: Draw::at(1.2, 0.25),
                 appeal: Draw::at(CUTE, 0.3),
+                muzzle_breadth: Draw::at(-0.2, 0.25),
+                stop: Draw::at(-0.5, 0.35),
+                eye_set: Draw::at(0.85, 0.15),
+                ear_size: Draw::at(-0.2, 0.2),
+                ear_point: Draw::at(0.8, 0.15),
+                ear_carriage: Draw::at(0.95, 0.05),
+                whiskers: Draw::at(-1.0, 0.1),
                 mass: Draw::at(0.6, 0.35),
                 body_fat: DEFAULT_BODY_FAT - 0.06,
                 age: Draw::at(32.0, 12.0),
@@ -355,6 +557,13 @@ impl Anchor {
             tail_carriage: mix(own.tail_carriage, other.tail_carriage),
             chest_depth: mix(own.chest_depth, other.chest_depth),
             appeal: mix(own.appeal, other.appeal),
+            muzzle_breadth: mix(own.muzzle_breadth, other.muzzle_breadth),
+            stop: mix(own.stop, other.stop),
+            eye_set: mix(own.eye_set, other.eye_set),
+            ear_size: mix(own.ear_size, other.ear_size),
+            ear_point: mix(own.ear_point, other.ear_point),
+            ear_carriage: mix(own.ear_carriage, other.ear_carriage),
+            whiskers: mix(own.whiskers, other.whiskers),
             mass: mix(own.mass, other.mass),
             body_fat: own.body_fat + (other.body_fat - own.body_fat) * share,
             age: mix(own.age, other.age),
@@ -380,6 +589,17 @@ impl Default for QuadrupedParams {
             tail_carriage: 0.0,
             chest_depth: 0.0,
             appeal: 0.0,
+            muzzle_breadth: 0.0,
+            stop: 0.0,
+            eye_set: 0.0,
+            pupil: Pupil::Round,
+            ear_size: 0.0,
+            ear_point: 0.0,
+            ear_carriage: 0.0,
+            nose: Nose::Leather,
+            feet: Feet::Claws,
+            whiskers: 0.0,
+            horn: Horn::None,
         }
     }
 }
@@ -392,6 +612,39 @@ impl QuadrupedParams {
     #[must_use]
     pub fn height_envelope() -> (f32, f32) {
         height_envelope()
+    }
+
+    /// What becomes of a part `kept` - a family's own, by `of` - when the
+    /// body changes kind: kept while one of its families has it, its
+    /// leading family's otherwise.
+    fn handed_over<T: Copy + PartialEq>(&self, kept: T, of: fn(Family) -> T) -> T {
+        let parents = [Some(self.family), self.hybrid];
+        if parents
+            .into_iter()
+            .flatten()
+            .any(|family| of(family) == kept)
+        {
+            kept
+        } else {
+            of(self.leading_family())
+        }
+    }
+
+    /// A part drawn for a re-roll: its family's, and a cross its hybrid's as
+    /// often as its blend leans that way, each part on its own stream.
+    fn drawn_part<T>(&self, rolls: &Rolls, stream: &str, of: fn(Family) -> T) -> T {
+        match self.hybrid {
+            Some(other) if rolls.range(stream, 0.0, 1.0) < self.blend => of(other),
+            _ => of(self.family),
+        }
+    }
+
+    /// The family a cross leans toward, or the family of a body that is none.
+    fn leading_family(&self) -> Family {
+        match self.hybrid {
+            Some(other) if self.blend >= 0.5 => other,
+            _ => self.family,
+        }
     }
 
     /// Makes this body a different kind of animal, carrying its own
@@ -438,6 +691,23 @@ impl QuadrupedParams {
         );
         carry(&mut self.chest_depth, from.chest_depth, to.chest_depth);
         carry(&mut self.appeal, from.appeal, to.appeal);
+        carry(
+            &mut self.muzzle_breadth,
+            from.muzzle_breadth,
+            to.muzzle_breadth,
+        );
+        carry(&mut self.stop, from.stop, to.stop);
+        carry(&mut self.eye_set, from.eye_set, to.eye_set);
+        carry(&mut self.ear_size, from.ear_size, to.ear_size);
+        carry(&mut self.ear_point, from.ear_point, to.ear_point);
+        carry(&mut self.ear_carriage, from.ear_carriage, to.ear_carriage);
+        carry(&mut self.whiskers, from.whiskers, to.whiskers);
+        // A part goes with its family, but a cross keeps whichever of its
+        // two families' parts it has, so dragging the blend does not flip
+        // the eyes or the nose back and forth at the middle.
+        self.pupil = self.handed_over(self.pupil, Pupil::of);
+        self.nose = self.handed_over(self.nose, Nose::of);
+        self.feet = self.handed_over(self.feet, Feet::of);
         self.sanitize();
     }
 }
@@ -477,6 +747,13 @@ impl BodyPlan for QuadrupedParams {
             (&mut self.tail_carriage, default.tail_carriage),
             (&mut self.chest_depth, default.chest_depth),
             (&mut self.appeal, default.appeal),
+            (&mut self.muzzle_breadth, default.muzzle_breadth),
+            (&mut self.stop, default.stop),
+            (&mut self.eye_set, default.eye_set),
+            (&mut self.ear_size, default.ear_size),
+            (&mut self.ear_point, default.ear_point),
+            (&mut self.ear_carriage, default.ear_carriage),
+            (&mut self.whiskers, default.whiskers),
         ] {
             *axis = super::sanitize_axis(*axis, fallback, signed_envelope());
         }
@@ -501,6 +778,10 @@ impl BodyPlan for QuadrupedParams {
 
         let mut skeleton = Skeleton::new();
         skeleton.anatomy = self.anatomy();
+        // The head the cage's head chain is shaped into, and what its feet
+        // are shaped into (#367).
+        skeleton.beast_head = Some(d.head);
+        skeleton.beast_feet = Some(super::BeastFeet { kind: self.feet });
         let hips = skeleton.add_node(
             Node::new(d.hips_at, d.hips_r)
                 .with_scale(d.hips_section)
@@ -620,10 +901,23 @@ impl BodyPlan for QuadrupedParams {
                 self.neck_carriage = draw("quadruped.neckCarriage", anchor.neck_carriage, signed);
                 self.tail_carriage = draw("quadruped.tailCarriage", anchor.tail_carriage, signed);
                 self.appeal = draw("quadruped.appeal", anchor.appeal, signed);
+                self.feet = self.drawn_part(rolls, "quadruped.feet", Feet::of);
             }
             Category::Head => {
                 self.head_size = draw("quadruped.headSize", anchor.head_size, signed);
                 self.muzzle_length = draw("quadruped.muzzleLength", anchor.muzzle_length, signed);
+                self.muzzle_breadth =
+                    draw("quadruped.muzzleBreadth", anchor.muzzle_breadth, signed);
+                self.stop = draw("quadruped.stop", anchor.stop, signed);
+                self.eye_set = draw("quadruped.eyeSet", anchor.eye_set, signed);
+                self.ear_size = draw("quadruped.earSize", anchor.ear_size, signed);
+                self.ear_point = draw("quadruped.earPoint", anchor.ear_point, signed);
+                self.ear_carriage = draw("quadruped.earCarriage", anchor.ear_carriage, signed);
+                self.nose = self.drawn_part(rolls, "quadruped.nose", Nose::of);
+                self.whiskers = draw("quadruped.whiskers", anchor.whiskers, signed);
+                // Never rolled: see [`Horn`].
+                self.horn = Horn::None;
+                self.pupil = self.drawn_part(rolls, "quadruped.pupil", Pupil::of);
             }
             // Nothing on this plan is a colour, a hair, an age or a garment
             // (#53, #358).
@@ -651,6 +945,19 @@ impl BodyPlan for QuadrupedParams {
         put_span(out, self.tail_carriage, signed_envelope());
         put_span(out, self.chest_depth, signed_envelope());
         put_span(out, self.appeal, signed_envelope());
+        // And the head's (#367), folded into version 10 while it is
+        // unpublished.
+        put_span(out, self.muzzle_breadth, signed_envelope());
+        put_span(out, self.stop, signed_envelope());
+        put_span(out, self.eye_set, signed_envelope());
+        out.push(self.pupil.code());
+        put_span(out, self.ear_size, signed_envelope());
+        put_span(out, self.ear_point, signed_envelope());
+        put_span(out, self.ear_carriage, signed_envelope());
+        out.push(self.nose.code());
+        out.push(self.feet.code());
+        put_span(out, self.whiskers, signed_envelope());
+        out.push(self.horn.code());
     }
 
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
@@ -673,6 +980,17 @@ impl BodyPlan for QuadrupedParams {
         params.tail_carriage = take_span(bytes, signed_envelope())?;
         params.chest_depth = take_span(bytes, signed_envelope())?;
         params.appeal = take_span(bytes, signed_envelope())?;
+        params.muzzle_breadth = take_span(bytes, signed_envelope())?;
+        params.stop = take_span(bytes, signed_envelope())?;
+        params.eye_set = take_span(bytes, signed_envelope())?;
+        params.pupil = Pupil::from_code(take_byte(bytes)?);
+        params.ear_size = take_span(bytes, signed_envelope())?;
+        params.ear_point = take_span(bytes, signed_envelope())?;
+        params.ear_carriage = take_span(bytes, signed_envelope())?;
+        params.nose = Nose::from_code(take_byte(bytes)?);
+        params.feet = Feet::from_code(take_byte(bytes)?);
+        params.whiskers = take_span(bytes, signed_envelope())?;
+        params.horn = Horn::from_code(take_byte(bytes)?);
         params.sanitize();
         Ok(params)
     }
@@ -1013,6 +1331,68 @@ mod tests {
             let json = serde_json::to_string(&family).expect("serialises");
             assert_eq!(json, format!("\"{}\"", family.name()));
         }
+    }
+
+    #[test]
+    fn a_family_s_pupils_come_with_its_rolls() {
+        let rolled = |seed: i64| {
+            let mut record = crate::AvatarRecord::new(
+                "Beast",
+                crate::Archetype::Quadruped(QuadrupedParams::default()),
+            );
+            record.reroll(seed);
+            match record.archetype {
+                crate::Archetype::Quadruped(params) => params,
+                _ => unreachable!("a quadruped rolls a quadruped"),
+            }
+        };
+        let mut crosses = 0;
+        for seed in 0..300 {
+            let params = rolled(seed);
+            match params.hybrid {
+                None => assert_eq!(params.pupil, Pupil::of(params.family), "seed {seed}"),
+                Some(other) => {
+                    crosses += 1;
+                    assert!(
+                        [Pupil::of(params.family), Pupil::of(other)].contains(&params.pupil),
+                        "seed {seed}: a cross took a pupil neither parent has"
+                    );
+                }
+            }
+        }
+        assert!(crosses > 10, "only {crosses} crosses in 300 rolls");
+    }
+
+    #[test]
+    fn a_family_change_hands_the_pupils_over_and_a_cross_keeps_either() {
+        let mut params = QuadrupedParams::default();
+        params.set_kind(Family::Cat, None, 0.0);
+        assert_eq!(params.pupil, Pupil::Slit);
+        // A cat crossed with a dog keeps the slit however the blend is
+        // dragged, since the slit is one of its families'.
+        for blend in [0.2, 0.5, 0.8] {
+            params.set_kind(Family::Cat, Some(Family::Dog), blend);
+            assert_eq!(params.pupil, Pupil::Slit, "at a blend of {blend}");
+        }
+        // A cross the slit belongs to neither side of takes the side it
+        // leans to.
+        params.set_kind(Family::Dog, Some(Family::Horse), 0.7);
+        assert_eq!(params.pupil, Pupil::Bar);
+        // The nose goes the same way: a cat's leather is a dog's too, so the
+        // dog-horse cross kept it; a horse alone has a soft muzzle.
+        assert_eq!(params.nose, Nose::Leather);
+        params.set_kind(Family::Horse, None, 0.0);
+        assert_eq!(params.nose, Nose::Soft);
+        for nose in Nose::ALL {
+            assert_eq!(Nose::named(nose.name()), nose);
+            assert_eq!(Nose::from_code(nose.code()), nose);
+        }
+        for pupil in Pupil::ALL {
+            assert_eq!(Pupil::named(pupil.name()), pupil);
+            assert_eq!(Pupil::from_code(pupil.code()), pupil);
+        }
+        assert_eq!(Pupil::named("star"), Pupil::Round);
+        assert_eq!(Pupil::from_code(200), Pupil::Round);
     }
 
     #[test]

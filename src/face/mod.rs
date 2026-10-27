@@ -19,7 +19,11 @@
 //!   both write poses rather than geometry.
 //! - [`canon`] is the ruler the rest are authored against — measured landmark
 //!   spans rather than plan numbers.
+//!
+//! A beast's head takes none of that: [`beast`] shapes it onto the head its
+//! plan declares (#367).
 
+pub mod beast;
 pub mod blink;
 pub mod canon;
 mod curve;

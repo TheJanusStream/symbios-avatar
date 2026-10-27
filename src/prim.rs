@@ -113,12 +113,54 @@ pub fn sphere_rings(radius: f32, polars: &[f32], segments: usize) -> PolyMesh {
         rings.push(std::f32::consts::FRAC_PI_2);
     }
 
+    ringed(radius, rings.len(), segments, |ring, _| rings[ring])
+}
+
+/// [`sphere_rings`] with every ring free to run at its own latitude round its
+/// azimuth (#367): `rings[ring][segment]` is that ring's polar angle at that
+/// segment, in radians from the `+Z` pole.
+///
+/// **What an elliptical colour boundary needs.** A cat's slit pupil is
+/// narrow across and tall up, so the pair of rings that carries its edge
+/// has to come close to the pole at the side and far from it at the top:
+/// round rings would smear the slit's edge across the iris for the reason
+/// [`sphere_rings`] gives. Taken as they come - the caller keeps each
+/// segment's latitudes increasing, as a ring list out of order would wind
+/// faces backwards. Every ring must hold `segments` latitudes, and
+/// `segments` is held to at least three, as [`sphere_rings`] holds it; an
+/// empty list is a sphere with one ring at the equator.
+#[must_use]
+pub fn sphere_rings_warped(radius: f32, rings: &[Vec<f32>], segments: usize) -> PolyMesh {
+    let segments = segments.max(3);
+    if rings.is_empty() {
+        return ringed(radius, 1, segments, |_, _| std::f32::consts::FRAC_PI_2);
+    }
+    ringed(radius, rings.len(), segments, |ring, segment| {
+        let ring = &rings[ring];
+        ring.get(segment)
+            .or(ring.last())
+            .copied()
+            .unwrap_or(std::f32::consts::FRAC_PI_2)
+            .clamp(1e-4, std::f32::consts::PI - 1e-4)
+    })
+}
+
+/// The sphere both of the above build: `count` rings of `segments` points
+/// each, the polar angle of each given by `polar(ring, segment)`, closed by a
+/// vertex at either pole.
+fn ringed(
+    radius: f32,
+    count: usize,
+    segments: usize,
+    polar: impl Fn(usize, usize) -> f32,
+) -> PolyMesh {
     let mut mesh = PolyMesh::new();
     let front = mesh.push_uv_vertex(Vec3::Z * radius, Vec2::splat(0.5));
-    for &polar in &rings {
-        // The chart's radius, running 0 at the near pole to 0.5 at the far one.
-        let out = polar / std::f32::consts::PI * 0.5;
+    for ring in 0..count {
         for segment in 0..segments {
+            let polar = polar(ring, segment);
+            // The chart's radius, running 0 at the near pole to 0.5 at the far one.
+            let out = polar / std::f32::consts::PI * 0.5;
             let azimuth = turn(segment, segments);
             let (sin, cos) = azimuth.sin_cos();
             mesh.push_uv_vertex(
@@ -137,7 +179,7 @@ pub fn sphere_rings(radius: f32, polars: &[f32], segments: usize) -> PolyMesh {
     for segment in 0..segments {
         mesh.push_face([front, at(0, segment), at(0, segment + 1)]);
     }
-    for ring in 0..rings.len() - 1 {
+    for ring in 0..count - 1 {
         for segment in 0..segments {
             mesh.push_face([
                 at(ring, segment),
@@ -147,7 +189,7 @@ pub fn sphere_rings(radius: f32, polars: &[f32], segments: usize) -> PolyMesh {
             ]);
         }
     }
-    let last = rings.len() - 1;
+    let last = count - 1;
     for segment in 0..segments {
         mesh.push_face([back, at(last, segment + 1), at(last, segment)]);
     }

@@ -476,6 +476,16 @@ fn main() {
     if let Some(seed) = seed {
         record.reroll(seed);
     }
+    // A horn, which no roll gives (#367): `--unicorn` puts one on a beast.
+    if args.iter().any(|arg| arg == "--unicorn") {
+        match &mut record.archetype {
+            Archetype::Quadruped(params) => params.horn = symbios_avatar::Horn::Unicorn,
+            _ => {
+                eprintln!("--unicorn horns a quadruped: add --quadruped");
+                std::process::exit(2);
+            }
+        }
+    }
 
     // Six numbers, in the order the axes are declared: nose, its width, brow,
     // mouth, its width, ears. Set on the record rather than through a config
@@ -849,6 +859,10 @@ fn main() {
     // deform identically to a good one at rest and under a head turn — and only
     // turning the PIVOT can (#135).
     let jaw = value("--jaw").and_then(|degrees| degrees.parse::<f32>().ok());
+    // How far a beast's tongue hangs out, `0..=1`; with `--jaw`, a pant (#367).
+    let tongue = value("--tongue")
+        .and_then(|share| share.parse::<f32>().ok())
+        .unwrap_or(0.0);
     // How far the brows are raised, in degrees; negative lowers them. Same
     // instrument-first argument as `--jaw` one slice later (#215).
     let brows = value("--brows").and_then(|degrees| degrees.parse::<f32>().ok());
@@ -906,6 +920,7 @@ fn main() {
         pass,
         gaze,
         jaw,
+        tongue,
         brows,
         corners,
         expression,
@@ -917,8 +932,11 @@ fn main() {
         grow_clumps(&mut avatar, &record);
     }
     let mandible = jaw_bone(&avatar.rig, &record.skeleton());
-    if (jaw.is_some() || jawbind) && mandible.is_none() {
-        eprintln!("this body has no jaw bone: --jaw and --jawbind need a humanoid");
+    let beast_jaw = avatar.parts.beast.is_some();
+    if (jawbind && mandible.is_none()) || (jaw.is_some() && mandible.is_none() && !beast_jaw) {
+        eprintln!(
+            "this body has no jaw bone: --jawbind needs a humanoid, --jaw a humanoid or a beast"
+        );
         std::process::exit(1);
     }
     if args.iter().any(|arg| arg == "--jawsweep") {
@@ -941,7 +959,8 @@ fn main() {
     // the instrument the creature work is judged by. Every other flag is
     // ignored, the build's own overrides included - hair, complexion, dress,
     // tier - because each tile is its own record built as it rolled; only the
-    // pass, `--seed` (the first roll), `--to-scale` and `--family` carry.
+    // pass, `--seed` (the first roll), `--to-scale`, `--family` and
+    // `--portrait` carry.
     if let Some(given) = value("--gallery") {
         let Some(count) = given.parse::<usize>().ok().filter(|&count| count > 0) else {
             eprintln!("--gallery takes how many rolls to draw, at least one, not `{given}`");
@@ -975,12 +994,15 @@ fn main() {
             _ => Archetype::default(),
         };
         let to_scale = args.iter().any(|arg| arg == "--to-scale");
+        // `--portrait`: each tile the head alone, from the front three
+        // quarters, which is where a face is judged (#367).
+        let portrait = args.iter().any(|arg| arg == "--portrait");
         gallery(
             &plan,
             seed.unwrap_or(1),
             count,
             show.pass,
-            to_scale,
+            Tiles { to_scale, portrait },
             &keep,
             &out,
         );
@@ -1217,8 +1239,11 @@ struct Show {
     pass: Option<String>,
     /// How far to one side the body is looking, in degrees, if at all.
     gaze: Option<f32>,
-    /// How far the mouth is opened, in degrees, if at all.
+    /// How far the mouth is opened, in degrees, if at all. A beast's jaw is
+    /// its own part on its own joint (#367), and opens through its own pose.
     jaw: Option<f32>,
+    /// How far a beast's tongue is turned out over its lip, `0..=1` (#367).
+    tongue: f32,
     /// How far the brows are raised (or, negative, lowered), in degrees, if at
     /// all. The same instrument argument as `jaw`: each brow has a joint
     /// and a territory, and only rotating the joints can show whether the
@@ -1459,6 +1484,12 @@ impl Subject {
         if let (Some(degrees), Some(jaw)) = (self.show.jaw, self.jaw) {
             pose.rotations[jaw.pivot] = Quat::from_rotation_x(degrees.to_radians());
         }
+        if let Some(beast) = &self.avatar.parts.beast {
+            let open = self.show.jaw.map_or(0.0, |degrees| {
+                degrees.to_radians() / symbios_avatar::face::beast::jaw::MAX_OPEN
+            });
+            beast.jaw.pose(&mut pose, open, self.show.tongue);
+        }
         // About the lateral axis at each brow's pivot on the skull's own axis,
         // NEGATIVE because positive x-rotation drops what is forward of the
         // axis (the jaw's comment above) and a raise lifts it: the forehead
@@ -1558,8 +1589,14 @@ impl Subject {
             Focus::Head => {
                 let deformed =
                     posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+                // A person's neck comes along, because a head with no neck
+                // in shot says nothing about the junction. A beast's does
+                // not: it is as long as the head and rises from the withers,
+                // and framing it shrinks the face to a third of the view
+                // (#367).
+                let neck = self.avatar.rig.anatomy.human_head();
                 for (vertex, zone) in parts.zones.iter().enumerate() {
-                    if matches!(zone, Zone::Head | Zone::Neck) {
+                    if *zone == Zone::Head || (neck && *zone == Zone::Neck) {
                         hold(deformed[vertex]);
                     }
                 }
@@ -1752,6 +1789,30 @@ impl Subject {
         };
         let frames = [of(0.0, 0.0), of(FRAC_PI_4, 0.0), of(FRAC_PI_2, 0.0), fourth];
         Some(self.render(pose, closure, &frames))
+    }
+
+    /// One three-quarter view of the head alone, for a gallery of faces
+    /// (#367): framed on the head zone at rest, so a long neck does not shrink
+    /// the face the tile is for, as `close_up`'s neck does.
+    fn portrait(&self) -> Option<Frame> {
+        let parts = &self.avatar.parts;
+        let posed = self.standing().forward(&self.avatar.rig);
+        let deformed = posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+        let (lo, hi) = parts
+            .zones
+            .iter()
+            .zip(&deformed)
+            .filter(|(zone, _)| **zone == Zone::Head)
+            .fold(
+                (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                |(lo, hi), (_, &point)| (lo.min(point), hi.max(point)),
+            );
+        (lo.x <= hi.x).then(|| Frame {
+            turn: PORTRAIT_TURN,
+            pitch: PORTRAIT_PITCH,
+            centre: (lo + hi) * 0.5,
+            span: (hi - lo).max_element() * CLOSE_MARGIN,
+        })
     }
 
     /// Draws one pose from four frames into a two-by-two sheet.
@@ -2898,12 +2959,20 @@ fn items<'a>(
             uvs: &drawn.mesh.uvs,
             mask: symbios_avatar::strand_mask(),
         });
+        // A skin that carries colours of its own over its atlas - a beast's
+        // mouth, its tongue (#367) - is drawn with them, as a consumer that
+        // multiplies vertex colour into the atlas draws it. An overlay tint
+        // asked for by an instrument takes their place, and a skin all white
+        // is drawn from its atlas alone, exactly as it always was.
+        let own = (drawn.kind == MeshKind::Skin
+            && drawn.mesh.colours.iter().any(|&colour| colour != Vec3::ONE))
+        .then_some(drawn.mesh.colours.as_slice());
         items.push(Item {
             positions: &drawn.mesh.positions,
             faces: &drawn.mesh.faces,
             normals: Some(&drawn.mesh.normals),
             paint,
-            tint: tint.as_deref(),
+            tint: tint.as_deref().or(own),
             cutout,
             material,
         });
@@ -2918,8 +2987,10 @@ fn items<'a>(
 /// Each roll fills its own tile, standing on the tile's ground line, because
 /// a shape is what a silhouette is judged on - and the stature axis spans more
 /// than a factor of seven, which at one scale leaves the small rolls a few
-/// pixels long. `to_scale` draws them all at the largest body's scale instead,
-/// for the other half of telling families apart: their size. Seeds run left to
+/// pixels long. `tiles.to_scale` draws them all at the largest body's scale
+/// instead, for the other half of telling families apart: their size, and
+/// `tiles.portrait` draws each head alone, from the front three quarters
+/// (#367). Seeds run left to
 /// right, top to bottom, and the tile is the seed's: a roll that fails to
 /// build leaves its tile blank rather than shifting every later one. Each is
 /// built with the default config, as it rolled.
@@ -2933,7 +3004,7 @@ fn gallery(
     first: i64,
     count: usize,
     pass: Option<String>,
-    to_scale: bool,
+    tiles: Tiles,
     keep: &dyn Fn(&AvatarRecord) -> bool,
     out: &std::path::Path,
 ) {
@@ -2991,13 +3062,25 @@ fn gallery(
             eprintln!("seed {} did not build", records[index].0);
             continue;
         };
-        // The ground a twentieth of a tile above the bottom edge.
-        let span = if to_scale { largest } else { subject.reach } * MARGIN;
-        let frame = Frame {
-            turn: FRAC_PI_2,
-            pitch: 0.0,
-            centre: Vec3::new(subject.middle.x, span * 0.45, subject.middle.z),
-            span,
+        let frame = if tiles.portrait {
+            let Some(frame) = subject.portrait() else {
+                eprintln!("seed {} has no head to frame", records[index].0);
+                continue;
+            };
+            frame
+        } else {
+            // The ground a twentieth of a tile above the bottom edge.
+            let span = if tiles.to_scale {
+                largest
+            } else {
+                subject.reach
+            } * MARGIN;
+            Frame {
+                turn: FRAC_PI_2,
+                pitch: 0.0,
+                centre: Vec3::new(subject.middle.x, span * 0.45, subject.middle.z),
+                span,
+            }
         };
         let view = subject.view(&subject.standing(), 0.0, &frame);
         // A tile no roll fills takes the backdrop's colour rather than black:
@@ -3017,6 +3100,24 @@ fn gallery(
         seed - 1
     );
 }
+
+/// How a gallery frames its tiles.
+#[derive(Clone, Copy)]
+struct Tiles {
+    /// Every roll at one scale, the largest's, rather than each filling its
+    /// tile.
+    to_scale: bool,
+    /// The head alone, from the front three quarters, rather than the whole
+    /// body side on (#367).
+    portrait: bool,
+}
+
+/// How far round from the face a portrait looks: the front three quarters.
+const PORTRAIT_TURN: f32 = 0.55;
+
+/// How far down a portrait looks, in radians: a little, as at a beast
+/// standing below the eye.
+const PORTRAIT_PITCH: f32 = 0.25;
 
 /// A wall behind the subject, square to whichever way the camera is looking.
 ///

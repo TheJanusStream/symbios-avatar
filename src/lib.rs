@@ -161,8 +161,9 @@ pub use hair::{
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
 pub use plan::{
-    Anatomy, Archetype, BodyPlan, Category, CompositePriors, Composites, Family, FootKind,
-    HeadKind, HumanoidParams, Limb, QuadrupedParams, TrunkKind, Zone, ZoneSet,
+    Anatomy, Archetype, BeastFeet, BeastHead, BodyPlan, Category, CompositePriors, Composites,
+    Family, Feet, FootKind, HeadKind, Horn, HumanoidParams, Limb, Nose, Pupil, QuadrupedParams,
+    TrunkKind, Zone, ZoneSet,
 };
 pub use record::{AvatarRecord, GENERATOR_VERSION, LockSet, ProfileRecord, ShareCodeError};
 pub use rig::{
@@ -320,6 +321,16 @@ pub fn build_body(
         // between the column and the shoulder, smooth by construction and so
         // run after the fairing rather than relaxed by it. See `face::neck`.
         face::fill_trapezius(&mut mesh, &rig, traits);
+        // A beast's head, shaped onto the head its plan declares (#367): the
+        // beast's counterpart of the face and skull passes above, which
+        // decline every head that is not a person's.
+        if let Some(head) = &skeleton.beast_head {
+            mesh = face::beast::shape(&mesh, &rig, head);
+        }
+        // And its feet, onto the paws or hooves it declares.
+        if let Some(feet) = &skeleton.beast_feet {
+            mesh = extremity::beast::shape(&mesh, &rig, feet);
+        }
         // And the feet: the cage's level run is a slab, and the wedge and the
         // bend toward the big toe are carved onto it (#306). Last, because it
         // scales height about the ground the sole already stands on.

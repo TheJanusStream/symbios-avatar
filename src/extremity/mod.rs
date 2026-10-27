@@ -11,6 +11,7 @@
 //! hair are built in the head's, so a renderer parents each part to its joint
 //! and it follows the body for free.
 
+pub mod beast;
 pub mod foot;
 pub mod hand;
 

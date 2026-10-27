@@ -218,6 +218,14 @@ pub struct Parts {
     /// Its face, if it is the kind of body that wears one.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub features: Option<Features>,
+    /// What a beast's head wears (#367): its ears, its jaw and its tongue,
+    /// on the head its plan declared.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
+    pub beast: Option<face::beast::BeastFace>,
+    /// A colour over the atlas at each body vertex, or empty for none: a
+    /// beast's palate, which its shut jaw hides (#367).
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
+    pub tint: Vec<Vec3>,
     /// Its hair, grown in its head joint's own space.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub hair: Option<Growth>,
@@ -397,16 +405,20 @@ impl Avatar {
         // from it too, and `Skull::measure` is 61% of a geometry build (#89) —
         // so measuring a second one for the hair would be the single most
         // expensive line in this function.
-        let skull = Skull::measure(&body, &rig);
+        //
+        // **A beast's head is not measured at all** (#367): its eyes are
+        // seated with its skull, which its plan declared, and nothing else
+        // that reads a canon - the carve, the mouth, the features, the hair -
+        // is built on a head that is not a person's (#365).
+        let skull = rig
+            .anatomy
+            .human_head()
+            .then(|| Skull::measure(&body, &rig))
+            .flatten();
         let canon = skull
             .as_ref()
             .map(|skull| Canon::measure(&rig, skull, &record.eyes));
-        // A face is carved into a human skull and nothing else (#365): the
-        // canon is still measured on a beast's head, because its eyes are
-        // seated against it until the creature work gives it its own (#367).
-        if let Some(canon) = &canon
-            && rig.anatomy.human_head()
-        {
+        if let Some(canon) = &canon {
             face::carve_face(&mut body, &rig, canon, &face_params);
         }
         // The chest, on the same rule as the face and for the same reason: it
@@ -440,9 +452,20 @@ impl Avatar {
             .filter(|_| rig.anatomy.human_head())
             .and_then(|canon| face::mouth::open(&mut body, &rig, canon, &face_params));
         let body = body;
-        let mut eyes = canon
+        // A beast's eyes and ears are seated on the head its plan declared
+        // (#367), framed on the cranium's joint.
+        let crown = skeleton
+            .beast_head
             .as_ref()
-            .map(|canon| Eyes::build(&rig, &body, canon, &record.eyes));
+            .and_then(|head| Some((head, cranium(&rig, head)?)));
+        let mut eyes = match crown {
+            Some((head, joint)) => Some(Eyes::seat(&rig, joint, head, &record.eyes)),
+            None => canon
+                .as_ref()
+                .map(|canon| Eyes::build(&rig, &body, canon, &record.eyes)),
+        };
+        let mut beast =
+            crown.map(|(head, joint)| face::beast::BeastFace::build(&rig, joint, head, &body));
 
         let mut weights = {
             let mut on_the_wall = body.clone();
@@ -534,7 +557,11 @@ impl Avatar {
         // different third on every body. Measured again here rather than reused
         // from above, because an ear is conformed to the surface it sits on and
         // that surface now has a face carved into it.
-        let skull = Skull::measure(&body, &rig);
+        let skull = rig
+            .anatomy
+            .human_head()
+            .then(|| Skull::measure(&body, &rig))
+            .flatten();
         let mut features = rig
             .anatomy
             .human_head()
@@ -560,13 +587,17 @@ impl Avatar {
         if let Some(eyes) = &mut eyes {
             eyes.rig(&mut rig);
         }
+        // And a beast's ears and jaw theirs, for the same reason (#367).
+        if let Some(beast) = &mut beast {
+            beast.rig(&mut rig);
+        }
 
         // The attached parts exist BEFORE the body is unwrapped, so the packer
         // can reserve them regions of the same atlas rather than being asked
         // afterwards for whatever the body did not want. The parts are the half
         // that needs the texels — a face is judged on its nose, its mouth and
         // its ears, and none of those is part of the body mesh.
-        let mut wanted: Vec<Vec2> = attached_meshes(&features, &extremities, &eyes)
+        let mut wanted: Vec<Vec2> = attached_meshes(&features, &extremities, &eyes, &beast)
             .map(|(mesh, zone)| chart_request(mesh, zone, &config.uv))
             .collect();
         // One more region when there is a mouth: its pocket cannot share the
@@ -583,7 +614,13 @@ impl Avatar {
             face::mouth::chart_interior(&mut charts, mouth, &body, rect);
         }
         let charts = charts;
-        place_charts(&mut features, &mut extremities, &mut eyes, &reserved);
+        place_charts(
+            &mut features,
+            &mut extremities,
+            &mut eyes,
+            &mut beast,
+            &reserved,
+        );
 
         // Cut from the body, so charted where the body is charted.
         let mut outfit = if rig.anatomy.human_trunk() && config.dressed {
@@ -610,7 +647,7 @@ impl Avatar {
 
         // Baked in body space, which is where a painter wants them: a nose is
         // then painted by the same complexion arithmetic as the cheek beside it.
-        let placed = attached_in_body(&rig, &features, &extremities, &eyes);
+        let placed = attached_in_body(&rig, &features, &extremities, &eyes, &beast);
         let borrowed: Vec<(&PolyMesh, Zone)> =
             placed.iter().map(|(mesh, zone)| (mesh, *zone)).collect();
         // The mouth's interior, as a per-vertex scalar the painter can read:
@@ -630,6 +667,42 @@ impl Avatar {
             inside
         };
         let geometry = texture::bake(&body, &charts, &borrowed, &inside, config.atlas);
+        // A beast's palate (#367): the head's skin its shut jaw covers, which
+        // an open one shows, tinted as the inside of a mouth. **By vertex,
+        // not in the atlas**: the palate shares its chart with the cheek and
+        // the throat, and a colour painted there leaks across the chart's
+        // seams into skin that shows, where a person's pocket has a chart of
+        // its own. The head's own skin only - the throat behind the jaw is
+        // not refined, and a tint on a facet that large spreads out from
+        // under the jaw.
+        // And its nose's leather, its claws and its hooves, darker than the
+        // skin they grow from - P3's coat is where their own colours come
+        // from (#368).
+        let tint = match (&beast, &skeleton.beast_head) {
+            (Some(beast), Some(head)) => {
+                let feet = skeleton.beast_feet.map_or_else(
+                    || vec![None; body.vertex_count()],
+                    |feet| crate::extremity::beast::tint(&body, &rig, &feet),
+                );
+                beast
+                    .jaw
+                    .covers(&rig, &body, head.radius)
+                    .into_iter()
+                    .zip(&zones)
+                    .zip(&body.positions)
+                    .zip(feet)
+                    .map(|(((covered, &zone), &point), foot)| match zone {
+                        Zone::Head if covered => face::beast::jaw::INSIDE,
+                        Zone::Head if head.on_leather(head.local(point), 0.02 * head.radius) => {
+                            face::beast::LEATHER
+                        }
+                        Zone::Extremity(_) => foot.unwrap_or(Vec3::ONE),
+                        _ => Vec3::ONE,
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
         // The body's composition reaches the painter here, and #165 is where
         // that plumbing arrived: until then the skin knew a complexion and
         // nothing about the body wearing it, so a lean body and a heavy one
@@ -757,6 +830,8 @@ impl Avatar {
             hair,
             far_hair,
             features,
+            beast,
+            tint,
             extremities,
             outfit,
             eyes,
@@ -843,7 +918,7 @@ impl Avatar {
                 globe
                     .positions
                     .iter()
-                    .map(|&point| face::eye::iris_of(point - eye.pivot, &eyes.params))
+                    .map(|&point| eye.colour_at(point - eye.pivot, &eyes.params))
                     .collect(),
             );
             // **Bound to its OWN joint, before the append** (#235). Both globes
@@ -858,6 +933,17 @@ impl Avatar {
             // assigns every vertex it is given.
             globe.bind_rigidly(eye.globe_joint.unwrap_or(eyes.head) as u16);
             globes.append(&globe);
+        }
+
+        // A beast's whiskers and horn (#367), in the draw that can colour
+        // them white and ivory on any coat - see `face::beast::adorn` - and
+        // held by the head.
+        if let Some(beast) = &self.parts.beast {
+            let mut worn = beast.adornments.assembled();
+            if !worn.faces.is_empty() {
+                worn.bind_rigidly(eyes.head as u16);
+                globes.append(&worn);
+            }
         }
 
         if globes.faces.is_empty() {
@@ -953,6 +1039,23 @@ impl Avatar {
                 mesh.set_normals(mesh.vertex_normals());
                 mesh.paint(Vec3::ONE);
                 let mut placed = mesh.transformed(to_body);
+                placed.bind_rigidly(joint as u16);
+                skin.append(&placed.split_uv_seams());
+            }
+        }
+
+        // A beast's parts, each whole on its own joint (#367): drawn with
+        // the skin they grow from. A part that carries colours of its own -
+        // the inside of a jaw, a tongue - keeps them over the skin.
+        if let Some(beast) = &self.parts.beast {
+            for (part, joint) in beast.parts() {
+                let mut mesh = part.clone();
+                mesh.set_normals(mesh.vertex_normals());
+                if mesh.colours.is_empty() {
+                    mesh.paint(Vec3::ONE);
+                }
+                let mut placed =
+                    mesh.transformed(Mat4::from_translation(self.rig.joints[joint].position));
                 placed.bind_rigidly(joint as u16);
                 skin.append(&placed.split_uv_seams());
             }
@@ -1096,7 +1199,11 @@ impl Avatar {
         mesh.set_uvs(keep(charts.uvs.clone(), &used));
         mesh.set_normals(keep(charts.gather(&normals), &used));
         mesh.set_skin(keep(charts.gather(&self.parts.weights.vertices), &used));
-        mesh.paint(Vec3::ONE);
+        if self.parts.tint.len() == self.parts.body.vertex_count() {
+            mesh.set_colours(keep(charts.gather(&self.parts.tint), &used));
+        } else {
+            mesh.paint(Vec3::ONE);
+        }
         mesh
     }
 
@@ -1133,6 +1240,7 @@ fn attached_meshes<'a>(
     features: &'a Option<Features>,
     extremities: &'a Extremities,
     eyes: &'a Option<Eyes>,
+    beast: &'a Option<face::beast::BeastFace>,
 ) -> impl Iterator<Item = (&'a PolyMesh, Zone)> {
     features
         .iter()
@@ -1149,6 +1257,13 @@ fn attached_meshes<'a>(
         .chain(
             eyes.iter()
                 .flat_map(|eyes| eyes.lids().map(|(mesh, _)| (mesh, Zone::Head))),
+        )
+        // A beast's parts after the lids, for the lids' reason: a body
+        // without them is handed every region it was before (#367).
+        .chain(
+            beast
+                .iter()
+                .flat_map(|beast| beast.parts().map(|(mesh, _)| (mesh, Zone::Head))),
         )
 }
 
@@ -1175,13 +1290,19 @@ fn place_charts(
     features: &mut Option<Features>,
     extremities: &mut Extremities,
     eyes: &mut Option<Eyes>,
+    beast: &mut Option<face::beast::BeastFace>,
     reserved: &[Rect],
 ) {
     let meshes = features
         .iter_mut()
         .flat_map(|face| face.meshes_mut())
         .chain(extremities.all_mut().map(|part| &mut part.mesh))
-        .chain(eyes.iter_mut().flat_map(Eyes::lids_mut));
+        .chain(eyes.iter_mut().flat_map(Eyes::lids_mut))
+        .chain(
+            beast
+                .iter_mut()
+                .flat_map(face::beast::BeastFace::meshes_mut),
+        );
     for (mesh, rect) in meshes.zip(reserved) {
         *mesh = mesh.uvs_within(rect.min, rect.size());
     }
@@ -1197,6 +1318,7 @@ fn attached_in_body(
     features: &Option<Features>,
     extremities: &Extremities,
     eyes: &Option<Eyes>,
+    beast: &Option<face::beast::BeastFace>,
 ) -> Vec<(PolyMesh, Zone)> {
     let mut placed = Vec::new();
     if let Some(face) = features {
@@ -1219,7 +1341,21 @@ fn attached_in_body(
         let to_body = Mat4::from_translation(rig.joints[part.joint].position);
         placed.push((part.mesh.transformed(to_body), Zone::Extremity(part.limb)));
     }
+    // A beast's parts about their own joints (#367).
+    for (mesh, joint) in beast.iter().flat_map(face::beast::BeastFace::parts) {
+        let to_body = Mat4::from_translation(rig.joints[joint].position);
+        placed.push((mesh.transformed(to_body), Zone::Head));
+    }
     placed
+}
+
+/// The joint a beast's declared head is framed on: the head joint standing
+/// where the declaration's origin is, the cranium's (#367).
+fn cranium(rig: &Rig, head: &crate::plan::BeastHead) -> Option<usize> {
+    rig.in_zone(Zone::Head).into_iter().min_by(|&a, &b| {
+        let off = |joint: usize| rig.joints[joint].position.distance(head.origin);
+        off(a).total_cmp(&off(b))
+    })
 }
 
 /// A default humanoid, for tools with nothing better to show.

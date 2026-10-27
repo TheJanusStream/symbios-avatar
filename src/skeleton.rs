@@ -11,7 +11,7 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::plan::{Anatomy, Zone};
+use crate::plan::{Anatomy, BeastFeet, BeastHead, Zone};
 
 /// One key ball of the skeleton: where the surface passes and how wide it is.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -290,6 +290,19 @@ pub struct Skeleton {
     /// them that did not stand on four legs was treated as one.
     #[serde(default)]
     pub anatomy: Anatomy,
+    /// The head a beast's plan declares (#367), which the build shapes the
+    /// head's surface onto and seats the eyes against; `None` on every other
+    /// body, a person's head being shaped by `face::skull` instead.
+    ///
+    /// Defaulted at the field, for [`Self::anatomy`]'s reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beast_head: Option<BeastHead>,
+    /// What a beast's feet are shaped into (#367): `None` on every other
+    /// body, whose feet are a person's or built as parts.
+    ///
+    /// Defaulted at the field, for [`Self::anatomy`]'s reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beast_feet: Option<BeastFeet>,
 }
 
 impl Skeleton {

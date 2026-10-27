@@ -23,6 +23,7 @@ use crate::prim;
 use crate::rig::{Rig, Role, landmark};
 
 use super::canon::Canon;
+use crate::plan::{BeastHead, Pupil};
 
 /// How a body's eyes are shaped and set.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -182,6 +183,21 @@ pub struct Eye {
     /// wants the sign of `x` rather than a name; a name and a sign can only
     /// ever disagree about what to call the eye.
     pub side: f32,
+    /// How the eye is turned at rest, in head-local space: from looking down
+    /// the head's `+Z` to where it looks (#367).
+    ///
+    /// The identity on a person, whose eyes look where the face does. A
+    /// beast's are turned out, a horse's most of a right angle - so a lid
+    /// closes about the eye's own across rather than the head's, and a glance
+    /// is measured from where the eye rests rather than from the face's
+    /// forward. The globe and lids are built already turned; the joints turn
+    /// them on from there.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub rest: Quat,
+    /// Where the globe's colours change (#367): a person's round pupil and
+    /// narrow iris, or a beast's.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub iris: Iris,
 }
 
 impl Eye {
@@ -222,7 +238,13 @@ impl Eye {
         } else {
             -Self::LOWER_SWING
         };
-        Quat::from_rotation_x(swing * closure)
+        let lid = Quat::from_rotation_x(swing * closure);
+        // About the eye's own across, on an eye that rests turned (#367).
+        if self.rest == Quat::IDENTITY {
+            lid
+        } else {
+            self.rest * lid * self.rest.inverse()
+        }
     }
 
     /// The transform placing a lid for a given closure.
@@ -243,7 +265,8 @@ impl Eye {
         if toward == Vec3::ZERO {
             return Quat::IDENTITY;
         }
-        let (axis, angle) = Quat::from_rotation_arc(landmark::FORWARD, toward).to_axis_angle();
+        let (axis, angle) =
+            Quat::from_rotation_arc(self.rest * landmark::FORWARD, toward).to_axis_angle();
         Quat::from_axis_angle(axis, angle.min(limit.max(0.0)))
     }
 
@@ -285,7 +308,7 @@ impl Eye {
             let mut azimuth = -std::f32::consts::PI;
             while azimuth < std::f32::consts::PI {
                 let (sin, cos) = azimuth.sin_cos();
-                let toward = Vec3::new(sin * band, elevation.sin(), cos * band);
+                let toward = self.rest * Vec3::new(sin * band, elevation.sin(), cos * band);
                 let on_globe = self.pivot + toward * self.radius;
                 whole += band;
                 let hidden = skin.is_some_and(|(mesh, head)| mesh.contains(head + on_globe))
@@ -305,12 +328,23 @@ impl Eye {
             elevation += APERTURE_STEP;
         }
 
-        let axis = moment.normalize_or(Vec3::Z);
+        let axis = self.rest.inverse() * moment.normalize_or(Vec3::Z);
         Aperture {
             share: bare / whole.max(f32::EPSILON),
             centre: (axis.x.atan2(axis.z), axis.y.clamp(-1.0, 1.0).asin()),
             span,
         }
+    }
+
+    /// The globe's colour at `offset` from its pivot, in head-local space:
+    /// [`iris_of`], drawn about where this eye looks and in its own
+    /// [`Iris`].
+    #[must_use]
+    pub fn colour_at(&self, offset: Vec3, params: &EyeParams) -> Vec3 {
+        if self.rest == Quat::IDENTITY {
+            return self.iris.colour(offset, params);
+        }
+        self.iris.colour(self.rest.inverse() * offset, params)
     }
 
     /// Every part of this eye as one mesh, posed at the given closure.
@@ -443,6 +477,25 @@ const PROUD: f32 = 0.003;
 /// 5 mm, and this is what keeps both ends of the axis inside it.
 const PROUD_RANGE: f32 = 0.0018;
 
+/// The turn from looking down `+Z` to looking along `gaze`, with the eye's
+/// across held level at rest (#367's critic).
+///
+/// **What keeps a horse's bar pupil a bar.** Turned the shortest way, an
+/// eye on the side of a nodding head carries the nod into its pupil, and a
+/// horse's bar, which stays level as the head drops to graze, came out
+/// tipped a fifth of a turn. Held level, the bar is across the world and a
+/// slit up it, and the lids close up and down it.
+fn level(gaze: Vec3) -> Quat {
+    let ahead = gaze.normalize_or(Vec3::Z);
+    let up = (Vec3::Y - ahead * ahead.y).normalize_or(Vec3::Y);
+    Quat::from_mat3(&glam::Mat3::from_cols(up.cross(ahead), up, ahead))
+}
+
+/// How far a beast's `depth` axis sinks or raises its globe, as a share of
+/// the globe's radius at either end of the axis.
+/// Provenance: **tuned by render** (#367).
+const BEAST_DEPTH: f32 = 0.25;
+
 impl Eyes {
     /// Builds a pair of eyes, seated in a head that has already been built.
     ///
@@ -508,9 +561,57 @@ impl Eyes {
         // carries; nothing here is asymmetric but the name.
         let pivot = Vec3::new(canon.apart, canon.level, skin - radius + proud);
         Self {
-            left: eye(1.0, pivot, radius, params),
-            right: eye(-1.0, Vec3::new(-pivot.x, pivot.y, pivot.z), radius, params),
+            left: eye(1.0, pivot, Quat::IDENTITY, radius, params, &Iris::HUMAN),
+            right: eye(
+                -1.0,
+                Vec3::new(-pivot.x, pivot.y, pivot.z),
+                Quat::IDENTITY,
+                radius,
+                params,
+                &Iris::HUMAN,
+            ),
             head: canon.head,
+            params: *params,
+        }
+    }
+
+    /// Seats a beast's eyes where its plan declared them (#367).
+    ///
+    /// **No canon is measured on a beast's head:** its eyes were placed with
+    /// its skull ([`BeastHead`]) rather than found on it, so this reads the
+    /// seat and turns it into the head joint's space. `head` is the joint
+    /// the pair hangs from - the cranium's, which is the declared head's
+    /// origin.
+    ///
+    /// The record's eye axes keep their meaning: `size` scales the globe
+    /// about the seat's own, `depth` sinks it along its gaze or raises it,
+    /// `aperture` opens the lids as on a person, and the colours are the
+    /// iris's. `spacing` is a person's: `eyeSet` sets a beast's.
+    #[must_use]
+    pub fn seat(rig: &Rig, head: usize, beast: &BeastHead, params: &EyeParams) -> Self {
+        let seat = beast.eye;
+        let origin = rig.joints[head].position;
+        let radius = seat.radius * (0.85 + 0.30 * params.size.clamp(0.0, 1.0));
+        let gaze = seat.facing * Vec3::Z;
+        let sunk = seat.centre - gaze * (BEAST_DEPTH * radius * params.depth.clamp(-1.0, 1.0));
+        let iris = Iris::beast(seat.pupil);
+        // The right eye is the left's reflection across the midline: its
+        // centre's `x` negated, and its gaze with it.
+        let mirror = Vec3::new(-1.0, 1.0, 1.0);
+        let place = |centre: Vec3, gaze: Vec3, side: f32| {
+            eye(
+                side,
+                beast.body(centre) - origin,
+                level(beast.turn * gaze),
+                radius,
+                params,
+                &iris,
+            )
+        };
+        Self {
+            left: place(sunk, gaze, 1.0),
+            right: place(sunk * mirror, gaze * mirror, -1.0),
+            head,
             params: *params,
         }
     }
@@ -685,7 +786,7 @@ impl Eyes {
             let Some(direction) = (outer.inverse() * toward).try_normalize() else {
                 continue;
             };
-            let aim = Quat::from_rotation_arc(landmark::FORWARD, direction);
+            let aim = Quat::from_rotation_arc(eye.rest * landmark::FORWARD, direction);
             let (axis, angle) = aim.to_axis_angle();
             let angle = angle.rem_euclid(std::f32::consts::TAU);
             // Folded to `-PI..=PI` for the same reason `level_feet` folds its
@@ -820,37 +921,184 @@ const EDGE: f32 = 0.0244;
 /// rings and Gouraud between them; the limbal ring is [`EyeParams::ring`].
 #[must_use]
 pub fn iris_of(offset: Vec3, params: &EyeParams) -> Vec3 {
-    let polar = offset.normalize_or(Vec3::Z).z.clamp(-1.0, 1.0).acos();
-    if polar < PUPIL {
-        Vec3::new(0.05, 0.06, 0.08)
-    } else if polar < LIMBUS - LIMBAL {
-        let toward = ((polar - PUPIL) / (LIMBUS - LIMBAL - PUPIL)).clamp(0.0, 1.0);
-        Vec3::from(params.inner).lerp(Vec3::from(params.outer), toward)
-    } else if polar < LIMBUS {
-        Vec3::from(params.ring)
-    } else {
-        Vec3::new(0.93, 0.92, 0.90)
+    Iris::HUMAN.colour(offset, params)
+}
+
+/// The pupil's colour: a hole, and constant for the reason [`iris_of`] gives.
+const PUPIL_COLOUR: Vec3 = Vec3::new(0.05, 0.06, 0.08);
+
+/// The sclera's colour: a membrane, and constant for the same reason.
+const SCLERA_COLOUR: Vec3 = Vec3::new(0.93, 0.92, 0.90);
+
+/// Where an eye's colours change, as angles about its gaze (#367).
+///
+/// A person's pupil is round and their iris a quarter of the globe's
+/// width; a beast's iris fills nearly all of what its lids leave bare, and
+/// its pupil is the family's: a dog's round and wide, a cat's a vertical
+/// slit, a horse's a bar held level. The pupil is an ellipse in angle about
+/// the gaze, its two half-angles across (toward the eye's own `+X`) and up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
+pub struct Iris {
+    /// The pupil's half-angles, across and up, in radians: equal for a round
+    /// pupil.
+    pub pupil: (f32, f32),
+    /// The iris's half-angle, to the outside of its limbal ring.
+    pub limbus: f32,
+}
+
+/// A person's.
+impl Default for Iris {
+    fn default() -> Self {
+        Self::HUMAN
     }
 }
+
+impl Iris {
+    /// A person's: `PUPIL` round and `LIMBUS` wide, the angles the
+    /// globe's rings were laid out for before a beast had eyes.
+    pub const HUMAN: Self = Self {
+        pupil: (PUPIL, PUPIL),
+        limbus: LIMBUS,
+    };
+
+    /// A beast's, with the pupil its record names.
+    ///
+    /// The iris runs out to `BEAST_LIMBUS`, so the white of a beast's eye
+    /// shows only when it looks hard aside, as an animal's does. The pupils
+    /// are drawn large, for the epic's cute default.
+    /// Provenance: **tuned by render** (#367).
+    #[must_use]
+    pub fn beast(pupil: Pupil) -> Self {
+        let pupil = match pupil {
+            Pupil::Round => (0.27, 0.27),
+            Pupil::Slit => (0.07, 0.50),
+            Pupil::Bar => (0.42, 0.16),
+        };
+        Self {
+            pupil,
+            limbus: BEAST_LIMBUS,
+        }
+    }
+
+    /// How much wider than a person's the lids open, at the same aperture: a
+    /// beast's iris fills most of its eye, and a person's lid line drawn
+    /// over it leaves a heavy-lidded stare.
+    /// Provenance: **tuned by render** (#367).
+    fn opening(&self) -> f32 {
+        if *self == Self::HUMAN {
+            1.0
+        } else {
+            BEAST_OPENING
+        }
+    }
+
+    /// Whether the pupil is round, which a person's always is: the globe is
+    /// then laid out exactly as it was before a pupil had a shape.
+    fn round(&self) -> bool {
+        self.pupil.0 == self.pupil.1
+    }
+
+    /// The pupil's edge at `azimuth` round the gaze, as a polar angle:
+    /// `azimuth` zero across toward the eye's `+X`, a quarter turn up.
+    fn pupil_edge(&self, azimuth: f32) -> f32 {
+        if self.round() {
+            return self.pupil.0;
+        }
+        let (across, up) = self.pupil;
+        let (sin, cos) = azimuth.sin_cos();
+        ((cos / across).powi(2) + (sin / up).powi(2)).sqrt().recip()
+    }
+
+    /// The colour at `offset` from the pivot, in the eye's own frame - gaze
+    /// `+Z`, up `+Y`. See [`iris_of`] for what each band is.
+    #[must_use]
+    pub fn colour(&self, offset: Vec3, params: &EyeParams) -> Vec3 {
+        let direction = offset.normalize_or(Vec3::Z);
+        let polar = direction.z.clamp(-1.0, 1.0).acos();
+        let edge = self.pupil_edge(direction.y.atan2(direction.x));
+        if polar < edge {
+            PUPIL_COLOUR
+        } else if polar < self.limbus - LIMBAL {
+            let toward = ((polar - edge) / (self.limbus - LIMBAL - edge)).clamp(0.0, 1.0);
+            Vec3::from(params.inner).lerp(Vec3::from(params.outer), toward)
+        } else if polar < self.limbus {
+            Vec3::from(params.ring)
+        } else {
+            SCLERA_COLOUR
+        }
+    }
+}
+
+/// How much wider a beast's lids open than a person's: see [`Iris`].
+/// Provenance: **tuned by render** (#367).
+const BEAST_OPENING: f32 = 1.45;
+
+/// How far round a beast's iris reaches from its gaze, in radians.
+///
+/// Most of what its lids leave bare: an animal's eye reads as all iris and
+/// pupil, and a white showing round it reads as alarm.
+/// Provenance: **tuned by render** (#367).
+const BEAST_LIMBUS: f32 = 0.80;
 
 /// The eyeball, with a latitude ring either side of every colour boundary.
 ///
 /// The filler rings past the limbus only have to round a sphere off; nothing is
 /// drawn on them and nothing looks at them, since the back of an eye is inside a
 /// head.
-fn globe(radius: f32) -> PolyMesh {
+fn globe(radius: f32, iris: &Iris) -> PolyMesh {
     /// How many facets round the iris. Sixteen puts a 12 mm iris on a 16-gon,
     /// which is under a third of a millimetre of chord error.
     const SEGMENTS: usize = 16;
 
-    let mut polars = Vec::with_capacity(12);
-    for boundary in [PUPIL, LIMBUS - LIMBAL, LIMBUS] {
-        polars.push(boundary - EDGE * 0.5);
-        polars.push(boundary + EDGE * 0.5);
+    if *iris == Iris::HUMAN {
+        let mut polars = Vec::with_capacity(12);
+        for boundary in [PUPIL, LIMBUS - LIMBAL, LIMBUS] {
+            polars.push(boundary - EDGE * 0.5);
+            polars.push(boundary + EDGE * 0.5);
+        }
+        // Enough to be a sphere behind the iris, and no more.
+        polars.extend([0.30, 0.70, 1.2, 1.7, 2.2, 2.7]);
+        return prim::sphere_rings(radius, &polars, SEGMENTS);
     }
-    // Enough to be a sphere behind the iris, and no more.
-    polars.extend([0.30, 0.70, 1.2, 1.7, 2.2, 2.7]);
-    prim::sphere_rings(radius, &polars, SEGMENTS)
+    beast_globe(radius, iris)
+}
+
+/// A beast's globe (#367): the pupil's edge carried by a pair of rings that
+/// follow its ellipse, the iris between it and the limbus given rings of its
+/// own - it is most of what shows, and a large eye faceted across it reads
+/// as cut glass - and the back filled as a person's is.
+fn beast_globe(radius: f32, iris: &Iris) -> PolyMesh {
+    /// Facets round a beast's globe: a third more than a person's, for an
+    /// eye drawn large.
+    const SEGMENTS: usize = 24;
+    let azimuths: Vec<f32> = (0..SEGMENTS)
+        .map(|segment| std::f32::consts::TAU * segment as f32 / SEGMENTS as f32)
+        .collect();
+    let edge: Vec<f32> = azimuths.iter().map(|&at| iris.pupil_edge(at)).collect();
+    let inner = iris.limbus - LIMBAL - EDGE * 0.5;
+    let mut rings: Vec<Vec<f32>> = vec![
+        edge.iter().map(|&at| at - EDGE * 0.5).collect(),
+        edge.iter().map(|&at| at + EDGE * 0.5).collect(),
+    ];
+    for share in [1.0 / 3.0, 2.0 / 3.0] {
+        rings.push(
+            edge.iter()
+                .map(|&at| {
+                    let from = at + EDGE * 0.5;
+                    from + (inner - from) * share
+                })
+                .collect(),
+        );
+    }
+    for boundary in [iris.limbus - LIMBAL, iris.limbus] {
+        rings.push(vec![boundary - EDGE * 0.5; SEGMENTS]);
+        rings.push(vec![boundary + EDGE * 0.5; SEGMENTS]);
+    }
+    for filler in [1.2, 1.7, 2.2, 2.7] {
+        rings.push(vec![filler; SEGMENTS]);
+    }
+    prim::sphere_rings_warped(radius, &rings, SEGMENTS)
 }
 
 /// Where the lids meet, as an azimuth either side of the gaze.
@@ -927,17 +1175,18 @@ const RIM_LIMIT: f32 = 1.955;
 /// drops below the eye's equator while the lower rises above it and the two
 /// overlap: there is no bare band outside the fissure, which is the defect a
 /// margin without this crossing leaves.
-fn margin(azimuth: f32, side: f32, open: f32, upper: bool) -> f32 {
+fn margin(azimuth: f32, side: f32, open: f32, upper: bool, opening: f32) -> f32 {
     let (shut, wide) = if upper { UPPER_MARGIN } else { LOWER_MARGIN };
-    let reach = shut + (wide - shut) * open;
+    let reach = shut + (wide * opening - shut) * open;
     let along = (azimuth / (2.0 * CANTHUS)).clamp(-1.0, 1.0);
     reach * (std::f32::consts::PI * along).cos()
         + CANTHAL_TILT * (azimuth / CANTHUS).clamp(-1.0, 1.0) * side
 }
 
 /// Builds one eye at `pivot`.
-fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
-    let globe = globe(radius).transformed(Mat4::from_translation(pivot));
+fn eye(side: f32, pivot: Vec3, rest: Quat, radius: f32, params: &EyeParams, iris: &Iris) -> Eye {
+    let placed = Mat4::from_translation(pivot) * Mat4::from_quat(rest);
+    let globe = globe(radius, iris).transformed(placed);
 
     // A lid is a shell clear of the globe, so it never intersects the eye it
     // covers. **1.08 rather than 1.06, and it is the rim's doing.** The surface
@@ -959,7 +1208,7 @@ fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
             .map(|segment| {
                 let turn = std::f32::consts::TAU * segment as f32 / SEGMENTS as f32;
                 let azimuth = if upper { half - turn } else { half + turn };
-                let at = margin(wrap(azimuth), side, open, upper);
+                let at = margin(wrap(azimuth), side, open, upper, iris.opening());
                 let polar = if upper { half - at } else { half + at };
                 polar.min(RIM_LIMIT)
             })
@@ -969,8 +1218,7 @@ fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
         } else {
             Quat::from_rotation_x(std::f32::consts::PI)
         };
-        prim::margin_shell(shell, thickness, &rim, 3)
-            .transformed(Mat4::from_translation(pivot) * Mat4::from_quat(flip))
+        prim::margin_shell(shell, thickness, &rim, 3).transformed(placed * Mat4::from_quat(flip))
     };
 
     Eye {
@@ -983,6 +1231,8 @@ fn eye(side: f32, pivot: Vec3, radius: f32, params: &EyeParams) -> Eye {
         globe_joint: None,
         radius,
         side,
+        rest,
+        iris: *iris,
     }
 }
 
@@ -1745,5 +1995,155 @@ mod tests {
         let once = params;
         params.sanitize();
         assert_eq!(once, params);
+    }
+
+    /// Which colour band a direction from the pivot falls in, by asking the
+    /// iris for its own pole colours rather than repeating its constants.
+    fn is_pupil(iris: &Iris, polar: f32, azimuth: f32) -> bool {
+        let params = EyeParams::default();
+        let (sin, cos) = azimuth.sin_cos();
+        let at = Vec3::new(polar.sin() * cos, polar.sin() * sin, polar.cos());
+        iris.colour(at, &params) == iris.colour(Vec3::Z, &params)
+    }
+
+    #[test]
+    fn a_slit_is_tall_and_a_bar_is_wide() {
+        use std::f32::consts::FRAC_PI_2;
+        let (slit, bar) = (Iris::beast(Pupil::Slit), Iris::beast(Pupil::Bar));
+        // Three tenths of a radian off the gaze: up is still the slit's
+        // pupil and across is already its iris, and the bar the other way.
+        assert!(is_pupil(&slit, 0.3, FRAC_PI_2) && !is_pupil(&slit, 0.3, 0.0));
+        assert!(is_pupil(&bar, 0.3, 0.0) && !is_pupil(&bar, 0.3, FRAC_PI_2));
+        // And a round pupil is round.
+        let round = Iris::beast(Pupil::Round);
+        assert_eq!(is_pupil(&round, 0.2, 0.0), is_pupil(&round, 0.2, FRAC_PI_2));
+    }
+
+    #[test]
+    fn a_person_s_iris_is_the_one_it_always_was() {
+        // `iris_of` is the human iris, band for band, at every angle the
+        // globe's rings sit at.
+        let params = EyeParams::default();
+        for polar in [
+            0.0,
+            0.1,
+            PUPIL,
+            0.3,
+            LIMBUS - LIMBAL,
+            0.48,
+            LIMBUS,
+            1.0,
+            2.5,
+        ] {
+            for azimuth in [0.0, 1.0, 2.5] {
+                let (sin, cos) = f32::sin_cos(azimuth);
+                let at = Vec3::new(polar.sin() * cos, polar.sin() * sin, polar.cos());
+                assert_eq!(iris_of(at, &params), Iris::HUMAN.colour(at, &params));
+            }
+        }
+        assert_eq!(Iris::default(), Iris::HUMAN);
+    }
+
+    #[test]
+    fn a_beast_globe_carries_its_pupil_edge_on_a_ring_pair() {
+        // Every vertex of the globe falls on the side of the slit's edge its
+        // ring was laid on: the inner ring of the pair is all pupil and the
+        // outer is all iris, at every azimuth round the ellipse.
+        let iris = Iris::beast(Pupil::Slit);
+        let mesh = globe(1.0, &iris);
+        let params = EyeParams::default();
+        let pupil = iris.colour(Vec3::Z, &params);
+        let (mut inside, mut outside) = (0, 0);
+        for &point in &mesh.positions {
+            let direction = point.normalize();
+            let polar = direction.z.clamp(-1.0, 1.0).acos();
+            let edge = iris.pupil_edge(direction.y.atan2(direction.x));
+            let coloured = iris.colour(point, &params) == pupil;
+            if (polar - edge).abs() < EDGE {
+                assert_eq!(
+                    coloured,
+                    polar < edge,
+                    "a vertex at {polar} beside an edge at {edge}"
+                );
+                if coloured {
+                    inside += 1;
+                } else {
+                    outside += 1;
+                }
+            }
+        }
+        assert!(
+            inside >= 24 && outside >= 24,
+            "{inside} in and {outside} out at the edge"
+        );
+        assert!(mesh.is_closed_manifold());
+    }
+
+    #[test]
+    fn a_turned_eye_closes_about_its_own_across_and_looks_from_its_rest() {
+        let params = EyeParams::default();
+        let rest = Quat::from_rotation_y(1.0);
+        let turned = eye(
+            1.0,
+            Vec3::ZERO,
+            rest,
+            0.01,
+            &params,
+            &Iris::beast(Pupil::Round),
+        );
+        // Shutting swings the lid about the eye's own across, which the rest
+        // has carried round with it.
+        let (axis, angle) = turned.lid_rotation(1.0, true).to_axis_angle();
+        assert!(angle > 1.0);
+        assert!(
+            axis.abs_diff_eq(rest * Vec3::X, 1.0e-4),
+            "it swung about {axis}"
+        );
+        // Looking where it rests is no turn at all.
+        let ahead = turned.gaze_rotation(rest * Vec3::Z, OCULAR_LIMIT);
+        assert!(ahead.angle_between(Quat::IDENTITY) < 1.0e-4);
+        // And a person's eye, unturned, closes about the head's across.
+        let person = eye(1.0, Vec3::ZERO, Quat::IDENTITY, 0.01, &params, &Iris::HUMAN);
+        assert_eq!(
+            person.lid_rotation(1.0, true),
+            Quat::from_rotation_x(Eye::UPPER_SWING)
+        );
+    }
+
+    #[test]
+    fn a_seated_eye_holds_its_across_level_however_the_head_is_carried() {
+        use crate::plan::{BodyPlan, Composites, QuadrupedParams};
+        for neck_carriage in [-1.0, 0.0, 0.55, 1.0] {
+            let params = QuadrupedParams {
+                neck_carriage,
+                eye_set: 0.85,
+                pupil: Pupil::Bar,
+                ..QuadrupedParams::default()
+            };
+            let skeleton = params.skeleton(&Composites::default());
+            let beast = skeleton.beast_head.expect("a quadruped declares its head");
+            let rig = Rig::from_skeleton(&skeleton).expect("the body rigs");
+            let head = rig
+                .in_zone(crate::plan::Zone::Head)
+                .into_iter()
+                .min_by(|&a, &b| {
+                    let off = |joint: usize| rig.joints[joint].position.distance(beast.origin);
+                    off(a).total_cmp(&off(b))
+                })
+                .expect("a head");
+            let eyes = Eyes::seat(&rig, head, &beast, &EyeParams::default());
+            for eye in [&eyes.left, &eyes.right] {
+                let across = eye.rest * Vec3::X;
+                assert!(
+                    across.y.abs() < 1.0e-4,
+                    "neck carriage {neck_carriage}: a bar tips {:.3} out of level",
+                    across.y
+                );
+                // And it still looks where the head seated it.
+                let gaze = beast.turn * beast.eye.facing * Vec3::Z;
+                let looks = eye.rest * Vec3::Z;
+                assert!((looks.x.abs() - gaze.x.abs()).abs() < 1.0e-4);
+            }
+        }
     }
 }

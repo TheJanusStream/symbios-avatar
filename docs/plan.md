@@ -207,7 +207,16 @@ Still ahead, in rough order:
   anchors over six new axes: muzzle length, stance, neck and tail carriage,
   chest depth, and an appeal from naturalistic to cute that a re-roll leans
   cute. Its girth is the composites' now (#178): `mass`, `bodyFat` and age
-  at sites of its own, its `build` and `muscle` retired into them.
+  at sites of its own, its `build` and `muscle` retired into them. The third
+  (#367) gives it a beast's face and feet. The head is shaped onto a skull
+  its plan declares (`BeastHead`: a braincase, a muzzle set in at a stop,
+  the lip's lobes, cheeks, a nose) rather than measured as a person's; the
+  eyes are seated with it, turned out by `eyeSet`, with the family's pupils;
+  cupped ears ride joints of their own, pricked through rose to dropped; a
+  hinged jaw and tongue are parts of their own; the nose is a leather pad or
+  a soft muzzle; whiskers and an optional horn are drawn with the eyes; and
+  each foot is shaped onto a paw on four toes, its claws showing or sheathed,
+  or a hoof.
 - **Creator UX** — seed-lock editor, share-code flow, staged preview, spanning
   both crates.
 

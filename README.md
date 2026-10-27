@@ -40,8 +40,9 @@ the examples consume.
 ## What it does
 
 - **A body is a record, not a mesh.** Fourteen plan axes for a biped
-  (twelve for a quadruped, rolled as a dog, a cat, a horse or a cross of
-  two) plus four composites — femininity, mass, body fat, age — with eyes,
+  (nineteen for a quadruped, with its pupils, nose, feet and any horn as
+  parts, rolled as a dog, a cat, a horse or a cross of two) plus four
+  composites — femininity, mass, body fat, age — with eyes,
   face, skin, hair and outfit in blocks of their own, about two kilobytes of
   JSON all told. Geometry is derived on demand, so the avatar belongs to the
   identity rather than to whichever app rendered it.

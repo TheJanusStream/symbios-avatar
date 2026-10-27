@@ -24,9 +24,13 @@ use crate::texture::SkinParams;
 /// into the composites (#178), and gains its family, the family it is crossed
 /// with (`255` for none), how far it is blended toward it, and the six axes
 /// that came with the families: `muzzleLength`, `stance`, `neckCarriage`,
-/// `tailCarriage`, `chestDepth` and `appeal`, appended (#366). A family byte
-/// this build does not know reads as a dog, as an unknown name does on a
-/// record. Version 9 stays readable through `PRE_FAMILIES_VERSION` (private,
+/// `tailCarriage`, `chestDepth` and `appeal`, appended (#366). After them,
+/// while 10 is unpublished, the head's (#367): the spans `muzzleBreadth`,
+/// `stop` and `eyeSet`, the `pupil` byte, the spans `earSize`, `earPoint`
+/// and `earCarriage`, the `nose` and `feet` bytes, the `whiskers` span and the
+/// `horn` byte. A family or part byte this build does not know reads as the
+/// part's default - a dog, round pupils, leather, clawed paws, no horn - as
+/// an unknown name does on a record. Version 9 stays readable through `PRE_FAMILIES_VERSION` (private,
 /// below): its `build` and `muscle` are read and dropped, and a code minted
 /// before the families meant the plan's neutral dog, which is what every
 /// default of the appended bytes says. The humanoid payload does not move.
@@ -391,6 +395,17 @@ mod tests {
             neck_carriage: 0.5,
             tail_carriage: -0.9,
             chest_depth: 0.5,
+            muzzle_breadth: -0.6,
+            stop: 0.7,
+            eye_set: 0.9,
+            pupil: crate::plan::Pupil::Slit,
+            ear_size: 0.4,
+            ear_point: -0.3,
+            ear_carriage: -0.8,
+            nose: crate::plan::Nose::Soft,
+            feet: crate::plan::Feet::Hooves,
+            whiskers: 0.7,
+            horn: crate::plan::Horn::Unicorn,
             ..Default::default()
         };
         let code = encode(
@@ -403,6 +418,14 @@ mod tests {
         };
         assert_eq!(back.family, Family::Horse);
         assert_eq!(back.hybrid, Some(Family::Cat));
+        assert_eq!(
+            back.pupil,
+            crate::plan::Pupil::Slit,
+            "a part is a byte, kept whole"
+        );
+        assert_eq!(back.nose, crate::plan::Nose::Soft);
+        assert_eq!(back.feet, crate::plan::Feet::Hooves);
+        assert_eq!(back.horn, crate::plan::Horn::Unicorn);
         // A byte over each span: a signed axis's step is 6/255.
         for (name, was, now) in [
             ("blend", original.blend, back.blend),
@@ -411,6 +434,13 @@ mod tests {
             ("neck", original.neck_carriage, back.neck_carriage),
             ("tail", original.tail_carriage, back.tail_carriage),
             ("chest", original.chest_depth, back.chest_depth),
+            ("breadth", original.muzzle_breadth, back.muzzle_breadth),
+            ("stop", original.stop, back.stop),
+            ("eye set", original.eye_set, back.eye_set),
+            ("ear size", original.ear_size, back.ear_size),
+            ("ear point", original.ear_point, back.ear_point),
+            ("ear carriage", original.ear_carriage, back.ear_carriage),
+            ("whiskers", original.whiskers, back.whiskers),
         ] {
             assert!((was - now).abs() < 0.013, "{name}: {was} came back {now}");
         }
@@ -491,15 +521,19 @@ mod tests {
         assert!(code.contains('-'), "grouped for legibility: {code}");
 
         // Version 10 reshaped the QUADRUPED's payload alone (#366, #178): two
-        // spans out, the family, its cross and seven spans in, so a beast's
-        // code is 52 characters to a person's 50 and sits under the same
-        // ceiling.
+        // spans out, the family, its cross and seven spans in, and the head's
+        // axes and parts after them (#367). A beast's body is nearly all in
+        // its plan - a person's look is spread over the face, the hair and
+        // the outfit too - so its code runs longer than a person's under a
+        // ceiling of its own, still a string a person can read out: eighty
+        // characters, hyphens and all (the neutral beast's is 73, in 13
+        // groups).
         let beast = encode(
             &Archetype::Quadruped(QuadrupedParams::default()),
             &Composites::default(),
             &SkinParams::default(),
         );
-        assert!(beast.len() <= 56, "code is {} chars: {beast}", beast.len());
+        assert!(beast.len() <= 80, "code is {} chars: {beast}", beast.len());
     }
 
     #[test]

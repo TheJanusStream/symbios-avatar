@@ -23,6 +23,8 @@
 //! `tests/plan.rs` walks the whole space and asserts every combination meshes.
 
 mod anatomy;
+pub(crate) mod beast_foot;
+pub(crate) mod beast_head;
 mod composites;
 pub(crate) mod derive;
 mod humanoid;
@@ -36,12 +38,14 @@ use serde::{Deserialize, Serialize};
 use crate::skeleton::Skeleton;
 
 pub use anatomy::{Anatomy, FootKind, HeadKind, TrunkKind};
+pub use beast_foot::BeastFeet;
+pub use beast_head::BeastHead;
 pub use composites::{
     AGE_PIVOT, AGE_RANGE, BODY_FAT_RANGE, CompositePriors, Composites, DEFAULT_AGE,
     DEFAULT_BODY_FAT,
 };
 pub use humanoid::HumanoidParams;
-pub use quadruped::{Family, QuadrupedParams};
+pub use quadruped::{Family, Feet, Horn, Nose, Pupil, QuadrupedParams};
 pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};
 
 /// Smallest and largest biped stature accepted, in metres.

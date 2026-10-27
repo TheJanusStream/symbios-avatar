@@ -615,12 +615,14 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
             "humanoid",
             serde_json::to_value(HumanoidParams::default()).expect("serialises"),
         ),
-        // A cross, because `hybrid` is written only on a body that is one.
+        // A horned cross, because `hybrid` is written only on a body that is
+        // one and `horn` only on a body that wears one (#367).
         (
             "quadruped",
             serde_json::to_value(QuadrupedParams {
                 hybrid: Some(symbios_avatar::Family::Cat),
                 blend: 0.5,
+                horn: symbios_avatar::Horn::Unicorn,
                 ..Default::default()
             })
             .expect("serialises"),

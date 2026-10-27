@@ -201,6 +201,19 @@ fn main() {
         ),
         ("chestDepth", 0.0, signed, hoof(|p, v| p.chest_depth = v)),
         ("appeal", 0.0, signed, hoof(|p, v| p.appeal = v)),
+        // The head's (#367).
+        (
+            "muzzleBreadth",
+            0.0,
+            signed,
+            hoof(|p, v| p.muzzle_breadth = v),
+        ),
+        ("stop", 0.0, signed, hoof(|p, v| p.stop = v)),
+        ("eyeSet", 0.0, signed, hoof(|p, v| p.eye_set = v)),
+        ("earSize", 0.0, signed, hoof(|p, v| p.ear_size = v)),
+        ("earPoint", 0.0, signed, hoof(|p, v| p.ear_point = v)),
+        ("earCarriage", 0.0, signed, hoof(|p, v| p.ear_carriage = v)),
+        ("whiskers", 0.0, signed, hoof(|p, v| p.whiskers = v)),
         // And the composites a beast reads since `build` and `muscle` retired
         // into them (#178).
         (
