@@ -419,14 +419,24 @@ fn every_quadruped_roll_fits_the_webgl2_budget() {
                 Archetype::Quadruped(QuadrupedParams {
                     height,
                     body_length: end,
-                    build: end,
-                    muscle: end,
                     leg_length: end,
                     neck_length: end,
                     head_size: end,
                     tail_length: end,
+                    muzzle_length: end,
+                    stance: end,
+                    neck_carriage: end,
+                    tail_carriage: end,
+                    chest_depth: end,
+                    appeal: end,
+                    ..Default::default()
                 }),
             );
+            // And the composites a beast reads to the same end (#178): the
+            // girth `build` and `muscle` carried before they retired.
+            record.composites.mass = end;
+            record.composites.body_fat = end;
+            record.composites.age = if end > 0.0 { 80 } else { 18 };
             record.sanitize();
             bodies.push((format!("every axis {name} at {height:.2} m"), record));
         }

@@ -97,6 +97,78 @@ fn signed_envelope() -> (f32, f32) {
     explore_range(0.0, (-1.0, 1.0))
 }
 
+/// Where a body plan's re-roll centres the composites it reads (#178).
+///
+/// **A plan's own, because the composites are the same axes on every body and
+/// the population they are drawn from is not.** A person's are the priors this
+/// crate fitted to people (#169); a quadruped's follow its family (#366) - a
+/// horse is heavier than a cat before anything else is said about either - and
+/// a quadruped has no frame axis to draw at all. [`super::BodyPlan`] declares
+/// them, so a plan that reads a composite differently also says how it is
+/// rolled, in one place.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CompositePriors {
+    /// Whether the plan reads [`Composites::femininity`]. A plan that does not
+    /// draws none, and keeps the value stored: the axis means a person's
+    /// frame, and on any other body it is a slider that moves nothing.
+    pub frame: bool,
+    /// Where [`Composites::mass`] centres, and how widely it spreads.
+    pub mass: (f32, f32),
+    /// The body-fat fraction a body at neutral mass, frame and age centres
+    /// on. The draw's own correlations with them are added to it.
+    pub body_fat: f32,
+    /// Where [`Composites::age`] centres, and how widely it spreads, in years.
+    pub age: (f32, f32),
+}
+
+impl CompositePriors {
+    /// A person's: the priors #169 fitted, which every humanoid seed has
+    /// drawn from since generation 3.
+    pub const PERSON: Self = Self {
+        frame: true,
+        mass: (0.0, 1.0),
+        body_fat: DEFAULT_BODY_FAT,
+        age: (38.0, 15.0),
+    };
+
+    /// Moves `composites` from these priors to `to`'s, as unusual for the new
+    /// ones as they were for these: what a change of a body's kind does to its
+    /// composites, as [`super::QuadrupedParams::set_kind`] does to its own
+    /// axes. The frame axis is a person's and is left alone.
+    ///
+    /// **Body fat keeps its distance from its own centre**, which is the
+    /// plan's fraction plus what mass, the frame and age add to it
+    /// ([`Composites::reroll`]'s draw), so a body sitting on its centre lands on
+    /// the new one whatever the mass it is carried to.
+    pub fn carry(&self, to: &Self, composites: &mut Composites) {
+        let across = |value: f32, from: (f32, f32), to: (f32, f32)| {
+            to.0 + (value - from.0) * (to.1 / from.1)
+        };
+        let before = *composites;
+        composites.mass = across(composites.mass, self.mass, to.mass);
+        composites.age = across(composites.age as f32, self.age, to.age)
+            .round()
+            .clamp(AGE_RANGE.0 as f32, AGE_RANGE.1 as f32) as u32;
+        composites.body_fat += body_fat_centre(to, composites) - body_fat_centre(self, &before);
+        composites.sanitize();
+    }
+}
+
+/// Where a re-roll centres `body_fat` for `composites` under `priors`: the
+/// plan's fraction at neutral, plus the three correlations #169 looked up -
+/// mass, the frame axis where the plan reads one, and age.
+///
+/// Summed in the order the draw always summed them, so a person's centre is
+/// bit-identical to the one every stored seed was drawn against.
+fn body_fat_centre(priors: &CompositePriors, composites: &Composites) -> f32 {
+    let frame = if priors.frame {
+        composites.femininity
+    } else {
+        0.0
+    };
+    priors.body_fat + 0.09 * composites.mass + 0.05 * frame + 0.05 * composites.ageing()
+}
+
 /// The high-level description of one body.
 ///
 /// Every axis here is read by more than one part of the crate, and every axis
@@ -240,11 +312,21 @@ impl Composites {
     /// `Category::ALL`'s, because [`Self::body_fat`]'s draw reads both of the
     /// first two. A locked category is skipped and its STORED value is what the
     /// later draws read, which is what makes a lock mean "keep this and build
-    /// around it".
-    pub fn reroll(&mut self, category: Category, rolls: &Rolls) {
+    /// around it". (Through generation 7 the record drew `Build` before `Age`,
+    /// so an unlocked roll read the age of the roll BEFORE it: one seed drew a
+    /// different body fat on a record that had been old, #178.)
+    ///
+    /// `priors` are the body plan's ([`super::BodyPlan::composite_priors`]):
+    /// where each draw centres, and whether the frame axis is drawn at all.
+    pub fn reroll(&mut self, category: Category, rolls: &Rolls, priors: &CompositePriors) {
         match category {
             Category::Build => {
-                self.mass = rolls.shape("composites.mass", 0.0, 1.0, signed_envelope());
+                self.mass = rolls.shape(
+                    "composites.mass",
+                    priors.mass.0,
+                    priors.mass.1,
+                    signed_envelope(),
+                );
                 // **The correlated draw the epic was raised for** (#161, #169).
                 // Independent draws made "heavy at 4% body fat" as likely as
                 // any other body, and the two axes are separable BY DESIGN —
@@ -267,14 +349,13 @@ impl Composites {
                 // Sigma is unchanged, so the SPREAD around the centre is what
                 // it always was; only the centre moves.
                 //
-                // Provenance: **looked up**, all three (#169).
-                let centre = DEFAULT_BODY_FAT
-                    + 0.09 * self.mass
-                    + 0.05 * self.femininity
-                    + 0.05 * self.ageing();
+                // Provenance: **looked up**, all three (#169). The centre at
+                // neutral is the plan's (#178), and a plan with no frame axis
+                // has no frame term: a value it stores is not one it reads.
+                let centre = body_fat_centre(priors, self);
                 self.body_fat = rolls.shape("composites.bodyFat", centre, 0.07, BODY_FAT_RANGE);
             }
-            Category::Frame => {
+            Category::Frame if priors.frame => {
                 self.femininity = rolls.shape("composites.femininity", 0.0, 1.0, signed_envelope());
             }
             Category::Age => {
@@ -297,13 +378,14 @@ impl Composites {
                 // then measured over 400 seeds (#169).
                 let years = rolls.shape(
                     "composites.age",
-                    38.0,
-                    15.0,
+                    priors.age.0,
+                    priors.age.1,
                     (AGE_RANGE.0 as f32, AGE_RANGE.1 as f32),
                 );
                 self.age = years.round() as u32;
             }
-            Category::Stature
+            Category::Frame
+            | Category::Stature
             | Category::Proportions
             | Category::Head
             | Category::Colouring
@@ -485,7 +567,7 @@ mod tests {
     fn rolling_one_category_leaves_the_others_alone() {
         let rolls = Rolls::new(7);
         let mut composites = Composites::default();
-        composites.reroll(Category::Build, &rolls);
+        composites.reroll(Category::Build, &rolls, &CompositePriors::PERSON);
         assert_ne!(composites.mass, 0.0, "build draws mass");
         assert_eq!(
             composites.femininity, 0.0,
@@ -503,7 +585,7 @@ mod tests {
             let rolls = Rolls::new(seed);
             let mut composites = Composites::default();
             for category in Category::ALL {
-                composites.reroll(category, &rolls);
+                composites.reroll(category, &rolls, &CompositePriors::PERSON);
             }
             let rolled = composites;
             composites.sanitize();
@@ -518,5 +600,36 @@ mod tests {
                 rolled.age
             );
         }
+    }
+    #[test]
+    fn a_carried_body_keeps_its_place_about_every_centre() {
+        // Mass as many spreads from its centre as it was, and body fat as far
+        // from ITS centre - which follows mass - as it was: a body on its
+        // centre lands on the new one (#178, the P1 critic's case).
+        let dog = CompositePriors {
+            frame: false,
+            mass: (0.0, 0.6),
+            body_fat: DEFAULT_BODY_FAT,
+            age: (32.0, 12.0),
+        };
+        let cat = CompositePriors {
+            mass: (-0.4, 0.4),
+            body_fat: DEFAULT_BODY_FAT + 0.02,
+            ..dog
+        };
+        let mut composites = Composites {
+            mass: 0.6,
+            ..Default::default()
+        };
+        composites.body_fat = body_fat_centre(&dog, &composites);
+        composites.sanitize();
+        let on_centre = composites.body_fat - body_fat_centre(&dog, &composites);
+        dog.carry(&cat, &mut composites);
+        assert!((composites.mass - 0.0).abs() < 1e-3, "{}", composites.mass);
+        let now = composites.body_fat - body_fat_centre(&cat, &composites);
+        assert!(
+            (now - on_centre).abs() < 2e-3,
+            "{now} from its centre, was {on_centre}"
+        );
     }
 }

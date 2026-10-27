@@ -44,7 +44,11 @@ fn every_rerolled_body_can_walk() {
         let mut biped = AvatarRecord::new("Walker", Archetype::default());
         biped.reroll(seed);
         assert_walks(&biped, &format!("biped seed {seed}"));
-
+    }
+    // Three times the seeds, because a quadruped roll is three families and
+    // their crosses (#366), and a family is its own corner of the space: a
+    // horse's high hock and a cat's short legs fail in different places.
+    for seed in 0..120i64 {
         let mut beast =
             AvatarRecord::new("Runner", Archetype::Quadruped(QuadrupedParams::default()));
         beast.reroll(seed);
@@ -455,21 +459,22 @@ fn a_limb_folds_the_way_its_own_plan_says_it_folds() {
     // knee and backwards for every other joint that can be solved.
     //
     // The expectations here were *measured*, not assumed. A first attempt keyed
-    // the direction on fore-versus-hind and the render disagreed: a quadruped's
-    // hock folds backward like its carpus, so the rule got half a creature
-    // wrong. The rest pose already knew — a quadruped's limbs are built with the
-    // bend in them — and reading it beats any rule about limb names.
+    // the direction on fore-versus-hind and the render disagreed: the old
+    // quadruped's solved joint was its hock, which folds backward like its
+    // carpus, so the rule got half a creature wrong. The rest pose already knew
+    // — a quadruped's limbs are built with the bend in them — and reading it
+    // beats any rule about limb names.
+    //
+    // Since #366 a quadruped's leg is zoned as a person's is, so the joint the
+    // IK solves is the stifle — a knee, folding forward — and the elbow, folding
+    // back, the same as the biped's anatomical fallback. Read off its rest pose
+    // all the same; `a_plan_that_states_its_own_bend_is_believed_over_the_fallback`
+    // is where a bend against the fallback is tested.
     use symbios_avatar::{Limb, anim::ik};
 
-    // Backward for everything a quadruped has; on a biped, whose limbs are all
-    // dead straight at rest, the anatomical fallback decides.
-    let expected = |name: &str, limb: Limb| -> f32 {
-        match (name, limb.is_fore()) {
-            ("quadruped", _) => -1.0,
-            (_, true) => -1.0,
-            (_, false) => 1.0,
-        }
-    };
+    // Every elbow folds back and every knee forward: on a biped by the
+    // anatomical fallback, on a quadruped by its own rest pose.
+    let expected = |_name: &str, limb: Limb| -> f32 { if limb.is_fore() { -1.0 } else { 1.0 } };
 
     for (name, archetype) in [
         ("biped", Archetype::default()),
@@ -513,16 +518,27 @@ fn a_limb_folds_the_way_its_own_plan_says_it_folds() {
 #[test]
 fn a_plan_that_states_its_own_bend_is_believed_over_the_fallback() {
     // The property that makes the fallback safe to keep: where a plan has an
-    // opinion, the opinion wins. A quadruped's hind limb folds backward, which
-    // is the opposite of what the fore-versus-hind fallback would choose, so
-    // this fails the moment the measurement stops being consulted.
-    use symbios_avatar::Limb;
+    // opinion, the opinion wins. A hind limb that rests bent backward is the
+    // opposite of what the fore-versus-hind fallback would choose, so this
+    // fails the moment the measurement stops being consulted.
+    //
+    // The quadruped folded its hind limbs that way until #366 zoned its legs
+    // as a person's, whose solved hind joint is a forward-folding stifle. So
+    // the body is built here: the quadruped with each stifle moved back behind
+    // the line from its thigh to its hock.
+    use symbios_avatar::{Limb, Zone};
 
-    let rig = Rig::from_skeleton(
-        &Archetype::Quadruped(QuadrupedParams::default())
-            .skeleton(&symbios_avatar::Composites::default()),
-    )
-    .expect("rigs");
+    let mut skeleton = Archetype::Quadruped(QuadrupedParams::default())
+        .skeleton(&symbios_avatar::Composites::default());
+    for limb in [Limb::HindLeft, Limb::HindRight] {
+        let upper: Vec<usize> = (0..skeleton.nodes.len())
+            .filter(|&node| skeleton.nodes[node].zone == Zone::UpperLimb(limb))
+            .collect();
+        let (root, stifle) = (upper[0], upper[1]);
+        let drop = skeleton.nodes[root].position.y - skeleton.nodes[stifle].position.y;
+        skeleton.nodes[stifle].position.z = skeleton.nodes[root].position.z - drop;
+    }
+    let rig = Rig::from_skeleton(&skeleton).expect("rigs");
     for limb in [Limb::HindLeft, Limb::HindRight] {
         let chain = rig.limb_chain(limb).expect("a hind limb solves");
         let root = rig.joints[chain[0]].position;

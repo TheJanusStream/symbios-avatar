@@ -1082,9 +1082,11 @@ mod tests {
         let rig =
             Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
                 .expect("rigs");
-        let contacts = rig.query(|zone| matches!(zone, Zone::Extremity(_)));
-        assert_eq!(contacts.len(), 4);
-        assert_eq!(rig.in_zone(Zone::Tail).len(), 2);
+        assert_eq!(rig.ground_contacts().len(), 4);
+        // A pad and toes a foot since #366, and a tail of five nodes.
+        let feet = rig.query(|zone| matches!(zone, Zone::Extremity(_)));
+        assert_eq!(feet.len(), 8);
+        assert_eq!(rig.in_zone(Zone::Tail).len(), 5);
     }
 
     #[test]

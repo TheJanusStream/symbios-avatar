@@ -105,6 +105,9 @@ pub fn humanoid() -> Skeleton {
 #[must_use]
 pub fn quadruped() -> Skeleton {
     let mut skeleton = Skeleton::new();
+    // A beast's, though nothing here reads it: a fixture should not claim a
+    // person's head (#365).
+    skeleton.anatomy = crate::Anatomy::BEAST;
 
     let tail_tip = skeleton.add_node(Node::new(Vec3::new(0.0, 0.42, -0.86), 0.018));
     let tail = skeleton.extend_from(tail_tip, Node::new(Vec3::new(0.0, 0.50, -0.62), 0.032));

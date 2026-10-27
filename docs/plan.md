@@ -200,7 +200,14 @@ Still ahead, in rough order:
   Under way as epic #364: dog-, cat- and horse-like families, hybrids and
   unnatural coats, cuter by default. Its first phase (#365) states the
   human-only rules against the plan's declared `Anatomy` rather than the
-  number of feet, and adds the gallery the rest is judged by.
+  number of feet, and adds the gallery the rest is judged by. The second
+  (#366) builds the quadruped's graph as an animal's - a rising neck, a
+  skull, muzzle and nose, a tuck-up, legs zoned as a person's are - and rolls
+  each one as a dog, a cat, a horse or a cross of two, around per-family
+  anchors over six new axes: muzzle length, stance, neck and tail carriage,
+  chest depth, and an appeal from naturalistic to cute that a re-roll leans
+  cute. Its girth is the composites' now (#178): `mass`, `bodyFat` and age
+  at sites of its own, its `build` and `muscle` retired into them.
 - **Creator UX** — seed-lock editor, share-code flow, staged preview, spanning
   both crates.
 

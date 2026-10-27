@@ -76,6 +76,7 @@
 //! cargo run --release --example render -- --quadruped --gallery 16   # 16 rolls side by side
 //! cargo run --release --example render -- --quadruped --gallery 16 --pass silhouette
 //! cargo run --release --example render -- --quadruped --gallery 16 --to-scale  # sizes compared
+//! cargo run --release --example render -- --quadruped --gallery 16 --family cat  # or dog, horse, cross
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -940,11 +941,32 @@ fn main() {
     // the instrument the creature work is judged by. Every other flag is
     // ignored, the build's own overrides included - hair, complexion, dress,
     // tier - because each tile is its own record built as it rolled; only the
-    // pass, `--seed` (the first roll) and `--to-scale` carry.
+    // pass, `--seed` (the first roll), `--to-scale` and `--family` carry.
     if let Some(given) = value("--gallery") {
         let Some(count) = given.parse::<usize>().ok().filter(|&count| count > 0) else {
             eprintln!("--gallery takes how many rolls to draw, at least one, not `{given}`");
             std::process::exit(2);
+        };
+        // `--family dog`, `cat` or `horse` keeps the rolls of that family that
+        // are no cross, and `--family cross` keeps only the crosses (#366).
+        let family = value("--family").cloned();
+        if let Some(name) = &family
+            && !["dog", "cat", "horse", "cross"].contains(&name.as_str())
+        {
+            eprintln!("--family takes dog, cat, horse or cross, not `{name}`");
+            std::process::exit(2);
+        }
+        if family.is_some() && !matches!(record.archetype, Archetype::Quadruped(_)) {
+            eprintln!("--family picks a quadruped's family: add --quadruped");
+            std::process::exit(2);
+        }
+        let keep = |record: &AvatarRecord| match (&record.archetype, family.as_deref()) {
+            (_, None) => true,
+            (Archetype::Quadruped(params), Some("cross")) => params.hybrid.is_some(),
+            (Archetype::Quadruped(params), Some(name)) => {
+                params.hybrid.is_none() && params.family.name() == name
+            }
+            _ => false,
         };
         let plan = match &record.archetype {
             Archetype::Quadruped(_) => {
@@ -953,7 +975,15 @@ fn main() {
             _ => Archetype::default(),
         };
         let to_scale = args.iter().any(|arg| arg == "--to-scale");
-        gallery(&plan, seed.unwrap_or(1), count, show.pass, to_scale, &out);
+        gallery(
+            &plan,
+            seed.unwrap_or(1),
+            count,
+            show.pass,
+            to_scale,
+            &keep,
+            &out,
+        );
         return;
     }
     let subject = Subject::new(avatar, show, mandible, arches, commissures);
@@ -2882,8 +2912,8 @@ fn items<'a>(
     items
 }
 
-/// Draws `count` rolls of `plan`, seeds `first` onward, one standing side view
-/// each, into a grid (#365).
+/// Draws `count` rolls of `plan` that `keep` accepts, seeds `first` onward,
+/// one standing side view each, into a grid (#365).
 ///
 /// Each roll fills its own tile, standing on the tile's ground line, because
 /// a shape is what a silhouette is judged on - and the stature axis spans more
@@ -2893,21 +2923,52 @@ fn items<'a>(
 /// right, top to bottom, and the tile is the seed's: a roll that fails to
 /// build leaves its tile blank rather than shifting every later one. Each is
 /// built with the default config, as it rolled.
+///
+/// `keep` skips the seeds it declines (#366: one family at a time), and every
+/// tile's seed is printed in tile order so a tile can be rolled again on its
+/// own. A filter that keeps too few gives up after a thousand seeds a tile
+/// and draws what it found.
 fn gallery(
     plan: &Archetype,
     first: i64,
     count: usize,
     pass: Option<String>,
     to_scale: bool,
+    keep: &dyn Fn(&AvatarRecord) -> bool,
     out: &std::path::Path,
 ) {
     let config = AvatarConfig::default();
     use std::f32::consts::FRAC_PI_2;
-    let subjects: Vec<Option<Subject>> = (0..count as i64)
-        .map(|offset| {
-            let mut record = AvatarRecord::new("Gallery", plan.clone());
-            record.reroll(first + offset);
-            let avatar = Avatar::build_with(&record, &config)?;
+    let mut records = Vec::with_capacity(count);
+    let mut seed = first;
+    while records.len() < count && seed < first + 1000 * count as i64 {
+        let mut record = AvatarRecord::new("Gallery", plan.clone());
+        record.reroll(seed);
+        if keep(&record) {
+            records.push((seed, record));
+        }
+        seed += 1;
+    }
+    for (tile, (seed, record)) in records.iter().enumerate() {
+        let kind = match &record.archetype {
+            Archetype::Quadruped(params) => match params.hybrid {
+                Some(other) => format!(
+                    "{} x {} at {:.2}",
+                    params.family.name(),
+                    other.name(),
+                    params.blend
+                ),
+                None => params.family.name().to_string(),
+            },
+            other => other.name().to_string(),
+        };
+        println!("tile {tile}: seed {seed}, {kind}");
+    }
+    let count = records.len().max(1);
+    let subjects: Vec<Option<Subject>> = records
+        .iter()
+        .map(|(_, record)| {
+            let avatar = Avatar::build_with(record, &config)?;
             let show = Show {
                 eyes: record.eyes,
                 pass: pass.clone(),
@@ -2924,9 +2985,10 @@ fn gallery(
     let columns = (count as f32).sqrt().ceil().max(1.0) as usize;
     let rows = count.div_ceil(columns);
     let mut sheet = Image::new(columns * VIEW, rows * VIEW);
+    let mut backed = false;
     for (index, subject) in subjects.iter().enumerate() {
         let Some(subject) = subject else {
-            eprintln!("seed {} did not build", first + index as i64);
+            eprintln!("seed {} did not build", records[index].0);
             continue;
         };
         // The ground a twentieth of a tile above the bottom edge.
@@ -2938,12 +3000,21 @@ fn gallery(
             span,
         };
         let view = subject.view(&subject.standing(), 0.0, &frame);
+        // A tile no roll fills takes the backdrop's colour rather than black:
+        // on a silhouette sheet a black square reads as a body (#366, on a
+        // gallery of eight in a grid of nine). Filled from the first view
+        // drawn, before it is copied in.
+        if !backed {
+            sheet.colour.fill(view.colour[0]);
+            backed = true;
+        }
         sheet.blit(&view, (index % columns) * VIEW, (index / columns) * VIEW);
     }
     write(out, "gallery", &sheet);
     println!(
-        "drew {count} rolls, seeds {first} to {}, into {columns} by {rows}",
-        first + count as i64 - 1
+        "drew {} rolls, from seed {first} to {}, into {columns} by {rows}",
+        records.len(),
+        seed - 1
     );
 }
 

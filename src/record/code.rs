@@ -20,6 +20,17 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
+/// **10** - the quadruped payload loses `build` and `muscle`, which retired
+/// into the composites (#178), and gains its family, the family it is crossed
+/// with (`255` for none), how far it is blended toward it, and the six axes
+/// that came with the families: `muzzleLength`, `stance`, `neckCarriage`,
+/// `tailCarriage`, `chestDepth` and `appeal`, appended (#366). A family byte
+/// this build does not know reads as a dog, as an unknown name does on a
+/// record. Version 9 stays readable through `PRE_FAMILIES_VERSION` (private,
+/// below): its `build` and `muscle` are read and dropped, and a code minted
+/// before the families meant the plan's neutral dog, which is what every
+/// default of the appended bytes says. The humanoid payload does not move.
+///
 /// **9** — the humanoid payload gains `chestSpacing` and `chestFullness`,
 /// appended (#289). They are where a chest's volume sits — across the ribcage
 /// and up it — over what the trunk's own constants derive, and the pair is the
@@ -72,7 +83,7 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 9;
+pub const SHARE_CODE_VERSION: u8 = 10;
 
 /// The oldest format whose codes still decode.
 const OLDEST_VERSION: u8 = 3;
@@ -114,6 +125,15 @@ const PRE_CHEST_VERSION: u8 = 7;
 /// layout would run two spans off the end of its own payload and the only thing
 /// that catches it is knowing which layout wrote it.
 const PRE_DISTRIBUTION_VERSION: u8 = 8;
+
+/// The last version whose quadruped payload carried `build` and `muscle` and
+/// ended at `tailLength`.
+///
+/// Version 10 drops the two and appends the family, its cross and six axes
+/// (#366, #178), and the gate is here for [`PRE_CHEST_VERSION`]'s reason: a
+/// version-9 quadruped read through today's layout would take its legs from
+/// its `build` and its family from the composites block.
+const PRE_FAMILIES_VERSION: u8 = 9;
 
 /// Crockford base32 digits.
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -198,11 +218,12 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
 
     use crate::plan::{take_signed, take_unit};
 
-    // Five plan layouts are readable and the order of these arms is the order
+    // Six plan layouts are readable and the order of these arms is the order
     // they arrived in: version 3's narrow spans, versions 4 and 5's envelope
     // spans with the retired slots still on the wire, versions 6 and 7's
-    // payload ending at `extremitySize`, version 8's ending at `chestLift`, and
-    // today's with the whole chest on it.
+    // payload ending at `extremitySize`, version 8's ending at `chestLift`,
+    // version 9's with the whole chest on it, and today's with the quadruped's
+    // families.
     let archetype = if version <= NARROW_SPAN_VERSION {
         Archetype::decode_legacy(&mut payload)?
     } else if version <= RESERVED_SLOTS_VERSION {
@@ -211,6 +232,8 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
         Archetype::decode_pre_chest(&mut payload)?
     } else if version <= PRE_DISTRIBUTION_VERSION {
         Archetype::decode_pre_distribution(&mut payload)?
+    } else if version <= PRE_FAMILIES_VERSION {
+        Archetype::decode_pre_families(&mut payload)?
     } else {
         Archetype::decode(&mut payload)?
     };
@@ -321,7 +344,7 @@ fn digit(ch: char) -> Result<u8, ShareCodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::{HumanoidParams, QuadrupedParams};
+    use crate::plan::{Family, HumanoidParams, QuadrupedParams};
     use crate::texture::SkinParams;
 
     #[test]
@@ -358,6 +381,93 @@ mod tests {
     }
 
     #[test]
+    fn a_quadruped_s_family_and_cross_survive_a_code() {
+        let original = QuadrupedParams {
+            family: Family::Horse,
+            hybrid: Some(Family::Cat),
+            blend: 0.4,
+            muzzle_length: 0.8,
+            stance: 1.0,
+            neck_carriage: 0.5,
+            tail_carriage: -0.9,
+            chest_depth: 0.5,
+            ..Default::default()
+        };
+        let code = encode(
+            &Archetype::Quadruped(original),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        let (Archetype::Quadruped(back), _, _) = decode(&code).expect("decodes") else {
+            panic!("archetype changed");
+        };
+        assert_eq!(back.family, Family::Horse);
+        assert_eq!(back.hybrid, Some(Family::Cat));
+        // A byte over each span: a signed axis's step is 6/255.
+        for (name, was, now) in [
+            ("blend", original.blend, back.blend),
+            ("muzzle", original.muzzle_length, back.muzzle_length),
+            ("stance", original.stance, back.stance),
+            ("neck", original.neck_carriage, back.neck_carriage),
+            ("tail", original.tail_carriage, back.tail_carriage),
+            ("chest", original.chest_depth, back.chest_depth),
+        ] {
+            assert!((was - now).abs() < 0.013, "{name}: {was} came back {now}");
+        }
+        // And a body that is no cross says so.
+        let code = encode(
+            &Archetype::Quadruped(QuadrupedParams::default()),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        let (Archetype::Quadruped(back), _, _) = decode(&code).expect("decodes") else {
+            panic!("archetype changed");
+        };
+        assert_eq!(
+            (back.family, back.hybrid, back.blend),
+            (Family::Dog, None, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_version_9_quadruped_code_reads_as_the_dog_it_named() {
+        // Assembled as a v9 writer wrote it: the eight axes and nothing after
+        // them. Read through today's layout, its family would come out of the
+        // composites block and the complexion would run off the end.
+        use crate::plan::{put_signed, put_span, put_unit};
+        let mut payload = vec![9u8, 2]; // version 9, quadruped tag
+        crate::plan::put_length(&mut payload, 0.9);
+        let signed = crate::plan::explore_range(0.0, (-1.0, 1.0));
+        let muscle = crate::plan::explore_range(0.0, (0.0, 1.0));
+        put_span(&mut payload, 0.4, signed); // body length
+        put_span(&mut payload, -0.3, signed); // build
+        put_span(&mut payload, 0.5, muscle); // muscle
+        for axis in [-0.5, 0.2, 0.1, 0.9] {
+            put_span(&mut payload, axis, signed); // legs, neck, head, tail
+        }
+        Composites::default().encode(&mut payload);
+        put_unit(&mut payload, 0.62); // melanin
+        put_signed(&mut payload, -0.3); // undertone
+        put_unit(&mut payload, 0.45); // blush
+        put_unit(&mut payload, 0.20); // freckles
+        payload.push(checksum(&payload));
+        let code = group(&base32_encode(&payload));
+
+        let (Archetype::Quadruped(back), _, skin) = decode(&code).expect("a v9 code decodes")
+        else {
+            panic!("archetype changed");
+        };
+        assert!((back.height - 0.9).abs() < 0.002);
+        assert!((back.tail_length - 0.9).abs() < 0.013);
+        assert_eq!(
+            (back.family, back.hybrid, back.blend),
+            (Family::Dog, None, 0.0)
+        );
+        assert_eq!(back.stance, 0.0, "an axis the code predates is its neutral");
+        assert!((skin.freckles - 0.20).abs() < 0.01);
+    }
+
+    #[test]
     fn codes_stay_short_and_grouped() {
         let code = encode(
             &Archetype::default(),
@@ -379,6 +489,17 @@ mod tests {
         // not to do — a look that changes when it is passed between people.
         assert!(code.len() <= 56, "code is {} chars: {code}", code.len());
         assert!(code.contains('-'), "grouped for legibility: {code}");
+
+        // Version 10 reshaped the QUADRUPED's payload alone (#366, #178): two
+        // spans out, the family, its cross and seven spans in, so a beast's
+        // code is 52 characters to a person's 50 and sits under the same
+        // ceiling.
+        let beast = encode(
+            &Archetype::Quadruped(QuadrupedParams::default()),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        assert!(beast.len() <= 56, "code is {} chars: {beast}", beast.len());
     }
 
     #[test]

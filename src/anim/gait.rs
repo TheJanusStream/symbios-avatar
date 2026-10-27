@@ -3623,6 +3623,49 @@ mod tests {
             .expect("rigs")
     }
 
+    /// The quadruped with each foot cut back to the single node it stood on
+    /// before #366 gave it a pad and toes: the body a foot that cannot roll is
+    /// tested on. A toe is an extremity leaf hanging off another extremity
+    /// node.
+    fn one_node_feet() -> Rig {
+        let mut skeleton = QuadrupedParams::default().skeleton(&crate::Composites::default());
+        let extremity =
+            |node: u32| matches!(skeleton.nodes[node as usize].zone, Zone::Extremity(_));
+        let neighbours = |node: u32| -> Vec<u32> {
+            skeleton
+                .bones
+                .iter()
+                .filter_map(|&[a, b]| {
+                    if a == node {
+                        Some(b)
+                    } else if b == node {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        let kept: Vec<u32> = (0..skeleton.nodes.len() as u32)
+            .filter(|&node| {
+                let around = neighbours(node);
+                !(extremity(node) && around.len() == 1 && extremity(around[0]))
+            })
+            .collect();
+        let index = |old: u32| kept.iter().position(|&k| k == old).map(|at| at as u32);
+        let bones = skeleton
+            .bones
+            .iter()
+            .filter_map(|&[a, b]| Some([index(a)?, index(b)?]))
+            .collect();
+        skeleton.nodes = kept
+            .iter()
+            .map(|&node| skeleton.nodes[node as usize])
+            .collect();
+        skeleton.bones = bones;
+        Rig::from_skeleton(&skeleton).expect("rigs")
+    }
+
     /// The world height of one contact in the given pose.
     fn contact_height(rig: &Rig, pose: &Pose, limb: Limb) -> f32 {
         let joint = rig.in_zone(Zone::Extremity(limb))[0];
@@ -6929,16 +6972,17 @@ mod tests {
     #[test]
     fn a_foot_of_one_node_is_left_alone_rather_than_given_an_invented_axis() {
         // Nothing here is written for two legs — the pitch comes from the phase
-        // and the pivot from the foot's own geometry — but a quadruped in this
-        // crate has nothing to roll: `plan::quadruped` gives each limb a SINGLE
-        // extremity node, so there is no heel-to-toe run to pitch along and no
-        // second sole point to bear the weight.
+        // and the pivot from the foot's own geometry — but a foot of a SINGLE
+        // extremity node has nothing to roll: no heel-to-toe run to pitch along
+        // and no second sole point to bear the weight. The quadruped stood on
+        // such feet until #366 gave it a pad and toes, so the body is built
+        // here with each foot cut back to its one node.
         //
         // The right answer is to leave it exactly as the plant left it. Deriving
         // an axis from one point would mean choosing one, and a hoof pitched
         // about a guess is worse than a hoof that does not pitch. Giving a beast
-        // a foot it can roll is a plan question (#178), not a gait one.
-        let rig = quadruped();
+        // a foot it can roll is a plan question, not a gait one.
+        let rig = one_node_feet();
         let gait = Gait::natural(&rig);
         let stride = Stride::for_body(&rig, 1.0);
         assert_eq!(gait.len(), 4, "the beast this tests needs four corners");

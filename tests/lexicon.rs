@@ -615,9 +615,15 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
             "humanoid",
             serde_json::to_value(HumanoidParams::default()).expect("serialises"),
         ),
+        // A cross, because `hybrid` is written only on a body that is one.
         (
             "quadruped",
-            serde_json::to_value(QuadrupedParams::default()).expect("serialises"),
+            serde_json::to_value(QuadrupedParams {
+                hybrid: Some(symbios_avatar::Family::Cat),
+                blend: 0.5,
+                ..Default::default()
+            })
+            .expect("serialises"),
         ),
         // The hair fragments, nested ones included: `field_names` reads the keys
         // of whatever serialises to an object, so a tress and the hair block are

@@ -23,7 +23,7 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use super::derive::humanoid::{Dimensions, frame};
-use super::{Anatomy, Composites, Limb, Zone};
+use super::{Anatomy, CompositePriors, Composites, Limb, Zone};
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
     take_span, take_unit,
@@ -262,6 +262,10 @@ impl HumanoidParams {
 impl BodyPlan for HumanoidParams {
     fn anatomy(&self) -> Anatomy {
         Anatomy::HUMAN
+    }
+
+    fn composite_priors(&self) -> CompositePriors {
+        CompositePriors::PERSON
     }
 
     fn sanitize(&mut self) {
@@ -755,6 +759,12 @@ impl BodyPlan for HumanoidParams {
         };
         params.sanitize();
         Ok(params)
+    }
+
+    fn decode_pre_families(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        // Version 9 is today's layout for a person: what version 10 appends is
+        // the quadruped's (#366).
+        Self::decode(bytes)
     }
 
     fn decode_pre_distribution(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {

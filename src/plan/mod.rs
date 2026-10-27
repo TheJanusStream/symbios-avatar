@@ -37,10 +37,11 @@ use crate::skeleton::Skeleton;
 
 pub use anatomy::{Anatomy, FootKind, HeadKind, TrunkKind};
 pub use composites::{
-    AGE_PIVOT, AGE_RANGE, BODY_FAT_RANGE, Composites, DEFAULT_AGE, DEFAULT_BODY_FAT,
+    AGE_PIVOT, AGE_RANGE, BODY_FAT_RANGE, CompositePriors, Composites, DEFAULT_AGE,
+    DEFAULT_BODY_FAT,
 };
 pub use humanoid::HumanoidParams;
-pub use quadruped::QuadrupedParams;
+pub use quadruped::{Family, QuadrupedParams};
 pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};
 
 /// Smallest and largest biped stature accepted, in metres.
@@ -101,6 +102,10 @@ pub enum Category {
     /// a silhouette expects the skeleton and not the flesh.
     Build,
     /// Skeletal frame: the `femininity` composite, shoulder and hip width.
+    ///
+    /// On a quadruped, which has no frame axis, it holds what kind of animal
+    /// the body is - its family, its cross and the blend, drawn first of all
+    /// (#366) - and its body length.
     Frame,
     /// Relative lengths of limbs, neck and tail, and the size of hands and feet.
     ///
@@ -350,6 +355,10 @@ pub trait BodyPlan: Sized {
     /// feet the body stands on.
     fn anatomy(&self) -> Anatomy;
 
+    /// Where a re-roll centres the composites this plan reads (#178), and
+    /// whether it reads the frame axis at all. See [`CompositePriors`].
+    fn composite_priors(&self) -> CompositePriors;
+
     /// Builds the capsule graph this plan describes.
     ///
     /// The result is always meshable by [`crate::cage::build_cage`] for any
@@ -381,12 +390,30 @@ pub trait BodyPlan: Sized {
     /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
 
+    /// Reads parameters from a **version-9** share code.
+    ///
+    /// Version 10 reshaped the quadruped's payload alone: its `build` and
+    /// `muscle` came out of the middle of it, retired into the composites
+    /// (#178), and its family, its cross and the six axes that came with them
+    /// were appended (#366). A quadruped's version-9 payload is the eight axes
+    /// it carried from version 4 - the two retired ones read and dropped - and a
+    /// code minted before the families meant the plan's neutral dog. **Identical
+    /// to [`Self::decode`] on every plan version 10 did not touch**, which
+    /// today is the humanoid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError::Truncated`] if the payload ends early.
+    fn decode_pre_families(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError>;
+
     /// Reads parameters from a **version-8** share code.
     ///
     /// Version 9 appended `chestSpacing` and `chestFullness` — where a chest's
-    /// volume sits, across the ribcage and up it. Version 8 carries today's
-    /// layout without them, and a code written before an axis existed means
-    /// that axis's neutral rather than a gap to be guessed at.
+    /// volume sits, across the ribcage and up it. Version 8 carries the
+    /// humanoid's layout without them, and a code written before an axis
+    /// existed means that axis's neutral rather than a gap to be guessed at. A
+    /// quadruped's payload did not move from version 4 to 9, so its version-8
+    /// codes read through [`Self::decode_pre_families`].
     ///
     /// # Errors
     ///
@@ -395,9 +422,11 @@ pub trait BodyPlan: Sized {
 
     /// Reads parameters from a **version-6 or version-7** share code.
     ///
-    /// Version 8 appended the chest axes; those two versions carry today's
-    /// layout without them, and a code written before an axis existed means
-    /// that axis's neutral rather than a gap to be guessed at.
+    /// Version 8 appended the chest axes; those two versions carry the
+    /// humanoid's layout without them, and a code written before an axis
+    /// existed means that axis's neutral rather than a gap to be guessed at. A
+    /// quadruped's read through [`Self::decode_pre_families`], for
+    /// [`Self::decode_pre_distribution`]'s reason.
     ///
     /// # Errors
     ///
@@ -424,10 +453,11 @@ pub trait BodyPlan: Sized {
     /// offsets. Version 6 removes the slots, so the older layout needs a path
     /// of its own — this one.
     ///
-    /// **Identical to [`Self::decode`] on every plan whose axes did not
-    /// retire**, which is why it is a plain method rather than a flag: the
-    /// quadruped's `build` and `muscle` are live axes and its two layouts are
-    /// the same bytes.
+    /// **Identical to the version-6 reader on every plan whose axes did not
+    /// retire then**, which is why it is a plain method rather than a flag: the
+    /// quadruped's `build` and `muscle` were live axes until version 10 retired
+    /// them in turn (#178), so its version-4 to version-9 layouts are the same
+    /// bytes, all read through [`Self::decode_pre_families`].
     ///
     /// # Errors
     ///
@@ -615,6 +645,18 @@ impl Archetype {
         }
     }
 
+    /// Where a re-roll centres this body's composites: its plan's
+    /// [`BodyPlan::composite_priors`]. An unknown body is a person's, for
+    /// [`Self::anatomy`]'s reason.
+    #[must_use]
+    pub fn composite_priors(&self) -> CompositePriors {
+        match self {
+            Archetype::Humanoid(params) => params.composite_priors(),
+            Archetype::Quadruped(params) => params.composite_priors(),
+            Archetype::Unknown { .. } => CompositePriors::PERSON,
+        }
+    }
+
     /// Builds the capsule graph for these parameters.
     ///
     /// An unknown body gets the default humanoid, so a client renders a
@@ -627,6 +669,17 @@ impl Archetype {
             Archetype::Humanoid(params) => params.skeleton(composites),
             Archetype::Quadruped(params) => params.skeleton(composites),
             Archetype::Unknown { .. } => HumanoidParams::default().skeleton(composites),
+        }
+    }
+
+    /// Draws what kind of body this is within its plan, before any of its
+    /// axes are drawn (#366): a quadruped's family and whether it is a cross,
+    /// which every axis it then draws is centred on. A person has no such
+    /// draw, and an unknown body is left alone for [`Self::reroll`]'s reason.
+    pub fn reroll_kind(&mut self, rolls: &Rolls) {
+        match self {
+            Archetype::Quadruped(params) => params.reroll_family(rolls),
+            Archetype::Humanoid(_) | Archetype::Unknown { .. } => {}
         }
     }
 
@@ -663,6 +716,29 @@ impl Archetype {
         match tag {
             1 => Ok(Archetype::Humanoid(HumanoidParams::decode(bytes)?)),
             2 => Ok(Archetype::Quadruped(QuadrupedParams::decode(bytes)?)),
+            other => Err(PlanDecodeError::UnknownArchetype(other)),
+        }
+    }
+
+    /// Reads an archetype from a **version-9** payload.
+    ///
+    /// See [`BodyPlan::decode_pre_families`]: the humanoid's payload as it is
+    /// today, and the quadruped's with its retired `build` and `muscle` in it
+    /// and none of the family, the cross or the six axes after it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanDecodeError`] if the tag is unknown or the payload is short.
+    pub fn decode_pre_families(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        let (&tag, rest) = bytes.split_first().ok_or(PlanDecodeError::Truncated)?;
+        *bytes = rest;
+        match tag {
+            1 => Ok(Archetype::Humanoid(HumanoidParams::decode_pre_families(
+                bytes,
+            )?)),
+            2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_pre_families(
+                bytes,
+            )?)),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }

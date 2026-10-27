@@ -967,7 +967,9 @@ mod tests {
     #[test]
     fn a_quadruped_walks_on_four_feet_and_has_no_hands() {
         // Read from which end of the body a limb is on, a quadruped's front
-        // legs come out as a pair of human hands, on the ground.
+        // legs come out as a pair of human hands, on the ground. Its feet are
+        // nodes of its own graph since #366 - a pad and toes on each leg - so
+        // none is built here, as none is for a person.
         use crate::plan::{BodyPlan, QuadrupedParams};
         let skeleton = QuadrupedParams::default().skeleton(&crate::Composites::default());
         let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
@@ -976,7 +978,11 @@ mod tests {
         let surface = Surface::measure(&mesh, &rig);
 
         let built = Extremities::build(&mut rig, &surface, 0.0);
-        assert_eq!(built.feet.len(), 4, "a quadruped stands on four");
+        assert_eq!(rig.ground_contacts().len(), 4, "a quadruped stands on four");
+        assert!(
+            built.feet.is_empty(),
+            "a quadruped's feet come from its graph"
+        );
         assert!(built.hands.is_empty(), "a quadruped has no hands");
     }
 

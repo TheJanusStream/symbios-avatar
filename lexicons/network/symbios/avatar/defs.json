@@ -111,7 +111,7 @@
     },
     "quadruped": {
       "type": "object",
-      "description": "A four-legged creature. Axes run -1 to 1 with 0 neutral, unless noted.",
+      "description": "A four-legged creature. Axes run -1 to 1 with 0 neutral, unless noted. Its girth is the composites': mass, bodyFat and age reach it at sites of its own, and femininity does not (#178).",
       "required": [
         "height"
       ],
@@ -127,20 +127,6 @@
           "type": "integer",
           "description": "Body length from shoulder to hip. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
           "minimum": -3000,
-          "maximum": 3000,
-          "default": 0
-        },
-        "build": {
-          "type": "integer",
-          "description": "Overall mass, from slight to heavy. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
-          "minimum": -3000,
-          "maximum": 3000,
-          "default": 0
-        },
-        "muscle": {
-          "type": "integer",
-          "description": "Musculature. Thousandths, 0 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
-          "minimum": 0,
           "maximum": 3000,
           "default": 0
         },
@@ -171,6 +157,74 @@
           "minimum": -3000,
           "maximum": 3000,
           "default": 0
+        },
+        "family": {
+          "type": "string",
+          "description": "Which kind of animal this is rolled as (#366): the centre a re-roll draws every axis around. The body is its axes and never this name, so a reader that does not recognise a value should read it as a dog and keep the body the axes describe; only the centre of its next roll is lost.",
+          "knownValues": [
+            "dog",
+            "cat",
+            "horse"
+          ],
+          "default": "dog"
+        },
+        "hybrid": {
+          "type": "string",
+          "description": "The second family of a cross, when this is one, and absent when it is not. A cross is rolled between its two families, `blend` of the way toward this one; a cross of a family with itself is no cross. A value a reader does not recognise reads as a dog, as for `family`.",
+          "knownValues": [
+            "dog",
+            "cat",
+            "horse"
+          ]
+        },
+        "blend": {
+          "type": "integer",
+          "description": "How far a cross is rolled toward its `hybrid` family, in thousandths: 0 none of the way, 1000 all of it. Always 0 on a body that is not a cross.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0
+        },
+        "muzzleLength": {
+          "type": "integer",
+          "description": "How long the muzzle is: a snub cat's face at the bottom, a horse's long head at the top. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "stance": {
+          "type": "integer",
+          "description": "What the legs stand on: flatter feet below 0, the toes of a dog or a cat at 0, the tips of them - a horse's hooves - at 1000, which also raises the hock and the carpus up longer bones of the foot. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "neckCarriage": {
+          "type": "integer",
+          "description": "How the neck is carried: low and forward at the bottom, high and arched at the top, the head nodding nose-down as it rises. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "tailCarriage": {
+          "type": "integer",
+          "description": "How the tail is carried: hanging at -1000, a sabre curve at 0, raised and curled over the back at 1000; past either end it is carried no further. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "chestDepth": {
+          "type": "integer",
+          "description": "How deep the chest is: the withers stand higher over the back and the brisket drops lower toward the elbow as it grows. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "appeal": {
+          "type": "integer",
+          "description": "How the whole body is drawn, from naturalistic at the bottom to cute at the top: over the anatomy it grows the head, shortens the muzzle, the neck and the body, and thickens the legs. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
         }
       }
     },
@@ -180,7 +234,7 @@
       "properties": {
         "femininity": {
           "type": "integer",
-          "description": "Where the body sits between the masculine and feminine references: -1000 fully masculine, +1000 fully feminine, 0 the midpoint of the two. Read by the frame, the fat distribution and the skull together, so a body cannot disagree with itself about it.",
+          "description": "Where the body sits between the masculine and feminine references: -1000 fully masculine, +1000 fully feminine, 0 the midpoint of the two. Read by the frame, the fat distribution and the skull together, so a body cannot disagree with itself about it. A person's axis: a quadruped does not read it, and a re-roll of one keeps the value stored (#178).",
           "minimum": -3000,
           "maximum": 3000,
           "default": 0

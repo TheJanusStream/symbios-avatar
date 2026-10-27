@@ -175,17 +175,46 @@ fn main() {
             hoof(|p, v| p.height = v),
         ),
         ("bodyLength", 0.0, signed, hoof(|p, v| p.body_length = v)),
-        ("build", 0.0, signed, hoof(|p, v| p.build = v)),
-        (
-            "muscle",
-            0.0,
-            explore_range(0.0, (0.0, 1.0)),
-            hoof(|p, v| p.muscle = v),
-        ),
         ("legLength", 0.0, signed, hoof(|p, v| p.leg_length = v)),
         ("neckLength", 0.0, signed, hoof(|p, v| p.neck_length = v)),
         ("headSize", 0.0, signed, hoof(|p, v| p.head_size = v)),
         ("tailLength", 0.0, signed, hoof(|p, v| p.tail_length = v)),
+        // The six the families brought (#366).
+        (
+            "muzzleLength",
+            0.0,
+            signed,
+            hoof(|p, v| p.muzzle_length = v),
+        ),
+        ("stance", 0.0, signed, hoof(|p, v| p.stance = v)),
+        (
+            "neckCarriage",
+            0.0,
+            signed,
+            hoof(|p, v| p.neck_carriage = v),
+        ),
+        (
+            "tailCarriage",
+            0.0,
+            signed,
+            hoof(|p, v| p.tail_carriage = v),
+        ),
+        ("chestDepth", 0.0, signed, hoof(|p, v| p.chest_depth = v)),
+        ("appeal", 0.0, signed, hoof(|p, v| p.appeal = v)),
+        // And the composites a beast reads since `build` and `muscle` retired
+        // into them (#178).
+        (
+            "mass",
+            0.0,
+            signed,
+            Box::new(|record: &mut AvatarRecord, value| record.composites.mass = value),
+        ),
+        (
+            "bodyFat",
+            symbios_avatar::plan::DEFAULT_BODY_FAT,
+            symbios_avatar::plan::BODY_FAT_RANGE,
+            Box::new(|record: &mut AvatarRecord, value| record.composites.body_fat = value),
+        ),
     ];
     let probe_beast = |set: &dyn Fn(&mut AvatarRecord, f32), value: f32| -> bool {
         let mut record =

@@ -87,6 +87,29 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
 ///
+/// **8** - a re-rolled quadruped is a dog, a cat or a horse (#366, owner
+/// call), and the composites are drawn in the order their docs always gave
+/// (#178). Two changes, batched:
+///
+/// - a quadruped's family is drawn first, evenly on `quadruped.family`, and
+///   fifteen in a hundred are a cross with a second (`quadruped.hybrid`,
+///   `quadruped.hybridFamily`) blended between the two (`quadruped.blend`).
+///   Every axis it then draws is centred on its family's anchor rather than
+///   on the plan's neutral, six new axes draw on streams of their own -
+///   `quadruped.appeal` among them, centred well toward cute - its
+///   `build` and `muscle` are gone into `mass` and `bodyFat`, and those and
+///   age are centred on its family too ([`crate::plan::CompositePriors`]);
+///   it draws no frame axis. Every quadruped seed is a different animal.
+/// - `Age` is drawn before `Build`. Drawn after it, as through generation 7,
+///   an unlocked roll's body fat read the age of the roll BEFORE it, so one
+///   seed drew a different body fat on a record that had been old than on a
+///   fresh one, and a fresh roll's never read its own age at all. A person's
+///   body fat moves on every seed whose age is past `plan::AGE_PIVOT`; no
+///   other draw of a person's moved, and no stream name.
+///
+/// No migration: a stored record keeps the composites and the axes it was
+/// saved with, and a quadruped saved before the families reads as a dog.
+///
 /// **7** - a re-roll dresses the body (#358, owner call). The outfit had been
 /// the one block a roll never touched, so every body a seed described wore
 /// the same top over the same trousers; it is a category of its own now,
@@ -165,7 +188,7 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 7;
+pub const GENERATOR_VERSION: u32 = 8;
 
 /// The generation whose hair a record has to be re-rolled to reach.
 ///
@@ -478,16 +501,30 @@ impl AvatarRecord {
         self.generator = GENERATOR_VERSION;
         let rolls = Rolls::new(seed);
 
+        // Pass zero: what kind of body this is within its plan - a
+        // quadruped's family and its cross (#366) - which every draw after it
+        // is centred on, the composites included (#178). Under the frame's
+        // lock: a creator who keeps a frame keeps the animal it is, and rolls
+        // its details.
+        if !self.locks.is_locked(Category::Frame) {
+            self.archetype.reroll_kind(&rolls);
+        }
+        let priors = self.archetype.composite_priors();
+
         // Pass one: the composites, in an order of their own. `Category::ALL`
-        // puts `Build` before `Frame`, and `body_fat`'s draw reads the frame
-        // axis — the same fraction is a different body on a masculine and a
-        // feminine frame — so the dependency is written out here rather than
-        // left to the order a bitmask happens to declare its variants in.
-        for category in [Category::Frame, Category::Build, Category::Age] {
+        // puts `Build` before `Frame` and `Age`, and `body_fat`'s draw reads
+        // both - the same fraction is a different body on a masculine and a
+        // feminine frame, and at forty and at seventy - so the dependency is
+        // written out here rather than left to the order a bitmask happens to
+        // declare its variants in. **`Age` before `Build`, since generation 8**
+        // (#178): drawn after it, as it was through generation 7, an unlocked
+        // roll's body fat read the age of the roll BEFORE it, so one seed drew
+        // a different body on a record that had been old than on a fresh one.
+        for category in [Category::Frame, Category::Age, Category::Build] {
             if self.locks.is_locked(category) {
                 continue;
             }
-            self.composites.reroll(category, &rolls);
+            self.composites.reroll(category, &rolls, &priors);
         }
 
         // Pass two: everything that reads them.
@@ -2097,7 +2134,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 7,
+            GENERATOR_VERSION, 8,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {
@@ -2149,6 +2186,9 @@ mod tests {
         //
         // Generation 7 (#358) dresses the body, and the table is unchanged
         // by it on every seed: the outfit draws from `outfit.*` streams alone.
+        // Generation 8 (#366, #178) is the quadruped's families and the
+        // composites' order: a person's body fat now reads the age this roll
+        // drew, and none of these columns reads body fat. Unchanged again.
         //
         // Generation 2 (#160) was the exploration distributions; generation 1
         // the first numbered draw.
@@ -2334,6 +2374,73 @@ mod tests {
         assert_eq!(beast.skin, person.skin, "the complexion is every body's");
         assert_ne!(person.face, blank.face);
         assert_ne!(person.hair, blank.hair);
+    }
+
+    #[test]
+    fn a_roll_depends_on_its_seed_and_nothing_the_record_held() {
+        // #178: through generation 7 the composites drew `Build` before `Age`,
+        // so an unlocked roll's body fat read the age of the roll BEFORE it -
+        // one seed drew a different body fat on a record that had been old in
+        // 194 seeds of 200. A record whose every unlocked category is drawn
+        // must come out the same whatever it held, the stored values a plan
+        // never draws (a beast's frame axis) aside.
+        for archetype in [
+            Archetype::default(),
+            Archetype::Quadruped(crate::plan::QuadrupedParams::default()),
+        ] {
+            for seed in 0..60i64 {
+                let fresh = AvatarRecord::rolled("Fresh", archetype.clone(), seed);
+                let mut worn = AvatarRecord::rolled("Worn", archetype.clone(), seed + 1000);
+                worn.composites.age = 80;
+                worn.composites.mass = -2.5;
+                worn.composites.body_fat = 0.55;
+                worn.reroll(seed);
+                assert_eq!(worn.archetype, fresh.archetype, "seed {seed}");
+                let body = |record: &AvatarRecord| {
+                    let composites = record.composites;
+                    (composites.mass, composites.body_fat, composites.age)
+                };
+                assert_eq!(body(&worn), body(&fresh), "seed {seed}");
+                if archetype.composite_priors().frame {
+                    assert_eq!(worn.composites.femininity, fresh.composites.femininity);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_seed_reproduces_the_same_animal() {
+        // `a_seed_reproduces_the_same_person`'s table for the other plan, from
+        // generation 8 (#366), the first in which a seed names a family: if
+        // this fails, every stored quadruped seed now names a different
+        // animal, and GENERATOR_VERSION has to move with it.
+        assert_eq!(
+            GENERATOR_VERSION, 8,
+            "bump the table below with the version"
+        );
+        let rolled = |seed: i64| {
+            let mut record = AvatarRecord::new(
+                "Golden",
+                Archetype::Quadruped(crate::plan::QuadrupedParams::default()),
+            );
+            record.reroll(seed);
+            let Archetype::Quadruped(params) = record.archetype else {
+                panic!("archetype changed");
+            };
+            (
+                params.family.name(),
+                params.hybrid.map(crate::plan::Family::name),
+                (params.height * 1000.0).round() as i32,
+                (params.muzzle_length * 1000.0).round() as i32,
+            )
+        };
+        // One of each family and a cross. Seed 2's muzzle is its wildcard
+        // (`Rolls::shape`): a cat with a dog's length of face, which the table
+        // keeps as the reminder that a family is a centre and not a fence.
+        assert_eq!(rolled(1), ("dog", None, 750, -69));
+        assert_eq!(rolled(2), ("cat", None, 368, 340));
+        assert_eq!(rolled(6), ("horse", None, 1410, 814));
+        assert_eq!(rolled(22), ("dog", Some("cat"), 809, 951));
     }
 
     #[test]

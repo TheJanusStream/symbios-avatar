@@ -12,7 +12,7 @@
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use symbios_avatar::face::{HeadTraits, Skull};
-use symbios_avatar::plan::{AGE_RANGE, DEFAULT_AGE, DEFAULT_BODY_FAT};
+use symbios_avatar::plan::{AGE_RANGE, BODY_FAT_RANGE, DEFAULT_AGE, DEFAULT_BODY_FAT};
 use symbios_avatar::{
     Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, Composites, HumanoidParams,
     Limb, Patch, QuadrupedParams, Rig, Skeleton, Vec3, Zone, build_body, build_cage,
@@ -111,15 +111,31 @@ fn a_non_finite_humanoid_axis_takes_its_documented_default() {
 
 #[test]
 fn a_non_finite_quadruped_axis_takes_its_documented_default() {
-    let axes: [Readable<QuadrupedParams>; 8] = [
+    let axes: [Readable<QuadrupedParams>; 12] = [
         ("height", |p, v| p.height = v, |p| p.height),
         ("body_length", |p, v| p.body_length = v, |p| p.body_length),
-        ("build", |p, v| p.build = v, |p| p.build),
-        ("muscle", |p, v| p.muscle = v, |p| p.muscle),
         ("leg_length", |p, v| p.leg_length = v, |p| p.leg_length),
         ("neck_length", |p, v| p.neck_length = v, |p| p.neck_length),
         ("head_size", |p, v| p.head_size = v, |p| p.head_size),
         ("tail_length", |p, v| p.tail_length = v, |p| p.tail_length),
+        (
+            "muzzle_length",
+            |p, v| p.muzzle_length = v,
+            |p| p.muzzle_length,
+        ),
+        ("stance", |p, v| p.stance = v, |p| p.stance),
+        (
+            "neck_carriage",
+            |p, v| p.neck_carriage = v,
+            |p| p.neck_carriage,
+        ),
+        (
+            "tail_carriage",
+            |p, v| p.tail_carriage = v,
+            |p| p.tail_carriage,
+        ),
+        ("chest_depth", |p, v| p.chest_depth = v, |p| p.chest_depth),
+        ("appeal", |p, v| p.appeal = v, |p| p.appeal),
     ];
     assert_non_finite_axes_fall_back("quadruped", &axes, Archetype::Quadruped);
 }
@@ -402,31 +418,44 @@ fn the_default_body_stands_near_the_proportion_canon() {
 
 #[test]
 fn every_quadruped_axis_meshes_at_its_extremes() {
+    // The envelope's ends as well as ±1 (#366): a roll's wildcard reaches
+    // them, and every saturation and floor the families brought is written
+    // for them.
     let heights = [0.25f32, 0.58, 1.8];
-    let axes: [Axis<QuadrupedParams>; 7] = [
+    let axes: [Axis<QuadrupedParams>; 11] = [
         ("body_length", |p, v| p.body_length = v),
-        ("build", |p, v| p.build = v),
-        ("muscle", |p, v| p.muscle = v.abs()),
         ("leg_length", |p, v| p.leg_length = v),
         ("neck_length", |p, v| p.neck_length = v),
         ("head_size", |p, v| p.head_size = v),
         ("tail_length", |p, v| p.tail_length = v),
+        ("muzzle_length", |p, v| p.muzzle_length = v),
+        ("stance", |p, v| p.stance = v),
+        ("neck_carriage", |p, v| p.neck_carriage = v),
+        ("tail_carriage", |p, v| p.tail_carriage = v),
+        ("chest_depth", |p, v| p.chest_depth = v),
+        ("appeal", |p, v| p.appeal = v),
     ];
 
     for height in heights {
         for (name, apply) in axes {
-            for value in EXTREMES {
+            for value in [-3.0f32, -1.0, 0.0, 1.0, 3.0] {
                 let mut params = QuadrupedParams {
-                    build: value,
-                    muscle: value.max(0.0),
                     height,
                     ..Default::default()
                 };
                 apply(&mut params, value);
                 params.sanitize();
+                // Compounded with the girth at the same end, as `build` and
+                // `muscle` were before they retired into these (#178).
+                let mut composites = Composites {
+                    mass: value,
+                    body_fat: DEFAULT_BODY_FAT + 0.15 * value,
+                    ..NEUTRAL
+                };
+                composites.sanitize();
                 assert_meshable(
                     &Archetype::Quadruped(params),
-                    &NEUTRAL,
+                    &composites,
                     &format!("quadruped h={height} {name}={value}"),
                 );
             }
@@ -439,21 +468,83 @@ fn random_quadrupeds_always_mesh() {
     let mut rng = Pcg64Mcg::seed_from_u64(0x4BEA_5700);
     for sample in 0..1500 {
         let mut params = QuadrupedParams {
-            build: rng.random_range(-1.0..=1.0),
-            muscle: rng.random_range(0.0..=1.0),
             height: rng.random_range(0.25..=1.8),
             body_length: rng.random_range(-1.0..=1.0),
             leg_length: rng.random_range(-1.0..=1.0),
             neck_length: rng.random_range(-1.0..=1.0),
             head_size: rng.random_range(-1.0..=1.0),
             tail_length: rng.random_range(-1.0..=1.0),
+            muzzle_length: rng.random_range(-1.0..=1.0),
+            stance: rng.random_range(-1.0..=1.5),
+            neck_carriage: rng.random_range(-1.0..=1.0),
+            tail_carriage: rng.random_range(-1.0..=1.0),
+            chest_depth: rng.random_range(-1.0..=1.0),
+            appeal: rng.random_range(-1.0..=1.5),
+            ..Default::default()
         };
         params.sanitize();
+        let mut composites = Composites {
+            mass: rng.random_range(-1.0..=1.0),
+            body_fat: rng.random_range(BODY_FAT_RANGE.0..=BODY_FAT_RANGE.1),
+            age: rng.random_range(AGE_RANGE.0..=AGE_RANGE.1),
+            ..NEUTRAL
+        };
+        composites.sanitize();
         assert_meshable(
             &Archetype::Quadruped(params),
-            &NEUTRAL,
-            &format!("random quadruped #{sample}: {params:?}"),
+            &composites,
+            &format!("random quadruped #{sample}: {params:?} {composites:?}"),
         );
+    }
+}
+
+#[test]
+fn the_composites_mesh_against_every_corner_of_a_quadruped() {
+    // The humanoid's composite corner product (#161's rule) for the plan the
+    // composites reach since #178: each end of `mass`, `bodyFat` and age
+    // against every axis at once at each of its ends, at both ends of the
+    // back's height. Mass and fat are the girth `build` and `muscle` were, so
+    // the bodies to worry about are the old pair sweep's: a slight one on
+    // long legs, a heavy one on short.
+    for mass in [-3.0f32, 0.0, 3.0] {
+        for body_fat in [BODY_FAT_RANGE.0, DEFAULT_BODY_FAT, BODY_FAT_RANGE.1] {
+            for age in [AGE_RANGE.0, AGE_RANGE.1] {
+                let composites = Composites {
+                    mass,
+                    body_fat,
+                    age,
+                    ..NEUTRAL
+                };
+                for value in [-3.0f32, -1.0, 0.0, 1.0, 3.0] {
+                    for height in [0.25f32, 1.8] {
+                        let mut params = QuadrupedParams {
+                            height,
+                            body_length: value,
+                            leg_length: value,
+                            neck_length: value,
+                            head_size: value,
+                            tail_length: value,
+                            muzzle_length: value,
+                            stance: value,
+                            neck_carriage: value,
+                            tail_carriage: value,
+                            chest_depth: value,
+                            appeal: value,
+                            ..Default::default()
+                        };
+                        params.sanitize();
+                        assert_meshable(
+                            &Archetype::Quadruped(params),
+                            &composites,
+                            &format!(
+                                "quadruped h={height} all={value} mass={mass} fat={body_fat} \
+                                 age={age}"
+                            ),
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -736,9 +827,31 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// render diffs clean against the prior sheet. Judged on `--bare --brows 10`
 /// and `--bare --corners 22` against rest, where the feature visibly moves
 /// and nothing outside its field does.
+///
+/// **Re-based for #366's quadruped graph**, which moves every quadruped row
+/// and no humanoid one: a raised neck carrying an occiput, a cranium, a
+/// muzzle and a nose; a higher, narrower loin; legs zoned as a person's, with
+/// a forward stifle, a high hock and a pad and toes; a five-node tail. Judged
+/// on `render --quadruped --gallery 16`, shaded and with `--pass silhouette`,
+/// where every roll reads as a four-legged animal rather than a table.
+///
+/// **And again for its families**, every quadruped row and no humanoid one: a
+/// roll is a dog, a cat, a horse or a cross of two, centred on its family's
+/// anchor, with five new axes, a spine floor of 1.6 girdle radii for 2.5, and
+/// a neck floor of 1.4 chest radii for 1.9. Judged on `render --quadruped
+/// --gallery 16 --family` for each family and for the crosses, as silhouettes.
+///
+/// **And for #178 and the appeal axis**, every quadruped seed row, its default
+/// unmoved: the composites reach a quadruped at sites of its own and are
+/// rolled from its family, and a roll leans cute. **Three humanoid rows move
+/// with them, seeds 0, 4 and 7, for the composites' order**: a person's body
+/// fat now reads the age the same roll drew rather than the last roll's, which
+/// moves the girths of every seed aged past `AGE_PIVOT` whose body fat came
+/// out different; the humanoid default, the frame, age and corner rows, the
+/// golden table of `record` and both golden renders hold.
 const FINGERPRINTS: [(&str, u64); 28] = [
     ("humanoid default", 0x9173c75bf766fde2),
-    ("quadruped default", 0x2aabd8cffd3320f0),
+    ("quadruped default", 0xe5c4699a50303bde),
     ("humanoid femininity -1", 0x673e572bbd1d51cd),
     ("humanoid femininity +1", 0xb3c982009b48dc6a),
     ("humanoid age 55", 0xba55b8459f1e0c73),
@@ -749,22 +862,22 @@ const FINGERPRINTS: [(&str, u64); 28] = [
     ("humanoid corner h=2.2 all=0", 0x0fd581eb22c0ff94),
     ("humanoid corner h=1.2 all=1", 0x2b700d85d0f6fd72),
     ("humanoid corner h=2.2 all=1", 0x5f2db1dd49571664),
-    ("humanoid seed 0", 0x2d4b3ebd6a8c2db8),
-    ("quadruped seed 0", 0x181d22a61a29e06b),
+    ("humanoid seed 0", 0x387f442843f970ab),
+    ("quadruped seed 0", 0x5eac45157a4e9fbf),
     ("humanoid seed 1", 0x2d9b6b9e530ad858),
-    ("quadruped seed 1", 0x66b32cdababaf760),
+    ("quadruped seed 1", 0x43d0673ea9b31a66),
     ("humanoid seed 2", 0x02347f5f268e17be),
-    ("quadruped seed 2", 0x0ca673b8f4eb9dd5),
+    ("quadruped seed 2", 0x07ef062ef5a70690),
     ("humanoid seed 3", 0x568d9be1418e9cad),
-    ("quadruped seed 3", 0x5fe315cd16d9b52b),
-    ("humanoid seed 4", 0x54f8203cc14f8084),
-    ("quadruped seed 4", 0x050364ec7b8118ea),
+    ("quadruped seed 3", 0xc02f39bf8b8986e2),
+    ("humanoid seed 4", 0x549491a10f50bdde),
+    ("quadruped seed 4", 0xc7e98ebf7187604c),
     ("humanoid seed 5", 0x9989c9294b7074b9),
-    ("quadruped seed 5", 0x2d22051939b73f20),
+    ("quadruped seed 5", 0xdc1c185fb4ea7e77),
     ("humanoid seed 6", 0x55df5943e6969883),
-    ("quadruped seed 6", 0x94b5b20cbe08a43a),
-    ("humanoid seed 7", 0xdf0bc70e24977d13),
-    ("quadruped seed 7", 0xc6b4259ae378e3bb),
+    ("quadruped seed 6", 0xe17d4b2a6290c916),
+    ("humanoid seed 7", 0xf654635d1602bfd6),
+    ("quadruped seed 7", 0xfa2518ad359afa88),
 ];
 
 /// Every number the two body plans produce, pinned.
