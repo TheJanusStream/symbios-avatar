@@ -42,11 +42,13 @@
 //! cargo run --release --example idleaudit -- --talking
 //! cargo run --release --example idleaudit -- --listening
 //! cargo run --release --example idleaudit -- --clip Idle_A   # the baseline
+//! cargo run --release --example idleaudit -- --quadruped      # a beast's (#370)
 //! ```
 
 use glam::Vec3;
 use symbios_avatar::{
-    Archetype, Avatar, AvatarRecord, ClipLibrary, Idle, IdleConfig, Limb, Pose, Zone,
+    Archetype, Avatar, AvatarRecord, ClipLibrary, Idle, IdleConfig, Limb, Pose, QuadrupedParams,
+    Zone,
 };
 
 /// Where the shipped reference clips live.
@@ -110,7 +112,13 @@ fn main() {
         IdleConfig::default()
     };
 
-    let record = AvatarRecord::new("Idler", Archetype::default());
+    // `--quadruped` measures a beast's idle instead (#370), all four feet.
+    let archetype = if args.iter().any(|arg| arg == "--quadruped") {
+        Archetype::Quadruped(QuadrupedParams::default())
+    } else {
+        Archetype::default()
+    };
+    let record = AvatarRecord::new("Idler", archetype);
     let Some(avatar) = Avatar::build(&record) else {
         eprintln!("the standing body would not build");
         std::process::exit(1);
@@ -195,15 +203,24 @@ fn main() {
 
     // The arm chains, for the carriage reading: how far off vertical the
     // upper arm hangs and how bent the elbow is, both off the POSED skeleton.
+    // Free ones only: a beast's fores are legs (#370), and their carriage is
+    // the stance's.
+    let carrying = rig.ground_contacts();
     let arms: Vec<[usize; 3]> = [Limb::ForeLeft, Limb::ForeRight]
         .into_iter()
+        .filter(|limb| !carrying.contains(limb))
         .filter_map(|limb| rig.limb_chain(limb))
         .collect();
+    // What must stay over the feet: a person's head, and a beast's trunk -
+    // its head is ahead of its fores by design (#370).
+    let four = carrying.len() == 4;
+    let trunk_middle = (first(Zone::Pelvis), first(Zone::Chest));
 
     let mut kept: Vec<(f32, Vec<Vec3>)> = Vec::new();
     let mut breath_chest: Vec<f32> = Vec::new();
     let mut breath_abdomen: Vec<f32> = Vec::new();
     let mut head_path: Vec<Vec3> = Vec::new();
+    let mut held_path: Vec<Vec3> = Vec::new();
     let mut foot_drift = 0.0f32;
     let mut jitter = 0.0f32;
     let mut jitter_at = 0.0f32;
@@ -258,6 +275,11 @@ fn main() {
         if let Some(joint) = head {
             head_path.push(posed[joint]);
         }
+        if let (true, (Some(hips), Some(withers))) = (four, trunk_middle) {
+            held_path.push((posed[hips] + posed[withers]) * 0.5);
+        } else if let Some(joint) = head {
+            held_path.push(posed[joint]);
+        }
         for &joint in &contacts {
             foot_drift = foot_drift.max(posed[joint].distance(rest[joint]));
         }
@@ -304,7 +326,9 @@ fn main() {
     // The carriage, against the bind pose it must NOT be showing (#267): a
     // relaxed arm hangs a few degrees off vertical with a slightly bent
     // elbow, and the A-pose the body is modelled in is neither.
-    {
+    if arms.is_empty() {
+        println!("  arms:   none free - every limb this body has stands on the ground");
+    } else {
         let rest_arm = |chain: &[usize; 3]| {
             let upper = rest[chain[1]] - rest[chain[0]];
             let fore = rest[chain[2]] - rest[chain[1]];
@@ -437,17 +461,22 @@ fn main() {
 
     // Containment, measured where it matters: the horizontal extent the body
     // reached against the ground it is standing on.
-    let out_x = flat
+    let held: Vec<Vec3> = held_path
+        .iter()
+        .map(|at| Vec3::new(at.x, 0.0, at.z))
+        .collect();
+    let out_x = held
         .iter()
         .map(|at| (across.0 - at.x).max(at.x - across.1))
         .fold(f32::MIN, f32::max);
-    let out_z = flat
+    let out_z = held
         .iter()
         .map(|at| (fore.0 - at.z).max(at.z - fore.1))
         .fold(f32::MIN, f32::max);
     println!(
-        "  stance: the sway stayed {:.0} mm inside the feet across and {:.0} mm fore-and-aft \
+        "  stance: the {} stayed {:.0} mm inside the feet across and {:.0} mm fore-and-aft \
          (a body outside its own support polygon is falling, not swaying)",
+        if four { "trunk" } else { "sway" },
         -out_x * 1000.0,
         -out_z * 1000.0,
     );

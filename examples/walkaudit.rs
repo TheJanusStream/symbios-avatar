@@ -84,6 +84,8 @@
 //! ```text
 //! cargo run --example walkaudit
 //! cargo run --example walkaudit -- --frames 24
+//! cargo run --example walkaudit -- --quadruped           # a beast's gaits (#370)
+//! cargo run --example walkaudit -- --quadruped --seed 6  # a rolled one's
 //! cargo run --example walkaudit -- --pace 1.4 --grade 0.12
 //! cargo run --example walkaudit -- --camber 0.20
 //! cargo run --example walkaudit -- --run          # a run, not a walk
@@ -262,6 +264,10 @@ fn main() {
     // reads as a body with no posture and unsettled feet under this flag; it is
     // for the one reading, not for the table.
     let bare = args.iter().any(|arg| arg == "--bare");
+    if args.iter().any(|arg| arg == "--quadruped") {
+        beasts(number("--seed").map(|seed| seed as i64));
+        return;
+    }
 
     let record = AvatarRecord::new("Walker", Archetype::default());
     let Some(avatar) = Avatar::build(&record) else {
@@ -1429,6 +1435,165 @@ fn main() {
 /// Asked at the joint rather than of the rotation applied to it. A quaternion
 /// about the arm's own axis is a perfectly good rotation that bends nothing, and
 /// reading the parameter instead of the geometry cannot tell the two apart.
+/// A beast's gaits, driven (#370): a walk, a trot, a canter and a gallop by
+/// Froude number on the default beast or the one `seed` rolls, each driven
+/// four seconds by the `Driver` as a chassis would and read over the last
+/// two.
+///
+/// Per gait: the pattern, its Froude number, duty and cadence; how far the
+/// hips and the withers rise and fall and their worst step in one frame -
+/// the jolts slice 2 of #370 removed; the trunk's pitch through its rock and
+/// the loin's height over the trunk's line through its fold; how far the
+/// head's pitch swings; how far a paw moves through the middle of its stance,
+/// where nothing turns it; and how many frames strained a leg.
+fn beasts(seed: Option<i64>) {
+    use symbios_avatar::QuadrupedParams;
+    use symbios_avatar::anim::driver::{Driver, Inputs, Source, level_ground};
+    use symbios_avatar::plan::Zone;
+
+    const STEP: f32 = 1.0 / 60.0;
+    let mut record = AvatarRecord::new("Runner", Archetype::Quadruped(QuadrupedParams::default()));
+    if let Some(seed) = seed {
+        record.reroll(seed);
+    }
+    let Some(avatar) = Avatar::build(&record) else {
+        eprintln!("the beast would not build");
+        std::process::exit(1);
+    };
+    let rig = &avatar.rig;
+    let first = |zone: Zone| rig.in_zone(zone).first().copied();
+    let (Some(hips), Some(loin), Some(withers)) = (
+        first(Zone::Pelvis),
+        first(Zone::Abdomen),
+        first(Zone::Chest),
+    ) else {
+        eprintln!("the beast has no trunk to read");
+        std::process::exit(1);
+    };
+    let head = rig.in_zone(Zone::Head);
+    let paws: Vec<(Limb, usize)> = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| Some((limb, *rig.in_zone(Zone::Extremity(limb)).first()?)))
+        .collect();
+    println!(
+        "a beast {:.2} m long on a leg of {:.3} m",
+        rig.extent(),
+        Speed::from_froude(1.0).metres_per_second(rig).powi(2) / 9.81
+    );
+    println!(
+        "\n{:>14} {:>5} {:>5} {:>5} {:>11} {:>10} {:>11} {:>10} {:>8} {:>8} {:>7} {:>8} {:>6}",
+        "pattern",
+        "Fr",
+        "duty",
+        "Hz",
+        "hips mm",
+        "step mm",
+        "withers mm",
+        "step mm",
+        "rock deg",
+        "fold mm",
+        "head deg",
+        "slide mm",
+        "strain"
+    );
+    for froude in [0.3, 1.4, 3.2, 7.0] {
+        let pace = Speed::from_froude(froude).metres_per_second(rig);
+        let mut driver = Driver::seeded(7);
+        let mut at = Vec3::ZERO;
+        let (mut hip_y, mut withers_y) = (Vec::new(), Vec::new());
+        let (mut pitch, mut arch, mut nod) = (Vec::new(), Vec::new(), Vec::new());
+        let mut planted: Vec<Option<Vec3>> = vec![None; paws.len()];
+        let (mut slide, mut strained) = (0.0f32, 0usize);
+        for frame in 0..240 {
+            let velocity = Vec3::Z * pace;
+            at += velocity * STEP;
+            let driven = driver
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: STEP,
+                        velocity,
+                        at,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed");
+            if frame < 120 {
+                continue;
+            }
+            let posed = driven.pose.forward(rig).positions;
+            hip_y.push(posed[hips].y);
+            withers_y.push(posed[withers].y);
+            let run = posed[withers] - posed[hips];
+            pitch.push(run.y.atan2(run.z).to_degrees());
+            let along = (posed[loin] - posed[hips]).dot(run) / run.length_squared();
+            arch.push(posed[loin].y - (posed[hips].y + run.y * along));
+            if let (Some(&from), Some(&to)) = (head.first(), head.last()) {
+                let face = posed[to] - posed[from];
+                nod.push(face.y.atan2(face.z).to_degrees());
+            }
+            strained += usize::from(driven.straining > 0);
+            let gait = driver.speed().map(|speed| speed.gait(rig));
+            for (index, &(limb, paw)) in paws.iter().enumerate() {
+                let middle = driven.source == Source::Gait
+                    && gait.as_ref().is_some_and(|gait| {
+                        gait.limbs
+                            .iter()
+                            .position(|&of| of == limb)
+                            .is_some_and(|at| {
+                                matches!(
+                                    gait.phase(at, driver.cycle()),
+                                    gait::Phase::Stance(t) if (0.1..0.6).contains(&t)
+                                )
+                            })
+                    });
+                let here = at + posed[paw];
+                planted[index] = match (middle, planted[index]) {
+                    (true, Some(was)) => {
+                        slide = slide.max(here.distance(was));
+                        Some(was)
+                    }
+                    (true, None) => Some(here),
+                    (false, _) => None,
+                };
+            }
+        }
+        let range = |values: &[f32]| {
+            values.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+                - values.iter().copied().fold(f32::INFINITY, f32::min)
+        };
+        let jolt = |values: &[f32]| {
+            values
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .fold(0.0f32, f32::max)
+        };
+        let speed = driver.speed().unwrap_or(Speed::STILL);
+        println!(
+            "{:>14} {:>5.2} {:>5.2} {:>5.2} {:>11.1} {:>10.1} {:>11.1} {:>10.1} {:>8.1} {:>8.1} {:>7.1} {:>8.2} {:>6}",
+            speed.pattern().map_or("none", |pattern| pattern.name()),
+            speed.froude(),
+            speed.duty(),
+            speed.cadence(rig),
+            range(&hip_y) * 1000.0,
+            jolt(&hip_y) * 1000.0,
+            range(&withers_y) * 1000.0,
+            jolt(&withers_y) * 1000.0,
+            range(&pitch),
+            range(&arch) * 1000.0,
+            range(&nod),
+            slide * 1000.0,
+            strained,
+        );
+    }
+    println!(
+        "\nhow a gait READS is not in this table: `cargo run --release --example render -- \
+         --quadruped --speed M/S --strip 8`, and the viewer's motion window."
+    );
+}
+
 fn elbow_bend(rig: &Rig, posed: &symbios_avatar::anim::Posed, limb: Limb) -> f32 {
     let Some([shoulder, elbow, wrist]) = rig.limb_chain(limb) else {
         return 0.0;

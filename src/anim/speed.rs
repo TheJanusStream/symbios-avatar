@@ -27,6 +27,10 @@
 //! * **Cadence is then arithmetic**, not a second fit: a body covering a known
 //!   distance per cycle at a known speed takes cycles per second at the rate
 //!   that makes those agree.
+//! * **A four-legged body moves in a [`Pattern`]** (#370) - a walk, a trot, a
+//!   canter, a gallop, chosen on the same axis - with its cycle from
+//!   Alexander's relation for quadrupeds rather than Grieve's for a biped, so
+//!   its stance holds near a leg's length while the flight grows.
 //!
 //! Nothing here is tuned against how a body looks. Every constant is a
 //! published figure or a consequence of one, and the two that are neither —
@@ -36,6 +40,9 @@ use crate::det::DetMath;
 use glam::Vec3;
 
 use super::gait::{Gait, RUN_DUTY, Stride};
+use super::quadruped::four_legged;
+use super::{Lead, Pattern};
+use crate::plan::FootKind;
 use crate::rig::Rig;
 
 /// Acceleration due to gravity, in metres per second squared.
@@ -102,6 +109,19 @@ pub const SPRINT_DUTY: f32 = 0.22;
 /// The Froude number [`SPRINT_DUTY`] is anchored at.
 pub const FROUDE_SPRINT: f32 = 4.0;
 
+/// A four-legged body's cycle, as a share of its leg, at Froude one (#370).
+///
+/// Provenance: **the literature**. Alexander and Jayes (1983) put mammals from
+/// rodents to rhinoceroses on one line: a stride of 2.3 hip heights times the
+/// Froude number to the [`QUADRUPED_STRIDE_POWER`]. Its stance - the cycle
+/// times the duty - then holds near a leg's length from a walk to a gallop
+/// while the flight grows, which is how a quadruped goes faster.
+pub const QUADRUPED_STRIDE: f32 = 2.3;
+
+/// The power of the Froude number a four-legged body's cycle grows with. See
+/// [`QUADRUPED_STRIDE`].
+pub const QUADRUPED_STRIDE_POWER: f32 = 0.3;
+
 /// How fast a body is travelling, as a number that means the same thing on any
 /// body.
 ///
@@ -111,11 +131,18 @@ pub const FROUDE_SPRINT: f32 = 4.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Speed {
     froude: f32,
+    /// The order a four-legged body's feet land in at this speed (#370), or
+    /// none for any other body - whose gait is its shape's, and whose
+    /// arithmetic is a person's to the bit.
+    pattern: Option<Pattern>,
 }
 
 impl Speed {
     /// Standing still.
-    pub const STILL: Self = Self { froude: 0.0 };
+    pub const STILL: Self = Self {
+        froude: 0.0,
+        pattern: None,
+    };
 
     /// From a ground speed in metres per second, on this body.
     ///
@@ -129,16 +156,81 @@ impl Speed {
             return Self::STILL;
         }
         let speed = metres_per_second.abs();
+        let froude = speed * speed / (GRAVITY * leg);
         Self {
-            froude: speed * speed / (GRAVITY * leg),
+            froude,
+            pattern: four_legged(rig).then(|| Pattern::at(froude, rotary(rig), Lead::Right)),
         }
     }
 
     /// From the dimensionless number itself.
+    ///
+    /// It knows no body, so it carries no [`Pattern`]: everything that takes a
+    /// four-legged body picks the one its Froude number does (#370), and
+    /// [`Self::duty`], which takes none, is a person's.
     #[must_use]
     pub fn from_froude(froude: f32) -> Self {
         Self {
             froude: froude.max(0.0),
+            pattern: None,
+        }
+    }
+
+    /// This speed with the pattern a body moving in `before` keeps at it
+    /// (#370): see [`Pattern::held`]. A body that takes up a canter or a
+    /// gallop from a walk, a trot or a standstill takes it on `lead`, and one
+    /// already in one keeps its own. A speed with no pattern is unchanged.
+    #[must_use]
+    pub fn held(self, rig: &Rig, before: Option<Pattern>, lead: Lead) -> Self {
+        let Some(now) = self.pattern else {
+            return self;
+        };
+        Self {
+            pattern: Some(match before {
+                Some(before) => Pattern::held(self.froude, before, rotary(rig), lead),
+                None => now.on(lead),
+            }),
+            ..self
+        }
+    }
+
+    /// This speed in `pattern`, whatever the speed (#370): a gait asked for
+    /// by name rather than by speed.
+    #[must_use]
+    pub fn in_pattern(self, pattern: Pattern) -> Self {
+        Self {
+            pattern: Some(pattern),
+            ..self
+        }
+    }
+
+    /// The order a four-legged body's feet land in at this speed, if it is
+    /// one's (#370).
+    #[must_use]
+    pub fn pattern(self) -> Option<Pattern> {
+        self.pattern
+    }
+
+    /// This speed on `rig`: a four-legged body's in the pattern its Froude
+    /// number picks, if it was made without a body to pick one for -
+    /// [`Self::from_froude`] knows none, and until it is handed one its
+    /// [`Self::duty`] is a person's.
+    fn resolved(self, rig: &Rig) -> Self {
+        match self.pattern {
+            None if four_legged(rig) => Self {
+                pattern: Some(Pattern::at(self.froude, rotary(rig), Lead::Right)),
+                ..self
+            },
+            _ => self,
+        }
+    }
+
+    /// This speed's pattern at another Froude number: a turn's working foot
+    /// goes faster than the body without the body changing gait.
+    pub(crate) fn at_froude(self, froude: f32) -> Self {
+        Self {
+            froude: froude.max(0.0),
+            ..self
         }
     }
 
@@ -159,9 +251,16 @@ impl Speed {
     /// See [`FROUDE_TRANSITION`]. The threshold is on the dimensionless number
     /// and so is the same question for every body, which is the point of asking
     /// it here rather than against a speed in metres.
+    ///
+    /// A four-legged body runs once its feet have a moment all off the ground:
+    /// a trot once its duty falls below a half, a canter and a gallop always
+    /// (#370).
     #[must_use]
     pub fn is_running(self) -> bool {
-        self.froude > FROUDE_TRANSITION
+        match self.pattern {
+            Some(pattern) => pattern.flies() || self.duty() < 0.5,
+            None => self.froude > FROUDE_TRANSITION,
+        }
     }
 
     /// How long one step is on this body, in metres — one footfall to the next.
@@ -192,6 +291,9 @@ impl Speed {
         if self.froude <= 0.0 {
             return 1.0;
         }
+        if let Some(pattern) = self.pattern {
+            return pattern.duty(self.froude);
+        }
         if !self.is_running() {
             let along = (self.froude / FROUDE_TRANSITION).clamp(0.0, 1.0);
             return WALK_DUTY_SLOW + (WALK_DUTY_FAST - WALK_DUTY_SLOW) * along;
@@ -213,6 +315,10 @@ impl Speed {
         if self.froude <= 0.0 {
             return Gait::standing(rig);
         }
+        let this = self.resolved(rig);
+        if let Some(pattern) = this.pattern {
+            return Gait::pattern(rig, pattern, this.duty());
+        }
         Gait {
             duty: self.duty(),
             ..Gait::natural(rig)
@@ -227,8 +333,18 @@ impl Speed {
     /// four-legged wave covers four. See [`Gait::footfalls`], which is where
     /// that is counted — taking the contact count instead gives a trotting body
     /// twice the cadence it needs.
+    ///
+    /// **A four-legged body's is Alexander's** (#370): [`QUADRUPED_STRIDE`] of
+    /// its leg at Froude one, not a step per footfall - a gallop lands its four
+    /// feet one at a time, and counting them would double its cycle.
     #[must_use]
     pub fn cycle_length(self, rig: &Rig) -> f32 {
+        if self.resolved(rig).pattern.is_some() {
+            if self.froude <= 0.0 {
+                return 0.0;
+            }
+            return leg_of(rig) * QUADRUPED_STRIDE * self.froude.det_powf(QUADRUPED_STRIDE_POWER);
+        }
         self.step_length(rig) * self.gait(rig).footfalls() as f32
     }
 
@@ -258,7 +374,8 @@ impl Speed {
     /// stating it here from the speed is what ties it to the cadence.
     #[must_use]
     pub fn stride(self, rig: &Rig) -> Stride {
-        let length = self.cycle_length(rig) * self.duty();
+        let this = self.resolved(rig);
+        let length = this.cycle_length(rig) * this.duty();
         Stride {
             direction: Vec3::Z,
             length,
@@ -270,9 +387,16 @@ impl Speed {
             // The heel tuck rises from nothing at the walk-run transition to
             // its whole self by a plain run's Froude — continuously, on the
             // same axis as everything else here, which is what keeps the run's
-            // character from being a gait-label switch (#331).
-            tuck: ((self.froude - FROUDE_TRANSITION) / (TUCK_FROUDE - FROUDE_TRANSITION))
-                .clamp(0.0, 1.0),
+            // character from being a gait-label switch (#331). A person's
+            // heel kicks up toward the glutes; a beast's feet do not, and a
+            // tucked swing lifted a trotting dog's hind paw to its belly
+            // (#370).
+            tuck: if this.pattern.is_some() {
+                0.0
+            } else {
+                ((self.froude - FROUDE_TRANSITION) / (TUCK_FROUDE - FROUDE_TRANSITION))
+                    .clamp(0.0, 1.0)
+            },
             split: 0.0,
         }
     }
@@ -290,7 +414,8 @@ impl Speed {
     /// The gait is an argument because [`Self::stride`] took its duty and its
     /// footfall count from one, and a stride divided by a different gait's is
     /// not this stride's speed. Handing back the gait that produced the stride
-    /// round-trips exactly.
+    /// round-trips exactly - on four legs its [`Pattern`] too, read off the
+    /// gait's footfalls.
     ///
     /// **The inversion amplifies.** Grieve's exponent is applied to the
     /// dimensionless speed rather than to the Froude number, so recovering the
@@ -314,6 +439,27 @@ impl Speed {
         if gait.duty >= 1.0 {
             return Self::STILL;
         }
+        // A four-legged body's cycle is Alexander's (#370), inverted as
+        // Grieve's is below.
+        if four_legged(rig) {
+            let relative = stride.length / (duty * leg * QUADRUPED_STRIDE);
+            if relative <= f32::EPSILON {
+                return Self::STILL;
+            }
+            let froude = relative.det_powf(1.0 / QUADRUPED_STRIDE_POWER);
+            // The pattern whose footfalls these are, so a canter held below
+            // its band or led on the left hands back what produced it; a gait
+            // no pattern draws reads as the one its Froude number picks.
+            let pattern = Pattern::ALL
+                .into_iter()
+                .flat_map(|pattern| [pattern, pattern.on(Lead::Left)])
+                .find(|&pattern| lands_as(&Gait::pattern(rig, pattern, duty), gait))
+                .unwrap_or_else(|| Pattern::at(froude, rotary(rig), Lead::Right));
+            return Self {
+                froude,
+                pattern: Some(pattern),
+            };
+        }
         let step = stride.length / (duty * footfalls);
         if step <= f32::EPSILON {
             return Self::STILL;
@@ -321,8 +467,25 @@ impl Speed {
         let relative = step / (leg * GRIEVE_ALPHA);
         Self {
             froude: relative.det_powf(2.0 / GRIEVE_BETA),
+            pattern: None,
         }
     }
+}
+
+/// Whether two gaits land the same feet at the same moments.
+fn lands_as(a: &Gait, b: &Gait) -> bool {
+    a.limbs == b.limbs
+        && a.offsets.len() == b.offsets.len()
+        && a.offsets
+            .iter()
+            .zip(&b.offsets)
+            .all(|(a, b)| (a - b).abs() < 1.0e-4)
+}
+
+/// Whether a four-legged body gallops round itself - a dog's, a cat's - rather
+/// than transverse, as a horse does: on paws rather than on hooves.
+fn rotary(rig: &Rig) -> bool {
+    rig.anatomy.feet != FootKind::Hooves
 }
 
 /// How high a contact lifts at the top of its swing, as a share of its
@@ -496,6 +659,25 @@ mod tests {
     }
 
     #[test]
+    fn a_stride_says_which_pattern_took_it() {
+        // A canter held below its own band, a gallop on the left lead and a
+        // pace are none of them what their Froude numbers pick, and the round
+        // trip hands each back all the same (#370).
+        let rig = quadruped();
+        for (froude, pattern) in [
+            (2.2, Pattern::Canter(Lead::Right)),
+            (5.0, Pattern::RotaryGallop(Lead::Left)),
+            (5.0, Pattern::Gallop(Lead::Right)),
+            (1.0, Pattern::Pace),
+            (0.3, Pattern::Walk),
+        ] {
+            let speed = Speed::from_froude(froude).in_pattern(pattern);
+            let back = Speed::of(&rig, &speed.gait(&rig), &speed.stride(&rig));
+            assert_eq!(back.pattern(), Some(pattern), "at Fr {froude}");
+        }
+    }
+
+    #[test]
     fn a_body_that_never_lifts_a_foot_is_not_going_anywhere() {
         // Whatever stride it is holding. A standing gait has no stance to
         // divide by, and `Stride::for_body` will happily hand out a full-length
@@ -624,13 +806,11 @@ mod tests {
 
     #[test]
     fn a_cycle_is_one_footfall_per_contact_and_the_distance_says_so() {
-        // Why [`Speed::cycle_length`] multiplies by the number of contacts. A
-        // step is one footfall to the next; a cycle is every foot having taken
-        // one. Counting the footfalls off the gait rather than asserting the
-        // arithmetic against itself is what makes this a check — a four-legged
-        // body covers four steps a cycle and a two-legged one covers two, and a
-        // relation that ignored that would give a quadruped half the cadence it
-        // needs at the same speed.
+        // Why [`Speed::cycle_length`] multiplies a biped's step by the number
+        // of footfalls. A step is one footfall to the next; a cycle is every
+        // foot having taken one. Counting the footfalls off the gait rather
+        // than asserting the arithmetic against itself is what makes this a
+        // check.
         for rig in [biped(), quadruped()] {
             let speed = Speed::from_froude(0.25);
             let gait = speed.gait(&rig);
@@ -649,15 +829,26 @@ mod tests {
                 gait.footfalls(),
                 "the gait disagrees with itself about how often support transfers"
             );
-            // Two on a biped's wave AND two on a quadruped's trot, which is the
-            // case that separates support transfers from feet.
-            assert_eq!(footfalls, 2, "both default gaits transfer support twice");
-            assert!(
-                (speed.cycle_length(&rig) - speed.step_length(&rig) * footfalls as f32).abs()
-                    < 1e-5,
-                "the distance per cycle is not the steps taken in it"
-            );
         }
+        // A biped's walk transfers support twice and covers a step each time.
+        let (biped, quadruped) = (biped(), quadruped());
+        let speed = Speed::from_froude(0.25);
+        assert_eq!(speed.gait(&biped).footfalls(), 2);
+        assert!(
+            (speed.cycle_length(&biped) - speed.step_length(&biped) * 2.0).abs() < 1e-5,
+            "the distance per cycle is not the steps taken in it"
+        );
+        // A four-legged body's walk lands its feet one at a time, and its
+        // cycle is Alexander's rather than four steps (#370): counted in
+        // steps, a gallop - four footfalls too - would have twice a trot's.
+        assert_eq!(
+            speed.gait(&quadruped).footfalls(),
+            4,
+            "a walk lands four times"
+        );
+        let alexander =
+            leg_of(&quadruped) * QUADRUPED_STRIDE * 0.25f32.powf(QUADRUPED_STRIDE_POWER);
+        assert!((speed.cycle_length(&quadruped) - alexander).abs() < 1e-4);
     }
 
     #[test]

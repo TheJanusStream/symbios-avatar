@@ -34,7 +34,9 @@
 //! * [`Speed`] — one dimensionless axis, the Froude number, from which the
 //!   stride, the cadence, the duty and the choice of walking or running all
 //!   follow. A caller says how fast the body is going and stops choosing the
-//!   rest.
+//!   rest. On four legs it picks a [`Pattern`] too - a walk, a trot, a canter
+//!   or a gallop - and the body carries its trunk as a beast does, rocking
+//!   and folding rather than leaning (#370).
 //! * [`Inertializer`] — transitions that carry momentum through, rather than
 //!   crossfades that stall it — and [`transition`], the layer above it that
 //!   decides when a transition is needed at all. Along the speed axis it is
@@ -48,7 +50,8 @@
 //!   them. A run is [`Gait::running`] or, better, whatever [`Speed::gait`] says
 //!   at the speed in hand.
 //! * [`Clip`] — authored motion, described by semantic queries and normalised
-//!   goals so one description serves every body.
+//!   goals so one description serves every body. [`gesture`] is a person's
+//!   roster of them and [`emote`] a beast's (#370).
 //! * [`PoseClip`] — the opposite trade, and it exists because the first one
 //!   cannot be walked back: motion that was performed on a body carries joint
 //!   angles no query recovers, so an imported clip keeps them. Addressed by
@@ -56,7 +59,8 @@
 //! * [`look_at`] — turning a body toward something, shared down the chain from
 //!   the torso rather than swivelled by the skull alone.
 //! * [`Springs`] — the hair, hems and tails that follow late, which is most of
-//!   what stops a body reading as a puppet.
+//!   what stops a body reading as a puppet. [`Driver`] steps a beast's ears
+//!   on them, and no other chain (#370).
 //!
 //! ```rust
 //! use symbios_avatar::{
@@ -84,6 +88,7 @@ pub mod blend;
 pub mod clip;
 pub mod driver;
 pub mod dual;
+pub mod emote;
 pub mod foothold;
 pub mod gait;
 pub mod gaze;
@@ -94,8 +99,10 @@ pub mod idle;
 pub mod ik;
 pub mod leap;
 pub mod library;
+mod pattern;
 pub mod pose;
 pub mod pose_clip;
+mod quadruped;
 pub mod speed;
 pub mod spring;
 pub mod swim;
@@ -121,6 +128,7 @@ pub use idle::{Idle, IdleConfig, Idled};
 pub use ik::{FabrikConfig, fabrik, two_bone};
 pub use leap::{Leap, Leapt, Stage};
 pub use library::{ClipLibrary, LibraryError};
+pub use pattern::{Lead, Pattern};
 pub use pose::{Pose, Posed};
 pub use pose_clip::{Continuity, Curve, JointTrack, Play, PoseClip, Slot};
 pub use speed::Speed;

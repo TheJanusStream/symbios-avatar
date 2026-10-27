@@ -64,7 +64,7 @@
 use crate::det::Rot;
 use glam::Vec3;
 
-use super::gait::{Gait, Phase, Stride, Walk, Walked, contact_offset, home_of};
+use super::gait::{Gait, Phase, Stride, Walk, Walked, contact_offset, home_of, led, stride_lead};
 use super::ground::Ground;
 use super::pose::Pose;
 use crate::plan::Limb;
@@ -271,7 +271,8 @@ impl Footholds {
             // What the stride would derive this frame — the plant when a foot
             // has just gone down, and the yardstick for a hold that has
             // stopped making sense.
-            let derived = contact_offset(home, stride, phase);
+            let lead = stride_lead(rig, limb, gait);
+            let derived = led(contact_offset(led(home, lead), stride, phase), lead);
             let derived = Vec3::new(derived.x, 0.0, derived.z);
             let reach = rig.limb_reach(limb).unwrap_or(f32::INFINITY);
 

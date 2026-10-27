@@ -34,10 +34,10 @@ use glam::{Quat, Vec3};
 
 use super::gait::incline_trunk;
 use super::gaze::{GazeConfig, look_at};
-use super::ground::solve_contact_toward;
+use super::ground::{Foot, solve_contact_laid_by, solve_contact_with};
 use super::pose::Pose;
 use crate::plan::{Limb, Zone};
-use crate::rig::{Rig, landmark};
+use crate::rig::{Rig, Role, landmark};
 
 /// Which parts of a body a track addresses.
 ///
@@ -155,6 +155,48 @@ pub enum Target {
     /// turns the body and everything on it, which is lying down. A gesture that
     /// wants both says both, in two tracks.
     Tilt,
+    /// How a four-legged body's trunk pitches, by the end it sinks (#370).
+    ///
+    /// In quarter turns read off the key's `z`: positive sinks the
+    /// hindquarters, turning the trunk nose up about the withers - a sit -
+    /// and negative sinks the forehand, turning it nose down about the hips -
+    /// a play bow. **The end that moves goes down**, for the reason the gait's
+    /// own rock gives: a girdle that sinks asks its legs only to bend, where
+    /// one that rose would ask them to reach. Hold the contacts in the world
+    /// ([`Track::in_world`]) and the legs under the sinking end fold.
+    ///
+    /// Does nothing on a body that does not stand on four legs, which is the
+    /// refusal: a person sits by [`Target::Root`], and bows by
+    /// [`Target::Trunk`].
+    Pitch,
+    /// How far a four-legged body's trunk turns about its own length, in
+    /// quarter turns read off the key's `z`, positive rolling its back toward
+    /// its left (#370): the forehand turning about the loin over hindquarters
+    /// that stay square, a dog shaking itself dry. The fores swing with their
+    /// girdle, and a contact held in the world puts each foot back; the hinds
+    /// are left standing, because a hind leg rolled out from under its hip
+    /// came back 15 mm wide of its foot. Does nothing on a body that does not
+    /// stand on four legs.
+    Roll,
+    /// Where a tail swings, in quarter turns: its tip toward the body's left
+    /// by the key's `x` and up by its `y`, the turn shared down the tail so
+    /// the tip goes furthest (#370). Does nothing on a body with no tail.
+    Tail,
+    /// How a beast's ears turn, in quarter turns: back by the key's `z` and
+    /// out by its `x`, the right ear the left's mirror (#370). Each ear's
+    /// spring carries its tip on after the turn. Does nothing on a body with
+    /// no ears of a beast's.
+    Ears,
+    /// How far a beast's mouth opens, the key's `y` of the way to its widest,
+    /// and its tongue comes out over the lip, its `z` of the way (#370): a
+    /// yawn is the jaw alone, a pant a little of each. Does nothing on a body
+    /// with no jaw of a beast's.
+    Jaw,
+    /// How far the head cants about the way it faces, in quarter turns read
+    /// off the key's `z`, its crown toward the body's left (#370): a dog's
+    /// questioning tilt. Turned after the gaze, so a head aimed somewhere
+    /// tilts there. Does nothing on a body with no head.
+    Cant,
 }
 
 impl Target {
@@ -186,7 +228,16 @@ impl Target {
             }
             // None of these drives a limb, so none is something this list can
             // name. `Clip::apply` reaches them directly.
-            Target::Gaze | Target::Trunk | Target::Root | Target::Tilt => Vec::new(),
+            Target::Gaze
+            | Target::Trunk
+            | Target::Root
+            | Target::Tilt
+            | Target::Pitch
+            | Target::Roll
+            | Target::Tail
+            | Target::Ears
+            | Target::Jaw
+            | Target::Cant => Vec::new(),
         }
     }
 }
@@ -338,6 +389,17 @@ pub struct Track {
     /// a forearm actually pronates, and a track whose keys return to zero
     /// returns the palm with them.
     pub facing: Option<Vec3>,
+    /// How the foot hanging off each limb is carried as the leg is solved
+    /// (#370): with its shank, by default; standing, for a foot a beast's
+    /// clip holds on the ground while its girdle moves; laid flat ahead of
+    /// its ankle, for a beast sitting or lying.
+    ///
+    /// **A body sunk below its own ankle needs it laid.** A beast's foot hangs
+    /// off a long metatarsus, and a leg folded under a hip lower than its hock
+    /// has nowhere to put a hanging foot down: a sitting dog's hind paw came
+    /// out 188 mm behind where it was sent. And a foot carried while a girdle
+    /// rolls the leg above it sideways came back 13 mm wide of where it stood.
+    pub foot: Foot,
 }
 
 impl Track {
@@ -357,6 +419,7 @@ impl Track {
             scale: Scale::Reach,
             bending: None,
             facing: None,
+            foot: Foot::Carried,
         }
     }
 
@@ -380,6 +443,22 @@ impl Track {
     #[must_use]
     pub fn on_body(mut self) -> Self {
         self.scale = Scale::Body;
+        self
+    }
+
+    /// Lays this track's feet flat along the ground ahead of their ankles.
+    /// See [`Track::foot`].
+    #[must_use]
+    pub fn laid(mut self) -> Self {
+        self.foot = Foot::Laid;
+        self
+    }
+
+    /// Stands this track's feet upright, as feet on the ground stand. See
+    /// [`Track::foot`].
+    #[must_use]
+    pub fn standing(mut self) -> Self {
+        self.foot = Foot::Stood;
         self
     }
 
@@ -513,9 +592,10 @@ impl Clip {
         // five-element sort.
         let mut ordered: Vec<&Track> = self.tracks.iter().collect();
         ordered.sort_by_key(|track| match track.target {
-            Target::Root | Target::Tilt => 0,
-            Target::Trunk => 1,
+            Target::Root | Target::Tilt | Target::Pitch => 0,
+            Target::Trunk | Target::Roll => 1,
             Target::Gaze => 3,
+            Target::Cant | Target::Tail | Target::Ears | Target::Jaw => 4,
             _ => 2,
         });
 
@@ -538,6 +618,39 @@ impl Clip {
             if track.target == Target::Tilt {
                 tilt_body(rig, pose, offset);
                 continue;
+            }
+            // A beast's parts (#370): see each target's own account.
+            let quarter = std::f32::consts::FRAC_PI_2;
+            match track.target {
+                Target::Pitch => {
+                    if super::quadruped::four_legged(rig) {
+                        super::quadruped::sink_end_standing(rig, pose, offset.z * quarter);
+                    }
+                    continue;
+                }
+                Target::Roll => {
+                    roll_trunk(rig, pose, offset.z * quarter);
+                    continue;
+                }
+                Target::Tail => {
+                    swing_tail(rig, pose, offset * quarter);
+                    continue;
+                }
+                Target::Ears => {
+                    turn_ears(rig, pose, offset * quarter);
+                    continue;
+                }
+                Target::Jaw => {
+                    open_jaw(rig, pose, offset);
+                    continue;
+                }
+                Target::Cant => {
+                    if let Some(&head) = rig.in_zone(Zone::Head).first() {
+                        pose.rotations[head] *= Rot::z(-offset.z * quarter);
+                    }
+                    continue;
+                }
+                _ => {}
             }
             if track.target == Target::Gaze {
                 let frame = match track.space {
@@ -594,7 +707,14 @@ impl Clip {
                     })
                     .unwrap_or(rest_pole);
                 let goal = frame.at(home + offset * unit);
-                if !solve_contact_toward(rig, pose, limb, goal, frame.at(pole)) {
+                // A laid foot goes down as the track does: see
+                // [`solve_contact_laid_by`].
+                let reached = if track.foot == Foot::Laid {
+                    solve_contact_laid_by(rig, pose, limb, goal, frame.at(pole), engaged)
+                } else {
+                    solve_contact_with(rig, pose, limb, goal, frame.at(pole), track.foot)
+                };
+                if !reached {
                     straining.push(limb);
                 }
                 if let Some(toward) = track.facing {
@@ -737,6 +857,69 @@ fn tilt_body(rig: &Rig, pose: &mut Pose, offset: Vec3) {
     // for `incline_trunk`'s reason: naming it would need one convention per
     // direction a body can tip in.
     pose.rotations[root] *= Rot::axis_angle(Vec3::Y.cross(toward), wanted);
+}
+
+/// Rolls a four-legged body's forehand `angle` radians about the trunk's own
+/// length, at the loin. See [`Target::Roll`].
+fn roll_trunk(rig: &Rig, pose: &mut Pose, angle: f32) {
+    if angle == 0.0 || !super::quadruped::four_legged(rig) {
+        return;
+    }
+    let Some(&loin) = rig.in_zone(Zone::Abdomen).first() else {
+        return;
+    };
+    pose.rotations[loin] *= Rot::z(-angle);
+}
+
+/// Swings a tail by `turn` - its `x` across, its `y` up, in radians - shared
+/// evenly down it. See [`Target::Tail`].
+fn swing_tail(rig: &Rig, pose: &mut Pose, turn: Vec3) {
+    let tail = rig.in_zone(Zone::Tail);
+    if tail.is_empty() || (turn.x == 0.0 && turn.y == 0.0) {
+        return;
+    }
+    #[expect(clippy::cast_precision_loss, reason = "a tail is a handful of joints")]
+    let share = 1.0 / tail.len() as f32;
+    // A tail runs back from the body, so a turn about `+Y` that carries `+Z`
+    // toward the left carries the tip toward the right: across is the
+    // negative turn, and up the positive one about `X`.
+    let each = Rot::y(-turn.x * share) * Rot::x(turn.y * share);
+    for joint in tail {
+        pose.rotations[joint] *= each;
+    }
+}
+
+/// Turns a beast's ears by `turn` - back by its `z`, out by its `x`, in
+/// radians. See [`Target::Ears`].
+fn turn_ears(rig: &Rig, pose: &mut Pose, turn: Vec3) {
+    for root in super::quadruped::ear_roots(rig) {
+        let side = rig.joints[root].position.x.signum();
+        pose.rotations[root] *= Rot::x(-turn.z) * Rot::z(-turn.x * side);
+    }
+}
+
+/// Opens a beast's jaw `offset.y` of the way and puts its tongue out
+/// `offset.z` of the way: the jaw is the facial joint the head carries that
+/// carries one of its own, the tongue. See [`Target::Jaw`].
+fn open_jaw(rig: &Rig, pose: &mut Pose, offset: Vec3) {
+    use crate::face::beast::jaw::{MAX_OPEN, TONGUE_OUT};
+    let facial = |joint: usize| rig.joints[joint].role == Role::Facial;
+    let child_of = |parent: usize| {
+        (0..rig.len()).find(|&joint| rig.joints[joint].parent == Some(parent) && facial(joint))
+    };
+    let Some((jaw, tongue)) = (0..rig.len())
+        .filter(|&joint| facial(joint))
+        .filter(|&joint| {
+            rig.joints[joint]
+                .parent
+                .is_some_and(|head| rig.joints[head].zone == Zone::Head)
+        })
+        .find_map(|jaw| child_of(jaw).map(|tongue| (jaw, tongue)))
+    else {
+        return;
+    };
+    pose.rotations[jaw] *= Rot::x(MAX_OPEN * offset.y.clamp(0.0, 1.0));
+    pose.rotations[tongue] *= Rot::x(TONGUE_OUT * offset.z.clamp(0.0, 1.0));
 }
 
 /// A rotation key read: which way it tips the part, and how far in radians.

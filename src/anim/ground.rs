@@ -36,7 +36,7 @@ use glam::{Quat, Vec3};
 use super::ik::two_bone;
 use super::pose::Pose;
 use super::pose_clip::PoseClip;
-use crate::plan::{Limb, Zone};
+use crate::plan::{FootKind, Limb, Zone};
 use crate::rig::Rig;
 
 /// What lies beneath a point.
@@ -71,7 +71,8 @@ pub struct FootingConfig {
     pub max_step_up: f32,
     /// Furthest the ankle may be turned to keep a sole flat, in radians.
     ///
-    /// Forty degrees, which is about what an ankle has. The clamp is what keeps
+    /// Forty degrees, which is about what an ankle has; a beast's hock or
+    /// carpus turns further, whatever this says (#370). The clamp is what keeps
     /// a leg that is reaching hard from answering with a foot folded under
     /// itself: on ground the body cannot properly reach, a *visibly* strained
     /// ankle is the honest failure and a broken one is not.
@@ -438,7 +439,7 @@ where
         // What the ankle must hold locally for the foot to end up there, and
         // then how far that is from leaving it alone, so it can be clamped.
         let local = posed.rotations[parent].inverse() * want;
-        pose.rotations[ankle] = folded_within(local, config.max_ankle);
+        pose.rotations[ankle] = folded_within(local, ankle_limit(rig, config));
 
         // **And then put the contact back** (#257). Levelling used to be
         // described here as free, on the grounds that a swinging foot is pinned
@@ -512,7 +513,12 @@ pub(crate) fn solve_contact(rig: &Rig, pose: &mut Pose, limb: Limb, target: Vec3
     let Some(pole) = rig.bend_pole(limb) else {
         return false;
     };
-    solve_contact_toward(rig, pose, limb, target, pole)
+    let foot = if rig.anatomy.feet == FootKind::Human {
+        Foot::Carried
+    } else {
+        Foot::Stood
+    };
+    solve_contact_with(rig, pose, limb, target, pole, foot)
 }
 
 /// As [`solve_contact`], but with the fold direction given rather than read off
@@ -533,10 +539,98 @@ pub(crate) fn solve_contact_toward(
     target: Vec3,
     pole: Vec3,
 ) -> bool {
+    solve_contact_with(rig, pose, limb, target, pole, Foot::Carried)
+}
+
+/// [`solve_contact`], keeping the foot's attitude as it stands: for the toe
+/// roll, which turns the foot itself (#370). Stood again instead, a beast's
+/// foot undid the toe-off roll that had just turned it, and rose 11 mm off the
+/// ground by lift-off as the contact went where the roll sent it.
+pub(crate) fn solve_contact_carried(rig: &Rig, pose: &mut Pose, limb: Limb, target: Vec3) -> bool {
+    let Some(pole) = rig.bend_pole(limb) else {
+        return false;
+    };
+    solve_contact_with(rig, pose, limb, target, pole, Foot::Carried)
+}
+
+/// How a leg's solve carries the foot hanging off it (#370).
+///
+/// **A beast's foot is most of a leg.** It hangs off a long metatarsus - a
+/// dog's hock stands a third of its leg off the ground - so where the paw
+/// lands depends on how the foot is held as much as on the leg above it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Foot {
+    /// Rigidly with the shank, as the leg folds: a person's, and what an
+    /// authored pose folding a leg wants.
+    #[default]
+    Carried,
+    /// Upright in the world, as [`level_feet`] lays it: a foot standing on
+    /// the ground, which a girdle swinging the leg above it cannot tip.
+    Stood,
+    /// Flat along the ground ahead of its ankle, the toes turned back level:
+    /// a sitting or lying beast's hock or wrist on the ground and its paw
+    /// before it. A leg folded under a body sunk below its own ankle cannot
+    /// put a hanging foot down anywhere.
+    Laid,
+}
+
+/// [`solve_contact_toward`], carrying the foot as `foot` says.
+///
+/// **Only a stance's solve stands it.** A leg the gait, the plant or the idle
+/// sets on the ground stands its foot as [`level_feet`] lays it; a leg a clip
+/// or a leap folds keeps its foot on its shank, as an authored pose folds it -
+/// stood instead, a lying dog's hind feet knotted under hocks held upright -
+/// or lays it flat where the clip says so.
+pub(crate) fn solve_contact_with(
+    rig: &Rig,
+    pose: &mut Pose,
+    limb: Limb,
+    target: Vec3,
+    pole: Vec3,
+    foot: Foot,
+) -> bool {
+    solve_leg(rig, pose, limb, target, pole, foot, 1.0)
+}
+
+/// [`solve_contact_with`] a foot [`Foot::Laid`] only `lay` of the way, from
+/// standing at `0` to flat at `1`: a clip lays a foot down as the body it
+/// carries sinks, since a leg still standing cannot put its ankle on the
+/// ground - laid from the first frame, every sitting beast's hind legs
+/// strained and a paw floated 131 mm.
+pub(crate) fn solve_contact_laid_by(
+    rig: &Rig,
+    pose: &mut Pose,
+    limb: Limb,
+    target: Vec3,
+    pole: Vec3,
+    lay: f32,
+) -> bool {
+    solve_leg(
+        rig,
+        pose,
+        limb,
+        target,
+        pole,
+        Foot::Laid,
+        lay.clamp(0.0, 1.0),
+    )
+}
+
+/// The solve behind every entry above: `foot`'s attitude, a laid one `lay`
+/// of the way.
+fn solve_leg(
+    rig: &Rig,
+    pose: &mut Pose,
+    limb: Limb,
+    target: Vec3,
+    pole: Vec3,
+    foot: Foot,
+    lay: f32,
+) -> bool {
     let Some(chain) = rig.limb_chain(limb) else {
         return false;
     };
-    let Some(&foot) = rig.in_zone(Zone::Extremity(limb)).first() else {
+    let Some(&contact) = rig.in_zone(Zone::Extremity(limb)).first() else {
         return false;
     };
 
@@ -561,12 +655,20 @@ pub(crate) fn solve_contact_toward(
     let untouched = chain
         .iter()
         .all(|&joint| pose.rotations[joint].angle_between(Quat::IDENTITY) <= REST_SLACK);
-    if untouched && pose.forward(rig).positions[foot].distance(target) <= CONTACT_TOLERANCE {
+    if untouched && pose.forward(rig).positions[contact].distance(target) <= CONTACT_TOLERANCE {
         return true;
     }
 
+    // **A stance stands a beast's foot up as the leg is solved** (#370). It
+    // hangs off a long metatarsus - a dog's hock stands a third of its leg off
+    // the ground - and carried rigidly with the shank a stride swings it, so
+    // a hind paw sent 12 cm ahead of where it rests missed by 6 mm and one
+    // sent 20 cm by 41, a reach the joint above it had to spare. Stood in the
+    // world as [`level_feet`] lays it afterwards, the paw lands where its
+    // ankle is sent, which is what the crouch's sink is reckoned for.
     let mut reached = false;
     for _ in 0..CONTACT_PASSES {
+        attitude(rig, pose, chain, contact, foot, lay);
         let posed = pose.forward(rig);
         // The convergence check reads the pose the *previous* pass left, which
         // costs at most one extra pass and saves a whole forward-kinematics
@@ -580,12 +682,13 @@ pub(crate) fn solve_contact_toward(
         // already standing where it is being sent still needs the leg moved
         // under it. The limb nothing has posed is the one exception, and it
         // returned above.
-        if reached && posed.positions[foot].distance(target) <= CONTACT_TOLERANCE {
+        if reached && posed.positions[contact].distance(target) <= CONTACT_TOLERANCE {
             break;
         }
-        let offset = posed.positions[chain[2]] - posed.positions[foot];
+        let offset = posed.positions[chain[2]] - posed.positions[contact];
         reached = two_bone(rig, pose, chain, target + offset, pole);
     }
+    attitude(rig, pose, chain, contact, foot, lay);
 
     // **The verdict gets its own tolerance, and a looser one.** `reached` means
     // "this limb strained" to every caller, and neither of the obvious readings
@@ -609,7 +712,56 @@ pub(crate) fn solve_contact_toward(
     let joint = |index: usize| rig.joints[chain[index]].position;
     let span = joint(0).distance(joint(1)) + joint(1).distance(joint(2));
     let allowed = CONTACT_STRAIN.max(span * super::ik::SOFT_ZONE);
-    reached || pose.forward(rig).positions[foot].distance(target) <= allowed
+    reached || pose.forward(rig).positions[contact].distance(target) <= allowed
+}
+
+/// Turns the foot hanging off `chain`'s last joint to `foot`'s attitude:
+/// upright in the pose's space as far as its ankle turns - the attitude
+/// [`level_feet`] lays a sole in on level ground - or laid `lay` of the way
+/// flat ahead of its ankle with `contact`'s toes turned back as far; a
+/// carried foot is left alone.
+fn attitude(rig: &Rig, pose: &mut Pose, chain: [usize; 3], contact: usize, foot: Foot, lay: f32) {
+    if foot == Foot::Carried {
+        return;
+    }
+    let carried = pose.forward(rig).rotations[chain[1]];
+    if foot == Foot::Stood {
+        pose.rotations[chain[2]] = folded_within(
+            carried.inverse(),
+            ankle_limit(rig, &FootingConfig::default()),
+        );
+        return;
+    }
+    // A quarter turn about the body's across carries a foot hanging down to
+    // one lying forward, and the toes it carried up with it come back down.
+    let quarter = std::f32::consts::FRAC_PI_2 * lay;
+    pose.rotations[chain[2]] = carried.inverse() * Rot::x(-quarter);
+    if rig.joints[contact].parent == Some(chain[2]) {
+        pose.rotations[contact] = Rot::x(quarter);
+    }
+}
+
+/// How far a beast's ankle turns, in radians, wherever a person's would stop
+/// at [`FootingConfig::max_ankle`].
+///
+/// **A hock or a carpus is not an ankle.** It opens and closes through most
+/// of a right angle as a stride swings the leg over it, where a person's
+/// ankle stops at forty degrees; held to a person's, a dog's paw sent 14 cm
+/// ahead of where it rests missed by 12 mm with the hock standing it as far
+/// as it was allowed, and allowed this it lands from 10 cm behind to 16
+/// ahead with nothing sunk.
+/// Provenance: **measured** (#370), the least that lands the default dog's
+/// paws across its strides.
+const BEAST_ANKLE: f32 = 1.2;
+
+/// How far `rig`'s ankles turn under `config`: [`BEAST_ANKLE`] for a beast's,
+/// at least.
+pub(crate) fn ankle_limit(rig: &Rig, config: &FootingConfig) -> f32 {
+    if rig.anatomy.feet == FootKind::Human {
+        config.max_ankle
+    } else {
+        config.max_ankle.max(BEAST_ANKLE)
+    }
 }
 
 /// How far a joint may be turned and still count as unposed, in radians.

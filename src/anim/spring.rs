@@ -36,6 +36,13 @@ const EPSILON: f32 = 1e-5;
 /// long step is subdivided rather than trusted.
 const MAX_STEP: f32 = 1.0 / 60.0;
 
+/// The most substeps one frame is cut into. A frame longer than this many
+/// [`MAX_STEP`]s is simulated as that long, so a dropped frame slows the
+/// chains down rather than taking substeps no stiff spring survives: an ear's,
+/// at a stiffness of 1000, swung 139 mm off its pose through a one-second
+/// frame cut in eight (#370).
+const MAX_SUBSTEPS: f32 = 8.0;
+
 /// How far an anchor may move in one step before the chain is assumed to have
 /// been teleported rather than to have moved, as a multiple of its own length.
 ///
@@ -57,7 +64,9 @@ pub struct SpringConfig {
     /// pull cannot settle: it is the same magnitude a hair's breadth from home
     /// as it is a hand's width away, so a chain arrives and then keeps going.
     pub stiffness: f32,
-    /// How much of its speed a chain loses per second, as a fraction.
+    /// How much of its speed a chain loses per second, as a fraction: its
+    /// speed about what it hangs from, so a chain carried along at a steady
+    /// pace keeps up rather than trailing.
     ///
     /// Per *second*, applied as an exponential decay. The spec's `dragForce` is
     /// a per-frame multiplier, which silently makes the behaviour depend on the
@@ -116,7 +125,8 @@ struct Chain {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Springs {
     chains: Vec<Chain>,
-    /// Where each simulated joint is, and was, in world space. `None` until the
+    /// Where each simulated joint is, and was, in world space, and where each
+    /// anchor last was - the step a chain is carried by. `None` until the
     /// first step, so a chain starts wherever the body starts rather than at
     /// the origin.
     at: Vec<Option<(Vec3, Vec3)>>,
@@ -199,6 +209,28 @@ impl Springs {
         self.at.iter_mut().for_each(|at| *at = None);
     }
 
+    /// These chains, keeping only those that hang from a joint `keep` names
+    /// (#370): the [`Driver`](super::Driver) steps a beast's ears, and not a
+    /// chain a consumer hangs off a body to step for itself.
+    #[must_use]
+    pub(crate) fn only(mut self, keep: impl Fn(usize) -> bool) -> Self {
+        self.chains.retain(|chain| keep(chain.joints[0]));
+        self
+    }
+
+    /// Whether these chains are `rig`'s: built from a rig of its size, every
+    /// simulated joint still a spring hanging off the one before it. A body
+    /// rebuilt under the same state is a different body.
+    pub(crate) fn fits(&self, rig: &Rig) -> bool {
+        self.at.len() == rig.len()
+            && self.chains.iter().all(|chain| {
+                chain.joints.windows(2).all(|pair| {
+                    rig.joints[pair[1]].role == Role::Spring
+                        && rig.joints[pair[1]].parent == Some(pair[0])
+                })
+            })
+    }
+
     /// Advances every chain by `dt` and writes the result into `pose`.
     ///
     /// `surface` is the body the chains must not swing into; passing `None`
@@ -218,8 +250,8 @@ impl Springs {
         if self.chains.is_empty() || !dt.is_finite() || dt <= 0.0 || !pose.fits(rig) {
             return;
         }
-        let steps = (dt / MAX_STEP).ceil().min(8.0);
-        let step = dt / steps;
+        let steps = (dt / MAX_STEP).ceil().min(MAX_SUBSTEPS);
+        let step = (dt / steps).min(MAX_STEP);
         for _ in 0..steps as usize {
             self.step(rig, pose, surface, step, config);
         }
@@ -239,17 +271,30 @@ impl Springs {
         // chain that is not moving sits exactly where the pose says.
         let posed = pose.forward(rig);
         let keep = (-config.drag.max(0.0) * dt).det_exp();
+        // How far each chain's anchor moved this substep, read before any of
+        // them is written back: two chains may hang off one anchor, which is
+        // never itself simulated, so its slot keeps where it was.
+        let carrying: Vec<Vec3> = self
+            .chains
+            .iter()
+            .map(|chain| {
+                let anchored = posed.positions[chain.joints[0]];
+                self.at[chain.joints[0]].map_or(Vec3::ZERO, |(_, was)| anchored - was)
+            })
+            .collect();
 
-        for chain in &self.chains {
+        for (chain, &carried_by) in self.chains.iter().zip(&carrying) {
             let anchored = posed.positions[chain.joints[0]];
             // A chain whose anchor jumped was moved, not animated.
             let span: f32 = chain.lengths.iter().sum();
+            let mut carried_by = carried_by;
             if let Some((was, _)) = self.at[chain.joints[1]]
                 && was.distance(anchored) > span * TELEPORT
             {
                 for &joint in &chain.joints[1..] {
                     self.at[joint] = None;
                 }
+                carried_by = Vec3::ZERO;
             }
 
             let mut solved = vec![anchored];
@@ -261,9 +306,20 @@ impl Springs {
                 // Verlet: the step it just took, damped, carries it into the
                 // next one. This is where the lag comes from — nothing here
                 // tells a chain to trail, it simply has not caught up yet.
-                let carried = (current - previous) * keep;
-                let pull = (rigid - current) * config.stiffness;
-                let mut next = current + carried + (pull + config.gravity) * dt * dt;
+                //
+                // **Damped toward the anchor's own step, not toward rest**
+                // (#370): drag on the step itself is a headwind, and a chain
+                // whose anchor moves steadily trails behind it by stiffness
+                // over drag times the speed. What decays is the swing about
+                // what it hangs from.
+                let carried = (current - previous) * keep + carried_by * (1.0 - keep);
+                // And pulled from where that carries it, not from where it
+                // was: the pose has already moved on, and a pull taken across
+                // that step balances only once a chain leads its own pose by
+                // a step.
+                let carried_to = current + carried;
+                let pull = (rigid - carried_to) * config.stiffness;
+                let mut next = carried_to + (pull + config.gravity) * dt * dt;
 
                 // A bone does not stretch.
                 let from = solved[index - 1];
@@ -283,6 +339,7 @@ impl Springs {
                 solved.push(next);
             }
 
+            self.at[chain.joints[0]] = Some((anchored, anchored));
             let original: Vec<Vec3> = chain
                 .joints
                 .iter()
@@ -574,6 +631,38 @@ mod tests {
             world[*chain.last().expect("a tip")].distance(anchor) < 1.0,
             "the chain whipped out to {} m from its anchor",
             world[*chain.last().expect("a tip")].distance(anchor)
+        );
+    }
+
+    #[test]
+    fn a_long_frame_slows_a_stiff_chain_rather_than_whipping_it() {
+        // #370. Cut in eight, a one-second frame took substeps no spring as
+        // stiff as an ear's survives, and a chain set swinging swung wider
+        // every frame. Simulated as eight of the longest substeps instead,
+        // the frame slows the chain down and it settles onto its pose.
+        let (rig, chain) = sprung();
+        let head = *rig.in_zone(Zone::Head).first().expect("a head");
+        let stiff = SpringConfig {
+            stiffness: 1000.0,
+            drag: 20.0,
+            gravity: Vec3::ZERO,
+            ..SpringConfig::default()
+        };
+        let mut springs = Springs::of(&rig);
+        let mut turned = Pose::rest(&rig);
+        turned.rotations[head] = Rot::y(0.5);
+        springs.advance(&rig, &mut turned, None, 1.0 / 60.0, &stiff);
+        let mut pose = Pose::rest(&rig);
+        for _ in 0..10 {
+            pose = Pose::rest(&rig);
+            springs.advance(&rig, &mut pose, None, 1.0, &stiff);
+        }
+        let tip = *chain.last().expect("a tip");
+        let off = at(&rig, &pose)[tip].distance(at(&rig, &Pose::rest(&rig))[tip]);
+        assert!(
+            off < 0.005,
+            "ten one-second frames left the tip {:.1} mm off its pose",
+            off * 1000.0
         );
     }
 

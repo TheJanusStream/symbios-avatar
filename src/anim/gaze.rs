@@ -74,10 +74,21 @@ pub fn look_at(rig: &Rig, pose: &mut Pose, target: Vec3, config: &GazeConfig) ->
     let Some(&head) = rig.in_zone(Zone::Head).first() else {
         return idle;
     };
+    // **Not through a girdle a leg stands on** (#370): a beast's withers
+    // carry its fores, and a glance turned through them swings a planted
+    // foot - 47 mm for a sitting dog's head levelled over its pitched trunk.
+    let standing: Vec<usize> = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.limb_chain(limb))
+        .filter_map(|[top, _, _]| rig.joints[top].parent)
+        .collect();
     let mut chain = vec![head];
     let mut cursor = head;
     while let Some(parent) = rig.joints[cursor].parent {
-        if !matches!(rig.joints[parent].zone, Zone::Neck | Zone::Chest) {
+        if !matches!(rig.joints[parent].zone, Zone::Neck | Zone::Chest)
+            || standing.contains(&parent)
+        {
             break;
         }
         chain.push(parent);

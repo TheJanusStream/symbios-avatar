@@ -173,7 +173,9 @@ impl Turn {
                 (across * across + along * along).sqrt()
             })
             .fold(travel, f32::max);
-        Speed::new(rig, fastest)
+        // At the working foot's speed, in the body's own pattern: one foot
+        // going faster does not change the gait the body is in (#370).
+        speed.at_froude(Speed::new(rig, fastest).froude())
     }
 
     /// The gait a body of this shape turns at this speed with.

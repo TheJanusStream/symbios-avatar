@@ -95,10 +95,11 @@ use super::idle::{Idle, IdleConfig, Idled};
 use super::leap::{Leap, Stage};
 use super::pose::Pose;
 use super::speed::{FROUDE_SPRINT, GRAVITY, Speed};
+use super::spring::{SpringConfig, Springs};
 use super::swim::Swim;
 use super::transition::{self, Family};
 use super::turn::{TURN_REACH, Turn};
-use super::{Target, gesture};
+use super::{Lead, Pattern, Target, gesture};
 
 /// The yaw rate a body standing still must turn at to step round rather than
 /// idle, in radians a second — about nine degrees a second (#361).
@@ -521,7 +522,8 @@ pub struct Inputs<'a> {
     /// its feet on the bottom and is walking.
     pub swimming: bool,
     /// A gesture asked for **this frame**, by the name
-    /// [`gesture::by_name`] knows it as.
+    /// [`gesture::for_body`] knows it as on this body: a person's roster, and
+    /// on four legs a beast's (#370).
     ///
     /// A request, not a state: hold it for one frame and let it go. A name the
     /// roster does not carry is ignored and does not spend the cooldown.
@@ -547,6 +549,14 @@ pub struct Inputs<'a> {
     /// A gait that looks right at the pattern a body chose can still be wrong
     /// at another, which is the only reason to override it.
     pub gait: Option<&'a Gait>,
+    /// Move in this pattern instead of the one the speed picks, on four legs
+    /// (#370): a walk, a trot, a canter or a gallop asked for by name. Its
+    /// cycle and cadence are still the speed's own and its duty the asked
+    /// pattern's - at this speed, or past either end of the pattern's own
+    /// speed band, at that end - so the stride is the travel its stance
+    /// covers and its feet keep to the ground. [`None`] picks by speed; a body
+    /// that is not four-legged ignores it.
+    pub pattern: Option<Pattern>,
     /// The walk's ablation switches.
     pub walk: WalkFlags,
     /// How fast the body is turning, in radians a second, positive toward its
@@ -621,6 +631,7 @@ impl Default for Inputs<'_> {
             cycle: None,
             cadence: None,
             gait: None,
+            pattern: None,
             walk: WalkFlags::default(),
             turn: 0.0,
             lids: None,
@@ -648,6 +659,7 @@ impl std::fmt::Debug for Inputs<'_> {
             .field("cycle", &self.cycle)
             .field("cadence", &self.cadence)
             .field("gait", &self.gait)
+            .field("pattern", &self.pattern)
             .field("walk", &self.walk)
             .field("turn", &self.turn)
             .field("lids", &self.lids)
@@ -795,7 +807,34 @@ pub struct Driver {
     /// Whether the caller has asked the next driven frame to blend in, through
     /// [`Self::blend_now`].
     blend_asked: bool,
+    /// The body's spring chains - a beast's ears (#370) - and where each
+    /// joint of them was. [`None`] until the first frame finds them on the
+    /// rig it is given.
+    springs: Option<Springs>,
 }
+
+/// How far one paddle carries a swimming beast, in its leg's reach (#370).
+/// Provenance: **the literature, rounded**: a dog swimming at about a metre a
+/// second paddles about twice a second on a leg of a third of a metre.
+const PADDLE_STRIDE: f32 = 1.5;
+
+/// How a beast's ears follow its head (#370): far stiffer than the hair
+/// [`SpringConfig::default`] is tuned for, and damped to settle in a few
+/// tenths of a second, so an ear moves off its pose and back with the gait
+/// rather than streaming behind it. The head it hangs from is held steady, so
+/// there is little to follow: the tip of the default dog's 69 mm ear moves
+/// 2 mm at a walk and a trot and 4 to 5 mm at a canter and a gallop, two to
+/// four degrees. No gravity, because an ear is built in its own carriage:
+/// pricked, folded or hanging.
+/// Provenance: **tuned by test** (#370), and only just: the ear test asks a
+/// trotting ear to move more than 2 mm off its pose and a standing one to
+/// settle home, and a trotting ear moves 2.4.
+const EARS: SpringConfig = SpringConfig {
+    stiffness: 1000.0,
+    drag: 20.0,
+    gravity: Vec3::ZERO,
+    clearance: 0.01,
+};
 
 impl Driver {
     /// A driver whose idle and blink are seeded from `seed`.
@@ -820,6 +859,7 @@ impl Driver {
             gestured_at: None,
             elapsed: 0.0,
             blend_asked: false,
+            springs: None,
         }
     }
 
@@ -909,10 +949,16 @@ impl Driver {
     /// makes sense. Most warps need no call at all: anything that stops the
     /// body passes through a frame the gait is not carrying it, and the ledger
     /// clears there.
+    ///
+    /// The ears' springs start again from where the pose puts them, rather
+    /// than swinging in from where the body was (#370).
     pub fn warped(&mut self) {
         self.footholds.reset();
         self.paced = None;
         self.turning = 0.0;
+        if let Some(springs) = &mut self.springs {
+            springs.settle();
+        }
     }
 
     /// Blend the next driven frame in from the last one drawn, whatever
@@ -994,7 +1040,22 @@ impl Driver {
             self.paced = None;
             planar
         };
-        let travelling = (planar >= config.idle_below).then(|| Speed::new(rig, paced));
+        // On four legs, in the pattern the body was already moving in where
+        // the speed still allows it: a body changes down later than it
+        // changed up. One breaking into a canter on a curve leads with its
+        // inside legs, as a horse is asked to (#370).
+        let lead = if self.turning > 0.0 {
+            Lead::Left
+        } else {
+            Lead::Right
+        };
+        let travelling = (planar >= config.idle_below).then(|| {
+            let speed = Speed::new(rig, paced);
+            match inputs.pattern.filter(|_| speed.pattern().is_some()) {
+                Some(asked) => speed.in_pattern(asked),
+                None => speed.held(rig, self.gaiting.and_then(Speed::pattern), lead),
+            }
+        });
         // How far the body actually travels for the pace its stride is built
         // from — one at a steady pace, and more or less while the pace eases
         // after a change of speed (#362, `stepping`).
@@ -1058,10 +1119,20 @@ impl Driver {
         // pendulum frequency — the one rate a body of this size has without
         // anybody choosing it. A giant sculls slower for the same reason it
         // walks slower.
+        //
+        // **A beast paddles at its legs' pace, not its body's** (#370): a
+        // paddle is its legs going round, so the pendulum is the leg and a
+        // cycle carries the body [`PADDLE_STRIDE`] of them. Timed by the whole
+        // body, as a crawl is, a dog half a metre long paddled at half a beat
+        // a second.
         let stroke_rate = || {
-            let length = rig.extent().max(f32::EPSILON);
+            let (length, per_stroke) = if super::quadruped::four_legged(rig) {
+                (super::speed::leg_of(rig).max(f32::EPSILON), PADDLE_STRIDE)
+            } else {
+                (rig.extent().max(f32::EPSILON), config.lengths_per_stroke)
+            };
             let tread = (GRAVITY / length).sqrt() / std::f32::consts::TAU;
-            (planar / (length * config.lengths_per_stroke)).max(tread)
+            (planar / (length * per_stroke)).max(tread)
         };
 
         // A leap owns the legs for as long as it lasts: a body cannot be
@@ -1136,6 +1207,13 @@ impl Driver {
             };
             self.cycle = transition::carry_cycle(&from, &into, self.cycle);
         }
+        // A four-legged body changing its pattern - a walk breaking into a
+        // trot, a canter into a gallop - moves every foot but the one the
+        // carry kept, and the blend below takes them there (#370).
+        let repatterned = matches!(
+            (self.gaiting.and_then(Speed::pattern), effort.and_then(Speed::pattern)),
+            (Some(before), Some(now)) if before != now
+        );
         self.gaiting = effort;
 
         // How far the clock steps, for the footholds' account of a stride's
@@ -1153,7 +1231,7 @@ impl Driver {
             0.0
         };
 
-        self.start_gesture(inputs.gesture);
+        self.start_gesture(rig, inputs.gesture);
         // Advanced and retired before the pose is built, so a gesture that
         // finished this frame does not get one last frame of overlay.
         if let Some(active) = self.gesture.as_mut() {
@@ -1254,7 +1332,7 @@ impl Driver {
         // maintain: the clip's own vocabulary is the mask.
         let mut aimed = false;
         if let Some(active) = &self.gesture
-            && let Some(clip) = gesture::by_name(&active.name)
+            && let Some(clip) = gesture::for_body(rig, &active.name)
         {
             clip.apply(rig, &mut pose, active.elapsed / config.gesture_secs);
             aimed = clip.tracks.iter().any(|track| track.target == Target::Gaze);
@@ -1313,7 +1391,7 @@ impl Driver {
             self.source == Source::Gait && source == Source::Gait && self.pivoted != pivoting;
         self.pivoted = pivoting;
         if config.blend > 0.0
-            && (asked || pivot_edge || self.source.needs_blend(source))
+            && (asked || pivot_edge || repatterned || self.source.needs_blend(source))
             && let (Some(previous), Some(current)) = (&self.previous, &self.current)
         {
             self.transition = Some(Inertializer::start(
@@ -1337,6 +1415,24 @@ impl Driver {
         };
         self.previous = self.current.take();
         self.current = Some(posed.clone());
+
+        // The ears follow late (#370): their spring chains are stepped over
+        // the pose as drawn, so they bob with the gait's own motion. In the
+        // pose's space rather than the world's, because a chassis that changes
+        // speed or heading in a few frames would flop any ear soft enough to
+        // bob at a trot. **A beast's ears and nothing else**: the stiffness is
+        // an ear's, and a chain a consumer hangs off a body is the consumer's
+        // to step, so a body without a beast's ears - a person, whatever hangs
+        // off them - is left exactly as it was.
+        let mut springs = match self.springs.take() {
+            Some(springs) if springs.fits(rig) => springs,
+            _ => {
+                let ears: Vec<usize> = super::quadruped::ear_roots(rig).collect();
+                Springs::of(rig).only(|anchor| ears.contains(&anchor))
+            }
+        };
+        springs.advance(rig, &mut posed, None, delta, &EARS);
+        self.springs = Some(springs);
 
         // The blink rides AFTER the blend — see `Inputs::eyes`.
         let closure = self.closure(inputs, delta);
@@ -1625,14 +1721,14 @@ impl Driver {
     /// cooldown**: a caller whose vocabulary has drifted from the engine's
     /// should get no gesture rather than a source change with no clip under it,
     /// and should not be rate-limited out of the gestures that do exist.
-    fn start_gesture(&mut self, request: Option<&str>) {
+    fn start_gesture(&mut self, rig: &Rig, request: Option<&str>) {
         let Some(name) = request else {
             return;
         };
         let ready = self
             .gestured_at
             .is_none_or(|last| self.elapsed - last >= self.config.gesture_cooldown);
-        if !ready || gesture::by_name(name).is_none() {
+        if !ready || gesture::for_body(rig, name).is_none() {
             return;
         }
         self.gesture = Some(ActiveGesture {

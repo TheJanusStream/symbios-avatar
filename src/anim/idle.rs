@@ -333,6 +333,8 @@ pub struct Idle {
     /// Contacts standing somewhere other than where they rest, and empty for a
     /// body nobody walked into. See [`Self::arrive`].
     stance: Vec<Footing>,
+    /// On four legs, the one foot the running shift is stepping home (#370).
+    stepping: Option<Limb>,
     /// Which way this fidget glances, and how far it rolls the shoulders.
     glance: Vec3,
     roll: f32,
@@ -358,6 +360,7 @@ impl Idle {
             was: None,
             fidget,
             stance: Vec::new(),
+            stepping: None,
             glance: Vec3::ZERO,
             roll: 0.0,
             rng,
@@ -451,11 +454,21 @@ impl Idle {
         self.bearing?;
         Some(match self.shift {
             Stage::Running(left) => {
-                let done = 1.0 - (left / self.config.shift_time.max(f32::EPSILON)).clamp(0.0, 1.0);
+                let done = 1.0 - (left / self.shift_length()).clamp(0.0, 1.0);
                 done * done * (3.0 - 2.0 * done)
             }
             Stage::Waiting(_) => 1.0,
         })
+    }
+
+    /// How long the running shift lasts, in seconds: a quick step on four
+    /// legs bringing one foot home (#370), the configured shift otherwise.
+    fn shift_length(&self) -> f32 {
+        if self.stepping.is_some() {
+            QUADRUPED_STEP
+        } else {
+            self.config.shift_time.max(f32::EPSILON)
+        }
     }
 
     /// The configuration in force.
@@ -555,7 +568,10 @@ impl Idle {
             return Idled::default();
         }
         self.elapsed += dt.max(0.0);
-        self.advance(dt.max(0.0));
+        // A beast stands on its fores as well as its hinds (#370), and its
+        // trunk is not upright: see [`Self::settle`] and [`Self::advance`].
+        let four = rig.ground_contacts().len() == 4;
+        self.advance(dt.max(0.0), four);
 
         // The arms first, hung at the sides (#267): a standing body was
         // drawing the bind pose's 50-degree splay, because nothing standing
@@ -570,7 +586,7 @@ impl Idle {
         // because they end in the same place — one root offset and one plant —
         // and settling the feet twice would be a solve chasing itself.
         let (fore, side) = self.drift(rig);
-        let bearing = self.settle(rig, pose, side, &ground);
+        let bearing = self.settle(rig, pose, side, four);
         self.tip(rig, pose, fore);
         // **The feet are put back by a SOLVE, not by the plant.**
         // `plant_feet_of` settles a sole onto the ground it is over — it is a
@@ -596,10 +612,20 @@ impl Idle {
         // the shift is settling ONTO is taking load and is left alone; it
         // recovers on the next shift, which `advance` schedules for as long as
         // anything is still out of place.
+        // On four legs only the foot stepping home moves, and between two
+        // steps none does (#370).
+        let onto = self.bearing;
+        let stepping = self.stepping;
+        let recovering = |limb: Limb| {
+            if four {
+                stepping == Some(limb)
+            } else {
+                Some(limb) != onto
+            }
+        };
         if let Some(share) = self.shift_share() {
-            let onto = self.bearing;
             for footing in &mut self.stance {
-                if Some(footing.limb) != onto {
+                if recovering(footing.limb) {
                     footing.offset = footing.from * (1.0 - share);
                 }
             }
@@ -642,7 +668,7 @@ impl Idle {
         let share = self.shift_share().unwrap_or(0.0);
         let arc = (share * std::f32::consts::PI).det_sin();
         let lift_of = |limb: Limb| {
-            if Some(limb) == self.bearing {
+            if !recovering(limb) {
                 return 0.0;
             }
             self.stance
@@ -677,6 +703,9 @@ impl Idle {
             plant_feet_of(rig, pose, &grounded, &ground, &FootingConfig::default());
         }
         let fidgeting = self.twitch(rig, pose);
+        if four {
+            self.enliven(rig, pose);
+        }
 
         Idled {
             bearing,
@@ -699,11 +728,30 @@ impl Idle {
     }
 
     /// Counts the schedules down and draws the next wait when one expires.
-    fn advance(&mut self, dt: f32) {
+    fn advance(&mut self, dt: f32, four: bool) {
         let config = self.config;
         let mut rng = std::mem::replace(&mut self.rng, Pcg64Mcg::seed_from_u64(0));
 
         self.shift = match self.shift {
+            // **On four legs a stopped body steps its feet home one at a
+            // time** (#370), the furthest first, its weight on the other side
+            // of the same pair: unloading every foot but the one it settles
+            // onto, as a person's shift does, left a beast standing on one.
+            Stage::Waiting(left) if left <= dt && four && !self.stance.is_empty() => {
+                self.was = self.bearing;
+                let furthest =
+                    self.stance
+                        .iter()
+                        .fold(None::<&Footing>, |best, footing| match best {
+                            Some(best) if best.offset.length() >= footing.offset.length() => {
+                                Some(best)
+                            }
+                            _ => Some(footing),
+                        });
+                self.stepping = furthest.map(|footing| footing.limb);
+                self.bearing = self.stepping.map(Limb::mirrored);
+                Stage::Running(QUADRUPED_STEP - (dt - left))
+            }
             Stage::Waiting(left) if left <= dt => {
                 // Onto whichever leg is not already carrying. A body that
                 // shifted onto the leg it was already standing on would have
@@ -735,6 +783,18 @@ impl Idle {
             Stage::Waiting(left) => Stage::Waiting(left - dt),
             Stage::Running(left) if left <= dt => {
                 self.was = self.bearing;
+                // **A beast's step ends with its foot home** (#370). The drive
+                // that would write the last of it moves only the foot still
+                // stepping, which after this is none; left a two-hundredth of
+                // the way out, the foot was stepped home a second time, a full
+                // sway of the hips for a fraction of a millimetre.
+                if let Some(stepped) = self.stepping.take() {
+                    for footing in &mut self.stance {
+                        if footing.limb == stepped {
+                            footing.offset = Vec3::ZERO;
+                        }
+                    }
+                }
                 // What the shift just recovered is home for good; what is left
                 // needs another leg unloaded (#276). Self-terminating: each
                 // shift zeroes every displaced leg it is not settling onto, so
@@ -829,7 +889,13 @@ impl Idle {
         // rig with no per-joint translation. Mirrored, so the two rise together
         // rather than the body shrugging one-sided, and solved against their own
         // lever for the same reason the spine is.
+        // A limb the body stands on is a leg, and a breath does not lift it
+        // (#370): the same rule `super::gait::hang_arms` keeps.
+        let carries = rig.ground_contacts();
         for limb in [Limb::ForeLeft, Limb::ForeRight] {
+            if carries.contains(&limb) {
+                continue;
+            }
             let Some(chain) = rig.limb_chain(limb) else {
                 continue;
             };
@@ -934,11 +1000,7 @@ impl Idle {
     /// Then [`plant_feet_of`] puts the soles back. The free knee softens
     /// without being told to: it is now nearer its own foot than a straight leg
     /// would be, and a solve that reaches a closer goal bends.
-    fn settle<F>(&self, rig: &Rig, pose: &mut Pose, side: f32, ground: &F) -> Option<Limb>
-    where
-        F: Fn(Vec3) -> Option<Ground>,
-    {
-        let _ = ground;
+    fn settle(&self, rig: &Rig, pose: &mut Pose, side: f32, four: bool) -> Option<Limb> {
         let Some(bearing) = self.bearing else {
             // No shift running, but the lateral sway still has to land — it is
             // the same motion at a smaller scale, and dropping it here is what
@@ -950,7 +1012,7 @@ impl Idle {
             // Eased, because a body settling onto a hip does not arrive at
             // constant speed. A smoothstep on the fraction remaining.
             Stage::Running(left) => {
-                let done = 1.0 - (left / self.config.shift_time.max(f32::EPSILON)).clamp(0.0, 1.0);
+                let done = 1.0 - (left / self.shift_length()).clamp(0.0, 1.0);
                 done * done * (3.0 - 2.0 * done)
             }
             Stage::Waiting(_) => 1.0,
@@ -971,6 +1033,13 @@ impl Idle {
         // walked the head 10 mm outside the support polygon and moved some
         // joints at 471 mm/s, which is a body lunging rather than one settling.
         let across = over * width * 0.5 * (2.0 * BEARING_SHARE - 1.0);
+        // A beast spreads its weight over four feet, and shifts it by a
+        // fraction of what a person moves over one (#370).
+        let across = if four {
+            across * QUADRUPED_SWAY
+        } else {
+            across
+        };
         // The sagitta: how far a hip must drop for its distance to its own foot
         // to be unchanged after moving `across` sideways. Exact for a leg of
         // length `reach`, and it degenerates safely on a body with none.
@@ -985,6 +1054,14 @@ impl Idle {
             0.0
         };
         pose.translation += Vec3::new(across + side, -sink, 0.0);
+        // **Its trunk is not upright, so it does not bend back over the
+        // middle** (#370). The bend is sized by the trunk's height, which on
+        // four legs is the withers' few centimetres above the hips: asked for
+        // a shoulder's way back over a centimetre's lever it hit its clamp and
+        // rolled a standing dog's loin through thirty degrees.
+        if four {
+            return Some(bearing);
+        }
 
         // **And the trunk comes back the other way**, which is the whole shape
         // of the pose: a hip pushed out to one side and the shoulders held over
@@ -1039,7 +1116,11 @@ impl Idle {
         // One rise and fall over the fidget, so it begins and ends at nothing
         // and cannot step when it starts or stops.
         let amount = (done * std::f32::consts::PI).det_sin() * self.roll * SHOULDER_ROLL;
+        let carries = rig.ground_contacts();
         for limb in [Limb::ForeLeft, Limb::ForeRight] {
+            if carries.contains(&limb) {
+                continue;
+            }
             let Some(chain) = rig.limb_chain(limb) else {
                 continue;
             };
@@ -1047,6 +1128,45 @@ impl Idle {
             pose.rotations[chain[0]] *= Rot::z(-amount * side);
         }
         true
+    }
+
+    /// What a standing beast's tail and ears add to its idle (#370): the tail
+    /// drifting slowly from side to side, and on each fidget one ear flicking
+    /// back and the tail giving a short wag, while the head glances.
+    fn enliven(&self, rig: &Rig, pose: &mut Pose) {
+        let tail = rig.in_zone(Zone::Tail);
+        // The drift: the same noise the sway reads, much slower.
+        let drift = self
+            .field
+            .get([f64::from(self.elapsed * TAIL_DRIFT_RATE), 71.0]) as f32;
+        let fidget = match self.fidget {
+            Stage::Running(left) => {
+                Some((1.0 - left / self.config.fidget_time.max(f32::EPSILON)).clamp(0.0, 1.0))
+            }
+            Stage::Waiting(_) => None,
+        };
+        #[expect(clippy::cast_precision_loss, reason = "a tail is a handful of joints")]
+        for (rank, &joint) in tail.iter().enumerate() {
+            let wag = fidget.map_or(0.0, |done| {
+                let late = done - rank as f32 * WAG_LAG;
+                (done * std::f32::consts::PI).det_sin()
+                    * (late * WAGS * std::f32::consts::TAU).det_sin()
+                    * TAIL_WAG
+            });
+            pose.rotations[joint] *= Rot::y(drift * TAIL_DRIFT + wag);
+        }
+        // One ear, the side the fidget's roll says, flicked back over the
+        // first part of it; its spring carries the rest.
+        let Some(done) = fidget.filter(|&done| done < EAR_FLICK_SHARE) else {
+            return;
+        };
+        let pulse = (done / EAR_FLICK_SHARE * std::f32::consts::PI).det_sin();
+        let side = self.roll.signum();
+        for base in super::quadruped::ear_roots(rig) {
+            if rig.joints[base].position.x.signum() == side {
+                pose.rotations[base] *= Rot::x(-EAR_FLICK * pulse * self.roll.abs());
+            }
+        }
     }
 }
 
@@ -1057,6 +1177,35 @@ impl Idle {
 /// way. A shoulder roll that always went the same way and always went the whole
 /// distance would be the clip this replaces.
 const SHOULDER_ROLL: f32 = 0.035;
+
+/// How long a beast takes to step one foot home after it stops, in seconds
+/// (#370): a quick step, one foot after another, rather than a person's
+/// settling shift.
+/// Provenance: **chosen** (#370), so four feet are home in under two seconds.
+const QUADRUPED_STEP: f32 = 0.4;
+
+/// What share of a person's weight shift a beast's sways by (#370): four feet
+/// carry it, and its hips move over one of them by a little.
+/// Provenance: **chosen** (#370), a centimetre and a half on the default dog.
+const QUADRUPED_SWAY: f32 = 0.25;
+
+/// How far a standing beast's tail drifts, in radians per joint at the
+/// noise's extreme, and how fast, in noise units a second.
+/// Provenance: **tuned by test** (#370).
+const TAIL_DRIFT: f32 = 0.05;
+const TAIL_DRIFT_RATE: f32 = 0.15;
+
+/// A fidget's wag: how far each tail joint swings, how many wags the fidget
+/// holds, and how far behind the one before each joint swings, in fidgets.
+/// Provenance: **tuned by test** (#370).
+const TAIL_WAG: f32 = 0.12;
+const WAGS: f32 = 4.0;
+const WAG_LAG: f32 = 0.03;
+
+/// How far an ear flicks back, in radians, and over what share of a fidget.
+/// Provenance: **tuned by test** (#370).
+const EAR_FLICK: f32 = 0.5;
+const EAR_FLICK_SHARE: f32 = 0.3;
 
 /// A wait drawn between two bounds, in seconds.
 fn draw(rng: &mut Pcg64Mcg, min: f32, max: f32) -> f32 {
@@ -1130,6 +1279,7 @@ pub fn glance_config() -> GazeConfig {
 mod tests {
     use super::*;
     use crate::plan::{BodyPlan, HumanoidParams};
+    use crate::rig::Role;
 
     /// A body mid-stride at `cycle`, with the contacts that were bearing it.
     fn walking(rig: &Rig, cycle: f32) -> (Pose, Vec<Limb>) {
@@ -1364,6 +1514,111 @@ mod tests {
                 frames as f32 / 60.0
             );
         }
+    }
+
+    /// The default beast as built, ears and all: the ears' joints arrive
+    /// with the face, not with the skeleton.
+    fn beast() -> Rig {
+        let record = crate::AvatarRecord::new(
+            "Runner",
+            crate::Archetype::Quadruped(crate::plan::QuadrupedParams::default()),
+        );
+        crate::Avatar::build_with(
+            &record,
+            &crate::AvatarConfig {
+                atlas: 64,
+                ..Default::default()
+            },
+        )
+        .expect("the default quadruped builds")
+        .rig
+    }
+
+    #[test]
+    fn a_standing_beast_flicks_an_ear_and_wags_when_it_fidgets() {
+        // #370. A person fidgets by rolling a shoulder, which on four legs
+        // twists a planted leg; a beast flicks one ear back and gives a short
+        // wag, and between fidgets its ears are still and its tail drifts.
+        let rig = beast();
+        let ears: Vec<usize> = (0..rig.len())
+            .filter(|&joint| rig.joints[joint].role == Role::Spring)
+            .filter_map(|tip| rig.joints[tip].parent)
+            .collect();
+        assert_eq!(ears.len(), 2, "two ears");
+        let tail = rig.in_zone(Zone::Tail);
+        let mut idle = Idle::seeded(7);
+        let (mut fidgets, mut flicked, mut still) = (0usize, [0.0f32; 2], 0.0f32);
+        let (mut wag, mut drift) = (0.0f32, 0.0f32);
+        for _ in 0..40 * 60 {
+            let mut pose = Pose::rest(&rig);
+            let idled = idle.drive(&rig, &mut pose, 1.0 / 60.0);
+            let turned = |joint: usize| pose.rotations[joint].to_axis_angle().1;
+            let swung = tail
+                .iter()
+                .map(|&joint| turned(joint))
+                .fold(0.0f32, f32::max);
+            if idled.fidgeting {
+                fidgets += 1;
+                for (flick, &ear) in flicked.iter_mut().zip(&ears) {
+                    *flick = flick.max(turned(ear));
+                }
+                wag = wag.max(swung);
+            } else {
+                still = still.max(turned(ears[0]).max(turned(ears[1])));
+                drift = drift.max(swung);
+            }
+        }
+        assert!(fidgets > 0, "forty seconds standing and no fidget");
+        // One ear or the other, by the fidget's own draw.
+        assert!(
+            flicked[0].max(flicked[1]) > 0.1,
+            "the ears turned {flicked:.2?} rad at most fidgeting"
+        );
+        assert!(still < 1.0e-6, "an ear turned {still} rad between fidgets");
+        assert!(
+            wag > drift * 2.0,
+            "a tail joint turned {wag:.3} rad fidgeting and {drift:.3} drifting"
+        );
+    }
+
+    #[test]
+    fn a_stopped_beast_steps_each_foot_home_once() {
+        // #370. A beast that stops with its feet out of place steps each home
+        // in turn, and once: a step that left its foot a fraction of a
+        // millimetre out stepped it again, eight steps and a sway of the hips
+        // each for four feet, and the last foot home after three seconds.
+        let rig = beast();
+        let mut idle = Idle::seeded(7);
+        let mut arrived = Pose::rest(&rig);
+        arrived.translation += Vec3::new(0.0, 0.0, 0.05);
+        idle.arrive(&rig, &arrived, &rig.ground_contacts());
+        assert_eq!(idle.stance.len(), 4, "every foot arrived out of place");
+        let (mut stepped, mut was, mut home) = (Vec::new(), None, None);
+        for frame in 0..180 {
+            let mut pose = Pose::rest(&rig);
+            idle.drive(&rig, &mut pose, 1.0 / 60.0);
+            if let Some(limb) = idle.stepping
+                && was != idle.stepping
+            {
+                stepped.push((frame, limb));
+            }
+            was = idle.stepping;
+            if home.is_none() && idle.stance.is_empty() {
+                home = Some(frame);
+            }
+        }
+        assert_eq!(stepped.len(), 4, "four feet took these steps: {stepped:?}");
+        for limb in rig.ground_contacts() {
+            assert_eq!(
+                stepped.iter().filter(|(_, of)| *of == limb).count(),
+                1,
+                "{limb:?} in {stepped:?}"
+            );
+        }
+        assert!(
+            home.is_some_and(|frame| frame < 120),
+            "the feet were home at frame {home:?}, not within two seconds"
+        );
     }
 
     fn body(height: f32) -> Rig {

@@ -48,6 +48,7 @@ use glam::Vec3;
 
 use super::clip::{Clip, Key, Target, Track};
 use crate::plan::Limb;
+use crate::rig::Rig;
 
 /// How far above its own rest position a raised hand goes, in body heights.
 ///
@@ -713,6 +714,22 @@ pub fn by_name(name: &str) -> Option<Clip> {
         "Sleeping" => Some(sleep()),
         _ => None,
     }
+}
+
+/// The gesture called `name` on this body (#370): on four legs a beast's own
+/// [`super::emote`] first, and then, on any body, [`by_name`]'s.
+///
+/// **A person is never offered a beast's.** An emote is written for a body
+/// on four legs, and the parts of it any body has - where it looks, how low
+/// it sits, where its feet go - move a person as readily as a beast: asked of
+/// a person, a sit would fold their legs under them and lay their feet flat.
+/// So the roster is the body's to answer, not the clip's to refuse.
+#[must_use]
+pub fn for_body(rig: &Rig, name: &str) -> Option<Clip> {
+    super::quadruped::four_legged(rig)
+        .then(|| super::emote::by_name(name))
+        .flatten()
+        .or_else(|| by_name(name))
 }
 
 /// The roster this module covers, in the baked set's own names.

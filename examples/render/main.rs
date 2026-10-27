@@ -79,6 +79,11 @@
 //! cargo run --release --example render -- --quadruped --gallery 16 --family cat  # or dog, horse, cross
 //! cargo run --release --example render -- --quadruped --gallery 9 --pattern rosettes  # coats marked so
 //! cargo run --release --example render -- --quadruped --gallery 9 --fantasy  # unnatural coats only
+//! cargo run --release --example render -- --quadruped --speed 2.5 --strip 8  # a gait at a speed, one row
+//! cargo run --release --example render -- --quadruped --gait canter --speed 3 --strip 8
+//! cargo run --release --example render -- --quadruped --gesture "Play Bow" --strip 8
+//! cargo run --release --example render -- --quadruped --swim 0.5 --strip 8
+//! cargo run --release --example render -- --quadruped --leap 3 --strip 8
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -1035,7 +1040,137 @@ fn main() {
         );
         return;
     }
-    let subject = Subject::new(avatar, show, mandible, arches, commissures);
+    let mut subject = Subject::new(avatar, show, mandible, arches, commissures);
+
+    // **A gait at a speed** (#370): `--speed` in metres per second builds the
+    // stride and the gait from the speed axis, and `--gait` holds a
+    // four-legged body in one pattern whatever the speed - walk, trot, pace,
+    // canter, gallop or rotary.
+    let pattern = value("--gait").map(|name| {
+        symbios_avatar::anim::Pattern::ALL
+            .into_iter()
+            .find(|pattern| pattern.name().replace(' ', "-") == name.as_str())
+            .unwrap_or_else(|| {
+                eprintln!(
+                    "--gait takes walk, trot, pace, canter, gallop or rotary-gallop, not `{name}`"
+                );
+                std::process::exit(2);
+            })
+    });
+    let speed = value("--speed").and_then(|metres| metres.parse::<f32>().ok());
+    if speed.is_some() || pattern.is_some() {
+        let rig = &subject.avatar.rig;
+        let mut paced = symbios_avatar::anim::Speed::new(rig, speed.unwrap_or(1.0));
+        if let Some(pattern) = pattern {
+            paced = paced.in_pattern(pattern);
+        }
+        subject.gait = paced.gait(rig);
+        subject.stride = paced.stride(rig);
+        println!(
+            "Froude {:.2}, {}, duty {:.2}, cycle {:.2} m at {:.2} Hz",
+            paced.froude(),
+            paced
+                .pattern()
+                .map_or("a person's gait", |pattern| pattern.name()),
+            subject.gait.duty,
+            paced.cycle_length(rig),
+            paced.cadence(rig)
+        );
+    }
+    // **A strip** (#370): one row of side views across a whole cycle, each
+    // frame's feet on the ground printed under it - the unit a gait is
+    // judged in.
+    if let Some(frames) = value("--strip").and_then(|count| count.parse::<usize>().ok()) {
+        let frames = frames.max(1);
+        let span = subject.reach * MARGIN;
+        let frame = Frame {
+            turn: std::f32::consts::FRAC_PI_2,
+            pitch: 0.0,
+            centre: Vec3::new(subject.middle.x, span * 0.45, subject.middle.z),
+            span,
+        };
+        let mut strip = Image::new(frames * VIEW, VIEW);
+        // The trunk's line, read off the posed pelvis, loin and withers: its
+        // pitch nose up and how far the loin stands above the chord - how a
+        // beast rocks and folds (#370).
+        let rig = &subject.avatar.rig;
+        let trunk = [Zone::Pelvis, Zone::Abdomen, Zone::Chest]
+            .map(|zone| rig.in_zone(zone).first().copied());
+        // `--gesture NAME` plays one of the rosters across the strip instead
+        // of a gait, from the body standing, its last frame its end (#370).
+        let playing = value("--gesture").map(|name| {
+            symbios_avatar::anim::gesture::for_body(rig, name).unwrap_or_else(|| {
+                eprintln!("this body has no gesture called {name}");
+                std::process::exit(1);
+            })
+        });
+        // `--swim M/S` swims the strip instead, through one stroke, and
+        // `--leap M/S` leaps it, from the wind-up to standing again (#370).
+        let swimming = value("--swim").and_then(|pace| pace.parse::<f32>().ok());
+        let leaping = value("--leap")
+            .and_then(|launch| launch.parse::<f32>().ok())
+            .map(symbios_avatar::anim::Leap::new);
+        for index in 0..frames {
+            let cycle = index as f32 / frames as f32;
+            if let Some(leap) = leaping {
+                let mut pose = Pose::rest(rig);
+                let last = (frames - 1).max(1) as f32;
+                leap.drive(
+                    rig,
+                    &mut pose,
+                    leap.duration(rig) * index as f32 / last,
+                    |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
+                );
+                let view = subject.view(&pose, 0.0, &frame);
+                strip.blit(&view, index * VIEW, 0);
+                continue;
+            }
+            let pose = match (&playing, swimming) {
+                (Some(clip), _) => {
+                    let mut pose = subject.standing();
+                    let last = (frames - 1).max(1) as f32;
+                    clip.apply(rig, &mut pose, index as f32 / last);
+                    pose
+                }
+                (None, Some(pace)) => {
+                    let mut pose = Pose::rest(rig);
+                    symbios_avatar::anim::Swim::at(cycle)
+                        .toward(pace)
+                        .drive(rig, &mut pose);
+                    pose
+                }
+                (None, None) => subject.walking(cycle),
+            };
+            let view = subject.view(&pose, 0.0, &frame);
+            strip.blit(&view, index * VIEW, 0);
+            let line = if let [Some(hips), Some(loin), Some(withers)] = trunk {
+                let at = pose.forward(rig).positions;
+                let run = at[withers] - at[hips];
+                let pitch = run.y.atan2(run.z).to_degrees();
+                let along = (at[loin] - at[hips]).dot(run) / run.length_squared();
+                let arch = at[loin].y - (at[hips].y + run.y * along);
+                format!(", trunk {pitch:+5.1} deg, arch {:+4.0} mm", arch * 1000.0)
+            } else {
+                String::new()
+            };
+            let down: Vec<&str> = subject
+                .gait
+                .limbs
+                .iter()
+                .enumerate()
+                .filter(|(contact, _)| subject.gait.phase(*contact, cycle).is_stance())
+                .map(|(_, limb)| match limb {
+                    Limb::ForeLeft => "LF",
+                    Limb::ForeRight => "RF",
+                    Limb::HindLeft => "LH",
+                    Limb::HindRight => "RH",
+                })
+                .collect();
+            println!("frame {index:2} at {cycle:.2}: {}{line}", down.join(" "));
+        }
+        write(&out, "strip", &strip);
+        return;
+    }
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
         match focus {
@@ -1063,10 +1198,12 @@ fn main() {
     // viewer plays for a greeting (#318). Sampled over its own length from
     // the standing pose, the way `gesturing` in the viewer applies it.
     if let Some(name) = value("--gesture") {
-        let Some(gesture) = symbios_avatar::anim::gesture::by_name(name) else {
+        let Some(gesture) = symbios_avatar::anim::gesture::for_body(&subject.avatar.rig, name)
+        else {
             eprintln!(
-                "unknown gesture {name}: expected one of {}",
-                symbios_avatar::anim::gesture::ROSTER.join(", ")
+                "this body has no gesture {name}: a person's are {}, and a beast's {}",
+                symbios_avatar::anim::gesture::ROSTER.join(", "),
+                symbios_avatar::anim::emote::ROSTER.join(", ")
             );
             std::process::exit(1);
         };

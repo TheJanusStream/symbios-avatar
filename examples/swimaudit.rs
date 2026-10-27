@@ -54,11 +54,12 @@
 //! cargo run --example swimaudit -- --pace 1.3        # one pace, in detail
 //! cargo run --example swimaudit -- --samples 720
 //! cargo run --example swimaudit -- --bare            # the limbs, without the trunk
+//! cargo run --example swimaudit -- --quadruped       # a beast's paddle (#370)
 //! ```
 
 use glam::Vec3;
 use symbios_avatar::{
-    Archetype, Avatar, AvatarRecord, Limb, Pose, Rig, Swim, Zone,
+    Archetype, Avatar, AvatarRecord, Limb, Pose, QuadrupedParams, Rig, Swim, Zone,
     anim::swim::{PRONE_AT, length_is},
 };
 
@@ -104,7 +105,14 @@ fn main() {
         .max(4);
     let bare = args.iter().any(|arg| arg == "--bare");
 
-    let record = AvatarRecord::new("Swimmer", Archetype::default());
+    // `--quadruped` measures a beast's paddle instead (#370): the same four
+    // readings, with its fores as the hands.
+    let archetype = if args.iter().any(|arg| arg == "--quadruped") {
+        Archetype::Quadruped(QuadrupedParams::default())
+    } else {
+        Archetype::default()
+    };
+    let record = AvatarRecord::new("Swimmer", archetype);
     let Some(avatar) = Avatar::build(&record) else {
         eprintln!("the swimming body would not build");
         std::process::exit(1);

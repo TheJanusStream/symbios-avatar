@@ -228,7 +228,18 @@ Still ahead, in rough order:
   the fetlocks, tufts at the ears' tips - as five lengths on the record, grown
   by the hair system's own cards on the body's zones, coloured from the coat
   at each card's root and bound as the skin it grows from, in the hair's draw
-  under a ceiling of its own.
+  under a ceiling of its own. The sixth (#370) moves it: the speed picks a
+  pattern by Froude number - a lateral-sequence walk, a trot, a canter, a
+  gallop, transverse on hooves and rotary on paws, changing down later than
+  it changed up and leading with the inside legs on a curve - and the trunk
+  rocks onto whichever end bears it and folds and stretches at the gallop,
+  the head steady, the tail streaming and the ears on springs; strides are
+  centred under the girdles and paws stood upright and rolled off their toes,
+  so the body rides its stride without jolting; it paddles, leaps fore and
+  hind in turn, idles on four legs (its feet stepped home one at a time, an
+  ear flicked, a wag), and has a roster of its own - sit, lie down, play bow,
+  shake, wag, ear flick, head tilt, yawn, pant, sniff - in goal-space clips
+  with the parts only a beast moves.
 - **Creator UX** — seed-lock editor, share-code flow, staged preview, spanning
   both crates.
 

@@ -307,6 +307,29 @@ impl Leap {
         // carries hung arms and a landing's solve bends legs under them.
         super::gait::hang_arms(rig, pose);
 
+        // **A beast leaps fore and hind in turn** (#370): it gathers on its
+        // haunches, nose up, arcs over through the flight and lands on its
+        // fores, nose down - the trunk turned by the end it sinks, as its gait
+        // rocks, so one stage hands the next the same pitch.
+        // Turned after the tuck in the air, which draws the legs up in the
+        // body's own frame, and before the plant on the ground, which puts
+        // the feet back down under it.
+        let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+        let pitch = if super::quadruped::four_legged(rig) {
+            match leapt.stage {
+                Stage::WindUp(t) => LEAP_PITCH * ease(t),
+                Stage::Flight(t) => LEAP_PITCH * (t * std::f32::consts::PI).det_cos(),
+                Stage::Landing(t) => -LEAP_PITCH * (1.0 - ease(t)),
+                Stage::Standing => 0.0,
+            }
+        } else {
+            0.0
+        };
+        let pitched = |pose: &mut Pose| {
+            if pitch != 0.0 {
+                super::quadruped::sink_end(rig, pose, pitch);
+            }
+        };
         match leapt.stage {
             Stage::Flight(t) => {
                 // **Rigid, and the feet come with it.** A projectile does not
@@ -314,12 +337,14 @@ impl Leap {
                 // whatever they are holding — which is the tuck below, applied
                 // in the body's own frame and therefore carried along with it.
                 self.tuck(rig, pose, t, &mut leapt);
+                pitched(pose);
                 pose.translation.y += leapt.height;
             }
             Stage::WindUp(_) | Stage::Landing(_) => {
                 // Feet on the floor, body dropping between them: the legs have
                 // to bend, so the sink goes in BEFORE the contacts are solved.
                 pose.translation.y += leapt.height;
+                pitched(pose);
                 let contacts = rig.ground_contacts();
                 let footing =
                     plant_feet_of(rig, pose, &contacts, ground, &FootingConfig::default());
@@ -363,6 +388,11 @@ impl Leap {
         }
     }
 }
+
+/// How far a leaping beast's trunk turns nose up as it gathers and nose down
+/// as it lands, in radians (#370).
+/// Provenance: **tuned by test** (#370).
+const LEAP_PITCH: f32 = 0.25;
 
 /// The deepest a leg will be asked to compress, as a share of its own reach.
 ///

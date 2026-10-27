@@ -367,6 +367,21 @@ beast's, hands or none, a human trunk or a barrel) and never guessed from how
 many feet it stands on (#365). A plan with more than four limbs would need
 `Limb` to name them first.
 
+**On four legs** (#370) the speed picks a `Pattern` as an animal does, by
+Froude number: a lateral-sequence walk, a trot, a canter and a gallop -
+transverse on hooves, rotary on paws - changing down later than it changed up,
+and leading with the inside legs on a curve. Instead of leaning into its pace
+the trunk rocks onto whichever end bears it and, galloping, folds its back
+under its gathered legs and stretches it as they push off, the head held
+steady over all of it and the tail streaming out behind; the ears follow on
+springs. `anim::emote` is a beast's roster - sit, lie down, play bow, shake,
+wag, ear flick, head tilt, yawn, pant, sniff - in the same goal-space clips,
+with targets for a beast's own parts (the trunk's pitch and roll, the tail, the
+ears, the jaw) and the head's cant; `gesture::for_body` offers it to a body on
+four legs and never to a person. A beast paddles rather than crawls, steps its
+feet home one at a time after it stops, and flicks an ear and wags while it
+stands.
+
 ```text
 cargo run --example dump -- --walk 12   # a walk cycle over a slope, frame by frame
 ```
@@ -393,7 +408,9 @@ dressed in its own skin and clothes, rigged, and walked. Records, body plans,
 the mesher, rigging, skinning, zones, landmarks, UV charting, procedural skin,
 hair, tight garments, the bone-driven face layer (expressions, blink, talk and
 visemes), and motion (pose, IK, foot placement, inertialization, gait,
-goal-space clips, baked-clip playback, gaze) are in place and tested.
+goal-space clips, baked-clip playback, gaze) are in place and tested. So are
+four-legged bodies (#364) - dogs, cats, horses and their crosses - from coat
+and fur to gaits, swimming and emotes.
 
 Still ahead: a GLB writer (the glTF module only *reads*, for clip import),
 loose garments and accessories, and creature variety —

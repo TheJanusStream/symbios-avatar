@@ -87,6 +87,7 @@
 //! cargo run --example gestureaudit
 //! cargo run --example gestureaudit -- --gesture Reject
 //! cargo run --example gestureaudit -- --samples 480
+//! cargo run --example gestureaudit -- --quadruped     # a beast's roster (#370)
 //! ```
 //!
 //! Every reading is taken over only what the clip actually addresses: a
@@ -102,7 +103,7 @@ use symbios_avatar::{
         Target,
         gesture::{self, ROSTER},
     },
-    plan::{BodyPlan, Composites, HumanoidParams},
+    plan::{BodyPlan, Composites, HumanoidParams, QuadrupedParams},
     rig::landmark,
 };
 
@@ -159,6 +160,10 @@ fn main() {
     };
     let samples = number("--samples").unwrap_or(SWEEP).max(4);
     let wanted = word("--gesture");
+    if args.iter().any(|arg| arg == "--quadruped") {
+        beasts(samples, wanted.as_deref());
+        return;
+    }
     let roster: Vec<&str> = match &wanted {
         Some(name) => vec![name.as_str()],
         None => ROSTER.to_vec(),
@@ -592,6 +597,105 @@ fn main() {
         "\nhow it READS is not in this table. `cargo run --release -F builtin-clips --example \
          viewer -- --gesture Greeting`, in the sibling `bevy_symbios_avatar`."
     );
+}
+
+/// The beasts a beast's roster is judged on (#370): each family as a roll
+/// gives it, and the default dog at both ends of its height and its legs -
+/// a rolled record's seed, or `None` for the default with a height and a leg
+/// length.
+const BEASTS: [(&str, Option<i64>, f32, f32); 7] = [
+    ("dog", None, 0.0, 0.0),
+    ("cat", Some(2), 0.0, 0.0),
+    ("horse", Some(6), 0.0, 0.0),
+    ("small dog", None, 0.25, 0.0),
+    ("big dog", None, 1.4, 0.0),
+    ("short legs", None, 0.0, -1.0),
+    ("long legs", None, 0.0, 1.0),
+];
+
+/// A beast's roster over [`BEASTS`] (#370): for each emote and each body,
+/// how many limbs ever strained, how low the trunk went - below the floor
+/// is through it - and how far any paw ever left the ground, in millimetres.
+///
+/// **A paw off the ground is a reading, not a fault, for an emote that lifts
+/// one**; for sitting and lying down, which plant every foot, it is a foot
+/// floating. The trunk through the floor is a fault everywhere.
+fn beasts(samples: usize, wanted: Option<&str>) {
+    let roster: Vec<&str> = match wanted {
+        Some(name) => vec![name],
+        None => symbios_avatar::anim::emote::ROSTER.to_vec(),
+    };
+    let rigs: Vec<(&str, Rig)> = BEASTS
+        .iter()
+        .map(|&(name, seed, height, legs)| {
+            let mut record = symbios_avatar::AvatarRecord::new(
+                "Beast",
+                symbios_avatar::Archetype::Quadruped(QuadrupedParams::default()),
+            );
+            if let Some(seed) = seed {
+                record.reroll(seed);
+            }
+            if let symbios_avatar::Archetype::Quadruped(params) = &mut record.archetype {
+                if height > 0.0 {
+                    params.height = height;
+                }
+                if legs != 0.0 {
+                    params.leg_length = legs;
+                }
+            }
+            record.sanitize();
+            let rig = Rig::from_skeleton(&record.skeleton()).expect("the plan builds a rig");
+            (name, rig)
+        })
+        .collect();
+    for name in roster {
+        let Some(clip) = symbios_avatar::anim::emote::by_name(name) else {
+            eprintln!("no emote called {name}");
+            std::process::exit(1);
+        };
+        println!(
+            "\n{name}: returns to rest {}",
+            gesture::returns_to_rest(&clip)
+        );
+        println!(
+            "  {:>10} {:>7} {:>7} {:>11} {:>10}",
+            "body", "height", "strain", "trunk mm", "paw up mm"
+        );
+        for (body, rig) in &rigs {
+            let trunk: Vec<usize> = [Zone::Pelvis, Zone::Abdomen, Zone::Chest]
+                .into_iter()
+                .flat_map(|zone| rig.in_zone(zone))
+                .collect();
+            let paws: Vec<usize> = rig
+                .ground_contacts()
+                .into_iter()
+                .filter_map(|limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
+                .collect();
+            let (mut strained, mut lowest, mut lifted) = (0usize, f32::MAX, 0.0f32);
+            for step in 0..=samples {
+                let mut pose = Pose::rest(rig);
+                strained = strained.max(
+                    clip.apply(rig, &mut pose, step as f32 / samples as f32)
+                        .len(),
+                );
+                let posed = pose.forward(rig).positions;
+                for &joint in &trunk {
+                    lowest = lowest.min(posed[joint].y);
+                }
+                for &paw in &paws {
+                    lifted = lifted.max(posed[paw].y - rig.joints[paw].position.y);
+                }
+            }
+            println!(
+                "  {:>10} {:>7.2} {:>7} {:>11.0} {:>10.1}",
+                body,
+                rig.extent(),
+                strained,
+                lowest * 1000.0,
+                lifted * 1000.0
+            );
+        }
+    }
 }
 
 /// A humanoid rig of the given stature and proportions.

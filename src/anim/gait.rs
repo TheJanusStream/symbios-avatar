@@ -30,10 +30,13 @@ use crate::det::{self, DetMath, Rot};
 use glam::{Quat, Vec3};
 
 use super::gaze::GazeConfig;
-use super::ground::{Footing, FootingConfig, Ground, folded_within, plant_feet_of, solve_contact};
+use super::ground::{
+    Footing, FootingConfig, Ground, ankle_limit, folded_within, plant_feet_of, solve_contact,
+    solve_contact_carried,
+};
 use super::heading::Heading;
 use super::pose::Pose;
-use crate::plan::{Limb, Zone};
+use crate::plan::{FootKind, Limb, Zone};
 use crate::rig::Rig;
 
 /// Where one contact is in the cycle.
@@ -139,6 +142,35 @@ impl Gait {
         }
     }
 
+    /// A four-legged body's feet in `pattern`'s order, each down `duty` of
+    /// the cycle (#370): a walk, a trot, a pace, a canter or a gallop. Falls
+    /// back to a wave gait at that duty on a body that is not four-legged.
+    ///
+    /// **Turned so the body's first contact lands at nought**, whatever the
+    /// pattern. A change of gait carries the cycle across by that contact's
+    /// phase ([`Self::phase_matched`]), so with every pattern starting from it
+    /// the foot the carry watches keeps its moment and only the others move -
+    /// which a blend covers.
+    #[must_use]
+    pub fn pattern(rig: &Rig, pattern: super::Pattern, duty: f32) -> Self {
+        let limbs = rig.ground_contacts();
+        if limbs.len() != 4 {
+            return Self {
+                duty,
+                ..Self::wave(rig)
+            };
+        }
+        let first = pattern.offset(limbs[0]);
+        Self {
+            offsets: limbs
+                .iter()
+                .map(|&limb| (pattern.offset(limb) - first).rem_euclid(1.0))
+                .collect(),
+            limbs,
+            duty,
+        }
+    }
+
     /// The same pattern, run rather than walked: a duty below a half, so the
     /// body has a moment with nothing on the ground.
     ///
@@ -152,8 +184,8 @@ impl Gait {
     /// makes this a *running trot* — a trot with a suspension phase, which is a
     /// real gait — and on two an ordinary run. **It is not a canter or a
     /// gallop**: those are asymmetric, their offsets are not evenly spread, and
-    /// neither this nor [`Self::wave`] can express that shape. That is a second
-    /// constructor this module does not have.
+    /// neither this nor [`Self::wave`] can express that shape. That is
+    /// [`Self::pattern`] (#370).
     #[must_use]
     pub fn running(rig: &Rig) -> Self {
         Self {
@@ -583,7 +615,8 @@ pub struct Stride {
     /// flexion a run reads by arrives through the leg's own solve reaching for
     /// that foot. On a stride derived from speed it rises with the Froude
     /// number past the walk-run transition; [`Stride::for_body`] maps its pace
-    /// axis to agree at the calibration points.
+    /// axis to agree at the calibration points. A four-legged body's stride
+    /// carries none (#370).
     pub tuck: f32,
     /// How far apart fore-and-aft the stance's two sides stand, in metres —
     /// the trailing side's contacts half of it in front of their homes, the
@@ -1118,11 +1151,14 @@ pub fn crouch_for(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
             // contact with no home is one `step` would skip, and skipping it
             // here is what keeps the planning figure and the frame agreeing.
             let home = home_of(rig, limb)?;
+            let lead = stride_lead(rig, limb, gait);
             // Both ends of the stride, since a contact may start forward of its
             // hip and only the further extreme matters.
             [0.5f32, -0.5]
                 .into_iter()
-                .filter_map(|share| sink_needed(rig, limb, traced(home, stride, share)))
+                .filter_map(|share| {
+                    sink_needed(rig, limb, led(traced(led(home, lead), stride, share), lead))
+                })
                 .fold(f32::NEG_INFINITY, f32::max)
                 .into()
         })
@@ -1179,16 +1215,66 @@ pub fn crouch_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
             // function of where that contact rests, so on a turn the two legs
             // ask for different sinks and the body owes the deeper one.
             let home = home_of(rig, limb)?;
+            let lead = stride_lead(rig, limb, gait);
             sink_needed(
                 rig,
                 limb,
-                contact_offset(home, stride, gait.phase(index, cycle)),
+                led(
+                    contact_offset(led(home, lead), stride, gait.phase(index, cycle)),
+                    lead,
+                ),
             )
         })
         .fold(0.0f32, f32::max)
         * CROUCH_MARGIN;
     reaching + compression_at(rig, gait, stride, cycle)
 }
+
+/// How deep a four-legged body rides at `cycle` (#370): the least curve over
+/// [`crouch_at`]'s whole cycle that changes by no more than [`RIDE_SLOPE`].
+///
+/// **Four legs hand the sink between them every few frames.** Each contact
+/// asks the most at the two ends of its stance, where it reaches furthest,
+/// and a running leg's spring asks the most in the middle; summed over four
+/// legs the depth jumps wherever one leg's ask hands over to another's - on
+/// the default dog's trot a touchdown asked 26 mm and the next frame 14,
+/// a root jolting by a centimetre and a half a frame and dragging its ears
+/// with it. Ridden instead, every depth the cycle asks is still met - the
+/// curve never runs under a sample of it - and the body only ever sinks and
+/// rises at the slope, so a peak spreads into its neighbours rather than
+/// jolting. A person's walk keeps its own curve: two legs hand over twice a
+/// cycle, and that is the bob a walk reads by.
+fn ridden_crouch(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
+    let leg = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.limb_reach(limb))
+        .fold(0.0f32, f32::max);
+    // Evenly through the cycle, and at every contact's touchdown, midstance
+    // and lift: a foot asks the most at the ends of its stance and a running
+    // leg's spring in the middle, so those are where every peak sits.
+    #[expect(clippy::cast_precision_loss, reason = "a handful of samples")]
+    let even = (0..RIDE_SAMPLES).map(|sample| sample as f32 / RIDE_SAMPLES as f32);
+    let ends = gait.offsets.iter().flat_map(|&offset| {
+        [0.0, 0.5, 1.0].map(|share| (offset + gait.duty * share).rem_euclid(1.0))
+    });
+    even.chain(ends)
+        .map(|at| {
+            let apart = (at - cycle).rem_euclid(1.0);
+            crouch_at(rig, gait, stride, at) - RIDE_SLOPE * leg * apart.min(1.0 - apart)
+        })
+        .fold(0.0f32, f32::max)
+}
+
+/// How fast a four-legged body's ride may sink or rise, in its leg's reach
+/// per cycle: on the default dog's trot about 4 mm a frame.
+/// Provenance: **tuned by test** (#370), the gentlest that keeps a trot's
+/// spring and a gallop's flight readable.
+const RIDE_SLOPE: f32 = 0.3;
+
+/// How many moments of its cycle a ride is read at, besides each contact's
+/// own: enough that the slope between them is never steeper than the ride's.
+const RIDE_SAMPLES: usize = 24;
 
 /// How far a running body's leg spring is squashed at this point of the cycle.
 ///
@@ -1213,19 +1299,42 @@ pub fn compression_at(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f3
     if !gait.has_flight() {
         return 0.0;
     }
-    let reach = gait
-        .limbs
-        .iter()
-        .filter_map(|&limb| rig.limb_reach(limb))
-        .fold(0.0f32, f32::max);
     let deepest = (0..gait.len())
         .filter_map(|index| match gait.phase(index, cycle) {
             Phase::Stance(t) => Some((t * std::f32::consts::PI).det_sin()),
             Phase::Swing(_) => None,
         })
         .fold(0.0f32, f32::max);
-    reach * RUN_COMPRESSION * pace_of(rig, stride) * deepest
+    spring_depth(rig, gait, stride) * deepest
 }
+
+/// How far a running body's leg spring squashes at its deepest, in metres:
+/// [`RUN_COMPRESSION`] of the leg's reach at a plain run's pace - and on four
+/// legs [`SHARED_SPRING`] of that.
+fn spring_depth(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
+    let reach = gait
+        .limbs
+        .iter()
+        .filter_map(|&limb| rig.limb_reach(limb))
+        .fold(0.0f32, f32::max);
+    let depth = reach * RUN_COMPRESSION * pace_of(rig, stride);
+    if gait.limbs.len() == 4 {
+        depth * SHARED_SPRING
+    } else {
+        depth
+    }
+}
+
+/// What share of a runner's spring a four-legged body's squashes (#370).
+///
+/// **Four legs take a landing two take alone**, and a beast's back rides the
+/// stride where a runner's whole body bounces on it: a galloping dog's
+/// withers rise and fall through a centimetre or two, where a runner's
+/// tenth of a leg put the default dog's through 50 mm twice a stride, a
+/// shudder at eight times a second.
+/// Provenance: **tuned by test** (#370), toward the literature's
+/// centimetre or two.
+const SHARED_SPRING: f32 = 0.5;
 
 /// How far above its stance height a running body is carried while airborne.
 ///
@@ -1271,12 +1380,7 @@ pub fn flight_rise(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> f32 {
     if grounded <= f32::EPSILON || airborne <= f32::EPSILON {
         return 0.0;
     }
-    let reach = gait
-        .limbs
-        .iter()
-        .filter_map(|&limb| rig.limb_reach(limb))
-        .fold(0.0f32, f32::max);
-    let compression = reach * RUN_COMPRESSION * pace_of(rig, stride);
+    let compression = spring_depth(rig, gait, stride);
     let apex = std::f32::consts::FRAC_PI_4 * compression * (airborne / grounded);
     apex * 4.0 * progress * (1.0 - progress)
 }
@@ -1648,10 +1752,13 @@ where
             // offset, for the swing AND the stance — a landing widened and a
             // stance that then pulled back inward would be a pop at every
             // plant. Phase-stable by construction; see [`footing_doubt`].
+            // And on four legs the stride walks forward under the hip
+            // (#370): see [`stride_lead`].
+            let lead = stride_lead(rig, limb, gait);
             let doubt = if gait.duty >= 1.0 {
                 0.0
             } else {
-                footing_doubt(home, foot, stride, gait.duty, &ground)
+                footing_doubt(led(home, lead), foot, stride, gait.duty, &ground)
             };
             let widen = Vec3::X * (home.x * SPREAD_ON_DOUBT * doubt);
             // A gait that never lifts a contact has no stride to express: at
@@ -1675,7 +1782,17 @@ where
                 let beneath = ground(home + level).map_or(0.0, |there| there.position.y);
                 level + Vec3::Y * beneath
             } else {
-                seated_offset(home + widen, foot, stride, phase, gait.duty, &ground) + widen
+                led(
+                    seated_offset(
+                        led(home + widen, lead),
+                        foot,
+                        stride,
+                        phase,
+                        gait.duty,
+                        &ground,
+                    ) + widen,
+                    lead,
+                )
             };
             Some((limb, phase, offset, home + offset, doubt))
         })
@@ -1726,7 +1843,11 @@ where
                 // expressed from the rest contact like every offset here.
                 let home = home_of(rig, limb)?;
                 let widen = Vec3::X * (home.x * SPREAD_ON_DOUBT * doubt);
-                let level = contact_offset(home + widen, stride, phase) + widen;
+                let lead = stride_lead(rig, limb, gait);
+                let level = led(
+                    contact_offset(led(home + widen, lead), stride, phase) + widen,
+                    lead,
+                );
                 Vec3::new(level.x, offset.y, level.z)
             };
             // The compliance term rides in the doubtful limb's own entry of
@@ -1753,6 +1874,11 @@ where
     // smoothly into its midstance. Zero for a gait that never leaves the
     // ground, which leaves every walk exactly as it was.
     steps.crouch += compression_at(rig, gait, stride, cycle);
+    // A four-legged body rides the cycle's sink smoothly rather than frame by
+    // frame (#370): see [`ridden_crouch`].
+    if gait.limbs.len() == 4 && gait.duty < 1.0 {
+        steps.crouch = steps.crouch.max(ridden_crouch(rig, gait, stride, cycle));
+    }
     pose.translation.y -= steps.crouch;
 
     for &(limb, phase, _, _, doubt) in &goals {
@@ -1886,6 +2012,10 @@ pub struct Walk {
     /// with the trunk, which is what splits the lean's contribution to a
     /// silhouette from the crane's.
     ///
+    /// On four legs the bargain is over the trunk's rock and fold rather than
+    /// a lean, and the neck takes back as much of them as the body's feet say
+    /// (#370): all of it on paws, half on hooves, where a horse nods.
+    ///
     /// Ignored while [`Self::posture`] is off, because there is then no lean to
     /// bargain over.
     pub head_level: bool,
@@ -1968,6 +2098,7 @@ impl Walk {
         if self.posture {
             swing_arms(rig, pose, gait, stride, self.cycle);
             lean_with(rig, pose, gait, stride, self.head_level);
+            super::quadruped::carry(rig, pose, gait, self.cycle, self.head_level);
         }
         // After the lean, which the neck has just taken back off to hold the
         // head level — a gaze applied first would be levelled away, the same
@@ -2758,6 +2889,7 @@ where
         return straining;
     }
 
+    let on_toes = rig.anatomy.feet != FootKind::Human;
     for (index, &limb) in gait.limbs.iter().enumerate() {
         let phase = gait.phase(index, cycle);
         // **Scaled by how much of the travel is fore-and-aft** (#242). Forward
@@ -2767,14 +2899,34 @@ where
         // which is `+1`, `−1` and `0` — so a diagonal gets a partial roll
         // rather than a choice between two of them, and nothing pops as the
         // heading swings.
-        let pitch = foot_pitch(phase) * Heading::toward(stride.direction).along();
+        //
+        // **A beast's foot lands flat** (#370): a beast walks on its toes, a
+        // hoof on one toe's tip, and a heel strike's toe-up landing, rolled
+        // on a metatarsus a third of its leg long, swung its paw 68 mm back
+        // across the ground as it came down. It keeps the toe-off, which
+        // lifts its heel about a toe that stays put.
+        let rolled = if on_toes {
+            foot_pitch(phase).min(0.0)
+        } else {
+            foot_pitch(phase)
+        };
+        let pitch = rolled * Heading::toward(stride.direction).along();
         let heading = contact_heading(stride, phase);
         // Nothing to do is nothing to do — but it now takes both to be nothing,
         // and a foot flat in mid-stance on a turn still has a bearing to hold.
         if pitch == 0.0 && heading == 0.0 {
             continue;
         }
-        if roll_one(rig, pose, limb, pitch, heading, &ground, config.max_ankle) == Some(false) {
+        if roll_one(
+            rig,
+            pose,
+            limb,
+            pitch,
+            heading,
+            &ground,
+            ankle_limit(rig, config),
+        ) == Some(false)
+        {
             straining.push(limb);
         }
     }
@@ -2909,7 +3061,7 @@ where
             .iter()
             .copied()
             .min_by(|a, b| (turned * *a).dot(up).total_cmp(&(turned * *b).dot(up)))?;
-        reached = solve_contact(rig, pose, limb, anchor + bearing - turned * bearing);
+        reached = solve_contact_carried(rig, pose, limb, anchor + bearing - turned * bearing);
     }
 
     Some(reached)
@@ -3248,6 +3400,10 @@ fn pace_of(rig: &Rig, stride: &Stride) -> f32 {
 /// **Rotations are composed, not assigned**, so this stacks with the twist
 /// rather than replacing it — running it twice compounds its own lean, as any
 /// additive layer would.
+///
+/// **A four-legged body does not lean** (#370): its trunk is already
+/// horizontal, and pitched forward it drops its withers. It rocks and folds
+/// instead, a stage [`Walk::drive`] runs beside this one.
 pub fn lean(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride) {
     lean_with(rig, pose, gait, stride, true);
 }
@@ -3267,6 +3423,12 @@ fn lean_with(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, head_leve
     // handed — the same rule `step` and `crouch_at` apply (#230). A standing
     // body stands up straight.
     if gait.duty >= 1.0 {
+        return;
+    }
+    // A four-legged body's trunk is already horizontal, and pitched forward
+    // it drops its withers: it rocks and folds instead, which
+    // `quadruped::carry` does (#370).
+    if gait.limbs.len() == 4 {
         return;
     }
     // **One inclination rather than two rotations, and the reason is
@@ -3328,7 +3490,7 @@ fn lean_with(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, head_leve
 /// The counter's total is exactly `inherited.inverse()`, so the head's own
 /// orientation lands level wherever the shares fall — what moved is where the
 /// bend lives, not where the head points.
-fn relevel_head(rig: &Rig, pose: &mut Pose, inherited: Quat) {
+pub(super) fn relevel_head(rig: &Rig, pose: &mut Pose, inherited: Quat) {
     let mut chain: Vec<usize> = rig.in_zone(Zone::Neck);
     if let Some(&head) = rig.in_zone(Zone::Head).first() {
         chain.push(head);
@@ -3588,7 +3750,7 @@ const TRUNK_PASSES: usize = 3;
 /// Walked up the parent chain and stopped at the root, so it is whatever spine
 /// the body has rather than a list of names. The root itself is left out: it
 /// carries the whole body, and turning it turns the legs too.
-fn spine_to(rig: &Rig, top: usize) -> Vec<usize> {
+pub(super) fn spine_to(rig: &Rig, top: usize) -> Vec<usize> {
     let mut chain = Vec::new();
     let mut at = Some(top);
     while let Some(joint) = at {
@@ -3606,6 +3768,32 @@ fn spine_to(rig: &Rig, top: usize) -> Vec<usize> {
 pub(crate) fn home_of(rig: &Rig, limb: Limb) -> Option<Vec3> {
     let joint = *rig.in_zone(crate::plan::Zone::Extremity(limb)).first()?;
     Some(rig.joints[joint].position)
+}
+
+/// How far forward of where a contact rests its stride is centred: on four
+/// legs (#370), by as far as the joint the leg reaches stands behind the hip
+/// or the shoulder carrying it - 33 mm and 51 mm on the default dog - and
+/// nowhere on two, or for a gait that never lifts a foot.
+///
+/// A stride centred on a beast's resting foot swings further back than
+/// forward, and the body has to sink for the back of every stance: on the
+/// default dog 44 to 68 mm by the stride's end, and a jolt as that foot lifts
+/// and the next deepest takes over. Centred beneath the hip the same stride
+/// asks a third of that, the same at either end. Every reader of a contact's
+/// arc - the step, the crouch, the foothold ledger - moves it by this, so none
+/// of them disagrees about where a foot is going.
+pub(crate) fn stride_lead(rig: &Rig, limb: Limb, gait: &Gait) -> Option<Vec3> {
+    if gait.limbs.len() != 4 || gait.duty >= 1.0 {
+        return None;
+    }
+    let [girdle, _, reaching] = rig.limb_chain(limb)?;
+    Some(Vec3::Z * (rig.joints[girdle].position.z - rig.joints[reaching].position.z))
+}
+
+/// `at` carried by `lead`, or `at` itself where there is none: a person's
+/// stride is the one it always was, to the bit and the signed zero.
+pub(crate) fn led(at: Vec3, lead: Option<Vec3>) -> Vec3 {
+    lead.map_or(at, |lead| at + lead)
 }
 
 #[cfg(test)]

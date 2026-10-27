@@ -23,9 +23,12 @@ use symbios_avatar::anim::driver::{
     Carriage, Driven, Driver, DriverConfig, Inputs, Showing, Source, level_ground, velocity_of,
 };
 use symbios_avatar::anim::gait;
-use symbios_avatar::anim::gesture;
+use symbios_avatar::anim::heading::Heading;
+use symbios_avatar::anim::{Lead, Pattern};
+use symbios_avatar::anim::{emote, gesture};
 use symbios_avatar::{
-    Archetype, Avatar, AvatarConfig, AvatarRecord, Leap, Limb, Pose, Rig, Speed, Vec3, Zone, plan,
+    Archetype, Avatar, AvatarConfig, AvatarRecord, Leap, Limb, Pose, QuadrupedParams, Rig, Role,
+    Speed, Vec3, Zone, plan,
 };
 
 /// The seed every instrument here stands its body's idle and blink on.
@@ -194,7 +197,7 @@ fn sole_pitch(rig: &Rig, pose: &Pose, limb: Limb) -> f32 {
 
 /// The ankle joint of each hind limb, which is where a foot hangs from.
 fn feet(rig: &Rig) -> Vec<usize> {
-    [Limb::HindLeft, Limb::HindRight]
+    rig.ground_contacts()
         .into_iter()
         .map(|limb| rig.in_zone(Zone::Extremity(limb))[0])
         .collect()
@@ -405,6 +408,528 @@ fn crossing_the_walk_run_boundary_does_not_relabel_the_clock() {
              the clock was relabelled under the body",
             pair[0],
             pair[1],
+        );
+    }
+}
+
+/// The default four-legged body, built as [`body_of`] builds a person's: a
+/// dog, whose paws gallop round itself.
+fn beast() -> Avatar {
+    let record = AvatarRecord::new("Runner", Archetype::Quadruped(QuadrupedParams::default()));
+    Avatar::build_with(
+        &record,
+        &AvatarConfig {
+            atlas: 64,
+            ..Default::default()
+        },
+    )
+    .expect("the default quadruped builds")
+}
+
+/// What a four-legged body's driver moved it in, driven one Froude number a
+/// frame and turning at `turn` radians a second: the speed it built the gait
+/// from on each frame it travelled.
+fn gaited(rig: &Rig, froudes: &[f32], turn: f32) -> Vec<Speed> {
+    let mut driver = Driver::seeded(INSTRUMENT_SEED);
+    let mut at = Vec3::ZERO;
+    froudes
+        .iter()
+        .filter_map(|&froude| {
+            let pace = Speed::from_froude(froude).metres_per_second(rig);
+            at += Vec3::Z * (pace * STEP);
+            driver
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: STEP,
+                        velocity: Vec3::Z * pace,
+                        at,
+                        turn,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed every frame");
+            driver.speed()
+        })
+        .collect()
+}
+
+/// Every change of pattern in `driven`: from, to, and the Froude number the
+/// driver changed at.
+fn changes(driven: &[Speed]) -> Vec<(Pattern, Pattern, f32)> {
+    driven
+        .windows(2)
+        .filter_map(|pair| {
+            let (before, now) = (pair[0].pattern()?, pair[1].pattern()?);
+            (before != now).then_some((before, now, pair[1].froude()))
+        })
+        .collect()
+}
+
+/// The Froude numbers a body standing on `rig` changes up at, read off the
+/// speed axis rather than restated: where [`Speed::new`] first picks each
+/// pattern.
+fn changes_up(rig: &Rig) -> Vec<f32> {
+    let pattern = |froude: f32| {
+        Speed::new(rig, Speed::from_froude(froude).metres_per_second(rig))
+            .pattern()
+            .expect("a four-legged body moves in a pattern")
+    };
+    let froudes: Vec<f32> = (0..=1_000).map(|step| step as f32 * 0.01).collect();
+    froudes
+        .windows(2)
+        .filter(|pair| pattern(pair[0]) != pattern(pair[1]))
+        .map(|pair| pair[1])
+        .collect()
+}
+
+#[test]
+fn a_four_legged_body_changes_gait_once_each_way_at_every_threshold() {
+    // #370. Speeding from a stroll to a flat-out gallop and back, a dog walks,
+    // trots, canters and gallops and then does the same in reverse - each
+    // change once, and each change down at a lower speed than the change up,
+    // so a body at the edge of a gait does not flicker across it.
+    let beast = beast();
+    let rig = &beast.rig;
+    let frames = (8.0 / STEP) as usize;
+    let up: Vec<f32> = (0..frames)
+        .map(|frame| 0.2 + 6.8 * frame as f32 / frames as f32)
+        .collect();
+    // And a moment at the stroll it set out at, for the eased pace to get
+    // there.
+    let there_and_back: Vec<f32> = up
+        .iter()
+        .chain(up.iter().rev())
+        .chain(&[0.2; 120])
+        .copied()
+        .collect();
+    let changes = changes(&gaited(rig, &there_and_back, 0.0));
+    let walk = Pattern::Walk;
+    let trot = Pattern::Trot;
+    let canter = Pattern::Canter(Lead::Right);
+    let gallop = Pattern::RotaryGallop(Lead::Right);
+    assert_eq!(
+        changes
+            .iter()
+            .map(|&(from, to, _)| (from, to))
+            .collect::<Vec<_>>(),
+        [
+            (walk, trot),
+            (trot, canter),
+            (canter, gallop),
+            (gallop, canter),
+            (canter, trot),
+            (trot, walk),
+        ],
+        "a straight run there and back, on paws"
+    );
+    for (up, down) in changes[..3].iter().zip(changes[3..].iter().rev()) {
+        assert!(
+            down.2 < up.2 * 0.9,
+            "{} changed up to {} at a Froude number of {:.2} and back down at {:.2}: a body \
+             that changes back where it changed is one that flickers between them",
+            up.0.name(),
+            up.1.name(),
+            up.2,
+            down.2,
+        );
+    }
+}
+
+#[test]
+fn a_four_legged_body_at_the_edge_of_a_gait_does_not_flicker() {
+    // Hovering about each change - a trot that keeps nearly dropping back to
+    // a walk - the body changes once and stays changed. The speed swings a
+    // tenth either side of the change, inside the band a body changes down
+    // across.
+    let beast = beast();
+    let rig = &beast.rig;
+    let thresholds = changes_up(rig);
+    assert_eq!(
+        thresholds.len(),
+        3,
+        "a walk, a trot, a canter and a gallop: {thresholds:?}"
+    );
+    for threshold in thresholds {
+        let frames = (8.0 / STEP) as usize;
+        let froudes: Vec<f32> = (0..frames)
+            .map(|frame| {
+                let t = frame as f32 * STEP;
+                // From well inside the slower gait up to the change, then
+                // round it.
+                let swing = if t < 2.0 {
+                    -0.15 * (1.0 - t / 2.0) - 0.1
+                } else {
+                    -0.1 * (std::f32::consts::TAU * (t - 2.0) / 2.0).cos()
+                };
+                threshold * (1.0 + swing)
+            })
+            .collect();
+        let changes = changes(&gaited(rig, &froudes, 0.0));
+        assert_eq!(
+            changes.len(),
+            1,
+            "hovering about a Froude number of {threshold:.2}, the body changed {changes:?}"
+        );
+    }
+}
+
+#[test]
+fn a_body_breaking_into_a_canter_on_a_curve_leads_with_its_inside_legs() {
+    // And the mirror: a left turn takes the left lead, a right turn the
+    // right, whichever the body would have taken going straight.
+    let beast = beast();
+    let rig = &beast.rig;
+    let frames = (4.0 / STEP) as usize;
+    let froudes: Vec<f32> = (0..frames)
+        .map(|frame| 1.0 + 2.5 * frame as f32 / frames as f32)
+        .collect();
+    for (turn, lead) in [(0.6, Lead::Left), (-0.6, Lead::Right)] {
+        let driven = gaited(rig, &froudes, turn);
+        let cantering = driven
+            .last()
+            .and_then(|speed| speed.pattern())
+            .expect("a quadruped moves in a pattern");
+        assert_eq!(cantering, Pattern::Canter(lead), "turning at {turn} rad/s");
+    }
+}
+
+#[test]
+fn a_pattern_asked_for_by_name_is_the_one_a_beast_moves_in() {
+    // #370. The viewer's picker: a transverse gallop asked of a dog at a
+    // canter's speed - a pattern its own choice would never make - is the
+    // pattern it moves in, its cycle still the speed's so its feet keep to
+    // the ground; and a person asked for one walks as a person.
+    let drive = |rig: &Rig, pattern: Pattern| {
+        let mut driver = Driver::seeded(INSTRUMENT_SEED);
+        let pace = Speed::from_froude(3.2).metres_per_second(rig);
+        let mut at = Vec3::ZERO;
+        for _ in 0..120 {
+            at += Vec3::Z * (pace * STEP);
+            driver
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: STEP,
+                        velocity: Vec3::Z * pace,
+                        at,
+                        pattern: Some(pattern),
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("posed");
+        }
+        driver.speed().and_then(|speed| speed.pattern())
+    };
+    let beast = beast();
+    let asked = Pattern::Gallop(Lead::Right);
+    assert_eq!(drive(&beast.rig, asked), Some(asked));
+    let person = body_of("did:plc:transition-test");
+    assert_eq!(
+        drive(&person.rig, asked),
+        None,
+        "a person has no pattern to be asked"
+    );
+}
+
+#[test]
+fn a_person_asked_for_a_beasts_emote_is_driven_as_if_asked_for_nothing() {
+    // #370. A beast's emotes are a beast's: asked of a person through the
+    // driver, each is a name the person's roster does not carry, ignored as
+    // any such name is - the person's pose to the bit, no gesture started and
+    // no cooldown spent. Looked up by name alone, a sit asked of a person
+    // folded their legs under them and laid their feet flat.
+    let drive = |rig: &Rig, name: Option<&str>| {
+        let mut driver = Driver::seeded(INSTRUMENT_SEED);
+        let mut gestured = false;
+        let poses: Vec<Pose> = (0..90)
+            .map(|frame| {
+                let driven = driver
+                    .drive(
+                        rig,
+                        &Inputs {
+                            delta: STEP,
+                            gesture: name.filter(|_| frame == 10),
+                            ..Inputs::default()
+                        },
+                        level_ground,
+                    )
+                    .expect("posed");
+                gestured |= driver.gesture().is_some();
+                driven.pose
+            })
+            .collect();
+        (poses, gestured)
+    };
+    let person = body_of("did:plc:transition-test");
+    let (standing, _) = drive(&person.rig, None);
+    let beast = beast();
+    for &name in emote::ROSTER {
+        let (asked, gestured) = drive(&person.rig, Some(name));
+        assert!(!gestured, "a person started {name}");
+        assert!(asked == standing, "{name} moved a person");
+        assert!(drive(&beast.rig, Some(name)).1, "a beast refused {name}");
+    }
+}
+
+#[test]
+fn a_beasts_ears_bob_as_it_trots_and_settle_when_it_stands() {
+    // #370. Each ear is a spring at its tip, swung where the body is in the
+    // world: read in the head's own frame, a still ear sits where the pose
+    // put it, a trotting one bobs off that and back, and one that has
+    // stopped settles home.
+    let beast = beast();
+    let rig = &beast.rig;
+    let tips: Vec<usize> = (0..rig.len())
+        .filter(|&joint| rig.joints[joint].role == Role::Spring)
+        .collect();
+    assert_eq!(tips.len(), 2, "two ears, each a spring at its tip");
+    let head = |tip: usize| {
+        let base = rig.joints[tip].parent.expect("an ear's base");
+        rig.joints[base].parent.expect("the head it hangs off")
+    };
+    // Where each tip sits in its head's frame, against where it sits at rest.
+    let rest = Pose::rest(rig).forward(rig);
+    let in_head = |posed: &symbios_avatar::anim::pose::Posed, tip: usize| {
+        posed.rotations[head(tip)].inverse() * (posed.positions[tip] - posed.positions[head(tip)])
+    };
+    let off = |pose: &Pose| {
+        let posed = pose.forward(rig);
+        tips.iter()
+            .map(|&tip| in_head(&posed, tip).distance(in_head(&rest, tip)))
+            .fold(0.0f32, f32::max)
+    };
+    let mut chassis = Chassis::seeded(INSTRUMENT_SEED);
+    let pace = Speed::from_froude(1.4).metres_per_second(rig);
+    let mut at = Vec3::ZERO;
+    let trotting: Vec<f32> = (0..120)
+        .map(|_| {
+            at += Vec3::Z * (pace * STEP);
+            off(&chassis.step(rig, at).pose)
+        })
+        .collect();
+    let standing: Vec<f32> = (0..240).map(|_| off(&chassis.step(rig, at).pose)).collect();
+    let bobbed = trotting[60..].iter().copied().fold(0.0f32, f32::max);
+    let settled = standing[180..].iter().copied().fold(0.0f32, f32::max);
+    assert!(
+        bobbed > 0.002,
+        "a trotting ear bobbed {:.1} mm off its pose",
+        bobbed * 1000.0
+    );
+    assert!(
+        settled < bobbed * 0.2,
+        "standing three seconds, an ear sat {:.1} mm off its pose, against {:.1} mm trotting",
+        settled * 1000.0,
+        bobbed * 1000.0
+    );
+}
+
+#[test]
+fn a_stopped_beast_steps_its_feet_home_one_at_a_time_and_stands_level() {
+    // #370. A person's idle on four legs rolled a standing dog's loin through
+    // thirty degrees - its spine bend is sized by the trunk's height, which on
+    // four legs is a few centimetres - stepped three feet at once, and its
+    // plant then dropped the hips 11 cm in a frame to reach the fores. A beast
+    // that stops steps each foot home in turn, its back level, and stands.
+    let beast = beast();
+    let rig = &beast.rig;
+    let hips = *rig.in_zone(Zone::Pelvis).first().expect("hips");
+    let loin = *rig.in_zone(Zone::Abdomen).first().expect("a loin");
+    let pads: Vec<usize> = rig
+        .ground_contacts()
+        .into_iter()
+        .map(|limb| rig.in_zone(Zone::Extremity(limb))[0])
+        .collect();
+    let mut chassis = Chassis::seeded(INSTRUMENT_SEED);
+    let pace = Speed::from_froude(1.4).metres_per_second(rig);
+    let mut at = Vec3::ZERO;
+    for _ in 0..120 {
+        at += Vec3::Z * (pace * STEP);
+        chassis.step(rig, at);
+    }
+    let mut last: Option<f32> = None;
+    let (mut jolt, mut roll, mut most_up) = (0.0f32, 0.0f32, 0usize);
+    let mut home = None;
+    for frame in 0..240 {
+        let driven = chassis.step(rig, at);
+        let posed = driven.pose.forward(rig);
+        let height = posed.positions[hips].y;
+        jolt = jolt.max(last.map_or(0.0, |last| (height - last).abs()));
+        last = Some(height);
+        roll = roll.max(driven.pose.rotations[loin].to_axis_angle().1.to_degrees());
+        // Once the blend out of the trot has landed the feet it was carrying.
+        if frame >= 12 {
+            most_up = most_up.max(
+                pads.iter()
+                    .filter(|&&pad| posed.positions[pad].y - rig.joints[pad].position.y > 0.005)
+                    .count(),
+            );
+        }
+        // Where each foot rests in the chassis's frame, which is the pose's:
+        // not against the pelvis, which sways over the bearing side by more
+        // than this test's centimetre with every foot home.
+        let away = pads
+            .iter()
+            .map(|&pad| {
+                let off = posed.positions[pad] - rig.joints[pad].position;
+                Vec3::new(off.x, 0.0, off.z).length()
+            })
+            .fold(0.0f32, f32::max);
+        if home.is_none() && frame > 2 && away < 0.01 {
+            home = Some(frame);
+        }
+    }
+    assert!(
+        jolt < 0.006,
+        "the hips moved {:.1} mm in one frame",
+        jolt * 1000.0
+    );
+    assert!(roll < 2.0, "the loin turned {roll:.1} degrees standing");
+    assert!(most_up <= 1, "{most_up} feet were off the ground at once");
+    assert!(
+        home.is_some_and(|frame| frame < 120),
+        "the feet were home by frame {home:?}, not within two seconds"
+    );
+}
+
+#[test]
+fn a_swimming_beast_paddles_at_its_legs_pace() {
+    // #370. A crawl is timed by the whole body's length; a paddle by the
+    // leg, so a dog paddles about twice a second under way, and treads at
+    // its leg's own pendulum.
+    let beast = beast();
+    let rig = &beast.rig;
+    let leg = Speed::from_froude(1.0).metres_per_second(rig).powi(2) / 9.81;
+    for (pace, wanted) in [
+        (0.0, (9.81 / leg).sqrt() / std::f32::consts::TAU),
+        (0.8, 0.8 / (leg * 1.5)),
+    ] {
+        let mut chassis = Chassis::seeded(INSTRUMENT_SEED);
+        let mut at = Vec3::ZERO;
+        let mut turns = 0.0f32;
+        let mut last: Option<f32> = None;
+        for _ in 0..120 {
+            at += Vec3::Z * (pace * STEP);
+            chassis.swim(rig, at);
+            let cycle = chassis.driver.cycle();
+            if let Some(last) = last {
+                turns += (cycle - last).rem_euclid(1.0);
+            }
+            last = Some(cycle);
+        }
+        let rate = turns / (119.0 * STEP);
+        assert!(
+            (rate - wanted).abs() < wanted * 0.15,
+            "at {pace} m/s the paddle ran at {rate:.2} Hz, not {wanted:.2}"
+        );
+    }
+}
+
+/// How far a body's feet move in the world through the middle of their
+/// stances, at `pace` m/s - swinging `swing` of that either way every two
+/// seconds - turning at `turn` rad/s and travelling `heading` off the way it
+/// faces, after two seconds to settle: the worst, in metres.
+///
+/// **The middle, from a tenth of the way in to six tenths**, because that is
+/// where nothing turns a foot: before it a landing settles, after it the heel
+/// lifts about a toe that stays put. A foot that moves in between is sliding.
+fn midstance_slide(rig: &Rig, pace: f32, swing: f32, turn: f32, heading: Option<Heading>) -> f32 {
+    let mut driver = Driver::seeded(INSTRUMENT_SEED);
+    let feet: Vec<(Limb, usize)> = rig
+        .ground_contacts()
+        .into_iter()
+        .map(|limb| (limb, rig.in_zone(Zone::Extremity(limb))[0]))
+        .collect();
+    let (mut at, mut facing) = (Vec3::ZERO, 0.0f32);
+    let mut planted: Vec<Option<Vec3>> = vec![None; feet.len()];
+    let mut worst = 0.0f32;
+    for frame in 0..300 {
+        let travel = heading.map_or(0.0, Heading::angle) + facing;
+        let paced = pace * (1.0 + swing * (std::f32::consts::TAU * frame as f32 / 120.0).sin());
+        let velocity = Vec3::new(travel.sin(), 0.0, travel.cos()) * paced;
+        at += velocity * STEP;
+        facing += turn * STEP;
+        let driven = driver
+            .drive(
+                rig,
+                &Inputs {
+                    delta: STEP,
+                    velocity,
+                    at,
+                    facing,
+                    heading,
+                    turn,
+                    ..Inputs::default()
+                },
+                level_ground,
+            )
+            .expect("an unheld body is posed every frame");
+        let posed = driven.pose.forward(rig);
+        let gait = driver.speed().map(|speed| speed.gait(rig));
+        let turned = symbios_avatar::Quat::from_rotation_y(facing);
+        for (index, &(limb, foot)) in feet.iter().enumerate() {
+            let middle = driven.source == Source::Gait
+                && gait.as_ref().is_some_and(|gait| {
+                    gait.limbs
+                        .iter()
+                        .position(|&of| of == limb)
+                        .is_some_and(|at| {
+                            matches!(
+                                gait.phase(at, driver.cycle()),
+                                gait::Phase::Stance(t) if (0.1..0.6).contains(&t)
+                            )
+                        })
+                });
+            let here = at + turned * posed.positions[foot];
+            planted[index] = match (middle, planted[index]) {
+                (true, Some(was)) => {
+                    if frame >= 120 {
+                        worst = worst.max(here.distance(was));
+                    }
+                    Some(was)
+                }
+                (true, None) => Some(here),
+                (false, _) => None,
+            };
+        }
+    }
+    worst
+}
+
+#[test]
+fn a_beast_keeps_its_paws_still_through_every_stance() {
+    // #370. Walking, trotting, cantering, galloping, changing speed,
+    // turning, strafing and backing on four legs, a paw on the ground does
+    // not move while it bears the body.
+    let beast = beast();
+    let rig = &beast.rig;
+    let walk = Speed::from_froude(0.3).metres_per_second(rig);
+    let trot = Speed::from_froude(1.4).metres_per_second(rig);
+    let canter = Speed::from_froude(3.2).metres_per_second(rig);
+    let gallop = Speed::from_froude(7.0).metres_per_second(rig);
+    let sideways = Some(Heading::new(std::f32::consts::FRAC_PI_2));
+    let backward = Some(Heading::new(std::f32::consts::PI));
+    for (name, pace, swing, turn, heading) in [
+        ("walking", walk, 0.0, 0.0, None),
+        ("trotting", trot, 0.0, 0.0, None),
+        // Where the trunk rocks and folds over the feet (#370).
+        ("cantering", canter, 0.0, 0.0, None),
+        ("galloping", gallop, 0.0, 0.0, None),
+        // Where the foothold ledger earns its keep: a stance held still in
+        // the world while the speed under it changes.
+        ("speeding up and slowing", trot, 0.4, 0.0, None),
+        ("walking round", walk, 0.0, 0.8, None),
+        ("trotting round", trot, 0.0, 0.8, None),
+        ("strafing", walk, 0.0, 0.0, sideways),
+        ("backing", walk, 0.0, 0.0, backward),
+    ] {
+        let slid = midstance_slide(rig, pace, swing, turn, heading);
+        assert!(
+            slid < 0.006,
+            "{name}, a paw moved {:.1} mm while it bore the body",
+            slid * 1000.0
         );
     }
 }
@@ -912,6 +1437,39 @@ fn a_landing_bends_the_legs_and_does_not_bury_the_body() {
         jump.sank > 0.02,
         "the root sank {:.0} mm — the landing is not absorbing anything",
         jump.sank * 1000.0,
+    );
+}
+
+#[test]
+fn a_beast_leaps_tucks_and_lands_on_all_fours() {
+    // #370. The same airborne state machine as a person's, on four legs: no
+    // marching and no planted paw in the air, the paws drawn up under it, and
+    // a landing every leg absorbs without a paw going through the floor.
+    let beast = beast();
+    let jump = jumped(&beast.rig, 3.0, 0.0);
+    assert!(
+        !jump.marched,
+        "the gait advanced while the beast was in the air"
+    );
+    assert!(
+        !jump.planted,
+        "a paw was planted while the beast was in the air"
+    );
+    assert!(
+        jump.highest > 0.03,
+        "the paws never drew up: the lowest reached {:.0} mm",
+        jump.highest * 1000.0
+    );
+    assert!(jump.landed, "the leap never reached its landing");
+    assert!(
+        jump.sank > 0.02 && jump.sank < 0.3,
+        "the landing sank the body {:.0} mm",
+        jump.sank * 1000.0
+    );
+    assert!(
+        jump.buried < 0.01,
+        "a paw went {:.0} mm through the floor",
+        jump.buried * 1000.0
     );
 }
 

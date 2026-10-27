@@ -53,7 +53,9 @@
 //! Named, rather than left to be discovered:
 //!
 //! * **One stroke.** Front crawl only: no breaststroke, no backstroke, no
-//!   sidestroke.
+//!   sidestroke. A four-legged body is the exception, and paddles (#370):
+//!   level and nose up, its legs going round in diagonal pairs as a trot's,
+//!   timed by its leg rather than by its length.
 //! * **No breathing.** A crawl breathes to one side every second or third
 //!   stroke, which is a two- or three-cycle period — the one thing here that
 //!   genuinely cannot close on a single cycle, and so wants its own clock
@@ -268,6 +270,10 @@ impl Swim {
         } else {
             0.0
         };
+        // A beast paddles rather than crawls (#370): see `quadruped::paddle`.
+        if super::quadruped::four_legged(rig) {
+            return super::quadruped::paddle(rig, pose, cycle, swum.effort);
+        }
 
         stroke(rig, pose, cycle, swum.effort);
         kick(rig, pose, cycle, swum.effort);

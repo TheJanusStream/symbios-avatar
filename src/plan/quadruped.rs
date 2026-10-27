@@ -657,8 +657,16 @@ impl QuadrupedParams {
 }
 
 impl BodyPlan for QuadrupedParams {
+    /// A beast's, its feet paws or hooves as its own feet are (#367, #370).
     fn anatomy(&self) -> Anatomy {
-        Anatomy::BEAST
+        Anatomy {
+            feet: if self.feet == Feet::Hooves {
+                super::FootKind::Hooves
+            } else {
+                super::FootKind::Beast
+            },
+            ..Anatomy::BEAST
+        }
     }
 
     /// Its family's (#178, #366), and no frame axis: the sexual dimorphism of

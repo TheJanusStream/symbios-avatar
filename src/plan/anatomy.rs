@@ -49,10 +49,11 @@ pub enum FootKind {
     /// (#111).
     #[default]
     Human,
-    /// A beast's foot, built on the leg's single extremity node. Today that is
-    /// still the human foot scaled down, until the creature work gives it paws
-    /// and hooves (#367).
+    /// A beast's paw, its claws showing or sheathed (#367).
     Beast,
+    /// A beast's hoof (#367): a horse's, which gallops transverse where a
+    /// paw's body gallops rotary (#370).
+    Hooves,
 }
 
 /// What a body's parts are.
