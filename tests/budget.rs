@@ -392,6 +392,67 @@ fn a_creature_is_not_more_expensive_than_a_person() {
 }
 
 #[test]
+fn every_quadruped_roll_fits_the_webgl2_budget() {
+    // #365. The creature work is about to spend triangles on heads, feet and
+    // fur, and what it spends against has to be measured across the rolls a
+    // seed makes and the corners of the plan's own axes - never on the default
+    // beast alone, which is the lesson the person's sweep learned twice (#185,
+    // #353). Printed either way, so the figure the next phase is argued from
+    // is never stale.
+    use symbios_avatar::QuadrupedParams;
+    let mut bodies: Vec<(String, AvatarRecord)> = (1..=24)
+        .map(|seed| {
+            let mut record =
+                AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
+            record.reroll(seed);
+            (format!("seed {seed}"), record)
+        })
+        .collect();
+    // Every axis to one end of its envelope at once - sanitize clamps a value
+    // past the end onto it - at the shortest and the tallest back the plan
+    // takes: what a record can ask for and a timid roll does not draw.
+    let (short, tall) = QuadrupedParams::height_envelope();
+    for (name, end) in [("low", -10.0f32), ("high", 10.0)] {
+        for height in [short, tall] {
+            let mut record = AvatarRecord::new(
+                "Beast",
+                Archetype::Quadruped(QuadrupedParams {
+                    height,
+                    body_length: end,
+                    build: end,
+                    muscle: end,
+                    leg_length: end,
+                    neck_length: end,
+                    head_size: end,
+                    tail_length: end,
+                }),
+            );
+            record.sanitize();
+            bodies.push((format!("every axis {name} at {height:.2} m"), record));
+        }
+    }
+    let mut worst = (String::new(), 0);
+    for (at, record) in &bodies {
+        let avatar = Avatar::build(record).unwrap_or_else(|| panic!("{at} does not build"));
+        if avatar.budget.tris > worst.1 {
+            worst = (at.clone(), avatar.budget.tris);
+        }
+        assert!(
+            avatar.budget.meshes <= MESH_TARGET,
+            "{at} costs {} draws",
+            avatar.budget.meshes
+        );
+    }
+    println!("dearest quadruped: {} at {}", worst.1, worst.0);
+    assert!(
+        worst.1 <= TRIANGLE_TARGET,
+        "{} costs {} triangles",
+        worst.0,
+        worst.1
+    );
+}
+
+#[test]
 fn no_one_part_of_a_body_dominates_its_budget() {
     // This test has now been rewritten twice by its own failure, which is what
     // it is for. It began asserting hair was over 60% of the budget. The hair

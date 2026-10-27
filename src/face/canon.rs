@@ -462,8 +462,8 @@ mod tests {
 
     #[test]
     fn a_creature_has_a_canon_too() {
-        // `skull::shape` declines to touch a head that walks on four legs, so
-        // this is the one place a canon is read off an unshaped tube. It must
+        // `skull::shape` declines to touch a head its plan does not call human
+        // (#365), so this is the one place a canon is read off an unshaped tube. It must
         // still answer, because the eye placement now depends on it — the old
         // path called `skull::reshape` on a creature unconditionally, applying a
         // human skull's transform to a head that never had one (#76).

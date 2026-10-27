@@ -204,6 +204,13 @@ pub enum RigError {
 pub struct Rig {
     /// Joints ordered parent-before-child, root first.
     pub joints: Vec<Joint>,
+    /// What the body's parts are (#365), from the skeleton it was rooted
+    /// from. The rules every pass applies to a part ask this - never how many
+    /// feet the body stands on, which is [`Self::ground_contacts`]' question
+    /// and the gait's. A rig serialised before it existed reads back as a
+    /// person's, whatever it was: rebuild from the record where that matters.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub anatomy: crate::plan::Anatomy,
 }
 
 impl Rig {
@@ -292,7 +299,10 @@ impl Rig {
             return Err(RigError::Disconnected { root, unreachable });
         }
 
-        Ok(Self { joints })
+        Ok(Self {
+            joints,
+            anatomy: skeleton.anatomy,
+        })
     }
 
     /// Hangs a joint off an existing one, and returns its index.

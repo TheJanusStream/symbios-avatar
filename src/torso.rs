@@ -908,8 +908,14 @@ struct Column {
 }
 
 impl Column {
-    /// Reads the column off the rig, or `None` on a body that has no trunk.
+    /// Reads the column off the rig, or `None` on a body that has no trunk —
+    /// or none its plan calls human (#365). A beast's barrel is not a chest,
+    /// and until #365 the only thing keeping the chest carves off one was that
+    /// the quadruped happened to have a single chest node and this asks for two.
     fn of(rig: &Rig) -> Option<Self> {
+        if !rig.anatomy.human_trunk() {
+            return None;
+        }
         let waist = *rig.in_zone(Zone::Abdomen).first()?;
         let chests = rig.in_zone(Zone::Chest);
         let (&chest, &girdle) = (chests.first()?, chests.get(1)?);

@@ -1288,11 +1288,12 @@ pub fn band_at(rig: &Rig, height: f32) -> Option<f32> {
 /// through the 30,000 target, for a region whose fields carry nothing
 /// finer than the cells already there.
 ///
-/// Does nothing to a body with no head, or to one that walks on four legs: this
-/// is a human skull's geometry and a creature's head is its own shape.
+/// Does nothing to a body with no head, or to one whose plan does not call its
+/// head human (#365): this is a human skull's geometry and a creature's head is
+/// its own shape.
 #[must_use]
 pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
-    if levels == 0 || rig.ground_contacts().len() > 2 {
+    if levels == 0 || !rig.anatomy.human_head() {
         return mesh.clone();
     }
     let Some(&head) = rig.in_zone(Zone::Head).first() else {
@@ -1363,10 +1364,12 @@ pub fn refine_face(mesh: &PolyMesh, rig: &Rig, levels: usize) -> PolyMesh {
 /// binding or unwrapping.
 pub fn shape(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
     // These are a HUMAN skull's proportions — a chin, a brow ridge, cheekbones
-    // widest. On something that walks on all fours they are simply wrong, in the
-    // same way that giving its front legs fingers was wrong. A creature's head
-    // is its own shape and belongs with the rest of the creature work.
-    if rig.ground_contacts().len() > 2 {
+    // widest. On a beast's head they are simply wrong, in the same way that
+    // giving its front legs fingers was wrong. A creature's head is its own
+    // shape and belongs with the rest of the creature work (#364). Asked of
+    // the anatomy the plan declares, not of how many feet the body stands on
+    // (#365).
+    if !rig.anatomy.human_head() {
         return;
     }
     let Some(&head) = rig.in_zone(Zone::Head).first() else {

@@ -63,7 +63,7 @@ use crate::face::{self, Canon, Eyes, Features, Skull};
 
 use crate::hair::{Growth, HairRecord};
 use crate::mesh::PolyMesh;
-use crate::plan::{Limb, Zone};
+use crate::plan::Zone;
 use crate::record::AvatarRecord;
 use crate::rig::{Rig, SkinConfig, SkinWeights, Surface, skin};
 use crate::texture;
@@ -234,9 +234,8 @@ pub struct Parts {
     /// What it is wearing.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub outfit: Outfit,
-    /// Whether this body carries limbs it does not stand on.
-    ///
-    /// See [`Avatar::build`] for why that is the question asked.
+    /// Whether this body's limbs that bear no weight end in hands: its plan's
+    /// [`crate::Anatomy::hands`] (#365).
     pub handed: bool,
     /// The openable mouth's seam and pocket vertices, if one was cut.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
@@ -324,15 +323,16 @@ impl Avatar {
     /// a question.
     ///
     /// **Which bodies wear a human face, human hair and human clothes** is
-    /// decided here, once, rather than by whoever is drawing. The test is not
-    /// what the record calls itself: it is whether the body has a limb it does
-    /// not stand on. A quadruped carries its weight on all four, so it has no
-    /// hands, and a fringe hanging off a muzzle over a pair of sleeved front legs
-    /// is a costume rather than a creature — creatures want fur, a muzzle and
-    /// a harness of their own, none of which exist here yet. Asking it this
-    /// way also gets a body
-    /// nobody has planned yet right: something with four legs and two arms is
-    /// dressed, and a six-legged walker is not.
+    /// decided here, once, rather than by whoever is drawing - and by the
+    /// anatomy the body's plan declares ([`crate::Anatomy`], #365), not by how
+    /// many feet it stands on, which is what this asked until then. A face, its
+    /// mouth, its features and a scalp's hair go on a human head; clothes go on
+    /// a human trunk; a limb that bears no weight ends in a hand where the plan
+    /// gives hands. A quadruped declares none of them, because a fringe hanging
+    /// off a muzzle over a pair of sleeved front legs is a costume rather than a
+    /// creature - creatures want fur, a muzzle and a harness of their own, which
+    /// the creature work brings (#364). A plan nobody has written yet says what
+    /// it is rather than being guessed at from its legs.
     ///
     /// # Errors
     ///
@@ -401,7 +401,12 @@ impl Avatar {
         let canon = skull
             .as_ref()
             .map(|skull| Canon::measure(&rig, skull, &record.eyes));
-        if let Some(canon) = &canon {
+        // A face is carved into a human skull and nothing else (#365): the
+        // canon is still measured on a beast's head, because its eyes are
+        // seated against it until the creature work gives it its own (#367).
+        if let Some(canon) = &canon
+            && rig.anatomy.human_head()
+        {
             face::carve_face(&mut body, &rig, canon, &face_params);
         }
         // The chest, on the same rule as the face and for the same reason: it
@@ -427,9 +432,12 @@ impl Avatar {
         // The mouth is cut AFTER the carve — the parting follows the carved
         // groove — and before anything measures, binds or charts the surface,
         // so the pocket is simply more body to all of them (#154). A rig with
-        // no jaw markers gets no cut and no change.
+        // no jaw markers gets no cut and no change, and nor does a head its plan
+        // does not call human (#365): the slit is cut along a human canon's
+        // mouth line, and a beast's jaw will be its own.
         let mouth = canon
             .as_ref()
+            .filter(|_| rig.anatomy.human_head())
             .and_then(|canon| face::mouth::open(&mut body, &rig, canon, &face_params));
         let body = body;
         let mut eyes = canon
@@ -515,9 +523,10 @@ impl Avatar {
         let zones = weights.zone_map(&body, &rig);
         let surface = Surface::measure(&body, &rig);
 
-        // A limb the body does not stand on is a hand, and a body with hands is
-        // the kind that wears things. See the note above.
-        let handed = rig.ground_contacts().len() < Limb::ALL.len();
+        // Asked of the anatomy the plan declares (#365), which used to be
+        // guessed from the feet: a limb the body does not stand on was a hand,
+        // and a body with hands was the kind that wears things.
+        let handed = rig.anatomy.hands;
         let hair_record = config.hair.as_ref().unwrap_or(&record.hair);
 
         // Measured from the body that was built, not from the plan that asked
@@ -526,7 +535,9 @@ impl Avatar {
         // from above, because an ear is conformed to the surface it sits on and
         // that surface now has a face carved into it.
         let skull = Skull::measure(&body, &rig);
-        let mut features = handed
+        let mut features = rig
+            .anatomy
+            .human_head()
             .then(|| {
                 let canon = canon.as_ref()?;
                 let skull = skull.as_ref()?;
@@ -575,7 +586,7 @@ impl Avatar {
         place_charts(&mut features, &mut extremities, &mut eyes, &reserved);
 
         // Cut from the body, so charted where the body is charted.
-        let mut outfit = if handed && config.dressed {
+        let mut outfit = if rig.anatomy.human_trunk() && config.dressed {
             Outfit::wear(&body, &rig, &weights, &zones, &record.outfit)
         } else {
             Outfit::default()
@@ -626,9 +637,17 @@ impl Avatar {
         // the composites, the way `HeadTraits` is the skull's.
         // Where hair may grow, which the painted layer needs and the grown one
         // will take over from the old shell at #209.
-        let follicles = skull.as_ref().zip(canon.as_ref()).map(|(skull, canon)| {
-            crate::hair::Follicles::of(&rig, skull, canon, &hair_record.regions)
-        });
+        // On a human head only (#365): every follicle region is a human one —
+        // scalp, brow, moustache, chin, flank — and a beast's measured head
+        // used to be painted with a scalp's hair. A creature's fur is its own
+        // zones (#369).
+        let follicles = skull
+            .as_ref()
+            .zip(canon.as_ref())
+            .filter(|_| rig.anatomy.human_head())
+            .map(|(skull, canon)| {
+                crate::hair::Follicles::of(&rig, skull, canon, &hair_record.regions)
+            });
         let complexion = config.complexion.unwrap_or(record.skin);
         let painted_hair = hair_record.painted();
         let layer = follicles.as_ref().map(|follicles| texture::PaintedLayer {
@@ -643,11 +662,10 @@ impl Avatar {
             layer.as_ref(),
         );
 
-        // **Grown from the record, region by region** (#202). A body with no
-        // hands is not the kind of body that wears a haircut — the same rule
-        // the shell era used — and one with no measured head has nowhere to
-        // put one.
-        let hair = follicles.as_ref().filter(|_| handed).map(|follicles| {
+        // **Grown from the record, region by region** (#202), where the
+        // follicles above were measured: on a human head, and only on one
+        // (#365). A body with no measured head has nowhere to put a haircut.
+        let hair = follicles.as_ref().map(|follicles| {
             let bed = crate::hair::clump::Bed {
                 weights: &weights,
                 body: &body,
@@ -1356,7 +1374,7 @@ mod tests {
     #[test]
     fn a_quadruped_is_bare_and_a_biped_is_dressed() {
         // The gate that had drifted between two examples, stated once. A body
-        // wears things when it has a limb it does not stand on.
+        // wears what its plan's anatomy is built for (#365).
         let beast = quadruped();
         assert!(!beast.parts.handed);
         assert!(beast.parts.hair.is_none(), "a quadruped grew a fringe");
@@ -1376,6 +1394,50 @@ mod tests {
         assert!(person.parts.hair.is_some());
         assert!(person.parts.features.is_some());
         assert_eq!(person.parts.outfit.len(), 2);
+    }
+
+    #[test]
+    fn nothing_human_is_carved_into_or_painted_on_a_beast() {
+        // #365. The face relief and the scalp's painted hair used to reach a
+        // quadruped, because both asked for a measured skull rather than a
+        // human one. Its rest surface is the one the cage built, which no carve
+        // has touched - the face's, the chest's and the mouth's alike.
+        let record = AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
+        let config = AvatarConfig::default();
+        let built = Avatar::build_with(&record, &config).expect("a quadruped builds");
+        let traits = face::HeadTraits::of(&record.composites);
+        let bare = crate::build_body(
+            &record.skeleton(),
+            &config.cage,
+            config.subdivisions,
+            &traits,
+        )
+        .expect("meshes");
+        assert!(
+            built.parts.body.positions == bare.positions,
+            "a carve reached a beast's surface"
+        );
+
+        // And it is painted the same whatever hair its record asks for: a
+        // person's full head of it against none at all.
+        let mut person = AvatarRecord::new("Person", Archetype::default());
+        person.reroll(3);
+        let mut hairy = record.clone();
+        hairy.hair = person.hair.clone();
+        let shorn = AvatarConfig {
+            hair: Some(HairRecord::bald()),
+            ..config.clone()
+        };
+        let with = Avatar::build_with(&hairy, &config).expect("builds");
+        let without = Avatar::build_with(&hairy, &shorn).expect("builds");
+        assert!(
+            with.skin.albedo == without.skin.albedo,
+            "a scalp's hair was painted on a beast"
+        );
+        // The person it came from does carry it, or this proved nothing.
+        let painted = Avatar::build_with(&person, &config).expect("builds");
+        let bald = Avatar::build_with(&person, &shorn).expect("builds");
+        assert!(painted.skin.albedo != bald.skin.albedo);
     }
 
     #[test]

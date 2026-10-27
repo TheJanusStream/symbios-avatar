@@ -201,8 +201,8 @@ const MARGIN: f32 = 0.05;
 
 /// Gives the column enough surface to carry the shape [`shape`] draws on it.
 ///
-/// Does nothing to a body with no head or no neck, or to one that walks on four
-/// legs — the same three cases the carve itself declines.
+/// Does nothing to a body with no head or no neck, or to one whose plan does not
+/// call its head human (#365) — the same three cases the carve itself declines.
 #[must_use]
 pub fn refine(mesh: &PolyMesh, rig: &Rig, traits: &HeadTraits) -> PolyMesh {
     let Some(bounds) = span(rig, traits) else {
@@ -276,7 +276,7 @@ pub fn refine(mesh: &PolyMesh, rig: &Rig, traits: &HeadTraits) -> PolyMesh {
 /// covered a different run from the carve would put a resolution boundary in
 /// the middle of the carve's own curvature — the one place it must not go.
 fn span(rig: &Rig, traits: &HeadTraits) -> Option<(f32, f32, f32, f32)> {
-    if rig.ground_contacts().len() > 2 {
+    if !rig.anatomy.human_head() {
         return None;
     }
     let &head = rig.in_zone(Zone::Head).first()?;
@@ -295,11 +295,11 @@ fn span(rig: &Rig, traits: &HeadTraits) -> Option<(f32, f32, f32, f32)> {
 /// Narrows the column between the jaw and the shoulders, in place.
 ///
 /// Runs after [`super::shape_skull`], on the same mesh, and does nothing to a
-/// body with no head or no neck — or to one that walks on four legs, for the
-/// reason the skull's own shaping bails: this is a human column and a creature's
-/// is its own shape.
+/// body with no head or no neck — or to one whose plan does not call its head
+/// human (#365), for the reason the skull's own shaping bails: this is a human
+/// column and a creature's is its own shape.
 pub fn shape(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
-    if rig.ground_contacts().len() > 2 {
+    if !rig.anatomy.human_head() {
         return;
     }
     let Some(&head) = rig.in_zone(Zone::Head).first() else {
@@ -552,7 +552,7 @@ const LARYNX_WIDTH: f32 = 0.09;
 /// Runs after [`shape`], does nothing to the bodies [`shape`] declines, and
 /// moves vertices without adding any — the budget cannot see it.
 pub fn fair(mesh: &mut PolyMesh, rig: &Rig, traits: &HeadTraits) {
-    if rig.ground_contacts().len() > 2 {
+    if !rig.anatomy.human_head() {
         return;
     }
     let Some(&head) = rig.in_zone(Zone::Head).first() else {
@@ -791,9 +791,11 @@ fn shoulder_band(rig: &Rig) -> Option<impl Fn(Vec3) -> bool> {
 ///
 /// The acromion is the girdle's lateral child, which is where the shoulder's
 /// top surface ends and the arm begins. A body with no such child has no
-/// shoulder to slope, and gets `None`.
+/// shoulder to slope, and gets `None` — and so does one whose head or trunk
+/// its plan does not call human (#365): the trapezius runs from a human neck
+/// to a human shoulder.
 fn shoulder(rig: &Rig) -> Option<(&crate::rig::Joint, &crate::rig::Joint, f32, f32)> {
-    if rig.ground_contacts().len() > 2 {
+    if !(rig.anatomy.human_head() && rig.anatomy.human_trunk()) {
         return None;
     }
     let &neck = rig.in_zone(Zone::Neck).first()?;

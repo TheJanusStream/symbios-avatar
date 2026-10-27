@@ -491,6 +491,12 @@ impl AvatarRecord {
         }
 
         // Pass two: everything that reads them.
+        //
+        // **Only what the body has** (#365): a face, a haircut and an outfit
+        // are a human head's and a human trunk's, so a beast keeps whatever it
+        // was carrying rather than drawing ones nothing will build. Every
+        // stream is named, so skipping one moves no other draw on any seed.
+        let anatomy = self.archetype.anatomy();
         for category in Category::ALL {
             if self.locks.is_locked(category) {
                 continue;
@@ -501,12 +507,20 @@ impl AvatarRecord {
             // different person for this; what changed is that a creator who
             // has found a face can now roll a complexion without losing it.
             match category {
-                Category::Head => reroll_face(&mut self.eyes, &mut self.face, &rolls),
+                Category::Head => {
+                    // Every head has eyes; only a human skull has this face.
+                    if anatomy.human_head() {
+                        reroll_face(&mut self.face, &rolls);
+                    }
+                    reroll_eyes(&mut self.eyes, &rolls);
+                }
                 Category::Colouring => reroll_skin(&mut self.skin, &rolls),
-                Category::Hair => reroll_hair(&mut self.hair, &rolls, &self.composites),
+                Category::Hair if anatomy.human_head() => {
+                    reroll_hair(&mut self.hair, &rolls, &self.composites);
+                }
                 // Last in `Category::ALL`, so the complexion it keeps clear
                 // of is the one this roll just drew — or the locked one.
-                Category::Outfit => {
+                Category::Outfit if anatomy.human_trunk() => {
                     crate::dress::roll::reroll_outfit(&mut self.outfit, &rolls, &self.skin);
                 }
                 _ => {}
@@ -702,14 +716,15 @@ fn is_record_key(key: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'~' | b'-'))
 }
 
-/// Draws a new face: the eyes, and what is carved around them.
+/// Draws a new face: what is carved around the eyes, which [`reroll_eyes`]
+/// draws (#365).
 ///
 /// **Shape only.** The complexion and the hair have locks of their own. The
 /// argument for grouping all three — "a creator with one lock per slider ends
 /// up with more locks than anyone reads" — answers the wrong question. The
 /// right one is what somebody would keep on purpose, and a face is kept while
 /// its colouring is rolled all the time.
-fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, rolls: &Rolls) {
+fn reroll_face(face: &mut FaceParams, rolls: &Rolls) {
     // Shape axes draw [`Rolls::shape`] (#160): a Gaussian on each axis's own
     // default with sigma half the old uniform fence — so a typical seed still
     // lands where it always did — plus the wildcard tail over the whole
@@ -723,7 +738,14 @@ fn reroll_face(eyes: &mut EyeParams, face: &mut FaceParams, rolls: &Rolls) {
     face.ears = rolls.shape("face.ears", 0.5, 0.375, unit(0.5));
     face.nose_width = rolls.shape("face.noseWidth", 0.5, 0.35, unit(0.5));
     face.mouth_width = rolls.shape("face.mouthWidth", 0.5, 0.375, unit(0.5));
+}
 
+/// Draws a fresh pair of eyes: their shape axes and their colour.
+///
+/// Split from [`reroll_face`] by #365 because every head has eyes and only
+/// a human skull has that face. The streams are the ones both always drew
+/// from, so a person's roll is what it was.
+fn reroll_eyes(eyes: &mut EyeParams, rolls: &Rolls) {
     // The eyes draw Gaussian like every shape axis but stay inside the CLASSIC
     // range rather than the envelope: an eye is the one feature whose extremes
     // read as broken rather than stylised — a spacing past ±1 runs the iris
@@ -2284,6 +2306,34 @@ mod tests {
             "record-key",
             "the lexicon must name the constraint the code enforces"
         );
+    }
+
+    #[test]
+    fn a_beast_rolls_its_eyes_but_no_face_hair_or_outfit() {
+        // #365: a face, a haircut and an outfit are a human head's and a human
+        // trunk's, so a beast keeps whatever it carried rather than drawing
+        // ones nothing will build - and every other draw stays where it was,
+        // because the streams are named.
+        let mut beast = AvatarRecord::new(
+            "Beast",
+            Archetype::Quadruped(crate::plan::QuadrupedParams::default()),
+        );
+        let untouched = beast.clone();
+        beast.reroll(11);
+        assert_eq!(beast.face, untouched.face, "a beast drew a face");
+        assert_eq!(beast.hair, untouched.hair, "a beast drew a haircut");
+        assert_eq!(beast.outfit, untouched.outfit, "a beast drew an outfit");
+        assert_ne!(beast.eyes, untouched.eyes, "a beast's eyes were not rolled");
+
+        // The eyes are drawn from the streams a person's are, and a person
+        // still draws everything.
+        let mut person = AvatarRecord::new("Person", Archetype::default());
+        let blank = person.clone();
+        person.reroll(11);
+        assert_eq!(beast.eyes, person.eyes);
+        assert_eq!(beast.skin, person.skin, "the complexion is every body's");
+        assert_ne!(person.face, blank.face);
+        assert_ne!(person.hair, blank.hair);
     }
 
     #[test]

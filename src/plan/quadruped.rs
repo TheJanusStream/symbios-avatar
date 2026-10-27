@@ -15,11 +15,11 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::derive::quadruped::Dimensions;
+use super::{Anatomy, Composites, Limb, Zone};
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
     take_span, take_unit,
 };
-use super::{Composites, Limb, Zone};
 use crate::skeleton::{Node, Skeleton};
 
 /// Smallest and largest back height this plan accepts, in metres.
@@ -111,6 +111,10 @@ impl QuadrupedParams {
 }
 
 impl BodyPlan for QuadrupedParams {
+    fn anatomy(&self) -> Anatomy {
+        Anatomy::BEAST
+    }
+
     fn sanitize(&mut self) {
         // See [`super::humanoid::HumanoidParams::sanitize`]: same shape, same
         // reason, and it carried the same bug (#55).
@@ -135,6 +139,7 @@ impl BodyPlan for QuadrupedParams {
         let d = Dimensions::of(self, composites);
 
         let mut skeleton = Skeleton::new();
+        skeleton.anatomy = self.anatomy();
         let hips = skeleton.add_node(
             Node::new(d.hips_at, d.hips_r)
                 .with_scale(d.hips_section)

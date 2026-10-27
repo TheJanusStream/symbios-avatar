@@ -22,6 +22,7 @@
 //! multiples of the joint radius they must clear. The parameter sweep in
 //! `tests/plan.rs` walks the whole space and asserts every combination meshes.
 
+mod anatomy;
 mod composites;
 pub(crate) mod derive;
 mod humanoid;
@@ -34,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::skeleton::Skeleton;
 
+pub use anatomy::{Anatomy, FootKind, HeadKind, TrunkKind};
 pub use composites::{
     AGE_PIVOT, AGE_RANGE, BODY_FAT_RANGE, Composites, DEFAULT_AGE, DEFAULT_BODY_FAT,
 };
@@ -341,10 +343,17 @@ pub trait BodyPlan: Sized {
     /// lost — `sanitize_axis`'s docs walk through why.
     fn sanitize(&mut self);
 
+    /// What the parts of the body this plan builds are (#365).
+    ///
+    /// Stamped on the skeleton [`Self::skeleton`] returns, so every pass
+    /// downstream reads it off the rig rather than guessing it from how many
+    /// feet the body stands on.
+    fn anatomy(&self) -> Anatomy;
+
     /// Builds the capsule graph this plan describes.
     ///
     /// The result is always meshable by [`crate::cage::build_cage`] for any
-    /// sanitised parameters.
+    /// sanitised parameters, and carries [`Self::anatomy`].
     fn skeleton(&self, composites: &Composites) -> Skeleton;
 
     /// Draws fresh values for the axes belonging to `category`.
@@ -588,6 +597,21 @@ impl Archetype {
             Archetype::Humanoid(params) => params.sanitize(),
             Archetype::Quadruped(params) => params.sanitize(),
             Archetype::Unknown { .. } => {}
+        }
+    }
+
+    /// What the parts of this body are (#365): its plan's
+    /// [`BodyPlan::anatomy`].
+    ///
+    /// An unknown body is a person's, because the stand-in
+    /// [`Archetype::skeleton`] builds for it is the default humanoid, and the
+    /// anatomy has to describe the body that is actually built.
+    #[must_use]
+    pub fn anatomy(&self) -> Anatomy {
+        match self {
+            Archetype::Humanoid(params) => params.anatomy(),
+            Archetype::Quadruped(params) => params.anatomy(),
+            Archetype::Unknown { .. } => Anatomy::HUMAN,
         }
     }
 
@@ -1036,6 +1060,32 @@ mod tests {
             }
             assert!(nodes > 0, "{what}: {limb:?} has no nodes to place");
         }
+    }
+
+    #[test]
+    fn each_plan_stamps_its_anatomy_on_the_skeleton_and_the_rig_keeps_it() {
+        // #365: the build's rules ask the anatomy, never the feet - so the
+        // anatomy has to reach every pass that holds only a rig.
+        let composites = crate::Composites::default();
+        for (archetype, anatomy) in [
+            (
+                Archetype::Humanoid(HumanoidParams::default()),
+                Anatomy::HUMAN,
+            ),
+            (
+                Archetype::Quadruped(QuadrupedParams::default()),
+                Anatomy::BEAST,
+            ),
+        ] {
+            assert_eq!(archetype.anatomy(), anatomy);
+            let skeleton = archetype.skeleton(&composites);
+            assert_eq!(skeleton.anatomy, anatomy);
+            let rig = crate::Rig::from_skeleton(&skeleton).expect("rigs");
+            assert_eq!(rig.anatomy, anatomy);
+        }
+        // A skeleton assembled by hand is a person's, as every one was taken
+        // to be before the anatomy existed.
+        assert_eq!(Skeleton::new().anatomy, Anatomy::HUMAN);
     }
 
     #[test]

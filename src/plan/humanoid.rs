@@ -23,11 +23,11 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use super::derive::humanoid::{Dimensions, frame};
+use super::{Anatomy, Composites, Limb, Zone};
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
     take_span, take_unit,
 };
-use super::{Composites, Limb, Zone};
 use crate::cage::limb::HALF_SEGMENT;
 use crate::skeleton::{Node, Skeleton};
 
@@ -260,6 +260,10 @@ impl HumanoidParams {
 }
 
 impl BodyPlan for HumanoidParams {
+    fn anatomy(&self) -> Anatomy {
+        Anatomy::HUMAN
+    }
+
     fn sanitize(&mut self) {
         // Fallbacks come from `Default` rather than being written out again, so
         // they cannot drift from the documented defaults. See
@@ -292,6 +296,7 @@ impl BodyPlan for HumanoidParams {
         let d = Dimensions::of(self, composites);
 
         let mut skeleton = Skeleton::new();
+        skeleton.anatomy = self.anatomy();
         let pelvis = skeleton.add_node(
             Node::new(Vec3::new(0.0, d.pelvis_y, 0.0), d.pelvis_r)
                 .with_scale(d.pelvis_section)

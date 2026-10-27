@@ -119,9 +119,14 @@ impl Extremities {
             }
 
             if !carries.contains(&limb) {
-                extremities
-                    .hands
-                    .push(grow_hand(rig, limb, joint, along, girth, stature));
+                // A limb that bears no weight ends in a hand only on a body its
+                // plan gives hands to (#365). Every plan today that has such a
+                // limb does; the rule is stated so the next one need not.
+                if rig.anatomy.hands {
+                    extremities
+                        .hands
+                        .push(grow_hand(rig, limb, joint, along, girth, stature));
+                }
             } else if extremity.len() < 2 {
                 // **A foot is only a part on a plan that has not got one.** The
                 // humanoid meshes its feet as nodes in the capsule graph — ankle,

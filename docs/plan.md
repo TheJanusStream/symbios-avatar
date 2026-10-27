@@ -197,6 +197,10 @@ Still ahead, in rough order:
   ship, loose ones do not.
 - **Creature variety** — part generators, patterns, fur, and the constraint
   system over them; the quadruped proves the engine, the variety is unbuilt.
+  Under way as epic #364: dog-, cat- and horse-like families, hybrids and
+  unnatural coats, cuter by default. Its first phase (#365) states the
+  human-only rules against the plan's declared `Anatomy` rather than the
+  number of feet, and adds the gallery the rest is judged by.
 - **Creator UX** — seed-lock editor, share-code flow, staged preview, spanning
   both crates.
 

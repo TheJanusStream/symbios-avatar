@@ -73,6 +73,9 @@
 //! cargo run --release --example render -- --age 80  # the age axis, 18 .. 80 years
 //! cargo run --release --example render -- --pass ao   # or normal, albedo, shadow, roughness
 //! cargo run --release --example render -- --quadruped
+//! cargo run --release --example render -- --quadruped --gallery 16   # 16 rolls side by side
+//! cargo run --release --example render -- --quadruped --gallery 16 --pass silhouette
+//! cargo run --release --example render -- --quadruped --gallery 16 --to-scale  # sizes compared
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -933,6 +936,26 @@ fn main() {
         eprintln!("this body has no mouth-corner joints: --corners needs a humanoid");
         std::process::exit(1);
     }
+    // **A gallery of rolls** (#365): many seeds of one body plan side by side,
+    // the instrument the creature work is judged by. Every other flag is
+    // ignored, the build's own overrides included - hair, complexion, dress,
+    // tier - because each tile is its own record built as it rolled; only the
+    // pass, `--seed` (the first roll) and `--to-scale` carry.
+    if let Some(given) = value("--gallery") {
+        let Some(count) = given.parse::<usize>().ok().filter(|&count| count > 0) else {
+            eprintln!("--gallery takes how many rolls to draw, at least one, not `{given}`");
+            std::process::exit(2);
+        };
+        let plan = match &record.archetype {
+            Archetype::Quadruped(_) => {
+                Archetype::Quadruped(symbios_avatar::QuadrupedParams::default())
+            }
+            _ => Archetype::default(),
+        };
+        let to_scale = args.iter().any(|arg| arg == "--to-scale");
+        gallery(&plan, seed.unwrap_or(1), count, show.pass, to_scale, &out);
+        return;
+    }
     let subject = Subject::new(avatar, show, mandible, arches, commissures);
 
     let shoot = |pose: &Pose, closure: f32| -> Option<Image> {
@@ -1136,6 +1159,7 @@ fn report(avatar: &Avatar) {
 /// is an instrument switch, they arrive together and they travel together, and
 /// the constructor was already at the argument count where the next one would
 /// have been a lint.
+#[derive(Default)]
 struct Show {
     linear: bool,
     /// Whether to draw the hair at all.
@@ -1703,6 +1727,39 @@ impl Subject {
     /// Draws one pose from four frames into a two-by-two sheet.
     fn render(&self, pose: &Pose, closure: f32, frames: &[Frame; 4]) -> Image {
         let built = self.deformed(pose, closure);
+        let (tints, span) = self.tints(&built);
+        // Once per run, not once per sheet. A head sheet is drawn twice — eyes
+        // open and eyes shut — and the same table printed twice reads as two
+        // different bodies.
+        static SAID: std::sync::Once = std::sync::Once::new();
+        if self.show.junction {
+            SAID.call_once(|| report_junction(&self.avatar.rig, &span));
+        } else if let Some(jaw) = self
+            .jaw
+            .filter(|_| self.show.jawbind || self.show.jaw.is_some())
+        {
+            SAID.call_once(|| report_jaw(&self.avatar, jaw, pose, self.show.jaw));
+        }
+
+        let mut sheet = Image::new(VIEW * 2, VIEW * 2);
+        for (index, frame) in frames.iter().enumerate() {
+            let view = self.shoot(&built, &tints, frame);
+            sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
+        }
+        sheet
+    }
+
+    /// Draws one pose from one frame, the size of one view of a sheet (#365):
+    /// what a gallery tiles.
+    fn view(&self, pose: &Pose, closure: f32, frame: &Frame) -> Image {
+        let built = self.deformed(pose, closure);
+        let (tints, _) = self.tints(&built);
+        self.shoot(&built, &tints, frame)
+    }
+
+    /// The tint each drawn mesh is overlaid with, if any, and the junction's
+    /// reach per joint that the tint measured on the way.
+    fn tints(&self, built: &[AvatarMesh]) -> (Vec<Option<Vec<Vec3>>>, Vec<Reach>) {
         // Only the skin is bound to the rig, so only the skin can be tinted by
         // it. Computed once for the sheet rather than once per view: the
         // classification is of the surface, and the surface does not turn.
@@ -1723,65 +1780,58 @@ impl Subject {
                 }
             })
             .collect();
-        // Once per run, not once per sheet. A head sheet is drawn twice — eyes
-        // open and eyes shut — and the same table printed twice reads as two
-        // different bodies.
-        static SAID: std::sync::Once = std::sync::Once::new();
-        if self.show.junction {
-            SAID.call_once(|| report_junction(&self.avatar.rig, &span));
-        } else if let Some(jaw) = self
-            .jaw
-            .filter(|_| self.show.jawbind || self.show.jaw.is_some())
-        {
-            SAID.call_once(|| report_jaw(&self.avatar, jaw, pose, self.show.jaw));
-        }
+        (tints, span)
+    }
 
-        let mut sheet = Image::new(VIEW * 2, VIEW * 2);
+    /// One frame of the deformed meshes, at the size of one view.
+    fn shoot(&self, built: &[AvatarMesh], tints: &[Option<Vec<Vec3>>], frame: &Frame) -> Image {
         let side = VIEW * SUPERSAMPLE;
-        for (index, frame) in frames.iter().enumerate() {
-            let wall = backdrop(frame);
-            let items = items(
-                &built,
-                &wall,
-                self.avatar.skin.albedo.as_slice(),
-                self.avatar.skin.roughness.as_slice(),
-                self.avatar.skin.normal.as_slice(),
-                self.atlas(),
-                self.avatar.cloth.as_ref(),
-                &tints,
-            );
-            // The key light is written in the camera's frame, so its shadow has
-            // to be cast anew for each view. Cheap enough at this size, and it
-            // keeps every view internally consistent.
-            let toward = frame.to_world(light::KEY);
-            let shadow = ShadowMap::cast(&items, toward, frame.centre, frame.span, 1024);
+        // A silhouette is the body alone, black on white: no wall behind
+        // it to cover the pixels around it (#365).
+        let wall = if self.show.pass.as_deref() == Some("silhouette") {
+            PolyMesh::new()
+        } else {
+            backdrop(frame)
+        };
+        let items = items(
+            built,
+            &wall,
+            self.avatar.skin.albedo.as_slice(),
+            self.avatar.skin.roughness.as_slice(),
+            self.avatar.skin.normal.as_slice(),
+            self.atlas(),
+            self.avatar.cloth.as_ref(),
+            tints,
+        );
+        // The key light is written in the camera's frame, so its shadow has
+        // to be cast anew for each view. Cheap enough at this size, and it
+        // keeps every view internally consistent.
+        let toward = frame.to_world(light::KEY);
+        let shadow = ShadowMap::cast(&items, toward, frame.centre, frame.span, 1024);
 
-            // Far off, the same frame at the pixels that distance spends on it
-            // (#350); close, exactly what it always drew.
-            let pixels = self
-                .show
-                .far
-                .map(|metres| ((frame.span * FAR_PIXELS / metres).round() as usize).clamp(1, VIEW));
-            let side = pixels.map_or(side, |pixels| pixels * SUPERSAMPLE);
-            let mut buffer = GBuffer::new(side, side);
-            if pixels.is_some() {
-                let share = side as f32 / (VIEW * SUPERSAMPLE) as f32;
-                buffer.floor = share * share;
-            }
-            buffer.draw(&items, frame);
-            let ao = light::occlusion(&buffer, frame);
-            let shaded = match &self.show.pass {
-                Some(pass) => light::inspect(&buffer, &ao, frame, &shadow, pass),
-                None => light::shade(&buffer, &ao, frame, &shadow),
-            };
-            let view = light::resolve(&shaded, SUPERSAMPLE);
-            let view = match pixels {
-                Some(pixels) => light::enlarge(&view, pixels, VIEW),
-                None => view,
-            };
-            sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
+        // Far off, the same frame at the pixels that distance spends on it
+        // (#350); close, exactly what it always drew.
+        let pixels = self
+            .show
+            .far
+            .map(|metres| ((frame.span * FAR_PIXELS / metres).round() as usize).clamp(1, VIEW));
+        let side = pixels.map_or(side, |pixels| pixels * SUPERSAMPLE);
+        let mut buffer = GBuffer::new(side, side);
+        if pixels.is_some() {
+            let share = side as f32 / (VIEW * SUPERSAMPLE) as f32;
+            buffer.floor = share * share;
         }
-        sheet
+        buffer.draw(&items, frame);
+        let ao = light::occlusion(&buffer, frame);
+        let shaded = match &self.show.pass {
+            Some(pass) => light::inspect(&buffer, &ao, frame, &shadow, pass),
+            None => light::shade(&buffer, &ao, frame, &shadow),
+        };
+        let view = light::resolve(&shaded, SUPERSAMPLE);
+        match pixels {
+            Some(pixels) => light::enlarge(&view, pixels, VIEW),
+            None => view,
+        }
     }
 
     /// Side of the skin atlas.
@@ -2240,9 +2290,13 @@ fn follicle_tint(mesh: &PolyMesh, avatar: &Avatar, eyes: &EyeParams) -> Vec<Vec3
 /// **A renderer measuring its own head is a second implementation of the
 /// recipe**, which this file's header is on record about — so this is the one
 /// place it happens, shared by the false-colour overlay and the region close-up.
-/// It answers `None` for a body with no head, which is a quadruped and not an
-/// error.
+/// It answers `None` where the pipeline grows no hair: on a body with no head,
+/// and on a head its plan does not call human (#365) — a quadruped's, which is
+/// measured, and which is not an error.
 fn regions_of(avatar: &Avatar, eyes: &EyeParams) -> Option<Follicles> {
+    if !avatar.rig.anatomy.human_head() {
+        return None;
+    }
     let skull = Skull::measure(&avatar.parts.body, &avatar.rig)?;
     let canon = Canon::measure(&avatar.rig, &skull, eyes);
     Some(Follicles::of(
@@ -2826,6 +2880,71 @@ fn items<'a>(
     }
 
     items
+}
+
+/// Draws `count` rolls of `plan`, seeds `first` onward, one standing side view
+/// each, into a grid (#365).
+///
+/// Each roll fills its own tile, standing on the tile's ground line, because
+/// a shape is what a silhouette is judged on - and the stature axis spans more
+/// than a factor of seven, which at one scale leaves the small rolls a few
+/// pixels long. `to_scale` draws them all at the largest body's scale instead,
+/// for the other half of telling families apart: their size. Seeds run left to
+/// right, top to bottom, and the tile is the seed's: a roll that fails to
+/// build leaves its tile blank rather than shifting every later one. Each is
+/// built with the default config, as it rolled.
+fn gallery(
+    plan: &Archetype,
+    first: i64,
+    count: usize,
+    pass: Option<String>,
+    to_scale: bool,
+    out: &std::path::Path,
+) {
+    let config = AvatarConfig::default();
+    use std::f32::consts::FRAC_PI_2;
+    let subjects: Vec<Option<Subject>> = (0..count as i64)
+        .map(|offset| {
+            let mut record = AvatarRecord::new("Gallery", plan.clone());
+            record.reroll(first + offset);
+            let avatar = Avatar::build_with(&record, &config)?;
+            let show = Show {
+                eyes: record.eyes,
+                pass: pass.clone(),
+                ..Show::default()
+            };
+            Some(Subject::new(avatar, show, None, Vec::new(), Vec::new()))
+        })
+        .collect();
+    let largest = subjects
+        .iter()
+        .flatten()
+        .map(|subject| subject.reach)
+        .fold(0.1f32, f32::max);
+    let columns = (count as f32).sqrt().ceil().max(1.0) as usize;
+    let rows = count.div_ceil(columns);
+    let mut sheet = Image::new(columns * VIEW, rows * VIEW);
+    for (index, subject) in subjects.iter().enumerate() {
+        let Some(subject) = subject else {
+            eprintln!("seed {} did not build", first + index as i64);
+            continue;
+        };
+        // The ground a twentieth of a tile above the bottom edge.
+        let span = if to_scale { largest } else { subject.reach } * MARGIN;
+        let frame = Frame {
+            turn: FRAC_PI_2,
+            pitch: 0.0,
+            centre: Vec3::new(subject.middle.x, span * 0.45, subject.middle.z),
+            span,
+        };
+        let view = subject.view(&subject.standing(), 0.0, &frame);
+        sheet.blit(&view, (index % columns) * VIEW, (index / columns) * VIEW);
+    }
+    write(out, "gallery", &sheet);
+    println!(
+        "drew {count} rolls, seeds {first} to {}, into {columns} by {rows}",
+        first + count as i64 - 1
+    );
 }
 
 /// A wall behind the subject, square to whichever way the camera is looking.

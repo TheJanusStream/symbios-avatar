@@ -262,6 +262,10 @@ pub fn inspect(
             } else {
                 0.0
             }),
+            // Black on white, the way a silhouette is judged (#365): a body
+            // has to read as what it is from its outline alone before any
+            // surface on it is worth looking at.
+            "silhouette" => Vec3::splat(if covered { 0.0 } else { 1.0 }),
             _ => Vec3::splat(if covered { 1.0 } else { 0.0 }),
         };
         // Written straight out, so what is shown is what the buffer holds.

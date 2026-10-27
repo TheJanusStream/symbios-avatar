@@ -48,8 +48,9 @@ the examples consume.
   fail when sliders reach shapes that cannot be built. The constraints live in the
   body plans, and a sweep over 3,000 random bodies — 1,500 per plan — plus every
   axis extreme holds them honest.
-- **Humanoids and creatures on one engine.** Only the graph differs; a pelvis
-  carrying two legs and a quadruped girdle carrying four are the same code path.
+- **Humanoids and creatures on one engine.** Only the graph and the anatomy its
+  plan declares differ; a pelvis carrying two legs and a quadruped girdle
+  carrying four are the same code path.
 - **Deterministic.** The same record always yields the same vertex layout, so
   geometry caches stay valid and a look reproduces exactly.
 - **Honest failures.** When a joint is too crowded to mesh, the error names the
@@ -357,8 +358,11 @@ assert!(footing.is_settled());
   from the torso outward. A body that swivels only its skull reads as a doll.
 
 Which limbs carry a body is read off the rig rather than declared: a biped stands
-on two of its four, a quadruped on all four, and a six-legged plan would work
-without changing any of this.
+on two of its four, a quadruped on all four. What the body's parts *are* is the
+other way round — declared by its plan as an `Anatomy` (a human head or a
+beast's, hands or none, a human trunk or a barrel) and never guessed from how
+many feet it stands on (#365). A plan with more than four limbs would need
+`Limb` to name them first.
 
 ```text
 cargo run --example dump -- --walk 12   # a walk cycle over a slope, frame by frame

@@ -65,9 +65,10 @@ const SHIFT_FROM: f32 = 0.35;
 ///
 /// The humanoid's foot is nodes in the capsule graph since #111, not the
 /// [`Foot`] this file builds for the attached path; this is the carve for
-/// that foot, and it declines a body that does not walk on two feet.
+/// that foot, and it declines a body whose plan does not give it human feet
+/// (#365).
 pub fn shape(mesh: &mut PolyMesh, rig: &Rig) {
-    if rig.ground_contacts().len() != 2 {
+    if !rig.anatomy.human_feet() {
         return;
     }
     for limb in [Limb::HindLeft, Limb::HindRight] {

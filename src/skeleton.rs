@@ -11,7 +11,7 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::plan::Zone;
+use crate::plan::{Anatomy, Zone};
 
 /// One key ball of the skeleton: where the surface passes and how wide it is.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -282,6 +282,14 @@ pub struct Skeleton {
     pub nodes: Vec<Node>,
     /// Undirected bones, each a pair of indices into [`Skeleton::nodes`].
     pub bones: Vec<[u32; 2]>,
+    /// What the body's parts are, as the plan that built it declares them
+    /// (#365) - handed on to the rig rooted from it.
+    ///
+    /// Defaulted at the field, like [`Node::roll`], so a skeleton written
+    /// before this existed still reads, and reads as a person's: every one of
+    /// them that did not stand on four legs was treated as one.
+    #[serde(default)]
+    pub anatomy: Anatomy,
 }
 
 impl Skeleton {

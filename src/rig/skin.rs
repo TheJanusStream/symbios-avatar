@@ -223,7 +223,13 @@ impl SkinWeights {
 /// corner is: the seam assignment overwrites the slit's own edge vertices
 /// after the bind, and it has to hand back exactly the share this field
 /// would have given them or a smile tears at the lip's free edge.
+///
+/// Empty on a head its plan does not call human (#365): these are a human
+/// face's corners, and a beast's head may carry marker leaves of its own.
 pub(crate) fn mouth_corners(rig: &Rig) -> Vec<(usize, f32, usize)> {
+    if !rig.anatomy.human_head() {
+        return Vec::new();
+    }
     (0..rig.len())
         .filter(|&joint| face_leaf(rig, joint) && !leaf_above_parent(rig, joint))
         .filter_map(|joint| {
@@ -239,8 +245,12 @@ pub(crate) fn mouth_corners(rig: &Rig) -> Vec<(usize, f32, usize)> {
 /// The brow joints a rig carries, each `(brow, side sign)` — the lone leaves
 /// ABOVE the head joint, where [`mouth_corners`] finds the ones below. Shared
 /// by [`bind`] and the expression layer, for the reason on
-/// [`mouth_corners`].
+/// [`mouth_corners`] - and empty, as those are, on a head its plan does not
+/// call human (#365).
 pub(crate) fn brow_joints(rig: &Rig) -> Vec<(usize, f32)> {
+    if !rig.anatomy.human_head() {
+        return Vec::new();
+    }
     (0..rig.len())
         .filter(|&joint| face_leaf(rig, joint) && leaf_above_parent(rig, joint))
         .map(|joint| (joint, rig.joints[joint].position.x.signum()))
