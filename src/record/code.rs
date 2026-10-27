@@ -525,15 +525,15 @@ mod tests {
         // axes and parts after them (#367). A beast's body is nearly all in
         // its plan - a person's look is spread over the face, the hair and
         // the outfit too - so its code runs longer than a person's under a
-        // ceiling of its own, still a string a person can read out: eighty
-        // characters, hyphens and all (the neutral beast's is 73, in 13
-        // groups).
+        // ceiling of its own, still a string a person can read out: a hundred
+        // characters, hyphens and all, which holds the coat's six bytes
+        // (#368) and leaves the fur's (#369) room.
         let beast = encode(
             &Archetype::Quadruped(QuadrupedParams::default()),
             &Composites::default(),
             &SkinParams::default(),
         );
-        assert!(beast.len() <= 80, "code is {} chars: {beast}", beast.len());
+        assert!(beast.len() <= 100, "code is {} chars: {beast}", beast.len());
     }
 
     #[test]

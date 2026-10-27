@@ -10,8 +10,6 @@
 //! everything on it is the foot's by the rig's reckoning, so without a
 //! ceiling the whole pastern would be pressed down onto the paw.
 
-use glam::Vec3;
-
 use crate::face::beast::fade;
 use crate::face::smooth;
 use crate::mesh::PolyMesh;
@@ -68,24 +66,9 @@ pub fn shape(mesh: &PolyMesh, rig: &Rig, feet: &BeastFeet) -> PolyMesh {
     shaped
 }
 
-/// The colour over the coat each of `body`'s vertices wears from its foot:
-/// a claw's tip, a hoof's horn, or `None`. Asked of the body as built.
-#[must_use]
-pub(crate) fn tint(body: &PolyMesh, rig: &Rig, feet: &BeastFeet) -> Vec<Option<Vec3>> {
-    let shapes = shapes(rig, feet);
-    owners(body, rig, &shapes)
-        .into_iter()
-        .zip(&body.positions)
-        .map(|(owner, &point)| {
-            let foot = &shapes[owner?].1;
-            foot.tint(foot.local(point))
-        })
-        .collect()
-}
-
 /// Every foot the rig ends a leg in, with its shape: the first two joints of
 /// each extremity zone are its pad and its toes.
-fn shapes(rig: &Rig, feet: &BeastFeet) -> Vec<(Limb, FootShape)> {
+pub(crate) fn shapes(rig: &Rig, feet: &BeastFeet) -> Vec<(Limb, FootShape)> {
     Limb::ALL
         .into_iter()
         .filter_map(|limb| {

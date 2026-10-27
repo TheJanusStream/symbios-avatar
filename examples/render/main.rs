@@ -77,6 +77,8 @@
 //! cargo run --release --example render -- --quadruped --gallery 16 --pass silhouette
 //! cargo run --release --example render -- --quadruped --gallery 16 --to-scale  # sizes compared
 //! cargo run --release --example render -- --quadruped --gallery 16 --family cat  # or dog, horse, cross
+//! cargo run --release --example render -- --quadruped --gallery 9 --pattern rosettes  # coats marked so
+//! cargo run --release --example render -- --quadruped --gallery 9 --fantasy  # unnatural coats only
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -959,8 +961,8 @@ fn main() {
     // the instrument the creature work is judged by. Every other flag is
     // ignored, the build's own overrides included - hair, complexion, dress,
     // tier - because each tile is its own record built as it rolled; only the
-    // pass, `--seed` (the first roll), `--to-scale`, `--family` and
-    // `--portrait` carry.
+    // pass, `--seed` (the first roll), `--to-scale`, `--family`,
+    // `--portrait`, `--fantasy` and `--pattern` carry.
     if let Some(given) = value("--gallery") {
         let Some(count) = given.parse::<usize>().ok().filter(|&count| count > 0) else {
             eprintln!("--gallery takes how many rolls to draw, at least one, not `{given}`");
@@ -979,13 +981,38 @@ fn main() {
             eprintln!("--family picks a quadruped's family: add --quadruped");
             std::process::exit(2);
         }
-        let keep = |record: &AvatarRecord| match (&record.archetype, family.as_deref()) {
-            (_, None) => true,
-            (Archetype::Quadruped(params), Some("cross")) => params.hybrid.is_some(),
-            (Archetype::Quadruped(params), Some(name)) => {
-                params.hybrid.is_none() && params.family.name() == name
+        // `--fantasy` keeps only the coats drawn in an unnatural palette, and
+        // `--pattern NAME` only the coats marked with it (#368).
+        let fantasy = args.iter().any(|arg| arg == "--fantasy");
+        let pattern = value("--pattern").map(|name| {
+            symbios_avatar::plan::Pattern::ALL
+                .into_iter()
+                .find(|pattern| pattern.name() == name.as_str())
+                .unwrap_or_else(|| {
+                    eprintln!("--pattern takes a coat pattern's name, not `{name}`");
+                    std::process::exit(2);
+                })
+        });
+        if (fantasy || pattern.is_some()) && !matches!(record.archetype, Archetype::Quadruped(_)) {
+            eprintln!("--fantasy and --pattern pick a quadruped's coat: add --quadruped");
+            std::process::exit(2);
+        }
+        let keep = |record: &AvatarRecord| {
+            let coat = match &record.archetype {
+                Archetype::Quadruped(params) => Some(params.coat),
+                _ => None,
+            };
+            let coat = (!fantasy
+                || coat.is_some_and(|coat| coat.fantasy != symbios_avatar::plan::Fantasy::None))
+                && pattern.is_none_or(|pattern| coat.is_some_and(|coat| coat.pattern == pattern));
+            coat && match (&record.archetype, family.as_deref()) {
+                (_, None) => true,
+                (Archetype::Quadruped(params), Some("cross")) => params.hybrid.is_some(),
+                (Archetype::Quadruped(params), Some(name)) => {
+                    params.hybrid.is_none() && params.family.name() == name
+                }
+                _ => false,
             }
-            _ => false,
         };
         let plan = match &record.archetype {
             Archetype::Quadruped(_) => {
@@ -2981,6 +3008,44 @@ fn items<'a>(
     items
 }
 
+/// A coat's loci in a breeder's words, for a gallery's list of tiles (#368).
+fn coat_words(coat: &symbios_avatar::Coat) -> String {
+    use symbios_avatar::plan::{Fantasy, Pattern, White};
+    let mut words = vec![
+        if coat.dilute {
+            format!("dilute {}", coat.pigment.name())
+        } else {
+            coat.pigment.name().to_string()
+        },
+        coat.agouti.name().to_string(),
+    ];
+    if coat.pattern != Pattern::None {
+        words.push(coat.pattern.name().to_string());
+    }
+    if coat.white != White::None {
+        words.push(format!("white {}", coat.white.name()));
+    }
+    for (carried, locus) in [
+        (coat.points, "points"),
+        (coat.merle, "merle"),
+        (coat.roan, "roan"),
+        (coat.dun, "dun"),
+        (coat.tortie, "tortie"),
+    ] {
+        if carried {
+            words.push(locus.to_string());
+        }
+    }
+    if coat.fantasy != Fantasy::None {
+        words.push(format!("in {}", coat.fantasy.name()));
+    }
+    words.push(format!(
+        "intensity {:.2}, marks {}",
+        coat.intensity, coat.marks
+    ));
+    words.join(", ")
+}
+
 /// Draws `count` rolls of `plan` that `keep` accepts, seeds `first` onward,
 /// one standing side view each, into a grid (#365).
 ///
@@ -3022,15 +3087,18 @@ fn gallery(
     }
     for (tile, (seed, record)) in records.iter().enumerate() {
         let kind = match &record.archetype {
-            Archetype::Quadruped(params) => match params.hybrid {
-                Some(other) => format!(
-                    "{} x {} at {:.2}",
-                    params.family.name(),
-                    other.name(),
-                    params.blend
-                ),
-                None => params.family.name().to_string(),
-            },
+            Archetype::Quadruped(params) => {
+                let family = match params.hybrid {
+                    Some(other) => format!(
+                        "{} x {} at {:.2}",
+                        params.family.name(),
+                        other.name(),
+                        params.blend
+                    ),
+                    None => params.family.name().to_string(),
+                };
+                format!("{family}: {}", coat_words(&params.coat))
+            }
             other => other.name().to_string(),
         };
         println!("tile {tile}: seed {seed}, {kind}");

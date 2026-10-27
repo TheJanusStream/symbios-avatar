@@ -15,7 +15,7 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::derive::quadruped::Dimensions;
-use super::{Anatomy, CompositePriors, Composites, DEFAULT_BODY_FAT, Limb, Zone};
+use super::{Anatomy, Coat, CompositePriors, Composites, DEFAULT_BODY_FAT, Limb, Zone};
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
     take_span, take_unit,
@@ -23,75 +23,12 @@ use super::{
 use crate::cage::limb::HALF_SEGMENT;
 use crate::skeleton::{Node, Skeleton};
 
-/// What every choice a quadruped stores by name shares (#366, #367): its
-/// list, its name both ways, its share-code byte both ways, and its serde as
-/// the name. Each is a fieldless enum whose default is the plan's own, and a
-/// name or byte this build does not know reads as that default, so a record
-/// from a newer build keeps everything else whole.
-macro_rules! named {
-    ($kind:ident: $($variant:ident => $name:literal),+ $(,)?) => {
-        impl $kind {
-            /// Every choice, in the order their share-code bytes run.
-            pub const ALL: [$kind; named!(@count $($variant)+)] = [$($kind::$variant),+];
-
-            /// Its name, as written in a record.
-            #[must_use]
-            pub fn name(self) -> &'static str {
-                match self {
-                    $($kind::$variant => $name),+
-                }
-            }
-
-            /// The choice a record's name says, or the default for one this
-            /// build does not know.
-            #[must_use]
-            pub fn named(name: &str) -> Self {
-                Self::ALL
-                    .into_iter()
-                    .find(|choice| choice.name() == name)
-                    .unwrap_or_default()
-            }
-
-            /// Its byte on a share code.
-            fn code(self) -> u8 {
-                Self::ALL
-                    .iter()
-                    .position(|&choice| choice == self)
-                    .unwrap_or(0) as u8
-            }
-
-            /// The choice a share-code byte names, or the default for one
-            /// this build does not know.
-            fn from_code(code: u8) -> Self {
-                Self::ALL.get(code as usize).copied().unwrap_or_default()
-            }
-        }
-
-        impl Serialize for $kind {
-            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.serialize_str(self.name())
-            }
-        }
-
-        impl<'de> Deserialize<'de> for $kind {
-            fn deserialize<D: serde::Deserializer<'de>>(
-                deserializer: D,
-            ) -> Result<Self, D::Error> {
-                let name = String::deserialize(deserializer)?;
-                Ok(Self::named(&name))
-            }
-        }
-    };
-    (@count $($variant:ident)+) => { 0 $(+ named!(@one $variant))+ };
-    (@one $variant:ident) => { 1 };
-}
-
 /// Smallest and largest back height this plan accepts, in metres.
 pub const HEIGHT_RANGE: (f32, f32) = (0.25, 1.8);
 
 /// Which kind of animal a quadruped is drawn as (#366): the anchor its axes
-/// are rolled around, and - with the parts and the coat to come (#367, #368) -
-/// the ears, feet, eyes and colours it is given.
+/// are rolled around, and where a roll draws its parts (#367) and its coat
+/// and eyes (#368) from.
 ///
 /// **The geometry does not read it.** A body is its axes and a family is
 /// where a roll centres them, so a creator who drags a cat's axes into a
@@ -348,6 +285,8 @@ pub struct QuadrupedParams {
     /// A horn on the forehead (#367). See [`Horn`].
     #[serde(skip_serializing_if = "is_hornless")]
     pub horn: Horn,
+    /// What colour its fur is and how it is marked (#368). See [`Coat`].
+    pub coat: Coat,
 }
 
 /// Whether a record writes no horn: the default, left off the wire.
@@ -600,6 +539,7 @@ impl Default for QuadrupedParams {
             feet: Feet::Claws,
             whiskers: 0.0,
             horn: Horn::None,
+            coat: Coat::default(),
         }
     }
 }
@@ -730,6 +670,11 @@ impl BodyPlan for QuadrupedParams {
         }
     }
 
+    /// Its family's eyes (#368): a cross's leading family's.
+    fn iris(&self, shade: f32) -> [f32; 3] {
+        super::coat::iris(self.leading_family(), shade)
+    }
+
     fn sanitize(&mut self) {
         // See [`super::humanoid::HumanoidParams::sanitize`]: same shape, same
         // reason, and it carried the same bug (#55).
@@ -761,6 +706,7 @@ impl BodyPlan for QuadrupedParams {
         // cross is blended toward nothing. (A cross at either end of its blend
         // stays a cross: it is centred on one family with the wider spread of
         // two, which is a state an editor's slider passes through.)
+        self.coat.sanitize();
         if self.hybrid == Some(self.family) {
             self.hybrid = None;
         }
@@ -919,9 +865,15 @@ impl BodyPlan for QuadrupedParams {
                 self.horn = Horn::None;
                 self.pupil = self.drawn_part(rolls, "quadruped.pupil", Pupil::of);
             }
-            // Nothing on this plan is a colour, a hair, an age or a garment
-            // (#53, #358).
-            Category::Colouring | Category::Hair | Category::Age | Category::Outfit => {}
+            // Its coat (#368), drawn from its family's loci - a cross's mixed
+            // by its blend.
+            Category::Colouring => {
+                self.coat
+                    .reroll(rolls, self.family, self.hybrid, self.blend);
+            }
+            // Nothing on this plan is a hair, an age or a garment (#53,
+            // #358).
+            Category::Hair | Category::Age | Category::Outfit => {}
         }
     }
 
@@ -958,6 +910,7 @@ impl BodyPlan for QuadrupedParams {
         out.push(self.feet.code());
         put_span(out, self.whiskers, signed_envelope());
         out.push(self.horn.code());
+        self.coat.encode(out);
     }
 
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
@@ -991,6 +944,7 @@ impl BodyPlan for QuadrupedParams {
         params.feet = Feet::from_code(take_byte(bytes)?);
         params.whiskers = take_span(bytes, signed_envelope())?;
         params.horn = Horn::from_code(take_byte(bytes)?);
+        params.coat = Coat::decode(bytes)?;
         params.sanitize();
         Ok(params)
     }

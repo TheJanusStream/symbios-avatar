@@ -33,11 +33,6 @@ use crate::mesh::PolyMesh;
 use crate::plan::{BeastHead, Zone};
 use crate::rig::Rig;
 
-/// A nose's leather, over the skin it is painted with (#367): darker, and
-/// as dark on every coat until the coat painter gives noses their own
-/// colours (#368).
-pub const LEATHER: glam::Vec3 = glam::Vec3::new(0.28, 0.22, 0.22);
-
 /// The parts a beast's head wears (#367): its ears, its jaw and its tongue,
 /// each riding a joint of its own off the head.
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +74,15 @@ impl BeastFace {
     /// Every part's mesh, in [`Self::parts`]' order, for writing.
     pub fn meshes_mut(&mut self) -> impl Iterator<Item = &mut PolyMesh> {
         self.ears.meshes_mut().chain(self.jaw.meshes_mut())
+    }
+
+    /// Every part's mouth channel, in [`Self::parts`]' order: none for the
+    /// ears, the jaw's inside and the whole tongue (#368).
+    pub fn mouths(&self) -> impl Iterator<Item = Vec<f32>> {
+        self.ears
+            .parts()
+            .map(|_| Vec::new())
+            .chain(self.jaw.mouths())
     }
 }
 
@@ -485,36 +489,6 @@ mod tests {
             }
             assert_eq!(head.nose.leather.is_some(), nose == Nose::Leather);
         }
-    }
-
-    #[test]
-    fn a_leather_nose_is_tinted_and_a_soft_muzzle_is_not() {
-        use crate::avatar::MeshKind;
-        use crate::plan::Nose;
-        use crate::{Archetype, Avatar, AvatarRecord};
-        let leathered = |nose: Nose| {
-            let params = QuadrupedParams {
-                nose,
-                ..QuadrupedParams::default()
-            };
-            let avatar = Avatar::build(&AvatarRecord::new("Beast", Archetype::Quadruped(params)))
-                .expect("the beast builds");
-            let skin = &avatar
-                .meshes
-                .iter()
-                .find(|mesh| mesh.kind == MeshKind::Skin)
-                .expect("a skin")
-                .mesh;
-            skin.colours
-                .iter()
-                .filter(|&&colour| colour == LEATHER)
-                .count()
-        };
-        assert!(
-            leathered(Nose::Leather) > 20,
-            "a leather nose went untinted"
-        );
-        assert_eq!(leathered(Nose::Soft), 0, "a soft muzzle wore leather");
     }
 
     #[test]

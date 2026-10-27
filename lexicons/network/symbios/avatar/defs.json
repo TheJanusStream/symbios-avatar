@@ -312,6 +312,124 @@
             "unicorn"
           ],
           "default": "none"
+        },
+        "coat": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedCoat",
+          "description": "What colour the fur is and how it is marked (#368)."
+        }
+      }
+    },
+    "quadrupedCoat": {
+      "type": "object",
+      "description": "A quadruped's coat (#368), recorded as coat-genetics loci rather than as colours: a reader derives the colours from the loci, so a coat stays a few small values, a cross can take each locus from either parent, and a creator changes a coat the way it varies in life - a liver dog is the black dog's coat with one locus turned. The genetics are a game's: every locus is open to every family, whichever one carries it in life. A locus value a reader does not recognise reads as that locus's default.",
+      "properties": {
+        "pigment": {
+          "type": "string",
+          "description": "The pigment the coat is built on: black or liver (brown) eumelanin, or red phaeomelanin alone - a ginger cat, a chestnut horse, a red setter. The bare parts follow it: a liver coat has a liver nose.",
+          "knownValues": [
+            "black",
+            "liver",
+            "red"
+          ],
+          "default": "red"
+        },
+        "dilute": {
+          "type": "boolean",
+          "description": "Whether the pigment is diluted: black to blue-grey, liver to lilac, red to cream.",
+          "default": false
+        },
+        "agouti": {
+          "type": "string",
+          "description": "How the dark and the light are spread: one colour all over; a light coat tipped dark along the back (sable); every hair banded dark and light, the wild grizzle a tabby's marks are drawn on; a dark coat with light points on the muzzle, brows, chest, legs and under the tail (tanPoints, a black-and-tan); a light coat with dark legs, tail, ear tips and muzzle (bay).",
+          "knownValues": [
+            "solid",
+            "sable",
+            "wild",
+            "tanPoints",
+            "bay"
+          ],
+          "default": "solid"
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Marks drawn over the coat in its dark pigment: a tabby's narrow stripes (mackerel), its swirls (blotched) or its ticking; round spots; rosettes, rings round a lighter centre; a brindle's thin broken stripes; a dapple's lighter rings netted over a grey.",
+          "knownValues": [
+            "none",
+            "mackerel",
+            "blotched",
+            "ticked",
+            "spotted",
+            "rosettes",
+            "brindle",
+            "dapple"
+          ],
+          "default": "none"
+        },
+        "points": {
+          "type": "boolean",
+          "description": "Whether the face, ears, legs and tail are darker than a paled body: a colourpoint.",
+          "default": false
+        },
+        "white": {
+          "type": "string",
+          "description": "How much white the coat carries, over every other locus: white feet (socks); feet, chest, a blaze and a tail tip (irish); large patches and most of the underside (piebald); or white nearly all over, colour left on the head and the base of the tail (extreme).",
+          "knownValues": [
+            "none",
+            "socks",
+            "irish",
+            "piebald",
+            "extreme"
+          ],
+          "default": "none"
+        },
+        "merle": {
+          "type": "boolean",
+          "description": "Whether the dark is broken into patches over a diluted ground: merle.",
+          "default": false
+        },
+        "roan": {
+          "type": "boolean",
+          "description": "Whether white hairs are scattered through the body: roan.",
+          "default": false
+        },
+        "dun": {
+          "type": "boolean",
+          "description": "Whether the body is diluted, with a dark stripe down the back and barred legs: dun.",
+          "default": false
+        },
+        "tortie": {
+          "type": "boolean",
+          "description": "Whether red and the dark are mixed in patches: a tortoiseshell. A red coat has no dark to mix in, and shows none.",
+          "default": false
+        },
+        "intensity": {
+          "type": "integer",
+          "description": "How rich the red runs: cream at -1000, a setter's red at 1000, and past them ivory at -3000 and mahogany at 3000. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "fantasy": {
+          "type": "string",
+          "description": "An unnatural palette the coat's dark and light are drawn in, or none for a natural coat. Rolled as a rarity.",
+          "knownValues": [
+            "none",
+            "sky",
+            "mint",
+            "lilac",
+            "rose",
+            "sunny",
+            "ocean"
+          ],
+          "default": "none"
+        },
+        "marks": {
+          "type": "integer",
+          "description": "The seed the coat's spots, stripes and patches are laid out from, so its marks survive the wire and can be thrown again on their own.",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0
         }
       }
     },

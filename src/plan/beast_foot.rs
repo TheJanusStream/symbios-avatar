@@ -45,13 +45,6 @@ const SHEATHED: (f32, f32) = (0.86, 1.08);
 /// pastern begins.
 const HOOF: f32 = 1.05;
 
-/// The colour a claw is drawn in over the coat (#367): dark, until the coat
-/// painter says otherwise (#368).
-pub(crate) const CLAW: Vec3 = Vec3::new(0.26, 0.23, 0.23);
-
-/// The colour a hoof's horn is drawn in over the coat (#367), as [`CLAW`].
-pub(crate) const HORN: Vec3 = Vec3::new(0.36, 0.31, 0.29);
-
 /// One foot's shape, in its own frame: the origin on the ground under the
 /// pad's centre, `+Z` toward the toes, `+Y` up and `+X` across.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -169,28 +162,26 @@ impl FootShape {
         )
     }
 
-    /// The colour a point of the foot's surface is drawn in over its coat:
-    /// the tip of a showing claw, a hoof's horn below its coronet, or
-    /// nothing. In the foot's frame.
-    pub(crate) fn tint(&self, at: Vec3) -> Option<Vec3> {
+    /// How much of a point of the foot's surface is horn rather than coat,
+    /// `0..=1`: the tip of a showing claw, a hoof below its coronet, or
+    /// none. In the foot's frame; the coat painter colours it (#368).
+    pub(crate) fn horn(&self, at: Vec3) -> f32 {
         match self.kind {
-            // Blended in under the coronet rather than cut at it: a colour
-            // that changes at one height steps across every facet the
-            // height crosses, and a hoof's rim reads as a saw.
+            // Blended in under the coronet rather than cut at it: a hoof's
+            // rim cut at one height reads as a saw across the facets it
+            // crosses.
             Feet::Hooves => {
                 let rise = at.y / (HOOF * self.pad);
-                let horn = 1.0 - crate::face::smooth((rise - 0.72) / 0.22);
-                (horn > 0.0).then(|| Vec3::ONE.lerp(HORN, horn))
+                1.0 - crate::face::smooth((rise - 0.72) / 0.22)
             }
-            Feet::Pads => None,
-            Feet::Claws => self
-                .toes()
-                .into_iter()
-                .any(|(centre, radius)| {
+            Feet::Pads => 0.0,
+            Feet::Claws => {
+                let showing = self.toes().into_iter().any(|(centre, radius)| {
                     let off = at - centre;
                     off.z > 0.55 * radius && off.y < 0.15 * radius
-                })
-                .then_some(CLAW),
+                });
+                if showing { 1.0 } else { 0.0 }
+            }
         }
     }
 }
@@ -270,26 +261,24 @@ mod tests {
     }
 
     #[test]
-    fn only_a_showing_claw_and_a_hoof_are_tinted() {
+    fn only_a_showing_claw_and_a_hoof_are_horn() {
         let tip = |kind: Feet| {
             let foot = foot(kind);
             let (centre, radius) = foot.toes()[1];
-            foot.tint(centre + Vec3::new(0.0, -0.1 * radius, 0.9 * radius))
+            foot.horn(centre + Vec3::new(0.0, -0.1 * radius, 0.9 * radius))
         };
-        assert_eq!(tip(Feet::Claws), Some(CLAW));
-        assert_eq!(tip(Feet::Pads), None, "a cat's claws are sheathed");
+        assert_eq!(tip(Feet::Claws), 1.0);
+        assert_eq!(tip(Feet::Pads), 0.0, "a cat's claws are sheathed");
         let hoof = foot(Feet::Hooves);
-        assert_eq!(hoof.tint(Vec3::new(0.0, 0.5, 1.0) * hoof.pad), Some(HORN));
+        assert_eq!(hoof.horn(Vec3::new(0.0, 0.5, 1.0) * hoof.pad), 1.0);
         assert_eq!(
-            hoof.tint(Vec3::new(0.0, 1.5, 0.5) * hoof.pad),
-            None,
+            hoof.horn(Vec3::new(0.0, 1.5, 0.5) * hoof.pad),
+            0.0,
             "the pastern is coat"
         );
-        let coronet = hoof
-            .tint(Vec3::new(0.0, 0.88, 1.0) * hoof.pad)
-            .expect("horn, fading");
+        let coronet = hoof.horn(Vec3::new(0.0, 0.88, 1.0) * hoof.pad);
         assert!(
-            coronet.x > HORN.x && coronet.x < 1.0,
+            coronet > 0.0 && coronet < 1.0,
             "the coronet blends, at {coronet}"
         );
     }

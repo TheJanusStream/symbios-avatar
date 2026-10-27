@@ -161,9 +161,9 @@ pub use hair::{
 pub use hull::{HullError, MAX_HULL_POINTS, convex_hull};
 pub use mesh::{ManifoldReport, PolyMesh};
 pub use plan::{
-    Anatomy, Archetype, BeastFeet, BeastHead, BodyPlan, Category, CompositePriors, Composites,
-    Family, Feet, FootKind, HeadKind, Horn, HumanoidParams, Limb, Nose, Pupil, QuadrupedParams,
-    TrunkKind, Zone, ZoneSet,
+    Anatomy, Archetype, BeastFeet, BeastHead, BodyPlan, Category, Coat, CompositePriors,
+    Composites, Family, Feet, FootKind, HeadKind, Horn, HumanoidParams, Limb, Nose, Pupil,
+    QuadrupedParams, TrunkKind, Zone, ZoneSet,
 };
 pub use record::{AvatarRecord, GENERATOR_VERSION, LockSet, ProfileRecord, ShareCodeError};
 pub use rig::{

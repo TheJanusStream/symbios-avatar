@@ -39,12 +39,14 @@ pub const TONGUE_OUT: f32 = 0.7;
 /// its root into the palate, where nothing shows it.
 const TONGUE_PIVOT: f32 = 0.7;
 
-/// The colour the inside of the mouth is drawn in, over the skin it is
-/// painted with - the jaw's top and the palate alike: a mouth is blood over
-/// darkness, as `texture::skin` paints a person's.
+/// The colour the inside of the mouth is tinted - the jaw's top and the
+/// palate alike: a mouth is blood over darkness. Over flesh on the jaw, which
+/// carries its inside as a mouth channel the coat painter reads (#368), and
+/// over the coat on the palate, whose charts are the cheek's and the throat's.
 pub const INSIDE: Vec3 = Vec3::new(0.32, 0.12, 0.12);
 
-/// The tongue's colour, over the skin it is painted with.
+/// The tongue's colour, over the flesh the coat painter gives the whole
+/// tongue (#368).
 const TONGUE: Vec3 = Vec3::new(0.92, 0.48, 0.52);
 
 /// Facets round the jaw and the tongue.
@@ -76,6 +78,9 @@ pub struct Jaw {
     pub mesh: PolyMesh,
     /// The tongue, in its joint's local space: about [`Jaw::pivot`].
     pub tongue: PolyMesh,
+    /// How much of each of the jaw's vertices is the inside of the mouth:
+    /// `1` where the shut head hides it, `0` where it might show (#368).
+    pub inside: Vec<f32>,
     /// Where the jaw hinges, in the head joint's local space.
     pub hinge: Vec3,
     /// Where the tongue turns, in the head joint's local space.
@@ -107,16 +112,21 @@ impl Jaw {
         // The jaw's inside is what the head hides while the mouth is shut:
         // coloured as a mouth's well inside the head and inside the surface
         // actually built, skin wherever it might show.
-        let inside: Vec<Vec3> = jaw
+        let inside: Vec<f32> = jaw
             .positions
             .iter()
             .map(|&at| {
                 let hidden =
                     beast.distance(at) < -HIDDEN * beast.radius && body.contains(beast.body(at));
-                if hidden { INSIDE } else { Vec3::ONE }
+                if hidden { 1.0 } else { 0.0 }
             })
             .collect();
-        jaw.set_colours(inside);
+        jaw.set_colours(
+            inside
+                .iter()
+                .map(|&hidden| if hidden > 0.5 { INSIDE } else { Vec3::ONE })
+                .collect(),
+        );
         let mut tongue = swept(&beast.tongue, |_, radius, round| {
             Vec2::new(radius * round, radius * 0.35 * round)
         });
@@ -125,6 +135,7 @@ impl Jaw {
         Self {
             mesh: into_joint(jaw, beast.hinge),
             tongue: into_joint(tongue, pivot),
+            inside,
             hinge: beast.body(beast.hinge) - origin,
             pivot: beast.body(pivot) - origin,
             joint: None,
@@ -213,6 +224,13 @@ impl Jaw {
     /// Both meshes, the jaw first, for writing.
     pub fn meshes_mut(&mut self) -> impl Iterator<Item = &mut PolyMesh> {
         [&mut self.mesh, &mut self.tongue].into_iter()
+    }
+
+    /// Each mesh's mouth channel, in [`Self::parts`]' order: the jaw's
+    /// inside, and all of the tongue (#368).
+    #[must_use]
+    pub fn mouths(&self) -> [Vec<f32>; 2] {
+        [self.inside.clone(), vec![1.0; self.tongue.vertex_count()]]
     }
 }
 

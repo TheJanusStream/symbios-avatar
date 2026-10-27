@@ -324,7 +324,7 @@ fn declared_defaults_match_the_values_the_crate_writes() {
     // VALUE, and the two definitions carrying the most axes were exempt from it.
     // A default that drifts is invisible to every reader who omits the field and
     // to nobody else, which is the hardest kind of schema defect to notice.
-    let cases: [(&str, Value); 12] = [
+    let cases: [(&str, Value); 13] = [
         (
             // The identity anchor of the whole composite overhaul (#161): the
             // formulas are written so that THIS description reproduces the body
@@ -349,6 +349,12 @@ fn declared_defaults_match_the_values_the_crate_writes() {
         (
             "humanoid",
             serde_json::to_value(HumanoidParams::default()).expect("serialises"),
+        ),
+        // A beast's coat (#368): every locus has a default a reader that
+        // omits it builds, and the neutral coat is a warm fawn.
+        (
+            "quadrupedCoat",
+            serde_json::to_value(symbios_avatar::Coat::default()).expect("serialises"),
         ),
         // **The hair fragments, which is nineteen definitions arriving at once**
         // (#211). Only the FLAT ones are here: a tress and the hair block itself
@@ -594,7 +600,7 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
     // is exactly one Rust type's serialised shape and that is what makes the
     // comparison total rather than a spot check.
     let defs = lexicon("defs");
-    let cases: [(&str, Value); 20] = [
+    let cases: [(&str, Value); 21] = [
         (
             "composites",
             serde_json::to_value(symbios_avatar::Composites::default()).expect("serialises"),
@@ -626,6 +632,10 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
                 ..Default::default()
             })
             .expect("serialises"),
+        ),
+        (
+            "quadrupedCoat",
+            serde_json::to_value(symbios_avatar::Coat::default()).expect("serialises"),
         ),
         // The hair fragments, nested ones included: `field_names` reads the keys
         // of whatever serialises to an object, so a tress and the hair block are
@@ -699,6 +709,64 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
                  the wire"
             );
         }
+    }
+}
+
+#[test]
+fn every_stored_choice_is_declared_with_the_names_the_crate_writes() {
+    // A beast's family and parts (#366, #367) and its coat's loci (#368) go on
+    // the wire as names, and a name the lexicon does not list is a state no
+    // other reader knows to offer. Compared in full and in order: the order
+    // is the one a share code numbers them in.
+    use symbios_avatar::plan::{Agouti, Fantasy, Pattern, Pigment, White};
+    use symbios_avatar::{Family, Feet, Horn, Nose, Pupil};
+    fn written<T: Copy>(all: &[T], name: fn(T) -> &'static str) -> Vec<String> {
+        all.iter().map(|&choice| name(choice).to_owned()).collect()
+    }
+    let defs = lexicon("defs");
+    let declared = |fragment: &str, field: &str| -> Vec<String> {
+        defs["defs"][fragment]["properties"][field]["knownValues"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{fragment}#{field} declares no knownValues"))
+            .iter()
+            .map(|name| name.as_str().expect("a name").to_owned())
+            .collect()
+    };
+    let cases = [
+        ("quadruped", "family", written(&Family::ALL, Family::name)),
+        ("quadruped", "hybrid", written(&Family::ALL, Family::name)),
+        ("quadruped", "pupil", written(&Pupil::ALL, Pupil::name)),
+        ("quadruped", "nose", written(&Nose::ALL, Nose::name)),
+        ("quadruped", "feet", written(&Feet::ALL, Feet::name)),
+        ("quadruped", "horn", written(&Horn::ALL, Horn::name)),
+        (
+            "quadrupedCoat",
+            "pigment",
+            written(&Pigment::ALL, Pigment::name),
+        ),
+        (
+            "quadrupedCoat",
+            "agouti",
+            written(&Agouti::ALL, Agouti::name),
+        ),
+        (
+            "quadrupedCoat",
+            "pattern",
+            written(&Pattern::ALL, Pattern::name),
+        ),
+        ("quadrupedCoat", "white", written(&White::ALL, White::name)),
+        (
+            "quadrupedCoat",
+            "fantasy",
+            written(&Fantasy::ALL, Fantasy::name),
+        ),
+    ];
+    for (fragment, field, names) in cases {
+        assert_eq!(
+            declared(fragment, field),
+            names,
+            "{fragment}#{field} declares other names than the crate writes"
+        );
     }
 }
 

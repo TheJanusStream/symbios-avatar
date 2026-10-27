@@ -22,9 +22,73 @@
 //! multiples of the joint radius they must clear. The parameter sweep in
 //! `tests/plan.rs` walks the whole space and asserts every combination meshes.
 
+/// What every choice a plan stores by name shares (#366, #367, #368): its
+/// list, its name both ways, its share-code byte both ways, and its serde as
+/// the name. Each is a fieldless enum whose default is the plan's own, and a
+/// name or byte this build does not know reads as that default, so a record
+/// from a newer build keeps everything else whole.
+macro_rules! named {
+    ($kind:ident: $($variant:ident => $name:literal),+ $(,)?) => {
+        impl $kind {
+            /// Every choice, in the order their share-code bytes run.
+            pub const ALL: [$kind; named!(@count $($variant)+)] = [$($kind::$variant),+];
+
+            /// Its name, as written in a record.
+            #[must_use]
+            pub fn name(self) -> &'static str {
+                match self {
+                    $($kind::$variant => $name),+
+                }
+            }
+
+            /// The choice a record's name says, or the default for one this
+            /// build does not know.
+            #[must_use]
+            pub fn named(name: &str) -> Self {
+                Self::ALL
+                    .into_iter()
+                    .find(|choice| choice.name() == name)
+                    .unwrap_or_default()
+            }
+
+            /// Its byte on a share code.
+            fn code(self) -> u8 {
+                Self::ALL
+                    .iter()
+                    .position(|&choice| choice == self)
+                    .unwrap_or(0) as u8
+            }
+
+            /// The choice a share-code byte names, or the default for one
+            /// this build does not know.
+            fn from_code(code: u8) -> Self {
+                Self::ALL.get(code as usize).copied().unwrap_or_default()
+            }
+        }
+
+        impl Serialize for $kind {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(self.name())
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $kind {
+            fn deserialize<D: serde::Deserializer<'de>>(
+                deserializer: D,
+            ) -> Result<Self, D::Error> {
+                let name = String::deserialize(deserializer)?;
+                Ok(Self::named(&name))
+            }
+        }
+    };
+    (@count $($variant:ident)+) => { 0 $(+ named!(@one $variant))+ };
+    (@one $variant:ident) => { 1 };
+}
+
 mod anatomy;
 pub(crate) mod beast_foot;
 pub(crate) mod beast_head;
+mod coat;
 mod composites;
 pub(crate) mod derive;
 mod humanoid;
@@ -40,6 +104,7 @@ use crate::skeleton::Skeleton;
 pub use anatomy::{Anatomy, FootKind, HeadKind, TrunkKind};
 pub use beast_foot::BeastFeet;
 pub use beast_head::BeastHead;
+pub use coat::{Agouti, Coat, Fantasy, Pattern, Pigment, White};
 pub use composites::{
     AGE_PIVOT, AGE_RANGE, BODY_FAT_RANGE, CompositePriors, Composites, DEFAULT_AGE,
     DEFAULT_BODY_FAT,
@@ -363,6 +428,14 @@ pub trait BodyPlan: Sized {
     /// whether it reads the frame axis at all. See [`CompositePriors`].
     fn composite_priors(&self) -> CompositePriors;
 
+    /// The iris a re-roll paints at `shade`, a draw in `0..=1` (#368): a
+    /// person's pigment ramp unless the plan's own eyes are other - a cat's
+    /// amber and green, a horse's dark brown.
+    #[must_use]
+    fn iris(&self, shade: f32) -> [f32; 3] {
+        crate::face::eye::iris_pigment(shade)
+    }
+
     /// Builds the capsule graph this plan describes.
     ///
     /// The result is always meshable by [`crate::cage::build_cage`] for any
@@ -658,6 +731,16 @@ impl Archetype {
             Archetype::Humanoid(params) => params.composite_priors(),
             Archetype::Quadruped(params) => params.composite_priors(),
             Archetype::Unknown { .. } => CompositePriors::PERSON,
+        }
+    }
+
+    /// The iris a re-roll paints at `shade`: see [`BodyPlan::iris`].
+    #[must_use]
+    pub fn iris(&self, shade: f32) -> [f32; 3] {
+        match self {
+            Archetype::Humanoid(params) => params.iris(shade),
+            Archetype::Quadruped(params) => params.iris(shade),
+            Archetype::Unknown { .. } => crate::face::eye::iris_pigment(shade),
         }
     }
 

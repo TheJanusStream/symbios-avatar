@@ -549,7 +549,7 @@ impl AvatarRecord {
                     if anatomy.human_head() {
                         reroll_face(&mut self.face, &rolls);
                     }
-                    reroll_eyes(&mut self.eyes, &rolls);
+                    reroll_eyes(&mut self.eyes, &rolls, &self.archetype);
                 }
                 Category::Colouring => reroll_skin(&mut self.skin, &rolls),
                 Category::Hair if anatomy.human_head() => {
@@ -782,7 +782,7 @@ fn reroll_face(face: &mut FaceParams, rolls: &Rolls) {
 /// Split from [`reroll_face`] by #365 because every head has eyes and only
 /// a human skull has that face. The streams are the ones both always drew
 /// from, so a person's roll is what it was.
-fn reroll_eyes(eyes: &mut EyeParams, rolls: &Rolls) {
+fn reroll_eyes(eyes: &mut EyeParams, rolls: &Rolls, plan: &Archetype) {
     // The eyes draw Gaussian like every shape axis but stay inside the CLASSIC
     // range rather than the envelope: an eye is the one feature whose extremes
     // read as broken rather than stylised — a spacing past ±1 runs the iris
@@ -804,7 +804,9 @@ fn reroll_eyes(eyes: &mut EyeParams, rolls: &Rolls) {
     // constant iris (#229).
     let shade = rolls.range("eyes.shade", 0.0, 1.0).powi(2);
     let fade = rolls.range("eyes.fade", 0.10, 0.35);
-    let centre = crate::face::eye::iris_pigment(shade);
+    // Through the plan's own palette (#368): a person's ramp, or a beast's
+    // family's eyes.
+    let centre = plan.iris(shade);
     eyes.inner = centre;
     eyes.outer = centre.map(|channel| channel * (1.0 - fade));
     eyes.ring = eyes.outer.map(|channel| channel * 0.41);
@@ -2365,12 +2367,18 @@ mod tests {
         assert_eq!(beast.outfit, untouched.outfit, "a beast drew an outfit");
         assert_ne!(beast.eyes, untouched.eyes, "a beast's eyes were not rolled");
 
-        // The eyes are drawn from the streams a person's are, and a person
-        // still draws everything.
+        // The eyes are drawn from the streams a person's are - the same
+        // shape on the same seed - and painted from the beast's own palette
+        // (#368), not a person's ramp. A person still draws everything.
         let mut person = AvatarRecord::new("Person", Archetype::default());
         let blank = person.clone();
         person.reroll(11);
-        assert_eq!(beast.eyes, person.eyes);
+        let shape = |eyes: &EyeParams| (eyes.size, eyes.spacing, eyes.depth, eyes.aperture);
+        assert_eq!(shape(&beast.eyes), shape(&person.eyes));
+        assert_ne!(
+            beast.eyes.inner, person.eyes.inner,
+            "a beast's iris is its family's"
+        );
         assert_eq!(beast.skin, person.skin, "the complexion is every body's");
         assert_ne!(person.face, blank.face);
         assert_ne!(person.hair, blank.hair);

@@ -101,13 +101,18 @@ pub fn bake_geometry(mesh: &PolyMesh, uv: &UvUnwrap, size: u32) -> AtlasGeometry
 /// painted by the same complexion arithmetic as the cheek beside it, because by
 /// the time the painter runs there is no difference between them.
 ///
+/// Each part brings its own mouth channel, as `mouth` is the body's: one
+/// scalar a vertex, or empty for none. A beast's jaw and tongue are the parts
+/// that carry one (#368), because they are the inside of its mouth and a
+/// painter cannot tell them from the head they are sunk into by position.
+///
 /// Dilation happens once, at the end, over everything. Doing it per part would
 /// let one part's grown edge overwrite a neighbour's genuine texels.
 #[must_use]
 pub fn bake(
     mesh: &PolyMesh,
     uv: &UvUnwrap,
-    parts: &[(&PolyMesh, Zone)],
+    parts: &[(&PolyMesh, Zone, &[f32])],
     mouth: &[f32],
     size: u32,
 ) -> AtlasGeometry {
@@ -151,21 +156,29 @@ pub fn bake(
         }
     }
 
-    for &(part, zone) in parts {
-        draw_part(&mut geometry, part, zone);
+    for &(part, zone, mouth) in parts {
+        draw_part(&mut geometry, part, zone, mouth);
     }
 
     dilate(&mut geometry, DILATION);
     geometry
 }
 
-/// Rasterises one attached part, using the coordinates it carries.
-fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone) {
+/// Rasterises one attached part, using the coordinates it carries and its
+/// mouth channel, if it has one.
+fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone, mouth: &[f32]) {
     if part.uvs.len() != part.positions.len() {
         return;
     }
     let normals = part.shading_normals();
     let creases = part.crease();
+    let mouths = |vertex: u32| {
+        if mouth.len() == part.positions.len() {
+            mouth[vertex as usize]
+        } else {
+            0.0
+        }
+    };
     for face in &part.faces {
         for corner in 1..face.len().saturating_sub(1) {
             let triangle = [face[0], face[corner], face[corner + 1]];
@@ -176,7 +189,7 @@ fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone) {
                 triangle.map(|v| part.positions[v as usize]),
                 triangle.map(|v| normals[v as usize]),
                 triangle.map(|v| creases[v as usize]),
-                [0.0; 3],
+                triangle.map(mouths),
             );
         }
     }

@@ -44,7 +44,7 @@
 //! requested before the body is unwrapped, packed alongside its charts, and
 //! rasterised into the same geometry buffer. By the time the painter runs there
 //! is no difference between a nose and the cheek beside it, which is what lets
-//! one complexion cover an avatar.
+//! one complexion - or one coat (#368) - cover an avatar.
 //!
 //! One thing is still degenerate: eyelids. They are built after the atlas is
 //! packed — a blink is a pose on the four lid joints, and the lid
@@ -648,8 +648,10 @@ impl Avatar {
         // Baked in body space, which is where a painter wants them: a nose is
         // then painted by the same complexion arithmetic as the cheek beside it.
         let placed = attached_in_body(&rig, &features, &extremities, &eyes, &beast);
-        let borrowed: Vec<(&PolyMesh, Zone)> =
-            placed.iter().map(|(mesh, zone)| (mesh, *zone)).collect();
+        let borrowed: Vec<(&PolyMesh, Zone, &[f32])> = placed
+            .iter()
+            .map(|(mesh, zone, mouth)| (mesh, *zone, mouth.as_slice()))
+            .collect();
         // The mouth's interior, as a per-vertex scalar the painter can read:
         // nothing derivable from a position can tell the inside of a closed
         // fold from the lip a millimetre outside it, so the surgery's own
@@ -674,33 +676,22 @@ impl Avatar {
         // seams into skin that shows, where a person's pocket has a chart of
         // its own. The head's own skin only - the throat behind the jaw is
         // not refined, and a tint on a facet that large spreads out from
-        // under the jaw.
-        // And its nose's leather, its claws and its hooves, darker than the
-        // skin they grow from - P3's coat is where their own colours come
-        // from (#368).
+        // under the jaw. The nose's leather, the claws and the hooves are
+        // the coat's own business, painted from its loci (#368).
         let tint = match (&beast, &skeleton.beast_head) {
-            (Some(beast), Some(head)) => {
-                let feet = skeleton.beast_feet.map_or_else(
-                    || vec![None; body.vertex_count()],
-                    |feet| crate::extremity::beast::tint(&body, &rig, &feet),
-                );
-                beast
-                    .jaw
-                    .covers(&rig, &body, head.radius)
-                    .into_iter()
-                    .zip(&zones)
-                    .zip(&body.positions)
-                    .zip(feet)
-                    .map(|(((covered, &zone), &point), foot)| match zone {
-                        Zone::Head if covered => face::beast::jaw::INSIDE,
-                        Zone::Head if head.on_leather(head.local(point), 0.02 * head.radius) => {
-                            face::beast::LEATHER
-                        }
-                        Zone::Extremity(_) => foot.unwrap_or(Vec3::ONE),
-                        _ => Vec3::ONE,
-                    })
-                    .collect()
-            }
+            (Some(beast), Some(head)) => beast
+                .jaw
+                .covers(&rig, &body, head.radius)
+                .into_iter()
+                .zip(&zones)
+                .map(|(covered, &zone)| {
+                    if covered && zone == Zone::Head {
+                        face::beast::jaw::INSIDE
+                    } else {
+                        Vec3::ONE
+                    }
+                })
+                .collect(),
             _ => Vec::new(),
         };
         // The body's composition reaches the painter here, and #165 is where
@@ -727,13 +718,27 @@ impl Avatar {
             follicles,
             painted: &painted_hair,
         });
-        let painted = texture::paint_skin(
-            &geometry,
-            &rig,
-            &complexion,
-            &texture::Condition::of(&record.composites),
-            layer.as_ref(),
-        );
+        // A beast wears a coat painted from its loci (#368), a person a skin
+        // painted from its complexion.
+        let painted = match &record.archetype {
+            crate::plan::Archetype::Quadruped(params) => texture::coat::paint_coat(
+                &geometry,
+                &rig,
+                &params.coat,
+                &texture::coat::CoatBody::of(
+                    &rig,
+                    skeleton.beast_head.as_ref(),
+                    skeleton.beast_feet.as_ref(),
+                ),
+            ),
+            _ => texture::paint_skin(
+                &geometry,
+                &rig,
+                &complexion,
+                &texture::Condition::of(&record.composites),
+                layer.as_ref(),
+            ),
+        };
 
         // **Grown from the record, region by region** (#202), where the
         // follicles above were measured: on a human head, and only on one
@@ -1308,7 +1313,8 @@ fn place_charts(
     }
 }
 
-/// Every attached part, moved into body space so a painter can reach it.
+/// Every attached part, moved into body space so a painter can reach it,
+/// with its mouth channel: empty but for a beast's jaw and tongue (#368).
 ///
 /// The parts are built in their joint's local space, which is what lets a
 /// renderer parent them; a texel, though, has to say where on the *body* it
@@ -1319,12 +1325,12 @@ fn attached_in_body(
     extremities: &Extremities,
     eyes: &Option<Eyes>,
     beast: &Option<face::beast::BeastFace>,
-) -> Vec<(PolyMesh, Zone)> {
+) -> Vec<(PolyMesh, Zone, Vec<f32>)> {
     let mut placed = Vec::new();
     if let Some(face) = features {
         let to_body = Mat4::from_translation(rig.joints[face.head].position);
         for mesh in face.meshes() {
-            placed.push((mesh.transformed(to_body), Zone::Head));
+            placed.push((mesh.transformed(to_body), Zone::Head, Vec::new()));
         }
     }
     if let Some(eyes) = eyes {
@@ -1334,17 +1340,24 @@ fn attached_in_body(
         // and at rest a lid joint and the head agree about that anyway.
         let to_body = Mat4::from_translation(rig.joints[eyes.head].position);
         for (mesh, _) in eyes.lids() {
-            placed.push((mesh.transformed(to_body), Zone::Head));
+            placed.push((mesh.transformed(to_body), Zone::Head, Vec::new()));
         }
     }
     for part in extremities.all() {
         let to_body = Mat4::from_translation(rig.joints[part.joint].position);
-        placed.push((part.mesh.transformed(to_body), Zone::Extremity(part.limb)));
+        placed.push((
+            part.mesh.transformed(to_body),
+            Zone::Extremity(part.limb),
+            Vec::new(),
+        ));
     }
-    // A beast's parts about their own joints (#367).
-    for (mesh, joint) in beast.iter().flat_map(face::beast::BeastFace::parts) {
-        let to_body = Mat4::from_translation(rig.joints[joint].position);
-        placed.push((mesh.transformed(to_body), Zone::Head));
+    // A beast's parts about their own joints (#367), the jaw and the tongue
+    // with the inside of the mouth marked (#368).
+    if let Some(beast) = beast {
+        for ((mesh, joint), mouth) in beast.parts().zip(beast.mouths()) {
+            let to_body = Mat4::from_translation(rig.joints[joint].position);
+            placed.push((mesh.transformed(to_body), Zone::Head, mouth));
+        }
     }
     placed
 }

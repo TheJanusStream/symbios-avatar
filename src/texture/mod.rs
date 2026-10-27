@@ -5,6 +5,10 @@
 //! [`paint_skin`] then runs as a pure function of one texel's sample, which is
 //! what keeps a procedural complexion tractable to write and to test.
 //!
+//! A quadruped's atlas is painted from its coat instead (#368): the same baked
+//! texels and the same three maps, the colours derived from the coat's loci
+//! rather than from a complexion.
+//!
 //! Output is a [`symbios_texture::generator::TextureMap`] — the same container
 //! every other symbios generator produces — so an avatar's skin travels through
 //! the ecosystem's existing image-conversion and upload path unchanged.
@@ -38,6 +42,7 @@
 #[cfg(feature = "serde-avatar")]
 pub mod atlas_serde;
 pub mod bake;
+pub(crate) mod coat;
 pub mod skin;
 
 pub use bake::{AtlasGeometry, DILATION, Texel, bake, bake_geometry};

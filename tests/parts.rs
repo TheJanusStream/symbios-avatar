@@ -594,8 +594,11 @@ fn the_painter_covers_the_parts_as_well_as_the_body() {
             symbios_avatar::Zone::Extremity(part.limb),
         ));
     }
-    let borrowed: Vec<(&PolyMesh, symbios_avatar::Zone)> =
-        placed.iter().map(|(mesh, zone)| (mesh, *zone)).collect();
+    // No mouth channel on any of them: a person's parts are all outside.
+    let borrowed: Vec<(&PolyMesh, symbios_avatar::Zone, &[f32])> = placed
+        .iter()
+        .map(|(mesh, zone)| (mesh, *zone, &[][..]))
+        .collect();
 
     // The same charts either way, so the only difference is the parts.
     let bare = texture::bake(&parts.body, &parts.unwrap, &[], &[], 256);

@@ -216,7 +216,14 @@ Still ahead, in rough order:
   hinged jaw and tongue are parts of their own; the nose is a leather pad or
   a soft muzzle; whiskers and an optional horn are drawn with the eyes; and
   each foot is shaped onto a paw on four toes, its claws showing or sheathed,
-  or a hoof.
+  or a hoof. The fourth (#368) gives it a coat: recorded as coat-genetics
+  loci (the pigment, dilution, the agouti locus, a pattern, a colourpoint,
+  white spotting, merle, roan, dun, tortoiseshell, an intensity, a rare
+  unnatural palette, and the seed its marks are laid out from), rolled with
+  each family's own frequencies, and painted from them in place of the
+  complexion, every mark placed by the beast's anatomy and cut from
+  body-space fields; the bare parts follow the pigment, and each family
+  draws its own eyes.
 - **Creator UX** — seed-lock editor, share-code flow, staged preview, spanning
   both crates.
 
