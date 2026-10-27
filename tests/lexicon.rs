@@ -268,6 +268,31 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
         );
     }
 
+    // A beast's fur's lengths (#369) and its coat's intensity (#368): the
+    // envelope over each one's own conservative range.
+    let quadruped = |fragment: &str, field: &str| -> (Option<i64>, Option<i64>) {
+        let axis = &defs["defs"][fragment]["properties"][field];
+        (axis["minimum"].as_i64(), axis["maximum"].as_i64())
+    };
+    let thousandths = |range: (f32, f32)| {
+        (
+            Some((range.0 * 1000.0).round() as i64),
+            Some((range.1 * 1000.0).round() as i64),
+        )
+    };
+    for zone in ["mane", "ruff", "tail", "feathering", "tufts"] {
+        assert_eq!(
+            quadruped("quadrupedFur", zone),
+            thousandths(symbios_avatar::plan::explore_range(0.0, (0.0, 1.0))),
+            "the declared bounds on fur's {zone} disagree with the crate"
+        );
+    }
+    assert_eq!(
+        quadruped("quadrupedCoat", "intensity"),
+        thousandths(symbios_avatar::plan::explore_range(0.0, (-1.0, 1.0))),
+        "the declared bounds on a coat's intensity disagree with the crate"
+    );
+
     // The composites (#162), whose two kinds of axis are bounded two different
     // ways and so are the easiest place in the schema for a bound to drift. The
     // shape pair carry the exploration envelope like every other shape axis;
@@ -324,7 +349,7 @@ fn declared_defaults_match_the_values_the_crate_writes() {
     // VALUE, and the two definitions carrying the most axes were exempt from it.
     // A default that drifts is invisible to every reader who omits the field and
     // to nobody else, which is the hardest kind of schema defect to notice.
-    let cases: [(&str, Value); 13] = [
+    let cases: [(&str, Value); 14] = [
         (
             // The identity anchor of the whole composite overhaul (#161): the
             // formulas are written so that THIS description reproduces the body
@@ -355,6 +380,12 @@ fn declared_defaults_match_the_values_the_crate_writes() {
         (
             "quadrupedCoat",
             serde_json::to_value(symbios_avatar::Coat::default()).expect("serialises"),
+        ),
+        // A beast's fur (#369): none anywhere, which a reader that omits it
+        // draws.
+        (
+            "quadrupedFur",
+            serde_json::to_value(symbios_avatar::Fur::default()).expect("serialises"),
         ),
         // **The hair fragments, which is nineteen definitions arriving at once**
         // (#211). Only the FLAT ones are here: a tress and the hair block itself
@@ -600,7 +631,7 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
     // is exactly one Rust type's serialised shape and that is what makes the
     // comparison total rather than a spot check.
     let defs = lexicon("defs");
-    let cases: [(&str, Value); 21] = [
+    let cases: [(&str, Value); 22] = [
         (
             "composites",
             serde_json::to_value(symbios_avatar::Composites::default()).expect("serialises"),
@@ -636,6 +667,10 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
         (
             "quadrupedCoat",
             serde_json::to_value(symbios_avatar::Coat::default()).expect("serialises"),
+        ),
+        (
+            "quadrupedFur",
+            serde_json::to_value(symbios_avatar::Fur::default()).expect("serialises"),
         ),
         // The hair fragments, nested ones included: `field_names` reads the keys
         // of whatever serialises to an object, so a tress and the hair block are

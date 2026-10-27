@@ -317,6 +317,11 @@
           "type": "ref",
           "ref": "network.symbios.avatar.defs#quadrupedCoat",
           "description": "What colour the fur is and how it is marked (#368)."
+        },
+        "fur": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedFur",
+          "description": "How long its fur grows, and where (#369)."
         }
       }
     },
@@ -429,6 +434,47 @@
           "description": "The seed the coat's spots, stripes and patches are laid out from, so its marks survive the wire and can be thrown again on their own.",
           "minimum": 0,
           "maximum": 65535,
+          "default": 0
+        }
+      }
+    },
+    "quadrupedFur": {
+      "type": "object",
+      "description": "How long a quadruped's fur grows where a beast grows long hair (#369): each zone a length, none at 0, as a share of the zone's own full length, which scales with the body. Everywhere else the coat is painted. A reader that knows nothing of fur draws the beast bald, which is what an absent field means.",
+      "properties": {
+        "mane": {
+          "type": "integer",
+          "description": "A mane down the neck's crest, and a forelock between the ears. Thousandths, 0 to 3000: 1000 is long, and past it the exploration envelope (#160) runs on; readers clamp to these bounds and every combination still builds.",
+          "minimum": 0,
+          "maximum": 3000,
+          "default": 0
+        },
+        "ruff": {
+          "type": "integer",
+          "description": "A ruff round the neck and over the chest's front. Thousandths, 0 to 3000: 1000 is long, and past it the exploration envelope (#160) runs on; readers clamp to these bounds and every combination still builds.",
+          "minimum": 0,
+          "maximum": 3000,
+          "default": 0
+        },
+        "tail": {
+          "type": "integer",
+          "description": "A brush along the tail: short fur fluffs, long hair hangs. Thousandths, 0 to 3000: 1000 is long, and past it the exploration envelope (#160) runs on; readers clamp to these bounds and every combination still builds.",
+          "minimum": 0,
+          "maximum": 3000,
+          "default": 0
+        },
+        "feathering": {
+          "type": "integer",
+          "description": "Feathering down the back of the fetlocks. Thousandths, 0 to 3000: 1000 is long, and past it the exploration envelope (#160) runs on; readers clamp to these bounds and every combination still builds.",
+          "minimum": 0,
+          "maximum": 3000,
+          "default": 0
+        },
+        "tufts": {
+          "type": "integer",
+          "description": "Tufts at the ears' tips. Thousandths, 0 to 3000: 1000 is long, and past it the exploration envelope (#160) runs on; readers clamp to these bounds and every combination still builds.",
+          "minimum": 0,
+          "maximum": 3000,
           "default": 0
         }
       }

@@ -410,38 +410,72 @@ fn every_quadruped_roll_fits_the_webgl2_budget() {
         .collect();
     // Every axis to one end of its envelope at once - sanitize clamps a value
     // past the end onto it - at the shortest and the tallest back the plan
-    // takes: what a record can ask for and a timid roll does not draw.
+    // takes: what a record can ask for and a timid roll does not draw. Per
+    // family, with its own parts, the head's axes and a horn too, and every
+    // zone of fur at its end at BOTH ends (#369): fur is a length, and a low
+    // body with long fur was the dearest corner the sweep never built - a
+    // horse with every axis low at 4.24 m and full fur, 26,540 against the
+    // 24,618 the high corners reached.
+    use symbios_avatar::{Feet, Fur, Horn, Nose, Pupil};
     let (short, tall) = QuadrupedParams::height_envelope();
-    for (name, end) in [("low", -10.0f32), ("high", 10.0)] {
-        for height in [short, tall] {
-            let mut record = AvatarRecord::new(
-                "Beast",
-                Archetype::Quadruped(QuadrupedParams {
-                    height,
-                    body_length: end,
-                    leg_length: end,
-                    neck_length: end,
-                    head_size: end,
-                    tail_length: end,
-                    muzzle_length: end,
-                    stance: end,
-                    neck_carriage: end,
-                    tail_carriage: end,
-                    chest_depth: end,
-                    appeal: end,
-                    ..Default::default()
-                }),
-            );
-            // And the composites a beast reads to the same end (#178): the
-            // girth `build` and `muscle` carried before they retired.
-            record.composites.mass = end;
-            record.composites.body_fat = end;
-            record.composites.age = if end > 0.0 { 80 } else { 18 };
-            record.sanitize();
-            bodies.push((format!("every axis {name} at {height:.2} m"), record));
+    for family in symbios_avatar::Family::ALL {
+        for (name, end) in [("low", -10.0f32), ("high", 10.0)] {
+            for height in [short, tall] {
+                let mut record = AvatarRecord::new(
+                    "Beast",
+                    Archetype::Quadruped(QuadrupedParams {
+                        family,
+                        feet: Feet::of(family),
+                        nose: Nose::of(family),
+                        pupil: Pupil::of(family),
+                        horn: Horn::Unicorn,
+                        height,
+                        body_length: end,
+                        leg_length: end,
+                        neck_length: end,
+                        head_size: end,
+                        tail_length: end,
+                        muzzle_length: end,
+                        stance: end,
+                        neck_carriage: end,
+                        tail_carriage: end,
+                        chest_depth: end,
+                        appeal: end,
+                        muzzle_breadth: end,
+                        stop: end,
+                        eye_set: end,
+                        ear_size: end,
+                        ear_point: end,
+                        ear_carriage: end,
+                        whiskers: end,
+                        fur: Fur {
+                            mane: 10.0,
+                            ruff: 10.0,
+                            tail: 10.0,
+                            feathering: 10.0,
+                            tufts: 10.0,
+                        },
+                        ..Default::default()
+                    }),
+                );
+                // And the composites a beast reads to the same end (#178): the
+                // girth `build` and `muscle` carried before they retired.
+                record.composites.mass = end;
+                record.composites.body_fat = end;
+                record.composites.age = if end > 0.0 { 80 } else { 18 };
+                record.sanitize();
+                bodies.push((
+                    format!("{} every axis {name} at {height:.2} m", family.name()),
+                    record,
+                ));
+            }
         }
     }
     let mut worst = (String::new(), 0);
+    // And each body bald (#369): the fur's ceiling is what that leaves, and
+    // re-measured here rather than trusted - a ceiling read off a docstring
+    // goes stale the day the body's own cost moves.
+    let mut bald = (String::new(), 0);
     for (at, record) in &bodies {
         let avatar = Avatar::build(record).unwrap_or_else(|| panic!("{at} does not build"));
         if avatar.budget.tris > worst.1 {
@@ -452,13 +486,29 @@ fn every_quadruped_roll_fits_the_webgl2_budget() {
             "{at} costs {} draws",
             avatar.budget.meshes
         );
+        let mut shorn = record.clone();
+        if let Archetype::Quadruped(params) = &mut shorn.archetype {
+            params.fur = symbios_avatar::Fur::default();
+        }
+        let shorn = Avatar::build(&shorn).unwrap_or_else(|| panic!("{at} bald does not build"));
+        if shorn.budget.tris > bald.1 {
+            bald = (at.clone(), shorn.budget.tris);
+        }
     }
     println!("dearest quadruped: {} at {}", worst.1, worst.0);
+    println!("dearest bald quadruped: {} at {}", bald.1, bald.0);
     assert!(
         worst.1 <= TRIANGLE_TARGET,
         "{} costs {} triangles",
         worst.0,
         worst.1
+    );
+    assert!(
+        bald.1 + symbios_avatar::hair::fur::MAX_TRIANGLES <= TRIANGLE_TARGET,
+        "{} bald costs {} triangles, and fur's ceiling of {} on it is past the target",
+        bald.0,
+        bald.1,
+        symbios_avatar::hair::fur::MAX_TRIANGLES
     );
 }
 

@@ -15,7 +15,7 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::derive::quadruped::Dimensions;
-use super::{Anatomy, Coat, CompositePriors, Composites, DEFAULT_BODY_FAT, Limb, Zone};
+use super::{Anatomy, Coat, CompositePriors, Composites, DEFAULT_BODY_FAT, Fur, Limb, Zone};
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
     take_span, take_unit,
@@ -287,6 +287,9 @@ pub struct QuadrupedParams {
     pub horn: Horn,
     /// What colour its fur is and how it is marked (#368). See [`Coat`].
     pub coat: Coat,
+    /// How long its fur grows where a beast grows long hair (#369). See
+    /// [`Fur`].
+    pub fur: Fur,
 }
 
 /// Whether a record writes no horn: the default, left off the wire.
@@ -540,6 +543,7 @@ impl Default for QuadrupedParams {
             whiskers: 0.0,
             horn: Horn::None,
             coat: Coat::default(),
+            fur: Fur::default(),
         }
     }
 }
@@ -707,6 +711,7 @@ impl BodyPlan for QuadrupedParams {
         // stays a cross: it is centred on one family with the wider spread of
         // two, which is a state an editor's slider passes through.)
         self.coat.sanitize();
+        self.fur.sanitize();
         if self.hybrid == Some(self.family) {
             self.hybrid = None;
         }
@@ -871,9 +876,13 @@ impl BodyPlan for QuadrupedParams {
                 self.coat
                     .reroll(rolls, self.family, self.hybrid, self.blend);
             }
-            // Nothing on this plan is a hair, an age or a garment (#53,
-            // #358).
-            Category::Hair | Category::Age | Category::Outfit => {}
+            // Its fur (#369): on a beast the hair lock is the fur lock, and
+            // a cross's odds are mixed by its blend as its coat's are.
+            Category::Hair => {
+                self.fur.reroll(rolls, self.family, self.hybrid, self.blend);
+            }
+            // Nothing on this plan is an age or a garment (#53, #358).
+            Category::Age | Category::Outfit => {}
         }
     }
 
@@ -911,6 +920,7 @@ impl BodyPlan for QuadrupedParams {
         put_span(out, self.whiskers, signed_envelope());
         out.push(self.horn.code());
         self.coat.encode(out);
+        self.fur.encode(out);
     }
 
     fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
@@ -945,6 +955,7 @@ impl BodyPlan for QuadrupedParams {
         params.whiskers = take_span(bytes, signed_envelope())?;
         params.horn = Horn::from_code(take_byte(bytes)?);
         params.coat = Coat::decode(bytes)?;
+        params.fur = Fur::decode(bytes)?;
         params.sanitize();
         Ok(params)
     }

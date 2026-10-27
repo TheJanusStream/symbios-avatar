@@ -358,7 +358,7 @@ pub fn meridians(
 /// Fanned from the first corner and drawn over the fan by area, so a face that
 /// subdivision left as a long thin quad is sampled evenly rather than favouring
 /// whichever triangle came first.
-fn inside(
+pub(in crate::hair) fn inside(
     mesh: &PolyMesh,
     normals: &[Vec3],
     weights: &SkinWeights,
@@ -420,7 +420,7 @@ fn triangle_area(mesh: &PolyMesh, corners: &[u32], step: usize) -> f32 {
 }
 
 /// A whole face's area.
-fn area_of(mesh: &PolyMesh, face: usize) -> f32 {
+pub(in crate::hair) fn area_of(mesh: &PolyMesh, face: usize) -> f32 {
     let corners = &mesh.faces[face];
     (0..corners.len() - 2)
         .map(|step| triangle_area(mesh, corners, step))

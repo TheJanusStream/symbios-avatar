@@ -28,9 +28,12 @@ use crate::texture::SkinParams;
 /// while 10 is unpublished, the head's (#367): the spans `muzzleBreadth`,
 /// `stop` and `eyeSet`, the `pupil` byte, the spans `earSize`, `earPoint`
 /// and `earCarriage`, the `nose` and `feet` bytes, the `whiskers` span and the
-/// `horn` byte. A family or part byte this build does not know reads as the
-/// part's default - a dog, round pupils, leather, clawed paws, no horn - as
-/// an unknown name does on a record. Version 9 stays readable through `PRE_FAMILIES_VERSION` (private,
+/// `horn` byte; then the coat's six bytes (#368) - its loci packed into
+/// three, the `intensity` span and the two of its `marks` seed - and the
+/// fur's five spans (#369): `mane`, `ruff`, `tail`, `feathering`, `tufts`. A
+/// family, part or locus code this build does not know reads as its default -
+/// a dog, round pupils, leather, clawed paws, no horn, the default coat's
+/// locus - as an unknown name does on a record. Version 9 stays readable through `PRE_FAMILIES_VERSION` (private,
 /// below): its `build` and `muscle` are read and dropped, and a code minted
 /// before the families meant the plan's neutral dog, which is what every
 /// default of the appended bytes says. The humanoid payload does not move.

@@ -223,7 +223,12 @@ Still ahead, in rough order:
   each family's own frequencies, and painted from them in place of the
   complexion, every mark placed by the beast's anatomy and cut from
   body-space fields; the bare parts follow the pigment, and each family
-  draws its own eyes.
+  draws its own eyes. The fifth (#369) gives it fur where a beast grows long
+  hair - a mane and forelock, a ruff, a brush along the tail, feathering at
+  the fetlocks, tufts at the ears' tips - as five lengths on the record, grown
+  by the hair system's own cards on the body's zones, coloured from the coat
+  at each card's root and bound as the skin it grows from, in the hair's draw
+  under a ceiling of its own.
 - **Creator UX** — seed-lock editor, share-code flow, staged preview, spanning
   both crates.
 

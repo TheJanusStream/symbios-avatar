@@ -56,7 +56,7 @@ use crate::mesh::{PolyMesh, VertexSkin};
 /// see.
 ///
 /// Provenance: **derived** from the render's own resolution.
-const FLATNESS: f32 = 0.001;
+pub(super) const FLATNESS: f32 = 0.001;
 
 /// How far a turning card's width may turn between two stations, in radians,
 /// where the card asks the sampler to follow it (see [`Shape::turns`]).
@@ -99,13 +99,17 @@ const BEVEL: f32 = 0.87;
 
 /// Sweeps one clump and appends it to `into`, gradient and all.
 ///
+/// `head` is the joint a clump is handed over to as it leaves the skin, or
+/// `None` for one that keeps its root's binding all the way down: a beast's
+/// fur, which rides the neck, the tail or the leg it grows on (#369).
+///
 /// Returns how many stations it spent, which is what the caller's triangle
 /// accounting is built from.
-pub(super) fn loft(
+pub(in crate::hair) fn loft(
     into: &mut PolyMesh,
     root: &Root,
     shape: &dyn Shape,
-    head: u16,
+    head: Option<u16>,
     roots_colour: Vec3,
     tips_colour: Vec3,
 ) -> usize {
@@ -251,7 +255,10 @@ pub(super) fn loft(
                 // It is a no-op wherever the skin is already the head's, which is
                 // the scalp, the brows and the upper lip — three of the five regions
                 // move not at all.
-                into.skin.push(handed_over(root.skin, head, *along));
+                into.skin.push(match head {
+                    Some(head) => handed_over(root.skin, head, *along),
+                    None => root.skin,
+                });
             }
         }
     }
@@ -362,6 +369,7 @@ pub(super) fn lump(into: &mut PolyMesh, lump: &super::Lump, head: u16, colour: V
 /// gradient are both functions of how far along the curve a station is and the
 /// index is not that (see the two call sites).
 fn sample(root: &Root, shape: &dyn Shape) -> (Vec<f32>, Vec<Vec3>) {
+    let flatness = shape.flatness();
     let mut fractions: Vec<f32> = (0..LEAST)
         .map(|station| station as f32 / (LEAST - 1) as f32)
         .collect();
@@ -375,7 +383,7 @@ fn sample(root: &Root, shape: &dyn Shape) -> (Vec<f32>, Vec<Vec3>) {
         let two = shape.across_at(root, to).normalize_or(Vec3::ZERO);
         let angle = one.dot(two).clamp(-1.0, 1.0).acos();
         if angle > TURN {
-            FLATNESS * angle / TURN
+            flatness * angle / TURN
         } else {
             0.0
         }
@@ -395,7 +403,7 @@ fn sample(root: &Root, shape: &dyn Shape) -> (Vec<f32>, Vec<Vec3>) {
                 worst = (strays, gap);
             }
         }
-        if worst.0 <= FLATNESS {
+        if worst.0 <= flatness {
             break;
         }
         let gap = worst.1;

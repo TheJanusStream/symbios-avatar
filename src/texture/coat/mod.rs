@@ -150,6 +150,74 @@ pub(crate) fn paint_coat(
     }
 }
 
+/// The coat asked at one point of the body rather than over an atlas
+/// (#369): what colour the fur growing there is.
+pub(crate) struct CoatSampler<'a> {
+    coat: &'a Coat,
+    body: &'a CoatBody,
+    palette: Palette,
+    fields: Fields,
+}
+
+impl<'a> CoatSampler<'a> {
+    /// The coat `coat` on the body `body`, ready to be asked.
+    pub(crate) fn new(coat: &'a Coat, body: &'a CoatBody) -> Self {
+        Self {
+            coat,
+            body,
+            palette: Palette::of(coat),
+            fields: Fields::new(coat.marks, body.height),
+        }
+    }
+
+    /// The coat's colour at `at`, on a surface facing along `normal` in
+    /// `zone`, every locus applied as the painter applies it.
+    pub(crate) fn colour(&self, at: Vec3, normal: Vec3, zone: Zone) -> Vec3 {
+        self.ask(at, normal, zone, |painter| painter.fur())
+    }
+
+    /// The colour of a mane's or a tail's long hair rooted at `at`: the
+    /// coat's own there, or its dark on a coat that darkens its points -
+    /// a bay's, a dun's - and white where white spotting reaches.
+    pub(crate) fn points(&self, at: Vec3, normal: Vec3, zone: Zone) -> Vec3 {
+        if self.coat.agouti == Agouti::Bay || self.coat.dun {
+            let white = self.ask(at, normal, zone, |painter| painter.white());
+            self.palette.dark.lerp(WHITE, white)
+        } else {
+            self.colour(at, normal, zone)
+        }
+    }
+
+    /// The coat's dark: a lynx's ear tips, whatever the coat round them.
+    pub(crate) fn dark(&self) -> Vec3 {
+        self.palette.dark
+    }
+
+    /// What `question` makes of a texel standing at `at`.
+    fn ask<R>(
+        &self,
+        at: Vec3,
+        normal: Vec3,
+        zone: Zone,
+        question: impl FnOnce(&Painter) -> R,
+    ) -> R {
+        let texel = Texel {
+            position: at,
+            normal,
+            crease: 0.0,
+            mouth: 0.0,
+            zone,
+        };
+        question(&Painter {
+            texel: &texel,
+            coat: self.coat,
+            palette: &self.palette,
+            fields: &self.fields,
+            body: self.body,
+        })
+    }
+}
+
 /// One texel and everything its colour is read from.
 struct Painter<'a> {
     texel: &'a Texel,

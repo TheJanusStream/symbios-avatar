@@ -1,4 +1,9 @@
-//! Hair, in two layers over five follicle regions.
+//! Hair, in two layers over five follicle regions - and a beast's fur.
+//!
+//! A beast grows the grown layer on its body's own zones instead of a
+//! measured head's: a mane, a ruff, a brush, feathering and ear tufts, from
+//! [`fur`], on this module's own cards and loft (#369). Everything below is a
+//! person's head.
 //!
 //! Hair is the single strongest signal of who a character is — more than the
 //! face, at the distances a game is actually played from, because it is the
@@ -78,6 +83,7 @@
 
 pub mod clump;
 pub mod follicle;
+pub mod fur;
 pub mod mask;
 pub mod painted;
 pub mod shell;

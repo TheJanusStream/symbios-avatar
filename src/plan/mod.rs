@@ -91,6 +91,7 @@ pub(crate) mod beast_head;
 mod coat;
 mod composites;
 pub(crate) mod derive;
+mod fur;
 mod humanoid;
 mod quadruped;
 mod zone;
@@ -109,6 +110,7 @@ pub use composites::{
     AGE_PIVOT, AGE_RANGE, BODY_FAT_RANGE, CompositePriors, Composites, DEFAULT_AGE,
     DEFAULT_BODY_FAT,
 };
+pub use fur::Fur;
 pub use humanoid::HumanoidParams;
 pub use quadruped::{Family, Feet, Horn, Nose, Pupil, QuadrupedParams};
 pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};

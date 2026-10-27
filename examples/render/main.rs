@@ -3008,6 +3008,27 @@ fn items<'a>(
     items
 }
 
+/// Where a beast's fur grows and how long, for a gallery's list of tiles
+/// (#369).
+fn fur_words(fur: &symbios_avatar::Fur) -> String {
+    let zones: Vec<String> = [
+        ("mane", fur.mane),
+        ("ruff", fur.ruff),
+        ("tail", fur.tail),
+        ("feathering", fur.feathering),
+        ("tufts", fur.tufts),
+    ]
+    .into_iter()
+    .filter(|(_, length)| *length > 0.0)
+    .map(|(zone, length)| format!("{zone} {length:.2}"))
+    .collect();
+    if zones.is_empty() {
+        "no fur".to_string()
+    } else {
+        format!("fur {}", zones.join(", "))
+    }
+}
+
 /// A coat's loci in a breeder's words, for a gallery's list of tiles (#368).
 fn coat_words(coat: &symbios_avatar::Coat) -> String {
     use symbios_avatar::plan::{Fantasy, Pattern, White};
@@ -3097,7 +3118,11 @@ fn gallery(
                     ),
                     None => params.family.name().to_string(),
                 };
-                format!("{family}: {}", coat_words(&params.coat))
+                format!(
+                    "{family}: {}; {}",
+                    coat_words(&params.coat),
+                    fur_words(&params.fur)
+                )
             }
             other => other.name().to_string(),
         };

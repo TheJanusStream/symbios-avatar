@@ -103,19 +103,7 @@ fn jitter(cell: Vec3, seed: u32) -> Vec3 {
     Vec3::new(unit(0), unit(10), unit(20)) * 0.8 + Vec3::splat(0.1)
 }
 
-/// A smooth step of `at` from nothing at `from` to all of it at `to`,
-/// clamped: rising when `to` is the higher, falling when it is the lower.
-pub(super) fn step(from: f32, to: f32, at: f32) -> f32 {
-    let span = to - from;
-    if span.abs() < f32::EPSILON {
-        return if (at - from) * span.signum() >= 0.0 {
-            1.0
-        } else {
-            0.0
-        };
-    }
-    crate::face::smooth((at - from) / span)
-}
+pub(super) use crate::face::step;
 
 #[cfg(test)]
 mod tests {

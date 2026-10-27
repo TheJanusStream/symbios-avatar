@@ -220,6 +220,17 @@ pub trait Shape {
         false
     }
 
+    /// How far a clump's drawn spine may stray from its curve, in metres.
+    ///
+    /// The default is a millimetre, under what the render resolves at the
+    /// framing a head is judged at. A beast's fur answers by its body's size
+    /// (#369): a horse's tail is judged at the framing a horse is, where a
+    /// millimetre is a third of a pixel and a long hanging card spent thirty
+    /// triangles drawing what eight would.
+    fn flatness(&self) -> f32 {
+        loft::FLATNESS
+    }
+
     /// A closed sculpted solid this style draws once beside its clumps, if it
     /// has one.
     ///
@@ -658,7 +669,7 @@ impl Growth {
                 &mut self.mesh,
                 root,
                 sowing.shape,
-                self.head as u16,
+                Some(self.head as u16),
                 sowing.roots,
                 sowing.tips,
             ) > 0
@@ -1010,7 +1021,7 @@ mod tests {
                     &mut one,
                     root,
                     sown.shape.as_ref(),
-                    grounds.follicles.head as u16,
+                    Some(grounds.follicles.head as u16),
                     Vec3::ONE,
                     Vec3::ONE,
                 ) == 0

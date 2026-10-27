@@ -236,6 +236,10 @@ pub struct Parts {
     /// [`crate::hair::clump::grow_tiers`].
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub far_hair: Option<Growth>,
+    /// Its fur, if it is a beast that grows any (#369): in body space, drawn
+    /// in the hair's draw.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
+    pub fur: Option<crate::hair::fur::FurGrowth>,
     /// Its hands and feet.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub extremities: Extremities,
@@ -720,17 +724,18 @@ impl Avatar {
         });
         // A beast wears a coat painted from its loci (#368), a person a skin
         // painted from its complexion.
-        let painted = match &record.archetype {
-            crate::plan::Archetype::Quadruped(params) => texture::coat::paint_coat(
-                &geometry,
+        // The body a beast's coat and fur read (#368, #369).
+        let anatomy = matches!(record.archetype, crate::plan::Archetype::Quadruped(_)).then(|| {
+            texture::coat::CoatBody::of(
                 &rig,
-                &params.coat,
-                &texture::coat::CoatBody::of(
-                    &rig,
-                    skeleton.beast_head.as_ref(),
-                    skeleton.beast_feet.as_ref(),
-                ),
-            ),
+                skeleton.beast_head.as_ref(),
+                skeleton.beast_feet.as_ref(),
+            )
+        });
+        let painted = match (&record.archetype, &anatomy) {
+            (crate::plan::Archetype::Quadruped(params), Some(anatomy)) => {
+                texture::coat::paint_coat(&geometry, &rig, &params.coat, anatomy)
+            }
             _ => texture::paint_skin(
                 &geometry,
                 &rig,
@@ -831,9 +836,30 @@ impl Avatar {
         let hair = hair.filter(|growth| growth.mesh.face_count() > 0);
         let far_hair = far_hair.filter(|growth| growth.mesh.face_count() > 0);
 
+        // **A beast's fur** (#369): the hair system's grown layer on the
+        // body's own zones, coloured from its coat and bound as its skin is,
+        // under a ceiling of its own.
+        let fur = match (&record.archetype, &anatomy) {
+            (crate::plan::Archetype::Quadruped(params), Some(anatomy)) if params.fur.any() => {
+                let bed = crate::hair::fur::Bed {
+                    body: &body,
+                    zones: &zones,
+                    rig: &rig,
+                    weights: &weights,
+                    anatomy,
+                    coat: &params.coat,
+                    ears: beast.as_ref().map(|beast| &beast.ears),
+                };
+                Some(crate::hair::fur::grow(&bed, &params.fur, record.seed))
+            }
+            _ => None,
+        }
+        .filter(|fur| fur.mesh.face_count() > 0);
+
         let parts = Parts {
             hair,
             far_hair,
+            fur,
             features,
             beast,
             tint,
@@ -1081,6 +1107,24 @@ impl Avatar {
             .filter(|growth| growth.mesh.face_count() > 0)
         {
             merged.push(self.placed_hair(growth));
+        }
+        // A beast's fur (#369), in the same draw: one alpha-tested draw
+        // whatever grows in it.
+        if let Some(fur) = self
+            .parts
+            .fur
+            .as_ref()
+            .filter(|fur| fur.mesh.face_count() > 0)
+        {
+            let mut mesh = fur.mesh.clone();
+            mesh.set_normals(mesh.vertex_normals());
+            match merged.iter_mut().find(|drawn| drawn.kind == MeshKind::Hair) {
+                Some(hair) => hair.mesh.append(&mesh),
+                None => merged.push(AvatarMesh {
+                    kind: MeshKind::Hair,
+                    mesh,
+                }),
+            }
         }
 
         if !self.parts.outfit.is_empty() {

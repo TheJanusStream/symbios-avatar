@@ -63,3 +63,17 @@ pub(crate) fn smooth(at: f32) -> f32 {
     let at = at.clamp(0.0, 1.0);
     at * at * (3.0 - 2.0 * at)
 }
+
+/// A smooth step of `at` from nothing at `from` to all of it at `to`,
+/// clamped: rising when `to` is the higher, falling when it is the lower.
+pub(crate) fn step(from: f32, to: f32, at: f32) -> f32 {
+    let span = to - from;
+    if span.abs() < f32::EPSILON {
+        return if (at - from) * span.signum() >= 0.0 {
+            1.0
+        } else {
+            0.0
+        };
+    }
+    smooth((at - from) / span)
+}
