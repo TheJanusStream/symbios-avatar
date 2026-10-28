@@ -150,10 +150,11 @@ the frame's centre, which is behind a person and inside a beast: a close-up's
 span is the part's own, and a beast's barrel runs the better part of a span
 behind it. The wall hid what was behind it, and what it left in front read as
 the body's own defect - a round lump hanging under a horse's belly that was the
-far hind leg's stifle, the rest of the leg behind the wall (#379). On a beast
-the wall now stands behind everything the frame draws; a person's frames keep
-the fixed wall, which the goldens pin, though it cuts them too (the head
-close-up's view from above has it through the shoulders).
+far hind leg's stifle, the rest of the leg behind the wall (#379). The wall
+now stands behind everything the frame draws, on every body: a person was cut
+too, the head close-up's view from above through the shoulders and the side
+view past the far hand, so the goldens were blessed again on a tree where
+nothing else had moved (#380).
 
 ```sh
 cargo run --release --example render -- --quadruped --walls 3000  # per view and frame: past the old wall, and behind the wall now

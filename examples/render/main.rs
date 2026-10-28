@@ -1793,14 +1793,6 @@ impl Subject {
         Some(self.render(pose, closure, &frames))
     }
 
-    /// Whether this body's backdrop stands behind everything a frame draws,
-    /// rather than at the fixed [`WALL_BEHIND`]: a beast's, whose barrel runs
-    /// the better part of a span behind any close-up's centre. See
-    /// [`wall_behind`].
-    fn clears_the_wall(&self) -> bool {
-        !self.avatar.rig.anatomy.human_trunk()
-    }
-
     /// Every frame the standing sheet and the close-ups draw this body in,
     /// by view: the close-ups it has no part for left out.
     fn every_frame(&self, pose: &Pose) -> Vec<(&'static str, [Frame; 4])> {
@@ -2135,7 +2127,7 @@ impl Subject {
         let wall = if self.show.pass.as_deref() == Some("silhouette") {
             PolyMesh::new()
         } else {
-            backdrop(frame, built, self.clears_the_wall())
+            backdrop(frame, built)
         };
         let items = items(
             built,
@@ -3447,17 +3439,12 @@ const PORTRAIT_PITCH: f32 = 0.25;
 /// front of the subject for half the sheet.
 ///
 /// Stood [`wall_behind`] the frame's centre, which reads `built`, the meshes
-/// the frame draws, posed, when `clear` asks it to stand behind them all.
-fn backdrop(frame: &Frame, built: &[AvatarMesh], clear: bool) -> PolyMesh {
+/// the frame draws, posed, so that it stands behind them all.
+fn backdrop(frame: &Frame, built: &[AvatarMesh]) -> PolyMesh {
     let toward = frame.to_world(Vec3::Z);
     let right = frame.to_world(Vec3::X);
     let up = frame.to_world(Vec3::Y);
-    let behind = if clear {
-        wall_behind(frame, built)
-    } else {
-        WALL_BEHIND
-    };
-    let middle = frame.centre - toward * (frame.span * behind);
+    let middle = frame.centre - toward * (frame.span * wall_behind(frame, built));
     let reach = frame.span * 2.2;
 
     let mut mesh = PolyMesh::new();
@@ -3489,11 +3476,11 @@ fn backdrop(frame: &Frame, built: &[AvatarMesh], clear: bool) -> PolyMesh {
 /// [`WALL_CLEARANCE`] behind the deepest of it; where nothing does it stands
 /// exactly where it always has, and every frame it never cut draws as before.
 ///
-/// **A beast's frames only, for now** ([`Subject::clears_the_wall`]). A
-/// person is cut too, more mildly: the head close-up's view from above has
-/// the wall through the shoulders, and the sheet's side view has the far
-/// hand past it. Both are frames the goldens pin, so they stand as they were
-/// until moving them is decided on its own.
+/// **Every body's frames** (#380). A person was cut too, more mildly: the
+/// head close-up's view from above had the wall through the shoulders, and
+/// the sheet's side view the far hand past it. Both are frames the goldens
+/// pin, so the goldens were blessed again on a tree where nothing else had
+/// moved.
 fn wall_behind(frame: &Frame, built: &[AvatarMesh]) -> f32 {
     let deepest = deepest_shown(frame, built);
     if deepest < WALL_BEHIND {
@@ -3579,7 +3566,7 @@ fn walls(plan: &Archetype, count: i64) {
                         for (name, frames) in subject.every_frame(&pose) {
                             for (index, frame) in frames.iter().enumerate() {
                                 let deep = deepest_shown(frame, &built) >= WALL_BEHIND;
-                                let cut = behind_wall(frame, &built, subject.clears_the_wall()) > 0;
+                                let cut = behind_wall(frame, &built) > 0;
                                 past |= deep;
                                 let mut tally = tally.lock().unwrap_or_else(|e| e.into_inner());
                                 let row = tally.entry((name, index)).or_insert([0; 3]);
@@ -3618,8 +3605,8 @@ fn walls(plan: &Archetype, count: i64) {
 }
 
 /// How many vertices `frame` shows behind the wall [`backdrop`] builds for it.
-fn behind_wall(frame: &Frame, built: &[AvatarMesh], clear: bool) -> usize {
-    let wall = backdrop(frame, built, clear);
+fn behind_wall(frame: &Frame, built: &[AvatarMesh]) -> usize {
+    let wall = backdrop(frame, built);
     let toward = frame.to_world(Vec3::Z);
     let camera = frame.camera();
     built
@@ -3787,29 +3774,42 @@ mod tests {
     fn nothing_a_frame_draws_stands_behind_its_backdrop() {
         // #379: a horse's, a cat's and a dog's chest framed from the front
         // three quarters had the far hind leg behind the wall, which hid all
-        // of it but the stifle. Every frame of the sheet and of each close-up
-        // the body has, on the three bodies the defect was seen on.
-        for seed in [13, 2, 17] {
+        // of it but the stifle. #380: a person's head from above had it
+        // through the shoulders, and the side view the far hand past it.
+        // Every frame of the sheet and of each close-up the body has, on the
+        // three beasts the defect was seen on and on the persons the goldens
+        // draw and two rolls of them.
+        let beasts = [13, 2, 17].map(|seed| {
             let mut record = AvatarRecord::new(
                 "Rendered",
                 Archetype::Quadruped(symbios_avatar::QuadrupedParams::default()),
             );
             record.reroll(seed);
-            let avatar = Avatar::build(&record).expect("a rolled beast builds");
+            (format!("beast {seed}"), record)
+        });
+        let persons = [None, Some(1), Some(2)].map(|seed| {
+            let mut record = AvatarRecord::default();
+            if let Some(seed) = seed {
+                record.reroll(seed);
+            }
+            (format!("person {seed:?}"), record)
+        });
+        for (body, record) in beasts.into_iter().chain(persons) {
+            let avatar = Avatar::build(&record).expect("a rolled body builds");
             let subject = Subject::new(avatar, Show::default(), None, Vec::new(), Vec::new());
             let pose = subject.standing();
             let built = subject.deformed(&pose, 0.0);
             let frames = subject.every_frame(&pose);
             assert!(
                 frames.iter().any(|(name, _)| *name == "chest"),
-                "seed {seed}: no chest close-up to frame"
+                "{body}: no chest close-up to frame"
             );
             for (name, four) in &frames {
                 for (index, frame) in four.iter().enumerate() {
                     assert_eq!(
-                        behind_wall(frame, &built, subject.clears_the_wall()),
+                        behind_wall(frame, &built),
                         0,
-                        "seed {seed}, {name} frame {index}: vertices drawn behind the backdrop"
+                        "{body}, {name} frame {index}: vertices drawn behind the backdrop"
                     );
                 }
             }
