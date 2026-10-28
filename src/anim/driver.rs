@@ -435,17 +435,27 @@ pub struct DriverConfig {
     /// How long a gesture takes, in seconds.
     ///
     /// The engine's gestures are written in normalised time — a goal-space clip
-    /// runs `0..1` and says nothing about seconds — so this is the only place
-    /// the real duration is decided. A second and a half is a greeting: long
-    /// enough for three waves to read as waves, short enough that a body is not
-    /// still doing it when the conversation has moved on.
+    /// runs `0..1` and says nothing about seconds - so this is where the real
+    /// duration is decided. A second and a half is a greeting: long enough for
+    /// three waves to read as waves, short enough that a body is not still
+    /// doing it when the conversation has moved on.
+    ///
+    /// **A beast's states keep their own time** (#377): a sit or a lying down
+    /// goes down at the pace [`super::emote::seconds`] gives it on the body
+    /// and is held, for as long as nothing gets the beast up - its being
+    /// moved, leaving the ground or swimming, which gets it up in a hurry
+    /// ([`super::emote::HURRY`]), or another gesture asked for, or
+    /// [`super::emote::GET_UP`], at the pace [`super::emote::getting_up`]
+    /// gives. This is read for none of it.
     pub gesture_secs: f32,
     /// The shortest gap between two gestures on one body, in seconds.
     ///
     /// Measured from one gesture's **start** rather than its end, so the limit
     /// is a rate and not a gap: a sender pasting the same word four times
     /// waves once and then stands there. Longer than [`Self::gesture_secs`], so
-    /// a well-behaved sender is never throttled by it.
+    /// a well-behaved sender is never throttled by it - and never by a beast's
+    /// state, which lasts as long as it is held: a request while it lasts is
+    /// not rate-limited but played once the beast is up (#377).
     pub gesture_cooldown: f32,
     /// How far one stroke of a crawl carries the body, in its own lengths.
     ///
@@ -735,11 +745,108 @@ struct ActiveGesture {
     /// less than the solve that follows it and keeps this a value rather than a
     /// cache.
     name: String,
-    /// How far into it, in seconds. A gesture plays **once**: this counts up to
-    /// [`DriverConfig::gesture_secs`] and then clears, where a locomotion cycle
-    /// wraps.
+    /// How long it has played, in seconds. A gesture plays **once**: this
+    /// counts up to [`DriverConfig::gesture_secs`] and then clears, where a
+    /// locomotion cycle wraps - but a beast's state, which counts for as long
+    /// as the state lasts, going down, held and getting up (#377).
     elapsed: f32,
+    /// Where a beast's state has got to, if this is one (#377).
+    resting: Option<Resting>,
 }
+
+/// Where a beast's state - a sit or a lying down - has got to (#377).
+///
+/// It goes down at its own pace ([`super::emote::seconds`]) and is held until
+/// something gets the beast up: moving, leaving the ground, swimming, another
+/// gesture, or [`super::emote::GET_UP`]. Getting up from the held state is the
+/// animal's own order ([`super::emote::getting_up`]); a beast interrupted on
+/// the way down comes back up the way it was going. Either way from wherever
+/// the body is, so nothing snaps.
+#[derive(Clone, Debug, PartialEq)]
+struct Resting {
+    phase: Phase,
+    /// How far through the phase's clip, `0..1`: the way down's for
+    /// [`Phase::Down`], [`Phase::Held`] and [`Phase::Back`], the getting up's
+    /// for [`Phase::Up`].
+    through: f32,
+    /// Getting up in a hurry, at [`super::emote::HURRY`] of the pace: the body
+    /// is moving, off the ground or in the water.
+    hurried: bool,
+    /// The gesture asked for while the beast was down, played once it is up:
+    /// the last one asked for.
+    then: Option<String>,
+}
+
+/// What a beast's state is doing (#377).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// Going down into it.
+    Down,
+    /// Down, until something gets it up.
+    Held,
+    /// Getting up out of it, as the animal does.
+    Up,
+    /// Coming back up the way it was going down, stopped part way.
+    Back,
+}
+
+impl Resting {
+    /// Gets the beast up from wherever it has got to: from the held state as
+    /// the animal rises, from part way down the way it came.
+    fn get_up(&mut self, hurried: bool) {
+        self.hurried |= hurried;
+        match self.phase {
+            Phase::Down => self.phase = Phase::Back,
+            Phase::Held => {
+                self.phase = Phase::Up;
+                self.through = 0.0;
+            }
+            Phase::Up | Phase::Back => {}
+        }
+    }
+
+    /// Moves it on by `delta` seconds of the state `name` on `rig`, and
+    /// answers whether the beast is up.
+    fn advance(&mut self, rig: &Rig, name: &str, delta: f32) -> bool {
+        let (Some(down), Some((_, up))) = (
+            super::emote::seconds(rig, name),
+            super::emote::getting_up(rig, name),
+        ) else {
+            return true;
+        };
+        let pace = if self.hurried {
+            super::emote::HURRY
+        } else {
+            1.0
+        };
+        let share = |seconds: f32| delta / (seconds * pace).max(f32::EPSILON);
+        match self.phase {
+            Phase::Down => {
+                self.through += share(down);
+                if self.through >= 1.0 {
+                    self.through = 1.0;
+                    self.phase = Phase::Held;
+                }
+                false
+            }
+            Phase::Held => false,
+            Phase::Up => {
+                self.through += share(up);
+                self.through >= 1.0
+            }
+            Phase::Back => {
+                self.through -= share(down);
+                self.through <= 0.0
+            }
+        }
+    }
+}
+
+/// How fast a body may be carried and still be resting, in metres a second
+/// (#377): a smoothed transform settles slower than this, and a body carried
+/// any faster is being moved, which gets a beast up out of a sit.
+/// Provenance: **chosen** (#377), a tenth of a metre a second.
+const STIR: f32 = 0.1;
 
 /// One body's motion, and every clock that outlives a frame.
 ///
@@ -811,6 +918,9 @@ pub struct Driver {
     /// joint of them was. [`None`] until the first frame finds them on the
     /// rig it is given.
     springs: Option<Springs>,
+    /// What a beast's rests solve from its rig alone, kept while the rig is
+    /// the same (#377): a held sit costs what an idle frame does.
+    rests: super::rest::Rests,
 }
 
 /// How far one paddle carries a swimming beast, in its leg's reach (#370).
@@ -860,6 +970,7 @@ impl Driver {
             elapsed: 0.0,
             blend_asked: false,
             springs: None,
+            rests: super::rest::Rests::default(),
         }
     }
 
@@ -926,7 +1037,9 @@ impl Driver {
         self.airborne
     }
 
-    /// The gesture playing and how far into it, in seconds.
+    /// The gesture playing and how long it has played, in seconds: up to
+    /// [`DriverConfig::gesture_secs`], or for a beast's state as long as the
+    /// state lasts, going down, held and getting up (#377).
     #[must_use]
     pub fn gesture(&self) -> Option<(&str, f32)> {
         self.gesture
@@ -1231,14 +1344,40 @@ impl Driver {
             0.0
         };
 
-        self.start_gesture(rig, inputs.gesture);
+        // **A beast's state is held until something gets it up** (#377):
+        // the body being moved, leaving the ground or swimming gets it up in a
+        // hurry, from wherever it is.
+        let stirred = planar >= STIR || airborne || showing_leap || swimming;
+        self.start_gesture(rig, inputs.gesture, stirred);
         // Advanced and retired before the pose is built, so a gesture that
         // finished this frame does not get one last frame of overlay.
+        let mut up = None;
         if let Some(active) = self.gesture.as_mut() {
             active.elapsed += delta;
-            if active.elapsed >= config.gesture_secs {
+            let done = match active.resting.as_mut() {
+                None => active.elapsed >= config.gesture_secs,
+                Some(resting) => {
+                    if stirred {
+                        resting.get_up(true);
+                    }
+                    let done = resting.advance(rig, &active.name, delta);
+                    if done {
+                        up = Some(resting.then.take());
+                    }
+                    done
+                }
+            };
+            if done {
                 self.gesture = None;
             }
+        }
+        // Up, and what it was asked for while down: the rise's last pose and
+        // the next gesture's first are two poses of one source, so the switch
+        // is blended as a change of source is.
+        if let Some(Some(name)) = up
+            && self.begin_gesture(rig, &name, stirred, false)
+        {
+            self.blend_asked = true;
         }
         // A gesture is its own source, so ending one blends back into the walk
         // it was riding rather than snapping.
@@ -1331,10 +1470,22 @@ impl Driver {
         // or the idle that carries them, and there is no joint mask to
         // maintain: the clip's own vocabulary is the mask.
         let mut aimed = false;
-        if let Some(active) = &self.gesture
-            && let Some(clip) = gesture::for_body(rig, &active.name)
-        {
-            clip.apply(rig, &mut pose, active.elapsed / config.gesture_secs);
+        let playing = self
+            .gesture
+            .as_ref()
+            .and_then(|active| match &active.resting {
+                None => gesture::for_body(rig, &active.name)
+                    .map(|clip| (clip, active.elapsed / config.gesture_secs)),
+                Some(resting) if resting.phase == Phase::Up => {
+                    super::emote::getting_up(rig, &active.name)
+                        .map(|(clip, _)| (clip, resting.through))
+                }
+                Some(resting) => {
+                    gesture::for_body(rig, &active.name).map(|clip| (clip, resting.through))
+                }
+            });
+        if let Some((clip, time)) = playing {
+            clip.apply_resting(rig, &mut pose, time, &mut self.rests);
             aimed = clip.tracks.iter().any(|track| track.target == Target::Gaze);
         }
         if let Some(over) = inputs.over_locomotion {
@@ -1350,8 +1501,15 @@ impl Driver {
         }
         // The tail of the drive: settle the contacts, then roll the ankles, in
         // that order. Gait only — the idle plants its own feet, a resting body
-        // has nothing down, and a leap places its own contacts.
-        if let Some((gait, stride)) = &walking {
+        // has nothing down, and a leap places its own contacts. **Nor under a
+        // beast in a state** (#377), which rests its whole body on the ground
+        // itself: settled after it, a dog walked off while seated dragged its
+        // pads 115 mm through the ground.
+        let resting = self
+            .gesture
+            .as_ref()
+            .is_some_and(|active| active.resting.is_some());
+        if let Some((gait, stride)) = walking.as_ref().filter(|_| !resting) {
             let walked = self
                 .walk_at(inputs, inputs.walk.footing)
                 .settle(rig, &mut pose, gait, stride, &steps, ground);
@@ -1721,21 +1879,64 @@ impl Driver {
     /// cooldown**: a caller whose vocabulary has drifted from the engine's
     /// should get no gesture rather than a source change with no clip under it,
     /// and should not be rate-limited out of the gestures that do exist.
-    fn start_gesture(&mut self, rig: &Rig, request: Option<&str>) {
+    ///
+    /// **A beast in a state takes every request its own way** (#377), and none
+    /// is rate-limited, since a state lasts as long as it is held:
+    /// [`super::emote::GET_UP`] gets it up; any other gesture the body has
+    /// gets it up and then plays, the last one asked for; the state it is
+    /// already going into or holding changes nothing.
+    fn start_gesture(&mut self, rig: &Rig, request: Option<&str>, stirred: bool) {
         let Some(name) = request else {
             return;
         };
-        let ready = self
-            .gestured_at
-            .is_none_or(|last| self.elapsed - last >= self.config.gesture_cooldown);
-        if !ready || gesture::for_body(rig, name).is_none() {
+        if let Some(active) = self.gesture.as_mut()
+            && let Some(resting) = active.resting.as_mut()
+        {
+            if name == super::emote::GET_UP {
+                resting.get_up(false);
+                resting.then = None;
+            } else if gesture::for_body(rig, name).is_some()
+                && !(name == active.name && matches!(resting.phase, Phase::Down | Phase::Held))
+            {
+                resting.get_up(false);
+                resting.then = Some(name.to_string());
+            }
             return;
+        }
+        self.begin_gesture(rig, name, stirred, true);
+    }
+
+    /// Starts the gesture `name`, if the cooldown allows it when `throttled`,
+    /// and answers whether it did.
+    ///
+    /// A beast's state does not start under a body that is being moved, is
+    /// off the ground or is swimming (#377): any of those gets the beast
+    /// straight back up. Nor does [`super::emote::GET_UP`] on a body already
+    /// up, which has nothing to get up from.
+    fn begin_gesture(&mut self, rig: &Rig, name: &str, stirred: bool, throttled: bool) -> bool {
+        let ready = !throttled
+            || self
+                .gestured_at
+                .is_none_or(|last| self.elapsed - last >= self.config.gesture_cooldown);
+        if !ready || gesture::for_body(rig, name).is_none() {
+            return false;
+        }
+        let state = super::emote::getting_up(rig, name).is_some();
+        if (state && stirred) || name == super::emote::GET_UP {
+            return false;
         }
         self.gesture = Some(ActiveGesture {
             name: name.to_string(),
             elapsed: 0.0,
+            resting: state.then_some(Resting {
+                phase: Phase::Down,
+                through: 0.0,
+                hurried: false,
+                then: None,
+            }),
         });
         self.gestured_at = Some(self.elapsed);
+        true
     }
 
     /// How shut the lids are this frame: the blink's own phase, or the one the

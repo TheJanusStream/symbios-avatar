@@ -40,6 +40,7 @@
 
 pub(crate) mod junction;
 pub mod landmark;
+pub mod outline;
 pub mod patch;
 pub mod skin;
 pub mod socket;
@@ -53,6 +54,7 @@ use crate::plan::{Limb, Zone};
 use crate::skeleton::{Skeleton, SkeletonError};
 
 pub use landmark::{Anchor, Landmark, Landmarks};
+pub use outline::Outline;
 pub use patch::{Footprint, Patch};
 pub use skin::{Influence, MAX_INFLUENCES, SkinConfig, SkinWeights};
 pub use socket::Socket;
@@ -212,6 +214,19 @@ pub struct Rig {
     /// person's, whatever it was: rebuild from the record where that matters.
     #[cfg_attr(feature = "serde-avatar", serde(default))]
     pub anatomy: crate::plan::Anatomy,
+    /// Where the skin over it reaches (#377), once a body has been built
+    /// over it and only on a body something reads it for: one on four legs,
+    /// whose sit and lying down rest that skin on the ground. `None` on a rig
+    /// rooted straight from a skeleton, which has no skin yet; a rest then
+    /// reads the joints' own radii instead, as it does for an empty one.
+    ///
+    /// Left out of a sent rig that has none, so a person's rig is written
+    /// exactly as it was before there were outlines.
+    #[cfg_attr(
+        feature = "serde-avatar",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub outline: Option<Outline>,
 }
 
 impl Rig {
@@ -303,6 +318,7 @@ impl Rig {
         Ok(Self {
             joints,
             anatomy: skeleton.anatomy,
+            outline: None,
         })
     }
 

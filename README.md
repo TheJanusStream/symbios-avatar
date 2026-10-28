@@ -378,7 +378,15 @@ springs. `anim::emote` is a beast's roster - sit, lie down, play bow, shake,
 wag, ear flick, head tilt, yawn, pant, sniff - in the same goal-space clips,
 with targets for a beast's own parts (the trunk's pitch and roll, the tail, the
 ears, the jaw) and the head's cant; `gesture::for_body` offers it to a body on
-four legs and never to a person. A beast paddles rather than crawls, steps its
+four legs and never to a person. Its sit and its lying down rest the drawn
+skin on the ground and move into it in the animal's order (#377): a built
+beast's `Rig::outline` keeps the points of its skin that can be its lowest,
+`emote::seconds` says how long each takes on a body and `emote::getting_up`
+gets up from it as the animal rises. The `Driver` holds the state until
+something gets the beast up - being moved, leaving the ground or swimming
+(in a hurry, `emote::HURRY`), another gesture (played once it is up), or
+`emote::GET_UP`, the name in the roster that stands it up where it is. A
+beast paddles rather than crawls, steps its
 feet home one at a time after it stops, and flicks an ear and wags while it
 stands.
 

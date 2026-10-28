@@ -83,6 +83,9 @@
 //! cargo run --release --example render -- --quadruped --speed 2.5 --strip 8  # a gait at a speed, one row
 //! cargo run --release --example render -- --quadruped --gait canter --speed 3 --strip 8
 //! cargo run --release --example render -- --quadruped --gesture "Play Bow" --strip 8
+//! cargo run --release --example render -- --quadruped --seed 1 --gesture Sit --rise --strip 8  # getting up from it
+//! cargo run --release --example render -- --quadruped --gesture Sit --interrupt 0.5 --strip 8  # told to get up part way down
+//! cargo run --release --example render -- --quadruped --seed 1 --gesture "Lie Down" --at 1  # one moment, four views
 //! cargo run --release --example render -- --quadruped --swim 0.5 --strip 8
 //! cargo run --release --example render -- --quadruped --leap 3 --strip 8
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
@@ -1146,13 +1149,59 @@ fn main() {
             )
         };
         // `--gesture NAME` plays one of the rosters across the strip instead
-        // of a gait, from the body standing, its last frame its end (#370).
+        // of a gait, from the body standing, its last frame its end (#370);
+        // with `--rise`, a beast getting up from the state it names (#377).
+        let rising = args.iter().any(|arg| arg == "--rise");
         let playing = value("--gesture").map(|name| {
-            symbios_avatar::anim::gesture::for_body(rig, name).unwrap_or_else(|| {
+            let clip = if rising {
+                symbios_avatar::anim::emote::getting_up(rig, name).map(|(clip, _)| clip)
+            } else {
+                symbios_avatar::anim::gesture::for_body(rig, name)
+            };
+            clip.unwrap_or_else(|| {
                 eprintln!("this body has no gesture called {name}");
                 std::process::exit(1);
             })
         });
+        // With `--interrupt SECONDS`, the state is asked of the driver and
+        // the beast told to get up that many seconds in - part of the way
+        // down, or held - and the strip runs from the asking to standing
+        // again (#377).
+        let interrupted = value("--interrupt")
+            .and_then(|seconds| seconds.parse::<f32>().ok())
+            .zip(value("--gesture"))
+            .map(|(seconds, name)| {
+                use symbios_avatar::anim::driver::{Driver, Inputs, level_ground};
+                let step = 1.0 / 60.0;
+                let mut driver = Driver::seeded(7);
+                let mut poses = Vec::new();
+                let asked = 10usize;
+                let told = asked + (seconds / step).round() as usize;
+                for at in 0..asked + 6000 {
+                    let gesture = if at == asked {
+                        Some(name.as_str())
+                    } else if at == told {
+                        Some(symbios_avatar::anim::emote::GET_UP)
+                    } else {
+                        None
+                    };
+                    let inputs = Inputs {
+                        delta: step,
+                        gesture,
+                        ..Inputs::default()
+                    };
+                    let Some(driven) = driver.drive(rig, &inputs, level_ground) else {
+                        continue;
+                    };
+                    if at >= asked {
+                        poses.push(driven.pose);
+                    }
+                    if at > told && driver.gesture().is_none() {
+                        break;
+                    }
+                }
+                poses
+            });
         // `--swim M/S` swims the strip instead, through one stroke, and
         // `--leap M/S` leaps it, from the wind-up to standing again (#370).
         let swimming = value("--swim").and_then(|pace| pace.parse::<f32>().ok());
@@ -1170,11 +1219,18 @@ fn main() {
                     leap.duration(rig) * index as f32 / last,
                     |foot| Some(Ground::level(Vec3::new(foot.x, 0.0, foot.z))),
                 );
-                let view = subject.view(&pose, 0.0, &frame);
+                let mut view = subject.view(&pose, 0.0, &frame);
+                ground_line(&mut view, &frame);
                 strip.blit(&view, index * VIEW, 0);
                 continue;
             }
             let pose = match (&playing, swimming) {
+                (Some(_), _) if interrupted.is_some() => {
+                    let poses = interrupted.as_deref().unwrap_or_default();
+                    let last = (frames - 1).max(1) as f32;
+                    let at = (index as f32 / last * (poses.len() - 1) as f32).round() as usize;
+                    poses.get(at).cloned().unwrap_or_else(|| Pose::rest(rig))
+                }
                 (Some(clip), _) => {
                     let mut pose = subject.standing();
                     let last = (frames - 1).max(1) as f32;
@@ -1190,7 +1246,8 @@ fn main() {
                 }
                 (None, None) => subject.walking(cycle),
             };
-            let view = subject.view(&pose, 0.0, &frame);
+            let mut view = subject.view(&pose, 0.0, &frame);
+            ground_line(&mut view, &frame);
             strip.blit(&view, index * VIEW, 0);
             let line = if let [Some(hips), Some(loin), Some(withers)] = trunk {
                 let rest: Vec<Vec3> = rig.joints.iter().map(|joint| joint.position).collect();
@@ -1258,6 +1315,22 @@ fn main() {
             );
             std::process::exit(1);
         };
+        // `--at T`: one moment of it, its four views on the ground line
+        // (#377) - `--at 1` the pose a state ends in.
+        if let Some(time) = value("--at").and_then(|time| time.parse::<f32>().ok()) {
+            let mut pose = subject.standing();
+            gesture.apply(&subject.avatar.rig, &mut pose, time);
+            let frames = subject.sheet_frames();
+            let mut sheet = Image::new(VIEW * 2, VIEW * 2);
+            for (index, frame) in frames.iter().enumerate() {
+                let mut view = subject.view(&pose, 0.0, frame);
+                ground_line(&mut view, frame);
+                sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
+            }
+            write(&out, &format!("{stem}_gesture_at"), &sheet);
+            println!("rendered {name} at {time}");
+            return;
+        }
         let count = clip_frames.max(1);
         for frame in 0..count {
             // A gesture's clock runs from 0 to 1 over its own length.
@@ -3131,6 +3204,31 @@ fn segment_distance(point: Vec3, from: Vec3, to: Vec3) -> f32 {
     }
     let t = ((point - from).dot(along) / length).clamp(0.0, 1.0);
     point.distance(from + along * t)
+}
+
+/// Draws the ground across a level view (#377): a thin line at the height
+/// the body stands on, over everything, so whatever reaches below it shows
+/// below the line. The renderer has no ground plane - its backdrop stands
+/// behind the body - so a sunk paw and a planted one looked alike.
+fn ground_line(view: &mut Image, frame: &Frame) {
+    if frame.pitch != 0.0 {
+        return;
+    }
+    let camera = frame.camera();
+    let height = camera
+        .project_point3(Vec3::new(frame.centre.x, 0.0, frame.centre.z))
+        .y;
+    let row = ((1.0 - height) * 0.5 * view.height as f32).round();
+    if !(0.0..view.height as f32).contains(&row) {
+        return;
+    }
+    let row = row as usize;
+    for column in 0..view.width {
+        // Dashed, so the body behind the line still reads through it.
+        if column % 6 < 4 {
+            view.colour[row * view.width + column] = Vec3::new(0.9, 0.25, 0.05);
+        }
+    }
 }
 
 /// Everything to draw, as items, against the given backdrop.

@@ -58,6 +58,7 @@ mod lexicon;
 mod motion;
 mod parts;
 mod plan;
+mod rest;
 mod rig;
 mod texture;
 mod throat;

@@ -1,0 +1,448 @@
+//! A beast at rest on the ground (#377): the drawn skin of a sitting and a
+//! lying body against the ground it rests on.
+//!
+//! **The skin as drawn, not the joints.** A pose that never asks where the
+//! skin is put the owner's beasts partly underground: P5's sit sank a dog's
+//! thigh 165 mm and its tail 82, its lying down a cat's chest 142 and its
+//! belly 153, and floated a horse's chest 194 mm off the ground on legs
+//! sunk 57. So every reading here is the lowest vertex of the body's own
+//! skin, posed through its own skin weights, sorted by the joint that holds
+//! it most: the haunches (the pelvis, the tail's root and the thighs), the
+//! hind feet (hock to toe), the forelegs, the forefeet, the chest - and
+//! everything.
+//!
+//! The bodies are the roll's whole range: each family and a cross of each,
+//! `appeal` from -1.5 to 2, and the composites at both ends of `mass` and
+//! `bodyFat` at once.
+
+use symbios_avatar::anim::driver::{Driver, Inputs, level_ground};
+use symbios_avatar::anim::{Clip, Pose, Posed, emote, gesture};
+use symbios_avatar::plan::BODY_FAT_RANGE;
+use symbios_avatar::{
+    Archetype, Avatar, AvatarRecord, Family, FootKind, QuadrupedParams, Rig, Zone,
+};
+
+/// How far anything may reach below the ground, in withers heights, and in
+/// metres at least: the skin is drawn in floats.
+const SINK: f32 = 0.005;
+const SINK_FLOOR: f32 = 0.002;
+
+/// How near the ground a support must come to rest on it, in withers
+/// heights, sitting and lying: a dog of 0.9 m touching within 32 mm, a cat
+/// of 0.44 within 15. Lying a little looser: the skin of the brisket between
+/// the forelegs is bound to the upper arms, and folding the forelegs carries
+/// it down under the chest, so the body rests on it a few millimetres above
+/// its sternum - on a slight cat, 4.0% of its withers height, the worst of
+/// every body here (#377).
+const TOUCH: f32 = 0.035;
+const TOUCH_LYING: f32 = 0.042;
+
+/// How far off the ground a lying horse's chest stands, at most, in withers
+/// heights: it lies on its folded forelegs and its hind legs folded beside
+/// it, and its sternum comes down between its knees without touching -
+/// measured (#377), 1.0 to 10.2% across every horse here, the default
+/// horse's 3.8%.
+const HORSE_CHEST: f32 = 0.11;
+
+/// How far off the ground a horse's croup may stand in its dog-sit, in
+/// withers heights: the research's "on the ground or just off it" (09,
+/// 2.3.4).
+const JUST_OFF: f32 = 0.05;
+
+/// How fast any joint of a body going into, holding or getting up out of a
+/// rest may move, in the speed `sqrt(g WH)` of a body its withers height
+/// high: about as fast as a galloping dog's paw swings forward past its
+/// body. A gallop at a Froude number of three on a leg of 0.55 WH carries
+/// the body at 1.3 `sqrt(g WH)`, and a paw in its swing passes the body at
+/// three times that. Nothing in a rest has business that fast: the fastest
+/// part of any of them, a rising horse's tail tip sweeping along the ground,
+/// reads 3.6; a joint past the bound has jumped (#377). Dogs going from their
+/// sit into lying down jumped at 6 to 8, horses getting up at 19 to 48.
+pub(crate) const SWIFT: f32 = 4.0;
+
+/// Gravity, for [`SWIFT`].
+const GRAVITY: f32 = 9.81;
+
+/// How finely a motion is swept, in steps of its own length: at the bound, a
+/// 6 mm step on a default dog's lying down.
+const STEPS: usize = 300;
+
+/// The furthest any joint but a marker moved between two poses of `rig`, and
+/// which joint it was.
+pub(crate) fn fastest(rig: &Rig, before: &Posed, after: &Posed) -> (f32, usize) {
+    before
+        .positions
+        .iter()
+        .zip(&after.positions)
+        .enumerate()
+        .filter(|(joint, _)| !rig.joints[*joint].marker)
+        .map(|(joint, (from, to))| (from.distance(*to), joint))
+        .fold(
+            (0.0, 0),
+            |most, step| if step.0 > most.0 { step } else { most },
+        )
+}
+
+/// The bound [`SWIFT`] puts on one step of `seconds` for a body `withers`
+/// high, in metres.
+pub(crate) fn swift(withers: f32, seconds: f32) -> f32 {
+    SWIFT * (GRAVITY * withers).sqrt() * seconds
+}
+
+/// A built beast and what it is.
+struct Beast {
+    what: String,
+    avatar: Avatar,
+    /// Its withers height, in metres.
+    withers: f32,
+    hooves: bool,
+}
+
+/// The lowest drawn skin of each part a rest is judged by, in metres.
+#[derive(Debug)]
+struct Lows {
+    haunch: f32,
+    hind_feet: f32,
+    fore_feet: f32,
+    fore_legs: f32,
+    chest: f32,
+    all: f32,
+}
+
+fn beasts() -> Vec<Beast> {
+    // Built side by side: there are thirty-three.
+    let mut records: Vec<(String, AvatarRecord)> = Vec::new();
+    let corners = [
+        (0.0, None),
+        (3.0, Some(BODY_FAT_RANGE.1)),
+        (-3.0, Some(BODY_FAT_RANGE.0)),
+    ];
+    for family in Family::ALL {
+        for appeal in [-1.5f32, 1.0, 2.0] {
+            for (mass, fat) in corners {
+                let mut params = QuadrupedParams::default();
+                params.set_kind(family, None, 0.0);
+                params.appeal = appeal;
+                let mut record = AvatarRecord::new("Beast", Archetype::Quadruped(params));
+                record.composites.mass = mass;
+                if let Some(fat) = fat {
+                    record.composites.body_fat = fat;
+                }
+                records.push((
+                    format!("{family:?} appeal {appeal} mass {mass} fat {fat:?}"),
+                    record,
+                ));
+            }
+        }
+    }
+    for (family, other) in [
+        (Family::Dog, Family::Horse),
+        (Family::Horse, Family::Dog),
+        (Family::Cat, Family::Dog),
+    ] {
+        let mut params = QuadrupedParams::default();
+        params.set_kind(family, Some(other), 0.5);
+        records.push((
+            format!("{family:?} crossed with {other:?}"),
+            AvatarRecord::new("Beast", Archetype::Quadruped(params)),
+        ));
+    }
+    for seed in [1i64, 2, 6] {
+        records.push((
+            format!("rolled seed {seed}"),
+            AvatarRecord::rolled(
+                "Beast",
+                Archetype::Quadruped(QuadrupedParams::default()),
+                seed,
+            ),
+        ));
+    }
+    let build = |(what, mut record): (String, AvatarRecord)| {
+        record.sanitize();
+        let Archetype::Quadruped(params) = &record.archetype else {
+            unreachable!("every record here is a beast")
+        };
+        // The withers height the plan builds a back height to.
+        let withers = params.height * 1.2;
+        let avatar = Avatar::build(&record).unwrap_or_else(|| panic!("{what} builds"));
+        let hooves = avatar.rig.anatomy.feet == FootKind::Hooves;
+        Beast {
+            what,
+            avatar,
+            withers,
+            hooves,
+        }
+    };
+    in_parallel(records, build)
+}
+
+/// `work` over every item, eight at a time, in the items' order.
+fn in_parallel<T: Send, R: Send>(items: Vec<T>, work: impl Fn(T) -> R + Sync) -> Vec<R> {
+    let count = items.len();
+    let queue = std::sync::Mutex::new(items.into_iter().enumerate());
+    let done = std::sync::Mutex::new(Vec::with_capacity(count));
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| {
+                loop {
+                    let next = queue.lock().expect("the queue").next();
+                    let Some((index, item)) = next else {
+                        break;
+                    };
+                    let result = work(item);
+                    done.lock().expect("the results").push((index, result));
+                }
+            });
+        }
+    });
+    let mut done = done.into_inner().expect("the results");
+    done.sort_by_key(|(index, _)| *index);
+    done.into_iter().map(|(_, result)| result).collect()
+}
+
+/// The lowest drawn skin of `beast` with `clip` held at `time`, from rest.
+fn lows(beast: &Beast, clip: &Clip, time: f32) -> Lows {
+    let rig = &beast.avatar.rig;
+    let mut pose = Pose::rest(rig);
+    clip.apply(rig, &mut pose, time);
+    let body = &beast.avatar.parts.body;
+    let weights = &beast.avatar.parts.weights;
+    let drawn = pose.forward(rig).deform(rig, &body.positions, weights);
+    let mut lows = Lows {
+        haunch: f32::MAX,
+        hind_feet: f32::MAX,
+        fore_feet: f32::MAX,
+        fore_legs: f32::MAX,
+        chest: f32::MAX,
+        all: f32::MAX,
+    };
+    for (vertex, at) in drawn.iter().enumerate() {
+        let joint = &rig.joints[usize::from(weights.vertices[vertex][0].joint)];
+        // The root of a tail set on the pelvis is the rump's, under which
+        // the ischia sit: a slight cat sitting bolt upright rests on it.
+        let rump = joint.zone == Zone::Tail
+            && joint
+                .parent
+                .is_some_and(|parent| rig.joints[parent].zone == Zone::Pelvis);
+        let zone = if rump { Zone::Pelvis } else { joint.zone };
+        let low = |slot: &mut f32| *slot = slot.min(at.y);
+        low(&mut lows.all);
+        match zone {
+            Zone::Pelvis => low(&mut lows.haunch),
+            Zone::UpperLimb(limb) if !limb.is_fore() => low(&mut lows.haunch),
+            Zone::LowerLimb(limb) | Zone::Extremity(limb) if !limb.is_fore() => {
+                low(&mut lows.hind_feet);
+            }
+            Zone::Extremity(_) => low(&mut lows.fore_feet),
+            Zone::UpperLimb(_) | Zone::LowerLimb(_) => low(&mut lows.fore_legs),
+            Zone::Chest => low(&mut lows.chest),
+            _ => {}
+        }
+    }
+    lows
+}
+
+/// Every way of going into and out of a rest a beast has, by name: the two
+/// states down, and getting up from each.
+fn motions(beast: &Beast) -> Vec<(String, Clip)> {
+    let rig = &beast.avatar.rig;
+    let mut motions = Vec::new();
+    for name in ["Sit", "Lie Down"] {
+        let down = gesture::for_body(rig, name).expect("a beast's state");
+        motions.push((name.to_string(), down));
+        let (up, _) = emote::getting_up(rig, name).expect("a beast gets up");
+        motions.push((format!("getting up from {name}"), up));
+    }
+    motions
+}
+
+#[test]
+fn nothing_of_a_resting_beast_goes_below_the_ground() {
+    // Through the whole of each motion, both ways, at twenty moments.
+    let mut worst: Vec<String> = Vec::new();
+    for beast in beasts() {
+        let allowed = (SINK * beast.withers).max(SINK_FLOOR);
+        for (name, clip) in motions(&beast) {
+            for step in 0..=20 {
+                #[expect(clippy::cast_precision_loss, reason = "twenty moments")]
+                let time = step as f32 / 20.0;
+                let low = lows(&beast, &clip, time).all;
+                if low < -allowed {
+                    worst.push(format!(
+                        "{}: {name} at {time:.2} reaches {:.0} mm below the ground",
+                        beast.what,
+                        -low * 1000.0
+                    ));
+                }
+            }
+        }
+    }
+    assert!(worst.is_empty(), "{}", worst.join("\n"));
+}
+
+#[test]
+fn a_sitting_beast_rests_on_its_haunches_its_hind_feet_and_its_forefeet() {
+    // 09 fact 3: the ischia, the flat metatarsi and the forepaws, and
+    // nothing else; a horse's held dog-sit on its folded hind legs and its
+    // forehooves, its croup on the ground or just off it.
+    let mut wrong: Vec<String> = Vec::new();
+    for beast in beasts() {
+        let sat = gesture::for_body(&beast.avatar.rig, "Sit").expect("a beast sits");
+        let lows = lows(&beast, &sat, 1.0);
+        let touch = TOUCH * beast.withers;
+        let haunch = if beast.hooves {
+            JUST_OFF * beast.withers
+        } else {
+            touch
+        };
+        let sunk = (SINK * beast.withers).max(SINK_FLOOR);
+        for (part, low, most) in [
+            ("haunches", lows.haunch, haunch),
+            ("hind feet", lows.hind_feet, touch),
+            ("forefeet", lows.fore_feet, touch),
+        ] {
+            // On the ground: neither off it nor in it.
+            if low > most || low < -sunk {
+                wrong.push(format!(
+                    "{}: its {part} rest {:+.0} mm from the ground",
+                    beast.what,
+                    low * 1000.0
+                ));
+            }
+        }
+        // And sitting, not lying: the chest stands clear.
+        if lows.chest < touch {
+            wrong.push(format!("{}: it sits on its chest", beast.what));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn a_lying_beast_rests_on_its_chest_its_forelegs_and_its_folded_hind_legs() {
+    // 09, 2.1.4 and 2.2.3: a dog's and a cat's sphinx, sternum, forearms
+    // and folded hind legs on the ground; 2.3.1: a horse on its folded legs,
+    // knees and hind legs on the ground, its chest just up off it.
+    let mut wrong: Vec<String> = Vec::new();
+    for beast in beasts() {
+        let lay = gesture::for_body(&beast.avatar.rig, "Lie Down").expect("a beast lies down");
+        let lows = lows(&beast, &lay, 1.0);
+        let touch = TOUCH_LYING * beast.withers;
+        let chest = if beast.hooves {
+            HORSE_CHEST
+        } else {
+            TOUCH_LYING
+        } * beast.withers;
+        let parts = [
+            ("forelegs", lows.fore_legs, touch),
+            ("hind feet", lows.hind_feet, touch),
+            ("chest", lows.chest, chest),
+        ];
+        let sunk = (SINK * beast.withers).max(SINK_FLOOR);
+        for (part, low, most) in parts {
+            // On the ground, or for a horse's chest near it: neither off it
+            // nor in it.
+            if low > most || low < -sunk {
+                wrong.push(format!(
+                    "{}: its {part} rest {:+.0} mm from the ground",
+                    beast.what,
+                    low * 1000.0
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn a_resting_beast_moves_into_and_out_of_it_without_a_jump() {
+    // #377: every motion a continuous function of its time, and the driver
+    // that plays them continuous frame to frame. The lying down took over
+    // from the sit by placing the trunk again by its own rule, and a dog's
+    // whole body jumped 161.5 mm one way going down and back getting up; a
+    // horse getting up found its loin's bend at the end of its range one
+    // frame and not the next, and its head jumped 906 mm.
+    let wrong: Vec<String> = in_parallel(beasts(), |beast| {
+        let rig = &beast.avatar.rig;
+        let mut wrong = Vec::new();
+        for name in ["Sit", "Lie Down"] {
+            let down = gesture::for_body(rig, name).expect("a beast's state");
+            let (up, rising) = emote::getting_up(rig, name).expect("a beast gets up");
+            let going = emote::seconds(rig, name).expect("a state keeps its own time");
+            for (way, clip, seconds) in [("going down", &down, going), ("getting up", &up, rising)] {
+                #[expect(clippy::cast_precision_loss, reason = "a few hundred steps")]
+                let at = |step: usize| clip.pose(rig, step as f32 / STEPS as f32).forward(rig);
+                #[expect(clippy::cast_precision_loss, reason = "a few hundred steps")]
+                let most = swift(beast.withers, seconds / STEPS as f32);
+                let mut before = at(0);
+                for step in 1..=STEPS {
+                    let after = at(step);
+                    let (moved, joint) = fastest(rig, &before, &after);
+                    if moved > most {
+                        #[expect(clippy::cast_precision_loss, reason = "a few hundred steps")]
+                        let time = step as f32 / STEPS as f32;
+                        wrong.push(format!(
+                            "{}: {name} {way}: joint {joint} ({:?}) moved {:.1} mm at {time:.3}, past {:.1}",
+                            beast.what,
+                            rig.joints[joint].zone,
+                            moved * 1000.0,
+                            most * 1000.0
+                        ));
+                        break;
+                    }
+                    before = after;
+                }
+            }
+            // And the driver at sixty frames a second: down, held half a
+            // second, and up again where it lies, at the unhurried pace.
+            let frame = 1.0 / 60.0;
+            let mut driver = Driver::seeded(377);
+            let mut drive = |gesture: Option<&str>| {
+                driver
+                    .drive(
+                        rig,
+                        &Inputs {
+                            delta: frame,
+                            gesture,
+                            ..Inputs::default()
+                        },
+                        level_ground,
+                    )
+                    .expect("an unheld body is posed every frame")
+                    .pose
+                    .forward(rig)
+            };
+            #[expect(clippy::cast_possible_truncation, reason = "a few hundred frames")]
+            let held = 30 + ((going + 0.5) / frame) as usize;
+            #[expect(clippy::cast_possible_truncation, reason = "a few hundred frames")]
+            let frames = held + ((rising + 1.0) / frame) as usize;
+            let most = swift(beast.withers, frame);
+            let mut before = drive(None);
+            for at in 1..frames {
+                let asked = match at {
+                    30 => Some(name),
+                    at if at == held => Some(emote::GET_UP),
+                    _ => None,
+                };
+                let after = drive(asked);
+                let (moved, joint) = fastest(rig, &before, &after);
+                if moved > most {
+                    wrong.push(format!(
+                        "{}: {name} driven: joint {joint} ({:?}) moved {:.1} mm in frame {at}, past {:.1}",
+                        beast.what,
+                        rig.joints[joint].zone,
+                        moved * 1000.0,
+                        most * 1000.0
+                    ));
+                    break;
+                }
+                before = after;
+            }
+        }
+        wrong
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

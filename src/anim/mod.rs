@@ -103,6 +103,7 @@ mod pattern;
 pub mod pose;
 pub mod pose_clip;
 mod quadruped;
+pub(crate) mod rest;
 pub mod speed;
 pub mod spring;
 pub mod swim;

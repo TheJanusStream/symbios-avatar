@@ -544,6 +544,11 @@ impl Avatar {
             }
         }
         let weights = weights;
+        // Where the skin reaches, for a body whose rests put it on the
+        // ground (#377): the joints alone miss it by centimetres.
+        if rig.ground_contacts().len() == 4 {
+            rig.outline = Some(crate::rig::Outline::measure(&body, &weights));
+        }
         let zones = weights.zone_map(&body, &rig);
         let surface = Surface::measure(&body, &rig);
 
@@ -2301,6 +2306,56 @@ mod tests {
         );
         assert!(back.parts.zones.is_empty());
         assert!(back.parts.features.is_none());
+    }
+
+    /// A beast's rig carries the outline its rests read across a worker
+    /// boundary, as one blob, and rests on the far side exactly as it did
+    /// where it was built; a person's has none and is written as it always
+    /// was (#377).
+    #[cfg(feature = "serde-avatar")]
+    #[test]
+    fn a_sent_beast_rests_as_it_was_built_and_a_sent_person_is_unchanged() {
+        let mut params = crate::QuadrupedParams::default();
+        params.set_kind(crate::Family::Horse, None, 0.0);
+        let record = AvatarRecord::new("Sent", Archetype::Quadruped(params));
+        let config = AvatarConfig {
+            atlas: 64,
+            ..AvatarConfig::default()
+        };
+        let built = Avatar::build_with(&record, &config).expect("builds");
+        let wire = serde_json::to_string(&built.rig).expect("serialises");
+        let back: Rig = serde_json::from_str(&wire).expect("deserialises");
+        assert_eq!(back, built.rig, "the rig must survive, outline and all");
+        // One blob of bytes, 36 a point, where a field-by-field encoding
+        // named every point's every field: 337 KB of a rig whose joints are
+        // 8 (#377).
+        let sent: serde_json::Value = serde_json::from_str(&wire).expect("parses");
+        let blob = sent["outline"]["points"]
+            .as_array()
+            .expect("the outline travels as one blob");
+        assert!(
+            !blob.is_empty()
+                && blob.len().is_multiple_of(36)
+                && blob.iter().all(serde_json::Value::is_u64),
+            "the outline travelled as {} values",
+            blob.len()
+        );
+        for name in ["Sit", "Lie Down"] {
+            let clip = crate::anim::gesture::for_body(&back, name).expect("a beast's state");
+            assert_eq!(
+                clip.pose(&back, 1.0),
+                clip.pose(&built.rig, 1.0),
+                "a sent beast's {name} rests otherwise than the one built"
+            );
+        }
+        let mut person = AvatarRecord::new("Sent", Archetype::default());
+        person.reroll(3);
+        let person = Avatar::build_with(&person, &config).expect("builds");
+        let wire = serde_json::to_string(&person.rig).expect("serialises");
+        assert!(
+            !wire.contains("outline"),
+            "a person's rig gained an outline field"
+        );
     }
 
     /// A truncated atlas is refused where it can still be reported, rather

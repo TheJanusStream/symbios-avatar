@@ -670,7 +670,13 @@ fn a_person_asked_for_a_beasts_emote_is_driven_as_if_asked_for_nothing() {
         let (asked, gestured) = drive(&person.rig, Some(name));
         assert!(!gestured, "a person started {name}");
         assert!(asked == standing, "{name} moved a person");
-        assert!(drive(&beast.rig, Some(name)).1, "a beast refused {name}");
+        // Every emote but the one that gets a beast up out of a state, which
+        // a standing beast has nothing to get up from (#377).
+        assert_eq!(
+            drive(&beast.rig, Some(name)).1,
+            name != emote::GET_UP,
+            "a beast took {name} wrongly"
+        );
     }
 }
 
@@ -3523,4 +3529,297 @@ fn a_squeezed_stride_steps_no_faster_than_its_heading_or_a_sprint() {
             );
         }
     }
+}
+
+/// A beast of `family` as the instruments here build one, and how high its
+/// withers stand, in metres.
+fn beast_of(family: plan::Family) -> (Avatar, f32) {
+    let mut params = QuadrupedParams::default();
+    params.set_kind(family, None, 0.0);
+    let withers = params.height * 1.2;
+    let record = AvatarRecord::new("Rester", Archetype::Quadruped(params));
+    let avatar = Avatar::build_with(
+        &record,
+        &AvatarConfig {
+            atlas: 64,
+            ..Default::default()
+        },
+    )
+    .expect("a beast builds");
+    (avatar, withers)
+}
+
+/// What gets a sitting or lying beast up (#377).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Interrupt {
+    /// The body carried off at a walk.
+    Walk,
+    /// The body thrown into the air.
+    Leap,
+    /// The body in deep water.
+    Swim,
+    /// Another gesture asked for.
+    Gesture,
+    /// [`emote::GET_UP`] asked for.
+    Stand,
+}
+
+/// When it comes: part of the way down, held, or part of the way up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum When {
+    GoingDown,
+    Held,
+    GettingUp,
+}
+
+/// The gesture an interrupting [`Interrupt::Gesture`] asks for.
+const SECOND: &str = "Shake";
+
+/// How long after a beast is up its pose is still the rest's to answer for,
+/// in seconds: the blend that hands it back, and a frame either side.
+const HANDED: f32 = 0.2;
+
+/// Puts a beast into `state`, gets it up `when` by `interrupt`, and answers
+/// everything wrong with how it went: a joint that jumped in a frame, a
+/// foot in the ground, a beast not up when it should be, a second gesture
+/// that did not play.
+fn interrupted(family: plan::Family, state: &str, interrupt: Interrupt, when: When) -> Vec<String> {
+    let (avatar, withers) = beast_of(family);
+    let rig = &avatar.rig;
+    let what = format!("{family:?} {state}, {interrupt:?} {when:?}");
+    let down = emote::seconds(rig, state).expect("a state keeps its own time");
+    let (_, up) = emote::getting_up(rig, state).expect("a beast gets up");
+    // In seconds from the request, when the interrupt comes, and by when
+    // the beast must be up: the way down undone, or the rise, in a hurry
+    // where the body is moving.
+    let (asked, hurried) = (
+        0.5,
+        !matches!(interrupt, Interrupt::Gesture | Interrupt::Stand),
+    );
+    let pace = if hurried { emote::HURRY } else { 1.0 };
+    let (at, rest) = match when {
+        When::GoingDown => (asked + 0.4 * down, 0.4 * down),
+        When::Held => (asked + down + 0.5, up),
+        When::GettingUp => (asked + down + 0.5 + 0.3 * up, 0.7 * up),
+    };
+    let by = at + rest * pace + 0.1;
+    // The feet's own skin, to read where the drawn feet are.
+    let body = &avatar.parts.body;
+    let weights = &avatar.parts.weights;
+    let feet: Vec<usize> = (0..body.positions.len())
+        .filter(|&vertex| {
+            matches!(
+                rig.joints[usize::from(weights.vertices[vertex][0].joint)].zone,
+                Zone::Extremity(_)
+            )
+        })
+        .collect();
+    let positions: Vec<Vec3> = feet.iter().map(|&vertex| body.positions[vertex]).collect();
+    let held = symbios_avatar::SkinWeights {
+        vertices: feet
+            .iter()
+            .map(|&vertex| weights.vertices[vertex])
+            .collect(),
+    };
+    let sink = (0.005 * withers).max(0.002);
+    let mut chassis = Chassis::seeded(377);
+    let mut wrong = Vec::new();
+    let mut before: Option<symbios_avatar::anim::Posed> = None;
+    let (mut second, mut handed) = (false, 0.0f32);
+    #[expect(clippy::cast_possible_truncation, reason = "a few hundred frames")]
+    let frames = ((by + 1.5) / STEP) as usize;
+    for frame in 0..frames {
+        #[expect(clippy::cast_precision_loss, reason = "a few hundred frames")]
+        let time = frame as f32 * STEP;
+        let after = (time - at).max(0.0);
+        let into = time >= at;
+        let place = match interrupt {
+            Interrupt::Walk if into => Vec3::Z * (1.2 * after),
+            Interrupt::Leap if into => Vec3::Y * (3.0 * after - 4.9 * after * after).max(0.0),
+            _ => Vec3::ZERO,
+        };
+        let swimming = interrupt == Interrupt::Swim && into;
+        let first = |moment: f32| time >= moment && time - STEP < moment;
+        let request = if first(asked) {
+            Some(state)
+        } else if when == When::GettingUp && first(asked + down + 0.5) {
+            Some(emote::GET_UP)
+        } else if first(at) && interrupt == Interrupt::Gesture {
+            Some(SECOND)
+        } else if first(at) && interrupt == Interrupt::Stand {
+            Some(emote::GET_UP)
+        } else {
+            None
+        };
+        let driven = chassis.drive(rig, place, swimming, request, None);
+        let posed = driven.pose.forward(rig);
+        let gesture = chassis.driver.gesture().map(|(name, _)| name.to_string());
+        let resting = gesture.as_deref() == Some(state);
+        if resting {
+            handed = time;
+        }
+        // Frame to frame, while the beast rests and as it is handed back to
+        // whatever carries it next: at an honest pace, or a hurried one from
+        // the moment something hurries it up. Whatever carries it after that
+        // is not this test's.
+        let fast = if hurried && into {
+            1.0 / emote::HURRY
+        } else {
+            1.0
+        };
+        if let Some(before) = before.as_ref().filter(|_| time - handed <= HANDED) {
+            let (moved, joint) = crate::rest::fastest(rig, before, &posed);
+            let most = crate::rest::swift(withers, STEP) * fast;
+            if moved > most {
+                wrong.push(format!(
+                    "{what}: joint {joint} ({:?}) moved {:.0} mm at {time:.2} s, past {:.0}",
+                    rig.joints[joint].zone,
+                    moved * 1000.0,
+                    most * 1000.0
+                ));
+            }
+        }
+        // Resting on the ground, no foot in it.
+        let grounded = chassis.driver.airborne().is_none() && !swimming;
+        if grounded && resting {
+            let low = posed
+                .deform(rig, &positions, &held)
+                .iter()
+                .map(|at| at.y)
+                .fold(f32::MAX, f32::min);
+            if low < -sink {
+                wrong.push(format!(
+                    "{what}: a foot {:.0} mm in the ground at {time:.2} s",
+                    -low * 1000.0
+                ));
+            }
+        }
+        second |= gesture.as_deref() == Some(SECOND);
+        if first(by) && gesture.as_deref() == Some(state) {
+            wrong.push(format!("{what}: still in its {state} at {time:.2} s"));
+        }
+        before = Some(posed);
+    }
+    if interrupt == Interrupt::Gesture && !second {
+        wrong.push(format!("{what}: {SECOND} never played"));
+    }
+    // A wrong reading every frame of a long fault says nothing the first
+    // five do not.
+    wrong.truncate(5);
+    wrong
+}
+
+/// Every interrupt from every moment, on a dog and a horse, for `state`.
+fn every_interrupt(state: &str) {
+    let mut wrong = Vec::new();
+    for family in [plan::Family::Dog, plan::Family::Horse] {
+        for interrupt in [
+            Interrupt::Walk,
+            Interrupt::Leap,
+            Interrupt::Swim,
+            Interrupt::Gesture,
+            Interrupt::Stand,
+        ] {
+            for when in [When::GoingDown, When::Held, When::GettingUp] {
+                wrong.extend(interrupted(family, state, interrupt, when));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn a_sitting_beast_gets_up_from_wherever_it_is_for_whatever_gets_it_up() {
+    // #377: a beast's state is held until something gets it up - being
+    // moved, leaving the ground, swimming, another gesture, or Get Up - and
+    // then it rises from wherever its body is, never snapping. Held for a
+    // fixed time and then replaced by a second gesture, a dog's sit stood it
+    // up 644 mm in a frame; walked off while seated its hips stayed 423 mm
+    // down and its pads dragged 115 mm through the ground.
+    every_interrupt("Sit");
+}
+
+#[test]
+fn a_lying_beast_gets_up_from_wherever_it_is_for_whatever_gets_it_up() {
+    // As the sit: a horse's lying down replaced by a greeting moved it
+    // 1113 mm in a frame.
+    every_interrupt("Lie Down");
+}
+
+#[test]
+fn a_beasts_state_is_held_until_something_gets_it_up() {
+    // #377: down at its own pace and held, standing still, long past any
+    // gesture's time; and the gesture asked for while it was down plays once
+    // it is up.
+    let (avatar, _) = beast_of(plan::Family::Dog);
+    let rig = &avatar.rig;
+    let down = emote::seconds(rig, "Sit").expect("a state keeps its own time");
+    let (_, up) = emote::getting_up(rig, "Sit").expect("a beast gets up");
+    let mut chassis = Chassis::seeded(377);
+    let held = down + 10.0;
+    #[expect(clippy::cast_possible_truncation, reason = "a thousand frames")]
+    let frames = ((held + up + 1.0) / STEP) as usize;
+    let mut seen = Vec::with_capacity(frames);
+    for frame in 0..frames {
+        #[expect(clippy::cast_precision_loss, reason = "a thousand frames")]
+        let time = frame as f32 * STEP;
+        let request = match frame {
+            0 => Some("Sit"),
+            _ if (time - held).abs() < STEP * 0.5 => Some(SECOND),
+            _ => None,
+        };
+        chassis.drive(rig, Vec3::ZERO, false, request, None);
+        seen.push(chassis.driver.gesture().map(|(name, _)| name.to_string()));
+    }
+    #[expect(clippy::cast_possible_truncation, reason = "a thousand frames")]
+    let at = |seconds: f32| seen[((seconds / STEP) as usize).min(frames - 1)].clone();
+    assert_eq!(
+        at(held - 0.1).as_deref(),
+        Some("Sit"),
+        "the sit was not held ten seconds"
+    );
+    assert_eq!(
+        at(held + up * 0.5).as_deref(),
+        Some("Sit"),
+        "the second gesture cut the getting up short"
+    );
+    assert_eq!(
+        at(held + up + 0.2).as_deref(),
+        Some(SECOND),
+        "the gesture asked for while down did not play once it was up"
+    );
+}
+
+#[test]
+fn a_persons_gesture_reads_its_length_as_it_plays() {
+    // #377 left a person's gestures as they were, and that includes this:
+    // `gesture_secs` is read every frame, so a caller shortening it part way
+    // through a wave ends the wave by the new length, not the old one.
+    let person = body_of("did:plc:transition-test");
+    let rig = &person.rig;
+    let mut chassis = Chassis::seeded(INSTRUMENT_SEED);
+    let shorter = 0.6;
+    #[expect(clippy::cast_possible_truncation, reason = "a hundred frames")]
+    let (changed, ended) = (
+        (0.3 / STEP) as usize,
+        ((shorter + 2.0 * STEP) / STEP) as usize,
+    );
+    for frame in 0..=ended {
+        if frame == changed {
+            chassis.driver.set_config(DriverConfig {
+                gesture_secs: shorter,
+                ..chassis.driver.config()
+            });
+        }
+        if frame == 0 {
+            chassis.ask(rig, Vec3::ZERO, "Greeting");
+        } else {
+            chassis.step(rig, Vec3::ZERO);
+        }
+    }
+    assert!(
+        chassis.driver.gesture().is_none(),
+        "the greeting played on to {:?} past a length of {shorter} s",
+        chassis.driver.gesture()
+    );
 }

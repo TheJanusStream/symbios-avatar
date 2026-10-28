@@ -15,20 +15,30 @@
 //! person folded their legs under them and laid their feet flat.
 //!
 //! **Two kinds, as the person's roster has.** [`sit`] and [`lie_down`] end in
-//! the pose they are for, which a caller holds; every other one starts and
+//! the pose they are for, which a caller holds and [`getting_up`] rises
+//! from, each at the pace [`seconds`] gives it; every other one starts and
 //! ends at rest. [`super::gesture::returns_to_rest`] tells them apart.
+//!
+//! **And a way back up** (#377): [`GET_UP`], which the [`super::Driver`]
+//! reads as getting a beast up out of whichever state it is in, without the
+//! body going anywhere. Asked by name like every other, so whatever already
+//! carries a beast's roster to it - a picker listing [`ROSTER`], a name sent
+//! to a peer - carries it too; as a clip it does nothing, because a body that
+//! is up has nothing to get up from.
 
 use glam::Vec3;
 
 use crate::det::DetMath;
 
 use super::clip::{Clip, Key, Target, Track};
-use crate::plan::Limb;
+use crate::plan::{FootKind, Limb};
+use crate::rig::Rig;
 
 /// Every beast's emote this module can build, by name.
 pub const ROSTER: &[&str] = &[
     "Sit",
     "Lie Down",
+    GET_UP,
     "Play Bow",
     "Shake",
     "Wag",
@@ -39,12 +49,28 @@ pub const ROSTER: &[&str] = &[
     "Sniff",
 ];
 
+/// The name that gets a beast up out of a sit or a lying down where it is
+/// (#377): see the module's notes. Played as a clip it does nothing.
+pub const GET_UP: &str = "Get Up";
+
+/// How much of its own time a beast takes to get up when it has to - when
+/// the body is moved, leaves the ground or swims while it sits or lies
+/// (#377) - as a share of [`getting_up`]'s, or of the way down it is coming
+/// back up: scaled with the body as those are.
+/// Provenance: **chosen** (#377), after the research's ratio (09, 2.1.2):
+/// a trained quick sit takes 0.4 to 0.6 s where a relaxed one takes 0.8 to
+/// 1.5, about two fifths (rules of thumb, the only quick figure it has);
+/// a fit animal can spring to its feet all at once (2.1.3). A dog with a
+/// half-metre leg is up from its sit in 0.44 s and from lying in 0.8.
+pub const HURRY: f32 = 0.4;
+
 /// The emote called `name`, if this roster has one.
 #[must_use]
 pub fn by_name(name: &str) -> Option<Clip> {
     match name {
         "Sit" => Some(sit()),
         "Lie Down" => Some(lie_down()),
+        GET_UP => Some(Clip::new(Vec::new())),
         "Play Bow" => Some(play_bow()),
         "Shake" => Some(shake()),
         "Wag" => Some(wag()),
@@ -56,26 +82,6 @@ pub fn by_name(name: &str) -> Option<Clip> {
         _ => None,
     }
 }
-
-/// How far a sitting beast's trunk turns nose up about its withers, in
-/// quarter turns: its hindquarters down onto the ground behind its fores.
-/// Provenance: **tuned by render** (#370).
-const SIT_PITCH: f32 = 0.35;
-
-/// How far forward a sitting beast's hind feet come, under its haunches, in
-/// the leg's reach.
-/// Provenance: **tuned by render** (#370).
-const SIT_TUCK: f32 = 0.3;
-
-/// How far a lying beast's body sinks, in its standing leg's reach, and how
-/// far forward its fore feet stretch and its hind feet tuck, in the leg's
-/// reach - every foot laid flat ([`Track::laid`]), so its legs fold under a
-/// body that comes down to the ground.
-/// Provenance: **tuned by render** (#370); every paw lands where it is sent
-/// down to 1.1, hips 312 mm down on the default dog.
-const LIE_DROP: f32 = 0.9;
-const LIE_REACH: f32 = 0.8;
-const LIE_TUCK: f32 = 0.3;
 
 /// How far a bowing beast's trunk turns nose down about its hips, in quarter
 /// turns, and how far its fore feet stretch out ahead, in the leg's reach.
@@ -156,46 +162,102 @@ fn planted(limbs: &[Limb]) -> Vec<Track> {
         .collect()
 }
 
-/// Sitting on its haunches: the hindquarters settle onto the ground behind
-/// fores that stay straight, the hind feet come forward under them, and the
-/// head stays level. **A state**: it ends sitting.
+/// Sitting on its haunches (#377): the hind paws come forward under the
+/// body and the hindquarters settle onto the ground in one braked descent,
+/// the haunches, the flat metatarsi and the forepaws on the ground and
+/// nothing else, the head level. A horse's is the dog-sit a rising horse
+/// passes through, held: forelegs planted ahead of the chest, hind legs
+/// folded under. Posed from where the body meets the ground: see
+/// [`Target::Sit`]. **A state**: it ends sitting, and [`getting_up`] gets up
+/// from it.
 #[must_use]
 pub fn sit() -> Clip {
-    let down = 0.6;
-    let mut tracks = vec![settled(Target::Pitch, Vec3::Z * SIT_PITCH, down)];
-    tracks.extend(planted(&[Limb::ForeLeft, Limb::ForeRight]));
-    for limb in [Limb::HindLeft, Limb::HindRight] {
-        tracks.push(
-            settled(Target::Just(limb), Vec3::Z * SIT_TUCK, down)
-                .in_world()
-                .laid(),
-        );
-    }
-    tracks.push(Track::new(Target::Gaze, [Key::new(0.0, Vec3::ZERO)]).in_world());
-    Clip::new(tracks)
+    Clip::new([
+        settled(Target::Sit, Vec3::Z, 1.0),
+        Track::new(Target::Gaze, [Key::new(0.0, Vec3::ZERO)]).in_world(),
+    ])
 }
 
-/// Lying down: the body sinks to the ground with its fore feet stretched out
-/// ahead and its hind feet tucked under it, every foot laid flat, its head
-/// up. **A state**: it ends lying.
+/// Lying down (#377): a dog or a cat through a sit, the forepaws walking out
+/// as the chest comes down between them, into the sphinx - sternum, belly,
+/// forearms and folded hind legs on the ground, head up; a horse gathering
+/// its feet, dropping onto its knees and folding its hindquarters after
+/// onto a hip, its forelegs tucked under. See [`Target::Lie`]. **A state**:
+/// it ends lying, and [`getting_up`] gets up from it.
 #[must_use]
 pub fn lie_down() -> Clip {
-    let down = 0.7;
-    let mut tracks = vec![settled(Target::Root, Vec3::NEG_Y * LIE_DROP, down)];
-    for (limbs, reach) in [
-        ([Limb::ForeLeft, Limb::ForeRight], LIE_REACH),
-        ([Limb::HindLeft, Limb::HindRight], LIE_TUCK),
-    ] {
-        for limb in limbs {
-            tracks.push(
-                settled(Target::Just(limb), Vec3::Z * reach, down)
-                    .in_world()
-                    .laid(),
-            );
-        }
+    Clip::new([
+        settled(Target::Lie, Vec3::Z, 1.0),
+        Track::new(Target::Gaze, [Key::new(0.0, Vec3::ZERO)]).in_world(),
+    ])
+}
+
+/// Getting up out of the state `name` leaves a body in, and how long that
+/// takes on `rig`, in seconds; `None` for an emote that ends at rest, a
+/// name the roster does not have, or a body that does not stand on four
+/// legs (#377).
+///
+/// **Not the way down played backward**: an animal rises in its own order.
+/// A sitting dog unfolds hip, stifle and hock in turn; a lying one puts its
+/// forelegs out first and then rises as from a sit; a horse puts its
+/// forelegs out ahead of its chest one and then the other, passes through
+/// its dog-sit and heaves up.
+#[must_use]
+pub fn getting_up(rig: &Rig, name: &str) -> Option<(Clip, f32)> {
+    let target = match name {
+        "Sit" => Target::Sit,
+        "Lie Down" => Target::Lie,
+        _ => return None,
+    };
+    let clip = Clip::new([
+        Track::new(target, [Key::new(0.0, Vec3::Z), Key::new(1.0, Vec3::ZERO)]),
+        Track::new(Target::Gaze, [Key::new(0.0, Vec3::ZERO)]).in_world(),
+    ]);
+    let seconds = timing(rig, name)?.1;
+    Some((clip, seconds))
+}
+
+/// How long the emote `name` takes on `rig`, in seconds, where it keeps its
+/// own time - the states, which an animal goes into at its own pace - and
+/// `None` for one that takes whatever its caller gives a gesture, a name
+/// the roster does not have, or a body that does not stand on four legs
+/// (#377).
+#[must_use]
+pub fn seconds(rig: &Rig, name: &str) -> Option<f32> {
+    Some(timing(rig, name)?.0)
+}
+
+/// How long a dog with a leg of [`STRIDE_LEG`] takes to sit down and to get
+/// up again, in seconds, and to lie down and to get up from lying; and a
+/// horse's, whose lying down and rising are slower and whose sit is its
+/// rising's dog-sit.
+/// Provenance: **the research's** (09): a greyhound rises from a sit in
+/// 1.14 s (Ellis2018, measured), a dog sits in 0.8 to 1.5 (rule of thumb);
+/// lies through the sit in one to two more and rises from it in 1 to 1.5; a
+/// horse gathers and drops in 2 to 6 and rises in 2 to 5 (rules of thumb).
+const PAWS: [f32; 4] = [1.0, 1.1, 2.4, 2.0];
+const HOOVES: [f32; 4] = [1.5, 1.4, 3.0, 3.0];
+
+/// The leg a dog's times are stated for, hip to hock, in metres: they scale
+/// with the square root of a body's own (09, note 12: dynamic similarity).
+const STRIDE_LEG: f32 = 0.5;
+
+/// How long the state `name` takes to go into and to get up from on `rig`.
+fn timing(rig: &Rig, name: &str) -> Option<(f32, f32)> {
+    if !super::quadruped::four_legged(rig) {
+        return None;
     }
-    tracks.push(Track::new(Target::Gaze, [Key::new(0.0, Vec3::ZERO)]).in_world());
-    Clip::new(tracks)
+    let times = if rig.anatomy.feet == FootKind::Hooves {
+        HOOVES
+    } else {
+        PAWS
+    };
+    let scale = (super::speed::leg_of(rig) / STRIDE_LEG).max(0.0).sqrt();
+    match name {
+        "Sit" => Some((times[0] * scale, times[1] * scale)),
+        "Lie Down" => Some((times[2] * scale, times[3] * scale)),
+        _ => None,
+    }
 }
 
 /// The bow a dog asks another to play with: its forehand down onto its
@@ -348,10 +410,12 @@ mod tests {
 
     #[test]
     fn a_sitting_beast_lowers_its_hindquarters_over_straight_fores() {
-        let rig = beast();
+        // A built dog, its rig carrying the outline of its skin a sit rests
+        // on the ground (#377).
+        let (rig, _) = crate::anim::rest::tests::built(crate::plan::Family::Dog);
         let (hips, withers, paws) = moved(&rig, &sit(), 1.0);
         assert!(hips.y < -0.15, "the hips sank {:.0} mm", -hips.y * 1000.0);
-        // Sitting back about its shoulders, the chest above them settles a
+        // Sitting back over its forelegs, the chest above them settles a
         // little; the hindquarters go all the way down.
         assert!(
             withers.y > hips.y * 0.4,
@@ -361,12 +425,14 @@ mod tests {
         );
         for (limb, paw) in Limb::ALL.into_iter().zip(&paws) {
             if limb.is_fore() {
+                // 4.0 mm on the default dog (#377).
                 assert!(
                     paw.length() < 0.005,
-                    "{limb:?} moved {:.0} mm",
+                    "{limb:?} moved {:.1} mm",
                     paw.length() * 1000.0
                 );
             } else {
+                // Stepped forward under the haunches.
                 assert!(
                     paw.z > 0.03,
                     "{limb:?} came {:.0} mm forward",
@@ -399,16 +465,21 @@ mod tests {
 
     #[test]
     fn a_lying_beast_sinks_with_its_fores_out_and_its_feet_on_the_ground() {
-        let rig = beast();
+        let (rig, _) = crate::anim::rest::tests::built(crate::plan::Family::Dog);
         let (hips, withers, paws) = moved(&rig, &lie_down(), 1.0);
         assert!(
             hips.y < -0.2 && withers.y < -0.2,
             "sank {hips:?} and {withers:?}"
         );
         for (limb, paw) in Limb::ALL.into_iter().zip(&paws) {
+            // Laid flat on the skin of its pads, which the ground holds, not
+            // on the joint: a forepaw's joint stands 17.7 mm above where it
+            // stood, a hind paw's 9.3, as far as the skin over the wrist and
+            // the elbow lifts it (#377). The skin itself is held to the
+            // ground in `tests/rest.rs`.
             assert!(
-                paw.y.abs() < 0.01,
-                "{limb:?} left the ground by {:.0} mm",
+                paw.y.abs() < 0.018,
+                "{limb:?} left the ground by {:.1} mm",
                 paw.y * 1000.0
             );
             if limb.is_fore() {

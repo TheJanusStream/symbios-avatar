@@ -190,8 +190,150 @@ Below zero the ribcage does not narrow by its column here but by a tenth of
   rigid with the girdle in every motion today. R5 (#378) drives it parallel
   to the forearm, the pantograph of 08 fact 2; it already carries the skin
   over it.
-- **Sit and Lie Down** (09) are R4's (#377): they still pitch the trunk about
-  the planted legs' tops and drop it by a share of the leg, as P5 built them.
+- **Sit and Lie Down rest on the ground** (#377): see the next section.
+
+## Resting on the ground (R4, #377)
+
+The owner's verdict on P5's clips: "With Sit and Lie Down, the animal ends up
+partially underground and the transition also looks unnatural." They pitched
+the trunk a fixed share and dropped it a fixed share of the leg, and nothing
+asked where the skin met the ground. Measured on the drawn skin over a sweep
+of 33 bodies (each family and a cross, `appeal` -1.5 to 2, `mass` and
+`bodyFat` at both ends; `tests/rest.rs`), the skin went under by up to 225 mm
+on a dog's sit and 229 lying, a cat's 132 and 240, a horse's 413 and 266;
+seed 1's dog 166 (18% of its withers), seed 2's cat 120 lying (27%), and a
+lying horse's chest stood 158 to 194 mm off the ground on forelegs sunk 57.
+
+**Posed from the skin, not the joints.** A rig is joints and radii, and the
+skin over them misses the radii by a tenth on a dog's thigh and by
+centimetres where a folded joint's blended skin bulges or collapses. So a
+built beast's rig keeps an outline of its skin (`rig::Outline`): the extremes
+of each joint's skin along a fan of directions, and every vertex held near
+half and half between two joints, each posed through the skin's own
+transforms - about 2,000 points, which read a folded body's lowest skin as
+drawn (`rig::outline`'s test). A rig rooted straight from a
+skeleton has none, and a rest reads the joints' rings instead, as it does
+for an outline with no points in it. Under `serde-avatar` the outline
+crosses a worker boundary as one blob of 36 bytes a point: 77 to 83 KB of a
+beast's rig in named msgpack, where field by field it was 217 to 233 KB; a
+person's rig, which has none, is written byte for byte as before.
+
+**The sit** is solved from the forehand back (`anim::rest`). The forelegs
+stand straight over the paws that stay, leaning back 0.12 rad (09: the
+forehand moves slightly back and up); a horse's lean 0.4, its forehooves out
+ahead of its chest as a rising horse's are. The chest pitches until the
+haunches touch the ground, the loin rounding as far again (a horse's 0.3 as
+far, its back stiff), and each hind leg folds down from the hip onto a
+metatarsus laid flat, the femur sloping 0.1 rad to the stifle and the hock
+closing as far as the hip is high - no further than 0.6 rad on paws (a dog's
+tarsus to 39 degrees) or 1.0 on hooves, where a horse's hock closed to 15
+degrees sank the back of its cannon 38 mm; beyond, the stifle rises toward
+the hip instead. **The hind paws step forward under the body** by however far
+that leaves them, lifted, before the body moves: 38% of its withers height
+on seed 1's dog, 12% on seed 2's cat, 16% on seed 6's horse, the forelegs
+leaning 7, 7 and 22 degrees. 09 says the feet stay planted, which is of rising
+from a sit (Ellis's protocol, from a crouch); from a natural stand with the
+hind paws planted, the first try laid the metatarsi flat behind them, carried
+the hips back past the paws and strained the forelegs forward. At the end a dog's or a cat's
+haunches, metatarsi and forepaws are on the ground (within 1.1% of its
+withers height over the sweep; a slight cat sitting bolt upright rests on
+its tail's root, which the haunches count) and nothing is under it; a horse
+rests on its hind cannons and forehooves, its croup within 2% of its withers
+height of the ground - 09's "on the ground or just off it".
+
+**Lying down**, for a dog or a cat, goes through the sit (09 fact 6): the
+first 0.4 of it is the sit, and then the chest comes down between forepaws
+that walk out ahead and lay flat, the pelvis levelling last. Its end is solved
+for the sternum and the back to touch together, the chest pitching no more
+than 0.3 rad; each foreleg's elbow point and paw are fitted to their own skin
+on the ground, the forearm sloping from one to the other; and the trunk is
+lowered again by what folding the forelegs lifts the brisket. The sternum,
+belly, forearms, forepaws and folded hind legs end within 4.0% of the
+withers height of the ground (a slight cat's chest at 4.0: the brisket's
+skin is bound to the upper arms, and rides a little under the sternum),
+nothing under it. **The lying down goes on from the sit exactly**: its trunk
+turns from the sit's attitude about hips held where the sit left them and
+comes down onto the sphinx's as the pelvis levels, its hind legs fold on from
+the sit's own fold; placed by the sphinx's own rule from its first moment, a
+dog's hips stood 161.5 mm off where the sit had left them, and the body
+jumped there in one frame, going down and getting up.
+
+**A horse lies down its own way** (09, 2.3.3): it gathers its hind feet
+under it, drops its forehand onto its knees first - the forearm sloping from
+the elbow to a knee on the ground, the cannon laid back under it and the
+hoof turned over, sole up - and folds its hindquarters after, rolling its
+pelvis 0.3 rad onto its left hip, its chest keeping 15% of the roll. Its
+hindquarters end where its dog-sit has them, which it rises through, its
+hind legs folded out beside its belly by the length its tibia exceeds its
+femur: a horse's hind leg folds no tighter than that, more than a lying
+horse's hip stands above a hock beneath it. Its chest comes down between its
+knees, short of the ground: lowered as far as its sternum lets it, the trunk
+sank a heavy horse's folded hind legs 229 mm into the ground, so it is
+raised again until its thighs clear, its forelegs where they were fitted.
+The lowest skin of its chest ends 1.0 to 10.2% of its withers height off the
+ground over the sweep, the default horse's 3.8% and with its legs at +1 2.1%
+(`tests/rest.rs` holds a horse's under 11%).
+
+**Getting up** follows the animal (`emote::getting_up`): out of a sit the hip
+opens first, then the stifle, then the hock (09 fact 5: 0 to 20%, 10 to 50%,
+25 to 60% of the rise), the hips staying over the hind feet until they step
+back under them at the end; out of lying down a dog or a cat puts its
+forelegs out first and rises into its sit and up from it; a horse extends one
+foreleg ahead of its chest and then the other, rises into its dog-sit and
+heaves up from it. Tests hold the order (`anim::rest`).
+
+**Every motion is a continuous function of its time** (#377), and
+`tests/rest.rs` sweeps each at 300 steps over the 33 bodies, and the
+`Driver` at 60 frames a second, holding every joint to four times
+`sqrt(g WH)`, about as fast as a galloping paw swings past its body; the
+fastest part of any rest, a rising horse's tail tip sweeping along the
+ground, reads 3.6 at that sweep and 4.2 at a 1,200-step one. What had
+jumped: the lying down taking over from the sit (above); a horse's loin
+finding its bend at the end of its range, and again where its shoulders came
+back within its forelegs' reach (its chest now bends as far as a straight
+foreleg's length costs against bending, smoothly); a hind leg's pole, which
+flipped when a lying horse's hip passed its hock's height and spun about a
+rising one's leg (it now turns over through the leg's own side); a tail
+tucked under a croup pitched far up, which first swung down through hanging
+before it came out of the ground (it hangs no further under than at rest,
+or 75 degrees); and a foreleg put back at rest that a contact solve took for
+one nothing had posed. A rest poses the joints it owns from rest, every
+frame, so two ways to one moment pose it the same.
+
+**Seconds**, a dog's at a hip-to-hock leg of 0.5 m and every body's by the
+square root of its own (09 note 12): to sit 1.0 and up 1.1 (Ellis: 1.14),
+to lie down 2.4 and up 2.0; a horse's 1.5 and 1.4, 3.0 and 3.0.
+
+**The `Driver` holds a state until something gets the beast up** (#377, the
+owner's default, for judging in the viewer). It goes down at its own pace
+and stays down. Moved (faster than 0.1 m/s), off the ground or in the water,
+the beast gets up in a hurry, in two fifths of its own time (`emote::HURRY`,
+09's quick sit against its relaxed one), and locomotion takes over through
+the blend; asked for another gesture, it gets up and then plays it, the last
+one asked for; asked for `emote::GET_UP`, a name in the beast's roster, it
+gets up where it is. Caught on the way down, it comes back up the way it was
+going. A state is not started under a body that is moving, in the air or
+swimming, and a request while one lasts is never rate-limited. Held for
+`gesture_secs` and then replaced by a second gesture, P5's and the first
+cut's states stood the body up in one frame - a dog 644 mm, a horse 1535 -
+and walked off while seated a dog dragged its pads 115 mm through the
+ground: the walk's own foot settling ran after the sit, and no longer runs
+under a beast in a state. A person's gestures are as they were.
+
+**Not done here**: the scapula still does not move - a dog's or a cat's chest
+rests on its sternum with its elbows on the ground without it. A dog's
+relaxed down, rolled onto one hip, is a later variant (the owner's call). A
+lying horse rests on its folded legs, its chest 1 to 10% of its withers
+height off the ground (above). A rest ignores a ground that is not level.
+
+**Cost**, native, per `Driver` frame (#377): what a rest solves from the rig
+alone - the sit's end, the lying end, the pose each holds - is solved once
+and kept while the rig is the same, and every reading of the skin takes all
+it needs of one pose in one pass. A held state costs what an idle frame
+does, 0.04 to 0.05 ms; going down or getting up 0.12 to 0.21 ms on average
+and at worst 0.8; the one frame that first needs a lying end pays its solve,
+about 2 ms. A clip applied on its own solves everything afresh, a little
+dearer than the first cut's: 0.4 ms held in a sit, 1.7 to 2.2 lying down.
 
 ## Where the body departs, and why
 
@@ -346,6 +488,5 @@ grain switching to the leg's bone on a line.
 
 ## Left for later slices
 
-- **R4 (#377)**: Sit and Lie Down posed from the anatomy and the ground (09).
 - **R5 (#378)**: the scapula driven parallel to the forearm, duty factors, the
   stance sweep, the carpus's fold, the spine's wave, the head's nod (08).

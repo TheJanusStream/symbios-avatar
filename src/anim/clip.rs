@@ -197,6 +197,17 @@ pub enum Target {
     /// questioning tilt. Turned after the gaze, so a head aimed somewhere
     /// tilts there. Does nothing on a body with no head.
     Cant,
+    /// How far a four-legged body has sat down on its haunches, read off the
+    /// key's `z`: `0` standing, `1` sitting (#377). The whole body is posed
+    /// from where it meets the ground - see `rest` - and a track whose last
+    /// key sits lower than its first is getting up, in the order an animal
+    /// rises, not the order it went down. Does nothing on a body that does
+    /// not stand on four legs.
+    Sit,
+    /// How far a four-legged body has lain down, read off the key's `z` as
+    /// [`Target::Sit`] is (#377). Does nothing on a body that does not stand
+    /// on four legs.
+    Lie,
 }
 
 impl Target {
@@ -237,7 +248,9 @@ impl Target {
             | Target::Tail
             | Target::Ears
             | Target::Jaw
-            | Target::Cant => Vec::new(),
+            | Target::Cant
+            | Target::Sit
+            | Target::Lie => Vec::new(),
         }
     }
 }
@@ -568,6 +581,18 @@ impl Clip {
     /// caller may want — a gesture that a stubby-armed body cannot complete is
     /// worth knowing about — rather than a failure.
     pub fn apply(&self, rig: &Rig, pose: &mut Pose, time: f32) -> Vec<Limb> {
+        self.apply_resting(rig, pose, time, &mut super::rest::Rests::default())
+    }
+
+    /// [`Self::apply`], what a rest solves from the rig alone kept in `rests`
+    /// between calls (#377): see [`super::rest::Rests`].
+    pub(crate) fn apply_resting(
+        &self,
+        rig: &Rig,
+        pose: &mut Pose,
+        time: f32,
+        rests: &mut super::rest::Rests,
+    ) -> Vec<Limb> {
         if !pose.fits(rig) {
             return Vec::new();
         }
@@ -592,7 +617,7 @@ impl Clip {
         // five-element sort.
         let mut ordered: Vec<&Track> = self.tracks.iter().collect();
         ordered.sort_by_key(|track| match track.target {
-            Target::Root | Target::Tilt | Target::Pitch => 0,
+            Target::Root | Target::Tilt | Target::Pitch | Target::Sit | Target::Lie => 0,
             Target::Trunk | Target::Roll => 1,
             Target::Gaze => 3,
             Target::Cant | Target::Tail | Target::Ears | Target::Jaw => 4,
@@ -642,6 +667,21 @@ impl Clip {
                 }
                 Target::Jaw => {
                     open_jaw(rig, pose, offset);
+                    continue;
+                }
+                Target::Sit | Target::Lie => {
+                    if super::quadruped::four_legged(rig) {
+                        let rest = if track.target == Target::Sit {
+                            super::rest::Rest::Sit
+                        } else {
+                            super::rest::Rest::Lie
+                        };
+                        let rising = matches!(
+                            (track.keys.first(), track.keys.last()),
+                            (Some(first), Some(last)) if last.offset.z < first.offset.z
+                        );
+                        super::rest::rest(rig, pose, rest, offset.z, rising, rests);
+                    }
                     continue;
                 }
                 Target::Cant => {

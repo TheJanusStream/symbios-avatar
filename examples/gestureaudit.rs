@@ -615,17 +615,22 @@ const BEASTS: [(&str, Option<i64>, f32, f32); 7] = [
 
 /// A beast's roster over [`BEASTS`] (#370): for each emote and each body,
 /// how many limbs ever strained, how low the trunk went - below the floor
-/// is through it - and how far any paw ever left the ground, in millimetres.
+/// is through it - how far any paw ever left the ground, and how far the
+/// drawn skin ever reached below it (#377), in millimetres; and getting up
+/// from each of the two states.
 ///
 /// **A paw off the ground is a reading, not a fault, for an emote that lifts
 /// one**; for sitting and lying down, which plant every foot, it is a foot
-/// floating. The trunk through the floor is a fault everywhere.
+/// floating. Skin below the ground is a fault everywhere.
+///
+/// The bodies are built as avatars, so the skin is the drawn skin and a rest
+/// is posed from the outline of it the rig carries.
 fn beasts(samples: usize, wanted: Option<&str>) {
     let roster: Vec<&str> = match wanted {
         Some(name) => vec![name],
         None => symbios_avatar::anim::emote::ROSTER.to_vec(),
     };
-    let rigs: Vec<(&str, Rig)> = BEASTS
+    let bodies: Vec<(&str, symbios_avatar::Avatar)> = BEASTS
         .iter()
         .map(|&(name, seed, height, legs)| {
             let mut record = symbios_avatar::AvatarRecord::new(
@@ -644,24 +649,36 @@ fn beasts(samples: usize, wanted: Option<&str>) {
                 }
             }
             record.sanitize();
-            let rig = Rig::from_skeleton(&record.skeleton()).expect("the plan builds a rig");
-            (name, rig)
+            let avatar = symbios_avatar::Avatar::build(&record).expect("the plan builds a body");
+            (name, avatar)
         })
         .collect();
+    // Each emote by name, and getting up from the two states: the label,
+    // the emote, and whether it is the getting up.
+    let mut clips: Vec<(String, &str, bool)> = Vec::new();
     for name in roster {
-        let Some(clip) = symbios_avatar::anim::emote::by_name(name) else {
-            eprintln!("no emote called {name}");
-            std::process::exit(1);
-        };
+        clips.push((name.to_string(), name, false));
+        if matches!(name, "Sit" | "Lie Down") {
+            clips.push((format!("{name}, getting up"), name, true));
+        }
+    }
+    for (label, name, rising) in &clips {
+        println!("\n{label}");
         println!(
-            "\n{name}: returns to rest {}",
-            gesture::returns_to_rest(&clip)
+            "  {:>10} {:>7} {:>7} {:>11} {:>10} {:>9} {:>8}",
+            "body", "height", "strain", "trunk mm", "paw up mm", "skin mm", "secs"
         );
-        println!(
-            "  {:>10} {:>7} {:>7} {:>11} {:>10}",
-            "body", "height", "strain", "trunk mm", "paw up mm"
-        );
-        for (body, rig) in &rigs {
+        for (body, avatar) in &bodies {
+            let rig = &avatar.rig;
+            let made = if *rising {
+                symbios_avatar::anim::emote::getting_up(rig, name).map(|(clip, _)| clip)
+            } else {
+                symbios_avatar::anim::emote::by_name(name)
+            };
+            let Some(clip) = made else {
+                eprintln!("no emote called {name}");
+                std::process::exit(1);
+            };
             let trunk: Vec<usize> = [Zone::Pelvis, Zone::Abdomen, Zone::Chest]
                 .into_iter()
                 .flat_map(|zone| rig.in_zone(zone))
@@ -671,28 +688,88 @@ fn beasts(samples: usize, wanted: Option<&str>) {
                 .into_iter()
                 .filter_map(|limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
                 .collect();
-            let (mut strained, mut lowest, mut lifted) = (0usize, f32::MAX, 0.0f32);
+            let (mut strained, mut lowest, mut lifted, mut skin) =
+                (0usize, f32::MAX, 0.0f32, f32::MAX);
             for step in 0..=samples {
                 let mut pose = Pose::rest(rig);
                 strained = strained.max(
                     clip.apply(rig, &mut pose, step as f32 / samples as f32)
                         .len(),
                 );
-                let posed = pose.forward(rig).positions;
+                let posed = pose.forward(rig);
                 for &joint in &trunk {
-                    lowest = lowest.min(posed[joint].y);
+                    lowest = lowest.min(posed.positions[joint].y);
                 }
                 for &paw in &paws {
-                    lifted = lifted.max(posed[paw].y - rig.joints[paw].position.y);
+                    lifted = lifted.max(posed.positions[paw].y - rig.joints[paw].position.y);
                 }
+                let drawn = posed.deform(rig, &avatar.parts.body.positions, &avatar.parts.weights);
+                skin = drawn.iter().map(|at| at.y).fold(skin, f32::min);
             }
+            let secs = if *rising {
+                symbios_avatar::anim::emote::getting_up(rig, name).map(|(_, secs)| secs)
+            } else {
+                symbios_avatar::anim::emote::seconds(rig, name)
+            }
+            .map_or_else(|| "-".to_string(), |secs| format!("{secs:.2}"));
             println!(
-                "  {:>10} {:>7.2} {:>7} {:>11.0} {:>10.1}",
+                "  {:>10} {:>7.2} {:>7} {:>11.0} {:>10.1} {:>9.1} {:>8}",
                 body,
                 rig.extent(),
                 strained,
                 lowest * 1000.0,
-                lifted * 1000.0
+                lifted * 1000.0,
+                skin * 1000.0,
+                secs
+            );
+        }
+    }
+    rests(&bodies);
+}
+
+/// What each body rests on at the end of a sit and of lying down (#377): the
+/// lowest drawn skin of the haunches, the hind feet, the forelegs, the
+/// forefeet and the chest, in millimetres - a support at about zero, and
+/// nothing below it.
+fn rests(bodies: &[(&str, symbios_avatar::Avatar)]) {
+    for name in ["Sit", "Lie Down"] {
+        println!("\n{name}: the lowest skin at its end, mm");
+        println!(
+            "  {:>10} {:>8} {:>9} {:>9} {:>9} {:>8}",
+            "body", "haunch", "hind ft", "forelegs", "fore ft", "chest"
+        );
+        for (body, avatar) in bodies {
+            let rig = &avatar.rig;
+            let clip = symbios_avatar::anim::emote::by_name(name).expect("a state");
+            let pose = clip.pose(rig, 1.0);
+            let weights = &avatar.parts.weights;
+            let drawn = pose
+                .forward(rig)
+                .deform(rig, &avatar.parts.body.positions, weights);
+            let mut lows = [f32::MAX; 5];
+            for (vertex, at) in drawn.iter().enumerate() {
+                let zone = rig.joints[usize::from(weights.vertices[vertex][0].joint)].zone;
+                let slot = match zone {
+                    Zone::Pelvis => Some(0),
+                    Zone::UpperLimb(limb) if !limb.is_fore() => Some(0),
+                    Zone::LowerLimb(limb) | Zone::Extremity(limb) if !limb.is_fore() => Some(1),
+                    Zone::UpperLimb(_) | Zone::LowerLimb(_) => Some(2),
+                    Zone::Extremity(_) => Some(3),
+                    Zone::Chest => Some(4),
+                    _ => None,
+                };
+                if let Some(slot) = slot {
+                    lows[slot] = lows[slot].min(at.y);
+                }
+            }
+            println!(
+                "  {:>10} {:>8.0} {:>9.0} {:>9.0} {:>9.0} {:>8.0}",
+                body,
+                lows[0] * 1000.0,
+                lows[1] * 1000.0,
+                lows[2] * 1000.0,
+                lows[3] * 1000.0,
+                lows[4] * 1000.0
             );
         }
     }
