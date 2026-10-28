@@ -96,11 +96,30 @@ pub(crate) fn build_limb(
 
     let mut rings: Vec<[u32; RING]> = Vec::with_capacity(count + 2);
     let mut dir = dirs[0];
-    let (mut u, mut v) = initial_frame(dir);
+    // A bridged leg whose rings are drawn out of round starts its frame with
+    // its first axis across the body (#374), so a section says across and
+    // fore-and-aft wherever the leg leans. Transported from world up, a leg
+    // dropping from the midline at a slight lean out and forward turned its
+    // first axis forty-five degrees round, and a thigh drawn deep from the
+    // side came out deep on the diagonal. A round leg keeps the frame it
+    // always had, and so its socket's fit on the hull: turned, the fore
+    // legs' sockets crowded the spine's off the forechest at the envelope's
+    // low corner. A person has no bridge.
+    let shaped = skeleton.nodes[nodes[1] as usize].scale != Vec2::ONE;
+    let (mut u, mut v) = if shaped && skeleton.bridge_aim(nodes[0], nodes[1]).is_some() {
+        lateral_frame(dir)
+    } else {
+        initial_frame(dir)
+    };
 
     if start_is_joint {
+        // A bridged bone's socket faces the joint the limb hangs from rather
+        // than the node it sweeps to (`Skeleton::bridge_aim`), its ring turned
+        // by the least rotation onto that face.
+        let away = aim(skeleton, nodes[0], nodes[1]).unwrap_or(dirs[0]);
+        let (su, sv) = transport(u, v, dirs[0], away);
         let socket = place_socket(
-            skeleton, nodes[0], nodes[1], dirs[0], lengths[0], u, v, config, mesh,
+            skeleton, nodes[0], nodes[1], away, lengths[0], su, sv, config, mesh,
         );
         rings.push(socket.ring);
         sockets.push(socket);
@@ -151,14 +170,16 @@ pub(crate) fn build_limb(
     dir = final_dir;
 
     if end_is_joint {
+        let away = aim(skeleton, nodes[count - 1], nodes[count - 2]).unwrap_or(-final_dir);
+        let (su, sv) = transport(u, v, -final_dir, away);
         let socket = place_socket(
             skeleton,
             nodes[count - 1],
             nodes[count - 2],
-            -final_dir,
+            away,
             lengths[count - 2],
-            u,
-            v,
+            su,
+            sv,
             config,
             mesh,
         );
@@ -227,7 +248,12 @@ fn place_socket(
     mesh: &mut PolyMesh,
 ) -> Socket {
     let hub = skeleton.nodes[joint as usize];
-    let next = skeleton.nodes[neighbor as usize];
+    // A bridged bone's socket is sized by the joint it opens toward, where
+    // the limb leaves the body, not by the node it sweeps to (#374): a
+    // thigh's muscle rides the stifle's ring, and blended into the socket
+    // on the pelvis it crowded the spine's socket off its bone.
+    let sized_by = skeleton.bridge_aim(joint, neighbor).unwrap_or(neighbor);
+    let next = skeleton.nodes[sized_by as usize];
 
     let max_dist = config.max_socket_fraction * bone_length;
     let dist = (config.socket_distance * hub.radius).min(max_dist);
@@ -269,6 +295,23 @@ fn place_socket(
 }
 
 /// Appends a [`RING`]-vertex ring, wound counter-clockwise about `u × v`.
+/// Which way the socket of a bridged bone faces out of its joint, if the bone
+/// from `joint` to `neighbor` is a bridge: toward the last marker of the run,
+/// the joint inside the body the limb hangs from - a shoulder, a hip (#374).
+///
+/// **Aimed there because two legs aimed at their own feet cannot both open on
+/// one hull.** Dropped near-parallel from a girdle, their rings lie side by
+/// side on the hull's floor and one facet takes both; the separation the hull
+/// needs is what spread the P1 legs into an A. Aimed at the shoulder, the
+/// socket opens on the front of the chest where the upper arm leaves it; at
+/// the hip, on the side of the croup where the thigh does, and the leg runs
+/// from there to the elbow or the stifle under the body.
+fn aim(skeleton: &Skeleton, joint: u32, neighbor: u32) -> Option<Vec3> {
+    let marker = skeleton.bridge_aim(joint, neighbor)?;
+    let toward = skeleton.nodes[marker as usize].position - skeleton.nodes[joint as usize].position;
+    (toward.length() > MIN_BONE_LENGTH).then(|| toward.normalize())
+}
+
 pub(crate) fn push_ring(
     mesh: &mut PolyMesh,
     center: Vec3,
@@ -294,6 +337,18 @@ pub(crate) fn initial_frame(dir: Vec3) -> (Vec3, Vec3) {
     let u = reference.cross(dir).normalize();
     let v = dir.cross(u);
     (u, v)
+}
+
+/// A ring frame for a bone along `dir` whose first axis is as near across
+/// the body, `+X`, as the bone allows: see [`build_limb`]. Falls back to
+/// [`initial_frame`] for a bone that runs across the body itself.
+fn lateral_frame(dir: Vec3) -> (Vec3, Vec3) {
+    let across = Vec3::X - dir * dir.dot(Vec3::X);
+    if across.length_squared() < 1e-6 {
+        return initial_frame(dir);
+    }
+    let u = across.normalize();
+    (u, dir.cross(u))
 }
 
 /// Rotates a frame by the minimal rotation carrying `from` onto `to`.

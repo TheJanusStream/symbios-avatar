@@ -544,6 +544,21 @@ impl Rig {
         )
     }
 
+    /// The joint `limb` hangs from: its first upper-limb joint, a person's
+    /// shoulder or hip - or, on a limb whose upper bones lie inside the trunk
+    /// as markers (#374), the last of them, the shoulder or the hip joint a
+    /// beast's leg swings from, rather than the top of its shoulder blade.
+    /// What a prop at a shoulder or a hip rides, and where it sits.
+    pub(crate) fn limb_root(&self, limb: Limb) -> Option<usize> {
+        let upper = self.in_zone(Zone::UpperLimb(limb));
+        upper
+            .iter()
+            .rev()
+            .find(|&&joint| self.joints[joint].marker)
+            .or_else(|| upper.first())
+            .copied()
+    }
+
     /// The three joints an [`crate::anim::ik::two_bone`] solve needs for `limb`.
     ///
     /// Returns `[root, mid, tip]` — hip, knee, ankle, or shoulder, elbow, wrist —

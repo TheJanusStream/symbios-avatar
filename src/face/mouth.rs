@@ -115,12 +115,7 @@ pub struct Mouth {
 pub fn open(body: &mut PolyMesh, rig: &Rig, canon: &Canon, params: &FaceParams) -> Option<Mouth> {
     // No jaw, no mouth to open: the seam's two sides would have nothing to
     // part them.
-    (0..rig.len()).find(|&tip| {
-        rig.joints[tip].marker
-            && rig.joints[tip]
-                .parent
-                .is_some_and(|pivot| rig.joints[pivot].marker)
-    })?;
+    crate::rig::skin::jaw_chain(rig)?;
     let head = *rig.in_zone(Zone::Head).first()?;
     let centre = rig.joints[head].position;
     let radius = rig.joints[head].radius;

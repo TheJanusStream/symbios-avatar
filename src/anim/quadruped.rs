@@ -522,10 +522,12 @@ mod tests {
             .collect()
     }
 
-    /// The pelvis, the loin and the withers.
+    /// The pelvis, the loin and the withers: the girdle the neck hangs
+    /// from, which is not the chest's first joint on a six-ring trunk (#375).
     fn trunk(rig: &Rig) -> [usize; 3] {
-        [Zone::Pelvis, Zone::Abdomen, Zone::Chest]
-            .map(|zone| *rig.in_zone(zone).first().expect("a beast's trunk"))
+        let first = |zone: Zone| *rig.in_zone(zone).first().expect("a beast's trunk");
+        let withers = rig.joints[first(Zone::Neck)].parent.expect("a girdle");
+        [first(Zone::Pelvis), first(Zone::Abdomen), withers]
     }
 
     /// The trunk's pitch nose up, in degrees, and how far the loin stands

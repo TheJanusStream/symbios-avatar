@@ -1,8 +1,13 @@
 //! The four-legged body plan.
 //!
 //! Structurally this is the humanoid's problem twice over: two girdles, each a
-//! four-way joint carrying a spine segment in each direction plus two legs. The
-//! same radius-relative floors apply, and for the same reason.
+//! four-way joint - the pelvis carrying the loin, the tail and two hind legs,
+//! the forechest the ribs, the neck and two fore legs - with a run of four
+//! trunk rings between them (#375). Each leg's bones inside the trunk, the
+//! shoulder blade and the shoulder on a fore leg and the hip joint on a hind
+//! one, are markers the rig keeps and the cage sweeps past (#374), so a leg
+//! meshes from its girdle straight to the elbow or the stifle under the body.
+//! docs/quadruped-anatomy.md has the targets and what the body departs from.
 //!
 //! **What is left in this file is the graph, not the geometry.** The axes, how
 //! they are clamped, rolled and encoded are here; every number a node is built
@@ -14,7 +19,10 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use super::derive::quadruped::Dimensions;
+use super::derive::quadruped::{Dimensions, FORE_INSIDE, HIND_INSIDE, TRUNK_NODES};
+
+/// One leg node as the derive gives it: where it stands and its radius.
+type LegNode = (Vec3, f32);
 use super::{Anatomy, Coat, CompositePriors, Composites, DEFAULT_BODY_FAT, Fur, Limb, Zone};
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
@@ -27,13 +35,18 @@ use crate::skeleton::{Node, Skeleton};
 pub const HEIGHT_RANGE: (f32, f32) = (0.25, 1.8);
 
 /// Which kind of animal a quadruped is drawn as (#366): the anchor its axes
-/// are rolled around, and where a roll draws its parts (#367) and its coat
-/// and eyes (#368) from.
+/// are rolled around, where a roll draws its parts (#367) and its coat and
+/// eyes (#368) from, and the anatomy its body is built in (#374).
 ///
-/// **The geometry does not read it.** A body is its axes and a family is
-/// where a roll centres them, so a creator who drags a cat's axes into a
-/// horse's range has a horse-shaped cat, which is what they asked for, and a
-/// hybrid is no more than a roll centred between two families.
+/// **The body reads it.** A family is a frame - a dog's, a cat's or a
+/// horse's bone lengths, trunk sections and stance, measured in withers
+/// heights (docs/quadruped-anatomy.md) - and what `appeal` makes of it: a
+/// puppy's, a kitten's or a foal's proportions. The body's axes move that
+/// frame by how far each sits from the family's own centre, so a roll at its
+/// family's centre is the family's frame, and a creator who drags a cat's
+/// axes into a horse's range has a cat stretched toward a horse. A hybrid is
+/// both: rolled between its two families, and built in their frames blended
+/// by its blend. The head still reads the axes alone, as P2 built it.
 ///
 /// Written as its lowercase name. A name this build does not know - a family a
 /// newer one added - reads as a dog rather than failing the record: the body
@@ -186,7 +199,12 @@ const CUTE: f32 = 1.0;
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct QuadrupedParams {
-    /// Height of the back line in metres, within [`super::quadruped_height_range`].
+    /// The body's size, in metres, within [`super::quadruped_height_range`]:
+    /// the back height P1 measured it as. The body stands at a withers height
+    /// 1.2 times this (#374), the top of the shoulder blades over the ground,
+    /// which keeps every record the size it was in a world while the body
+    /// under it was rebuilt; every proportion is a share of that withers
+    /// height.
     #[serde(with = "super::scaled")]
     pub height: f32,
     /// Body length from shoulder to hip.
@@ -239,9 +257,12 @@ pub struct QuadrupedParams {
     pub chest_depth: f32,
     /// How the whole body is drawn, from naturalistic at the bottom to cute
     /// at the top (#366). Applied over the anatomy, it grows the head and
-    /// shortens the muzzle, the neck and the body, and thickens the legs: the
-    /// baby schema's proportions, which every family keeps its own reading
-    /// of. A re-roll leans it cute, the owner's call.
+    /// shortens the muzzle on every family, and draws the body its family's
+    /// young has (#372, the owner's call): a dog or a cat a puppy's, its
+    /// barrel rounder rather than longer under a shorter, thicker neck, on
+    /// legs at their adult share with bigger paws; a horse a foal's, a short
+    /// body on long legs. A cross blends its two families' by its blend. A
+    /// re-roll leans it cute, the owner's call.
     #[serde(with = "super::scaled")]
     pub appeal: f32,
     /// How broad the muzzle is: a borzoi's wedge at the bottom, a boxer's
@@ -513,6 +534,40 @@ impl Anchor {
     }
 }
 
+/// Where a roll of a body centres the axes its body is built from (#374): its
+/// family's, a cross's blended. The derive reads each body axis as a step
+/// from here, so a roll at its family's centre builds the family's own frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AxisCentres {
+    /// `legLength`'s centre.
+    pub leg_length: f32,
+    /// `bodyLength`'s centre.
+    pub body_length: f32,
+    /// `chestDepth`'s centre.
+    pub chest_depth: f32,
+    /// `stance`'s centre.
+    pub stance: f32,
+    /// [`Composites::mass`]'s centre: the trunk's depth reads mass and body
+    /// fat as steps from the family's own body, as its frame was measured
+    /// on.
+    pub mass: f32,
+    /// The family's body fat at that mass.
+    pub body_fat: f32,
+}
+
+/// See [`AxisCentres`].
+pub(crate) fn axis_centres(params: &QuadrupedParams) -> AxisCentres {
+    let anchor = Anchor::for_params(params);
+    AxisCentres {
+        leg_length: anchor.leg_length.mean,
+        body_length: anchor.body_length.mean,
+        chest_depth: anchor.chest_depth.mean,
+        stance: anchor.stance.mean,
+        mass: anchor.mass.mean,
+        body_fat: anchor.body_fat,
+    }
+}
+
 impl Default for QuadrupedParams {
     fn default() -> Self {
         Self {
@@ -741,23 +796,28 @@ impl BodyPlan for QuadrupedParams {
         // are shaped into (#367).
         skeleton.beast_head = Some(d.head);
         skeleton.beast_feet = Some(super::BeastFeet { kind: self.feet });
-        let hips = skeleton.add_node(
-            Node::new(d.hips_at, d.hips_r)
-                .with_scale(d.hips_section)
-                .in_zone(Zone::Pelvis),
-        );
-        let spine = skeleton.extend_from(
-            hips,
-            Node::new(d.spine_at, d.spine_r)
-                .with_scale(d.spine_section)
-                .in_zone(Zone::Abdomen),
-        );
-        let withers = skeleton.extend_from(
-            spine,
-            Node::new(d.withers_at, d.withers_r)
-                .with_scale(d.withers_section)
-                .in_zone(Zone::Chest),
-        );
+        // The trunk, pelvis forward (#375): six rings, each its own depth and
+        // width. The pelvis is the root, as it always was.
+        let zones = [
+            Zone::Pelvis,
+            Zone::Abdomen,
+            Zone::Abdomen,
+            Zone::Chest,
+            Zone::Chest,
+            Zone::Chest,
+        ];
+        let mut ring = None;
+        let mut trunk = [0u32; TRUNK_NODES];
+        for (index, (&(at, radius, section), zone)) in d.trunk.iter().zip(zones).enumerate() {
+            let node = Node::new(at, radius).with_scale(section).in_zone(zone);
+            let added = match ring {
+                None => skeleton.add_node(node),
+                Some(previous) => skeleton.extend_from(previous, node),
+            };
+            trunk[index] = added;
+            ring = Some(added);
+        }
+        let (hips, withers) = (trunk[0], trunk[TRUNK_NODES - 1]);
         let neck = skeleton.extend_from(
             withers,
             Node::new(d.neck_at, d.neck_r)
@@ -799,19 +859,37 @@ impl BodyPlan for QuadrupedParams {
             // in the extremity. `Rig::limb_chain` then hands the leg IK the
             // same three joints it gets on a person, and the pad, the first
             // extremity node, is the contact the gait plants.
-            let zones = |limb: Limb| {
-                [
-                    Zone::UpperLimb(limb),
-                    Zone::UpperLimb(limb),
-                    Zone::LowerLimb(limb),
-                    Zone::Extremity(limb),
-                    Zone::Extremity(limb),
-                ]
+            // Zoned as the humanoid's limbs are (#366): the upper limb, the
+            // ankle - the hock, the carpus - in the lower, the foot in the
+            // extremity. The bones inside the trunk are upper-limb MARKERS
+            // (#374): the rig keeps them, the cage sweeps the leg straight
+            // from the girdle to the first joint outside the body. Then
+            // `Rig::limb_chain`, which takes the last three of the upper and
+            // lower limb, hands the leg IK the shoulder, the elbow and the
+            // carpus - or the hip, the stifle and the hock - and the pad, the
+            // first extremity node, is the contact the gait plants.
+            let zone = |limb: Limb, index: usize, count: usize| match count - index {
+                1 | 2 => Zone::Extremity(limb),
+                3 => Zone::LowerLimb(limb),
+                _ => Zone::UpperLimb(limb),
             };
-            for (girdle, limb, nodes) in [(hips, hind, &d.hind), (withers, fore, &d.fore)] {
+            let legs: [(u32, Limb, &[LegNode], usize); 2] = [
+                (hips, hind, &d.hind, HIND_INSIDE),
+                (withers, fore, &d.fore, FORE_INSIDE),
+            ];
+            for (girdle, limb, nodes, inside) in legs {
                 let mut parent = girdle;
-                for (&(position, radius), zone) in nodes.iter().zip(zones(limb)) {
+                for (index, &(position, radius)) in nodes.iter().enumerate() {
+                    let zone = zone(limb, index, nodes.len());
                     let mut node = Node::new(at(position), radius).in_zone(zone);
+                    if index < inside {
+                        node = node.as_marker();
+                    }
+                    // The thigh's muscle rides the stifle's ring, the first
+                    // the cage sweeps below the croup (#374).
+                    if index == inside && limb == hind {
+                        node = node.with_scale(d.stifle_section);
+                    }
                     // The foot's two nodes stand on a flat edge rather than a
                     // vertex, for the reason `plan::humanoid` gives its sole.
                     if matches!(zone, Zone::Extremity(_)) {
@@ -1076,18 +1154,39 @@ fn take_byte(bytes: &mut &[u8]) -> Result<u8, PlanDecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan::derive::quadruped::SKIN;
     use crate::skeleton::NodeKind;
 
     #[test]
     fn the_neutral_body_has_two_four_way_girdles() {
+        // #375: the trunk is a run of rings from the pelvis to the forechest,
+        // and only its two ends are joints. Each girdle still carries four
+        // bones; a leg's first is the marker its bridge starts with (#374).
         let skeleton = QuadrupedParams::default().skeleton(&crate::Composites::default());
         skeleton.validate().expect("valid skeleton");
-        assert_eq!(skeleton.degree(0), 4, "hips: spine, tail, two legs");
-        assert_eq!(skeleton.degree(2), 4, "withers: spine, neck, two legs");
+        let withers = TRUNK_NODES as u32 - 1;
+        assert_eq!(skeleton.degree(0), 4, "pelvis: loin, tail, two hips");
+        assert_eq!(
+            skeleton.degree(withers),
+            4,
+            "forechest: ribs, neck, two blades"
+        );
+        assert_eq!(skeleton.kind(0), NodeKind::Joint);
+        assert_eq!(skeleton.kind(withers), NodeKind::Joint);
+        for ring in 1..withers {
+            assert_eq!(
+                skeleton.kind(ring),
+                NodeKind::Connector,
+                "ring {ring} of the trunk is not one of a run"
+            );
+        }
 
-        // Head, tail tip, four feet.
+        // Head, tail tip, four feet: the markers inside the legs mesh
+        // nothing, and are no part of the cage's count.
         let leaves = (0..skeleton.nodes.len() as u32)
-            .filter(|&node| skeleton.kind(node) == NodeKind::Leaf)
+            .filter(|&node| {
+                !skeleton.nodes[node as usize].marker && skeleton.kind(node) == NodeKind::Leaf
+            })
             .count();
         assert_eq!(leaves, 6);
     }
@@ -1121,14 +1220,26 @@ mod tests {
             body_fat: 0.35,
             ..Default::default()
         };
+        // #374: the run from the pelvis to the forechest is floored at a
+        // multiple of the trunk's largest ring, where P1 floored one spine
+        // bone against its girdle: a short deep body stretches rather than
+        // crowd its ribs out of their girdles' sockets, and still meshes.
         let skeleton = params.skeleton(&heavy);
-        let hips = skeleton.nodes[0].position.z;
-        let spine = skeleton.nodes[1].position.z;
-        let girdle = skeleton.nodes[0].radius;
+        let withers = TRUNK_NODES - 1;
+        let run = skeleton.nodes[withers].position.z - skeleton.nodes[0].position.z;
+        let largest = skeleton.nodes[..TRUNK_NODES]
+            .iter()
+            .map(|node| node.radius)
+            .fold(0.0, f32::max);
+        let floor = crate::plan::derive::quadruped::SPAN_FLOOR;
         assert!(
-            (spine - hips) >= girdle * 1.55,
-            "spine segment floored against the girdle radius"
+            run >= floor * largest * 0.999,
+            "the trunk runs {run} under its floor {}",
+            floor * largest
         );
+        let cage = crate::cage::build_cage(&skeleton, &crate::CageConfig::default())
+            .expect("the stretched body meshes");
+        assert!(cage.manifold_report().is_clean());
     }
 
     #[test]
@@ -1393,6 +1504,12 @@ mod tests {
         QuadrupedParams::default().skeleton(&composites)
     }
 
+    /// The radius and the cross-section of trunk node `index`.
+    fn skeleton_trunk(skeleton: &Skeleton, index: usize) -> (f32, glam::Vec2) {
+        let node = skeleton.nodes[index];
+        (node.radius, node.scale)
+    }
+
     /// The radius of the first node in `zone`.
     fn radius(skeleton: &Skeleton, zone: Zone) -> f32 {
         skeleton
@@ -1408,29 +1525,89 @@ mod tests {
         // #178: mass reaches every girth and the fleshy sites fastest, body
         // fat fills the belly and leaves the cannon alone, and age wastes the
         // legs and settles the back. The frame axis reaches nothing.
+        // On the trunk (#374, #375) a heavier body is wider at every ring and
+        // deeper through the barrel under the same back, and a fatter one
+        // most at the belly, whose underline drops - on a dog and a cat, at
+        // a naturalistic `appeal` and at the roll's centre, where a puppy's
+        // or a kitten's ribcage is already as round as it may be. The walls
+        // the rings are held by (round, the loin's width) hold the shape and
+        // never swallow the amount of body.
+        for family in [Family::Dog, Family::Cat] {
+            for appeal in [0.0, 1.0] {
+                let mut params = QuadrupedParams::default();
+                params.set_kind(family, None, 0.0);
+                params.appeal = appeal;
+                let at = |mass: f32, body_fat: f32| {
+                    Dimensions::of(
+                        &params,
+                        &Composites {
+                            mass,
+                            body_fat,
+                            ..Default::default()
+                        },
+                    )
+                };
+                // A ring's half-extents as the skin should measure them.
+                let width = |d: &Dimensions, i: usize| d.trunk[i].1 * d.trunk[i].2.x * SKIN;
+                let depth = |d: &Dimensions, i: usize| d.trunk[i].1 * d.trunk[i].2.y * SKIN;
+                let underline = |d: &Dimensions, i: usize| d.trunk[i].0.y - depth(d, i);
+                let back = |d: &Dimensions, i: usize| d.trunk[i].0.y + depth(d, i);
+                let what = format!("{family:?} at appeal {appeal}");
+                let (neutral, heavy, slight) = (
+                    at(0.0, DEFAULT_BODY_FAT),
+                    at(1.0, DEFAULT_BODY_FAT),
+                    at(-1.0, DEFAULT_BODY_FAT),
+                );
+                for i in 0..TRUNK_NODES {
+                    assert!(
+                        width(&heavy, i) > width(&slight, i) * 1.15,
+                        "{what}: mass widens ring {i} ({} against {})",
+                        width(&heavy, i),
+                        width(&slight, i)
+                    );
+                }
+                for i in 1..=4 {
+                    assert!(
+                        depth(&heavy, i) > depth(&slight, i) * 1.05,
+                        "{what}: mass deepens ring {i} ({} against {})",
+                        depth(&heavy, i),
+                        depth(&slight, i)
+                    );
+                    assert!(
+                        underline(&heavy, i) < underline(&neutral, i),
+                        "{what}: under the same back, so ring {i}'s underline drops"
+                    );
+                    assert!(
+                        (back(&neutral, i) - back(&heavy, i)).abs() < 1e-5,
+                        "{what}: ring {i}'s back stays where it was"
+                    );
+                }
+                let ratio = |of: &dyn Fn(&Dimensions, usize) -> f32, d: &Dimensions, i: usize| {
+                    of(d, i) / of(&neutral, i)
+                };
+                assert!(
+                    ratio(&width, &heavy, 2) > ratio(&width, &heavy, 3) * 1.03,
+                    "{what}: the belly gains faster than the ribcage"
+                );
+                let fat = at(0.0, 0.45);
+                assert!(
+                    ratio(&width, &fat, 1) > 1.05 && ratio(&width, &fat, 2) > 1.05,
+                    "{what}: a fat animal is round"
+                );
+                assert!(
+                    underline(&neutral, 2) - underline(&fat, 2) > 0.015 * params.height
+                        && underline(&fat, 1) < underline(&neutral, 1)
+                        && ratio(&depth, &fat, 2) > ratio(&depth, &fat, 3),
+                    "{what}: and carries it at the belly, whose underline drops"
+                );
+            }
+        }
+
         let neutral = built(Composites::default());
-        let ratio =
-            |skeleton: &Skeleton, zone: Zone| radius(skeleton, zone) / radius(&neutral, zone);
-
-        let heavy = built(Composites {
-            mass: 1.0,
-            ..Default::default()
-        });
-        let slight = built(Composites {
-            mass: -1.0,
-            ..Default::default()
-        });
-        assert!(radius(&heavy, Zone::Pelvis) > radius(&slight, Zone::Pelvis) * 1.3);
-        assert!(
-            ratio(&heavy, Zone::Abdomen) > ratio(&heavy, Zone::Chest) * 1.03,
-            "the belly gains faster than the ribcage"
-        );
-
         let fat = built(Composites {
             body_fat: 0.45,
             ..Default::default()
         });
-        assert!(ratio(&fat, Zone::Abdomen) > 1.1, "a fat animal is round");
         let hock = Zone::LowerLimb(Limb::HindLeft);
         assert_eq!(
             radius(&fat, hock),
@@ -1455,7 +1632,11 @@ mod tests {
         assert!(thigh(&old) < thigh(&neutral), "age wastes the legs");
         let loin = |skeleton: &Skeleton| skeleton.nodes[1].position.y;
         assert!(loin(&old) < loin(&neutral), "and settles the back");
-        assert_eq!(radius(&old, Zone::Pelvis), radius(&neutral, Zone::Pelvis));
+        assert_eq!(
+            skeleton_trunk(&old, 0),
+            skeleton_trunk(&neutral, 0),
+            "and leaves the pelvis as it was"
+        );
 
         for femininity in [-3.0, 3.0] {
             let framed = built(Composites {
@@ -1508,37 +1689,177 @@ mod tests {
     }
     #[test]
     fn appeal_draws_the_baby_schema_over_any_family() {
-        // #366: a bigger head for the body, a shorter face and body, sturdier
-        // legs - and a cute horse is still a horse, so the family's own
-        // proportions survive it.
-        let at = |appeal: f32, family: Family| {
-            let mut params = QuadrupedParams {
-                appeal,
-                ..QuadrupedParams::default()
-            };
-            params.set_kind(family, None, 0.0);
+        // #366, and #372's owner calls: a bigger head and a shorter face on
+        // every family, and the body each family's young has. A puppy's or a
+        // kitten's barrel grows round rather than long, under a shorter,
+        // thicker neck, on legs at the adult's share (S7: head 0.61 against
+        // 0.39, girth 1.58 against 1.15, legs 0.61 both). A foal's body is
+        // short on long legs and no rounder. A cute horse is still a horse.
+        let at = |appeal: f32, family: Family, hybrid: Option<Family>| {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(family, hybrid, 0.5);
             params.appeal = appeal;
             Dimensions::of(&params, &Composites::default())
         };
+        // The heart girth's ring, as an ellipse's girth.
+        let girth = |d: &Dimensions| {
+            let (_, radius, section) = d.trunk[TRUNK_NODES - 2];
+            let (a, b) = (radius * section.x, radius * section.y);
+            std::f32::consts::PI * (3.0 * (a + b) - ((3.0 * a + b) * (a + 3.0 * b)).sqrt())
+        };
+        let length = |d: &Dimensions| d.trunk[TRUNK_NODES - 1].0.z - d.trunk[0].0.z;
+        // The elbow over the pad's centre: the leg, without the bigger paw
+        // a puppy stands on.
+        let elbow = |d: &Dimensions| d.fore[2].0.y - d.fore[4].0.y;
+        let neck = |d: &Dimensions| d.neck_at.distance(d.trunk[TRUNK_NODES - 1].0);
+        let face = |d: &Dimensions| d.nose_at.distance(d.head_at) / d.head_r;
+        let grew = |of: &dyn Fn(&Dimensions) -> f32, plain: &Dimensions, cute: &Dimensions| {
+            of(cute) / of(plain)
+        };
         for family in Family::ALL {
-            let (plain, cute) = (at(0.0, family), at(1.0, family));
-            assert!(cute.head_r / cute.withers_r > plain.head_r / plain.withers_r * 1.2);
-            let face = |d: &Dimensions| d.nose_at.distance(d.head_at) / d.head_r;
-            assert!(face(&cute) < face(&plain), "{family:?}: the face shortens");
-            let body = |d: &Dimensions| d.withers_at.z - d.hips_at.z;
-            assert!(body(&cute) < body(&plain), "{family:?}: the body shortens");
+            let (plain, cute) = (at(0.0, family, None), at(1.5, family, None));
             assert!(
-                cute.hind[2].1 > plain.hind[2].1 * 1.2,
-                "{family:?}: the hock thickens"
+                cute.head_r > plain.head_r * 1.35,
+                "{family:?}: the head grows"
             );
+            assert!(face(&cute) < face(&plain), "{family:?}: the face shortens");
+            let (round, long, legs) = (
+                grew(&girth, &plain, &cute),
+                grew(&length, &plain, &cute),
+                grew(&elbow, &plain, &cute),
+            );
+            match family {
+                Family::Dog | Family::Cat => {
+                    assert!(round > 1.2, "{family:?}: the barrel rounds ({round})");
+                    assert!(
+                        long < 1.15 && long - 1.0 < (round - 1.0) * 0.5,
+                        "{family:?}: rounder rather than longer ({long} against {round})"
+                    );
+                    assert!(
+                        (legs - 1.0).abs() < 0.01,
+                        "{family:?}: the legs keep their share ({legs})"
+                    );
+                    assert!(
+                        neck(&cute) < neck(&plain) && cute.neck_r > plain.neck_r * 1.2,
+                        "{family:?}: a shorter, thicker neck"
+                    );
+                    assert!(
+                        cute.hind[2].1 > plain.hind[2].1 * 1.1,
+                        "{family:?}: the hock thickens"
+                    );
+                }
+                Family::Horse => {
+                    assert!(long < 0.95, "a foal's body is short ({long})");
+                    assert!(legs > 1.1, "a foal stands on long legs ({legs})");
+                    let arm = |d: &Dimensions| d.fore[1].0.distance(d.fore[2].0);
+                    assert!(
+                        arm(&cute) < arm(&plain) * 0.9,
+                        "its long legs are its cannons, under a short upper arm"
+                    );
+                    assert!(round <= 1.0, "and no rounder ({round})");
+                }
+            }
         }
+        // A cross is drawn by both its families' rules, by its blend.
+        let (plain, cute) = (
+            at(0.0, Family::Dog, Some(Family::Horse)),
+            at(1.5, Family::Dog, Some(Family::Horse)),
+        );
+        let legs = grew(&elbow, &plain, &cute);
+        let foal = grew(
+            &elbow,
+            &at(0.0, Family::Horse, None),
+            &at(1.5, Family::Horse, None),
+        );
+        assert!(
+            legs > 1.01 && legs < foal,
+            "a dog-horse's legs lengthen by part of a foal's ({legs} against {foal})"
+        );
         let face = |d: &Dimensions| d.nose_at.distance(d.head_at) / d.head_r;
         assert!(
-            face(&at(1.0, Family::Horse)) > face(&at(1.0, Family::Dog))
-                && face(&at(1.0, Family::Dog)) > face(&at(1.0, Family::Cat)),
+            face(&at(1.0, Family::Horse, None)) > face(&at(1.0, Family::Dog, None))
+                && face(&at(1.0, Family::Dog, None)) > face(&at(1.0, Family::Cat, None)),
             "the families keep their faces' order"
         );
     }
+    #[test]
+    fn a_thigh_is_deeper_from_the_side_than_across() {
+        // #374: the thigh's muscle rides the stifle's ring, drawn deeper fore
+        // and aft than across - but a leg's ring frame was transported from
+        // world up, and on a leg dropping from the midline with a slight lean
+        // out and forward that turned its first axis forty-five degrees
+        // round: a thigh drawn deep from the side came out deep on the
+        // diagonal. A bridged leg's frame starts across the body.
+        for seed in 0..40 {
+            let mut record = crate::AvatarRecord::new(
+                "Beast",
+                crate::Archetype::Quadruped(QuadrupedParams::default()),
+            );
+            record.reroll(seed);
+            let skeleton = record.skeleton();
+            let cage = crate::cage::build_cage(&skeleton, &crate::CageConfig::default())
+                .expect("the roll meshes");
+            for limb in [Limb::HindLeft, Limb::HindRight] {
+                let stifle = skeleton
+                    .nodes
+                    .iter()
+                    .find(|node| node.zone == Zone::UpperLimb(limb) && !node.marker)
+                    .expect("a stifle");
+                // The stifle's own ring: the cage's corners in the plane
+                // square to the leg there, about as far out as its section.
+                let index = skeleton
+                    .nodes
+                    .iter()
+                    .position(|node| std::ptr::eq(node, stifle))
+                    .expect("a node") as u32;
+                let [into, out] =
+                    [skeleton.neighbors(index)[0], skeleton.neighbors(index)[1]].map(|other| {
+                        (stifle.position - skeleton.nodes[other as usize].position).normalize()
+                    });
+                let along = (into - out).normalize();
+                let reach = stifle.radius * stifle.scale.max_element();
+                let ring: Vec<Vec3> = cage
+                    .positions
+                    .iter()
+                    .map(|&p| p - stifle.position)
+                    .filter(|offset| {
+                        offset.length() < reach * 1.05 && offset.dot(along).abs() < 0.3 * reach
+                    })
+                    .collect();
+                assert!(ring.len() >= 6, "seed {seed}: no ring at the stifle");
+                let extent = |of: fn(Vec3) -> f32| {
+                    ring.iter().map(|&p| of(p)).fold(f32::MIN, f32::max)
+                        - ring.iter().map(|&p| of(p)).fold(f32::MAX, f32::min)
+                };
+                let (deep, wide) = (extent(|p| p.z), extent(|p| p.x));
+                assert!(
+                    deep > wide * 1.15,
+                    "seed {seed} {limb:?}: the thigh is {deep} deep and {wide} wide"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_thigh_s_muscle_does_not_crowd_the_croup() {
+        // #374: a bridged bone's socket is sized by the joint it opens toward,
+        // the hip, not by the stifle it sweeps to; blended from a thick
+        // thigh's stifle ring, the thighs' sockets on the pelvis crowded the
+        // spine's off its bone on 57 rolls in 400.
+        for seed in 0..400 {
+            let mut record = crate::AvatarRecord::new(
+                "Beast",
+                crate::Archetype::Quadruped(QuadrupedParams::default()),
+            );
+            record.reroll(seed);
+            if let Err(error) =
+                crate::cage::build_cage(&record.skeleton(), &crate::CageConfig::default())
+            {
+                panic!("seed {seed} does not mesh: {error}");
+            }
+        }
+    }
+
     #[test]
     fn no_tail_reaches_the_ground() {
         // A long tail hanging straight down ran a tenth of the body's height

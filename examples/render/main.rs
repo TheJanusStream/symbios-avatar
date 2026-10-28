@@ -1094,8 +1094,27 @@ fn main() {
         // pitch nose up and how far the loin stands above the chord - how a
         // beast rocks and folds (#370).
         let rig = &subject.avatar.rig;
-        let trunk = [Zone::Pelvis, Zone::Abdomen, Zone::Chest]
-            .map(|zone| rig.in_zone(zone).first().copied());
+        // The withers are the girdle the neck hangs from: the chest's first
+        // joint is the middle of the ribcage on the six-ring trunk (#375).
+        let girdle = rig
+            .in_zone(Zone::Neck)
+            .first()
+            .and_then(|&neck| rig.joints[neck].parent);
+        let trunk = [
+            rig.in_zone(Zone::Pelvis).first().copied(),
+            rig.in_zone(Zone::Abdomen).first().copied(),
+            girdle,
+        ];
+        // Both read against the standing line: the girdles' and the loin's
+        // ring centres stand at their own heights.
+        let line_of = |at: &[Vec3], [hips, loin, withers]: [usize; 3]| {
+            let run = at[withers] - at[hips];
+            let along = (at[loin] - at[hips]).dot(run) / run.length_squared();
+            (
+                run.y.atan2(run.z).to_degrees(),
+                at[loin].y - (at[hips].y + run.y * along),
+            )
+        };
         // `--gesture NAME` plays one of the rosters across the strip instead
         // of a gait, from the body standing, its last frame its end (#370).
         let playing = value("--gesture").map(|name| {
@@ -1144,12 +1163,14 @@ fn main() {
             let view = subject.view(&pose, 0.0, &frame);
             strip.blit(&view, index * VIEW, 0);
             let line = if let [Some(hips), Some(loin), Some(withers)] = trunk {
-                let at = pose.forward(rig).positions;
-                let run = at[withers] - at[hips];
-                let pitch = run.y.atan2(run.z).to_degrees();
-                let along = (at[loin] - at[hips]).dot(run) / run.length_squared();
-                let arch = at[loin].y - (at[hips].y + run.y * along);
-                format!(", trunk {pitch:+5.1} deg, arch {:+4.0} mm", arch * 1000.0)
+                let rest: Vec<Vec3> = rig.joints.iter().map(|joint| joint.position).collect();
+                let (pitch, arch) = line_of(&pose.forward(rig).positions, [hips, loin, withers]);
+                let (pitch_0, arch_0) = line_of(&rest, [hips, loin, withers]);
+                format!(
+                    ", trunk {:+5.1} deg, arch {:+4.0} mm",
+                    pitch - pitch_0,
+                    (arch - arch_0) * 1000.0
+                )
             } else {
                 String::new()
             };

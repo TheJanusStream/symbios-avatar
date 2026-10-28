@@ -34,7 +34,7 @@
 //!
 //! [`Role::Helper`]: super::Role
 
-use super::landmark::{Anchor, FORWARD, Landmark, Landmarks};
+use super::landmark::{Anchor, FORWARD, Landmark, Landmarks, UP};
 use super::{Rig, Surface};
 use crate::plan::{Limb, Zone};
 
@@ -158,13 +158,16 @@ impl Socket {
         match self {
             Self::Crown | Self::Face => rig.in_zone(Zone::Head).first().copied(),
             Self::Neck => rig.in_zone(Zone::Neck).first().copied(),
+            // A beast's chest is the front of its forechest, the girdle its
+            // neck hangs from; its back is the top of its ribcage, the
+            // chest's first ring (#375), where a saddle or a pack sits.
+            Self::Chest if !rig.anatomy.human_trunk() => forechest(rig),
             Self::Chest | Self::Back => rig.in_zone(Zone::Chest).first().copied(),
             Self::Waist => rig.in_zone(Zone::Abdomen).first().copied(),
             Self::Hips => rig.in_zone(Zone::Pelvis).first().copied(),
             Self::Tail => rig.in_zone(Zone::Tail).first().copied(),
             Self::LeftShoulder | Self::RightShoulder | Self::LeftHip | Self::RightHip => {
-                let limb = self.limb()?;
-                rig.in_zone(Zone::UpperLimb(limb)).first().copied()
+                rig.limb_root(self.limb()?)
             }
             Self::LeftHand | Self::RightHand | Self::LeftFoot | Self::RightFoot => {
                 let limb = self.limb()?;
@@ -195,10 +198,12 @@ impl Socket {
             Self::Neck => marks.get(Landmark::NeckBase),
             Self::Chest | Self::Back => {
                 let joint = rig.joints[self.joint(rig)?];
-                let direction = if self == Self::Chest {
-                    FORWARD
-                } else {
-                    -FORWARD
+                // A beast's back faces the sky: its trunk lies along its
+                // travel, and a back facing behind it ran out of its croup.
+                let direction = match self {
+                    Self::Chest => FORWARD,
+                    _ if !rig.anatomy.human_trunk() => UP,
+                    _ => -FORWARD,
                 };
                 Some(Anchor {
                     position: joint.position,
@@ -234,6 +239,12 @@ impl Socket {
         let position = surface.clear(rig, anchor.offset(1.0), margin);
         Some(Anchor { position, ..anchor })
     }
+}
+
+/// The girdle a body's neck hangs from: on a beast, the forechest.
+fn forechest(rig: &Rig) -> Option<usize> {
+    let neck = *rig.in_zone(Zone::Neck).first()?;
+    rig.joints[neck].parent
 }
 
 #[cfg(test)]
@@ -281,6 +292,69 @@ mod tests {
                 "{socket:?} did not resolve on a quadruped"
             );
             assert!(socket.anchor(&rig).is_some(), "{socket:?} has no anchor");
+        }
+    }
+
+    #[test]
+    fn a_beast_wears_its_chest_ahead_its_back_on_top_and_its_shoulders_where_its_legs_swing() {
+        // #374, #375: the chest's first joint is the middle of a beast's
+        // ribcage, and its legs hang from joints inside the trunk under the
+        // tops of their shoulder blades. A pendant hangs at the front of the
+        // forechest, a pack rides the top of the ribs facing the sky, and a
+        // shoulder or a hip prop rides the joint the leg swings from - the
+        // one the leg's solve turns.
+        let rig = quadruped();
+        let chest = Socket::Chest.anchor(&rig).expect("a chest");
+        let back = Socket::Back.anchor(&rig).expect("a back");
+        let tops: Vec<f32> = [Limb::ForeLeft, Limb::ForeRight]
+            .map(|limb| {
+                rig.joints[rig.limb_chain(limb).expect("a fore")[0]]
+                    .position
+                    .z
+            })
+            .to_vec();
+        assert!(
+            tops.iter().all(|&z| chest.position.z + chest.radius > z),
+            "the chest's front stands behind the shoulders"
+        );
+        assert!(chest.direction.dot(FORWARD) > 0.9);
+        assert!(back.direction.dot(UP) > 0.9, "a beast's back faces the sky");
+        let (hips, girdle) = (
+            rig.joints[rig.in_zone(Zone::Pelvis)[0]].position.z,
+            rig.joints[forechest(&rig).expect("a girdle")].position.z,
+        );
+        assert!(
+            (hips..girdle).contains(&back.position.z),
+            "the back is between the girdles"
+        );
+        for (socket, limb) in [
+            (Socket::LeftShoulder, Limb::ForeLeft),
+            (Socket::RightHip, Limb::HindRight),
+        ] {
+            assert_eq!(
+                socket.joint(&rig),
+                rig.limb_chain(limb).map(|chain| chain[0]),
+                "{socket:?} does not ride the joint its leg swings from"
+            );
+        }
+
+        // Seated outside the body the beast is built with.
+        let skeleton = QuadrupedParams::default().skeleton(&Composites::default());
+        let cage = build_cage(&skeleton, &CageConfig::default()).expect("the body should mesh");
+        let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
+        let surface = Surface::measure(&mesh, &rig);
+        for socket in [
+            Socket::Chest,
+            Socket::Back,
+            Socket::LeftShoulder,
+            Socket::Hips,
+        ] {
+            let seated = socket.seat(&rig, &surface, 0.02).expect("seats");
+            assert_eq!(
+                surface.clearance(&rig, seated.position, 0.01),
+                crate::Vec3::ZERO,
+                "{socket:?} seated inside the beast"
+            );
         }
     }
 

@@ -39,7 +39,18 @@ impl CoatBody {
                 .map(|&joint| rig.joints[joint].position)
         };
         let hips = first(Zone::Pelvis).unwrap_or(Vec3::ZERO);
-        let withers = first(Zone::Chest).unwrap_or(hips + Vec3::Z);
+        // The front girdle is the joint the neck hangs from: since the trunk
+        // became six rings (#375) the chest's first is the middle of the
+        // ribcage, and read as the withers it ran every mark measured along
+        // the spine (a tan chest, a ruff) back over half the barrel.
+        let girdle = rig
+            .in_zone(Zone::Neck)
+            .first()
+            .and_then(|&neck| rig.joints[neck].parent)
+            .map(|joint| rig.joints[joint].position);
+        let withers = girdle
+            .or_else(|| first(Zone::Chest))
+            .unwrap_or(hips + Vec3::Z);
         let tail = rig.in_zone(Zone::Tail);
         let tail = tail
             .first()
@@ -126,4 +137,34 @@ pub(crate) fn leg(zone: Zone) -> bool {
         zone,
         Zone::UpperLimb(_) | Zone::LowerLimb(_) | Zone::Extremity(_)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plan::{BodyPlan, Composites, QuadrupedParams};
+
+    #[test]
+    fn the_withers_are_the_girdle_the_neck_hangs_from() {
+        // #375: the trunk is six rings, and the chest's first is the middle
+        // of the ribcage. Read as the withers, every mark measured along the
+        // spine - a tan chest, a ruff - ran back over half the barrel.
+        let rig = Rig::from_skeleton(&QuadrupedParams::default().skeleton(&Composites::default()))
+            .expect("rigs");
+        let body = CoatBody::of(&rig, None, None);
+        let neck = rig.in_zone(Zone::Neck)[0];
+        let girdle = rig.joints[neck].parent.expect("a girdle");
+        assert_eq!(body.withers, rig.joints[girdle].position);
+        // Every ring of the trunk lies between the croup and the withers.
+        for joint in [Zone::Pelvis, Zone::Abdomen, Zone::Chest]
+            .into_iter()
+            .flat_map(|zone| rig.in_zone(zone))
+        {
+            let along = body.along_spine(rig.joints[joint].position);
+            assert!(
+                (-1e-4..=1.0 + 1e-4).contains(&along),
+                "a trunk ring lies {along} along the spine"
+            );
+        }
+    }
 }

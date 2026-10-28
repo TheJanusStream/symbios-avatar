@@ -781,10 +781,23 @@ fn a_stopped_beast_steps_its_feet_home_one_at_a_time_and_stands_level() {
             home = Some(frame);
         }
     }
+    // **A share of the leg, re-derived from 6 mm** (#374): the bound was set
+    // on a leg of 0.284 m (2.1% of it), measured from a hip joint that stood
+    // at the trunk's underside. The hip joint now stands inside the croup,
+    // where an animal's does, and the leg it reaches with is 0.466 m; the
+    // blend out of the trot, five frames as it was, lifts the hips out of a
+    // crouch that is the same share of that leg (P5's body 3.7 mm in a frame,
+    // 1.3% of its leg; this body 6.6 mm, 1.4%).
+    let leg = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.limb_reach(limb))
+        .fold(0.0f32, f32::max);
     assert!(
-        jolt < 0.006,
-        "the hips moved {:.1} mm in one frame",
-        jolt * 1000.0
+        jolt < 0.021 * leg,
+        "the hips moved {:.1} mm in one frame, {:.1}% of the leg",
+        jolt * 1000.0,
+        jolt / leg * 100.0
     );
     assert!(roll < 2.0, "the loin turned {roll:.1} degrees standing");
     assert!(most_up <= 1, "{most_up} feet were off the ground at once");

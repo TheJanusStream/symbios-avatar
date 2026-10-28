@@ -8,34 +8,439 @@
 //!
 //! **This plan's girth is the composites', spent at sites of its own** (#178):
 //! `mass` says how much body there is, `bodyFat` how it is spent, age what the
-//! legs lose, and legginess slims all of it. See [`Girth`].
+//! legs lose, and legginess slims all of it. See [`Girth`]. On the trunk they
+//! move the family's own body (#374): every ring is wider and the barrel
+//! deeper for a heavier body under the same back, a fatter one's most at the
+//! belly, whose underline drops; the girdles' depth is their bone's.
 
 mod head;
 
 use glam::{Quat, Vec2, Vec3};
 
-use crate::plan::{BeastHead, Composites, DEFAULT_BODY_FAT, QuadrupedParams};
+use crate::det::DetMath;
+use crate::plan::{BeastHead, Composites, DEFAULT_BODY_FAT, Family, QuadrupedParams};
 
-/// Cross-sections of the trunk, as `(lateral, vertical)` multiples of the node's
-/// radius.
+/// A neck's cross-section, as `(lateral, vertical)` multiples of its radius:
+/// rounder than the body it leaves.
 ///
-/// The same idea as the humanoid's, and the axes come out the other way round
-/// for a reason worth stating. The ring frame is transported from a world-up
-/// reference, so `x` is lateral on any body; but a quadruped's spine runs
-/// fore-and-aft rather than vertically, which leaves `y` pointing *up* instead
-/// of forward. A galloping animal's ribcage is narrow and deep — the opposite
-/// proportion to a person's, in the same two numbers.
-///
-/// As on the humanoid, every axis that moves moves *downward*: a socket's
-/// clearance demand is its largest half-extent, so shrinking is free and growing
-/// costs a joint its room. Both girdles here carry four sockets each.
-const HIPS_SECTION: Vec2 = Vec2::new(0.86, 1.0);
-/// See [`HIPS_SECTION`]. The loin, between the two girdles.
-const SPINE_SECTION: Vec2 = Vec2::new(0.80, 1.0);
-/// See [`HIPS_SECTION`].
-const WITHERS_SECTION: Vec2 = Vec2::new(0.84, 1.0);
-/// See [`HIPS_SECTION`]. A neck is rounder than the body it leaves.
+/// The ring frame is transported from a world-up reference, so `x` is lateral
+/// on any body and, on a quadruped's fore-and-aft spine, `y` points up. As on
+/// the humanoid, every axis that moves moves *downward*: a socket's clearance
+/// demand is its largest half-extent, so shrinking is free and growing costs
+/// a joint its room.
 const NECK_SECTION: Vec2 = Vec2::new(0.92, 1.0);
+
+/// The withers height a record's back height builds, as a multiple of it.
+///
+/// Provenance: measured off the P5 body by `examples/quadprobe` (#374): its
+/// trunk's top stood 1.18 to 1.26 back heights up, the girdle node's own
+/// radius above the line the field names. Kept, so the rebuilt body stands
+/// as tall in a world as the one the owner judged: a record's height is a
+/// size, and this leaves every size where it was.
+const WITHERS: f32 = 1.2;
+
+/// The share of a trunk ring's half-extent the subdivided skin keeps, so the
+/// cage is drawn this much wider than the skin it is meant to give. Measured
+/// by `examples/quadprobe`.
+pub(crate) const SKIN: f32 = 0.95;
+
+/// How far under the points of the shoulders the underline of the chest's
+/// front - the heart girth's ring and the forechest's - is held at least, in
+/// withers heights. **A cage wall, not anatomy**: it puts the forechest's
+/// hull at the shoulders' height, where [`PECTORAL`] can close the chest in
+/// front of them, and the heart girth's under it, without which the skin
+/// between the two rose off the shoulders anyway (`examples/quadprobe`).
+/// Under every dog's and cat's own rings at their centre, so it deepens a
+/// horse's forechest, a foal's and a slight horse's most.
+const BRISKET: f32 = 0.04;
+
+/// How far the forechest's hull is held to reach past the points of the
+/// shoulders, at their height, in withers heights: the pectorals in front of
+/// the joints, so a shoulder's socket and the leg's IK root are under the
+/// skin (#374, #375). Measured against the built skin by `examples/quadprobe`
+/// and held by `tests/plan.rs` over a sweep of rolls.
+const PECTORAL: f32 = 0.07;
+
+/// How many cross-sections the trunk is built from, from the pelvis forward:
+/// the pelvis, the loin, the last rib, the middle of the ribcage, the heart
+/// girth behind the elbows, and the forechest the forelegs hang from (#375).
+pub(crate) const TRUNK_NODES: usize = 6;
+
+/// Where each trunk ring stands between the forechest and the pelvis, as a
+/// share of the run from the one to the other, pelvis first.
+const TRUNK_SHARES: [f32; TRUNK_NODES] = [1.0, 0.73, 0.555, 0.38, 0.205, 0.0];
+
+/// The shortest run from the forechest's ring to the pelvis's, in multiples
+/// of the trunk's largest ring radius. **A cage wall, not anatomy**: the
+/// ribs between the girdles need bones long enough to open their sockets on
+/// the girdles' hulls. Below every family's own run at its centre, so it
+/// moves only a short, deep body.
+pub(crate) const SPAN_FLOOR: f32 = 2.85;
+
+/// One trunk cross-section as the skin should measure it, in withers heights:
+/// the top of the back over it, the underline under it, and its half-width.
+#[derive(Clone, Copy, Debug)]
+struct Ring {
+    top: f32,
+    bottom: f32,
+    half_width: f32,
+}
+
+impl Ring {
+    const fn at(top: f32, bottom: f32, half_width: f32) -> Self {
+        Self {
+            top,
+            bottom,
+            half_width,
+        }
+    }
+}
+
+/// The body a family stands in, in withers heights (#374, #375).
+///
+/// **Measured where the dossier measured it** - docs/research/research-07,
+/// whose rows carry their confidence - and **chosen** where it is silent or
+/// fights the cage; each family says which below. The standing angles are not
+/// here: the stance is solved from these lengths and where the paws stand
+/// ([`Dimensions::of`]), and the angles that come out are checks against the
+/// dossier's, as its note 1 asks.
+///
+/// A cross blends its two families' frames by its blend ([`Frame::for_params`]),
+/// in these normalised units, as the dossier's note 11 says to.
+#[derive(Clone, Copy, Debug)]
+struct Frame {
+    /// Point of the shoulder to point of the buttock.
+    length: f32,
+    /// The trunk's rings, pelvis first: see [`TRUNK_NODES`].
+    rings: [Ring; TRUNK_NODES],
+    /// The shoulder blade, its top to the shoulder joint.
+    scapula: f32,
+    /// The shoulder blade's slope from horizontal, in radians.
+    incline: f32,
+    /// How high the top of the shoulder blade sits.
+    scapula_top: f32,
+    /// The upper arm, shoulder to elbow.
+    humerus: f32,
+    /// The forearm, elbow to carpus.
+    radius: f32,
+    /// The carpus to the pad: the metacarpus and the digits it stands on.
+    metacarpus: f32,
+    /// The metacarpus' slope from vertical, in radians: a dog's pastern.
+    pastern: f32,
+    /// How high the hip joint sits.
+    hip: f32,
+    /// How far the hip joint sits ahead of the point of the buttock.
+    hip_ahead: f32,
+    /// The thigh, hip to stifle.
+    femur: f32,
+    /// The second thigh, stifle to hock.
+    tibia: f32,
+    /// The hock to the pad: the metatarsus and the digits it stands on.
+    metatarsus: f32,
+    /// How far the hind pad stands behind the hip joint.
+    paw_behind: f32,
+    /// The legs' girth against a dog's.
+    limb: f32,
+    /// The thigh's girth at the stifle, against the leg's own: the hind
+    /// leg's muscle, which the cage has no node for between the croup and
+    /// the stifle, so the stifle's ring carries it down the thigh and on into
+    /// the gaskin. **Chosen by render** (#374): the dossier measures masses
+    /// (S8: a thigh 4.5% of a dog's body, its whole foreleg 4.5%), not
+    /// outlines.
+    thigh: f32,
+    /// The stifle's cross-section, `(across, fore and aft)` multiples of its
+    /// radius: deeper from the side than across, as a thigh is.
+    thigh_section: Vec2,
+    /// The neck's girth against P1's: research-07 note 4 puts a neck at
+    /// 0.45 to 0.5 of the chest's girth (S9, the one dog measured), where
+    /// P1's measured 0.27 to 0.43 of it.
+    neck_girth: f32,
+    /// The neck's cross-section: a horse's is deep and narrow, crested.
+    neck_section: Vec2,
+    /// How far the neck reaches against P1's. A horse's is 0.53 withers
+    /// heights from the withers to the poll (S3, M); a dog's and a cat's are
+    /// chosen by render.
+    neck: f32,
+}
+
+impl Frame {
+    /// One family's frame.
+    fn of(family: Family) -> Self {
+        match family {
+            // Bones: Lasota-Moskalewska and Harcourt (S5, M); the shoulder
+            // blade's slope and the croup are background (L). Trunk: chest
+            // depth 0.45 to 0.50 (S11, S12), the underline at the elbow, a
+            // Labrador's length (S11). **The girth is chosen between two
+            // rows that disagree**: the heart girth 1.07 to 1.15 (S9, S7) and
+            // a chest that deep make a depth to width near 2:1, where the
+            // dossier's Labrador is 1.3 to 1.5:1; this takes about 1.8:1,
+            // and the loin is 0.8 of the ribcage's girth, between a
+            // Labrador's and a sighthound's.
+            Family::Dog => Self {
+                length: 0.99,
+                rings: [
+                    Ring::at(1.0, 0.64, 0.125),
+                    Ring::at(0.995, 0.62, 0.125),
+                    Ring::at(1.0, 0.565, 0.135),
+                    Ring::at(1.0, 0.515, 0.14),
+                    Ring::at(0.995, 0.50, 0.125),
+                    Ring::at(1.0, 0.58, 0.105),
+                ],
+                scapula: 0.25,
+                incline: 60f32.to_radians(),
+                scapula_top: 0.90,
+                humerus: 0.30,
+                radius: 0.31,
+                metacarpus: 0.12,
+                pastern: 20f32.to_radians(),
+                hip: 0.80,
+                hip_ahead: 0.12,
+                femur: 0.33,
+                tibia: 0.34,
+                metatarsus: 0.17,
+                paw_behind: 0.20,
+                limb: 1.0,
+                thigh: 1.3,
+                thigh_section: Vec2::new(0.8, 1.25),
+                neck_girth: 1.6,
+                neck_section: NECK_SECTION,
+                neck: 1.0,
+            },
+            // Bones: Poradowski's radiographs (S2, H), the shoulder blade and
+            // the metapodials background (L). The hip at 0.88 (S21). The
+            // trunk is chosen round: girth 1.3 to 1.5 at a depth to width
+            // near 1.15:1 (S14, derived), and a loin rounder than the chest
+            // (1.04 to 1.13, S14) with the pouch hanging under it.
+            // **Chosen compact, against the dossier's length and stance**
+            // (#374, by render): its 1.3 to 1.5 (S25, L, its definition
+            // unconfirmed) read as a ferret, and the paw 0.22 behind the hip
+            // trailed the hind leg out behind the croup. The paw stands near
+            // under the hip instead, as a dog's does on the radiograph table
+            // (S6); on the radiographs' long femur and tibia, trimmed a
+            // little toward joint centres, that folds the stifle to about 96
+            // degrees against the background's 110 to 125 (L) - a crouched
+            // cat. Shorter thigh bones opened it, and folded the low corner
+            // of the envelope's stifle so close under the croup that its
+            // socket no longer fitted on the bone (`tests/budget.rs`).
+            Family::Cat => Self {
+                length: 1.0,
+                rings: [
+                    Ring::at(1.05, 0.62, 0.17),
+                    Ring::at(1.03, 0.48, 0.235),
+                    Ring::at(1.02, 0.50, 0.22),
+                    Ring::at(1.005, 0.51, 0.21),
+                    Ring::at(0.995, 0.52, 0.19),
+                    Ring::at(1.0, 0.60, 0.14),
+                ],
+                scapula: 0.30,
+                incline: 62f32.to_radians(),
+                scapula_top: 0.97,
+                humerus: 0.387,
+                radius: 0.375,
+                metacarpus: 0.13,
+                pastern: 20f32.to_radians(),
+                hip: 0.86,
+                hip_ahead: 0.12,
+                femur: 0.40,
+                tibia: 0.42,
+                metatarsus: 0.22,
+                paw_behind: 0.08,
+                limb: 1.0,
+                thigh: 1.25,
+                thigh_section: Vec2::new(0.8, 1.25),
+                neck_girth: 1.9,
+                neck_section: NECK_SECTION,
+                neck: 0.85,
+            },
+            // Matsuura's landmarks (S4, H) throughout: segment lengths, the
+            // shoulder blade at 60, chest depth 0.48, heart girth 1.15 to
+            // 1.22 at 2:1, length 1.02. The barrel widens behind the girth to
+            // its widest at the last ribs (bg, L) and the belly line rises
+            // gently to the stifle, with no tuck-up. The cannon and the
+            // pastern are one bone here: the pad node is the hoof.
+            Family::Horse => Self {
+                length: 1.06,
+                rings: [
+                    Ring::at(1.03, 0.64, 0.15),
+                    Ring::at(0.99, 0.60, 0.16),
+                    Ring::at(0.99, 0.555, 0.17),
+                    Ring::at(0.995, 0.53, 0.155),
+                    Ring::at(0.99, 0.52, 0.12),
+                    Ring::at(1.0, 0.60, 0.10),
+                ],
+                scapula: 0.32,
+                incline: 60f32.to_radians(),
+                scapula_top: 0.90,
+                humerus: 0.19,
+                radius: 0.24,
+                metacarpus: 0.21,
+                pastern: 10f32.to_radians(),
+                hip: 0.75,
+                hip_ahead: 0.14,
+                femur: 0.22,
+                tibia: 0.33,
+                metatarsus: 0.25,
+                paw_behind: 0.14,
+                limb: 0.85,
+                thigh: 1.7,
+                thigh_section: Vec2::new(0.75, 1.35),
+                neck_girth: 1.3,
+                neck_section: Vec2::new(0.72, 1.0),
+                neck: 1.2,
+            },
+        }
+    }
+
+    /// The frame `params` stands in: its family's, blended toward its
+    /// hybrid's by its blend.
+    fn for_params(params: &QuadrupedParams) -> Self {
+        let own = Self::of(params.family);
+        let Some(other) = params.hybrid.filter(|&other| other != params.family) else {
+            return own;
+        };
+        let other = Self::of(other);
+        let t = params.blend.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self {
+            length: mix(own.length, other.length),
+            rings: std::array::from_fn(|i| {
+                let (a, b) = (own.rings[i], other.rings[i]);
+                Ring::at(
+                    mix(a.top, b.top),
+                    mix(a.bottom, b.bottom),
+                    mix(a.half_width, b.half_width),
+                )
+            }),
+            scapula: mix(own.scapula, other.scapula),
+            incline: mix(own.incline, other.incline),
+            scapula_top: mix(own.scapula_top, other.scapula_top),
+            humerus: mix(own.humerus, other.humerus),
+            radius: mix(own.radius, other.radius),
+            metacarpus: mix(own.metacarpus, other.metacarpus),
+            pastern: mix(own.pastern, other.pastern),
+            hip: mix(own.hip, other.hip),
+            hip_ahead: mix(own.hip_ahead, other.hip_ahead),
+            femur: mix(own.femur, other.femur),
+            tibia: mix(own.tibia, other.tibia),
+            metatarsus: mix(own.metatarsus, other.metatarsus),
+            paw_behind: mix(own.paw_behind, other.paw_behind),
+            limb: mix(own.limb, other.limb),
+            thigh: mix(own.thigh, other.thigh),
+            thigh_section: own.thigh_section.lerp(other.thigh_section, t),
+            neck_girth: mix(own.neck_girth, other.neck_girth),
+            neck_section: own.neck_section.lerp(other.neck_section, t),
+            neck: mix(own.neck, other.neck),
+        }
+    }
+}
+
+/// What `appeal` makes of a family's body (#372, the owner's call of
+/// 2026-10-28), as the share each measure gains at the top of the scale's
+/// young end: `appeal` 1.5, where a body is all the way to the young animal
+/// the family reads cute as. Below zero each runs the other way, by half as
+/// far at most: `young` is `appeal / 1.5` held to -0.5, which `appeal` -0.75
+/// reaches. **But not the ribcage's width**, which below zero narrows by a
+/// tenth of `young` (at most 5%) rather than by [`Schema::round`]: a body
+/// past the adult's is not a thinner one.
+///
+/// **A dog or a cat follows the puppy, rounder rather than longer.** A
+/// 45-day puppy against its withers (research-07 summary fact 10, S7): head
+/// 0.61 against an adult's 0.39, chest girth 1.58 against 1.15, body 1.44
+/// against 1.04, legs at the adult's 0.61. The head takes the whole ratio and
+/// the girth most of it; the length takes little of its own, because a
+/// barrel grown as long as a puppy's under P1's long neck read as a
+/// dachshund and a ferret (the probe, #374). The neck shortens and thickens.
+///
+/// **A horse follows a foal.** A foal stands on near-adult cannons at sixty
+/// per cent of its adult height, its humerus and femur half an adult's
+/// (research-07, foal growth, L-M): a big head on a short body and long legs.
+/// The cannons lengthen, the upper arm and the thigh shorten, the barrel
+/// shortens and does not round; how far is **chosen by render**, the dossier
+/// giving no foal figure for the trunk.
+///
+/// A cross blends its two families' schemas by its blend, as the
+/// [`Frame`] does.
+#[derive(Clone, Copy, Debug)]
+struct Schema {
+    /// The head's radius.
+    head: f32,
+    /// The trunk's length.
+    length: f32,
+    /// The ribcage's width, toward round.
+    round: f32,
+    /// How far the barrel's underline sinks, in withers heights.
+    sink: f32,
+    /// How much shorter the neck reaches.
+    neck: f32,
+    /// How much thicker the neck is.
+    neck_girth: f32,
+    /// The metapodials, a horse's cannons.
+    legs: f32,
+    /// The upper arm and the thigh, inside the trunk: a foal's are half an
+    /// adult's at sixty per cent of its height. Lengthened below and kept
+    /// above, a foal's leg folded at the stifle to 96 degrees.
+    upper: f32,
+    /// The legs' girth.
+    sturdy: f32,
+    /// The pads' size.
+    pads: f32,
+}
+
+impl Schema {
+    /// One family's.
+    fn of(family: Family) -> Self {
+        match family {
+            Family::Dog | Family::Cat => Self {
+                head: 0.56,
+                length: 0.10,
+                round: 0.90,
+                sink: 0.05,
+                neck: 0.30,
+                neck_girth: 0.30,
+                legs: 0.0,
+                upper: 0.0,
+                sturdy: 0.18,
+                pads: 0.375,
+            },
+            Family::Horse => Self {
+                head: 0.40,
+                length: -0.12,
+                round: 0.0,
+                sink: 0.0,
+                neck: 0.20,
+                neck_girth: 0.10,
+                legs: 0.35,
+                upper: -0.20,
+                sturdy: 0.0,
+                pads: 0.0,
+            },
+        }
+    }
+
+    /// The schema `params` is drawn by: its family's, blended toward its
+    /// hybrid's by its blend.
+    fn for_params(params: &QuadrupedParams) -> Self {
+        let own = Self::of(params.family);
+        let Some(other) = params.hybrid.filter(|&other| other != params.family) else {
+            return own;
+        };
+        let other = Self::of(other);
+        let t = params.blend.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self {
+            head: mix(own.head, other.head),
+            length: mix(own.length, other.length),
+            round: mix(own.round, other.round),
+            sink: mix(own.sink, other.sink),
+            neck: mix(own.neck, other.neck),
+            neck_girth: mix(own.neck_girth, other.neck_girth),
+            legs: mix(own.legs, other.legs),
+            upper: mix(own.upper, other.upper),
+            sturdy: mix(own.sturdy, other.sturdy),
+            pads: mix(own.pads, other.pads),
+        }
+    }
+}
 
 /// Every number the four-legged cage is built from.
 ///
@@ -43,45 +448,31 @@ const NECK_SECTION: Vec2 = Vec2::new(0.92, 1.0);
 /// assembler mirrors them — which is what keeps the animal symmetric by
 /// construction rather than by two expressions agreeing.
 ///
-/// **Where this is bounded rather than anatomical:** `girth` saturates at
-/// `0.50..1.80`, and each spine segment is floored at 1.6 times the largest
-/// girdle it joins (1.2 at the top of `appeal`), so a short heavy animal stretches instead of folding its
-/// two girdles into each other. **The floor is a look, not a mesher wall**
-/// (#366): the cage closes with it at 0.9, because the mesher pushes its
-/// sockets out as far as it needs. What 1.6 keeps is a loin between the two
-/// girdles; the 2.5 it replaces held every body long, so `bodyLength` could
-/// not shorten a heavy one and a horse could not be compact. The neck's floor
-/// is the same kind of number, for the same reason (`neck_reach`).
+/// **The trunk is six rings, each its own depth and width** (#375): the
+/// pelvis, the loin, the last rib, the middle of the ribcage, the heart girth
+/// and the forechest, the girdles at either end. The ribcage is the largest
+/// mass and the forechest narrows between the elbows; how the loin compares
+/// is the family's ([`Frame`]).
 ///
-/// **The graph is an animal's, not a table's** (#366). The neck rises from
-/// the withers and carries a cranium, a muzzle and a nose; the loin rides
-/// higher and narrower than the chest and the croup, which is the tuck-up;
-/// each leg is laid out the way the humanoid's is — two nodes in the upper
-/// limb, the ankle in the lower, the foot in the extremity — so the leg IK
-/// solves the same three joints on both plans. On the hind leg that ankle is
-/// the hock, held high off the ground, and the stifle points forward of the
-/// thigh while the hock points back of it: the zig-zag every four-legged
-/// silhouette is read by.
+/// **The bones inside the trunk are markers** (#374). The shoulder blade and
+/// the upper arm, the hip joint and the thigh lie inside an animal's
+/// silhouette, and a socket for each on the girdle's hull would have to stand
+/// outside it - which is what rooted the P1 legs beside the trunk, splayed
+/// from the front, with the upper bones hanging under the body as tubes. So
+/// the scapula's top, the shoulder and the hip are joints the rig keeps and
+/// the cage skips: the cage sweeps each leg from its girdle straight to the
+/// elbow or the stifle, where the leg leaves the body (`Skeleton`'s bridge).
+///
+/// **The stance is solved, not authored**: the lengths and the paw's place
+/// go in and the joints come out, so a standing angle is a check against the
+/// dossier and never an input (its note 1). See [`Dimensions::of`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Dimensions {
-    /// Where the rear girdle (the croup) sits.
-    pub hips_at: Vec3,
-    /// Radius of the rear girdle.
-    pub hips_r: f32,
-    /// Cross-section of the rear girdle.
-    pub hips_section: Vec2,
-    /// Where the loin sits, between the girdles.
-    pub spine_at: Vec3,
-    /// Radius of the loin.
-    pub spine_r: f32,
-    /// Cross-section of the loin.
-    pub spine_section: Vec2,
-    /// Where the front girdle (the chest, under the withers) sits.
-    pub withers_at: Vec3,
-    /// Radius of the front girdle.
-    pub withers_r: f32,
-    /// Cross-section of the front girdle.
-    pub withers_section: Vec2,
+    /// The trunk's nodes from the pelvis forward, each with its radius and
+    /// its cross-section as `(lateral, vertical)` multiples of the radius:
+    /// the first is the rear girdle, the pelvis, and the last the front
+    /// one, the forechest under the withers.
+    pub trunk: [(Vec3, f32, Vec2); TRUNK_NODES],
     /// Where the neck sits, risen from the withers.
     pub neck_at: Vec3,
     /// Radius of the neck node.
@@ -109,22 +500,41 @@ pub(crate) struct Dimensions {
     pub head: BeastHead,
     /// Each tail node from the croup outward, with its radius.
     pub tail: [(Vec3, f32); TAIL_NODES],
-    /// The hind leg's nodes from the body down, on the `+X` side: where it
-    /// leaves the body, the stifle, the hock, the pad and the toes.
-    pub hind: [(Vec3, f32); LEG_NODES],
-    /// The fore leg's nodes from the body down, on the `+X` side: where it
-    /// leaves the body, the elbow, the carpus, the pad and the toes.
-    pub fore: [(Vec3, f32); LEG_NODES],
+    /// The hind leg's nodes from the body down, on the `+X` side: the hip
+    /// joint (a marker), the stifle, the hock, the pad and the toes.
+    pub hind: [(Vec3, f32); HIND_NODES],
+    /// The fore leg's nodes from the body down, on the `+X` side: the top of
+    /// the shoulder blade and the shoulder joint (both markers), the elbow,
+    /// the carpus, the pad and the toes.
+    pub fore: [(Vec3, f32); FORE_NODES],
+    /// The stifle's cross-section, as `(across, fore and aft)` multiples of
+    /// its radius: the thigh's muscle, deeper from the side than across.
+    pub stifle_section: Vec2,
 }
 
 /// How many nodes a tail carries: enough to bend, and to swing as a chain once
 /// the springs reach it (#370).
 pub(crate) const TAIL_NODES: usize = 5;
 
-/// How many nodes a leg carries: two in the upper limb, one in the lower, two
-/// in the extremity — the humanoid's split, so `Rig::limb_chain` takes the same
-/// three joints on both plans.
-pub(crate) const LEG_NODES: usize = 5;
+/// How many nodes a hind leg carries: two in the upper limb (the hip joint, a
+/// marker, and the stifle), the hock in the lower, two in the extremity -
+/// the humanoid's split, so `Rig::limb_chain` takes the same three joints on
+/// both plans.
+pub(crate) const HIND_NODES: usize = 5;
+
+/// How many nodes a fore leg carries: [`HIND_NODES`]' and the shoulder
+/// blade's top before them, a third upper-limb node (#374). `Rig::limb_chain`
+/// takes the LAST three of the upper and lower limb, so it still hands the leg
+/// IK the shoulder, the elbow and the carpus; the blade rides on the trunk
+/// until the IK learns it (#378).
+pub(crate) const FORE_NODES: usize = 6;
+
+/// How many of a leg's nodes, from the body down, are markers inside it:
+/// the hip joint on the hind leg; the blade's top and the shoulder on the
+/// fore.
+pub(crate) const HIND_INSIDE: usize = 1;
+/// See [`HIND_INSIDE`].
+pub(crate) const FORE_INSIDE: usize = 2;
 
 /// A tail's bends at `tailCarriage` 0, in radians above level from each node
 /// to the next, the first unused: out and a little up from the croup, then
@@ -251,64 +661,259 @@ impl Dimensions {
     /// beast - a quadruped's dimorphism is a species question before it is a
     /// body question (#178). `mass`, `bodyFat` and age are read, through
     /// [`Girth`], and age also settles the back and lowers the head.
+    ///
+    /// **The body reads its family** (#374): the frame it stands in is the
+    /// family's, a cross's blended ([`Frame`]), and the body's axes move it
+    /// by how far each sits from the family's own centre, so a roll at its
+    /// family's centre IS the family's frame. The head still reads the axes
+    /// alone, as P2 built it.
     pub(crate) fn of(params: &QuadrupedParams, composites: &Composites) -> Self {
         let h = params.height;
+        let wh = h * WITHERS;
         let girth = Girth::of(params, composites);
         let ageing = composites.ageing();
+        let frame = Frame::for_params(params);
+        let centre = crate::plan::quadruped::axis_centres(params);
         // `appeal` (#366): the baby schema's proportions over the anatomy - a
-        // bigger head on a shorter neck, a shorter muzzle and body, rounder,
-        // and thicker legs on bigger pads - read by every family in its own
+        // bigger head and a shorter muzzle - read by every family in its own
         // terms, so a cute horse is still a horse. Saturated where the head
-        // would swallow the neck and the legs their own joints.
+        // would swallow the neck.
         let appeal = params.appeal.clamp(-1.5, 2.0);
-        let round = 1.0 + 0.06 * appeal;
-        let sturdy = 1.0 + 0.25 * appeal;
+        // And the body follows the family's young (#372, the owner's call):
+        // a puppy's, a kitten's or a foal's ([`Schema`]). At 1.5 a body is all
+        // the way there; below zero it leans the other way.
+        let young = (appeal / 1.5).clamp(-0.5, 1.33);
+        let schema = Schema::for_params(params);
+        let sturdy = 1.0 + schema.sturdy * young;
+        let pads = 1.0 + schema.pads * young;
 
-        let girdle_r = h * 0.181 * girth.at(CROUP) * round;
-        // A deep chest is a larger front girdle about the same centre: the
-        // withers stand over the back line and the brisket drops toward the
-        // elbow, which is a horse's front and a greyhound's (#366).
-        let withers_r = h * 0.190 * girth.at(CHEST) * round * (1.0 + 0.12 * params.chest_depth);
-        // The loin is narrower and rides higher than the girdles either side
-        // of it: the tuck-up, which is most of what tells a trunk from a tube.
-        let spine_r = h * 0.150 * girth.at(BELLY) * round;
-        // The neck that leaves the top of the chest thickens with its depth:
-        // a deep chest carries a heavy forehand, a draught horse's rather than
-        // a whippet's.
-        let neck_r = h * 0.078 * girth.at(NECK) * (1.0 + 0.2 * params.chest_depth).clamp(0.6, 1.6);
+        // Each body axis as a step from its family's centre.
+        let leggy = params.leg_length - centre.leg_length;
+        let long = params.body_length - centre.body_length;
+        let deep = params.chest_depth - centre.chest_depth;
+        let toes = params.stance - centre.stance;
 
-        // Spine segments are floored at a multiple of the girdles they join, so
-        // a short-bodied heavy animal stretches rather than folding its girdles
-        // into each other.
-        let stretch = (1.0 + 0.25 * params.body_length) * (1.0 - 0.12 * appeal);
-        // A cute body carries a shorter loin, down to 1.2 radii at the top of
-        // the axis: on a body the floor already holds, a rounder girdle would
-        // otherwise make it LONGER, against everything the axis means.
-        let segment_floor = (1.6 - 0.2 * appeal.max(0.0)) * girdle_r.max(withers_r);
+        // Legginess lengthens the leg below the body - the forearm, the second
+        // thigh and the long bones of the foot - at a fixed withers height, so
+        // the trunk over it gets shallower: a leggy animal is a slender one.
+        // The bones inside the trunk keep their length, because they cannot
+        // grow without passing each other: a blade grown with the leg hung
+        // its shoulder below its own elbow.
+        let reach = (1.0 + 0.10 * leggy).clamp(0.75, 1.3);
+        // A foal's long legs are its cannons (`Schema::legs`): near their
+        // adult length at birth, where every bone above them is short.
+        let metapodial =
+            (reach * (1.0 + 0.20 * toes).clamp(0.6, 1.5) * (1.0 + schema.legs * young))
+                .clamp(0.45, 1.95);
+        let pad_r = wh * 0.042 * girth.limb(PAD) * pads;
+        let toe_r = wh * 0.035 * girth.limb(PAD) * pads;
+        // The pad's centre: its radius above the ground, less what subdivision
+        // takes off a small node, so the surface meets the floor.
+        let pad_y = pad_r * 0.82;
+        let toe_y = toe_r * 0.82;
 
-        let withers_z = h * 0.345 * stretch;
-        let spine_z = withers_z - (h * 0.483 * stretch).max(segment_floor);
-        let hips_z = spine_z - (h * 0.448 * stretch).max(segment_floor);
+        // **The foreleg, solved from the top down.** The blade hangs from its
+        // top at its slope; the forearm stands vertical under the withers
+        // (S11) on its pastern; the upper arm closes the gap between the
+        // shoulder and the elbow, which says how far behind the shoulder the
+        // elbow stands. A blade that would leave the arm too short to reach
+        // slides down the ribs instead, as a sling lets it.
+        let (incline_sin, incline_cos) = (frame.incline.det_sin(), frame.incline.det_cos());
+        let (pastern_sin, pastern_cos) = (frame.pastern.det_sin(), frame.pastern.det_cos());
+        let upper = (1.0 + schema.upper * young).clamp(0.75, 1.25);
+        let humerus = frame.humerus * upper * wh;
+        let carpus_y = pad_y + frame.metacarpus * metapodial * wh * pastern_cos;
+        let elbow_y = carpus_y + frame.radius * reach * wh;
+        let blade = frame.scapula * wh;
+        // Held between an arm hanging nearly straight and one lying no
+        // flatter than 17 degrees: past either the arm cannot close the gap.
+        let shoulder_y = (frame.scapula_top * wh - blade * incline_sin)
+            .min(elbow_y + humerus * 0.97)
+            .max(elbow_y + humerus * 0.3);
+        let behind = (humerus * humerus - (shoulder_y - elbow_y).powi(2)).sqrt();
+
+        // **The trunk**, its rings where the family's stand, every height but
+        // the back's moved by how far the legs moved the elbow: longer legs
+        // under the same withers leave a shallower body.
+        // Floored where the girdles' hulls would crowd the ribs between
+        // them out of their sockets (#374's sweep: a short horse at the
+        // bottom of `appeal`).
+        let stretch = ((1.0 + 0.12 * long) * (1.0 + schema.length * young)).clamp(0.82, 1.8);
+        let length = frame.length * wh * stretch;
+        // Point of the shoulder at the front, point of the buttock at the back.
+        let shoulder_z = 0.5 * length;
+        let buttock_z = -0.5 * length;
+        let elbow_z = shoulder_z - behind;
+        let natural_elbow = {
+            let carpus = frame.metacarpus * frame.pastern.det_cos();
+            frame.radius + carpus
+        };
+        let lift = (elbow_y - pad_y) / wh - natural_elbow;
+        let hip_z = buttock_z + frame.hip_ahead * wh * stretch;
+        // The pelvis's node stands a little ahead of the hip joints, so the
+        // tail leaving its back and the thighs leaving its sides each have a
+        // bone long enough to open a socket on.
+        let pelvis_z = hip_z + 0.05 * wh;
+        // Toward round on the young side; on the other, a tenth of `young`
+        // narrower whatever the family's `Schema::round`.
+        let rounder = 1.0 + schema.round * young.max(0.0) - 0.1 * young.min(0.0).abs();
+        let sites = [CROUP, BELLY, BELLY, CHEST, CHEST, CHEST];
+        // **The composites move the trunk from the family's own body**: its
+        // frame is that body's, measured at the mass and fat a roll of the
+        // family centres on, so each ring's width, and the barrel's depth,
+        // take how far this body's girth at the ring's site stands from that
+        // one's. A heavier body is a bigger trunk under the same back; a
+        // fatter one carries it most at the belly, whose underline drops. At
+        // the family's own composites every ring is its frame's. Legginess is
+        // in both girths, so it slims the width alone: it has made the trunk
+        // shallower already, through `lift`.
+        let centred = Girth::of(
+            params,
+            &Composites {
+                mass: centre.mass,
+                body_fat: centre.body_fat,
+                ..*composites
+            },
+        );
+        let grown = |site: Site| girth.at(site) / centred.at(site);
+        let pelvis_width = frame.rings[0].half_width * wh * centred.at(CROUP);
+        let rings: [(f32, f32, Vec2); TRUNK_NODES] = std::array::from_fn(|i| {
+            let ring = frame.rings[i];
+            // The barrel is the four rings between the girdles; the ribcage
+            // the three of them ahead of the loin.
+            let barrel = (1..=4).contains(&i);
+            let ribs = (2..=4).contains(&i);
+            // A deep chest drops the underline of the ribcage; the loin's
+            // follows by half, the pelvis not at all. A puppy's barrel hangs
+            // lower too.
+            let drop = match i {
+                0 => 0.0,
+                1 => 0.02 * deep,
+                _ => 0.04 * deep,
+            } + if barrel {
+                schema.sink * young.max(0.0)
+            } else {
+                0.0
+            };
+            let top = ring.top * wh * (1.0 - if i == 1 { 0.04 * ageing } else { 0.0 });
+            let bottom = ((ring.bottom + lift - drop) * wh).min(top - 0.2 * wh);
+            let mut half_depth = 0.5 * (top - bottom);
+            // The family's own width here, which the walls below are drawn
+            // on before this body's composites move it, so that a wall holds
+            // the shape and never the amount of body.
+            let mut half_width = ring.half_width * wh * centred.at(sites[i]);
+            // A puppy's ribcage rounds toward round, not past it.
+            if ribs {
+                half_width = (half_width * rounder).min(half_depth * 1.05);
+            }
+            // **A cage wall, not anatomy**: the loin is held to a little
+            // over the pelvis's width, because the spine's socket on the
+            // pelvis's hull carries the loin's width and the thighs' sockets
+            // beside it have to clear it within their bones (#374's sweep).
+            if i == 1 {
+                half_width = half_width.min(pelvis_width * 1.15);
+            }
+            // The width takes all of the growth and the ribcage's depth the
+            // square root of it, under the same back: all of it hung a heavy
+            // dog's chest under its elbows, and on the girdles, whose depth
+            // is the bone's, crowded the legs' sockets off their hulls
+            // (`examples/quadprobe --sweep`). The loin takes half the
+            // ribcage's power: its socket on the pelvis's hull is sized by
+            // its depth, and a fat horse's at the top of the envelope crowded
+            // the thighs' off it (`tests/budget.rs`).
+            let grow = grown(sites[i]);
+            half_width *= grow;
+            if ribs {
+                half_depth *= grow.sqrt();
+                // And still round, not past it: a heavy kitten's ribs past
+                // their depth crowded the forechest's sockets off its hull.
+                half_width = half_width.min(half_depth * 1.05);
+            } else if i == 1 {
+                half_depth *= grow.det_powf(0.25);
+            }
+            // And held there as the two girths part: a fat loin's belly
+            // goes down, where the pelvis's hull is not in its way.
+            if i == 1 {
+                half_width = half_width.min(pelvis_width * grown(CROUP) * 1.15);
+            }
+            half_depth = half_depth.max(0.1 * wh);
+            // **A cage wall, not anatomy** ([`BRISKET`]): the front of the
+            // chest reaches down past the points of the shoulders, so its
+            // hull is there to close the chest in front of them. A foal's
+            // long cannons raise its underline (`lift`) under shoulders that
+            // stay where the blades put them, and left them hanging under
+            // the front of its chest.
+            if i >= TRUNK_NODES - 2 {
+                half_depth = half_depth.max(0.5 * (top - shoulder_y + BRISKET * wh));
+            }
+            let y = top - half_depth;
+            let (half_width, half_depth) = (half_width / SKIN, half_depth / SKIN);
+            let radius = half_depth.max(half_width);
+            (y, radius, Vec2::new(half_width, half_depth) / radius)
+        });
+        // The withers are the tops of the blades: the front girdle stands
+        // under them, ahead of the elbows by as much as the arm lies back -
+        // and a third of the way on toward the points of the shoulders, so
+        // the chest its hull closes reaches past them, as the pectorals do.
+        // Under the blades' tops, a horse's steep upper arm left the front
+        // of its chest behind its own shoulders. **And further on where that
+        // falls short** (a cage wall): the forechest's hull, an ellipse in
+        // the side view, is held to reach [`PECTORAL`] past the shoulder at
+        // the shoulder's height, which moves a horse's on by about 0.06
+        // withers heights.
+        let withers_z = {
+            let (y, radius, section) = rings[TRUNK_NODES - 1];
+            let below = (shoulder_y - y) / (radius * section.y);
+            let reach = radius * (1.0 - below * below).max(0.0).sqrt();
+            (shoulder_z - 0.67 * blade * incline_cos).max(shoulder_z + PECTORAL * wh - reach)
+        };
+        // The run from the forechest to the pelvis is floored at a multiple
+        // of the largest ring, P1's spine floor in one number: a short deep
+        // body stretches rather than crowd its ribs out of their girdles'
+        // sockets (#374: every axis at -3 did). The hip moves back with it.
+        let largest = rings.iter().map(|ring| ring.1).fold(0.0, f32::max);
+        let span = (withers_z - pelvis_z).max(SPAN_FLOOR * largest);
+        let pelvis_z = withers_z - span;
+        let hip_z = pelvis_z - 0.05 * wh;
+        let trunk: [(Vec3, f32, Vec2); TRUNK_NODES] = std::array::from_fn(|i| {
+            let (y, radius, section) = rings[i];
+            let z = withers_z - span * TRUNK_SHARES[i];
+            (Vec3::new(0.0, y, z), radius, section)
+        });
+        let (hips_at, withers_at) = (trunk[0].0, trunk[TRUNK_NODES - 1].0);
+        let forechest = trunk[5].1 * trunk[5].2.x * SKIN;
+        let pelvis = trunk[0].1 * trunk[0].2.x * SKIN;
 
         // The neck rises from the top of the chest rather than its front, so
         // the brisket stands forward under the throat, and the head is
         // carried above the back line rather than level with it. How steeply
         // is `neckCarriage`: a cat's carried low and forward, a horse's high
         // (#366). Saturated well short of level and of upright. Floored at
-        // 1.4 chest radii, a look rather than a wall like the spine's: at the
-        // 1.9 it replaces, the floor and not `neckLength` set every cat's
-        // neck, and the head sat a hound's height over its shoulders.
-        let neck_reach = (h * 0.32 * (1.0 + 0.3 * params.neck_length) * (1.0 - 0.15 * appeal))
-            .max(withers_r * 1.4);
-        let level_rise = 0.70f32.atan2(0.62);
+        // the P1 chest's radius, a look rather than a wall: P1's 1.4 of it
+        // held every cat's neck there, longer than its family's own (#374).
+        let neck_r = h
+            * 0.078
+            * frame.neck_girth
+            * girth.at(NECK)
+            * (1.0 + 0.2 * params.chest_depth).clamp(0.6, 1.6)
+            * (1.0 + schema.neck_girth * young);
+        let neck_reach = (h
+            * 0.32
+            * frame.neck
+            * (1.0 + 0.3 * params.neck_length)
+            * (1.0 - schema.neck * young))
+            .max(h * 0.19);
+        let level_rise = 0.70f32.det_atan2(0.62);
         // Age carries it lower, as an old dog carries its head.
         let rise = (level_rise + 0.26 * params.neck_carriage - 0.12 * ageing).clamp(0.30, 1.35);
         let neck_at = Vec3::new(
             0.0,
-            h * 1.06 + neck_reach * 0.935 * rise.sin(),
-            withers_z + neck_reach * 0.935 * rise.cos(),
+            h * 1.06 + neck_reach * 0.935 * rise.det_sin(),
+            withers_z + 0.06 * wh + neck_reach * 0.935 * rise.det_cos(),
         );
-        let head_r = h * 0.150 * (1.0 + 0.25 * params.head_size) * (1.0 + 0.30 * appeal);
+        // A puppy's head is 0.61 withers heights long against an adult's 0.39
+        // (S7): appeal grows it by that ratio, a foal's by less ([`Schema`]).
+        let head_r = h * 0.150 * (1.0 + 0.25 * params.head_size) * (1.0 + schema.head * young);
         // The skull is two rings, the back of it and the brow, because a lone
         // large ring between two small ones is what subdivision smooths away:
         // two of a size make a plateau it keeps, and the head reads as a mass
@@ -354,7 +959,9 @@ impl Dimensions {
         // because a curl past `RAISED` folds the tail into the back.
         let tail_step = h * 0.13 * (1.0 + 0.6 * params.tail_length);
         let tail_r = h * 0.050 * girth.at(TAIL);
-        let set = Vec3::new(0.0, h * 1.08, hips_z - girdle_r * 1.20);
+        // Set at the top of the croup's back, far enough off the pelvis's
+        // node for its socket to clear the thighs' on the hull.
+        let set = hips_at + Vec3::new(0.0, 0.75, -1.15) * trunk[0].1;
         let carriage = params.tail_carriage.clamp(-1.0, 1.0);
         let toward = if carriage < 0.0 { HANGING } else { RAISED };
         let bends: [f32; TAIL_NODES] =
@@ -364,8 +971,8 @@ impl Dimensions {
             let mut at = set;
             for (index, bend) in bends.into_iter().enumerate() {
                 if index > 0 {
-                    at +=
-                        Vec3::new(0.0, bend.sin(), -bend.cos()) * step.max(tail[index - 1].1 * 2.2);
+                    at += Vec3::new(0.0, bend.det_sin(), -bend.det_cos())
+                        * step.max(tail[index - 1].1 * 2.2);
                 }
                 let taper = 1.0 - 0.14 * index as f32;
                 tail[index] = (at, (tail_r * taper).max(h * 0.012));
@@ -387,129 +994,92 @@ impl Dimensions {
             tail = lay(tail_step * fit.max(0.0));
         }
 
-        // The pad's centre: its radius above the ground, less what
-        // subdivision takes off a small node, so the surface meets the floor.
-        let pad_r = h * 0.050 * girth.limb(PAD) * sturdy;
-        let toe_r = h * 0.042 * girth.limb(PAD) * sturdy;
-        let pad_y = pad_r * 0.82;
-        let toe_y = toe_r * 0.82;
+        // The legs stand under the body, not beside it (#374): each drops
+        // straight from under the side of its girdle's ring, as an animal's
+        // do seen from the front.
+        // The elbow tucks against the ribs behind it rather than inside them:
+        // a puppy's barrel rounds out past its forechest, and a leg set by the
+        // forechest alone ran its arm up through the side of the chest.
+        let heart = trunk[4].1 * trunk[4].2.x * SKIN;
+        let fore_x = forechest.max(heart * 0.85) * 0.80;
+        let hind_x = pelvis * 0.80;
+        let limb = frame.limb * sturdy;
 
-        // Each girdle spreads its legs far enough that the two sockets
-        // separate, and drops far enough that the bone can carry them there -
-        // but never so far that the leg left below it is shorter than four of
-        // its pads. A barrel on short legs raises its legs' roots into its
-        // girth instead, because a root dropped past that floor leaves the
-        // joints below it no span to be placed in, and the leg cannot fold
-        // (#366: a deep chest on a wildcard of muscle, seed 1).
-        let leg_floor = pad_y + pad_r * 4.0;
-        let rear_x = girdle_r * 1.55;
-        let front_x = withers_r * 1.55;
-        let rear_root_y = (h * 0.966 - girdle_r * 1.95).max(leg_floor);
-        let front_root_y = (h - withers_r * 1.95).max(leg_floor);
-
-        // **Every joint of a leg is placed as a share of that leg's own drop**
-        // from where it leaves the body to the pad, never as a share of the
-        // body's height. The two disagree as soon as legginess or girth moves
-        // the root: placed by height, a short-legged roll put its elbow at the
-        // height of its own carpus, the forearm lay flat, and the leg could not
-        // fold far enough to plant (#366, found by `every_rerolled_body_can_walk`
-        // on seed 1).
-        let hind_drop = rear_root_y - pad_y;
-        let fore_drop = front_root_y - pad_y;
-
-        // `stance` is what the legs stand on (#366): up on the toes at 0, a
-        // dog's and a cat's, and up on the tips of them at 1, a horse's - the
-        // long bones of the foot lengthen, so the hock and the carpus ride
-        // higher, the stifle tucks up toward the belly and the foot shortens
-        // to a hoof's length. Below 0 the foot lies flatter. Every share is
-        // saturated so the three joints the leg IK solves stay a bent leg.
-        let stance = params.stance;
-        let stifle_share = (0.30 - 0.06 * stance).clamp(0.18, 0.40);
-        let hock_share = (0.42 + 0.10 * stance).clamp(0.22, 0.62);
-        let carpus_share = (0.25 + 0.08 * stance).clamp(0.12, 0.40);
-        let toe_ahead = pad_r * (1.4 - 0.5 * stance).clamp(0.7, 2.2);
-
-        // Hind: the thigh leaves the croup, the stifle sits forward of it at
-        // the flank, the hock well back of the stifle and - on a dog - four
-        // tenths of the way up, and the long bones of the foot drop from the
-        // hock to the pad.
-        let hind = [
-            (
-                Vec3::new(rear_x, rear_root_y, hips_z + hind_drop * 0.05),
-                h * 0.092 * girth.limb(THIGH) * sturdy,
-            ),
-            (
-                Vec3::new(
-                    rear_x,
-                    rear_root_y - hind_drop * stifle_share,
-                    hips_z + hind_drop * 0.20,
-                ),
-                h * 0.060 * girth.limb(SHANK) * sturdy,
-            ),
-            (
-                Vec3::new(
-                    rear_x,
-                    pad_y + hind_drop * hock_share,
-                    hips_z - hind_drop * 0.05,
-                ),
-                h * 0.042 * girth.limb(CANNON) * sturdy,
-            ),
-            (Vec3::new(rear_x, pad_y, hips_z + hind_drop * 0.04), pad_r),
-            (
-                Vec3::new(rear_x, toe_y, hips_z + hind_drop * 0.04 + toe_ahead),
-                toe_r,
-            ),
-        ];
-        // Fore: the arm leaves the chest at the point of the shoulder, the
-        // elbow sits at the brisket well behind it - the bend a stride takes
-        // its slack from, which a straight foreleg would not have - the forearm
-        // drops to the carpus, and a short pastern carries the pad.
+        // Fore: the blade's top beside the withers, the point of the
+        // shoulder ahead and below it, the elbow behind the shoulder at the
+        // brisket, the forearm straight down to the carpus, and the pastern
+        // forward to the pad.
+        let carpus_z = elbow_z;
+        let pad_z = carpus_z + frame.metacarpus * metapodial * wh * pastern_sin;
         let fore = [
             (
-                Vec3::new(front_x, front_root_y, withers_z + fore_drop * 0.09),
-                h * 0.080 * girth.limb(THIGH) * sturdy,
-            ),
-            (
                 Vec3::new(
-                    front_x,
-                    front_root_y - fore_drop * 0.28,
-                    withers_z - fore_drop * 0.13,
+                    forechest * 0.35,
+                    shoulder_y + blade * incline_sin,
+                    shoulder_z - blade * incline_cos,
                 ),
-                h * 0.055 * girth.limb(SHANK) * sturdy,
+                wh * 0.06 * limb,
             ),
             (
+                // Outside the keel of the ribs: the shoulder joint sits on
+                // the blade's outer face, and its socket on the hull opens
+                // the further from its fellow for it.
                 Vec3::new(
-                    front_x,
-                    pad_y + fore_drop * carpus_share,
-                    withers_z - fore_drop * 0.06,
+                    splay(forechest * 1.35, withers_at, shoulder_y, shoulder_z),
+                    shoulder_y,
+                    shoulder_z,
                 ),
-                h * 0.040 * girth.limb(CANNON) * sturdy,
+                wh * 0.065 * limb * girth.limb(THIGH),
             ),
             (
-                Vec3::new(front_x, pad_y, withers_z - fore_drop * 0.02),
-                pad_r,
+                Vec3::new(fore_x, elbow_y, elbow_z),
+                wh * 0.058 * limb * girth.limb(SHANK),
             ),
             (
-                Vec3::new(front_x, toe_y, withers_z - fore_drop * 0.02 + toe_ahead),
-                toe_r,
+                Vec3::new(fore_x, carpus_y, carpus_z),
+                wh * 0.032 * limb * girth.limb(CANNON),
             ),
+            (Vec3::new(fore_x, pad_y, pad_z), pad_r),
+            (Vec3::new(fore_x, toe_y, pad_z + toe_r * 1.6), toe_r),
+        ];
+
+        // Hind: the paw stands its family's distance behind the hip, the
+        // metatarsus straight up from it to the hock, and the stifle closes
+        // the thigh and the second thigh between the hip and the hock, bent
+        // forward: two bones and two ends are one bend.
+        let hip = Vec2::new(hip_z, frame.hip * wh);
+        let paw_z = hip_z - frame.paw_behind * wh;
+        let hock = Vec2::new(paw_z, pad_y + frame.metatarsus * metapodial * wh);
+        let stifle = knee(
+            hip,
+            hock,
+            frame.femur * upper * wh,
+            frame.tibia * reach * wh,
+        );
+        let hind = [
+            (
+                Vec3::new(splay(pelvis * 0.75, hips_at, hip.y, hip.x), hip.y, hip.x),
+                // The thigh's socket on the croup is sized by this joint
+                // (`cage::limb`), so it spends the thigh's girth.
+                wh * 0.08 * limb * girth.limb(THIGH),
+            ),
+            (
+                Vec3::new(hind_x, stifle.y, stifle.x),
+                wh * 0.088 * limb * frame.thigh * girth.limb(THIGH),
+            ),
+            (
+                Vec3::new(hind_x, hock.y, hock.x),
+                wh * 0.034 * limb * girth.limb(CANNON),
+            ),
+            (Vec3::new(hind_x, pad_y, paw_z), pad_r),
+            (Vec3::new(hind_x, toe_y, paw_z + toe_r * 1.6), toe_r),
         ];
 
         Self {
-            hips_at: Vec3::new(0.0, h * 0.966, hips_z),
-            hips_r: girdle_r,
-            hips_section: HIPS_SECTION,
-            // The loin rides above the girdles, and settles toward them with
-            // age: the dipped back of an old horse.
-            spine_at: Vec3::new(0.0, h * (1.03 - 0.05 * ageing), spine_z),
-            spine_r,
-            spine_section: SPINE_SECTION,
-            withers_at: Vec3::new(0.0, h, withers_z),
-            withers_r,
-            withers_section: WITHERS_SECTION,
+            trunk,
             neck_at,
             neck_r,
-            neck_section: NECK_SECTION,
+            neck_section: frame.neck_section,
             occiput_at,
             occiput_r,
             head_at,
@@ -522,6 +1092,46 @@ impl Dimensions {
             tail,
             hind,
             fore,
+            stifle_section: frame.thigh_section,
         }
     }
+}
+
+/// How far out a leg's inner joint stands - a shoulder, a hip - given where
+/// it would stand and the girdle it hangs from.
+///
+/// **A cage wall, not anatomy.** The cage aims each leg's socket at this
+/// joint (`Skeleton::bridge_aim`), and the two legs' sockets open apart on
+/// the girdle's hull only if they leave it at least a third of the way
+/// sideways (#374's sweep: a horse's shoulder dropped far below its
+/// forechest aimed both sockets down the same line). Held there, the joint
+/// moves out a little on the few bodies that need it, and nowhere else.
+fn splay(lateral: f32, girdle: Vec3, y: f32, z: f32) -> f32 {
+    let off = Vec2::new(y - girdle.y, z - girdle.z).length();
+    lateral.max(0.65 * off)
+}
+
+/// Where a two-bone leg from `hip` to `hock` bends, in the body's side plane
+/// as `(z, y)`: the bend that puts the joint FORWARD of the line between
+/// them, a stifle's. A reach longer than both bones straightens the leg; a
+/// shorter one than their difference folds it shut.
+fn knee(hip: Vec2, hock: Vec2, femur: f32, tibia: f32) -> Vec2 {
+    let span = hock - hip;
+    let reach = span
+        .length()
+        .clamp((femur - tibia).abs() + 1e-4, (femur + tibia) * 0.999);
+    let along = span / span.length().max(1e-6);
+    let cos =
+        ((femur * femur + reach * reach - tibia * tibia) / (2.0 * femur * reach)).clamp(-1.0, 1.0);
+    let turn = cos.det_acos();
+    let (sin, cos) = (turn.det_sin(), turn.det_cos());
+    // Turned toward +z: the leg runs down, so forward is a clockwise turn
+    // in (z, y) when the reach points down and back.
+    let one = Vec2::new(along.x * cos - along.y * sin, along.x * sin + along.y * cos);
+    let other = Vec2::new(
+        along.x * cos + along.y * sin,
+        -along.x * sin + along.y * cos,
+    );
+    let pick = if one.x > other.x { one } else { other };
+    hip + pick * femur
 }

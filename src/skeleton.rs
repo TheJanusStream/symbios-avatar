@@ -102,6 +102,14 @@ pub struct Node {
     /// surface to it by the ordinary falloff, without asking the hull for a
     /// socket it cannot give.
     ///
+    /// **And for the bones a limb carries inside the body** (#374): a beast's
+    /// shoulder blade, shoulder joint and hip joint lie inside its trunk, and
+    /// a socket for each would stand outside it. A run of markers between two
+    /// meshed nodes is a **bridge**: the cage sweeps it as one bone, its socket
+    /// aimed at the run's last marker, and the skin binds to a limb's markers
+    /// as to any bone (a face's take their skin from their own regions). A run
+    /// that ends in a marker - a jaw, a brow - meshes nothing, as before.
+    ///
     /// Defaulted **at the field** for the reason [`Node::roll`] gives: a
     /// `Skeleton` written before this existed still reads, and reads as meshed.
     #[serde(default)]
@@ -403,12 +411,7 @@ impl Skeleton {
         // sweeps straight through it — and counting the jaw markers would make
         // it a three-socket joint, which is the construction #134 measured as
         // impossible there.
-        match self
-            .incident_bones(node)
-            .into_iter()
-            .filter(|&bone| !self.is_marker_bone(bone))
-            .count()
-        {
+        match self.meshed_edges_at(&self.meshed_edges(), node).len() {
             0 | 1 => NodeKind::Leaf,
             2 => NodeKind::Connector,
             _ => NodeKind::Joint,
@@ -419,6 +422,97 @@ impl Skeleton {
     fn is_marker_bone(&self, bone: usize) -> bool {
         let [a, b] = self.bones[bone];
         self.nodes[a as usize].marker || self.nodes[b as usize].marker
+    }
+
+    /// The bones the cage meshes, as node pairs: every bone between two
+    /// meshed nodes, in bone order, and after them one **bridge** for each
+    /// run of markers that joins two meshed nodes.
+    ///
+    /// **A bridge is how a limb carries bones inside the body** (#374). A
+    /// beast's shoulder blade and upper arm lie inside its trunk, and a socket
+    /// for each would have to stand outside it (see [`Node::marker`]), which
+    /// is the splay the quadruped had: its legs rooted beside the trunk. So
+    /// those joints are markers the rig keeps, and the cage sweeps the limb
+    /// straight from the girdle to the first joint below them, as one bone.
+    /// A marker run that ends in a marker - a jaw, a brow, a corner - joins
+    /// nothing and meshes nothing, as it always has.
+    fn meshed_edges(&self) -> Vec<[u32; 2]> {
+        let mut edges: Vec<[u32; 2]> = (0..self.bones.len())
+            .filter(|&bone| !self.is_marker_bone(bone))
+            .map(|bone| self.bones[bone])
+            .collect();
+        for &[a, b] in &self.bones {
+            let (from, mut here) =
+                match (self.nodes[a as usize].marker, self.nodes[b as usize].marker) {
+                    (false, true) => (a, b),
+                    (true, false) => (b, a),
+                    _ => continue,
+                };
+            let mut previous = from;
+            // Walk the run while it stays a single file of markers.
+            let end = loop {
+                if !self.nodes[here as usize].marker {
+                    break Some(here);
+                }
+                let onward: Vec<u32> = self
+                    .neighbors(here)
+                    .into_iter()
+                    .filter(|&next| next != previous)
+                    .collect();
+                if onward.len() != 1 {
+                    break None;
+                }
+                previous = here;
+                here = onward[0];
+            };
+            // Found from both ends: kept once, from the lower.
+            if let Some(end) = end.filter(|&end| from < end) {
+                edges.push([from, end]);
+            }
+        }
+        edges
+    }
+
+    /// The last marker of the run bridging `joint` to `neighbor`, if a run
+    /// of markers joins them: the joint inside the body the bridge's limb
+    /// hangs from, which the cage aims the bridge's socket at (#374). See
+    /// [`Self::meshed_edges`].
+    pub(crate) fn bridge_aim(&self, joint: u32, neighbor: u32) -> Option<u32> {
+        for first in self.neighbors(joint) {
+            if !self.nodes[first as usize].marker {
+                continue;
+            }
+            let (mut previous, mut here) = (joint, first);
+            loop {
+                let onward: Vec<u32> = self
+                    .neighbors(here)
+                    .into_iter()
+                    .filter(|&next| next != previous)
+                    .collect();
+                let [next] = onward[..] else {
+                    break;
+                };
+                if next == neighbor {
+                    return Some(here);
+                }
+                if !self.nodes[next as usize].marker {
+                    break;
+                }
+                previous = here;
+                here = next;
+            }
+        }
+        None
+    }
+
+    /// Indices into `edges` of the meshed edges touching `node`.
+    fn meshed_edges_at(&self, edges: &[[u32; 2]], node: u32) -> Vec<usize> {
+        edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge[0] == node || edge[1] == node)
+            .map(|(index, _)| index)
+            .collect()
     }
 
     /// Decomposes the graph into limbs: chains between leaves and joints.
@@ -435,81 +529,59 @@ impl Skeleton {
     pub fn limbs(&self) -> Result<Vec<Chain>, SkeletonError> {
         self.validate()?;
 
-        // Marker bones are the rig's and never mesh, so they are spent before
-        // the walk begins — both so no chain crosses one and so the unanchored-
-        // ring check below does not mistake them for an unreached loop.
-        let mut used: Vec<bool> = (0..self.bones.len())
-            .map(|bone| self.is_marker_bone(bone))
-            .collect();
+        // Marker bones are the rig's and never mesh, so the walk runs over the
+        // meshed edges alone - both so no chain crosses one and so the
+        // unanchored-ring check below does not mistake them for an unreached
+        // loop. A run of markers between two meshed nodes is one edge here.
+        let edges = self.meshed_edges();
+        let mut used = vec![false; edges.len()];
         let mut limbs = Vec::new();
 
         for start in 0..self.nodes.len() as u32 {
             if self.nodes[start as usize].marker || self.kind(start) == NodeKind::Connector {
                 continue;
             }
-            for bone in self.incident_bones(start) {
-                if used[bone] {
+            for edge in self.meshed_edges_at(&edges, start) {
+                if used[edge] {
                     continue;
                 }
-                limbs.push(self.walk_limb(start, bone, &mut used));
+                limbs.push(self.walk_limb(&edges, start, edge, &mut used));
             }
         }
 
-        if let Some(bone) = used.iter().position(|&u| !u) {
-            let mut ring = vec![self.bones[bone][0]];
-            let mut cursor = self.bones[bone][1];
-            let mut here = bone;
-            used[bone] = true;
+        if let Some(edge) = used.iter().position(|&u| !u) {
+            let mut ring = vec![edges[edge][0]];
+            let mut cursor = edges[edge][1];
+            used[edge] = true;
             while cursor != ring[0] {
                 ring.push(cursor);
                 let next = self
-                    .incident_bones(cursor)
+                    .meshed_edges_at(&edges, cursor)
                     .into_iter()
-                    .find(|&b| !used[b])
+                    .find(|&e| !used[e])
                     .expect("a connector ring always continues until it closes");
                 used[next] = true;
-                cursor = self.other_end(next, cursor);
-                here = next;
+                cursor = other_end(edges[next], cursor);
             }
-            let _ = here;
             return Err(SkeletonError::UnanchoredRing { nodes: ring });
         }
 
         Ok(limbs)
     }
 
-    /// Indices of the bones touching `node`.
-    fn incident_bones(&self, node: u32) -> Vec<usize> {
-        self.bones
-            .iter()
-            .enumerate()
-            .filter(|(_, bone)| bone[0] == node || bone[1] == node)
-            .map(|(index, _)| index)
-            .collect()
-    }
-
-    /// The end of `bone` that is not `node`.
-    fn other_end(&self, bone: usize, node: u32) -> u32 {
-        let [a, b] = self.bones[bone];
-        if a == node { b } else { a }
-    }
-
-    /// Walks from `start` across `bone` until the next terminal.
-    fn walk_limb(&self, start: u32, bone: usize, used: &mut [bool]) -> Chain {
+    /// Walks from `start` across `edge` until the next terminal.
+    fn walk_limb(&self, edges: &[[u32; 2]], start: u32, edge: usize, used: &mut [bool]) -> Chain {
         let mut nodes = vec![start];
-        let mut current = bone;
-        let mut cursor = self.other_end(bone, start);
-        used[bone] = true;
+        let mut current = edge;
+        let mut cursor = other_end(edges[edge], start);
+        used[edge] = true;
         nodes.push(cursor);
 
         while self.kind(cursor) == NodeKind::Connector {
-            // Marker bones are filtered here too: a connector's kind already
-            // ignores them, so following one would walk the chain off the
-            // meshed graph and onto a rig-only bone.
             let Some(next) = self
-                .incident_bones(cursor)
+                .meshed_edges_at(edges, cursor)
                 .into_iter()
-                .find(|&b| b != current && !self.is_marker_bone(b))
+                .find(|&e| e != current)
             else {
                 break;
             };
@@ -518,12 +590,18 @@ impl Skeleton {
             }
             used[next] = true;
             current = next;
-            cursor = self.other_end(next, cursor);
+            cursor = other_end(edges[next], cursor);
             nodes.push(cursor);
         }
 
         Chain { nodes }
     }
+}
+
+/// The end of `edge` that is not `node`.
+fn other_end(edge: [u32; 2], node: u32) -> u32 {
+    let [a, b] = edge;
+    if a == node { b } else { a }
 }
 
 #[cfg(test)]
@@ -577,6 +655,53 @@ mod tests {
         // through the chain they hang off.
         let rig = crate::Rig::rooted_at(&marked, 0).expect("markers rig");
         assert_eq!(rig.len(), 6);
+    }
+
+    #[test]
+    fn a_marker_run_between_meshed_nodes_is_one_meshed_bone() {
+        // #374: a beast's shoulder blade and upper arm are markers inside its
+        // trunk, and the leg below them still meshes onto its girdle. The run
+        // is one bone to the cage, its socket aimed at the run's last marker,
+        // and every joint of it still the rig's.
+        let mut skel = chain(3);
+        let hub = 1;
+        skel.extend_from(hub, Node::new(Vec3::new(1.0, 1.0, 0.0), 0.2));
+        let blade = skel.extend_from(hub, Node::new(Vec3::new(0.2, 1.5, 0.0), 0.1).as_marker());
+        let shoulder =
+            skel.extend_from(blade, Node::new(Vec3::new(-0.6, 1.2, 0.0), 0.1).as_marker());
+        let elbow = skel.extend_from(shoulder, Node::new(Vec3::new(-0.6, 0.2, 0.0), 0.1));
+        skel.extend_from(elbow, Node::new(Vec3::new(-0.6, -0.6, 0.0), 0.1));
+
+        assert_eq!(
+            skel.kind(hub),
+            NodeKind::Joint,
+            "the run is a fourth socket"
+        );
+        assert_eq!(
+            skel.kind(elbow),
+            NodeKind::Connector,
+            "and the elbow sweeps on"
+        );
+        let limbs = skel.limbs().expect("a bridged skeleton decomposes");
+        assert!(
+            limbs
+                .iter()
+                .any(|limb| limb.nodes == vec![hub, elbow, elbow + 1]),
+            "{limbs:?}"
+        );
+        assert!(limbs.iter().all(|limb| !limb.nodes.contains(&blade)));
+        assert_eq!(skel.bridge_aim(hub, elbow), Some(shoulder));
+        assert_eq!(
+            skel.bridge_aim(hub, 2),
+            None,
+            "a plain bone aims at its node"
+        );
+
+        let rig = crate::Rig::rooted_at(&skel, 0).expect("bridged markers rig");
+        assert_eq!(rig.len(), skel.nodes.len());
+        let cage = crate::cage::build_cage(&skel, &crate::CageConfig::default())
+            .expect("the bridged leg meshes");
+        assert!(cage.manifold_report().is_clean());
     }
 
     #[test]

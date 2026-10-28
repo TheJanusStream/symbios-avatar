@@ -483,10 +483,7 @@ impl Avatar {
         // jaw's; the welds keep their blend, which is what lets a mouth corner
         // stretch (#154).
         if let Some(mouth) = &mouth {
-            let jaw = (0..rig.len()).find_map(|tip| {
-                let pivot = rig.joints[tip].parent?;
-                (rig.joints[tip].marker && rig.joints[pivot].marker).then_some(pivot)
-            });
+            let jaw = skin::jaw_pivot(&rig);
             let head = rig.in_zone(Zone::Head).first().copied();
             if let (Some(pivot), Some(head)) = (jaw, head) {
                 let solely = |joint: usize| {

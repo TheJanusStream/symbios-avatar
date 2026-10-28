@@ -690,8 +690,9 @@ impl Stride {
     /// **The rig is here for the stance**, which only a body can answer: a
     /// sideways stride long enough drives one foot past the other. A
     /// two-footed body crosses over in a split stance, the CC0 strafe's answer
-    /// (#362, [`Stride::split`]), and takes its whole anatomical stride; any
-    /// other body still shuffles, its stride held under `shuffle_bound` — see
+    /// (#362, [`Stride::split`]), and takes its whole anatomical stride, as a
+    /// four-footed one does in its two pairs (#374, a side-pass); any other
+    /// body still shuffles, its stride held under `shuffle_bound` - see
     /// `Heading`'s own docs for how that bound was found, which was by a guard
     /// refuting the claim it had been written to confirm.
     ///
@@ -838,10 +839,9 @@ fn shuffle_bound(rig: &Rig, heading: Heading, anatomical: f32) -> f32 {
     if engaged <= 0.0 {
         return anatomical;
     }
-    let eased = (across * across - 1.0 + c * c + CORNER_EASE)
-        .max(0.0)
-        .sqrt();
-    let restored = (c * c + CORNER_EASE).sqrt() - c;
+    let ease = corner_ease(rig);
+    let eased = (across * across - 1.0 + c * c + ease).max(0.0).sqrt();
+    let restored = (c * c + ease).sqrt() - c;
     let cap = stance * (across - eased + restored);
     anatomical - engaged * (anatomical - cap).max(0.0)
 }
@@ -862,24 +862,40 @@ fn sideways_engaged(heading: Heading) -> f32 {
 }
 
 /// Whether this body crosses its feet over to step sideways (#362): one with
-/// two contacts on opposite sides, which the CC0 strafe is. Four feet would
-/// need a crossover the reference does not show, so they keep the shuffle.
+/// two contacts on opposite sides, which the CC0 strafe is.
 ///
 /// **Opposite sides of the midline, not merely apart**: `split_of` moves each
 /// foot by the side it stands on, so two feet on one side — or one on the
 /// midline — would split the same way or not at all, and `split_bound`'s
 /// account of how far apart the split stands them would not hold.
+///
+/// **And four feet in two such pairs** (#374), a fore pair and a hind pair:
+/// a beast's legs drop under its body, and their shuffle's bound, held to
+/// half a stance a third as wide as P1's splayed legs stood, cut a strafe's
+/// stride to 70 mm on the default dog and slid a planted paw 55 mm. A horse's
+/// side-pass crosses its legs over, fore and hind alike; split by side, the
+/// left pair stands back and the right forward, and each pair keeps the
+/// clearance the two-footed account gives it ([`stance_width`]).
 fn crosses_over(rig: &Rig) -> bool {
     let contacts = rig.ground_contacts();
-    let sides: Vec<f32> = contacts
-        .iter()
-        .filter_map(|&limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
-        .map(|joint| rig.joints[joint].position.x)
-        .collect();
-    contacts.len() == 2
-        && sides.len() == 2
-        && sides[0].min(sides[1]) < 0.0
-        && sides[0].max(sides[1]) > 0.0
+    let side = |limb: Limb| {
+        rig.in_zone(Zone::Extremity(limb))
+            .first()
+            .map(|&joint| rig.joints[joint].position.x)
+    };
+    let opposite = |pair: &[Limb]| {
+        let sides: Vec<f32> = pair.iter().filter_map(|&limb| side(limb)).collect();
+        sides.len() == 2 && sides[0].min(sides[1]) < 0.0 && sides[0].max(sides[1]) > 0.0
+    };
+    match contacts.len() {
+        2 => opposite(&contacts),
+        4 => {
+            let (fores, hinds): (Vec<Limb>, Vec<Limb>) =
+                contacts.iter().partition(|limb| limb.is_fore());
+            opposite(&fores) && opposite(&hinds)
+        }
+        _ => false,
+    }
 }
 
 /// How much of its split stance a stride `anatomical` long needs, `0..1`
@@ -1003,8 +1019,9 @@ fn split_bound(rig: &Rig, heading: Heading, split: f32, anatomical: f32) -> f32 
     if engaged <= 0.0 {
         return anatomical;
     }
-    let eased = (c * c - perp * perp + CORNER_EASE).max(0.0).sqrt();
-    let restored = (c * c + CORNER_EASE).sqrt() - c;
+    let ease = corner_ease(rig);
+    let eased = (c * c - perp * perp + ease).max(0.0).sqrt();
+    let restored = (c * c + ease).sqrt() - c;
     let cap = stance * (reach_along - eased + restored);
     anatomical - engaged * (anatomical - cap).max(0.0)
 }
@@ -1039,11 +1056,33 @@ const SPLIT_OF_REACH: f32 = 0.5;
 
 /// How far apart this body's ground contacts stand, across the body, in
 /// metres — `None` for a body whose stance has no width to cross.
+///
+/// On four feet, the narrower girdle's pair (#374): the clearance is between
+/// a pair's two feet, and a beast's fores stand closer than its hinds.
 fn stance_width(rig: &Rig) -> Option<f32> {
-    let sides: Vec<f32> = rig
-        .ground_contacts()
-        .into_iter()
-        .filter_map(|limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
+    let contacts = rig.ground_contacts();
+    if contacts.len() == 4 {
+        let width = |fore: bool| {
+            let pair: Vec<Limb> = contacts
+                .iter()
+                .copied()
+                .filter(|limb| limb.is_fore() == fore)
+                .collect();
+            spread(rig, &pair)
+        };
+        return match (width(true), width(false)) {
+            (Some(fores), Some(hinds)) => Some(fores.min(hinds)),
+            (one, other) => one.or(other),
+        };
+    }
+    spread(rig, &contacts)
+}
+
+/// How far apart `limbs`' contacts stand across the body, in metres.
+fn spread(rig: &Rig, limbs: &[Limb]) -> Option<f32> {
+    let sides: Vec<f32> = limbs
+        .iter()
+        .filter_map(|&limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
         .map(|joint| rig.joints[joint].position.x)
         .collect();
     let low = sides.iter().copied().fold(f32::MAX, f32::min);
@@ -1092,6 +1131,32 @@ const SHUFFLE_ENGAGE_BAND: f32 = 0.16;
 /// Chosen against the same sweep as [`SHUFFLE_ENGAGE_BAND`]; zero puts the
 /// corner back and a value of one flattens the bound into uselessness.
 const CORNER_EASE: f32 = 0.04;
+
+/// [`CORNER_EASE`] on four feet (#374). A beast's feet stand under its body,
+/// 139 mm apart on the default dog against a diagonal stride of some 210,
+/// and through the corner its shuffle's bound fell 15.3 mm in one degree of
+/// heading, 2.7 times its neighbours'; side-passing in its pairs, its split
+/// stance's bound fell 12.7 mm at 161 degrees against 4.7. Padded this far
+/// both pass the pop guard (the shuffle's steepest degree modelled at 1.6
+/// times its neighbours); the pure-sideways limit is restored as on two feet,
+/// and the pad only rides further under the exact bound, so the clearance
+/// cannot lose. A wider [`SHUFFLE_ENGAGE_BAND`] was tried first and made it
+/// worse: the pop is the corner, not the band.
+const FOUR_FOOT_CORNER_EASE: f32 = 0.12;
+
+/// The corner ease this body's stance bounds round their corner by:
+/// [`FOUR_FOOT_CORNER_EASE`] on four feet, [`CORNER_EASE`] on any other
+/// number. Four feet stand under the body (#374), about a third as far apart
+/// as P1's splayed legs, against a stride that grew with the leg: the bound
+/// falls three times as far, and its corner rounded as a person's is stepped
+/// out of the sweep around it.
+fn corner_ease(rig: &Rig) -> f32 {
+    if rig.ground_contacts().len() == 4 {
+        FOUR_FOOT_CORNER_EASE
+    } else {
+        CORNER_EASE
+    }
+}
 
 /// How far one limb must sink for its chain to reach a goal `toward` its rest
 /// contact, before any margin.
@@ -4515,9 +4580,9 @@ mod tests {
         // (CORNER_EASE and the engagement band to zero) puts a lone step at
         // ten times its neighbours. A ratio between those two is the guard.
         //
-        // **On four feet the shuffle is what it always was; on two, the split
-        // stance's bound** (#362), which arrives on a backward diagonal where
-        // the split's fade toward straight back stands the feet in line. It is
+        // **On four feet and on two, the split stance's bound** (#362, and
+        // #374 for a beast's pairs), which arrives on a backward diagonal
+        // where the split's fade toward straight back stands the feet in line. It is
         // faded in over a wider band there (`SPLIT_ENGAGE_BACK`) because the
         // fade sweeps the feet's separation across it in fewer degrees; the
         // forward band's own width read 3.4x.
@@ -4566,27 +4631,27 @@ mod tests {
         // degree — and in particular keeps the same foot in front through 90
         // degrees, where swapping it would pop the stance every frame a
         // strafing body's velocity jittered across the line.
-        let rig = biped();
-        let whole = Stride::split_toward(&rig, Heading::LEFT);
-        assert!(whole > 0.0, "a two-footed body stands split to strafe");
-        // Square fore and aft — to a float's resolution at straight back,
-        // whose `sin(PI)` is not quite nothing.
-        assert_eq!(Stride::split_toward(&rig, Heading::FORWARD), 0.0);
-        assert!(Stride::split_toward(&rig, Heading::BACKWARD) < 1e-9);
-        assert_eq!(
-            Stride::split_toward(&quadruped(), Heading::LEFT),
-            0.0,
-            "four feet shuffle"
-        );
-        let split = |degrees: f32| Stride::split_toward(&rig, Heading::degrees(degrees));
-        let steepest = (0..3600)
-            .map(|tenth| (split((tenth + 1) as f32 / 10.0) - split(tenth as f32 / 10.0)).abs())
-            .fold(0.0f32, f32::max);
-        assert!(
-            steepest < whole * 0.02,
-            "the split moved {:.1} mm in a tenth of a degree",
-            steepest * 1000.0
-        );
+        //
+        // **And four feet in their pairs** (#374): a beast's legs stand under
+        // it, too close for a shuffle to strafe on, and it side-passes as a
+        // horse does, crossing over fore and hind alike.
+        for (name, rig) in [("two feet", biped()), ("four feet", quadruped())] {
+            let whole = Stride::split_toward(&rig, Heading::LEFT);
+            assert!(whole > 0.0, "{name} stand split to strafe");
+            // Square fore and aft - to a float's resolution at straight back,
+            // whose `sin(PI)` is not quite nothing.
+            assert_eq!(Stride::split_toward(&rig, Heading::FORWARD), 0.0);
+            assert!(Stride::split_toward(&rig, Heading::BACKWARD) < 1e-9);
+            let split = |degrees: f32| Stride::split_toward(&rig, Heading::degrees(degrees));
+            let steepest = (0..3600)
+                .map(|tenth| (split((tenth + 1) as f32 / 10.0) - split(tenth as f32 / 10.0)).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                steepest < whole * 0.02,
+                "{name}: the split moved {:.1} mm in a tenth of a degree",
+                steepest * 1000.0
+            );
+        }
     }
 
     #[test]

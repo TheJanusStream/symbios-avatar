@@ -135,9 +135,12 @@ impl Landmarks {
 
         for limb in Limb::ALL {
             // Within a zone the rig is ordered outward from the body, so the
-            // first upper-limb joint is the socket and the last is the mid joint.
+            // last upper-limb joint is the mid joint. The socket is
+            // `limb_root`'s: the first upper-limb joint on a person, and on a
+            // beast the last of the markers inside the trunk (#374), the
+            // shoulder or the hip joint rather than the blade's top.
             let upper = rig.in_zone(Zone::UpperLimb(limb));
-            if let Some(&root) = upper.first() {
+            if let Some(root) = rig.limb_root(limb) {
                 anchors.insert(Landmark::LimbRoot(limb), limb_anchor(rig, root));
             }
             if let Some(&mid) = upper.last() {

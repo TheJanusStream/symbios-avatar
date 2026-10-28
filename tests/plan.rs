@@ -12,7 +12,7 @@
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use symbios_avatar::face::{HeadTraits, Skull};
-use symbios_avatar::plan::{AGE_RANGE, BODY_FAT_RANGE, DEFAULT_AGE, DEFAULT_BODY_FAT};
+use symbios_avatar::plan::{AGE_RANGE, BODY_FAT_RANGE, DEFAULT_AGE, DEFAULT_BODY_FAT, Family};
 use symbios_avatar::{
     Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, Composites, HumanoidParams,
     Limb, Patch, QuadrupedParams, Rig, Skeleton, Vec3, Zone, build_body, build_cage,
@@ -571,6 +571,120 @@ fn every_rerolled_record_meshes() {
     }
 }
 
+/// How far the skin of a quadruped's chest stands ahead of its left shoulder
+/// joint, along the midline at the joint's height, in withers heights; `None`
+/// when that line does not pass through the chest at all.
+///
+/// The run is the stretch of the line inside the mesh that holds the
+/// forechest's node: the front girdle, the trunk's foremost ring.
+fn chest_ahead_of_shoulder(record: &AvatarRecord) -> Option<f32> {
+    let Archetype::Quadruped(params) = &record.archetype else {
+        panic!("not a quadruped");
+    };
+    // The withers height the plan builds a back height to (`WITHERS`).
+    let wh = params.height * 1.2;
+    let skeleton = record.skeleton();
+    let body = build_body(
+        &skeleton,
+        &CageConfig::default(),
+        BODY_SUBDIVISIONS,
+        &HeadTraits::of(&record.composites),
+    )
+    .expect("a rolled beast meshes");
+    // The shoulder joint: the last marker inside the trunk, the joint the
+    // leg's IK swings from (`Rig::limb_root`).
+    let shoulder = skeleton
+        .nodes
+        .iter()
+        .rfind(|node| node.zone == Zone::UpperLimb(Limb::ForeLeft) && node.marker)
+        .expect("a fore leg")
+        .position;
+    let forechest = skeleton
+        .nodes
+        .iter()
+        .filter(|node| node.zone == Zone::Chest)
+        .map(|node| node.position.z)
+        .fold(f32::MIN, f32::max);
+    // Where the line at the shoulder's height, a hair off the midline the
+    // mesh has edges along, crosses each triangle.
+    let mut crossings: Vec<f32> = Vec::new();
+    for face in &body.faces {
+        for i in 1..face.len() - 1 {
+            let [a, b, c] = [face[0], face[i], face[i + 1]].map(|v| body.positions[v as usize]);
+            let at = |p: Vec3| (p.x, p.y);
+            let (a2, b2, c2) = (at(a), at(b), at(c));
+            let (px, py) = (1e-4, shoulder.y);
+            let denominator = (b2.0 - a2.0) * (c2.1 - a2.1) - (b2.1 - a2.1) * (c2.0 - a2.0);
+            if denominator.abs() < 1e-12 {
+                continue;
+            }
+            let u = ((px - a2.0) * (c2.1 - a2.1) - (py - a2.1) * (c2.0 - a2.0)) / denominator;
+            let v = ((b2.0 - a2.0) * (py - a2.1) - (b2.1 - a2.1) * (px - a2.0)) / denominator;
+            if u >= 0.0 && v >= 0.0 && u + v <= 1.0 {
+                crossings.push(a.z + (b.z - a.z) * u + (c.z - a.z) * v);
+            }
+        }
+    }
+    crossings.sort_by(f32::total_cmp);
+    // Pairs of crossings bound the runs inside a closed surface.
+    crossings
+        .chunks(2)
+        .filter(|pair| pair.len() == 2)
+        .find(|pair| pair[0] <= forechest && forechest <= pair[1])
+        .map(|pair| (pair[1] - shoulder.z) / wh)
+}
+
+#[test]
+fn the_chest_stands_in_front_of_the_shoulders_on_every_roll() {
+    // #374, #375: the shoulder joint is a marker inside the trunk, and the
+    // leg's IK root and the shoulder's socket stand on it, so the skin of the
+    // chest has to close in front of it - with room, as the pectorals do. A
+    // foal's long cannons raised its underline under shoulders that stayed
+    // where the blades put them: before the forechest was held down past the
+    // shoulders and on ahead of them, a rolled horse's chest ended up to 0.13
+    // withers heights behind its own shoulder joints.
+    const MARGIN: f32 = 0.02;
+    let mut records = Vec::new();
+    for family in Family::ALL {
+        for appeal in [-1.5, 0.0, 1.0, 1.5, 2.0] {
+            for mass in [-2.0, 0.0, 2.0] {
+                let mut params = QuadrupedParams::default();
+                params.set_kind(family, None, 0.0);
+                params.appeal = appeal;
+                let mut record = AvatarRecord::new("Beast", Archetype::Quadruped(params));
+                record.composites.mass = mass;
+                records.push((format!("{family:?} appeal {appeal} mass {mass}"), record));
+            }
+        }
+    }
+    let mut seen = [0usize; 3];
+    for seed in 0..400i64 {
+        let record = AvatarRecord::rolled(
+            "Beast",
+            Archetype::Quadruped(QuadrupedParams::default()),
+            seed,
+        );
+        if let Archetype::Quadruped(params) = &record.archetype
+            && let Some(at) = Family::ALL.iter().position(|&f| f == params.family)
+        {
+            seen[at] += 1;
+        }
+        records.push((format!("rolled seed {seed}"), record));
+    }
+    assert!(
+        seen.iter().all(|&count| count > 0),
+        "every family is rolled: {seen:?}"
+    );
+    for (what, record) in &records {
+        let ahead = chest_ahead_of_shoulder(record);
+        assert!(
+            ahead.is_some_and(|ahead| ahead >= MARGIN),
+            "{what}: the chest stands {ahead:?} withers heights ahead of the shoulder joint, \
+             under {MARGIN}"
+        );
+    }
+}
+
 #[test]
 fn a_look_survives_a_share_code_and_still_meshes() {
     for seed in 0..200i64 {
@@ -851,7 +965,7 @@ fn fingerprinted_bodies() -> Vec<(String, Skeleton)> {
 /// golden table of `record` and both golden renders hold.
 const FINGERPRINTS: [(&str, u64); 28] = [
     ("humanoid default", 0x9173c75bf766fde2),
-    ("quadruped default", 0xe5c4699a50303bde),
+    ("quadruped default", 0xa5a2688192fb3fde),
     ("humanoid femininity -1", 0x673e572bbd1d51cd),
     ("humanoid femininity +1", 0xb3c982009b48dc6a),
     ("humanoid age 55", 0xba55b8459f1e0c73),
@@ -863,24 +977,36 @@ const FINGERPRINTS: [(&str, u64); 28] = [
     ("humanoid corner h=1.2 all=1", 0x2b700d85d0f6fd72),
     ("humanoid corner h=2.2 all=1", 0x5f2db1dd49571664),
     ("humanoid seed 0", 0x387f442843f970ab),
-    ("quadruped seed 0", 0x5eac45157a4e9fbf),
+    ("quadruped seed 0", 0x6c51f1a1790c3b6e),
     ("humanoid seed 1", 0x2d9b6b9e530ad858),
-    ("quadruped seed 1", 0x43d0673ea9b31a66),
+    ("quadruped seed 1", 0x6fed81869a0384ba),
     ("humanoid seed 2", 0x02347f5f268e17be),
-    ("quadruped seed 2", 0x07ef062ef5a70690),
+    ("quadruped seed 2", 0xe5b1607b0b6ddc6f),
     ("humanoid seed 3", 0x568d9be1418e9cad),
-    ("quadruped seed 3", 0xc02f39bf8b8986e2),
+    ("quadruped seed 3", 0x0933948dfc07bd04),
     ("humanoid seed 4", 0x549491a10f50bdde),
-    ("quadruped seed 4", 0xc7e98ebf7187604c),
+    ("quadruped seed 4", 0xeafd9d43ea2f28ff),
     ("humanoid seed 5", 0x9989c9294b7074b9),
-    ("quadruped seed 5", 0xdc1c185fb4ea7e77),
+    ("quadruped seed 5", 0x30fed88f09248dc2),
     ("humanoid seed 6", 0x55df5943e6969883),
-    ("quadruped seed 6", 0xe17d4b2a6290c916),
+    ("quadruped seed 6", 0x430ab38008d0d025),
     ("humanoid seed 7", 0xf654635d1602bfd6),
-    ("quadruped seed 7", 0xfa2518ad359afa88),
+    ("quadruped seed 7", 0xf0878d211abdca21),
 ];
 
 /// Every number the two body plans produce, pinned.
+///
+/// **Quadruped rows re-pinned 2026-10-28 for the anatomical body** (#374,
+/// #375): a six-ring trunk, the shoulder blade, the upper arm and the thigh
+/// inside it, the legs under it, each family's frame and young (`appeal`),
+/// and the thigh's muscle. Judged on `render --quadruped --gallery 6 --family`
+/// per family, the turntables of seeds 1, 2 and 6, and `quadprobe` against
+/// docs/quadruped-anatomy.md. Humanoid rows did not move. **The rolled
+/// rows moved again the same day** for the review's fixes: `mass` and
+/// `bodyFat` reach the trunk's depth as well as its width, the ribcage is
+/// held round after them, and the chest's front is held ahead of the
+/// shoulder joints. Judged on the same galleries and the seed 6 turntable;
+/// the default dog did not move.
 ///
 /// **Humanoid rows re-pinned 2026-08-20 for the toe-out** (#306): the foot's
 /// level run turns seven degrees about the ankle, toe away from the midline.

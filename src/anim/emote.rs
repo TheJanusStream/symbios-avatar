@@ -339,7 +339,11 @@ mod tests {
             .into_iter()
             .map(|limb| from(joint(Zone::Extremity(limb))))
             .collect();
-        (from(joint(Zone::Pelvis)), from(joint(Zone::Chest)), paws)
+        // The withers are the girdle the neck and the fores hang from: the
+        // chest's first joint has been the middle of the ribcage since the
+        // trunk became six rings (#375).
+        let withers = rig.joints[joint(Zone::Neck)].parent.expect("a girdle");
+        (from(joint(Zone::Pelvis)), from(withers), paws)
     }
 
     #[test]

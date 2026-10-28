@@ -218,4 +218,35 @@ mod tests {
         // lip bone exists, DECLARED rather than discovered.
         assert_eq!(Viseme::Pp.mouth(), Viseme::Sil.mouth());
     }
+
+    #[test]
+    fn speech_never_moves_a_beast() {
+        // #374: a beast's foreleg carries its shoulder blade and shoulder as
+        // two markers in a row, the shape a person's jaw has. Found by shape
+        // alone that run is the jaw, and every syllable swung the leg; the
+        // lookup asks for the head's zone too. A beast's own jaw is a facial
+        // joint of its own, which speech does not open (#367).
+        let record = crate::AvatarRecord::new(
+            "Mute",
+            crate::Archetype::Quadruped(crate::QuadrupedParams::default()),
+        );
+        let avatar = crate::Avatar::build(&record).expect("a beast builds");
+        let rig = &avatar.rig;
+        let rest = Pose::rest(rig);
+        for (name, viseme) in Viseme::NAMES {
+            let mut posed = rest.clone();
+            viseme.apply(rig, &mut posed);
+            assert_eq!(posed.rotations, rest.rotations, "{name} moved a beast");
+        }
+        let mut posed = rest.clone();
+        crate::face::Expression {
+            jaw: 1.0,
+            ..crate::face::Expression::SURPRISED
+        }
+        .apply(rig, &mut posed);
+        assert_eq!(
+            posed.rotations, rest.rotations,
+            "an expression moved a beast"
+        );
+    }
 }

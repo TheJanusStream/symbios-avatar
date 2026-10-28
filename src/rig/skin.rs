@@ -43,7 +43,7 @@
 //!
 //! [`Pose::forward`]: crate::anim::Pose::forward
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use std::collections::BTreeSet;
 
 use super::Rig;
@@ -196,7 +196,9 @@ impl SkinWeights {
                     })
                     .min_by(|a, b| a.0.total_cmp(&b.0));
                 match nearest {
-                    Some((_, along, child)) if along >= 0.5 => rig.joints[child].zone,
+                    Some((_, along, child)) if along >= handover(rig, joint, child) => {
+                        rig.joints[child].zone
+                    }
                     _ => here.zone,
                 }
             })
@@ -258,13 +260,28 @@ pub(crate) fn brow_joints(rig: &Rig) -> Vec<(usize, f32)> {
 }
 
 /// The jaw's pivot, if this rig carries the marker chain: the joint the
-/// mandible region swings on. The same structural lookup [`bind`] and the
-/// mouth cut use — a marker whose child is a marker is the chain, and the
-/// pivot is the tip's parent.
+/// mandible region swings on. See [`jaw_chain`].
 pub(crate) fn jaw_pivot(rig: &Rig) -> Option<usize> {
+    jaw_chain(rig).map(|(pivot, _)| pivot)
+}
+
+/// The jaw's marker chain, `(pivot, tip)`, if this rig carries one: the one
+/// structural lookup [`bind`], the mouth cut and the face's pose layers
+/// share - a marker whose parent is a marker is the tip, and the pivot is
+/// that parent.
+///
+/// **Both in the head's zone** (#374). A marker chain was only ever a jaw
+/// while the face was the one place a rig carried two markers in a row; a
+/// beast's foreleg now carries its shoulder blade and its shoulder as a run
+/// of markers inside the trunk, and found by structure alone that run IS a
+/// jaw: the bind handed the withers' skin to the blade as a mandible, and
+/// talk and visemes would have swung the leg on every syllable.
+pub(crate) fn jaw_chain(rig: &Rig) -> Option<(usize, usize)> {
     (0..rig.len()).find_map(|tip| {
         let pivot = rig.joints[tip].parent?;
-        (rig.joints[tip].marker && rig.joints[pivot].marker).then_some(pivot)
+        let facial =
+            |joint: usize| rig.joints[joint].marker && rig.joints[joint].zone == Zone::Head;
+        (facial(tip) && facial(pivot)).then_some((pivot, tip))
     })
 }
 
@@ -344,19 +361,11 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
     // A distance falloff was measured unable to say that (#135: the chin's
     // flank and the upper lip sit 27.4 and 28.5 mm from the bone, and nothing
     // keyed to distance can hold one and release the other).
-    let jaw = (0..joints)
-        .find(|&tip| {
-            rig.joints[tip].marker
-                && rig.joints[tip]
-                    .parent
-                    .is_some_and(|pivot| rig.joints[pivot].marker)
-        })
-        .and_then(|tip| {
-            let pivot = rig.joints[tip].parent?;
-            let head = rig.joints[pivot].parent?;
-            let neck = rig.joints[head].parent?;
-            Some((pivot, head, neck))
-        });
+    let jaw = jaw_chain(rig).and_then(|(pivot, _)| {
+        let head = rig.joints[pivot].parent?;
+        let neck = rig.joints[head].parent?;
+        Some((pivot, head, neck))
+    });
 
     // The brows, if this rig carries them (#215): the lone marker leaves
     // ABOVE the head joint — see [`face_leaf`] for the identification and why
@@ -387,6 +396,30 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
     // smiled.
     let corners = mouth_corners(rig);
 
+    // The limbs hung from a bridge (#374): a beast's, whose upper bones lie
+    // inside its trunk as markers. See [`trunk_depth`] for what their skin
+    // does differently; a person has none, and binds as it always has.
+    let bridged: Vec<Limb> = Limb::ALL
+        .into_iter()
+        .filter(|&limb| {
+            rig.in_zone(Zone::UpperLimb(limb))
+                .into_iter()
+                .any(|joint| rig.joints[joint].marker)
+        })
+        .collect();
+    let trunk: Vec<usize> = if bridged.is_empty() {
+        Vec::new()
+    } else {
+        (0..joints)
+            .filter(|&joint| {
+                matches!(
+                    rig.joints[joint].zone,
+                    Zone::Pelvis | Zone::Abdomen | Zone::Chest
+                ) && !rig.joints[joint].marker
+            })
+            .collect()
+    };
+
     let mut dense = vec![0.0f32; vertices * joints];
     // Which limb each vertex is on, if any — read once for the gate below and
     // again after the smoothing, which can leak across a seam the gate closed.
@@ -394,6 +427,7 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
     for (vertex, &position) in mesh.positions.iter().enumerate() {
         let row = &mut dense[vertex * joints..(vertex + 1) * joints];
         let mut nearest = (f32::INFINITY, first_deforming);
+        let mut nearest_limb: Option<(f32, usize)> = None;
         // Which body part this vertex is ON, asked exactly the way
         // [`crate::face::skull::shape`] asks it. See [`owner_of`]: for one bone
         // in the rig the answer decides which end of it turns this vertex.
@@ -404,7 +438,11 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
         // module docs: `rig.bone(segment)` runs `parent → segment`, and it is
         // the parent's rotation that turns it.
         for segment in 0..joints {
-            if !rig.joints[segment].role.deforms() || rig.joints[segment].marker {
+            // A face's markers take their skin from the regions below; a
+            // limb's are bones inside a beast's trunk (#374), and the skin
+            // over a shoulder blade is the blade's to move.
+            let facial = rig.joints[segment].marker && rig.joints[segment].zone.limb().is_none();
+            if !rig.joints[segment].role.deforms() || facial {
                 continue;
             }
             let (start, end) = rig.bone(segment);
@@ -432,6 +470,11 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
             if distance < nearest.0 {
                 nearest = (distance, owner);
             }
+            if rig.joints[owner].zone.limb().is_some()
+                && nearest_limb.is_none_or(|(closest, _)| distance < closest)
+            {
+                nearest_limb = Some((distance, owner));
+            }
             let span = radius * config.reach;
             if span > 0.0 {
                 // Several bones may leave one joint — a pelvis has three — and
@@ -451,6 +494,35 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
                     base.powf(config.falloff)
                 };
                 row[owner] = row[owner].max(pull);
+            }
+        }
+
+        // **A leg's skin below the trunk is the leg's** (#374). A beast's
+        // upper arm and thigh run inside its trunk, whose bones are as wide
+        // as the body, so their reach takes in the whole upper leg: measured
+        // on the default dog, the trunk held 0.60 of the skin round the upper
+        // arm and the shoulder 0.30, so a stride swung the arm out from under
+        // a sleeve that stayed with the chest. Where the skin leaves the
+        // trunk's own section the trunk lets go of it, over a band, so the
+        // shoulder and the croup still blend into the back.
+        if let Some(limb) = limbs[vertex].filter(|limb| bridged.contains(limb)) {
+            let keep = 1.0
+                - crate::face::smooth(
+                    (trunk_depth(rig, &trunk, position) - TRUNK_HOLDS)
+                        / (TRUNK_LETS_GO - TRUNK_HOLDS),
+                );
+            if keep < 1.0 {
+                for (joint, weight) in row.iter_mut().enumerate() {
+                    if rig.joints[joint].zone.limb().is_none() {
+                        *weight *= keep;
+                    }
+                }
+                if row.iter().all(|w| *w <= 0.0)
+                    && let Some((_, owner)) = nearest_limb
+                {
+                    debug_assert_eq!(rig.joints[owner].zone.limb(), Some(limb));
+                    row[owner] = 1.0;
+                }
             }
         }
 
@@ -564,6 +636,69 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
             .map(|vertex| strongest(&dense[vertex * joints..(vertex + 1) * joints]))
             .collect(),
     }
+}
+
+/// How far along the bone from `joint` to its `child` a vertex held by
+/// `joint` takes the child's zone, for [`SkinWeights::zone_map`]: halfway, on
+/// every bone but a tail's dock.
+///
+/// **A dock is the trunk's until the tail leaves it** (#375). A beast's tail
+/// is set on the back of its croup, and the bone the rig runs to it from the
+/// pelvis's centre lies inside the croup for most of its length: zoned at
+/// halfway, the skin over the rump was the tail's, so the coat painted a
+/// tail's rings across it and the tail's brush grew out of it - the flap
+/// the probe saw on a cat's croup. The tail's zone starts a root's radius
+/// short of the root, where its surface does.
+fn handover(rig: &Rig, joint: usize, child: usize) -> f32 {
+    let (parent, dock) = (&rig.joints[joint], &rig.joints[child]);
+    if dock.zone != Zone::Tail || !matches!(parent.zone, Zone::Pelvis | Zone::Abdomen | Zone::Chest)
+    {
+        return 0.5;
+    }
+    let length = parent.position.distance(dock.position);
+    (1.0 - dock.radius / length.max(f32::EPSILON)).max(0.5)
+}
+
+/// How deep in the trunk's own section a beast's skin lies at which the trunk
+/// begins to let a leg's skin go, and where it has let it go: see
+/// [`trunk_depth`]. The skin of the trunk itself measures about 0.9, the
+/// subdivided surface inside the cage rings it is measured against.
+/// Provenance: **chosen** (#374), so the band ends above the elbow and the
+/// stifle on every family and starts outside the trunk's own skin.
+const TRUNK_HOLDS: f32 = 1.0;
+/// See [`TRUNK_HOLDS`].
+const TRUNK_LETS_GO: f32 = 1.2;
+
+/// How far out of the trunk `position` lies, as a share of the trunk's own
+/// cross-section where it lies: under one inside the body, one on the cage
+/// rings' ellipse, and more on a leg below or beside it.
+///
+/// Read in the section's own plane: across (`x`) against the ring's
+/// half-width and up (`y`) against its half-depth, on the trunk bone the
+/// point lies nearest - a beast's spine runs fore and aft, so its rings face
+/// along `z`. `trunk` is the trunk's joints, each bone between one and its
+/// parent among them.
+fn trunk_depth(rig: &Rig, trunk: &[usize], position: Vec3) -> f32 {
+    let mut nearest = (f32::INFINITY, f32::INFINITY);
+    for &joint in trunk {
+        let Some(parent) = rig.joints[joint]
+            .parent
+            .filter(|parent| trunk.contains(parent))
+        else {
+            continue;
+        };
+        let (from, to) = (&rig.joints[parent], &rig.joints[joint]);
+        let (distance, along) = distance_to_segment(position, from.position, to.position);
+        if distance >= nearest.0 {
+            continue;
+        }
+        let centre = from.position.lerp(to.position, along);
+        let half = (from.scale * from.radius).lerp(to.scale * to.radius, along);
+        let across = (position.x - centre.x) / half.x.max(f32::EPSILON);
+        let up = (position.y - centre.y) / half.y.max(f32::EPSILON);
+        nearest = (distance, Vec2::new(across, up).length());
+    }
+    nearest.1
 }
 
 /// Whether a bone in `zone` is on a different limb from a vertex on `mine`.
@@ -1559,5 +1694,126 @@ mod tests {
             .max_by(|a, b| score(*a.1).total_cmp(&score(*b.1)))
             .expect("mesh has vertices")
             .0
+    }
+
+    /// The default beast's body, the rig it is bound to, and the binding.
+    fn beast() -> (PolyMesh, Rig, SkinWeights) {
+        let skeleton = crate::QuadrupedParams::default().skeleton(&crate::Composites::default());
+        let cage = build_cage(&skeleton, &CageConfig::default()).expect("the beast meshes");
+        let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
+        let rig = Rig::from_skeleton(&skeleton).expect("the beast rigs");
+        let weights = bind(&mesh, &rig, &SkinConfig::default());
+        (mesh, rig, weights)
+    }
+
+    #[test]
+    fn a_beast_s_leg_below_its_trunk_is_the_leg_s() {
+        // #374: a beast's upper arm and thigh run inside its trunk, whose
+        // bones are as wide as the body; their reach took in the whole upper
+        // leg, and a stride swung the arm out from under skin that stayed with
+        // the chest. Out of the trunk's own section the trunk lets go.
+        let (mesh, rig, weights) = beast();
+        let trunk: Vec<usize> = (0..rig.len())
+            .filter(|&joint| {
+                matches!(
+                    rig.joints[joint].zone,
+                    Zone::Pelvis | Zone::Abdomen | Zone::Chest
+                ) && !rig.joints[joint].marker
+            })
+            .collect();
+        let (mut free, mut held) = (0, 0.0f32);
+        for (vertex, &position) in mesh.positions.iter().enumerate() {
+            let on_leg = rig.joints[rig.nearest_bone(position).joint]
+                .zone
+                .limb()
+                .is_some();
+            if !on_leg || trunk_depth(&rig, &trunk, position) < TRUNK_LETS_GO + 0.1 {
+                continue;
+            }
+            free += 1;
+            held += weights.vertices[vertex]
+                .iter()
+                .filter(|influence| trunk.contains(&(influence.joint as usize)))
+                .map(|influence| influence.weight)
+                .sum::<f32>();
+        }
+        let held = held / free.max(1) as f32;
+        assert!(
+            free > 100,
+            "only {free} leg vertices stand out of the trunk"
+        );
+        // Measured on the default dog: 0.068 of each such vertex without the
+        // band, 0.006 with it - the smoothing pass blends a little back
+        // across the band's edge.
+        assert!(
+            held < 0.02,
+            "the trunk still holds {held:.3} of a leg outside it"
+        );
+    }
+
+    #[test]
+    fn a_shoulder_blade_carries_the_skin_over_it() {
+        // #374: the blade's top and the shoulder are markers the cage sweeps
+        // past, and a marker held no skin, so nothing the blade did would
+        // show. A limb's markers bind as bones; a face's still take their
+        // skin from their regions.
+        let (mesh, rig, weights) = beast();
+        for limb in [Limb::ForeLeft, Limb::ForeRight] {
+            let blade = rig.in_zone(Zone::UpperLimb(limb))[0];
+            assert!(rig.joints[blade].marker, "the blade's top is a marker");
+            // In vertex-weights: none while a marker held no skin, about
+            // eight on the default dog.
+            let carried: f32 = weights
+                .vertices
+                .iter()
+                .flat_map(|influences| influences.iter())
+                .filter(|influence| influence.joint as usize == blade)
+                .map(|influence| influence.weight)
+                .sum();
+            assert!(
+                carried > 3.0,
+                "{limb:?}'s blade carries {carried:.1} vertices"
+            );
+            // And turning it moves them, as a drive of the blade will (#378).
+            let mut pose = crate::anim::Pose::rest(&rig);
+            pose.rotations[blade] = glam::Quat::from_rotation_x(0.3);
+            let moved = pose.forward(&rig).deform(&rig, &mesh.positions, &weights);
+            let travelled = moved
+                .iter()
+                .zip(&mesh.positions)
+                .map(|(a, b)| a.distance(*b))
+                .fold(0.0f32, f32::max);
+            assert!(travelled > 0.01, "{limb:?}: the blade moved no skin");
+        }
+    }
+
+    #[test]
+    fn a_beast_s_croup_is_not_its_tail() {
+        // #375: a tail is set on the back of the croup, and the bone the rig
+        // runs to it from the pelvis lies inside the croup. Zoned halfway
+        // along it, the rump's skin was the tail's: the coat painted a tail's
+        // rings across it and the brush grew out of it. The tail's zone
+        // starts at the surface over its root.
+        let (mesh, rig, weights) = beast();
+        let zones = weights.zone_map(&mesh, &rig);
+        let dock = rig.in_zone(Zone::Tail)[0];
+        let pelvis = rig.joints[dock].parent.expect("a pelvis");
+        let (from, to) = (rig.joints[pelvis].position, rig.joints[dock].position);
+        let root = rig.joints[dock].radius;
+        let tail: Vec<Vec3> = mesh
+            .positions
+            .iter()
+            .zip(&zones)
+            .filter(|(_, zone)| **zone == Zone::Tail)
+            .map(|(&position, _)| position)
+            .collect();
+        assert!(!tail.is_empty(), "no skin is the tail's");
+        for position in tail {
+            let (_, along) = distance_to_segment(position, from, to);
+            assert!(
+                along * from.distance(to) >= from.distance(to) - root * 1.01,
+                "the croup at {position} is zoned the tail's"
+            );
+        }
     }
 }

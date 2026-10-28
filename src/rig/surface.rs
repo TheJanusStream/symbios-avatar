@@ -13,6 +13,7 @@
 use glam::Vec3;
 
 use crate::mesh::PolyMesh;
+use crate::plan::Zone;
 use crate::rig::Rig;
 
 /// Where the measured radius sits in each joint's spread of surface distances.
@@ -101,7 +102,8 @@ impl Surface {
     ///
     /// The push is horizontal. Things that drape — hair, cloth — go *around* a
     /// chest, and pushing along the shortest line would instead slide them up
-    /// the body toward the shoulders.
+    /// the body toward the shoulders. Out of a beast's barrel, which lies
+    /// along its travel, the push is straight out of the bone instead.
     #[must_use]
     pub fn clear(&self, rig: &Rig, point: Vec3, margin: f32) -> Vec3 {
         point + self.clearance(rig, point, margin)
@@ -121,7 +123,20 @@ impl Surface {
             return Vec3::ZERO;
         }
         let away = point - hit.closest;
-        let flat = Vec3::new(away.x, 0.0, away.z);
+        // **Straight out of a beast's barrel** (#375): its trunk lies along
+        // its travel, and pushed level a point over its back ran along the
+        // spine instead of up off it - a pack seated on a dog's ribs slid
+        // forward to its shoulders.
+        let barrel = !rig.anatomy.human_trunk()
+            && matches!(
+                rig.joints[hit.joint].zone,
+                Zone::Pelvis | Zone::Abdomen | Zone::Chest
+            );
+        let flat = if barrel {
+            away
+        } else {
+            Vec3::new(away.x, 0.0, away.z)
+        };
         let out = flat.normalize_or(Vec3::Z);
         out * (needed - flat.length()).max(0.0)
     }

@@ -1462,11 +1462,12 @@ fn beasts(seed: Option<i64>) {
     };
     let rig = &avatar.rig;
     let first = |zone: Zone| rig.in_zone(zone).first().copied();
-    let (Some(hips), Some(loin), Some(withers)) = (
-        first(Zone::Pelvis),
-        first(Zone::Abdomen),
-        first(Zone::Chest),
-    ) else {
+    // The withers are the girdle the neck hangs from: the chest's first joint
+    // is the middle of the ribcage on the six-ring trunk (#375).
+    let girdle = first(Zone::Neck).and_then(|neck| rig.joints[neck].parent);
+    let (Some(hips), Some(loin), Some(withers)) =
+        (first(Zone::Pelvis), first(Zone::Abdomen), girdle)
+    else {
         eprintln!("the beast has no trunk to read");
         std::process::exit(1);
     };

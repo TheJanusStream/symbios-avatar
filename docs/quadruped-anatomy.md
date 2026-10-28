@@ -1,0 +1,298 @@
+# Quadruped anatomy: what the beast is built to, and where it departs
+
+The quadruped's body (#372's R1 and R2, issues #374 and #375) is built to
+measured animals. This file holds the targets, family by family, with the
+dossier rows they come from; the owner's decisions that shape them; what the
+rig honours today, measured; and every place it departs from the animal, each
+with its reason. The dossiers are `docs/research/research-07-quadruped-morphology.md`
+(the body at rest, cited here as **07** with its source keys, S1 to S33),
+`research-08-quadruped-gait.md` (**08**) and `research-09-quadruped-postures.md`
+(**09**). A figure's confidence is the dossier's: H measured and read, M
+measured with a caveat or a breed standard, L a rule of thumb, derived or
+recalled.
+
+**WH** is the withers height throughout: the ground to the top of the
+shoulder blades, standing square. Every length is a share of it.
+
+Measure a body against this file with `cargo run --release --example
+quadprobe` (the three families at their anchors; `--appeal 1` at the roll's
+default, `--seed N` a rolled record, `--sweep N` how many rolls mesh). Judge it
+with `cargo run --release --example render -- --quadruped --gallery 6 --family
+dog` (or `cat`, `horse`), and in motion with `--seed 1 --strip 8 --speed 2.5`
+(seed 1 is a dog, 2 a cat, 6 a horse).
+
+## The owner's decisions (2026-10-28, on #372)
+
+1. **The body is one slice**, R1 and R2 together: the skeleton and the trunk.
+2. **Cute follows the family's young**, not a toy's proportions. A dog's and a
+   cat's `appeal` draws a puppy: a head as much bigger as a puppy's, a barrel
+   that grows **rounder rather than longer**, under a shorter, thicker neck, on
+   legs at the adult's share. A horse's draws a **foal**: a bigger head, a
+   **shorter body on longer legs**. A cross blends its two families' rules by
+   its blend. The second half of this decision (rounder, not longer; the foal)
+   was taken mid-slice, after the probe's rolls read as dachshunds and ferrets.
+3. **A horse's Sit** is the dog-sit a rising horse passes through, held, its
+   hind legs folded under (R4, #377).
+4. **Lie Down** is the sphinx for dogs and cats and the lopsided sternal rest
+   for a horse; a dog's relaxed down, rolled onto one hip, is a later variant
+   (R4).
+
+And a correction the owner made to the plan: `GENERATOR_VERSION` tracks what a
+seed rolls, not how the record's axes become a body, so a body rebuilt in the
+derive leaves it at 8. Nothing on the wire changed: `QuadrupedParams` already
+carries `family`, `hybrid` and `blend`, which is all the per-family frame
+needs.
+
+## How the body is built
+
+- **A frame per family** (`plan::derive::quadruped::Frame`): bone lengths,
+  six trunk sections (pelvis, loin, last rib, mid-ribcage, heart girth,
+  forechest, each a top, an underline and a half-width), the shoulder blade's
+  slope and top, the hip's height, how far the hind paw stands behind it, the
+  legs' and the thigh's girth, the neck's. A cross blends two frames in these
+  normalised units, as 07's note 11 says to.
+- **The stance is solved, not authored** (07 note 1). Fore: the blade hangs
+  from its top at its slope, the forearm stands vertical under the withers
+  (S11), the upper arm closes the gap. Hind: the paw stands its distance
+  behind the hip, the metatarsus rises straight from it (S12), and the stifle
+  closes femur and tibia between hip and hock, bent forward. The standing
+  angles that come out are checks against the dossier, never inputs.
+- **The body's axes are steps from the family's centre**, so a roll at its
+  family's centre is the family's frame. Legginess lengthens only the leg
+  below the trunk.
+- **So are the composites, on the trunk**: the frame's rings are the family's
+  at the `mass` and `bodyFat` its rolls centre on, and a body heavier than
+  that is wider at every ring and deeper through the barrel under the same
+  back; a fatter one most at the belly, whose underline drops. Measured at
+  `appeal` 1, a dog at `mass` 1 and `bodyFat` 0.45 has a ribcage girth of 1.64
+  against 1.38 and its underline at 0.40 WH against 0.47.
+- **The bones inside the trunk are markers** (`Node::marker`): the blade's top
+  and the shoulder on a fore leg, the hip joint on a hind one. The rig keeps
+  them as joints; the cage sweeps each leg from its girdle straight to the
+  elbow or the stifle (a **bridge**), its socket aimed at the shoulder or the
+  hip. The skin binds to them as to any bone.
+
+## Targets per family, and what the body measures
+
+`quadprobe`, each family at its anchor and `appeal` 0; fractions of WH as the
+built surface measures them, bones joint to joint.
+
+### Dog (07 section 2.1; reference breeds Labrador, Malinois, GSD)
+
+| Quantity | Target | Source | Built |
+|---|---|---|---|
+| Chest depth | 0.45 to 0.50 | S11, S12 (M, H) | 0.50 |
+| Brisket and elbow | the elbow at 0.50, the brisket reaching it | S11 (M) | brisket 0.50; elbow joint 0.44, its point about 0.50 |
+| Heart girth | 1.07 to 1.15 | S9, S7 (H) | 1.10 |
+| Depth to width at the heart | 1.3 to 1.5:1 (Labrador) | 07 fact 4 (derived) | 1.9:1, see departures |
+| Loin against ribcage girth | 0.85 to 0.9 (Labrador), 0.72 (sighthound) | S9, S11 (L-M) | 0.84 |
+| Body length, shoulder to buttock | 1.00 to 1.05 | S11, S12 (H/M) | 1.07 |
+| Scapula, its slope | 0.25, 55 to 65 deg | S5 (M), bg (L) | 0.26 at 60 deg |
+| Humerus, radius | 0.30, 0.31 | S5 (M) | 0.29, 0.30 |
+| Femur, tibia | 0.33, 0.34 | S5 (M) | 0.32, 0.33 |
+| Metatarsus | 0.15 to 0.18 | derived (L) | 0.16 |
+| Shoulder angle | 107 to 120 | S13 (H) | 103 |
+| Elbow angle | 130 to 145 | S18 (M) | 138 |
+| Stifle angle | 145 +/- 8 | S6 (H) | 139 |
+| Hock angle | 134 +/- 9 | S6 (H) | 141 |
+| Neck girth | 0.45 to 0.5 of the chest's | S9 (one dog, 07 note 4) | 0.44 |
+
+### Cat (07 section 2.2; domestic shorthair, WH about 26 cm)
+
+| Quantity | Target | Source | Built |
+|---|---|---|---|
+| Heart girth | 1.3 to 1.5 | S14 (M), derived | 1.33 |
+| Depth to width | 1.1 to 1.3:1 | derived (L) | 1.23:1 |
+| Loin against chest girth | 1.04 to 1.13, a pouch under it | S14 (M) | 1.00 |
+| Chest depth, brisket | about 0.5 | (dog and horse rows) | 0.49, 0.51 |
+| Humerus, radius | 0.387, 0.375 | S2 (H) | 0.38, 0.37 |
+| Femur, tibia | 0.416, 0.438 | S2 (H) | 0.39, 0.41 |
+| Metatarsus | 0.20 to 0.23 | bg (L) | 0.22 |
+| Hip height | 0.88 | S21 (M) | 0.84 |
+| Stifle, hock, elbow | 110 to 125, 110 to 130, 120 to 140 | bg (L) | 96, 132, 116 |
+| Body length | 1.3 to 1.5 | S25 (L, definition unconfirmed) | 1.14, see departures |
+
+### Horse (07 section 2.3; Matsuura's 35 horses, S4)
+
+| Quantity | Target | Source | Built |
+|---|---|---|---|
+| Chest depth | 0.48 | S4 (H) | 0.50 |
+| Heart girth | 1.14 to 1.22 | S4, S3 (H) | 1.08 |
+| Depth to width at the girth | about 2:1 | S4, derived | 1.75:1 |
+| Barrel | widest behind the girth, no tuck-up | bg (L-M) | ribcage 0.31 wide against the girth's 0.25; loin 0.93 of the ribcage's girth |
+| Body length | 1.015 to 1.048 | S4 (H) | 1.05 |
+| Scapula, its slope | 0.31 to 0.33, 58 to 61 deg | S4 (H) | 0.31 at 60 deg |
+| Humerus, radius | 0.19, 0.24 | S4 (H) | 0.18, 0.22 |
+| Femur, tibia | 0.22, 0.32 to 0.34 | S4 (M, H) | 0.20, 0.30 |
+| Shoulder, elbow angles | 100 to 105, 133 to 137 | S4 (H) | 100, 135 |
+| Stifle, hock angles | 117 to 126, 141 to 159 | S4, S20 (H) | 122, 141 |
+| Neck length | 0.53 (pony, withers to poll) | S3 (M) | 0.46 to the occiput joint |
+| Neck girth | (no figure) | | 0.51 of the heart's |
+
+### The thigh
+
+07 note 3: a thin-looking body comes from a missing forechest, triceps and
+**thigh**; S8 puts a GSD's thigh at 4.5% of its body mass against 2.4% for
+the upper arm. No dossier measures a thigh's outline, so its thickness is
+**chosen by render**, the horse thickest: from the side, three quarters of the
+way down the femur, the dog's thigh is 0.22 WH fore and aft (0.13 across), the
+horse's 0.26 (0.15), and the gaskins 0.18 and 0.21. (The cat's thigh is cut
+inside its belly at that height, so its row reads the trunk.)
+
+## The young: what `appeal` draws (`plan::derive::quadruped::Schema`)
+
+`appeal` runs 0 at naturalistic to 1.5 at all the way to the young animal
+(`young` = `appeal / 1.5`, held to -0.5 below zero, so the other way goes
+half as far at most, reached at `appeal` -0.75); a roll centres it at 1.
+Below zero the ribcage does not narrow by its column here but by a tenth of
+`young`, 5% at most.
+
+| Family | Head | Body length | Ribcage width toward round | Underline | Neck reach, girth | Upper arm, thigh | Cannons | Leg girth, paws |
+|---|---|---|---|---|---|---|---|---|
+| Dog, cat (puppy) | x1.56 | x1.10 | x1.90, capped at round | sinks 0.05 WH | -30%, +30% | adult share | adult share | +18%, +37.5% |
+| Horse (foal) | x1.40 | x0.88 | none | none | -20%, +10% | x0.80 | x1.35 | unchanged |
+
+- **The puppy** (07 fact 10, S7, a 45-day Kars shepherd against WH): head 0.61
+  against an adult's 0.39, chest girth 1.58 against 1.15, body 1.44 against
+  1.04, legs 0.61 both. The head takes the whole ratio; the girth most of
+  it; the length a quarter of it, on the owner's call. Measured at the roll's
+  default (`appeal` 1): the dog's heart girth 1.34 and body 1.12, the cat's
+  1.61 and 1.21.
+- **The foal** (07 foal row, L-M): about 60% of mature WH at birth on cannons
+  only about 20% short of their adult length, the humerus and femur about
+  half. So against its own WH a foal's cannons are about 1.4 times an
+  adult's share and its upper bones about 0.8, and its body is short: the
+  cannons lengthen, the upper arm and the thigh shorten, the trunk shortens
+  and does not round. How far is chosen by render; the dossier has no foal
+  trunk figure. At `appeal` 1 the horse's elbow stands at 0.49 WH against
+  0.445, its body is 0.95 long and its heart girth is 0.98, the front of its
+  chest 0.05 ahead of its shoulder joints; its stifle folds to 108 degrees against
+  the adult's 122, and its shoulder to 87 against 100 - a foal standing on
+  legs too long for the hip the frame keeps (a croup-high foal would open
+  them; the dossier gives no figure for it).
+- 07 note 10's envelope for a cute but believable body (head 0.45 to 0.6, body
+  1.1 to 1.4, girth 1.3 to 1.6) holds at the roll's default for a dog and a
+  cat. Its "shorten the lower legs" policy is the toy style the owner did not
+  take.
+
+## What the rig honours, beyond the body at rest
+
+- **Froude by hip height** (08 fact 10): a leg's reach is now measured from
+  the hip and the shoulder joints inside the body, 0.466 m on the default dog
+  against P5's 0.284, which put the hip at the trunk's underside. Strides,
+  cadences and the gait's transitions follow it. The bob of the trunk at a
+  trot is 2.8% of WH on the default dog, 5.3% on seed 2's cat and 2.9% on seed
+  6's horse, inside 08's 2 to 6% (fact 7, the horse's); on P5's body it was
+  1.0 to 1.5%.
+- **A side-pass** (#374): four feet in two pairs cross over to strafe, as a
+  horse's legs do, rather than shuffling on a stance too narrow to step in.
+- **The scapula is its own joint** (the first upper-limb joint of a fore leg),
+  rigid with the girdle in every motion today. R5 (#378) drives it parallel
+  to the forearm, the pantograph of 08 fact 2; it already carries the skin
+  over it.
+- **Sit and Lie Down** (09) are R4's (#377): they still pitch the trunk about
+  the planted legs' tops and drop it by a share of the leg, as P5 built them.
+
+## Where the body departs, and why
+
+### Cage walls (each commented "a cage wall, not anatomy" in the derive)
+
+The joint-hull mesher opens one socket per bone on a girdle's hull, and the
+anatomy is held back wherever two sockets would not fit.
+
+- **The loin is at most 1.15 times the pelvis's width.** The spine's socket on
+  the pelvis's hull carries the loin's width, and the thighs' sockets beside
+  it have to clear it within their bones.
+- **The forechest to the pelvis is at least 2.85 times the largest ring.** The
+  ribs between the girdles need bones long enough to open their sockets on
+  both hulls; a short, deep body stretches instead. It holds the cat's trunk
+  near 1.14 WH whatever its frame asks.
+- **A shoulder or hip joint stands out from its girdle at least 0.65 of its
+  offset from it.** The cage aims each leg's socket at that joint, and two
+  sockets open apart on the hull only if they leave it at least a third of
+  the way sideways. It moves only rare bodies.
+- **The front girdle stands a third of the way from the blades' tops toward
+  the points of the shoulders**, so the hull it closes reaches past them as
+  the pectorals do; under the blades' tops a horse's steep upper arm left the
+  front of its chest behind its own shoulders. **And further on where that
+  falls short**: the forechest's hull is held to reach 0.07 WH past the
+  shoulder joints at their height (`PECTORAL`), which moves every horse's on
+  by about 0.06 WH. Measured on the skin, the front stands at least 0.02 WH
+  ahead of the joints on every roll (`tests/plan.rs`): 0.06 on the anchor
+  horse, 0.10 on the dog, 0.09 on the cat. Before it a foal's chest ended
+  up to 0.13 WH behind its own shoulders, so the leg's IK root and the
+  shoulder's socket stood outside the skin.
+- **The chest's underline at the heart girth and the forechest stays at least
+  0.04 WH under the shoulder joints** (`BRISKET`), so the forechest's hull is
+  there at their height for the rule above to close. A foal's long cannons
+  raise its underline under shoulders that stay where the blades put them,
+  and so do a slight horse's; under every dog's and cat's own rings, it
+  deepens the anchor horse's forechest a little and a foal's most.
+- **The composites grow a ring's width fully, the ribcage's depth by the
+  square root of it, the loin's by its fourth root, and the girdles' depth not
+  at all**, and the ribcage stays no wider than 1.05 of its depth after them as
+  before. Depth grown as fully as width hung a heavy dog's chest under its
+  elbows and crowded the legs' sockets off the girdles' hulls on 28 rolls in
+  3,000; the loin's socket on the pelvis's hull and a heavy kitten's ribs
+  crowded the envelope's high corner (`tests/budget.rs`).
+- **The tail is set off the pelvis by 0.75 up and 1.15 back of its ring's
+  radius**, so its socket clears the thighs' on the hull.
+- **Legginess does not lengthen the blade, the humerus or the femur**: a blade
+  lengthened with the leg hung its shoulder below its own elbow. A foal's
+  long legs are its cannons.
+- **A bridged leg's socket is sized by the joint it opens toward**, the hip or
+  the shoulder, not by the node it sweeps to: the thigh's muscle rides the
+  stifle's ring, and blended into the socket on the pelvis it crowded the
+  spine's socket off its bone on 57 rolls in 400.
+- **A bridged leg drawn out of round starts its ring frame across the body**,
+  so a section says across and fore and aft whatever the leg's lean;
+  transported from world up, the thigh came out deep on the diagonal. A round
+  leg (every fore leg) keeps the frame it had: turned, its sockets crowded the
+  spine's off the forechest at the envelope's low corner.
+
+### Choices against a dossier figure
+
+- **The dog's chest is about 1.9:1 deep to wide, not 1.3 to 1.5:1.** The
+  dossier's own rows disagree: a chest 0.45 to 0.50 deep with a heart girth of
+  1.07 to 1.15 forces nearly 2:1. The girth was kept.
+- **The elbow joint stands at 0.44 to 0.46 under a 0.50 brisket**, reading the
+  dossier's 0.50 to 0.52 as the point of the elbow, which stands above the
+  joint.
+- **The dog's shoulder angle reads 103 against 107 to 120**: the blade is
+  measured in three dimensions here, and includes the joint set out from the
+  ribs that its socket needs.
+- **The cat is compact.** Its 1.3 to 1.5 body length (S25, L, its definition
+  unconfirmed) read as a ferret; the paw 0.22 behind the hip that the
+  radiographs' bones need at a 0.86 hip trailed the hind leg out behind the
+  croup. The paw stands near under the hip, as on a dog's radiograph table
+  (S6), the thigh bones trimmed a little toward joint centres; that folds the
+  stifle to about 96 degrees against the background's 110 to 125 (L). Shorter
+  thigh bones opened it, and folded the stifle of the envelope's low corner
+  too close under the croup for its socket.
+- **The horse's heart girth and depth to width are a little low** (1.08 and
+  1.75:1): its forechest ring narrows ahead of the girth.
+- **The horse's hip angle is not measured**: the rig has no pelvis bone, only
+  the girdle.
+- **The size is P5's.** A record's `height` builds a withers height 1.2 times
+  it, so every record stands as tall in a world as the one the owner judged.
+
+### Skin and zones on the new body
+
+- **A leg's skin below the trunk is the leg's.** The trunk's bones are as wide
+  as the body and reached the whole upper leg; the trunk lets go of a leg's
+  skin where it leaves the trunk's own section, over a band (`rig::skin`).
+- **The croup is not the tail.** The bone from the pelvis to the tail's root
+  lies inside the croup; the tail's zone starts at its root, so the coat no
+  longer paints a tail's rings on the rump and the brush no longer grows out
+  of it.
+- **The withers are the girdle the neck hangs from**, for every reader that
+  measures along the spine (the coat, the wearable sockets, the instruments):
+  the chest's first joint is now the middle of the ribcage.
+
+## Left for later slices
+
+- **R3 (#376)**: the coat's frame turns at the top of each leg (the stripes
+  change direction where the leg leaves the body).
+- **R4 (#377)**: Sit and Lie Down posed from the anatomy and the ground (09).
+- **R5 (#378)**: the scapula driven parallel to the forearm, duty factors, the
+  stance sweep, the carpus's fold, the spine's wave, the head's nod (08).
