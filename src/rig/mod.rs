@@ -38,6 +38,7 @@
 //! # Ok::<(), symbios_avatar::RigError>(())
 //! ```
 
+pub(crate) mod junction;
 pub mod landmark;
 pub mod patch;
 pub mod skin;
@@ -428,13 +429,20 @@ impl Rig {
     /// with no surface of its own.
     #[must_use]
     pub fn nearest_bone(&self, point: Vec3) -> BoneHit {
+        self.nearest_bone_where(point, |_| true)
+    }
+
+    /// [`Self::nearest_bone`] among the surfaced joints `keep` accepts: a
+    /// beast's coat asks for the trunk's grain at a texel a leg is nearer
+    /// to (#376).
+    pub(crate) fn nearest_bone_where(&self, point: Vec3, keep: impl Fn(usize) -> bool) -> BoneHit {
         let mut best = BoneHit {
-            joint: self.surfaced().next().unwrap_or(0),
+            joint: self.surfaced().find(|&joint| keep(joint)).unwrap_or(0),
             distance: f32::INFINITY,
             radius: 1.0,
             closest: point,
         };
-        for joint in self.surfaced() {
+        for joint in self.surfaced().filter(|&joint| keep(joint)) {
             let (start, end) = self.bone(joint);
             let (start_radius, end_radius) = self.bone_radii(joint);
             let axis = end - start;

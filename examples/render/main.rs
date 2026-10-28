@@ -79,6 +79,7 @@
 //! cargo run --release --example render -- --quadruped --gallery 16 --family cat  # or dog, horse, cross
 //! cargo run --release --example render -- --quadruped --gallery 9 --pattern rosettes  # coats marked so
 //! cargo run --release --example render -- --quadruped --gallery 9 --fantasy  # unnatural coats only
+//! cargo run --release --example render -- --quadruped --seed 6 --pattern brindle --points  # any coat on any family
 //! cargo run --release --example render -- --quadruped --speed 2.5 --strip 8  # a gait at a speed, one row
 //! cargo run --release --example render -- --quadruped --gait canter --speed 3 --strip 8
 //! cargo run --release --example render -- --quadruped --gesture "Play Bow" --strip 8
@@ -479,6 +480,12 @@ fn main() {
     } else {
         Archetype::default()
     };
+    // `--walls N`: where the backdrop stands across N rolls, and whether it
+    // still stands behind anything a frame draws (#379).
+    if let Some(count) = value("--walls").and_then(|v| v.parse::<i64>().ok()) {
+        walls(&archetype, count);
+        return;
+    }
     let mut record = AvatarRecord::new("Rendered", archetype);
     if let Some(seed) = seed {
         record.reroll(seed);
@@ -491,6 +498,29 @@ fn main() {
                 eprintln!("--unicorn horns a quadruped: add --quadruped");
                 std::process::exit(2);
             }
+        }
+    }
+
+    // A coat pattern, or a colourpoint, that a family never rolls (#376):
+    // `--pattern NAME` marks one beast's coat so - in a gallery it filters
+    // instead - and `--points` gives it a colourpoint, so every pattern is
+    // judged on every family.
+    if args.iter().any(|arg| arg == "--points") || value("--pattern").is_some() {
+        let Archetype::Quadruped(params) = &mut record.archetype else {
+            eprintln!("--pattern and --points mark a quadruped's coat: add --quadruped");
+            std::process::exit(2);
+        };
+        if let Some(name) = value("--pattern") {
+            params.coat.pattern = symbios_avatar::plan::Pattern::ALL
+                .into_iter()
+                .find(|pattern| pattern.name() == name.as_str())
+                .unwrap_or_else(|| {
+                    eprintln!("--pattern takes a coat pattern's name, not `{name}`");
+                    std::process::exit(2);
+                });
+        }
+        if args.iter().any(|arg| arg == "--points") {
+            params.coat.points = true;
         }
     }
 
@@ -1728,6 +1758,11 @@ impl Subject {
 
     /// Four views of the whole body in one image.
     fn sheet(&self, pose: &Pose, closure: f32) -> Image {
+        self.render(pose, closure, &self.sheet_frames())
+    }
+
+    /// The four frames of [`Self::sheet`].
+    fn sheet_frames(&self) -> [Frame; 4] {
         use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
         // Framed on the body's whole extent, not on its height. A quadruped is
         // longer than it is tall, and a frame sized by height alone crops the
@@ -1740,8 +1775,7 @@ impl Subject {
             span: self.reach * MARGIN,
         };
         // Front, side, back, three-quarter.
-        let frames = [of(0.0), of(FRAC_PI_2), of(PI), of(FRAC_PI_4)];
-        self.render(pose, closure, &frames)
+        [of(0.0), of(FRAC_PI_2), of(PI), of(FRAC_PI_4)]
     }
 
     /// Four close-ups of one part of the body in one image.
@@ -1755,6 +1789,41 @@ impl Subject {
     /// which of its vertices are a head, which is exactly what a close-up needs
     /// to know and exactly why [`symbios_avatar::Parts`] is kept.
     fn close_up(&self, pose: &Pose, closure: f32, focus: Focus) -> Option<Image> {
+        let frames = self.close_frames(pose, focus)?;
+        Some(self.render(pose, closure, &frames))
+    }
+
+    /// Whether this body's backdrop stands behind everything a frame draws,
+    /// rather than at the fixed [`WALL_BEHIND`]: a beast's, whose barrel runs
+    /// the better part of a span behind any close-up's centre. See
+    /// [`wall_behind`].
+    fn clears_the_wall(&self) -> bool {
+        !self.avatar.rig.anatomy.human_trunk()
+    }
+
+    /// Every frame the standing sheet and the close-ups draw this body in,
+    /// by view: the close-ups it has no part for left out.
+    fn every_frame(&self, pose: &Pose) -> Vec<(&'static str, [Frame; 4])> {
+        let mut frames = vec![("sheet", self.sheet_frames())];
+        for (name, focus) in [
+            ("head", Focus::Head),
+            ("hand", Focus::Hand),
+            ("foot", Focus::Foot),
+            ("crotch", Focus::Crotch),
+            ("chest", Focus::Chest),
+            ("throat", Focus::Throat),
+        ] {
+            if let Some(four) = self.close_frames(pose, focus) {
+                frames.push((name, four));
+            }
+        }
+        frames
+    }
+
+    /// The four frames of [`Self::close_up`], or `None` where the body has no
+    /// such part: apart from the drawing, so `--walls` can ask where every
+    /// close-up's backdrop stands without rendering one.
+    fn close_frames(&self, pose: &Pose, focus: Focus) -> Option<[Frame; 4]> {
         use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
         let parts = &self.avatar.parts;
         let posed = pose.forward(&self.avatar.rig);
@@ -1972,8 +2041,7 @@ impl Subject {
         } else {
             of(0.0, steep)
         };
-        let frames = [of(0.0, 0.0), of(FRAC_PI_4, 0.0), of(FRAC_PI_2, 0.0), fourth];
-        Some(self.render(pose, closure, &frames))
+        Some([of(0.0, 0.0), of(FRAC_PI_4, 0.0), of(FRAC_PI_2, 0.0), fourth])
     }
 
     /// One three-quarter view of the head alone, for a gallery of faces
@@ -2067,7 +2135,7 @@ impl Subject {
         let wall = if self.show.pass.as_deref() == Some("silhouette") {
             PolyMesh::new()
         } else {
-            backdrop(frame)
+            backdrop(frame, built, self.clears_the_wall())
         };
         let items = items(
             built,
@@ -3377,15 +3445,19 @@ const PORTRAIT_PITCH: f32 = 0.25;
 /// cue that a body occupies space. Camera-facing rather than world-fixed,
 /// because the camera walks all the way round and a fixed wall would end up in
 /// front of the subject for half the sheet.
-fn backdrop(frame: &Frame) -> PolyMesh {
+///
+/// Stood [`wall_behind`] the frame's centre, which reads `built`, the meshes
+/// the frame draws, posed, when `clear` asks it to stand behind them all.
+fn backdrop(frame: &Frame, built: &[AvatarMesh], clear: bool) -> PolyMesh {
     let toward = frame.to_world(Vec3::Z);
     let right = frame.to_world(Vec3::X);
     let up = frame.to_world(Vec3::Y);
-    // Close behind the subject. Far back, a key light this far off-axis throws
-    // its shadow sideways by more than the wall is wide and the shadow simply
-    // leaves the picture — which is what happened the moment the lighting was
-    // made good enough to have form.
-    let middle = frame.centre - toward * (frame.span * 0.32);
+    let behind = if clear {
+        wall_behind(frame, built)
+    } else {
+        WALL_BEHIND
+    };
+    let middle = frame.centre - toward * (frame.span * behind);
     let reach = frame.span * 2.2;
 
     let mut mesh = PolyMesh::new();
@@ -3394,6 +3466,170 @@ fn backdrop(frame: &Frame) -> PolyMesh {
     }
     mesh.push_face([0, 1, 2, 3]);
     mesh
+}
+
+/// How far behind a frame's centre its backdrop stands, in spans: the wall's
+/// depth on the frame's own [`Frame::camera`].
+///
+/// **Close behind the subject**, at [`WALL_BEHIND`]. Far back, a key light
+/// this far off-axis throws its shadow sideways by more than the wall is wide
+/// and the shadow simply leaves the picture - which is what happened the
+/// moment the lighting was made good enough to have form.
+///
+/// **And behind everything the frame draws** (#379). A fixed distance was
+/// sized on a person, whose head or chest is about as deep as the frame round
+/// it is wide, and lands inside a beast: a close-up's span is the part's own,
+/// and a horse's chest framed from the front three quarters has the far hind
+/// leg the better part of a span behind its centre. The wall stood in front
+/// of that leg and hid all of it but the stifle, which comes forward under
+/// the belly, so the stifle drew as a round lump hanging off the belly, and
+/// on a dog as a fragment floating beside the near hind leg - and was taken
+/// for the body's, as the shadow acne was before it ([`ShadowMap::lit`]).
+/// So where anything in frame reaches past [`WALL_BEHIND`] the wall stands
+/// [`WALL_CLEARANCE`] behind the deepest of it; where nothing does it stands
+/// exactly where it always has, and every frame it never cut draws as before.
+///
+/// **A beast's frames only, for now** ([`Subject::clears_the_wall`]). A
+/// person is cut too, more mildly: the head close-up's view from above has
+/// the wall through the shoulders, and the sheet's side view has the far
+/// hand past it. Both are frames the goldens pin, so they stand as they were
+/// until moving them is decided on its own.
+fn wall_behind(frame: &Frame, built: &[AvatarMesh]) -> f32 {
+    let deepest = deepest_shown(frame, built);
+    if deepest < WALL_BEHIND {
+        WALL_BEHIND
+    } else {
+        deepest + WALL_CLEARANCE
+    }
+}
+
+/// How far behind a frame's centre the deepest thing it draws stands, in
+/// spans, or `f32::MIN` if it draws nothing.
+///
+/// A face is in frame when any corner of it lands inside the frame's square,
+/// and then all its corners count: a face across the frame's edge is drawn
+/// in part, and its part in frame is no nearer than its deepest corner.
+fn deepest_shown(frame: &Frame, built: &[AvatarMesh]) -> f32 {
+    let camera = frame.camera();
+    let mut deepest = f32::MIN;
+    for drawn in built {
+        let clip: Vec<Vec3> = drawn
+            .mesh
+            .positions
+            .iter()
+            .map(|&point| camera.transform_point3(point))
+            .collect();
+        for face in &drawn.mesh.faces {
+            let shown = face.iter().any(|&corner| {
+                let at = clip[corner as usize];
+                at.x.abs() <= 1.0 && at.y.abs() <= 1.0
+            });
+            if shown {
+                for &corner in face {
+                    deepest = deepest.max(clip[corner as usize].z);
+                }
+            }
+        }
+    }
+    deepest
+}
+
+/// How far behind a frame's centre its backdrop stands when nothing in frame
+/// reaches it, in spans: see [`wall_behind`].
+const WALL_BEHIND: f32 = 0.32;
+
+/// How far behind the deepest thing in frame the backdrop stands when that
+/// is past [`WALL_BEHIND`], in spans: near enough that its shadow still lands
+/// in the picture, clear enough that nothing touches the wall.
+const WALL_CLEARANCE: f32 = 0.05;
+
+/// `--walls N`: where the backdrop stands across N rolls of a plan, for every
+/// frame of the standing sheet and of every close-up the body has (#379).
+///
+/// Prints, per view, how many frames have something drawn past
+/// [`WALL_BEHIND`] - the frames the wall stood in front of the subject in
+/// before it learned to stand back - and how many still have anything behind
+/// the wall [`backdrop`] builds, which is the defect: zero on a beast, and on
+/// a person what [`wall_behind`] leaves standing.
+fn walls(plan: &Archetype, count: i64) {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+    // Per view and frame of it: frames taken, frames past the old wall and
+    // frames still cut; and the rolls with any frame past the old wall.
+    let tally: Mutex<BTreeMap<(&str, usize), [usize; 3]>> = Mutex::new(BTreeMap::new());
+    let rolls: Mutex<Vec<i64>> = Mutex::new(Vec::new());
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
+    std::thread::scope(|scope| {
+        for thread in 0..threads {
+            let (tally, rolls) = (&tally, &rolls);
+            scope.spawn(move || {
+                let mut seed = thread as i64;
+                while seed < count {
+                    let mut record = AvatarRecord::new("Rendered", plan.clone());
+                    record.reroll(seed);
+                    if let Some(avatar) = Avatar::build(&record) {
+                        let show = Show {
+                            eyes: record.eyes,
+                            ..Show::default()
+                        };
+                        let subject = Subject::new(avatar, show, None, Vec::new(), Vec::new());
+                        let pose = subject.standing();
+                        let built = subject.deformed(&pose, 0.0);
+                        let mut past = false;
+                        for (name, frames) in subject.every_frame(&pose) {
+                            for (index, frame) in frames.iter().enumerate() {
+                                let deep = deepest_shown(frame, &built) >= WALL_BEHIND;
+                                let cut = behind_wall(frame, &built, subject.clears_the_wall()) > 0;
+                                past |= deep;
+                                let mut tally = tally.lock().unwrap_or_else(|e| e.into_inner());
+                                let row = tally.entry((name, index)).or_insert([0; 3]);
+                                row[0] += 1;
+                                row[1] += usize::from(deep);
+                                row[2] += usize::from(cut);
+                            }
+                        }
+                        if past {
+                            rolls.lock().unwrap_or_else(|e| e.into_inner()).push(seed);
+                        }
+                    }
+                    seed += threads as i64;
+                }
+            });
+        }
+    });
+    let tally = tally.into_inner().unwrap_or_else(|e| e.into_inner());
+    let mut rolls = rolls.into_inner().unwrap_or_else(|e| e.into_inner());
+    rolls.sort_unstable();
+    // A sheet's frames are front, side, back and three-quarter; a
+    // close-up's front, three-quarter, side and the fourth view.
+    println!(
+        "{:<8} {:>5} {:>7} {:>16} {:>14}",
+        "view", "frame", "frames", "past old wall", "behind wall"
+    );
+    for ((name, index), [frames, deep, cut]) in &tally {
+        println!("{name:<8} {index:>5} {frames:>7} {deep:>16} {cut:>14}");
+    }
+    let shown: Vec<String> = rolls.iter().take(12).map(i64::to_string).collect();
+    println!(
+        "{} of {count} rolls have a frame past the old wall (first: {})",
+        rolls.len(),
+        shown.join(", ")
+    );
+}
+
+/// How many vertices `frame` shows behind the wall [`backdrop`] builds for it.
+fn behind_wall(frame: &Frame, built: &[AvatarMesh], clear: bool) -> usize {
+    let wall = backdrop(frame, built, clear);
+    let toward = frame.to_world(Vec3::Z);
+    let camera = frame.camera();
+    built
+        .iter()
+        .flat_map(|drawn| &drawn.mesh.positions)
+        .filter(|&&point| {
+            let at = camera.transform_point3(point);
+            at.x.abs() <= 1.0 && at.y.abs() <= 1.0 && (point - wall.positions[0]).dot(toward) < 0.0
+        })
+        .count()
 }
 
 /// A golden pixel may drift this far per channel before it counts as changed.
@@ -3540,5 +3776,43 @@ fn write(dir: &std::path::Path, name: &str, image: &Image) {
         .and_then(|png| png.save(&path).map_err(|error| error.to_string()));
     if let Err(error) = saved {
         eprintln!("cannot write {}: {error}", path.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_a_frame_draws_stands_behind_its_backdrop() {
+        // #379: a horse's, a cat's and a dog's chest framed from the front
+        // three quarters had the far hind leg behind the wall, which hid all
+        // of it but the stifle. Every frame of the sheet and of each close-up
+        // the body has, on the three bodies the defect was seen on.
+        for seed in [13, 2, 17] {
+            let mut record = AvatarRecord::new(
+                "Rendered",
+                Archetype::Quadruped(symbios_avatar::QuadrupedParams::default()),
+            );
+            record.reroll(seed);
+            let avatar = Avatar::build(&record).expect("a rolled beast builds");
+            let subject = Subject::new(avatar, Show::default(), None, Vec::new(), Vec::new());
+            let pose = subject.standing();
+            let built = subject.deformed(&pose, 0.0);
+            let frames = subject.every_frame(&pose);
+            assert!(
+                frames.iter().any(|(name, _)| *name == "chest"),
+                "seed {seed}: no chest close-up to frame"
+            );
+            for (name, four) in &frames {
+                for (index, frame) in four.iter().enumerate() {
+                    assert_eq!(
+                        behind_wall(frame, &built, subject.clears_the_wall()),
+                        0,
+                        "seed {seed}, {name} frame {index}: vertices drawn behind the backdrop"
+                    );
+                }
+            }
+        }
     }
 }

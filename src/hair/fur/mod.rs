@@ -626,4 +626,83 @@ mod tests {
         let again = built(Family::Horse, all(1.0), Coat::default());
         assert_eq!(once.parts.fur, again.parts.fur);
     }
+
+    #[test]
+    fn a_ruff_thins_out_down_a_foreleg_rather_than_stopping_at_its_zone() {
+        // Grown on the chest's zone and not the leg's, a ruff over the
+        // chest's front stopped on the line the skin's weights draw round the
+        // top of each foreleg (#376): through the band where the leg leaves
+        // the trunk, a root's weight is the same whichever zone it is in.
+        for family in Family::ALL {
+            let avatar = built(family, all(1.0), Coat::default());
+            let parts = &avatar.parts;
+            let anatomy = CoatBody::of(&avatar.rig, None, None);
+            let coat = Coat::default();
+            let bed = Bed {
+                body: &parts.body,
+                zones: &parts.zones,
+                rig: &avatar.rig,
+                weights: &parts.weights,
+                anatomy: &anatomy,
+                coat: &coat,
+                ears: None,
+            };
+            let mut ruffed = 0;
+            for (&at, normal) in parts.body.positions.iter().zip(parts.body.vertex_normals()) {
+                let Some(leg) = anatomy.junctions.leg(at).filter(|leg| leg.share < 1.0) else {
+                    continue;
+                };
+                let weight = |zone| FurZone::Ruff.weight(&bed, at, normal, zone);
+                let chest = weight(Zone::Chest);
+                assert_eq!(
+                    weight(Zone::UpperLimb(leg.limb)),
+                    chest,
+                    "{family:?}: the ruff stops at the zone line at {at}"
+                );
+                ruffed += usize::from(chest > 0.0);
+            }
+            assert!(ruffed > 0, "{family:?}: no ruff reaches a junction");
+        }
+    }
+
+    #[test]
+    fn a_ruff_does_not_run_down_a_foreleg() {
+        // The other half of the blend: the ruff thins out through the band
+        // where the leg leaves the trunk, and is gone below it. Grown on the
+        // upper leg's zone without the leg's share against it, it ran on
+        // down the front of each forearm to the carpus.
+        for family in Family::ALL {
+            let avatar = built(family, all(1.0), Coat::default());
+            let parts = &avatar.parts;
+            let anatomy = CoatBody::of(&avatar.rig, None, None);
+            let coat = Coat::default();
+            let bed = Bed {
+                body: &parts.body,
+                zones: &parts.zones,
+                rig: &avatar.rig,
+                weights: &parts.weights,
+                anatomy: &anatomy,
+                coat: &coat,
+                ears: None,
+            };
+            let mut legs = 0;
+            for ((&at, &zone), normal) in parts
+                .body
+                .positions
+                .iter()
+                .zip(&parts.zones)
+                .zip(parts.body.vertex_normals())
+            {
+                if !matches!(zone, Zone::Chest | Zone::UpperLimb(_))
+                    || anatomy.junctions.share(at) < 1.0
+                {
+                    continue;
+                }
+                let weight = FurZone::Ruff.weight(&bed, at, normal, zone);
+                assert_eq!(weight, 0.0, "{family:?}: a ruff on the leg at {at}");
+                legs += 1;
+            }
+            assert!(legs > 20, "{family:?}: only {legs} roots down the legs");
+        }
+    }
 }

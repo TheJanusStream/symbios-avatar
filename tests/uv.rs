@@ -227,3 +227,107 @@ fn duplication_stays_proportionate() {
         mesh.vertex_count()
     );
 }
+
+#[test]
+fn a_beast_s_legs_are_charted_as_finely_as_its_barrel() {
+    // A beast's upper arm and thigh lie inside its trunk, so the skin the
+    // zone map gave each leg ran up over the shoulder and the flank, and
+    // wrapped round a bone inside the trunk - a wall beside the bone, not a
+    // tube round it - that skin came out at a third to a half of the barrel's
+    // density, stretched two to three to one, and painted as streaked fur in
+    // a crescent over the elbow (#376). Charted with the trunk it wraps, and
+    // the leg below round the bone leaving the elbow and the stifle, every
+    // leg is as fine as the barrel and nearly square.
+    //
+    // Fore and hind apart, and the worst tenth as well as the thinnest: a
+    // horse's thigh is half again as deep at the stifle as it is across, and
+    // the two pairs averaged hid a hind leg whose chart had taken in the fold
+    // over the stifle and the groin past the midline, stretched up to twenty
+    // to one, while the forelegs came out better than ever. And over sixty
+    // rolls, every family and their hybrids: six seeds held it on average.
+    use symbios_avatar::plan::Limb;
+    use symbios_avatar::{Avatar, AvatarConfig, Vec2};
+    // The charts do not depend on the atlas's size; the painting does.
+    let config = AvatarConfig {
+        atlas: 64,
+        ..AvatarConfig::default()
+    };
+    let mut worst = [(f32::INFINITY, 0i64, "fore"), (f32::INFINITY, 0, "hind")];
+    let mut stretched = [(0.0f32, 0i64, "fore"), (0.0, 0, "hind")];
+    for seed in 0..60i64 {
+        let mut record =
+            AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
+        record.reroll(seed);
+        let avatar = Avatar::build_with(&record, &config).expect("the beast builds");
+        let (uv, body) = (&avatar.parts.unwrap, &avatar.parts.body);
+        let mut barrel = Vec::new();
+        let mut legs: [(Vec<f32>, Vec<f32>); 2] = Default::default();
+        for (index, face) in uv.faces.iter().enumerate() {
+            // The map from the face's first triangle to the atlas: its two
+            // singular values are how far a texel reaches each way.
+            let corners = [face[0], face[1], face[2]];
+            let at = corners.map(|v| body.positions[uv.source[v as usize] as usize]);
+            let (edge, other) = (at[1] - at[0], at[2] - at[0]);
+            let normal = edge.cross(other);
+            if normal.length_squared() < 1e-20 {
+                continue;
+            }
+            let (x, y) = (edge.normalize(), normal.cross(edge).normalize());
+            let flat = glam::Mat2::from_cols(
+                Vec2::new(edge.dot(x), edge.dot(y)),
+                Vec2::new(other.dot(x), other.dot(y)),
+            );
+            let atlas = corners.map(|v| uv.uvs[v as usize]);
+            let map =
+                glam::Mat2::from_cols(atlas[1] - atlas[0], atlas[2] - atlas[0]) * flat.inverse();
+            let sum = map.x_axis.length_squared() + map.y_axis.length_squared();
+            let area = map.determinant().abs();
+            let spread = (sum * sum - 4.0 * area * area).max(0.0).sqrt();
+            let (most, least) = (
+                ((sum + spread) / 2.0).sqrt(),
+                ((sum - spread) / 2.0).max(0.0).sqrt(),
+            );
+            match uv.charts[uv.chart_of_face[index] as usize].zone {
+                Zone::Chest | Zone::Abdomen | Zone::Pelvis => barrel.push(area.sqrt()),
+                Zone::UpperLimb(limb) => {
+                    let pair = usize::from(matches!(limb, Limb::HindLeft | Limb::HindRight));
+                    legs[pair].0.push(area.sqrt());
+                    legs[pair].1.push(most / least.max(1e-9));
+                }
+                _ => {}
+            }
+        }
+        barrel.sort_by(f32::total_cmp);
+        let share = |list: &[f32], at: f32| list[((list.len() - 1) as f32 * at) as usize];
+        let middle = share(&barrel, 0.5);
+        for (pair, (mut density, mut stretch)) in legs.into_iter().enumerate() {
+            density.sort_by(f32::total_cmp);
+            stretch.sort_by(f32::total_cmp);
+            let thinnest = share(&density, 0.1) / middle;
+            if thinnest < worst[pair].0 {
+                worst[pair] = (thinnest, seed, worst[pair].2);
+            }
+            let reach = share(&stretch, 0.9);
+            if reach > stretched[pair].0 {
+                stretched[pair] = (reach, seed, stretched[pair].2);
+            }
+        }
+    }
+    // At the slice: the thinnest tenth 0.69 fore and 0.67 hind, the worst
+    // tenth stretched 3.0 and 3.6 to one. Before it, 0.25 and 0.25, and 22
+    // and 32; with the hind thigh measured in its deepest radius 0.33 and 21
+    // to one, and with the fold over the stifle charted with the leg 0.39
+    // and 12.
+    for (thinnest, seed, pair) in worst {
+        assert!(
+            thinnest > 0.62,
+            "seed {seed}: a tenth of the {pair} legs is charted at {thinnest:.2} of the barrel"
+        );
+    }
+    for (reach, seed, pair) in stretched {
+        assert!(
+            reach < 4.0,
+            "seed {seed}: a tenth of the {pair} legs' texels is stretched {reach:.2} to one"
+        );
+    }
+}

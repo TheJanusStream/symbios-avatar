@@ -4,14 +4,26 @@
 //! blaze down the face, stripes round the barrel - and the painter has only
 //! a texel's body-space position, its normal and its zone. This is the rest:
 //! the spine the stripes run across, the back's height the legs are measured
-//! against, the tail's tip, and the head and the feet the plan declared,
-//! whose frames place a blaze and tell a claw from a pad.
+//! against, the tail's tip, the head and the feet the plan declared, whose
+//! frames place a blaze and tell a claw from a pad, and where each leg leaves
+//! the trunk.
+//!
+//! **A mark that differs between the barrel and a leg asks the junction, not
+//! the zone** (#376). The zone map's line between the two is where the skin
+//! weights cross, which is nowhere an animal's coat changes: a stripe turned
+//! from a band to a ring there, and a sock, a point or a roan's thinning cut
+//! off along it, on a hard line round the top of the leg. The junction's
+//! share runs from the barrel to the leg through the crease at the elbow and
+//! the stifle, so every such mark blends over that band instead - and below
+//! it, down the leg, a sock, a point or a bay's black lies where the leg's
+//! zone used to put it.
 
 use glam::Vec3;
 
 use crate::plan::beast_foot::FootShape;
 use crate::plan::{BeastFeet, BeastHead, Limb, Zone};
 use crate::rig::Rig;
+use crate::rig::junction::Junctions;
 
 /// A beast's body, as the painter reads it.
 #[derive(Clone, Debug)]
@@ -28,6 +40,9 @@ pub(crate) struct CoatBody {
     pub head: Option<BeastHead>,
     /// Each foot's shape, by the limb it ends.
     pub feet: Vec<(Limb, FootShape)>,
+    /// Where each leg leaves the trunk (#376): what a mark asks instead of a
+    /// texel's zone wherever it changes from the barrel to a leg.
+    pub junctions: Junctions,
 }
 
 impl CoatBody {
@@ -63,6 +78,7 @@ impl CoatBody {
             tail,
             head: head.copied(),
             feet: feet.map_or_else(Vec::new, |feet| crate::extremity::beast::shapes(rig, feet)),
+            junctions: Junctions::of(rig),
         }
     }
 

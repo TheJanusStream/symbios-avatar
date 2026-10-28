@@ -106,6 +106,16 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 name = "integration"
 path = "tests/main.rs"
 
+# The `render` instrument's own tests, run by a bare `cargo test` (#379).
+# An example's `#[test]`s are compiled but never run unless it says so, and
+# the instrument once drew a backdrop through a beast's far hind leg and had
+# the stub it left taken for the body's: where the wall stands is the
+# instrument's to prove, against its own framing code, which lives only here.
+[[example]]
+name = "render"
+path = "examples/render/main.rs"
+test = true
+
 # The test profile, measured (#332).
 #
 # There was no `[profile]` section here at all, so CI's bare `cargo test` ran

@@ -15,6 +15,16 @@
 //! horn - the pads pink and the horn pale under a white foot, the nose pink
 //! where piebald or extreme white reaches it. The inside of the mouth, which
 //! the jaw and the tongue mark through the bake, is flesh on every coat.
+//!
+//! **Where a leg leaves the trunk, nothing asks the zone** (#376). Every mark
+//! that differs between the barrel and a leg - a stripe's frame, a spot's
+//! size, a point, a sock, a bay's black, a roan's and a dun's thinning, a
+//! bib, a piebald's lean, the fur's grain - blends by how much of a leg a
+//! texel is ([`body`]'s junctions), so it turns over a band at the elbow and
+//! the stifle, as an animal's own pattern does, instead of on the line the
+//! skin weights draw. Below it a leg wears its own frame - rings closer than
+//! the barrel's bands, spots finer - and its colour regions where its zone
+//! used to put them.
 
 mod body;
 mod marks;
@@ -27,8 +37,10 @@ use symbios_texture::generator::TextureMap;
 use symbios_texture::normal::{BoundaryMode, height_to_normal};
 
 use super::bake::{AtlasGeometry, Texel};
+use crate::det::DetMath;
 use crate::plan::{Agouti, Coat, Feet, Pattern, Pigment, White, Zone};
 use crate::rig::Rig;
+use crate::rig::junction::LegShare;
 use body::{leg, topside, trunk, underside};
 use marks::{Fields, step};
 use palette::{PALE_HORN, PINK, Palette, WHITE};
@@ -71,6 +83,21 @@ const BRINDLE: Waver = Waver {
     frequency: 7.0,
 };
 
+/// How much finer a pattern's marks are down a leg than over the barrel:
+/// its rings closer than the barrel's bands, its spots smaller.
+/// Provenance: **tuned by render** (#368), the rings' own share since then;
+/// the spots' since #376.
+const LEG_FINER: f32 = 1.6;
+
+/// How far down a leg, in the radii of the joint it leaves the trunk at, a
+/// pattern's frame takes to turn from the barrel's to the leg's: far enough
+/// that the bands crossing a thick thigh close into rings without crowding.
+/// Provenance: **derived** (#376): round a leg of radius `r` the bands
+/// differ by about `count x r / spine` stripes, and closed over `TURN x r`
+/// they press the stripes at most `1 / TURN` of the barrel's own density
+/// closer.
+const TURN: f32 = 1.5;
+
 /// What a texel is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Surface {
@@ -100,13 +127,7 @@ pub(crate) fn paint_coat(
 
     for (index, sample) in geometry.texels.iter().enumerate() {
         let Some(texel) = sample else { continue };
-        let painter = Painter {
-            texel,
-            coat,
-            palette: &palette,
-            fields: &fields,
-            body,
-        };
+        let painter = Painter::new(texel, coat, &palette, &fields, body);
         let surface = painter.surface();
         let (colour, roughness, fur) = match surface {
             Surface::Fur => (painter.fur(), FUR_ROUGHNESS, 1.0),
@@ -208,13 +229,13 @@ impl<'a> CoatSampler<'a> {
             mouth: 0.0,
             zone,
         };
-        question(&Painter {
-            texel: &texel,
-            coat: self.coat,
-            palette: &self.palette,
-            fields: &self.fields,
-            body: self.body,
-        })
+        question(&Painter::new(
+            &texel,
+            self.coat,
+            &self.palette,
+            &self.fields,
+            self.body,
+        ))
     }
 }
 
@@ -225,9 +246,65 @@ struct Painter<'a> {
     palette: &'a Palette,
     fields: &'a Fields,
     body: &'a CoatBody,
+    /// The leg this texel is most a part of, and how much (#376).
+    leg: Option<LegShare>,
 }
 
-impl Painter<'_> {
+impl<'a> Painter<'a> {
+    /// The painter of `texel`, which reads the junctions once for every mark
+    /// that asks them.
+    fn new(
+        texel: &'a Texel,
+        coat: &'a Coat,
+        palette: &'a Palette,
+        fields: &'a Fields,
+        body: &'a CoatBody,
+    ) -> Self {
+        Self {
+            texel,
+            coat,
+            palette,
+            fields,
+            body,
+            leg: body.junctions.leg(texel.position),
+        }
+    }
+
+    /// How much of a leg this texel is, `0` on the barrel to `1` below the
+    /// elbow or the stifle: what every mark that differs between the two
+    /// blends by, where the zone it reads would cut it (#376).
+    fn limb(&self) -> f32 {
+        self.leg.map_or(0.0, |leg| leg.share)
+    }
+
+    /// How far a pattern's frame has turned from the barrel's to a leg's,
+    /// `0..=1`: none above the junction, all of it [`TURN`] of the
+    /// junction's radii down the leg.
+    fn turn(&self) -> f32 {
+        self.leg
+            .map_or(0.0, |leg| leg.share * step(0.0, TURN, leg.depth))
+    }
+
+    /// The distance to the nearest cell centre at `frequency` cells per back
+    /// height, in cell widths: the field spots, rosettes and dapples are cut
+    /// from, [`LEG_FINER`] times as fine down a leg - an animal's spots
+    /// shrink toward its feet rather than wrapping a thin leg whole - and
+    /// the two blended as the frame turns.
+    fn cells(&self, frequency: f32) -> f32 {
+        let (at, share) = (self.texel.position, self.turn());
+        let barrel = if share < 1.0 {
+            self.fields.cells(at, frequency).0
+        } else {
+            0.0
+        };
+        let leg = if share > 0.0 {
+            self.fields.cells(at, frequency * LEG_FINER).0
+        } else {
+            0.0
+        };
+        barrel + (leg - barrel) * share
+    }
+
     /// What this texel is: asked of the declared head and feet.
     ///
     /// Not whether it is the inside of the mouth, which the jaw and the
@@ -324,20 +401,19 @@ impl Painter<'_> {
     /// tail.
     fn tan(&self) -> f32 {
         let (at, normal, zone) = (self.texel.position, self.texel.normal, self.texel.zone);
-        let legs = if leg(zone) {
-            step(0.42, 0.30, self.body.rise(at))
-        } else {
-            0.0
-        };
+        let legs = step(0.42, 0.30, self.body.rise(at)) * self.limb();
         let face = self.head_local().map_or(0.0, |local| {
             let muzzle = step(0.45, 0.75, local.z) * step(0.15, -0.05, local.y);
             let brow = Vec3::new(local.x.abs(), local.y, local.z);
             let spot = step(0.16, 0.10, brow.distance(Vec3::new(0.38, 0.40, 0.62)));
             muzzle.max(spot)
         });
-        let chest = if zone == Zone::Chest || zone == Zone::Neck {
+        // The chest's front, which fades out down the top of each foreleg
+        // rather than stopping where the zone map gives the skin to it.
+        let chest = if zone == Zone::Neck || trunk(zone) || leg(zone) {
             step(0.2, 0.6, underside(normal))
                 * step(0.0, 0.1, (at - self.body.withers).z / self.body.height)
+                * (1.0 - self.limb())
         } else {
             0.0
         };
@@ -353,11 +429,7 @@ impl Painter<'_> {
     /// round the nose.
     fn bay(&self) -> f32 {
         let (at, zone) = (self.texel.position, self.texel.zone);
-        let legs = if leg(zone) {
-            step(0.50, 0.38, self.body.rise(at))
-        } else {
-            0.0
-        };
+        let legs = step(0.50, 0.38, self.body.rise(at)) * self.limb();
         let tail = if zone == Zone::Tail {
             step(0.2, 0.5, self.body.along_tail(at))
         } else {
@@ -375,7 +447,7 @@ impl Painter<'_> {
 
     /// How strongly a pattern's dark mark lies here, `0..=1`.
     fn pattern(&self) -> f32 {
-        let (at, normal, zone) = (self.texel.position, self.texel.normal, self.texel.zone);
+        let (at, normal) = (self.texel.position, self.texel.normal);
         let fields = self.fields;
         // A pattern fades out under the belly, as a tabby's does.
         let belly = 1.0 - 0.7 * step(0.3, 0.9, underside(normal));
@@ -387,13 +459,8 @@ impl Painter<'_> {
                 let broken = step(-0.55, -0.1, fields.patches(at, 12.0));
                 step(0.45, 0.75, self.stripes(17.0, BRINDLE)) * broken * 0.85
             }
-            Pattern::Ticked => {
-                if leg(zone) {
-                    step(0.55, 0.85, self.stripes(6.0, TABBY)) * 0.6
-                } else {
-                    0.0
-                }
-            }
+            // Barred down the legs only, fading in through the junction.
+            Pattern::Ticked => step(0.55, 0.85, self.stripes(6.0, TABBY)) * 0.6 * self.limb(),
             // A swirl round each flank's middle, giving way to a tabby's
             // stripes away from it: over the shoulders, down the legs and
             // the tail.
@@ -402,11 +469,11 @@ impl Painter<'_> {
                 let stripes = step(0.25, 0.55, self.stripes(7.0, TABBY));
                 stripes + (step(0.2, 0.5, swirl) - stripes) * flank
             }
-            Pattern::Spotted => step(0.36, 0.26, fields.cells(at, 9.0).0),
+            Pattern::Spotted => step(0.36, 0.26, self.cells(9.0)),
             // A ring round a centre a shade darker than the ground, wavering
             // and broken into three or four marks, as a leopard's is.
             Pattern::Rosettes => {
-                let near = fields.cells(at, 6.5).0 + 0.07 * fields.warp(at, 16.0);
+                let near = self.cells(6.5) + 0.07 * fields.warp(at, 16.0);
                 let ring = step(0.20, 0.29, near) * step(0.47, 0.38, near);
                 let broken = step(-0.45, -0.05, fields.patches(at, 26.0));
                 (ring * broken).max(0.3 * step(0.27, 0.17, near))
@@ -417,18 +484,38 @@ impl Painter<'_> {
 
     /// Bands round the body at `count` per spine length, rings round the
     /// legs and the tail, every one wavering by `waver`: `-1..=1`.
+    ///
+    /// A band turns into a ring down the top of a leg, as a tiger's stripes
+    /// curve round into its legs' (#376): the phase is blended there rather
+    /// than chosen by zone, and each leg's rings are counted from the band
+    /// that crosses its junction, so the two meet stripe for stripe. Counted
+    /// from anywhere else they would differ by a dozen stripes there, and the
+    /// blend would crowd those dozen into the turn. The bands that cross a
+    /// thick thigh's front and back still have to close into rings, so the
+    /// turn runs [`TURN`] radii down the leg: over the crease alone it pressed
+    /// them into a whorl of fine stripes at the stifle.
     fn stripes(&self, count: f32, waver: Waver) -> f32 {
-        let (at, zone) = (self.texel.position, self.texel.zone);
-        let body = self.body;
-        let phase = if leg(zone) {
-            body.rise(at) * count * 1.6
-        } else if zone == Zone::Tail {
-            body.tail_tip_distance(at) * count * 2.0
-        } else {
-            body.along_spine(at) * count
-        };
+        let at = self.texel.position;
         let wavering = waver.share * self.fields.warp(at, waver.frequency);
-        (std::f32::consts::TAU * (phase + wavering)).sin()
+        (std::f32::consts::TAU * (self.stripe_phase(count) + wavering)).det_sin()
+    }
+
+    /// How many stripes along [`Self::stripes`] counts to this texel,
+    /// before the wavering.
+    fn stripe_phase(&self, count: f32) -> f32 {
+        let (at, body) = (self.texel.position, self.body);
+        if self.texel.zone == Zone::Tail {
+            return body.tail_tip_distance(at) * count * 2.0;
+        }
+        let (band, turn) = (body.along_spine(at) * count, self.turn());
+        match self.leg {
+            Some(leg) if turn > 0.0 => {
+                let ring = (body.rise(at) - body.rise(leg.junction)) * count * LEG_FINER
+                    + body.along_spine(leg.junction) * count;
+                band + (ring - band) * turn
+            }
+            _ => band,
+        }
     }
 
     /// A blotched tabby's bullseye, ringed round the middle of each flank,
@@ -447,7 +534,7 @@ impl Painter<'_> {
     /// it, the grey between them reading as a darker net.
     fn dapple(&self, colour: Vec3) -> Vec3 {
         let at = self.texel.position;
-        let near = self.fields.cells(at, 6.0).0 + 0.06 * self.fields.warp(at, 20.0);
+        let near = self.cells(6.0) + 0.06 * self.fields.warp(at, 20.0);
         let grey = colour.lerp(Vec3::new(0.42, 0.42, 0.44), 0.6);
         grey.lerp(grey.lerp(WHITE, 0.45), step(0.6, 0.34, near))
     }
@@ -457,20 +544,19 @@ impl Painter<'_> {
     fn pointed(&self, colour: Vec3) -> Vec3 {
         let (at, zone) = (self.texel.position, self.texel.zone);
         let pale = colour.lerp(WHITE.lerp(self.palette.light, 0.15), 0.78);
-        let point = if leg(zone) {
-            step(0.62, 0.30, self.body.rise(at))
-        } else if zone == Zone::Tail {
+        let point = if zone == Zone::Tail {
             step(0.0, 0.35, self.body.along_tail(at))
         } else {
             // A mask round the nose that takes the eyes in, and the ears.
-            self.head_local().map_or(0.0, |local| {
+            let face = self.head_local().map_or(0.0, |local| {
                 let nose = self
                     .body
                     .head
                     .as_ref()
                     .map_or(Vec3::Z, |head| head.nose_centre() / head.radius);
                 step(1.1, 0.6, local.distance(nose)).max(step(0.85, 1.05, local.y))
-            })
+            });
+            face.max(step(0.62, 0.30, self.body.rise(at)) * self.limb())
         };
         pale.lerp(colour, point)
     }
@@ -513,14 +599,12 @@ impl Painter<'_> {
     }
 
     /// Where a roan's white hairs grow, `0..=1`: through the body and the
-    /// neck, thinning down the upper legs, along the tail and out before the
-    /// head, which a roan keeps solid.
+    /// neck, thinning down the legs, along the tail and out before the head,
+    /// which a roan keeps solid.
     fn roan(&self) -> f32 {
         let (at, zone) = (self.texel.position, self.texel.zone);
-        let body = if trunk(zone) || zone == Zone::Neck {
-            1.0
-        } else if matches!(zone, Zone::UpperLimb(_)) {
-            step(0.4, 0.65, self.body.rise(at))
+        let body = if trunk(zone) || zone == Zone::Neck || leg(zone) {
+            1.0 + (step(0.4, 0.65, self.body.rise(at)) - 1.0) * self.limb()
         } else if zone == Zone::Tail {
             step(0.45, 0.15, self.body.along_tail(at))
         } else {
@@ -534,12 +618,10 @@ impl Painter<'_> {
     /// their colour.
     fn dun_body(&self) -> f32 {
         let (at, zone) = (self.texel.position, self.texel.zone);
-        if leg(zone) {
-            step(0.25, 0.45, self.body.rise(at))
-        } else if zone == Zone::Tail {
+        if zone == Zone::Tail {
             step(0.6, 0.2, self.body.along_tail(at))
         } else {
-            1.0
+            1.0 + (step(0.25, 0.45, self.body.rise(at)) - 1.0) * self.limb()
         }
     }
 
@@ -547,16 +629,14 @@ impl Painter<'_> {
     /// from behind the head on along the tail, and bars across the lower
     /// legs.
     fn dun_marks(&self) -> f32 {
-        let (at, normal, zone) = (self.texel.position, self.texel.normal, self.texel.zone);
+        let (at, normal) = (self.texel.position, self.texel.normal);
         let rise = self.body.rise(at);
         let stripe = step(0.05, 0.03, at.x.abs() / self.body.height)
             * step(0.6, 0.85, topside(normal))
             * self.off_head();
-        let bars = if leg(zone) {
-            step(0.45, 0.35, rise) * step(0.3, 0.8, (std::f32::consts::TAU * rise * 9.0).sin())
-        } else {
-            0.0
-        };
+        let bars = step(0.45, 0.35, rise)
+            * step(0.3, 0.8, (std::f32::consts::TAU * rise * 9.0).det_sin())
+            * self.limb();
         stripe.max(bars)
     }
 
@@ -575,15 +655,11 @@ impl Painter<'_> {
         let (at, normal, zone) = (self.texel.position, self.texel.normal, self.texel.zone);
         let fields = self.fields;
         let socks = |height: f32| {
-            if leg(zone) {
-                step(
-                    height + 0.03,
-                    height - 0.03,
-                    self.body.rise(at) + 0.02 * fields.warp(at, 8.0),
-                )
-            } else {
-                0.0
-            }
+            step(
+                height + 0.03,
+                height - 0.03,
+                self.body.rise(at) + 0.02 * fields.warp(at, 8.0),
+            ) * self.limb()
         };
         match self.coat.white {
             White::None => 0.0,
@@ -593,8 +669,7 @@ impl Painter<'_> {
                 .max(self.bib(normal, zone))
                 .max(step(0.14, 0.10, self.body.tail_tip_distance(at))),
             White::Piebald => {
-                let lean = 0.55 * underside(normal) - 0.25 * topside(normal)
-                    + if leg(zone) { 0.3 } else { 0.0 }
+                let lean = 0.55 * underside(normal) - 0.25 * topside(normal) + 0.3 * self.limb()
                     - if zone == Zone::Head { 0.4 } else { 0.0 };
                 step(0.05, 0.25, fields.patches(at, 2.2) + lean)
             }
@@ -634,9 +709,9 @@ impl Painter<'_> {
 
     /// A white bib: down the middle of the chin, the throat, the chest and
     /// the belly - on the head only what faces the ground, where the chest's
-    /// front counts too.
+    /// front counts too - and not down the legs.
     fn bib(&self, normal: Vec3, zone: Zone) -> f32 {
-        if leg(zone) || zone == Zone::Tail {
+        if zone == Zone::Tail {
             return 0.0;
         }
         let width = 0.12 * (1.0 + 0.4 * self.fields.warp(self.texel.position, 4.0));
@@ -650,16 +725,46 @@ impl Painter<'_> {
         } else {
             underside(normal).max(normal.z * 0.8)
         };
-        middle * step(0.3, 0.6, facing)
+        middle * step(0.3, 0.6, facing) * (1.0 - self.limb())
     }
 
     /// The fur's grain at this texel: noise stretched along the bone it
     /// grows on, which the normal map turns into strands catching the light.
+    ///
+    /// Through the junction the barrel's grain and the leg's are blended
+    /// rather than switched where a leg's bone becomes the nearer (#376):
+    /// switched, the strands turned on a line round the top of the leg. The
+    /// blend is scaled to keep the grain's strength, which two independent
+    /// halves would otherwise lose in the band's middle.
     fn grain(&self, rig: &Rig) -> f32 {
-        let at = self.texel.position;
-        let hit = rig.nearest_bone(at);
+        let share = self.limb();
+        let leg_axis = self
+            .leg
+            .filter(|_| share > 0.0)
+            .and_then(|leg| self.body.junctions.leg_axis(leg.limb, self.texel.position));
+        let Some(leg_axis) = leg_axis else {
+            return self.grain_along(self.trunk_bone(rig));
+        };
+        if share >= 1.0 {
+            return self.grain_along(leg_axis);
+        }
+        let (barrel, leg) = (
+            self.grain_along(self.trunk_bone(rig)),
+            self.grain_along(leg_axis),
+        );
+        (barrel + (leg - barrel) * share) / ((1.0 - share).powi(2) + share.powi(2)).sqrt()
+    }
+
+    /// The run of the bone nearest this texel that is not a leg's.
+    fn trunk_bone(&self, rig: &Rig) -> Vec3 {
+        let hit = rig.nearest_bone_where(self.texel.position, |joint| !leg(rig.joints[joint].zone));
         let (from, to) = rig.bone(hit.joint);
-        let along = (to - from).normalize_or(Vec3::Y);
+        (to - from).normalize_or(Vec3::Y)
+    }
+
+    /// The grain's noise stretched along `along`.
+    fn grain_along(&self, along: Vec3) -> f32 {
+        let at = self.texel.position;
         let across = along.any_orthonormal_vector();
         let other = along.cross(across);
         let height = self.body.height;
@@ -740,15 +845,341 @@ mod tests {
     /// A beast of `family`'s body as the painter reads it: its rig's spine
     /// and tail, and the head and feet its plan declares.
     fn coat_body(family: Family) -> CoatBody {
+        rigged(family).1
+    }
+
+    /// A beast of `family`'s rig, and its body as the painter reads it.
+    fn rigged(family: Family) -> (Rig, CoatBody) {
         let mut params = QuadrupedParams::default();
         params.set_kind(family, None, 0.0);
         let skeleton = Archetype::Quadruped(params).skeleton(&crate::plan::Composites::default());
         let rig = Rig::from_skeleton(&skeleton).expect("the beast rigs");
-        CoatBody::of(
+        let body = CoatBody::of(
             &rig,
             skeleton.beast_head.as_ref(),
             skeleton.beast_feet.as_ref(),
-        )
+        );
+        (rig, body)
+    }
+
+    /// Every vertex of a built beast of `family` with its normal, and the
+    /// body the painter reads.
+    fn surface(family: Family) -> (Vec<(Vec3, Vec3)>, Rig, CoatBody) {
+        let (avatar, _) = painted(family, |_| ());
+        let body = &avatar.parts.body;
+        let points = body
+            .positions
+            .iter()
+            .copied()
+            .zip(body.vertex_normals())
+            .collect();
+        let (rig, coat_body) = rigged(family);
+        (points, rig, coat_body)
+    }
+
+    /// The coats the junction is judged on: every pattern, every white,
+    /// a colourpoint, the agouti states that mark the legs, and the loci
+    /// that thin down them.
+    fn junction_coats() -> Vec<Coat> {
+        let mut coats = Vec::new();
+        for (index, &pattern) in Pattern::ALL.iter().enumerate() {
+            coats.push(Coat {
+                pattern,
+                points: index % 2 == 1,
+                white: White::ALL[index % White::ALL.len()],
+                marks: 1 + index as u16 * 977,
+                ..Coat::default()
+            });
+        }
+        for agouti in [Agouti::TanPoints, Agouti::Bay] {
+            coats.push(Coat {
+                agouti,
+                roan: agouti == Agouti::Bay,
+                dun: agouti == Agouti::TanPoints,
+                ..Coat::default()
+            });
+        }
+        coats
+    }
+
+    #[test]
+    fn a_leg_s_coat_does_not_ask_the_zone() {
+        // The zone map's line round the top of a leg is where the skin
+        // weights cross, which is nowhere a coat changes: asked there, a
+        // stripe turned from a band to a ring on it and a point, a roan's
+        // thinning, a bib, a piebald's lean were cut along it (#376); and on a
+        // cat the chest's zone runs down the forearm, where a sock or a
+        // bay's black asked of it stopped short. Through the band where a leg
+        // leaves the trunk and all the way down the leg, a point is the same
+        // colour whichever zone the map gave it.
+        for family in Family::ALL {
+            let (points, _, body) = surface(family);
+            let band: Vec<_> = points
+                .iter()
+                .filter_map(|&(at, normal)| {
+                    let leg = body.junctions.leg(at)?;
+                    Some((at, normal, leg.limb))
+                })
+                .collect();
+            assert!(
+                band.len() > 20,
+                "{family:?}: only {} points on a leg",
+                band.len()
+            );
+            for coat in junction_coats() {
+                for &(at, normal, limb) in &band {
+                    let colour = |zone| paint(&body, &coat, (at, normal, zone), |p| p.fur());
+                    let upper = colour(Zone::UpperLimb(limb));
+                    for zone in [
+                        Zone::Chest,
+                        Zone::Abdomen,
+                        Zone::Pelvis,
+                        Zone::LowerLimb(limb),
+                    ] {
+                        assert_eq!(
+                            colour(zone),
+                            upper,
+                            "{family:?} {:?}: {zone:?} and the upper leg differ at {at}",
+                            coat.pattern
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_band_closes_into_rings_without_crowding() {
+        // Turned over the crease alone, the bands crossing a thigh's front
+        // and back closed into rings in a whorl of fine stripes at the
+        // stifle; and counted from the ground rather than from the band at
+        // the junction, the rings met the bands a dozen stripes out, which
+        // the turn then crowded together (#376). Down the whole turn the
+        // stripes along the skin lie under twice as close as the leg's own
+        // rings: 1.4 to 1.7 at the slice, 4.1 and 2.6 with either undone.
+        const COUNT: f32 = 17.0;
+        for family in Family::ALL {
+            let (points, _, body) = surface(family);
+            let coat = Coat::default();
+            let phase = |at: Vec3| {
+                paint(
+                    &body,
+                    &coat,
+                    (at, Vec3::Y, Zone::UpperLimb(crate::plan::Limb::ForeLeft)),
+                    |p| p.stripe_phase(COUNT),
+                )
+            };
+            let ring = COUNT * LEG_FINER / body.height;
+            let mut worst: f32 = 0.0;
+            for &(at, normal) in &points {
+                let turn = paint(&body, &coat, (at, normal, Zone::Chest), |p| p.turn());
+                if turn <= 0.0 || turn >= 1.0 {
+                    continue;
+                }
+                // Along the skin: the gradient less its part through it.
+                let step = 1.0e-3 * body.height;
+                let gradient = Vec3::new(
+                    phase(at + Vec3::X * step) - phase(at - Vec3::X * step),
+                    phase(at + Vec3::Y * step) - phase(at - Vec3::Y * step),
+                    phase(at + Vec3::Z * step) - phase(at - Vec3::Z * step),
+                ) / (2.0 * step);
+                let along = gradient - normal * gradient.dot(normal);
+                worst = worst.max(along.length() / ring);
+            }
+            assert!(worst > 0.0, "{family:?}: no turn was measured");
+            assert!(
+                worst < 2.0,
+                "{family:?}: stripes crowd to {worst:.2}x the rings' density in the turn"
+            );
+        }
+    }
+
+    #[test]
+    fn a_spot_down_a_leg_is_cut_finer_than_one_on_the_barrel() {
+        // A barrel's cell wrapped a thin leg whole, so a spot or a dapple ran
+        // round it as a band; an animal's spots shrink toward its feet.
+        let (points, _, body) = surface(Family::Dog);
+        let coat = Coat::default();
+        let fields = Fields::new(coat.marks, body.height);
+        let mut down = 0;
+        for &(at, normal) in &points {
+            let (turn, cells) = paint(&body, &coat, (at, normal, Zone::Chest), |p| {
+                (p.turn(), p.cells(9.0))
+            });
+            if turn >= 1.0 {
+                down += 1;
+                assert_eq!(cells, fields.cells(at, 9.0 * LEG_FINER).0, "at {at}");
+            } else if turn <= 0.0 {
+                assert_eq!(cells, fields.cells(at, 9.0).0, "at {at}");
+            }
+        }
+        assert!(down > 100, "only {down} points down the legs");
+    }
+
+    /// A body's vertices, each with its normal and its zone.
+    type Zoned = Vec<(Vec3, Vec3, Zone)>;
+
+    /// Two dozen rolled beasts, every family and their hybrids: each
+    /// vertex with its normal and the zone the skin map gives it, and the
+    /// body the painter reads.
+    fn rolled() -> Vec<(i64, Zoned, CoatBody)> {
+        // Only the mesh and its zones are read.
+        let config = crate::AvatarConfig {
+            atlas: 64,
+            ..crate::AvatarConfig::default()
+        };
+        (0..24)
+            .map(|seed| {
+                let mut record =
+                    AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
+                record.reroll(seed);
+                let skeleton = record.skeleton();
+                let avatar = Avatar::build_with(&record, &config).expect("the beast builds");
+                let body = &avatar.parts.body;
+                let points = body
+                    .positions
+                    .iter()
+                    .zip(body.vertex_normals())
+                    .zip(&avatar.parts.zones)
+                    .map(|((&at, normal), &zone)| (at, normal, zone))
+                    .collect();
+                let coat_body = CoatBody::of(
+                    &avatar.rig,
+                    skeleton.beast_head.as_ref(),
+                    skeleton.beast_feet.as_ref(),
+                );
+                (seed, points, coat_body)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_point_and_a_bay_s_black_lie_down_the_legs_and_nowhere_else_as_low() {
+        // A colourpoint's dark legs and a bay's black ones are measured by
+        // height, which every low part of the body shares: without the leg's
+        // share against them, the points' dark ran over everything below
+        // their line and the bay's black over everything below its own -
+        // a low belly, a cat's chin, a hanging tail (#376). Asked as the
+        // barrel wherever on the body, so that the head's and the tail's own
+        // points stand aside, neither is ever darker than a texel is leg, and
+        // low on a leg both are all dark.
+        let (pointed, bay) = (
+            Coat {
+                points: true,
+                ..Coat::default()
+            },
+            Coat {
+                agouti: Agouti::Bay,
+                ..Coat::default()
+            },
+        );
+        let (mut under_points, mut under_bay) = (0, 0);
+        for (seed, points, body) in rolled() {
+            // As pale as a point gets: the top of the back's.
+            let pale = paint(&body, &pointed, (body.withers, Vec3::Y, Zone::Chest), |p| {
+                p.pointed(Vec3::ZERO)
+            });
+            let mut dark_legs = 0;
+            for &(at, normal, _) in &points {
+                let texel = (at, normal, Zone::Chest);
+                let (share, rise) = (body.junctions.share(at), body.rise(at));
+                let point =
+                    1.0 - paint(&body, &pointed, texel, |p| p.pointed(Vec3::ZERO)).x / pale.x;
+                let black = paint(&body, &bay, texel, |p| p.bay());
+                assert!(
+                    point <= share + 1.0e-5,
+                    "seed {seed}: a point {point:.2} dark on {share:.2} leg at {at}"
+                );
+                assert!(
+                    black <= share,
+                    "seed {seed}: a bay {black:.2} black on {share:.2} leg at {at}"
+                );
+                // Where height alone would have darkened it.
+                under_points += usize::from(step(0.62, 0.30, rise) > share + 0.02);
+                under_bay += usize::from(step(0.50, 0.38, rise) > share + 0.02);
+                if share == 1.0 && rise < 0.3 {
+                    assert!(point > 1.0 - 1.0e-5, "seed {seed}: a pale leg at {at}");
+                    assert_eq!(black, 1.0, "seed {seed}: a bay's leg not black at {at}");
+                    dark_legs += 1;
+                }
+            }
+            assert!(dark_legs > 100, "seed {seed}: {dark_legs} down the legs");
+        }
+        assert!(
+            under_points > 50 && under_bay > 50,
+            "only {under_points} and {under_bay} points lie under the lines"
+        );
+    }
+
+    #[test]
+    fn a_bib_runs_down_the_chest_and_not_down_the_legs() {
+        // A bib is measured from the midline, and a narrow chest's forelegs
+        // stand inside its width, and a short-legged beast's hind legs too:
+        // without the leg's share against it, a bib ran on down the inside of
+        // the legs (#376).
+        let coat = Coat::default();
+        let mut inside = 0;
+        for (seed, points, body) in rolled() {
+            let mut chest = 0;
+            for &(at, normal, zone) in &points {
+                let bib = paint(&body, &coat, (at, normal, zone), |p| p.bib(normal, zone));
+                let share = body.junctions.share(at);
+                assert!(
+                    bib <= 1.0 - share,
+                    "seed {seed}: a bib {bib:.2} on {share:.2} leg at {at}"
+                );
+                chest += usize::from(trunk(zone) && bib > 0.5);
+                // Where the midline alone would have whitened it.
+                inside += usize::from(share == 1.0 && at.x.abs() < 0.12 * body.height);
+            }
+            assert!(chest > 20, "seed {seed}: only {chest} under the bib");
+        }
+        assert!(inside > 50, "only {inside} of the legs lie inside a bib");
+    }
+
+    #[test]
+    fn the_fur_s_grain_runs_unbroken_from_the_barrel_onto_a_leg() {
+        // Switched where a leg's bone became the nearer, the strands turned
+        // on a line round the top of every leg (#376).
+        for family in Family::ALL {
+            let (rig, body) = rigged(family);
+            let coat = Coat::default();
+            for limb in crate::plan::Limb::ALL {
+                let junction = rig.joints[rig
+                    .in_zone(Zone::UpperLimb(limb))
+                    .into_iter()
+                    .find(|&joint| !rig.joints[joint].marker)
+                    .expect("a joint outside the trunk")]
+                .position;
+                // From straight above the junction where the trunk is all
+                // trunk, to as far below it.
+                let reach = (1..20)
+                    .map(|step| step as f32 * 0.05 * body.height)
+                    .find(|&reach| body.junctions.share(junction + Vec3::Y * reach) == 0.0)
+                    .expect("the trunk above a junction");
+                let (from, to) = (junction + Vec3::Y * reach, junction - Vec3::Y * reach);
+                let samples = 4000;
+                let grain = |at: Vec3| {
+                    paint(&body, &coat, (at, Vec3::X, Zone::UpperLimb(limb)), |p| {
+                        (p.grain(&rig), p.limb())
+                    })
+                };
+                let (mut last, start) = grain(from);
+                assert_eq!(start, 0.0, "{family:?} {limb:?}: the path starts on a leg");
+                let mut worst: f32 = 0.0;
+                let mut end = 0.0;
+                for sample in 1..=samples {
+                    let (here, share) = grain(from.lerp(to, sample as f32 / samples as f32));
+                    worst = worst.max((here - last).abs());
+                    (last, end) = (here, share);
+                }
+                assert_eq!(end, 1.0, "{family:?} {limb:?}: the path ends off the leg");
+                assert!(
+                    worst < 0.08,
+                    "{family:?} {limb:?}: the grain jumps {worst:.3}"
+                );
+            }
+        }
     }
 
     /// What `ask` makes of `coat` on `body`, at a texel at `position`
@@ -767,13 +1198,7 @@ mod tests {
             mouth: 0.0,
             zone,
         };
-        ask(&Painter {
-            texel: &texel,
-            coat,
-            palette: &palette,
-            fields: &fields,
-            body,
-        })
+        ask(&Painter::new(&texel, coat, &palette, &fields, body))
     }
 
     #[test]

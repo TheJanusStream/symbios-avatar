@@ -13,7 +13,7 @@
 //! cargo run --release --example quadprobe -- --mass 1 --fat 0.45  # the same, heavier and fatter
 //! cargo run --release --example quadprobe -- --seed 1     # one rolled record
 //! cargo run --release --example quadprobe -- --seed 1 --girdle  # and its girdles' nodes, for a socket failure
-//! cargo run --release --example quadprobe -- --sweep 3000 # how many of 3,000 rolls mesh, and why not
+//! cargo run --release --example quadprobe -- --sweep 3000 # how many of 3,000 rolls mesh, why not, and in how many pieces
 //! ```
 //!
 //! What it measures, and where:
@@ -59,18 +59,24 @@ fn main() {
     let mass = value("--mass").and_then(|v| v.parse::<f32>().ok());
     let fat = value("--fat").and_then(|v| v.parse::<f32>().ok());
     // `--sweep N`: how many of N rolled beasts the cage meshes, and why the
-    // rest do not.
+    // rest do not; and how many mesh into more than one piece.
     if let Some(count) = value("--sweep").and_then(|v| v.parse::<i64>().ok()) {
-        let mut failed = 0;
+        let (mut failed, mut split) = (0, 0);
         for seed in 0..count {
             let record = AvatarRecord::rolled(
                 "Probe",
                 Archetype::Quadruped(QuadrupedParams::default()),
                 seed,
             );
-            if let Err(error) =
-                symbios_avatar::build_cage(&record.skeleton(), &CageConfig::default())
-            {
+            let cage = symbios_avatar::build_cage(&record.skeleton(), &CageConfig::default());
+            if let Ok(cage) = &cage {
+                let pieces = pieces(cage);
+                if pieces > 1 {
+                    split += 1;
+                    println!("seed {seed}: {pieces} separate pieces");
+                }
+            }
+            if let Err(error) = cage {
                 failed += 1;
                 if let Archetype::Quadruped(params) = &record.archetype {
                     println!(
@@ -85,6 +91,7 @@ fn main() {
             }
         }
         println!("{failed} of {count} rolls do not mesh");
+        println!("{split} of {count} rolls mesh into more than one piece");
         return;
     }
     if let Some(seed) = value("--seed").and_then(|v| v.parse::<i64>().ok()) {
@@ -574,6 +581,37 @@ fn cross_line(tri: [Vec3; 3], y: f32, x: f32) -> Option<f32> {
         return None;
     }
     Some(a.z + (b.z - a.z) * u + (c.z - a.z) * v)
+}
+
+/// How many separate pieces a mesh is: its faces' connected components.
+///
+/// The cage's count is the built body's, because subdivision and the shaping
+/// after it add and move vertices but join and part nothing. A stray piece of
+/// the body would be a second one (#379), which none has turned out to be.
+fn pieces(mesh: &PolyMesh) -> usize {
+    let mut parent: Vec<usize> = (0..mesh.positions.len()).collect();
+    fn root(parent: &mut [usize], mut at: usize) -> usize {
+        while parent[at] != at {
+            parent[at] = parent[parent[at]];
+            at = parent[at];
+        }
+        at
+    }
+    for face in &mesh.faces {
+        let first = root(&mut parent, face[0] as usize);
+        for &corner in &face[1..] {
+            let other = root(&mut parent, corner as usize);
+            parent[other] = first;
+        }
+    }
+    let mut roots: Vec<usize> = mesh
+        .faces
+        .iter()
+        .map(|face| root(&mut parent, face[0] as usize))
+        .collect();
+    roots.sort_unstable();
+    roots.dedup();
+    roots.len()
 }
 
 /// Prints the front girdle's neighbourhood: the debug view of a socket

@@ -289,10 +289,63 @@ anatomy is held back wherever two sockets would not fit.
   measures along the spine (the coat, the wearable sockets, the instruments):
   the chest's first joint is now the middle of the ribcage.
 
+### Where a leg leaves the trunk (R3, #376)
+
+The visible junction is the elbow and the stifle, the first joint of each leg
+outside the trunk. The zone map draws its line between trunk and leg where the
+skin weights cross, which is nowhere an animal's coat changes; the renders
+showed four things changing on it: the stripes' frame (bands round the barrel,
+rings round the leg, meeting on a hard line), every mark gated on a leg's zone
+(points, socks, a bay's black, a roan's and a dun's thinning, a bib, a
+piebald's lean, a ruff's cards), the charts (the leg's zone ran up over the
+shoulder and the flank, wrapped round a bone inside the trunk: its thinnest
+tenth at a third to a half of the barrel's texel density, its texels stretched
+two to three to one, the streaked crescent over the elbow), and the fur's
+grain switching to the leg's bone on a line.
+
+- **The junction is a share, not a zone** (`rig::junction`): a point's
+  distance from a leg's bones over its distance from the spine, each in its
+  own section (half-extents across and deep), runs from the barrel (all
+  trunk) through the crease to the leg (all leg). The leg is the nearest one:
+  by share, a paw far below the trunk was as much the other leg of its
+  pair's. A section and not a radius, because a horse's thigh is half again
+  as deep at the stifle as it is across: measured in its depth all round, the
+  stifle reached in past the midline into the groin. And the spine runs on
+  past the croup: measured from its last joint there, a tail was many of the
+  spine's radii out and only a few of a hind leg's, and came out part leg,
+  wearing a piebald's lean, a ticked coat's bars and the leg's grain. No
+  tail and no back is any leg's now, over two dozen rolls and the shortest
+  legs of a dog and a horse.
+- **The charts follow it** (`uv`): skin the zone map gave a leg but more trunk
+  than leg is charted with the trunk and wraps round the spine; the leg's
+  chart is the skin below its junction, wrapped round the bone leaving the
+  elbow or the stifle. Only below it: the fold over a horse's stifle is as
+  much leg as trunk, but wrapped round the bone below it stretched a tenth of
+  the hind leg's texels up to twelve to one, so it stays with the trunk. Over
+  sixty rolls, fore and hind apart, the thinnest tenth of an upper leg's
+  chart is 0.69 to 0.93 of the barrel's density on the forelegs and 0.67 to
+  0.91 on the hind (before the slice 0.25 to 0.50 and 0.25 to 0.70), its
+  median stretch 1.2 to 1.5 to one and 1.1 to 1.4, and its worst tenth
+  stretched at most 3.0 and 3.6 to one (before, up to 22 and 32). Every roll
+  is better on both legs than before. The barrel pays for the skin it takes
+  over: its worst tenth stretched 3.13 to one on average over the sixty
+  against 3.06, at most 4.3 against 5.5.
+- **The coat blends through it** (`texture::coat`): every mark that differs
+  between barrel and leg asks the share, so below the band a leg is painted
+  as its zone used to paint it and nothing is cut on the zone line. A band
+  turns into a ring down the top of the leg as a tiger's do, counted from the
+  band that crosses the junction, the turn taking 1.5 of the junction's radii
+  so the bands crossing a thick thigh close into rings no tighter than the
+  leg's own. Spots, rosettes and dapples are cut 1.6 times finer down a leg,
+  blended over the same turn. The grain blends the barrel's and the leg's.
+- **Persons are untouched**: a person's limbs carry no marker inside the
+  trunk, so it has no junction.
+- **Not the coat's**: the fold the leg's tube makes against the barrel at the
+  elbow still shades as a crease (geometry), and a chest's front still wears
+  its bands broad, where the spine's frame lies square to the surface.
+
 ## Left for later slices
 
-- **R3 (#376)**: the coat's frame turns at the top of each leg (the stripes
-  change direction where the leg leaves the body).
 - **R4 (#377)**: Sit and Lie Down posed from the anatomy and the ground (09).
 - **R5 (#378)**: the scapula driven parallel to the forearm, duty factors, the
   stance sweep, the carpus's fold, the spine's wave, the head's nod (08).

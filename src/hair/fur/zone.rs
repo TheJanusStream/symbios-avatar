@@ -136,12 +136,14 @@ impl FurZone {
                     * step(0.35, 0.15, local.z)
             }
             // All round the neck, and over the chest's front where the neck
-            // meets it.
+            // meets it, thinning out down the top of each foreleg rather than
+            // stopping on the line the skin's zones draw round it (#376).
             Self::Ruff => match zone {
                 Zone::Neck => 1.0,
-                Zone::Chest => {
+                Zone::Chest | Zone::UpperLimb(_) => {
                     step(0.78, 0.95, anatomy.along_spine(at))
                         * step(0.0, 0.4, normal.dot(bed.forward()))
+                        * (1.0 - anatomy.junctions.share(at))
                 }
                 // And up behind the jaw onto the cheeks and the throat, where a
                 // ruff frames a face: a big head hides a ruff on the neck alone

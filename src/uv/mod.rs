@@ -24,6 +24,13 @@
 //!   surface area times an importance weight, so detail lands where it is looked
 //!   at rather than spread evenly over a body that is mostly forearm.
 //!
+//! A beast's legs are the exception to following the zones (#376). Its upper
+//! arm and thigh lie inside its trunk, so the skin its zone map gives a leg
+//! runs up over the shoulder and the flank: that skin is charted with the
+//! trunk it is part of, and a leg's chart starts at the elbow or the stifle,
+//! wrapped round the bone leaving it, so the coat is as fine where the leg
+//! leaves the body as on either side.
+//!
 //! Unwrapping duplicates vertices — at chart boundaries, and along each chart's
 //! seam — so the result carries its own vertex list with a [`UvUnwrap::source`]
 //! index back into the mesh it came from.
@@ -35,6 +42,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use crate::mesh::PolyMesh;
 use crate::plan::Zone;
+use crate::rig::junction::Junctions;
 use crate::rig::{Rig, landmark};
 
 pub use pack::Rect;
@@ -217,10 +225,18 @@ pub fn unwrap_with(
         return (UvUnwrap::default(), Vec::new());
     }
 
+    let junctions = Junctions::of(rig);
     let face_zones: Vec<Zone> = mesh
         .faces
         .iter()
-        .map(|face| dominant_zone(face, zones))
+        .enumerate()
+        .map(|(index, face)| {
+            junction_zone(
+                &junctions,
+                dominant_zone(face, zones),
+                mesh.face_centroid(index),
+            )
+        })
         .collect();
     let groups = connected_groups(mesh, rig, &face_zones);
 
@@ -296,6 +312,38 @@ fn dominant_zone(face: &[u32], zones: &[Zone]) -> Zone {
         .max_by_key(|&(zone, count)| (count, std::cmp::Reverse(zone)))
         .map(|(zone, _)| zone)
         .unwrap_or_default()
+}
+
+/// The zone a face near a beast's leg is charted with (#376): the leg's if
+/// the face is more leg than trunk and below the junction, the trunk's
+/// otherwise.
+///
+/// A beast's upper arm and thigh lie inside its trunk, so the skin the zone
+/// map gives a leg runs up over the shoulder and the flank, and wrapped round
+/// a bone inside the trunk that skin - a wall beside the bone, not a tube
+/// round it - came out at a third to a half of the barrel's texel density and
+/// stretched two to three to one, which painted as streaked fur and smeared
+/// marks in a crescent over the elbow. Charted with the trunk it wraps round
+/// the spine like the barrel it is; and the skin of a leg the zone map gave
+/// the trunk joins the leg's chart the same way.
+///
+/// Only below the junction, though. The fold over a horse's stifle, where
+/// the thigh's front meets the flank and the belly, is as much leg as trunk
+/// by share, but it lies above the bone the leg's chart wraps round: wrapped
+/// round it, a tenth of a horse's hind leg stretched up to twelve to one.
+/// A face that is neither a trunk's nor an upper leg's keeps its zone, and
+/// so does every face of a body without a junction.
+fn junction_zone(junctions: &Junctions, zone: Zone, centroid: Vec3) -> Zone {
+    if !matches!(
+        zone,
+        Zone::Pelvis | Zone::Abdomen | Zone::Chest | Zone::UpperLimb(_)
+    ) {
+        return zone;
+    }
+    match junctions.leg(centroid) {
+        Some(leg) if leg.share >= 0.5 && leg.depth >= 0.0 => Zone::UpperLimb(leg.limb),
+        _ => junctions.girdle(zone).unwrap_or(zone),
+    }
 }
 
 /// How a chart is flattened.
@@ -755,9 +803,25 @@ fn warp(at: f32, knots: &[f32]) -> f32 {
 /// bones — a chest carries two clavicles whose directions would cancel the spine
 /// out — and it is also what a rigger would pick.
 fn zone_axis(rig: &Rig, zone: Zone) -> Vec3 {
-    let Some(&first) = rig.in_zone(zone).first() else {
+    let joints = rig.in_zone(zone);
+    let Some(&first) = joints.first() else {
         return landmark::UP;
     };
+    // A beast's upper leg starts inside its trunk (#376): its first bones are
+    // markers, and its chart is the skin below its first joint outside - the
+    // elbow, the stifle - wrapped round the bone leaving that joint.
+    if rig.joints[first].marker
+        && let Some(&outside) = joints.iter().find(|&&joint| !rig.joints[joint].marker)
+        && let Some(below) = rig
+            .joints
+            .iter()
+            .find(|joint| joint.parent == Some(outside))
+    {
+        let leaving = below.position - rig.joints[outside].position;
+        if leaving.length_squared() > 1e-12 {
+            return leaving.normalize();
+        }
+    }
     let (start, end) = rig.bone(first);
     let entering = end - start;
     if entering.length_squared() > 1e-12 {
