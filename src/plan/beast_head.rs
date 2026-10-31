@@ -175,6 +175,43 @@ pub(crate) struct EarSeat {
     pub(crate) fold: f32,
 }
 
+/// The neck's upper run as the head it carries sizes it (#388): a tube of
+/// elliptical sections, in the head's frame, from a little way down the neck
+/// to inside the skull.
+///
+/// **Sized off the head, not off the family.** The cage's neck has one ring,
+/// whose radius the chest's depth and the family set, and subdivided it leaves
+/// a neck half the depth of the head it runs into: the crease the head's
+/// surface then wraps round. So the sections are measured off the finished
+/// head (`plan::derive::quadruped`), and the surface of both the neck and the
+/// head is shaped onto them by `face::beast`, so the two cannot disagree where
+/// they meet. **Not part of [`BeastHead::distance`]**: that is the head, which
+/// a coat's marks and the jaw ask about, and a neck is not one.
+///
+/// A point is read as `(u, v, x)`: how far along the chord from [`Self::base`]
+/// to [`Self::end`] as a share of it, how far toward the crest from the chord,
+/// and how far across.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Nape {
+    /// Where the run starts, on the neck's line. Below it the neck is the
+    /// cage's.
+    pub(crate) base: Vec3,
+    /// Where the run ends, inside the skull.
+    pub(crate) end: Vec3,
+    /// How far along the chord the neck joint stands, where the sections take
+    /// their full size.
+    pub(crate) knee: f32,
+    /// How far the neck joint stands off the chord toward the crest: the
+    /// neck's bend, which the centre line follows as a parabola.
+    pub(crate) bow: f32,
+    /// A section's half-extents `(across, deep)` at the neck joint: the throat.
+    pub(crate) throat: Vec2,
+    /// And where the run ends, inside the skull.
+    pub(crate) seat: Vec2,
+    /// How softly the run joins the head: a smooth union's radius, in metres.
+    pub(crate) blend: f32,
+}
+
 /// How softly each part joins the head: a smooth union's radius, in metres.
 /// Small is a crease and large a slope - the stop, above all.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -211,6 +248,10 @@ pub struct BeastHead {
     pub(crate) cranium: Blob,
     /// The back of the skull, where the neck comes in.
     pub(crate) occiput: Blob,
+    /// The poll: the top of the back of the skull, the corner a long head's
+    /// forehead turns down its nape at, between and behind the ears (#388).
+    /// Grown after every seat is cast, so a seat never reads it.
+    pub(crate) poll: Option<Blob>,
     /// The muzzle.
     pub(crate) muzzle: Muzzle,
     /// The upper lip's lobes either side of the nose: a cat's whisker pads, a
@@ -230,6 +271,8 @@ pub struct BeastHead {
     pub(crate) tongue: Cone,
     /// The cheeks: a cat's broad face, a horse's jowl.
     pub(crate) cheeks: Blob,
+    /// The neck's upper run, if the head is carried on one.
+    pub(crate) nape: Option<Nape>,
     /// The nose.
     pub(crate) nose: NoseSeat,
     /// How softly the parts join.
@@ -280,6 +323,9 @@ impl BeastHead {
         let blends = &self.blends;
         let mut distance = self.cranium.distance(at);
         distance = smooth_union(distance, self.occiput.distance(at), blends.occiput);
+        if let Some(poll) = &self.poll {
+            distance = smooth_union(distance, poll.distance(at), blends.occiput);
+        }
         distance = smooth_union(distance, self.muzzle.distance(at), blends.muzzle);
         distance = smooth_union(distance, self.pads.distance(mirrored), blends.pads);
         distance = smooth_union(distance, self.cheeks.distance(mirrored), blends.cheeks);
@@ -290,6 +336,16 @@ impl BeastHead {
         // A nostril is a hollow: the head minus the nostril, eased at its
         // rim as a union is at its crease.
         -smooth_union(-distance, nose.nostril.distance(mirrored), nose.blend)
+    }
+
+    /// [`Self::distance`] with the neck's upper run joined on: the surface the
+    /// head's vertices are shaped onto, which the head proper is not all of.
+    #[must_use]
+    pub fn drawn_distance(&self, at: Vec3) -> f32 {
+        let head = self.distance(at);
+        self.nape.as_ref().map_or(head, |nape| {
+            smooth_union(head, nape.distance(at), nape.blend)
+        })
     }
 
     /// The middle of the nose, in the head's frame: the leather pad's
@@ -311,8 +367,9 @@ impl BeastHead {
             .is_some_and(|leather| leather.distance(at) < margin)
     }
 
-    /// Where the head's surface is, seen from its axis through `at` (in the
-    /// head's frame): the outermost crossing on the ray from the axis point
+    /// Where the drawn surface is - the head and the neck's upper run joined -
+    /// seen from its axis through `at` (in the head's frame): the outermost
+    /// crossing on the ray from the axis point
     /// nearest `at` through it.
     ///
     /// **The outermost, because that is the one that shows.** The march runs
@@ -327,7 +384,27 @@ impl BeastHead {
         let share =
             ((at - back).dot(along) / along.length_squared().max(f32::EPSILON)).clamp(0.0, 1.0);
         let anchor = back + along * share;
-        self.leave(anchor, (at - anchor).try_normalize()?)
+        march(
+            |at| self.drawn_distance(at),
+            anchor,
+            (at - anchor).try_normalize()?,
+            self.radius,
+        )
+    }
+
+    /// Where a point of the neck's upper run goes, in the head's frame: onto
+    /// the run's section, as much as it is along the run, or where it is when
+    /// the head declares no run.
+    #[must_use]
+    pub fn carried(&self, at: Vec3) -> Vec3 {
+        self.nape.as_ref().map_or(at, |nape| nape.carried(at))
+    }
+
+    /// How far along the neck's upper run a point is, for choosing the faces
+    /// worth refining: negative below it. `None` when the head declares no run.
+    #[must_use]
+    pub(crate) fn along_nape(&self, at: Vec3) -> Option<f32> {
+        self.nape.as_ref().map(|nape| nape.read(at).0)
     }
 
     /// The surface's outward normal at `at`, in the head's frame: the
@@ -407,6 +484,79 @@ impl Blob {
     }
 }
 
+impl Nape {
+    /// The chord's direction and length.
+    fn chord(&self) -> (Vec3, f32) {
+        let chord = self.end - self.base;
+        let length = chord.length().max(f32::EPSILON);
+        (chord / length, length)
+    }
+
+    /// The way toward the crest, square to the chord and across the body.
+    fn crestward(along: Vec3) -> Vec3 {
+        Vec3::new(0.0, along.z, -along.y).normalize_or(Vec3::Y)
+    }
+
+    /// A point as `(u, v, x)`: see the struct.
+    fn read(&self, at: Vec3) -> (f32, f32, f32) {
+        let (along, length) = self.chord();
+        let from = at - self.base;
+        (
+            from.dot(along) / length,
+            from.dot(Self::crestward(along)),
+            at.x,
+        )
+    }
+
+    /// How far toward the crest the centre line stands at `u`: a parabola
+    /// through the chord's ends and the neck joint.
+    fn centre(&self, u: f32) -> f32 {
+        let u = u.clamp(0.0, 1.0);
+        let knee = self.knee.clamp(0.05, 0.95);
+        self.bow * u * (1.0 - u) / (knee * (1.0 - knee))
+    }
+
+    /// A section's half-extents at `u`: the throat's up to the neck joint,
+    /// opening smoothly to the seat's inside the skull.
+    fn half(&self, u: f32) -> Vec2 {
+        let share = ((u - self.knee) / (1.0 - self.knee).max(f32::EPSILON)).clamp(0.0, 1.0);
+        let share = share * share * (3.0 - 2.0 * share);
+        self.throat.lerp(self.seat, share)
+    }
+
+    /// A bound on the distance from `at`, negative inside, capped square at
+    /// the run's two ends.
+    fn distance(&self, at: Vec3) -> f32 {
+        let (u, v, x) = self.read(at);
+        let half = self.half(u).max(Vec2::splat(1.0e-5));
+        let round = Vec2::new(x, v - self.centre(u)) / half;
+        let side = (round.length() - 1.0) * half.min_element();
+        let (_, length) = self.chord();
+        side.max(-u * length).max((u - 1.0) * length)
+    }
+
+    /// Where a point of the run goes: onto its section, along the line out of
+    /// the centre through it, faded in from the run's start to the neck joint
+    /// so the neck leaves the cage's surface without a step.
+    fn carried(&self, at: Vec3) -> Vec3 {
+        let (u, v, x) = self.read(at);
+        if u <= 0.0 {
+            return at;
+        }
+        let share = (u / self.knee.max(f32::EPSILON)).clamp(0.0, 1.0);
+        let share = share * share * (3.0 - 2.0 * share);
+        let half = self.half(u).max(Vec2::splat(1.0e-5));
+        let off = Vec2::new(x, v - self.centre(u));
+        let scale = (off / half).length();
+        if scale <= f32::EPSILON {
+            return at;
+        }
+        let drawn = off / scale - off;
+        let (along, _) = self.chord();
+        at + (Vec3::X * drawn.x + Self::crestward(along) * drawn.y) * share
+    }
+}
+
 impl Muzzle {
     /// The section's half-width at `z` along the frame, held at the ends of
     /// the run past them.
@@ -480,6 +630,7 @@ mod tests {
                 radii: Vec3::splat(radius),
             },
             occiput: inside,
+            poll: None,
             muzzle: Muzzle {
                 span: Vec2::new(0.0, 0.05 * radius),
                 top: Vec2::splat(0.05 * radius),
@@ -504,6 +655,7 @@ mod tests {
                 front_radius: 0.02 * radius,
             },
             cheeks: inside,
+            nape: None,
             nose: NoseSeat {
                 leather: None,
                 nostril: inside,

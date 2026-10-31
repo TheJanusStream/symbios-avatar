@@ -152,6 +152,7 @@ pub(in crate::hair) fn loft(
     let seamed = shape.seamed();
     let mut was: Option<bool> = None;
     let mut over = false;
+    let mut last_side: Option<Vec3> = None;
     for (station, (at, along)) in path.iter().zip(&fractions).enumerate() {
         let tangent = if station + 1 < path.len() {
             path[station + 1] - *at
@@ -187,7 +188,14 @@ pub(in crate::hair) fn loft(
         // cross-product's handedness, not a fact about hair — so it is not asked.
         // The width axis is flipped with the face so the quad's winding still
         // agrees with its normal.
-        let flipped = out.dot(root.out) < 0.0;
+        //
+        // Once, at the root, for a card whose face is meant to swing past its
+        // root's on the way (see [`Shape::keeps_its_way_round`]): after that it
+        // is only kept the way round the last station's width lay.
+        let flipped = match last_side {
+            Some(last) if shape.keeps_its_way_round() => side.dot(last) < 0.0,
+            _ => out.dot(root.out) < 0.0,
+        };
         if flipped {
             out = -out;
             side = -side;
@@ -209,6 +217,7 @@ pub(in crate::hair) fn loft(
         // between the two. The mask's lane runs across the card by where an
         // edge IS rather than by which way round it was drawn, so a strand
         // does not jump sides at the seam.
+        last_side = Some(side);
         let turns = seamed && was.is_some_and(|facing| facing != flipped);
         was = Some(flipped);
         let drawn: &[(Vec3, Vec3, bool)] = if turns {

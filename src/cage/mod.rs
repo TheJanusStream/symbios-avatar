@@ -11,12 +11,14 @@
 //! 3. At each joint, place one socket ring per incident limb, hull the sockets,
 //!    and delete the socket facets to leave openings the tubes plug into.
 //! 4. Cap leaf ends.
+//! 5. On a beast, draw each leg's junction in under the trunk (`leg_root`).
 //!
 //! Because socket rings are *shared* between the joint hull and the limb tube,
 //! no stitching pass is needed and the result is a closed 2-manifold by
 //! construction — which [`PolyMesh::manifold_report`] verifies.
 
 mod joint;
+mod leg_root;
 pub(crate) mod limb;
 
 use glam::{Vec2, Vec3};
@@ -264,6 +266,14 @@ impl Socket {
 /// [`CageError::SocketNotOnHull`], both of which point at a skeleton that needs
 /// adjusting rather than an internal failure.
 pub fn build_cage(skeleton: &Skeleton, config: &CageConfig) -> Result<PolyMesh, CageError> {
+    Ok(build_with_sockets(skeleton, config)?.0)
+}
+
+/// [`build_cage`], handing back the sockets it opened as well.
+fn build_with_sockets(
+    skeleton: &Skeleton,
+    config: &CageConfig,
+) -> Result<(PolyMesh, Vec<Socket>), CageError> {
     let limbs = skeleton.limbs()?;
     let mut mesh = PolyMesh::new();
     let mut sockets: Vec<Socket> = Vec::new();
@@ -288,10 +298,12 @@ pub fn build_cage(skeleton: &Skeleton, config: &CageConfig) -> Result<PolyMesh, 
     for (joint, indices) in by_joint {
         joint::build_joint(skeleton, joint, &indices, &mut sockets, config, &mut mesh)?;
     }
+    // After every hull, whose faces then simply follow the vertices it moves.
+    leg_root::wrap_junctions(skeleton, &sockets, &builds, &mut mesh);
 
     for build in &builds {
         limb::emit_limb_faces(build, &mut mesh);
     }
 
-    Ok(mesh)
+    Ok((mesh, sockets))
 }

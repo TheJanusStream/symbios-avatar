@@ -12,6 +12,12 @@
 //! family's own odds: a horse a long mane and tail, a dog or a cat sometimes
 //! a ruff or a brush, a cat sometimes lynx tips. Every zone is open to every
 //! family, rarely, as the coat's loci are: a cat with a mane is a lion.
+//!
+//! **And one that is not a length** (#389): how stiff a mane is, from lying
+//! flat to a short upright crest. Nothing rolls it, so a re-roll leaves it where
+//! its owner put it and no record's generator stamp moves; every beast starts
+//! at [`Fur::DEFAULT_MANE_STIFFNESS`], and a record at that default does not
+//! write it.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +25,7 @@ use super::{Family, PlanDecodeError, Rolls};
 
 /// How long a beast's fur grows in each zone: `0` none, `1` long, as a share
 /// of the zone's own full length, which scales with the body.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Fur {
     /// A mane down the neck's crest, and a forelock between the ears.
@@ -37,7 +43,41 @@ pub struct Fur {
     /// Tufts at the ears' tips.
     #[serde(with = "super::scaled")]
     pub tufts: f32,
+    /// How stiff the mane is (#389), `0` lying flat over the neck and draping,
+    /// `1` a short stiff upright crest, a zebra's or a hogged mane. Its length
+    /// stays [`Self::mane`]'s. Left off the wire at its default.
+    #[serde(
+        with = "super::scaled",
+        skip_serializing_if = "is_default_mane_stiffness"
+    )]
+    pub mane_stiffness: f32,
 }
+
+impl Default for Fur {
+    /// No fur anywhere, and a mane that would stand at the default if it grew.
+    fn default() -> Self {
+        Self {
+            mane: 0.0,
+            ruff: 0.0,
+            tail: 0.0,
+            feathering: 0.0,
+            tufts: 0.0,
+            mane_stiffness: Self::DEFAULT_MANE_STIFFNESS,
+        }
+    }
+}
+
+/// Whether a record writes no mane stiffness: the default, left off the wire,
+/// so that a record saved before the field existed writes the bytes it read.
+/// Compared on the wire's own thousandths.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_default_mane_stiffness(stiffness: &f32) -> bool {
+    super::scaled::quantize(*stiffness) == Fur::DEFAULT_MANE_STIFFNESS
+}
+
+/// The range a mane's stiffness is stored in. It is a share rather than a
+/// length, so there is no envelope past it: past `1` there is nothing stiffer.
+const STIFFNESS_SPAN: (f32, f32) = (0.0, 1.0);
 
 /// The range every zone's length is stored in: none to long, explored past
 /// long.
@@ -114,6 +154,11 @@ fn odds(family: Family) -> [Odds; 5] {
 }
 
 impl Fur {
+    /// How stiff a mane is until its owner says otherwise: a modest crest
+    /// standing along the neck, with the rest of the mane falling over it.
+    /// Provenance: **tuned by render** (#389).
+    pub const DEFAULT_MANE_STIFFNESS: f32 = 0.4;
+
     /// Each zone's length, in field order.
     fn zones_mut(&mut self) -> [&mut f32; 5] {
         [
@@ -130,6 +175,11 @@ impl Fur {
         for zone in self.zones_mut() {
             *zone = super::sanitize_axis(*zone, 0.0, span());
         }
+        self.mane_stiffness = super::sanitize_axis(
+            self.mane_stiffness,
+            Self::DEFAULT_MANE_STIFFNESS,
+            STIFFNESS_SPAN,
+        );
     }
 
     /// Draws fresh fur for a body of `family`, crossed with `hybrid` `blend`
@@ -166,7 +216,8 @@ impl Fur {
         }
     }
 
-    /// Its bytes on a share code: a span for each zone.
+    /// Its bytes on a share code: a span for each zone. The mane's stiffness
+    /// is not among them: see [`Self::stiffness_byte`].
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         for zone in [self.mane, self.ruff, self.tail, self.feathering, self.tufts] {
             super::put_span(out, zone, span());
@@ -181,6 +232,26 @@ impl Fur {
         }
         fur.sanitize();
         Ok(fur)
+    }
+
+    /// The mane's stiffness as the one byte a version 11 share code ends with.
+    pub(crate) fn stiffness_byte(&self) -> u8 {
+        let mut out = Vec::with_capacity(1);
+        super::put_span(&mut out, self.mane_stiffness, STIFFNESS_SPAN);
+        out[0]
+    }
+
+    /// Whether a share code has to carry the mane's stiffness: not if a reader
+    /// assuming the default gets the same byte back.
+    pub(crate) fn stiffness_needs_a_byte(&self) -> bool {
+        self.stiffness_byte() != Self::default().stiffness_byte()
+    }
+
+    /// Reads the mane's stiffness off the end of a version 11 share code.
+    pub(crate) fn take_stiffness(&mut self, bytes: &mut &[u8]) -> Result<(), PlanDecodeError> {
+        self.mane_stiffness = super::take_span(bytes, STIFFNESS_SPAN)?;
+        self.sanitize();
+        Ok(())
     }
 
     /// Whether any zone grows anything.
@@ -278,5 +349,64 @@ mod tests {
         assert_eq!(fur.mane, span().1);
         assert_eq!(fur.ruff, 0.0);
         assert!(!Fur::default().any(), "a record without fur reads bald");
+    }
+
+    #[test]
+    fn a_mane_s_stiffness_is_clamped_and_a_bad_one_is_the_default() {
+        let mut fur = Fur {
+            mane_stiffness: 1.7,
+            ..Fur::default()
+        };
+        fur.sanitize();
+        assert_eq!(fur.mane_stiffness, 1.0);
+        fur.mane_stiffness = -0.2;
+        fur.sanitize();
+        assert_eq!(fur.mane_stiffness, 0.0);
+        fur.mane_stiffness = f32::NAN;
+        fur.sanitize();
+        assert_eq!(fur.mane_stiffness, Fur::DEFAULT_MANE_STIFFNESS);
+    }
+
+    #[test]
+    fn a_re_roll_leaves_a_mane_s_stiffness_where_its_owner_put_it() {
+        for seed in 0..50 {
+            for family in Family::ALL {
+                let mut fur = Fur {
+                    mane_stiffness: 0.85,
+                    ..Fur::default()
+                };
+                fur.reroll(&Rolls::new(seed), family, None, 0.0);
+                assert_eq!(fur.mane_stiffness, 0.85);
+            }
+        }
+    }
+
+    #[test]
+    fn a_default_stiffness_is_left_off_the_wire_and_a_record_without_one_reads_the_default() {
+        let saved_today = r#"{"mane":800,"ruff":0,"tail":700,"feathering":0,"tufts":0}"#;
+        let read: Fur = serde_json::from_str(saved_today).expect("a record saved today reads");
+        assert_eq!(read.mane_stiffness, Fur::DEFAULT_MANE_STIFFNESS);
+        assert_eq!(
+            serde_json::to_string(&read).expect("writes"),
+            saved_today,
+            "a record saved today writes other bytes"
+        );
+        let stiff = Fur {
+            mane_stiffness: 1.0,
+            ..read
+        };
+        let written = serde_json::to_string(&stiff).expect("writes");
+        assert!(written.contains(r#""maneStiffness":1000"#), "{written}");
+        let back: Fur = serde_json::from_str(&written).expect("reads");
+        assert_eq!(back, stiff);
+    }
+
+    #[test]
+    fn a_reader_that_knows_no_field_reads_past_it() {
+        // What a client older than `maneStiffness` meets: a key it has no field
+        // for, on the same struct. The next key after it must not be lost.
+        let newer = r#"{"mane":800,"aKeyFromTheFuture":1000,"tail":700}"#;
+        let read: Fur = serde_json::from_str(newer).expect("an unknown fur key is read past");
+        assert_eq!((read.mane, read.tail), (0.8, 0.7));
     }
 }

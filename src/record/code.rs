@@ -20,6 +20,14 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
+/// **11** - a beast's code ends with one more byte, after the complexion: its
+/// mane's stiffness (#389). **Written only by a code that needs it**: a person,
+/// and a beast at the default stiffness, go on writing version 10, byte for
+/// byte, so that a client that knows only 10 can still read them. Version 10
+/// reads as the default stiffness, which is what every record meant before it
+/// had one. A byte at the end rather than among the fur's, so that the layouts
+/// before it stay the one `Archetype::decode` reads.
+///
 /// **10** - the quadruped payload loses `build` and `muscle`, which retired
 /// into the composites (#178), and gains its family, the family it is crossed
 /// with (`255` for none), how far it is blended toward it, and the six axes
@@ -90,7 +98,10 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 10;
+pub const SHARE_CODE_VERSION: u8 = 11;
+
+/// The version every code that carries no mane stiffness is written at.
+const PRE_STIFFNESS_VERSION: u8 = 10;
 
 /// The oldest format whose codes still decode.
 const OLDEST_VERSION: u8 = 3;
@@ -185,13 +196,25 @@ pub enum ShareCodeError {
 pub fn encode(archetype: &Archetype, composites: &Composites, skin: &SkinParams) -> String {
     use crate::plan::{put_signed, put_unit};
 
-    let mut payload = vec![SHARE_CODE_VERSION];
+    // Only a beast whose stiffness a reader of version 10 would get wrong.
+    let stiffness = match archetype {
+        Archetype::Quadruped(params) if params.fur.stiffness_needs_a_byte() => {
+            Some(params.fur.stiffness_byte())
+        }
+        _ => None,
+    };
+    let version = match stiffness {
+        Some(_) => SHARE_CODE_VERSION,
+        None => PRE_STIFFNESS_VERSION,
+    };
+    let mut payload = vec![version];
     archetype.encode(&mut payload);
     composites.encode(&mut payload);
     put_unit(&mut payload, skin.melanin);
     put_signed(&mut payload, skin.undertone);
     put_unit(&mut payload, skin.blush);
     put_unit(&mut payload, skin.freckles);
+    payload.extend(stiffness);
     payload.push(checksum(&payload));
     group(&base32_encode(&payload))
 }
@@ -231,7 +254,7 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
     // payload ending at `extremitySize`, version 8's ending at `chestLift`,
     // version 9's with the whole chest on it, and today's with the quadruped's
     // families.
-    let archetype = if version <= NARROW_SPAN_VERSION {
+    let mut archetype = if version <= NARROW_SPAN_VERSION {
         Archetype::decode_legacy(&mut payload)?
     } else if version <= RESERVED_SLOTS_VERSION {
         Archetype::decode_reserved(&mut payload)?
@@ -265,6 +288,13 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
         take_unit(&mut payload)?;
     }
     skin.sanitize();
+    // Only a beast's: nothing writes a person at 11, and a person's byte too many
+    // is the layout disagreement `Trailing` says it is.
+    if version > PRE_STIFFNESS_VERSION
+        && let Archetype::Quadruped(params) = &mut archetype
+    {
+        params.fur.take_stiffness(&mut payload)?;
+    }
     if !payload.is_empty() {
         return Err(ShareCodeError::Trailing(payload.len()));
     }
@@ -353,6 +383,12 @@ mod tests {
     use super::*;
     use crate::plan::{Family, HumanoidParams, QuadrupedParams};
     use crate::texture::SkinParams;
+
+    /// The default person's code, as the tree before version 11 wrote it.
+    const PERSON_V10: &str = "180XC-1M0G2-08104-0G208-1040G-20810-2N55C-R0WR0-XM";
+
+    /// The default beast's code, as the tree before version 11 wrote it.
+    const BEAST_V10: &str = "18148-0M0G2-08100-0ZW08-1040G-20810-40G00-81040-00080-00200-08000-00000-0000G-205AA-ASG1S-G1Y8";
 
     #[test]
     fn a_look_round_trips() {
@@ -498,6 +534,77 @@ mod tests {
         );
         assert_eq!(back.stance, 0.0, "an axis the code predates is its neutral");
         assert!((skin.freckles - 0.20).abs() < 0.01);
+    }
+
+    /// The version a code was written at.
+    fn version_of(code: &str) -> u8 {
+        base32_decode(code).expect("a code")[0]
+    }
+
+    #[test]
+    fn a_person_and_a_default_beast_stay_at_version_10_byte_for_byte() {
+        // Literal, minted by the tree before version 11 existed: a client that
+        // knows only 10 reads these, and they must not move.
+        let person = encode(
+            &Archetype::default(),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        assert_eq!(person, PERSON_V10);
+        assert_eq!(version_of(&person), 10);
+        let beast = Archetype::Quadruped(QuadrupedParams::default());
+        let code = encode(&beast, &Composites::default(), &SkinParams::default());
+        assert_eq!(code, BEAST_V10);
+        assert_eq!(version_of(&code), 10);
+        // A stiffness that lands on the default's byte says nothing either.
+        let mut near = QuadrupedParams::default();
+        near.fur.mane_stiffness = crate::plan::Fur::DEFAULT_MANE_STIFFNESS + 0.001;
+        let code = encode(
+            &Archetype::Quadruped(near),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        assert_eq!(version_of(&code), 10);
+    }
+
+    #[test]
+    fn a_version_10_beast_reads_as_the_default_stiffness() {
+        let (Archetype::Quadruped(back), _, _) = decode(BEAST_V10).expect("a v10 code decodes")
+        else {
+            panic!("archetype changed");
+        };
+        assert_eq!(
+            back.fur.mane_stiffness,
+            crate::plan::Fur::DEFAULT_MANE_STIFFNESS
+        );
+    }
+
+    #[test]
+    fn a_stiff_mane_survives_a_code_at_version_11() {
+        for stiffness in [0.0, 0.25, 0.8, 1.0] {
+            let mut params = QuadrupedParams::default();
+            params.fur.mane = 0.8;
+            params.fur.mane_stiffness = stiffness;
+            let skin = SkinParams {
+                freckles: 0.2,
+                ..SkinParams::default()
+            };
+            let code = encode(&Archetype::Quadruped(params), &Composites::default(), &skin);
+            assert_eq!(version_of(&code), 11);
+            let (Archetype::Quadruped(back), _, back_skin) = decode(&code).expect("decodes") else {
+                panic!("archetype changed");
+            };
+            assert!(
+                (back.fur.mane_stiffness - stiffness).abs() <= 0.5 / 255.0 + 0.0005,
+                "{stiffness} came back {}",
+                back.fur.mane_stiffness
+            );
+            assert!((back.fur.mane - 0.8).abs() < 0.013);
+            assert!(
+                (back_skin.freckles - 0.2).abs() < 0.01,
+                "the complexion was read off the stiffness's byte"
+            );
+        }
     }
 
     #[test]

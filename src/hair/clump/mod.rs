@@ -192,6 +192,16 @@ pub trait Shape {
         None
     }
 
+    /// Whether the card keeps the way round its root faced, all along it, however
+    /// far its face swings from its root's. Off by default, which turns each
+    /// station to face the way the skin does; a card whose width is already
+    /// continuous and whose face goes past a right angle, as a mane's does when
+    /// it rises off a crest and falls back (#389), would be turned over at every
+    /// such swing, each a bow-tie.
+    fn keeps_its_way_round(&self) -> bool {
+        false
+    }
+
     /// Whether a card whose face turns past the skin's side part-way along
     /// it is seamed there, rather than flipped between two stations.
     ///

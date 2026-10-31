@@ -448,7 +448,13 @@ const EDGE_SLACK: f32 = 1e-5;
 /// Möller-Trumbore: how far along a unit ray it meets a triangle, and where in
 /// the triangle, if it does - including a ray along one of its edges, within
 /// [`EDGE_SLACK`].
-fn moller(origin: Vec3, ray: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<(f32, f32, f32)> {
+pub(in crate::hair) fn moller(
+    origin: Vec3,
+    ray: Vec3,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+) -> Option<(f32, f32, f32)> {
     moller_within(origin, ray, [a, b, c], EDGE_SLACK)
 }
 

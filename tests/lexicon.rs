@@ -287,6 +287,18 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
             "the declared bounds on fur's {zone} disagree with the crate"
         );
     }
+    // A mane's stiffness is a share, with no envelope past it (#389), and its
+    // declared default is the one a record left without it reads.
+    assert_eq!(
+        quadruped("quadrupedFur", "maneStiffness"),
+        thousandths((0.0, 1.0)),
+        "the declared bounds on a mane's stiffness disagree with the crate"
+    );
+    assert_eq!(
+        defs["defs"]["quadrupedFur"]["properties"]["maneStiffness"]["default"].as_i64(),
+        Some((symbios_avatar::Fur::DEFAULT_MANE_STIFFNESS * 1000.0).round() as i64),
+        "the declared default of a mane's stiffness disagrees with the crate"
+    );
     assert_eq!(
         quadruped("quadrupedCoat", "intensity"),
         thousandths(symbios_avatar::plan::explore_range(0.0, (-1.0, 1.0))),
@@ -668,9 +680,15 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
             "quadrupedCoat",
             serde_json::to_value(symbios_avatar::Coat::default()).expect("serialises"),
         ),
+        // Away from its default, because `maneStiffness` is written only there
+        // (#389).
         (
             "quadrupedFur",
-            serde_json::to_value(symbios_avatar::Fur::default()).expect("serialises"),
+            serde_json::to_value(symbios_avatar::Fur {
+                mane_stiffness: 1.0,
+                ..symbios_avatar::Fur::default()
+            })
+            .expect("serialises"),
         ),
         // The hair fragments, nested ones included: `field_names` reads the keys
         // of whatever serialises to an object, so a tress and the hair block are

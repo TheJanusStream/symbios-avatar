@@ -16,7 +16,7 @@
 use glam::{Mat3, Quat, Vec2, Vec3};
 
 use crate::plan::beast_head::{
-    BeastHead, Blends, Blob, Cone, EarSeat, EyeSeat, HornSeat, Muzzle, NoseSeat, WHISKERS,
+    BeastHead, Blends, Blob, Cone, EarSeat, EyeSeat, HornSeat, Muzzle, Nape, NoseSeat, WHISKERS,
     WhiskerSeat,
 };
 use crate::plan::{Horn, Nose, QuadrupedParams};
@@ -36,6 +36,13 @@ pub(super) struct Chain {
     pub cranium: Ball,
     /// The nose, which ends the chain.
     pub nose: Ball,
+    /// The neck joint the chain hangs from.
+    pub neck: Vec3,
+    /// Where the neck leaves the trunk.
+    pub withers: Vec3,
+    /// How far the back of the skull has gone from a cat's round one toward
+    /// a horse's poll and jowl: 0 to 1 (`Frame::skull_back`).
+    pub back: f32,
 }
 
 /// The share of a node's radius its subdivided surface keeps.
@@ -240,12 +247,14 @@ pub(super) fn head(
             centre: occiput,
             radii: Vec3::new(1.0, 0.95, 1.0) * chain.occiput.1 * SURFACE,
         },
+        poll: None,
         muzzle,
         pads,
         jaw,
         hinge,
         tongue,
         cheeks,
+        nape: None,
         nose: leather_or_soft,
         blends: Blends {
             occiput: 0.30 * r,
@@ -281,8 +290,130 @@ pub(super) fn head(
     head.ear = ear_seat(&head, params, appeal);
     head.whiskers = whisker_seat(&head, params);
     head.horn = horn_seat(&head, params);
+    back_of_head(&mut head, chain.back, fullness);
+    head.nape = Some(nape(&head, chain));
     head
 }
+
+/// The back of the head as its anatomy has it (#388), from `back` of the way
+/// from a cat's round skull to a horse's.
+///
+/// A horse's skull is a long wedge: the forehead runs back to a poll, the
+/// corner between and behind the ears; from there its nape falls almost
+/// straight to the throat; and under it stands the jowl, the flat plate of the
+/// jaw's ramus, as deep as the head is anywhere and much narrower than the
+/// skull. A cat's is a round braincase with its cheeks on the front of it. So
+/// the back ball draws in to the wedge's nape, a poll grows at its top, and the
+/// cheeks flatten from balls into plates, set further back and lower.
+///
+/// **After the seats, because everything that rides on the head is seated on
+/// the skull in front of all this**: an ear's base, a horn's, an eye and a
+/// whisker all stay where they were, so a rig's ear line does not move and
+/// Overlands' seats read what they read.
+fn back_of_head(head: &mut BeastHead, back: f32, fullness: f32) {
+    let r = head.radius;
+    let back = back.clamp(0.0, 1.0);
+    let wide = head.cranium.radii.x / (r * SURFACE);
+    head.occiput = Blob {
+        centre: head
+            .occiput
+            .centre
+            .lerp(Vec3::new(0.0, 0.10 * r, -0.50 * r), back),
+        radii: head
+            .occiput
+            .radii
+            .lerp(Vec3::new(0.56, 0.62, 0.62) * r, back),
+    };
+    // Well inside the skull at a cat's end, where it adds nothing.
+    head.poll = Some(Blob {
+        centre: Vec3::new(0.0, 0.08 * r, -0.30 * r).lerp(Vec3::new(0.0, 0.58 * r, -0.72 * r), back),
+        radii: Vec3::new(0.34, 0.24, 0.34) * r,
+    });
+    head.axis[0] = head.occiput.centre;
+    let plate = Blob {
+        centre: Vec3::new(0.40 * r * wide, -0.52 * r, -0.20 * r),
+        radii: Vec3::new(0.30 * fullness.max(1.0), 0.72, 0.80) * r,
+    };
+    head.cheeks = Blob {
+        centre: head.cheeks.centre.lerp(plate.centre, back),
+        radii: head.cheeks.radii.lerp(plate.radii, back),
+    };
+}
+
+/// The neck's upper run for a head (#388): every section's size measured off
+/// the head as it now stands.
+///
+/// The run starts a bounded way down the neck, in head radii, and opens from
+/// the [`THROAT`] share of the head's section at the neck joint to the
+/// [`SEAT`] share inside the skull.
+fn nape(head: &BeastHead, chain: &Chain) -> Nape {
+    let r = head.radius;
+    let local = |at: Vec3| head.local(at);
+    let neck = local(chain.neck);
+    let withers = local(chain.withers);
+    let down = (withers - neck).length();
+    let base = neck + (withers - neck) * (NAPE_RUN * r / down.max(f32::EPSILON)).min(NAPE_MOST);
+    let end = head.occiput.centre.lerp(Vec3::ZERO, 0.5);
+    let chord = end - base;
+    let length = chord.length().max(f32::EPSILON);
+    let along = chord / length;
+    let crest = Vec3::new(0.0, along.z, -along.y).normalize_or(Vec3::Y);
+    let section = rear_section(head);
+    Nape {
+        base,
+        end,
+        knee: (neck - base).dot(along) / length,
+        bow: (neck - base).dot(crest),
+        throat: section * THROAT,
+        seat: section * SEAT,
+        blend: NAPE_BLEND * r,
+    }
+}
+
+/// The head's half-extents `(across, deep)` behind the eye, where the neck
+/// comes into it: the widest it reaches to the side over its height and half
+/// the height it stands there.
+fn rear_section(head: &BeastHead) -> Vec2 {
+    let r = head.radius;
+    let z = -REAR_SLICE * r;
+    let across = [0.35, 0.0, -0.35, -0.70]
+        .into_iter()
+        .filter_map(|y| head.leave(Vec3::new(0.0, y * r, z), Vec3::X))
+        .map(|at| at.x)
+        .fold(0.0, f32::max)
+        .max(0.5 * r);
+    let top = head
+        .leave(Vec3::new(0.0, 0.0, z), Vec3::Y)
+        .map_or(r, |at| at.y);
+    let bottom = head
+        .leave(Vec3::new(0.5 * across, 0.0, z), Vec3::NEG_Y)
+        .map_or(-r, |at| at.y);
+    Vec2::new(across, 0.5 * (top - bottom))
+}
+
+/// How far behind the braincase's centre the head's section is read, in head
+/// radii: behind the eye, on the skull and the jowl, in front of the nape.
+const REAR_SLICE: f32 = 0.45;
+
+/// How much of the head's section the neck's is at the neck joint, across and
+/// through: an animal's throat narrows behind the jaw, so it is not the skull's
+/// width, and a neck under half of it reads as a post in a ball.
+/// Provenance: **tuned by render** (#388).
+const THROAT: Vec2 = Vec2::new(0.60, 0.64);
+
+/// How much of the head's section the run has reached inside the skull.
+/// Provenance: **tuned by render** (#388).
+const SEAT: f32 = 0.85;
+
+/// How far down the neck the run starts, in head radii, and at most what share
+/// of the neck: over this much the neck goes from the cage's size to the
+/// head's. Provenance: **tuned by render** (#388).
+const NAPE_RUN: f32 = 2.6;
+const NAPE_MOST: f32 = 0.55;
+
+/// How softly the run joins the head, in head radii: the crease it would leave
+/// is the join the owner saw. Provenance: **tuned by render** (#388).
+const NAPE_BLEND: f32 = 0.30;
 
 /// Where the whiskers sprout and how they run (#367), or `None` below
 /// [`NO_WHISKERS`] of `whiskers`.

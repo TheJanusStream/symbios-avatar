@@ -41,8 +41,9 @@ const TOUCH_LYING: f32 = 0.042;
 /// heights: it lies on its folded forelegs and its hind legs folded beside
 /// it, and its sternum comes down between its knees without touching -
 /// measured (#377), 1.0 to 10.2% across every horse here, the default
-/// horse's 3.8%.
-const HORSE_CHEST: f32 = 0.11;
+/// horse's 3.8%. The hind junctions drawn under the trunk (#387) carry the
+/// heavy foal's to 11.0%.
+const HORSE_CHEST: f32 = 0.115;
 
 /// How far off the ground a horse's croup may stand in its dog-sit, in
 /// withers heights: the research's "on the ground or just off it" (09,

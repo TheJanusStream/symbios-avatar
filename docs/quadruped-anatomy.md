@@ -71,6 +71,15 @@ needs.
   them as joints; the cage sweeps each leg from its girdle straight to the
   elbow or the stifle (a **bridge**), its socket aimed at the shoulder or the
   hip. The skin binds to them as to any bone.
+- **A leg's junction wraps under the trunk** (#387, `cage::leg_root`). A socket
+  has to stand up the flank to be a facet of the girdle's hull, so once every
+  hull is closed the ring's lower, inner vertices are drawn in under the keel,
+  the line from the spine ring's lowest point to the neck's or the tail's, and
+  the first ring below it leans in to meet them. Left and right junctions come
+  to 0.04 to 0.10 WH apart at the fore legs and 0.02 to 0.15 at the hind, skin
+  to skin, against up to 0.35 before. Only cage vertices move: no joint, no
+  face, no triangle. A cat's elbow stands above its chest's floor, so its fore
+  junctions close at the front of the chest and open again toward the elbow.
 
 ## Targets per family, and what the body measures
 
@@ -95,7 +104,7 @@ built surface measures them, bones joint to joint.
 | Elbow angle | 130 to 145 | S18 (M) | 138 |
 | Stifle angle | 145 +/- 8 | S6 (H) | 139 |
 | Hock angle | 134 +/- 9 | S6 (H) | 141 |
-| Neck girth | 0.45 to 0.5 of the chest's | S9 (one dog, 07 note 4) | 0.44 |
+| Neck girth | 0.45 to 0.5 of the chest's | S9 (one dog, 07 note 4) | 0.37 at the throat, see below |
 
 ### Cat (07 section 2.2; domestic shorthair, WH about 26 cm)
 
@@ -127,7 +136,7 @@ built surface measures them, bones joint to joint.
 | Shoulder, elbow angles | 100 to 105, 133 to 137 | S4 (H) | 100, 135 |
 | Stifle, hock angles | 117 to 126, 141 to 159 | S4, S20 (H) | 122, 141 |
 | Neck length | 0.53 (pony, withers to poll) | S3 (M) | 0.46 to the occiput joint |
-| Neck girth | (no figure) | | 0.51 of the heart's |
+| Neck girth | (no figure) | | 0.37 of the heart's at the throat |
 
 ### The thigh
 
@@ -391,6 +400,31 @@ anatomy is held back wherever two sockets would not fit.
   transported from world up, the thigh came out deep on the diagonal. A round
   leg (every fore leg) keeps the frame it had: turned, its sockets crowded the
   spine's off the forechest at the envelope's low corner.
+
+### The back of the head and the join (#388)
+
+The dossiers give a head's length and a neck's girth, not the shape of the back
+of a skull or of a throat, so both of these are drawn from the anatomy in words
+and **tuned by render**.
+
+- **The back of the skull** runs from a cat's round braincase to a horse's poll
+  and jowl (`Frame::skull_back`: cat 0, dog 0.6, horse 1, a cross between its
+  two, a young skull at most half as far). At a horse's end the back ball draws
+  in, a poll stands at the top of the nape between and behind the ears, and the
+  cheeks flatten from balls into plates set further back and lower. Every seat
+  is cast before this, so no ear, eye, horn or whisker moves, and neither does
+  any joint of the rig.
+- **The neck's upper run is sized off the head it carries** (`plan::beast_head`'s
+  `Nape`): at the neck joint 0.60 of the head's half-width behind the eye and
+  0.64 of its half-depth, opening to 0.85 inside the skull. The cage's neck does
+  not know its head: its section at that joint ran from 0.44 to 1.83 of the
+  head's across a sweep of head sizes; this one holds 0.58 to 0.67.
+- **So the neck joint is a throat, not the neck's middle.** The girth this
+  document's tables quote was read at that joint, and it now reads 0.38 of the
+  heart's on a dog, 0.34 on a cat and 0.37 on a horse at their anchors, under the
+  one dog's 0.45 to 0.5 of S9; the probe prints the girth halfway up as well.
+  Chosen against S9, which measures no throat: at 0.70 of the head a big-headed
+  beast's neck was the tube the owner asked not to get.
 
 ### Choices against a dossier figure
 

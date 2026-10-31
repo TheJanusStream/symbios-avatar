@@ -14,6 +14,8 @@
 //! cargo run --release --example quadprobe -- --seed 1     # one rolled record
 //! cargo run --release --example quadprobe -- --seed 1 --girdle  # and its girdles' nodes, for a socket failure
 //! cargo run --release --example quadprobe -- --sweep 3000 # how many of 3,000 rolls mesh, why not, and in how many pieces
+//! cargo run --release --example quadprobe -- --sweep 3000 --shaped # and whether the shaped bodies close
+//! cargo run --release --example quadprobe -- --gap 600    # how close left and right leg junctions come under the trunk, per family
 //! ```
 //!
 //! What it measures, and where:
@@ -29,8 +31,8 @@
 //!   tail's root (the tail is the same surface, so a line through it would
 //!   run on along it).
 //! - **Neck**: its length from the top of the withers to the occiput joint,
-//!   and its girth where the plane square to its run cuts it at the neck
-//!   node, against the heart girth; the head's length is its nodes' extent
+//!   and its girth where the plane square to its run cuts it halfway up and at
+//!   the neck node, against the heart girth; the head's length is its nodes' extent
 //!   fore and aft, a comparison between bodies rather than a skull's length.
 //! - **Thigh and gaskin**: the hind leg's extent fore and aft and across
 //!   where a level plane cuts it three quarters of the way down the femur
@@ -92,6 +94,50 @@ fn main() {
         }
         println!("{failed} of {count} rolls do not mesh");
         println!("{split} of {count} rolls mesh into more than one piece");
+        // `--shaped`: and the body the build draws from each cage, with its
+        // head and neck shaped onto what the plan declares (#388).
+        if args.iter().any(|arg| arg == "--shaped") {
+            let (mut failed, mut open, mut split, mut dearest) = (0, 0, 0, 0);
+            for seed in 0..count {
+                let record = AvatarRecord::rolled(
+                    "Probe",
+                    Archetype::Quadruped(QuadrupedParams::default()),
+                    seed,
+                );
+                let skeleton = record.skeleton();
+                match build_body(
+                    &skeleton,
+                    &CageConfig::default(),
+                    BODY_SUBDIVISIONS,
+                    &HeadTraits::default(),
+                ) {
+                    Ok(body) => {
+                        open += usize::from(!body.is_closed_manifold());
+                        split += usize::from(pieces(&body) > 1);
+                        dearest = dearest.max(body.triangulated().len());
+                    }
+                    Err(error) => {
+                        failed += 1;
+                        println!("seed {seed}: {error}");
+                    }
+                }
+            }
+            println!(
+                "shaped: {failed} of {count} fail, {open} open, {split} split, dearest body {dearest} triangles"
+            );
+        }
+        return;
+    }
+    // `--gap N`: how far apart the left and right legs' junctions come under
+    // the trunk (#387), fore and hind apart, per family, over N rolled beasts.
+    if let Some(count) = value("--gap").and_then(|v| v.parse::<i64>().ok()) {
+        gaps(count);
+        return;
+    }
+    // `--cuts SEED`: the skin's plane cuts across the legs' tops, as text, for
+    // plotting (#387): `z` headers, then each loop's `x y` rows.
+    if let Some(seed) = value("--cuts").and_then(|v| v.parse::<i64>().ok()) {
+        cuts(seed);
         return;
     }
     if let Some(seed) = value("--seed").and_then(|v| v.parse::<i64>().ok()) {
@@ -296,10 +342,16 @@ fn measure(record: &AvatarRecord) {
     if let (Some(neck), Some(&occiput)) = (neck_node, head_nodes.first()) {
         let withers_top = Vec3::new(0.0, withers.top, spine[0].z);
         let run = occiput - spine[0];
-        let girth = cut_plane(&mesh, neck.position, run, Vec3::X)
-            .into_iter()
-            .find(|ring| contains(ring, Vec2::ZERO))
-            .map(|ring| perimeter(&ring));
+        let girth_at = |at: Vec3| {
+            cut_plane(&mesh, at, run, Vec3::X)
+                .into_iter()
+                .find(|ring| contains(ring, Vec2::ZERO))
+                .map(|ring| perimeter(&ring))
+        };
+        // The neck node is the throat, which the head sizes (#388); halfway up
+        // to it is the neck itself, what a dossier's neck girth is.
+        let girth = girth_at(neck.position);
+        let middle = girth_at(spine[0].lerp(neck.position, 0.5));
         let head_length = skeleton
             .nodes
             .iter()
@@ -313,8 +365,9 @@ fn measure(record: &AvatarRecord) {
                 .map(|node| node.position.z - node.radius)
                 .fold(f32::MAX, f32::min);
         println!(
-            "neck length {:.3} (withers top to occiput), mid-neck girth {:.3} = {:.2} of the heart's; head length {:.3} (its nodes, fore and aft)",
+            "neck length {:.3} (withers top to occiput), girth {:.2} of the heart's halfway up and {:.3} = {:.2} at the throat; head length {:.3} (its nodes, fore and aft)",
             unit(withers_top.distance(occiput)),
+            middle.unwrap_or(0.0) / heart.girth,
             unit(girth.unwrap_or(0.0)),
             girth.unwrap_or(0.0) / heart.girth,
             unit(head_length)
@@ -451,6 +504,192 @@ fn section(mesh: &PolyMesh, spine: &[Vec3], z: f32) -> Option<Section> {
         bottom,
         width: high_x - low_x,
     })
+}
+
+/// The width of the notch between a pair of legs just under the trunk, at
+/// its narrowest over the plane cuts across the legs' top, and how long a run
+/// of the body stands within [`NARROW`]; both shares of the WH (#387).
+fn notch(mesh: &PolyMesh, spine: &[Vec3], from: f32, to: f32, wh: f32) -> Option<(f32, f32)> {
+    /// How far under the underside the notch is read, a share of the WH.
+    const UNDER: f32 = 0.02;
+    /// A notch this wide or narrower counts as the junctions all but meeting.
+    const NARROW: f32 = 0.08;
+    let step = 0.01 * wh;
+    let (mut least, mut run) = (f32::MAX, 0.0f32);
+    let mut z = from;
+    while z < to {
+        let loops = cut_loops(mesh, z);
+        let inside = Vec2::new(0.0, spine_y(spine, z));
+        let floor = loops
+            .iter()
+            .find(|ring| contains(ring, inside))
+            .and_then(|ring| {
+                crossings(ring, 0.0, true)
+                    .into_iter()
+                    .fold(None, |low: Option<f32>, y| {
+                        Some(low.map_or(y, |low| low.min(y)))
+                    })
+            });
+        if let Some(floor) = floor {
+            let y = floor - UNDER * wh;
+            // A loop across the midline that is not the trunk's is a tail's.
+            let (mut left, mut right) = (f32::MAX, f32::MAX);
+            for ring in &loops {
+                let straddles = ring.iter().any(|p| p.x < 0.0) && ring.iter().any(|p| p.x > 0.0);
+                if straddles && !contains(ring, inside) {
+                    continue;
+                }
+                for x in crossings(ring, y, false) {
+                    if x > 0.0 {
+                        right = right.min(x);
+                    } else {
+                        left = left.min(-x);
+                    }
+                }
+            }
+            if left < f32::MAX && right < f32::MAX {
+                let gap = (left + right) / wh;
+                least = least.min(gap);
+                if gap <= NARROW {
+                    run += step / wh;
+                }
+            }
+        }
+        z += step;
+    }
+    (least < f32::MAX).then_some((least, run))
+}
+
+/// Where a loop crosses the line `x = at` (`vertical`, returning each `y`) or
+/// `y = at` (returning each `x`).
+fn crossings(ring: &[Vec2], at: f32, vertical: bool) -> Vec<f32> {
+    let mut found = Vec::new();
+    for (a, b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+        let (da, db) = if vertical {
+            (a.x - at, b.x - at)
+        } else {
+            (a.y - at, b.y - at)
+        };
+        if (da < 0.0) != (db < 0.0) {
+            let p = *a + (*b - *a) * (da / (da - db));
+            found.push(if vertical { p.y } else { p.x });
+        }
+    }
+    found
+}
+
+/// The `--cuts` listing.
+fn cuts(seed: i64) {
+    let record = AvatarRecord::rolled(
+        "Probe",
+        Archetype::Quadruped(QuadrupedParams::default()),
+        seed,
+    );
+    let skeleton = record.skeleton();
+    let Ok(mesh) = build_body(
+        &skeleton,
+        &CageConfig::default(),
+        BODY_SUBDIVISIONS,
+        &HeadTraits::default(),
+    ) else {
+        return;
+    };
+    let fore = leg(&skeleton, Limb::ForeLeft);
+    let hind = leg(&skeleton, Limb::HindLeft);
+    println!("elbow {:?} shoulder {:?}", fore[2].1, fore[1].1);
+    println!("stifle {:?} hip {:?}", hind[1].1, hind[0].1);
+    let span = (fore[1].1.z - hind[0].1.z).abs();
+    let mut z = hind[0].1.z.min(hind[1].1.z) - span * 0.12;
+    let end = fore[1].1.z + span * 0.12;
+    while z < end {
+        println!("z {z}");
+        for ring in cut_loops(&mesh, z) {
+            println!("loop");
+            for p in ring {
+                println!("{} {}", p.x, p.y);
+            }
+        }
+        z += span * 0.04;
+    }
+}
+
+/// The `--gap` table: [`notch`] per family, fore and hind apart.
+fn gaps(count: i64) {
+    type Readings = Vec<(f32, f32)>;
+    let mut table: Vec<(String, Readings, Readings)> = Vec::new();
+    for seed in 0..count {
+        let record = AvatarRecord::rolled(
+            "Probe",
+            Archetype::Quadruped(QuadrupedParams::default()),
+            seed,
+        );
+        let Archetype::Quadruped(params) = &record.archetype else {
+            continue;
+        };
+        let name = match params.hybrid {
+            Some(_) => "cross".to_string(),
+            None => format!("{:?}", params.family),
+        };
+        let skeleton = record.skeleton();
+        let Ok(mesh) = build_body(
+            &skeleton,
+            &CageConfig::default(),
+            BODY_SUBDIVISIONS,
+            &HeadTraits::default(),
+        ) else {
+            continue;
+        };
+        let spine = trunk_line(&skeleton);
+        let fore = leg(&skeleton, Limb::ForeLeft);
+        let hind = leg(&skeleton, Limb::HindLeft);
+        let wh = params.height * 1.2;
+        let z = |nodes: &[(Zone, Vec3)], index: usize| nodes[index].1.z;
+        let at = notch(
+            &mesh,
+            &spine,
+            z(&fore, 2) - 0.1 * wh,
+            z(&fore, 1) + 0.1 * wh,
+            wh,
+        );
+        let back = notch(
+            &mesh,
+            &spine,
+            z(&hind, 0).min(z(&hind, 1)) - 0.1 * wh,
+            z(&hind, 0).max(z(&hind, 1)) + 0.1 * wh,
+            wh,
+        );
+        let at_row = table.iter().position(|row| row.0 == name);
+        let row = match at_row {
+            Some(row) => row,
+            None => {
+                table.push((name, Vec::new(), Vec::new()));
+                table.len() - 1
+            }
+        };
+        table[row].1.extend(at);
+        table[row].2.extend(back);
+    }
+    table.sort_by(|a, b| a.0.cmp(&b.0));
+    println!("gap under the trunk, share of WH: least / median / most; run within 0.08: median");
+    for (name, fore, hind) in &table {
+        for (end, values) in [("fore", fore), ("hind", hind)] {
+            let mut gap: Vec<f32> = values.iter().map(|v| v.0).collect();
+            let mut run: Vec<f32> = values.iter().map(|v| v.1).collect();
+            gap.sort_by(f32::total_cmp);
+            run.sort_by(f32::total_cmp);
+            if gap.is_empty() {
+                continue;
+            }
+            println!(
+                "{name:>6} {end}: {:.3} / {:.3} / {:.3}; run {:.3}, {} rolls",
+                gap[0],
+                gap[gap.len() / 2],
+                gap[gap.len() - 1],
+                run[run.len() / 2],
+                gap.len()
+            );
+        }
+    }
 }
 
 /// Every closed loop the plane `z = at` cuts through the mesh, as `(x, y)`.

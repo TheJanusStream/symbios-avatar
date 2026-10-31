@@ -142,6 +142,9 @@ const MARGIN: f32 = 1.12;
 const CLOSE_MARGIN: f32 = 1.5;
 /// How far the overhead view tilts over, in radians.
 const OVERHEAD_PITCH: f32 = 1.0;
+/// How far the game's third-person camera looks down on an avatar it follows
+/// from behind, about: what `--nape` judges a head from (#388).
+const GAME_PITCH: f32 = 0.35;
 /// Pixels one metre covers one metre from a camera, for `--far`: 1080 lines
 /// over a 60-degree vertical field, `1080 / (2 tan 30)`.
 ///
@@ -492,6 +495,54 @@ fn main() {
     let mut record = AvatarRecord::new("Rendered", archetype);
     if let Some(seed) = seed {
         record.reroll(seed);
+    }
+    // Which beast a head is judged on (#388): `--kin horse` turns the roll
+    // into a family (`--kin dog+cat` a cross of the two), `--head-axis 1.5` and
+    // `--appeal 2` are the big-headed and small-headed ends of the roll.
+    if let Archetype::Quadruped(params) = &mut record.archetype {
+        use symbios_avatar::Family;
+        let family_of = |name: &str| match name {
+            "dog" => Family::Dog,
+            "cat" => Family::Cat,
+            "horse" => Family::Horse,
+            other => {
+                eprintln!("--kin takes dog, cat, horse or two joined by +, not `{other}`");
+                std::process::exit(2);
+            }
+        };
+        if let Some(kin) = value("--kin") {
+            match kin.split_once('+') {
+                Some((own, other)) => params.set_kind(family_of(own), Some(family_of(other)), 0.5),
+                None => params.set_kind(family_of(kin), None, 0.0),
+            }
+        }
+        if let Some(size) = value("--head-axis").and_then(|v| v.parse::<f32>().ok()) {
+            params.head_size = size;
+        }
+        if let Some(appeal) = value("--appeal").and_then(|v| v.parse::<f32>().ok()) {
+            params.appeal = appeal;
+        }
+    }
+    // A mane's length, whatever the roll grew (#386): `--fur-mane 1.5`.
+    if let Some(length) = value("--fur-mane").and_then(|v| v.parse::<f32>().ok()) {
+        match &mut record.archetype {
+            Archetype::Quadruped(params) => params.fur.mane = length,
+            _ => {
+                eprintln!("--fur-mane grows a quadruped's mane: add --quadruped");
+                std::process::exit(2);
+            }
+        }
+    }
+    // A mane's stiffness, which no roll draws (#389): `--fur-stiffness 0.8`.
+    let stiffness = value("--fur-stiffness").and_then(|v| v.parse::<f32>().ok());
+    if let Some(stiffness) = stiffness {
+        match &mut record.archetype {
+            Archetype::Quadruped(params) => params.fur.mane_stiffness = stiffness,
+            _ => {
+                eprintln!("--fur-stiffness stiffens a quadruped's mane: add --quadruped");
+                std::process::exit(2);
+            }
+        }
     }
     // A horn, which no roll gives (#367): `--unicorn` puts one on a beast.
     if args.iter().any(|arg| arg == "--unicorn") {
@@ -1062,12 +1113,18 @@ fn main() {
         // `--portrait`: each tile the head alone, from the front three
         // quarters, which is where a face is judged (#367).
         let portrait = args.iter().any(|arg| arg == "--portrait");
+        let mane = value("--fur-mane").and_then(|v| v.parse::<f32>().ok());
         gallery(
             &plan,
             seed.unwrap_or(1),
             count,
             show.pass,
-            Tiles { to_scale, portrait },
+            Tiles {
+                to_scale,
+                portrait,
+                mane,
+                stiffness,
+            },
             &keep,
             &out,
         );
@@ -1109,6 +1166,58 @@ fn main() {
             paced.cycle_length(rig),
             paced.cadence(rig)
         );
+    }
+    // **The crest** (#386): a sheet of the neck alone, close enough to see
+    // where a mane's cards enter the skin - side, front three quarters,
+    // behind three quarters, and from above behind.
+    if args.iter().any(|arg| arg == "--crest") {
+        let Some(frames) = subject.crest() else {
+            eprintln!("--crest frames a neck: this body has none");
+            std::process::exit(2);
+        };
+        write(
+            &out,
+            "crest",
+            &subject.render(&subject.standing(), 0.0, &frames),
+        );
+        return;
+    }
+    // **The nape** (#388): the back of the head and where the neck meets it -
+    // side on, from behind and above as the game's camera sees it, three
+    // quarters behind, and behind level. `--nape-pose` draws it nodded, turned,
+    // or at the end of a rest (`nod`, `turn`, or a gesture's name).
+    if args.iter().any(|arg| arg == "--nape") {
+        let mut pose = subject.standing();
+        let rig = &subject.avatar.rig;
+        match value("--nape-pose").map(String::as_str) {
+            None => {}
+            Some(name @ ("nod" | "turn")) => {
+                let turn = if name == "nod" {
+                    Quat::from_rotation_x(0.45)
+                } else {
+                    Quat::from_rotation_y(0.55)
+                };
+                for &joint in &rig.in_zone(Zone::Neck) {
+                    pose.rotations[joint] = turn;
+                }
+                if let Some(&occiput) = rig.in_zone(Zone::Head).first() {
+                    pose.rotations[occiput] = turn;
+                }
+            }
+            Some(name) => {
+                let Some(gesture) = symbios_avatar::anim::gesture::for_body(rig, name) else {
+                    eprintln!("this body has no gesture {name}");
+                    std::process::exit(1);
+                };
+                gesture.apply(rig, &mut pose, 1.0);
+            }
+        }
+        let Some(frames) = subject.nape(&pose) else {
+            eprintln!("--nape frames a head: this body has none");
+            std::process::exit(2);
+        };
+        write(&out, "nape", &subject.render(&pose, 0.0, &frames));
+        return;
     }
     // **A strip** (#370): one row of side views across a whole cycle, each
     // frame's feet on the ground printed under it - the unit a gait is
@@ -1302,6 +1411,20 @@ fn main() {
         return;
     }
 
+    // `--underside` standing: how a beast's legs join its trunk (#387). With
+    // `--gesture NAME --at T` it draws that moment instead, below.
+    if args.iter().any(|arg| arg == "--underside") && value("--gesture").is_none() {
+        let pose = subject.standing();
+        let mut sheet = Image::new(VIEW * 2, VIEW * 2);
+        for (index, frame) in subject.underside_frames().iter().enumerate() {
+            let view = subject.view(&pose, 0.0, frame);
+            sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
+        }
+        write(&out, &format!("{stem}_underside"), &sheet);
+        println!("rendered the underside");
+        return;
+    }
+
     // One of the crate's own goal-space gestures, by roster name — what the
     // viewer plays for a greeting (#318). Sampled over its own length from
     // the standing pose, the way `gesturing` in the viewer applies it.
@@ -1320,11 +1443,20 @@ fn main() {
         if let Some(time) = value("--at").and_then(|time| time.parse::<f32>().ok()) {
             let mut pose = subject.standing();
             gesture.apply(&subject.avatar.rig, &mut pose, time);
-            let frames = subject.sheet_frames();
+            // `--underside`: the same moment from below, in front and from
+            // the low three-quarters, where a leg's junction reads (#387).
+            let underside = args.iter().any(|arg| arg == "--underside");
+            let frames = if underside {
+                subject.underside_frames()
+            } else {
+                subject.sheet_frames()
+            };
             let mut sheet = Image::new(VIEW * 2, VIEW * 2);
             for (index, frame) in frames.iter().enumerate() {
                 let mut view = subject.view(&pose, 0.0, frame);
-                ground_line(&mut view, frame);
+                if !underside {
+                    ground_line(&mut view, frame);
+                }
                 sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
             }
             write(&out, &format!("{stem}_gesture_at"), &sheet);
@@ -1851,6 +1983,37 @@ impl Subject {
         [of(0.0), of(FRAC_PI_2), of(PI), of(FRAC_PI_4)]
     }
 
+    /// The four views a leg's junction with the trunk is judged from (#387):
+    /// straight up from under the body, nose at the top of the frame; square
+    /// to the chest; and low from the three-quarters, in front and behind.
+    fn underside_frames(&self) -> [Frame; 4] {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        // On the trunk's underside, from pelvis to withers, so the frame is
+        // spent on the junctions and not on the head and the tail.
+        let rig = &self.avatar.rig;
+        let along: Vec<Vec3> = [Zone::Pelvis, Zone::Abdomen, Zone::Chest]
+            .into_iter()
+            .flat_map(|zone| rig.in_zone(zone))
+            .map(|joint| rig.joints[joint].position)
+            .collect();
+        let (near, far) = along.iter().fold((f32::MAX, f32::MIN), |(near, far), at| {
+            (near.min(at.z), far.max(at.z))
+        });
+        let low = along.iter().map(|at| at.y).sum::<f32>() / along.len().max(1) as f32;
+        let of = |turn: f32, pitch: f32| Frame {
+            turn,
+            pitch,
+            centre: Vec3::new(0.0, low * 0.8, (near + far) * 0.5),
+            span: (far - near) * 1.7,
+        };
+        [
+            of(PI, -FRAC_PI_2 + 0.02),
+            of(0.0, 0.0),
+            of(FRAC_PI_4, -0.4),
+            of(PI - FRAC_PI_4, -0.4),
+        ]
+    }
+
     /// Four close-ups of one part of the body in one image.
     ///
     /// Different angles from the body sheet, because different things are being
@@ -2130,6 +2293,74 @@ impl Subject {
             pitch: PORTRAIT_PITCH,
             centre: (lo + hi) * 0.5,
             span: (hi - lo).max_element() * CLOSE_MARGIN,
+        })
+    }
+
+    /// Four views of the neck alone at rest (#386), framed on its zone: a
+    /// mane's roots are a few pixels at any framing that holds the whole body.
+    fn crest(&self) -> Option<[Frame; 4]> {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+        let parts = &self.avatar.parts;
+        let posed = self.standing().forward(&self.avatar.rig);
+        let deformed = posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+        let (lo, hi) = parts
+            .zones
+            .iter()
+            .zip(&deformed)
+            .filter(|(zone, _)| **zone == Zone::Neck)
+            .fold(
+                (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                |(lo, hi), (_, &point)| (lo.min(point), hi.max(point)),
+            );
+        (lo.x <= hi.x).then(|| {
+            let of = |turn: f32, pitch: f32| Frame {
+                turn,
+                pitch,
+                centre: (lo + hi) * 0.5,
+                span: (hi - lo).max_element() * CLOSE_MARGIN,
+            };
+            [
+                of(FRAC_PI_2, 0.0),
+                of(FRAC_PI_4, PORTRAIT_PITCH),
+                of(3.0 * FRAC_PI_4, PORTRAIT_PITCH),
+                of(3.0 * FRAC_PI_4, OVERHEAD_PITCH),
+            ]
+        })
+    }
+
+    /// Four views of the back of the head in `pose` (#388), framed on the head
+    /// zone and the neck's upper half: the join is the subject, and a framing
+    /// that holds the whole neck leaves it a few pixels.
+    fn nape(&self, pose: &Pose) -> Option<[Frame; 4]> {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        let parts = &self.avatar.parts;
+        let posed = pose.forward(&self.avatar.rig);
+        let deformed = posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+        let bounds = |wanted: Zone| {
+            parts
+                .zones
+                .iter()
+                .zip(&deformed)
+                .filter(|(zone, _)| **zone == wanted)
+                .fold(
+                    (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                    |(lo, hi), (_, &point)| (lo.min(point), hi.max(point)),
+                )
+        };
+        let (lo, hi) = bounds(Zone::Head);
+        (lo.x <= hi.x).then(|| {
+            let of = |turn: f32, pitch: f32| Frame {
+                turn,
+                pitch,
+                centre: (lo + hi) * 0.5,
+                span: (hi - lo).max_element() * CLOSE_MARGIN * 1.2,
+            };
+            [
+                of(FRAC_PI_2, 0.0),
+                of(PI, GAME_PITCH),
+                of(3.0 * FRAC_PI_4, GAME_PITCH * 0.5),
+                of(PI, 0.0),
+            ]
         })
     }
 
@@ -3417,6 +3648,10 @@ fn gallery(
     while records.len() < count && seed < first + 1000 * count as i64 {
         let mut record = AvatarRecord::new("Gallery", plan.clone());
         record.reroll(seed);
+        if let Archetype::Quadruped(params) = &mut record.archetype {
+            params.fur.mane = tiles.mane.unwrap_or(params.fur.mane);
+            params.fur.mane_stiffness = tiles.stiffness.unwrap_or(params.fur.mane_stiffness);
+        }
         if keep(&record) {
             records.push((seed, record));
         }
@@ -3519,6 +3754,10 @@ struct Tiles {
     /// The head alone, from the front three quarters, rather than the whole
     /// body side on (#367).
     portrait: bool,
+    /// A mane's length, whatever each roll grew (#386).
+    mane: Option<f32>,
+    /// A mane's stiffness, whatever a roll starts at (#389).
+    stiffness: Option<f32>,
 }
 
 /// How far round from the face a portrait looks: the front three quarters.

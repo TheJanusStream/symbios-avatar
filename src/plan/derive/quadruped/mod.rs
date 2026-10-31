@@ -30,6 +30,11 @@ use crate::plan::{BeastHead, Composites, DEFAULT_BODY_FAT, Family, QuadrupedPara
 /// a joint its room.
 const NECK_SECTION: Vec2 = Vec2::new(0.92, 1.0);
 
+/// How far a dog's skull has gone from a cat's round one toward a horse's poll
+/// and jowl (#388): between them, with a marked occiput and a modest jowl.
+/// Provenance: **tuned by render**.
+const DOG_SKULL_BACK: f32 = 0.60;
+
 /// The withers height a record's back height builds, as a multiple of it.
 ///
 /// Provenance: measured off the P5 body by `examples/quadprobe` (#374): its
@@ -157,6 +162,10 @@ struct Frame {
     neck_girth: f32,
     /// The neck's cross-section: a horse's is deep and narrow, crested.
     neck_section: Vec2,
+    /// How far the back of the skull has gone from round to a poll and a flat
+    /// jowl (#388): nothing on a cat, whose braincase is the round end of the
+    /// range, and all of it on a horse.
+    skull_back: f32,
     /// How far the neck reaches against P1's. A horse's is 0.53 withers
     /// heights from the withers to the poll (S3, M); a dog's and a cat's are
     /// chosen by render.
@@ -204,6 +213,7 @@ impl Frame {
                 thigh_section: Vec2::new(0.8, 1.25),
                 neck_girth: 1.6,
                 neck_section: NECK_SECTION,
+                skull_back: DOG_SKULL_BACK,
                 neck: 1.0,
             },
             // Bones: Poradowski's radiographs (S2, H), the shoulder blade and
@@ -250,6 +260,7 @@ impl Frame {
                 thigh_section: Vec2::new(0.8, 1.25),
                 neck_girth: 1.9,
                 neck_section: NECK_SECTION,
+                skull_back: 0.0,
                 neck: 0.85,
             },
             // Matsuura's landmarks (S4, H) throughout: segment lengths, the
@@ -286,6 +297,7 @@ impl Frame {
                 thigh_section: Vec2::new(0.75, 1.35),
                 neck_girth: 1.3,
                 neck_section: Vec2::new(0.72, 1.0),
+                skull_back: 1.0,
                 neck: 1.2,
             },
         }
@@ -329,6 +341,7 @@ impl Frame {
             thigh_section: own.thigh_section.lerp(other.thigh_section, t),
             neck_girth: mix(own.neck_girth, other.neck_girth),
             neck_section: own.neck_section.lerp(other.neck_section, t),
+            skull_back: mix(own.skull_back, other.skull_back),
             neck: mix(own.neck, other.neck),
         }
     }
@@ -947,6 +960,10 @@ impl Dimensions {
                 occiput: (occiput_at, occiput_r),
                 cranium: (head_at, head_r),
                 nose: (nose_at, nose_r),
+                neck: neck_at,
+                withers: trunk[TRUNK_NODES - 1].0,
+                // A young skull is a round one whatever it grows into.
+                back: frame.skull_back * (1.0 - 0.5 * young.max(0.0)),
             },
             params,
             appeal,

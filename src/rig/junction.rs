@@ -282,6 +282,20 @@ mod tests {
             .collect()
     }
 
+    /// The spine's nearest point to `at`.
+    fn nearest_on_spine(junctions: &Junctions, at: Vec3) -> Vec3 {
+        junctions
+            .spine
+            .windows(2)
+            .map(|pair| {
+                let (a, b) = (pair[0].0, pair[1].0);
+                let along = ((at - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+                a + (b - a) * along
+            })
+            .min_by(|p, q| p.distance(at).total_cmp(&q.distance(at)))
+            .expect("a spine")
+    }
+
     #[test]
     fn a_person_has_no_junction() {
         // A person's limbs hang free of the trunk, and its coat is its skin:
@@ -311,8 +325,12 @@ mod tests {
                         assert_eq!(leg.limb, limb, "{zone:?} at {at} was another leg's");
                         assert!(leg.share > 0.99, "{zone:?} at {at} is {:.2} leg", leg.share);
                     }
-                    // The back, which faces the sky.
-                    Zone::Chest | Zone::Abdomen | Zone::Pelvis if normal.y > 0.5 => {
+                    // The back, which faces the sky. Not a fold facing up below
+                    // the spine: the junctions meeting under the trunk (#387)
+                    // gave a horse's groin one, the crease the share runs through.
+                    Zone::Chest | Zone::Abdomen | Zone::Pelvis
+                        if normal.y > 0.5 && at.y > nearest_on_spine(&junctions, at).y =>
+                    {
                         assert_eq!(junctions.share(at), 0.0, "the back at {at} is a leg's");
                     }
                     _ => {}
@@ -357,20 +375,6 @@ mod tests {
         for (name, record) in bodies {
             let avatar = Avatar::build_with(&record, &config).expect("the beast builds");
             let junctions = Junctions::of(&avatar.rig);
-            // The spine's nearest point to `at`.
-            let spine = |at: Vec3| {
-                junctions
-                    .spine
-                    .windows(2)
-                    .map(|pair| {
-                        let (a, b) = (pair[0].0, pair[1].0);
-                        let along =
-                            ((at - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
-                        a + (b - a) * along
-                    })
-                    .min_by(|p, q| p.distance(at).total_cmp(&q.distance(at)))
-                    .expect("a spine")
-            };
             let (mut tails, mut backs) = (0, 0);
             let body = &avatar.parts.body;
             for ((&at, &zone), normal) in body
@@ -381,7 +385,7 @@ mod tests {
             {
                 let back = matches!(zone, Zone::Chest | Zone::Abdomen | Zone::Pelvis)
                     && normal.y > 0.2
-                    && at.y > spine(at).y;
+                    && at.y > nearest_on_spine(&junctions, at).y;
                 if zone == Zone::Tail || back {
                     let share = junctions.share(at);
                     assert_eq!(share, 0.0, "{name}: {zone:?} at {at} is {share:.3} leg");

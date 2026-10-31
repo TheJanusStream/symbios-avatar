@@ -454,6 +454,7 @@ fn every_quadruped_roll_fits_the_webgl2_budget() {
                             tail: 10.0,
                             feathering: 10.0,
                             tufts: 10.0,
+                            ..Fur::default()
                         },
                         ..Default::default()
                     }),

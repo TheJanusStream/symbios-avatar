@@ -22,11 +22,27 @@
 //!   height and counts are fixed per zone, because the budget is triangles,
 //!   not area.
 //!
+//! **A card goes in under the skin and lies on it** (#386). Seated on the skin
+//! and standing off it, a card's root is a straight cut across a lock with
+//! the coat right behind it, and every card showed one. So a card narrows to
+//! a pinch at its root, starts below the skin, and comes out at a shallow
+//! angle (`zone::Lock`); and a mane, whose every card a viewer sees, drapes
+//! over the neck's measured section from under the crest's far side
+//! (`Crest`), so the two sides' cards cross on it and cover each other.
+//!
+//! **A mane stands as stiffly as its record says** (#389): a card comes out of
+//! the skin the same way, over the crest, and then rises (`zone::Stand`) before
+//! whatever is left of it falls to the neck's side. The rise is what makes an
+//! outline against the sky; the low foot it rises from is what still covers
+//! the other side's seams.
+//!
 //! Drawn in the hair's draw: a beast grows no person's hair, so fur is the
 //! one draw more a furred beast makes than a bald one - three in all, inside
 //! the budget's four. Tiered under [`MAX_TRIANGLES`] as a head is under its
 //! own: a zone's count is a request (`plan.md`, risk 5).
 
+#[cfg(test)]
+mod seam;
 mod zone;
 
 pub use zone::FurZone;
@@ -40,6 +56,7 @@ use super::clump::loft::loft;
 use super::clump::scatter::{area_of, inside};
 use crate::face::beast::Ears;
 use crate::face::step;
+use crate::hair::shell::face::moller;
 use crate::mesh::{PolyMesh, VertexSkin};
 use crate::plan::{Coat, Fur, Zone};
 use crate::rig::{Influence, Rig, SkinWeights};
@@ -49,14 +66,17 @@ use zone::Lock;
 /// What a beast's fur may cost, in triangles.
 ///
 /// Provenance: **derived** from the budget. The dearest bald beast the sweep
-/// in `tests/budget.rs` reaches is 17,770 (a horse with every axis low, at
-/// the envelope's shortest), and this on it is 26,770 against the 32,200
-/// target - a sum the sweep re-measures rather than trusts, and holds only
-/// because the ceiling is hard (`grow`). Not the whole leftover: a card is
-/// drawn over the coat it grows from and over its neighbours, alpha-tested,
-/// and a triangle of fur costs a browser more than a triangle of skin; 5,430
-/// are kept back for that. At every zone's full length a horse grows about
-/// 5,600, a dog 4,700 and a cat 4,300, so the ceiling bites only past that,
+/// in `tests/budget.rs` reaches is 20,042, and the dearest of 3,000 sampled
+/// corners 21,000; this on that is 30,000 against the 32,200 target - a sum
+/// the sweep re-measures rather than trusts, and holds only because the
+/// ceiling is hard (`grow`). Not the whole leftover: a card is drawn over the
+/// coat it grows from and over its neighbours, alpha-tested, and a triangle
+/// of fur costs a browser more than a triangle of skin; 2,200 are kept back
+/// for that. At every zone's full length a rolled horse grows
+/// about 5,700, a dog 5,900 and a cat 4,800, the dearest roll 7,500 (a mane
+/// draped over its neck, #386, costs about 750 of that). A mane's crest at the
+/// default stiffness (#389) adds about 1,400 on a horse, and the dearest mane
+/// the seam sweep builds comes to 8,800, so the ceiling bites only past that,
 /// toward the envelope's end.
 pub const MAX_TRIANGLES: usize = 9_000;
 
@@ -80,6 +100,14 @@ const LAST_PASSES: usize = 5;
 const JITTER: f32 = 0.8;
 const RETRIES: usize = 4;
 
+/// How far a mane's root leans toward the side it falls, as the sideways part
+/// of its facing: past anything the crest's own facing says once its sideways
+/// part is taken out, so that it is the root's side and no vertex's.
+const PARTING: f32 = 0.4;
+
+/// The weakest root a mane grows a card from.
+const THINNEST: f32 = 0.05;
+
 /// One zone's fur, grown: a line of [`FurGrowth`]'s ledger.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GrownZone {
@@ -87,6 +115,8 @@ pub struct GrownZone {
     pub zone: FurZone,
     /// How many cards were rooted.
     pub clumps: usize,
+    /// How many of them, the last, stand as a mane's crest (#389).
+    pub upright: usize,
     /// What they cost, in triangles.
     pub tris: usize,
 }
@@ -192,33 +222,57 @@ fn grow_share(bed: &Bed, fur: &Fur, seed: i64, share: f32) -> FurGrowth {
         // keeps one: a zone that grows keeps growing.
         let count = ((zone.cut().count as f32 * share).round() as usize).max(1);
         let mut stream = Pcg64Mcg::seed_from_u64(stream_seed(seed, zone));
+        let line = (zone == FurZone::Mane).then(|| Crest::of(bed)).flatten();
+        let lock = Lock::new(zone, bed, line.as_ref(), length, fur.mane_stiffness);
+        let mut sets = Vec::with_capacity(2);
         let roots = match zone {
-            FurZone::Mane => crest(bed, count, &mut stream),
+            FurZone::Mane => line.as_ref().map_or_else(Vec::new, |line| {
+                // A mane falls over less the stiffer it is, and grows a crest of
+                // upright cards as well, each its own even alternation of sides:
+                // taken out of the falling cards, they left bald stretches.
+                let (falling, standing) = zone::crest_split(count, fur.mane_stiffness);
+                let roots = crest(bed, line, falling, thins_falling, &mut stream);
+                let upright = Lock::upright(bed, Some(line), length, fur.mane_stiffness);
+                sets.push((
+                    upright,
+                    crest(bed, line, standing, thins_upright, &mut stream),
+                ));
+                roots
+            }),
             FurZone::Tufts => tufts(bed, count),
             _ => scatter(bed, zone, count, &mut stream),
         };
-        let lock = Lock::new(zone, bed, length);
+        sets.insert(0, (lock, roots));
         let before = growth.mesh.face_count();
         let mut clumps = 0;
-        for (root, at_zone) in &roots {
-            let colour = if zone == FurZone::Tufts {
-                sampler.dark()
-            } else if zone.points() {
-                sampler.points(root.at, root.out, *at_zone)
-            } else {
-                sampler.colour(root.at, root.out, *at_zone)
-            };
-            // Tipped a shade lighter, as fur in the light is.
-            let tips = colour.lerp(Vec3::ONE, 0.08);
-            if loft(&mut growth.mesh, root, &lock, None, colour, tips) > 0 {
-                clumps += 1;
+        let mut upright = 0;
+        for (set, (lock, roots)) in sets.iter().enumerate() {
+            for (root, at_zone) in roots {
+                let colour = if zone == FurZone::Tufts {
+                    sampler.dark()
+                } else if zone.points() {
+                    sampler.points(root.at, root.out, *at_zone)
+                } else {
+                    sampler.colour(root.at, root.out, *at_zone)
+                };
+                // Tipped a shade lighter, as fur in the light is.
+                let tips = colour.lerp(Vec3::ONE, 0.08);
+                if loft(&mut growth.mesh, root, lock, None, colour, tips) > 0 {
+                    clumps += 1;
+                    upright += usize::from(set > 0);
+                }
             }
         }
         let tris: usize = (before..growth.mesh.face_count())
             .map(|face| growth.mesh.faces[face].len().saturating_sub(2))
             .sum();
         if clumps > 0 {
-            growth.grown.push(GrownZone { zone, clumps, tris });
+            growth.grown.push(GrownZone {
+                zone,
+                clumps,
+                upright,
+                tris,
+            });
         }
     }
     growth
@@ -332,95 +386,359 @@ fn scatter(bed: &Bed, zone: FurZone, count: usize, stream: &mut Pcg64Mcg) -> Vec
     roots
 }
 
-/// `count` roots along the neck's crest, from the withers up to the poll:
-/// the line a mane grows from.
+/// One point of a neck's crest.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Crested {
+    /// Where the crest's skin is.
+    pub at: Vec3,
+    /// Up off the neck's bone there.
+    pub up: Vec3,
+    /// Along the crest toward the withers.
+    pub run: Vec3,
+    /// How far the skin stands off the bone, round from the crest: the greater
+    /// of the neck's two sides, every [`Crest::ROUND`] over [`Crest::RAYS`].
+    pub skin: [f32; Crest::RAYS],
+}
+
+impl Crested {
+    /// How far the skin stands off the bone `turned` radians round from the
+    /// crest.
+    pub(super) fn skin_at(&self, turned: f32) -> f32 {
+        let at = (turned / Crest::ROUND).clamp(0.0, (Crest::RAYS - 1) as f32);
+        let ray = (at as usize).min(Crest::RAYS - 2);
+        self.skin[ray] + (self.skin[ray + 1] - self.skin[ray]) * (at - ray as f32)
+    }
+}
+
+/// The line along a neck's crest that a mane grows from and lies along.
 ///
-/// **Read off the rig, not the mesh.** A neck is a tube whose rings run far
-/// apart down its length, and on a horse's long neck the crest showed on two
-/// of them; a mask over its faces rooted the whole mane at the withers. The
-/// rig knows the neck's line - the chest's joint, the neck's, the occiput -
-/// and each joint's radius says how far above its bone the crest runs. A
-/// root sits where that line passes, at the height of the surface nearest
-/// it, and takes that surface's binding.
-fn crest(bed: &Bed, count: usize, stream: &mut Pcg64Mcg) -> Vec<(Root, Zone)> {
-    let rig = bed.rig;
-    // From the head's first joint down the neck to the trunk's.
-    let Some(occiput) = rig.joints.iter().position(|joint| {
-        joint.zone == Zone::Head
-            && joint
-                .parent
-                .is_some_and(|parent| rig.joints[parent].zone == Zone::Neck)
-    }) else {
-        return Vec::new();
-    };
-    let mut chain = vec![occiput];
-    let mut at = occiput;
-    while let Some(parent) = rig.joints[at].parent {
-        chain.push(parent);
-        if rig.joints[parent].zone != Zone::Neck {
-            break;
+/// **Read off the rig, then off the skin.** A neck is a tube whose rings run
+/// far apart down its length, and on a horse's long neck the crest showed on
+/// two of them; a mask over its faces rooted the whole mane at the withers.
+/// The rig knows the neck's line (the chest's joint, the neck's, the occiput)
+/// and each joint's radius says about how far above its bone the crest runs,
+/// but only about: a deep neck's skin stands well over it, and a card rooted
+/// on the rig's line starts inside the neck and comes out wherever the nearest
+/// ring lets it (#386). So the skin is asked where it is: straight up off the
+/// bone, at every point of the line.
+///
+/// Evened out along its length, because the bones are not even: each is
+/// straight and the next one turns.
+pub(super) struct Crest {
+    /// From the trunk's joint up to the occiput.
+    pub(super) line: Vec<Crested>,
+}
+
+impl Crest {
+    /// How many points a crest is read at.
+    const POINTS: usize = 21;
+
+    /// How many times it is evened out.
+    const EVENED: usize = 3;
+
+    /// How many rays read the neck's section at each point.
+    pub(super) const RAYS: usize = 7;
+
+    /// How far apart they are, in radians.
+    pub(super) const ROUND: f32 = 0.3;
+
+    /// How far along the bone from the neck joint to the skull the crest ends.
+    /// Provenance: **tuned by render** (#388).
+    const POLL: f32 = 0.70;
+
+    /// `bed`'s crest, if its body has a neck.
+    pub(super) fn of(bed: &Bed) -> Option<Self> {
+        let rig = bed.rig;
+        // From the head's first joint down the neck to the trunk's.
+        let occiput = rig.joints.iter().position(|joint| {
+            joint.zone == Zone::Head
+                && joint
+                    .parent
+                    .is_some_and(|parent| rig.joints[parent].zone == Zone::Neck)
+        })?;
+        let mut chain = vec![occiput];
+        let mut at = occiput;
+        while let Some(parent) = rig.joints[at].parent {
+            chain.push(parent);
+            if rig.joints[parent].zone != Zone::Neck {
+                break;
+            }
+            at = parent;
         }
-        at = parent;
+        chain.reverse();
+        if chain.len() < 2 {
+            return None;
+        }
+        // Each joint: where it is, and its bone's own up.
+        let joints: Vec<(Vec3, Vec3)> = chain
+            .iter()
+            .map(|&joint| {
+                let here = rig.joints[joint].position;
+                (here, bed.dorsal(here))
+            })
+            .collect();
+        let lengths: Vec<f32> = joints
+            .windows(2)
+            .map(|pair| pair[0].0.distance(pair[1].0))
+            .collect();
+        let total: f32 = lengths.iter().sum();
+        if total <= f32::EPSILON {
+            return None;
+        }
+        // Only what a ray from inside the neck can meet first: the legs, the
+        // rump and the tail are most of the body and none of its neck.
+        let triangles: Vec<[Vec3; 3]> = bed
+            .body
+            .triangulated()
+            .iter()
+            .filter(|corners| {
+                corners.iter().any(|&corner| {
+                    !matches!(
+                        bed.zones[corner as usize],
+                        Zone::Pelvis | Zone::LowerLimb(_) | Zone::Extremity(_) | Zone::Tail
+                    )
+                })
+            })
+            .map(|corners| corners.map(|corner| bed.body.positions[corner as usize]))
+            .collect();
+        // First the crest itself: where each point of the bone, looking up,
+        // leaves the skin.
+        let mut bones = Vec::with_capacity(Self::POINTS);
+        let mut crest: Vec<Vec3> = Vec::with_capacity(Self::POINTS);
+        for point in 0..Self::POINTS {
+            // Where along the line, and which of its pieces that is.
+            let mut left = point as f32 / (Self::POINTS - 1) as f32 * total;
+            let mut piece = 0;
+            while piece + 1 < lengths.len() && left > lengths[piece] {
+                left -= lengths[piece];
+                piece += 1;
+            }
+            let t = (left / lengths[piece].max(f32::EPSILON)).clamp(0.0, 1.0);
+            let ((from, up_from), (to, up_to)) = (joints[piece], joints[piece + 1]);
+            let bone = from.lerp(to, t);
+            let up = up_from.lerp(up_to, t).normalize_or(Vec3::Y);
+            let reach = first_exit(&triangles, bone, up).unwrap_or(rig.joints[chain[piece]].radius);
+            bones.push(bone);
+            crest.push(bone + up * reach);
+        }
+        // Up to the poll, and no further: past it a line stops being a crest
+        // and starts climbing the back of the head, where a card has no neck to
+        // lie on. Read off the bones rather than the section, because the neck
+        // grows into the head it carries (#388), so nothing narrows there.
+        let neck_run: f32 = lengths[..lengths.len() - 1].iter().sum();
+        let poll = (neck_run + Self::POLL * lengths[lengths.len() - 1]) / total;
+        let poll = ((poll * (Self::POINTS - 1) as f32).round() as usize).min(Self::POINTS - 1);
+        bones.truncate(poll + 1);
+        crest.truncate(poll + 1);
+        for _ in 0..Self::EVENED {
+            crest = even(&crest);
+        }
+        // Then its run, and square to that its up: on a bone's own up the
+        // cards fan apart wherever the neck's bones turn, however smoothly.
+        let mut runs: Vec<Vec3> = (0..crest.len())
+            .map(|point| {
+                let (down, on) = (point.saturating_sub(1), (point + 1).min(crest.len() - 1));
+                (crest[down] - crest[on]).normalize_or(Vec3::NEG_Z)
+            })
+            .collect();
+        for _ in 0..Self::EVENED {
+            runs = even(&runs);
+        }
+        let line = (0..crest.len())
+            .map(|point| {
+                let run = runs[point].normalize_or(Vec3::NEG_Z);
+                let off = crest[point] - bones[point];
+                let up = (off - run * off.dot(run)).normalize_or(Vec3::Y);
+                let up = (up - Vec3::X * up.x).normalize_or(Vec3::Y);
+                // The middle of the neck's section there, and how far each way
+                // round from the crest its skin stands off that.
+                let reach = off.dot(up).max(f32::EPSILON);
+                let middle = crest[point] - up * reach;
+                // Evened out, a line along a neck that hollows on its way into
+                // the head stands off the hollow: back down onto the skin (#388).
+                let reach =
+                    first_exit(&triangles, middle, up).map_or(reach, |skin| reach.min(skin));
+                let at = middle + up * reach;
+                let mut skin = [reach; Self::RAYS];
+                for (ray, standing) in skin.iter_mut().enumerate().skip(1) {
+                    let (sin, cos) = (ray as f32 * Self::ROUND).sin_cos();
+                    let exit = |side: f32| {
+                        first_exit(&triangles, middle, up * cos + Vec3::X * (side * sin))
+                    };
+                    *standing = exit(1.0)
+                        .into_iter()
+                        .chain(exit(-1.0))
+                        .max_by(f32::total_cmp)
+                        .unwrap_or(reach);
+                }
+                Crested { at, up, run, skin }
+            })
+            .collect();
+        Some(Self { line })
     }
-    chain.reverse();
-    if chain.len() < 2 || count == 0 {
-        return Vec::new();
+
+    /// The crest where it passes nearest `at`, read between its points.
+    ///
+    /// By the nearest **piece** of the line, not its nearest point and a
+    /// neighbour: a reading of the second kind jumps where the nearest point
+    /// changes, by more the more the line bends, and a card lying along it
+    /// inherits the jump as a kink it turns over at (#388).
+    pub(super) fn near(&self, at: Vec3) -> Crested {
+        let (piece, t) = self.place(at);
+        self.between(piece, t)
     }
-    // Each joint's top: off its bone's own up by its radius.
-    let tops: Vec<(Vec3, Vec3)> = chain
-        .iter()
-        .map(|&joint| {
-            let here = rig.joints[joint].position;
-            let up = bed.dorsal(here);
-            (here + up * rig.joints[joint].radius, up)
-        })
-        .collect();
-    let lengths: Vec<f32> = tops
-        .windows(2)
-        .map(|pair| pair[0].0.distance(pair[1].0))
-        .collect();
-    let total: f32 = lengths.iter().sum();
-    if total <= f32::EPSILON {
-        return Vec::new();
+
+    /// The piece of the line nearest `at` and how far along that piece.
+    fn place(&self, at: Vec3) -> (usize, f32) {
+        let mut best = (0, 0.0, f32::INFINITY);
+        for piece in 0..self.line.len().saturating_sub(1) {
+            let (from, to) = (self.line[piece].at, self.line[piece + 1].at);
+            let run = to - from;
+            let t = ((at - from).dot(run) / run.length_squared().max(f32::EPSILON)).clamp(0.0, 1.0);
+            let off = from.lerp(to, t).distance_squared(at);
+            if off < best.2 {
+                best = (piece, t, off);
+            }
+        }
+        (best.0, best.1)
     }
+
+    /// The line a share `t` along `piece`.
+    fn between(&self, piece: usize, t: f32) -> Crested {
+        let here = self.line[piece];
+        let Some(there) = self.line.get(piece + 1) else {
+            return here;
+        };
+        Crested {
+            at: here.at.lerp(there.at, t),
+            up: here.up.lerp(there.up, t).normalize_or(here.up),
+            run: here.run.lerp(there.run, t).normalize_or(here.run),
+            skin: std::array::from_fn(|ray| {
+                here.skin[ray] + (there.skin[ray] - here.skin[ray]) * t
+            }),
+        }
+    }
+
+    /// The crest `by` metres down it from where it passes nearest `from`,
+    /// walked along the line, and how far past its lower end that is.
+    ///
+    /// **Along the line rather than off it**: a straight step from a root leaves
+    /// a crest that bends, as a neck growing into its head does (#388), and which
+    /// point of it is then nearest stops being a question of how far the card
+    /// has come.
+    pub(super) fn walked(&self, from: Vec3, by: f32) -> (Crested, f32) {
+        let (mut piece, t) = self.place(from);
+        let length = |piece: usize| self.line[piece].at.distance(self.line[piece + 1].at);
+        if self.line.len() < 2 {
+            return (self.between(0, 0.0), by.max(0.0));
+        }
+        // Index 0 is the withers, so down the crest is down the line.
+        let mut left = by - t * length(piece);
+        if left <= 0.0 {
+            // Still on this piece, or above where it started.
+            let mut up = -left;
+            while up > length(piece) && piece + 2 < self.line.len() {
+                up -= length(piece);
+                piece += 1;
+            }
+            let share = (up / length(piece).max(f32::EPSILON)).clamp(0.0, 1.0);
+            return (self.between(piece, share), 0.0);
+        }
+        while piece > 0 {
+            piece -= 1;
+            let span = length(piece);
+            if left <= span {
+                let share = 1.0 - left / span.max(f32::EPSILON);
+                return (self.between(piece, share), 0.0);
+            }
+            left -= span;
+        }
+        (self.between(0, 0.0), left)
+    }
+}
+
+/// How a falling card's root weighs, a share of the way up the crest: thinning
+/// out at either end, where a mane does: slowly into the withers, or its last
+/// whole card is a straight edge down the shoulder, and quickly at the poll,
+/// which a mane reaches. Gone before a card is too small to come out of the
+/// skin it is sunk in.
+fn thins_falling(share: f32) -> f32 {
+    step(0.0, 0.3, share) * step(1.0, 0.95, share)
+}
+
+/// How an upright card's root weighs: it stands where it is rooted, where a
+/// falling card reaches back over the withers, so it thins out closer to them;
+/// and more slowly at the poll, or a crest ends there in a blunt block.
+fn thins_upright(share: f32) -> f32 {
+    step(0.0, 0.15, share) * step(1.0, 0.75, share)
+}
+
+/// `count` roots along the neck's crest, from the withers up to the poll: the
+/// line a mane grows from.
+///
+/// A root sits where [`Crest`] passes, takes the binding of the surface
+/// nearest it, and is parted to one side or the other, card by card.
+fn crest(
+    bed: &Bed,
+    line: &Crest,
+    count: usize,
+    thins: fn(f32) -> f32,
+    stream: &mut Pcg64Mcg,
+) -> Vec<(Root, Zone)> {
     let normals = bed.body.shading_normals();
     let mut roots = Vec::with_capacity(count);
     for index in 0..count {
         let jitter = stream.random_range(-0.5..0.5) * JITTER;
         let share = ((index as f32 + 0.5 + jitter) / count as f32).clamp(0.0, 1.0);
-        // Where along the line, and which of its pieces that is.
-        let mut left = share * total;
-        let mut piece = 0;
-        while piece + 1 < lengths.len() && left > lengths[piece] {
-            left -= lengths[piece];
-            piece += 1;
+        let weight = thins(share);
+        if weight < THINNEST {
+            continue;
         }
-        let t = (left / lengths[piece].max(f32::EPSILON)).clamp(0.0, 1.0);
-        let ((from, up_from), (to, up_to)) = (tops[piece], tops[piece + 1]);
-        let line = from.lerp(to, t);
-        let up = up_from.lerp(up_to, t).normalize_or(Vec3::Y);
+        let along = share * (line.line.len() - 1) as f32;
+        let piece = (along as usize).min(line.line.len() - 2);
+        let t = along - piece as f32;
+        let (from, to) = (line.line[piece], line.line[piece + 1]);
+        let at = from.at.lerp(to.at, t);
+        let up = from.up.lerp(to.up, t).normalize_or(Vec3::Y);
         let Some(nearest) = (0..bed.body.vertex_count()).min_by(|&a, &b| {
             bed.body.positions[a]
-                .distance_squared(line)
-                .total_cmp(&bed.body.positions[b].distance_squared(line))
+                .distance_squared(at)
+                .total_cmp(&bed.body.positions[b].distance_squared(at))
         }) else {
             return roots;
         };
-        // At the surface's height there, on the line.
-        let surface = bed.body.positions[nearest];
-        let at = line - up * (line - surface).dot(up);
+        // Parted card by card, so that a mane falls both ways evenly and no
+        // run of cards leaves a side bare. The card reads its side off this.
+        let parting = if index % 2 == 0 { PARTING } else { -PARTING };
+        let faces = normals[nearest] - Vec3::X * normals[nearest].x;
         roots.push((
             Root {
                 at,
-                out: (normals[nearest] + up).normalize_or(up),
-                // Thinning out at either end, where a mane does.
-                weight: step(0.0, 0.12, share) * step(1.0, 0.85, share),
+                out: ((faces + up).normalize_or(up) + Vec3::X * parting).normalize_or(up),
+                weight,
                 skin: bed.weights.vertices[nearest],
             },
             Zone::Neck,
         ));
     }
     roots
+}
+
+/// `line` with each of its inner points moved toward its neighbours.
+fn even(line: &[Vec3]) -> Vec<Vec3> {
+    let mut evened = line.to_vec();
+    for point in 1..line.len().saturating_sub(1) {
+        evened[point] = (line[point - 1] + line[point] * 2.0 + line[point + 1]) * 0.25;
+    }
+    evened
+}
+
+/// How far along `ray` from `from` it first crosses a triangle.
+fn first_exit(triangles: &[[Vec3; 3]], from: Vec3, ray: Vec3) -> Option<f32> {
+    triangles
+        .iter()
+        .filter_map(|&[a, b, c]| moller(from, ray, a, b, c).map(|(distance, _, _)| distance))
+        .min_by(f32::total_cmp)
 }
 
 /// `count` roots at each ear's tip, splayed round the ear's own run and
@@ -485,6 +803,7 @@ mod tests {
             tail: length,
             feathering: length,
             tufts: length,
+            ..Fur::default()
         }
     }
 
