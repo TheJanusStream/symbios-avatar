@@ -222,6 +222,15 @@ pub struct Parts {
     /// on the head its plan declared.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub beast: Option<face::beast::BeastFace>,
+    /// A beast's whiskers and horn (#367), if it wears either. Kept apart from
+    /// [`Self::beast`] because the eyes' draw they go in is built per call,
+    /// wherever the body is drawn, so unlike the rest of a head they have to
+    /// survive a worker boundary (#385).
+    #[cfg_attr(
+        feature = "serde-avatar",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub adornments: Option<face::beast::Adornments>,
     /// A colour over the atlas at each body vertex, or empty for none: a
     /// beast's palate, which its shut jaw hides (#367).
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
@@ -858,12 +867,17 @@ impl Avatar {
         }
         .filter(|fur| fur.mesh.face_count() > 0);
 
+        let adornments = beast
+            .as_ref()
+            .map(|beast| beast.adornments.clone())
+            .filter(|worn| worn.whiskers.face_count() + worn.horn.face_count() > 0);
         let parts = Parts {
             hair,
             far_hair,
             fur,
             features,
             beast,
+            adornments,
             tint,
             extremities,
             outfit,
@@ -971,12 +985,10 @@ impl Avatar {
         // A beast's whiskers and horn (#367), in the draw that can colour
         // them white and ivory on any coat - see `face::beast::adorn` - and
         // held by the head.
-        if let Some(beast) = &self.parts.beast {
-            let mut worn = beast.adornments.assembled();
-            if !worn.faces.is_empty() {
-                worn.bind_rigidly(eyes.head as u16);
-                globes.append(&worn);
-            }
+        if let Some(adornments) = &self.parts.adornments {
+            let mut worn = adornments.assembled();
+            worn.bind_rigidly(eyes.head as u16);
+            globes.append(&worn);
         }
 
         if globes.faces.is_empty() {
@@ -2306,6 +2318,44 @@ mod tests {
         );
         assert!(back.parts.zones.is_empty());
         assert!(back.parts.features.is_none());
+    }
+
+    /// A beast's whiskers and horn are drawn on the far side of a worker
+    /// boundary too (#385). The eyes' draw is built per call, so it reads them
+    /// where the body is drawn, and they had stayed behind in `parts.beast`:
+    /// every browser drew a cat with no whiskers and a unicorn with no horn. A
+    /// person carries none and writes no such key.
+    #[cfg(feature = "serde-avatar")]
+    #[test]
+    fn a_sent_beast_keeps_its_whiskers_and_its_horn() {
+        let mut params = crate::QuadrupedParams::default();
+        params.set_kind(crate::Family::Horse, None, 0.0);
+        params.whiskers = 1.0;
+        params.horn = crate::Horn::Unicorn;
+        let config = AvatarConfig {
+            atlas: 64,
+            ..AvatarConfig::default()
+        };
+        let beast = AvatarRecord::new("Sent", Archetype::Quadruped(params));
+        let built = Avatar::build_with(&beast, &config).expect("builds");
+        let bare_faces = built.parts.eyes.as_ref().map_or(0, |eyes| {
+            eyes.left.globe.face_count() + eyes.right.globe.face_count()
+        });
+        let here = built.eyes_at(0.0);
+        assert!(
+            here[0].mesh.face_count() > bare_faces,
+            "the premise: this beast wears something in the eyes' draw"
+        );
+        let wire = serde_json::to_string(&built).expect("serialises");
+        let back: Avatar = serde_json::from_str(&wire).expect("deserialises");
+        assert_eq!(back.eyes_at(0.0), here, "the far side draws them too");
+
+        let person = AvatarRecord::new("Sent", Archetype::default());
+        let built = Avatar::build_with(&person, &config).expect("builds");
+        let wire = serde_json::to_string(&built).expect("serialises");
+        assert!(!wire.contains("adornments"), "a person's payload grew");
+        let back: Avatar = serde_json::from_str(&wire).expect("deserialises");
+        assert_eq!(back.eyes_at(0.0), built.eyes_at(0.0));
     }
 
     /// A beast's rig carries the outline its rests read across a worker

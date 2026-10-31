@@ -41,6 +41,7 @@ const HORN_TURNS: f32 = 1.5;
 /// A beast's whiskers and horn, built in its head joint's space and
 /// coloured, for the eyes' draw.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
 pub struct Adornments {
     /// Both sides' whiskers, as one mesh; empty when the head grows none.
     pub whiskers: PolyMesh,
