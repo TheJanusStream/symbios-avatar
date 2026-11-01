@@ -38,12 +38,21 @@
 //! throat, a bib, a piebald's lean, an extreme white's cap, a colourpoint's mask
 //! and the fur's grain each stopped on it. They fade by how far a texel lies off
 //! the head instead.
+//!
+//! **A creator's colours go in through the palette** (#401), and what each reaches
+//! is stated on [`crate::plan::CoatColours`]. Nothing here asks a family, and a
+//! mark's layout does not move. Two are new to the painter: a tail in a colour of
+//! its own, which fades in from the rump by how far out along the dock a texel lies
+//! ([`DOCK_FADE`]) so that the zone's line never shows, and a mane in a colour of
+//! its own, which [`ManeRoots`] paints under it, light on a dark coat as readily
+//! as dark on a light one.
 
 mod body;
 mod marks;
 mod palette;
 
 pub(crate) use body::CoatBody;
+pub use palette::{coat_colour, coat_swatches};
 
 use glam::Vec3;
 use symbios_texture::generator::TextureMap;
@@ -56,7 +65,7 @@ use crate::rig::Rig;
 use crate::rig::junction::LegShare;
 use body::{leg, topside, trunk, underside};
 use marks::{Fields, step};
-use palette::{PALE_HORN, PINK, Palette, WHITE};
+use palette::{Palette, WHITE};
 
 /// How strongly the fur's grain stands out of the normal map.
 /// Provenance: **tuned by render** (#368), against the skin's 0.15.
@@ -124,6 +133,23 @@ const GRAIN_BAND: f32 = 0.06;
 /// How far short of the last bone read another has its whole share, as a share of
 /// [`GRAIN_BAND`]. Provenance: **chosen** (#395).
 const GRAIN_HANDOVER: f32 = 0.25;
+
+/// How far out along the tail's first bone a picked colour takes to come in, in
+/// back heights, starting past where the zone map's line can lie, so that the line
+/// never shows. Cards rooted before it has come in start as the coat does and run to
+/// the colour: on a horse about a third of them, which from behind reads as a small
+/// patch of the coat where the tail leaves the rump.
+/// Along the bone rather than from the tail's root, which reads the same line at
+/// anything up to 0.3, because the line runs round the dock and across this measure.
+/// Provenance: **measured** (#401): the line lies at 0.069 at most over 600 rolls,
+/// and `a_tail_in_a_picked_colour_meets_the_rump_with_no_line` holds the margin;
+/// **tuned by render** for its end.
+const DOCK_FADE: (f32, f32) = (0.08, 0.14);
+
+/// And by [`CoatBody::along_tail`], which a tail that curls back past its own
+/// first bone still climbs. Provenance: **measured** (#401): the line lies at 0.25
+/// at most, tails at the envelope's ends among them.
+const TAIL_FADE: (f32, f32) = (0.26, 0.42);
 
 /// What a texel is.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -227,7 +253,7 @@ pub(crate) fn paint_coat(
             Some(mane) if surface == Surface::Fur => {
                 let share = mane.share(texel.position);
                 if share > 0.0 {
-                    colour.lerp(painter.points(), share)
+                    colour.lerp(painter.mane(), share)
                 } else {
                     colour
                 }
@@ -295,13 +321,23 @@ impl<'a> CoatSampler<'a> {
 
     /// The colour of a mane's or a tail's long hair rooted at `at`: the
     /// coat's own there, or its dark on a coat that darkens its points -
-    /// a bay's, a dun's - and white where white spotting reaches.
-    pub(crate) fn points(&self, at: Vec3, normal: Vec3, zone: Zone) -> Vec3 {
-        if darkens_points(self.coat) {
+    /// a bay's, a dun's - and white where white spotting reaches. A mane's is the
+    /// colour picked for it, if one was (#401), and a picked tail's root is what
+    /// its skin is there.
+    pub(crate) fn points(&self, at: Vec3, normal: Vec3, zone: Zone, tail: bool) -> Vec3 {
+        if !tail && let Some(mane) = self.palette.mane {
+            mane
+        } else if darkens_points(self.coat) && !(tail && self.palette.tail.is_some()) {
             self.ask(at, normal, zone, |painter| painter.points())
         } else {
             self.colour(at, normal, zone)
         }
+    }
+
+    /// The colour picked for the tail, if one was: what a card rooted anywhere on
+    /// it runs to, whatever its root has to match on the skin.
+    pub(crate) fn tail(&self) -> Option<Vec3> {
+        self.palette.tail
     }
 
     /// The coat's dark: a lynx's ear tips, whatever the coat round them.
@@ -428,8 +464,25 @@ impl<'a> Painter<'a> {
         Surface::Fur
     }
 
-    /// The coat at this texel, every locus applied in a breeder's order.
+    /// The coat at this texel, every locus applied in a breeder's order, and a
+    /// tail's own colour over that.
     fn fur(&self) -> Vec3 {
+        self.tailed(self.coat_fur())
+    }
+
+    /// `colour` with a picked tail colour over it, as far as the tail has come in
+    /// here (#401).
+    fn tailed(&self, colour: Vec3) -> Vec3 {
+        match self.palette.tail {
+            Some(tail) if self.texel.zone == Zone::Tail => {
+                colour.lerp(tail, self.body.tail_share(self.texel.position))
+            }
+            _ => colour,
+        }
+    }
+
+    /// The coat at this texel, every locus applied in a breeder's order.
+    fn coat_fur(&self) -> Vec3 {
         let mut colour = self.agouti();
         // A brindle is striped over a light coat, as a fawn brindle's is: on
         // a solid one it brings the light out to stripe, where in life the
@@ -446,7 +499,7 @@ impl<'a> Painter<'a> {
         }
         colour = self.countershaded(colour);
         colour = self.broken(colour);
-        colour.lerp(WHITE, self.white())
+        colour.lerp(self.palette.white, self.white())
     }
 
     /// The nose's or a pad's leather: a pad pink under any white that
@@ -461,12 +514,12 @@ impl<'a> Painter<'a> {
                 _ => 0.0,
             }
         };
-        self.palette.leather.lerp(PINK, bare)
+        self.palette.leather.lerp(self.palette.bare_leather, bare)
     }
 
     /// A claw's or a hoof's horn: pale under a white sock.
     fn horn(&self) -> Vec3 {
-        self.palette.horn.lerp(PALE_HORN, self.white())
+        self.palette.horn.lerp(self.palette.bare_horn, self.white())
     }
 
     /// How the agouti locus spreads the dark and the light here.
@@ -632,7 +685,11 @@ impl<'a> Painter<'a> {
     fn dapple(&self, colour: Vec3) -> Vec3 {
         let at = self.texel.position;
         let near = self.cells(6.0) + 0.06 * self.fields.warp(at, 20.0);
-        let grey = colour.lerp(Vec3::new(0.42, 0.42, 0.44), 0.6);
+        let grey = if self.palette.picked {
+            colour
+        } else {
+            colour.lerp(Vec3::new(0.42, 0.42, 0.44), 0.6)
+        };
         grey.lerp(grey.lerp(WHITE, 0.45), step(0.6, 0.34, near))
     }
 
@@ -640,7 +697,7 @@ impl<'a> Painter<'a> {
     /// their colour.
     fn pointed(&self, colour: Vec3) -> Vec3 {
         let (at, zone) = (self.texel.position, self.texel.zone);
-        let pale = colour.lerp(WHITE.lerp(self.palette.light, 0.15), 0.78);
+        let pale = colour.lerp(self.palette.pale, 0.78);
         let point = if zone == Zone::Tail {
             step(0.0, 0.35, self.body.along_tail(at))
         } else {
@@ -674,7 +731,7 @@ impl<'a> Painter<'a> {
         if coat.merle {
             // The dark broken into patches over a diluted ground.
             let patch = fields.patches(at, 5.0);
-            let diluted = colour.lerp(Vec3::new(0.56, 0.57, 0.60), 0.62);
+            let diluted = colour.lerp(self.palette.merle, 0.62);
             colour = diluted.lerp(colour, step(0.10, 0.30, patch));
         }
         if coat.tortie && coat.pigment != Pigment::Red {
@@ -684,13 +741,16 @@ impl<'a> Painter<'a> {
             );
         }
         if coat.dun {
-            let diluted = colour.lerp(self.palette.light.lerp(WHITE, 0.3), 0.5);
+            let diluted = self
+                .palette
+                .dun
+                .unwrap_or_else(|| colour.lerp(self.palette.light.lerp(WHITE, 0.3), 0.5));
             colour = colour.lerp(diluted, 0.8 * self.dun_body());
             colour = colour.lerp(self.palette.dark, 0.8 * self.dun_marks());
         }
         if coat.roan {
             let hairs = step(-0.1, 0.45, fields.grain(at, 70.0));
-            colour = colour.lerp(WHITE, 0.5 * hairs * self.roan());
+            colour = colour.lerp(self.palette.white, 0.5 * hairs * self.roan());
         }
         colour
     }
@@ -713,7 +773,13 @@ impl<'a> Painter<'a> {
     /// A coat's dark, and white where white spotting reaches: its long hair's
     /// colour, on a coat that darkens its points.
     fn points(&self) -> Vec3 {
-        self.palette.dark.lerp(WHITE, self.white())
+        self.palette.dark.lerp(self.palette.white, self.white())
+    }
+
+    /// A mane's skin: the colour picked for it, or its long hair's on a coat that
+    /// darkens its points.
+    fn mane(&self) -> Vec3 {
+        self.palette.mane.unwrap_or_else(|| self.points())
     }
 
     /// How much of a dun's dilution reaches here, `0..=1`: all of the body,
@@ -915,7 +981,7 @@ impl<'a> Painter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::{Family, Nose, QuadrupedParams};
+    use crate::plan::{CoatChannel, Family, Fantasy, Nose, QuadrupedParams};
     use crate::{Archetype, Avatar, AvatarRecord, Rig};
 
     /// A beast of `family` with its family's parts, as `tweak` leaves it,
@@ -940,6 +1006,690 @@ mod tests {
             .chunks_exact(4)
             .filter(|texel| (0..3).all(|channel| texel[channel].abs_diff(stored[channel]) <= 1))
             .count()
+    }
+
+    /// One picked colour per channel, none a coat would derive.
+    fn marker(channel: CoatChannel) -> [f32; 3] {
+        match channel {
+            CoatChannel::Dark => [0.10, 0.20, 0.90],
+            CoatChannel::Light => [0.95, 0.85, 0.10],
+            CoatChannel::White => [0.95, 0.30, 0.80],
+            CoatChannel::Leather => [0.10, 0.90, 0.20],
+            CoatChannel::Horn => [0.90, 0.10, 0.10],
+            CoatChannel::Mane => [0.15, 0.95, 0.95],
+            CoatChannel::Tail => [0.60, 0.10, 0.95],
+        }
+    }
+
+    /// A dark coat that uses every channel: tanned, spotted white, roan, on a beast
+    /// with claws and a leather nose, its mane and tail long.
+    fn every_channel_shows(params: &mut QuadrupedParams) {
+        params.coat.pigment = Pigment::Black;
+        params.coat.agouti = Agouti::TanPoints;
+        params.coat.white = White::Irish;
+        params.coat.roan = true;
+        params.feet = Feet::Claws;
+        params.nose = Nose::Leather;
+        params.fur.mane = 0.8;
+        params.fur.tail = 0.8;
+        params.fur.ruff = 0.0;
+    }
+
+    #[test]
+    fn a_picked_colour_paints_its_own_channel_and_no_other() {
+        // Read of the painter at every vertex of the body: which surface a point
+        // is, and which colour changed there, against the same beast with nothing
+        // picked.
+        let (avatar, _) = painted(Family::Dog, every_channel_shows);
+        let Archetype::Quadruped(base) = ({
+            let mut params = QuadrupedParams::default();
+            params.set_kind(Family::Dog, None, 0.0);
+            every_channel_shows(&mut params);
+            Archetype::Quadruped(params)
+        }) else {
+            unreachable!()
+        };
+        let skeleton = Archetype::Quadruped(base).skeleton(&crate::plan::Composites::default());
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let anatomy = CoatBody::of(
+            &rig,
+            skeleton.beast_head.as_ref(),
+            skeleton.beast_feet.as_ref(),
+        );
+        let (mesh, zones) = (&avatar.parts.body, &avatar.parts.zones);
+        let normals = mesh.vertex_normals();
+        let plain = Palette::of(&base.coat);
+        let fields = Fields::new(base.coat.marks, anatomy.height);
+        for channel in CoatChannel::ALL {
+            let mut coat = base.coat;
+            *coat.colours.get_mut(channel) = Some(marker(channel));
+            let palette = Palette::of(&coat);
+            let chosen = Vec3::from_array(marker(channel));
+            let (mut fur, mut leather, mut horn) = (0, 0, 0);
+            for vertex in 0..mesh.vertex_count() {
+                let texel = Texel {
+                    position: mesh.positions[vertex],
+                    normal: normals[vertex],
+                    crease: 0.0,
+                    mouth: 0.0,
+                    zone: zones[vertex],
+                };
+                let before = Painter::new(&texel, &base.coat, &plain, &fields, &anatomy);
+                let after = Painter::new(&texel, &coat, &palette, &fields, &anatomy);
+                match before.surface() {
+                    Surface::Fur => {
+                        if before.fur() != after.fur() {
+                            fur += 1;
+                            assert!(
+                                matches!(
+                                    channel,
+                                    CoatChannel::Dark
+                                        | CoatChannel::Light
+                                        | CoatChannel::White
+                                        | CoatChannel::Tail
+                                ),
+                                "{channel:?} moved the coat at {texel:?}"
+                            );
+                            if channel == CoatChannel::Tail {
+                                assert_eq!(texel.zone, Zone::Tail, "a tail's colour left the tail");
+                            }
+                            if channel == CoatChannel::White {
+                                assert!(
+                                    before.white() > 0.0 || before.roan() > 0.0,
+                                    "white reached a texel with no white on it"
+                                );
+                            }
+                        }
+                    }
+                    Surface::Leather => {
+                        if before.leather() != after.leather() {
+                            leather += 1;
+                            assert_eq!(channel, CoatChannel::Leather);
+                            assert_eq!(after.leather(), chosen, "under white as well");
+                        }
+                    }
+                    Surface::Horn(_) => {
+                        if before.horn() != after.horn() {
+                            horn += 1;
+                            assert_eq!(channel, CoatChannel::Horn);
+                            assert_eq!(after.horn(), chosen, "under white as well");
+                        }
+                    }
+                }
+            }
+            // The other half: each reached something.
+            match channel {
+                CoatChannel::Dark | CoatChannel::Light | CoatChannel::White | CoatChannel::Tail => {
+                    assert!(fur > 20, "{channel:?} reached {fur} vertices");
+                }
+                CoatChannel::Leather => assert!(leather > 20, "{leather} leather vertices"),
+                CoatChannel::Horn => assert!(horn > 20, "{horn} horn vertices"),
+                // Its fur and its roots: below.
+                CoatChannel::Mane => assert_eq!(fur + leather + horn, 0),
+            }
+        }
+    }
+
+    #[test]
+    fn every_picked_colour_reaches_the_atlas_and_a_coat_that_picks_none_does_not_move() {
+        let (plain, _) = painted(Family::Dog, every_channel_shows);
+        for channel in CoatChannel::ALL {
+            let (avatar, _) = painted(Family::Dog, |params| {
+                every_channel_shows(params);
+                *params.coat.colours.get_mut(channel) = Some(marker(channel));
+            });
+            let chosen = Vec3::from_array(marker(channel));
+            assert_eq!(texels_of(&plain, chosen), 0, "{channel:?}: the premise");
+            assert!(
+                texels_of(&avatar, chosen) > 20,
+                "{channel:?} painted {} texels",
+                texels_of(&avatar, chosen)
+            );
+        }
+    }
+
+    #[test]
+    fn a_picked_colour_wins_over_the_loci_and_a_derived_one_follows_it() {
+        let picked = [0.3, 0.6, 0.9];
+        let chosen = Vec3::from_array(picked);
+        for fantasy in [Fantasy::None, Fantasy::Rose] {
+            for dilute in [false, true] {
+                for intensity in [-3.0, 0.0, 3.0] {
+                    for pigment in Pigment::ALL {
+                        let base = Coat {
+                            fantasy,
+                            dilute,
+                            intensity,
+                            pigment,
+                            ..Coat::default()
+                        };
+                        let with = |channel: CoatChannel| {
+                            let mut coat = base;
+                            *coat.colours.get_mut(channel) = Some(picked);
+                            Palette::of(&coat)
+                        };
+                        assert_eq!(with(CoatChannel::Dark).dark, chosen);
+                        assert_eq!(with(CoatChannel::Light).light, chosen);
+                        assert_eq!(with(CoatChannel::White).white, chosen);
+                        assert_eq!(with(CoatChannel::Leather).leather, chosen);
+                        assert_eq!(with(CoatChannel::Leather).bare_leather, chosen);
+                        assert_eq!(with(CoatChannel::Horn).horn, chosen);
+                        assert_eq!(with(CoatChannel::Horn).bare_horn, chosen);
+                        // Nothing else moves on the channel's own account.
+                        let plain = Palette::of(&base);
+                        let horned = with(CoatChannel::Horn);
+                        assert_eq!((horned.dark, horned.light), (plain.dark, plain.light));
+                        assert_eq!(horned.leather, plain.leather);
+                    }
+                }
+            }
+        }
+        // A red coat's dark stays its light deepened, whichever light that is,
+        // until it is picked itself.
+        let mut coat = Coat {
+            pigment: Pigment::Red,
+            ..Coat::default()
+        };
+        coat.colours.light = Some(picked);
+        let palette = Palette::of(&coat);
+        assert_eq!(palette.ground, chosen);
+        assert_eq!(palette.dark, chosen * 0.62);
+        coat.colours.dark = Some([0.1, 0.1, 0.1]);
+        assert_eq!(Palette::of(&coat).dark, Vec3::splat(0.1));
+        assert_eq!(Palette::of(&coat).ground, chosen);
+        // And a dark coat's ground is its dark.
+        let mut coat = Coat {
+            pigment: Pigment::Black,
+            ..Coat::default()
+        };
+        coat.colours.dark = Some(picked);
+        assert_eq!(Palette::of(&coat).ground, chosen);
+    }
+
+    #[test]
+    fn what_a_picked_white_and_a_picked_light_reach_is_as_settled() {
+        let (avatar, _) = painted(Family::Horse, |_| ());
+        let mut params = QuadrupedParams::default();
+        params.set_kind(Family::Horse, None, 0.0);
+        let skeleton = Archetype::Quadruped(params).skeleton(&crate::plan::Composites::default());
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let anatomy = CoatBody::of(
+            &rig,
+            skeleton.beast_head.as_ref(),
+            skeleton.beast_feet.as_ref(),
+        );
+        let (mesh, zones) = (&avatar.parts.body, &avatar.parts.zones);
+        let normals = mesh.vertex_normals();
+        // Over the barrel's flank, level, so that no belly and no leg reads.
+        let flank = (0..mesh.vertex_count())
+            .find(|&vertex| {
+                zones[vertex] == Zone::Pelvis
+                    && normals[vertex].x > 0.9
+                    && anatomy.junctions.share(mesh.positions[vertex]) == 0.0
+            })
+            .expect("a flank");
+        let texel = Texel {
+            position: mesh.positions[flank],
+            normal: normals[flank],
+            crease: 0.0,
+            mouth: 0.0,
+            zone: Zone::Pelvis,
+        };
+        let fur = |coat: Coat| {
+            let palette = Palette::of(&coat);
+            let fields = Fields::new(coat.marks, anatomy.height);
+            Painter::new(&texel, &coat, &palette, &fields, &anatomy).fur()
+        };
+        let picked = [0.2, 0.9, 0.3];
+        let chosen = Vec3::from_array(picked);
+        let with = |base: Coat, channel: CoatChannel| {
+            let mut coat = base;
+            *coat.colours.get_mut(channel) = Some(picked);
+            fur(coat)
+        };
+        let black = Coat {
+            pigment: Pigment::Black,
+            ..Coat::default()
+        };
+        // A colourpoint's paled body is the light's and not the white's.
+        let point = Coat {
+            points: true,
+            ..black
+        };
+        assert_eq!(with(point, CoatChannel::White), fur(point));
+        assert!(with(point, CoatChannel::Light).distance(chosen) < 0.3);
+        assert!(fur(point).distance(chosen) > 0.5, "the premise");
+        // A roan's hairs are the white's, on some grain or other.
+        let roan = Coat {
+            roan: true,
+            ..black
+        };
+        let roan_at = (0..600)
+            .map(|marks| Coat { marks, ..roan })
+            .find(|coat| {
+                fur(*coat).distance(fur(Coat {
+                    roan: false,
+                    ..*coat
+                })) > 0.05
+            })
+            .expect("a hair");
+        // Which shows as how much greener than it is red, the colour being green.
+        let lean = |colour: Vec3| colour.y - colour.x;
+        let hairs = fur(Coat {
+            colours: crate::plan::CoatColours {
+                white: Some(picked),
+                ..crate::plan::CoatColours::default()
+            },
+            ..roan_at
+        });
+        assert!(lean(hairs) > lean(fur(roan_at)) + 0.02);
+        // A dun's body is the light's, nearly whole.
+        let dun = Coat { dun: true, ..black };
+        assert!(with(dun, CoatChannel::Light).distance(chosen) < 0.3);
+        // A dark merle's ground leans to the light; a red merle's cannot.
+        let merle = Coat {
+            merle: true,
+            ..black
+        };
+        let merled = (0..600)
+            .map(|marks| Coat { marks, ..merle })
+            .find(|coat| {
+                fur(*coat).distance(fur(Coat {
+                    merle: false,
+                    ..*coat
+                })) > 0.05
+            })
+            .expect("a patch");
+        assert!(with(merled, CoatChannel::Light).distance(chosen) < fur(merled).distance(chosen));
+        let mut red = Coat {
+            merle: true,
+            pigment: Pigment::Red,
+            ..Coat::default()
+        };
+        red.colours.light = Some(picked);
+        assert_eq!(Palette::of(&red).merle, Vec3::new(0.56, 0.57, 0.60));
+        // A dapple is not greyed under a picked colour: its net is the colour.
+        let dapple = Coat {
+            pattern: Pattern::Dapple,
+            ..black
+        };
+        assert!(with(dapple, CoatChannel::Dark).distance(chosen) < fur(dapple).distance(chosen));
+        let grey_in = |colour: Vec3| colour.max_element() - colour.min_element();
+        assert!(grey_in(with(dapple, CoatChannel::Dark)) > grey_in(fur(dapple)) + 0.2);
+    }
+
+    #[test]
+    fn every_channel_offers_its_presets_and_reads_what_it_paints() {
+        for channel in CoatChannel::ALL {
+            let swatches = coat_swatches(channel);
+            assert!(swatches.len() >= 3, "{channel:?}");
+            let coat = Coat::default();
+            let mut picked = coat;
+            *picked.colours.get_mut(channel) = Some(marker(channel));
+            assert_eq!(coat_colour(&picked, channel), marker(channel));
+            assert_ne!(coat_colour(&coat, channel), marker(channel));
+        }
+        // A black coat's dark is one of the presets, and so is every fantasy's.
+        let black = Coat {
+            pigment: Pigment::Black,
+            ..Coat::default()
+        };
+        let darks = coat_swatches(CoatChannel::Dark);
+        assert!(
+            darks
+                .iter()
+                .any(|(_, tone)| *tone == coat_colour(&black, CoatChannel::Dark))
+        );
+        for fantasy in FANTASIES_FOR_TEST {
+            let coat = Coat {
+                fantasy,
+                pigment: Pigment::Black,
+                ..Coat::default()
+            };
+            assert!(
+                darks
+                    .iter()
+                    .any(|(_, tone)| *tone == coat_colour(&coat, CoatChannel::Dark))
+            );
+        }
+    }
+
+    const FANTASIES_FOR_TEST: [Fantasy; 6] = [
+        Fantasy::Sky,
+        Fantasy::Mint,
+        Fantasy::Lilac,
+        Fantasy::Rose,
+        Fantasy::Sunny,
+        Fantasy::Ocean,
+    ];
+
+    /// What a mane's or a tail's cards were coloured: root and tip of each
+    /// vertex of `zone`'s faces.
+    fn fur_colours(avatar: &Avatar, zone: crate::hair::fur::FurZone) -> Vec<Vec3> {
+        let Some(fur) = avatar.parts.fur.as_ref() else {
+            return Vec::new();
+        };
+        let mesh = &fur.mesh;
+        let mut face = 0;
+        let mut out = Vec::new();
+        for grown in &fur.grown {
+            let faces = face..face + grown.tris / 2;
+            face = faces.end;
+            if grown.zone == zone {
+                for corners in &mesh.faces[faces] {
+                    out.extend(corners.iter().map(|&corner| mesh.colours[corner as usize]));
+                }
+            }
+        }
+        out
+    }
+
+    /// The colour at the tip of each card of `zone`.
+    fn fur_tips(fur: &crate::hair::fur::FurGrowth, zone: crate::hair::fur::FurZone) -> Vec<Vec3> {
+        let mesh = &fur.mesh;
+        let mut face = 0;
+        let mut out = Vec::new();
+        for grown in &fur.grown {
+            let faces = face..face + grown.tris / 2;
+            face = faces.end;
+            if grown.zone == zone {
+                for corners in &mesh.faces[faces] {
+                    out.extend(
+                        corners
+                            .iter()
+                            .filter(|&&corner| mesh.uvs[corner as usize].y >= 0.999)
+                            .map(|&corner| mesh.colours[corner as usize]),
+                    );
+                }
+            }
+        }
+        assert!(!out.is_empty(), "fixture: no tips");
+        out
+    }
+
+    #[test]
+    fn a_mane_in_a_picked_colour_is_that_colour_and_so_is_the_skin_under_it() {
+        use crate::hair::fur::FurZone;
+        // A light mane on a dark coat, which the roots never had to paint before:
+        // the cards in it, from root to a shade lighter at the tip, and the skin
+        // along the crest in it too, or a line of coat shows between two cards.
+        let light = [0.92, 0.90, 0.78];
+        let chosen = Vec3::from_array(light);
+        for family in Family::ALL {
+            let beast = |pick: bool, mane: f32| {
+                painted(family, |params| {
+                    params.coat.pigment = Pigment::Black;
+                    params.coat.agouti = Agouti::Solid;
+                    params.fur.mane = mane;
+                    if pick {
+                        params.coat.colours.mane = Some(light);
+                    }
+                })
+                .0
+            };
+            let (bare, maned) = (beast(true, 0.0), beast(true, 0.8));
+            let before = texels_of(&bare, chosen);
+            let after = texels_of(&maned, chosen);
+            assert_eq!(before, 0, "{family:?}: the premise");
+            // Measured, per family: 2,700 to 3,700, a line down the neck.
+            assert!(
+                (1500..6500).contains(&after),
+                "{family:?}: {after} texels under its mane"
+            );
+            let tips = chosen.lerp(Vec3::ONE, 0.08);
+            for zone in [FurZone::Mane, FurZone::Forelock] {
+                let colours = fur_colours(&maned, zone);
+                assert!(colours.len() > 40, "{family:?} {zone:?}: {}", colours.len());
+                for colour in colours {
+                    let (root, tip) = (colour.distance(chosen), colour.distance(tips));
+                    let span = chosen.distance(tips) + 1.0e-4;
+                    assert!(
+                        root <= span && tip <= span,
+                        "{family:?} {zone:?} wore {colour:?}"
+                    );
+                }
+            }
+            // The rest of the coat is what it was: only the line moved.
+            let unpicked = beast(false, 0.8);
+            let moved = unpicked
+                .skin
+                .albedo
+                .chunks_exact(4)
+                .zip(maned.skin.albedo.chunks_exact(4))
+                .filter(|(a, b)| a != b)
+                .count();
+            assert!(
+                moved < after * 2,
+                "{family:?}: {moved} texels moved for {after} on the line"
+            );
+        }
+    }
+
+    #[test]
+    fn a_picked_mane_with_no_mane_to_wear_it_changes_nothing() {
+        for family in Family::ALL {
+            let beast = |pick: bool| {
+                painted(family, |params| {
+                    params.fur.tail = 0.5;
+                    if pick {
+                        params.coat.colours.mane = Some([0.9, 0.1, 0.5]);
+                    }
+                })
+                .0
+            };
+            let (plain, picked) = (beast(false), beast(true));
+            assert!(plain.skin.albedo == picked.skin.albedo, "{family:?}");
+            assert_eq!(plain.parts.fur, picked.parts.fur, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn a_tail_in_a_picked_colour_meets_the_rump_with_no_line() {
+        // Rolled beasts, crosses among them, and tails at the envelope's ends: at
+        // every face that crosses from the tail onto the rest of the body, the
+        // tail's side has yet to take any of the colour, so nothing shows where
+        // the zone map draws its line. Asked of the vertices, as a texel's zone is
+        // its nearest's.
+        let (mut highest, mut furthest) = (0.0f32, 0.0f32);
+        for seed in 0..60 {
+            for tail_length in [None, Some(-3.0), Some(3.0)] {
+                let mut record =
+                    AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
+                record.reroll(seed);
+                let Archetype::Quadruped(params) = &mut record.archetype else {
+                    panic!("a beast");
+                };
+                if let Some(tail_length) = tail_length {
+                    params.tail_length = tail_length;
+                }
+                record.sanitize();
+                let config = crate::AvatarConfig {
+                    atlas: 64,
+                    ..crate::AvatarConfig::default()
+                };
+                let avatar = Avatar::build_with(&record, &config).expect("builds");
+                let skeleton = record.skeleton();
+                let body = CoatBody::of(&avatar.rig, skeleton.beast_head.as_ref(), None);
+                let (mesh, zones) = (&avatar.parts.body, &avatar.parts.zones);
+                for face in &mesh.faces {
+                    let on_tail = |corner: &&u32| zones[**corner as usize] == Zone::Tail;
+                    if face.iter().any(|corner| on_tail(&corner))
+                        && !face.iter().all(|corner| on_tail(&corner))
+                    {
+                        for corner in face.iter().filter(on_tail) {
+                            let at = mesh.positions[*corner as usize];
+                            highest = highest.max(body.along_dock(at));
+                            furthest = furthest.max(body.along_tail(at));
+                            let share = body.tail_share(at);
+                            assert!(share <= 0.0, "seed {seed}: {share} at the rump's line");
+                        }
+                    }
+                }
+            }
+        }
+        // More than 3 % clear of what was read.
+        assert!(
+            highest * 1.03 < DOCK_FADE.0 && furthest * 1.03 < TAIL_FADE.0,
+            "the line lies at {highest} and {furthest}"
+        );
+    }
+
+    #[test]
+    fn a_picked_white_reaches_the_long_hair_of_a_coat_that_darkens_its_points() {
+        // `points` still went to the constant white: on a bay's or a dun's white
+        // patches the mane and the tail, and the skin under the mane, stayed white
+        // on a beast whose every other white was the colour picked (#401).
+        let picked = [0.90, 0.10, 0.80];
+        let chosen = Vec3::from_array(picked);
+        let (rig, body) = rigged(Family::Horse);
+        let along: Vec<Vec3> = rig
+            .joints
+            .iter()
+            .filter(|joint| !joint.marker && trunk(joint.zone))
+            .map(|joint| joint.position + Vec3::Y * 0.1 * body.height)
+            .collect();
+        for (agouti, dun) in [(Agouti::Bay, false), (Agouti::Solid, true)] {
+            let coat = Coat {
+                pigment: Pigment::Black,
+                agouti,
+                dun,
+                white: White::Extreme,
+                colours: crate::plan::CoatColours {
+                    white: Some(picked),
+                    ..crate::plan::CoatColours::default()
+                },
+                ..Coat::default()
+            };
+            assert!(darkens_points(&coat), "the premise: {agouti:?}");
+            let dark = Palette::of(&coat).dark;
+            let mut most: f32 = 0.0;
+            for &at in &along {
+                let (points, white) = paint(&body, &coat, (at, Vec3::Y, Zone::Chest), |painter| {
+                    (painter.points(), painter.white())
+                });
+                most = most.max(white);
+                assert!(
+                    points.distance(dark.lerp(chosen, white)) < 1.0e-4,
+                    "{agouti:?} at {at}: {points} with {white} of the white"
+                );
+            }
+            assert!(most > 0.5, "{agouti:?}: the premise, white reaching {most}");
+        }
+    }
+
+    #[test]
+    fn a_tail_s_skin_and_its_cards_agree_at_every_root_and_it_runs_to_the_colour() {
+        use crate::hair::fur::FurZone;
+        let picked = [0.60, 0.10, 0.95];
+        let chosen = Vec3::from_array(picked);
+        for family in Family::ALL {
+            let tweak = |agouti: Agouti| {
+                move |params: &mut QuadrupedParams| {
+                    params.fur.tail = 0.8;
+                    params.coat.pigment = Pigment::Black;
+                    params.coat.agouti = agouti;
+                    params.coat.colours.tail = Some(picked);
+                }
+            };
+            // On a coat that draws its long hair in its own colour and one that
+            // draws it in its dark.
+            for agouti in [Agouti::Solid, Agouti::Bay] {
+                let (avatar, _) = painted(family, tweak(agouti));
+                let colours = fur_colours(&avatar, FurZone::Tail);
+                assert!(colours.len() > 40, "{family:?}: {} corners", colours.len());
+                let tips = chosen.lerp(Vec3::ONE, 0.08);
+                // Cards rooted past the fade are the colour from root to tip. Only a
+                // share of them are: see [`DOCK_FADE`] for the rest.
+                let span = tips - chosen;
+                let at_the_colour = colours
+                    .iter()
+                    .filter(|colour| {
+                        let along = (**colour - chosen).dot(span) / span.length_squared();
+                        colour.distance(chosen + span * along.clamp(0.0, 1.0)) < 0.01
+                    })
+                    .count();
+                assert!(
+                    at_the_colour * 3 > colours.len(),
+                    "{family:?} {agouti:?}: {at_the_colour} of {} at the colour",
+                    colours.len()
+                );
+                // And every card, however its root started, ends there.
+                let fur = avatar.parts.fur.as_ref().expect("a tail's fur");
+                for colour in fur_tips(fur, FurZone::Tail) {
+                    assert!(
+                        colour.distance(tips) < 0.01,
+                        "{family:?} {agouti:?}: a tip of {colour:?}"
+                    );
+                }
+                // The whole skin past the fade is the colour.
+                assert!(texels_of(&avatar, chosen) > 200, "{family:?} {agouti:?}");
+            }
+            // A card rooted before the colour has come in starts as the coat does.
+            let (_, body) = rigged(family);
+            for agouti in [Agouti::Solid, Agouti::Bay] {
+                let coat = Coat {
+                    pigment: Pigment::Black,
+                    agouti,
+                    colours: crate::plan::CoatColours {
+                        tail: Some(picked),
+                        ..crate::plan::CoatColours::default()
+                    },
+                    ..Coat::default()
+                };
+                let bare = Coat {
+                    colours: crate::plan::CoatColours::default(),
+                    ..coat
+                };
+                let (root, tip) = body.tail.expect("a tail");
+                let sampler = CoatSampler::new(&coat, &body);
+                let plain = CoatSampler::new(&bare, &body);
+                let mut previous = None;
+                for step_along in 0..=60 {
+                    let at = root.lerp(tip, step_along as f32 / 60.0);
+                    let card = sampler.points(at, Vec3::Y, Zone::Tail, true);
+                    let skin = sampler.colour(at, Vec3::Y, Zone::Tail);
+                    assert_eq!(card, skin, "{family:?} at {step_along}: card against skin");
+                    let share = body.tail_share(at);
+                    if share <= 0.0 {
+                        assert_eq!(card, plain.colour(at, Vec3::Y, Zone::Tail));
+                    }
+                    if share >= 1.0 {
+                        assert_eq!(card, chosen);
+                    }
+                    // No step between two points a sixtieth of the tail apart: under
+                    // half the whole gap in one.
+                    if let Some(previous) = previous {
+                        let gap = chosen.distance(plain.colour(at, Vec3::Y, Zone::Tail));
+                        let moved = card.distance(previous);
+                        assert!(
+                            moved < gap.max(0.3) * 0.5,
+                            "{family:?} at {step_along}: {moved} of {gap}"
+                        );
+                    }
+                    previous = Some(card);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_coat_that_picks_nothing_paints_what_it_always_painted() {
+        // The palette's new fields say what the old constants said.
+        for fantasy in FANTASIES_FOR_TEST.into_iter().chain([Fantasy::None]) {
+            for pigment in Pigment::ALL {
+                let palette = Palette::of(&Coat {
+                    fantasy,
+                    pigment,
+                    ..Coat::default()
+                });
+                assert_eq!(palette.white, WHITE);
+                assert_eq!(palette.pale, WHITE.lerp(palette.light, 0.15));
+                assert_eq!(palette.merle, Vec3::new(0.56, 0.57, 0.60));
+                assert_eq!(palette.dun, None);
+                assert!(!palette.picked);
+                assert_eq!((palette.mane, palette.tail), (None, None));
+            }
+        }
     }
 
     #[test]

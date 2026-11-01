@@ -554,7 +554,9 @@ fn main() {
     // A horn, which no roll gives (#367): `--unicorn` puts one on a beast.
     if args.iter().any(|arg| arg == "--unicorn") {
         match &mut record.archetype {
-            Archetype::Quadruped(params) => params.horn = symbios_avatar::Horn::Unicorn,
+            Archetype::Quadruped(params) => {
+                params.ornaments.horn = Some(symbios_avatar::Ornament::UNICORN);
+            }
             _ => {
                 eprintln!("--unicorn horns a quadruped: add --quadruped");
                 std::process::exit(2);

@@ -15,6 +15,12 @@
 //! family, which is what a cross wants. Every family rolls its own
 //! frequencies; the unnatural palettes (`Fantasy`) are rolled as a rarity,
 //! the owner's call (#364).
+//!
+//! **And the look, where a creator asks for one** (#401). The loci make a preset:
+//! beside them [`CoatColours`] holds a colour per channel a creator has picked,
+//! the way eyes hold theirs, each absent until picked and absent meaning exactly
+//! what the loci derive. What each one reaches is stated on [`CoatColours`]. A rare
+//! roll picks them too, as a creator would, a pair off a short list (#403).
 
 use serde::{Deserialize, Serialize};
 
@@ -160,7 +166,351 @@ pub struct Coat {
     /// The seed its spots, stripes and patches are laid out from, so a coat's
     /// marks survive the wire and can be re-thrown on their own.
     pub marks: u16,
+    /// The colours a creator has picked over what all of the above derive
+    /// (#401), or a rare roll has (#403). Left off the wire while none is.
+    #[serde(skip_serializing_if = "CoatColours::is_empty")]
+    pub colours: CoatColours,
 }
+
+/// One of the colours a creator can pick for a coat (#401): see [`CoatColours`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CoatChannel {
+    /// The dark pigment.
+    Dark,
+    /// The light pigment.
+    Light,
+    /// White markings.
+    White,
+    /// The nose and the pads.
+    Leather,
+    /// The claws and the hooves.
+    Horn,
+    /// The mane and the forelock.
+    Mane,
+    /// The tail.
+    Tail,
+}
+
+impl CoatChannel {
+    /// Every channel, in the order the wire's mask counts them.
+    pub const ALL: [Self; 7] = [
+        Self::Dark,
+        Self::Light,
+        Self::White,
+        Self::Leather,
+        Self::Horn,
+        Self::Mane,
+        Self::Tail,
+    ];
+
+    /// Its name on a record.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+            Self::White => "white",
+            Self::Leather => "leather",
+            Self::Horn => "horn",
+            Self::Mane => "mane",
+            Self::Tail => "tail",
+        }
+    }
+}
+
+/// The colours a creator has picked for a coat (#401), or a rare roll has for it
+/// (#403), in sRGB, each absent until picked. The loci stay the presets that fill in whatever is absent; marks keep
+/// their layout, since `marks`, the pattern and the white pattern still say where
+/// everything goes, and only what they are drawn in changes.
+///
+/// **A picked colour wins outright over what the loci derive**: `dilute`,
+/// `intensity` and `fantasy` do not touch it. A channel derived from another stays
+/// derived until it is picked itself: a red coat's dark is its light deepened,
+/// whichever light that is, and a fantasy coat's leather its dark's.
+///
+/// What each one reaches, settled by render:
+///
+/// - **`dark`** every mark, tip and point drawn in the dark, ear tufts, a dark
+///   coat's whole ground, and a bay's or a dun's long hair unless that is picked.
+/// - **`light`** a tan, a bay's body, a tabby's ground and a red coat's whole
+///   ground. Past that it takes over the places the loci only lean toward a pale
+///   of it: a colourpoint's paled body, a dun's diluted body, and a dark merle's
+///   diluted ground.
+/// - **`white`** white spotting and a roan's white hairs, both of which are white
+///   hair. Not a colourpoint's paled body, which is `light`'s, and not a dapple's
+///   lighter rounds, which are no marking.
+/// - **`leather`** the nose and the pads, under white as well: a pad goes pink
+///   under a white foot only while it is unpicked.
+/// - **`horn`** claws and hooves, likewise under a white sock. A unicorn's horn
+///   stays ivory: it is drawn with the whiskers.
+/// - **`mane`** the mane's and forelock's cards, whole, and the skin under the
+///   crest's line so that no seam shows. A beast with no mane draws nothing of it.
+/// - **`tail`** the tail, skin and cards, fading in from the rump.
+///
+/// A dapple is not greyed where `dark` or `light` is picked, only given its rounds:
+/// the grey would otherwise be most of what shows. Countershading goes on applying
+/// to `dark` and `light`, at most 15 % toward a pale under the belly, because it
+/// is what shapes a coat in one colour; the others are not shaded at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CoatColours {
+    /// The dark pigment.
+    #[serde(
+        with = "super::scaled::chosen",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dark: Option<[f32; 3]>,
+    /// The light pigment.
+    #[serde(
+        with = "super::scaled::chosen",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub light: Option<[f32; 3]>,
+    /// White markings.
+    #[serde(
+        with = "super::scaled::chosen",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub white: Option<[f32; 3]>,
+    /// The nose and the pads.
+    #[serde(
+        with = "super::scaled::chosen",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub leather: Option<[f32; 3]>,
+    /// The claws and the hooves.
+    #[serde(
+        with = "super::scaled::chosen",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub horn: Option<[f32; 3]>,
+    /// The mane and the forelock.
+    #[serde(
+        with = "super::scaled::chosen",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub mane: Option<[f32; 3]>,
+    /// The tail.
+    #[serde(
+        with = "super::scaled::chosen",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tail: Option<[f32; 3]>,
+}
+
+impl CoatColours {
+    /// Whether nothing is picked.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The colour picked for `channel`, if one is.
+    #[must_use]
+    pub fn get(&self, channel: CoatChannel) -> Option<[f32; 3]> {
+        match channel {
+            CoatChannel::Dark => self.dark,
+            CoatChannel::Light => self.light,
+            CoatChannel::White => self.white,
+            CoatChannel::Leather => self.leather,
+            CoatChannel::Horn => self.horn,
+            CoatChannel::Mane => self.mane,
+            CoatChannel::Tail => self.tail,
+        }
+    }
+
+    /// Where `channel`'s colour is kept.
+    pub fn get_mut(&mut self, channel: CoatChannel) -> &mut Option<[f32; 3]> {
+        match channel {
+            CoatChannel::Dark => &mut self.dark,
+            CoatChannel::Light => &mut self.light,
+            CoatChannel::White => &mut self.white,
+            CoatChannel::Leather => &mut self.leather,
+            CoatChannel::Horn => &mut self.horn,
+            CoatChannel::Mane => &mut self.mane,
+            CoatChannel::Tail => &mut self.tail,
+        }
+    }
+
+    /// What a roll picks for a coat (#403): nothing, on most seeds, and otherwise a
+    /// pair off [`ROLLED_COLOURS`] with its accent, sometimes, on the long hair. Three
+    /// draws on streams of their own, even among the pairs.
+    #[must_use]
+    pub(crate) fn rolled(rolls: &Rolls) -> Self {
+        if rolls.range("coat.colours", 0.0, 1.0) >= FREE_COLOUR_SHARE {
+            return Self::default();
+        }
+        let pair = ROLLED_COLOURS[rolls.pick("coat.coloursPair", &[1.0; ROLLED_COLOURS.len()])];
+        let accent = Some(pair.accent);
+        let (mane, tail) = match rolls.pick("coat.coloursAccent", &ACCENT_ODDS) {
+            0 => (None, None),
+            1 => (accent, accent),
+            2 => (accent, None),
+            _ => (None, accent),
+        };
+        Self {
+            dark: Some(pair.dark),
+            light: Some(pair.light),
+            mane,
+            tail,
+            ..Self::default()
+        }
+    }
+
+    /// Clamps every channel to `0..=1` and puts it on the wire's grid. A channel
+    /// that is not a number reads as black rather than as unpicked: what was asked
+    /// for is the record's, and the coat a reader would otherwise fall back to is
+    /// not what it asked for either.
+    pub fn sanitize(&mut self) {
+        for channel in CoatChannel::ALL {
+            if let Some(colour) = self.get_mut(channel) {
+                *colour = colour.map(|part| super::sanitize_axis(part, 0.0, (0.0, 1.0)));
+            }
+        }
+    }
+
+    /// Its bytes on a share code: a mask of which channels are picked, in
+    /// [`CoatChannel::ALL`]'s order, then a byte a part for each that is.
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        let mask = CoatChannel::ALL
+            .iter()
+            .enumerate()
+            .filter(|(_, channel)| self.get(**channel).is_some())
+            .fold(0u8, |mask, (bit, _)| mask | 1 << bit);
+        out.push(mask);
+        for channel in CoatChannel::ALL {
+            for part in self.get(channel).into_iter().flatten() {
+                super::put_unit(out, part);
+            }
+        }
+    }
+
+    /// Them back off a share code. The mask's top bit is no channel yet, and
+    /// reads as nothing.
+    pub(crate) fn decode(bytes: &mut &[u8]) -> Result<Self, PlanDecodeError> {
+        let mask = take(bytes)?;
+        let mut colours = Self::default();
+        for (bit, channel) in CoatChannel::ALL.into_iter().enumerate() {
+            if mask & 1 << bit != 0 {
+                *colours.get_mut(channel) = Some([
+                    super::take_unit(bytes)?,
+                    super::take_unit(bytes)?,
+                    super::take_unit(bytes)?,
+                ]);
+            }
+        }
+        colours.sanitize();
+        Ok(colours)
+    }
+}
+
+/// The share of re-rolled coats that wear free colours.
+/// Provenance: **the owner's call** (#403), for the owner to judge from a sheet: about
+/// one roll in twenty. Drawn on a stream of its own, `coat.colours`, so every coat it
+/// misses is what it was to the byte.
+const FREE_COLOUR_SHARE: f32 = 1.0 / 20.0;
+
+/// How often a rolled pair's accent shows: not at all, on the mane and the tail, on
+/// the mane alone, on the tail alone.
+/// Provenance: **chosen** (#403): half plain, as a coat in two colours is look enough.
+const ACCENT_ODDS: [f32; 4] = [0.5, 0.3, 0.1, 0.1];
+
+/// One combination a roll can pick, as a creator would on purpose.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RolledPair {
+    /// The dark pigment: a dark coat's ground and everybody's marks.
+    dark: [f32; 3],
+    /// The light pigment: a red coat's ground, a tan, a bay's body, a belly.
+    light: [f32; 3],
+    /// What its long hair can be drawn in instead.
+    accent: [f32; 3],
+}
+
+/// The combinations a roll picks among (#403).
+///
+/// **A pair rather than a colour, as the loci say which of the two a body is mostly
+/// drawn in**: a black or a liver coat shows `dark` with `light` on its belly and its
+/// tan, a red coat `light` with `dark` in its marks, and a bay `light` with `dark` on
+/// its points. So both of a pair are one harmony, the deep and the pale of one hue or a
+/// neutral beside it, and either way round reads as meant. An accent is a contrast
+/// chosen for the pair. Leather and horn stay the loci's, which is what keeps a blue
+/// beast an animal, and white stays white.
+///
+/// Provenance: **chosen, and judged by render** (#403). `dark` is the darker of each.
+const ROLLED_COLOURS: [RolledPair; 12] = [
+    // A black coat with a white mane.
+    RolledPair {
+        dark: [0.07, 0.07, 0.08],
+        light: [0.24, 0.24, 0.26],
+        accent: [0.93, 0.92, 0.89],
+    },
+    // A deep blue with a pale belly.
+    RolledPair {
+        dark: [0.09, 0.14, 0.36],
+        light: [0.70, 0.78, 0.90],
+        accent: [0.86, 0.90, 0.96],
+    },
+    // Silver and white, with a charcoal mane.
+    RolledPair {
+        dark: [0.56, 0.58, 0.62],
+        light: [0.90, 0.90, 0.88],
+        accent: [0.12, 0.12, 0.14],
+    },
+    // Burgundy over rose.
+    RolledPair {
+        dark: [0.30, 0.06, 0.10],
+        light: [0.72, 0.42, 0.38],
+        accent: [0.12, 0.05, 0.06],
+    },
+    // Forest and moss, with a gold mane.
+    RolledPair {
+        dark: [0.08, 0.22, 0.14],
+        light: [0.62, 0.70, 0.46],
+        accent: [0.85, 0.76, 0.42],
+    },
+    // Copper and ink.
+    RolledPair {
+        dark: [0.16, 0.12, 0.20],
+        light: [0.72, 0.38, 0.16],
+        accent: [0.10, 0.08, 0.14],
+    },
+    // Slate teal and sea, with a cream mane.
+    RolledPair {
+        dark: [0.10, 0.26, 0.32],
+        light: [0.62, 0.80, 0.78],
+        accent: [0.93, 0.86, 0.66],
+    },
+    // Plum and lilac.
+    RolledPair {
+        dark: [0.24, 0.12, 0.36],
+        light: [0.76, 0.66, 0.86],
+        accent: [0.93, 0.84, 0.93],
+    },
+    // Chocolate and gold, with a flaxen mane: a palomino's, richer.
+    RolledPair {
+        dark: [0.26, 0.15, 0.08],
+        light: [0.90, 0.70, 0.30],
+        accent: [0.97, 0.92, 0.76],
+    },
+    // Steel blue and pearl, with a midnight mane.
+    RolledPair {
+        dark: [0.34, 0.42, 0.52],
+        light: [0.78, 0.82, 0.86],
+        accent: [0.12, 0.16, 0.24],
+    },
+    // Rose and blush.
+    RolledPair {
+        dark: [0.52, 0.20, 0.30],
+        light: [0.96, 0.80, 0.76],
+        accent: [0.99, 0.93, 0.85],
+    },
+    // Ash and charcoal, with an ember mane.
+    RolledPair {
+        dark: [0.14, 0.14, 0.15],
+        light: [0.50, 0.50, 0.50],
+        accent: [0.85, 0.30, 0.10],
+    },
+];
 
 /// A warm fawn, unmarked: the neutral beast.
 impl Default for Coat {
@@ -179,6 +529,7 @@ impl Default for Coat {
             intensity: 0.0,
             fantasy: Fantasy::None,
             marks: 0,
+            colours: CoatColours::default(),
         }
     }
 }
@@ -294,14 +645,21 @@ fn pick<T: Copy>(draw: f32, weights: &[f32], states: &[T]) -> T {
 }
 
 impl Coat {
-    /// Clamps `intensity` to its envelope; every other field is a state.
+    /// Clamps `intensity` to its envelope and the picked colours to theirs; every
+    /// other field is a state.
     pub fn sanitize(&mut self) {
         self.intensity =
             super::sanitize_axis(self.intensity, 0.0, super::explore_range(0.0, (-1.0, 1.0)));
+        self.colours.sanitize();
     }
 
     /// Draws a fresh coat for a body of `family`, crossed with `hybrid`
     /// `blend` of the way, each locus on a stream of its own.
+    ///
+    /// Picked colours go with the coat they were picked over (#401), as a roll of
+    /// the colouring draws fresh eyes over the ones picked before it, and what the
+    /// seed draws takes their place, on most seeds nothing (#403): a creator who wants
+    /// to keep them locks the colouring. Nothing else a roll does touches them.
     pub(crate) fn reroll(
         &mut self,
         rolls: &Rolls,
@@ -335,6 +693,7 @@ impl Coat {
             Fantasy::None
         };
         self.marks = (state("coat.marks") * f32::from(u16::MAX)) as u16;
+        self.colours = CoatColours::rolled(rolls);
     }
 
     /// Its bytes on a share code: the loci packed into three, then the
@@ -456,8 +815,10 @@ mod tests {
                 let back = Coat::decode(&mut out.as_slice()).expect("decodes");
                 assert!((back.intensity - coat.intensity).abs() < 0.013);
                 assert_eq!(
+                    // Picked colours go in a block of their own, at the code's end.
                     Coat {
                         intensity: coat.intensity,
+                        colours: coat.colours,
                         ..back
                     },
                     coat
@@ -474,6 +835,223 @@ mod tests {
         assert_eq!(back.white, White::default());
         assert_eq!(back.fantasy, Fantasy::None);
         assert_eq!(back.pattern, Pattern::Dapple);
+    }
+
+    /// Every channel picked, each its own colour, off the wire's grid.
+    fn every_channel() -> CoatColours {
+        let mut colours = CoatColours::default();
+        for (index, channel) in CoatChannel::ALL.into_iter().enumerate() {
+            let part = |at: usize| ((index * 37 + at * 91 + 5) % 255) as f32 / 255.0;
+            *colours.get_mut(channel) = Some([part(0), part(1), part(2)]);
+        }
+        colours
+    }
+
+    #[test]
+    fn a_coat_that_picks_nothing_writes_no_colours_and_reads_as_none() {
+        let coat = Coat::default();
+        let json = serde_json::to_string(&coat).expect("writes");
+        assert!(!json.contains("colours"), "{json}");
+        let back: Coat = serde_json::from_str(&json).expect("reads");
+        assert_eq!(back, coat);
+        // A key a coat never had is a coat that picked nothing.
+        let old: Coat = serde_json::from_str(r#"{"pigment":"black"}"#).expect("reads");
+        assert!(old.colours.is_empty());
+    }
+
+    #[test]
+    fn picked_colours_are_thousandths_on_the_wire_and_settle_at_once() {
+        let mut coat = Coat {
+            colours: every_channel(),
+            ..Coat::default()
+        };
+        coat.sanitize();
+        let json = serde_json::to_string(&coat).expect("writes");
+        let wire: serde_json::Value = serde_json::from_str(&json).expect("parses");
+        for channel in CoatChannel::ALL {
+            let parts = wire["colours"][channel.name()].as_array().expect("written");
+            assert_eq!(parts.len(), 3);
+            assert!(parts.iter().all(serde_json::Value::is_i64), "{json}");
+        }
+        let mut back: Coat = serde_json::from_str(&json).expect("reads");
+        assert_eq!(back, coat, "one round trip is stable");
+        back.sanitize();
+        assert_eq!(back, coat, "and sanitizing moves nothing");
+        assert_eq!(serde_json::to_string(&back).expect("writes"), json);
+        // Only what was picked.
+        let one = Coat {
+            colours: CoatColours {
+                mane: Some([0.25, 0.5, 0.75]),
+                ..CoatColours::default()
+            },
+            ..Coat::default()
+        };
+        let json = serde_json::to_string(&one).expect("writes");
+        assert!(
+            json.contains(r#""colours":{"mane":[250,500,750]}"#),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn a_picked_colour_out_of_range_is_brought_into_it() {
+        let mut colours = CoatColours {
+            dark: Some([1.7, -0.2, f32::NAN]),
+            tail: Some([0.123_456, 0.5, 1.0]),
+            ..CoatColours::default()
+        };
+        colours.sanitize();
+        assert_eq!(colours.dark, Some([1.0, 0.0, 0.0]));
+        assert_eq!(colours.tail, Some([0.123, 0.5, 1.0]));
+        assert_eq!(colours.light, None, "and an absent one stays absent");
+    }
+
+    #[test]
+    fn picked_colours_survive_their_bytes_and_their_bytes_are_stable() {
+        for mask in 0..128u8 {
+            let mut colours = every_channel();
+            for (bit, channel) in CoatChannel::ALL.into_iter().enumerate() {
+                if mask & 1 << bit == 0 {
+                    *colours.get_mut(channel) = None;
+                }
+            }
+            let mut out = Vec::new();
+            colours.encode(&mut out);
+            assert_eq!(out.len(), 1 + 3 * mask.count_ones() as usize);
+            assert_eq!(out[0], mask);
+            let back = CoatColours::decode(&mut out.as_slice()).expect("decodes");
+            for channel in CoatChannel::ALL {
+                match (colours.get(channel), back.get(channel)) {
+                    (None, None) => {}
+                    (Some(a), Some(b)) => {
+                        for (a, b) in a.iter().zip(b) {
+                            assert!((a - b).abs() < 0.001, "{channel:?}: {a} came back {b}");
+                        }
+                    }
+                    other => panic!("{channel:?}: {other:?}"),
+                }
+            }
+            // A byte, read and sanitized onto the record's grid, is the same byte.
+            let mut again = Vec::new();
+            back.encode(&mut again);
+            assert_eq!(again, out);
+        }
+        let short = [0b0000_0001, 1, 2];
+        assert!(CoatColours::decode(&mut short.as_slice()).is_err());
+        // A channel this build does not know reads as nothing.
+        let future = [0b1000_0000];
+        assert!(
+            CoatColours::decode(&mut future.as_slice())
+                .expect("decodes")
+                .is_empty()
+        );
+    }
+
+    /// The first seed from 0 that does or does not draw free colours.
+    fn seed_drawing(picked: bool) -> i64 {
+        (0..)
+            .find(|&seed| CoatColours::rolled(&Rolls::new(seed)).is_empty() != picked)
+            .expect("in reach")
+    }
+
+    #[test]
+    fn a_roll_of_the_coat_puts_what_its_seed_draws_over_picked_colours() {
+        let reroll = |seed: i64| {
+            let mut coat = Coat {
+                colours: every_channel(),
+                ..Coat::default()
+            };
+            coat.reroll(&Rolls::new(seed), Family::Dog, None, 0.0);
+            coat.colours
+        };
+        assert!(reroll(seed_drawing(false)).is_empty());
+        let seed = seed_drawing(true);
+        assert!(!reroll(seed).is_empty());
+        assert_eq!(reroll(seed), CoatColours::rolled(&Rolls::new(seed)));
+    }
+
+    #[test]
+    fn a_small_share_of_rolls_pick_a_pair_off_the_list_with_an_accent_sometimes() {
+        const SEEDS: i64 = 16_000;
+        let mut pairs = [0usize; ROLLED_COLOURS.len()];
+        let mut shown = [0usize; 4];
+        for seed in 0..SEEDS {
+            let colours = CoatColours::rolled(&Rolls::new(seed));
+            if colours.is_empty() {
+                continue;
+            }
+            let at = ROLLED_COLOURS
+                .iter()
+                .position(|pair| {
+                    colours.dark == Some(pair.dark) && colours.light == Some(pair.light)
+                })
+                .unwrap_or_else(|| panic!("{seed} picked no pair on the list: {colours:?}"));
+            pairs[at] += 1;
+            for long_hair in [colours.mane, colours.tail].into_iter().flatten() {
+                assert_eq!(long_hair, ROLLED_COLOURS[at].accent, "{seed}");
+            }
+            shown[match (colours.mane, colours.tail) {
+                (None, None) => 0,
+                (Some(_), Some(_)) => 1,
+                (Some(_), None) => 2,
+                (None, Some(_)) => 3,
+            }] += 1;
+            assert_eq!(colours.white, None, "white stays white");
+            assert_eq!(colours.leather, None, "and leather the loci's");
+            assert_eq!(colours.horn, None, "and horn");
+        }
+        let picked: usize = pairs.iter().sum();
+        let share = picked as f32 / SEEDS as f32;
+        // Sampling error at this count is 0.0017; the margin is a quarter of the share.
+        assert!(
+            (share - FREE_COLOUR_SHARE).abs() < FREE_COLOUR_SHARE * 0.25,
+            "{share} of rolls pick colours, for a share of {FREE_COLOUR_SHARE}"
+        );
+        let even = picked as f32 / pairs.len() as f32;
+        assert!(
+            pairs.iter().all(|&n| (n as f32 - even).abs() < even * 0.6),
+            "pairs drawn {pairs:?}"
+        );
+        let total: f32 = ACCENT_ODDS.iter().sum();
+        for (count, odds) in shown.iter().zip(ACCENT_ODDS) {
+            let at = *count as f32 / picked as f32;
+            assert!((at - odds / total).abs() < 0.08, "accents {shown:?}");
+        }
+    }
+
+    #[test]
+    fn every_rolled_pair_is_on_the_grid_dark_over_light_and_survives_its_round_trips() {
+        // The perceived weight sRGB carries, near enough to say which is the deeper.
+        let weight = |colour: [f32; 3]| 0.3 * colour[0] + 0.59 * colour[1] + 0.11 * colour[2];
+        for (index, pair) in ROLLED_COLOURS.iter().enumerate() {
+            assert!(
+                weight(pair.dark) < weight(pair.light),
+                "pair {index} is the wrong way round"
+            );
+            for mane in [None, Some(pair.accent)] {
+                let colours = CoatColours {
+                    dark: Some(pair.dark),
+                    light: Some(pair.light),
+                    mane,
+                    tail: Some(pair.accent),
+                    ..CoatColours::default()
+                };
+                let mut settled = colours;
+                settled.sanitize();
+                assert_eq!(settled, colours, "pair {index} is off the grid");
+                let text = serde_json::to_string(&colours).expect("writes");
+                assert_eq!(
+                    serde_json::from_str::<CoatColours>(&text).expect("reads"),
+                    colours
+                );
+                let mut bytes = Vec::new();
+                colours.encode(&mut bytes);
+                let back = CoatColours::decode(&mut bytes.as_slice()).expect("reads");
+                let mut again = Vec::new();
+                back.encode(&mut again);
+                assert_eq!(again, bytes, "pair {index} on a code");
+            }
+        }
     }
 
     #[test]

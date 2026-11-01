@@ -306,12 +306,17 @@
         },
         "horn": {
           "type": "string",
-          "description": "A horn on the forehead: none, or one spiralled horn. Never rolled - a creator gives it, and a re-roll of the head takes it off - and left off the record when there is none; a value a reader does not recognise reads as none.",
+          "description": "The horn a record could say before ornaments (#402): none, or exactly one spiralled ivory unicorn's horn, which reads as the matching piece in ornaments and goes on being written here by a body wearing exactly that. A creator gives it, or a rare roll does, and a re-roll of the head puts what its seed draws in its place; left off the record when there is none; a value a reader does not recognise reads as none. An ornaments.horn wins over this.",
           "knownValues": [
             "none",
             "unicorn"
           ],
           "default": "none"
+        },
+        "ornaments": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedOrnaments",
+          "description": "What it wears on its head, beyond what horn says (#402). A creator gives it, or a rare roll gives one piece (#403); the head's lock holds it, and a re-roll of an unlocked head puts what its seed draws in its place, which is usually nothing. Left off while there is nothing to say."
         },
         "coat": {
           "type": "ref",
@@ -327,7 +332,7 @@
     },
     "quadrupedCoat": {
       "type": "object",
-      "description": "A quadruped's coat (#368), recorded as coat-genetics loci rather than as colours: a reader derives the colours from the loci, so a coat stays a few small values, a cross can take each locus from either parent, and a creator changes a coat the way it varies in life - a liver dog is the black dog's coat with one locus turned. The genetics are a game's: every locus is open to every family, whichever one carries it in life. A locus value a reader does not recognise reads as that locus's default.",
+      "description": "A quadruped's coat (#368), recorded as coat-genetics loci: a reader derives the colours from the loci, so a coat stays a few small values, a cross can take each locus from either parent, and a creator changes a coat the way it varies in life - a liver dog is the black dog's coat with one locus turned. The genetics are a game's: every locus is open to every family, whichever one carries it in life. A locus value a reader does not recognise reads as that locus's default. Beside the loci, 'colours' holds whatever a creator picked over them (#401).",
       "properties": {
         "pigment": {
           "type": "string",
@@ -435,6 +440,284 @@
           "minimum": 0,
           "maximum": 65535,
           "default": 0
+        },
+        "colours": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedCoatColours",
+          "description": "The colours a creator picked over what the loci derive (#401), or a rare roll did (#403); the colouring's lock holds them, and a re-roll of an unlocked colouring puts what its seed draws in their place, which is usually nothing. Left off while none is."
+        }
+      }
+    },
+    "quadrupedOrnaments": {
+      "type": "object",
+      "description": "What a beast wears on its head (#402): each piece optional and absent until given. A piece's sizes are shares of the head's radius, so it scales with the head and fits every family and cross. A key a reader does not recognise is ignored.",
+      "properties": {
+        "horn": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedOrnament",
+          "description": "One horn on the middle of the forehead, riding the head: a unicorn's. A horn exactly the defaults below is written as the plan's own horn key instead."
+        },
+        "pairedHorns": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedOrnament",
+          "description": "A horn either side of the crown in front of the ears, riding the head: a bull's, a ram's."
+        },
+        "upperFangs": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedOrnament",
+          "description": "A fang either side of the upper lip, hanging outside the shut jaw and riding the head: a sabre-tooth's."
+        },
+        "lowerFangs": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedOrnament",
+          "description": "A small fang either side of the lower jaw, riding the jaw and opening with the mouth, outside the upper lip where it reaches it."
+        },
+        "tusks": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedOrnament",
+          "description": "A tusk either side of the lower jaw, riding the jaw and opening with the mouth, rising outside the upper lip: a boar's."
+        },
+        "antlers": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedAntlers",
+          "description": "A branching antler either side of the crown in front of the ears, riding the head: a stag's."
+        }
+      }
+    },
+    "quadrupedOrnament": {
+      "type": "object",
+      "description": "One head ornament's shape and colours (#402). Readers clamp to these bounds, and an absent number reads as its default here: a unicorn's horn.",
+      "properties": {
+        "length": {
+          "type": "integer",
+          "description": "Base to tip along its line, as a share of the head's radius, thousandths.",
+          "minimum": 50,
+          "maximum": 4000,
+          "default": 1300
+        },
+        "thickness": {
+          "type": "integer",
+          "description": "Its radius at the base, as a share of the head's radius, thousandths.",
+          "minimum": 10,
+          "maximum": 500,
+          "default": 150
+        },
+        "taper": {
+          "type": "integer",
+          "description": "How much of its radius it has lost at the tip, thousandths.",
+          "minimum": 0,
+          "maximum": 980,
+          "default": 940
+        },
+        "curve": {
+          "type": "integer",
+          "description": "How far its line turns from base to tip, in thousandths of a whole turn, tightening toward the tip and stepping aside to clear itself past half a turn. A horn or an antler's positive curve turns up or forward, its negative back and down, a ram's curl; a fang's or a tusk's positive turns its tip back toward the throat.",
+          "minimum": -1500,
+          "maximum": 1500,
+          "default": 0
+        },
+        "twist": {
+          "type": "integer",
+          "description": "How far its flutes turn about it from base to tip, in thousandths of a whole turn. Nothing shows without flutes.",
+          "minimum": -4000,
+          "maximum": 4000,
+          "default": 1500
+        },
+        "flutes": {
+          "type": "integer",
+          "description": "How deep its flutes are, as a share of its radius, thousandths: none at zero.",
+          "minimum": 0,
+          "maximum": 500,
+          "default": 120
+        },
+        "base": {
+          "type": "array",
+          "description": "Its colour at the base. Ivory if absent. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "tip": {
+          "type": "array",
+          "description": "Its colour at the tip. Ivory if absent. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        }
+      }
+    },
+    "quadrupedAntlers": {
+      "type": "object",
+      "description": "A pair of antlers (#402): a beam shaped as any other ornament is, and what its branching needs. Readers clamp to these bounds, and an absent number reads as its default here. The numbers a beam shares with any ornament default as one does, a unicorn's horn, so a writer gives them all; a stag's are length 2300, thickness 110, taper 650, curve 140, no flutes.",
+      "properties": {
+        "length": {
+          "type": "integer",
+          "description": "Base to tip along its line, as a share of the head's radius, thousandths.",
+          "minimum": 50,
+          "maximum": 4000,
+          "default": 1300
+        },
+        "thickness": {
+          "type": "integer",
+          "description": "Its radius at the base, as a share of the head's radius, thousandths.",
+          "minimum": 10,
+          "maximum": 500,
+          "default": 150
+        },
+        "taper": {
+          "type": "integer",
+          "description": "How much of its radius it has lost at the tip, thousandths.",
+          "minimum": 0,
+          "maximum": 980,
+          "default": 940
+        },
+        "curve": {
+          "type": "integer",
+          "description": "How far its line turns from base to tip, in thousandths of a whole turn, tightening toward the tip and stepping aside to clear itself past half a turn. A horn or an antler's positive curve turns up or forward, its negative back and down, a ram's curl; a fang's or a tusk's positive turns its tip back toward the throat.",
+          "minimum": -1500,
+          "maximum": 1500,
+          "default": 0
+        },
+        "twist": {
+          "type": "integer",
+          "description": "How far its flutes turn about it from base to tip, in thousandths of a whole turn. Nothing shows without flutes.",
+          "minimum": -4000,
+          "maximum": 4000,
+          "default": 1500
+        },
+        "flutes": {
+          "type": "integer",
+          "description": "How deep its flutes are, as a share of its radius, thousandths: none at zero.",
+          "minimum": 0,
+          "maximum": 500,
+          "default": 120
+        },
+        "base": {
+          "type": "array",
+          "description": "The beam's colour at the skull. Ivory if absent. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "tip": {
+          "type": "array",
+          "description": "The colour its points run to. Ivory if absent. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "points": {
+          "type": "integer",
+          "description": "How many points each antler ends in, the beam's own tip among them: a count, not thousandths.",
+          "minimum": 1,
+          "maximum": 8,
+          "default": 5
+        },
+        "fork": {
+          "type": "integer",
+          "description": "How wide its tines fork from the beam, from almost along it to almost square to it, thousandths.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 450
+        }
+      }
+    },
+    "quadrupedCoatColours": {
+      "type": "object",
+      "description": "The colours a creator picked for a coat (#401), free rather than points on a pigment ramp, as an iris's are. Each is absent until picked, and absent means what the loci derive. A picked colour wins outright over the loci: dilute, intensity and fantasy do not touch it, and marks keep their layout. A colour a reader does not recognise the name of is ignored.",
+      "properties": {
+        "dark": {
+          "type": "array",
+          "description": "The dark pigment: marks, tips, points, and a dark coat's whole ground. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "light": {
+          "type": "array",
+          "description": "The light pigment: tan, a bay's body, a tabby's ground, a red coat's whole ground, a colourpoint's paled body, a dun's diluted body and a dark merle's diluted ground. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "white": {
+          "type": "array",
+          "description": "White markings: white spotting and a roan's white hairs. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "leather": {
+          "type": "array",
+          "description": "The nose and the pads, under white as well. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "horn": {
+          "type": "array",
+          "description": "The claws and the hooves, under white as well. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "mane": {
+          "type": "array",
+          "description": "The mane and the forelock, and the skin along the crest under them. Draws nothing on a beast with no mane. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "tail": {
+          "type": "array",
+          "description": "The tail, skin and fur, fading in from the rump. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3
         }
       }
     },

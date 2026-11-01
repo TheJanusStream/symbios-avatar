@@ -16,10 +16,11 @@
 use glam::{Mat3, Quat, Vec2, Vec3};
 
 use crate::plan::beast_head::{
-    BeastHead, Blends, Blob, Cone, EarSeat, EyeSeat, HornSeat, Muzzle, Nape, NoseSeat, WHISKERS,
-    WhiskerSeat,
+    BeastHead, Blends, Blob, Cone, EarSeat, EyeSeat, Muzzle, Nape, NoseSeat, OrnamentSeat,
+    WHISKERS, WhiskerSeat,
 };
-use crate::plan::{Horn, Nose, QuadrupedParams};
+use crate::plan::ornament::{Ornament, OrnamentKind};
+use crate::plan::{Nose, QuadrupedParams};
 
 /// One node of the head chain: where it sits, at rest in body space, and its
 /// radius.
@@ -284,13 +285,17 @@ pub(super) fn head(
             fold: 0.0,
         },
         whiskers: None,
-        horn: None,
+        ornaments: [None; 6],
     };
     head.eye = eye_seat(&head, params, appeal);
     head.ear = ear_seat(&head, params, appeal);
     head.whiskers = whisker_seat(&head, params);
-    head.horn = horn_seat(&head, params);
+    head.ornaments = ornament_seats(&head, params, false);
     back_of_head(&mut head, chain.back, fullness);
+    let on_the_face = ornament_seats(&head, params, true);
+    for (slot, seat) in head.ornaments.iter_mut().zip(on_the_face) {
+        *slot = slot.or(seat);
+    }
     head.nape = Some(nape(&head, chain));
     head
 }
@@ -449,13 +454,88 @@ fn whisker_seat(head: &BeastHead, params: &QuadrupedParams) -> Option<WhiskerSea
 /// Below this much `whiskers`, a muzzle grows none.
 const NO_WHISKERS: f32 = -0.6;
 
-/// Where a horn stands, if the record gives one (#367): on the forehead
-/// above and between the eyes, rising forward of upright as the body stands
-/// however the head is carried, a little longer than the braincase is tall.
-fn horn_seat(head: &BeastHead, params: &QuadrupedParams) -> Option<HornSeat> {
-    if params.horn == Horn::None {
-        return None;
+/// Where everything the record has it wear stands (#402), a slot a kind, read off the
+/// head as declared so far: its surface, its ears, its lip and its jaw. **Nothing
+/// here names a family**, so a cross and a head at either end of the envelope are
+/// asked the same questions.
+///
+/// **In two goes**, as `on_the_face` says. What stands on the crown is seated with the
+/// ears, on the skull in front of [`back_of_head`], as a horn always was, and what
+/// stands on the lip and the jaw once that has moved the cheeks it has to clear.
+fn ornament_seats(
+    head: &BeastHead,
+    params: &QuadrupedParams,
+    on_the_face: bool,
+) -> [Option<OrnamentSeat>; 6] {
+    OrnamentKind::ALL.map(|kind| {
+        let face = matches!(
+            kind,
+            OrnamentKind::UpperFangs | OrnamentKind::LowerFangs | OrnamentKind::Tusks
+        );
+        if face != on_the_face {
+            return None;
+        }
+        let mut piece = params.ornaments.get(kind)?;
+        piece.sanitize();
+        let mut seat = match kind {
+            OrnamentKind::Horn => horn_seat(head, &piece),
+            OrnamentKind::PairedHorns => crown_seat(head, &piece, PAIRED_CROWN),
+            OrnamentKind::Antlers => crown_seat(head, &piece, ANTLER_CROWN),
+            OrnamentKind::UpperFangs => upper_fang_seat(head, &piece),
+            OrnamentKind::LowerFangs => jaw_seat(head, &piece, LOWER_FANG_ON_JAW, FANG_SIDES),
+            OrnamentKind::Tusks => jaw_seat(head, &piece, TUSK_ON_JAW, TUSK_SIDES),
+        };
+        if kind == OrnamentKind::Antlers {
+            let mut antlers = params.ornaments.antlers?;
+            antlers.sanitize();
+            seat.tines = Some((
+                (antlers.points - 1) as u8,
+                antlers.fork,
+                head.turn.inverse() * Vec3::Z,
+            ));
+        }
+        Some(seat)
+    })
+}
+
+/// A piece's shape, its line's vectors left for the seat to set.
+fn shaped(head: &BeastHead, piece: &Ornament, sides: u8, pair: bool) -> OrnamentSeat {
+    OrnamentSeat {
+        base: Vec3::ZERO,
+        direction: Vec3::Y,
+        bend: Vec3::Z,
+        side: Vec3::X,
+        across: Vec3::X,
+        length: piece.length * head.radius,
+        radius: piece.thickness * head.radius,
+        taper: piece.taper,
+        curve: piece.curve.abs(),
+        twist: piece.twist,
+        flutes: piece.flutes,
+        colours: [Vec3::from(piece.base), Vec3::from(piece.tip)],
+        sides,
+        pair,
+        tines: None,
     }
+}
+
+/// `toward` with whatever of it runs along the unit `along` taken off, as a unit
+/// vector: the way a line going `along` turns to head toward it.
+fn square_to(toward: Vec3, along: Vec3) -> Vec3 {
+    (toward - along * toward.dot(along)).normalize_or(along.any_orthonormal_vector())
+}
+
+/// How far a crown piece's base is sunk into the skull, so that a thick one's rim is
+/// under the surface as well: a unicorn's, up to the thickness at which it starts
+/// to show. Provenance: **tuned by render** (#402).
+fn sunk(head: &BeastHead, radius: f32) -> f32 {
+    (0.06 * head.radius).max(0.6 * radius - 0.04 * head.radius)
+}
+
+/// One horn (#367): on the forehead above and between the eyes, rising forward of
+/// upright as the body stands however the head is carried. Its curve turns it
+/// forward over the nose, or back over the skull when negative.
+fn horn_seat(head: &BeastHead, piece: &Ornament) -> OrnamentSeat {
     let r = head.radius;
     let centre = head.cranium.centre;
     let up = Vec3::new(0.0, 0.62f32.cos(), 0.62f32.sin());
@@ -464,13 +544,396 @@ fn horn_seat(head: &BeastHead, params: &QuadrupedParams) -> Option<HornSeat> {
     // horse's head hangs nose-down, and a horn turned with it points at
     // whatever is in front of it.
     let direction = head.turn.inverse() * Vec3::new(0.0, 0.75, 0.66).normalize();
-    Some(HornSeat {
-        base: forehead - direction * (0.06 * r),
-        direction,
-        length: 1.3 * r,
-        radius: 0.15 * r,
+    let mut seat = shaped(head, piece, HORN_SIDES, false);
+    seat.base = forehead - direction * sunk(head, seat.radius);
+    seat.direction = direction;
+    let forward = Vec3::X.cross(direction);
+    seat.bend = if piece.curve < 0.0 { -forward } else { forward };
+    seat
+}
+
+/// Facets round a horn's section, and round a smaller piece's: a fang's is a few
+/// pixels across wherever a face is seen from.
+const HORN_SIDES: u8 = 12;
+const PAIRED_SIDES: u8 = 10;
+const FANG_SIDES: u8 = 8;
+const TUSK_SIDES: u8 = 10;
+const BEAM_SIDES: u8 = 8;
+
+/// How a pair stands on the crown: where on the skull before any ear is in the way,
+/// and the ways it sets off and turns as the body stands (`+X` out, `+Y` up, `+Z`
+/// forward).
+struct Crown {
+    /// How far round from the top of the skull toward its side, in radians.
+    spread: f32,
+    /// How far forward of the skull's top, in radians.
+    forward: f32,
+    /// Facets round its section.
+    sides: u8,
+    /// The way it sets off with no curve, or a positive one.
+    rising: Vec3,
+    /// The way a positive curve turns it.
+    turning: Vec3,
+    /// The way it sets off under a full negative curve: back over the ear.
+    falling: Vec3,
+    /// The way a negative curve turns it: down and round under the ear.
+    curling: Vec3,
+}
+
+/// A bull's: from the corners of the forehead, out, and curving up and forward; a
+/// ram's, under a negative curve: back over the ear, round it and forward under it.
+/// Provenance: **tuned by render** (#402).
+const PAIRED_CROWN: Crown = Crown {
+    spread: 0.62,
+    forward: 0.10,
+    sides: PAIRED_SIDES,
+    rising: Vec3::new(0.82, 0.42, 0.38),
+    turning: Vec3::new(-0.2, 1.0, 0.25),
+    falling: Vec3::new(0.45, 0.80, -0.40),
+    curling: Vec3::new(0.05, -0.55, -1.0),
+};
+
+/// A stag's: a little nearer the midline than a horn's, up and back, the beam then
+/// curving forward so the tines stand over the face.
+/// Provenance: **tuned by render** (#402).
+const ANTLER_CROWN: Crown = Crown {
+    spread: 0.50,
+    forward: 0.06,
+    sides: BEAM_SIDES,
+    rising: Vec3::new(0.56, 0.72, -0.40),
+    turning: Vec3::new(0.05, 0.25, 1.0),
+    falling: Vec3::new(0.70, 0.62, -0.35),
+    curling: Vec3::new(0.2, -0.3, -1.0),
+};
+
+/// A pair on the crown, in front of the ears, whatever the ears are.
+///
+/// The seat is cast on the skull where [`Crown`] asks and then walked forward along
+/// it until its section is clear of the ear's blade, which is read in the ear's own
+/// frame: a bull's horn stands in front of a pricked ear rather than in it, however
+/// big the ear. A step at a time by what is still missing, so nothing jumps as an
+/// ear grows.
+fn crown_seat(head: &BeastHead, piece: &Ornament, crown: Crown) -> OrnamentSeat {
+    let r = head.radius;
+    let centre = head.cranium.centre;
+    let mut seat = shaped(head, piece, crown.sides, true);
+    let cast = |forward: f32| {
+        let forward = forward.min(CROWN_MOST_FORWARD);
+        let toward = Vec3::new(
+            crown.spread.sin() * forward.cos(),
+            crown.spread.cos() * forward.cos(),
+            forward.sin(),
+        );
+        head.leave(centre, toward).unwrap_or(centre + toward * r)
+    };
+    let needed = seat.radius * EAR_AIR + head.ear.cup * 0.5 * head.ear.width;
+    let mut forward = crown.forward;
+    for _ in 0..CROWN_WALK {
+        let local = head.ear.frame.inverse() * (cast(forward) - head.ear.base);
+        let beside = (local.x.abs() - 0.5 * head.ear.width).max(0.0);
+        let off = Vec2::new(beside, local.z).length();
+        forward += (needed - off).max(0.0) / r;
+    }
+    let surface = cast(forward);
+    let stands = head.turn.inverse();
+    let falling = smooth_share(-piece.curve / CURL_SETTLED);
+    let direction = (stands * crown.rising.normalize())
+        .lerp(stands * crown.falling.normalize(), falling)
+        .normalize();
+    let turning = if piece.curve < 0.0 {
+        crown.curling
+    } else {
+        crown.turning
+    };
+    seat.direction = direction;
+    seat.bend = square_to(stands * turning, direction);
+    let side = direction.cross(seat.bend);
+    seat.side = if side.x < 0.0 { -side } else { side };
+    seat.across = seat.side;
+    seat.base = surface - direction * sunk(head, seat.radius);
+    // However thick, the two never meet across the middle.
+    seat.base.x = seat.base.x.max(seat.radius * EAR_AIR);
+    seat
+}
+
+/// How much further than an ear's blade a crown piece's section stands off it, in the
+/// piece's radii. Provenance: **chosen** (#402), 15 % of air.
+const EAR_AIR: f32 = 1.15;
+
+/// How many steps a crown seat walks forward off an ear: each takes off most of what
+/// the last left, as the skull's surface is nearly a ball there.
+const CROWN_WALK: usize = 4;
+
+/// The furthest forward of the skull's top a crown seat goes, in radians: past this
+/// it would be on the brow over the eye.
+const CROWN_MOST_FORWARD: f32 = 0.85;
+
+/// How much negative curve it takes for a crown piece to have set off the falling way
+/// altogether, in whole turns. Provenance: **tuned by render** (#402).
+const CURL_SETTLED: f32 = 0.35;
+
+/// `0` at or under zero, `1` at or over one, and an S between them.
+fn smooth_share(share: f32) -> f32 {
+    let share = share.clamp(0.0, 1.0);
+    share * share * (3.0 - 2.0 * share)
+}
+
+/// Where along the jaw an upper fang hangs, a lower fang and a tusk rise, as a share
+/// of the way from its back to its chin: the upper behind the lower, as a canine's.
+/// Provenance: **tuned by render** (#402).
+const UPPER_FANG_ON_JAW: f32 = 0.68;
+const LOWER_FANG_ON_JAW: f32 = 0.82;
+const TUSK_ON_JAW: f32 = 0.66;
+
+/// How much further than the jaw's side a fang's section hangs, in its radii: air
+/// between them on either side of a shut mouth. Provenance: **chosen** (#402), and
+/// the guard in `face::beast::adorn` asks it of the jaw as built.
+const JAW_AIR: f32 = 1.15;
+
+/// An upper fang: rooted in the upper lip and hanging from it past the shut jaw, on
+/// the outside of the jaw, which the lip hangs over: the jaw is narrower than the
+/// muzzle precisely so that a lip can. Where a deep jaw stands as wide as the lip, the
+/// fang roots in the lip all the same and leans out by as little as clears the jaw,
+/// whose side is read along the fang's whole run, however it curves. A mouth opening
+/// turns the jaw in the plane the fang stands outside of.
+fn upper_fang_seat(head: &BeastHead, piece: &Ornament) -> OrnamentSeat {
+    let r = head.radius;
+    let jaw = &head.jaw;
+    let z = jaw.back.z + (jaw.front.z - jaw.back.z) * UPPER_FANG_ON_JAW;
+    let mut seat = shaped(head, piece, FANG_SIDES, true);
+    let (axis, _) = jaw.at(z);
+    let hang = |seat: &mut OrnamentSeat, tilt: f32| {
+        let direction = Vec3::new(tilt.sin(), -tilt.cos(), 0.12).normalize();
+        let back = square_to(Vec3::NEG_Z, direction);
+        seat.direction = direction;
+        seat.bend = if piece.curve < 0.0 { -back } else { back };
+        let side = direction.cross(seat.bend);
+        seat.side = if side.x < 0.0 { -side } else { side };
+        seat.across = seat.side;
+    };
+    // Off the jaw straight down, along the line in its own plane.
+    hang(&mut seat, 0.0);
+    seat.base = Vec3::new(0.0, axis, z);
+    let line = seat.line();
+    let last = (line.len() - 1) as f32;
+    let straight = line
+        .iter()
+        .enumerate()
+        .map(|(station, at)| {
+            head.jaw_wide_at(at.z) + seat.radius_at(station as f32 / last) * JAW_AIR
+        })
+        .fold(0.0, f32::max);
+    // Rooted up that line, at the first height its end is buried under the skin, so
+    // that it hangs straight and no flat end shows. Where the head does not reach
+    // that far out, drawn in until it does, to lean out past the jaw from there. Only
+    // a very thick fang never buries its end, and bulges through the deepest it got.
+    let buried = (0.8 * seat.radius).max(ROOT_DEPTH * r);
+    let rise = (ROOT_RISE * r).max(2.0 * seat.radius);
+    let mut x = straight;
+    let mut deepest = Vec3::new(x, axis, z);
+    for _ in 0..ROOT_TRIES {
+        let lip = head
+            .leave(Vec3::new(x, axis + r, z), Vec3::NEG_Y)
+            .map_or(axis, |at| at.y);
+        let heights = (0..=ROOT_SAMPLES).map(|at| lip + rise * at as f32 / ROOT_SAMPLES as f32);
+        let mut found = None;
+        for y in heights {
+            let at = Vec3::new(x, y, z);
+            let depth = head.distance(at);
+            if depth < head.distance(deepest) {
+                deepest = at;
+            }
+            if depth < -buried {
+                found = Some(at);
+                break;
+            }
+        }
+        if let Some(at) = found {
+            deepest = at;
+            break;
+        }
+        x -= ROOT_STEP * r;
+    }
+    // Over the jaw, if drawn in far enough to be standing in it. The ring is what is
+    // asked of it, so far enough over for the ring.
+    let (over, girth) = jaw.at(z);
+    let round = seat.radius * JAW_AIR;
+    let across = deepest.x / (head.jaw_wide_at(z) + round);
+    if across < 1.0 {
+        let top = over + (0.9 * girth + round) * (1.0 - across * across).sqrt() * ROOT_CLEAR;
+        deepest.y = deepest.y.max(top);
+    }
+    seat.base = deepest;
+    let tilt = least_lean(
+        &mut seat,
+        FANG_LEAN_MOST,
+        |seat, tilt| hang(seat, tilt),
+        |seat| clears_the_jaw(head, seat),
+    );
+    hang(&mut seat, tilt);
+    seat
+}
+
+/// How many heights a fang's root is tried at and over how much of a head radius, how
+/// many places across, how far apart in head radii, and how far under the skin one
+/// has to be to do at the least, in head radii.
+const ROOT_SAMPLES: usize = 16;
+const ROOT_RISE: f32 = 0.6;
+const ROOT_TRIES: usize = 20;
+const ROOT_STEP: f32 = 0.03;
+const ROOT_DEPTH: f32 = 0.02;
+
+/// How much further over the jaw a root drawn in over it stands, as a share of the
+/// height it reads there: the ring's round is not the outer ellipse the height is
+/// read off. Provenance: **chosen** (#402).
+const ROOT_CLEAR: f32 = 1.2;
+
+/// Whether a piece's line, round its section, stays out of the shut jaw: the jaw's
+/// elliptical section along its run, as `face::beast::jaw` sweeps it.
+fn clears_the_jaw(head: &BeastHead, seat: &OrnamentSeat) -> bool {
+    let line = seat.line();
+    let last = (line.len() - 1) as f32;
+    let round = seat.direction.cross(seat.side);
+    line.iter().enumerate().all(|(station, &at)| {
+        let reach = seat.radius_at(station as f32 / last) * JAW_AIR;
+        (0..JAW_RING).all(|point| {
+            let angle = std::f32::consts::TAU * point as f32 / JAW_RING as f32;
+            let on_ring = at + (seat.side * angle.cos() + round * angle.sin()) * reach;
+            let (axis, girth) = head.jaw.at(on_ring.z);
+            let across = on_ring.x / head.jaw_wide_at(on_ring.z);
+            let up = (on_ring.y - axis) / (0.9 * girth);
+            across * across + up * up > 1.0
+        })
     })
 }
+
+/// How many points round a fang's section are asked of the jaw.
+const JAW_RING: usize = 8;
+
+/// The least lean in `0..=most` that `clear` passes: the first of a coarse walk up,
+/// then halved, so that it follows what it depends on without a jump. `most`, if
+/// nothing does.
+fn least_lean(
+    seat: &mut OrnamentSeat,
+    most: f32,
+    lean: impl Fn(&mut OrnamentSeat, f32),
+    clear: impl Fn(&OrnamentSeat) -> bool,
+) -> f32 {
+    let (mut low, mut high) = (0.0, most);
+    for step in 0..=LEAN_STEPS {
+        let tilt = most * step as f32 / LEAN_STEPS as f32;
+        lean(seat, tilt);
+        if clear(seat) {
+            high = tilt;
+            break;
+        }
+        low = tilt;
+    }
+    for _ in 0..LEAN_HALVINGS {
+        let tilt = 0.5 * (low + high);
+        lean(seat, tilt);
+        if clear(seat) {
+            high = tilt;
+        } else {
+            low = tilt;
+        }
+    }
+    high
+}
+
+/// The most an upper fang leans out from hanging straight, in radians.
+const FANG_LEAN_MOST: f32 = 1.0;
+
+/// A lower fang or a tusk: rooted in the jaw's side under the lip and leaning out by
+/// as little as clears the head, the upper lip above all, as a boar's does. The lean
+/// is found by asking the piece's whole line, at its section, of the surface: it
+/// depends on how long it is and how it curves, so a short fang stands nearly
+/// upright under the lip and a long tusk goes out round it.
+fn jaw_seat(head: &BeastHead, piece: &Ornament, on_jaw: f32, sides: u8) -> OrnamentSeat {
+    let jaw = &head.jaw;
+    let z = jaw.back.z + (jaw.front.z - jaw.back.z) * on_jaw;
+    let (axis, girth) = jaw.at(z);
+    // Round the jaw's section from its side toward its underside to the first of it
+    // the shut head does not cover, and rooted inside it there: the jaw is mostly
+    // hidden by a flew hanging low over it, and a piece has to come out of what shows.
+    let (wide, deep) = (head.jaw_wide_at(z), 0.9 * girth);
+    let shows = (0..=JAW_SHOW_STEPS)
+        .map(|step| {
+            let round = JAW_SHOW_MOST * step as f32 / JAW_SHOW_STEPS as f32;
+            Vec3::new(wide * round.cos(), axis - deep * round.sin(), z)
+        })
+        .find(|&on_jaw| head.distance(on_jaw) > 0.0);
+    let mut seat = shaped(head, piece, sides, true);
+    // On a snub head none of it may show, and then it comes out of the cheek by the
+    // jaw, which it still rides.
+    seat.base = shows.map_or_else(
+        || {
+            let low = Vec3::new(0.0, axis - deep, z);
+            let side = head.leave(low, Vec3::X).unwrap_or(low);
+            side - Vec3::X * seat.radius
+        },
+        |shows| Vec3::new(0.0, axis, z).lerp(shows, JAW_ROOT),
+    );
+    let lean = |seat: &mut OrnamentSeat, tilt: f32| {
+        let direction = Vec3::new(tilt.sin(), tilt.cos(), 0.10).normalize();
+        let back = square_to(Vec3::new(0.0, 0.6, -0.8), direction);
+        let forward = square_to(Vec3::new(0.0, 0.6, 0.8), direction);
+        seat.direction = direction;
+        seat.bend = if piece.curve < 0.0 { forward } else { back };
+        let side = direction.cross(seat.bend);
+        seat.side = if side.x < 0.0 { -side } else { side };
+        seat.across = seat.side;
+    };
+    // Out of the head by half way, and once out it stays out: its root may grow
+    // through a flew, and nothing further along may go back in.
+    let clear = |seat: &OrnamentSeat| {
+        let line = seat.line();
+        let last = (line.len() - 1) as f32;
+        let out = |station: usize| {
+            let round = seat.radius_at(station as f32 / last);
+            [seat.side, -seat.side, Vec3::Y, Vec3::NEG_Y, Vec3::ZERO]
+                .into_iter()
+                .all(|off| head.distance(line[station] + off * round) > 0.0)
+        };
+        (0..line.len())
+            .position(out)
+            .is_some_and(|first| first * 2 <= line.len() && (first..line.len()).all(out))
+    };
+    let tilt = least_lean(&mut seat, LEAN_MOST, |seat, tilt| lean(seat, tilt), clear);
+    lean(&mut seat, tilt);
+    // Past where a snub head's cheek swallows the whole of a short one, slid out along
+    // itself until it shows, which a body with any face to speak of never needs.
+    for _ in 0..SLIDE_STEPS {
+        if clear(&seat) {
+            break;
+        }
+        seat.base += seat.direction * (SLIDE_STEP * head.radius);
+    }
+    seat
+}
+
+/// How many steps a piece a cheek would swallow slides out, and how far each is in
+/// head radii.
+const SLIDE_STEPS: usize = 16;
+const SLIDE_STEP: f32 = 0.05;
+
+/// How far from the jaw's axis toward its surface a jaw piece roots: inside it, near
+/// its wall. Provenance: **tuned by render** (#402).
+const JAW_ROOT: f32 = 0.75;
+
+/// How far round the jaw's section a piece's root is looked for, in radians from its
+/// side, and in how many steps.
+const JAW_SHOW_MOST: f32 = 1.4;
+const JAW_SHOW_STEPS: usize = 14;
+
+/// The most a jaw piece leans out from upright, in radians: nearly level, from the
+/// side of the jaw.
+const LEAN_MOST: f32 = 1.45;
+
+/// How many steps the walk up to a clearing lean takes, and how many times what it
+/// finds is halved: to under a tenth of a degree.
+const LEAN_STEPS: usize = 12;
+const LEAN_HALVINGS: usize = 7;
 
 /// Where the ears stand on a head and how they are made (#367).
 ///

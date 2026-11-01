@@ -87,6 +87,22 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
 ///
+/// **9** - a small share of re-rolled beasts wear what a creator gives one (#403,
+/// the owner's call, overturning "never rolled"). Two coins on NEW streams:
+///
+/// - `quadruped.ornament`, about one roll in twelve under the head's lock, puts one
+///   look on, off a short list (`quadruped.ornamentLook`), a long face drawing no
+///   sabre fangs. Over a creator's own, as before: a re-roll of an unlocked head puts what its seed draws in their place.
+/// - `coat.colours`, about one in twenty under the colouring's, picks free colours,
+///   a pair off a short list (`coat.coloursPair`) and sometimes its accent
+///   (`coat.coloursAccent`).
+///
+/// No existing stream moved and no draw changed, and a person draws neither, so every
+/// seed either coin misses rebuilds to the byte, and a seed one lands on keeps every
+/// other axis. No migration, for generation 7's reason: nothing re-rolls a record that
+/// is only being read, so a saved beast keeps what it was saved with and its stamp, and
+/// only a host that derives a body from a seed afresh sees the new draw.
+///
 /// **8** - a re-rolled quadruped is a dog, a cat or a horse (#366, owner
 /// call), and the composites are drawn in the order their docs always gave
 /// (#178). Two changes, batched:
@@ -188,7 +204,7 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 8;
+pub const GENERATOR_VERSION: u32 = 9;
 
 /// The generation whose hair a record has to be re-rolled to reach.
 ///
@@ -1925,6 +1941,47 @@ mod tests {
     }
 
     #[test]
+    fn a_coat_s_picked_colours_are_the_colouring_s_and_nothing_else_s() {
+        // #401, the way an iris's colour goes with what it was rolled by: a roll of
+        // anything else leaves them where they were, and so does a new family; a
+        // roll of the colouring takes them, unless it is locked.
+        let picked = crate::CoatColours {
+            dark: Some([0.1, 0.2, 0.3]),
+            mane: Some([0.4, 0.5, 0.6]),
+            tail: Some([0.7, 0.8, 0.9]),
+            ..crate::CoatColours::default()
+        };
+        let colours = |record: &AvatarRecord| match &record.archetype {
+            Archetype::Quadruped(params) => params.coat.colours,
+            _ => panic!("a beast"),
+        };
+        let mut record = AvatarRecord::new("Picks", Archetype::Quadruped(Default::default()));
+        record.reroll(5);
+        let Archetype::Quadruped(params) = &mut record.archetype else {
+            panic!("a beast");
+        };
+        params.coat.colours = picked;
+        let coat = params.coat;
+        record.locks = LockSet::NONE.with(Category::Colouring);
+        for seed in 6..12 {
+            record.reroll(seed);
+            assert_eq!(colours(&record), picked, "seed {seed}");
+        }
+        let Archetype::Quadruped(params) = &mut record.archetype else {
+            panic!("a beast");
+        };
+        assert_eq!(params.coat, coat, "the whole coat held");
+        params.set_kind(crate::Family::Horse, Some(crate::Family::Cat), 0.4);
+        assert_eq!(colours(&record), picked, "and through a new family");
+        record.locks = LockSet::NONE;
+        record.reroll(40);
+        assert!(
+            colours(&record).is_empty(),
+            "a roll of the colouring takes them"
+        );
+    }
+
+    #[test]
     fn extremity_size_is_held_by_the_proportions_it_belongs_with() {
         // Moved out of `Features` in #53: a hand is a proportion of the arm it
         // ends, and nobody locks a face to hold a hand.
@@ -2136,7 +2193,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 8,
+            GENERATOR_VERSION, 9,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {
@@ -2416,6 +2473,124 @@ mod tests {
         }
     }
 
+    /// A rolled beast with what generation 9's two coins draw taken off it, and its
+    /// stamp.
+    fn untouched_by_the_coins(seed: i64) -> AvatarRecord {
+        let mut record = AvatarRecord::rolled(
+            "Golden",
+            Archetype::Quadruped(crate::plan::QuadrupedParams::default()),
+            seed,
+        );
+        record.generator = 0;
+        let Archetype::Quadruped(params) = &mut record.archetype else {
+            panic!("archetype changed");
+        };
+        params.ornaments = crate::plan::Ornaments::default();
+        params.coat.colours = crate::plan::CoatColours::default();
+        record
+    }
+
+    /// A record's text with each number read to the nearest 50 thousandths, which a
+    /// last bit of libm cannot tip over an edge: `Rolls::shape` reads `ln` and `cos`,
+    /// and the fingerprint below has to hold on CI's glibc as well as on this one.
+    fn coarse(value: &serde_json::Value, out: &mut String) {
+        use serde_json::Value;
+        match value {
+            Value::Number(number) => {
+                let bucket = number.as_f64().map_or(0, |n| (n / 50.0).floor() as i64);
+                out.push_str(&bucket.to_string());
+            }
+            Value::Array(items) => items.iter().for_each(|item| coarse(item, out)),
+            Value::Object(map) => map.iter().for_each(|(key, item)| {
+                out.push_str(key);
+                coarse(item, out);
+            }),
+            other => out.push_str(&other.to_string()),
+        }
+        out.push(',');
+    }
+
+    #[test]
+    fn the_coins_of_generation_9_move_nothing_else_on_any_seed() {
+        // The fingerprint is generation 8's, taken on the tree before the coins with
+        // this same reading: a coin that shares a stream, or a draw that touches
+        // anything else on the seeds it lands on, moves it.
+        let mut text = String::new();
+        for seed in 0..400 {
+            let record = serde_json::to_value(untouched_by_the_coins(seed)).expect("writes");
+            coarse(&record, &mut text);
+        }
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for byte in text.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        assert_eq!(hash, 0x55bd_4406_a0c7_ff0f, "over {} bytes", text.len());
+    }
+
+    #[test]
+    fn a_roll_that_draws_nothing_says_nothing_of_either() {
+        let mut bare = 0;
+        for seed in 0..120 {
+            let record = AvatarRecord::rolled(
+                "Bare",
+                Archetype::Quadruped(crate::plan::QuadrupedParams::default()),
+                seed,
+            );
+            let Archetype::Quadruped(params) = &record.archetype else {
+                panic!("archetype changed");
+            };
+            if !params.ornaments.is_empty() || !params.coat.colours.is_empty() {
+                continue;
+            }
+            bare += 1;
+            let text = serde_json::to_string(&record).expect("writes");
+            for key in ["\"ornaments\"", "\"horn\"", "\"colours\""] {
+                assert!(!text.contains(key), "seed {seed} writes {key}: {text}");
+            }
+            assert_eq!(
+                record.share_code(),
+                {
+                    let mut stripped = untouched_by_the_coins(seed);
+                    stripped.generator = record.generator;
+                    stripped.share_code()
+                },
+                "seed {seed}"
+            );
+        }
+        assert!(bare > 80, "{bare} rolls of 120 drew nothing");
+    }
+
+    #[test]
+    fn a_person_rolls_neither_and_a_saved_beast_keeps_its_stamp_and_its_look() {
+        // What a person is drawn on is not touched: the streams are a beast's own.
+        let person = AvatarRecord::rolled("Person", Archetype::default(), 7);
+        let text = serde_json::to_string(&person).expect("writes");
+        assert!(
+            !text.contains("\"ornaments\"") && !text.contains("\"coat\""),
+            "{text}"
+        );
+        // A stored beast rolled by generation 8 reads as it was saved: its stamp stays,
+        // and nothing draws anything for it until somebody asks for a re-roll.
+        let mut saved = AvatarRecord::rolled(
+            "Saved",
+            Archetype::Quadruped(crate::plan::QuadrupedParams::default()),
+            (0..)
+                .find(|&seed| !crate::plan::Ornaments::rolled(&Rolls::new(seed), 0.0).is_empty())
+                .expect("in reach"),
+        );
+        let Archetype::Quadruped(params) = &mut saved.archetype else {
+            panic!("archetype changed");
+        };
+        params.ornaments = crate::plan::Ornaments::default();
+        saved.generator = 8;
+        let text = serde_json::to_string(&saved).expect("writes");
+        let mut read: AvatarRecord = serde_json::from_str(&text).expect("reads");
+        read.sanitize();
+        assert_eq!(read, saved);
+        assert_eq!(read.generator, 8);
+    }
+
     #[test]
     fn a_seed_reproduces_the_same_animal() {
         // `a_seed_reproduces_the_same_person`'s table for the other plan, from
@@ -2423,7 +2598,7 @@ mod tests {
         // this fails, every stored quadruped seed now names a different
         // animal, and GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 8,
+            GENERATOR_VERSION, 9,
             "bump the table below with the version"
         );
         let rolled = |seed: i64| {

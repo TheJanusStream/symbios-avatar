@@ -274,6 +274,12 @@ impl PolyMesh {
         self.skin = vec![influences; self.positions.len()];
     }
 
+    /// Whether it has no vertices at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+
     /// Paints every vertex one colour.
     pub fn paint(&mut self, colour: Vec3) {
         self.colours = vec![colour; self.positions.len()];

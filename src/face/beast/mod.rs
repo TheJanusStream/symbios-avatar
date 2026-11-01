@@ -22,7 +22,7 @@
 //!
 //! The parts that stand off the head are built against the same declaration
 //! and kept together as a [`BeastFace`]: the [`ears`], the [`jaw`] with its
-//! tongue, and the whiskers and the horn ([`adorn`]).
+//! tongue, and the whiskers and what it wears ([`adorn`]).
 
 pub mod adorn;
 pub mod ears;
@@ -50,7 +50,7 @@ pub struct BeastFace {
     pub ears: Ears,
     /// The lower jaw and the tongue.
     pub jaw: Jaw,
-    /// The whiskers and the horn, drawn with the eyes.
+    /// The whiskers and what it wears, drawn with the eyes.
     pub adornments: Adornments,
 }
 
@@ -71,6 +71,7 @@ impl BeastFace {
     pub fn rig(&mut self, rig: &mut Rig) {
         self.ears.rig(rig);
         self.jaw.rig(rig);
+        self.adornments.jaw_joint = self.jaw.joint;
     }
 
     /// Every part with the joint it rides, in a fixed order - the ears, the
@@ -1406,9 +1407,8 @@ mod tests {
         // Every seat is cast before the back of the head is reshaped (#388), so
         // its base must still be in the new skull and not buried by it: the
         // ear's base is sunk a little and its first hand of length stands out.
-        use crate::plan::Horn;
         for (name, mut params) in heads() {
-            params.horn = Horn::Unicorn;
+            params.ornaments.horn = Some(crate::plan::Ornament::UNICORN);
             let head = declared(&params);
             let r = head.radius;
             let ear = head.ear;
@@ -1429,7 +1429,7 @@ mod tests {
                 head.distance(eye.centre + eye.facing * Vec3::Z * eye.radius) > -0.02 * r,
                 "{name}: an eye is buried"
             );
-            let horn = head.horn.expect("a horn");
+            let horn = head.ornaments[0].expect("a horn");
             assert!(head.distance(horn.base) < 0.0, "{name}: a horn floats");
         }
     }

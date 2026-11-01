@@ -214,13 +214,17 @@ Still ahead, in rough order:
   eyes are seated with it, turned out by `eyeSet`, with the family's pupils;
   cupped ears ride joints of their own, pricked through rose to dropped; a
   hinged jaw and tongue are parts of their own; the nose is a leather pad or
-  a soft muzzle; whiskers and an optional horn are drawn with the eyes; and
+  a soft muzzle; whiskers and any head ornaments (#402: a horn, paired horns,
+  upper and lower fangs, tusks, antlers, one look of them on a small share of
+  rolls, #403) are drawn with the eyes,
+  the lower fangs and tusks on the jaw's joint so that they open with it; and
   each foot is shaped onto a paw on four toes, its claws showing or sheathed,
   or a hoof. The fourth (#368) gives it a coat: recorded as coat-genetics
   loci (the pigment, dilution, the agouti locus, a pattern, a colourpoint,
   white spotting, merle, roan, dun, tortoiseshell, an intensity, a rare
   unnatural palette, and the seed its marks are laid out from), rolled with
-  each family's own frequencies, and painted from them in place of the
+  each family's own frequencies and, on a small share of rolls, a pair of free
+  colours off a short list (#403), and painted from them in place of the
   complexion, every mark placed by the beast's anatomy and cut from
   body-space fields; the bare parts follow the pigment, and each family
   draws its own eyes. The fifth (#369) gives it fur where a beast grows long

@@ -416,7 +416,22 @@ fn every_quadruped_roll_fits_the_webgl2_budget() {
     // body with long fur was the dearest corner the sweep never built - a
     // horse with every axis low at 4.24 m and full fur, 26,540 against the
     // 24,618 the high corners reached.
-    use symbios_avatar::{Feet, Fur, Horn, Nose, Pupil};
+    use symbios_avatar::{Feet, Fur, Nose, OrnamentKind, Ornaments, Pupil};
+    // All six kinds at their dearest, a most-curled line on each and an antler's
+    // most tines: what a piece costs depends on nothing else (#402).
+    let every_ornament = || {
+        let mut worn = Ornaments::default();
+        for kind in OrnamentKind::ALL {
+            worn.wear(kind, true);
+            if let Some(piece) = worn.get_mut(kind) {
+                piece.curve = symbios_avatar::plan::CURVE_RANGE.1;
+            }
+        }
+        if let Some(antlers) = &mut worn.antlers {
+            antlers.points = symbios_avatar::plan::POINTS_RANGE.1;
+        }
+        worn
+    };
     let (short, tall) = QuadrupedParams::height_envelope();
     for family in symbios_avatar::Family::ALL {
         for (name, end) in [("low", -10.0f32), ("high", 10.0)] {
@@ -428,7 +443,7 @@ fn every_quadruped_roll_fits_the_webgl2_budget() {
                         feet: Feet::of(family),
                         nose: Nose::of(family),
                         pupil: Pupil::of(family),
-                        horn: Horn::Unicorn,
+                        ornaments: every_ornament(),
                         height,
                         body_length: end,
                         leg_length: end,
@@ -490,6 +505,12 @@ fn every_quadruped_roll_fits_the_webgl2_budget() {
         let mut shorn = record.clone();
         if let Archetype::Quadruped(params) = &mut shorn.archetype {
             params.fur = symbios_avatar::Fur::default();
+            // A unicorn's horn: past it, what a body wears comes out of the fur's
+            // own ceiling (#402), so this much of a body is what that is left of.
+            params.ornaments = Ornaments {
+                horn: Some(symbios_avatar::Ornament::UNICORN),
+                ..Ornaments::default()
+            };
         }
         let shorn = Avatar::build(&shorn).unwrap_or_else(|| panic!("{at} bald does not build"));
         if shorn.budget.tris > bald.1 {

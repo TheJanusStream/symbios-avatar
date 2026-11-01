@@ -109,18 +109,123 @@ pub(crate) struct WhiskerSeat {
     pub(crate) droop: f32,
 }
 
-/// A horn (#367): its base on the forehead, the way it points, how long it
-/// is and how thick at the base.
+/// One piece a head wears (#402), or the `+X` side's of a pair: a tapered tube along
+/// a line that starts at [`Self::base`] and turns as it goes, in the head's frame,
+/// in metres. `plan::derive::quadruped` says where it stands, reading the head and
+/// nothing else, and `face::beast::adorn` sweeps it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct HornSeat {
-    /// The middle of its base, sunk a little into the forehead.
+pub(crate) struct OrnamentSeat {
+    /// The middle of its base, sunk into whatever it grows from.
     pub(crate) base: Vec3,
-    /// The way it points, a unit vector.
+    /// The way it sets off, a unit vector.
     pub(crate) direction: Vec3,
-    /// Base to tip, in metres.
+    /// The way it turns as it goes, a unit vector square to [`Self::direction`].
+    pub(crate) bend: Vec3,
+    /// Square to both, the way a coil steps aside to clear itself.
+    pub(crate) side: Vec3,
+    /// What the sweep holds its section's first axis along.
+    pub(crate) across: Vec3,
+    /// Base to tip along its line.
     pub(crate) length: f32,
-    /// Its radius at the base, in metres.
+    /// Its radius at the base.
     pub(crate) radius: f32,
+    /// How much of its radius it has lost at the tip.
+    pub(crate) taper: f32,
+    /// How far its line turns toward [`Self::bend`], in whole turns: never
+    /// negative.
+    pub(crate) curve: f32,
+    /// How far its flutes turn about it, in whole turns.
+    pub(crate) twist: f32,
+    /// How deep its flutes are, as a share of its radius.
+    pub(crate) flutes: f32,
+    /// Its colour at the base and at the tip.
+    pub(crate) colours: [Vec3; 2],
+    /// How many facets its section has.
+    pub(crate) sides: u8,
+    /// Whether it has a `-X` twin.
+    pub(crate) pair: bool,
+    /// An antler's tines: how many, how wide they fork, `0..=1`, and the way that is
+    /// forward as the body stands, the way they reach.
+    pub(crate) tines: Option<(u8, f32, Vec3)>,
+}
+
+/// How many stations a piece with no curve to follow is swept through.
+const PIECE_STATIONS: usize = 6;
+
+/// How many more it takes per whole turn of curve.
+/// Provenance: **tuned by render** (#402): a ram's curl keeps its round at 12, 30
+/// degrees a station under smooth normals, against the triangles a pair costs.
+const STATIONS_PER_TURN: f32 = 12.0;
+
+/// How far a coil steps aside per turn, in the piece's radii at its base: two would
+/// lay a turn against the one before it. Provenance: **chosen** (#402).
+const COIL_STEP: f32 = 2.2;
+
+/// How much a turn tightens toward the tip at most, as a share of it: a horn's curl
+/// is a spiral rather than a circle. Provenance: **tuned by render** (#402).
+const TIGHTENING: f32 = 0.5;
+
+impl OrnamentSeat {
+    /// How many stations its line is swept through.
+    pub(crate) fn stations(&self) -> usize {
+        PIECE_STATIONS + (self.curve * STATIONS_PER_TURN).ceil() as usize
+    }
+
+    /// Its line, base to tip. A piece with no curve is a straight run, and it steps
+    /// aside only once its turn is well past a quarter: under that it cannot meet
+    /// itself, and a sideways shift on a gentle curve would only take it out of
+    /// the plane its seat chose.
+    pub(crate) fn line(&self) -> Vec<Vec3> {
+        let count = self.stations();
+        let last = (count - 1) as f32;
+        if self.curve == 0.0 {
+            return (0..count)
+                .map(|station| self.base + self.direction * (self.length * station as f32 / last))
+                .collect();
+        }
+        let tight = TIGHTENING * smoothstep(0.0, 0.5, self.curve);
+        let turned = |along: f32| {
+            std::f32::consts::TAU * self.curve * (along * (1.0 - tight) + tight * along * along)
+        };
+        let step = self.length / last;
+        let mut line = Vec::with_capacity(count);
+        let mut on_plane = self.base;
+        line.push(self.base);
+        for station in 1..count {
+            let middle = turned((station as f32 - 0.5) / last);
+            on_plane += (self.direction * middle.cos() + self.bend * middle.sin()) * step;
+            let angle = turned(station as f32 / last);
+            let aside = COIL_STEP * self.radius * angle / std::f32::consts::TAU
+                * smoothstep(0.3, 0.55, angle / std::f32::consts::TAU);
+            line.push(on_plane + self.side * aside);
+        }
+        line
+    }
+
+    /// Its radius `along` of the way from base to tip, before any flute.
+    pub(crate) fn radius_at(&self, along: f32) -> f32 {
+        self.radius * (1.0 - self.taper * along)
+    }
+
+    /// The `-X` twin of a pair: its mirror, its flutes turning the other way.
+    pub(crate) fn mirrored(&self) -> Self {
+        let mirror = Vec3::new(-1.0, 1.0, 1.0);
+        Self {
+            base: self.base * mirror,
+            direction: self.direction * mirror,
+            bend: self.bend * mirror,
+            side: self.side * mirror,
+            across: self.across * mirror,
+            twist: -self.twist,
+            ..*self
+        }
+    }
+}
+
+/// `0` under `low`, `1` over `high`, and an S between them.
+fn smoothstep(low: f32, high: f32, value: f32) -> f32 {
+    let share = ((value - low) / (high - low)).clamp(0.0, 1.0);
+    share * share * (3.0 - 2.0 * share)
 }
 
 /// Where the `+X` eye sits (#367); the other is its mirror.
@@ -283,8 +388,8 @@ pub struct BeastHead {
     pub(crate) ear: EarSeat,
     /// The whiskers, if the head has any.
     pub(crate) whiskers: Option<WhiskerSeat>,
-    /// The horn, if it wears one.
-    pub(crate) horn: Option<HornSeat>,
+    /// What it wears, a slot a kind in `OrnamentKind::ALL`'s order (#402).
+    pub(crate) ornaments: [Option<OrnamentSeat>; 6],
 }
 
 /// How far out, in head radii, a ray starts its march inward. Past every part
@@ -376,6 +481,11 @@ impl BeastHead {
         self.nape.as_ref().map_or(head, |nape| {
             smooth_union(head, nape.distance(at), nape.blend)
         })
+    }
+
+    /// How far the jaw reaches to the side at `z`, as `face::beast::jaw` builds it.
+    pub(crate) fn jaw_wide_at(&self, z: f32) -> f32 {
+        (self.muzzle.half_width_at(z) * JAW_WIDTH).max(self.jaw.at(z).1)
     }
 
     /// The middle of the nose, in the head's frame: the leather pad's
@@ -669,6 +779,22 @@ impl Nape {
     }
 }
 
+/// How wide the jaw is against the muzzle over it: a little narrower, so
+/// the upper lip hangs over its sides.
+pub(crate) const JAW_WIDTH: f32 = 0.85;
+
+impl Cone {
+    /// Its axis's height and its radius at `z` along the frame, held at the ends
+    /// past them.
+    pub(crate) fn at(&self, z: f32) -> (f32, f32) {
+        let share = ((z - self.back.z) / (self.front.z - self.back.z)).clamp(0.0, 1.0);
+        (
+            self.back.y + (self.front.y - self.back.y) * share,
+            self.back_radius + (self.front_radius - self.back_radius) * share,
+        )
+    }
+}
+
 impl Muzzle {
     /// The section's half-width at `z` along the frame, held at the ends of
     /// the run past them.
@@ -798,7 +924,7 @@ mod tests {
                 fold: 0.0,
             },
             whiskers: None,
-            horn: None,
+            ornaments: [None; 6],
         }
     }
 

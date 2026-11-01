@@ -479,6 +479,7 @@ fn with_crest<T>(avatar: &Avatar, read: impl FnOnce(&Crest, f32) -> T) -> T {
         anatomy: &anatomy,
         coat: &coat,
         ears: None,
+        worn: 0,
     };
     read(&Crest::of(&bed).expect("a neck"), anatomy.height)
 }

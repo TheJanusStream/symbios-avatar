@@ -23,6 +23,7 @@ use super::derive::quadruped::{Dimensions, FORE_INSIDE, HIND_INSIDE, TRUNK_NODES
 
 /// One leg node as the derive gives it: where it stands and its radius.
 type LegNode = (Vec3, f32);
+use super::ornament::Ornaments;
 use super::{Anatomy, Coat, CompositePriors, Composites, DEFAULT_BODY_FAT, Fur, Limb, Zone};
 use super::{
     BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length, take_signed,
@@ -159,23 +160,6 @@ impl Feet {
     }
 }
 
-/// A horn on the forehead (#367): none, or one spiralled horn, a unicorn's.
-///
-/// **Never rolled**: a creator gives a beast its horn, and a re-roll of its
-/// head takes it off again, so a seeded world's beasts are the animals they
-/// were rolled as. Written as its lowercase name; a name or share-code byte
-/// this build does not know reads as none.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum Horn {
-    /// No horn.
-    #[default]
-    None,
-    /// One spiralled horn, rising forward from the forehead.
-    Unicorn,
-}
-
-named!(Horn: None => "none", Unicorn => "unicorn");
-
 /// The share of re-rolled quadrupeds that come out a cross of two families
 /// (#366: hybrids are in, the owner's call). Drawn on its own stream.
 const HYBRID_SHARE: f32 = 0.15;
@@ -303,20 +287,16 @@ pub struct QuadrupedParams {
     /// the top (#367).
     #[serde(with = "super::scaled")]
     pub whiskers: f32,
-    /// A horn on the forehead (#367). See [`Horn`].
-    #[serde(skip_serializing_if = "is_hornless")]
-    pub horn: Horn,
+    /// What it wears on its head (#402), which a rare roll draws too, under the head's
+    /// lock (#403). See [`Ornaments`]. On a record, a unicorn's horn goes on being
+    /// `horn` and anything else is `ornaments`: `on_record`.
+    #[serde(flatten, with = "super::ornament::on_record")]
+    pub ornaments: Ornaments,
     /// What colour its fur is and how it is marked (#368). See [`Coat`].
     pub coat: Coat,
     /// How long its fur grows where a beast grows long hair (#369). See
     /// [`Fur`].
     pub fur: Fur,
-}
-
-/// Whether a record writes no horn: the default, left off the wire.
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn is_hornless(horn: &Horn) -> bool {
-    *horn == Horn::None
 }
 
 /// Neutral back height, used when a record omits the field.
@@ -596,7 +576,7 @@ impl Default for QuadrupedParams {
             nose: Nose::Leather,
             feet: Feet::Claws,
             whiskers: 0.0,
-            horn: Horn::None,
+            ornaments: Ornaments::default(),
             coat: Coat::default(),
             fur: Fur::default(),
         }
@@ -775,6 +755,7 @@ impl BodyPlan for QuadrupedParams {
         // two, which is a state an editor's slider passes through.)
         self.coat.sanitize();
         self.fur.sanitize();
+        self.ornaments.sanitize();
         if self.hybrid == Some(self.family) {
             self.hybrid = None;
         }
@@ -952,8 +933,8 @@ impl BodyPlan for QuadrupedParams {
                 self.ear_carriage = draw("quadruped.earCarriage", anchor.ear_carriage, signed);
                 self.nose = self.drawn_part(rolls, "quadruped.nose", Nose::of);
                 self.whiskers = draw("quadruped.whiskers", anchor.whiskers, signed);
-                // Never rolled: see [`Horn`].
-                self.horn = Horn::None;
+                // Rarely, off a short list, and over a creator's: see [`Ornaments`].
+                self.ornaments = Ornaments::rolled(rolls, self.muzzle_length);
                 self.pupil = self.drawn_part(rolls, "quadruped.pupil", Pupil::of);
             }
             // Its coat (#368), drawn from its family's loci - a cross's mixed
@@ -1004,7 +985,7 @@ impl BodyPlan for QuadrupedParams {
         out.push(self.nose.code());
         out.push(self.feet.code());
         put_span(out, self.whiskers, signed_envelope());
-        out.push(self.horn.code());
+        out.push(self.ornaments.horn_byte());
         self.coat.encode(out);
         self.fur.encode(out);
     }
@@ -1039,7 +1020,7 @@ impl BodyPlan for QuadrupedParams {
         params.nose = Nose::from_code(take_byte(bytes)?);
         params.feet = Feet::from_code(take_byte(bytes)?);
         params.whiskers = take_span(bytes, signed_envelope())?;
-        params.horn = Horn::from_code(take_byte(bytes)?);
+        params.ornaments = Ornaments::from_horn_byte(take_byte(bytes)?);
         params.coat = Coat::decode(bytes)?;
         params.fur = Fur::decode(bytes)?;
         params.sanitize();

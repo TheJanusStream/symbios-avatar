@@ -20,6 +20,19 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
+/// **12** - a beast's code ends with the colours a creator picked for its coat
+/// (#401), after the stiffness byte, which this version always carries: a mask of
+/// the picked channels, then three bytes for each. **Written only by a code that
+/// needs it**: a beast that picked none goes on writing 11 or 10, byte for byte.
+/// Versions up to 11 read as picking nothing, which is what they meant. A colour
+/// goes as sRGB bytes, as lossy as the rest of a code; on the record it is
+/// thousandths. After the colours, what a beast wears on its head (#402): a mask of
+/// the kinds a `horn` byte cannot say, then each one's six spans and six colour
+/// bytes, and an antler's points and fork. **Written only by a code that needs it**
+/// as well, and a body wearing exactly a unicorn's horn needs none: it goes on saying
+/// so in its `horn` byte at the version it always wrote. A code of this version that
+/// ends at the colours wears nothing more, and top bits of the mask read as nothing.
+///
 /// **11** - a beast's code ends with one more byte, after the complexion: its
 /// mane's stiffness (#389). **Written only by a code that needs it**: a person,
 /// and a beast at the default stiffness, go on writing version 10, byte for
@@ -98,10 +111,13 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 11;
+pub const SHARE_CODE_VERSION: u8 = 12;
 
 /// The version every code that carries no mane stiffness is written at.
 const PRE_STIFFNESS_VERSION: u8 = 10;
+
+/// The version every code that carries no picked colours is written at, at most.
+const PRE_COLOURS_VERSION: u8 = 11;
 
 /// The oldest format whose codes still decode.
 const OLDEST_VERSION: u8 = 3;
@@ -196,16 +212,29 @@ pub enum ShareCodeError {
 pub fn encode(archetype: &Archetype, composites: &Composites, skin: &SkinParams) -> String {
     use crate::plan::{put_signed, put_unit};
 
-    // Only a beast whose stiffness a reader of version 10 would get wrong.
+    // Only a beast whose colours or ornaments a reader of version 11 would lose,
+    // and after that, whose stiffness a reader of version 10 would get wrong. The
+    // layout of version 12 carries the stiffness whatever it is.
+    let colours = match archetype {
+        Archetype::Quadruped(params)
+            if !params.coat.colours.is_empty() || params.ornaments.needs_bytes() =>
+        {
+            Some((params.coat.colours, params.ornaments))
+        }
+        _ => None,
+    };
     let stiffness = match archetype {
-        Archetype::Quadruped(params) if params.fur.stiffness_needs_a_byte() => {
+        Archetype::Quadruped(params)
+            if colours.is_some() || params.fur.stiffness_needs_a_byte() =>
+        {
             Some(params.fur.stiffness_byte())
         }
         _ => None,
     };
-    let version = match stiffness {
-        Some(_) => SHARE_CODE_VERSION,
-        None => PRE_STIFFNESS_VERSION,
+    let version = match (&colours, stiffness) {
+        (Some(_), _) => SHARE_CODE_VERSION,
+        (None, Some(_)) => PRE_COLOURS_VERSION,
+        (None, None) => PRE_STIFFNESS_VERSION,
     };
     let mut payload = vec![version];
     archetype.encode(&mut payload);
@@ -215,6 +244,10 @@ pub fn encode(archetype: &Archetype, composites: &Composites, skin: &SkinParams)
     put_unit(&mut payload, skin.blush);
     put_unit(&mut payload, skin.freckles);
     payload.extend(stiffness);
+    if let Some((colours, ornaments)) = colours {
+        colours.encode(&mut payload);
+        ornaments.encode(&mut payload);
+    }
     payload.push(checksum(&payload));
     group(&base32_encode(&payload))
 }
@@ -294,6 +327,10 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
         && let Archetype::Quadruped(params) = &mut archetype
     {
         params.fur.take_stiffness(&mut payload)?;
+        if version > PRE_COLOURS_VERSION {
+            params.coat.colours = crate::plan::CoatColours::decode(&mut payload)?;
+            params.ornaments.decode_over(&mut payload)?;
+        }
     }
     if !payload.is_empty() {
         return Err(ShareCodeError::Trailing(payload.len()));
@@ -444,7 +481,10 @@ mod tests {
             nose: crate::plan::Nose::Soft,
             feet: crate::plan::Feet::Hooves,
             whiskers: 0.7,
-            horn: crate::plan::Horn::Unicorn,
+            ornaments: crate::plan::Ornaments {
+                horn: Some(crate::plan::Ornament::UNICORN),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let code = encode(
@@ -464,7 +504,7 @@ mod tests {
         );
         assert_eq!(back.nose, crate::plan::Nose::Soft);
         assert_eq!(back.feet, crate::plan::Feet::Hooves);
-        assert_eq!(back.horn, crate::plan::Horn::Unicorn);
+        assert_eq!(back.ornaments.horn, Some(crate::plan::Ornament::UNICORN));
         // A byte over each span: a signed axis's step is 6/255.
         for (name, was, now) in [
             ("blend", original.blend, back.blend),
@@ -605,6 +645,201 @@ mod tests {
                 "the complexion was read off the stiffness's byte"
             );
         }
+    }
+
+    /// A beast with `dark` and `tail` picked, at `stiffness`.
+    fn coloured(stiffness: f32) -> QuadrupedParams {
+        let mut params = QuadrupedParams::default();
+        params.fur.mane_stiffness = stiffness;
+        params.coat.colours.dark = Some([0.2, 0.4, 0.6]);
+        params.coat.colours.tail = Some([1.0, 0.0, 0.0]);
+        params.coat.sanitize();
+        params.fur.sanitize();
+        params
+    }
+
+    #[test]
+    fn picked_colours_survive_a_code_at_version_12() {
+        let default_stiffness = crate::plan::Fur::DEFAULT_MANE_STIFFNESS;
+        for stiffness in [default_stiffness, 0.8] {
+            let params = coloured(stiffness);
+            let skin = SkinParams {
+                melanin: 0.25,
+                ..SkinParams::default()
+            };
+            let code = encode(&Archetype::Quadruped(params), &Composites::default(), &skin);
+            assert_eq!(version_of(&code), 12);
+            let (Archetype::Quadruped(back), _, read_skin) = decode(&code).expect("decodes") else {
+                panic!("a quadruped");
+            };
+            assert!((read_skin.melanin - 0.25).abs() < 0.01);
+            assert!((back.fur.mane_stiffness - stiffness).abs() <= 0.5 / 255.0 + 0.0005);
+            assert!(back.coat.colours.light.is_none());
+            for (read, wrote) in [
+                (back.coat.colours.dark, params.coat.colours.dark),
+                (back.coat.colours.tail, params.coat.colours.tail),
+            ] {
+                let (read, wrote) = (read.expect("came back"), wrote.expect("written"));
+                for (read, wrote) in read.iter().zip(wrote) {
+                    assert!((read - wrote).abs() < 0.003, "{wrote} came back {read}");
+                }
+            }
+            // A code read and written again is the same code.
+            let again = encode(
+                &Archetype::Quadruped(back),
+                &Composites::default(),
+                &read_skin,
+            );
+            assert_eq!(again, code);
+        }
+    }
+
+    #[test]
+    fn codes_up_to_11_read_as_picking_nothing_and_go_on_being_written() {
+        // Literals: `BEAST_V10` is above, and this one was minted by the tree
+        // before version 12 existed, at a mane stiffness of 0.8.
+        const BEAST_V11: &str = "1C148-0M0G2-08100-0ZW08-1040G-20810-40G00-81040-00080-00200-08000-00000-0000G-205AA-ASG1S-G1K06";
+        for (code, version) in [(BEAST_V10, 10), (BEAST_V11, 11)] {
+            assert_eq!(version_of(code), version);
+            let (Archetype::Quadruped(back), composites, skin) = decode(code).expect("decodes")
+            else {
+                panic!("a quadruped");
+            };
+            assert!(back.coat.colours.is_empty());
+            let again = encode(&Archetype::Quadruped(back), &composites, &skin);
+            assert_eq!(
+                again, code,
+                "written back the same bytes at the same version"
+            );
+        }
+        // A person never reads a colour off the end of a code.
+        let (person, composites, skin) = decode(PERSON_V10).expect("decodes");
+        assert_eq!(encode(&person, &composites, &skin), PERSON_V10);
+    }
+
+    #[test]
+    fn a_unicorn_goes_on_writing_what_it_wrote() {
+        // Literals, minted by the tree before ornaments existed: `horn` was a byte.
+        const DOG: &str = "18148-0M0G2-08100-0ZW08-1040G-20810-40G00-81040-00080-08200-08000-00000-0000G-205AA-ASG1S-G05G";
+        const HORSE: &str = "181AM-1ANG2-J7PTG-2ZW09-ZAMQA-TQR0X-V7MR1-7F8X8-04160-08200-08000-00000-0000G-205AA-ASG1S-G0H8";
+        for code in [DOG, HORSE] {
+            assert_eq!(version_of(code), 10);
+            let (Archetype::Quadruped(back), composites, skin) = decode(code).expect("decodes")
+            else {
+                panic!("a quadruped");
+            };
+            assert_eq!(back.ornaments.horn, Some(crate::plan::Ornament::UNICORN));
+            let again = encode(&Archetype::Quadruped(back), &composites, &skin);
+            assert_eq!(again, code, "the same bytes at the same version");
+        }
+    }
+
+    /// A beast wearing every kind, none of them what the `horn` byte can say.
+    fn ornate() -> QuadrupedParams {
+        let mut params = QuadrupedParams::default();
+        for kind in crate::plan::OrnamentKind::ALL {
+            params.ornaments.wear(kind, true);
+        }
+        params.ornaments.horn.as_mut().expect("worn").curve = 0.25;
+        params.ornaments.tusks.as_mut().expect("worn").base = [0.1, 0.2, 0.3];
+        let antlers = params.ornaments.antlers.as_mut().expect("worn");
+        antlers.points = 7;
+        antlers.fork = 0.8;
+        params
+    }
+
+    #[test]
+    fn ornaments_survive_a_code_at_version_12_after_the_colours() {
+        let mut params = ornate();
+        params.coat.colours.tail = Some([1.0, 0.0, 0.0]);
+        let skin = SkinParams::default();
+        let code = encode(&Archetype::Quadruped(params), &Composites::default(), &skin);
+        assert_eq!(version_of(&code), 12);
+        let (Archetype::Quadruped(back), composites, skin) = decode(&code).expect("decodes") else {
+            panic!("a quadruped");
+        };
+        assert_eq!(back.coat.colours.tail.map(|tail| tail[0]), Some(1.0));
+        let tusks = back.ornaments.tusks.expect("came back");
+        assert!((tusks.base[1] - 0.2).abs() < 0.003);
+        let antlers = back.ornaments.antlers.expect("came back");
+        assert_eq!(antlers.points, 7);
+        assert!((antlers.fork - 0.8).abs() < 0.003);
+        assert!((back.ornaments.horn.expect("came back").curve - 0.25).abs() < 0.007);
+        assert_eq!(
+            encode(&Archetype::Quadruped(back), &composites, &skin),
+            code
+        );
+        // With no colours picked, the mask of none goes before it.
+        let code = encode(
+            &Archetype::Quadruped(ornate()),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        assert_eq!(version_of(&code), 12);
+        let (Archetype::Quadruped(back), _, _) = decode(&code).expect("decodes") else {
+            panic!("a quadruped");
+        };
+        assert!(back.coat.colours.is_empty());
+        assert!(back.ornaments.antlers.is_some());
+        // A unicorn beside a tusk keeps its byte and spends none of its own on the horn.
+        let mut both = QuadrupedParams::default();
+        both.ornaments.horn = Some(crate::plan::Ornament::UNICORN);
+        both.ornaments.wear(crate::plan::OrnamentKind::Tusks, true);
+        let code = encode(
+            &Archetype::Quadruped(both),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        let (Archetype::Quadruped(back), _, _) = decode(&code).expect("decodes") else {
+            panic!("a quadruped");
+        };
+        assert_eq!(back.ornaments.horn, Some(crate::plan::Ornament::UNICORN));
+        assert!(back.ornaments.tusks.is_some());
+    }
+
+    #[test]
+    fn a_code_cut_short_inside_its_ornaments_is_an_error_not_a_panic() {
+        let code = encode(
+            &Archetype::Quadruped(ornate()),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        let bytes = base32_decode(&code).expect("a code");
+        let body = &bytes[..bytes.len() - 1];
+        let mask_of_none_ends = encode_length_without_ornaments();
+        for cut in mask_of_none_ends..body.len() {
+            let mut cut_short = body[..cut].to_vec();
+            cut_short.push(checksum(&cut_short));
+            let read = decode(&base32_encode(&cut_short));
+            if cut == mask_of_none_ends {
+                let (Archetype::Quadruped(back), _, _) = read.expect("ends at the colours") else {
+                    panic!("a quadruped");
+                };
+                assert!(back.ornaments.is_empty(), "wears nothing further");
+            } else {
+                assert!(read.is_err(), "cut at {cut} of {}", body.len());
+            }
+        }
+        // Bits no kind has yet read as nothing, and then the bytes after them, which
+        // only a newer layout would write, are the disagreement `Trailing` says.
+        let mut unknown = body[..mask_of_none_ends].to_vec();
+        unknown.push(0b1100_0000);
+        unknown.push(checksum(&unknown));
+        let (Archetype::Quadruped(back), _, _) = decode(&base32_encode(&unknown)).expect("reads")
+        else {
+            panic!("a quadruped");
+        };
+        assert!(back.ornaments.is_empty());
+    }
+
+    /// How long a default beast's code body runs at version 12, up to where its
+    /// ornaments start: the version byte, the payload, the stiffness and the mask of
+    /// no colours.
+    fn encode_length_without_ornaments() -> usize {
+        let mut payload = vec![SHARE_CODE_VERSION];
+        Archetype::Quadruped(QuadrupedParams::default()).encode(&mut payload);
+        Composites::default().encode(&mut payload);
+        payload.len() + 4 + 1 + 1
     }
 
     #[test]

@@ -25,6 +25,8 @@ use crate::plan::{BeastFeet, BeastHead, Limb, Zone};
 use crate::rig::Rig;
 use crate::rig::junction::Junctions;
 
+use super::marks::step;
+
 /// A beast's body, as the painter reads it.
 #[derive(Clone, Debug)]
 pub(crate) struct CoatBody {
@@ -36,6 +38,8 @@ pub(crate) struct CoatBody {
     pub height: f32,
     /// The tail's first joint, at the croup, and its last.
     pub tail: Option<(Vec3, Vec3)>,
+    /// Which way the tail's first bone leaves its root.
+    pub dock: Option<Vec3>,
     /// The head its plan declared.
     pub head: Option<BeastHead>,
     /// Each foot's shape, by the limb it ends.
@@ -71,11 +75,18 @@ impl CoatBody {
             .first()
             .zip(tail.last())
             .map(|(&root, &tip)| (rig.joints[root].position, rig.joints[tip].position));
+        // Along its first bone, or its whole run on a tail of one.
+        let dock = rig
+            .in_zone(Zone::Tail)
+            .get(1)
+            .map(|&joint| rig.joints[joint].position);
+        let dock = tail.map(|(root, tip)| (dock.unwrap_or(tip) - root).normalize_or(Vec3::NEG_Z));
         Self {
             hips,
             withers,
             height: withers.y.max(f32::EPSILON),
             tail,
+            dock,
             head: head.copied(),
             feet: feet.map_or_else(Vec::new, |feet| crate::extremity::beast::shapes(rig, feet)),
             junctions: Junctions::of(rig),
@@ -116,6 +127,20 @@ impl CoatBody {
         } else {
             0.0
         }
+    }
+
+    /// How far out along the tail's first bone `at` lies, in back heights.
+    pub(crate) fn along_dock(&self, at: Vec3) -> f32 {
+        self.tail
+            .zip(self.dock)
+            .map_or(0.0, |((root, _), dock)| (at - root).dot(dock) / self.height)
+    }
+
+    /// How much of a colour picked for the tail a point on it has taken, `0..=1`
+    /// (#401): none where the tail leaves the rump, all of it soon after.
+    pub(crate) fn tail_share(&self, at: Vec3) -> f32 {
+        let (out, down) = (super::DOCK_FADE, super::TAIL_FADE);
+        step(out.0, out.1, self.along_dock(at)).max(step(down.0, down.1, self.along_tail(at)))
     }
 
     /// The foot `at` belongs to, if its zone is a foot's, with `at` in that

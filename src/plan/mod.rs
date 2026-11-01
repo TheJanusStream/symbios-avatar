@@ -93,6 +93,7 @@ mod composites;
 pub(crate) mod derive;
 mod fur;
 mod humanoid;
+mod ornament;
 mod quadruped;
 mod zone;
 
@@ -105,14 +106,18 @@ use crate::skeleton::Skeleton;
 pub use anatomy::{Anatomy, FootKind, HeadKind, TrunkKind};
 pub use beast_foot::BeastFeet;
 pub use beast_head::BeastHead;
-pub use coat::{Agouti, Coat, Fantasy, Pattern, Pigment, White};
+pub use coat::{Agouti, Coat, CoatChannel, CoatColours, Fantasy, Pattern, Pigment, White};
 pub use composites::{
     AGE_PIVOT, AGE_RANGE, BODY_FAT_RANGE, CompositePriors, Composites, DEFAULT_AGE,
     DEFAULT_BODY_FAT,
 };
 pub use fur::Fur;
 pub use humanoid::HumanoidParams;
-pub use quadruped::{Family, Feet, Horn, Nose, Pupil, QuadrupedParams};
+pub use ornament::{
+    Antlers, CURVE_RANGE, FLUTES_RANGE, FORK_RANGE, Horn, LENGTH_RANGE, ORNAMENT_SWATCHES,
+    Ornament, OrnamentKind, Ornaments, POINTS_RANGE, TAPER_RANGE, THICKNESS_RANGE, TWIST_RANGE,
+};
+pub use quadruped::{Family, Feet, Nose, Pupil, QuadrupedParams};
 pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};
 
 /// Smallest and largest biped stature accepted, in metres.
@@ -186,11 +191,18 @@ pub enum Category {
     /// The shape of the head: its size, breadth and face length, the eyes, and
     /// the nose, brow, mouth and ears carved into it.
     ///
+    /// On a beast it holds what the head wears too (#403), a creator's or a rare
+    /// roll's: a re-roll of an unlocked head puts what its seed draws in their place.
+    ///
     /// Shape only. What colour any of it is belongs to [`Category::Colouring`],
     /// and what grows on top belongs to [`Category::Hair`] — the split this
     /// category exists for.
     Head,
     /// Complexion: tone, undertone, blush, freckles and stubble.
+    ///
+    /// On a beast, its coat, and with it the free colours over the coat (#403), a
+    /// creator's or a rare roll's: a re-roll of an unlocked colouring puts what its
+    /// seed draws in their place.
     Colouring,
     /// Hair: its length, volume, hairline, part, wave, curl and shade.
     Hair,
@@ -575,6 +587,10 @@ pub const QUADRUPED_TYPE: &str = "network.symbios.avatar.defs#quadruped";
 /// [`Archetype::Unknown`] variant keeps the type name and every field verbatim
 /// so a read-modify-write cannot destroy a body this build does not understand,
 /// and [`Archetype::is_understood`] lets a client say so rather than pretend.
+// A beast's plan is the largest by what it can wear (#402). A record holds one per
+// body and it is cloned about as often as a record is, so a box would save nothing
+// and take `Copy` off a plan every editor matches by value.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Archetype {
     /// An upright biped.
@@ -1033,6 +1049,32 @@ pub(crate) mod scaled {
         ) -> Result<[f32; 3], D::Error> {
             let raw = <[i64; 3]>::deserialize(deserializer)?;
             Ok(raw.map(super::unscale))
+        }
+    }
+
+    /// The same for a colour that may not be there (#401): `null` and an absent
+    /// key both read as `None`, and a writer leaves `None` off.
+    pub mod chosen {
+        use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+        /// Writes the colour, if there is one, as [`super::triple`] does.
+        // serde's `with` hands a field by reference, whatever its size.
+        #[allow(clippy::ref_option)]
+        pub fn serialize<S: Serializer>(
+            value: &Option<[f32; 3]>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            value
+                .map(|parts| parts.map(super::scale))
+                .serialize(serializer)
+        }
+
+        /// Reads it back, wide for [`super::triple`]'s reason.
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<[f32; 3]>, D::Error> {
+            let raw = Option::<[i64; 3]>::deserialize(deserializer)?;
+            Ok(raw.map(|parts| parts.map(super::unscale)))
         }
     }
 

@@ -40,6 +40,13 @@
 //! hair card's scalp is, and on any other coat a card is already the colour of
 //! the skin it leaves.
 //!
+//! **A mane and a tail can be a colour of their own** (#401). A mane's cards take
+//! the colour picked for it, whole, and its skin follows it along the crest as a
+//! dark mane's does, a light mane on a dark coat included. A tail's skin comes in
+//! from the rump, so a card rooted while it is still coming in starts as its skin
+//! is there and runs to the tail's colour by its tip: skin and fur agree at every
+//! root, and the brush reads as the colour picked.
+//!
 //! Drawn in the hair's draw: a beast grows no person's hair, so fur is the
 //! one draw more a furred beast makes than a bald one - three in all, inside
 //! the budget's four. Tiered under [`MAX_TRIANGLES`] as a head is under its
@@ -157,6 +164,9 @@ pub(crate) struct Bed<'a> {
     pub coat: &'a Coat,
     /// The ears, rigged, for the tufts at their tips.
     pub ears: Option<&'a Ears>,
+    /// How many triangles what the head wears has spent out of the fur's ceiling
+    /// (#402).
+    pub worn: usize,
 }
 
 impl Bed<'_> {
@@ -190,14 +200,15 @@ impl Bed<'_> {
     }
 }
 
-/// Grows `fur` on `bed`, tiered to fit [`MAX_TRIANGLES`], every zone on a
-/// stream of its own drawn from `seed`.
+/// Grows `fur` on `bed`, tiered to fit [`MAX_TRIANGLES`] less what [`Bed::worn`]
+/// has already spent, every zone on a stream of its own drawn from `seed`.
 pub(crate) fn grow(bed: &Bed, fur: &Fur, seed: i64) -> FurGrowth {
+    let ceiling = MAX_TRIANGLES.saturating_sub(bed.worn);
     let mut share = 1.0;
     let mut growth = grow_share(bed, fur, seed, share);
     for pass in 0..TIER_PASSES + LAST_PASSES {
         let tris = growth.tris();
-        if tris <= MAX_TRIANGLES {
+        if tris <= ceiling {
             break;
         }
         let aim = if pass < TIER_PASSES {
@@ -205,7 +216,7 @@ pub(crate) fn grow(bed: &Bed, fur: &Fur, seed: i64) -> FurGrowth {
         } else {
             LAST_AIM
         };
-        share *= MAX_TRIANGLES as f32 / tris as f32 * aim;
+        share *= ceiling as f32 / tris as f32 * aim;
         growth = grow_share(bed, fur, seed, share);
     }
     growth
@@ -216,10 +227,11 @@ pub(crate) fn grow(bed: &Bed, fur: &Fur, seed: i64) -> FurGrowth {
 /// Provenance: **tuned by render** (#389).
 const ROOTS_REACH: f32 = 1.5;
 
-/// The skin a mane in a coat's dark grows out of, for the painter, if it has one:
-/// on any other coat a card is the colour of the skin it leaves.
+/// The skin a mane in a coat's dark, or in a colour picked for it, grows out of,
+/// for the painter, if it has one: on any other coat a card is the colour of the
+/// skin it leaves.
 pub(crate) fn mane_roots(bed: &Bed, fur: &Fur) -> Option<ManeRoots> {
-    if fur.mane <= 0.0 || !darkens_points(bed.coat) {
+    if fur.mane <= 0.0 || !(darkens_points(bed.coat) || bed.coat.colours.mane.is_some()) {
         return None;
     }
     let line = Crest::of(bed)?.line;
@@ -262,12 +274,16 @@ fn grow_share(bed: &Bed, fur: &Fur, seed: i64, share: f32) -> FurGrowth {
             let colour = if zone == FurZone::Tufts {
                 sampler.dark()
             } else if zone.points() {
-                sampler.points(root.at, root.out, *at_zone)
+                sampler.points(root.at, root.out, *at_zone, zone == FurZone::Tail)
             } else {
                 sampler.colour(root.at, root.out, *at_zone)
             };
             // Tipped a shade lighter, as fur in the light is.
-            let tips = colour.lerp(Vec3::ONE, 0.08);
+            let tips = sampler
+                .tail()
+                .filter(|_| zone == FurZone::Tail)
+                .unwrap_or(colour)
+                .lerp(Vec3::ONE, 0.08);
             if loft(&mut growth.mesh, root, &lock, None, colour, tips) > 0 {
                 clumps += 1;
             }
@@ -956,6 +972,7 @@ mod tests {
                 anatomy: &anatomy,
                 coat: &coat,
                 ears: None,
+                worn: 0,
             };
             let mut ruffed = 0;
             for (&at, normal) in parts.body.positions.iter().zip(parts.body.vertex_normals()) {
@@ -994,6 +1011,7 @@ mod tests {
                 anatomy: &anatomy,
                 coat: &coat,
                 ears: None,
+                worn: 0,
             };
             let mut legs = 0;
             for ((&at, &zone), normal) in parts

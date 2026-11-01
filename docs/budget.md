@@ -127,6 +127,16 @@ coil visibly thin, because a hanging card covers nothing but itself and the coun
 IS the density of the curtain. Do the arithmetic, then look at it — the
 arithmetic was right for two styles out of five.
 
+**A beast's head ornaments come out of its fur's ceiling** (#402). A piece costs
+what its section and its stations do: a unicorn's horn is 140, a preset pair of
+horns 312, fangs 216 to 248, tusks 352 and a stag's antlers 696 (the
+`a_piece_costs_little_against_the_budget` test prints these and each at its
+tightest curl, where the dearest, antlers with eight points, is 1,544). Six kinds
+at their dearest at once are about 5,500, and on a body with the longest fur that
+is more than was left, so `hair::fur::grow`'s ceiling gives up whatever a body wears
+past a unicorn's 140: such a body is under the target as a unicorn's always was,
+and a body wearing no more than that grows the fur it always grew.
+
 **A carve is not free just because it adds no vertices.** The skin is
 bit-identical under a displacement-only change, but the hair's scalp is
 measured off the *built* skull — a deeper nose resampled hair at +40 triangles

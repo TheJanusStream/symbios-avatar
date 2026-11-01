@@ -222,7 +222,7 @@ pub struct Parts {
     /// on the head its plan declared.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub beast: Option<face::beast::BeastFace>,
-    /// A beast's whiskers and horn (#367), if it wears either. Kept apart from
+    /// A beast's whiskers and what it wears (#367, #402), if any. Kept apart from
     /// [`Self::beast`] because the eyes' draw they go in is built per call,
     /// wherever the body is drawn, so unlike the rest of a head they have to
     /// survive a worker boundary (#385).
@@ -765,6 +765,7 @@ impl Avatar {
                         anatomy,
                         coat: &params.coat,
                         ears: None,
+                        worn: 0,
                     },
                     &params.fur,
                 );
@@ -883,6 +884,9 @@ impl Avatar {
                     anatomy,
                     coat: &params.coat,
                     ears: beast.as_ref().map(|beast| &beast.ears),
+                    worn: beast
+                        .as_ref()
+                        .map_or(0, |beast| beast.adornments.triangles_past_a_unicorn()),
                 };
                 Some(crate::hair::fur::grow(&bed, &params.fur, record.seed))
             }
@@ -893,7 +897,7 @@ impl Avatar {
         let adornments = beast
             .as_ref()
             .map(|beast| beast.adornments.clone())
-            .filter(|worn| worn.whiskers.face_count() + worn.horn.face_count() > 0);
+            .filter(|worn| !worn.is_empty());
         let parts = Parts {
             hair,
             far_hair,
@@ -1005,13 +1009,18 @@ impl Avatar {
             globes.append(&globe);
         }
 
-        // A beast's whiskers and horn (#367), in the draw that can colour
-        // them white and ivory on any coat - see `face::beast::adorn` - and
-        // held by the head.
+        // A beast's whiskers and what it wears (#367, #402), in the draw that can
+        // colour them on any coat - see `face::beast::adorn` - and held by the
+        // head, or by the jaw if they are to open with the mouth.
         if let Some(adornments) = &self.parts.adornments {
             let mut worn = adornments.assembled();
             worn.bind_rigidly(eyes.head as u16);
             globes.append(&worn);
+            if !adornments.on_jaw.is_empty() {
+                let mut jawed = adornments.on_jaw.clone();
+                jawed.bind_rigidly(adornments.jaw_joint.unwrap_or(eyes.head) as u16);
+                globes.append(&jawed);
+            }
         }
 
         if globes.faces.is_empty() {
@@ -2343,18 +2352,19 @@ mod tests {
         assert!(back.parts.features.is_none());
     }
 
-    /// A beast's whiskers and horn are drawn on the far side of a worker
-    /// boundary too (#385). The eyes' draw is built per call, so it reads them
+    /// A beast's whiskers and what it wears are drawn on the far side of a worker
+    /// boundary too (#385, #402). The eyes' draw is built per call, so it reads them
     /// where the body is drawn, and they had stayed behind in `parts.beast`:
-    /// every browser drew a cat with no whiskers and a unicorn with no horn. A
-    /// person carries none and writes no such key.
+    /// every browser drew a cat with no whiskers and a unicorn with no horn. Every
+    /// kind crosses, and what rides the jaw goes on riding it over there, where the
+    /// jaw's own part is not. A person carries none and writes no such key.
     #[cfg(feature = "serde-avatar")]
     #[test]
     fn a_sent_beast_keeps_its_whiskers_and_its_horn() {
         let mut params = crate::QuadrupedParams::default();
         params.set_kind(crate::Family::Horse, None, 0.0);
         params.whiskers = 1.0;
-        params.horn = crate::Horn::Unicorn;
+        params.ornaments.horn = Some(crate::Ornament::UNICORN);
         let config = AvatarConfig {
             atlas: 64,
             ..AvatarConfig::default()
@@ -2372,6 +2382,61 @@ mod tests {
         let wire = serde_json::to_string(&built).expect("serialises");
         let back: Avatar = serde_json::from_str(&wire).expect("deserialises");
         assert_eq!(back.eyes_at(0.0), here, "the far side draws them too");
+        assert!(
+            back.parts.beast.is_none(),
+            "the premise: the jaw stayed behind"
+        );
+
+        // Every kind, one at a time, drawn the same on the far side, shut and with
+        // its mouth open on the joint that came over with it.
+        for kind in crate::OrnamentKind::ALL {
+            let mut params = params;
+            params.whiskers = -1.0;
+            params.ornaments = crate::Ornaments::default();
+            params.ornaments.wear(kind, true);
+            let beast = AvatarRecord::new("Sent", Archetype::Quadruped(params));
+            let built = Avatar::build_with(&beast, &config).expect("builds");
+            let here = built.eyes_at(0.0);
+            assert!(
+                here[0].mesh.face_count() > bare_faces,
+                "{kind:?} drew nothing"
+            );
+            let wire = serde_json::to_string(&built).expect("serialises");
+            let back: Avatar = serde_json::from_str(&wire).expect("deserialises");
+            assert_eq!(back.eyes_at(0.0), here, "{kind:?} stayed behind");
+            let mut open = crate::anim::Pose::rest(&built.rig);
+            built
+                .parts
+                .beast
+                .as_ref()
+                .expect("a beast")
+                .jaw
+                .pose(&mut open, 1.0, 0.0);
+            let eyes = |avatar: &Avatar| {
+                avatar
+                    .posed(&open, 0.0)
+                    .into_iter()
+                    .find(|mesh| mesh.kind == MeshKind::Eye)
+                    .expect("an eyes' draw")
+                    .mesh
+                    .positions
+            };
+            assert_eq!(
+                eyes(&back),
+                eyes(&built),
+                "{kind:?} opens differently there"
+            );
+            if kind.rides_the_jaw() {
+                assert_ne!(
+                    back.parts
+                        .adornments
+                        .as_ref()
+                        .and_then(|worn| worn.jaw_joint),
+                    None,
+                    "{kind:?} lost its joint"
+                );
+            }
+        }
 
         let person = AvatarRecord::new("Sent", Archetype::default());
         let built = Avatar::build_with(&person, &config).expect("builds");
@@ -2379,6 +2444,64 @@ mod tests {
         assert!(!wire.contains("adornments"), "a person's payload grew");
         let back: Avatar = serde_json::from_str(&wire).expect("deserialises");
         assert_eq!(back.eyes_at(0.0), built.eyes_at(0.0));
+    }
+
+    /// A picked colour reaches the far side of a worker boundary (#401): it is
+    /// painted into the atlas and into the fur's vertices, both of which travel,
+    /// and read from nothing that stays behind.
+    #[cfg(feature = "serde-avatar")]
+    #[test]
+    fn a_sent_beast_keeps_its_picked_colours() {
+        let (mane, tail) = ([0.15, 0.95, 0.95], [0.60, 0.10, 0.95]);
+        let mut params = crate::QuadrupedParams::default();
+        params.set_kind(crate::Family::Horse, None, 0.0);
+        params.fur.mane = 0.8;
+        params.fur.tail = 0.8;
+        params.coat.colours.mane = Some(mane);
+        params.coat.colours.tail = Some(tail);
+        params.coat.colours.horn = Some([0.9, 0.1, 0.1]);
+        let config = AvatarConfig {
+            atlas: 64,
+            ..AvatarConfig::default()
+        };
+        let record = AvatarRecord::new("Sent", Archetype::Quadruped(params));
+        let built = Avatar::build_with(&record, &config).expect("builds");
+        let wire = serde_json::to_string(&built).expect("serialises");
+        let back: Avatar = serde_json::from_str(&wire).expect("deserialises");
+        // The draws, as a browser receives them, wear what was picked.
+        let fur = back.meshes.iter().find(|drawn| {
+            drawn
+                .mesh
+                .colours
+                .iter()
+                .any(|colour| colour.distance(glam::Vec3::from_array(mane)) < 1.0e-3)
+        });
+        let fur = fur.expect("the mane's colour crossed").mesh.clone();
+        assert!(
+            fur.colours
+                .iter()
+                .any(|colour| colour.distance(glam::Vec3::from_array(tail)) < 0.1),
+            "the tail's colour crossed"
+        );
+        assert!(
+            back.skin.albedo == built.skin.albedo,
+            "the atlas crossed whole"
+        );
+        assert_eq!(back.meshes, built.meshes);
+        // And the atlas it crossed with carries them, which is not the unpicked one.
+        let plain = AvatarRecord::new(
+            "Sent",
+            Archetype::Quadruped({
+                let mut plain = params;
+                plain.coat.colours = crate::CoatColours::default();
+                plain
+            }),
+        );
+        let plain = Avatar::build_with(&plain, &config).expect("builds");
+        assert!(
+            plain.skin.albedo != back.skin.albedo,
+            "the colours were painted"
+        );
     }
 
     /// A beast's rig carries the outline its rests read across a worker

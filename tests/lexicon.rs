@@ -287,6 +287,32 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
             "the declared bounds on fur's {zone} disagree with the crate"
         );
     }
+    // What a head wears (#402): one set of bounds, read by all its kinds.
+    for (axis, range) in [
+        ("length", symbios_avatar::plan::LENGTH_RANGE),
+        ("thickness", symbios_avatar::plan::THICKNESS_RANGE),
+        ("taper", symbios_avatar::plan::TAPER_RANGE),
+        ("curve", symbios_avatar::plan::CURVE_RANGE),
+        ("twist", symbios_avatar::plan::TWIST_RANGE),
+        ("flutes", symbios_avatar::plan::FLUTES_RANGE),
+    ] {
+        for block in ["quadrupedOrnament", "quadrupedAntlers"] {
+            assert_eq!(
+                quadruped(block, axis),
+                thousandths(range),
+                "the declared bounds on an ornament's {axis} disagree with the crate"
+            );
+        }
+    }
+    assert_eq!(
+        quadruped("quadrupedAntlers", "fork"),
+        thousandths(symbios_avatar::plan::FORK_RANGE)
+    );
+    let (fewest, most) = symbios_avatar::plan::POINTS_RANGE;
+    assert_eq!(
+        quadruped("quadrupedAntlers", "points"),
+        (Some(i64::from(fewest)), Some(i64::from(most))),
+    );
     // A mane's stiffness is a share, with no envelope past it (#389), and its
     // declared default is the one a record left without it reads.
     assert_eq!(
@@ -299,6 +325,28 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
         Some((symbios_avatar::Fur::DEFAULT_MANE_STIFFNESS * 1000.0).round() as i64),
         "the declared default of a mane's stiffness disagrees with the crate"
     );
+    // A coat's picked colours (#401): one declared per channel the crate has,
+    // each three thousandths, and no others.
+    let channels = defs["defs"]["quadrupedCoatColours"]["properties"]
+        .as_object()
+        .expect("the coat's colours are declared");
+    assert_eq!(channels.len(), symbios_avatar::CoatChannel::ALL.len());
+    for channel in symbios_avatar::CoatChannel::ALL {
+        let declared = &channels[channel.name()];
+        assert_eq!(declared["type"], "array", "{channel:?}");
+        assert_eq!(
+            declared["items"]["minimum"].as_i64(),
+            Some(0),
+            "{channel:?}"
+        );
+        assert_eq!(
+            declared["items"]["maximum"].as_i64(),
+            Some(1000),
+            "{channel:?}"
+        );
+        assert_eq!(declared["minLength"].as_i64(), Some(3), "{channel:?}");
+        assert_eq!(declared["maxLength"].as_i64(), Some(3), "{channel:?}");
+    }
     assert_eq!(
         quadruped("quadrupedCoat", "intensity"),
         thousandths(symbios_avatar::plan::explore_range(0.0, (-1.0, 1.0))),
@@ -643,7 +691,7 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
     // is exactly one Rust type's serialised shape and that is what makes the
     // comparison total rather than a spot check.
     let defs = lexicon("defs");
-    let cases: [(&str, Value); 22] = [
+    let cases: [(&str, Value); 26] = [
         (
             "composites",
             serde_json::to_value(symbios_avatar::Composites::default()).expect("serialises"),
@@ -665,20 +713,68 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
             serde_json::to_value(HumanoidParams::default()).expect("serialises"),
         ),
         // A horned cross, because `hybrid` is written only on a body that is
-        // one and `horn` only on a body that wears one (#367).
+        // one and `horn` only on a body that wears exactly a unicorn's (#367), and
+        // tusked, because `ornaments` is written only for what `horn` cannot say
+        // (#402).
         (
             "quadruped",
             serde_json::to_value(QuadrupedParams {
                 hybrid: Some(symbios_avatar::Family::Cat),
                 blend: 0.5,
-                horn: symbios_avatar::Horn::Unicorn,
+                ornaments: symbios_avatar::Ornaments {
+                    horn: Some(symbios_avatar::Ornament::UNICORN),
+                    tusks: Some(symbios_avatar::OrnamentKind::Tusks.preset()),
+                    ..Default::default()
+                },
                 ..Default::default()
             })
             .expect("serialises"),
         ),
+        // Every kind, each away from what `horn` says.
+        (
+            "quadrupedOrnaments",
+            serde_json::to_value({
+                let mut worn = symbios_avatar::Ornaments::default();
+                for kind in symbios_avatar::OrnamentKind::ALL {
+                    worn.wear(kind, true);
+                }
+                worn
+            })
+            .expect("serialises"),
+        ),
+        (
+            "quadrupedOrnament",
+            serde_json::to_value(symbios_avatar::Ornament::UNICORN).expect("serialises"),
+        ),
+        (
+            "quadrupedAntlers",
+            serde_json::to_value(symbios_avatar::Antlers::default()).expect("serialises"),
+        ),
         (
             "quadrupedCoat",
-            serde_json::to_value(symbios_avatar::Coat::default()).expect("serialises"),
+            // With a colour picked, because `colours` is written only then (#401).
+            serde_json::to_value(symbios_avatar::Coat {
+                colours: symbios_avatar::CoatColours {
+                    dark: Some([0.1, 0.2, 0.3]),
+                    ..symbios_avatar::CoatColours::default()
+                },
+                ..symbios_avatar::Coat::default()
+            })
+            .expect("serialises"),
+        ),
+        // Every one picked.
+        (
+            "quadrupedCoatColours",
+            serde_json::to_value(symbios_avatar::CoatColours {
+                dark: Some([0.1, 0.2, 0.3]),
+                light: Some([0.1, 0.2, 0.3]),
+                white: Some([0.1, 0.2, 0.3]),
+                leather: Some([0.1, 0.2, 0.3]),
+                horn: Some([0.1, 0.2, 0.3]),
+                mane: Some([0.1, 0.2, 0.3]),
+                tail: Some([0.1, 0.2, 0.3]),
+            })
+            .expect("serialises"),
         ),
         // Away from its default, because `maneStiffness` is written only there
         // (#389).

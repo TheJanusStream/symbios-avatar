@@ -46,4 +46,5 @@ pub(crate) mod coat;
 pub mod skin;
 
 pub use bake::{AtlasGeometry, DILATION, Texel, bake, bake_geometry};
+pub use coat::{coat_colour, coat_swatches};
 pub use skin::{Condition, PaintedLayer, SkinParams, paint_skin};

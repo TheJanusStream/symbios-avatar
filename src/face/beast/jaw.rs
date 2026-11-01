@@ -22,7 +22,7 @@ use glam::{Mat4, Quat, Vec2, Vec3};
 use crate::anim::Pose;
 use crate::mesh::PolyMesh;
 use crate::plan::BeastHead;
-use crate::plan::beast_head::Cone;
+use crate::plan::beast_head::{Cone, JAW_WIDTH};
 use crate::prim;
 use crate::rig::{Rig, Role};
 
@@ -66,10 +66,6 @@ const HIDDEN: f32 = 0.15;
 /// argument as [`HIDDEN`], from the head's side of the crossing.
 /// Provenance: **tuned by render** (#367).
 const COVERED: f32 = 0.10;
-
-/// How wide the jaw is against the muzzle over it: a little narrower, so
-/// the upper lip hangs over its sides.
-const JAW_WIDTH: f32 = 0.85;
 
 /// A beast's lower jaw and tongue.
 #[derive(Clone, Debug, PartialEq)]
