@@ -4,7 +4,9 @@
 //! parallel-transported from segment to segment — rotated by the minimal
 //! rotation that carries the old direction onto the new one — so the tube
 //! inherits no twist from the reference up-vector, and a socket ring at one end
-//! lines up index-for-index with the socket at the other.
+//! lines up index-for-index with the socket at the other. On a beast's head chain
+//! the rings of a tight bend are then drawn out of each other, column by column
+//! (`straighten_columns`, #395).
 
 use glam::{Quat, Vec2, Vec3};
 
@@ -62,6 +64,69 @@ pub(crate) struct LimbBuild {
     /// Whether the end end is a leaf and needs a cap.
     pub cap_end: bool,
 }
+
+/// Draws the rings of a beast's head chain out of each other at a tight bend
+/// (#395), column by column.
+///
+/// **A bisector ring keeps a tube whole only while the bone is longer than the
+/// bend eats.** A beast's head nods about the top of its neck, through up to a
+/// hundred degrees in a bone shorter than the skull is wide, so on the throat
+/// side the cranium's ring reaches back past the occiput's: the skin between
+/// them runs backwards, in a hairpin the shaping cannot undo, because a map from
+/// where a vertex is to where it goes sends both legs of a hairpin to the same
+/// place. So a vertex that runs backwards to the next ring in its column, along
+/// the bone between their centres, is drawn toward the middle of its two
+/// neighbours, as far as it runs backwards, and the column straightens across
+/// the bend. Nothing moves that has room: a ring on a straight run or a gentle
+/// bend is where it was, and the far wall of the bend always is. The head and the
+/// neck's upper run are projected from these vertices later, so what moves is
+/// where the skin is sampled and not the surface it is drawn onto.
+fn straighten_columns(
+    skeleton: &Skeleton,
+    nodes: &[u32],
+    rings: &[[u32; RING]],
+    mesh: &mut PolyMesh,
+) {
+    // The first ring is a socket the joint's hull still moves, and the last
+    // interior one is the last with a ring beyond it on a bone.
+    let interior = nodes.len() - 2;
+    let ring_of = |node: usize| rings[node];
+    let centre = |node: usize| skeleton.nodes[nodes[node] as usize].position;
+    let radius = |node: usize| skeleton.nodes[nodes[node] as usize].radius;
+    for _ in 0..COLUMN_PASSES {
+        for column in 0..RING {
+            for node in 1..=interior.saturating_sub(1) {
+                let along = (centre(node + 1) - centre(node)).normalize_or_zero();
+                let at = |node: usize| mesh.positions[ring_of(node)[column] as usize];
+                let room = (at(node + 1) - at(node)).dot(along);
+                let radius = radius(node);
+                let short =
+                    ((COLUMN_ROOM * radius - room) / (COLUMN_SPAN * radius)).clamp(0.0, 1.0);
+                if short <= 0.0 {
+                    continue;
+                }
+                let drawn = at(node).lerp(0.5 * (at(node - 1) + at(node + 1)), short);
+                mesh.positions[ring_of(node)[column] as usize] = drawn;
+            }
+        }
+    }
+}
+
+/// How many times a head chain's columns are straightened: each pass takes a
+/// hairpin about half of the way to its chord.
+/// Provenance: **tuned against the inward-face census** (#395).
+const COLUMN_PASSES: usize = 4;
+
+/// How far along the bone a column's next vertex has to stand before it is left
+/// alone, in the ring's own radii: rings closer than this are crowding, and the
+/// fold starts from there.
+/// Provenance: **tuned against the inward-face census** (#395).
+const COLUMN_ROOM: f32 = 0.1;
+
+/// Over how much shortfall, in the ring's own radii, a vertex goes from staying
+/// where it is to the middle of its neighbours, so that a ring's slide with a
+/// slider is smooth. Provenance: **tuned against the inward-face census** (#395).
+const COLUMN_SPAN: f32 = 0.3;
 
 /// Builds the ring chain for `limb`, registering a [`Socket`] at each joint end.
 pub(crate) fn build_limb(
@@ -144,6 +209,11 @@ pub(crate) fn build_limb(
         ));
     }
 
+    let carries_head = skeleton.beast_head.as_ref().is_some_and(|head| {
+        nodes
+            .iter()
+            .any(|&node| skeleton.nodes[node as usize].position == head.origin)
+    });
     for index in 1..count - 1 {
         let node = skeleton.nodes[nodes[index] as usize];
         // A bisector keeps the ring from pinching where the chain bends.
@@ -163,6 +233,9 @@ pub(crate) fn build_limb(
             node.half_extents(),
             node.roll,
         ));
+    }
+    if carries_head {
+        straighten_columns(skeleton, nodes, &rings, mesh);
     }
 
     let final_dir = dirs[count - 2];

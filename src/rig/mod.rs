@@ -448,6 +448,33 @@ impl Rig {
         self.nearest_bone_where(point, |_| true)
     }
 
+    /// The `N` surfaced joints `keep` accepts whose bones lie nearest `point`,
+    /// nearest first, each with how far off it is, and any left over infinitely
+    /// far: a beast's coat blends the grain of the nearest few (#395).
+    pub(crate) fn nearest_bones_where<const N: usize>(
+        &self,
+        point: Vec3,
+        keep: impl Fn(usize) -> bool,
+    ) -> [(usize, f32); N] {
+        let mut nearest = [(0, f32::INFINITY); N];
+        for joint in self.surfaced().filter(|&joint| keep(joint)) {
+            let (start, end) = self.bone(joint);
+            let axis = end - start;
+            let along = if axis.length_squared() <= f32::EPSILON {
+                0.0
+            } else {
+                ((point - start).dot(axis) / axis.length_squared()).clamp(0.0, 1.0)
+            };
+            let distance = point.distance(start + axis * along);
+            let place = nearest.partition_point(|near| near.1 <= distance);
+            if place < N {
+                nearest.copy_within(place..N - 1, place + 1);
+                nearest[place] = (joint, distance);
+            }
+        }
+        nearest
+    }
+
     /// [`Self::nearest_bone`] among the surfaced joints `keep` accepts: a
     /// beast's coat asks for the trunk's grain at a texel a leg is nearer
     /// to (#376).

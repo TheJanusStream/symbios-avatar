@@ -32,6 +32,12 @@
 //! rung of it. So the painter darkens the line the mane grows from
 //! ([`ManeRoots`]), as a hair card's scalp is painted: nothing else on the coat
 //! knows a mane is there, and no other coat changes.
+//!
+//! **Nor where the neck meets the head** (#395), for the same reason as a leg:
+//! the zone map's line there is nothing an animal's coat knows of, and a tan
+//! throat, a bib, a piebald's lean, an extreme white's cap, a colourpoint's mask
+//! and the fur's grain each stopped on it. They fade by how far a texel lies off
+//! the head instead.
 
 mod body;
 mod marks;
@@ -104,6 +110,20 @@ const LEG_FINER: f32 = 1.6;
 /// they press the stripes at most `1 / TURN` of the barrel's own density
 /// closer.
 const TURN: f32 = 1.5;
+
+/// How many of the trunk's, neck's and head's bones a texel's grain reads at most:
+/// where several meet, at the poll, a few at once.
+const GRAIN_BONES: usize = 5;
+
+/// How much further than the nearest bone another still gives a texel's grain any
+/// of its own, as a share of the back's height: wide enough that the strands turn
+/// over a band as wide as a neck's skin is off its bone.
+/// Provenance: **tuned by render** (#395).
+const GRAIN_BAND: f32 = 0.06;
+
+/// How far short of the last bone read another has its whole share, as a share of
+/// [`GRAIN_BAND`]. Provenance: **chosen** (#395).
+const GRAIN_HANDOVER: f32 = 0.25;
 
 /// What a texel is.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -477,20 +497,22 @@ impl<'a> Painter<'a> {
     fn tan(&self) -> f32 {
         let (at, normal, zone) = (self.texel.position, self.texel.normal, self.texel.zone);
         let legs = step(0.42, 0.30, self.body.rise(at)) * self.limb();
-        let face = self.head_local().map_or(0.0, |local| {
+        let face = self.on_head(|local| {
             let muzzle = step(0.45, 0.75, local.z) * step(0.15, -0.05, local.y);
             let brow = Vec3::new(local.x.abs(), local.y, local.z);
             let spot = step(0.16, 0.10, brow.distance(Vec3::new(0.38, 0.40, 0.62)));
             muzzle.max(spot)
         });
-        // The chest's front, which fades out down the top of each foreleg
-        // rather than stopping where the zone map gives the skin to it.
-        let chest = if zone == Zone::Neck || trunk(zone) || leg(zone) {
+        // The chest's front, which fades out down the top of each foreleg and up
+        // the neck before the head rather than stopping where the zone map gives
+        // the skin to either (#395).
+        let chest = if zone == Zone::Tail {
+            0.0
+        } else {
             step(0.2, 0.6, underside(normal))
                 * step(0.0, 0.1, (at - self.body.withers).z / self.body.height)
                 * (1.0 - self.limb())
-        } else {
-            0.0
+                * self.off_head()
         };
         let tail = if zone == Zone::Tail {
             step(0.2, 0.6, underside(normal))
@@ -510,7 +532,7 @@ impl<'a> Painter<'a> {
         } else {
             0.0
         };
-        let face = self.head_local().map_or(0.0, |local| {
+        let face = self.on_head(|local| {
             let ears = step(0.95, 1.15, local.y);
             let nose = self.body.head.as_ref().map_or(0.0, |head| {
                 step(0.45, 0.25, local.distance(head.nose_centre() / head.radius))
@@ -623,7 +645,7 @@ impl<'a> Painter<'a> {
             step(0.0, 0.35, self.body.along_tail(at))
         } else {
             // A mask round the nose that takes the eyes in, and the ears.
-            let face = self.head_local().map_or(0.0, |local| {
+            let face = self.on_head(|local| {
                 let nose = self
                     .body
                     .head
@@ -751,23 +773,21 @@ impl<'a> Painter<'a> {
                 .max(step(0.14, 0.10, self.body.tail_tip_distance(at))),
             White::Piebald => {
                 let lean = 0.55 * underside(normal) - 0.25 * topside(normal) + 0.3 * self.limb()
-                    - if zone == Zone::Head { 0.4 } else { 0.0 };
+                    - 0.4 * (1.0 - self.off_head());
                 step(0.05, 0.25, fields.patches(at, 2.2) + lean)
             }
             White::Extreme => {
-                let kept = if zone == Zone::Head {
-                    self.head_local()
-                        .map_or(0.0, |local| step(0.15, 0.4, local.y))
+                // A cap on the head.
+                let cap = self.on_head(|local| step(0.15, 0.4, local.y));
+                // The tail's root and a patch over the croup it springs from.
+                let tail = if zone == Zone::Tail {
+                    step(0.5, 0.2, self.body.along_tail(at))
                 } else {
-                    // The tail's root and a patch over the croup it springs
-                    // from.
-                    let tail = if zone == Zone::Tail {
-                        step(0.5, 0.2, self.body.along_tail(at))
-                    } else {
-                        0.0
-                    };
-                    tail.max(step(0.3, 0.18, self.body.tail_root_distance(at)))
+                    0.0
                 };
+                let kept = cap
+                    .max(tail)
+                    .max(step(0.3, 0.18, self.body.tail_root_distance(at)));
                 1.0 - kept.max(step(0.45, 0.6, fields.patches(at, 2.0)) * 0.8)
             }
         }
@@ -776,21 +796,23 @@ impl<'a> Painter<'a> {
     /// A white blaze down the middle of the face, from the forehead to the
     /// nose, on the faces that look up or ahead: not under the chin.
     fn blaze(&self) -> f32 {
-        let (Some(head), Some(local)) = (self.body.head.as_ref(), self.head_local()) else {
+        let Some(head) = self.body.head.as_ref() else {
             return 0.0;
         };
         let (at, normal) = (self.texel.position, self.texel.normal);
-        let facing = head.local(at + normal) - head.local(at);
-        let width = 0.16 + 0.04 * self.fields.warp(at, 10.0);
-        step(width + 0.04, width, local.x.abs())
-            * step(0.30, 0.42, local.z)
-            * step(1.0, 0.85, local.y)
-            * step(-0.45, -0.15, facing.y)
+        self.on_head(|local| {
+            let facing = head.local(at + normal) - head.local(at);
+            let width = 0.16 + 0.04 * self.fields.warp(at, 10.0);
+            step(width + 0.04, width, local.x.abs())
+                * step(0.30, 0.42, local.z)
+                * step(1.0, 0.85, local.y)
+                * step(-0.45, -0.15, facing.y)
+        })
     }
 
     /// A white bib: down the middle of the chin, the throat, the chest and
-    /// the belly - on the head only what faces the ground, where the chest's
-    /// front counts too - and not down the legs.
+    /// the belly - on the head only what faces the ground, and off it the
+    /// chest's front too - and not down the legs.
     fn bib(&self, normal: Vec3, zone: Zone) -> f32 {
         if zone == Zone::Tail {
             return 0.0;
@@ -801,11 +823,9 @@ impl<'a> Painter<'a> {
             width,
             self.texel.position.x.abs() / self.body.height,
         );
-        let facing = if zone == Zone::Head {
-            underside(normal)
-        } else {
-            underside(normal).max(normal.z * 0.8)
-        };
+        // The chest's front counts too, fading out up the neck before the head
+        // rather than stopping where the zone map gives the skin to it (#395).
+        let facing = underside(normal).max(normal.z * 0.8 * self.off_head());
         middle * step(0.3, 0.6, facing) * (1.0 - self.limb())
     }
 
@@ -824,23 +844,37 @@ impl<'a> Painter<'a> {
             .filter(|_| share > 0.0)
             .and_then(|leg| self.body.junctions.leg_axis(leg.limb, self.texel.position));
         let Some(leg_axis) = leg_axis else {
-            return self.grain_along(self.trunk_bone(rig));
+            return self.trunk_grain(rig);
         };
         if share >= 1.0 {
             return self.grain_along(leg_axis);
         }
-        let (barrel, leg) = (
-            self.grain_along(self.trunk_bone(rig)),
-            self.grain_along(leg_axis),
-        );
+        let (barrel, leg) = (self.trunk_grain(rig), self.grain_along(leg_axis));
         (barrel + (leg - barrel) * share) / ((1.0 - share).powi(2) + share.powi(2)).sqrt()
     }
 
-    /// The run of the bone nearest this texel that is not a leg's.
-    fn trunk_bone(&self, rig: &Rig) -> Vec3 {
-        let hit = rig.nearest_bone_where(self.texel.position, |joint| !leg(rig.joints[joint].zone));
-        let (from, to) = rig.bone(hit.joint);
-        (to - from).normalize_or(Vec3::Y)
+    /// The grain of the bones nearest this texel that are not a leg's, blended by
+    /// how much further each is than the nearest (#395): switched where one becomes
+    /// the nearer, the strands turned on a straight line round the neck and the
+    /// back of the head. As in [`Self::grain`], scaled to keep its strength.
+    fn trunk_grain(&self, rig: &Rig) -> f32 {
+        let at = self.texel.position;
+        let near = rig.nearest_bones_where::<GRAIN_BONES>(at, |joint| !leg(rig.joints[joint].zone));
+        let band = GRAIN_BAND * self.body.height;
+        let last = near[GRAIN_BONES - 1].1;
+        let (mut sum, mut squares) = (0.0, 0.0);
+        for (joint, distance) in near {
+            // The last bone read has no share, so the bone it hands over to, when
+            // two swap places, comes in from nothing.
+            let share = step(band, 0.0, distance - near[0].1)
+                * step(0.0, GRAIN_HANDOVER * band, last - distance);
+            if share > 0.0 {
+                let (from, to) = rig.bone(joint);
+                sum += share * self.grain_along((to - from).normalize_or(Vec3::Y));
+                squares += share * share;
+            }
+        }
+        sum / squares.sqrt().max(f32::EPSILON)
     }
 
     /// The grain's noise stretched along `along`.
@@ -857,14 +891,24 @@ impl<'a> Painter<'a> {
         0.35 * self.fields.grain(stretched * height, 1.0)
     }
 
-    /// This texel in the declared head's frame, in head radii, if the body
-    /// has one and the texel is the head's.
-    fn head_local(&self) -> Option<Vec3> {
-        if self.texel.zone != Zone::Head {
-            return None;
+    /// What `mark` makes of this texel in the declared head's frame, in head radii:
+    /// all of it on the head, and fading out down the neck rather than stopping
+    /// where the zone map gives the skin to it (#395). Nothing on a body with no
+    /// head declared.
+    fn on_head(&self, mark: impl FnOnce(Vec3) -> f32) -> f32 {
+        let Some(head) = self.body.head.as_ref() else {
+            return 0.0;
+        };
+        let share = if self.texel.zone == Zone::Head {
+            1.0
+        } else {
+            1.0 - self.off_head()
+        };
+        if share > 0.0 {
+            mark(head.local(self.texel.position) / head.radius) * share
+        } else {
+            0.0
         }
-        let head = self.body.head.as_ref()?;
-        Some(head.local(self.texel.position) / head.radius)
     }
 }
 
@@ -1190,9 +1234,9 @@ mod tests {
         // share against them, the points' dark ran over everything below
         // their line and the bay's black over everything below its own -
         // a low belly, a cat's chin, a hanging tail (#376). Asked as the
-        // barrel wherever on the body, so that the head's and the tail's own
-        // points stand aside, neither is ever darker than a texel is leg, and
-        // low on a leg both are all dark.
+        // barrel, so that the tail's own points stand aside, and off the head,
+        // whose own fade by how far a texel lies from it (#395), neither is ever
+        // darker than a texel is leg, and low on a leg both are all dark.
         let (pointed, bay) = (
             Coat {
                 points: true,
@@ -1212,6 +1256,9 @@ mod tests {
             let mut dark_legs = 0;
             for &(at, normal, _) in &points {
                 let texel = (at, normal, Zone::Chest);
+                if paint(&body, &pointed, texel, |p| p.off_head()) < 1.0 {
+                    continue;
+                }
                 let (share, rise) = (body.junctions.share(at), body.rise(at));
                 let point =
                     1.0 - paint(&body, &pointed, texel, |p| p.pointed(Vec3::ZERO)).x / pale.x;
@@ -1265,6 +1312,119 @@ mod tests {
             assert!(chest > 20, "seed {seed}: only {chest} under the bib");
         }
         assert!(inside > 50, "only {inside} of the legs lie inside a bib");
+    }
+
+    #[test]
+    fn no_mark_stops_on_the_line_between_the_neck_and_the_head() {
+        // Both sides of every edge that crosses the line, asked of the same point:
+        // all that differs is what the zone says, which no animal's coat knows of.
+        // A tan throat, a bib, a piebald's lean, an extreme white's cap and a
+        // colourpoint's mask each stopped on it (#395).
+        let config = crate::AvatarConfig {
+            atlas: 64,
+            ..crate::AvatarConfig::default()
+        };
+        // On black, whose dark and light differ, or half of these marks draw nothing.
+        let black = Coat {
+            pigment: Pigment::Black,
+            ..Coat::default()
+        };
+        let coats = [
+            Coat {
+                agouti: Agouti::TanPoints,
+                ..black
+            },
+            Coat {
+                agouti: Agouti::Bay,
+                ..black
+            },
+            Coat {
+                white: White::Piebald,
+                ..black
+            },
+            Coat {
+                white: White::Extreme,
+                ..black
+            },
+            Coat {
+                white: White::Irish,
+                ..black
+            },
+            Coat {
+                points: true,
+                ..black
+            },
+        ];
+        let mut worst = (0.0f32, 0i64, 0usize);
+        let mut crossed = 0;
+        for seed in 0..24i64 {
+            let mut record =
+                AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
+            record.reroll(seed);
+            let skeleton = record.skeleton();
+            let avatar = Avatar::build_with(&record, &config).expect("the beast builds");
+            let body = &avatar.parts.body;
+            // The line a texel's zone changes on is its chart's.
+            let head = skeleton.beast_head.as_ref().expect("a beast's head");
+            let zones = crate::face::beast::chart_zones(body, head, &avatar.parts.zones);
+            let normals = body.vertex_normals();
+            let coat_body = CoatBody::of(
+                &avatar.rig,
+                skeleton.beast_head.as_ref(),
+                skeleton.beast_feet.as_ref(),
+            );
+            for face in &body.faces {
+                for corner in 0..face.len() {
+                    let (a, b) = (
+                        face[corner] as usize,
+                        face[(corner + 1) % face.len()] as usize,
+                    );
+                    if !matches!(
+                        (zones[a], zones[b]),
+                        (Zone::Head, Zone::Neck) | (Zone::Neck, Zone::Head)
+                    ) {
+                        continue;
+                    }
+                    crossed += 1;
+                    let at = (body.positions[a] + body.positions[b]) * 0.5;
+                    let normal = (normals[a] + normals[b]).normalize_or(Vec3::Y);
+                    for (index, coat) in coats.iter().enumerate() {
+                        let neck = paint(&coat_body, coat, (at, normal, Zone::Neck), |p| p.fur());
+                        let head = paint(&coat_body, coat, (at, normal, Zone::Head), |p| p.fur());
+                        let jump = (neck - head).abs().max_element();
+                        if jump > worst.0 {
+                            worst = (jump, seed, index);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(crossed > 200, "only {crossed} edges cross the line");
+        assert!(worst.0 < 0.05, "a mark jumps on the line: {worst:?}");
+    }
+
+    #[test]
+    fn the_fur_s_grain_runs_unbroken_up_the_neck_onto_the_head() {
+        // Switched where the next bone became the nearer, the strands turned on a
+        // straight line round the neck and the back of the head (#395).
+        for family in Family::ALL {
+            let (rig, body) = rigged(family);
+            let coat = Coat::default();
+            let skull = rig.joints[rig.in_zone(Zone::Head)[0]].position;
+            let up = Vec3::Y * 0.1 * body.height;
+            let (from, to) = (body.withers + up, skull + up);
+            let grain =
+                |at: Vec3| paint(&body, &coat, (at, Vec3::Y, Zone::Neck), |p| p.grain(&rig));
+            let samples = 4000;
+            let mut last = grain(from);
+            let mut worst: f32 = 0.0;
+            for sample in 1..=samples {
+                let here = grain(from.lerp(to, sample as f32 / samples as f32));
+                worst = worst.max((here - last).abs());
+                last = here;
+            }
+            assert!(worst < 0.08, "{family:?}: the grain jumps {worst:.3}");
+        }
     }
 
     #[test]

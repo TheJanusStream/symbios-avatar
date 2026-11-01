@@ -68,7 +68,7 @@ use crate::record::AvatarRecord;
 use crate::rig::{Rig, SkinConfig, SkinWeights, Surface, skin};
 use crate::texture;
 use crate::texture::SkinParams;
-use crate::uv::{Rect, UvConfig, UvUnwrap, unwrap_with};
+use crate::uv::{BeastCharts, Rect, UvConfig, UvUnwrap, unwrap_framed};
 
 /// Which material a merged mesh needs.
 ///
@@ -622,7 +622,18 @@ impl Avatar {
         if mouth.is_some() {
             wanted.push(Vec2::new(0.06, 0.04));
         }
-        let (mut charts, mut reserved) = unwrap_with(&body, &rig, &zones, &config.uv, &wanted);
+        let charted = skeleton
+            .beast_head
+            .as_ref()
+            .map(|head| face::beast::chart_zones(&body, head, &zones));
+        let (mut charts, mut reserved) = unwrap_framed(
+            &body,
+            &rig,
+            charted.as_deref().unwrap_or(&zones),
+            &config.uv,
+            &wanted,
+            skeleton.beast_head.as_ref().map(BeastCharts::of).as_ref(),
+        );
         if let Some(mouth) = &mouth
             && let Some(rect) = reserved.pop()
         {

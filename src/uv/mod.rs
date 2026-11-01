@@ -31,6 +31,14 @@
 //! wrapped round the bone leaving it, so the coat is as fine where the leg
 //! leaves the body as on either side.
 //!
+//! A beast's charts are the other exception (#395): skin that faces along a
+//! chart's axis has no height to spread over, so it smears. A person's skull and
+//! trunk mostly face away from theirs, but a beast's breast and rump face straight
+//! along its spine, and the underside of a head on a raised neck straight down
+//! that neck. So a beast's head is wrapped round the head's own axis, from the
+//! occiput to the nose, and its charts' heights go by how far the skin runs
+//! (`BeastCharts`).
+//!
 //! Unwrapping duplicates vertices — at chart boundaries, and along each chart's
 //! seam — so the result carries its own vertex list with a [`UvUnwrap::source`]
 //! index back into the mesh it came from.
@@ -41,7 +49,7 @@ use glam::{Vec2, Vec3};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use crate::mesh::PolyMesh;
-use crate::plan::Zone;
+use crate::plan::{BeastHead, Zone};
 use crate::rig::junction::Junctions;
 use crate::rig::{Rig, landmark};
 
@@ -74,7 +82,8 @@ impl Default for UvConfig {
 /// One unwrapped region of the body.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Chart {
-    /// The body zone this chart covers.
+    /// The body zone this chart covers: the zone map's, except that a beast's skin
+    /// past the back of its skull is charted with its neck (#395).
     pub zone: Zone,
     /// Where the chart sits in the atlas.
     pub rect: Rect,
@@ -221,6 +230,61 @@ pub fn unwrap_with(
     config: &UvConfig,
     extra: &[Vec2],
 ) -> (UvUnwrap, Vec<Rect>) {
+    unwrap_framed(mesh, rig, zones, config, extra, None)
+}
+
+/// What a beast's charts ask that a person's do not (#395).
+///
+/// **The head's axis.** A chart wraps round the bone entering its zone, and for a
+/// head that is the top of the neck. On a person that runs up through the skull
+/// from under the chin, which suits it. A beast's muzzle stands out sideways from
+/// that bone, and on a raised neck the whole underside of its head faces straight
+/// down it, so that skin all comes out at one height and streaks. The head's own
+/// axis runs down the muzzle and leaves only the two ends of the head to face
+/// along it. It also fixes the seam: the chart's middle is the crown, and the wrap
+/// lands under the chin.
+///
+/// **The height.** Those two ends remain, and so do a beast's breast and rump,
+/// which face straight along its spine. A height that also counts how far the skin
+/// has drawn in toward the axis ([`along_the_skin`]) spreads them out as it does
+/// any other skin. The atlas is positional, so none of this changes what a coat
+/// paints, only how finely each part of it is sampled.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BeastCharts {
+    /// A point on the head's axis, in body space.
+    on_axis: Vec3,
+    /// The head's axis, occiput to nose, in body space.
+    axis: Vec3,
+    /// The way the head's crown faces, in body space.
+    up: Vec3,
+}
+
+impl BeastCharts {
+    /// What the head `head` declares of its charts.
+    pub(crate) fn of(head: &BeastHead) -> Self {
+        let [back, front] = head.axis.map(|at| head.body(at));
+        Self {
+            on_axis: back,
+            axis: (front - back).normalize_or(landmark::FORWARD),
+            up: head.turn * Vec3::Y,
+        }
+    }
+
+    /// The chart's axis and a point on it, when the zone's is the head's.
+    fn head(beast: Option<&Self>, zone: Zone) -> Option<&Self> {
+        beast.filter(|_| zone == Zone::Head)
+    }
+}
+
+/// Unwraps `mesh` as [`unwrap_with`] does, by a beast's rules if it is given them.
+pub(crate) fn unwrap_framed(
+    mesh: &PolyMesh,
+    rig: &Rig,
+    zones: &[Zone],
+    config: &UvConfig,
+    extra: &[Vec2],
+    beast: Option<&BeastCharts>,
+) -> (UvUnwrap, Vec<Rect>) {
     if mesh.faces.is_empty() || zones.len() != mesh.positions.len() {
         return (UvUnwrap::default(), Vec::new());
     }
@@ -238,12 +302,12 @@ pub fn unwrap_with(
             )
         })
         .collect();
-    let groups = connected_groups(mesh, rig, &face_zones);
+    let groups = connected_groups(mesh, rig, &face_zones, beast);
 
     // Project every chart into its own local square first, then pack.
     let mut projections = Vec::with_capacity(groups.len());
     for group in &groups {
-        projections.push(project(mesh, rig, group));
+        projections.push(project(mesh, rig, group, beast));
     }
 
     let mut sizes: Vec<Vec2> = projections
@@ -388,7 +452,12 @@ struct Group {
 /// Connectivity matters: a zone that appears in two disconnected places would
 /// otherwise share one chart, and the projection would fold one part onto the
 /// other.
-fn connected_groups(mesh: &PolyMesh, rig: &Rig, face_zones: &[Zone]) -> Vec<Group> {
+fn connected_groups(
+    mesh: &PolyMesh,
+    rig: &Rig,
+    face_zones: &[Zone],
+    beast: Option<&BeastCharts>,
+) -> Vec<Group> {
     let mut axis_of: HashMap<Zone, Vec3> = HashMap::new();
     // Where each zone's material stands, for asking whether a face is AT the
     // axis or merely oriented along it. The mean of the zone's face centroids
@@ -404,9 +473,11 @@ fn connected_groups(mesh: &PolyMesh, rig: &Rig, face_zones: &[Zone]) -> Vec<Grou
     }
     let face_kinds: Vec<Kind> = (0..mesh.faces.len())
         .map(|face| {
+            let zone = face_zones[face];
+            let on_head = BeastCharts::head(beast, zone);
             let axis = *axis_of
-                .entry(face_zones[face])
-                .or_insert_with(|| zone_axis(rig, face_zones[face]));
+                .entry(zone)
+                .or_insert_with(|| on_head.map_or_else(|| zone_axis(rig, zone), |head| head.axis));
             if face_normal(mesh, face).dot(axis).abs() <= 0.85 {
                 return Kind::Cylindrical;
             }
@@ -421,8 +492,8 @@ fn connected_groups(mesh: &PolyMesh, rig: &Rig, face_zones: &[Zone]) -> Vec<Grou
             // neighbouring charts' dilation (#158). So the cap test is the
             // failure mode itself, measured: the circular span of the face's
             // corners about the axis.
-            let (centre, count) = centre_of[&face_zones[face]];
-            let origin = centre / count.max(1.0);
+            let (centre, count) = centre_of[&zone];
+            let origin = on_head.map_or(centre / count.max(1.0), |head| head.on_axis);
             let (tangent, binormal) = frame(axis);
             let corners = &mesh.faces[face];
             let mut turns: Vec<f32> = corners
@@ -564,7 +635,7 @@ fn density(zone: Zone, config: &UvConfig) -> f32 {
 }
 
 /// Projects one group of faces cylindrically about its zone's axis.
-fn project(mesh: &PolyMesh, rig: &Rig, group: &Group) -> Projection {
+fn project(mesh: &PolyMesh, rig: &Rig, group: &Group, beast: Option<&BeastCharts>) -> Projection {
     let vertices: Vec<u32> = {
         let mut all: Vec<u32> = group
             .faces
@@ -576,17 +647,35 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group) -> Projection {
         all
     };
 
-    let origin = vertices
-        .iter()
-        .map(|&v| mesh.positions[v as usize])
-        .sum::<Vec3>()
-        / vertices.len().max(1) as f32;
-    let axis = zone_axis(rig, group.zone);
-    let (tangent, binormal) = frame(axis);
+    let on_head = BeastCharts::head(beast, group.zone);
+    let origin = on_head.map_or_else(
+        || {
+            vertices
+                .iter()
+                .map(|&v| mesh.positions[v as usize])
+                .sum::<Vec3>()
+                / vertices.len().max(1) as f32
+        },
+        |head| head.on_axis,
+    );
+    let axis = on_head.map_or_else(|| zone_axis(rig, group.zone), |head| head.axis);
+    let (tangent, binormal) = on_head.map_or_else(
+        || frame(axis),
+        |head| {
+            let up = (head.up - axis * head.up.dot(axis)).normalize_or(landmark::UP);
+            (up, axis.cross(up))
+        },
+    );
 
     let mut angle = HashMap::with_capacity(vertices.len());
     let mut along = HashMap::with_capacity(vertices.len());
     let mut radius_sum = 0.0f32;
+    // The charts whose skin closes on their axis at an end. A neck is open at
+    // both and curves away from its bone, so counting its skin as closing took its
+    // worst stretch from 3 to 30 on one roll, and a pelvis and a tail gained nothing.
+    let closes = matches!(group.zone, Zone::Head | Zone::Chest | Zone::Extremity(_));
+    let skin = (beast.is_some() && closes && group.kind == Kind::Cylindrical)
+        .then(|| along_the_skin(mesh, &vertices, origin, axis));
 
     for &vertex in &vertices {
         let offset = mesh.positions[vertex as usize] - origin;
@@ -596,10 +685,15 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group) -> Projection {
         match group.kind {
             Kind::Cylindrical => {
                 // Angle zero points forward, so the wrap — and the seam — lands
-                // behind the body.
+                // behind the body. On a beast's head it points at the crown, so
+                // the seam lands under the chin.
                 let turn = flat.dot(binormal).atan2(flat.dot(tangent));
                 angle.insert(vertex, turn / std::f32::consts::TAU + 0.5);
-                along.insert(vertex, height);
+                along.insert(
+                    vertex,
+                    skin.as_ref()
+                        .map_or(height, |skin| skin.height(height, flat.length())),
+                );
             }
             Kind::Planar => {
                 // Flattened down the axis, so a cap keeps its shape.
@@ -717,6 +811,73 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group) -> Projection {
         v_warp,
     }
 }
+
+/// A chart's height that follows its skin, rather than only the skin's way along
+/// the axis (#395): where the skin faces along the axis it has no such way to go,
+/// and all comes out at one height, in streaks.
+struct AlongTheSkin {
+    /// How far from the axis the chart's widest skin lies.
+    widest: f32,
+    /// Where along the axis that is.
+    waist: f32,
+}
+
+/// The widest of a chart's skin, about `axis` through `origin`.
+fn along_the_skin(mesh: &PolyMesh, vertices: &[u32], origin: Vec3, axis: Vec3) -> AlongTheSkin {
+    let read: Vec<(f32, f32)> = vertices
+        .iter()
+        .map(|&vertex| {
+            let offset = mesh.positions[vertex as usize] - origin;
+            let height = offset.dot(axis);
+            (height, (offset - axis * height).length())
+        })
+        .collect();
+    let widest = read.iter().map(|row| row.1).fold(0.0, f32::max);
+    let (mut heights, mut count) = (0.0, 0.0);
+    for &(height, radius) in &read {
+        if radius >= WAIST_NEAR * widest {
+            heights += height;
+            count += 1.0;
+        }
+    }
+    AlongTheSkin {
+        widest,
+        waist: heights / f32::max(count, 1.0),
+    }
+}
+
+impl AlongTheSkin {
+    /// The chart's height for skin at `height` along the axis, `radius` off it:
+    /// away from the waist, how far the skin has drawn in on the way counts as far
+    /// as how far it has gone.
+    ///
+    /// **Never short of the way the skin runs**: the two legs of a run are both
+    /// counted where the true length is the hypotenuse, which spends at most four
+    /// tenths too many texels on a slope and none too few, and a chart can afford
+    /// that where it cannot afford a streak. Only a wall facing back toward the
+    /// waist, a whisker pad's back, runs against the count.
+    fn height(&self, height: f32, radius: f32) -> f32 {
+        let off = height - self.waist;
+        let side = (off / (WAIST_BAND * self.widest).max(f32::EPSILON)).clamp(-1.0, 1.0);
+        height + side * (CLOSING * self.widest - radius).max(0.0)
+    }
+}
+
+/// How near the axis, as a share of the widest, skin has to lie before it counts
+/// as closing on the axis: the walls of a body's own section stand further off
+/// than this, and counting those shears the whole chart for nothing.
+/// Provenance: **tuned against the charts' stretch** (#395).
+const CLOSING: f32 = 0.6;
+
+/// How near the widest a vertex has to lie, as a share of it, to say where the
+/// chart's waist is. Provenance: **chosen** (#395): a ring's worth, not one vertex.
+const WAIST_NEAR: f32 = 0.9;
+
+/// Over how much of the axis, either side of the waist and in the chart's widest
+/// radii, drawing in goes from not counting to counting whole: a step at the waist
+/// would be a seam across the chart, on skin that is not quite the widest.
+/// Provenance: **chosen** (#395).
+const WAIST_BAND: f32 = 0.5;
 
 /// How many bins a chart's density warp is built over.
 const WARP_BINS: usize = 32;

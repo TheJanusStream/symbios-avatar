@@ -524,6 +524,12 @@ fn main() {
             params.appeal = appeal;
         }
     }
+    // One exact record, as its JSON is saved (#395): `--record cat.json`, for the
+    // body someone is wearing rather than a roll that looks like it.
+    if let Some(path) = value("--record") {
+        let text = std::fs::read_to_string(path).expect("the record's file reads");
+        record = serde_json::from_str(&text).expect("the file holds a record");
+    }
     // A mane's length, whatever the roll grew (#386): `--fur-mane 1.5`.
     if let Some(length) = value("--fur-mane").and_then(|v| v.parse::<f32>().ok()) {
         match &mut record.archetype {
@@ -1171,6 +1177,18 @@ fn main() {
     // **The crest** (#386): a sheet of the neck alone, close enough to see
     // where a mane's cards enter the skin - side, front three quarters,
     // behind three quarters, and from above behind.
+    if args.iter().any(|arg| arg == "--throat") {
+        let Some(frames) = subject.throat() else {
+            eprintln!("--throat frames a neck: this body has none");
+            std::process::exit(2);
+        };
+        write(
+            &out,
+            "throat",
+            &subject.render(&subject.standing(), 0.0, &frames),
+        );
+        return;
+    }
     if args.iter().any(|arg| arg == "--crest") {
         let Some(frames) = subject.crest() else {
             eprintln!("--crest frames a neck: this body has none");
@@ -2377,6 +2395,40 @@ impl Subject {
                 of(3.0 * FRAC_PI_4, OVERHEAD_PITCH),
             ]
         })
+    }
+
+    /// Four views of the throat at rest (#395), framed on the neck and what is
+    /// either side of it: side on, three quarters ahead, and from ahead and from
+    /// three quarters ahead looking up at it.
+    fn throat(&self) -> Option<[Frame; 4]> {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+        let [side, ..] = self.crest()?;
+        let wide = Frame {
+            span: side.span * 1.7,
+            ..side
+        };
+        Some([
+            Frame {
+                turn: FRAC_PI_2,
+                pitch: 0.0,
+                ..wide
+            },
+            Frame {
+                turn: FRAC_PI_4,
+                pitch: 0.0,
+                ..wide
+            },
+            Frame {
+                turn: 0.0,
+                pitch: -0.45,
+                ..wide
+            },
+            Frame {
+                turn: FRAC_PI_4,
+                pitch: -0.55,
+                ..wide
+            },
+        ])
     }
 
     /// Four views of the back of the head in `pose` (#388), framed on the head

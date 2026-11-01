@@ -302,6 +302,36 @@ const STEPS_PER_RADIUS: f32 = 24.0;
 /// of a step, which on a 75 mm cranium is under four micrometres.
 const BISECTIONS: usize = 10;
 
+/// How many steps a point takes down the distance's gradient onto the drawn
+/// surface: each takes off most of what the bound leaves.
+const SETTLE_STEPS: usize = 2;
+
+/// How much nearer the head a point may lie than the neck's upper run, in head
+/// radii, and still be charted with the run: the back of the skull beside the
+/// crease lies round the head chart's pole, and is as much a neck to a chart.
+/// Provenance: **tuned against the chart census and by render** (#395): none left
+/// a hard-edged sliver of the head's chart on the back of a dog's skull, and 0.3
+/// took the cheeks of a short face.
+const ON_RUN: f32 = 0.15;
+
+/// How far either side of the crease between the head and the neck's upper run
+/// a face still counts as in the crook, in the run's blends.
+/// Provenance: **tuned against the inward-face census** (#395).
+const CROOK: f32 = 6.0;
+
+/// How far from the nose a face has to be to count as in the crook, as a share
+/// of the head's length: a head hung low brings its muzzle against the run, and
+/// the rim of a nostril or a lip is a cell turned on purpose.
+/// Provenance: **tuned by render** (#395), at the top of the envelope, long faces
+/// and short.
+const CROOK_NOSE: f32 = 0.35;
+
+/// How far along the run a face has to be to count as in the crook, as a share
+/// of the run: the run's start is a square cap, whose gradient says nothing of
+/// which way the skin there faces.
+/// Provenance: **chosen** (#395), under the 0.4 the lowest fold starts at.
+const CROOK_FROM: f32 = 0.25;
+
 impl BeastHead {
     /// A body-space point, in the head's frame.
     #[must_use]
@@ -368,28 +398,103 @@ impl BeastHead {
     }
 
     /// Where the drawn surface is - the head and the neck's upper run joined -
-    /// seen from its axis through `at` (in the head's frame): the outermost
-    /// crossing on the ray from the axis point
-    /// nearest `at` through it.
+    /// seen through `at`, in the head's frame: on the ray through it from the line
+    /// it is built round.
     ///
-    /// **The outermost, because that is the one that shows.** The march runs
-    /// inward from outside every part and stops at the first sample inside
-    /// any, so a ray that clips a lip's lobe on its way to the jaw lands on
-    /// the lobe. `None` when `at` lies on the axis, which gives a ray no
-    /// direction, or when the ray never enters the head.
+    /// **That line is the head's axis near the head and the neck's upper run near
+    /// the run, because the run is a tube and a ray from elsewhere can lie down it
+    /// (#395).** A neck carried high under a nodded head hangs below the head in
+    /// the head's own frame, so a ray through the throat from the head's axis runs
+    /// inside the run for most of its length and leaves it low on the neck, inside
+    /// the chest: the outermost crossing of the two together drew the skin from
+    /// the jaw to that point and folded it back on the way up. Cast from the run's
+    /// own centre line, a ray leaves by the wall beside the vertex. Which surface
+    /// a vertex is nearer decides which line it is cast from, blended across the
+    /// crease between them so that nothing jumps.
+    ///
+    /// **The head's outermost crossing comes first, because that is the one that
+    /// shows**: the march runs inward from outside every part and stops at the
+    /// first sample inside any, so a ray that clips a lip's lobe on its way to the
+    /// jaw lands on the lobe. From there the landing is the first way out of the
+    /// head and the run together. `None` when `at` gives the ray no direction.
     #[must_use]
     pub fn surface_through(&self, at: Vec3) -> Option<Vec3> {
         let [back, front] = self.axis;
         let along = front - back;
         let share =
             ((at - back).dot(along) / along.length_squared().max(f32::EPSILON)).clamp(0.0, 1.0);
-        let anchor = back + along * share;
-        march(
-            |at| self.drawn_distance(at),
-            anchor,
-            (at - anchor).try_normalize()?,
-            self.radius,
-        )
+        let on_axis = back + along * share;
+        let anchor = self.nape.as_ref().map_or(on_axis, |nape| {
+            let lead = (self.distance(at) - nape.distance(at)) / nape.blend;
+            let lean = (0.5 * (lead + 1.0)).clamp(0.0, 1.0);
+            on_axis.lerp(nape.line_beside(at), lean * lean * (3.0 - 2.0 * lean))
+        });
+        let direction = (at - anchor).try_normalize()?;
+        let start = march(|at| self.distance(at), anchor, direction, self.radius).unwrap_or(anchor);
+        let step = self.radius / STEPS_PER_RADIUS;
+        if self.drawn_distance(start) > 0.0 {
+            return Some(start);
+        }
+        // A march's end lies on the head, and on no other surface, unless the run
+        // stands over it.
+        let (mut inside, mut outside, mut gone) = (start, start, 0.0);
+        while self.drawn_distance(outside) <= 0.0 {
+            inside = outside;
+            gone += step;
+            outside = start + direction * gone;
+            if gone > REACH * self.radius {
+                return Some(start);
+            }
+        }
+        for _ in 0..BISECTIONS {
+            let middle = inside.lerp(outside, 0.5);
+            if self.drawn_distance(middle) <= 0.0 {
+                inside = middle;
+            } else {
+                outside = middle;
+            }
+        }
+        Some(inside.lerp(outside, 0.5))
+    }
+
+    /// `at`, a point near the drawn surface, moved onto it down the distance's
+    /// gradient. A few steps, because the distance is a bound rather than exact
+    /// and the first falls short.
+    #[must_use]
+    pub(crate) fn settled(&self, at: Vec3) -> Vec3 {
+        let mut point = at;
+        for _ in 0..SETTLE_STEPS {
+            let off = self.drawn_distance(point);
+            point -= self.drawn_normal(point) * off;
+        }
+        point
+    }
+
+    /// The drawn surface's outward normal at `at`, in the head's frame.
+    #[must_use]
+    pub(crate) fn drawn_normal(&self, at: Vec3) -> Vec3 {
+        gradient(|at| self.drawn_distance(at), at, self.radius)
+    }
+
+    /// Whether a point in the head's frame lies on the neck's upper run for
+    /// charting: nearer the run's surface than the head's, or as good as.
+    #[must_use]
+    pub(crate) fn on_run(&self, at: Vec3) -> bool {
+        self.nape
+            .as_ref()
+            .is_some_and(|nape| nape.distance(at) < self.distance(at) + ON_RUN * self.radius)
+    }
+
+    /// Whether a point in the head's frame lies in the crease between the head
+    /// and the neck's upper run.
+    #[must_use]
+    pub(crate) fn in_crook(&self, at: Vec3) -> bool {
+        self.nape.as_ref().is_some_and(|nape| {
+            nape.read(at).0 > CROOK_FROM
+                && at.distance(self.nose_centre())
+                    > CROOK_NOSE * self.axis[0].distance(self.axis[1])
+                && self.distance(at).abs().max(nape.distance(at).abs()) < CROOK * nape.blend
+        })
     }
 
     /// Where a point of the neck's upper run goes, in the head's frame: onto
@@ -506,6 +611,13 @@ impl Nape {
             from.dot(Self::crestward(along)),
             at.x,
         )
+    }
+
+    /// The point of the run's centre line beside `at`, in the head's frame.
+    fn line_beside(&self, at: Vec3) -> Vec3 {
+        let (along, length) = self.chord();
+        let u = self.read(at).0.clamp(0.0, 1.0);
+        self.base + along * (u * length) + Self::crestward(along) * self.centre(u)
     }
 
     /// How far toward the crest the centre line stands at `u`: a parabola
