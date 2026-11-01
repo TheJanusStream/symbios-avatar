@@ -745,7 +745,19 @@ impl Avatar {
         });
         let painted = match (&record.archetype, &anatomy) {
             (crate::plan::Archetype::Quadruped(params), Some(anatomy)) => {
-                texture::coat::paint_coat(&geometry, &rig, &params.coat, anatomy)
+                let mane = crate::hair::fur::mane_roots(
+                    &crate::hair::fur::Bed {
+                        body: &body,
+                        zones: &zones,
+                        rig: &rig,
+                        weights: &weights,
+                        anatomy,
+                        coat: &params.coat,
+                        ears: None,
+                    },
+                    &params.fur,
+                );
+                texture::coat::paint_coat(&geometry, &rig, &params.coat, anatomy, mane.as_ref())
             }
             _ => texture::paint_skin(
                 &geometry,

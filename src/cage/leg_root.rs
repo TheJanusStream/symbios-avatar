@@ -17,6 +17,17 @@
 //! vertices: the cage's topology stands as the hull made it, nothing can stop
 //! building, no triangle is added, and no joint moves. Only skin does. A
 //! person has no bridges, so a person's cage never comes through here.
+//!
+//! **The leg's outside goes over the trunk (#394).** The hull's widest points
+//! are its sockets' own, and a ring's widest vertex need not be the one the
+//! leg's outer wall runs up to: a ring is matched to the next by index, and on
+//! a cat the thigh's outer wall climbs to the ring's top and back, inside the
+//! hip, while the ring's widest vertex runs off down the front of the thigh.
+//! So the trunk stood past the wall at the leg's top, and swinging the leg
+//! brought it through. Each ring vertex is carried out as far as the vertex it
+//! runs down to is the swept ring's outside, past whichever stands widest
+//! there, the ring itself or the trunk, and the swept ring follows part of the
+//! way. Only the outer side moves, so the wrap under the trunk stands as it was.
 
 use glam::Vec3;
 
@@ -46,6 +57,9 @@ struct Wrap {
     /// a stifle - comes in, in that ring's half-widths, so the leg leans toward
     /// the strip instead of stepping out to it.
     lean: f32,
+    /// How much less a socket ring's vertex comes out with the leg's outer
+    /// wall for lying past its girdle toward the ring on the far side.
+    far: f32,
 }
 
 /// The fore legs. Their rings stand ahead of the elbows, on the rise of the
@@ -53,12 +67,16 @@ struct Wrap {
 /// body or held under the keel there, the ring folds over that ring's lower
 /// edge and shows as a sliver on the chest. Less lean than this lets a heavy
 /// kitten's skin through the ground as it lies down (3 mm at 0.13, measured).
+/// Their wall holds back at the forechest: carried out there it stood the chest
+/// out from a small-headed cat's neck, a step of 0.61 head radii against the 0.45
+/// `the_neck_grows_into_the_head_without_a_step` allows.
 const FORE: Wrap = Wrap {
     strip: 0.1,
     under: 0.0,
     along: 0.0,
     ahead: 0.0,
     lean: 0.3,
+    far: 1.0,
 };
 
 /// The hind legs. Their rings stand behind the belly with room ahead of them,
@@ -73,12 +91,16 @@ const FORE: Wrap = Wrap {
 /// its withers height, on 11 of 2,799 sampled corners against none of those
 /// unwrapped. Held rests do not, no one of these settings changes it, and fading
 /// the wrap there would give those bodies back the legs stuck on their sides.
+///
+/// Their wall holds back some beside the tail: carried out there in full, a lying
+/// dog's rump folded in dark spikes, seen from behind and above.
 const HIND: Wrap = Wrap {
     strip: 0.1,
     under: 0.1,
     along: 0.5,
     ahead: 0.4,
     lean: 0.1,
+    far: 0.6,
 };
 
 /// Below this share of a ring's reach toward the keel a vertex stays where the
@@ -92,7 +114,51 @@ const FLANK: f32 = 0.4;
 /// with the trunk's and fight it.
 const CLEAR: f32 = 0.25;
 
-/// Wraps every bridged leg's junction under its girdle. See the module.
+/// How far past the trunk a leg's outer wall comes at its top, in half-widths
+/// of the ring the leg sweeps to, so a heavy thigh stands proud by more than a
+/// slight one.
+///
+/// Provenance: **tuned by render** (#394), read with the swing of a galloping
+/// cat's thigh: at 0.5 a horse's hips read wider than its barrel from behind.
+const PROUD: f32 = 0.2;
+
+/// What share of the way out to the top of its wall the swept ring comes - an
+/// elbow, a stifle - so the wall falls from the top, not tucks in under it.
+///
+/// Provenance: **tuned by render** (#394): at 0.8 a cat's elbow stepped hard
+/// into its forearm, and at 0 the wall leaned in and the trunk stood past it.
+const FOLLOW: f32 = 0.5;
+
+/// The furthest the swept ring comes out, in its half-widths: little, for it
+/// carries the leg's own section. Widened further, a thigh stops being deeper
+/// than it is wide (`a_thigh_is_deeper_from_the_side_than_across`, seed 27 at
+/// 0.15), and a cat's fore leg stretches its coat.
+///
+/// Provenance: **measured** (#394): at 0.1 the worst tenth of a fore leg's texels
+/// stretches 4.33 to one against the 4.5 `tests/uv.rs` allows; at 0.15, 4.39.
+const FOLLOW_MOST: f32 = 0.1;
+
+/// How much less of that a ring vertex comes out for standing a girdle's depth
+/// above the girdle. Skin binds to the bone it is nearest, so a high vertex
+/// carried out binds to the thigh and swings with it.
+///
+/// Provenance: **tuned by render** (#394): at none, a galloping or lying cat's
+/// hip stood up as a corner over the line of its back.
+const CROWN: f32 = 0.6;
+
+/// How far along the body from a leg's own run a ring of the spine still counts
+/// as the trunk beside it, in lengths of that run. It fades to nothing there, so
+/// no ring's counting can jump as a slider slides it along the body.
+///
+/// Provenance: **measured** (#394), a first choice left standing: it counts a
+/// cat's ribs behind its upper arm, the widest of the trunk there, and took the
+/// median of the trunk's widest past the leg's on its fore legs from 0.0065 of the
+/// withers height to -0.0044, against the hub's spine ring alone. No other value
+/// has been tried.
+const BESIDE: f32 = 0.5;
+
+/// Wraps every bridged leg's junction under its girdle and brings its outer
+/// wall out over the trunk. See the module.
 pub(super) fn wrap_junctions(
     skeleton: &Skeleton,
     sockets: &[Socket],
@@ -127,6 +193,10 @@ pub(super) fn wrap_junctions(
         });
         if let Some(next) = next {
             lean_ring(&next, wrap.lean, side, strip, spine.y, mesh);
+            let trunk = trunk_beside(skeleton, socket, sockets, builds, &next, mesh);
+            let hub = skeleton.nodes[socket.joint as usize];
+            let girdle = (hub.position.y, hub.half_extents().y, hub.position.z, far.z);
+            broaden_wall(wrap, &socket.ring, &next, side, trunk, girdle, mesh);
         }
     }
 }
@@ -237,6 +307,90 @@ fn lean_ring(
     }
 }
 
+/// How far off the midline the spine stands beside a leg's top: the widest of
+/// its rings along the run from the socket to the swept ring, each counted for
+/// less the further along the body it lies past that run ([`BESIDE`]).
+fn trunk_beside(
+    skeleton: &Skeleton,
+    socket: &Socket,
+    sockets: &[Socket],
+    builds: &[LimbBuild],
+    next: &[u32; RING],
+    mesh: &PolyMesh,
+) -> f32 {
+    let along = |ring: &[u32; RING]| {
+        ring.iter()
+            .map(|&vertex| mesh.positions[vertex as usize].z)
+            .sum::<f32>()
+            / RING as f32
+    };
+    let (rim, foot) = (along(&socket.ring), along(next));
+    let (near, far) = (rim.min(foot), rim.max(foot));
+    let run = (far - near).max(f32::EPSILON);
+    let spines = sockets.iter().filter(|other| {
+        other.joint == socket.joint
+            && skeleton.bridge_aim(other.joint, other.toward).is_none()
+            && matches!(
+                skeleton.nodes[other.toward as usize].zone,
+                Zone::Pelvis | Zone::Abdomen | Zone::Chest
+            )
+    });
+    let rings = spines
+        .flat_map(|spine| {
+            builds.iter().filter(|build| {
+                build.rings.first() == Some(&spine.ring) || build.rings.last() == Some(&spine.ring)
+            })
+        })
+        .flat_map(|build| build.rings.iter());
+    rings.fold(0.0f32, |widest, ring| {
+        let at = along(ring);
+        let past = (near - at).max(at - far).max(0.0) / run;
+        let wide = ring
+            .iter()
+            .map(|&vertex| mesh.positions[vertex as usize].x.abs())
+            .fold(0.0, f32::max);
+        widest.max(wide * (1.0 - weight(past / BESIDE)))
+    })
+}
+
+/// Brings a leg's outer wall out over the trunk at its top, each ring vertex by
+/// how far the vertex it runs down to is the swept ring's outside. `girdle` is
+/// its hub's height and half its depth, and how far along the body the hub and
+/// the ring on its far side stand.
+fn broaden_wall(
+    wrap: &Wrap,
+    rim: &[u32; RING],
+    next: &[u32; RING],
+    side: f32,
+    trunk: f32,
+    (height, depth, hub_z, far_z): (f32, f32, f32, f32),
+    mesh: &mut PolyMesh,
+) {
+    let off_midline = |ring: &[u32; RING], mesh: &PolyMesh| {
+        ring.map(|vertex| mesh.positions[vertex as usize].x * side)
+    };
+    let outermost = |ring: &[f32; RING]| ring.iter().copied().fold(f32::MIN, f32::max);
+    let (rim_at, next_at) = (off_midline(rim, mesh), off_midline(next, mesh));
+    let (rim_out, next_out) = (outermost(&rim_at), outermost(&next_at));
+    let centre = next_at.iter().sum::<f32>() / RING as f32;
+    let half = next_out - centre;
+    if half <= 0.0 {
+        return;
+    }
+    let top = rim_out.max(trunk) + PROUD * half;
+    let follow = ((top - next_out).max(0.0) * FOLLOW).min(FOLLOW_MOST * half);
+    for index in 0..RING {
+        let share = weight((next_at[index] - centre) / half);
+        mesh.positions[next[index] as usize].x += side * follow * share;
+        let vertex = &mut mesh.positions[rim[index] as usize];
+        let crown = 1.0 - CROWN * weight((vertex.y - height) / depth);
+        let run = far_z - hub_z;
+        let past = (vertex.z - hub_z) * run.signum() / run.abs().max(f32::EPSILON);
+        let ahead = 1.0 - wrap.far * weight(past);
+        vertex.x += side * (top - rim_at[index]).max(0.0) * share * crown * ahead;
+    }
+}
+
 /// A smooth step over a clamped share.
 fn weight(share: f32) -> f32 {
     let share = share.clamp(0.0, 1.0);
@@ -246,7 +400,9 @@ fn weight(share: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cage::{CageConfig, build_with_sockets};
+    use std::collections::{HashMap, HashSet};
+
+    use crate::cage::{CageConfig, build_with_limbs, build_with_sockets};
     use crate::plan::{Family, Limb};
     use crate::{Archetype, AvatarRecord, HumanoidParams, QuadrupedParams, catmull_clark};
 
@@ -379,6 +535,199 @@ mod tests {
             println!(
                 "{name}: fore {:.3}..{:.3}, hind {:.3}..{:.3} WH, {} rolls",
                 fore[row].least, fore[row].most, hind[row].least, hind[row].most, fore[row].rolls
+            );
+        }
+    }
+
+    /// How far the trunk stands past a leg's outer wall, as a share of the
+    /// withers height: side on, over the leg's own run along the body, height
+    /// by height, the trunk's widest skin less the leg's. Read off the
+    /// subdivided surface, whose faces follow the cage's in order, one per
+    /// corner, so each face still says whether it is the leg's or the trunk's.
+    /// Tail and neck are not the trunk. A leg's very top, where its skin thins
+    /// to the point of the ring, is not yet a wall to stand past.
+    fn trunk_past_wall(
+        skeleton: &Skeleton,
+        cage: &PolyMesh,
+        sockets: &[Socket],
+        builds: &[LimbBuild],
+        limb: Limb,
+        wh: f32,
+    ) -> f32 {
+        /// How far below its top a leg's skin is first a wall, a share of WH.
+        const POINT: f32 = 0.06;
+        let rings_of = |socket: &Socket| {
+            builds
+                .iter()
+                .find(|build| {
+                    build.rings.first() == Some(&socket.ring)
+                        || build.rings.last() == Some(&socket.ring)
+                })
+                .expect("every socket closes a limb")
+                .rings
+                .iter()
+                .flatten()
+                .copied()
+        };
+        let bridged = |socket: &&Socket| skeleton.bridge_aim(socket.joint, socket.toward).is_some();
+        let socket = sockets
+            .iter()
+            .filter(bridged)
+            .find(|socket| skeleton.nodes[socket.toward as usize].zone == Zone::UpperLimb(limb))
+            .expect("a bridged leg opens a socket");
+        let leg: HashSet<u32> = rings_of(socket).collect();
+        let legs: HashSet<u32> = sockets.iter().filter(bridged).flat_map(rings_of).collect();
+        let beyond: HashSet<u32> = sockets
+            .iter()
+            .filter(|socket| {
+                !bridged(socket)
+                    && !matches!(
+                        skeleton.nodes[socket.toward as usize].zone,
+                        Zone::Pelvis | Zone::Abdomen | Zone::Chest
+                    )
+            })
+            .flat_map(rings_of)
+            .collect();
+        let skin = catmull_clark(cage, 1);
+        let side = socket.center().x.signum();
+        let cell = 0.004 * wh;
+        // By (along, height): the leg's widest skin and the trunk's.
+        let mut cells: HashMap<(i32, i32), (f32, f32)> = HashMap::new();
+        let owners = cage
+            .faces
+            .iter()
+            .flat_map(|face| std::iter::repeat_n(face, face.len()));
+        for (face, parent) in skin.faces.iter().zip(owners) {
+            let is_leg = parent.iter().all(|vertex| leg.contains(vertex));
+            let is_trunk = !parent.iter().all(|vertex| legs.contains(vertex))
+                && !parent.iter().all(|vertex| beyond.contains(vertex));
+            if !is_leg && !is_trunk {
+                continue;
+            }
+            let corners: Vec<Vec3> = face
+                .iter()
+                .map(|&vertex| skin.positions[vertex as usize] * Vec3::new(side, 1.0, 1.0))
+                .collect();
+            for [a, b, c] in [
+                [corners[0], corners[1], corners[2]],
+                [corners[0], corners[2], corners[3]],
+            ] {
+                let (ab, ac) = (b - a, c - a);
+                let area = ab.z * ac.y - ac.z * ab.y;
+                if area == 0.0 {
+                    continue;
+                }
+                let cells_over =
+                    |low: f32, high: f32| (low / cell).floor() as i32..=(high / cell).ceil() as i32;
+                for along in cells_over(a.z.min(b.z).min(c.z), a.z.max(b.z).max(c.z)) {
+                    for height in cells_over(a.y.min(b.y).min(c.y), a.y.max(b.y).max(c.y)) {
+                        let (dz, dy) = (along as f32 * cell - a.z, height as f32 * cell - a.y);
+                        let u = (dz * ac.y - ac.z * dy) / area;
+                        let v = (ab.z * dy - dz * ab.y) / area;
+                        if u < 0.0 || v < 0.0 || u + v > 1.0 {
+                            continue;
+                        }
+                        let x = a.x + ab.x * u + ac.x * v;
+                        let widest = cells.entry((along, height)).or_insert((f32::MIN, f32::MIN));
+                        if is_leg {
+                            widest.0 = widest.0.max(x);
+                        } else {
+                            widest.1 = widest.1.max(x);
+                        }
+                    }
+                }
+            }
+        }
+        let legged: Vec<_> = cells
+            .iter()
+            .filter(|(_, widest)| widest.0 > f32::MIN)
+            .collect();
+        let run = legged.iter().map(|(key, _)| key.0);
+        let (near, far) = (run.clone().min().unwrap_or(0), run.max().unwrap_or(0));
+        let top = legged.iter().map(|(key, _)| key.1).max().unwrap_or(0);
+        // The leg's run only, and down from its point.
+        let mut rows: HashMap<i32, (f32, f32)> = HashMap::new();
+        for (&(along, height), &(on_leg, on_trunk)) in &cells {
+            if (near..=far).contains(&along)
+                && height as f32 * cell <= top as f32 * cell - POINT * wh
+            {
+                let row = rows.entry(height).or_insert((f32::MIN, f32::MIN));
+                row.0 = row.0.max(on_leg);
+                row.1 = row.1.max(on_trunk);
+            }
+        }
+        rows.values()
+            .filter(|row| row.0 > f32::MIN && row.1 > f32::MIN)
+            .map(|row| row.1 - row.0)
+            .fold(f32::MIN, f32::max)
+            / wh
+    }
+
+    /// #394: fore and hind apart, per family over 60 rolls each, as #387's
+    /// table is. A body plan's trunk and legs differ, so each row has its own
+    /// ceiling, from the table this test prints, with margin for CI's libm.
+    ///
+    /// | worst, WH | dog fore | dog hind | cat fore | cat hind | cross fore | cross hind |
+    /// |-----------|----------|----------|----------|----------|------------|------------|
+    /// | unbroadened | 0.0062 | 0.0046 | 0.0418 | 0.0201 | 0.0338 | 0.0199 |
+    /// | broadened | 0.0035 | 0.0036 | 0.0145 | 0.0096 | 0.0058 | 0.0088 |
+    ///
+    /// A horse's trunk stood past neither wall at rest before or after, so its
+    /// row holds that line and no more.
+    #[test]
+    fn the_trunk_does_not_stand_past_a_leg_s_outer_wall() {
+        const ROLLS: usize = 60;
+        /// Ceilings by row, dog, cat, horse, cross, fore then hind.
+        const CEILING: [(f32, f32); 4] = [
+            (0.0042, 0.0042),
+            (0.018, 0.0115),
+            (0.001, 0.001),
+            (0.0075, 0.0105),
+        ];
+        let mut fore: [Readings; 4] = Default::default();
+        let mut hind: [Readings; 4] = Default::default();
+        let mut seed = 0;
+        while fore.iter().any(|row| row.rolls < ROLLS) {
+            let record = AvatarRecord::rolled(
+                "Probe",
+                Archetype::Quadruped(QuadrupedParams::default()),
+                seed,
+            );
+            seed += 1;
+            let Archetype::Quadruped(params) = &record.archetype else {
+                panic!("a quadruped rolled something else");
+            };
+            let row = match (params.hybrid, params.family) {
+                (Some(_), _) => 3,
+                (None, Family::Dog) => 0,
+                (None, Family::Cat) => 1,
+                (None, _) => 2,
+            };
+            if fore[row].rolls >= ROLLS {
+                continue;
+            }
+            let wh = params.height * 1.2;
+            let skeleton = record.skeleton();
+            let (cage, sockets, builds) = build_with_limbs(&skeleton, &CageConfig::default())
+                .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+            for (limb, table) in [(Limb::ForeLeft, &mut fore), (Limb::HindLeft, &mut hind)] {
+                table[row].read(trunk_past_wall(
+                    &skeleton, &cage, &sockets, &builds, limb, wh,
+                ));
+            }
+        }
+        for (name, row) in ["dog", "cat", "horse", "cross"].iter().zip(0..) {
+            println!(
+                "{name}: fore {:.4}..{:.4}, hind {:.4}..{:.4} WH, {} rolls",
+                fore[row].least, fore[row].most, hind[row].least, hind[row].most, fore[row].rolls
+            );
+        }
+        for (name, row) in ["dog", "cat", "horse", "cross"].iter().zip(0..) {
+            assert!(
+                fore[row].most <= CEILING[row].0 && hind[row].most <= CEILING[row].1,
+                "{name}: the trunk stands {:.4} past the fore wall, {:.4} past the hind, in WH",
+                fore[row].most,
+                hind[row].most
             );
         }
     }

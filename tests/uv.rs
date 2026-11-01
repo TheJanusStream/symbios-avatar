@@ -322,7 +322,8 @@ fn a_beast_s_legs_are_charted_as_finely_as_its_barrel() {
     // worst rolls, as its elbow stands above the chest's floor and the ring
     // reaches further to it. The two worst, seeds 19 and 40, show nothing of it
     // in a render, and the wrap alone holds it at 4.0, so these bounds moved
-    // with it rather than the wrap: from 0.62 and 4.0.
+    // with it rather than the wrap: from 0.62 and 4.0. Broadening the legs' outer
+    // walls (#394) leaves 0.66 and 0.70, and 4.33 and 2.90, within the same bounds.
     for (thinnest, seed, pair) in worst {
         assert!(
             thinnest > 0.6,

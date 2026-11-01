@@ -30,11 +30,15 @@
 //! over the neck's measured section from under the crest's far side
 //! (`Crest`), so the two sides' cards cross on it and cover each other.
 //!
-//! **A mane stands as stiffly as its record says** (#389): a card comes out of
-//! the skin the same way, over the crest, and then rises (`zone::Stand`) before
-//! whatever is left of it falls to the neck's side. The rise is what makes an
-//! outline against the sky; the low foot it rises from is what still covers
-//! the other side's seams.
+//! **A mane stands as stiffly as its record says** (#389): one set of cards at
+//! every stiffness, as long as the record's `mane` says. How stiff they are says
+//! how far a card stands before it bends over (`zone::Lock`), from lying on the
+//! neck to straight up off the crest; each comes out of the skin the same way at
+//! every value, which is what goes on hiding where it enters. Where it stands
+//! too high for any card to lie over the seam, its colour hides it: the skin
+//! under a mane in a coat's dark is painted that colour (`mane_roots`), as a
+//! hair card's scalp is, and on any other coat a card is already the colour of
+//! the skin it leaves.
 //!
 //! Drawn in the hair's draw: a beast grows no person's hair, so fur is the
 //! one draw more a furred beast makes than a bald one - three in all, inside
@@ -60,7 +64,7 @@ use crate::hair::shell::face::moller;
 use crate::mesh::{PolyMesh, VertexSkin};
 use crate::plan::{Coat, Fur, Zone};
 use crate::rig::{Influence, Rig, SkinWeights};
-use crate::texture::coat::{CoatBody, CoatSampler};
+use crate::texture::coat::{CoatBody, CoatSampler, ManeRoots, darkens_points};
 use zone::Lock;
 
 /// What a beast's fur may cost, in triangles.
@@ -74,10 +78,10 @@ use zone::Lock;
 /// of fur costs a browser more than a triangle of skin; 2,200 are kept back
 /// for that. At every zone's full length a rolled horse grows
 /// about 5,700, a dog 5,900 and a cat 4,800, the dearest roll 7,500 (a mane
-/// draped over its neck, #386, costs about 750 of that). A mane's crest at the
-/// default stiffness (#389) adds about 1,400 on a horse, and the dearest mane
-/// the seam sweep builds comes to 8,800, so the ceiling bites only past that,
-/// toward the envelope's end.
+/// draped over its neck, #386, costs about 750 of that). A mane's stiffness (#389)
+/// bends the same cards and adds no card, only the stations a bend takes: the
+/// dearest fur the sweep's long manes build is 8,350, about a quarter of the way up
+/// the slider, so the ceiling bites only past that, toward the envelope's end.
 pub const MAX_TRIANGLES: usize = 9_000;
 
 /// How many times fur is regrown by the measured ratio to get under
@@ -115,8 +119,6 @@ pub struct GrownZone {
     pub zone: FurZone,
     /// How many cards were rooted.
     pub clumps: usize,
-    /// How many of them, the last, stand as a mane's crest (#389).
-    pub upright: usize,
     /// What they cost, in triangles.
     pub tris: usize,
 }
@@ -209,6 +211,29 @@ pub(crate) fn grow(bed: &Bed, fur: &Fur, seed: i64) -> FurGrowth {
     growth
 }
 
+/// How far off its line a mane's colour reaches into the skin, in a limp card's
+/// half widths at its root: past where a card, thin there, leaves the neck.
+/// Provenance: **tuned by render** (#389).
+const ROOTS_REACH: f32 = 1.5;
+
+/// The skin a mane in a coat's dark grows out of, for the painter, if it has one:
+/// on any other coat a card is the colour of the skin it leaves.
+pub(crate) fn mane_roots(bed: &Bed, fur: &Fur) -> Option<ManeRoots> {
+    if fur.mane <= 0.0 || !darkens_points(bed.coat) {
+        return None;
+    }
+    let line = Crest::of(bed)?.line;
+    let last = line.len().saturating_sub(1).max(1) as f32;
+    let reach =
+        FurZone::Mane.cut().width * bed.anatomy.height * fur.mane.min(1.0).sqrt() * ROOTS_REACH;
+    Some(ManeRoots::new(
+        line.iter()
+            .enumerate()
+            .map(|(point, crested)| (crested.at, reach * thins(point as f32 / last).sqrt()))
+            .collect(),
+    ))
+}
+
 /// Grows every zone the record asks for, at `share` of its count.
 fn grow_share(bed: &Bed, fur: &Fur, seed: i64, share: f32) -> FurGrowth {
     let sampler = CoatSampler::new(bed.coat, bed.anatomy);
@@ -224,55 +249,34 @@ fn grow_share(bed: &Bed, fur: &Fur, seed: i64, share: f32) -> FurGrowth {
         let mut stream = Pcg64Mcg::seed_from_u64(stream_seed(seed, zone));
         let line = (zone == FurZone::Mane).then(|| Crest::of(bed)).flatten();
         let lock = Lock::new(zone, bed, line.as_ref(), length, fur.mane_stiffness);
-        let mut sets = Vec::with_capacity(2);
         let roots = match zone {
-            FurZone::Mane => line.as_ref().map_or_else(Vec::new, |line| {
-                // A mane falls over less the stiffer it is, and grows a crest of
-                // upright cards as well, each its own even alternation of sides:
-                // taken out of the falling cards, they left bald stretches.
-                let (falling, standing) = zone::crest_split(count, fur.mane_stiffness);
-                let roots = crest(bed, line, falling, thins_falling, &mut stream);
-                let upright = Lock::upright(bed, Some(line), length, fur.mane_stiffness);
-                sets.push((
-                    upright,
-                    crest(bed, line, standing, thins_upright, &mut stream),
-                ));
-                roots
-            }),
+            FurZone::Mane => line
+                .as_ref()
+                .map_or_else(Vec::new, |line| crest(bed, line, count, &mut stream)),
             FurZone::Tufts => tufts(bed, count),
             _ => scatter(bed, zone, count, &mut stream),
         };
-        sets.insert(0, (lock, roots));
         let before = growth.mesh.face_count();
         let mut clumps = 0;
-        let mut upright = 0;
-        for (set, (lock, roots)) in sets.iter().enumerate() {
-            for (root, at_zone) in roots {
-                let colour = if zone == FurZone::Tufts {
-                    sampler.dark()
-                } else if zone.points() {
-                    sampler.points(root.at, root.out, *at_zone)
-                } else {
-                    sampler.colour(root.at, root.out, *at_zone)
-                };
-                // Tipped a shade lighter, as fur in the light is.
-                let tips = colour.lerp(Vec3::ONE, 0.08);
-                if loft(&mut growth.mesh, root, lock, None, colour, tips) > 0 {
-                    clumps += 1;
-                    upright += usize::from(set > 0);
-                }
+        for (root, at_zone) in &roots {
+            let colour = if zone == FurZone::Tufts {
+                sampler.dark()
+            } else if zone.points() {
+                sampler.points(root.at, root.out, *at_zone)
+            } else {
+                sampler.colour(root.at, root.out, *at_zone)
+            };
+            // Tipped a shade lighter, as fur in the light is.
+            let tips = colour.lerp(Vec3::ONE, 0.08);
+            if loft(&mut growth.mesh, root, &lock, None, colour, tips) > 0 {
+                clumps += 1;
             }
         }
         let tris: usize = (before..growth.mesh.face_count())
             .map(|face| growth.mesh.faces[face].len().saturating_sub(2))
             .sum();
         if clumps > 0 {
-            growth.grown.push(GrownZone {
-                zone,
-                clumps,
-                upright,
-                tris,
-            });
+            growth.grown.push(GrownZone { zone, clumps, tris });
         }
     }
     growth
@@ -583,6 +587,7 @@ impl Crest {
     /// neighbour: a reading of the second kind jumps where the nearest point
     /// changes, by more the more the line bends, and a card lying along it
     /// inherits the jump as a kink it turns over at (#388).
+    #[cfg(test)]
     pub(super) fn near(&self, at: Vec3) -> Crested {
         let (piece, t) = self.place(at);
         self.between(piece, t)
@@ -657,20 +662,12 @@ impl Crest {
     }
 }
 
-/// How a falling card's root weighs, a share of the way up the crest: thinning
-/// out at either end, where a mane does: slowly into the withers, or its last
-/// whole card is a straight edge down the shoulder, and quickly at the poll,
-/// which a mane reaches. Gone before a card is too small to come out of the
-/// skin it is sunk in.
-fn thins_falling(share: f32) -> f32 {
+/// How a mane's root weighs, a share of the way up the crest: thinning out at
+/// either end, where a mane does: slowly into the withers, or its last whole card
+/// is a straight edge down the shoulder, and quickly at the poll, which a mane
+/// reaches. Gone before a card is too small to come out of the skin it is sunk in.
+fn thins(share: f32) -> f32 {
     step(0.0, 0.3, share) * step(1.0, 0.95, share)
-}
-
-/// How an upright card's root weighs: it stands where it is rooted, where a
-/// falling card reaches back over the withers, so it thins out closer to them;
-/// and more slowly at the poll, or a crest ends there in a blunt block.
-fn thins_upright(share: f32) -> f32 {
-    step(0.0, 0.15, share) * step(1.0, 0.75, share)
 }
 
 /// `count` roots along the neck's crest, from the withers up to the poll: the
@@ -678,13 +675,7 @@ fn thins_upright(share: f32) -> f32 {
 ///
 /// A root sits where [`Crest`] passes, takes the binding of the surface
 /// nearest it, and is parted to one side or the other, card by card.
-fn crest(
-    bed: &Bed,
-    line: &Crest,
-    count: usize,
-    thins: fn(f32) -> f32,
-    stream: &mut Pcg64Mcg,
-) -> Vec<(Root, Zone)> {
+fn crest(bed: &Bed, line: &Crest, count: usize, stream: &mut Pcg64Mcg) -> Vec<(Root, Zone)> {
     let normals = bed.body.shading_normals();
     let mut roots = Vec::with_capacity(count);
     for index in 0..count {

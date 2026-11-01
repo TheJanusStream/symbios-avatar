@@ -14,7 +14,7 @@
 //! family, rarely, as the coat's loci are: a cat with a mane is a lion.
 //!
 //! **And one that is not a length** (#389): how stiff a mane is, from lying
-//! flat to a short upright crest. Nothing rolls it, so a re-roll leaves it where
+//! flat to standing straight up. Nothing rolls it, so a re-roll leaves it where
 //! its owner put it and no record's generator stamp moves; every beast starts
 //! at [`Fur::DEFAULT_MANE_STIFFNESS`], and a record at that default does not
 //! write it.
@@ -43,9 +43,9 @@ pub struct Fur {
     /// Tufts at the ears' tips.
     #[serde(with = "super::scaled")]
     pub tufts: f32,
-    /// How stiff the mane is (#389), `0` lying flat over the neck and draping,
-    /// `1` a short stiff upright crest, a zebra's or a hogged mane. Its length
-    /// stays [`Self::mane`]'s. Left off the wire at its default.
+    /// How stiff the mane is (#389): how far a card stands before it bends over,
+    /// `0` lying flat over the neck and draping, `1` straight up off the crest.
+    /// How long it is stays [`Self::mane`]'s. Left off the wire at its default.
     #[serde(
         with = "super::scaled",
         skip_serializing_if = "is_default_mane_stiffness"
@@ -154,8 +154,8 @@ fn odds(family: Family) -> [Odds; 5] {
 }
 
 impl Fur {
-    /// How stiff a mane is until its owner says otherwise: a modest crest
-    /// standing along the neck, with the rest of the mane falling over it.
+    /// How stiff a mane is until its owner says otherwise: its cards rise a
+    /// little off the crest before they fall over the neck.
     /// Provenance: **tuned by render** (#389).
     pub const DEFAULT_MANE_STIFFNESS: f32 = 0.4;
 

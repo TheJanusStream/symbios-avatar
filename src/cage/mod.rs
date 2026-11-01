@@ -274,6 +274,14 @@ fn build_with_sockets(
     skeleton: &Skeleton,
     config: &CageConfig,
 ) -> Result<(PolyMesh, Vec<Socket>), CageError> {
+    build_with_limbs(skeleton, config).map(|(mesh, sockets, _)| (mesh, sockets))
+}
+
+/// [`build_with_sockets`], handing back each limb's rings as well.
+fn build_with_limbs(
+    skeleton: &Skeleton,
+    config: &CageConfig,
+) -> Result<(PolyMesh, Vec<Socket>, Vec<limb::LimbBuild>), CageError> {
     let limbs = skeleton.limbs()?;
     let mut mesh = PolyMesh::new();
     let mut sockets: Vec<Socket> = Vec::new();
@@ -305,5 +313,5 @@ fn build_with_sockets(
         limb::emit_limb_faces(build, &mut mesh);
     }
 
-    Ok((mesh, sockets))
+    Ok((mesh, sockets, builds))
 }

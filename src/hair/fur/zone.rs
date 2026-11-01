@@ -10,9 +10,9 @@
 //! and bends toward the ground the longer it is, as [`super::super::clump::Fall`]
 //! does. A mane's cards alone have a curve of their own, draped over the neck
 //! and standing off its crest as stiffly as the record says (see
-//! [`Lock::draped`] and [`Stand`]).
+//! [`Lock::draped`] and [`Lock::section`]).
 
-use std::f32::consts::PI;
+use std::f32::consts::{FRAC_PI_2, PI};
 
 use glam::Vec3;
 
@@ -264,36 +264,53 @@ const ARCH_ENDS: f32 = 0.5;
 /// Provenance: **tuned by render** (#386).
 const LOFT_AT_ROOT: f32 = 0.004;
 
-/// How high a full-length mane's crest stands at full stiffness, as a share of
-/// the back's height; it goes with the square root of the record's length, so
-/// that length stays an axis of its own without a long mane making a sail.
-/// Provenance: **tuned by render** (#389), about a hogged horse's 10 to 12 cm.
-const STAND_REACH: f32 = 0.08;
-
-/// How much of a card a rise may spend, at most: the rest is its foot, and a
-/// tip.
+/// By what stiffness a mane's card has gone from draped over the neck to the
+/// stiff card [`Lock::section`] draws: the one hands over to the other low on the
+/// slider, where they lie close together.
 /// Provenance: **tuned by render** (#389).
-const STAND_SHARE: f32 = 0.7;
+const STIFF_FROM: f32 = 0.2;
 
-/// How far round a standing card's foot comes before it rises, in radians: over
-/// the crest and little further, or an upright card's foot pokes through the
-/// falling cards lying there.
-/// Provenance: **tuned by render** (#389).
-const FOOT_TURN: f32 = 0.12;
+/// How much higher a stiffening card lies than a limp one, past its foot, as a
+/// share of its length, by its stiffness: what lifts a short card's outline, which
+/// has little left to stand on past its foot, before it can stand.
+/// Provenance: **tuned by render** (#389), against the outline's sweep.
+const STIFF_ARCH: f32 = 0.65;
 
-/// How much of a card's turn round the neck is left at the top of its rise: a
-/// little, so that the two sides' cards lean together into a ridge and do not
-/// lie in one plane.
-/// Provenance: **tuned by render** (#389).
-const RIDGE: f32 = 0.2;
+/// How much longer than its cut a stiff card's curve is drawn: the limp curve,
+/// laid over the skin that stands off its bone, comes out 1.14 to 1.44 times its
+/// cut, and a mane is to keep its length as it stands. In the middle of that.
+/// Provenance: **measured** (`stiffness_table`, #389).
+const DRAWN: f32 = 1.25;
 
-/// How far back along the crest a card leans as it rises, as a share of the rise.
+/// How far past its top a card comes round once it bends over, in radians from
+/// straight up: short of straight down, so that what is left of a long card
+/// falls clear of the one beside it.
 /// Provenance: **tuned by render** (#389).
-const RAKE: f32 = 0.35;
+const OVER: f32 = 2.95;
 
-/// How far along a card it comes down from the top of its rise, in rises.
+/// How much wider a card's bend gets with stiffness, as a share of its length at
+/// full stiffness: a limp card bends round the neck, and a stiff one over a bow.
 /// Provenance: **tuned by render** (#389).
-const FALL: f32 = 1.6;
+const BOW: f32 = 0.8;
+
+/// How much wider a card's bend is from the start of the slider, as a share of its
+/// length at full stiffness: past the neck's side a long card would fall the moment
+/// it left the crest, and never rise above a limp one's arch.
+/// Provenance: **tuned by render** (#389), against the outline's sweep.
+const BOW_EARLY: f32 = 0.2;
+
+/// How long a card's foot is, in its ways out of the skin, on a limp card.
+/// Provenance: **tuned by render** (#389), against the seam sweep.
+const FOOT: f32 = 3.5;
+
+/// How much of a card a foot may spend, at most: on a short card its way out of
+/// the skin is a good part of it.
+/// Provenance: **tuned by render** (#389).
+const FOOT_SHARE: f32 = 0.45;
+
+/// How much of a card's way out of the skin the bend up off it takes.
+/// Provenance: **tuned by render** (#389).
+const LIFTS_OFF: f32 = 0.25;
 
 /// How far under the skin a stiff card's root goes past a limp one's, at full
 /// stiffness, as a share of it: a card that leaves the neck steeply needs its
@@ -301,54 +318,10 @@ const FALL: f32 = 1.6;
 /// Provenance: **tuned by render** (#389).
 const BURY: f32 = 0.5;
 
-/// How much narrower a card is at full stiffness: a crest's cards are short,
-/// and a card as wide as it is long reads as a scale.
+/// How much narrower a card is at full stiffness: it stands on its edge along the
+/// crest beside every other card, and at a limp card's width that is a board.
 /// Provenance: **tuned by render** (#389).
 const NARROWS: f32 = 0.5;
-
-/// How much lower a falling card's arch stands than the crest's upright cards.
-/// Provenance: **tuned by render** (#389).
-const ARCHED: f32 = 0.4;
-
-/// How many times longer than its half width an upright card is, at least.
-/// Provenance: **tuned by render** (#389), from #369's length over width of 2.5.
-const UPRIGHT_SLENDER: f32 = 4.0;
-
-/// How long the falling cards are at full stiffness, as a share of the back's
-/// height: a low skirt either side of the crest. Without it a crest's cards stand
-/// out of bare neck, one by one, like the teeth of a comb. The seam sweep cannot
-/// see that, and reads the skirt's own seams against it (0.051 without, 0.056
-/// with): this is a judgement of the render.
-/// Provenance: **tuned by render** (#389).
-const SKIRT: f32 = 0.06;
-
-/// What share of its width a skirt's card has where it enters the skin, and how
-/// far along it opens to the whole of it: it has too little length to cover its
-/// own seam with.
-/// Provenance: **tuned by render** (#389), against the seam sweep.
-const SKIRT_PINCH: f32 = 0.12;
-/// See [`SKIRT_PINCH`].
-const SKIRT_OPENS: f32 = 0.5;
-
-/// The same of an upright card, which leaves the skin well along it, on the
-/// crest, where a viewer sees the seam from above whatever lies beside it: so it
-/// has hardly any width there, and a card reads as a spear of hair.
-/// Provenance: **tuned by render** (#389), against the seam sweep.
-const UPRIGHT_PINCH: f32 = 0.12;
-/// See [`UPRIGHT_PINCH`].
-const UPRIGHT_OPENS: f32 = 0.8;
-
-/// How a stiff mane's cards stand, on one record: see [`Lock::standing`].
-#[derive(Clone, Copy, Debug, Default)]
-struct Stand {
-    /// How stiff, `0..=1`.
-    stiffness: f32,
-    /// How far a full-weight card rises, in metres, before its share of a
-    /// card's length is taken.
-    rise: f32,
-    /// How long a full-weight card is at full stiffness, in metres.
-    least: f32,
-}
 
 /// One zone's cards, cut for one record's length on one body.
 pub(super) struct Lock<'a> {
@@ -362,16 +335,14 @@ pub(super) struct Lock<'a> {
     width: f32,
     /// What that would be on a limp card.
     limp_width: f32,
+    /// How stiff a mane's cards are, `0..=1`: see [`Lock::section`].
+    stiffness: f32,
     taper: f32,
     lie: f32,
     droop: f32,
     pinch: f32,
-    /// How far along it opens to its whole width.
-    opens: f32,
     /// How far a card's drawn spine may stray from its curve, in metres.
     flatness: f32,
-    /// How a mane's cards stand.
-    stand: Stand,
 }
 
 impl<'a> Lock<'a> {
@@ -393,71 +364,27 @@ impl<'a> Lock<'a> {
         } else {
             0.0
         };
-        let reach = bed.anatomy.height * length.max(0.0).sqrt();
-        let stand = Stand {
-            stiffness,
-            // Gone at full stiffness, where all a falling card does is cover
-            // the crest's seams.
-            rise: STAND_REACH * reach * stiffness * ARCHED * (1.0 - stiffness.powi(3)),
-            least: SKIRT * bed.anatomy.height,
-        };
-        Self::cut(zone, bed, crest, length, stand)
-    }
-
-    /// The cards of a mane's crest that do not fall over (see [`crest_split`]):
-    /// as stiff as a card gets, and as tall as the record's `stiffness` says.
-    pub(super) fn upright(
-        bed: &'a Bed<'a>,
-        crest: Option<&'a Crest>,
-        length: f32,
-        stiffness: f32,
-    ) -> Self {
-        // The tallest a mane's crest is at this stiffness.
-        let rise = STAND_REACH * bed.anatomy.height * length.max(0.0).sqrt() * stiffness.powf(0.4);
-        let stand = Stand {
-            stiffness: 1.0,
-            rise,
-            least: rise / STAND_SHARE,
-        };
-        let mut lock = Self::cut(FurZone::Mane, bed, crest, length, stand);
-        // Long over wide, however short: a card as wide as it is long reads as
-        // a scale.
-        lock.width = lock.width.min(stand.rise / STAND_SHARE / UPRIGHT_SLENDER);
-        lock.pinch = UPRIGHT_PINCH;
-        lock.opens = UPRIGHT_OPENS;
-        lock
-    }
-
-    fn cut(
-        zone: FurZone,
-        bed: &'a Bed<'a>,
-        crest: Option<&'a Crest>,
-        length: f32,
-        stand: Stand,
-    ) -> Self {
         let cut = zone.cut();
         let height = bed.anatomy.height;
         // Narrower on shorter fur, so a short ruff is fine rather than a
         // fringe of paddles.
         let limp_width = cut.width * height * length.min(1.0).sqrt();
-        let skirted = stand.stiffness.powi(3);
         Self {
             zone,
             bed,
             crest,
             length: cut.reach * height * length,
-            width: limp_width * (1.0 - NARROWS * stand.stiffness),
+            width: limp_width * (1.0 - NARROWS * stiffness),
             limp_width,
-            stand,
+            stiffness,
             taper: cut.taper,
             // A pixel's worth at the framing a body is judged at, never finer
             // than a head's hair is drawn.
-            flatness: (FLATNESS * height).max(Lock::FINEST),
+            // Coarser the stiffer: a stiff card's bend is long and shallow, and
+            // drawn as finely as a limp card's wrap it is the dearest fur there is.
+            flatness: (FLATNESS * height).max(Lock::FINEST) * (1.0 + stiffness),
             lie: cut.lie,
-            // A falling card at full stiffness is a short skirt, which has no
-            // length left to cover its own seam with: it pinches as a crest's.
-            pinch: cut.pinch + (SKIRT_PINCH - cut.pinch) * skirted,
-            opens: OPENS + (SKIRT_OPENS - OPENS) * skirted,
+            pinch: cut.pinch,
             // Long hair hangs and short fur stands, by how long it is in
             // metres: a horse's tail falls where a cat's brush fluffs.
             droop: cut.droop * (0.5 + cut.reach * height * length / DROOP_LENGTH).min(3.0),
@@ -465,28 +392,7 @@ impl<'a> Lock<'a> {
     }
 }
 
-/// How `count` cards of a mane are shared out at `stiffness`, as the ones that
-/// fall over and the ones that stand as its crest: all fall on a limp mane, and
-/// on a stiff one eight in ten stand and seven in ten lie under them as a skirt. The
-/// upright cards' tips are the crest's frayed outline, where a falling card's
-/// arch has only an edge.
-/// Provenance: **tuned by render** (#389).
-pub(super) fn crest_split(count: usize, stiffness: f32) -> (usize, usize) {
-    let stiffness = stiffness.clamp(0.0, 1.0);
-    let of = |share: f32| (count as f32 * share).round() as usize;
-    (
-        of(1.0 - 0.3 * stiffness.powi(3)),
-        of(0.8 * stiffness.sqrt()),
-    )
-}
-
 impl Lock<'_> {
-    /// How long a card is cut, before a mane's stiffness shortens it. Shorter
-    /// where the mask is weaker, so a zone thins out at its edge.
-    fn uncut(&self, root: &Root) -> f32 {
-        self.length * root.weight.clamp(0.0, 1.0).sqrt()
-    }
-
     /// How much of a mane's card's way out of the skin it has still to go, a
     /// share of the way along it: `1` at its root, and none from
     /// [`Self::comes_out`] on, which it reaches at a shallow angle.
@@ -503,10 +409,10 @@ impl Lock<'_> {
         if self.pinch >= 1.0 {
             return 0.0;
         }
-        // Measured off the width a limp card has: a stiff card is narrower for
-        // its short length's sake, and no less steep where it leaves the skin.
+        // Measured off the width a limp card has: a stiff card is narrower, and
+        // no less steep where it leaves the skin.
         let base = self.limp_width * root.weight.clamp(0.0, 1.0).sqrt();
-        (base * self.zone.cut().pinch * (1.0 + BURY * self.stand.stiffness.powi(3)))
+        (base * self.zone.cut().pinch * (1.0 + BURY * self.stiffness.powi(3)))
             .min(self.length(root) * COMES_OUT * 0.25)
     }
 
@@ -516,24 +422,74 @@ impl Lock<'_> {
         self.sunk(root) * 4.0
     }
 
-    /// How far this card rises off the crest, in metres, and how far along it,
-    /// in metres, it starts to: its foot.
+    /// How far a card of `total` metres lies low before it lifts: over the crest
+    /// and on, over where the other side's cards come out, until there is nothing
+    /// left to stand on it.
+    fn foot(&self, root: &Root, total: f32) -> f32 {
+        (self.comes_out(root) * FOOT).min(total * FOOT_SHARE) * (1.0 - self.stiffness)
+    }
+
+    /// How far from straight up a stiff card's run leans.
+    fn leans(&self) -> f32 {
+        FRAC_PI_2 * (1.0 - self.stiffness.powf(0.4))
+    }
+
+    /// The radius of the bend a card takes up off the skin.
+    fn lifts(&self, root: &Root) -> f32 {
+        (self.comes_out(root) * LIFTS_OFF).max(f32::EPSILON)
+    }
+
+    /// How far along a card of `total` metres it has lifted off its foot and is
+    /// on its run.
+    fn lifted(&self, root: &Root, total: f32) -> f32 {
+        self.foot(root, total) + self.lifts(root) * (FRAC_PI_2 - self.leans())
+    }
+
+    /// A stiff card a way `travel` along it, in the plane across the neck: how
+    /// far it has gone to its side, and how far up off the crest.
     ///
-    /// A card is cut for its record's length and the rise is taken out of that
-    /// (see [`Shape::length`]), so a stiff mane is short for being stiff and a
-    /// long mane still longer than a short one at any stiffness.
-    fn standing(&self, crest: &Crest, root: &Root) -> (f32, f32) {
-        if self.stand.stiffness <= 0.0 {
-            return (0.0, 0.0);
+    /// **One curve at every stiffness, its length its own** (#389). It comes off
+    /// the skin on a bend, runs straight at the angle its stiffness holds it at,
+    /// and past as much of its length as its stiffness stands it, bends over and
+    /// falls: straight lines and arcs of circles, so a way along the curve is a
+    /// way along the card, whatever shape the stiffness gives it. At full
+    /// stiffness the straight run is all of it, and square to the crest; at none
+    /// the run is gone, the bend is the neck's own, and [`Lock::draped`]'s limp
+    /// curve has taken over.
+    fn section(&self, root: &Root, travel: f32, total: f32, beside: f32) -> (f32, f32) {
+        let stiff = self.stiffness;
+        let leans = self.leans();
+        let lifts = self.lifts(root);
+        let foot = self.foot(root, total);
+        if travel <= foot {
+            return (travel, 0.0);
         }
-        let length = self.length(root);
-        let radius = crest.near(root.at).skin_at(WRAP * 0.5);
-        let foot = (self.comes_out(root) * 0.5 + FOOT_TURN * radius) / SWEEP.sin();
-        let foot = foot.min(length * (1.0 - STAND_SHARE));
-        // By its weight, where its length goes by the root of that: a thin
-        // card at a mane's end hardly rises, or its few stations turn it over.
-        let rise = self.stand.rise * root.weight.clamp(0.0, 1.0);
-        (rise.min(self.uncut(root) * STAND_SHARE), foot)
+        let lifted = self.lifted(root, total);
+        if travel <= lifted {
+            let turn = (travel - foot) / lifts;
+            return (foot + lifts * turn.sin(), lifts * (1.0 - turn.cos()));
+        }
+        let turn = FRAC_PI_2 - leans;
+        let mut x = foot + lifts * turn.sin();
+        let mut y = lifts * (1.0 - turn.cos());
+        let stands = lifted + (total - lifted).max(0.0) * stiff.powf(1.35);
+        let run = travel.min(stands) - lifted;
+        x += run * leans.sin();
+        y += run * leans.cos();
+        let past = travel - stands;
+        if past <= 0.0 {
+            return (x, y);
+        }
+        // Round to the neck's side, and no wider, until it is stiff enough to
+        // bow: a limp card sent wider than the neck stands out as a wing.
+        let fits = (beside - x).max(0.0) / (leans.cos() - OVER.cos());
+        let bow = fits.max(f32::EPSILON) + total * (BOW_EARLY * stiff + BOW * stiff.powi(4));
+        let bend = (past / bow).min(OVER - leans).max(0.0);
+        let heading = leans + bend;
+        x += bow * (leans.cos() - heading.cos());
+        y += bow * (heading.sin() - leans.sin());
+        let falling = past - bend * bow;
+        (x + falling * heading.sin(), y + falling * heading.cos())
     }
 
     /// Where a mane's card has got to, a share of the way along it: back
@@ -541,49 +497,94 @@ impl Lock<'_> {
     /// as [`Crest`] measured it plus its loft, until it has come round far
     /// enough to hang free.
     ///
-    /// **A stiff card rises on the way** (#389). Over its rise the card stops
-    /// going round the neck, comes back to the crest's line and lifts off it;
-    /// past its top it comes back down as it goes on round. At no stiffness
-    /// there is no rise and this is the draped mane of #386, byte for byte.
+    /// **A stiff card stands on the way** (#389): it sweeps back along the crest
+    /// less, and [`Self::section`] lifts it off the neck. At no stiffness this is
+    /// the draped mane of #386, byte for byte.
     fn draped(&self, crest: &Crest, root: &Root, along: f32) -> Draped {
         let length = self.length(root);
         let buried = self.buried(root, along);
         let side = Vec3::X * if root.out.x < 0.0 { -1.0 } else { 1.0 };
-        let gone = length * along;
-        let (rise, foot) = self.standing(crest, root);
-        let (risen, stood) = if rise > 0.0 {
-            let risen = step(0.0, 1.0, (gone - foot) / rise);
-            let fallen = step(0.0, 1.0, (gone - foot - rise) / (rise * FALL));
-            (risen, risen * (1.0 - fallen))
+        let stiff = self.stiffness;
+        let stands = if stiff > 0.0 {
+            step(0.0, STIFF_FROM, stiff)
         } else {
-            (0.0, 0.0)
+            0.0
         };
-        // What the rise spends goes neither back along the crest nor round the
-        // neck, past its own rake.
-        let spent = gone - rise * risen;
-        let (here, past) = crest.walked(root.at, spent * SWEEP.cos() + rise * risen * RAKE);
+        let drawn = length * (1.0 + (DRAWN - 1.0) * stands);
+        let gone = drawn * along;
+        let sweep = SWEEP + (FRAC_PI_2 - SWEEP) * stiff * stiff * stiff;
+        let (here, past) = crest.walked(root.at, gone * sweep.cos());
         // From under the far side of the crest, so that the two sides' cards
         // cross on it and each covers where the other comes out.
-        let travel = spent * SWEEP.sin() - self.comes_out(root) * 0.5;
+        let out = self.comes_out(root) * 0.5;
+        let travel = gone * sweep.sin() - out;
         let radius = here.skin_at(WRAP * 0.5);
-        let turned = (travel / radius).min(WRAP) * (1.0 - (1.0 - RIDGE) * stood);
+        let wrapped = (travel / radius).min(WRAP);
+        // Off the skin at a share of the way along, on top of the skin itself: a limp
+        // card's whole lift, and all a stiff card's foot has while it lies low.
+        let lift = |along: f32| {
+            (LOFT_AT_ROOT * self.bed.anatomy.height
+                + length * (ARCH * (PI * (along / ARCH_ENDS).min(1.0)).sin() + LOFT * along))
+                * (1.0 - self.buried(root, along))
+        };
+        let limp_off = here.skin_at(wrapped.abs()) + lift(along);
+        let hangs = travel - wrapped * radius;
+        let (turned, off) = if stands > 0.0 {
+            let across = drawn * sweep.sin();
+            let total = across - out;
+            // At a share of the way along: how far round the neck it is, how far off
+            // the bone its curve puts it, and how far the skin and its lift do.
+            let placed = |along: f32| {
+                let travel = across * along - out;
+                let (x, y) = if travel > 0.0 {
+                    self.section(root, travel, total, here.skin_at(FRAC_PI_2))
+                } else {
+                    (travel, 0.0)
+                };
+                // Higher, once it is clear of where it came out: until it stands, this
+                // is all that lifts its outline.
+                let arch =
+                    length * STIFF_ARCH * stiff * (1.0 - stiff).powi(2) * step(0.15, 0.4, along);
+                let high = here.skin[0] + y + arch;
+                let round = x.atan2(high);
+                (
+                    round,
+                    x.hypot(high),
+                    here.skin_at(round.abs()) + lift(along),
+                )
+            };
+            let (round, curve, clear) = placed(along);
+            // Its foot lies on its lift, over the other side's seams. Past the foot
+            // what that lift stood above the curve goes with it: a floor the curve
+            // had to climb back up to would hold it still across the neck while it
+            // went on along the crest, which swings a width squared to its way round
+            // to face that way, and turns it over.
+            let left = ((self.lifted(root, total) + out) / across.max(f32::EPSILON)).min(1.0);
+            let stood = if along <= left {
+                curve.max(clear)
+            } else {
+                let (_, curve_then, clear_then) = placed(left);
+                curve + (clear_then - curve_then).max(0.0)
+            };
+            (
+                wrapped + (round - wrapped) * stands,
+                limp_off + (stood - limp_off) * stands,
+            )
+        } else {
+            (wrapped, limp_off)
+        };
         Draped {
             up: here.up,
             side,
             run: here.run,
+            sweep,
             turned,
-            stood,
-            stiffness: self.stand.stiffness,
+            stands,
             // The bone under the crest it has come down to, and on past the
             // crest's end.
             bone: here.at - here.up * here.skin[0] + here.run * past,
-            off: here.skin_at(turned.abs())
-                + (LOFT_AT_ROOT * self.bed.anatomy.height
-                    + length * (ARCH * (PI * (along / ARCH_ENDS).min(1.0)).sin() + LOFT * along)
-                    + rise * stood)
-                    * (1.0 - buried)
-                - self.sunk(root) * buried,
-            hangs: travel - (travel / radius).min(WRAP) * radius,
+            off: off - self.sunk(root) * buried,
+            hangs: hangs * (1.0 - stands),
         }
     }
 }
@@ -593,12 +594,12 @@ struct Draped {
     up: Vec3,
     side: Vec3,
     run: Vec3,
+    /// How far off the neck's run toward its side it combs, in radians.
+    sweep: f32,
     /// How far round the neck, in radians.
     turned: f32,
-    /// How far up its rise it stands, `0..=1`: see [`Lock::standing`].
-    stood: f32,
-    /// How stiff the card is.
-    stiffness: f32,
+    /// How far from draped to stiff it is, `0..=1`: see [`Lock::section`].
+    stands: f32,
     /// The bone it lies round.
     bone: Vec3,
     /// How far it lies off that bone.
@@ -625,29 +626,23 @@ impl Draped {
         let turning = self.side * self.turned.cos() - self.up * self.turned.sin();
         let lying = self
             .round()
-            .cross(self.run * SWEEP.cos() + turning * SWEEP.sin());
-        // Going up, a card's width lies along the crest, its face to the side.
+            .cross(self.run * self.sweep.cos() + turning * self.sweep.sin());
+        // A stiff card's width lies along the crest however it is bent, so that
+        // it goes on lying the way it did: the loft squares this to the card.
         let along_crest = self.run * lying.dot(self.run).signum();
-        lying.lerp(along_crest, self.stood * self.stiffness * self.stiffness)
+        lying.lerp(along_crest, self.stands)
     }
 }
 
 impl Shape for Lock<'_> {
     fn length(&self, root: &Root) -> f32 {
-        let uncut = self.uncut(root);
-        let stiff = self.stand.stiffness;
-        if stiff <= 0.0 {
-            return uncut;
-        }
-        // A stiff mane is a short one: what is past a card's least goes as it
-        // stiffens, and is gone at full stiffness.
-        let least = (self.stand.least * root.weight.clamp(0.0, 1.0).sqrt()).min(uncut);
-        least + (uncut - least) * (1.0 - stiff.powi(3))
+        // Shorter where the mask is weaker, so a zone thins out at its edge.
+        self.length * root.weight.clamp(0.0, 1.0).sqrt()
     }
 
     fn at(&self, root: &Root, along: f32) -> Vec3 {
         if let Some(crest) = self.crest {
-            let limp = 1.0 - self.stand.stiffness;
+            let limp = 1.0 - self.stiffness;
             return self.draped(crest, root, along).at()
                 + Vec3::NEG_Y * (limp * self.droop * self.length(root) * along.powi(3) * 0.25);
         }
@@ -670,7 +665,7 @@ impl Shape for Lock<'_> {
     }
 
     fn keeps_its_way_round(&self) -> bool {
-        self.stand.stiffness > 0.0
+        self.stiffness > 0.0
     }
 
     fn width(&self, root: &Root) -> (f32, f32) {
@@ -681,7 +676,7 @@ impl Shape for Lock<'_> {
     fn width_at(&self, root: &Root, along: f32) -> f32 {
         let (base, tip) = self.width(root);
         let along = along.clamp(0.0, 1.0);
-        let opened = self.pinch + (1.0 - self.pinch) * (along / self.opens).min(1.0);
+        let opened = self.pinch + (1.0 - self.pinch) * (along / OPENS).min(1.0);
         (base + (tip - base) * along) * opened
     }
 

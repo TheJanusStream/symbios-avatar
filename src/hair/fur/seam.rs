@@ -7,7 +7,8 @@
 //! each such point is asked whether any card lies between it and a camera.
 //!
 //! And what a mane's stiffness does above that line (#389): how far its outline
-//! stands off the crest, side on, which is what a whole body's picture shows.
+//! stands off the crest, side on, which is what a whole body's picture shows,
+//! with the same cards at the same length all the way up the slider.
 
 use glam::Vec3;
 
@@ -162,6 +163,9 @@ struct Reading {
     /// How steeply a card's lines leave the skin, in degrees above it, as the
     /// mean over the cards' lines.
     standing: f32,
+    /// The cosine of the sharpest turn a card's width takes between two stations
+    /// past its root.
+    sharpest: f32,
     /// What share of the stations past a card's seam have gone back into the
     /// skin.
     back_in: f32,
@@ -204,8 +208,17 @@ fn read(avatar: &Avatar, zone: FurZone) -> Reading {
             ));
         }
     }
+    let sharpest = cards
+        .iter()
+        .flat_map(|card| card.edges.windows(2).skip(1))
+        .map(|pair| {
+            let (from, to) = (pair[0].1 - pair[0].0, pair[1].1 - pair[1].0);
+            from.normalize_or_zero().dot(to.normalize_or_zero())
+        })
+        .fold(1.0, f32::min);
     let mut reading = Reading {
         cards: cards.len(),
+        sharpest,
         ..Reading::default()
     };
     let (mut past, mut sunk) = (0usize, 0usize);
@@ -326,12 +339,7 @@ fn seam_table() {
     // The mane's own sweep at each stiffness: 128 beasts a line of three (#389).
     for stiffness in STIFFNESSES {
         let mut seam = (0.0f32, 0.0f32, 0.0f32, 0usize, 0usize);
-        for family in [
-            Some(Family::Horse),
-            Some(Family::Dog),
-            Some(Family::Cat),
-            None,
-        ] {
+        for family in FAMILIES {
             let beasts: Vec<(f32, Avatar)> = [0.2f32, 0.8, 1.5, 3.0]
                 .into_iter()
                 .flat_map(|length| {
@@ -383,12 +391,7 @@ fn seam_table() {
         ("feather", FurZone::Feathering, |fur| fur.feathering = 0.8),
     ];
     for (name, zone, wear) in rows {
-        for family in [
-            Some(Family::Horse),
-            Some(Family::Dog),
-            Some(Family::Cat),
-            None,
-        ] {
+        for family in FAMILIES {
             let mut total = Reading::default();
             let mut most: f32 = 0.0;
             let mut beasts = 0;
@@ -422,20 +425,19 @@ fn seam_table() {
 /// The stiffnesses a mane's tests judge: none, the default and all (#389).
 const STIFFNESSES: [f32; 3] = [0.0, Fur::DEFAULT_MANE_STIFFNESS, 1.0];
 
-/// Every roll a mane's tests judge: each family and its crosses, two rolls of
-/// each, short, long and at the envelope's end, at each of [`STIFFNESSES`].
+/// Every roll a mane's tests judge: each family and its crosses, short, long and
+/// at the envelope's end, two rolls of each at each of [`STIFFNESSES`] and one at
+/// each stiffness between them on a [`SWEEP`] of the slider.
 fn maned() -> impl Iterator<Item = (String, f32, Avatar)> {
-    [
-        Some(Family::Horse),
-        Some(Family::Dog),
-        Some(Family::Cat),
-        None,
-    ]
-    .into_iter()
-    .flat_map(|family| {
+    FAMILIES.into_iter().flat_map(|family| {
         [0.2f32, 0.8, 3.0].into_iter().flat_map(move |length| {
-            STIFFNESSES.into_iter().flat_map(move |stiffness| {
-                rolled(family, 2, move |fur: &mut Fur| {
+            SWEEP.into_iter().flat_map(move |stiffness| {
+                let rolls = if STIFFNESSES.contains(&stiffness) {
+                    2
+                } else {
+                    1
+                };
+                rolled(family, rolls, move |fur: &mut Fur| {
                     fur.mane = length;
                     fur.mane_stiffness = stiffness;
                 })
@@ -489,10 +491,20 @@ fn outline_along(avatar: &Avatar, crest: &Crest, height: f32) -> Vec<f32> {
     let run = last - first;
     let mut bins = [0.0f32; BINS];
     for card in cards(avatar, FurZone::Mane) {
-        for (edges, &along) in card.edges.iter().zip(&card.along) {
-            if along > OUTLINE {
-                continue;
-            }
+        for (station, (edges, &along)) in card.edges.iter().zip(&card.along).enumerate() {
+            // A straight card has few stations: read it where its mask gives out,
+            // between the two either side, and no further.
+            let edges = match station.checked_sub(1) {
+                Some(last) if along > OUTLINE && card.along[last] < OUTLINE => {
+                    let share = (OUTLINE - card.along[last]) / (along - card.along[last]);
+                    (
+                        card.edges[last].0.lerp(edges.0, share),
+                        card.edges[last].1.lerp(edges.1, share),
+                    )
+                }
+                _ if along > OUTLINE => continue,
+                _ => *edges,
+            };
             for point in [edges.0, edges.1, (edges.0 + edges.1) * 0.5] {
                 // Side on: the sideways part of a card is not in the picture.
                 let flat = Vec3::new(0.0, point.y, point.z);
@@ -508,20 +520,6 @@ fn outline_along(avatar: &Avatar, crest: &Crest, height: f32) -> Vec<f32> {
         }
     }
     bins.iter().map(|bin| bin / height).collect()
-}
-
-/// The cards of a mane that fall over, without its crest's.
-fn falling(avatar: &Avatar) -> Vec<Card> {
-    let upright = avatar.parts.fur.as_ref().map_or(0, |fur| {
-        fur.grown
-            .iter()
-            .filter(|grown| grown.zone == FurZone::Mane)
-            .map(|grown| grown.upright)
-            .sum()
-    });
-    let mut cards = cards(avatar, FurZone::Mane);
-    cards.truncate(cards.len() - upright);
-    cards
 }
 
 /// How far along a card it still counts for an outline: its mask holds together
@@ -555,21 +553,46 @@ fn read_all<T: Send + Sync>(beasts: &[(T, Avatar)], zone: FurZone) -> Vec<Readin
     })
 }
 
+/// The cosine of the sharpest turn a mane's card may take: seventy-five degrees.
+const WHOLE: f32 = 0.26;
+
+/// How much seam a camera may see, to the default stiffness and at the top of
+/// the slider, rising evenly between the two.
+const SEEN_TO_THE_DEFAULT: f32 = 0.06;
+/// See [`SEEN_TO_THE_DEFAULT`].
+const SEEN_AT_THE_TOP: f32 = 0.19;
+
 #[test]
 fn a_mane_hides_where_its_cards_enter_the_skin() {
     // One test rather than three, each reading the same dear sweep.
-    let beasts: Vec<(String, Avatar)> = maned().map(|(name, _, avatar)| (name, avatar)).collect();
-    for ((name, _), reading) in beasts.iter().zip(read_all(&beasts, FurZone::Mane)) {
+    let beasts: Vec<((String, f32), Avatar)> = maned()
+        .map(|(name, stiffness, avatar)| ((name, stiffness), avatar))
+        .collect();
+    for (((name, stiffness), _), reading) in beasts.iter().zip(read_all(&beasts, FurZone::Mane)) {
+        let stiffness = *stiffness;
         assert!(reading.cards > 60, "{name}: only {} cards", reading.cards);
         // The owner's complaint in one number: how much of the line where a
         // card meets the neck a camera sees, round the beast and from above it,
         // in shares of the back's height. A mane of standing cards shows about
         // a third of its height's worth from any angle (0.23 to 0.58 over a
         // wider sweep), which is the neck's whole length; the draped one under
-        // 0.03. An upright crest whose cards open early shows 0.13 to 0.20 (#389),
-        // which is what their long pinch is for. Bound set between them after
-        // seeing all of them.
-        assert!(reading.seen < 0.1, "{name} shows its seam: {reading:?}");
+        // 0.03. Up the slider each card's foot lies over the other side's seams
+        // until there is too little foot left to, and past that a root stands in
+        // plain view: pinched thinner to hide it, it left rungs of coat between
+        // the cards, which read far worse (#389). There it hides by its colour:
+        // the skin under a dark mane is painted as the mane
+        // (`crate::texture::coat::ManeRoots`), and on any other coat a card is
+        // the colour of the skin it leaves, as a ruff's are, which reads 0.7 of
+        // this measure and shows nothing. Bounds set after reading `seam_table`
+        // and `seam_by_stiffness`.
+        let past = (stiffness - Fur::DEFAULT_MANE_STIFFNESS).max(0.0)
+            / (1.0 - Fur::DEFAULT_MANE_STIFFNESS);
+        let bound = SEEN_TO_THE_DEFAULT + (SEEN_AT_THE_TOP - SEEN_TO_THE_DEFAULT) * past;
+        assert!(reading.seen < bound, "{name} shows its seam: {reading:?}");
+        // Every ribbon whole, at every value. A card bends where its foot turns up
+        // into its run, by about sixty degrees at the sharpest. One held still across
+        // the neck goes on along the crest, and its width swings round to follow.
+        assert!(reading.sharpest > WHOLE, "{name}: {reading:?}");
         // Each root's whole line, not just its middle: a straight line laid
         // across a curved crest stands off it at both ends. The cards let off
         // are the tiny ones where a mane thins out at either end of the crest.
@@ -616,9 +639,7 @@ fn a_mane_leaves_no_gap_down_either_side_of_the_neck() {
     // run, halfway down each card, one side at a time, no gap may be much
     // wider than the usual one, whatever a root's own jitter does.
     for (name, _, avatar) in maned() {
-        // The falling cards alone: the upright ones stand along only part of
-        // the run, and the crest's own test reads their stretches.
-        let cards = falling(&avatar);
+        let cards = cards(&avatar, FurZone::Mane);
         let middle = |(left, right): (Vec3, Vec3)| (left + right) * 0.5;
         let (Some(first), Some(last)) = (cards.first(), cards.last()) else {
             panic!("{name}: no mane");
@@ -630,7 +651,7 @@ fn a_mane_leaves_no_gap_down_either_side_of_the_neck() {
                 .filter(|card| (card.edges[card.edges.len() - 1].0.x > 0.0) == side)
                 .filter_map(|card| {
                     // Halfway exactly, between stations: a stiff card spends its
-                    // on its rise, and the next along may be far past halfway.
+                    // on its bend, and the next along may be far past halfway.
                     let station = card.along.iter().position(|&along| along >= 0.5)?;
                     let at = middle(card.edges[station]);
                     let Some(before) = station.checked_sub(1) else {
@@ -647,10 +668,9 @@ fn a_mane_leaves_no_gap_down_either_side_of_the_neck() {
             // shortest and a gap is its business.
             let ends = gaps.len() / 7;
             // Against the gaps around it, not the whole mane's: a long one
-            // gathers at the withers, where gaps are small and a stiff mane's
-            // shorter cards do not reach, and a mean of the two called the
-            // ordinary gaps above them wedges (#389). A wedge is one gap in a run
-            // of smaller ones. Bound 3 as it was against the mean.
+            // gathers at the withers, where gaps are small, and a mean of the
+            // two called the ordinary gaps above them wedges (#389). A wedge is one
+            // gap in a run of smaller ones.
             for at in ends..gaps.len() - ends {
                 let around: Vec<f32> = (at.saturating_sub(4)..(at + 5).min(gaps.len()))
                     .filter(|&other| other != at)
@@ -658,7 +678,7 @@ fn a_mane_leaves_no_gap_down_either_side_of_the_neck() {
                     .collect();
                 let usual = mean(&around);
                 assert!(
-                    gaps[at] <= usual * 3.0,
+                    gaps[at] <= usual * GAP,
                     "{name}: a gap of {}, usually {usual}",
                     gaps[at]
                 );
@@ -666,6 +686,11 @@ fn a_mane_leaves_no_gap_down_either_side_of_the_neck() {
         }
     }
 }
+
+/// How much wider than those around it a gap may be. Read off the sweep: limp and
+/// combed even, a mane's worst is 2.84; a stiff card has no comb, and its gaps are
+/// its roots' own jitter, 4.04 at worst (a millimetre or two on a small neck).
+const GAP: f32 = 4.5;
 
 #[test]
 fn a_mane_s_cards_never_turn_over() {
@@ -682,51 +707,262 @@ fn a_mane_s_cards_never_turn_over() {
     }
 }
 
+/// How long a card is along itself, read off its stations' middles.
+fn along_itself(card: &Card) -> f32 {
+    card.edges
+        .windows(2)
+        .map(|pair| ((pair[1].0 + pair[1].1) - (pair[0].0 + pair[0].1)).length() * 0.5)
+        .sum()
+}
+
+/// The longest cards of a mane, the ones its mask leaves whole: their middle
+/// length, in metres.
+fn card_length(avatar: &Avatar) -> f32 {
+    let mut lengths: Vec<f32> = cards(avatar, FurZone::Mane)
+        .iter()
+        .map(along_itself)
+        .collect();
+    lengths.sort_by(f32::total_cmp);
+    lengths[lengths.len() * 3 / 4]
+}
+
+/// Prints, for a person to read, what each stiffness does to a mane: `cargo test
+/// --release stiffness_table -- --ignored --nocapture`.
 #[test]
-fn a_mane_s_crest_stands_higher_the_stiffer_it_is() {
-    // The owner's picture in one number: how far the mane's outline stands above
-    // the neck's skin, side on, along the middle of its crest.
-    for family in [
-        Some(Family::Horse),
-        Some(Family::Dog),
-        Some(Family::Cat),
-        None,
-    ] {
-        for length in [0.3f32, 0.8, 1.5] {
-            let outline = |stiffness: f32| -> Vec<(i64, f32, f32)> {
-                rolled(family, 3, move |fur: &mut Fur| {
-                    fur.mane = length;
+#[ignore = "a table to read, not a check"]
+fn stiffness_table() {
+    for family in FAMILIES {
+        for mane in [0.2f32, 0.8, 1.5] {
+            for stiffness in SWEEP {
+                let beasts: Vec<_> = rolled(family, 3, move |fur: &mut Fur| {
+                    fur.mane = mane;
                     fur.mane_stiffness = stiffness;
                 })
-                .map(|(seed, avatar)| {
-                    let bins = outline_of(&avatar);
-                    let lowest = bins.iter().copied().fold(f32::MAX, f32::min);
-                    (seed, mean(&bins), lowest)
-                })
-                .collect()
-            };
-            let [limp, default, stiff] = STIFFNESSES.map(outline);
-            for ((limp, default), stiff) in limp.iter().zip(&default).zip(&stiff) {
-                let name = format!(
-                    "{} seed {} mane {length}",
+                .map(|(_, avatar)| avatar)
+                .collect();
+                let outline: Vec<f32> = beasts.iter().map(|a| mean(&outline_of(a))).collect();
+                let heights: Vec<f32> = beasts
+                    .iter()
+                    .map(|a| card_length(a) / with_crest(a, |_, height| height))
+                    .collect();
+                let count = beasts
+                    .iter()
+                    .map(|a| cards(a, FurZone::Mane).len())
+                    .min()
+                    .unwrap_or(0);
+                let tris = beasts
+                    .iter()
+                    .map(|a| {
+                        a.parts.fur.as_ref().map_or(0, |fur| {
+                            fur.grown
+                                .iter()
+                                .filter(|grown| grown.zone == FurZone::Mane)
+                                .map(|grown| grown.tris)
+                                .sum::<usize>()
+                        })
+                    })
+                    .max()
+                    .unwrap_or(0);
+                println!(
+                    "{:6} mane {mane:3.1} stiffness {stiffness:4.2}: outline {:.4} length {:.4} (cut {:.4}) cards {count} mane tris {tris}",
                     family.map_or("cross", Family::name),
-                    limp.0
+                    mean(&outline),
+                    mean(&heights),
+                    FurZone::Mane.cut().reach * mane,
                 );
-                let (limp_at, default_at, stiff_at) = (limp.1, default.1, stiff.1);
-                // Bounds set after seeing the sweep: the limp mane's own arch
-                // at 0.012 to 0.040, the default at 0.029 to 0.062 and the
-                // stiff crest at 0.038 to 0.081, in every family and length, the
-                // nearest ratios 1.41 and 1.29.
-                assert!(
-                    default_at > limp_at * 1.3 && stiff_at > default_at * 1.2,
-                    "{name}: {limp_at} {default_at} {stiff_at}"
-                );
-                // And it is a crest along the neck, not a tuft here and there:
-                // no stretch stands much under the rest.
-                for (at, lowest) in [(default_at, default.2), (stiff_at, stiff.2)] {
-                    assert!(lowest > at * 0.6, "{name}: {lowest} against {at}");
-                }
             }
         }
     }
 }
+
+/// Prints the dearest fur at each step of the slider, on long manes over every
+/// roll a sweep builds: `cargo test --release fur_cost_table -- --ignored --nocapture`.
+#[test]
+#[ignore = "a table to read, not a check"]
+fn fur_cost_table() {
+    for step in 0..=10 {
+        let stiffness = step as f32 / 10.0;
+        let dearest = FAMILIES
+            .into_iter()
+            .flat_map(|family| {
+                [0.8f32, 1.0, 1.5, 3.0].into_iter().flat_map(move |length| {
+                    rolled(family, 8, move |fur: &mut Fur| {
+                        fur.mane = length;
+                        fur.mane_stiffness = stiffness;
+                    })
+                })
+            })
+            .map(|(_, avatar)| avatar.parts.fur.as_ref().map_or(0, FurGrowth::tris))
+            .max()
+            .unwrap_or(0);
+        println!("stiffness {stiffness:3.1}: dearest fur {dearest}");
+    }
+}
+
+/// Prints how much seam shows up the slider, on fewer beasts than [`seam_table`]'s
+/// line of each stiffness it judges: `cargo test --release seam_by_stiffness --
+/// --ignored --nocapture`.
+#[test]
+#[ignore = "a table to read, not a check"]
+fn seam_by_stiffness() {
+    for stiffness in SWEEP {
+        let beasts: Vec<(f32, Avatar)> = FAMILIES
+            .into_iter()
+            .flat_map(|family| {
+                [0.2f32, 0.8, 1.5, 3.0].into_iter().flat_map(move |length| {
+                    rolled(family, 2, move |fur: &mut Fur| {
+                        fur.mane = length;
+                        fur.mane_stiffness = stiffness;
+                    })
+                    .map(move |(_, avatar)| (length, avatar))
+                })
+            })
+            .collect();
+        let readings = read_all(&beasts, FurZone::Mane);
+        let seen: Vec<f32> = readings.iter().map(|reading| reading.seen).collect();
+        for wanted in [0.2f32, 0.8, 1.5, 3.0] {
+            let some: Vec<f32> = beasts
+                .iter()
+                .zip(&seen)
+                .filter(|((length, _), _)| *length == wanted)
+                .map(|(_, seen)| *seen)
+                .collect();
+            println!(
+                "  mane {wanted:3.1}: seen mean {:.4} most {:.4}",
+                mean(&some),
+                some.iter().copied().fold(0.0, f32::max)
+            );
+        }
+        let most = seen.iter().copied().fold(0.0, f32::max);
+        let open: usize = readings.iter().map(|reading| reading.open_roots).sum();
+        let steepest = readings
+            .iter()
+            .map(|reading| reading.standing)
+            .fold(0.0, f32::max);
+        println!(
+            "stiffness {stiffness:4.2}: seen mean {:.4} most {most:.4}, steepest {steepest:.1}, open {open}",
+            mean(&seen)
+        );
+    }
+}
+
+/// Every family and its crosses.
+const FAMILIES: [Option<Family>; 4] = [
+    Some(Family::Horse),
+    Some(Family::Dog),
+    Some(Family::Cat),
+    None,
+];
+
+/// The stiffnesses a sweep of the slider reads.
+const SWEEP: [f32; 7] = [0.0, 0.1, 0.2, Fur::DEFAULT_MANE_STIFFNESS, 0.6, 0.8, 1.0];
+
+/// Each family's and its crosses' first `rolls` beasts with a mane `length` long,
+/// at every stiffness of the [`SWEEP`], one line of them a roll.
+fn along_the_slider(length: f32, rolls: usize) -> impl Iterator<Item = (String, Vec<Avatar>)> {
+    FAMILIES.into_iter().flat_map(move |family| {
+        (0..rolls).map(move |roll| {
+            let name = format!(
+                "{} roll {roll} mane {length}",
+                family.map_or("cross", Family::name)
+            );
+            let line = SWEEP
+                .into_iter()
+                .map(|stiffness| {
+                    rolled(family, roll + 1, move |fur: &mut Fur| {
+                        fur.mane = length;
+                        fur.mane_stiffness = stiffness;
+                    })
+                    .nth(roll)
+                    .map(|(_, avatar)| avatar)
+                    .expect("a roll")
+                })
+                .collect();
+            (name, line)
+        })
+    })
+}
+
+#[test]
+fn a_mane_is_the_same_cards_at_every_stiffness() {
+    // No value of the slider where a set of cards appears or vanishes: a crest
+    // of its own, grown over the falling cards from some stiffness on, is the
+    // one thing the owner asked to be rid of (#389).
+    for length in [0.2f32, 0.8, 1.5] {
+        for (name, line) in along_the_slider(length, 2) {
+            let counts: Vec<usize> = line
+                .iter()
+                .map(|avatar| cards(avatar, FurZone::Mane).len())
+                .collect();
+            assert!(
+                counts.iter().all(|&count| count == counts[0]),
+                "{name}: {counts:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_mane_is_as_long_at_every_stiffness() {
+    // `mane` is how long a card is; stiffness only bends it.
+    for length in [0.2f32, 0.8, 1.5] {
+        for (name, line) in along_the_slider(length, 2) {
+            let lengths: Vec<f32> = line.iter().map(card_length).collect();
+            let longest = lengths.iter().copied().fold(0.0, f32::max);
+            let shortest = lengths.iter().copied().fold(f32::MAX, f32::min);
+            assert!(longest < shortest * LENGTH_BOUND, "{name}: {lengths:?}");
+        }
+    }
+}
+
+/// How much longer a mane's longest card on the slider is than its shortest, at
+/// most: 1.283 at worst on the sweep, a horse's limp card against a stiff one, the
+/// limp curve being the longer for how far its neck stands off its bone.
+/// Provenance: **measured** (`stiffness_table`).
+const LENGTH_BOUND: f32 = 1.33;
+
+#[test]
+fn a_mane_stands_higher_the_stiffer_it_is() {
+    // The owner's picture in one number: how far the mane's outline stands above
+    // the neck's skin, side on, along the middle of its crest, up the slider.
+    for length in [0.3f32, 0.8, 1.5] {
+        for (name, line) in along_the_slider(length, 2) {
+            let bins: Vec<Vec<f32>> = line.iter().map(outline_of).collect();
+            let means: Vec<f32> = bins.iter().map(|bins| mean(bins)).collect();
+            // Stepping over 0.1, where a limp card's arch hands over and a couple
+            // of millimetres either way are nobody's picture: six values.
+            assert!(means[2] > means[0] * RISES, "{name}: {means:?}");
+            for pair in means[2..6].windows(2) {
+                assert!(pair[1] > pair[0] * RISES, "{name}: {means:?}");
+            }
+            // By 0.8 a long mane has all the height its length gives it: from there
+            // to the top of the slider what changes is how far its tips bend over.
+            assert!(means[6] > means[5] * HOLDS, "{name}: {means:?}");
+            // At full stiffness, about as high as the card is long, as far as
+            // the outline reads it: its last fraying tip left out.
+            let reach = FurZone::Mane.cut().reach * length;
+            assert!(
+                means[6] > reach * STANDS_ALL_OF_IT,
+                "{name}: {} against a cut of {reach}",
+                means[6]
+            );
+            // And it is a crest along the neck, not a tuft here and there. The
+            // lowest stretch is toward the withers, where its cards thin out: 0.45
+            // of the mean at worst on the sweep.
+            for (bins, at) in bins.iter().zip(&means).skip(3) {
+                let lowest = bins.iter().copied().fold(f32::MAX, f32::min);
+                assert!(lowest > at * 0.4, "{name}: {lowest} against {at}");
+            }
+        }
+    }
+}
+
+/// How much higher each step up the slider stands, at least. Read off the sweep:
+/// the thinnest step, off a limp mane's own arch on a long-maned cross, is 1.042.
+const RISES: f32 = 1.01;
+/// How much of its height at 0.8 a mane keeps at full stiffness. Read off the
+/// sweep: 0.98.
+const HOLDS: f32 = 0.95;
+/// How much of its cut a mane stands at full stiffness, at least, where its outline
+/// is read short of its tip and its cards thin out. Read off the sweep: 0.839.
+const STANDS_ALL_OF_IT: f32 = 0.8;

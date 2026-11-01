@@ -25,6 +25,13 @@
 //! skin weights draw. Below it a leg wears its own frame - rings closer than
 //! the barrel's bands, spots finer - and its colour regions where its zone
 //! used to put them.
+//!
+//! **The skin under a dark mane is the mane's colour** (#389). A bay's or a
+//! dun's mane is drawn in its dark, so where a card leaves the neck the skin
+//! beside it would show as a line of another colour, and between two cards as a
+//! rung of it. So the painter darkens the line the mane grows from
+//! ([`ManeRoots`]), as a hair card's scalp is painted: nothing else on the coat
+//! knows a mane is there, and no other coat changes.
 
 mod body;
 mod marks;
@@ -110,13 +117,71 @@ enum Surface {
     Horn(f32),
 }
 
-/// Paints a beast's coat into the atlas its body was baked into.
+/// Whether a coat draws its long hair in its own dark: a bay's, a dun's.
+pub(crate) fn darkens_points(coat: &Coat) -> bool {
+    coat.agouti == Agouti::Bay || coat.dun
+}
+
+/// The skin a mane in a coat's dark grows out of (#389): the line it is rooted
+/// along, which the painter darkens as hair cards' scalps are painted, so that
+/// what shows between two cards where they leave the neck is the mane again.
+#[derive(Clone, Debug)]
+pub(crate) struct ManeRoots {
+    /// The line, and how far off it the colour reaches at each of its points.
+    line: Vec<(Vec3, f32)>,
+    /// A box round all of it, so that nearly every texel asks one question.
+    bounds: (Vec3, Vec3),
+}
+
+impl ManeRoots {
+    /// How much of a soft edge the colour has, as a share of its reach.
+    /// Provenance: **tuned by render** (#389).
+    const SOFT: f32 = 0.4;
+
+    /// The roots along `line`, each reaching as far as it says.
+    pub(crate) fn new(line: Vec<(Vec3, f32)>) -> Self {
+        let most = line.iter().fold(0.0f32, |most, point| most.max(point.1));
+        let bounds = line.iter().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(low, high), point| {
+                (
+                    low.min(point.0 - Vec3::splat(most)),
+                    high.max(point.0 + Vec3::splat(most)),
+                )
+            },
+        );
+        Self { line, bounds }
+    }
+
+    /// How much of the mane's colour the skin at `at` takes, `0..=1`.
+    fn share(&self, at: Vec3) -> f32 {
+        if at.cmplt(self.bounds.0).any() || at.cmpgt(self.bounds.1).any() {
+            return 0.0;
+        }
+        let mut most = 0.0f32;
+        for piece in self.line.windows(2) {
+            let ((from, from_reach), (to, to_reach)) = (piece[0], piece[1]);
+            let run = to - from;
+            let t = ((at - from).dot(run) / run.length_squared().max(f32::EPSILON)).clamp(0.0, 1.0);
+            let reach = from_reach + (to_reach - from_reach) * t;
+            if reach > 0.0 {
+                let off = (at - from - run * t).length();
+                most = most.max(step(reach, reach * (1.0 - Self::SOFT), off));
+            }
+        }
+        most
+    }
+}
+
+/// Paints a beast's coat into the atlas its body was baked into, the skin
+/// under `mane`, if it has one, in the mane's colour.
 #[must_use]
 pub(crate) fn paint_coat(
     geometry: &AtlasGeometry,
     rig: &Rig,
     coat: &Coat,
     body: &CoatBody,
+    mane: Option<&ManeRoots>,
 ) -> TextureMap {
     let palette = Palette::of(coat);
     let fields = Fields::new(coat.marks, body.height);
@@ -137,6 +202,17 @@ pub(crate) fn paint_coat(
                 FUR_ROUGHNESS + (HORN_ROUGHNESS - FUR_ROUGHNESS) * share,
                 1.0 - share,
             ),
+        };
+        let colour = match mane {
+            Some(mane) if surface == Surface::Fur => {
+                let share = mane.share(texel.position);
+                if share > 0.0 {
+                    colour.lerp(painter.points(), share)
+                } else {
+                    colour
+                }
+            }
+            _ => colour,
         };
         // The inside of a mouth is flesh, whatever the coat: the jaw's and the
         // tongue's, which carry it as a channel of their own through the bake.
@@ -201,9 +277,8 @@ impl<'a> CoatSampler<'a> {
     /// coat's own there, or its dark on a coat that darkens its points -
     /// a bay's, a dun's - and white where white spotting reaches.
     pub(crate) fn points(&self, at: Vec3, normal: Vec3, zone: Zone) -> Vec3 {
-        if self.coat.agouti == Agouti::Bay || self.coat.dun {
-            let white = self.ask(at, normal, zone, |painter| painter.white());
-            self.palette.dark.lerp(WHITE, white)
+        if darkens_points(self.coat) {
+            self.ask(at, normal, zone, |painter| painter.points())
         } else {
             self.colour(at, normal, zone)
         }
@@ -613,6 +688,12 @@ impl<'a> Painter<'a> {
         body * self.off_head()
     }
 
+    /// A coat's dark, and white where white spotting reaches: its long hair's
+    /// colour, on a coat that darkens its points.
+    fn points(&self) -> Vec3 {
+        self.palette.dark.lerp(WHITE, self.white())
+    }
+
     /// How much of a dun's dilution reaches here, `0..=1`: all of the body,
     /// thinning out down the legs and toward the tail's tip, which keep
     /// their colour.
@@ -815,6 +896,55 @@ mod tests {
             .chunks_exact(4)
             .filter(|texel| (0..3).all(|channel| texel[channel].abs_diff(stored[channel]) <= 1))
             .count()
+    }
+
+    #[test]
+    fn the_skin_under_a_dark_mane_takes_its_colour_and_no_other_coat_changes() {
+        let with_mane = |dun: bool, agouti: Agouti, mane: f32| {
+            painted(Family::Horse, |params| {
+                params.coat.dun = dun;
+                params.coat.agouti = agouti;
+                params.fur.mane = mane;
+            })
+        };
+        for (dun, agouti) in [(false, Agouti::Bay), (true, Agouti::Solid)] {
+            let (bare, palette) = with_mane(dun, agouti, 0.0);
+            let (maned, _) = with_mane(dun, agouti, 0.8);
+            let before = texels_of(&bare, palette.dark);
+            let after = texels_of(&maned, palette.dark);
+            // Measured: about 3,650, a line down the neck, and no further than that.
+            assert!(
+                (2000..6000).contains(&(after - before)),
+                "dun {dun} {agouti:?}: {before} dark texels to {after} under its mane"
+            );
+        }
+        // A coat that draws its mane in its own colour has nothing to hide.
+        let (bare, _) = with_mane(false, Agouti::Solid, 0.0);
+        let (maned, _) = with_mane(false, Agouti::Solid, 0.8);
+        assert!(bare.skin.albedo == maned.skin.albedo);
+    }
+
+    #[test]
+    fn a_mane_s_roots_reach_as_far_as_their_line_says_and_fade_there() {
+        let reach = 0.1;
+        let roots = ManeRoots::new(vec![
+            (Vec3::ZERO, reach),
+            (Vec3::Y, reach),
+            (Vec3::new(0.0, 2.0, 0.0), 0.0),
+        ]);
+        let up = Vec3::new(0.0, 0.5, 0.0);
+        assert_eq!(roots.share(up), 1.0, "on the line");
+        assert_eq!(
+            roots.share(up + Vec3::X * 0.05),
+            1.0,
+            "inside its soft edge"
+        );
+        let edge = roots.share(up + Vec3::X * 0.08);
+        assert!(edge > 0.0 && edge < 1.0, "in its soft edge: {edge}");
+        assert_eq!(roots.share(up + Vec3::X * reach), 0.0, "at its reach");
+        assert_eq!(roots.share(Vec3::splat(9.0)), 0.0, "out of its bounds");
+        // Narrowing to nothing at the end of the line, which has no width to read.
+        assert_eq!(roots.share(Vec3::new(0.05, 2.0, 0.0)), 0.0);
     }
 
     #[test]

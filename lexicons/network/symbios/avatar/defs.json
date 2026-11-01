@@ -479,7 +479,7 @@
         },
         "maneStiffness": {
           "type": "integer",
-          "description": "How stiff the mane is (#389): at 0 it lies flat over the neck and drapes, at 1000 it is a short stiff upright crest, a zebra's or a hogged mane; between, a crest stands along the neck and the rest of the mane falls over it. Its length stays mane's. Never rolled: a beast starts at the default and its owner changes it. Thousandths, 0 to 1000; readers clamp to these bounds. Left off at the default.",
+          "description": "How stiff the mane is (#389): at 0 it lies flat over the neck and drapes, at 1000 it stands straight up off the crest, a zebra's or a hogged mane; between, it stands further the stiffer it is before it bends over and falls. Its length stays mane's. Never rolled: a beast starts at the default and its owner changes it. Thousandths, 0 to 1000; readers clamp to these bounds. Left off at the default.",
           "minimum": 0,
           "maximum": 1000,
           "default": 400

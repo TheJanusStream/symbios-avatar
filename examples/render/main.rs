@@ -57,6 +57,7 @@
 //! cargo run --release --example render -- --corners 12 # smile this many degrees (negative frowns)
 //! cargo run --release --example render -- --expression happy # or sad, angry, surprised, neutral
 //! cargo run --release --example render -- --viseme aa # an Oculus-15 mouth shape; try SS, oh, ou
+//! cargo run --release --example render -- --quadruped --upper-legs # how the legs' outsides sit over the trunk; --at C mid-stride, --gesture NAME --at T a pose
 //! cargo run --release --example render -- --jawsweep # tune the jaw's binding reach by measurement
 //! cargo run --release --example render -- --clip Punch_Cross            # a CC0 clip, retargeted
 //! cargo run --release --example render -- --clip Wave --clipframes 12   # more frames of it
@@ -1411,6 +1412,25 @@ fn main() {
         return;
     }
 
+    // `--upper-legs` standing, or `--at C` that far through a stride: how the
+    // outsides of a beast's upper legs sit over its trunk (#394). With
+    // `--gesture NAME --at T` it draws that moment instead, below.
+    let upper_legs = args.iter().any(|arg| arg == "--upper-legs");
+    if upper_legs && value("--gesture").is_none() {
+        let pose = match value("--at").and_then(|cycle| cycle.parse::<f32>().ok()) {
+            Some(cycle) => subject.walking(cycle),
+            None => subject.standing(),
+        };
+        let mut sheet = Image::new(VIEW * 2, VIEW * 2);
+        for (index, frame) in subject.upper_leg_frames().iter().enumerate() {
+            let view = subject.view(&pose, 0.0, frame);
+            sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
+        }
+        write(&out, &format!("{stem}_upper_legs"), &sheet);
+        println!("rendered the upper legs");
+        return;
+    }
+
     // `--underside` standing: how a beast's legs join its trunk (#387). With
     // `--gesture NAME --at T` it draws that moment instead, below.
     if args.iter().any(|arg| arg == "--underside") && value("--gesture").is_none() {
@@ -1446,7 +1466,9 @@ fn main() {
             // `--underside`: the same moment from below, in front and from
             // the low three-quarters, where a leg's junction reads (#387).
             let underside = args.iter().any(|arg| arg == "--underside");
-            let frames = if underside {
+            let frames = if upper_legs {
+                subject.upper_leg_frames()
+            } else if underside {
                 subject.underside_frames()
             } else {
                 subject.sheet_frames()
@@ -1454,7 +1476,7 @@ fn main() {
             let mut sheet = Image::new(VIEW * 2, VIEW * 2);
             for (index, frame) in frames.iter().enumerate() {
                 let mut view = subject.view(&pose, 0.0, frame);
-                if !underside {
+                if !underside && !upper_legs {
                     ground_line(&mut view, frame);
                 }
                 sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
@@ -2011,6 +2033,35 @@ impl Subject {
             of(0.0, 0.0),
             of(FRAC_PI_4, -0.4),
             of(PI - FRAC_PI_4, -0.4),
+        ]
+    }
+
+    /// The four views the outside of a beast's upper legs is judged from
+    /// (#394): side on; the three-quarters, in front and behind; and from
+    /// behind and above, as the game's camera sees it.
+    fn upper_leg_frames(&self) -> [Frame; 4] {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        let rig = &self.avatar.rig;
+        let along: Vec<Vec3> = [Zone::Pelvis, Zone::Abdomen, Zone::Chest]
+            .into_iter()
+            .flat_map(|zone| rig.in_zone(zone))
+            .map(|joint| rig.joints[joint].position)
+            .collect();
+        let (near, far) = along.iter().fold((f32::MAX, f32::MIN), |(near, far), at| {
+            (near.min(at.z), far.max(at.z))
+        });
+        let low = along.iter().map(|at| at.y).sum::<f32>() / along.len().max(1) as f32;
+        let of = |turn: f32, pitch: f32| Frame {
+            turn,
+            pitch,
+            centre: Vec3::new(0.0, low * 0.8, (near + far) * 0.5),
+            span: (far - near) * 2.0,
+        };
+        [
+            of(FRAC_PI_2, 0.0),
+            of(FRAC_PI_4, 0.1),
+            of(PI - FRAC_PI_4, 0.1),
+            of(PI, 0.5),
         ]
     }
 
