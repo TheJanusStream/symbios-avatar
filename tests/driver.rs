@@ -820,7 +820,11 @@ fn a_swimming_beast_paddles_at_its_legs_pace() {
     // its leg's own pendulum.
     let beast = beast();
     let rig = &beast.rig;
-    let leg = Speed::from_froude(1.0).metres_per_second(rig).powi(2) / 9.81;
+    let leg = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.limb_reach(limb))
+        .fold(0.0f32, f32::max);
     for (pace, wanted) in [
         (0.0, (9.81 / leg).sqrt() / std::f32::consts::TAU),
         (0.8, 0.8 / (leg * 1.5)),
@@ -3822,4 +3826,438 @@ fn a_persons_gesture_reads_its_length_as_it_plays() {
         "the greeting played on to {:?} past a length of {shorter} s",
         chassis.driver.gesture()
     );
+}
+
+/// How far any joint of a standing body's neck and head moves in one frame,
+/// over a minute of its idle, as a share of its height.
+fn head_jump(record: &AvatarRecord, seed: u64) -> f32 {
+    let avatar = Avatar::build_with(
+        record,
+        &AvatarConfig {
+            atlas: 64,
+            ..AvatarConfig::default()
+        },
+    )
+    .expect("a beast builds");
+    let rig = &avatar.rig;
+    let height = rig
+        .joints
+        .iter()
+        .map(|joint| joint.position.y)
+        .fold(0.0, f32::max);
+    let watched: Vec<usize> = (0..rig.joints.len())
+        .filter(|&joint| {
+            !rig.joints[joint].marker && matches!(rig.joints[joint].zone, Zone::Neck | Zone::Head)
+        })
+        .collect();
+    let mut driver = Driver::seeded(seed);
+    let mut last: Option<Vec<Vec3>> = None;
+    let mut worst: f32 = 0.0;
+    for _ in 0..3600 {
+        let driven = driver
+            .drive(
+                rig,
+                &Inputs {
+                    delta: STEP,
+                    ..Inputs::default()
+                },
+                level_ground,
+            )
+            .expect("an unheld body is posed every frame");
+        let at = driven.pose.forward(rig).positions;
+        if let Some(last) = &last {
+            for &joint in &watched {
+                worst = worst.max(last[joint].distance(at[joint]));
+            }
+        }
+        last = Some(at);
+    }
+    worst / height
+}
+
+#[test]
+fn a_standing_beast_s_head_turns_to_a_glance_rather_than_snapping() {
+    // Taken whole the moment a fidget started and dropped the moment it ended, a
+    // glance moved a horse's nose 445 mm in one frame, .18 of its height (#382).
+    let mut worst = (0.0f32, String::new());
+    let mut read = |name: String, record: &AvatarRecord, seed: u64| {
+        let jump = head_jump(record, seed);
+        if jump > worst.0 {
+            worst = (jump, name);
+        }
+    };
+    for family in plan::Family::ALL {
+        let mut params = QuadrupedParams::default();
+        params.set_kind(family, None, 0.0);
+        let record = AvatarRecord::new("Beast", Archetype::Quadruped(params));
+        for seed in [0, 9, 21] {
+            read(format!("{family:?} driver {seed}"), &record, seed);
+        }
+    }
+    for roll in [1, 6, 9, 23, 72, 258] {
+        let record = AvatarRecord::rolled(
+            "Beast",
+            Archetype::Quadruped(QuadrupedParams::default()),
+            roll,
+        );
+        read(format!("roll {roll}"), &record, 9);
+    }
+    assert!(
+        worst.0 < HEAD_JUMP,
+        "{}: {} of its height",
+        worst.1,
+        worst.0
+    );
+}
+
+#[test]
+fn a_standing_person_s_head_turns_to_a_glance_rather_than_snapping() {
+    // The same step on a far shorter lever: 20 to 25 mm in one frame (#398).
+    for roll in [0, 3, 9] {
+        let mut record = AvatarRecord::new("Person", Archetype::default());
+        record.reroll(roll);
+        let jump = head_jump(&record, 9);
+        assert!(
+            jump < PERSON_HEAD_JUMP,
+            "person {roll}: {jump} of their height"
+        );
+    }
+}
+
+/// See [`a_standing_person_s_head_turns_to_a_glance_rather_than_snapping`]. Set after
+/// reading it: the worst is .0011 of a person's height, and .0147 with the fix undone.
+const PERSON_HEAD_JUMP: f32 = 0.0015;
+
+/// See [`a_standing_beast_s_head_turns_to_a_glance_rather_than_snapping`]. Set after
+/// reading it: the worst is .0123, on a rolled beast.
+const HEAD_JUMP: f32 = 0.015;
+
+/// How a beast comes to a stop from `froude` at about the game's braking, at the
+/// worst of ten moments of its stride: how far anything of its upper legs falls
+/// below where it rests, and how far any joint moves in one frame, each as a share
+/// of its height.
+fn stopping(rig: &Rig, froude: f32) -> (f32, f32) {
+    let height = rig
+        .joints
+        .iter()
+        .map(|joint| joint.position.y)
+        .fold(0.0, f32::max);
+    let pace = Speed::from_froude(froude).metres_per_second(rig);
+    let (mut fall, mut most) = (0.0f32, 0.0f32);
+    for moment in 0..10 {
+        let stop = 2.0 + moment as f32 * 0.12;
+        let mut driver = Driver::seeded(7);
+        let (mut at, mut velocity) = (Vec3::ZERO, 0.0f32);
+        let mut last: Option<Vec<Vec3>> = None;
+        for frame in 0..((stop + 1.2) / STEP) as usize {
+            let time = frame as f32 * STEP;
+            let wanted = if time < stop { pace } else { 0.0 };
+            velocity += (wanted - velocity).clamp(-40.0 * STEP, 40.0 * STEP);
+            at += Vec3::Z * velocity * STEP;
+            let driven = driver
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: STEP,
+                        velocity: Vec3::Z * velocity,
+                        at,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed every frame");
+            let posed = driven.pose.forward(rig).positions;
+            if time >= stop {
+                for (joint, here) in posed.iter().enumerate() {
+                    if matches!(rig.joints[joint].zone, Zone::UpperLimb(_)) {
+                        fall = fall.max(rig.joints[joint].position.y - here.y);
+                    }
+                    if let Some(last) = &last {
+                        most = most.max(last[joint].distance(*here));
+                    }
+                }
+            }
+            last = Some(posed);
+        }
+    }
+    (fall / height, most / height)
+}
+
+#[test]
+fn a_stopping_beast_does_not_plunge() {
+    // A stride's feet out of a thigh and a shank's reach asked for the whole height
+    // of the leg: a stopping horse's root dropped .74 m in a fifth of a second, with
+    // a joint moving up to 1.8 m in a frame, on most stops (#378).
+    let mut bodies = Vec::new();
+    for family in plan::Family::ALL {
+        let mut params = QuadrupedParams::default();
+        params.set_kind(family, None, 0.0);
+        bodies.push(AvatarRecord::new("Beast", Archetype::Quadruped(params)));
+    }
+    for roll in [6, 8, 9, 11] {
+        bodies.push(AvatarRecord::rolled(
+            "Beast",
+            Archetype::Quadruped(QuadrupedParams::default()),
+            roll,
+        ));
+    }
+    for (index, record) in bodies.iter().enumerate() {
+        let avatar = Avatar::build_with(
+            record,
+            &AvatarConfig {
+                atlas: 64,
+                ..AvatarConfig::default()
+            },
+        )
+        .expect("a beast builds");
+        // The game's walking and running speeds.
+        for froude in [0.49, 3.586] {
+            let (fall, most) = stopping(&avatar.rig, froude);
+            assert!(
+                fall < STOP_FALL,
+                "body {index} at {froude} falls {fall} of its height"
+            );
+            assert!(
+                most < STOP_MOVES,
+                "body {index} at {froude} moves {most} of its height in a frame"
+            );
+        }
+    }
+}
+
+/// See [`a_stopping_beast_does_not_plunge`]. Set after reading it: the worst fall is
+/// .121 of a height and the worst move in a frame .118, both a cat's at a run, where
+/// a canter's swinging foot moves about that anyway.
+const STOP_FALL: f32 = 0.135;
+const STOP_MOVES: f32 = 0.13;
+
+/// How far the worst joint of `rig` jumps past its own motion in a frame, at a
+/// steady `speed` up a plane rising `grade` per metre.
+fn pop_on_grade(rig: &Rig, grade: f32, speed: f32) -> f32 {
+    let normal = Vec3::new(0.0, 1.0, -grade).normalize();
+    let ground = move |at: Vec3| {
+        Some(symbios_avatar::anim::Ground {
+            position: Vec3::new(at.x, at.z * grade, at.z),
+            normal,
+        })
+    };
+    let frame = 1.0 / 60.0;
+    let mut driver = Driver::seeded(INSTRUMENT_SEED);
+    let mut at = Vec3::ZERO;
+    let mut last: Vec<Vec<Vec3>> = Vec::new();
+    let mut worst = 0.0f32;
+    for step in 0..300 {
+        at += Vec3::Z * speed * frame;
+        let inputs = Inputs {
+            delta: frame,
+            velocity: Vec3::Z * speed,
+            at,
+            ..Inputs::default()
+        };
+        let now = driver
+            .drive(rig, &inputs, ground)
+            .expect("a walking body is posed")
+            .pose
+            .forward(rig)
+            .positions;
+        if step > 60
+            && let [two, one] = &last[..]
+        {
+            for joint in (0..now.len()).filter(|&joint| !rig.joints[joint].marker) {
+                worst = worst.max((now[joint] - one[joint] * 2.0 + two[joint]).length());
+            }
+        }
+        last.push(now);
+        if last.len() > 2 {
+            last.remove(0);
+        }
+    }
+    worst
+}
+
+#[test]
+fn a_leg_solve_does_not_take_a_tear_for_a_root_on_a_steep_grade() {
+    // #399: where a wrist comes up by its shoulder, `wrapped` tears and the
+    // stride's search settled on the tear or the root, from one frame to the
+    // next. Second differences on a grade of .30, before and after in mm: the
+    // cross 1254 and 486, roll 1 1083 and 341, roll 2 625 and 166. These are bodies
+    // the fix helps, not the fleet's: uphill at .3 and .4 the fleet's worst did not
+    // move, and #399 stays open for that.
+    let mut cross = QuadrupedParams::default();
+    cross.set_kind(plan::Family::Dog, Some(plan::Family::Horse), 0.5);
+    let rolled = |roll| {
+        AvatarRecord::rolled(
+            "Beast",
+            Archetype::Quadruped(QuadrupedParams::default()),
+            roll,
+        )
+    };
+    for (what, record, speed, most) in [
+        (
+            "the cross",
+            AvatarRecord::new("Beast", Archetype::Quadruped(cross)),
+            1.2,
+            0.52,
+        ),
+        ("roll 1", rolled(1), 1.2, 0.37),
+        ("roll 2", rolled(2), 3.5, 0.18),
+    ] {
+        let mut record = record;
+        record.sanitize();
+        let avatar = Avatar::build_with(
+            &record,
+            &AvatarConfig {
+                atlas: 64,
+                ..AvatarConfig::default()
+            },
+        )
+        .expect("a beast builds");
+        let pop = pop_on_grade(&avatar.rig, 0.3, speed);
+        assert!(
+            pop < most,
+            "{what}: a joint jumped {:.0} mm past its motion, past {:.0}",
+            pop * 1000.0,
+            most * 1000.0
+        );
+    }
+}
+
+#[test]
+fn a_body_seated_in_a_state_is_where_going_down_would_have_it() {
+    // #383: one call for what took a consumer unseen frames.
+    let beast = beast();
+    let rig = &beast.rig;
+    let frame = 1.0 / 60.0;
+    let idle = Inputs {
+        delta: frame,
+        ..Inputs::default()
+    };
+    for name in ["Sit", "Lie Down"] {
+        let clip = gesture::for_body(rig, name).expect("a beast's state");
+        let down = emote::seconds(rig, name).expect("a state keeps its time");
+        for through in [0.25f32, 0.7, 1.0, 2.0] {
+            let mut seated = Driver::seeded(INSTRUMENT_SEED);
+            assert!(seated.seat(rig, name, through), "{name} is a state");
+            let (playing, elapsed) = seated.gesture().expect("seated in it");
+            assert_eq!(playing, name);
+            assert!((elapsed - through.min(1.0) * down).abs() < 1.0e-4);
+            // A frame of nothing moves it on by nothing to speak of.
+            let drawn = seated
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: 1.0e-5,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed");
+            assert_eq!(drawn.source, Source::Gesture);
+            let wanted = clip.pose(rig, through).forward(rig);
+            let posed = drawn.pose.forward(rig);
+            let apart = wanted
+                .positions
+                .iter()
+                .zip(&posed.positions)
+                .map(|(one, two)| one.distance(*two))
+                .fold(0.0f32, f32::max);
+            assert!(
+                apart < 2.0e-3,
+                "{name} at {through}: a joint stood {:.1} mm off the way down",
+                apart * 1000.0
+            );
+        }
+        // From part way down it goes on down, and held it stays, and each gets
+        // up: from the held state as the animal does, from part way as it came.
+        let mut part = Driver::seeded(INSTRUMENT_SEED);
+        part.seat(rig, name, 0.5);
+        for _ in 0..3 {
+            part.drive(rig, &idle, level_ground);
+        }
+        let (_, moved_on) = part.gesture().expect("still going down");
+        assert!(moved_on > 0.5 * down, "it did not go on down");
+        let up = |driver: &mut Driver| {
+            let asked = Inputs {
+                delta: frame,
+                gesture: Some(emote::GET_UP),
+                ..Inputs::default()
+            };
+            driver.drive(rig, &asked, level_ground);
+            for _ in 0..1200 {
+                driver.drive(rig, &idle, level_ground);
+                if driver.gesture().is_none() {
+                    return true;
+                }
+            }
+            false
+        };
+        assert!(up(&mut part), "{name}: never got up from part way");
+        let mut held = Driver::seeded(INSTRUMENT_SEED);
+        held.seat(rig, name, 1.0);
+        for _ in 0..600 {
+            held.drive(rig, &idle, level_ground);
+        }
+        assert!(held.gesture().is_some(), "{name}: a held state let go");
+        assert!(up(&mut held), "{name}: never got up from held");
+        // None of it, and it is out of it.
+        held.seat(rig, name, 1.0);
+        assert!(held.seat(rig, name, 0.0));
+        assert_eq!(held.gesture(), None);
+    }
+    let mut driver = Driver::seeded(INSTRUMENT_SEED);
+    assert!(!driver.seat(rig, "Wag", 0.5), "a wag is no state");
+    assert_eq!(driver.gesture(), None, "and it changed nothing");
+    let person = AvatarRecord::new("Person", Archetype::default());
+    let person = Avatar::build(&person).expect("a person builds");
+    assert!(!driver.seat(&person.rig, "Sit", 0.5), "nor is a person's");
+}
+
+#[test]
+fn what_stirs_a_body_is_what_gets_a_beast_up() {
+    // #383: the driver's own reading, by construction what its frame asks.
+    let beast = beast();
+    let rig = &beast.rig;
+    let frame = 1.0 / 60.0;
+    for (speed, stirs) in [(0.0f32, false), (0.09, false), (0.11, true), (2.0, true)] {
+        let inputs = Inputs {
+            delta: frame,
+            velocity: Vec3::new(speed * 0.6, 0.0, speed * 0.8),
+            ..Inputs::default()
+        };
+        let mut driver = Driver::seeded(INSTRUMENT_SEED);
+        assert_eq!(driver.stirred(&inputs), stirs, "at {speed}");
+        driver.seat(rig, "Sit", 1.0);
+        driver.drive(rig, &inputs, level_ground);
+        let mut hold = 0;
+        for _ in 0..600 {
+            driver.drive(rig, &inputs, level_ground);
+            hold += usize::from(driver.gesture().is_some());
+        }
+        assert_eq!(
+            hold == 600,
+            !stirs,
+            "at {speed} it {} up",
+            if stirs { "did not get" } else { "got" }
+        );
+    }
+    let mut driver = Driver::seeded(INSTRUMENT_SEED);
+    let swimming = Inputs {
+        swimming: true,
+        ..Inputs::default()
+    };
+    assert!(driver.stirred(&swimming), "a swimming body is stirred");
+    let leaping = Inputs {
+        showing: Some(Showing::Leap(Leap::new(3.0))),
+        ..Inputs::default()
+    };
+    assert!(driver.stirred(&leaping), "a body shown leaping is stirred");
+    // Off the ground, whatever the frame says.
+    let launch = Inputs {
+        delta: frame,
+        velocity: Vec3::Y * 4.0,
+        ..Inputs::default()
+    };
+    driver.drive(rig, &launch, level_ground);
+    assert!(driver.airborne().is_some(), "launched");
+    assert!(driver.stirred(&Inputs::default()), "an airborne body is");
 }

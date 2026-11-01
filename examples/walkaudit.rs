@@ -1478,7 +1478,7 @@ fn beasts(seed: Option<i64>) {
         .filter_map(|limb| Some((limb, *rig.in_zone(Zone::Extremity(limb)).first()?)))
         .collect();
     println!(
-        "a beast {:.2} m long on a leg of {:.3} m",
+        "a beast {:.2} m long with its hips {:.3} m up",
         rig.extent(),
         Speed::from_froude(1.0).metres_per_second(rig).powi(2) / 9.81
     );

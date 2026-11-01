@@ -86,11 +86,11 @@ const FORE: Wrap = Wrap {
 /// the thigh's inner skin folds under a lying body: at 0.3 a heavy foal's chest
 /// rode up to 196 mm, against the 191 `tests/rest.rs` allows it.
 ///
-/// Measured and left: on the shortest legs (`legLength` -3) the wrapped thigh dips
-/// through the ground for a moment as a body gets up from a sit, up to 1.4% of
-/// its withers height, on 11 of 2,799 sampled corners against none of those
-/// unwrapped. Held rests do not, no one of these settings changes it, and fading
-/// the wrap there would give those bodies back the legs stuck on their sides.
+/// On the shortest legs (`legLength` -3) the wrapped thigh hangs lowest as a body
+/// gets up from a sit, and hips rising over a leg folded that tight only sink it
+/// further: `settle` in `anim/rest.rs` lifts the feet for it instead (#390), as
+/// fading the wrap there would give those bodies back the legs stuck on their
+/// sides.
 ///
 /// Their wall holds back some beside the tail: carried out there in full, a lying
 /// dog's rump folded in dark spikes, seen from behind and above.

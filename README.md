@@ -385,8 +385,12 @@ beast's `Rig::outline` keeps the points of its skin that can be its lowest,
 gets up from it as the animal rises. The `Driver` holds the state until
 something gets the beast up - being moved, leaving the ground or swimming
 (in a hurry, `emote::HURRY`), another gesture (played once it is up), or
-`emote::GET_UP`, the name in the roster that stands it up where it is. A
-beast paddles rather than crawls, steps its
+`emote::GET_UP`, the name in the roster that stands it up where it is;
+`Driver::seat` puts it at a point of a state in one step, and `Driver::stirred`
+says whether a frame would get it up. Driven, a state rests on whatever ground
+the `Driver` is given, turned onto the plane under the body with each foot on
+the ground under itself (#381); a clip applied on its own rests on level
+ground. A beast paddles rather than crawls, steps its
 feet home one at a time after it stops, and flicks an ear and wags while it
 stands.
 

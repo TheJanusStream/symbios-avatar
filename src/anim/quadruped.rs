@@ -1,72 +1,73 @@
-//! How a four-legged body carries itself through a gait (#370), where a
+//! How a four-legged body carries itself through a gait (#370, #378), where a
 //! person's walk leans.
 //!
 //! A person leans into their pace; a beast's trunk is already horizontal, and
 //! pitched forward it drops its withers and stands its head on its chin. What
-//! a running quadruped's trunk does instead is **rock** - its hindquarters
-//! settling while its hinds bear it, its forehand while its fores do - and,
-//! galloping, **fold** its back as its hinds reach under it and stretch it as
-//! they push off. Its head is held steady over all of that and reaches
-//! forward at speed, and its tail sways with the hips at a walk and streams
-//! out behind at a gallop.
+//! a moving quadruped's trunk does instead, on the figures of
+//! docs/research/research-08-quadruped-gait.md:
 //!
-//! **Read off the footfalls, not off the pattern's name.** The rock and the
-//! fold are each the first harmonic of a sum over the four contacts: how the
-//! hinds' load and the fores' differ, and how far the hinds reach forward
-//! while the fores reach back. A walk's, a trot's and a pace's pairs cancel
-//! in both sums, so they carry a level, straight back; a canter's and a
-//! gallop's hinds and fores land apart, so they rock and fold by as much as
-//! their footfalls part. Nothing here asks which [`super::Pattern`] a gait is.
+//! - **Each girdle rides on its own feet.** At a walk a girdle vaults over its
+//!   legs, highest at a leg's midstance and lowest with both down; at a trot
+//!   and faster it springs, lowest at midstance and highest as it leaves. So
+//!   the withers and the pelvis ride a quarter of a stride apart at a walk,
+//!   together at a trot and apart again as a canter's feet part, and one trunk
+//!   rising as a block is what a table does. [`Ride`].
+//! - **The spine bends**, a dog's and a cat's a lot and a horse's a little:
+//!   sideways once a stride, and at speed folding as the hinds reach under and
+//!   stretching as they push off.
+//! - **The head nods**: a horse's twice a stride at a walk, down as each fore
+//!   bears, its neck swinging under a head that holds its own attitude. At
+//!   speed the neck reaches forward, and the tail sways with the hips at a walk
+//!   and streams out behind at a gallop.
+//! - **Each leg is a pantograph** ([`stand`]): the shoulder blade turns with
+//!   the forearm and the metatarsus with the femur, so a leg swings from high
+//!   in the body as one long spring. A swinging leg folds at the carpus and
+//!   the toes ([`articulate`]).
+//!
+//! **Read off the footfalls, not off the pattern's name.** The ride and the
+//! fold are harmonics of a sum over the four contacts, so a walk's, a trot's
+//! and a gallop's differ by when their feet are down and nothing here asks
+//! which [`super::Pattern`] a gait is. **Nor which family a body is**: [`Kin`]
+//! reads what the motion needs off the bones, so a cross moves between its
+//! parents as it stands between them.
 
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 use glam::{Quat, Vec2, Vec3};
 
-use super::gait::{Gait, relevel_head, spine_to};
-use super::ground::{solve_contact, solve_contact_toward};
+use super::gait::{
+    Gait, Phase, Steps, Stride, contact_heading, contact_offset, foot_pitch, home_of, led,
+    relevel_head, spine_to, stride_lead,
+};
+use super::ground::{Foot, Ground, solve_contact_as, solve_contact_toward};
+use super::heading::Heading;
+use super::ik::two_bone;
 use super::pose::Pose;
 use super::speed::leg_of;
 use super::swim::Swum;
 use crate::det::{self, DetMath, Rot};
-use crate::plan::{FootKind, HeadKind, Limb, Zone};
+use crate::plan::{HeadKind, Limb, Zone};
 use crate::rig::{Rig, Role};
 
 /// The duty a gait has all its flight at: a gallop's least (#370), where the
 /// back folds furthest and the neck reaches furthest.
-const FULL_FLIGHT: f32 = 0.22;
+const FULL_FLIGHT: f32 = 0.27;
 
 /// How far the back folds and stretches either way at a full gallop, in
-/// radians at the loin: a dog's or a cat's supple back, a horse's stiff one.
-/// Provenance: **tuned by render** (#370), inside the literature's band - a
-/// greyhound's back flexes through some forty degrees a stride, a horse's
-/// through a few.
-const FOLD_PAWS: f32 = 0.45;
-const FOLD_HOOVES: f32 = 0.06;
+/// radians summed along the spine: a dog's or a cat's supple back, a horse's
+/// stiff one.
+/// Provenance: **the literature** (#378), research-08 2.4 and 2.7: a cat's
+/// spine moves through some 49 degrees galloping, a greyhound's an estimated
+/// 20 to 40; a horse's thoracolumbar 9 at a canter with 6 to 7 at the
+/// lumbosacral joint.
+const FOLD_PAWS: f32 = 0.50;
+const FOLD_HOOVES: f32 = 0.11;
 
-/// How far the end of the trunk a rock sinks goes down at the rock's
-/// deepest, in the leg's reach: on the default dog 14 mm, a degree and a
-/// half.
-///
-/// **A drop, not an angle**, because a trunk is as long as its plan says: an
-/// angle a short-bodied beast rocks by visibly drops a long-bodied one's
-/// hindquarters through a sixth of its height - 0.08 radians on the default
-/// dog's half-metre trunk sank an end by 43 mm.
-/// Provenance: **tuned by test** (#370).
-const ROCK: f32 = 0.05;
-
-/// How far apart a gait's hinds and fores must load, as the rock's first
-/// harmonic, before it rocks all the way: a canter's and a gallop's both do,
-/// though a gallop's part twice as far - a canter's longer stride gives the
-/// same moment longer to turn the body, which is why it is the gait that
-/// rocks. Below it the rock fades, and a gait whose pairs cancel has none.
-/// Provenance: **chosen** (#370), under a canter's `0.48`.
-const ROCK_FULL: f32 = 0.4;
-
-/// How much of the trunk's pitch the head takes back off: a dog's or a cat's
+/// How much of the trunk's turn the head takes back off: a dog's or a cat's
 /// held steady, a horse's nodding with its neck.
 /// Provenance: **tuned by render** (#370).
 const STEADY_PAWS: f32 = 1.0;
-const STEADY_HOOVES: f32 = 0.5;
+const STEADY_HOOVES: f32 = 0.9;
 
 /// How far the neck reaches forward and down at a full gallop, in radians,
 /// and what share of that the head keeps rather than taking back.
@@ -87,16 +88,698 @@ const TAIL_LAG: f32 = 0.08;
 const TAIL_LIFT: f32 = 0.6;
 const TAIL_WAVE: f32 = 0.06;
 
+/// Where in its stance a leg bears most, as a share of it.
+/// Provenance: **the literature**, research-08 fact 8: a trotting horse's
+/// girdles are lowest at 37 to 45% of the stance, and a walking one's highest
+/// at 42 to 57%.
+const BEARS_AT: f32 = 0.45;
+
+/// A girdle's whole rise and fall at a walk, a trot, a canter and a gallop, as
+/// a share of the withers height: the pelvis's and the withers'.
+/// Provenance: **the literature**, research-08 fact 7 and 2.7: a horse's in
+/// hand, withers 2% and pelvis 4 to 5% at a walk, withers 3 to 6% and pelvis
+/// 3.5 to 5.5% at a trot; a dog's by dynamic similarity. Faster than a trot is
+/// **chosen** by render, the literature having no figure.
+const RIDE_PELVIS: [f32; 4] = [0.045, 0.045, 0.055, 0.055];
+const RIDE_WITHERS: [f32; 4] = [0.021, 0.045, 0.055, 0.065];
+
+/// The duties those four rides are anchored at, a straight line between each.
+const RIDE_DUTY: [f32; 4] = [0.60, 0.43, 0.35, 0.28];
+
+/// The duty a girdle's ride changes from a vault to a spring at, and how far
+/// either side of it the change takes. A body riding at a duty between the two
+/// neither vaults nor springs, which only a change of gait passes through.
+const VAULT_DUTY: f32 = 0.525;
+const VAULT_BAND: f32 = 0.05;
+
+/// The sideways bend of the back at a walk and at a trot, its whole swing from
+/// one side to the other in radians between the trunk's two halves: a dog's or
+/// a cat's, a horse's.
+/// Provenance: **tuned by render** (#378) under research-08 2.7, which gives
+/// the shape (one wave a stride, lateral at least the sagittal, a horse's a few
+/// degrees) and no dog's figure.
+const BEND_PAWS: f32 = 0.20;
+const BEND_HOOVES: f32 = 0.05;
+
+/// How far a walk's bend runs behind itself from the withers to the pelvis, in
+/// cycles: it travels head to tail at a walk and is one bend at a trot
+/// (research-08 2.7).
+/// Provenance: **chosen** (#378).
+const BEND_TRAVEL: f32 = 0.12;
+
+/// The back's hollow as a girdle bears, its whole swing in radians, twice a
+/// stride at a walk and a trot.
+/// Provenance: **the literature**: a horse's thoracolumbar moves through about
+/// 4 degrees at a walk, less at a trot (research-08 fact 9).
+const HOLLOW: f32 = 0.06;
+
+/// How far the neck swings either way from the withers twice a stride, in
+/// radians, at a walk:
+/// a horse's and a dog's or a cat's; and at a trot, where the head mostly rides
+/// the withers.
+/// Provenance: **derived** (#378). A walking horse's head rises and falls 5 to
+/// 7% of its withers height against the withers' 2%, in antiphase, on a neck
+/// and head about 0.7 of that height; a dog's head is carried nearer its back.
+const NOD_HOOVES: f32 = 0.13;
+const NOD_PAWS: f32 = 0.05;
+const NOD_TROT: f32 = 0.008;
+
+/// How many times the trunk's pitch the neck turns the other way, to take the
+/// lever from the hips off the head: the hips to the head over the neck to the
+/// head, about.
+/// Provenance: **tuned by test** (#378), on a walking horse's antiphase.
+const NECK_TAKES_PITCH: f32 = 2.2;
+
+/// How much of the neck's nod the head takes back off, holding its attitude.
+/// Provenance: **the literature**: a horse's head pitch is held small at every
+/// gait (research-08 2.8).
+const NOD_HELD: f32 = 0.8;
+
+/// A leg's pantograph: how far the blade turns with the forearm, the metacarpus
+/// with the forearm, and the metatarsus with the femur, each as a share.
+/// Provenance: **the literature** for the coupling, research-08 fact 2,
+/// parallel through the stride; the blade's share is a pony's 23 to 28 degrees
+/// against a forearm's 40.
+const BLADE_WITH_FOREARM: f32 = 0.45;
+const CARPUS_WITH_FOREARM: f32 = 1.0;
+const METATARSUS_WITH_FEMUR: f32 = 1.0;
+
+/// How far along its blade from the top a fore leg's pivot stands.
+/// Provenance: **the literature**, research-08 2.2: the scapular pivot, about a
+/// third of the blade's height.
+const PIVOT_ON_BLADE: f32 = 1.0 / 3.0;
+
+/// How far behind the leg's pivot a paw passes at midstance, in radians: a fore
+/// and a hind.
+/// Provenance: **the literature**, research-08 2.2 and fact 3: a fore lands 19
+/// to 22 degrees ahead and leaves 17 to 25 behind; a hind lands 17 to 21 ahead
+/// and leaves 22 to 33 behind.
+const MIDSTANCE_BEHIND_FORE: f32 = 0.03;
+const MIDSTANCE_BEHIND_HIND: f32 = 0.09;
+
+/// How much of a straight leg's length a stance may stretch to.
+/// Provenance: **chosen** (#378): the 3 bones laid straight are a singularity,
+/// and a stance's far end stops short of them by a hock's and a stifle's bend.
+const STANCE_STRETCH: f32 = 0.975;
+
+/// How high a hind paw lifts against a fore's, and how early each peaks (the
+/// stride's `tuck`, without its raise).
+/// Provenance: **the literature**, research-08 2.6: a horse's hind hoof rises
+/// about half what its fore does. The hurry is **tuned by render**: a paw
+/// peels up and back as it leaves, and reaches forward low.
+const HIND_LIFT: f32 = 0.65;
+const FORE_HURRY: f32 = 0.8;
+const HIND_HURRY: f32 = 0.5;
+
+/// How far the carpus folds at its deepest at a walk and at a trot and faster,
+/// and the toes at a walk and faster, in radians.
+/// Provenance: **the literature**, research-08 fact 5: a trotting horse's
+/// carpus closes to 92 degrees, a shepherd's swings through 89 and its MCP
+/// through 105; a flat walk's through about 54, and joint patterns are the
+/// same with less amplitude (2.3).
+const CARPUS_FOLD_PAWS: (f32, f32) = (1.15, 1.75);
+const CARPUS_FOLD_HOOVES: (f32, f32) = (0.85, 1.5);
+const TOES_FOLD_PAWS: (f32, f32) = (1.0, 1.75);
+const TOES_FOLD_HOOVES: (f32, f32) = (0.75, 1.2);
+/// How far a hock closes on its own in swing, past the pantograph, and the hind
+/// toes. Provenance: **tuned by render** (#378); the hind paw breaks far less
+/// than the fore (research-08 fact 5).
+const HOCK_FOLD: f32 = 0.1;
+const HIND_TOES_FOLD: f32 = 0.7;
+
+/// How much of a fold's arc the paw goes round its wrist, rather than the wrist
+/// round the paw.
+/// Provenance: **tuned by render** (#378).
+const FOLD_RAISES_PAWS: f32 = 0.6;
+const FOLD_RAISES_HOOVES: f32 = 0.3;
+
+/// What a body's motion reads off its bones.
+///
+/// **Not its family's name**, so a cross stands between its parents and a leggy
+/// dog a little toward a horse: every term here is continuous in the bones.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Kin {
+    /// How far toward a horse's leg this is, `0..1`: a short upper arm over a
+    /// long forearm and cannon. A horse's stiff back and its nod go with it.
+    hoof: f32,
+    /// How tall the withers stand, in metres.
+    withers: f32,
+}
+
+impl Kin {
+    /// The upper arm over the forearm and metacarpus, for a dog's 0.70, a cat's
+    /// 0.76 and a horse's 0.42: everything at or over 0.64 reads as paws.
+    fn of(rig: &Rig) -> Self {
+        let lengths = rig
+            .ground_contacts()
+            .into_iter()
+            .find(|limb| limb.is_fore())
+            .and_then(|limb| {
+                let [shoulder, elbow, carpus] = rig.limb_chain(limb)?;
+                let pad = *rig.in_zone(Zone::Extremity(limb)).first()?;
+                let joint = |at: usize| rig.joints[at].position;
+                let top = rig.joints[shoulder].parent.map_or(joint(shoulder), joint);
+                Some((
+                    joint(shoulder).distance(joint(elbow)),
+                    joint(elbow).distance(joint(carpus)) + joint(carpus).distance(joint(pad)),
+                    top.y,
+                ))
+            });
+        let Some((upper, lower, top)) = lengths else {
+            return Self {
+                hoof: 0.0,
+                withers: leg_of(rig),
+            };
+        };
+        Self {
+            hoof: ((0.64 - upper / lower.max(f32::EPSILON)) / 0.2).clamp(0.0, 1.0),
+            withers: top / 0.92,
+        }
+    }
+
+    /// `paws` on a horse-free body, `hooves` on a horse, between on a cross.
+    fn of_feet(self, paws: f32, hooves: f32) -> f32 {
+        paws + (hooves - paws) * self.hoof
+    }
+}
+
+/// How high a four-legged body's hip joint stands at rest, in metres: the
+/// length Alexander's relations are in (#378).
+pub(super) fn hip_height(rig: &Rig) -> Option<f32> {
+    let hind = rig
+        .ground_contacts()
+        .into_iter()
+        .find(|limb| !limb.is_fore())?;
+    let [hip, _, _] = rig.limb_chain(hind)?;
+    Some(rig.joints[hip].position.y)
+}
+
+/// The point a leg swings from, at rest: the hip, or a third down the blade.
+fn pivot_of(rig: &Rig, limb: Limb) -> Option<Vec3> {
+    let [top, _, _] = rig.limb_chain(limb)?;
+    let at = rig.joints[top].position;
+    if !limb.is_fore() {
+        return Some(at);
+    }
+    let blade = rig.joints[top].parent?;
+    Some(rig.joints[blade].position.lerp(at, PIVOT_ON_BLADE))
+}
+
+/// How far forward of where its paw rests a leg's stride is centred, so the paw
+/// passes [`MIDSTANCE_BEHIND_FORE`] or [`MIDSTANCE_BEHIND_HIND`] behind the
+/// leg's pivot at midstance.
+///
+/// **A stride is about the leg's pivot, not about the paw's standing place**: a
+/// dog stands with its hind paw 20% of its height behind its hip, and centred
+/// on that, or on the joint above it, its legs landed 25 to 36 degrees ahead of
+/// their pivots where an animal's land 16 to 22.
+pub(super) fn centred(rig: &Rig, limb: Limb) -> Option<Vec3> {
+    let pivot = pivot_of(rig, limb)?;
+    let home = home_of(rig, limb)?;
+    let behind = if limb.is_fore() {
+        MIDSTANCE_BEHIND_FORE
+    } else {
+        MIDSTANCE_BEHIND_HIND
+    };
+    let height = (pivot.y - home.y).max(0.0);
+    Some(Vec3::Z * (pivot.z - height * behind.det_tan() - home.z))
+}
+
+/// `stride` as `limb` takes it: a hind paw lifts lower than a fore, and each
+/// peels up early and reaches forward low. A person's is the stride to the bit,
+/// and so is a standing body's.
+pub(super) fn limb_stride(limb: Limb, gait: &Gait, stride: &Stride) -> Stride {
+    if gait.limbs.len() != 4 || gait.duty >= 1.0 {
+        return *stride;
+    }
+    let (share, hurry) = if limb.is_fore() {
+        (1.0, FORE_HURRY)
+    } else {
+        (HIND_LIFT, HIND_HURRY)
+    };
+    // A tuck raises the arc as it hurries it: the height is taken back off.
+    Stride {
+        lift: stride.lift * share / (1.0 + hurry),
+        tuck: hurry,
+        ..*stride
+    }
+}
+
+/// Where a joint's turn stands in the world, by the turns above it: a pose's
+/// [`Pose::forward`] for one joint, without the whole rig's positions.
+fn turned_at(rig: &Rig, pose: &Pose, joint: usize) -> Quat {
+    let mut turn = pose.rotations[joint];
+    let mut at = rig.joints[joint].parent;
+    while let Some(parent) = at {
+        turn = pose.rotations[parent] * turn;
+        at = rig.joints[parent].parent;
+    }
+    turn
+}
+
+/// Stands a beast's leg in its pantograph for its paw to land on `goal`, as far
+/// down as a leg's solve leaves to the rest of it: `chain` is what
+/// [`Rig::limb_chain`] hands it (#378).
+///
+/// **The forearm carries the blade and the metacarpus, and the femur the
+/// metatarsus** (research-08 fact 2), so a leg swings as a pair of parallel
+/// bones at each end of a third, from the top of the blade or the hip. Stood
+/// upright instead, as they were before, the 75 to 120 degrees of a stride's
+/// swing were all the thigh's or the upper arm's, and the paw at either end of a
+/// stance hung off a compass's leg. `fold` turns the metapodial further, for a
+/// swinging leg; a stance's is nothing.
+///
+/// **Solved, not iterated with the leg.** The two-bone solve below it turns the
+/// very bone this reads, and near a leg's full reach a millimetre at the ankle
+/// turns the thigh by more than the metapodial gives back, so alternating the
+/// two diverged at the ends of a stance. So the coupling is found first, in the
+/// side plane: the one swing of the driving bone that, with the blade and the
+/// metapodial turned by it, the two-bone leg itself takes. With the metapodial
+/// then fixed in the world the leg's solve lands in a single pass.
+pub(super) fn stand(rig: &Rig, pose: &mut Pose, chain: [usize; 3], goal: Vec3, fold: f32) {
+    let [top, elbow, ankle] = chain;
+    let Zone::UpperLimb(limb) = rig.joints[top].zone else {
+        return;
+    };
+    let Some(&pad) = rig.in_zone(Zone::Extremity(limb)).first() else {
+        return;
+    };
+    let rest = |joint: usize| rig.joints[joint].position;
+    // `(z, y)` of a vector: the plane the swing is in, its angle as a turn
+    // about X carries it.
+    let angle = |v: Vec3| v.z.det_atan2(v.y);
+    let (upper, lower) = (
+        rest(top).distance(rest(elbow)),
+        rest(elbow).distance(rest(ankle)),
+    );
+    let hang = rest(pad) - rest(ankle);
+    let thigh_rest = angle(rest(elbow) - rest(top));
+    let shank_rest = angle(rest(ankle) - rest(elbow));
+    let line_rest = angle(rest(ankle) - rest(top));
+    let bend = wrapped(thigh_rest - line_rest).signum();
+    let fore = limb.is_fore();
+    let posed = pose.forward(rig);
+    // A fore's root turns on its blade with the forearm; a hind's stays.
+    let blade = rig.joints[top]
+        .parent
+        .filter(|&blade| fore && rig.joints[blade].zone == Zone::UpperLimb(limb));
+    let root_of = |swing: f32| match blade {
+        Some(blade) => {
+            let girdle = rig.joints[blade]
+                .parent
+                .map_or(Quat::IDENTITY, |girdle| posed.rotations[girdle]);
+            posed.positions[blade]
+                + girdle * (Rot::x(BLADE_WITH_FOREARM * swing) * (rest(top) - rest(blade)))
+        }
+        None => posed.positions[top],
+    };
+    let share = if fore {
+        CARPUS_WITH_FOREARM
+    } else {
+        METATARSUS_WITH_FEMUR
+    };
+    // The swing the leg takes, given the swing asked of it, less that swing:
+    // falling as the swing rises, with its one root the coupling.
+    let error = |swing: f32| {
+        let root = root_of(swing);
+        let wrist = goal - Rot::x(share * swing + fold) * hang;
+        let span = wrist - root;
+        let asked = span.length();
+        let asked = if fold == 0.0 {
+            asked
+        } else {
+            within_reach(asked, upper + lower)
+        };
+        let reach = asked.clamp((upper - lower).abs() + 1.0e-4, (upper + lower) * 0.999);
+        let cosine = (upper * upper + reach * reach - lower * lower) / (2.0 * upper * reach);
+        let thigh = angle(span) + bend * cosine.clamp(-1.0, 1.0).det_acos();
+        let taken = if fore {
+            let knee = Vec3::new(
+                wrist.x,
+                root.y + upper * thigh.det_cos(),
+                root.z + upper * thigh.det_sin(),
+            );
+            wrapped(angle(wrist - knee) - shank_rest)
+        } else {
+            wrapped(thigh - thigh_rest)
+        };
+        taken - swing
+    };
+    // Regula falsi, with the Illinois halving so a bent curve cannot pin one
+    // end: within a tenth of a degree in a handful of calls.
+    let (mut low, mut high) = (-SWING_LIMIT, SWING_LIMIT);
+    let (mut at_low, mut at_high) = (error(low), error(high));
+    let mut swing = 0.0;
+    if at_low > 0.0 && at_high < 0.0 {
+        let mut left = 0.0f32;
+        for _ in 0..SWING_PASSES {
+            swing = (low * at_high - high * at_low) / (at_high - at_low);
+            let at = error(swing);
+            left = at;
+            if at.abs() < SWING_CLOSE {
+                break;
+            }
+            if at > 0.0 {
+                low = swing;
+                at_low = at;
+                at_high *= 0.5;
+            } else {
+                high = swing;
+                at_high = at;
+                at_low *= 0.5;
+            }
+        }
+        // A sign change is not a root where it is a tear.
+        if left.abs() > SWING_TORN {
+            swing = short_of_tear(error);
+        }
+    } else {
+        swing = if at_low <= 0.0 { low } else { high };
+    }
+    if let Some(blade) = blade {
+        pose.rotations[blade] = Rot::x(BLADE_WITH_FOREARM * swing);
+    }
+    let carried = turned_at(rig, pose, elbow);
+    pose.rotations[ankle] = carried.inverse() * Rot::x(share * swing + fold);
+}
+
+/// The swing that answers `error` when a search settled on its tear (#399): the
+/// first root up from [`SWING_LIMIT`] below, or where there is none short of the
+/// tear, the swing that comes nearest one.
+///
+/// **A tear looks like a root.** A wrist come up by its shoulder asks for a forearm
+/// or a thigh turned half way round, where `wrapped` jumps a whole turn, and the
+/// error falls through nought there as it does through a root. On a steep grade
+/// the search settled on either from one frame to the next, and an elbow read y
+/// 759, 58, 711 mm on three of them. Below the tear the real root rises to meet
+/// a second, rising crossing, and the two vanish together; the least error goes
+/// on from where they met, so a leg losing its root does not jump.
+fn short_of_tear(error: impl Fn(f32) -> f32) -> f32 {
+    #[expect(clippy::cast_precision_loss, reason = "a few dozen steps")]
+    let width = 2.0 * SWING_LIMIT / TEAR_STEPS as f32;
+    let (mut from, mut at_from) = (-SWING_LIMIT, error(-SWING_LIMIT));
+    let mut nearest = (from, at_from);
+    for index in 1..=TEAR_STEPS {
+        #[expect(clippy::cast_precision_loss, reason = "a few dozen steps")]
+        let to = -SWING_LIMIT + width * index as f32;
+        let at_to = error(to);
+        if at_to <= 0.0 {
+            if at_from - at_to < PI {
+                let (mut low, mut high) = (from, to);
+                for _ in 0..TEAR_NARROWING {
+                    let middle = 0.5 * (low + high);
+                    if error(middle) > 0.0 {
+                        low = middle;
+                    } else {
+                        high = middle;
+                    }
+                }
+                return 0.5 * (low + high);
+            }
+            break;
+        }
+        if at_to < nearest.1 {
+            nearest = (to, at_to);
+        }
+        from = to;
+        at_from = at_to;
+    }
+    let (mut low, mut high) = (
+        (nearest.0 - width).max(-SWING_LIMIT),
+        (nearest.0 + width).min(SWING_LIMIT),
+    );
+    for _ in 0..TEAR_NARROWING {
+        let (one, two) = ((2.0 * low + high) / 3.0, (low + 2.0 * high) / 3.0);
+        // Past the tear reads as far below any root: nearest is above nought.
+        let read = |swing: f32| {
+            let at = error(swing);
+            if at > 0.0 { at } else { f32::MAX }
+        };
+        if read(one) <= read(two) {
+            high = two;
+        } else {
+            low = one;
+        }
+    }
+    0.5 * (low + high)
+}
+
+/// Where a beast's leg's middle joint bends toward with its root at `root` and
+/// its tip going to `tip`: square to the line between them in the side plane, on
+/// the side the leg bends at rest.
+///
+/// **Not [`Rig::bend_pole`]'s one point in space.** A swinging fore's wrist, its
+/// paw folded back, sweeps up behind its shoulder and across the line to that
+/// point, and the elbow flips to the other side of the leg: 200 to 380 mm in one
+/// sample at a gallop (it did before the fold as well, 280 on a horse).
+pub(super) fn side_pole(rig: &Rig, chain: [usize; 3], root: Vec3, tip: Vec3) -> Vec3 {
+    let rest = |joint: usize| rig.joints[joint].position;
+    let angle = |v: Vec3| v.z.det_atan2(v.y);
+    let bend =
+        wrapped(angle(rest(chain[1]) - rest(chain[0])) - angle(rest(chain[2]) - rest(chain[0])));
+    let square = angle(tip - root) + bend.signum() * PI * 0.5;
+    root + Vec3::new(0.0, square.det_cos(), square.det_sin()) * rig.extent()
+}
+
+/// An angle folded into `-PI..PI`.
+fn wrapped(angle: f32) -> f32 {
+    (angle + PI).rem_euclid(TAU) - PI
+}
+
+/// The furthest a leg's driving bone swings from its rest, in radians, and how
+/// closely and in how many calls the coupling is found.
+/// Provenance: **chosen** (#378). A tenth of a degree is under what a skin shows.
+const SWING_LIMIT: f32 = 1.7;
+const SWING_CLOSE: f32 = 2.0e-3;
+const SWING_PASSES: usize = 8;
+
+/// How much error a search may leave and still have found a root, in radians,
+/// and in how many steps of the swing's range and how many narrowings of one
+/// [`short_of_tear`] looks for the real answer.
+/// Provenance: **chosen** (#399). A root the search has finished with reads a few
+/// hundredths and a tear on a gentle grade well over this, but on a steep one the
+/// two run together, with thousands of searches stopping between .2 and 1.4, so
+/// this is only a threshold. It clears a downhill grade of .4 and does not settle
+/// an uphill one, which is why #399 stays open.
+const SWING_TORN: f32 = 0.5;
+const TEAR_STEPS: usize = 32;
+const TEAR_NARROWING: usize = 12;
+
+/// A girdle's ride: the first two harmonics of the load on its legs, each as a
+/// turning point in the plane, so a sum over the legs is a sum of points.
+#[derive(Clone, Copy, Debug)]
+struct Ride {
+    /// The load on the hinds' two harmonics and the fores'.
+    hinds: [Vec2; 2],
+    fores: [Vec2; 2],
+    /// The whole rise and fall of each, in metres, positive for a spring.
+    pelvis: f32,
+    withers: f32,
+}
+
+impl Ride {
+    fn of(gait: &Gait, kin: Kin) -> Self {
+        let duty = gait.duty.clamp(0.0, 1.0);
+        // A half sine's Fourier coefficients, `d` long and centred where it
+        // bears. At `2kd = 1` the ratio is its limit.
+        let weight = |k: f32| {
+            let across = 2.0 * k * duty;
+            let denominator = 1.0 - across * across;
+            let ratio = if denominator.abs() < 1.0e-3 {
+                PI / 4.0
+            } else {
+                (PI * k * duty).det_cos() / denominator
+            };
+            4.0 * duty / PI * ratio
+        };
+        let harmonic = |fore: bool, k: f32| {
+            let mut sum = Vec2::ZERO;
+            for (&limb, &offset) in gait.limbs.iter().zip(&gait.offsets) {
+                if limb.is_fore() == fore {
+                    sum += turned(k * (offset + duty * BEARS_AT));
+                }
+            }
+            sum * weight(k)
+        };
+        let spring = ((VAULT_DUTY - duty) / VAULT_BAND).clamp(-1.0, 1.0);
+        let anchored = |table: [f32; 4]| {
+            let along =
+                |from: usize| (RIDE_DUTY[from] - duty) / (RIDE_DUTY[from] - RIDE_DUTY[from + 1]);
+            if duty >= RIDE_DUTY[0] {
+                table[0]
+            } else if duty >= RIDE_DUTY[1] {
+                table[0] + (table[1] - table[0]) * along(0)
+            } else if duty >= RIDE_DUTY[2] {
+                table[1] + (table[2] - table[1]) * along(1)
+            } else {
+                table[2] + (table[3] - table[2]) * along(2).min(1.0)
+            }
+        };
+        Self {
+            hinds: [harmonic(false, 1.0), harmonic(false, 2.0)],
+            fores: [harmonic(true, 1.0), harmonic(true, 2.0)],
+            pelvis: anchored(RIDE_PELVIS) * kin.withers * spring,
+            withers: anchored(RIDE_WITHERS) * kin.withers * spring,
+        }
+    }
+
+    /// How far above their mean the pelvis and the withers ride at `cycle`, in
+    /// metres.
+    fn at(&self, cycle: f32) -> (f32, f32) {
+        let one = turned(cycle);
+        let two = turned(2.0 * cycle);
+        let wave = |sum: [Vec2; 2]| {
+            let peak = sum[0].length() + sum[1].length();
+            if peak <= f32::EPSILON {
+                0.0
+            } else {
+                (sum[0].dot(one) + sum[1].dot(two)) / peak
+            }
+        };
+        (
+            -0.5 * self.pelvis * wave(self.hinds),
+            -0.5 * self.withers * wave(self.fores),
+        )
+    }
+
+    /// The fores' load's second harmonic at `cycle`, in `-1..=1`: what a nod and
+    /// a hollow back keep time to.
+    fn twice(&self, cycle: f32) -> f32 {
+        let sum = self.fores[1];
+        if sum.length() <= f32::EPSILON {
+            return 0.0;
+        }
+        sum.dot(turned(2.0 * cycle)) / sum.length()
+    }
+
+    /// How far above their mean either girdle ever rides, in metres.
+    fn height(&self) -> f32 {
+        0.5 * self.pelvis.abs().max(self.withers.abs())
+    }
+}
+
+/// How far a folding leg's wrist lies from the leg's top, given how far it is asked
+/// to: as asked until the leg is nearly straight, then easing toward its full
+/// length rather than running into it (#378).
+///
+/// **A two-bone solve has a square-root singularity at full reach.** The fold
+/// raises a hoof by the swing it folds through and throws the wrist out with it,
+/// past the leg's length on a horse, where the elbow swings through the last of
+/// its angle in one sample: a pop of 186 mm in a frame, every stride.
+fn within_reach(asked: f32, length: f32) -> f32 {
+    let knee = FOLD_REACH_KNEE * length;
+    if asked <= knee {
+        return asked;
+    }
+    let room = (FOLD_REACH_MOST - FOLD_REACH_KNEE) * length;
+    let over = (asked - knee) / room;
+    knee + room * over / (1.0 + over)
+}
+
+/// How much of a leg's length a folding wrist reaches before [`within_reach`] eases
+/// it, and the most it ever reaches. Provenance: **tuned against the elbow's pop**
+/// (#378), which fell from 130 to 24 mm a sample on the worst rolled horse.
+const FOLD_REACH_KNEE: f32 = 0.92;
+const FOLD_REACH_MOST: f32 = 0.997;
+
+/// How far a beast's body must sink for the foot of `limb`, standing `offset` from
+/// where it rests, to be in reach: the stride's own measure of a leg (#378), which
+/// counts the metatarsus. [`super::gait::sink_needed`] reads a thigh and a shank,
+/// and past those it asks for the whole height of the leg, so a stopping horse
+/// plunged .74 m in a fifth of a second.
+pub(super) fn sink_toward(rig: &Rig, limb: Limb, offset: Vec3) -> Option<f32> {
+    let home = rig.joints[*rig.in_zone(Zone::Extremity(limb)).first()?].position;
+    Some(sink_for(rig, limb, home + offset)?.max(0.0))
+}
+
+/// How far a leg's pivot must sink for its paw to reach `paw`, in metres:
+/// negative where it has slack to spare.
+fn sink_for(rig: &Rig, limb: Limb, paw: Vec3) -> Option<f32> {
+    let [top, mid, tip] = rig.limb_chain(limb)?;
+    let pad = *rig.in_zone(Zone::Extremity(limb)).first()?;
+    let joint = |at: usize| rig.joints[at].position;
+    let length = (joint(top).distance(joint(mid))
+        + joint(mid).distance(joint(tip))
+        + joint(tip).distance(joint(pad)))
+        * STANCE_STRETCH;
+    let along = paw - joint(top);
+    // The blade's swing takes up a share of a fore's reach.
+    let share = if limb.is_fore() { 0.8 } else { 1.0 };
+    let flat = Vec2::new(along.x, along.z * share);
+    Some(-along.y - (length * length - flat.length_squared()).max(0.0).sqrt())
+}
+
+/// How deep a four-legged body holds itself through `gait`, in metres: the
+/// least depth at which every paw reaches every stance moment with the girdle
+/// above it riding where it rides then (#378).
+///
+/// **One depth, and the bob is the [`Ride`]'s.** Sinking moment by moment for
+/// whichever leg asked most jolted a trot 14 mm a frame as one leg's ask handed
+/// to another's, put every girdle's low point at the ends of a stride whatever
+/// the gait, and rode the withers and pelvis as a block.
+pub(super) fn depth(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
+    let ride = Ride::of(gait, Kin::of(rig));
+    let mut deepest = 0.0f32;
+    for (index, &limb) in gait.limbs.iter().enumerate() {
+        let (Some(home), offset) = (home_of(rig, limb), gait.offsets[index]) else {
+            continue;
+        };
+        let lead = stride_lead(rig, limb, gait);
+        for share in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
+            let reached = led(
+                contact_offset(led(home, lead), stride, Phase::Stance(share)),
+                lead,
+            );
+            let (pelvis, withers) = ride.at(offset + gait.duty * share);
+            let rides = if limb.is_fore() { withers } else { pelvis };
+            if let Some(sink) = sink_for(rig, limb, home + reached) {
+                deepest = deepest.max(sink + rides);
+            }
+        }
+    }
+    deepest
+}
+
+/// [`depth`] for the moment `cycle` with its stance paws where they really are,
+/// on real ground or held by a ledger: a slope's or a change of speed's ask, and
+/// on a flat steady walk no more than [`depth`].
+pub(super) fn depth_at(
+    rig: &Rig,
+    gait: &Gait,
+    cycle: f32,
+    standing: impl Iterator<Item = (Limb, Vec3)>,
+) -> f32 {
+    let (pelvis, withers) = Ride::of(gait, Kin::of(rig)).at(cycle);
+    standing
+        .filter_map(|(limb, paw)| {
+            Some(sink_for(rig, limb, paw)? + if limb.is_fore() { withers } else { pelvis })
+        })
+        .fold(0.0, f32::max)
+}
+
+/// The deepest a girdle of a four-legged body rides in `gait`: [`depth`] and
+/// the [`Ride`] below it, the planning figure `gait::crouch_for` hands out.
+pub(super) fn deepest(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
+    depth(rig, gait, stride) + Ride::of(gait, Kin::of(rig)).height()
+}
+
 /// Carries a four-legged body's trunk, head and tail through `gait` at
 /// `cycle`.
 ///
 /// Call where a person's walk leans: after [`super::gait::step`] and before
-/// the footing tail, which replants the stance feet the rock and the fold
-/// moved and leaves the swinging ones reaching where the back sent them.
-/// `head_level: false` leaves the head to ride the trunk, the ablation
-/// [`super::gait::Walk::head_level`] names. A body standing on any other
-/// number of legs, or a gait that never lifts one, is left alone.
-pub(super) fn carry(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32, head_level: bool) {
+/// the footing tail. The legs go back where `steps` sent them, a stance's and
+/// a swing's both: nothing below a girdle moves as the trunk does but the bones
+/// joining them. `head_level: false` leaves the head to ride the trunk, the
+/// ablation [`super::gait::Walk::head_level`] names. A body standing on any
+/// other number of legs, or a gait that never lifts one, is left alone.
+pub(super) fn carry(
+    rig: &Rig,
+    pose: &mut Pose,
+    gait: &Gait,
+    steps: &mut Steps,
+    cycle: f32,
+    head_level: bool,
+) {
     if !pose.fits(rig) || gait.duty >= 1.0 || gait.limbs.len() != 4 {
         return;
     }
@@ -109,102 +792,281 @@ pub(super) fn carry(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32, head_le
     let Some(girdle) = rig.joints[neck].parent else {
         return;
     };
-    let paws = rig.anatomy.feet != FootKind::Hooves;
+    let kin = Kin::of(rig);
     // How much of a gallop this is, `0..1`, off the duty: nothing until a
     // foot's stance is shorter than its swing.
     let flight = ((0.5 - gait.duty) / (0.5 - FULL_FLIGHT)).clamp(0.0, 1.0);
-    let (gather, rock) = harmonics(gait, cycle);
-    let fold = gather * flight * if paws { FOLD_PAWS } else { FOLD_HOOVES };
+    let ride = Ride::of(gait, kin);
+    let (pelvis, withers) = ride.at(cycle);
     let trunk = rig.joints[girdle].position - rig.joints[root].position;
-    let pitch = (rock * ROCK * leg_of(rig) / trunk.length().max(f32::EPSILON))
-        .clamp(-1.0, 1.0)
-        .det_asin();
+    let pitch = (withers - pelvis).det_atan2(trunk.length().max(f32::EPSILON));
+    let fold = harmonics(gait, cycle) * flight * kin.of_feet(FOLD_PAWS, FOLD_HOOVES);
+    let twice = ride.twice(cycle);
 
-    // **The rock only ever sinks the end it moves.** Nose up, it turns the
-    // trunk about the withers and the hindquarters settle under the hinds
-    // that bear them; nose down, about the hips, and the forehand settles
-    // onto its fores. A girdle that sinks asks its legs only to bend further,
-    // where one that rises asks them to reach: turned about the trunk's
-    // middle, a canter lifted its withers off a fore planted at the front of
-    // its stride and the plant dropped the whole body 35 mm to get it back.
-    // The fold turns the loin up under the arch and the back down from it,
-    // about the hips, so neither girdle moves and only the back between them
-    // bends. A positive turn about X carries the nose down.
-    //
-    // Where the step stood each foot on the ground, which the trunk's turns
-    // below must not move.
+    // The trunk's first duty is to leave a foot on the ground where the step
+    // stood it, which the turns below must not move. Each stance leg keeps the
+    // attitude the step gave it and is solved back to its place, or a fore at
+    // the back of its stance swung further back and up as the forehand tipped,
+    // and the plant dropped the body to reach it.
     let held = pose.forward(rig).rotations;
     let stepped = pose.rotations.clone();
-    let stood: Vec<(Limb, Vec3)> = {
-        let posed = pose.forward(rig);
-        gait.limbs
-            .iter()
-            .enumerate()
-            .filter(|&(index, _)| gait.phase(index, cycle).is_stance())
-            .filter_map(|(_, &limb)| {
-                let paw = *rig.in_zone(Zone::Extremity(limb)).first()?;
-                Some((limb, posed.positions[paw]))
-            })
-            .collect()
-    };
-    sink_end(rig, pose, pitch);
-    let middle = spine_to(rig, girdle)
-        .first()
-        .copied()
-        .filter(|&joint| joint != girdle);
-    let mut inherited = Rot::x(-pitch);
-    if let Some(loin) = middle {
-        pose.rotations[root] *= Rot::x(-fold * 0.5);
-        pose.rotations[loin] *= Rot::x(fold);
-        inherited *= Rot::x(fold * 0.5);
+
+    // The girdles' ride: the trunk's height at its hips, and its pitch to the
+    // withers about them.
+    let tops: Vec<Vec3> = rig
+        .ground_contacts()
+        .into_iter()
+        .filter(|limb| !limb.is_fore())
+        .filter_map(|limb| rig.limb_chain(limb))
+        .map(|[top, _, _]| rig.joints[top].position)
+        .collect();
+    if !tops.is_empty() {
+        #[expect(clippy::cast_precision_loss, reason = "two legs")]
+        let hips = tops.iter().sum::<Vec3>() / tops.len() as f32;
+        let lever = hips - rig.joints[root].position;
+        let before = pose.rotations[root] * lever;
+        pose.rotations[root] *= Rot::x(-pitch);
+        pose.translation += before - pose.rotations[root] * lever;
     }
-    if head_level {
-        let steady = if paws { STEADY_PAWS } else { STEADY_HOOVES };
-        relevel_head(rig, pose, det::slerp(Quat::IDENTITY, inherited, steady));
-    }
-    // And at speed the neck reaches forward and the head goes down with it,
-    // less than the neck does. **From the neck's own joint, not the
-    // withers**: the fores hang from the withers, and turned there a horse's
-    // shoulders swung 10 cm under its neck, further than a planted leg could
-    // follow.
-    let reach = REACH * flight;
-    if reach > 0.0 {
-        pose.rotations[neck] *= Rot::x(reach);
-        if let Some(&head) = rig.in_zone(Zone::Head).first() {
-            pose.rotations[head] *= Rot::x(-reach * (1.0 - REACH_KEPT));
+    pose.translation.y += pelvis;
+
+    // The spine's bends, spread along it and heaviest at its middle, where
+    // the thoracolumbar junction bends most (research-08 2.7), with the trunk
+    // turned back by half of each so the two halves bend about its middle.
+    // Sideways once a stride, one bend at a trot and a wave from the withers
+    // to the pelvis at a walk, dying away as the body takes flight.
+    let spine = spine_to(rig, girdle);
+    let hind = gait
+        .limbs
+        .iter()
+        .position(|limb| !limb.is_fore() && limb.is_left())
+        .map_or(0.0, |index| gait.offsets[index]);
+    let side = kin.of_feet(BEND_PAWS, BEND_HOOVES) * 0.5 * (1.0 - flight);
+    let walking = ((gait.duty - 0.45) / 0.15).clamp(0.0, 1.0);
+    let hollow = -HOLLOW * 0.5 * twice * (1.0 - flight);
+    let mut across = 0.0f32;
+    let mut along = 0.0f32;
+    #[expect(clippy::cast_precision_loss, reason = "a spine is a handful of joints")]
+    {
+        let count = spine.len().max(1) as f32;
+        let total: f32 = (0..spine.len())
+            .map(|rank| ((rank as f32 + 0.5) / count * PI).det_sin())
+            .sum();
+        for (rank, &joint) in spine.iter().enumerate() {
+            let at = (rank as f32 + 0.5) / count;
+            let share = (at * PI).det_sin() / total.max(f32::EPSILON);
+            let late = (1.0 - at) * BEND_TRAVEL * walking;
+            let yaw = side * share * (TAU * (cycle - hind - late)).det_cos();
+            let bow = (fold + hollow) * share;
+            pose.rotations[joint] *= Rot::y(yaw) * Rot::x(bow);
+            across += yaw;
+            along += bow;
         }
     }
+    pose.rotations[root] *= Rot::y(-0.5 * across) * Rot::x(-0.5 * along);
 
-    // **A foot on the ground stays where the step stood it.** Turned with
-    // its girdle, a fore at the back of its stance swung further back and up
-    // as the fold tipped the forehand, and the plant dropped the body 16 mm
-    // to reach it - and let go the frame that foot lifted, a 30 mm jolt into
-    // the gallop's flight. So its leg first keeps the attitude the step gave
-    // it, and then the foot is put back where it stood: the girdle still
-    // moves, and the plant puts a foot back down without putting it back
-    // across the ground - 15 mm of slide through a gallop's stance. **Only
-    // where the leg reaches**: pinned beyond its reach, the plant dropped the
-    // whole body to make up the difference, 25 mm in a frame at a gallop.
-    // A leg in the air goes with its girdle, and gathers and stretches with
-    // the back.
-    let turned = pose.forward(rig).rotations;
-    for (limb, at) in stood {
-        let Some(chain) = rig.limb_chain(limb) else {
+    let mut inherited = Rot::x(-pitch) * Rot::y(0.5 * across) * Rot::x(0.5 * along);
+    if head_level {
+        inherited = det::slerp(
+            Quat::IDENTITY,
+            inherited,
+            kin.of_feet(STEADY_PAWS, STEADY_HOOVES),
+        );
+        relevel_head(rig, pose, inherited);
+    }
+    // At speed the neck reaches forward and the head goes down with it, less
+    // than the neck does. **From the neck's own joint, not the withers**: the
+    // fores hang from the withers, and turned there a horse's shoulders swung
+    // 10 cm under its neck, further than a planted leg could follow. And twice
+    // a stride it nods, most at a walk and on a horse, down as each fore bears.
+    // The trunk's pitch would carry the head on the whole lever from the hips,
+    // so the neck takes that back first: the head rides the trunk's height, not
+    // the far end of a see-saw.
+    let nod = kin.of_feet(NOD_PAWS, NOD_HOOVES) * walking + NOD_TROT * (1.0 - walking);
+    let nodding = nod * twice * (1.0 - flight);
+    let swing = pitch * NECK_TAKES_PITCH;
+    let reach = REACH * flight;
+    // A nod swings the whole neck, so from the withers: the neck's own joint
+    // stands halfway up it, and takes four times the angle for the same drop.
+    pose.rotations[girdle] *= Rot::x(nodding);
+    pose.rotations[neck] *= Rot::x(reach + swing);
+    if let Some(&head) = rig.in_zone(Zone::Head).first() {
+        pose.rotations[head] *= Rot::x(-reach * (1.0 - REACH_KEPT) - (swing + nodding) * NOD_HELD);
+    }
+
+    // And the legs go back. A leg in the air goes back to where the step sent
+    // it too: a girdle's ride is no more than a foot going where it was going.
+    let turned_now = pose.forward(rig).rotations;
+    for (index, &limb) in gait.limbs.iter().enumerate() {
+        let (Some(chain), Some(home)) = (rig.limb_chain(limb), home_of(rig, limb)) else {
+            continue;
+        };
+        let Some(&(_, offset, _)) = steps.asked.iter().find(|&&(of, _, _)| of == limb) else {
             continue;
         };
         let top = chain[0];
-        if let Some(parent) = rig.joints[top].parent {
-            pose.rotations[top] = turned[parent].inverse() * held[parent] * stepped[top];
+        let standing = gait.phase(index, cycle).is_stance();
+        if standing && let Some(parent) = rig.joints[top].parent {
+            pose.rotations[top] = turned_now[parent].inverse() * held[parent] * stepped[top];
         }
         let kept = chain.map(|joint| pose.rotations[joint]);
-        if !solve_contact(rig, pose, limb, at) {
+        // A stance pinned beyond its reach would have the plant drop the whole
+        // body to make up the difference. A swing past it reaches as far as it
+        // goes, and hunting back to where it was jolted it 240 mm in a sample.
+        if !solve_contact_as(rig, pose, limb, home + offset, Foot::Striding) && standing {
             for (joint, rotation) in chain.into_iter().zip(kept) {
                 pose.rotations[joint] = rotation;
             }
         }
     }
 
+    // Where the swinging paws now stand is what a clip laid over the walk would
+    // move them from: short of their goals, as a leg at its reach is, they would
+    // otherwise read as a clip's, and fold and unfold between one frame and the
+    // next.
+    let placed = pose.forward(rig);
+    for (limb, at) in &mut steps.placed {
+        if let Some(&paw) = rig.in_zone(Zone::Extremity(*limb)).first() {
+            *at = placed.positions[paw];
+        }
+    }
+
     swish(rig, pose, gait, cycle, flight);
+}
+
+/// Which of a gait's swinging legs are still where [`super::gait::step`] left
+/// them, and so its own to fold: a clip laid over the walk owns what it moved.
+/// None on any other body than four-legged.
+pub(super) fn owned_swings(
+    rig: &Rig,
+    pose: &Pose,
+    gait: &Gait,
+    steps: &Steps,
+    kept: f32,
+) -> Vec<Limb> {
+    if gait.limbs.len() != 4 || gait.duty >= 1.0 || steps.placed.is_empty() {
+        return Vec::new();
+    }
+    let posed = pose.forward(rig);
+    steps
+        .placed
+        .iter()
+        .filter(|&&(limb, was)| {
+            rig.in_zone(Zone::Extremity(limb))
+                .first()
+                .is_some_and(|&foot| posed.positions[foot].distance(was) <= kept)
+        })
+        .map(|&(limb, _)| limb)
+        .collect()
+}
+
+/// A swinging leg's fold through its swing, `0` at both ends and `1` a little
+/// before its middle, leaving and arriving without a jolt.
+fn fold_along(t: f32) -> f32 {
+    let up = (t.clamp(0.0, 1.0).det_powf(0.8) * PI)
+        .det_sin()
+        .clamp(0.0, 1.0);
+    up * up * (3.0 - 2.0 * up)
+}
+
+/// The last of a beast's walk: folds the legs in the air and lays the toes on
+/// the ground, the feet where the plant and the roll left them (#378).
+///
+/// **The pad does not move**, so nothing in the ground's account of a paw
+/// changes, and every leg is continuous across its landing and its lift-off: a
+/// fold is nothing at either end of a swing, and the toes' attitude is the
+/// roll's from the stance into the swing.
+///
+/// `owned` names the swinging legs a clip has not taken: see [`owned_swings`].
+pub(super) fn articulate<F>(
+    rig: &Rig,
+    pose: &mut Pose,
+    gait: &Gait,
+    stride: &Stride,
+    cycle: f32,
+    owned: &[Limb],
+    ground: &F,
+) where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    if !pose.fits(rig) || gait.limbs.len() != 4 || gait.duty >= 1.0 {
+        return;
+    }
+    let kin = Kin::of(rig);
+    let trotting = ((0.58 - gait.duty) / 0.15).clamp(0.0, 1.0);
+    let at_speed = |(walk, faster): (f32, f32)| walk + (faster - walk) * trotting;
+    let along = Heading::toward(stride.direction).along();
+    for (index, &limb) in gait.limbs.iter().enumerate() {
+        let Some(chain) = rig.limb_chain(limb) else {
+            continue;
+        };
+        let extremity = rig.in_zone(Zone::Extremity(limb));
+        let [pad, ..] = extremity[..] else {
+            continue;
+        };
+        let phase = gait.phase(index, cycle);
+        let swinging = match phase {
+            Phase::Swing(t) => fold_along(t),
+            Phase::Stance(_) => 0.0,
+        };
+        let (joint_fold, toe_fold) = if limb.is_fore() {
+            (
+                at_speed((
+                    kin.of_feet(CARPUS_FOLD_PAWS.0, CARPUS_FOLD_HOOVES.0),
+                    kin.of_feet(CARPUS_FOLD_PAWS.1, CARPUS_FOLD_HOOVES.1),
+                )),
+                at_speed((
+                    kin.of_feet(TOES_FOLD_PAWS.0, TOES_FOLD_HOOVES.0),
+                    kin.of_feet(TOES_FOLD_PAWS.1, TOES_FOLD_HOOVES.1),
+                )),
+            )
+        } else {
+            (-HOCK_FOLD, HIND_TOES_FOLD)
+        };
+        if swinging > 0.0 && owned.contains(&limb) {
+            // The paw folds up and back about the wrist, the wrist staying near
+            // where the leg was going: left low with its wrist thrown out ahead,
+            // a folding fore straightened its elbow and flicked through it.
+            let fold = joint_fold * swinging;
+            let hang = rig.joints[pad]
+                .position
+                .distance(rig.joints[chain[2]].position);
+            let folded = Vec3::new(0.0, hang * (1.0 - fold.det_cos()), -hang * fold.det_sin())
+                * kin.of_feet(FOLD_RAISES_PAWS, FOLD_RAISES_HOOVES);
+            let goal = pose.forward(rig).positions[pad] + folded;
+            stand(rig, pose, chain, goal, fold);
+            let posed = pose.forward(rig);
+            let hang = posed.positions[chain[2]] - posed.positions[pad];
+            let root = posed.positions[chain[0]];
+            let joint = |at: usize| rig.joints[at].position;
+            let length = joint(chain[0]).distance(joint(chain[1]))
+                + joint(chain[1]).distance(joint(chain[2]));
+            let span = goal + hang - root;
+            let wrist = root + span.normalize_or_zero() * within_reach(span.length(), length);
+            two_bone(rig, pose, chain, wrist, side_pole(rig, chain, root, wrist));
+        }
+        // The toes: flat on the ground as the leg stands over them, turned to
+        // hold their bearing on a turn and peeled by the roll; in the air they
+        // go from that to the fold, with the metapodial's.
+        let at = pose.forward(rig).positions[pad];
+        let up = ground(at)
+            .map_or(Vec3::Y, |ground| ground.normal)
+            .normalize_or(Vec3::Y);
+        let roll = foot_pitch(phase).min(0.0) * along;
+        let flat = Rot::axis_angle(up, contact_heading(stride, phase))
+            * det::from_rotation_arc(Vec3::Y, up);
+        let axis = (flat * Vec3::Z)
+            .cross(up)
+            .try_normalize()
+            .unwrap_or(Vec3::X);
+        let ankle = turned_at(rig, pose, chain[2]);
+        let laid = ankle.inverse() * Rot::axis_angle(axis, roll) * flat;
+        // About the side's axis the long way if need be, not a slerp's short
+        // way: a fold past the half turn from flat flipped the toes through 230
+        // mm in a sample.
+        let flexed = 2.0 * laid.x.det_atan2(laid.w);
+        pose.rotations[pad] = laid * Rot::x(swinging * (toe_fold - wrapped(flexed)));
+    }
 }
 
 /// Whether `rig` stands on four legs, and so moves as a beast does (#370).
@@ -240,8 +1102,7 @@ pub(super) fn ear_roots(rig: &Rig) -> impl Iterator<Item = usize> + '_ {
 /// swung forward under its trunk and its fore paws 118 mm off where they
 /// stood.
 ///
-/// The gait's rock and [`super::clip::Target::Pitch`] both, so a sit and a
-/// canter's settling hindquarters are one motion.
+/// What [`super::clip::Target::Pitch`] turns a sit about.
 pub(super) fn sink_end(rig: &Rig, pose: &mut Pose, pitch: f32) {
     let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
         return;
@@ -388,39 +1249,23 @@ const PADDLE_SURGE: f32 = 0.02;
 /// Provenance: **tuned by render** (#370).
 const PADDLE_RUDDER: f32 = 0.03;
 
-/// The back's fold and the trunk's rock at `cycle`, each in `-1..=1`.
+/// The back's fold at `cycle`, in `-1..=1`.
 ///
-/// The fold is positive **gathered** - the hinds reaching under the body as
-/// they land, the fores back under it as they lift - and negative stretched,
-/// and is the first harmonic of that reach summed over the contacts, so it is
-/// as large as the hinds and the fores part. The rock is positive nose up,
-/// while the hinds bear more of the body than the fores - each contact is
-/// loaded most at its midstance - and rocks all the way once the loads part
-/// by [`ROCK_FULL`].
-fn harmonics(gait: &Gait, cycle: f32) -> (f32, f32) {
+/// Positive **gathered** - the hinds reaching under the body as they land, the
+/// fores back under it as they lift - and negative stretched, and the first
+/// harmonic of that reach summed over the contacts, so it is as large as the
+/// hinds and the fores part.
+fn harmonics(gait: &Gait, cycle: f32) -> f32 {
     let duty = gait.duty;
-    // Each sum as a complex number, a point turning once a cycle: its length
-    // is how far the contacts part and its angle when the motion peaks.
     let mut gather = Vec2::ZERO;
-    let mut rock = Vec2::ZERO;
     for (&limb, &offset) in gait.limbs.iter().zip(&gait.offsets) {
-        let (reaching, load) = if limb.is_fore() {
-            (offset + duty, -1.0)
+        gather += turned(if limb.is_fore() {
+            offset + duty
         } else {
-            (offset, 1.0)
-        };
-        gather += turned(reaching);
-        rock += turned(offset + duty * 0.5) * load;
+            offset
+        });
     }
-    let now = turned(cycle);
-    let at = |sum: Vec2| sum.dot(now) * 0.25;
-    let parted = rock.length() * 0.25;
-    let rocking = if parted > f32::EPSILON {
-        at(rock) / parted * (parted / ROCK_FULL).min(1.0)
-    } else {
-        0.0
-    };
-    (at(gather), rocking)
+    gather.dot(turned(cycle)) * 0.25
 }
 
 /// The point a moment `0..1` of the cycle sits at on the unit circle.
@@ -450,7 +1295,7 @@ fn swish(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32, flight: f32) {
     for (rank, &joint) in tail.iter().enumerate() {
         let late = cycle - rank as f32 * TAIL_LAG;
         let sway = TAIL_SWAY * (1.0 - flight) * (TAU * (late - hind)).det_sin();
-        let wave = TAIL_WAVE * flight * harmonics(gait, late).0;
+        let wave = TAIL_WAVE * flight * harmonics(gait, late);
         pose.rotations[joint] *= Rot::y(sway) * Rot::x(wave);
     }
     // How far below the horizontal behind the tail's chord hangs: a turn
@@ -469,7 +1314,30 @@ mod tests {
     use crate::anim::ground::Ground;
     use crate::anim::pose::Posed;
     use crate::anim::{Lead, Pattern, Speed};
-    use crate::plan::{BodyPlan, Limb, QuadrupedParams};
+    use crate::plan::{BodyPlan, QuadrupedParams};
+
+    #[test]
+    fn a_tear_is_not_taken_for_a_root() {
+        // #399. Falling through nought at 0.8 and torn at 1.2, it finds the root.
+        let torn = |swing: f32| {
+            if swing < 1.2 {
+                0.8 - swing
+            } else {
+                0.8 - swing - std::f32::consts::TAU
+            }
+        };
+        assert!((short_of_tear(torn) - 0.8).abs() < 1.0e-3);
+        // No root short of the tear: the swing that comes nearest, a parabola's
+        // lowest at 0.3, off nought by a tenth.
+        let rootless = |swing: f32| {
+            if swing < 1.2 {
+                0.1 + (swing - 0.3) * (swing - 0.3)
+            } else {
+                swing - 1.2 - std::f32::consts::PI
+            }
+        };
+        assert!((short_of_tear(rootless) - 0.3).abs() < 5.0e-3);
+    }
 
     fn quadruped() -> Rig {
         beast(QuadrupedParams::default())
@@ -720,11 +1588,21 @@ mod tests {
         );
     }
 
-    /// The largest of a harmonic across a cycle.
-    fn peak(gait: &Gait, of: impl Fn((f32, f32)) -> f32) -> f32 {
+    /// The largest of the back's fold across a cycle.
+    fn peak(gait: &Gait) -> f32 {
         (0..100)
-            .map(|step| of(harmonics(gait, step as f32 * 0.01)).abs())
+            .map(|step| harmonics(gait, step as f32 * 0.01).abs())
             .fold(0.0, f32::max)
+    }
+
+    /// How far a gait's girdles part once a stride: what rocks a trunk.
+    fn parted(gait: &Gait) -> f32 {
+        let kin = Kin {
+            hoof: 0.0,
+            withers: 1.0,
+        };
+        let ride = Ride::of(gait, kin);
+        (ride.hinds[0] - ride.fores[0]).length()
     }
 
     /// A beast paddling at `effort`, posed at `cycle`.
@@ -824,6 +1702,424 @@ mod tests {
         }
     }
 
+    // ---- #378: the gait against docs/research/research-08-quadruped-gait.md.
+
+    /// The bodies a gait is judged on, by the family: and a cross.
+    fn kin() -> Vec<(&'static str, Rig, f32)> {
+        use crate::plan::Family;
+        [
+            ("dog", Family::Dog, None),
+            ("cat", Family::Cat, None),
+            ("horse", Family::Horse, None),
+            ("cat+horse", Family::Cat, Some(Family::Horse)),
+        ]
+        .into_iter()
+        .map(|(name, own, other)| {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(own, other, if other.is_some() { 0.5 } else { 0.0 });
+            let rig = beast(params);
+            let withers = Kin::of(&rig).withers;
+            (name, rig, withers)
+        })
+        .collect()
+    }
+
+    /// One moment of a cycle as the whole walk poses it.
+    struct Sampled {
+        at: Vec<Vec3>,
+        phase: Vec<(Limb, Phase)>,
+        cycle: f32,
+    }
+
+    /// `pattern` at `froude`, `frames` moments of one cycle.
+    fn cycle_of(rig: &Rig, pattern: Pattern, froude: f32, frames: usize) -> Vec<Sampled> {
+        let speed = Speed::from_froude(froude).in_pattern(pattern);
+        let (gait, stride) = (speed.gait(rig), speed.stride(rig));
+        (0..frames)
+            .map(|frame| {
+                let cycle = frame as f32 / frames as f32;
+                let mut pose = Pose::rest(rig);
+                Walk::at(cycle).drive(rig, &mut pose, &gait, &stride, |at| {
+                    Some(Ground::level(Vec3::new(at.x, 0.0, at.z)))
+                });
+                Sampled {
+                    at: pose.forward(rig).positions,
+                    phase: gait
+                        .limbs
+                        .iter()
+                        .enumerate()
+                        .map(|(index, &limb)| (limb, gait.phase(index, cycle)))
+                        .collect(),
+                    cycle,
+                }
+            })
+            .collect()
+    }
+
+    /// A bone's angle to straight down in the side plane, in degrees, its end
+    /// ahead positive: the dossier's SEG-V.
+    fn seg(v: Vec3) -> f32 {
+        v.z.atan2(-v.y).to_degrees()
+    }
+
+    fn included(upper: Vec3, lower: Vec3) -> f32 {
+        180.0 + ((seg(lower) - seg(upper) + 540.0).rem_euclid(360.0) - 180.0)
+    }
+
+    fn range(values: impl Iterator<Item = f32>) -> (f32, f32) {
+        values.fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), value| {
+            (low.min(value), high.max(value))
+        })
+    }
+
+    /// How far `values` part across their second harmonic, and its phase in
+    /// strides.
+    fn twice_a_stride(samples: &[Sampled], of: impl Fn(&Sampled) -> f32) -> (f32, f32) {
+        let mean = samples.iter().map(&of).sum::<f32>() / samples.len() as f32;
+        let (mut re, mut im) = (0.0, 0.0);
+        for sample in samples {
+            let angle = 2.0 * TAU * sample.cycle;
+            re += (of(sample) - mean) * angle.cos();
+            im += (of(sample) - mean) * angle.sin();
+        }
+        let count = samples.len() as f32;
+        (
+            2.0 * (re * re + im * im).sqrt() / count,
+            im.atan2(re) / (2.0 * TAU),
+        )
+    }
+
+    #[test]
+    fn each_leg_is_a_pantograph() {
+        // Fact 2: the femur and the metatarsus move as one, and the blade with
+        // the forearm. Before #378 the blade never moved and the metatarsus
+        // kept to 17 degrees under a femur's 75 to 108.
+        for (name, rig, _) in kin() {
+            for (pattern, froude) in [(Pattern::Walk, 0.25), (Pattern::Trot, 1.2)] {
+                let samples = cycle_of(&rig, pattern, froude, 96);
+                let upper = rig.in_zone(Zone::UpperLimb(Limb::HindLeft));
+                let hock = rig.in_zone(Zone::LowerLimb(Limb::HindLeft))[0];
+                let pad = rig.in_zone(Zone::Extremity(Limb::HindLeft))[0];
+                let gaps: Vec<f32> = samples
+                    .iter()
+                    .map(|s| seg(s.at[upper[1]] - s.at[upper[0]]) - seg(s.at[pad] - s.at[hock]))
+                    .collect();
+                let (low, high) = range(gaps.iter().copied());
+                assert!(
+                    high - low < 10.0,
+                    "{name} {pattern:?}: femur and metatarsus part by {:.1} degrees",
+                    high - low
+                );
+                let (low, high) = range(samples.iter().map(|s| seg(s.at[pad] - s.at[hock])));
+                assert!(
+                    high - low > 30.0,
+                    "{name} {pattern:?}: the metatarsus swings {:.1} degrees",
+                    high - low
+                );
+                let fore = rig.in_zone(Zone::UpperLimb(Limb::ForeLeft));
+                let (low, high) = range(samples.iter().map(|s| seg(s.at[fore[1]] - s.at[fore[0]])));
+                assert!(
+                    (15.0..60.0).contains(&(high - low)),
+                    "{name} {pattern:?}: the blade swings {:.1} degrees",
+                    high - low
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_paw_lands_under_the_chest_and_leaves_under_the_loin() {
+        // Fact 3: lands 16 to 22 degrees ahead of the leg's pivot and leaves 14
+        // to 33 behind, the leaving further at a walk's pace. Before #378 a fore
+        // landed 32 to 36 ahead and left 16 to 22 behind.
+        for (name, rig, _) in kin() {
+            for limb in [Limb::ForeLeft, Limb::HindLeft] {
+                let samples = cycle_of(&rig, Pattern::Walk, 0.25, 192);
+                let chain = rig.limb_chain(limb).expect("a leg");
+                let pad = rig.in_zone(Zone::Extremity(limb))[0];
+                let parent = rig.joints[chain[0]].parent.expect("a blade or a hip's");
+                let pivot = |s: &Sampled| {
+                    if limb.is_fore() {
+                        s.at[parent].lerp(s.at[chain[0]], PIVOT_ON_BLADE)
+                    } else {
+                        s.at[chain[0]]
+                    }
+                };
+                let stance: Vec<(f32, f32)> = samples
+                    .iter()
+                    .filter_map(|s| {
+                        let (_, phase) = *s.phase.iter().find(|(of, _)| *of == limb)?;
+                        match phase {
+                            Phase::Stance(t) => Some((t, seg(s.at[pad] - pivot(s)))),
+                            Phase::Swing(_) => None,
+                        }
+                    })
+                    .collect();
+                let first = stance
+                    .iter()
+                    .copied()
+                    .fold((2.0, 0.0), |a, b| if b.0 < a.0 { b } else { a });
+                let last = stance
+                    .iter()
+                    .copied()
+                    .fold((-1.0, 0.0), |a, b| if b.0 > a.0 { b } else { a });
+                assert!(
+                    (12.0..27.0).contains(&first.1),
+                    "{name} {limb:?} landed {:.1} degrees ahead",
+                    first.1
+                );
+                assert!(
+                    (15.0..35.0).contains(&-last.1),
+                    "{name} {limb:?} left {:.1} degrees behind",
+                    -last.1
+                );
+                assert!(
+                    -last.1 > first.1,
+                    "{name} {limb:?}: a leg leaves further behind than it lands ahead"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_fore_folds_in_the_air_and_stands_past_straight_on_the_ground() {
+        // Fact 5. Before #378 a carpus closed only to 135 in a trot's swing and
+        // bent to 150 under load, and the toes never moved from 244.
+        for (name, rig, _) in kin() {
+            let samples = cycle_of(&rig, Pattern::Trot, 1.2, 192);
+            let limb = Limb::ForeLeft;
+            let [_, elbow, carpus] = rig.limb_chain(limb).expect("a leg");
+            let feet = rig.in_zone(Zone::Extremity(limb));
+            let of = |s: &Sampled| s.phase.iter().find(|(l, _)| *l == limb).expect("a leg").1;
+            let wrist =
+                |s: &Sampled| included(s.at[carpus] - s.at[elbow], s.at[feet[0]] - s.at[carpus]);
+            let toes =
+                |s: &Sampled| included(s.at[feet[0]] - s.at[carpus], s.at[feet[1]] - s.at[feet[0]]);
+            let swinging = || samples.iter().filter(|s| !of(s).is_stance());
+            let standing = || samples.iter().filter(|s| of(s).is_stance());
+            let (least, _) = range(swinging().map(wrist));
+            assert!(
+                least < 125.0,
+                "{name}: a swinging carpus closes to {least:.0}"
+            );
+            let (least, _) = range(standing().map(wrist));
+            assert!(
+                least > 175.0,
+                "{name}: a standing carpus closes to {least:.0}"
+            );
+            let (least, _) = range(swinging().map(toes));
+            assert!(least < 200.0, "{name}: swinging toes close to {least:.0}");
+            let (least, _) = range(standing().map(toes));
+            assert!(least > 190.0, "{name}: standing toes close to {least:.0}");
+        }
+    }
+
+    #[test]
+    fn the_girdles_ride_apart_at_a_walk_and_together_at_a_trot() {
+        // Facts 7 and 8. Before #378 the pelvis, the withers and the head went
+        // up and down as one, at the same height, at every gait.
+        for (name, rig, wh) in kin() {
+            let [hips, _, withers] = trunk(&rig);
+            for (pattern, froude, apart) in [(Pattern::Walk, 0.25, 0.25), (Pattern::Trot, 1.2, 0.0)]
+            {
+                let samples = cycle_of(&rig, pattern, froude, 96);
+                let (pelvis, from) = twice_a_stride(&samples, |s| s.at[hips].y);
+                let (shoulders, to) = twice_a_stride(&samples, |s| s.at[withers].y);
+                let gap = (to - from).rem_euclid(0.5);
+                let gap = gap.min(0.5 - gap);
+                assert!(
+                    (gap - apart).abs() < 0.04,
+                    "{name} {pattern:?}: the girdles ride {gap:.2} of a stride apart"
+                );
+                assert!(
+                    (0.014..0.035).contains(&(pelvis / wh)),
+                    "{name} {pattern:?}: the pelvis rides {:.1}% of the withers' height",
+                    pelvis / wh * 200.0
+                );
+                let _ = shoulders;
+            }
+        }
+    }
+
+    #[test]
+    fn a_walking_trunk_is_lowest_at_each_end_of_a_legs_stance_and_a_trotting_one_at_its_middle() {
+        // Fact 8's timing: a vault and a spring.
+        let rig = quadruped();
+        let [hips, ..] = trunk(&rig);
+        for (pattern, froude, deep) in [(Pattern::Walk, 0.25, false), (Pattern::Trot, 1.2, true)] {
+            let samples = cycle_of(&rig, pattern, froude, 192);
+            let height = |t0: f32, t1: f32| {
+                let inside: Vec<f32> = samples
+                    .iter()
+                    .filter_map(
+                        |s| match s.phase.iter().find(|(l, _)| *l == Limb::HindLeft)?.1 {
+                            Phase::Stance(t) if (t0..t1).contains(&t) => Some(s.at[hips].y),
+                            _ => None,
+                        },
+                    )
+                    .collect();
+                inside.iter().sum::<f32>() / inside.len() as f32
+            };
+            let (mid, ends) = (height(0.35, 0.55), height(0.0, 0.15));
+            assert_eq!(
+                mid < ends,
+                deep,
+                "{pattern:?}: the hips ride {mid:.4} at midstance and {ends:.4} at the landing"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dogs_back_bends_and_a_horses_hardly() {
+        // Fact 9. Before #378 no back bent at a walk or a trot at all.
+        let bodies = kin();
+        let bend = |rig: &Rig, pattern, froude| {
+            let [hips, loin, withers] = trunk(rig);
+            let samples = cycle_of(rig, pattern, froude, 96);
+            let middle = spine_to(rig, withers)[spine_to(rig, withers).len() / 2];
+            let _ = loin;
+            let (low, high) = range(samples.iter().map(|s| {
+                let (rear, front) = (s.at[middle] - s.at[hips], s.at[withers] - s.at[middle]);
+                (front.x.atan2(front.z) - rear.x.atan2(rear.z)).to_degrees()
+            }));
+            high - low
+        };
+        let dog = &bodies[0].1;
+        let horse = &bodies[2].1;
+        for (pattern, froude) in [(Pattern::Walk, 0.25), (Pattern::Trot, 1.2)] {
+            let (dog, horse) = (bend(dog, pattern, froude), bend(horse, pattern, froude));
+            assert!(
+                dog > 4.0,
+                "{pattern:?}: a dog's back bends {dog:.1} degrees"
+            );
+            assert!(
+                dog > horse * 2.5,
+                "{pattern:?}: a dog's back bends {dog:.1} degrees and a horse's {horse:.1}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_walking_horse_nods_against_its_withers_twice_a_stride() {
+        // Fact 8: the head lowest as each fore bears, moving about three times
+        // what the withers do, a quarter of a stride off them.
+        let bodies = kin();
+        let horse = &bodies[2].1;
+        let head = horse.in_zone(Zone::Head)[0];
+        let [_, _, withers] = trunk(horse);
+        let samples = cycle_of(horse, Pattern::Walk, 0.25, 96);
+        let (nod, from) = twice_a_stride(&samples, |s| s.at[head].y);
+        let (rise, to) = twice_a_stride(&samples, |s| s.at[withers].y);
+        assert!(
+            nod > rise * 1.8,
+            "the head moves {nod:.4} and the withers {rise:.4}"
+        );
+        let gap = (to - from).rem_euclid(0.5);
+        assert!(
+            (gap - 0.25).abs() < 0.08,
+            "the head and the withers are {gap:.2} of a stride apart"
+        );
+    }
+
+    #[test]
+    fn no_joint_jolts_through_a_cycle() {
+        // A leg flipped through its pole, toes turned the short way round past
+        // the half turn, a swing hunting back from its reach: each jumped a
+        // joint by 90 to 280 mm between two samples. Second differences at 240
+        // samples a second of the slowest thing that can be seen. On rolled horses
+        // too, whose legs reach least for how far a fold throws the wrist: an elbow
+        // popped 130 mm a sample there, every stride, against 72 on the default.
+        let rolled = [6, 8, 9, 11].map(|seed| {
+            let record = crate::AvatarRecord::rolled(
+                "Beast",
+                crate::Archetype::Quadruped(QuadrupedParams::default()),
+                seed,
+            );
+            let rig = Rig::from_skeleton(&record.skeleton()).expect("rigs");
+            let withers = Kin::of(&rig).withers;
+            ("rolled", rig, withers)
+        });
+        for (name, rig, wh) in kin().into_iter().chain(rolled) {
+            for (pattern, froude, bound) in [
+                (Pattern::Walk, 0.25, 0.03),
+                (Pattern::Trot, 1.2, 0.03),
+                (Pattern::Canter(Lead::Right), 3.2, 0.03),
+                (Pattern::Gallop(Lead::Right), 7.0, 0.05),
+            ] {
+                let speed = Speed::from_froude(froude).in_pattern(pattern);
+                let frames = (240.0 / speed.cadence(&rig)) as usize;
+                let samples = cycle_of(&rig, pattern, froude, frames);
+                let count = samples.len();
+                let mut worst = 0.0f32;
+                for index in 0..count {
+                    let (a, b, c) = (
+                        &samples[index].at,
+                        &samples[(index + 1) % count].at,
+                        &samples[(index + 2) % count].at,
+                    );
+                    for joint in 0..a.len() {
+                        worst = worst.max((a[joint] - b[joint] * 2.0 + c[joint]).length());
+                    }
+                }
+                assert!(
+                    worst < wh * bound,
+                    "{name} {pattern:?} jolted {:.1} mm, {:.1}% of its height",
+                    worst * 1000.0,
+                    worst / wh * 100.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_cross_moves_between_its_parents_with_no_jump_along_the_slider() {
+        use crate::plan::Family;
+        let posed = |own, other, blend: f32| {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(own, Some(other), blend);
+            let rig = beast(params);
+            let kin = Kin::of(&rig);
+            let mut pose = Pose::rest(&rig);
+            let speed = Speed::from_froude(1.2).in_pattern(Pattern::Trot);
+            Walk::at(0.3).drive(
+                &rig,
+                &mut pose,
+                &speed.gait(&rig),
+                &speed.stride(&rig),
+                |at| Some(Ground::level(Vec3::new(at.x, 0.0, at.z))),
+            );
+            // Against the withers, for a body whose size moves along the slider.
+            // What the motion does, not the body: its rest moves as it will.
+            let at: Vec<Vec3> = pose
+                .forward(&rig)
+                .positions
+                .iter()
+                .zip(&rig.joints)
+                .map(|(at, joint)| (*at - joint.position) / kin.withers)
+                .collect();
+            (kin.hoof, at)
+        };
+        for (own, other) in [(Family::Dog, Family::Horse), (Family::Cat, Family::Horse)] {
+            let mut last = posed(own, other, 0.0);
+            let mut worst = (0.0f32, 0.0f32);
+            for step in 1..=20 {
+                let now = posed(own, other, step as f32 / 20.0);
+                worst.0 = worst.0.max((now.0 - last.0).abs());
+                for (a, b) in now.1.iter().zip(&last.1) {
+                    worst.1 = worst.1.max(a.distance(*b));
+                }
+                last = now;
+            }
+            assert!(
+                worst.0 < 0.15 && worst.1 < 0.06,
+                "{own:?}+{other:?}: a twentieth of the slider moved the hoof {:.3} and a joint \
+                 {:.3} of the withers' height",
+                worst.0,
+                worst.1
+            );
+        }
+    }
+
     #[test]
     fn a_beast_gathers_nose_up_arcs_over_and_lands_nose_down() {
         // #370. The trunk's line through a leap, against where it stands:
@@ -865,19 +2161,13 @@ mod tests {
         let rig = quadruped();
         let gait = |pattern| Gait::pattern(&rig, pattern, 0.3);
         for pattern in [Pattern::Walk, Pattern::Trot, Pattern::Pace] {
-            assert!(
-                peak(&gait(pattern), |(fold, _)| fold) < 1.0e-5,
-                "{pattern:?} folds"
-            );
-            assert!(
-                peak(&gait(pattern), |(_, rock)| rock) < 1.0e-5,
-                "{pattern:?} rocks"
-            );
+            assert!(peak(&gait(pattern)) < 1.0e-5, "{pattern:?} folds");
+            assert!(parted(&gait(pattern)) < 1.0e-5, "{pattern:?} rocks");
         }
         let canter = gait(Pattern::Canter(Lead::Right));
         let gallop = gait(Pattern::RotaryGallop(Lead::Right));
-        assert!(peak(&canter, |(_, rock)| rock) > 0.3);
-        assert!(peak(&gallop, |(fold, _)| fold) > peak(&canter, |(fold, _)| fold));
+        assert!(parted(&canter) > 0.3);
+        assert!(peak(&gallop) > peak(&canter));
     }
 
     #[test]
@@ -909,9 +2199,9 @@ mod tests {
             })
             .fold(f32::INFINITY, f32::min);
         let gathered = (lifted + landed) * 0.5;
-        let (fold, _) = harmonics(&gait, gathered.rem_euclid(1.0));
+        let fold = harmonics(&gait, gathered.rem_euclid(1.0));
         assert!(
-            fold > 0.5 * peak(&gait, |(fold, _)| fold),
+            fold > 0.5 * peak(&gait),
             "the back is gathered at {gathered:.2}: {fold:.2}"
         );
     }

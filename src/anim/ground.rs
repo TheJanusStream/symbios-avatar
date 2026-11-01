@@ -283,6 +283,32 @@ pub fn plant_feet_of<F>(
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
+    plant_feet_as(rig, pose, limbs, beneath, config, standing_foot(rig))
+}
+
+/// The foot a leg set on the ground stands: a beast's upright, a person's
+/// carried on the shank.
+fn standing_foot(rig: &Rig) -> Foot {
+    if rig.anatomy.feet == FootKind::Human {
+        Foot::Carried
+    } else {
+        Foot::Stood
+    }
+}
+
+/// [`plant_feet_of`], with the legs solved holding the foot as `foot` says: a
+/// beast's stride plants them in its pantograph (#378).
+pub(crate) fn plant_feet_as<F>(
+    rig: &Rig,
+    pose: &mut Pose,
+    limbs: &[Limb],
+    beneath: F,
+    config: &FootingConfig,
+    holding: Foot,
+) -> Footing
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
     if !pose.fits(rig) {
         return Footing::default();
     }
@@ -304,7 +330,7 @@ where
         // Every contact, not only the planted ones: a swinging foot is pinned
         // by nothing, so levelling it is free, and it is the foot most likely
         // to be ploughing through the ground.
-        level_feet(rig, pose, &beneath, config);
+        level_feet_as(rig, pose, &beneath, config, holding);
         let posed = pose.forward(rig);
 
         // Probe before moving anything: the corrections have to be known against
@@ -350,7 +376,7 @@ where
                 continue;
             }
 
-            if solve_contact(rig, pose, limb, target) {
+            if solve_contact_as(rig, pose, limb, target, holding) {
                 footing.planted.push(limb);
             } else {
                 footing.straining.push(limb);
@@ -398,6 +424,14 @@ fn stand_off(rig: &Rig, foot: usize) -> f32 {
 /// Call after the legs are placed. Running it before [`plant_feet`] would level
 /// the feet against a pose the solve is about to change.
 pub fn level_feet<F>(rig: &Rig, pose: &mut Pose, beneath: F, config: &FootingConfig)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    level_feet_as(rig, pose, beneath, config, standing_foot(rig));
+}
+
+/// [`level_feet`], with the legs put back holding the foot as `foot` says.
+fn level_feet_as<F>(rig: &Rig, pose: &mut Pose, beneath: F, config: &FootingConfig, holding: Foot)
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
@@ -453,7 +487,7 @@ where
         // levelled afterwards landed its sole at zero by accident. Fixing the
         // solve (#254) removed the accident and left the drag showing at 11 mm.
         // The two had to land together.
-        solve_contact(rig, pose, limb, held);
+        solve_contact_as(rig, pose, limb, held, holding);
     }
 }
 
@@ -513,10 +547,20 @@ pub(crate) fn solve_contact(rig: &Rig, pose: &mut Pose, limb: Limb, target: Vec3
     let Some(pole) = rig.bend_pole(limb) else {
         return false;
     };
-    let foot = if rig.anatomy.feet == FootKind::Human {
-        Foot::Carried
-    } else {
-        Foot::Stood
+    solve_contact_with(rig, pose, limb, target, pole, standing_foot(rig))
+}
+
+/// [`solve_contact`], holding the foot as `foot` says, the fold direction the
+/// rig's.
+pub(crate) fn solve_contact_as(
+    rig: &Rig,
+    pose: &mut Pose,
+    limb: Limb,
+    target: Vec3,
+    foot: Foot,
+) -> bool {
+    let Some(pole) = rig.bend_pole(limb) else {
+        return false;
     };
     solve_contact_with(rig, pose, limb, target, pole, foot)
 }
@@ -567,6 +611,10 @@ pub enum Foot {
     /// Upright in the world, as [`level_feet`] lays it: a foot standing on
     /// the ground, which a girdle swinging the leg above it cannot tip.
     Stood,
+    /// Turned with the leg above it, as a beast's stride turns it, the blade
+    /// with the forearm and the metatarsus with the femur (#378). A body at rest
+    /// stands [`Self::Stood`].
+    Striding,
     /// Flat along the ground ahead of its ankle, the toes turned back level:
     /// a sitting or lying beast's hock or wrist on the ground and its paw
     /// before it. A leg folded under a body sunk below its own ankle cannot
@@ -668,7 +716,7 @@ fn solve_leg(
     // ankle is sent, which is what the crouch's sink is reckoned for.
     let mut reached = false;
     for _ in 0..CONTACT_PASSES {
-        attitude(rig, pose, chain, contact, foot, lay);
+        attitude(rig, pose, chain, contact, foot, lay, target);
         let posed = pose.forward(rig);
         // The convergence check reads the pose the *previous* pass left, which
         // costs at most one extra pass and saves a whole forward-kinematics
@@ -686,9 +734,15 @@ fn solve_leg(
             break;
         }
         let offset = posed.positions[chain[2]] - posed.positions[contact];
+        // A stride swings a leg right round its fixed pole: see `side_pole`.
+        let pole = if foot == Foot::Striding {
+            super::quadruped::side_pole(rig, chain, posed.positions[chain[0]], target + offset)
+        } else {
+            pole
+        };
         reached = two_bone(rig, pose, chain, target + offset, pole);
     }
-    attitude(rig, pose, chain, contact, foot, lay);
+    attitude(rig, pose, chain, contact, foot, lay, target);
 
     // **The verdict gets its own tolerance, and a looser one.** `reached` means
     // "this limb strained" to every caller, and neither of the obvious readings
@@ -717,11 +771,24 @@ fn solve_leg(
 
 /// Turns the foot hanging off `chain`'s last joint to `foot`'s attitude:
 /// upright in the pose's space as far as its ankle turns - the attitude
-/// [`level_feet`] lays a sole in on level ground - or laid `lay` of the way
+/// [`level_feet`] lays a sole in on level ground - in the leg's pantograph
+/// as [`super::quadruped::stand`] stands a stride's, or laid `lay` of the way
 /// flat ahead of its ankle with `contact`'s toes turned back as far; a
 /// carried foot is left alone.
-fn attitude(rig: &Rig, pose: &mut Pose, chain: [usize; 3], contact: usize, foot: Foot, lay: f32) {
+fn attitude(
+    rig: &Rig,
+    pose: &mut Pose,
+    chain: [usize; 3],
+    contact: usize,
+    foot: Foot,
+    lay: f32,
+    target: Vec3,
+) {
     if foot == Foot::Carried {
+        return;
+    }
+    if foot == Foot::Striding {
+        super::quadruped::stand(rig, pose, chain, target, 0.0);
         return;
     }
     let carried = pose.forward(rig).rotations[chain[1]];

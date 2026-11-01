@@ -80,7 +80,7 @@
 
 use glam::{Vec2, Vec3};
 
-use crate::det::DetMath;
+use crate::det::{self, DetMath};
 use crate::face::{Expression, Eyes};
 use crate::plan::Limb;
 use crate::rig::Rig;
@@ -1047,6 +1047,67 @@ impl Driver {
             .map(|active| (active.name.as_str(), active.elapsed))
     }
 
+    /// Whether a frame of these `inputs` is moving the body as a beast's state
+    /// counts it (#377): carried faster than a tenth of a metre a second, shown
+    /// swimming or leaping, or off the ground. Any of those gets a beast up out
+    /// of a sit or a lying down and keeps it from going into one, and this is
+    /// what [`Self::drive`] asks, so a caller that has to know beforehand reads
+    /// the same answer. Only [`Inputs::velocity`], [`Inputs::showing`] and
+    /// [`Inputs::swimming`] are read. Asked before a frame, it does not yet see
+    /// a leap that frame's own vertical speed will start.
+    #[must_use]
+    pub fn stirred(&self, inputs: &Inputs<'_>) -> bool {
+        Vec2::new(inputs.velocity.x, inputs.velocity.z).length() >= STIR
+            || self.airborne.is_some()
+            || inputs.swimming
+            || matches!(inputs.showing, Some(Showing::Leap(_) | Showing::Swim(_)))
+    }
+
+    /// Puts the body at a point of the state `name` on `rig`, as one step (#383):
+    /// `through` of the way down, the share [`super::emote::seconds`] runs it in;
+    /// held from one up; and with nothing or less, out of it and standing.
+    ///
+    /// **As if it had gone down that far**, so what comes next is what would
+    /// have: a body seated part way goes on down and comes back up the way it
+    /// came, and one held gets up as the animal does. Whatever gesture the body
+    /// was playing, and whatever it had been asked for after, is gone.
+    ///
+    /// **It draws there on the next frame**, with no blend from what it last
+    /// drew: a driver that has drawn nothing has nothing to blend from, and one
+    /// that has can be told to with [`Self::blend_now`].
+    ///
+    /// Answers whether `name` is a state of this body; a name that is not
+    /// changes nothing. No clock runs, so a fresh body brought down in a rebuild
+    /// costs nothing, and it spends no [`DriverConfig::gesture_cooldown`].
+    pub fn seat(&mut self, rig: &Rig, name: &str, through: f32) -> bool {
+        let Some(down) = super::emote::seconds(rig, name) else {
+            return false;
+        };
+        self.transition = None;
+        self.blend_asked = false;
+        if through <= 0.0 {
+            self.gesture = None;
+            return true;
+        }
+        let through = through.min(1.0);
+        self.gesture = Some(ActiveGesture {
+            name: name.to_string(),
+            elapsed: through * down,
+            resting: Some(Resting {
+                phase: if through >= 1.0 {
+                    Phase::Held
+                } else {
+                    Phase::Down
+                },
+                through,
+                hurried: false,
+                then: None,
+            }),
+        });
+        self.source = Source::Gesture;
+        true
+    }
+
     /// The pose the body was last drawn in, if it has been driven.
     #[must_use]
     pub fn posed(&self) -> Option<&Pose> {
@@ -1347,7 +1408,7 @@ impl Driver {
         // **A beast's state is held until something gets it up** (#377):
         // the body being moved, leaving the ground or swimming gets it up in a
         // hurry, from wherever it is.
-        let stirred = planar >= STIR || airborne || showing_leap || swimming;
+        let stirred = self.stirred(inputs);
         self.start_gesture(rig, inputs.gesture, stirred);
         // Advanced and retired before the pose is built, so a gesture that
         // finished this frame does not get one last frame of overlay.
@@ -1486,6 +1547,7 @@ impl Driver {
             });
         if let Some((clip, time)) = playing {
             clip.apply_resting(rig, &mut pose, time, &mut self.rests);
+            self.rests.on_ground(rig, &mut pose, ground);
             aimed = clip.tracks.iter().any(|track| track.target == Target::Gaze);
         }
         if let Some(over) = inputs.over_locomotion {
@@ -1524,8 +1586,19 @@ impl Driver {
         // runs, and asking the clip rather than keeping a list of which
         // gestures involve the head is what keeps that true as the roster
         // grows.
-        if !aimed && let Some(target) = idled.and_then(|idled: Idled| idled.glance) {
+        if !aimed
+            && let Some(idled) = idled
+            && let Some(target) = idled.glance
+        {
+            // The pose either side of the turn, rather than a share of the turn:
+            // `look_at`'s last joint always completes what is asked of it.
+            let before = (idled.glance_share < 1.0).then(|| pose.rotations.clone());
             look_at(rig, &mut pose, target, &super::idle::glance_config());
+            if let Some(before) = before {
+                for (turned, was) in pose.rotations.iter_mut().zip(before) {
+                    *turned = det::slerp(was, *turned, idled.glance_share);
+                }
+            }
         }
         if let Some(over) = inputs.over_settled {
             over(rig, &mut pose);

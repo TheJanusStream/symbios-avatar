@@ -109,14 +109,23 @@ pub const SPRINT_DUTY: f32 = 0.22;
 /// The Froude number [`SPRINT_DUTY`] is anchored at.
 pub const FROUDE_SPRINT: f32 = 4.0;
 
-/// A four-legged body's cycle, as a share of its leg, at Froude one (#370).
+/// A four-legged body's cycle, as a share of its hip height, at Froude one
+/// (#370, #378).
 ///
-/// Provenance: **the literature**. Alexander and Jayes (1983) put mammals from
-/// rodents to rhinoceroses on one line: a stride of 2.3 hip heights times the
-/// Froude number to the [`QUADRUPED_STRIDE_POWER`]. Its stance - the cycle
+/// Provenance: **the literature, and then the rig**. Alexander and Jayes (1983)
+/// put mammals from rodents to rhinoceroses on one line: a stride of 2.3 hip
+/// heights times the Froude number to the [`QUADRUPED_STRIDE_POWER`], the
+/// number itself on that height too (`measure_of`). Its stance - the cycle
 /// times the duty - then holds near a leg's length from a walk to a gallop
 /// while the flight grows, which is how a quadruped goes faster.
-pub const QUADRUPED_STRIDE: f32 = 2.3;
+///
+/// **2.05 here, not 2.3** (#378). This rig's hip joint stands at 0.73 to 0.87 of
+/// the withers where the dossier's horse has 0.65, and 2.3 on it swept a trot's
+/// legs through 60 degrees against a dog's measured 40 to 48 (research-08 fact
+/// 3), landing and leaving a long way from under the body. 2.05 gives a horse
+/// the dossier's own check, 2.8 m at 1.4 Hz at 4 m/s. The sweep is high
+/// confidence and the 2.3 is recalled, so the sweep won, by render too.
+pub const QUADRUPED_STRIDE: f32 = 2.05;
 
 /// The power of the Froude number a four-legged body's cycle grows with. See
 /// [`QUADRUPED_STRIDE`].
@@ -151,7 +160,7 @@ impl Speed {
     /// going either way.
     #[must_use]
     pub fn new(rig: &Rig, metres_per_second: f32) -> Self {
-        let leg = leg_of(rig);
+        let leg = measure_of(rig);
         if leg <= f32::EPSILON {
             return Self::STILL;
         }
@@ -243,7 +252,7 @@ impl Speed {
     /// What this is in metres per second, on this body.
     #[must_use]
     pub fn metres_per_second(self, rig: &Rig) -> f32 {
-        (self.froude * GRAVITY * leg_of(rig)).sqrt()
+        (self.froude * GRAVITY * measure_of(rig)).sqrt()
     }
 
     /// Whether a body at this speed runs rather than walks.
@@ -343,7 +352,9 @@ impl Speed {
             if self.froude <= 0.0 {
                 return 0.0;
             }
-            return leg_of(rig) * QUADRUPED_STRIDE * self.froude.det_powf(QUADRUPED_STRIDE_POWER);
+            return measure_of(rig)
+                * QUADRUPED_STRIDE
+                * self.froude.det_powf(QUADRUPED_STRIDE_POWER);
         }
         self.step_length(rig) * self.gait(rig).footfalls() as f32
     }
@@ -379,7 +390,12 @@ impl Speed {
         Stride {
             direction: Vec3::Z,
             length,
-            lift: length * LIFT_OF_STRIDE,
+            lift: length
+                * if this.pattern.is_some() {
+                    BEAST_LIFT_OF_STRIDE
+                } else {
+                    LIFT_OF_STRIDE
+                },
             // A speed alone says nothing about a heading changing. `Turn`
             // is what fills this in, and it takes the speed as its argument
             // for exactly that reason.
@@ -426,7 +442,7 @@ impl Speed {
     /// rather than re-fit a second one going the other way.
     #[must_use]
     pub fn of(rig: &Rig, gait: &Gait, stride: &Stride) -> Self {
-        let leg = leg_of(rig);
+        let leg = measure_of(rig);
         let duty = gait.duty.clamp(0.0, 1.0);
         let footfalls = gait.footfalls() as f32;
         if leg <= f32::EPSILON || duty <= f32::EPSILON {
@@ -498,6 +514,29 @@ fn rotary(rig: &Rig) -> bool {
 ///
 /// [`Stride::for_body`]: super::gait::Stride::for_body
 pub(crate) const LIFT_OF_STRIDE: f32 = 0.12 / 0.70;
+
+/// How high a beast's fore paw lifts at the top of its swing, as a share of its
+/// excursion: its hind paw lifts less, see `quadruped::limb_stride` (#378).
+///
+/// Provenance: **derived** from research-08 2.6 and fact 10. A horse's fore
+/// hoof rises 10 to 20 cm and its hind 5.4 at a withers height near 1.6 m, so
+/// 6 to 12% and 3.4% of it, over an excursion near 0.8 of it.
+pub(crate) const BEAST_LIFT_OF_STRIDE: f32 = 0.11;
+
+/// The length a body's speed is measured against, in metres: a person's
+/// [`leg_of`], and a beast's hip joint's height at rest (#378).
+///
+/// **Alexander's relations are in hip heights** (research-08 fact 10), and what
+/// [`leg_of`] reads on a beast is a thigh and a shank, without the metatarsus
+/// standing under them: on a horse 0.73 of the height the relation means, which
+/// took 29% off its stride, and on a cat 0.95.
+pub(crate) fn measure_of(rig: &Rig) -> f32 {
+    if four_legged(rig) {
+        super::quadruped::hip_height(rig).unwrap_or_else(|| leg_of(rig))
+    } else {
+        leg_of(rig)
+    }
+}
 
 /// The reach of the longest leg a body stands on, in metres.
 ///
@@ -847,8 +886,32 @@ mod tests {
             "a walk lands four times"
         );
         let alexander =
-            leg_of(&quadruped) * QUADRUPED_STRIDE * 0.25f32.powf(QUADRUPED_STRIDE_POWER);
+            measure_of(&quadruped) * QUADRUPED_STRIDE * 0.25f32.powf(QUADRUPED_STRIDE_POWER);
         assert!((speed.cycle_length(&quadruped) - alexander).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_beasts_speed_and_stride_are_in_its_hip_height() {
+        // Fact 10 (#378): measured against a thigh and a shank, a horse's stride
+        // came out 27% short and every gait changed a band too soon.
+        let rig = quadruped();
+        let hip = rig
+            .limb_chain(crate::plan::Limb::HindLeft)
+            .map(|[hip, _, _]| rig.joints[hip].position.y)
+            .expect("a hind leg");
+        assert!(
+            hip > leg_of(&rig) * 1.1,
+            "the premise: {hip} over {}",
+            leg_of(&rig)
+        );
+        let speed = Speed::new(&rig, 2.0);
+        assert!((speed.froude() - 4.0 / (GRAVITY * hip)).abs() < 1e-5);
+        assert!((speed.metres_per_second(&rig) - 2.0).abs() < 1e-4);
+        let relative = speed.cycle_length(&rig) / hip;
+        assert!(
+            (relative - QUADRUPED_STRIDE * speed.froude().powf(QUADRUPED_STRIDE_POWER)).abs()
+                < 1e-4
+        );
     }
 
     #[test]

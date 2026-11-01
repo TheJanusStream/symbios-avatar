@@ -25,7 +25,9 @@
 //!
 //! **Whatever still sinks rises**: the trunk by what its own skin sinks, its
 //! legs reaching down again, and the whole body with its feet by what a leg's
-//! own skin sinks, where the skin blended across a closed joint folds in.
+//! own skin sinks, where the skin blended across a closed joint folds in, or by
+//! what a thigh's does where raising the hips over a tight fold would only sink
+//! it further (#390).
 //!
 //! **Continuous, and the same however it got there.** Each motion is a
 //! continuous function of its time: the lying down goes on from exactly
@@ -34,16 +36,21 @@
 //! ears and jaw - so a moment reached two ways is posed one way, and what it
 //! solves from the rig alone is kept between frames by whoever plays it
 //! ([`Rests`]): a held sit costs what an idle frame does.
+//!
+//! **On level ground, and then on the ground** (#381). All of that is solved
+//! against a level ground. [`Rests::on_ground`] lays the result on whatever the
+//! body is really over, for a caller that has a ground to say: `Driver::drive`
+//! does; a clip applied on its own rests on level ground.
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use glam::{Quat, Vec3};
 
 use super::gait::{relevel_head, spine_to};
-use super::ground::{Foot, solve_contact_with};
+use super::ground::{Foot, Ground, solve_contact_with};
 use super::ik::two_bone;
 use super::pose::{Pose, Posed};
-use crate::det::{DetMath, Rot};
+use crate::det::{self, DetMath, Rot};
 use crate::plan::{FootKind, Limb, Zone};
 use crate::rig::{Rig, Role};
 
@@ -545,6 +552,9 @@ pub(crate) struct Rests {
     /// What of the rig the solve was made for, and the solve, or `None` for
     /// a body a rest does not pose.
     solved: Option<(Key, Option<Box<Solved>>)>,
+    /// How far onto the ground under it the rest last posed is to be turned
+    /// ([`Rests::on_ground`]), until that is done.
+    posed: Option<f32>,
 }
 
 /// What of a rig a rest reads: every joint's place, size, parent and zone,
@@ -608,6 +618,19 @@ impl Rests {
             self.solved = Some((key, solved));
         }
         self.solved.as_mut()?.1.as_deref_mut()
+    }
+
+    /// Lays the rest just posed in `pose` on `ground`: see [`on_ground`].
+    pub(super) fn on_ground<F>(&mut self, rig: &Rig, pose: &mut Pose, ground: F)
+    where
+        F: Fn(Vec3) -> Option<Ground>,
+    {
+        let Some(tilt) = self.posed.take() else {
+            return;
+        };
+        if let Some(solved) = self.of(rig) {
+            on_ground(rig, &solved.ctx.body, pose, tilt, ground);
+        }
     }
 }
 
@@ -705,6 +728,7 @@ pub(super) fn rest(
     if !pose.fits(rig) || down <= 0.0 {
         return;
     }
+    rests.posed = Some(tilt_at(rig, rest, down, rising));
     let Some(solved) = rests.of(rig) else {
         return;
     };
@@ -719,6 +743,176 @@ pub(super) fn rest(
         return;
     }
     solved.pose(rig, pose, rest, down, rising);
+}
+
+/// How much of a slope's turn a rest has taken `down` of the way into `rest`,
+/// or out of it if `rising`: nothing standing, where a beast's trunk rides level
+/// over legs that reach the ground as its idle's do, and all of it by
+/// [`TILT_BY`] of its sit, or of a horse's way down, well above the ground.
+fn tilt_at(rig: &Rig, rest: Rest, down: f32, rising: bool) -> f32 {
+    let through = match rest {
+        Rest::Lie if hooved(rig) == 0 || rising => down / LIE_SAT[usize::from(rising)],
+        Rest::Sit | Rest::Lie => down,
+    };
+    step(0.0, TILT_BY, through)
+}
+
+/// How far into a sit a beast has taken the whole of a slope's turn.
+/// Provenance: **chosen** (#381): half way, where the haunches still have over
+/// half of their way to fall, so a trunk not yet turned onto ground rising
+/// behind it does not reach it.
+const TILT_BY: f32 = 0.5;
+
+/// Lays a rest posed on level ground on the ground it is really over (#381).
+///
+/// **Turned whole, then each support read.** The rest is solved against a level
+/// ground, once and kept; on a slope nothing of that solve changes but its
+/// attitude. So the body is turned `tilt` of the way onto the plane that best
+/// fits the ground under its four feet, its pelvis and its withers, about the
+/// middle of them, so on a plane everything that touched the level ground
+/// touches this one to the same fraction of a millimetre, the tail along it. The
+/// neck takes the turn back off the head by the shares [`relevel_head`] gives
+/// it. Each foot is then sent to the ground under itself, its sole turned to
+/// the ground's own slope there; what is left of a slope not yet taken is met
+/// by the trunk sinking for the leg with furthest to reach, as a plant does.
+///
+/// **Level ground is left to the bit**, so the frame the body is in answering
+/// flat is the rest as it was measured.
+fn on_ground<F>(rig: &Rig, body: &Body, pose: &mut Pose, tilt: f32, ground: F)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    let level = pose.forward(rig);
+    let legs = || body.hinds.iter().chain(&body.fores);
+    let under: Vec<Ground> = legs()
+        .map(|leg| leg.pad)
+        .chain([body.root, body.withers])
+        .filter_map(|joint| ground(level.positions[joint]))
+        .collect();
+    if under
+        .iter()
+        .all(|below| below.position.y == GROUND && below.normal == Vec3::Y)
+    {
+        return;
+    }
+    let (middle, height, slope) = fit_plane(&under);
+    let flat = Vec3::new(middle.x, GROUND, middle.y);
+    let up = Vec3::new(-slope.x, 1.0, -slope.y).normalize();
+    let turned = det::slerp(Quat::IDENTITY, det::from_rotation_arc(Vec3::Y, up), tilt);
+
+    // The whole body, about the middle of what it stands on.
+    let root = rig.joints[body.root].position;
+    let at = flat + Vec3::Y * height + turned * (level.positions[body.root] - flat);
+    pose.translation = at - root;
+    pose.rotations[body.root] = turned * pose.rotations[body.root];
+    relevel_neck(rig, pose, &level, turned);
+
+    // Where each ankle goes: over its own foot, standing as far off the ground
+    // under it as it stood off the level one.
+    let tilted = pose.forward(rig);
+    let mut sink = 0.0f32;
+    let mut goals = Vec::with_capacity(4);
+    for leg in legs() {
+        let foot = tilted.positions[leg.pad];
+        let Some(below) = ground(foot) else {
+            continue;
+        };
+        let normal = below.normal.normalize_or(Vec3::Y);
+        let [top, knee, ankle] = leg.chain.map(|joint| rig.joints[joint].position);
+        let attitude = det::from_rotation_arc(Vec3::Y, normal) * level.rotations[leg.chain[2]];
+        let stands = level.positions[leg.pad].y / normal.y.max(0.1);
+        let wanted = Vec3::new(foot.x, below.position.y + stands, foot.z)
+            - attitude * (rig.joints[leg.pad].position - ankle);
+        // No further than the leg lies now, however straight that is.
+        let lies = level.positions[leg.chain[0]].distance(level.positions[leg.chain[2]]);
+        let most = lies.max((top.distance(knee) + knee.distance(ankle)) * TILT_REACH);
+        let along = wanted - tilted.positions[leg.chain[0]];
+        let flat = along.x * along.x + along.z * along.z;
+        if along.length() > most {
+            sink = sink.max(-along.y - (most * most - flat).max(0.0).sqrt());
+        }
+        goals.push((leg, wanted, attitude));
+    }
+    pose.translation.y -= sink;
+    for (leg, wanted, attitude) in goals {
+        let posed = pose.forward(rig);
+        let [top, knee, ankle] = leg.chain.map(|joint| posed.positions[joint]);
+        if ankle.distance(wanted) <= TILT_CLOSE
+            && posed.rotations[leg.chain[2]].angle_between(attitude) <= TILT_CLOSE
+        {
+            continue;
+        }
+        // On the side it bends now, however little that is.
+        let bent = knee - (top + ankle) * 0.5;
+        let pole = if bent.length() > TILT_CLOSE {
+            knee + bent.normalize() * rig.extent()
+        } else {
+            rig.bend_pole(leg.limb).unwrap_or(knee)
+        };
+        two_bone(rig, pose, leg.chain, wanted, pole);
+        let carried = pose.forward(rig).rotations[leg.chain[1]];
+        pose.rotations[leg.chain[2]] = carried.inverse() * attitude;
+    }
+}
+
+/// The share of a leg's bones a slope's reach may stretch it to, and how near a
+/// foot must already be to where a slope sends it, in metres and in radians,
+/// for its leg to be left alone.
+/// Provenance: **chosen** (#381): [`FORE_GIVE`], a straight leg short of locked,
+/// and a tenth of a millimetre, under what a skin shows and over what a turn
+/// rounds to.
+const TILT_REACH: f32 = FORE_GIVE;
+const TILT_CLOSE: f32 = 1.0e-4;
+
+/// The plane nearest `under`: the middle of its points along the ground, how
+/// high it stands there, and how far it rises per metre across and ahead. Level
+/// where the points do not span one.
+fn fit_plane(under: &[Ground]) -> (glam::Vec2, f32, glam::Vec2) {
+    #[expect(clippy::cast_precision_loss, reason = "six points")]
+    let count = under.len().max(1) as f32;
+    let sum: Vec3 = under.iter().map(|below| below.position).sum();
+    let middle = sum / count;
+    let (mut xx, mut xz, mut zz, mut xy, mut zy) = (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    for below in under {
+        let off = below.position - middle;
+        xx += off.x * off.x;
+        xz += off.x * off.z;
+        zz += off.z * off.z;
+        xy += off.x * off.y;
+        zy += off.z * off.y;
+    }
+    let across = xx * zz - xz * xz;
+    let slope = if across > 1.0e-10 {
+        glam::Vec2::new(xy * zz - zy * xz, zy * xx - xy * xz) / across
+    } else {
+        glam::Vec2::ZERO
+    };
+    (glam::Vec2::new(middle.x, middle.z), middle.y, slope)
+}
+
+/// Takes a whole body's `turned` back off its head, by the shares
+/// [`relevel_head`] spreads it over the neck, each joint's attitude otherwise
+/// what it was in `level`.
+fn relevel_neck(rig: &Rig, pose: &mut Pose, level: &Posed, turned: Quat) {
+    let mut chain = rig.in_zone(Zone::Neck);
+    chain.extend(rig.in_zone(Zone::Head).first());
+    #[expect(clippy::cast_precision_loss, reason = "a neck is a handful of joints")]
+    let total = (chain.len() * (chain.len() + 1)) as f32 * 0.5;
+    let mut worlds: Vec<Quat> = level
+        .rotations
+        .iter()
+        .map(|rotation| turned * *rotation)
+        .collect();
+    let mut taken = 0.0f32;
+    for (at, &joint) in chain.iter().enumerate() {
+        #[expect(clippy::cast_precision_loss, reason = "a neck is a handful of joints")]
+        let share = (at + 1) as f32 / total;
+        taken += share;
+        worlds[joint] = det::slerp(turned, Quat::IDENTITY, taken) * level.rotations[joint];
+        if let Some(parent) = rig.joints[joint].parent {
+            pose.rotations[joint] = worlds[parent].inverse() * worlds[joint];
+        }
+    }
 }
 
 /// Poses `down` of the way into a sit, or out of it.
@@ -1500,6 +1694,8 @@ fn settle(
         let zone = rig.joints[joint].zone;
         if limb(zone) {
             Some(1)
+        } else if matches!(zone, Zone::UpperLimb(_)) {
+            Some(2)
         } else if zone != Zone::Tail || (skin && docked(rig, joint)) {
             Some(0)
         } else {
@@ -1507,18 +1703,52 @@ fn settle(
         }
     };
     let mut lifted = 0.0f32;
+    let mut rose = None;
     for _ in 0..6 {
         lay_tail(rig, body, pose);
-        let [trunk, leg] = lowest_each(rig, &pose.forward(rig), slot).map(|low| GROUND - low);
+        let [core, leg, thigh] = lowest_each(rig, &pose.forward(rig), slot).map(|low| GROUND - low);
+        let trunk = core.max(thigh);
         if trunk <= 1.0e-4 && leg <= 1.0e-4 {
-            break;
+            return lifted;
         }
-        pose.translation.y += trunk.max(leg).max(0.0);
+        // **A rise that does not clear a thigh** (#390). Hips rising over a hind
+        // leg folded as tight as a short one is fall a stifle four times as far,
+        // and the thigh's skin under the femur with them: a horse of `legLength`
+        // -3 getting up from its sit read 9.5, 13.5, 17.1, 19.6, 20.7 mm as its
+        // trunk climbed 100 mm in one frame, its thigh 20.5 mm in the ground for
+        // all that. So a rise that left more of a thigh than it was for stands
+        // and that goes on the feet: the body as it was before the rise, lifted
+        // whole, clears by exactly that, and the rump still in the ground takes
+        // the whole body up with it.
+        if let Some(was) = rose.filter(|&was| was > SETTLE_LEFT && thigh > was && leg < thigh) {
+            let rump = core.max(0.0);
+            pose.translation.y += rump;
+            lifted += was + rump;
+            legs(pose, lifted);
+            lay_tail(rig, body, pose);
+            return lifted;
+        }
+        let rise = trunk.max(leg).max(0.0);
+        pose.translation.y += rise;
         lifted += leg.max(0.0);
+        // What a rise for the thigh alone was for.
+        rose = (thigh > leg && thigh >= core).then_some(thigh - leg.max(0.0));
+        legs(pose, lifted);
+    }
+    // And the passes spent on one clearing too slowly to finish: the same.
+    let [_, _, thigh] = lowest_each(rig, &pose.forward(rig), slot).map(|low| GROUND - low);
+    if thigh > SETTLE_LEFT {
+        lifted += thigh - SETTLE_LEFT;
         legs(pose, lifted);
     }
     lifted
 }
+
+/// How little of a sitting body's skin in the ground [`settle`] leaves to its
+/// passes, however they go, in metres: under the least a rest allows.
+/// Provenance: **chosen** (#390), half of what `tests/rest.rs` allows the smallest
+/// body. Every body it was measured on but the shortest legged ends within it.
+const SETTLE_LEFT: f32 = 1.0e-3;
 
 /// Whether `joint` is the root of a tail, set on the pelvis.
 fn docked(rig: &Rig, joint: usize) -> bool {

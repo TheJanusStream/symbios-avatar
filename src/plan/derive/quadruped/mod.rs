@@ -538,8 +538,8 @@ pub(crate) const HIND_NODES: usize = 5;
 /// How many nodes a fore leg carries: [`HIND_NODES`]' and the shoulder
 /// blade's top before them, a third upper-limb node (#374). `Rig::limb_chain`
 /// takes the LAST three of the upper and lower limb, so it still hands the leg
-/// IK the shoulder, the elbow and the carpus; the blade rides on the trunk
-/// until the IK learns it (#378).
+/// IK the shoulder, the elbow and the carpus; a stride turns the blade with the
+/// forearm (`anim::quadruped::stand`, #378), and at rest it rides the trunk.
 pub(crate) const FORE_NODES: usize = 6;
 
 /// How many of a leg's nodes, from the body down, are markers inside it:

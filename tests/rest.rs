@@ -16,10 +16,10 @@
 //! `bodyFat` at once.
 
 use symbios_avatar::anim::driver::{Driver, Inputs, level_ground};
-use symbios_avatar::anim::{Clip, Pose, Posed, emote, gesture};
+use symbios_avatar::anim::{Clip, Ground, Pose, Posed, emote, gesture};
 use symbios_avatar::plan::BODY_FAT_RANGE;
 use symbios_avatar::{
-    Archetype, Avatar, AvatarRecord, Family, FootKind, QuadrupedParams, Rig, Zone,
+    Archetype, Avatar, AvatarRecord, Family, FootKind, QuadrupedParams, Rig, Vec3, Zone,
 };
 
 /// How far anything may reach below the ground, in withers heights, and in
@@ -206,9 +206,18 @@ fn lows(beast: &Beast, clip: &Clip, time: f32) -> Lows {
     let rig = &beast.avatar.rig;
     let mut pose = Pose::rest(rig);
     clip.apply(rig, &mut pose, time);
+    lows_over(beast, &pose, 0.0, 0.0)
+}
+
+/// The lowest drawn skin of `beast` posed as `pose`, measured square off the
+/// plane rising `grade` per metre ahead and `camber` across.
+fn lows_over(beast: &Beast, pose: &Pose, grade: f32, camber: f32) -> Lows {
+    let rig = &beast.avatar.rig;
+    let up = Vec3::new(-camber, 1.0, -grade).normalize().y;
     let body = &beast.avatar.parts.body;
     let weights = &beast.avatar.parts.weights;
     let drawn = pose.forward(rig).deform(rig, &body.positions, weights);
+    let off = |at: Vec3| (at.y - at.z * grade - at.x * camber) * up;
     let mut lows = Lows {
         haunch: f32::MAX,
         hind_feet: f32::MAX,
@@ -226,7 +235,7 @@ fn lows(beast: &Beast, clip: &Clip, time: f32) -> Lows {
                 .parent
                 .is_some_and(|parent| rig.joints[parent].zone == Zone::Pelvis);
         let zone = if rump { Zone::Pelvis } else { joint.zone };
-        let low = |slot: &mut f32| *slot = slot.min(at.y);
+        let low = |slot: &mut f32| *slot = slot.min(off(*at));
         low(&mut lows.all);
         match zone {
             Zone::Pelvis => low(&mut lows.haunch),
@@ -447,3 +456,324 @@ fn a_resting_beast_moves_into_and_out_of_it_without_a_jump() {
     .collect();
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// The plane rising `grade` per metre ahead and `camber` across.
+fn plane(grade: f32, camber: f32) -> impl Fn(Vec3) -> Option<Ground> + Copy {
+    let normal = Vec3::new(-camber, 1.0, -grade).normalize();
+    move |at: Vec3| {
+        Some(Ground {
+            position: Vec3::new(at.x, at.x * camber + at.z * grade, at.z),
+            normal,
+        })
+    }
+}
+
+/// One frame of a body seated `through` of the way down `name`, on `ground`.
+fn seated<F>(beast: &Beast, name: &str, through: f32, ground: F) -> Pose
+where
+    F: Fn(Vec3) -> Option<Ground> + Copy,
+{
+    let rig = &beast.avatar.rig;
+    let mut driver = Driver::seeded(381);
+    assert!(driver.seat(rig, name, through), "{name} is a beast's state");
+    let inputs = Inputs {
+        delta: 1.0e-4,
+        ..Inputs::default()
+    };
+    driver
+        .drive(rig, &inputs, ground)
+        .expect("an unheld body is posed")
+        .pose
+}
+
+#[test]
+fn a_beast_rests_on_a_plane_as_it_rests_on_level_ground() {
+    // #381: on a 20% grade a sitting dog's hind pads sank 19 mm and a horse's 81
+    // to 93 while its forepads floated 49 and 192. Off the plane, square to it,
+    // every part reads what it reads on the level, which the guards above
+    // judge; both ways up a grade, across one and on a corner of both.
+    let wrong: Vec<String> = in_parallel(beasts(), |beast| {
+        let mut wrong = Vec::new();
+        for name in ["Sit", "Lie Down"] {
+            let level = lows_over(&beast, &seated(&beast, name, 1.0, level_ground), 0.0, 0.0);
+            for (grade, camber) in [(0.2, 0.0), (-0.2, 0.0), (0.0, 0.2), (0.3, 0.3), (-0.4, 0.0)] {
+                let pose = seated(&beast, name, 1.0, plane(grade, camber));
+                let sloped = lows_over(&beast, &pose, grade, camber);
+                for (part, on, off) in [
+                    ("haunches", level.haunch, sloped.haunch),
+                    ("hind feet", level.hind_feet, sloped.hind_feet),
+                    ("forefeet", level.fore_feet, sloped.fore_feet),
+                    ("forelegs", level.fore_legs, sloped.fore_legs),
+                    ("chest", level.chest, sloped.chest),
+                    ("whole body", level.all, sloped.all),
+                ] {
+                    if (on - off).abs() > ON_A_PLANE {
+                        wrong.push(format!(
+                            "{}: {name} on {grade} by {camber}: its {part} read {:+.1} mm off \
+                             the plane against {:+.1} on the level",
+                            beast.what,
+                            off * 1000.0,
+                            on * 1000.0
+                        ));
+                    }
+                }
+            }
+        }
+        wrong
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How far a part of a held rest may read off the plane from what it reads on
+/// the level, in metres. Provenance: **measured** (#381): the rest is turned
+/// whole, so what is left is float rounding, 0.1 mm at most.
+const ON_A_PLANE: f32 = 1.0e-3;
+
+/// The families and a cross of two, for what is too dear to sweep over every
+/// body: built, and their withers heights.
+fn few() -> Vec<Beast> {
+    beasts()
+        .into_iter()
+        .filter(|beast| {
+            beast.what.ends_with("appeal 1 mass 0 fat None") || beast.what.contains("crossed")
+        })
+        .collect()
+}
+
+#[test]
+fn a_beast_goes_down_and_gets_up_on_a_plane_out_of_it_and_without_a_jump() {
+    // #381, through the driver at sixty frames a second, from when the blend
+    // from its idle is done until the beast is up: the idle's own feet on a slope
+    // are not a rest's to answer for.
+    let wrong: Vec<String> = in_parallel(few(), |beast| {
+        let rig = &beast.avatar.rig;
+        let mut wrong = Vec::new();
+        let frame = 1.0 / 60.0;
+        let allowed = (SINK * beast.withers).max(SINK_FLOOR);
+        let most = swift(beast.withers, frame);
+        for name in ["Sit", "Lie Down"] {
+            let going = emote::seconds(rig, name).expect("a state keeps its own time");
+            for (grade, camber) in [(0.2, 0.0), (-0.2, 0.0), (0.0, 0.2)] {
+                let ground = plane(grade, camber);
+                let mut driver = Driver::seeded(381);
+                let drive = |gesture: Option<&str>, driver: &mut Driver| {
+                    driver
+                        .drive(
+                            rig,
+                            &Inputs {
+                                delta: frame,
+                                gesture,
+                                ..Inputs::default()
+                            },
+                            ground,
+                        )
+                        .expect("an unheld body is posed")
+                        .pose
+                };
+                for _ in 0..30 {
+                    drive(None, &mut driver);
+                }
+                let mut before = drive(Some(name), &mut driver).forward(rig);
+                #[expect(clippy::cast_possible_truncation, reason = "a few hundred frames")]
+                let held = ((going + 0.5) / frame) as usize;
+                let mut at = 0usize;
+                while driver.gesture().is_some() && at < 3000 {
+                    at += 1;
+                    let pose = drive((at == held).then_some(emote::GET_UP), &mut driver);
+                    let after = pose.forward(rig);
+                    let (moved, joint) = fastest(rig, &before, &after);
+                    if moved > most {
+                        wrong.push(format!(
+                            "{}: {name} on {grade} by {camber}: joint {joint} moved {:.0} mm in \
+                             frame {at}, past {:.0}",
+                            beast.what,
+                            moved * 1000.0,
+                            most * 1000.0
+                        ));
+                    }
+                    before = after;
+                    // Past the blend in, and on all of the rest of it.
+                    if at > 20 && driver.gesture().is_some() {
+                        let low = lows_over(&beast, &pose, grade, camber).all;
+                        if low < -allowed {
+                            wrong.push(format!(
+                                "{}: {name} on {grade} by {camber}: {:.0} mm into it in frame \
+                                 {at}, past {:.0}",
+                                beast.what,
+                                -low * 1000.0,
+                                allowed * 1000.0
+                            ));
+                        }
+                    }
+                }
+                assert!(at < 3000, "{}: {name} never got up", beast.what);
+            }
+        }
+        wrong
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn a_grade_taken_toward_nothing_comes_to_the_rest_on_the_level() {
+    // No jump at the slider's middle: level ground is left alone to the bit,
+    // and the least of a grade must be as near that as it is near level.
+    for beast in few() {
+        let rig = &beast.avatar.rig;
+        for name in ["Sit", "Lie Down"] {
+            for through in [0.3, 1.0] {
+                let level = seated(&beast, name, through, level_ground).forward(rig);
+                let nearly = seated(&beast, name, through, plane(1.0e-4, 0.0)).forward(rig);
+                let (moved, joint) = fastest(rig, &level, &nearly);
+                assert!(
+                    moved < 1.0e-3,
+                    "{}: {name} at {through}: joint {joint} stood {:.1} mm off",
+                    beast.what,
+                    moved * 1000.0
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_head_stays_level_when_a_rest_turns_onto_a_slope() {
+    // The trunk takes the ground's slope and the neck takes it back off.
+    for beast in few() {
+        let rig = &beast.avatar.rig;
+        let head = rig.in_zone(Zone::Head)[0];
+        for name in ["Sit", "Lie Down"] {
+            let level = seated(&beast, name, 1.0, level_ground).forward(rig);
+            let turned = seated(&beast, name, 1.0, plane(0.3, 0.2)).forward(rig);
+            let off = level.rotations[head].angle_between(turned.rotations[head]);
+            assert!(
+                off < 1.0e-2,
+                "{}: {name}: the head turned {off:.3} rad with the ground",
+                beast.what
+            );
+        }
+    }
+}
+
+#[test]
+fn each_foot_of_a_rest_reads_the_ground_under_itself() {
+    // Ground that is no plane: the body fits what it can, and each foot is
+    // sent to its own height, as far off it as it stands off the level.
+    let height = |x: f32, z: f32| 0.05 * (2.0 * z).sin() + 0.03 * (3.0 * x).sin();
+    let ground = move |at: Vec3| {
+        let normal = Vec3::new(-0.09 * (3.0 * at.x).cos(), 1.0, -0.1 * (2.0 * at.z).cos());
+        Some(Ground {
+            position: Vec3::new(at.x, height(at.x, at.z), at.z),
+            normal: normal.normalize(),
+        })
+    };
+    for beast in few() {
+        let rig = &beast.avatar.rig;
+        for name in ["Sit", "Lie Down"] {
+            let level = seated(&beast, name, 1.0, level_ground).forward(rig);
+            let bumpy = seated(&beast, name, 1.0, ground).forward(rig);
+            for limb in rig.ground_contacts() {
+                let pad = rig.in_zone(Zone::Extremity(limb))[0];
+                let at = bumpy.positions[pad];
+                let off = at.y - height(at.x, at.z) - level.positions[pad].y;
+                assert!(
+                    off.abs() < 2.0e-3,
+                    "{}: {name}: {limb:?} stood {:+.1} mm off its own ground",
+                    beast.what,
+                    off * 1000.0
+                );
+            }
+        }
+    }
+}
+
+/// The body #390 was found on and its neighbours: short legs under a long or a
+/// middling trunk, a horse's, whose tibia folds least far under its femur.
+fn short_legged() -> Vec<Beast> {
+    let mut records = Vec::new();
+    for leg in [-3.0f32, -2.0] {
+        for trunk in [0.0f32, 3.0] {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(Family::Horse, None, 0.0);
+            params.leg_length = leg;
+            params.body_length = trunk;
+            records.push((format!("horse leg {leg} trunk {trunk}"), params));
+        }
+    }
+    in_parallel(records, |(what, params)| {
+        let mut record = AvatarRecord::new("Beast", Archetype::Quadruped(params));
+        record.sanitize();
+        let Archetype::Quadruped(params) = &record.archetype else {
+            unreachable!("every record here is a beast")
+        };
+        let withers = params.height * 1.2;
+        let avatar = Avatar::build(&record).unwrap_or_else(|| panic!("{what} builds"));
+        Beast {
+            what,
+            avatar,
+            withers,
+            hooves: true,
+        }
+    })
+}
+
+#[test]
+fn a_short_legged_beast_gets_up_from_a_sit_with_its_thigh_out_of_the_ground() {
+    // #390: hips rising over a hind leg folded this tight fall the stifle four
+    // times as far, so each pass of the settle sank the wrapped thigh further:
+    // 20.5 mm on legLength -3 and 23.7 on -2 at a long trunk, 2.4 and 2.7 times
+    // what is allowed, the trunk climbing 100 mm in the frame it gave up.
+    let wrong: Vec<String> = in_parallel(short_legged(), |beast| {
+        let rig = &beast.avatar.rig;
+        let (up, _) = emote::getting_up(rig, "Sit").expect("a beast gets up");
+        let allowed = (SINK * beast.withers).max(SINK_FLOOR);
+        let mut wrong = Vec::new();
+        let mut before: Option<Posed> = None;
+        for step in 0..=100 {
+            // The first third of it, where the hips open over the closed leg.
+            #[expect(clippy::cast_precision_loss, reason = "a hundred steps")]
+            let time = step as f32 / 300.0;
+            let low = lows(&beast, &up, time).all;
+            if low < -allowed {
+                wrong.push(format!(
+                    "{}: at {time:.3} reaches {:.1} mm below the ground, past {:.1}",
+                    beast.what,
+                    -low * 1000.0,
+                    allowed * 1000.0
+                ));
+            }
+            let now = up.pose(rig, time).forward(rig);
+            if let Some(before) = &before {
+                let (moved, joint) = fastest(rig, before, &now);
+                if moved > FOLDED_STEP {
+                    wrong.push(format!(
+                        "{}: at {time:.3} joint {joint} moved {:.1} mm, past {:.1}",
+                        beast.what,
+                        moved * 1000.0,
+                        FOLDED_STEP * 1000.0
+                    ));
+                }
+            }
+            before = Some(now);
+        }
+        wrong
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How far any joint of a short-legged horse may move in a three-hundredth of
+/// its rise from a sit, in metres, over the first third of it. Provenance:
+/// **measured** (#390): 89 mm where the trunk climbed in vain, 62 since, a neck
+/// joint carried on as the trunk swings up. A last-place change in libm alone reads
+/// up to 75 on this body, as the rise's own threshold falls the other way at a
+/// sample, so the bound stands between that and the fault.
+const FOLDED_STEP: f32 = 0.08;

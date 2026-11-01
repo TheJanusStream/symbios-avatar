@@ -309,6 +309,7 @@ the Disney principles):
 | #329 lean distribution | hip extension, spread counter-curve, ceiling | §2.4, §2.3, §3 (weight) |
 | #330 head-level bargain | partial counter along the cervical chain | §2.5 |
 | #331 run character | elbow pump, heel lift, on the speed axis | §2.6, §2.2, §3 (airborne) |
+| #378 a beast's gait | the pantograph, the girdles' ride, the fold | §7 |
 | overlands #1192 | pace smoothing at the consumer | §4 (springs) |
 | #361 turning on the spot | a pivot as a gait, the stance's yaw bounded by the hip | §2.7, §2.8 |
 | #362 the sidestep | a heading's cadence, a crossover in a split stance | §2.7, §2.8 |
@@ -330,6 +331,36 @@ the Disney principles):
 - **Judge a carve POSED and judge a walk MOVING**: idle was fine and the
   hunch appeared only in motion — a term verified at rest says nothing about
   what the gait adds.
+
+## 7. A beast's gait *(#378)*
+
+Everything above is a person's. A beast's motion is `anim/quadruped.rs`,
+judged against `docs/research/research-08-quadruped-gait.md`; read the numbers
+with `examples/gaitaudit` and judge by the strips and the moving body.
+
+- **A speed in hip heights.** Froude number and stride are on the hip joint's
+  rest height (`speed::measure_of`), `lambda = 2.05 h Fr^0.3`. 2.05 and not the
+  recalled 2.3: see `QUADRUPED_STRIDE`.
+- **Each leg a pantograph.** `quadruped::stand` finds, in the side plane, the
+  one swing of the forearm or femur that with the blade and the metapodial
+  turned by it the two-bone leg takes; alternating the two diverges near a
+  leg's reach, where a millimetre at the ankle turns the thigh by more than the
+  metapodial gives back. A body at rest stands its foot upright (`Foot::Stood`):
+  only a stride is `Foot::Striding`, or the sit and the lying down move.
+- **Each girdle rides on its own feet.** The two harmonics of each pair's load
+  (`quadruped::Ride`), a vault at a walk, a spring at a trot and faster, flipping
+  through nothing where the duty crosses a half. Everything reads footfalls:
+  nothing asks a pattern's name. One depth (`quadruped::depth`), the bob on top.
+- **A leg in the air folds last** (`quadruped::articulate`), its pad left where
+  the plant and the roll left it but raised round the wrist, so nothing in the
+  ground's account of a paw changes and a fold is nothing at both ends.
+- **Traps paid for.** A fold past the half turn from flat flips a slerp: turn the
+  toes about the side's axis. A swing past its reach must not hunt back. A
+  swing short of its goal after the trunk moves read as a layered clip's until
+  `Steps::placed` was re-read after the carry. A nod from the neck's own joint
+  has a third the lever of one from the withers.
+- **Kin.** Nothing asks a family: `quadruped::Kin` reads the upper arm against
+  the forearm and cannon, so a cross moves between its parents.
 
 ## Sources
 

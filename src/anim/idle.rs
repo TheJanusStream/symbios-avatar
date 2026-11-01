@@ -271,6 +271,12 @@ pub struct Idled {
     /// for every other target. Duplicating any of that here would give the body
     /// two opinions about where it is looking.
     pub glance: Option<Vec3>,
+    /// How much of the way to [`Self::glance`] the body turns this moment, `0..=1`.
+    ///
+    /// **So a head turns rather than snaps** (#382, #398). Taken whole the moment a
+    /// fidget starts and dropped the moment it ends, a horse's nose moved 390 mm in
+    /// one frame, twice a fidget, and a person's head 20 to 25 mm.
+    pub glance_share: f32,
 }
 
 /// Where one contact stands, when that is not where it rests.
@@ -335,6 +341,9 @@ pub struct Idle {
     stance: Vec<Footing>,
     /// On four legs, the one foot the running shift is stepping home (#370).
     stepping: Option<Limb>,
+    /// On four legs, how far under its height the body still rides out of the
+    /// stride it stopped from, in metres. See [`Self::arrive`].
+    settling: f32,
     /// Which way this fidget glances, and how far it rolls the shoulders.
     glance: Vec3,
     roll: f32,
@@ -361,6 +370,7 @@ impl Idle {
             fidget,
             stance: Vec::new(),
             stepping: None,
+            settling: 0.0,
             glance: Vec3::ZERO,
             roll: 0.0,
             rng,
@@ -405,8 +415,15 @@ impl Idle {
     /// is untouched by any of this.
     pub fn arrive(&mut self, rig: &Rig, pose: &Pose, bearing: &[Limb]) {
         self.stance.clear();
+        self.settling = 0.0;
         if !pose.fits(rig) {
             return;
+        }
+        // **A beast rises out of its stride over a beat** (#378). A canter rides a
+        // horse 22 cm under its height, and left to the blend out of the gait it
+        // stood up out of that in five frames, a hop on stopping.
+        if rig.ground_contacts().len() == 4 {
+            self.settling = (-pose.translation.y).max(0.0);
         }
         let posed = pose.forward(rig);
         for limb in rig.ground_contacts() {
@@ -640,14 +657,28 @@ impl Idle {
         // So sink far enough that every seeded contact is within its leg's
         // reach — [`super::gait::sink_needed`], the same relation a stride uses
         // and for the same reason, rather than a second opinion about how long
-        // a leg is. It needs no decay of its own: the offsets decay as the
-        // stance closes and the sink follows them to nothing, so a body rises
-        // as it brings its feet together. Which is what a person does.
+        // a leg is; on four legs the four-legged stride's own. It needs no decay
+        // of its own: the offsets decay as the stance closes and the sink follows
+        // them to nothing, so a body rises as it brings its feet together. Which
+        // is what a person does.
         let sink = self
             .stance
             .iter()
-            .filter_map(|footing| super::gait::sink_needed(rig, footing.limb, footing.offset))
+            .filter_map(|footing| {
+                if four {
+                    super::quadruped::sink_toward(rig, footing.limb, footing.offset)
+                } else {
+                    super::gait::sink_needed(rig, footing.limb, footing.offset)
+                }
+            })
             .fold(0.0f32, f32::max);
+        let sink = if four {
+            let rate = SETTLE_RATE * super::quadruped::hip_height(rig).unwrap_or(1.0);
+            self.settling = (self.settling - rate * dt.max(0.0)).max(0.0);
+            sink.max(self.settling)
+        } else {
+            sink
+        };
         // With [`super::gait::CROUCH_MARGIN`], for the reason that constant
         // exists: a solve sunk to EXACTLY full reach has no slack, so the
         // bearing foot drifts with the root as the sway moves it. Measured at
@@ -724,7 +755,21 @@ impl Idle {
                     .map_or(height, |&joint| rig.joints[joint].position.y);
                 self.glance * height * 2.0 + Vec3::Y * eye
             }),
+            glance_share: self.turned_to_glance(),
         }
+    }
+
+    /// How far the body has turned to the running fidget's glance: up over its
+    /// start, held, and back down over its end. Nothing outside a fidget.
+    fn turned_to_glance(&self) -> f32 {
+        let Stage::Running(left) = self.fidget else {
+            return 0.0;
+        };
+        let time = self.config.fidget_time.max(f32::EPSILON);
+        let done = (1.0 - left / time).clamp(0.0, 1.0);
+        let turn = (GLANCE_TURN / time).min(0.5);
+        let share = (done / turn).min((1.0 - done) / turn).min(1.0);
+        share * share * (3.0 - 2.0 * share)
     }
 
     /// Counts the schedules down and draws the next wait when one expires.
@@ -1262,6 +1307,16 @@ fn ground_centre(rig: &Rig) -> Vec3 {
     let middle = feet.iter().copied().sum::<Vec3>() / feet.len() as f32;
     Vec3::new(middle.x, 0.0, middle.z)
 }
+
+/// How fast a beast rises out of the stride it stopped from, in its hip heights a
+/// second. Provenance: **chosen** (#378): a horse's canter crouch in a quarter of a
+/// second, and a dog's hips under the 2.1% of a leg a frame that
+/// `a_stopped_beast_steps_its_feet_home_one_at_a_time_and_stands_level` allows.
+const SETTLE_RATE: f32 = 0.7;
+
+/// How long a head takes to turn to a glance and to turn back, in seconds.
+/// Provenance: **chosen** (#382): a look round, not a start.
+const GLANCE_TURN: f32 = 0.45;
 
 /// The gaze settings an idle's glance is meant to be spread with.
 ///

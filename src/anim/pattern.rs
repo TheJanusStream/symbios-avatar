@@ -73,13 +73,15 @@ const DOWN: f32 = 0.8;
 /// numbers, which it keeps beyond them: falling with speed within a gait and
 /// stepping down between gaits, as a quadruped's does.
 ///
-/// Provenance: **the literature**, rounded: Alexander and Jayes' duty
-/// factors, a walk's from three quarters at its slowest, a trot's from a half
-/// at the change, a gallop's down to about a fifth.
-const WALK_DUTY: (f32, f32) = (0.75, 0.60);
-const TROT_DUTY: (f32, f32) = (0.50, 0.38);
+/// Provenance: **the literature**, research-08 2.1 (#378): dog walks 0.56 to
+/// 0.64 and a cat's 0.64 at their ordinary speeds, a slower walk longer; dog
+/// trots 0.39 to 0.47; a horse's canter near 0.4, and gallops 0.31 at 9.5 m/s
+/// and 0.28 at 12.5, a greyhound's near 0.3. A trot at or above a half reads
+/// as a shuffle.
+const WALK_DUTY: (f32, f32) = (0.68, 0.58);
+const TROT_DUTY: (f32, f32) = (0.47, 0.39);
 const CANTER_DUTY: (f32, f32) = (0.38, 0.33);
-const GALLOP_DUTY: (f32, f32) = (0.32, 0.22);
+const GALLOP_DUTY: (f32, f32) = (0.32, 0.27);
 
 /// The Froude number a gallop's duty reaches its least at.
 const GALLOP_TOP: f32 = 8.0;
@@ -352,6 +354,27 @@ mod tests {
             let duty = at(froude).duty(froude);
             assert!(duty <= last + 1.0e-6, "the duty rose at {froude}");
             last = duty;
+        }
+    }
+
+    #[test]
+    fn each_patterns_duty_is_the_literatures() {
+        // Fact 4 (#378): before it a walk ran up to 0.75, and a trot from 0.50
+        // and a gallop down to 0.22, past anything measured.
+        for froude in [0.05, 0.25, 0.49] {
+            let duty = Pattern::Walk.duty(froude);
+            assert!((0.56..=0.70).contains(&duty), "a walk at {froude}: {duty}");
+        }
+        for froude in [0.5, 1.2, 2.5] {
+            let duty = Pattern::Trot.duty(froude);
+            assert!((0.38..=0.48).contains(&duty), "a trot at {froude}: {duty}");
+        }
+        for froude in [4.0, 7.0, 12.0] {
+            let duty = Pattern::Gallop(Lead::Right).duty(froude);
+            assert!(
+                (0.26..=0.34).contains(&duty),
+                "a gallop at {froude}: {duty}"
+            );
         }
     }
 

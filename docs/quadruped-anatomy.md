@@ -186,19 +186,15 @@ Below zero the ribcage does not narrow by its column here but by a tenth of
 
 ## What the rig honours, beyond the body at rest
 
-- **Froude by hip height** (08 fact 10): a leg's reach is now measured from
-  the hip and the shoulder joints inside the body, 0.466 m on the default dog
-  against P5's 0.284, which put the hip at the trunk's underside. Strides,
-  cadences and the gait's transitions follow it. The bob of the trunk at a
-  trot is 2.8% of WH on the default dog, 5.3% on seed 2's cat and 2.9% on seed
-  6's horse, inside 08's 2 to 6% (fact 7, the horse's); on P5's body it was
-  1.0 to 1.5%.
+- **Froude by hip height** (08 fact 10, #378): a beast's speed and stride are
+  measured against its hip joint's height at rest, 0.557 m on the default dog,
+  where they were on a thigh and a shank, 0.466 m. Each girdle rides on its own
+  feet; see docs/locomotion-playbook.md section 7 for the gait against 08.
 - **A side-pass** (#374): four feet in two pairs cross over to strafe, as a
   horse's legs do, rather than shuffling on a stance too narrow to step in.
-- **The scapula is its own joint** (the first upper-limb joint of a fore leg),
-  rigid with the girdle in every motion today. R5 (#378) drives it parallel
-  to the forearm, the pantograph of 08 fact 2; it already carries the skin
-  over it.
+- **The scapula is its own joint** (the first upper-limb joint of a fore leg).
+  A stride turns it with the forearm, the pantograph of 08 fact 2, and it
+  carries the skin over it (#378); at rest it rides with the girdle.
 - **Sit and Lie Down rest on the ground** (#377): see the next section.
 
 ## Resting on the ground (R4, #377)
@@ -333,7 +329,7 @@ under a beast in a state. A person's gestures are as they were.
 rests on its sternum with its elbows on the ground without it. A dog's
 relaxed down, rolled onto one hip, is a later variant (the owner's call). A
 lying horse rests on its folded legs, its chest 1 to 10% of its withers
-height off the ground (above). A rest ignores a ground that is not level.
+height off the ground (above).
 
 **Cost**, native, per `Driver` frame (#377): what a rest solves from the rig
 alone - the sit's end, the lying end, the pose each holds - is solved once
@@ -343,6 +339,38 @@ does, 0.04 to 0.05 ms; going down or getting up 0.12 to 0.21 ms on average
 and at worst 0.8; the one frame that first needs a lying end pays its solve,
 about 2 ms. A clip applied on its own solves everything afresh, a little
 dearer than the first cut's: 0.4 ms held in a sit, 1.7 to 2.2 lying down.
+
+**On whatever ground it is over** (#381). A rest is solved against a level
+ground, once and kept; on a slope nothing of that solve changes but its attitude.
+`Driver::drive` turns it onto the plane that best fits the ground under the four
+feet, the pelvis and the withers, about their middle, so on a plane everything
+that touched the level ground touches this one (0.1 mm at most, against a sitting
+dog's hind pads 19 mm in and a horse's 81 to 93, its forepads 49 and 192 off).
+The neck takes the turn back off the head; each foot then goes to the ground
+under itself, its sole on the ground's own slope there. Standing, a trunk is
+level as an idle's is, so the turn comes on over the first half of the sit (or of
+a horse's way down), the trunk sinking meanwhile for whichever leg has furthest
+to reach, and goes off again rising. Level ground is left alone to the bit, and a
+clip applied on its own (`Clip::apply`) has no ground to ask and rests level.
+**Left**: the body takes the ground's whole slope, so a horse sitting facing up
+a steep grade leans back past where it would hold itself: the trunk is not solved
+again against gravity. The game drives with `level_ground` and tilts its whole
+body on its chassis, so none of this reaches it; it reaches the viewer's grade
+slider and any consumer that drives on real terrain.
+
+**A rise that does not clear a thigh goes on the feet** (#390). On the shortest
+legs a horse's hind leg folds so tight in its sit that the stifle falls four
+times as far as the hips rise, and the wrapped thigh's skin under the femur with
+it, so `settle` raising the trunk only sank it further: 23.7 mm into the ground
+on `legLength` -2 and a long trunk, 2.7 times what is allowed, at about a tenth of
+the way up. Once a rise leaves more of the thigh in the ground than it was for,
+that goes on the whole leg instead. **What it costs**: the hind feet stand up to
+27 mm off the ground for that moment, and the worst body's abdomen moves 122 mm in
+one frame where it moved 97, which is rarely seen. It reaches the shortest-legged
+horses only, `legLength` -1.9 and under: 36 corners of the Sit's grid, 5 of them
+bodies that never failed the bound, and 1 of 500 rolled beasts. Every body hashed
+through its rests, its stops and its gaits on level ground reads the same to the
+bit.
 
 ## Where the body departs, and why
 
