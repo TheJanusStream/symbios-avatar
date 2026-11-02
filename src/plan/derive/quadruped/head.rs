@@ -714,63 +714,69 @@ fn upper_fang_seat(head: &BeastHead, piece: &Ornament) -> OrnamentSeat {
     // Off the jaw straight down, along the line in its own plane.
     hang(&mut seat, 0.0);
     seat.base = Vec3::new(0.0, axis, z);
-    let line = seat.line();
-    let last = (line.len() - 1) as f32;
-    let straight = line
-        .iter()
-        .enumerate()
-        .map(|(station, at)| {
-            head.jaw_wide_at(at.z) + seat.radius_at(station as f32 / last) * JAW_AIR
-        })
+    let straight = seat
+        .read_along(CLEAR_READINGS)
+        .into_iter()
+        .map(|(at, along)| head.jaw_wide_at(at.z) + seat.radius_at(along) * JAW_AIR)
         .fold(0.0, f32::max);
     // Rooted up that line, at the first height its end is buried under the skin, so
     // that it hangs straight and no flat end shows. Where the head does not reach
     // that far out, drawn in until it does, to lean out past the jaw from there. Only
     // a very thick fang never buries its end, and bulges through the deepest it got.
+    // Each first is eased toward the next as it stops being one (#404), a column's
+    // over more of how deep it reaches than a height's, as it moves the root further.
     let buried = (0.8 * seat.radius).max(ROOT_DEPTH * r);
     let rise = (ROOT_RISE * r).max(2.0 * seat.radius);
+    let (ease, across_ease) = (EASE * r, COLUMN_EASE * r);
+    let mut columns = Vec::with_capacity(ROOT_TRIES);
     let mut x = straight;
-    let mut deepest = Vec3::new(x, axis, z);
     for _ in 0..ROOT_TRIES {
         let lip = head
             .leave(Vec3::new(x, axis + r, z), Vec3::NEG_Y)
             .map_or(axis, |at| at.y);
-        let heights = (0..=ROOT_SAMPLES).map(|at| lip + rise * at as f32 / ROOT_SAMPLES as f32);
-        let mut found = None;
-        for y in heights {
-            let at = Vec3::new(x, y, z);
-            let depth = head.distance(at);
-            if depth < head.distance(deepest) {
-                deepest = at;
-            }
-            if depth < -buried {
-                found = Some(at);
-                break;
-            }
-        }
-        if let Some(at) = found {
-            deepest = at;
-            break;
-        }
+        let places: Vec<Vec3> = (0..=ROOT_SAMPLES)
+            .map(|at| Vec3::new(x, lip + rise * at as f32 / ROOT_SAMPLES as f32, z))
+            .collect();
+        let depths: Vec<f32> = places.iter().map(|&at| -head.distance(at)).collect();
+        let deepest = depths.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        columns.push((places, depths, deepest));
         x -= ROOT_STEP * r;
     }
+    // Nothing buried as deep as asked, and then as deep as any of them goes.
+    let deepest = columns
+        .iter()
+        .map(|column| column.2)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let wanted = buried.min(deepest - 0.5 * across_ease);
+    // Up a column to its first height that is, or the deepest it gets.
+    let up = |(places, depths, deepest): &(Vec<Vec3>, Vec<f32>, f32)| {
+        let wanted = wanted.min(deepest - 0.5 * ease);
+        eased_first(places, ease, |at| depths[at] - wanted)
+    };
+    let tops: Vec<Vec3> = columns.iter().map(|column| column.0[0]).collect();
+    let mut root = eased_mix(
+        &tops,
+        across_ease,
+        |at| columns[at].2 - wanted,
+        |at| up(&columns[at]),
+    );
     // Over the jaw, if drawn in far enough to be standing in it. The ring is what is
     // asked of it, so far enough over for the ring.
     let (over, girth) = jaw.at(z);
     let round = seat.radius * JAW_AIR;
-    let across = deepest.x / (head.jaw_wide_at(z) + round);
+    let across = root.x / (head.jaw_wide_at(z) + round);
     if across < 1.0 {
         let top = over + (0.9 * girth + round) * (1.0 - across * across).sqrt() * ROOT_CLEAR;
-        deepest.y = deepest.y.max(top);
+        root.y = root.y.max(top);
     }
-    seat.base = deepest;
-    let tilt = least_lean(
+    seat.base = root;
+    least_lean(
         &mut seat,
-        FANG_LEAN_MOST,
-        |seat, tilt| hang(seat, tilt),
-        |seat| clears_the_jaw(head, seat),
+        FANG_LEAN_SAMPLES,
+        LEAN_EASE,
+        |seat, at| hang(seat, FANG_LEAN_MOST * at / FANG_LEAN_SAMPLES as f32),
+        |seat| jaw_clearance(head, seat) - AIM,
     );
-    hang(&mut seat, tilt);
     seat
 }
 
@@ -788,61 +794,185 @@ const ROOT_DEPTH: f32 = 0.02;
 /// read off. Provenance: **chosen** (#402).
 const ROOT_CLEAR: f32 = 1.2;
 
-/// Whether a piece's line, round its section, stays out of the shut jaw: the jaw's
-/// elliptical section along its run, as `face::beast::jaw` sweeps it.
-fn clears_the_jaw(head: &BeastHead, seat: &OrnamentSeat) -> bool {
-    let line = seat.line();
-    let last = (line.len() - 1) as f32;
+/// How far a piece's line, round its section, stands out of the shut jaw, as a lean
+/// ([`turned_off`]): the jaw's elliptical section along its run, as `face::beast::jaw`
+/// sweeps it. Negative where it is in it. Past its root's own section, which no lean
+/// moves: a fang hung at the jaw's widest touches the jaw there by construction, and
+/// a hair either side of touching decided between hanging straight and leaning out as
+/// far as it goes (#404).
+fn jaw_clearance(head: &BeastHead, seat: &OrnamentSeat) -> f32 {
     let round = seat.direction.cross(seat.side);
-    line.iter().enumerate().all(|(station, &at)| {
-        let reach = seat.radius_at(station as f32 / last) * JAW_AIR;
-        (0..JAW_RING).all(|point| {
+    let mut clearance = f32::INFINITY;
+    for (at, along) in seat.read_along(CLEAR_READINGS).into_iter().skip(1) {
+        let reach = seat.radius_at(along) * JAW_AIR;
+        for point in 0..JAW_RING {
             let angle = std::f32::consts::TAU * point as f32 / JAW_RING as f32;
             let on_ring = at + (seat.side * angle.cos() + round * angle.sin()) * reach;
             let (axis, girth) = head.jaw.at(on_ring.z);
-            let across = on_ring.x / head.jaw_wide_at(on_ring.z);
-            let up = (on_ring.y - axis) / (0.9 * girth);
-            across * across + up * up > 1.0
-        })
-    })
+            let (wide, deep) = (head.jaw_wide_at(on_ring.z), 0.9 * girth);
+            let across = on_ring.x / wide;
+            let up = (on_ring.y - axis) / deep;
+            let out = ((across * across + up * up).sqrt() - 1.0) * wide.min(deep);
+            clearance = clearance.min(turned_off(head, seat, along, out));
+        }
+    }
+    clearance
 }
 
 /// How many points round a fang's section are asked of the jaw.
 const JAW_RING: usize = 8;
 
-/// The least lean in `0..=most` that `clear` passes: the first of a coarse walk up,
-/// then halved, so that it follows what it depends on without a jump. `most`, if
-/// nothing does.
-fn least_lean(
-    seat: &mut OrnamentSeat,
-    most: f32,
-    lean: impl Fn(&mut OrnamentSeat, f32),
-    clear: impl Fn(&OrnamentSeat) -> bool,
-) -> f32 {
-    let (mut low, mut high) = (0.0, most);
-    for step in 0..=LEAN_STEPS {
-        let tilt = most * step as f32 / LEAN_STEPS as f32;
-        lean(seat, tilt);
-        if clear(seat) {
-            high = tilt;
-            break;
-        }
-        low = tilt;
-    }
-    for _ in 0..LEAN_HALVINGS {
-        let tilt = 0.5 * (low + high);
-        lean(seat, tilt);
-        if clear(seat) {
-            high = tilt;
-        } else {
-            low = tilt;
-        }
-    }
-    high
+/// How many places along a piece's line a seat asks of the head, base and tip among
+/// them, however many stations it is swept through: every station of a preset fang's
+/// and a preset tusk's line is one of them.
+const CLEAR_READINGS: usize = 25;
+
+/// How far either side of just clear a seat's search eases (#404). A place counts as
+/// in the way in full until it is half this short of clear and not at all once it is
+/// half this past it, and in part between, so what is found eases from one place to
+/// the next as a slider takes a clearance away or gives one, rather than jumping.
+/// A root's places in head radii, a fang's root drawn in from one column to the next
+/// over twice as much as it rises from one height to the next; a lean's, and a
+/// slide's out of a cheek, in radians, their clearances read as leans
+/// ([`turned_off`]). Provenance: **chosen** (#404), a few slider steps of thickness
+/// for the jumps the first clear place made: the wider, the more of them it eases
+/// and the more bodies near one it moves.
+const EASE: f32 = 0.002;
+const COLUMN_EASE: f32 = 0.004;
+const LEAN_EASE: f32 = 0.025;
+
+/// How clear a lean is asked to be, in radians: a hair, so that one found where the
+/// clearance passes smoothly through zero is clear, not touching.
+const AIM: f32 = 1.0e-4;
+
+/// How far a piece's line reaches from its base `along` of the way to its tip, past
+/// [`LEAST_LEVER`]: what a lean turns a place on it by. A clearance over this reads
+/// as about how much more lean it would take to close it, which is what an easing in
+/// radians is of: the same ease near the root as near the tip.
+fn lever(head: &BeastHead, seat: &OrnamentSeat, along: f32) -> f32 {
+    (along * seat.length).max(LEAST_LEVER * head.radius)
 }
 
-/// The most an upper fang leans out from hanging straight, in radians.
+/// The shortest lever [`lever`] reads, in head radii: at the root, which no lean
+/// moves.
+const LEAST_LEVER: f32 = 0.4;
+
+/// A clearance `out` of a place `along` a piece, as a lean ([`lever`]).
+fn turned_off(head: &BeastHead, seat: &OrnamentSeat, along: f32, out: f32) -> f32 {
+    out / lever(head, seat, along)
+}
+
+/// How much a place whose clearance is `clear` counts as in the way, eased over
+/// `ease` either side of zero.
+fn blocked(clear: f32, ease: f32) -> f32 {
+    (0.5 - clear / ease).clamp(0.0, 1.0)
+}
+
+/// The least of `0..=samples` along a walk at which `clearness` passes zero, read
+/// between the samples along a line: how much of the walk is in the way, a stretch
+/// counting by how [`blocked`] the best clearance up to it is (#404). What it finds
+/// follows the clearance smoothly however that comes and goes, as the first clear
+/// sample of a walk does not: a clear stretch that closes as a slider moves hands on
+/// to the next by the way between them. With the best clearance the walk reached.
+fn eased_crossing(
+    samples: usize,
+    ease: f32,
+    mut clearness: impl FnMut(usize) -> f32,
+) -> (f32, f32) {
+    // What `blocked` adds up to, from where it starts to ease to `clear`.
+    let summed = |clear: f32| {
+        let past = clear + 0.5 * ease;
+        let inside = past.clamp(0.0, ease);
+        past.min(0.0) + inside - inside * inside / (2.0 * ease)
+    };
+    // `blocked` on the average over a stretch along which the clearance goes evenly
+    // from one to the other.
+    let across = |from: f32, to: f32| {
+        if to - from < 1.0e-3 * ease {
+            blocked(0.5 * (from + to), ease)
+        } else {
+            (summed(to) - summed(from)) / (to - from)
+        }
+    };
+    let mut before = clearness(0);
+    let mut best = before;
+    let mut found = 0.0;
+    for sample in 1..=samples {
+        if blocked(best, ease) == 0.0 {
+            break;
+        }
+        let next = clearness(sample);
+        if next <= best {
+            found += blocked(best, ease);
+        } else {
+            // Level at the best so far until the line passes it, then along the line.
+            let level = ((best - before) / (next - before)).max(0.0);
+            found += level * blocked(best, ease) + (1.0 - level) * across(before.max(best), next);
+            best = next;
+        }
+        before = next;
+    }
+    (found, best)
+}
+
+/// The first of `places` in order at which `clearness` passes zero, eased as
+/// [`eased_crossing`] eases it, for places that are apart rather than along a line:
+/// each place weighs what its clearance takes off how [`blocked`] the way still is,
+/// so that the first clear past the easing is the place itself, and one clear by
+/// less shares with the next as it stops being clear. The last place if nothing
+/// clears.
+fn eased_first(places: &[Vec3], ease: f32, clearness: impl FnMut(usize) -> f32) -> Vec3 {
+    eased_mix(places, ease, clearness, |at| places[at])
+}
+
+/// [`eased_first`] over `places`, each place standing for what `at` reads there, which
+/// is read only where it weighs anything.
+fn eased_mix(
+    places: &[Vec3],
+    ease: f32,
+    mut clearness: impl FnMut(usize) -> f32,
+    at: impl Fn(usize) -> Vec3,
+) -> Vec3 {
+    let mut best = f32::NEG_INFINITY;
+    let mut still = 1.0;
+    let mut found = Vec3::ZERO;
+    for place in 0..places.len() {
+        best = best.max(clearness(place));
+        let now = blocked(best, ease);
+        if still > now {
+            found += at(place) * (still - now);
+        }
+        still = now;
+        if still == 0.0 {
+            return found;
+        }
+    }
+    found + at(places.len() - 1) * still
+}
+
+/// The least lean along a walk of `samples` that `clearness` passes, as
+/// [`eased_crossing`] finds it, `place` setting the seat `at` a share of the walk in
+/// samples; the seat left there. With the best clearance the walk reached.
+fn least_lean(
+    seat: &mut OrnamentSeat,
+    samples: usize,
+    ease: f32,
+    place: impl Fn(&mut OrnamentSeat, f32),
+    clearness: impl Fn(&OrnamentSeat) -> f32,
+) -> f32 {
+    let mut probe = *seat;
+    let (at, best) = eased_crossing(samples, ease, |at| {
+        place(&mut probe, at as f32);
+        clearness(&probe)
+    });
+    place(seat, at);
+    best
+}
+
+/// The most an upper fang leans out from hanging straight, in radians, and in how
+/// many steps that is asked.
 const FANG_LEAN_MOST: f32 = 1.0;
+const FANG_LEAN_SAMPLES: usize = 64;
 
 /// A lower fang or a tusk: rooted in the jaw's side under the lip and leaning out by
 /// as little as clears the head, the upper lip above all, as a boar's does. The lean
@@ -850,6 +980,8 @@ const FANG_LEAN_MOST: f32 = 1.0;
 /// depends on how long it is and how it curves, so a short fang stands nearly
 /// upright under the lip and a long tusk goes out round it.
 fn jaw_seat(head: &BeastHead, piece: &Ornament, on_jaw: f32, sides: u8) -> OrnamentSeat {
+    let r = head.radius;
+    let ease = EASE * r;
     let jaw = &head.jaw;
     let z = jaw.back.z + (jaw.front.z - jaw.back.z) * on_jaw;
     let (axis, girth) = jaw.at(z);
@@ -857,23 +989,26 @@ fn jaw_seat(head: &BeastHead, piece: &Ornament, on_jaw: f32, sides: u8) -> Ornam
     // the shut head does not cover, and rooted inside it there: the jaw is mostly
     // hidden by a flew hanging low over it, and a piece has to come out of what shows.
     let (wide, deep) = (head.jaw_wide_at(z), 0.9 * girth);
-    let shows = (0..=JAW_SHOW_STEPS)
-        .map(|step| {
-            let round = JAW_SHOW_MOST * step as f32 / JAW_SHOW_STEPS as f32;
-            Vec3::new(wide * round.cos(), axis - deep * round.sin(), z)
-        })
-        .find(|&on_jaw| head.distance(on_jaw) > 0.0);
+    let on_section = |step: usize| {
+        let round = JAW_SHOW_MOST * step as f32 / JAW_SHOW_STEPS as f32;
+        Vec3::new(wide * round.cos(), axis - deep * round.sin(), z)
+    };
     let mut seat = shaped(head, piece, sides, true);
     // On a snub head none of it may show, and then it comes out of the cheek by the
     // jaw, which it still rides.
-    seat.base = shows.map_or_else(
-        || {
-            let low = Vec3::new(0.0, axis - deep, z);
-            let side = head.leave(low, Vec3::X).unwrap_or(low);
-            side - Vec3::X * seat.radius
-        },
-        |shows| Vec3::new(0.0, axis, z).lerp(shows, JAW_ROOT),
-    );
+    let low = Vec3::new(0.0, axis - deep, z);
+    let cheek = head.leave(low, Vec3::X).unwrap_or(low) - Vec3::X * seat.radius;
+    let roots: Vec<Vec3> = (0..=JAW_SHOW_STEPS)
+        .map(|step| Vec3::new(0.0, axis, z).lerp(on_section(step), JAW_ROOT))
+        .chain([cheek])
+        .collect();
+    seat.base = eased_first(&roots, ease, |step| {
+        if step > JAW_SHOW_STEPS {
+            f32::INFINITY
+        } else {
+            head.distance(on_section(step))
+        }
+    });
     let lean = |seat: &mut OrnamentSeat, tilt: f32| {
         let direction = Vec3::new(tilt.sin(), tilt.cos(), 0.10).normalize();
         let back = square_to(Vec3::new(0.0, 0.6, -0.8), direction);
@@ -885,30 +1020,62 @@ fn jaw_seat(head: &BeastHead, piece: &Ornament, on_jaw: f32, sides: u8) -> Ornam
         seat.across = seat.side;
     };
     // Out of the head by half way, and once out it stays out: its root may grow
-    // through a flew, and nothing further along may go back in.
-    let clear = |seat: &OrnamentSeat| {
-        let line = seat.line();
-        let last = (line.len() - 1) as f32;
-        let out = |station: usize| {
-            let round = seat.radius_at(station as f32 / last);
-            [seat.side, -seat.side, Vec3::Y, Vec3::NEG_Y, Vec3::ZERO]
-                .into_iter()
-                .all(|off| head.distance(line[station] + off * round) > 0.0)
-        };
-        (0..line.len())
-            .position(out)
-            .is_some_and(|first| first * 2 <= line.len() && (first..line.len()).all(out))
+    // through a flew, and nothing further along may go back in. Read round the
+    // section square to the way a positive curve bends it whichever way it does, so
+    // that nothing steps where the bend flips with the curve's sign.
+    let clearness = |seat: &OrnamentSeat| {
+        let across = seat
+            .direction
+            .cross(square_to(Vec3::new(0.0, 0.6, -0.8), seat.direction));
+        let outs: Vec<f32> = seat
+            .read_along(CLEAR_READINGS)
+            .into_iter()
+            .map(|(at, along)| {
+                let round = seat.radius_at(along);
+                let out = [across, -across, Vec3::Y, Vec3::NEG_Y, Vec3::ZERO]
+                    .into_iter()
+                    .map(|off| head.distance(at + off * round))
+                    .fold(f32::INFINITY, f32::min);
+                turned_off(head, seat, along, out)
+            })
+            .collect();
+        // Out from half way on, and anything before that either in, or with all
+        // after it out: so a root only just in the skin is in the way by how near it
+        // is to coming out, rather than all or nothing, and one out of it in full.
+        let half = (CLEAR_READINGS - 1) / 2;
+        let mut after = f32::INFINITY;
+        let mut clearness = f32::INFINITY;
+        for (at, &out) in outs.iter().enumerate().rev() {
+            if at < half {
+                clearness = clearness.min((AIM - 0.5 * LEAN_EASE - out).max(after));
+            }
+            after = after.min(out);
+        }
+        clearness.min(outs[half..].iter().copied().fold(f32::INFINITY, f32::min)) - AIM
     };
-    let tilt = least_lean(&mut seat, LEAN_MOST, |seat, tilt| lean(seat, tilt), clear);
-    lean(&mut seat, tilt);
+    let root = seat.base;
+    let mut best = least_lean(
+        &mut seat,
+        LEAN_SAMPLES,
+        LEAN_EASE,
+        |seat, at| lean(seat, LEAN_MOST * at / LEAN_SAMPLES as f32),
+        clearness,
+    );
     // Past where a snub head's cheek swallows the whole of a short one, slid out along
-    // itself until it shows, which a body with any face to speak of never needs.
-    for _ in 0..SLIDE_STEPS {
-        if clear(&seat) {
+    // itself until it shows, which a body with any face to speak of never needs: a
+    // step at a time, each taken by how much the way is still in it.
+    let mut slid = 0.0;
+    let mut probe = seat;
+    for step in 0..SLIDE_STEPS {
+        probe.base = root + seat.direction * (step as f32 * SLIDE_STEP * r);
+        best = best.max(clearness(&probe));
+        let still = blocked(best, LEAN_EASE);
+        if still == 0.0 {
             break;
         }
-        seat.base += seat.direction * (SLIDE_STEP * head.radius);
+        slid += still;
     }
+    seat.base = root + seat.direction * (slid * SLIDE_STEP * r);
     seat
 }
 
@@ -927,13 +1094,9 @@ const JAW_SHOW_MOST: f32 = 1.4;
 const JAW_SHOW_STEPS: usize = 14;
 
 /// The most a jaw piece leans out from upright, in radians: nearly level, from the
-/// side of the jaw.
+/// side of the jaw; and in how many steps that is asked, each under a degree.
 const LEAN_MOST: f32 = 1.45;
-
-/// How many steps the walk up to a clearing lean takes, and how many times what it
-/// finds is halved: to under a tenth of a degree.
-const LEAN_STEPS: usize = 12;
-const LEAN_HALVINGS: usize = 7;
+const LEAN_SAMPLES: usize = 96;
 
 /// Where the ears stand on a head and how they are made (#367).
 ///

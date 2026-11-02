@@ -37,7 +37,9 @@
 //! along its spine, and the underside of a head on a raised neck straight down
 //! that neck. So a beast's head is wrapped round the head's own axis, from the
 //! occiput to the nose, and its charts' heights go by how far the skin runs
-//! (`BeastCharts`).
+//! (`BeastCharts`). A beast's tail curls away from the bone leaving its hips, so
+//! it is wrapped round its own bones instead (#397), from the root to the tip
+//! with the seam along its underside (`TailChain`).
 //!
 //! Unwrapping duplicates vertices — at chart boundaries, and along each chart's
 //! seam — so the result carries its own vertex list with a [`UvUnwrap::source`]
@@ -276,6 +278,177 @@ impl BeastCharts {
     }
 }
 
+/// A beast's tail, charted along its bones rather than round the first of them
+/// (#397).
+///
+/// Wrapped round the bone leaving the hips, a tail that curls away from it runs
+/// across that axis rather than along it, so the whole of its upper length comes
+/// out at a handful of heights: a few texels along a tail whose coat is painted in
+/// rings along it, which blurred them into a line down its top. Here the height
+/// is how far along the bones the skin lies and the angle is taken round the bone
+/// beside it, in a frame carried down the chain without twisting, so the chart
+/// unrolls the tail however it curls.
+///
+/// **Which bone is beside a point** is decided by the planes that halve the bend
+/// at each joint, not by the nearest bone: the skin on the outside of a bend lies
+/// past the end of one bone and short of the start of the next, and the nearest
+/// bone put all of it at the joint's one height. Between two such planes the
+/// height runs from one joint's to the next in proportion, so it is continuous
+/// across every joint, and so is the angle, which a frame without twist keeps.
+///
+/// **The seam runs along the underside**, which a camera behind and above the
+/// beast sees least, and the chart's middle is the tail's top.
+#[derive(Clone, Debug)]
+struct TailChain {
+    /// The hips, then every joint of the tail, root to tip.
+    joints: Vec<Vec3>,
+    /// How far along the bones each joint lies.
+    reach: Vec<f32>,
+    /// Each bone's direction, root to tip.
+    bones: Vec<Vec3>,
+    /// The plane each joint's bend is halved by, as its normal: the first and
+    /// last bones' own directions at the two ends.
+    halves: Vec<Vec3>,
+    /// The top of each bone: square to it, and carried down the chain from the
+    /// first without twisting.
+    tops: Vec<Vec3>,
+}
+
+/// Where a point lies by a [`TailChain`].
+#[derive(Clone, Copy, Debug)]
+struct OnTheTail {
+    /// How far along the bones.
+    along: f32,
+    /// The point's offset from the bone beside it, square to that bone.
+    flat: Vec3,
+    /// That bone's direction.
+    axis: Vec3,
+    /// That bone's top.
+    top: Vec3,
+}
+
+impl TailChain {
+    /// The tail on `rig`, if it has one.
+    fn of(rig: &Rig) -> Option<Self> {
+        let tail = rig.in_zone(Zone::Tail);
+        // The tip: the tail joint no other tail joint hangs from.
+        let tip = *tail.iter().find(|&&joint| {
+            !tail
+                .iter()
+                .any(|&other| rig.joints[other].parent == Some(joint))
+        })?;
+        let mut chain = vec![tip];
+        let mut at = tip;
+        while let Some(parent) = rig.joints[at].parent {
+            chain.push(parent);
+            if rig.joints[parent].zone != Zone::Tail {
+                break;
+            }
+            at = parent;
+        }
+        chain.reverse();
+        let mut joints: Vec<Vec3> = chain
+            .iter()
+            .map(|&joint| rig.joints[joint].position)
+            .collect();
+        joints.dedup_by(|next, previous| next.distance_squared(*previous) < 1e-12);
+        if joints.len() < 2 {
+            return None;
+        }
+
+        let bones: Vec<Vec3> = joints
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).normalize())
+            .collect();
+        let mut reach = vec![0.0];
+        for pair in joints.windows(2) {
+            reach.push(reach[reach.len() - 1] + pair[0].distance(pair[1]));
+        }
+        let mut halves = vec![bones[0]];
+        for pair in bones.windows(2) {
+            halves.push((pair[0] + pair[1]).normalize_or(pair[1]));
+        }
+        halves.push(bones[bones.len() - 1]);
+
+        // The top of a tail leaving the hips straight back is up, and it turns
+        // with the tail in the body's middle plane: back for one hanging down,
+        // forward for one carried straight up.
+        let square = |top: Vec3, bone: Vec3| (top - bone * top.dot(bone)).normalize_or_zero();
+        let first = square(Vec3::X.cross(bones[0]), bones[0]);
+        let mut tops = vec![if first == Vec3::ZERO {
+            frame(bones[0]).0
+        } else {
+            first
+        }];
+        for pair in bones.windows(2) {
+            let carried = crate::det::from_rotation_arc(pair[0], pair[1]) * tops[tops.len() - 1];
+            let top = square(carried, pair[1]);
+            tops.push(if top == Vec3::ZERO {
+                frame(pair[1]).0
+            } else {
+                top
+            });
+        }
+        Some(Self {
+            joints,
+            reach,
+            bones,
+            halves,
+            tops,
+        })
+    }
+
+    /// Where `at` lies along the tail and round it.
+    fn place(&self, at: Vec3) -> OnTheTail {
+        let last = self.bones.len() - 1;
+        // The bone between the two planes `at` lies between, the nearest such if
+        // a tight curl puts it between more than one pair, and the nearest bone if
+        // it is between none.
+        let mut best: Option<(bool, f32, usize)> = None;
+        for bone in 0..=last {
+            let (start, end) = (self.joints[bone], self.joints[bone + 1]);
+            let past = (at - start).dot(self.halves[bone]);
+            let short = (end - at).dot(self.halves[bone + 1]);
+            let between = (bone == 0 || past >= 0.0) && (bone == last || short >= 0.0);
+            let length = self.reach[bone + 1] - self.reach[bone];
+            let t = ((at - start).dot(self.bones[bone]) / length).clamp(0.0, 1.0);
+            let off = at.distance(start.lerp(end, t));
+            let better = match best {
+                None => true,
+                Some((was_between, was_off, _)) => {
+                    (between && !was_between) || (between == was_between && off < was_off)
+                }
+            };
+            if better {
+                best = Some((between, off, bone));
+            }
+        }
+        let bone = best.map_or(0, |(_, _, bone)| bone);
+
+        let (start, end) = (self.joints[bone], self.joints[bone + 1]);
+        let axis = self.bones[bone];
+        let past = (at - start).dot(self.halves[bone]);
+        let short = (end - at).dot(self.halves[bone + 1]);
+        let along = if bone == 0 && past < 0.0 {
+            // Short of the hips, along the first bone.
+            past
+        } else if bone == last && short < 0.0 {
+            // Past the tip, along the last bone.
+            self.reach[bone + 1] - short
+        } else {
+            let share = past.max(0.0) / (past.max(0.0) + short.max(0.0)).max(f32::EPSILON);
+            self.reach[bone] + (self.reach[bone + 1] - self.reach[bone]) * share
+        };
+        let offset = at - start;
+        OnTheTail {
+            along,
+            flat: offset - axis * offset.dot(axis),
+            axis,
+            top: self.tops[bone],
+        }
+    }
+}
+
 /// Unwraps `mesh` as [`unwrap_with`] does, by a beast's rules if it is given them.
 pub(crate) fn unwrap_framed(
     mesh: &PolyMesh,
@@ -302,12 +475,13 @@ pub(crate) fn unwrap_framed(
             )
         })
         .collect();
-    let groups = connected_groups(mesh, rig, &face_zones, beast);
+    let tail = beast.and_then(|_| TailChain::of(rig));
+    let groups = connected_groups(mesh, rig, &face_zones, beast, tail.as_ref());
 
     // Project every chart into its own local square first, then pack.
     let mut projections = Vec::with_capacity(groups.len());
     for group in &groups {
-        projections.push(project(mesh, rig, group, beast));
+        projections.push(project(mesh, rig, group, beast, tail.as_ref()));
     }
 
     let mut sizes: Vec<Vec2> = projections
@@ -457,6 +631,7 @@ fn connected_groups(
     rig: &Rig,
     face_zones: &[Zone],
     beast: Option<&BeastCharts>,
+    tail: Option<&TailChain>,
 ) -> Vec<Group> {
     let mut axis_of: HashMap<Zone, Vec3> = HashMap::new();
     // Where each zone's material stands, for asking whether a face is AT the
@@ -475,9 +650,17 @@ fn connected_groups(
         .map(|face| {
             let zone = face_zones[face];
             let on_head = BeastCharts::head(beast, zone);
-            let axis = *axis_of
-                .entry(zone)
-                .or_insert_with(|| on_head.map_or_else(|| zone_axis(rig, zone), |head| head.axis));
+            // A beast's tail asks the bone beside the face, as its chart does.
+            let on_tail = tail.filter(|_| zone == Zone::Tail).map(|tail| {
+                let centroid = mesh.face_centroid(face);
+                (centroid, tail.place(centroid))
+            });
+            let axis = match on_tail {
+                Some((_, spot)) => spot.axis,
+                None => *axis_of.entry(zone).or_insert_with(|| {
+                    on_head.map_or_else(|| zone_axis(rig, zone), |head| head.axis)
+                }),
+            };
             if face_normal(mesh, face).dot(axis).abs() <= 0.85 {
                 return Kind::Cylindrical;
             }
@@ -493,7 +676,10 @@ fn connected_groups(
             // failure mode itself, measured: the circular span of the face's
             // corners about the axis.
             let (centre, count) = centre_of[&zone];
-            let origin = on_head.map_or(centre / count.max(1.0), |head| head.on_axis);
+            let origin = match on_tail {
+                Some((centroid, spot)) => centroid - spot.flat,
+                None => on_head.map_or(centre / count.max(1.0), |head| head.on_axis),
+            };
             let (tangent, binormal) = frame(axis);
             let corners = &mesh.faces[face];
             let mut turns: Vec<f32> = corners
@@ -586,6 +772,9 @@ struct Projection {
     v_range: (f32, f32),
     /// Mean distance from the chart's axis, used to size the chart honestly.
     mean_radius: f32,
+    /// The chart's girth where each vertex lies along it, when the chart is
+    /// unrolled by it: a beast's tail (#397). See [`unrolled`].
+    radii: HashMap<u32, f32>,
     /// Surface area the chart covers.
     area: f32,
     /// Importance of the zone this chart covers.
@@ -599,7 +788,7 @@ struct Projection {
 impl Projection {
     /// Where a vertex lands in the chart's own unit square.
     fn unit_uv(&self, vertex: u32, shift: u8) -> Vec2 {
-        let u = self.angle[&vertex] + f32::from(shift);
+        let u = unrolled(self.angle[&vertex], shift, self.radii.get(&vertex));
         let v = self.along[&vertex];
         Vec2::new(
             warp(normalize(u, self.u_range), &self.u_warp),
@@ -618,6 +807,7 @@ impl Projection {
         // A cylindrical chart's width is the arc it wraps through; a planar
         // chart's is already a distance.
         let width = match self.kind {
+            Kind::Cylindrical if !self.radii.is_empty() => span * std::f32::consts::TAU,
             Kind::Cylindrical => span * std::f32::consts::TAU * self.mean_radius.max(1e-4),
             Kind::Planar => span,
         };
@@ -635,7 +825,13 @@ fn density(zone: Zone, config: &UvConfig) -> f32 {
 }
 
 /// Projects one group of faces cylindrically about its zone's axis.
-fn project(mesh: &PolyMesh, rig: &Rig, group: &Group, beast: Option<&BeastCharts>) -> Projection {
+fn project(
+    mesh: &PolyMesh,
+    rig: &Rig,
+    group: &Group,
+    beast: Option<&BeastCharts>,
+    tail: Option<&TailChain>,
+) -> Projection {
     let vertices: Vec<u32> = {
         let mut all: Vec<u32> = group
             .faces
@@ -658,18 +854,32 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group, beast: Option<&BeastCharts
         },
         |head| head.on_axis,
     );
-    let axis = on_head.map_or_else(|| zone_axis(rig, group.zone), |head| head.axis);
-    let (tangent, binormal) = on_head.map_or_else(
-        || frame(axis),
-        |head| {
-            let up = (head.up - axis * head.up.dot(axis)).normalize_or(landmark::UP);
-            (up, axis.cross(up))
-        },
-    );
+    let on_tail = tail.filter(|_| group.zone == Zone::Tail);
+    // A tail's cap is flattened down the bone beside it, its top up the chart.
+    let tip = on_tail
+        .filter(|_| group.kind == Kind::Planar)
+        .map(|tail| tail.place(origin));
+    let axis = match tip {
+        Some(spot) => spot.axis,
+        None => on_head.map_or_else(|| zone_axis(rig, group.zone), |head| head.axis),
+    };
+    let (tangent, binormal) = match tip {
+        Some(spot) => (spot.top, spot.axis.cross(spot.top)),
+        None => on_head.map_or_else(
+            || frame(axis),
+            |head| {
+                let up = (head.up - axis * head.up.dot(axis)).normalize_or(landmark::UP);
+                (up, axis.cross(up))
+            },
+        ),
+    };
+    // The rest of a tail is wrapped round its bones.
+    let along_the_bones = on_tail.filter(|_| group.kind == Kind::Cylindrical);
 
     let mut angle = HashMap::with_capacity(vertices.len());
     let mut along = HashMap::with_capacity(vertices.len());
     let mut radius_sum = 0.0f32;
+    let mut radii = HashMap::new();
     // The charts whose skin closes on their axis at an end. A neck is open at
     // both and curves away from its bone, so counting its skin as closing took its
     // worst stretch from 3 to 30 on one roll, and a pelvis and a tail gained nothing.
@@ -678,15 +888,28 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group, beast: Option<&BeastCharts
         .then(|| along_the_skin(mesh, &vertices, origin, axis));
 
     for &vertex in &vertices {
-        let offset = mesh.positions[vertex as usize] - origin;
-        let height = offset.dot(axis);
-        let flat = offset - axis * height;
+        let at = mesh.positions[vertex as usize];
+        let (height, flat, tangent, binormal) = match along_the_bones {
+            Some(tail) => {
+                let spot = tail.place(at);
+                (spot.along, spot.flat, spot.top, spot.axis.cross(spot.top))
+            }
+            None => {
+                let offset = at - origin;
+                let height = offset.dot(axis);
+                (height, offset - axis * height, tangent, binormal)
+            }
+        };
         radius_sum += flat.length();
+        if along_the_bones.is_some() {
+            radii.insert(vertex, flat.length());
+        }
         match group.kind {
             Kind::Cylindrical => {
                 // Angle zero points forward, so the wrap — and the seam — lands
                 // behind the body. On a beast's head it points at the crown, so
-                // the seam lands under the chin.
+                // the seam lands under the chin, and on its tail at the tail's
+                // top, so the seam runs along the underside.
                 let turn = flat.dot(binormal).atan2(flat.dot(tangent));
                 angle.insert(vertex, turn / std::f32::consts::TAU + 0.5);
                 along.insert(
@@ -700,6 +923,34 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group, beast: Option<&BeastCharts
                 angle.insert(vertex, flat.dot(tangent));
                 along.insert(vertex, flat.dot(binormal));
             }
+        }
+    }
+
+    // A tail is unrolled by its girth where each vertex lies along it, not by
+    // the vertex's own distance from the bone: a ring is not quite round, nor
+    // centred on its bone where the tail leaves the rump, and unrolled vertex by
+    // vertex those rings folded over.
+    //
+    // And past the tip the skin rounds over its end, facing along the last bone
+    // with nowhere along it to go, so how far it has drawn in counts as far as
+    // how far it has gone, as `AlongTheSkin` counts it on a head: counted only
+    // by the way along, the last centimetre of every tail came out at a third of
+    // the rest of it. Counted in as the skin goes past the tip, so the height
+    // runs on across the last joint's plane without a step.
+    if let Some(tail) = along_the_bones {
+        let end = tail.reach[tail.reach.len() - 1];
+        let rim = Girth::of(&vertices, &along, &radii)
+            .at(end)
+            .max(f32::EPSILON);
+        for (vertex, height) in &mut along {
+            let past = *height - end;
+            if past > 0.0 {
+                *height += (rim - radii[vertex]).max(0.0) * (past / rim).min(1.0);
+            }
+        }
+        let girth = Girth::of(&vertices, &along, &radii);
+        for (vertex, radius) in &mut radii {
+            *radius = girth.at(along[vertex]);
         }
     }
 
@@ -757,7 +1008,7 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group, beast: Option<&BeastCharts
             vec![0; face.len()]
         };
         for (corner, &shift) in face.iter().zip(&corner_shifts) {
-            let u = angle[corner] + f32::from(shift);
+            let u = unrolled(angle[corner], shift, radii.get(corner));
             u_range = (u_range.0.min(u), u_range.1.max(u));
         }
         shifts.push(corner_shifts);
@@ -777,7 +1028,10 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group, beast: Option<&BeastCharts
     for (&face_index, corner_shifts) in group.faces.iter().zip(&shifts) {
         let face = &mesh.faces[face_index as usize];
         for (corner, &shift) in face.iter().zip(corner_shifts) {
-            u_samples.push(normalize(angle[corner] + f32::from(shift), u_range));
+            u_samples.push(normalize(
+                unrolled(angle[corner], shift, radii.get(corner)),
+                u_range,
+            ));
             v_samples.push(normalize(along[corner], v_range));
         }
     }
@@ -801,6 +1055,7 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group, beast: Option<&BeastCharts
         u_range,
         v_range,
         mean_radius: radius_sum / vertices.len().max(1) as f32,
+        radii,
         area: group
             .faces
             .iter()
@@ -811,6 +1066,84 @@ fn project(mesh: &PolyMesh, rig: &Rig, group: &Group, beast: Option<&BeastCharts
         v_warp,
     }
 }
+
+/// A cylindrical chart's `u` for a corner `angle` turns round, lifted `shift`
+/// whole turns over the seam: unrolled by the chart's girth at the corner,
+/// `radius`, if the chart is, so that `u` is how far round the skin it lies
+/// rather than how far round the axis.
+///
+/// A tail tapers to a point with as many faces round its tip as round its root,
+/// so taken by angle alone the tip spread across the whole width a chart sized
+/// by its mean radius has, five to one on the worst tails, and the root came out
+/// at a third of the barrel's density round it. Unrolled, the chart is a wedge
+/// that is as fine across the tail as along it everywhere, for the corners of
+/// its rectangle that nothing uses (#397).
+fn unrolled(angle: f32, shift: u8, radius: Option<&f32>) -> f32 {
+    let turn = angle + f32::from(shift);
+    radius.map_or(turn, |radius| (turn - 0.5) * radius)
+}
+
+/// How far a chart's skin stands off its axis, by how far along it lies.
+struct Girth {
+    /// Where along the chart the first bin starts, and how long each is.
+    start: f32,
+    step: f32,
+    /// The mean distance off the axis in each bin, empty bins filled from their
+    /// neighbours.
+    bins: Vec<f32>,
+}
+
+impl Girth {
+    /// The girth of `vertices`, by how far `along` the chart each lies and how
+    /// far off its axis, `radii`.
+    fn of(vertices: &[u32], along: &HashMap<u32, f32>, radii: &HashMap<u32, f32>) -> Self {
+        let (low, high) = along
+            .values()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), &at| {
+                (low.min(at), high.max(at))
+            });
+        let step = ((high - low) / GIRTH_BINS as f32).max(f32::EPSILON);
+        let mut sums = [(0.0f32, 0.0f32); GIRTH_BINS];
+        // Summed in the vertices' order rather than the map's, so a chart comes
+        // out the same to the bit on every run.
+        for vertex in vertices {
+            let bin = (((along[vertex] - low) / step) as usize).min(GIRTH_BINS - 1);
+            sums[bin].0 += radii[vertex];
+            sums[bin].1 += 1.0;
+        }
+        let mut bins: Vec<Option<f32>> = sums
+            .iter()
+            .map(|&(sum, count)| (count > 0.0).then(|| sum / count))
+            .collect();
+        // The first bin and the last hold the chart's two ends, so an empty bin
+        // has a full one either side; it takes the nearer.
+        for bin in 0..GIRTH_BINS {
+            if bins[bin].is_none() {
+                bins[bin] = (1..GIRTH_BINS).find_map(|reach| {
+                    let before = bin.checked_sub(reach).and_then(|at| bins[at]);
+                    before.or_else(|| bins.get(bin + reach).copied().flatten())
+                });
+            }
+        }
+        Self {
+            start: low,
+            step,
+            bins: bins.into_iter().map(|bin| bin.unwrap_or(0.0)).collect(),
+        }
+    }
+
+    /// The girth `at` this far along, between the middles of the bins.
+    fn at(&self, at: f32) -> f32 {
+        let place = ((at - self.start) / self.step - 0.5).clamp(0.0, (GIRTH_BINS - 1) as f32);
+        let low = (place as usize).min(GIRTH_BINS - 2);
+        let between = place - low as f32;
+        self.bins[low] + (self.bins[low + 1] - self.bins[low]) * between
+    }
+}
+
+/// How many bins a tail's girth is read in: a few to each bone.
+/// Provenance: **chosen** (#397).
+const GIRTH_BINS: usize = 24;
 
 /// A chart's height that follows its skin, rather than only the skin's way along
 /// the axis (#395): where the skin faces along the axis it has no such way to go,

@@ -681,21 +681,39 @@ impl Dimensions {
     /// family's centre IS the family's frame. The head still reads the axes
     /// alone, as P2 built it.
     pub(crate) fn of(params: &QuadrupedParams, composites: &Composites) -> Self {
+        Self::eased(params, composites, &AS_ASKED)
+    }
+
+    /// [`Self::of`] with each of the axes its girdles are built from only
+    /// part of the way from its family's centre to what the record asks
+    /// (#391): see [`Ease`]. At [`AS_ASKED`] it is the body as asked, bit for
+    /// bit; at all zeros, its family's own frame under the record's height,
+    /// head and tail.
+    ///
+    /// **The head reads the record as it is**: none of its nodes is a joint
+    /// the cage has to hull, so nothing about it refuses a body, and a
+    /// creator's head stays theirs - its size, its muzzle, its attitude and
+    /// what `appeal` makes of it. See `QuadrupedParams::skeleton` for when a
+    /// body is eased, and by how much.
+    pub(crate) fn eased(asked: &QuadrupedParams, as_asked: &Composites, ease: &Ease) -> Self {
+        let centre = crate::plan::quadruped::axis_centres(asked);
+        let (params, composites) = &eased_axes(asked, as_asked, &centre, ease);
         let h = params.height;
         let wh = h * WITHERS;
         let girth = Girth::of(params, composites);
         let ageing = composites.ageing();
         let frame = Frame::for_params(params);
-        let centre = crate::plan::quadruped::axis_centres(params);
         // `appeal` (#366): the baby schema's proportions over the anatomy - a
         // bigger head and a shorter muzzle - read by every family in its own
         // terms, so a cute horse is still a horse. Saturated where the head
-        // would swallow the neck.
+        // would swallow the neck. The head's is the record's own.
         let appeal = params.appeal.clamp(-1.5, 2.0);
+        let head_appeal = asked.appeal.clamp(-1.5, 2.0);
         // And the body follows the family's young (#372, the owner's call):
         // a puppy's, a kitten's or a foal's ([`Schema`]). At 1.5 a body is all
         // the way there; below zero it leans the other way.
         let young = (appeal / 1.5).clamp(-0.5, 1.33);
+        let head_young = (head_appeal / 1.5).clamp(-0.5, 1.33);
         let schema = Schema::for_params(params);
         let sturdy = 1.0 + schema.sturdy * young;
         let pads = 1.0 + schema.pads * young;
@@ -926,7 +944,7 @@ impl Dimensions {
         );
         // A puppy's head is 0.61 withers heights long against an adult's 0.39
         // (S7): appeal grows it by that ratio, a foal's by less ([`Schema`]).
-        let head_r = h * 0.150 * (1.0 + 0.25 * params.head_size) * (1.0 + schema.head * young);
+        let head_r = h * 0.150 * (1.0 + 0.25 * params.head_size) * (1.0 + schema.head * head_young);
         // The skull is two rings, the back of it and the brow, because a lone
         // large ring between two small ones is what subdivision smooths away:
         // two of a size make a plateau it keeps, and the head reads as a mass
@@ -941,14 +959,14 @@ impl Dimensions {
         // And the rest of the head nods about it as the neck is carried
         // higher: a horse's long head hangs from an arched neck, a cat's is
         // held level. Positive is nose-down.
-        let nod = Quat::from_rotation_x((0.75 * params.neck_carriage).clamp(-0.21, 0.9));
+        let nod = Quat::from_rotation_x((0.75 * asked.neck_carriage).clamp(-0.21, 0.9));
         let head_at = occiput_at + nod * Vec3::new(0.0, 0.10, 1.0).normalize() * head_r * 0.85;
         // The muzzle leaves the cranium forward and a little down; the nose
         // closes it. Both scale with the head they hang off, and between them
         // they stand the nose `snout` cranium radii past the cranium's front:
         // a third of one on a cat, a dog's 1.3, two on a horse
         // (`muzzleLength`, #366). Floored so the shortest face keeps a nose.
-        let snout = ((1.30 + 1.12 * params.muzzle_length) * (1.0 - 0.30 * appeal)).max(0.15);
+        let snout = ((1.30 + 1.12 * params.muzzle_length) * (1.0 - 0.30 * head_appeal)).max(0.15);
         let ahead = head_r * (0.60 + snout) / 1.90;
         let muzzle_r = head_r * 0.58;
         let muzzle_at = head_at + nod * Vec3::new(0.0, -head_r * 0.30, ahead * 1.15);
@@ -963,11 +981,11 @@ impl Dimensions {
                 neck: neck_at,
                 withers: trunk[TRUNK_NODES - 1].0,
                 // A young skull is a round one whatever it grows into.
-                back: frame.skull_back * (1.0 - 0.5 * young.max(0.0)),
+                back: frame.skull_back * (1.0 - 0.5 * head_young.max(0.0)),
             },
-            params,
-            appeal,
-            girth.at(CHEEK),
+            asked,
+            head_appeal,
+            Girth::of(asked, as_asked).at(CHEEK),
         );
 
         // The tail is set high on the croup and carried as `tailCarriage`
@@ -1112,6 +1130,66 @@ impl Dimensions {
             stifle_section: frame.thigh_section,
         }
     }
+}
+
+/// How far each axis a body's girdles are built from goes from its family's
+/// centre toward what the record asks (#391), in this order: `legLength`,
+/// `bodyLength`, `chestDepth`, `stance`, `neckLength`, `neckCarriage`, what
+/// `appeal` makes of the body, and the composites `mass`, `bodyFat` and age.
+/// `1` is all the way, the record's own value; `0` none of it, the family's.
+///
+/// **These are the axes a girdle's sockets are crowded by**: they set how
+/// deep the chest hangs against the elbows, how far the girdles stand from
+/// the ribs beside them, how thick the legs and the neck leave them and at
+/// what angle. Easing one moves the body along the line its own slider runs
+/// on, so an eased body is one a creator could have asked for.
+pub(crate) type Ease = [f32; EASED_AXES];
+
+/// How many axes an [`Ease`] carries.
+pub(crate) const EASED_AXES: usize = 10;
+
+/// The [`Ease`] of a body as its record asks for it.
+pub(crate) const AS_ASKED: Ease = [1.0; EASED_AXES];
+
+/// The axes and composites [`Dimensions::eased`] builds a body from: each
+/// eased axis its [`Ease`]'s share of the way from its family's centre to
+/// what was asked, the rest as asked. An axis at a share of 1 is the
+/// record's own value, untouched rather than recomputed, so a body that is
+/// not eased is bit-identical to one built before easing existed.
+fn eased_axes(
+    asked: &QuadrupedParams,
+    composites: &Composites,
+    centre: &crate::plan::quadruped::AxisCentres,
+    ease: &Ease,
+) -> (QuadrupedParams, Composites) {
+    let toward = |axis: usize, value: f32, centre: f32| {
+        if ease[axis] >= 1.0 {
+            value
+        } else {
+            centre + (value - centre) * ease[axis]
+        }
+    };
+    let params = QuadrupedParams {
+        leg_length: toward(0, asked.leg_length, centre.leg_length),
+        body_length: toward(1, asked.body_length, centre.body_length),
+        chest_depth: toward(2, asked.chest_depth, centre.chest_depth),
+        stance: toward(3, asked.stance, centre.stance),
+        neck_length: toward(4, asked.neck_length, centre.neck_length),
+        neck_carriage: toward(5, asked.neck_carriage, centre.neck_carriage),
+        appeal: toward(6, asked.appeal, centre.appeal),
+        ..*asked
+    };
+    let composites = Composites {
+        mass: toward(7, composites.mass, centre.mass),
+        body_fat: toward(8, composites.body_fat, centre.body_fat),
+        age: if ease[9] >= 1.0 {
+            composites.age
+        } else {
+            toward(9, composites.age as f32, centre.age).round() as u32
+        },
+        ..*composites
+    };
+    (params, composites)
 }
 
 /// How far out a leg's inner joint stands - a shoulder, a hip - given where

@@ -622,65 +622,105 @@ mod tests {
         }
     }
 
-    /// A piece's tip across a sweep of something a slider moves: no step of a
-    /// thousandth-sized slider may move it by more than a stride of the same. On a
-    /// sample of heads, and only `curve` and `length`: a fang's or a tusk's lean takes
-    /// the first tilt that clears, which steps along `thickness` by up to .33 of a
-    /// head radius in preset shapes, and #404 holds that.
+    /// A piece's tip across every slider that moves its seat - its curve, its length,
+    /// its thickness, and the muzzle it stands on - on a dog, a cat, a cross and a snub
+    /// cat:
+    /// swept coarsely, and the stretches that moved it most followed down to a single
+    /// step of the wire's grid, where no step may move it by more than [`STEP_MOST`].
+    /// A seat's search eases from one clear place to the next (#404), quickly where a
+    /// clear stretch closes, but over several steps of a slider rather than one: the
+    /// first clear tilt stepped by up to .53 of a head radius in one.
+    ///
+    /// **Short of one**: an upper fang's thickness on the snub cat still steps by up to
+    /// .33 where its root, drawn in under the lip, moves from one column of places to
+    /// the next right at the jaw's shoulder, where the least lean that clears the jaw
+    /// turns on a hair of where the root is. #410 holds it.
     #[test]
     fn no_slider_makes_a_piece_jump() {
-        for (name, base) in heads().into_iter().take(9).step_by(4) {
+        const WIRE: f32 = 0.001;
+        const COARSE: i32 = 48;
+        const FOLLOWED: usize = 3;
+        let axes = [
+            ("curve", -1.5, 1.5),
+            ("length", 0.05, 4.0),
+            ("thickness", 0.01, 0.5),
+            ("muzzle", -3.0, 3.0),
+        ];
+        for name in ["dog", "cat", "horse x cat", "cat muzzle -3"] {
+            let (_, base) = heads()
+                .into_iter()
+                .find(|(head, _)| head == name)
+                .expect("a sampled head");
             for kind in OrnamentKind::ALL {
-                let tip = |set: &dyn Fn(&mut Ornament)| {
-                    let params = QuadrupedParams {
-                        ornaments: shaped(kind, set),
-                        ..base
-                    };
-                    let (head, seat) = seat_of(&params, kind);
-                    (*seat.line().last().expect("a line"), head.radius)
-                };
-                for (axis, low, high) in [("curve", -1.5, 1.5), ("length", 0.05, 4.0)] {
-                    let steps = 120;
-                    let at = |step: usize| low + (high - low) * step as f32 / steps as f32;
-                    let mut worst = (0.0f32, 0.0f32);
-                    for step in 1..=steps {
-                        let read = |value: f32| {
-                            tip(&|piece: &mut Ornament| {
-                                if axis == "curve" {
-                                    piece.curve = value;
-                                } else {
-                                    piece.length = value;
-                                }
-                            })
-                        };
-                        let ((one, r), (two, _)) = (read(at(step - 1)), read(at(step)));
-                        let moved = one.distance(two) / r;
-                        if moved > worst.0 {
-                            worst = (moved, at(step));
-                        }
+                for (axis, low, high) in axes {
+                    if name == "cat muzzle -3"
+                        && kind == OrnamentKind::UpperFangs
+                        && axis == "thickness"
+                    {
+                        continue;
                     }
-                    // A whole line swung through a stride of the range at its longest
-                    // moves its tip about as much as the stride's own length: a jump
-                    // is several of that.
-                    let stride = (high - low) / steps as f32;
-                    let bound = if axis == "curve" {
-                        std::f32::consts::TAU * stride * 2.3
-                    } else {
-                        stride * 3.0
-                    } + JUMP_ALLOWED;
-                    assert!(
-                        worst.0 < bound,
-                        "{name} {kind:?} {axis} jumped {} head radii at {} (bound {bound})",
-                        worst.0,
-                        worst.1
-                    );
+                    // The tip, in head radii, at a slider's value in steps of the grid.
+                    let tip = |grid: i32| {
+                        let value = grid as f32 * WIRE;
+                        let mut params = QuadrupedParams {
+                            ornaments: shaped(kind, |piece| match axis {
+                                "curve" => piece.curve = value,
+                                "length" => piece.length = value,
+                                "thickness" => piece.thickness = value,
+                                _ => {}
+                            }),
+                            ..base
+                        };
+                        if axis == "muzzle" {
+                            params.muzzle_length = value;
+                        }
+                        let (head, seat) = seat_of(&params, kind);
+                        *seat.line().last().expect("a line") / head.radius
+                    };
+                    let (from, to) = ((low / WIRE).round() as i32, (high / WIRE).round() as i32);
+                    let stride = (to - from) / COARSE;
+                    let coarse: Vec<Vec3> =
+                        (0..=COARSE).map(|at| tip(from + at * stride)).collect();
+                    let mut stretches: Vec<(f32, i32)> = coarse
+                        .windows(2)
+                        .zip(0..)
+                        .map(|(pair, at)| (pair[0].distance(pair[1]), from + at * stride))
+                        .collect();
+                    stretches.sort_by(|one, other| other.0.total_cmp(&one.0));
+                    // And where a curve's bend flips, and a muzzle passes its middle.
+                    if low < 0.0 && high > 0.0 {
+                        stretches.insert(0, (f32::INFINITY, -stride / 2));
+                    }
+                    for &(_, start) in stretches.iter().take(FOLLOWED + 1) {
+                        // Halved toward whichever half moved it further, to one step.
+                        let (mut low, mut high) =
+                            ((start, tip(start)), (start + stride, tip(start + stride)));
+                        while high.0 - low.0 > 1 {
+                            let middle = (low.0 + high.0) / 2;
+                            let at = (middle, tip(middle));
+                            if low.1.distance(at.1) >= at.1.distance(high.1) {
+                                high = at;
+                            } else {
+                                low = at;
+                            }
+                        }
+                        let moved = low.1.distance(high.1);
+                        assert!(
+                            moved < STEP_MOST,
+                            "{name} {kind:?}: a step of {axis} at {} moved its tip {moved} head \
+                             radii",
+                            high.0 as f32 * WIRE
+                        );
+                    }
                 }
             }
         }
     }
 
-    /// What a seat's search for a clear lean may still jump by, in head radii.
-    const JUMP_ALLOWED: f32 = 0.10;
+    /// The most one step of a slider may move a piece's tip by, in head radii: a long
+    /// piece's curve moves it by about a fortieth, and a lean eased over a few steps
+    /// out of a closing clearance by up to a tenth.
+    const STEP_MOST: f32 = 0.12;
 
     #[test]
     fn nothing_on_the_crown_stands_in_an_ear() {

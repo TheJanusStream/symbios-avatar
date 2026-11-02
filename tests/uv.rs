@@ -50,6 +50,35 @@ fn world_area(mesh: &PolyMesh, face_index: usize) -> f32 {
         .sum()
 }
 
+/// How far a texel reaches each way over the first triangle of `face`: the
+/// determinant of the map from the body to the atlas, and its two singular
+/// values, the most and the least. `None` for a triangle with no area.
+fn texel_reach(uv: &UvUnwrap, body: &PolyMesh, face: &[u32]) -> Option<(f32, f32, f32)> {
+    use symbios_avatar::Vec2;
+    let corners = [face[0], face[1], face[2]];
+    let at = corners.map(|v| body.positions[uv.source[v as usize] as usize]);
+    let (edge, other) = (at[1] - at[0], at[2] - at[0]);
+    let normal = edge.cross(other);
+    if normal.length_squared() < 1e-20 {
+        return None;
+    }
+    let (x, y) = (edge.normalize(), normal.cross(edge).normalize());
+    let flat = glam::Mat2::from_cols(
+        Vec2::new(edge.dot(x), edge.dot(y)),
+        Vec2::new(other.dot(x), other.dot(y)),
+    );
+    let atlas = corners.map(|v| uv.uvs[v as usize]);
+    let map = glam::Mat2::from_cols(atlas[1] - atlas[0], atlas[2] - atlas[0]) * flat.inverse();
+    let sum = map.x_axis.length_squared() + map.y_axis.length_squared();
+    let area = map.determinant().abs();
+    let spread = (sum * sum - 4.0 * area * area).max(0.0).sqrt();
+    Some((
+        area,
+        ((sum + spread) / 2.0).sqrt(),
+        ((sum - spread) / 2.0).max(0.0).sqrt(),
+    ))
+}
+
 /// Checks every invariant an atlas must satisfy, whatever the body.
 #[track_caller]
 fn assert_sound_atlas(mesh: &PolyMesh, uv: &UvUnwrap, what: &str) {
@@ -246,7 +275,7 @@ fn a_beast_s_legs_are_charted_as_finely_as_its_barrel() {
     // to one, while the forelegs came out better than ever. And over sixty
     // rolls, every family and their hybrids: six seeds held it on average.
     use symbios_avatar::plan::Limb;
-    use symbios_avatar::{Avatar, AvatarConfig, Vec2};
+    use symbios_avatar::{Avatar, AvatarConfig};
     // The charts do not depend on the atlas's size; the painting does.
     let config = AvatarConfig {
         atlas: 64,
@@ -263,30 +292,9 @@ fn a_beast_s_legs_are_charted_as_finely_as_its_barrel() {
         let mut barrel = Vec::new();
         let mut legs: [(Vec<f32>, Vec<f32>); 2] = Default::default();
         for (index, face) in uv.faces.iter().enumerate() {
-            // The map from the face's first triangle to the atlas: its two
-            // singular values are how far a texel reaches each way.
-            let corners = [face[0], face[1], face[2]];
-            let at = corners.map(|v| body.positions[uv.source[v as usize] as usize]);
-            let (edge, other) = (at[1] - at[0], at[2] - at[0]);
-            let normal = edge.cross(other);
-            if normal.length_squared() < 1e-20 {
+            let Some((area, most, least)) = texel_reach(uv, body, face) else {
                 continue;
-            }
-            let (x, y) = (edge.normalize(), normal.cross(edge).normalize());
-            let flat = glam::Mat2::from_cols(
-                Vec2::new(edge.dot(x), edge.dot(y)),
-                Vec2::new(other.dot(x), other.dot(y)),
-            );
-            let atlas = corners.map(|v| uv.uvs[v as usize]);
-            let map =
-                glam::Mat2::from_cols(atlas[1] - atlas[0], atlas[2] - atlas[0]) * flat.inverse();
-            let sum = map.x_axis.length_squared() + map.y_axis.length_squared();
-            let area = map.determinant().abs();
-            let spread = (sum * sum - 4.0 * area * area).max(0.0).sqrt();
-            let (most, least) = (
-                ((sum + spread) / 2.0).sqrt(),
-                ((sum - spread) / 2.0).max(0.0).sqrt(),
-            );
+            };
             match uv.charts[uv.chart_of_face[index] as usize].zone {
                 Zone::Chest | Zone::Abdomen | Zone::Pelvis => barrel.push(area.sqrt()),
                 Zone::UpperLimb(limb) => {
@@ -336,4 +344,68 @@ fn a_beast_s_legs_are_charted_as_finely_as_its_barrel() {
             "seed {seed}: a tenth of the {pair} legs' texels is stretched {reach:.2} to one"
         );
     }
+}
+
+#[test]
+fn a_beast_s_tail_is_charted_along_its_bones() {
+    // A tail wrapped round the bone leaving the hips runs across that axis
+    // wherever it curls away from it, so the whole of its upper length came out
+    // at a handful of the chart's heights: a few texels along a tail whose
+    // coat is painted in rings along it, and a striped cat's tail showed a dark
+    // line down its top instead of its rings (#397). Charted along its bones,
+    // its texels are as nearly square as the barrel's, and as fine.
+    use symbios_avatar::{Avatar, AvatarConfig};
+    let config = AvatarConfig {
+        atlas: 64,
+        ..AvatarConfig::default()
+    };
+    let (mut stretched, mut thinnest) = ((0.0f32, 0i64), (f32::INFINITY, 0i64));
+    for seed in 0..40i64 {
+        let mut record =
+            AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
+        record.reroll(seed);
+        let avatar = Avatar::build_with(&record, &config).expect("the beast builds");
+        let (uv, body) = (&avatar.parts.unwrap, &avatar.parts.body);
+        let (mut barrel, mut density, mut stretch) = (Vec::new(), Vec::new(), Vec::new());
+        for (index, face) in uv.faces.iter().enumerate() {
+            let Some((area, most, least)) = texel_reach(uv, body, face) else {
+                continue;
+            };
+            match uv.charts[uv.chart_of_face[index] as usize].zone {
+                Zone::Chest | Zone::Abdomen => barrel.push(area.sqrt()),
+                Zone::Tail => {
+                    density.push(least);
+                    stretch.push(most / least.max(1e-9));
+                }
+                _ => {}
+            }
+        }
+        for list in [&mut barrel, &mut density, &mut stretch] {
+            list.sort_by(f32::total_cmp);
+        }
+        let share = |list: &[f32], at: f32| list[((list.len() - 1) as f32 * at) as usize];
+        let reach = share(&stretch, 0.9);
+        if reach > stretched.0 {
+            stretched = (reach, seed);
+        }
+        let thin = share(&density, 0.1) / share(&barrel, 0.5);
+        if thin < thinnest.0 {
+            thinnest = (thin, seed);
+        }
+    }
+    // At the slice: the worst tenth stretched 2.11 to one, the thinnest tenth
+    // 0.47 of the barrel, which is the last centimetre, where the tail rounds
+    // over its tip. Wrapped round the first bone, 28 to one and 0.05; unrolled
+    // by angle alone, so a tapering tail's tip spread across the whole chart,
+    // 5.3 to one and 0.31.
+    let (reach, seed) = stretched;
+    assert!(
+        reach < 2.5,
+        "seed {seed}: a tenth of a tail's texels is stretched {reach:.2} to one"
+    );
+    let (thin, seed) = thinnest;
+    assert!(
+        thin > 0.4,
+        "seed {seed}: a tenth of a tail is charted at {thin:.2} of the barrel"
+    );
 }

@@ -257,16 +257,18 @@ fn grow_share(bed: &Bed, fur: &Fur, seed: i64, share: f32) -> FurGrowth {
         }
         // At least one card in a zone asked for, as a person's thinned region
         // keeps one: a zone that grows keeps growing.
+        let full = zone.cut().count.max(1);
         let count = ((zone.cut().count as f32 * share).round() as usize).max(1);
+        let kept = Thinned::new(full, count, zone == FurZone::Mane);
         let mut stream = Pcg64Mcg::seed_from_u64(stream_seed(seed, zone));
         let line = (zone == FurZone::Mane).then(|| Crest::of(bed)).flatten();
         let lock = Lock::new(zone, bed, line.as_ref(), length, fur.mane_stiffness);
         let roots = match zone {
             FurZone::Mane => line
                 .as_ref()
-                .map_or_else(Vec::new, |line| crest(bed, line, count, &mut stream)),
-            FurZone::Tufts => tufts(bed, count),
-            _ => scatter(bed, zone, count, &mut stream),
+                .map_or_else(Vec::new, |line| crest(bed, line, &kept, &mut stream)),
+            FurZone::Tufts => tufts(bed, &kept),
+            _ => scatter(bed, zone, &kept, &mut stream),
         };
         let before = growth.mesh.face_count();
         let mut clumps = 0;
@@ -298,6 +300,55 @@ fn grow_share(bed: &Bed, fur: &Fur, seed: i64, share: f32) -> FurGrowth {
     growth
 }
 
+/// Which of a zone's cards a growth at a share of their count keeps (#404).
+///
+/// **Rooted for the whole count, whatever the share**, and the share keeps the first
+/// so many of them in an order that spreads over the zone at any length: a card's
+/// index with its bits read backwards, by pairs for a mane, whose cards part to
+/// either side by turns. So a share a little under the last drops a few cards and
+/// moves none of the rest: re-rooting the zone for the count it kept moved every
+/// card, which a worn piece's first triangles past its allowance did at the fur's
+/// ceiling. A whole share keeps every card, as it always grew.
+struct Thinned {
+    /// Where each card comes in the order it is kept in.
+    ranks: Vec<usize>,
+    /// How many are kept.
+    kept: usize,
+}
+
+impl Thinned {
+    fn new(full: usize, kept: usize, pairs: bool) -> Self {
+        let group = if pairs { 2 } else { 1 };
+        let groups = full.div_ceil(group);
+        let bits = usize::BITS - groups.saturating_sub(1).leading_zeros();
+        let backwards = |index: usize| {
+            let at = index / group;
+            if bits == 0 {
+                0
+            } else {
+                at.reverse_bits() >> (usize::BITS - bits)
+            }
+        };
+        let mut order: Vec<usize> = (0..full).collect();
+        order.sort_by_key(|&index| (backwards(index), index % group));
+        let mut ranks = vec![0; full];
+        for (rank, &index) in order.iter().enumerate() {
+            ranks[index] = rank;
+        }
+        Self { ranks, kept }
+    }
+
+    /// How many cards are rooted.
+    fn full(&self) -> usize {
+        self.ranks.len()
+    }
+
+    /// Whether the card rooted `index`th is kept.
+    fn keeps(&self, index: usize) -> bool {
+        self.ranks[index] < self.kept
+    }
+}
+
 /// The seed of one zone's stream: the record's, mixed with the zone's own.
 fn stream_seed(seed: i64, zone: FurZone) -> u64 {
     let salt = FurZone::ALL
@@ -308,14 +359,16 @@ fn stream_seed(seed: i64, zone: FurZone) -> u64 {
     (seed as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ salt.wrapping_mul(0xd1b5_4a32_d192_ed03)
 }
 
-/// Scatters `count` roots over one zone of the body, each with the body zone
-/// it landed in.
+/// Scatters a zone's whole count of roots over its part of the body, each with the
+/// body zone it landed in, and keeps those `kept` keeps: every root is drawn, so a
+/// kept one lands where it would among all of them.
 ///
 /// [`super::clump::scatter::scatter`]'s stratified sample with its mask
 /// swapped for the zone's: a face holds roots in proportion to its area
 /// times the zone's weight there, and a root is redrawn inside its face
 /// until the weight where it lands accepts it.
-fn scatter(bed: &Bed, zone: FurZone, count: usize, stream: &mut Pcg64Mcg) -> Vec<(Root, Zone)> {
+fn scatter(bed: &Bed, zone: FurZone, kept: &Thinned, stream: &mut Pcg64Mcg) -> Vec<(Root, Zone)> {
+    let count = kept.full();
     if count == 0 {
         return Vec::new();
     }
@@ -390,7 +443,7 @@ fn scatter(bed: &Bed, zone: FurZone, count: usize, stream: &mut Pcg64Mcg) -> Vec
             at_zone = zone_at(seat.0);
             weight = zone.weight(bed, seat.0, seat.1, at_zone);
         }
-        if weight <= f32::EPSILON {
+        if weight <= f32::EPSILON || !kept.keeps(index) {
             continue;
         }
         roots.push((
@@ -686,19 +739,20 @@ fn thins(share: f32) -> f32 {
     step(0.0, 0.3, share) * step(1.0, 0.95, share)
 }
 
-/// `count` roots along the neck's crest, from the withers up to the poll: the
-/// line a mane grows from.
+/// A mane's whole count of roots along the neck's crest, from the withers up to the
+/// poll, the line a mane grows from, of which those `kept` keeps.
 ///
 /// A root sits where [`Crest`] passes, takes the binding of the surface
 /// nearest it, and is parted to one side or the other, card by card.
-fn crest(bed: &Bed, line: &Crest, count: usize, stream: &mut Pcg64Mcg) -> Vec<(Root, Zone)> {
+fn crest(bed: &Bed, line: &Crest, kept: &Thinned, stream: &mut Pcg64Mcg) -> Vec<(Root, Zone)> {
     let normals = bed.body.shading_normals();
+    let count = kept.full();
     let mut roots = Vec::with_capacity(count);
     for index in 0..count {
         let jitter = stream.random_range(-0.5..0.5) * JITTER;
         let share = ((index as f32 + 0.5 + jitter) / count as f32).clamp(0.0, 1.0);
         let weight = thins(share);
-        if weight < THINNEST {
+        if weight < THINNEST || !kept.keeps(index) {
             continue;
         }
         let along = share * (line.line.len() - 1) as f32;
@@ -748,9 +802,10 @@ fn first_exit(triangles: &[[Vec3; 3]], from: Vec3, ray: Vec3) -> Option<f32> {
         .min_by(f32::total_cmp)
 }
 
-/// `count` roots at each ear's tip, splayed round the ear's own run and
-/// bound to the joint at its tip, so a tuft swings with its ear.
-fn tufts(bed: &Bed, count: usize) -> Vec<(Root, Zone)> {
+/// The whole count of roots at each ear's tip, splayed round the ear's own run and
+/// bound to the joint at its tip, so a tuft swings with its ear; those `kept` keeps.
+fn tufts(bed: &Bed, kept: &Thinned) -> Vec<(Root, Zone)> {
+    let count = kept.full();
     let Some(ears) = bed.ears else {
         return Vec::new();
     };
@@ -768,7 +823,7 @@ fn tufts(bed: &Bed, count: usize) -> Vec<(Root, Zone)> {
             weight: 1.0,
         };
         let at = head + ear.tip - run * (0.01 * bed.anatomy.height);
-        for index in 0..count {
+        for index in (0..count).filter(|&index| kept.keeps(index)) {
             let turn = std::f32::consts::TAU * index as f32 / count.max(1) as f32;
             let splay = (across * turn.cos() + other * turn.sin()) * 0.35;
             roots.push((
@@ -788,7 +843,7 @@ fn tufts(bed: &Bed, count: usize) -> Vec<(Root, Zone)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::{Agouti, Family, Pigment, QuadrupedParams};
+    use crate::plan::{Agouti, Family, Ornament, Ornaments, Pigment, QuadrupedParams};
     use crate::rig::Role;
     use crate::{Archetype, Avatar, AvatarRecord};
 
@@ -910,6 +965,49 @@ mod tests {
                 "the ledger is not the mesh"
             );
         }
+    }
+
+    #[test]
+    fn a_piece_a_little_dearer_drops_a_few_cards_and_moves_none() {
+        // At every zone's longest the fur meets its ceiling, and what a worn piece costs
+        // past a unicorn's comes off it (#404): bending a unicorn's horn by a thousandth
+        // of a turn moved every vertex of a dog's fur.
+        let fur_wearing = |curve: f32| {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(Family::Dog, None, 0.0);
+            params.fur = all(3.0);
+            params.ornaments = Ornaments {
+                horn: Some(Ornament {
+                    curve,
+                    ..Ornament::UNICORN
+                }),
+                ..Ornaments::default()
+            };
+            let record = AvatarRecord::new("Beast", Archetype::Quadruped(params));
+            let avatar = Avatar::build_for_shape(&record).expect("the beast builds");
+            avatar.parts.fur.expect("fur")
+        };
+        let (straight, bent) = (fur_wearing(0.0), fur_wearing(0.001));
+        assert!(
+            bent.tris() < straight.tris(),
+            "the bend spends nothing of the fur's: {} against {}",
+            bent.tris(),
+            straight.tris()
+        );
+        let bits = |at: &Vec3| at.to_array().map(f32::to_bits);
+        let before: std::collections::HashSet<_> =
+            straight.mesh.positions.iter().map(bits).collect();
+        let moved = bent
+            .mesh
+            .positions
+            .iter()
+            .filter(|at| !before.contains(&bits(at)))
+            .count();
+        assert!(
+            moved * 50 <= bent.mesh.vertex_count(),
+            "{moved} of {} vertices moved",
+            bent.mesh.vertex_count()
+        );
     }
 
     #[test]

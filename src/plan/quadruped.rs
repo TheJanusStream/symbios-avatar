@@ -14,12 +14,19 @@
 //! from comes out of [`Dimensions`], including the correlation this plan is
 //! most worth reading for — legginess slims the barrel rather than changing the
 //! back height, because at a given height a leggy animal is a slender one and a
-//! squat animal is a barrel.
+//! squat animal is a barrel. One thing here asks the cage: a body it cannot
+//! hull is eased toward its family's before it is handed out (#391, see
+//! `QuadrupedParams::skeleton`).
+
+use std::cell::RefCell;
+use std::collections::VecDeque;
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use super::derive::quadruped::{Dimensions, FORE_INSIDE, HIND_INSIDE, TRUNK_NODES};
+use super::derive::quadruped::{
+    AS_ASKED, Dimensions, EASED_AXES, Ease, FORE_INSIDE, HIND_INSIDE, TRUNK_NODES,
+};
 
 /// One leg node as the derive gives it: where it stands and its radius.
 type LegNode = (Vec3, f32);
@@ -330,6 +337,36 @@ fn muscle_envelope() -> (f32, f32) {
 /// The `blend` range: a share, so it is not explored past its ends.
 const BLEND_RANGE: (f32, f32) = (0.0, 1.0);
 
+/// How many halvings each search for an eased body takes (#391, see
+/// `QuadrupedParams::skeleton`): a 64th of an axis's step from its family's
+/// centre, under a tenth of an axis unit from the envelope's far end.
+const EASE_HALVINGS: usize = 6;
+
+thread_local! {
+    /// The last [`EASES_KEPT`] eases found on this thread, each with the record
+    /// and composites it was found for (#391): see `QuadrupedParams::ease`.
+    static EASES: RefCell<VecDeque<(QuadrupedParams, Composites, Ease)>> =
+        const { RefCell::new(VecDeque::new()) };
+}
+
+/// How many eases [`EASES`] remembers: a viewer's own body, the one it is
+/// editing and a few peers' are asked for over and over, every frame alike.
+const EASES_KEPT: usize = 4;
+
+#[cfg(test)]
+thread_local! {
+    /// How many eases this thread has searched for, which
+    /// `a_record_asked_again_is_not_searched_again` reads.
+    static SEARCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether the cage hulls `skeleton` and the rig roots it: what
+/// [`crate::Avatar::build`] asks of a body before anything else.
+fn meshes(skeleton: &Skeleton) -> bool {
+    crate::cage::build_cage(skeleton, &crate::cage::CageConfig::default()).is_ok()
+        && crate::rig::Rig::from_skeleton(skeleton).is_ok()
+}
+
 /// How far a roll's back height may stray from its family's, as factors on
 /// the anchor's mean. [`Rolls::shape`]'s rare wildcard spans this rather than
 /// the whole envelope, because a family is told apart by its size before
@@ -533,6 +570,15 @@ pub(crate) struct AxisCentres {
     pub mass: f32,
     /// The family's body fat at that mass.
     pub body_fat: f32,
+    /// `appeal`'s centre, which a body eased toward its family's
+    /// (`Dimensions::eased`, #391) reads with the four above.
+    pub appeal: f32,
+    /// `neckLength`'s centre.
+    pub neck_length: f32,
+    /// `neckCarriage`'s centre.
+    pub neck_carriage: f32,
+    /// [`Composites::age`]'s centre, in years.
+    pub age: f32,
 }
 
 /// See [`AxisCentres`].
@@ -545,6 +591,10 @@ pub(crate) fn axis_centres(params: &QuadrupedParams) -> AxisCentres {
         stance: anchor.stance.mean,
         mass: anchor.mass.mean,
         body_fat: anchor.body_fat,
+        appeal: anchor.appeal.mean,
+        neck_length: anchor.neck_length.mean,
+        neck_carriage: anchor.neck_carriage.mean,
+        age: anchor.age.mean,
     }
 }
 
@@ -766,122 +816,38 @@ impl BodyPlan for QuadrupedParams {
         };
     }
 
+    /// **A body its cage cannot hull is eased toward its family's until it
+    /// can** (#391). Every slider runs to the exploration envelope's ends,
+    /// where no roll reaches, and about one corner in thirteen crowds a
+    /// girdle's sockets off its hull: a chest hung below the elbows on short
+    /// legs and a heavy body, the elbows' sockets buried under the ribs'; a
+    /// forechest deeper than the run back to the ribs; a foal's short thigh
+    /// under a heavy croup; a heavy cat's neck carried low. Which bodies is
+    /// the cage's plane test, and no ratio of the derived body tells them from
+    /// the ones that mesh (`examples/cornercensus`), so the cage is asked.
+    ///
+    /// The body as asked is built first and returned whenever it meshes,
+    /// which is every body a roll draws, bit for bit. One that does not is
+    /// eased (`Dimensions::eased`): every eased axis by the largest common
+    /// share of its step from its family's centre that meshes, then each
+    /// axis back to what was asked where the body still meshes with it, then
+    /// the axes still eased together again as far as they go - so only the
+    /// axes crowding a girdle give anything up, and each by as little as
+    /// `EASE_HALVINGS` can find. The record keeps what its creator asked;
+    /// only the body built from it has less of it. A body whose family's own
+    /// frame does not mesh either is returned as asked, and refuses as it
+    /// did: none of 70,000 sampled corners is one.
+    ///
+    /// Two things follow from asking the cage. Its test is the cage's own
+    /// arithmetic, whose trigonometry is the platform's, so a body at the very
+    /// edge of meshing may ease a step more or less in a browser than natively,
+    /// as it could already build on one and refuse on the other. And it asks
+    /// with the default `CageConfig`: a caller building with another cage may
+    /// get an eased body that still refuses. The answer is remembered for the
+    /// last few records asked on a thread, so an editor that asks every frame
+    /// pays once per change.
     fn skeleton(&self, composites: &Composites) -> Skeleton {
-        // Passed through: see `derive::quadruped::Dimensions::of` for why a beast
-        // does not read the frame axis.
-        let d = Dimensions::of(self, composites);
-
-        let mut skeleton = Skeleton::new();
-        skeleton.anatomy = self.anatomy();
-        // The head the cage's head chain is shaped into, and what its feet
-        // are shaped into (#367).
-        skeleton.beast_head = Some(d.head);
-        skeleton.beast_feet = Some(super::BeastFeet { kind: self.feet });
-        // The trunk, pelvis forward (#375): six rings, each its own depth and
-        // width. The pelvis is the root, as it always was.
-        let zones = [
-            Zone::Pelvis,
-            Zone::Abdomen,
-            Zone::Abdomen,
-            Zone::Chest,
-            Zone::Chest,
-            Zone::Chest,
-        ];
-        let mut ring = None;
-        let mut trunk = [0u32; TRUNK_NODES];
-        for (index, (&(at, radius, section), zone)) in d.trunk.iter().zip(zones).enumerate() {
-            let node = Node::new(at, radius).with_scale(section).in_zone(zone);
-            let added = match ring {
-                None => skeleton.add_node(node),
-                Some(previous) => skeleton.extend_from(previous, node),
-            };
-            trunk[index] = added;
-            ring = Some(added);
-        }
-        let (hips, withers) = (trunk[0], trunk[TRUNK_NODES - 1]);
-        let neck = skeleton.extend_from(
-            withers,
-            Node::new(d.neck_at, d.neck_r)
-                .with_scale(d.neck_section)
-                .in_zone(Zone::Neck),
-        );
-        // The head is a chain out of the neck: the back of the skull, the
-        // cranium, the muzzle, the nose. All of it is the head's zone,
-        // because all of it is what a head is.
-        let occiput = skeleton.extend_from(
-            neck,
-            Node::new(d.occiput_at, d.occiput_r).in_zone(Zone::Head),
-        );
-        let cranium =
-            skeleton.extend_from(occiput, Node::new(d.head_at, d.head_r).in_zone(Zone::Head));
-        let muzzle = skeleton.extend_from(
-            cranium,
-            Node::new(d.muzzle_at, d.muzzle_r).in_zone(Zone::Head),
-        );
-        skeleton.extend_from(muzzle, Node::new(d.nose_at, d.nose_r).in_zone(Zone::Head));
-
-        let mut tail = hips;
-        for &(at, radius) in &d.tail {
-            tail = skeleton.extend_from(tail, Node::new(at, radius).in_zone(Zone::Tail));
-        }
-
-        // Left is `+X`, as it is on every plan — see `plan::humanoid` for the
-        // convention and for why the `−X` side is built first. This body faces
-        // `+Z` too: its head sits ahead of its tail.
-        for (side, fore, hind) in [
-            (-1.0f32, Limb::ForeRight, Limb::HindRight),
-            (1.0, Limb::ForeLeft, Limb::HindLeft),
-        ] {
-            // [`Dimensions`] gives every leg on the `+X` side; this is the
-            // mirror, and it is the only place a side is decided.
-            let at = |node: Vec3| Vec3::new(side * node.x, node.y, node.z);
-            // Zoned as the humanoid's limbs are (#366): two nodes in the upper
-            // limb, the ankle - the hock, the carpus - in the lower, the foot
-            // in the extremity. `Rig::limb_chain` then hands the leg IK the
-            // same three joints it gets on a person, and the pad, the first
-            // extremity node, is the contact the gait plants.
-            // Zoned as the humanoid's limbs are (#366): the upper limb, the
-            // ankle - the hock, the carpus - in the lower, the foot in the
-            // extremity. The bones inside the trunk are upper-limb MARKERS
-            // (#374): the rig keeps them, the cage sweeps the leg straight
-            // from the girdle to the first joint outside the body. Then
-            // `Rig::limb_chain`, which takes the last three of the upper and
-            // lower limb, hands the leg IK the shoulder, the elbow and the
-            // carpus - or the hip, the stifle and the hock - and the pad, the
-            // first extremity node, is the contact the gait plants.
-            let zone = |limb: Limb, index: usize, count: usize| match count - index {
-                1 | 2 => Zone::Extremity(limb),
-                3 => Zone::LowerLimb(limb),
-                _ => Zone::UpperLimb(limb),
-            };
-            let legs: [(u32, Limb, &[LegNode], usize); 2] = [
-                (hips, hind, &d.hind, HIND_INSIDE),
-                (withers, fore, &d.fore, FORE_INSIDE),
-            ];
-            for (girdle, limb, nodes, inside) in legs {
-                let mut parent = girdle;
-                for (index, &(position, radius)) in nodes.iter().enumerate() {
-                    let zone = zone(limb, index, nodes.len());
-                    let mut node = Node::new(at(position), radius).in_zone(zone);
-                    if index < inside {
-                        node = node.as_marker();
-                    }
-                    // The thigh's muscle rides the stifle's ring, the first
-                    // the cage sweeps below the croup (#374).
-                    if index == inside && limb == hind {
-                        node = node.with_scale(d.stifle_section);
-                    }
-                    // The foot's two nodes stand on a flat edge rather than a
-                    // vertex, for the reason `plan::humanoid` gives its sole.
-                    if matches!(zone, Zone::Extremity(_)) {
-                        node = node.with_roll(HALF_SEGMENT);
-                    }
-                    parent = skeleton.extend_from(parent, node);
-                }
-            }
-        }
-
-        skeleton
+        self.assemble(&Dimensions::eased(self, composites, &self.ease(composites)))
     }
 
     /// The composites are drawn first and centred on the family's own
@@ -1079,6 +1045,194 @@ impl BodyPlan for QuadrupedParams {
         };
         params.sanitize();
         Ok(params)
+    }
+}
+
+impl QuadrupedParams {
+    /// [`Self::search_ease`]'s answer, remembered for the last few records
+    /// asked on this thread ([`EASES`]): the search asks the cage, at ten
+    /// times the skeleton's own cost, and a viewer's header or a game's slider
+    /// asks for the same record's skeleton every frame it is open or held.
+    fn ease(&self, composites: &Composites) -> Ease {
+        let remembered = EASES.with_borrow(|eases| {
+            eases
+                .iter()
+                .find(|(params, asked, _)| params == self && asked == composites)
+                .map(|&(_, _, ease)| ease)
+        });
+        remembered.unwrap_or_else(|| {
+            let ease = self.search_ease(composites);
+            EASES.with_borrow_mut(|eases| {
+                if eases.len() == EASES_KEPT {
+                    eases.pop_front();
+                }
+                eases.push_back((*self, *composites, ease));
+            });
+            ease
+        })
+    }
+
+    /// How far each axis [`Ease`] names is built toward what this record asks
+    /// (#391): [`AS_ASKED`] for a body that meshes as asked, and for one whose
+    /// family's own frame does not mesh either. See [`BodyPlan::skeleton`].
+    fn search_ease(&self, composites: &Composites) -> Ease {
+        #[cfg(test)]
+        SEARCHED.with(|count| count.set(count.get() + 1));
+        let meshes_at =
+            |ease: &Ease| meshes(&self.assemble(&Dimensions::eased(self, composites, ease)));
+        if meshes(&self.assemble(&Dimensions::of(self, composites)))
+            || !meshes_at(&[0.0; EASED_AXES])
+        {
+            return AS_ASKED;
+        }
+        // Every axis together first: the largest common share that meshes.
+        let (mut low, mut high) = (0.0f32, 1.0f32);
+        for _ in 0..EASE_HALVINGS {
+            let middle = 0.5 * (low + high);
+            if meshes_at(&[middle; EASED_AXES]) {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        let mut ease = [low; EASED_AXES];
+        // Then each axis back to what was asked where the body still meshes
+        // with it: an axis that crowds no girdle goes back all the way.
+        for axis in 0..EASED_AXES {
+            let mut trial = ease;
+            trial[axis] = 1.0;
+            if meshes_at(&trial) {
+                ease = trial;
+            }
+        }
+        // And the ones that do, together again, as far as they will go now
+        // that the rest are as asked.
+        let eased = |share: f32| ease.map(|kept| if kept < 1.0 { share } else { kept });
+        let mut high = 1.0f32;
+        for _ in 0..EASE_HALVINGS {
+            let middle = 0.5 * (low + high);
+            if meshes_at(&eased(middle)) {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        eased(low)
+    }
+
+    /// Hangs the nodes of one derived body on a skeleton.
+    fn assemble(&self, d: &Dimensions) -> Skeleton {
+        let mut skeleton = Skeleton::new();
+        skeleton.anatomy = self.anatomy();
+        // The head the cage's head chain is shaped into, and what its feet
+        // are shaped into (#367).
+        skeleton.beast_head = Some(d.head);
+        skeleton.beast_feet = Some(super::BeastFeet { kind: self.feet });
+        // The trunk, pelvis forward (#375): six rings, each its own depth and
+        // width. The pelvis is the root, as it always was.
+        let zones = [
+            Zone::Pelvis,
+            Zone::Abdomen,
+            Zone::Abdomen,
+            Zone::Chest,
+            Zone::Chest,
+            Zone::Chest,
+        ];
+        let mut ring = None;
+        let mut trunk = [0u32; TRUNK_NODES];
+        for (index, (&(at, radius, section), zone)) in d.trunk.iter().zip(zones).enumerate() {
+            let node = Node::new(at, radius).with_scale(section).in_zone(zone);
+            let added = match ring {
+                None => skeleton.add_node(node),
+                Some(previous) => skeleton.extend_from(previous, node),
+            };
+            trunk[index] = added;
+            ring = Some(added);
+        }
+        let (hips, withers) = (trunk[0], trunk[TRUNK_NODES - 1]);
+        let neck = skeleton.extend_from(
+            withers,
+            Node::new(d.neck_at, d.neck_r)
+                .with_scale(d.neck_section)
+                .in_zone(Zone::Neck),
+        );
+        // The head is a chain out of the neck: the back of the skull, the
+        // cranium, the muzzle, the nose. All of it is the head's zone,
+        // because all of it is what a head is.
+        let occiput = skeleton.extend_from(
+            neck,
+            Node::new(d.occiput_at, d.occiput_r).in_zone(Zone::Head),
+        );
+        let cranium =
+            skeleton.extend_from(occiput, Node::new(d.head_at, d.head_r).in_zone(Zone::Head));
+        let muzzle = skeleton.extend_from(
+            cranium,
+            Node::new(d.muzzle_at, d.muzzle_r).in_zone(Zone::Head),
+        );
+        skeleton.extend_from(muzzle, Node::new(d.nose_at, d.nose_r).in_zone(Zone::Head));
+
+        let mut tail = hips;
+        for &(at, radius) in &d.tail {
+            tail = skeleton.extend_from(tail, Node::new(at, radius).in_zone(Zone::Tail));
+        }
+
+        // Left is `+X`, as it is on every plan - see `plan::humanoid` for the
+        // convention and for why the `−X` side is built first. This body faces
+        // `+Z` too: its head sits ahead of its tail.
+        for (side, fore, hind) in [
+            (-1.0f32, Limb::ForeRight, Limb::HindRight),
+            (1.0, Limb::ForeLeft, Limb::HindLeft),
+        ] {
+            // [`Dimensions`] gives every leg on the `+X` side; this is the
+            // mirror, and it is the only place a side is decided.
+            let at = |node: Vec3| Vec3::new(side * node.x, node.y, node.z);
+            // Zoned as the humanoid's limbs are (#366): two nodes in the upper
+            // limb, the ankle - the hock, the carpus - in the lower, the foot
+            // in the extremity. `Rig::limb_chain` then hands the leg IK the
+            // same three joints it gets on a person, and the pad, the first
+            // extremity node, is the contact the gait plants.
+            // Zoned as the humanoid's limbs are (#366): the upper limb, the
+            // ankle - the hock, the carpus - in the lower, the foot in the
+            // extremity. The bones inside the trunk are upper-limb MARKERS
+            // (#374): the rig keeps them, the cage sweeps the leg straight
+            // from the girdle to the first joint outside the body. Then
+            // `Rig::limb_chain`, which takes the last three of the upper and
+            // lower limb, hands the leg IK the shoulder, the elbow and the
+            // carpus - or the hip, the stifle and the hock - and the pad, the
+            // first extremity node, is the contact the gait plants.
+            let zone = |limb: Limb, index: usize, count: usize| match count - index {
+                1 | 2 => Zone::Extremity(limb),
+                3 => Zone::LowerLimb(limb),
+                _ => Zone::UpperLimb(limb),
+            };
+            let legs: [(u32, Limb, &[LegNode], usize); 2] = [
+                (hips, hind, &d.hind, HIND_INSIDE),
+                (withers, fore, &d.fore, FORE_INSIDE),
+            ];
+            for (girdle, limb, nodes, inside) in legs {
+                let mut parent = girdle;
+                for (index, &(position, radius)) in nodes.iter().enumerate() {
+                    let zone = zone(limb, index, nodes.len());
+                    let mut node = Node::new(at(position), radius).in_zone(zone);
+                    if index < inside {
+                        node = node.as_marker();
+                    }
+                    // The thigh's muscle rides the stifle's ring, the first
+                    // the cage sweeps below the croup (#374).
+                    if index == inside && limb == hind {
+                        node = node.with_scale(d.stifle_section);
+                    }
+                    // The foot's two nodes stand on a flat edge rather than a
+                    // vertex, for the reason `plan::humanoid` gives its sole.
+                    if matches!(zone, Zone::Extremity(_)) {
+                        node = node.with_roll(HALF_SEGMENT);
+                    }
+                    parent = skeleton.extend_from(parent, node);
+                }
+            }
+        }
+
+        skeleton
     }
 }
 
@@ -1838,6 +1992,116 @@ mod tests {
             {
                 panic!("seed {seed} does not mesh: {error}");
             }
+        }
+    }
+
+    #[test]
+    fn a_record_asked_again_is_not_searched_again() {
+        // #391: the search for an ease asks the cage, at ten times the
+        // skeleton's cost, and an open editor asks for the same record's
+        // skeleton every frame. A body that refuses as asked is the dear
+        // one: the slight, fat dog below, about twenty cages a search.
+        let mut params = QuadrupedParams {
+            height: 2.0,
+            neck_length: 3.0,
+            neck_carriage: 3.0,
+            stance: 3.0,
+            chest_depth: 3.0,
+            ..QuadrupedParams::default()
+        };
+        params.sanitize();
+        let composites = Composites {
+            mass: -3.0,
+            body_fat: crate::plan::BODY_FAT_RANGE.1,
+            ..Composites::default()
+        };
+        let first = params.skeleton(&composites);
+        let searched = SEARCHED.with(std::cell::Cell::get);
+        let again = params.skeleton(&composites);
+        assert_eq!(
+            SEARCHED.with(std::cell::Cell::get),
+            searched,
+            "the same record was searched again"
+        );
+        assert_eq!(first.nodes.len(), again.nodes.len());
+        for (a, b) in first.nodes.iter().zip(&again.nodes) {
+            assert_eq!(a.position, b.position);
+            assert_eq!(a.radius, b.radius);
+        }
+        // And a record one step away is its own question.
+        params.leg_length = f32::from_bits(params.leg_length.to_bits() + 1);
+        let _ = params.skeleton(&composites);
+        assert_eq!(SEARCHED.with(std::cell::Cell::get), searched + 1);
+    }
+
+    #[test]
+    fn an_eased_body_keeps_the_head_its_record_asks_for() {
+        // #391: a body its cage cannot hull is eased toward its family's on
+        // the axes its girdles are built from, and on nothing else. The head
+        // hangs off the eased neck, so it may stand elsewhere, but its nodes'
+        // sizes and the runs between them are the record's: a slight, fat dog
+        // whose forechest is deeper than the run back to its ribs, and whose
+        // `appeal` and `mass` are among the axes eased - both of which also
+        // grow a head.
+        let mut params = QuadrupedParams {
+            height: 2.0,
+            neck_length: 3.0,
+            neck_carriage: 3.0,
+            stance: 3.0,
+            chest_depth: 3.0,
+            ..QuadrupedParams::default()
+        };
+        params.sanitize();
+        let composites = Composites {
+            mass: -3.0,
+            body_fat: crate::plan::BODY_FAT_RANGE.1,
+            ..Composites::default()
+        };
+        let ease = params.ease(&composites);
+        assert!(
+            ease[6] < 1.0 && ease[7] < 1.0,
+            "appeal and mass eased: {ease:?}"
+        );
+        let asked = params.assemble(&Dimensions::of(&params, &composites));
+        let built = params.skeleton(&composites);
+        assert!(meshes(&built), "the body built meshes");
+        assert!(!meshes(&asked), "the body as asked does not");
+        let head = [7, 8, 9, 10];
+        for node in head {
+            assert_eq!(
+                built.nodes[node].radius, asked.nodes[node].radius,
+                "head node {node}"
+            );
+        }
+        for pair in head.windows(2) {
+            let run = |skeleton: &Skeleton| {
+                skeleton.nodes[pair[1]].position - skeleton.nodes[pair[0]].position
+            };
+            assert!(
+                run(&built).abs_diff_eq(run(&asked), 1e-5 * params.height),
+                "the run from {} to {}: {} against {}",
+                pair[0],
+                pair[1],
+                run(&built),
+                run(&asked)
+            );
+        }
+        // And a body that meshes as asked - every roll - is not eased at all.
+        for seed in 0..200 {
+            let record = crate::AvatarRecord::rolled(
+                "Beast",
+                crate::Archetype::Quadruped(QuadrupedParams::default()),
+                seed,
+            );
+            let crate::Archetype::Quadruped(params) = &record.archetype else {
+                unreachable!("a beast rolls a beast");
+            };
+            assert_eq!(params.ease(&record.composites), AS_ASKED, "seed {seed}");
+            assert_eq!(
+                params.skeleton(&record.composites),
+                params.assemble(&Dimensions::of(params, &record.composites)),
+                "seed {seed}"
+            );
         }
     }
 

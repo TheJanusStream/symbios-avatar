@@ -571,6 +571,132 @@ fn every_rerolled_record_meshes() {
     }
 }
 
+/// One corner of a beast's sliders, as an editor can drag them (#391): every
+/// signed axis at an envelope end or the middle, the composites at theirs,
+/// the height anywhere, sanitised as a record from outside is.
+fn slider_corner(rng: &mut Pcg64Mcg) -> AvatarRecord {
+    let end = |rng: &mut Pcg64Mcg| [-3.0f32, 0.0, 3.0][rng.random_range(0..3)];
+    let families = [Family::Dog, Family::Cat, Family::Horse];
+    let family = families[rng.random_range(0..3)];
+    let hybrid = rng
+        .random_bool(0.3)
+        .then(|| families[rng.random_range(0..3)]);
+    let params = QuadrupedParams {
+        height: rng.random_range(0.0..=4.3),
+        body_length: end(rng),
+        leg_length: end(rng),
+        neck_length: end(rng),
+        head_size: end(rng),
+        tail_length: end(rng),
+        family,
+        hybrid,
+        blend: rng.random_range(0.0..=1.0),
+        muzzle_length: end(rng),
+        stance: end(rng),
+        neck_carriage: end(rng),
+        tail_carriage: end(rng),
+        chest_depth: end(rng),
+        appeal: end(rng),
+        muzzle_breadth: end(rng),
+        stop: end(rng),
+        eye_set: end(rng),
+        ..Default::default()
+    };
+    let mut record = AvatarRecord::new("Corner", Archetype::Quadruped(params));
+    record.composites.mass = end(rng);
+    record.composites.body_fat =
+        [BODY_FAT_RANGE.0, DEFAULT_BODY_FAT, BODY_FAT_RANGE.1][rng.random_range(0..3)];
+    record.composites.age = [AGE_RANGE.0, AGE_RANGE.1][rng.random_range(0..2)];
+    record.sanitize();
+    record
+}
+
+#[test]
+fn every_corner_of_a_beasts_sliders_meshes() {
+    // #391: an editor's sliders reach the envelope's ends, where no roll goes,
+    // and about one corner in thirteen used to crowd a girdle's sockets off
+    // its hull - 201 of the critic's 3,000 - so the viewer's host showed a
+    // build-failed banner for a body its creator had only dragged sliders to.
+    // A beast's skeleton now eases such a body until its cage meshes
+    // (`QuadrupedParams::skeleton`); `examples/cornercensus` runs the long
+    // census, and finds none in 70,000.
+    let mut rng = Pcg64Mcg::seed_from_u64(0x391);
+    for sample in 0..1000 {
+        let record = slider_corner(&mut rng);
+        assert_meshable(
+            &record.archetype,
+            &record.composites,
+            &format!(
+                "slider corner #{sample}: {:?} {:?}",
+                record.archetype, record.composites
+            ),
+        );
+    }
+}
+
+#[test]
+fn the_worst_slider_corners_build_a_beast() {
+    // #391's families of refusal, through the whole build: the cage is not
+    // the only thing that has to take an eased body. #384's cat at the top of
+    // the height's envelope and a fat kitten, whose chests bury their elbows'
+    // sockets; a slight dog whose forechest is deeper than the run back to
+    // its ribs; a foal's short thigh under a heavy croup.
+    let cat = QuadrupedParams {
+        family: Family::Cat,
+        height: 4.24,
+        chest_depth: 3.0,
+        leg_length: -3.0,
+        ..Default::default()
+    };
+    let kitten = QuadrupedParams {
+        family: Family::Cat,
+        leg_length: -3.0,
+        chest_depth: 3.0,
+        appeal: 3.0,
+        body_length: -3.0,
+        ..Default::default()
+    };
+    let dog = QuadrupedParams {
+        height: 2.0,
+        neck_length: 3.0,
+        neck_carriage: 3.0,
+        stance: 3.0,
+        chest_depth: 3.0,
+        ..Default::default()
+    };
+    let foal = QuadrupedParams {
+        family: Family::Horse,
+        height: 1.45,
+        leg_length: -3.0,
+        stance: -3.0,
+        appeal: 3.0,
+        ..Default::default()
+    };
+    let corners = [
+        (cat, 0.0, DEFAULT_BODY_FAT, DEFAULT_AGE),
+        (kitten, 3.0, BODY_FAT_RANGE.1, AGE_RANGE.1),
+        (dog, -3.0, BODY_FAT_RANGE.1, AGE_RANGE.0),
+        (foal, 3.0, DEFAULT_BODY_FAT, AGE_RANGE.1),
+    ];
+    let refused: Vec<String> = corners
+        .into_iter()
+        .filter_map(|(params, mass, body_fat, age)| {
+            let mut record = AvatarRecord::new("Corner", Archetype::Quadruped(params));
+            record.composites = Composites {
+                mass,
+                body_fat,
+                age,
+                ..NEUTRAL
+            };
+            record.sanitize();
+            symbios_avatar::Avatar::build_for_shape(&record)
+                .is_none()
+                .then(|| format!("{:?} mass {mass} fat {body_fat} age {age}", params.family))
+        })
+        .collect();
+    assert!(refused.is_empty(), "these do not build: {refused:#?}");
+}
+
 /// How far the skin of a quadruped's chest stands ahead of its left shoulder
 /// joint, along the midline at the joint's height, in withers heights; `None`
 /// when that line does not pass through the chest at all.

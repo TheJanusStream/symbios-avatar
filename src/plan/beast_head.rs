@@ -207,6 +207,23 @@ impl OrnamentSeat {
         self.radius * (1.0 - self.taper * along)
     }
 
+    /// Its line read at `count` evenly spaced shares of the way from base to tip,
+    /// each with its share, whatever its stations are (#404): what a seat asks of
+    /// the head, so that nothing it finds steps where a curve adds a station.
+    pub(crate) fn read_along(&self, count: usize) -> Vec<(Vec3, f32)> {
+        let line = self.line();
+        let last = (line.len() - 1) as f32;
+        (0..count)
+            .map(|at| {
+                let along = at as f32 / (count - 1) as f32;
+                let station = along * last;
+                let below = (station.floor() as usize).min(line.len() - 2);
+                let point = line[below].lerp(line[below + 1], station - below as f32);
+                (point, along)
+            })
+            .collect()
+    }
+
     /// The `-X` twin of a pair: its mirror, its flutes turning the other way.
     pub(crate) fn mirrored(&self) -> Self {
         let mirror = Vec3::new(-1.0, 1.0, 1.0);
