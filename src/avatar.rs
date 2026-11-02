@@ -2579,64 +2579,26 @@ mod tests {
     }
 
     /// A beast with no mane draws its fur as it did before the mane was a solid
-    /// (#407), every channel to the bit: shaded by its own faces where it is drawn,
-    /// and with no far tier. Its lofted cards carry normals of their own, and a draw
-    /// that kept those because there was one a vertex moved every maneless beast's
-    /// fur while its parts held. The hashes are HEAD's at 0.19.1, written from it.
+    /// (#407): shaded by its own faces where it is drawn, and with no far tier. Its
+    /// lofted cards carry normals of their own, and a draw that kept them, because
+    /// the mesh had one for every vertex, moved every maneless beast's fur while its
+    /// parts held.
+    ///
+    /// **Read against its own faces, not a hash** (#411). It held every channel to
+    /// hashes written on this machine, which CI could not reproduce: a beast's build
+    /// calls the platform's `acosf`, `atan2f`, `sinf` and more, its fur roots on
+    /// that body, and glibc 2.43 rounds them correctly where CI's 2.39 does not.
+    /// Both sides of this comparison are computed in one process, so they agree on
+    /// any libm. Every channel against a release is the `nomane` row of
+    /// `scripts/compare-published.sh`, which builds both on one machine.
     #[test]
-    fn a_beast_with_no_mane_draws_its_fur_as_it_did() {
-        fn hashed(mesh: &PolyMesh) -> u64 {
-            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-            let mut word = |word: u32| {
-                for byte in word.to_le_bytes() {
-                    hash ^= u64::from(byte);
-                    hash = hash.wrapping_mul(0x0100_0000_01b3);
-                }
-            };
-            for at in &mesh.positions {
-                at.to_array()
-                    .into_iter()
-                    .for_each(|value| word(value.to_bits()));
-            }
-            for face in &mesh.faces {
-                word(face.len() as u32);
-                face.iter().for_each(|&corner| word(corner));
-            }
-            for uv in &mesh.uvs {
-                uv.to_array()
-                    .into_iter()
-                    .for_each(|value| word(value.to_bits()));
-            }
-            for normal in &mesh.normals {
-                normal
-                    .to_array()
-                    .into_iter()
-                    .for_each(|value| word(value.to_bits()));
-            }
-            for colour in &mesh.colours {
-                colour
-                    .to_array()
-                    .into_iter()
-                    .for_each(|value| word(value.to_bits()));
-            }
-            for skin in &mesh.skin {
-                for influence in skin {
-                    word(u32::from(influence.joint));
-                    word(influence.weight.to_bits());
-                }
-            }
-            hash
-        }
+    fn a_beast_with_no_mane_is_shaded_by_its_own_faces() {
         let config = AvatarConfig {
             atlas: 64,
             far_hair: true,
             ..AvatarConfig::default()
         };
-        for (seed, every_zone, was) in [
-            (0, true, 0x204c_5bce_8308_28fc_u64),
-            (2, false, 0xfcc7_73c3_ee45_2b70),
-            (5, true, 0x9075_860d_0fe5_9da6),
-        ] {
+        for (seed, every_zone) in [(0, true), (2, false), (5, true)] {
             let mut record =
                 AvatarRecord::new("Maneless", Archetype::Quadruped(Default::default()));
             record.reroll(seed);
@@ -2652,12 +2614,16 @@ mod tests {
             }
             let built = Avatar::build_with(&record, &config).expect("builds");
             assert!(built.far_hair.is_none(), "seed {seed}: a far tier");
-            let drawn = built
+            let drawn = &built
                 .meshes
                 .iter()
                 .find(|drawn| drawn.kind == MeshKind::Hair)
-                .expect("the premise: fur");
-            assert_eq!(hashed(&drawn.mesh), was, "seed {seed}: drawn as it was not");
+                .expect("the premise: fur")
+                .mesh;
+            assert!(
+                drawn.normals == drawn.vertex_normals(),
+                "seed {seed}: shaded by its cards' own normals"
+            );
         }
     }
 
