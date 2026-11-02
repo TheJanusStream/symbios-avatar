@@ -165,7 +165,7 @@ fn beasts() -> Vec<Beast> {
         };
         // The withers height the plan builds a back height to.
         let withers = params.height * 1.2;
-        let avatar = Avatar::build(&record).unwrap_or_else(|| panic!("{what} builds"));
+        let avatar = Avatar::build_for_shape(&record).unwrap_or_else(|| panic!("{what} builds"));
         let hooves = avatar.rig.anatomy.feet == FootKind::Hooves;
         Beast {
             what,
@@ -713,7 +713,7 @@ fn short_legged() -> Vec<Beast> {
             unreachable!("every record here is a beast")
         };
         let withers = params.height * 1.2;
-        let avatar = Avatar::build(&record).unwrap_or_else(|| panic!("{what} builds"));
+        let avatar = Avatar::build_for_shape(&record).unwrap_or_else(|| panic!("{what} builds"));
         Beast {
             what,
             avatar,

@@ -279,7 +279,7 @@ fn built(seed: Option<i64>) -> Avatar {
     if let Some(seed) = seed {
         record.reroll(seed);
     }
-    Avatar::build(&record).expect("a biped builds")
+    Avatar::build_for_shape(&record).expect("a biped builds")
 }
 
 #[test]
@@ -335,7 +335,7 @@ fn the_ceiling_holds_across_the_parameter_space() {
                 params.head_breadth = breadth.unwrap_or(params.head_breadth);
                 params.face_length = length.unwrap_or(params.face_length);
             }
-            let avatar = Avatar::build(&record).expect("a biped builds");
+            let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
             let at = format!("seed {seed} {name}");
             if avatar.budget.tris > worst.1 {
                 worst = (at.clone(), avatar.budget.tris);
@@ -379,7 +379,7 @@ fn a_creature_is_not_more_expensive_than_a_person() {
     // Creatures are day-one scope, and a quadruped wears nothing, so it should
     // be comfortably the cheaper of the two. If that ever inverts, something is
     // being built for it that should not be.
-    let beast = Avatar::build(&AvatarRecord::new(
+    let beast = Avatar::build_for_shape(&AvatarRecord::new(
         "Beast",
         Archetype::Quadruped(symbios_avatar::QuadrupedParams::default()),
     ))
@@ -493,7 +493,8 @@ fn every_quadruped_roll_fits_the_webgl2_budget() {
     // goes stale the day the body's own cost moves.
     let mut bald = (String::new(), 0);
     for (at, record) in &bodies {
-        let avatar = Avatar::build(record).unwrap_or_else(|| panic!("{at} does not build"));
+        let avatar =
+            Avatar::build_for_shape(record).unwrap_or_else(|| panic!("{at} does not build"));
         if avatar.budget.tris > worst.1 {
             worst = (at.clone(), avatar.budget.tris);
         }
@@ -512,7 +513,8 @@ fn every_quadruped_roll_fits_the_webgl2_budget() {
                 ..Ornaments::default()
             };
         }
-        let shorn = Avatar::build(&shorn).unwrap_or_else(|| panic!("{at} bald does not build"));
+        let shorn =
+            Avatar::build_for_shape(&shorn).unwrap_or_else(|| panic!("{at} bald does not build"));
         if shorn.budget.tris > bald.1 {
             bald = (at.clone(), shorn.budget.tris);
         }
@@ -716,7 +718,7 @@ impl Head {
             params.head_breadth = breadth;
             params.face_length = length;
         }
-        let avatar = Avatar::build(&record).expect("a biped builds");
+        let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
         let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a biped has a head");
         let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
         Self {
@@ -1124,7 +1126,7 @@ fn the_budget_holds_for_a_record_that_asks_for_the_most_expensive_hair() {
     let mut record = AvatarRecord::new("Greedy", Archetype::default());
     record.hair = greediest();
     record.sanitize();
-    let avatar = Avatar::build(&record).expect("a biped builds");
+    let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
     println!("the greedy-hair body: {} triangles", avatar.budget.tris);
     assert!(
         avatar.budget.tris <= TRIANGLE_TARGET,
@@ -1184,7 +1186,7 @@ fn the_budget_holds_for_the_dearest_hair_on_the_dearest_head() {
             }
             record.hair = greediest();
             record.sanitize();
-            let avatar = Avatar::build(&record).expect("a biped builds");
+            let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
             if avatar.budget.tris > worst.1 {
                 worst = (format!("seed {seed} {name}"), avatar.budget.tris);
             }
@@ -1256,7 +1258,7 @@ fn the_regrown_hair_is_the_hair_the_body_ships() {
             let mut record = head.record.clone();
             record.hair = hair;
             record.sanitize();
-            let shipped = Avatar::build(&record).expect("a biped builds");
+            let shipped = Avatar::build_for_shape(&record).expect("a biped builds");
             let regrown = head.regrow(&record.hair);
             let shipped = shipped
                 .parts
@@ -1481,7 +1483,7 @@ fn the_hair_ceiling_is_what_the_budget_actually_leaves() {
             }
             record.hair = HairRecord::bald();
             record.sanitize();
-            let avatar = Avatar::build(&record).expect("a biped builds");
+            let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
             if avatar.budget.tris > worst.1 {
                 worst = (format!("seed {seed} {name}"), avatar.budget.tris);
             }
@@ -1530,7 +1532,7 @@ fn probe_where_the_body_got_cheaper() {
         }
         record.hair = HairRecord::bald();
         record.sanitize();
-        let avatar = Avatar::build(&record).expect("a biped builds");
+        let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
         println!(
             "seed {seed} {name}: raw body {} faces / {} tris, drawn total {} tris",
             avatar.parts.body.face_count(),

@@ -1055,7 +1055,7 @@ mod tests {
         use glam::Quat;
 
         let record = crate::AvatarRecord::new("Turned", crate::Archetype::default());
-        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
         let rig = &avatar.rig;
         let head = *rig
             .in_zone(Zone::Head)
@@ -1157,7 +1157,7 @@ mod tests {
                 params.face_length = face_length;
             }
             record.sanitize();
-            let avatar = crate::Avatar::build(&record).expect("a biped builds");
+            let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
             let rig = &avatar.rig;
             let body = &avatar.parts.body;
             let head = *rig.in_zone(Zone::Head).first().expect("a head");
@@ -1342,7 +1342,7 @@ mod tests {
         use glam::Quat;
 
         let record = crate::AvatarRecord::new("Chinned", crate::Archetype::default());
-        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
         let rig = &avatar.rig;
         let body = &avatar.parts.body;
         let head = *rig.in_zone(Zone::Head).first().expect("a head");
@@ -1433,7 +1433,7 @@ mod tests {
         use glam::Quat;
 
         let record = crate::AvatarRecord::new("Browed", crate::Archetype::default());
-        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
         let rig = &avatar.rig;
         let body = &avatar.parts.body;
         let head = *rig.in_zone(Zone::Head).first().expect("a head");
@@ -1534,7 +1534,7 @@ mod tests {
         use glam::Quat;
 
         let record = crate::AvatarRecord::new("Smiled", crate::Archetype::default());
-        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
         let rig = &avatar.rig;
         let body = &avatar.parts.body;
         let head = *rig.in_zone(Zone::Head).first().expect("a head");
@@ -1634,7 +1634,7 @@ mod tests {
         // the zone test alone it came out held 0.79 by the head and 0.03 by the
         // neck, which turns a windpipe with a glance.
         let record = crate::AvatarRecord::new("Throated", crate::Archetype::default());
-        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
         let rig = &avatar.rig;
         let head = *rig.in_zone(Zone::Head).first().expect("a head");
         let neck = rig.joints[head].parent.expect("a head sits on a neck");

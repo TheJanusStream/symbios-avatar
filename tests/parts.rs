@@ -520,7 +520,7 @@ fn every_attached_part_owns_a_region_of_the_atlas() {
     // A part with no region can only be flat-shaded, and the parts are most of
     // what a face is judged on. Each must land somewhere in the atlas, somewhere
     // of its own, and somewhere the painter actually covered.
-    let avatar = Avatar::build(&AvatarRecord::default()).expect("builds");
+    let avatar = Avatar::build_for_shape(&AvatarRecord::default()).expect("builds");
     let parts = &avatar.parts;
     let features = parts.features.as_ref().expect("a biped has a face");
 

@@ -173,7 +173,7 @@ mod tests {
         // joints — the jaw's pivot and the two corners. A viseme that moved
         // a brow would be speech raising eyebrows on every syllable.
         let record = crate::AvatarRecord::new("Spoken", crate::Archetype::default());
-        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
         let rig = &avatar.rig;
         let rest = Pose::rest(rig);
         // `ou`, because both of its channels are nonzero: `aa` spreads by
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn silence_is_exactly_rest_and_every_shape_is_in_range() {
         let record = crate::AvatarRecord::new("Silent", crate::Archetype::default());
-        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
         let rig = &avatar.rig;
         let rest = Pose::rest(rig);
         let mut posed = rest.clone();
@@ -230,7 +230,7 @@ mod tests {
             "Mute",
             crate::Archetype::Quadruped(crate::QuadrupedParams::default()),
         );
-        let avatar = crate::Avatar::build(&record).expect("a beast builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a beast builds");
         let rig = &avatar.rig;
         let rest = Pose::rest(rig);
         for (name, viseme) in Viseme::NAMES {

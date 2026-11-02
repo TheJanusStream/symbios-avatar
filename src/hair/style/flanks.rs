@@ -637,7 +637,7 @@ mod tests {
     /// The regions of one built head, which a style is fitted against.
     fn head() -> Follicles {
         let record = AvatarRecord::new("Flanks", Archetype::default());
-        let avatar = Avatar::build(&record).expect("a biped builds");
+        let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
         let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
         let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
         Follicles::of(&avatar.rig, &skull, &canon, &FollicleParams::default())
@@ -776,7 +776,7 @@ mod tests {
             },
             ..crate::hair::HairRecord::bald()
         };
-        let avatar = Avatar::build(&record).expect("a biped builds");
+        let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
         let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
         let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
         let head = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);

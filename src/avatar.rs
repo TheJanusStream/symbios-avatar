@@ -335,6 +335,24 @@ impl Avatar {
         Self::build_with(record, &AvatarConfig::default())
     }
 
+    /// Builds an avatar for a reader of its shape rather than its colours: its
+    /// meshes, rig and parts are [`Self::build`]'s, painted on the smallest atlas worth
+    /// having. Its budget differs only in `texture_bytes`, which counts that atlas.
+    ///
+    /// **Most of a beast's build is painting**: 535 ms on the default atlas against 70
+    /// here, measured, and the suite's slowest tests sweep beasts for their fur's
+    /// shape and never look at a texel. A person's gains less, 1117 ms against 868.
+    #[must_use]
+    pub fn build_for_shape(record: &AvatarRecord) -> Option<Self> {
+        Self::build_with(
+            record,
+            &AvatarConfig {
+                atlas: 64,
+                ..AvatarConfig::default()
+            },
+        )
+    }
+
     /// Builds an avatar from a record.
     ///
     /// The order is the whole point of this function. The body is shaped before
@@ -2350,6 +2368,34 @@ mod tests {
         );
         assert!(back.parts.zones.is_empty());
         assert!(back.parts.features.is_none());
+    }
+
+    #[test]
+    fn a_shape_build_is_the_same_body_on_a_smaller_atlas() {
+        // What lets a test read shape from `build_for_shape`: everything but the
+        // atlas is `build`'s, for a person and a beast.
+        let mut person = AvatarRecord::new("Built", Archetype::default());
+        person.reroll(7);
+        let beast =
+            AvatarRecord::rolled("Beast", Archetype::Quadruped(QuadrupedParams::default()), 7);
+        for record in [person, beast] {
+            let full = Avatar::build(&record).expect("builds");
+            let shape = Avatar::build_for_shape(&record).expect("builds");
+            assert_eq!(full.rig, shape.rig);
+            assert_eq!(full.meshes, shape.meshes);
+            assert_eq!(full.far_hair, shape.far_hair);
+            assert_eq!(full.parts, shape.parts);
+            assert_eq!(
+                Budget {
+                    texture_bytes: 0,
+                    ..full.budget
+                },
+                Budget {
+                    texture_bytes: 0,
+                    ..shape.budget
+                }
+            );
+        }
     }
 
     /// A beast's whiskers and what it wears are drawn on the far side of a worker

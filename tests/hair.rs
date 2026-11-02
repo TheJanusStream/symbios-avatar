@@ -59,7 +59,7 @@ impl Head {
         record.hair.moustache.style = MoustacheStyle::None;
         record.hair.chin.style = ChinStyle::None;
         record.hair.flanks.style = FlankStyle::None;
-        let avatar = Avatar::build(&record).expect("a biped builds");
+        let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
         let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
         let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
         let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
@@ -906,7 +906,7 @@ impl Beard {
         record.hair.moustache.style = MoustacheStyle::None;
         record.hair.chin.style = chin;
         record.hair.flanks.style = flanks;
-        let avatar = Avatar::build(&record).expect("a biped builds");
+        let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
         let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
         let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
         let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
@@ -2758,7 +2758,7 @@ fn every_card_is_cut_from_one_lane_of_the_strand_mask() {
         record.hair.moustache.style = MoustacheStyle::Handlebar { sweep: 0.9 };
         record.hair.chin.style = ChinStyle::Full;
         record.hair.flanks.style = FlankStyle::FullConnect { reach: 0.7 };
-        let avatar = Avatar::build(&record).expect("a biped builds");
+        let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
         let hair = avatar
             .drawn(0.0)
             .into_iter()
@@ -2884,7 +2884,7 @@ impl Sculpted {
         hair.flanks.style = wears.flanks;
         record.hair = hair;
         record.sanitize();
-        let avatar = Avatar::build(&record).expect("a biped builds");
+        let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
         let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
         let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
         let follicles = Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions);
@@ -3644,7 +3644,7 @@ const FLARE_REACH: f32 = 1.2;
 
 /// A head's follicle regions, measured off the body `record` builds.
 fn regions_of(record: &AvatarRecord) -> Follicles {
-    let avatar = Avatar::build(record).expect("a biped builds");
+    let avatar = Avatar::build_for_shape(record).expect("a biped builds");
     let skull = Skull::measure(&avatar.parts.body, &avatar.rig).expect("a head measures");
     let canon = Canon::measure(&avatar.rig, &skull, &record.eyes);
     Follicles::of(&avatar.rig, &skull, &canon, &record.hair.regions)
@@ -3906,11 +3906,13 @@ fn the_near_tier_is_the_same_bytes_whether_or_not_a_far_tier_is_asked_for() {
     // and the grown hair with its ledger, compared with `==` and not within a
     // tolerance.
     for (label, record) in tier_records() {
-        let plain = Avatar::build(&record).expect("a biped builds");
+        let plain = Avatar::build_for_shape(&record).expect("a biped builds");
         let tiered = Avatar::build_with(
             &record,
             &symbios_avatar::AvatarConfig {
                 far_hair: true,
+                // `build_for_shape`'s atlas, as the budget counts its bytes.
+                atlas: 64,
                 ..Default::default()
             },
         )
@@ -4421,7 +4423,7 @@ fn a_faceted_solid_ships_no_vertex_that_no_face_references() {
                 record.hair = hair;
             }
             record.sanitize();
-            let avatar = Avatar::build(&record).expect("a biped builds");
+            let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
             let hair = &avatar.parts.hair.as_ref().expect("grows hair").mesh;
             let mut used = vec![false; hair.vertex_count()];
             for face in &hair.faces {

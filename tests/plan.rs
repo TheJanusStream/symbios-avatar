@@ -1081,7 +1081,7 @@ fn the_plan_builds_the_bodies_it_was_last_judged_on() {
 /// Measured off the built body rather than off the plan, because the plan's
 /// numbers are what a node was asked for and this is about what the mesh did.
 fn zone_extent(record: &AvatarRecord, zone: symbios_avatar::Zone) -> [f32; 3] {
-    let avatar = symbios_avatar::Avatar::build(record).expect("the body builds");
+    let avatar = symbios_avatar::Avatar::build_for_shape(record).expect("the body builds");
     let parts = &avatar.parts;
     let mut lo = [f32::MAX; 3];
     let mut hi = [f32::MIN; 3];
@@ -1649,7 +1649,7 @@ fn the_body_stands_on_the_plan_s_own_ground_plane() {
             Archetype::Humanoid(HumanoidParams::default()),
             seed,
         );
-        let avatar = symbios_avatar::Avatar::build(&record)
+        let avatar = symbios_avatar::Avatar::build_for_shape(&record)
             .unwrap_or_else(|| panic!("seed {seed} would not build"));
         let low = avatar
             .parts
@@ -1692,7 +1692,7 @@ fn the_sole_is_flat_along_the_foot_it_stands_on() {
     // graph, which is exactly why `foot.rs`'s own level-sole test passed
     // throughout.
     let record = AvatarRecord::rolled("stance", Archetype::Humanoid(HumanoidParams::default()), 0);
-    let avatar = symbios_avatar::Avatar::build(&record).expect("the body builds");
+    let avatar = symbios_avatar::Avatar::build_for_shape(&record).expect("the body builds");
 
     // Selected by SKIN WEIGHT, not by zone label, which is the same selection
     // `examples/footaudit` makes and for the same reason: the zone array marks a

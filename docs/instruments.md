@@ -6,6 +6,29 @@ question than its name asks. Every one had been passing; every one was caught
 because **a number moved when the geometry had not**, or because two
 instruments disagreed. This file is the fleet and the distilled rules.
 
+## The gate
+
+`scripts/gate.sh` runs fmt, the suite with every feature on, clippy on each entry of
+CI's feature matrix, both doc gates, the wasm check and the no-default-features check,
+side by side where they share no build lock, and skips a step that passed while
+everything that can decide it is the same. It says `gate: passed` only when every step
+it owes has reported a pass and nothing it read moved under it. CI also runs the suite
+with no features; no test is cut by a feature's absence, so that run proves nothing the
+all-features one does not, unless a test leans on a feature without gating it.
+`--viewer` adds the viewer's tests and clippy against this tree. `--libm` runs a chosen
+set of tests (the filters are in the script: animation, the beast's face, charts, coats,
+plans, records, fur, cages and junctions; the driver, rests, charts, budget and lexicon
+in the integration target) with every libm function a last place or two off
+(`tools/libm-nudge`), because CI's glibc differs from a desktop's.
+
+`scripts/compare-published.sh` reads sixteen seeds of people and beasts against HEAD,
+line by line, and exits 1 if anything moved: every field of each built avatar, its
+texture maps by hash; records and share codes; the rows the eye can read, like joints and
+bodies, in full. Sixteen seeds are a sample and no more.
+
+A test that reads a body's shape and no texel builds it with
+`Avatar::build_for_shape`, which paints a small atlas: a beast costs 70 ms against 535.
+
 ## The fleet
 
 All under `examples/`, all release-built (`cargo run --release --example …`).

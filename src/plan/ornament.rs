@@ -931,7 +931,7 @@ mod tests {
         assert_eq!(antlers.beam.length, LENGTH_RANGE.0);
         assert_eq!(params.ornaments.tusks, Some(Ornament::default()));
         let record = crate::AvatarRecord::new("Hostile", Archetype::Quadruped(params));
-        assert!(crate::Avatar::build(&record).is_some());
+        assert!(crate::Avatar::build_for_shape(&record).is_some());
     }
 
     /// The first plain roll of each family and the first cross, which between them
@@ -1052,7 +1052,7 @@ mod tests {
         // read the head.
         let tris = |params: QuadrupedParams| {
             let record = crate::AvatarRecord::new("Worn", Archetype::Quadruped(params));
-            crate::Avatar::build(&record)
+            crate::Avatar::build_for_shape(&record)
                 .expect("builds")
                 .drawn(0.0)
                 .iter()
@@ -1105,7 +1105,10 @@ mod tests {
                 continue;
             }
             let record = crate::AvatarRecord::new("Worn", Archetype::Quadruped(params));
-            assert!(crate::Avatar::build(&record).is_some(), "seed {seed}");
+            assert!(
+                crate::Avatar::build_for_shape(&record).is_some(),
+                "seed {seed}"
+            );
         }
     }
 

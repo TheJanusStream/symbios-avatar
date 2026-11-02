@@ -704,7 +704,7 @@ mod tests {
         let library = Gltf::read(&bytes).expect("the reference reads");
         let skin = library.skin(0).expect("the reference has a skin");
         let record = crate::AvatarRecord::new("Retargeted", crate::Archetype::default());
-        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
         let matched =
             Correspondence::human(&avatar.rig, &library, &skin).expect("the reference matches");
         Some((library, matched, avatar))
@@ -723,7 +723,7 @@ mod tests {
         //
         // Needs no reference file: it is a fact about our own rig.
         let record = crate::AvatarRecord::new("Pinned", crate::Archetype::default());
-        let avatar = crate::Avatar::build(&record).expect("a biped builds");
+        let avatar = crate::Avatar::build_for_shape(&record).expect("a biped builds");
         let chest = avatar.rig.in_zone(Zone::Chest);
         assert_eq!(chest.len(), 4, "spine, spine, and two clavicles");
         assert!(

@@ -52,7 +52,7 @@ fn every_shipped_clip_plays_on_a_body_built_today() {
     // against — to resolve every track the artifact carries. A track that
     // resolves to nothing is a limb that would not move and no error.
     let record = AvatarRecord::new("Plays", Archetype::default());
-    let avatar = Avatar::build(&record).expect("a biped builds");
+    let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
 
     for clip in &library().clips {
         assert!(clip.frames > 0, "{} has no frames", clip.name);
@@ -90,7 +90,7 @@ fn a_run_leaves_the_ground_and_a_walk_does_not() {
     // hides, so both are checked — a test that only saw the run could pass on a
     // rule that called every foot airborne.
     let record = AvatarRecord::new("Running", Archetype::default());
-    let avatar = Avatar::build(&record).expect("a biped builds");
+    let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
     let library = library();
 
     let over = |name: &str| -> Vec<usize> {
@@ -130,7 +130,7 @@ fn a_walks_swinging_foot_is_not_called_planted() {
     // motion in: a planted foot is stationary in the world while the body passes
     // over it.
     let record = AvatarRecord::new("Walking", Archetype::default());
-    let avatar = Avatar::build(&record).expect("a biped builds");
+    let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
     let library = library();
     let walk = library.get("Walk").expect("Walk is shipped");
 

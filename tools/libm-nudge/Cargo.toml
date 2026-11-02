@@ -1,0 +1,21 @@
+[package]
+name = "libm-nudge"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# The libm nudge (#1558): LD_PRELOAD the libm crate (the maths wasm32
+# links) over the platform libm, and optionally nudge one function's result
+# k ulps up or down, to show which derivations ride the last bit of a libm
+# call.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+libm = "=0.2.16"
+
+[profile.dev]
+opt-level = 2
+debug = false

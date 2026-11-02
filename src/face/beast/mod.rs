@@ -1479,7 +1479,7 @@ mod tests {
                 ..QuadrupedParams::default()
             };
             let record = AvatarRecord::new("Beast", Archetype::Quadruped(params));
-            let avatar = Avatar::build(&record).expect("the beast builds");
+            let avatar = Avatar::build_for_shape(&record).expect("the beast builds");
             let eyes = avatar.parts.eyes.as_ref().expect("a beast has eyes");
             let head = avatar.rig.joints[eyes.head].position;
             let body = &avatar.parts.body;
@@ -1513,7 +1513,7 @@ mod tests {
         use crate::rig::Role;
         use crate::{Archetype, Avatar, AvatarRecord};
         let record = AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
-        let avatar = Avatar::build(&record).expect("the beast builds");
+        let avatar = Avatar::build_for_shape(&record).expect("the beast builds");
         let ears = &avatar.parts.beast.as_ref().expect("a beast has ears").ears;
         let skin = &avatar
             .meshes
@@ -1541,7 +1541,7 @@ mod tests {
             );
         }
         // And a person has none.
-        let person = Avatar::build(&AvatarRecord::new("Person", Archetype::default()))
+        let person = Avatar::build_for_shape(&AvatarRecord::new("Person", Archetype::default()))
             .expect("the person builds");
         assert!(person.parts.beast.is_none());
     }
@@ -1571,7 +1571,7 @@ mod tests {
         use crate::anim::{Pose, SpringConfig, Springs};
         use crate::{Archetype, Avatar, AvatarRecord};
         let record = AvatarRecord::new("Beast", Archetype::Quadruped(QuadrupedParams::default()));
-        let avatar = Avatar::build(&record).expect("the beast builds");
+        let avatar = Avatar::build_for_shape(&record).expect("the beast builds");
         let rig = &avatar.rig;
         let ears = &avatar.parts.beast.as_ref().expect("a beast has ears").ears;
         let bases: Vec<usize> = [&ears.left, &ears.right]

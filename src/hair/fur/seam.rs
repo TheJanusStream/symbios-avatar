@@ -325,7 +325,7 @@ fn rolled(
             Some((seed, record))
         })
         .take(count)
-        .filter_map(|(seed, record)| Some((seed, Avatar::build(&record)?)))
+        .filter_map(|(seed, record)| Some((seed, Avatar::build_for_shape(&record)?)))
 }
 
 /// One row of [`seam_table`]: its name, the zone it reads, and the fur it wears.

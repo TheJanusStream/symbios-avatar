@@ -798,7 +798,7 @@ mod tests {
         params.set_kind(family, None, 0.0);
         params.fur = fur;
         params.coat = coat;
-        Avatar::build(&AvatarRecord::new("Beast", Archetype::Quadruped(params)))
+        Avatar::build_for_shape(&AvatarRecord::new("Beast", Archetype::Quadruped(params)))
             .expect("the beast builds")
     }
 
