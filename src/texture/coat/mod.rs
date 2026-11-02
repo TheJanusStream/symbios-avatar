@@ -27,11 +27,12 @@
 //! used to put them.
 //!
 //! **The skin under a dark mane is the mane's colour** (#389). A bay's or a
-//! dun's mane is drawn in its dark, so where a card leaves the neck the skin
-//! beside it would show as a line of another colour, and between two cards as a
-//! rung of it. So the painter darkens the line the mane grows from
-//! ([`ManeRoots`]), as a hair card's scalp is painted: nothing else on the coat
-//! knows a mane is there, and no other coat changes.
+//! dun's mane is drawn in its dark, so where it leaves the neck the skin beside
+//! it would show as a line of another colour. So the painter darkens the line the
+//! mane grows from ([`ManeRoots`]), as a hair card's scalp is painted: nothing
+//! else on the coat knows a mane is there, and no other coat changes. Since #407
+//! the mane is one solid in one colour, whole, white spotting under it included,
+//! and the line is painted that colour.
 //!
 //! **Nor where the neck meets the head** (#395), for the same reason as a leg:
 //! the zone map's line there is nothing an animal's coat knows of, and a tan
@@ -163,6 +164,13 @@ enum Surface {
     Horn(f32),
 }
 
+/// How much darker than its coat a mane that follows the coat is drawn (#407): a
+/// mane of exactly the coat's colour lying on the neck has no outline.
+/// Provenance: **tuned by render** (#407), the owner's decision that it is "a
+/// little darker"; 0.75 first, which a pale coat's mane (horse 11, cross 73) all
+/// but lost at play size, then 0.6 at the owner's asking.
+pub(crate) const MANE_SHADE: f32 = 0.6;
+
 /// Whether a coat draws its long hair in its own dark: a bay's, a dun's.
 pub(crate) fn darkens_points(coat: &Coat) -> bool {
     coat.agouti == Agouti::Bay || coat.dun
@@ -170,7 +178,7 @@ pub(crate) fn darkens_points(coat: &Coat) -> bool {
 
 /// The skin a mane in a coat's dark grows out of (#389): the line it is rooted
 /// along, which the painter darkens as hair cards' scalps are painted, so that
-/// what shows between two cards where they leave the neck is the mane again.
+/// what shows where the mane leaves the neck is the mane again.
 #[derive(Clone, Debug)]
 pub(crate) struct ManeRoots {
     /// The line, and how far off it the colour reaches at each of its points.
@@ -332,6 +340,12 @@ impl<'a> CoatSampler<'a> {
         } else {
             self.colour(at, normal, zone)
         }
+    }
+
+    /// The one colour a mane is drawn in, forelock and all (#407): see
+    /// `Palette::mane`, and [`coat_colour`], which names it to a creator.
+    pub(crate) fn mane(&self) -> Vec3 {
+        self.palette.mane(darkens_points(self.coat))
     }
 
     /// The colour picked for the tail, if one was: what a card rooted anywhere on
@@ -776,10 +790,11 @@ impl<'a> Painter<'a> {
         self.palette.dark.lerp(self.palette.white, self.white())
     }
 
-    /// A mane's skin: the colour picked for it, or its long hair's on a coat that
-    /// darkens its points.
+    /// A mane's skin: the colour picked for it, or on a coat that darkens its points
+    /// its dark, whole, as the mane over it is (#407): white spotting under it would
+    /// show as a patch the mane does not have.
     fn mane(&self) -> Vec3 {
-        self.palette.mane.unwrap_or_else(|| self.points())
+        self.palette.mane(true)
     }
 
     /// How much of a dun's dilution reaches here, `0..=1`: all of the body,
@@ -1436,18 +1451,19 @@ mod tests {
                 (1500..6500).contains(&after),
                 "{family:?}: {after} texels under its mane"
             );
+            // The mane and the forelock are one solid (#407): every vertex of it on
+            // the way from the colour to a shade lighter, its underside no more than
+            // a little darker.
             let tips = chosen.lerp(Vec3::ONE, 0.08);
-            for zone in [FurZone::Mane, FurZone::Forelock] {
-                let colours = fur_colours(&maned, zone);
-                assert!(colours.len() > 40, "{family:?} {zone:?}: {}", colours.len());
-                for colour in colours {
-                    let (root, tip) = (colour.distance(chosen), colour.distance(tips));
-                    let span = chosen.distance(tips) + 1.0e-4;
-                    assert!(
-                        root <= span && tip <= span,
-                        "{family:?} {zone:?} wore {colour:?}"
-                    );
-                }
+            let colours = fur_colours(&maned, FurZone::Mane);
+            assert!(colours.len() > 40, "{family:?}: {}", colours.len());
+            for colour in colours {
+                let on_the_way = (0..=50).any(|step| {
+                    let along = chosen.lerp(tips, step as f32 / 50.0);
+                    let shade = colour.dot(along) / along.length_squared();
+                    (0.85..=1.0001).contains(&shade) && colour.distance(along * shade) < 2.0e-3
+                });
+                assert!(on_the_way, "{family:?} wore {colour:?}");
             }
             // The rest of the coat is what it was: only the line moved.
             let unpicked = beast(false, 0.8);
@@ -1704,8 +1720,10 @@ mod tests {
         for (dun, agouti) in [(false, Agouti::Bay), (true, Agouti::Solid)] {
             let (bare, palette) = with_mane(dun, agouti, 0.0);
             let (maned, _) = with_mane(dun, agouti, 0.8);
-            let before = texels_of(&bare, palette.dark);
-            let after = texels_of(&maned, palette.dark);
+            // The mane's colour: the coat's dark, shaded down to its outline where
+            // that is no darker than it (#407), a red bay's.
+            let before = texels_of(&bare, palette.mane(true));
+            let after = texels_of(&maned, palette.mane(true));
             // Measured: about 3,650, a line down the neck, and no further than that.
             assert!(
                 (2000..6000).contains(&(after - before)),

@@ -5,12 +5,15 @@
 //! spine, the back's height, the tail, the declared head) and the bone a
 //! point hangs off - and a **curve**, the [`Shape`] a card rooted there
 //! follows. A card leaves the skin at a shallow angle toward its zone's own
-//! way - a mane over the neck's side, a forelock down the face, a ruff back
-//! along the body, a brush toward the tail's tip, feathering to the ground -
-//! and bends toward the ground the longer it is, as [`super::super::clump::Fall`]
-//! does. A mane's cards alone have a curve of their own, draped over the neck
-//! and standing off its crest as stiffly as the record says (see
-//! [`Lock::draped`] and [`Lock::section`]).
+//! way - a ruff back along the body, a brush toward the tail's tip, feathering
+//! to the ground - and bends toward the ground the longer it is, as
+//! [`super::super::clump::Fall`] does.
+//!
+//! A mane is not cards (#407): it is one solid with its forelock (`super::mane`).
+//! Its curve is still here, the one a mane's card followed, draped over the neck
+//! and standing off its crest as stiffly as the record says (see [`Lock::draped`]
+//! and [`Lock::section`]): the solid stands on it as it stiffens. The forelock's
+//! zone keeps its mask and its cut, and grows nothing of its own.
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -24,9 +27,11 @@ use crate::plan::{Fur, Zone};
 /// Where on a beast long hair grows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FurZone {
-    /// Down the neck's crest, from the poll to the withers.
+    /// Down the neck's crest, from the poll to the withers, and on over the poll
+    /// as its forelock: one solid (#407).
     Mane,
-    /// Between the ears, falling over the face.
+    /// Between the ears, falling over the face: since #407 the mane's own end,
+    /// drawn with it, so it grows nothing of its own and has no line in a ledger.
     Forelock,
     /// Round the neck, over the chest's front and up behind the jaw.
     Ruff,
@@ -232,25 +237,31 @@ const OPENS: f32 = 0.15;
 /// Provenance: **tuned by render** (#386).
 const COMES_OUT: f32 = 0.4;
 
-/// How far off the neck's run toward its side a mane's card combs, in radians:
-/// back along the crest, so that each root lies under the card ahead of it,
-/// and over the side, so that it does not hang down the neck's back and pile
-/// at the withers.
+// **The curve a mane stands on** (#386, #389). Everything from here to `Lock`
+// was tuned on a mane's cards, which since #407 are one solid (`super::mane`):
+// its columns walk the neck lying on it and, as the mane stiffens, hand over to
+// the curve a card stood on, read as `Shape::at` and `Shape::length` read it.
+// So "a card" below is that curve, a column's spine; nothing reads its width.
+
+/// How far off the neck's run toward its side a mane's curve combs, in radians:
+/// back along the crest, so that each root lay under the card ahead of it, and
+/// over the side, so that it does not hang down the neck's back and pile at the
+/// withers. The solid combs further (`Lock::swept`).
 /// Provenance: **tuned by render** (#386).
 const SWEEP: f32 = 0.9;
 
-/// How far round the neck a mane's card follows it before it hangs free, in
-/// radians: short of a right angle, where the card would face away from the
-/// way its root does and the loft would turn it over.
+/// How far round the neck a mane's curve follows it before it hangs free, in
+/// radians: short of a right angle, where a card would face away from the way
+/// its root does and the loft would turn it over.
 /// Provenance: **tuned by render** (#386).
 const WRAP: f32 = 1.2;
 
-/// How far off the skin a mane's card has lifted by its tip, as a share of its
-/// length: flat on the neck it reads as paint.
+/// How far off the skin a mane's curve has lifted by its tip, as a share of its
+/// length: flat on the neck a card read as paint.
 /// Provenance: **tuned by render** (#386).
 const LOFT: f32 = 0.08;
 
-/// How high a mane's card arches off the crest before it falls to the neck's
+/// How high a mane's curve arches off the crest before it falls to the neck's
 /// side, as a share of its length, and how far along it has come back down: a
 /// mane flat on the neck has no outline, and on a coat of its own colour shows
 /// nothing at all.
@@ -259,13 +270,13 @@ const ARCH: f32 = 0.09;
 /// See [`ARCH`].
 const ARCH_ENDS: f32 = 0.5;
 
-/// How far off the skin a mane's card lies once it is out of it, as a share of
+/// How far off the skin a mane's curve lies once it is out of it, as a share of
 /// the back's height: more than a chord of the skin's own faces can bulge by.
 /// Provenance: **tuned by render** (#386).
 const LOFT_AT_ROOT: f32 = 0.004;
 
-/// By what stiffness a mane's card has gone from draped over the neck to the
-/// stiff card [`Lock::section`] draws: the one hands over to the other low on the
+/// By what stiffness a mane's curve has gone from draped over the neck to the
+/// stiff one [`Lock::section`] draws: the one hands over to the other low on the
 /// slider, where they lie close together.
 /// Provenance: **tuned by render** (#389).
 const STIFF_FROM: f32 = 0.2;
@@ -318,8 +329,9 @@ const LIFTS_OFF: f32 = 0.25;
 /// Provenance: **tuned by render** (#389).
 const BURY: f32 = 0.5;
 
-/// How much narrower a card is at full stiffness: it stands on its edge along the
-/// crest beside every other card, and at a limp card's width that is a board.
+/// How much narrower a mane's card was at full stiffness: it stood on its edge
+/// along the crest beside every other card, and at a limp card's width that was a
+/// board. Read only by [`Shape::width`], which no mane is lofted with since #407.
 /// Provenance: **tuned by render** (#389).
 const NARROWS: f32 = 0.5;
 
@@ -327,7 +339,7 @@ const NARROWS: f32 = 0.5;
 pub(super) struct Lock<'a> {
     zone: FurZone,
     bed: &'a Bed<'a>,
-    /// The crest a mane's cards lie along.
+    /// The crest a mane's curve lies along.
     crest: Option<&'a Crest>,
     /// How long a card is at full mask weight, in metres.
     length: f32,
@@ -335,8 +347,11 @@ pub(super) struct Lock<'a> {
     width: f32,
     /// What that would be on a limp card.
     limp_width: f32,
-    /// How stiff a mane's cards are, `0..=1`: see [`Lock::section`].
+    /// How stiff a mane's curve stands, `0..=1`: see [`Lock::section`].
     stiffness: f32,
+    /// How far off the neck's run a limp mane's curve combs, in radians: [`SWEEP`],
+    /// or the mane's own (`Lock::swept`).
+    sweep: f32,
     taper: f32,
     lie: f32,
     droop: f32,
@@ -377,6 +392,7 @@ impl<'a> Lock<'a> {
             width: limp_width * (1.0 - NARROWS * stiffness),
             limp_width,
             stiffness,
+            sweep: SWEEP,
             taper: cut.taper,
             // A pixel's worth at the framing a body is judged at, never finer
             // than a head's hair is drawn.
@@ -393,6 +409,14 @@ impl<'a> Lock<'a> {
 }
 
 impl Lock<'_> {
+    /// The same curve combed `sweep` radians off the neck's run when limp (#407):
+    /// the mane's solid sweeps back along the crest less than a card, which lies
+    /// under the one ahead of it.
+    pub(super) fn swept(mut self, sweep: f32) -> Self {
+        self.sweep = sweep;
+        self
+    }
+
     /// How much of a mane's card's way out of the skin it has still to go, a
     /// share of the way along it: `1` at its root, and none from
     /// [`Self::comes_out`] on, which it reaches at a shallow angle.
@@ -512,7 +536,7 @@ impl Lock<'_> {
         };
         let drawn = length * (1.0 + (DRAWN - 1.0) * stands);
         let gone = drawn * along;
-        let sweep = SWEEP + (FRAC_PI_2 - SWEEP) * stiff * stiff * stiff;
+        let sweep = self.sweep + (FRAC_PI_2 - self.sweep) * stiff * stiff * stiff;
         let (here, past) = crest.walked(root.at, gone * sweep.cos());
         // From under the far side of the crest, so that the two sides' cards
         // cross on it and each covers where the other comes out.

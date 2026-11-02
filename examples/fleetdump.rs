@@ -3,9 +3,10 @@
 //! field of each built avatar by hash, its texture maps included, for a person and for a
 //! beast at several stiffnesses; records and codes; and in full, for reading, what an
 //! eye goes to first: a person's rig and meshes, a beast's rig and body, a beast's fur
-//! without a mane and with a limp one.
+//! without a mane and with a limp one, and the hair it draws without one, every channel:
+//! the fur a beast keeps is not what it draws, which is shaded on its way there (#407).
 use std::fmt::Write as _;
-use symbios_avatar::{Archetype, Avatar, AvatarRecord, QuadrupedParams, TextureMap};
+use symbios_avatar::{Archetype, Avatar, AvatarRecord, MeshKind, QuadrupedParams, TextureMap};
 
 /// FNV-1a over what is written to it, so that a whole mesh costs one line.
 struct Fnv(u64);
@@ -137,7 +138,21 @@ fn main() {
             p.fur.feathering = 0.7;
             p.fur.tufts = 0.7;
         }
-        let f = Avatar::build(&limp).expect("builds").parts.fur;
+        let built = Avatar::build(&limp).expect("builds");
+        let drawn = built.meshes.iter().find(|m| m.kind == MeshKind::Hair);
+        let _ = writeln!(
+            out,
+            "nomane {seed} hair {:?}",
+            drawn.map(|m| (
+                &m.mesh.positions,
+                &m.mesh.faces,
+                &m.mesh.uvs,
+                &m.mesh.normals,
+                &m.mesh.colours,
+                &m.mesh.skin
+            ))
+        );
+        let f = built.parts.fur;
         let _ = writeln!(
             out,
             "nomane {seed} {:?}",

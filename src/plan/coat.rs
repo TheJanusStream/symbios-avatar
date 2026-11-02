@@ -243,8 +243,9 @@ impl CoatChannel {
 ///   under a white foot only while it is unpicked.
 /// - **`horn`** claws and hooves, likewise under a white sock. A unicorn's horn
 ///   stays ivory: it is drawn with the whiskers.
-/// - **`mane`** the mane's and forelock's cards, whole, and the skin under the
-///   crest's line so that no seam shows. A beast with no mane draws nothing of it.
+/// - **`mane`** the mane, forelock and all, exactly, and the skin under the crest's
+///   line so that no seam shows. A beast with no mane draws nothing of it. Unpicked,
+///   a mane is the coat's own long hair in one colour (#407).
 /// - **`tail`** the tail, skin and cards, fading in from the rump.
 ///
 /// A dapple is not greyed where `dark` or `light` is picked, only given its rounds:

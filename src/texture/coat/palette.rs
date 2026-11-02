@@ -109,6 +109,32 @@ pub(super) struct Palette {
 }
 
 impl Palette {
+    /// The one colour a mane is drawn in, forelock and all (#407): the colour picked
+    /// for it, exactly; or else the coat's own long hair whole, with no patch of its
+    /// marks or its white - its dark on a coat that `darkens` its points, a bay's or
+    /// a dun's, or on any other its ground, shaded [`super::MANE_SHADE`] darker so
+    /// that a mane following its coat keeps an outline against it. A dark no darker
+    /// than that against the body it lies on, the light, is shaded down to it: a red
+    /// bay's pale brown. Measured against the light and not the ground, which on any
+    /// pigment but red is the dark itself: a black, a liver or a dilute bay's mane, or
+    /// a dun's, is its dark, as its tail, its legs and a dun's dorsal stripe are.
+    pub(super) fn mane(&self, darkens: bool) -> Vec3 {
+        let light = |colour: Vec3| colour.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+        match self.mane {
+            Some(mane) => mane,
+            None if darkens => {
+                let most = light(self.light) * super::MANE_SHADE;
+                let dark = light(self.dark);
+                if dark > most {
+                    self.dark * (most / dark)
+                } else {
+                    self.dark
+                }
+            }
+            None => self.ground * super::MANE_SHADE,
+        }
+    }
+
     /// The palette a coat's loci make.
     pub(super) fn of(coat: &Coat) -> Self {
         let picked = coat.colours;
@@ -154,9 +180,10 @@ impl Palette {
 }
 
 /// What `channel` paints on `coat` right now, in sRGB: the colour picked, or the
-/// one the loci derive (#401). What a creator's picker opens on. A mane's and a
-/// tail's are the coat's long hair, which on a marked coat varies card to card, so
-/// this is its main colour.
+/// one the loci derive (#401). What a creator's picker opens on. A tail's is the
+/// coat's long hair, which on a marked coat varies card to card, so this is its main
+/// colour; a mane's is the one colour it is drawn in (#407), the coat's long hair
+/// whole, a shade darker where that is the coat's own colour.
 #[must_use]
 pub fn coat_colour(coat: &Coat, channel: CoatChannel) -> [f32; 3] {
     let palette = Palette::of(coat);
@@ -171,7 +198,7 @@ pub fn coat_colour(coat: &Coat, channel: CoatChannel) -> [f32; 3] {
         CoatChannel::White => palette.white,
         CoatChannel::Leather => palette.leather,
         CoatChannel::Horn => palette.horn,
-        CoatChannel::Mane => palette.mane.unwrap_or(long_hair),
+        CoatChannel::Mane => palette.mane(super::darkens_points(coat)),
         CoatChannel::Tail => palette.tail.unwrap_or(long_hair),
     }
     .to_array()

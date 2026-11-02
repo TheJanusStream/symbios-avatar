@@ -564,6 +564,21 @@ fn main() {
         }
     }
 
+    // Antlers, which few rolls give (#407 looks at a mane against them).
+    if args.iter().any(|arg| arg == "--antlers") {
+        match &mut record.archetype {
+            Archetype::Quadruped(params) => {
+                params
+                    .ornaments
+                    .wear(symbios_avatar::OrnamentKind::Antlers, true);
+            }
+            _ => {
+                eprintln!("--antlers crowns a quadruped: add --quadruped");
+                std::process::exit(2);
+            }
+        }
+    }
+
     // A coat pattern, or a colourpoint, that a family never rolls (#376):
     // `--pattern NAME` marks one beast's coat so - in a gallery it filters
     // instead - and `--points` gives it a colourpoint, so every pattern is
@@ -1177,7 +1192,7 @@ fn main() {
         );
     }
     // **The crest** (#386): a sheet of the neck alone, close enough to see
-    // where a mane's cards enter the skin - side, front three quarters,
+    // where a mane enters the skin - side, front three quarters,
     // behind three quarters, and from above behind.
     if args.iter().any(|arg| arg == "--throat") {
         let Some(frames) = subject.throat() else {
@@ -1207,7 +1222,7 @@ fn main() {
     // side on, from behind and above as the game's camera sees it, three
     // quarters behind, and behind level. `--nape-pose` draws it nodded, turned,
     // or at the end of a rest (`nod`, `turn`, or a gesture's name).
-    if args.iter().any(|arg| arg == "--nape") {
+    if args.iter().any(|arg| arg == "--nape") || args.iter().any(|arg| arg == "--mane") {
         let mut pose = subject.standing();
         let rig = &subject.avatar.rig;
         match value("--nape-pose").map(String::as_str) {
@@ -1232,6 +1247,43 @@ fn main() {
                 };
                 gesture.apply(rig, &mut pose, 1.0);
             }
+        }
+        // **The mane, whole** (#407): six views of one mane from the withers to the
+        // forelock - front, three quarters front, side close on the head and neck,
+        // from above, behind and above, and the whole body side on - in a 3 by 2
+        // sheet.
+        if args.iter().any(|arg| arg == "--mane") {
+            let Some(frames) = subject.mane(&pose) else {
+                eprintln!("--mane frames a head and neck: this body has none");
+                std::process::exit(2);
+            };
+            let built = subject.deformed(&pose, 0.0);
+            let (tints, _) = subject.tints(&built);
+            let mut sheet = Image::new(VIEW * 3, VIEW * 2);
+            for (index, frame) in frames.iter().enumerate() {
+                let view = subject.shoot(&built, &tints, frame);
+                sheet.blit(&view, (index % 3) * VIEW, (index / 3) * VIEW);
+            }
+            write(&out, "mane", &sheet);
+            // And the whole body from behind and above as the game's camera
+            // sees it, side on, and three quarters ahead: to be read at play size.
+            let whole = subject.sheet_frames()[0];
+            let play = [
+                (std::f32::consts::PI, GAME_PITCH),
+                (std::f32::consts::FRAC_PI_2, 0.0),
+                (std::f32::consts::FRAC_PI_4, 0.15),
+            ];
+            let mut sheet = Image::new(VIEW * 3, VIEW);
+            for (index, (turn, pitch)) in play.into_iter().enumerate() {
+                let frame = Frame {
+                    turn,
+                    pitch,
+                    ..whole
+                };
+                sheet.blit(&subject.shoot(&built, &tints, &frame), index * VIEW, 0);
+            }
+            write(&out, "play", &sheet);
+            return;
         }
         let Some(frames) = subject.nape(&pose) else {
             eprintln!("--nape frames a head: this body has none");
@@ -1655,6 +1707,17 @@ fn report(avatar: &Avatar) {
             drawn.mesh.triangulated().len(),
             drawn.mesh.vertex_count(),
         );
+    }
+    // A beast's fur, zone by zone (#407): what a mane costs against the rest.
+    if let Some(fur) = &avatar.parts.fur {
+        for grown in &fur.grown {
+            println!(
+                "{:<8} {:>7} tris  {:>6} clumps",
+                grown.zone.name(),
+                grown.tris,
+                grown.clumps
+            );
+        }
     }
     // The far tier's own line (#350): drawn in the hair's place, never beside it.
     if let Some(far) = &avatar.far_hair {
@@ -2465,6 +2528,43 @@ impl Subject {
                 of(PI, GAME_PITCH),
                 of(3.0 * FRAC_PI_4, GAME_PITCH * 0.5),
                 of(PI, 0.0),
+            ]
+        })
+    }
+
+    /// Six views of a mane in `pose` (#407), framed on the head and the neck
+    /// together: front, three quarters front, side, from above (nose up the
+    /// frame), behind and above as the game's camera sees it, and the whole body
+    /// side on.
+    fn mane(&self, pose: &Pose) -> Option<[Frame; 6]> {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        let parts = &self.avatar.parts;
+        let posed = pose.forward(&self.avatar.rig);
+        let deformed = posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+        let (lo, hi) = parts
+            .zones
+            .iter()
+            .zip(&deformed)
+            .filter(|(zone, _)| matches!(**zone, Zone::Head | Zone::Neck))
+            .fold(
+                (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                |(lo, hi), (_, &point)| (lo.min(point), hi.max(point)),
+            );
+        (lo.x <= hi.x).then(|| {
+            let of = |turn: f32, pitch: f32| Frame {
+                turn,
+                pitch,
+                centre: (lo + hi) * 0.5,
+                span: (hi - lo).max_element() * 1.2,
+            };
+            let whole = self.sheet_frames()[1];
+            [
+                of(0.0, 0.1),
+                of(FRAC_PI_4, 0.15),
+                of(FRAC_PI_2, 0.0),
+                of(PI, 1.45),
+                of(PI, GAME_PITCH),
+                whole,
             ]
         })
     }

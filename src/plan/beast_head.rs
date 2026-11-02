@@ -632,6 +632,33 @@ impl BeastHead {
         self.nape.as_ref().map_or(at, |nape| nape.carried(at))
     }
 
+    /// Where the neck's upper run's skin is on the line out of its centre through
+    /// `at`, a point in the head's frame, and how much of the drawn neck there is
+    /// the run's: none below the run's start, all of it from the neck joint on as
+    /// [`Self::carried`] shapes it, and less again where the head takes over (#407:
+    /// a mane lies on it). `None` off the run, or with no run declared.
+    #[must_use]
+    pub(crate) fn nape_skin(&self, at: Vec3) -> Option<(Vec3, f32)> {
+        let nape = self.nape.as_ref()?;
+        let (u, v, x) = nape.read(at);
+        if !(0.0..1.0).contains(&u) {
+            return None;
+        }
+        let half = nape.half(u).max(Vec2::splat(1.0e-5));
+        let off = Vec2::new(x, v - nape.centre(u));
+        let scale = (off / half).length();
+        if scale <= f32::EPSILON {
+            return None;
+        }
+        let drawn = off / scale - off;
+        let (along, _) = nape.chord();
+        let on = at + Vec3::X * drawn.x + Nape::crestward(along) * drawn.y;
+        let fades_in = smoothstep(0.0, nape.knee.max(f32::EPSILON), u);
+        let lead = (self.distance(at) - nape.distance(at)) / nape.blend;
+        let run = smoothstep(0.0, 1.0, 0.5 * (lead + 1.0));
+        Some((on, fades_in * run))
+    }
+
     /// How far along the neck's upper run a point is, for choosing the faces
     /// worth refining: negative below it. `None` when the head declares no run.
     #[must_use]

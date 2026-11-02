@@ -263,6 +263,25 @@ pub struct Parts {
     pub mouth: Option<face::Mouth>,
 }
 
+/// A beast's fur ready to draw (#369): in body space already, and shaded by its own
+/// faces as the hair's draw is, unless it has a mane, whose solid carries the
+/// normals it is shaded by (#407). The near tier's and the far tier's alike.
+///
+/// **Decided on the mane, not on the normals**: every card is lofted with normals of
+/// its own, so fur with no mane carries a whole set too, and a draw that kept them
+/// shaded every maneless beast's fur apart from the faces it had always been shaded
+/// by.
+fn placed_fur(fur: &crate::hair::fur::FurGrowth) -> AvatarMesh {
+    let mut mesh = fur.mesh.clone();
+    if fur.solid() == 0 {
+        mesh.set_normals(mesh.vertex_normals());
+    }
+    AvatarMesh {
+        kind: MeshKind::Hair,
+        mesh,
+    }
+}
+
 /// A record, built.
 ///
 /// Deliberately not `Clone`, `Debug` or `PartialEq`: it owns several megabytes
@@ -319,6 +338,10 @@ pub struct Avatar {
     /// every catalogue corner (`tests/budget.rs` holds it): the scalp's stand-in
     /// is on the far grid ([`crate::hair::shell::FAR_COLUMNS`]) and a region
     /// cheaper than its stand-in keeps its cards.
+    ///
+    /// **A beast's is its whole fur** (#407), which is the whole of its hair's
+    /// draw: every zone's cards as the near tier grows them, and the mane's solid on
+    /// a coarser grid, bound and placed as the near fur is.
     #[cfg_attr(feature = "serde-avatar", serde(default))]
     pub far_hair: Option<AvatarMesh>,
     /// The parts the merge was made from.
@@ -892,7 +915,7 @@ impl Avatar {
         // **A beast's fur** (#369): the hair system's grown layer on the
         // body's own zones, coloured from its coat and bound as its skin is,
         // under a ceiling of its own.
-        let fur = match (&record.archetype, &anatomy) {
+        let (fur, far_fur) = match (&record.archetype, &anatomy) {
             (crate::plan::Archetype::Quadruped(params), Some(anatomy)) if params.fur.any() => {
                 let bed = crate::hair::fur::Bed {
                     body: &body,
@@ -906,11 +929,19 @@ impl Avatar {
                         .as_ref()
                         .map_or(0, |beast| beast.adornments.triangles_past_a_unicorn()),
                 };
-                Some(crate::hair::fur::grow(&bed, &params.fur, record.seed))
+                // And its far tier, asked for (#407): a beast grows no person's
+                // hair, so its fur is the whole of the hair's draw a far tier
+                // stands in for.
+                let (near, far) =
+                    crate::hair::fur::grow(&bed, &params.fur, record.seed, config.far_hair);
+                (Some(near), far)
             }
-            _ => None,
-        }
-        .filter(|fur| fur.mesh.face_count() > 0);
+            _ => (None, None),
+        };
+        let fur = fur.filter(|fur| fur.mesh.face_count() > 0);
+        // The far tier's fur is drawn as it is placed, below: nothing else reads it,
+        // so the parts do not keep it.
+        let far_fur = far_fur.filter(|far| fur.is_some() && far.mesh.face_count() > 0);
 
         let adornments = beast
             .as_ref()
@@ -950,7 +981,8 @@ impl Avatar {
             .parts
             .far_hair
             .as_ref()
-            .map(|far| avatar.placed_hair(far));
+            .map(|far| avatar.placed_hair(far))
+            .or_else(|| far_fur.as_ref().map(placed_fur));
         avatar.budget = avatar.measure();
         Some(avatar)
     }
@@ -1180,14 +1212,10 @@ impl Avatar {
             .as_ref()
             .filter(|fur| fur.mesh.face_count() > 0)
         {
-            let mut mesh = fur.mesh.clone();
-            mesh.set_normals(mesh.vertex_normals());
+            let placed = placed_fur(fur);
             match merged.iter_mut().find(|drawn| drawn.kind == MeshKind::Hair) {
-                Some(hair) => hair.mesh.append(&mesh),
-                None => merged.push(AvatarMesh {
-                    kind: MeshKind::Hair,
-                    mesh,
-                }),
+                Some(hair) => hair.mesh.append(&placed.mesh),
+                None => merged.push(placed),
             }
         }
 
@@ -2547,6 +2575,134 @@ mod tests {
         assert!(
             plain.skin.albedo != back.skin.albedo,
             "the colours were painted"
+        );
+    }
+
+    /// A beast with no mane draws its fur as it did before the mane was a solid
+    /// (#407), every channel to the bit: shaded by its own faces where it is drawn,
+    /// and with no far tier. Its lofted cards carry normals of their own, and a draw
+    /// that kept those because there was one a vertex moved every maneless beast's
+    /// fur while its parts held. The hashes are HEAD's at 0.19.1, written from it.
+    #[test]
+    fn a_beast_with_no_mane_draws_its_fur_as_it_did() {
+        fn hashed(mesh: &PolyMesh) -> u64 {
+            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+            let mut word = |word: u32| {
+                for byte in word.to_le_bytes() {
+                    hash ^= u64::from(byte);
+                    hash = hash.wrapping_mul(0x0100_0000_01b3);
+                }
+            };
+            for at in &mesh.positions {
+                at.to_array()
+                    .into_iter()
+                    .for_each(|value| word(value.to_bits()));
+            }
+            for face in &mesh.faces {
+                word(face.len() as u32);
+                face.iter().for_each(|&corner| word(corner));
+            }
+            for uv in &mesh.uvs {
+                uv.to_array()
+                    .into_iter()
+                    .for_each(|value| word(value.to_bits()));
+            }
+            for normal in &mesh.normals {
+                normal
+                    .to_array()
+                    .into_iter()
+                    .for_each(|value| word(value.to_bits()));
+            }
+            for colour in &mesh.colours {
+                colour
+                    .to_array()
+                    .into_iter()
+                    .for_each(|value| word(value.to_bits()));
+            }
+            for skin in &mesh.skin {
+                for influence in skin {
+                    word(u32::from(influence.joint));
+                    word(influence.weight.to_bits());
+                }
+            }
+            hash
+        }
+        let config = AvatarConfig {
+            atlas: 64,
+            far_hair: true,
+            ..AvatarConfig::default()
+        };
+        for (seed, every_zone, was) in [
+            (0, true, 0x204c_5bce_8308_28fc_u64),
+            (2, false, 0xfcc7_73c3_ee45_2b70),
+            (5, true, 0x9075_860d_0fe5_9da6),
+        ] {
+            let mut record =
+                AvatarRecord::new("Maneless", Archetype::Quadruped(Default::default()));
+            record.reroll(seed);
+            let Archetype::Quadruped(params) = &mut record.archetype else {
+                unreachable!("a beast")
+            };
+            params.fur.mane = 0.0;
+            if every_zone {
+                params.fur.ruff = 0.7;
+                params.fur.tail = 0.7;
+                params.fur.feathering = 0.7;
+                params.fur.tufts = 0.7;
+            }
+            let built = Avatar::build_with(&record, &config).expect("builds");
+            assert!(built.far_hair.is_none(), "seed {seed}: a far tier");
+            let drawn = built
+                .meshes
+                .iter()
+                .find(|drawn| drawn.kind == MeshKind::Hair)
+                .expect("the premise: fur");
+            assert_eq!(hashed(&drawn.mesh), was, "seed {seed}: drawn as it was not");
+        }
+    }
+
+    /// A maned beast's far tier reaches the far side of a worker boundary (#407), as
+    /// a person's does: it is placed into [`Avatar::far_hair`] where the body is
+    /// built, from fur the parts do not keep, so nothing on the far side rebuilds it
+    /// from what stayed behind. The near draw comes over with the normals its mane is
+    /// shaded by, and the far one with the mane's solid on its far grid.
+    #[cfg(feature = "serde-avatar")]
+    #[test]
+    fn a_sent_beast_keeps_its_far_tier() {
+        let mut params = crate::QuadrupedParams::default();
+        params.set_kind(crate::Family::Horse, None, 0.0);
+        params.fur.mane = 0.8;
+        let config = AvatarConfig {
+            atlas: 64,
+            far_hair: true,
+            ..AvatarConfig::default()
+        };
+        let record = AvatarRecord::new("Sent", Archetype::Quadruped(params));
+        let built = Avatar::build_with(&record, &config).expect("builds");
+        let far = built.far_hair.as_ref().expect("the premise: a far tier");
+        let wire = serde_json::to_string(&built).expect("serialises");
+        let back: Avatar = serde_json::from_str(&wire).expect("deserialises");
+        assert!(
+            back.parts.fur.is_none(),
+            "the premise: the fur stayed behind"
+        );
+        assert_eq!(back.far_hair.as_ref(), Some(far), "the far tier crossed");
+        let near = |avatar: &Avatar| {
+            avatar
+                .meshes
+                .iter()
+                .find(|drawn| drawn.kind == MeshKind::Hair)
+                .expect("a hair draw")
+                .clone()
+        };
+        assert_eq!(near(&back), near(&built), "the near draw crossed");
+        for drawn in [near(&back), back.far_hair.clone().expect("crossed")] {
+            assert_eq!(drawn.mesh.normals.len(), drawn.mesh.positions.len());
+            assert_eq!(drawn.mesh.skin.len(), drawn.mesh.positions.len());
+        }
+        assert!(
+            far.mesh.face_count() < near(&back).mesh.face_count(),
+            "the far tier is the near one"
         );
     }
 
