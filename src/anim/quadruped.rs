@@ -787,16 +787,20 @@ pub(super) fn depth_at(
 /// each measured from its own girdle's ground, which the trunk is ridden over,
 /// each with how far through its stance it is: a paw leaving the ground asks
 /// less of the sink the nearer it is to leaving, by [`LEAVING`], and nothing as
-/// it lifts, by as much as the ground is [`Girdles::steep`]: on the level, as
-/// much as [`depth_at`] asks of it. Asked whole to the last, a girdle sank all through a stance for the
-/// paw at its back, lowest on a slope, and rose by all of it in the frame that
-/// paw left the ground: a horse's pelvis 300 mm up a .4 grade.
+/// it lifts, and in a stride that goes nowhere or turns, `settling` of `0..=1`,
+/// or a fore's at a walk ([`WALKING_DUTY`]), a paw landing nothing as it lands
+/// and more as it settles, all by as much as the ground is [`Girdles::steep`]:
+/// on the level, as much as [`depth_at`] asks of it. Asked whole to the last, a
+/// girdle sank all through a stance for the paw at its back, lowest on a slope,
+/// and rose by all of it in the frame that paw left the ground: a horse's pelvis
+/// 300 mm up a .4 grade.
 pub(super) fn depth_leaving(
     rig: &Rig,
     gait: &Gait,
     cycle: f32,
     standing: impl Iterator<Item = (Limb, Vec3, f32)>,
     girdles: Girdles,
+    settling: f32,
 ) -> f32 {
     let (pelvis, withers) = Ride::of(gait, Kin::of(rig)).at(cycle);
     standing
@@ -806,14 +810,61 @@ pub(super) fn depth_leaving(
             let sink = sink_for(rig, limb, paw)? + rides;
             let left = ((1.0 - through) / LEAVING).clamp(0.0, 1.0);
             let fade = left * left * (3.0 - 2.0 * left);
+            // And, in a stride that goes nowhere or turns, comes into it as it
+            // lands: asked whole the frame it came down, a pivot's paw landing
+            // down a slope tipped a horse's trunk seven degrees in that frame.
+            // A straight stride plans for its landing paw, and easing that in
+            // changed where a walk breaking into a trot threw a hind paw (see
+            // the walk-to-trot issue).
+            //
+            // **A fore's at a walk too** (#413): a fore's stride is planned on
+            // the level, so nothing of a slope is planned for its landing paw
+            // whichever way the stride goes, and a dog walking down a 25
+            // degree slope tipped its trunk 4.4 degrees in the frame each
+            // forepaw came down. Not at a trot or faster, where it moved a
+            // hind paw a dog breaking into a trot throws past what a frame
+            // allows (the walk-to-trot issue again); faded out through the
+            // walk's lowest duties, so the walk's step to a run moves little.
+            let landed = (through / LEAVING).clamp(0.0, 1.0);
+            let landed = landed * landed * (3.0 - 2.0 * landed);
+            let settling = if limb.is_fore() {
+                let [slow, fast] = WALKING_DUTY;
+                let walking = ((gait.duty - slow) / (fast - slow)).clamp(0.0, 1.0);
+                settling.max(walking * walking * (3.0 - 2.0 * walking))
+            } else {
+                settling
+            };
+            let fade = fade * (1.0 - settling * (1.0 - landed));
             Some(sink * (1.0 - girdles.steep() * (1.0 - fade)))
         })
         .fold(0.0, f32::max)
 }
 
-/// How late in its stance a paw on a slope begins to ask less of the sink, as
-/// a share of the stance. Provenance: **chosen** (#399): the last quarter, where
-/// a paw is rolling off its toes.
+/// The duties over which a fore's landing paw comes to be eased into its
+/// girdle's sink at every stride, wholly from the second (#413). Provenance:
+/// **measured** (#413): over the sweeps a four-legged walk's duty runs from
+/// 0.58 to 0.68 and a trot's from 0.44 to 0.47; a walk at its slowest, its
+/// duty highest, is eased in wholly, and at its fastest a fifth, so stepping to
+/// a trot changes that little.
+const WALKING_DUTY: [f32; 2] = [0.55, 0.65];
+
+/// How short a stride is that goes nowhere, as a share of the hip's height: a
+/// pivot's, whose paws land with nothing planned for them. Provenance:
+/// **chosen** (#413): a quarter, under the shortest walk's and over a pivot's
+/// none.
+pub(super) const STILL_STRIDE: f32 = 0.25;
+
+/// How far a stride's heading turns across a stance, in radians, for its
+/// landing paws to have nothing planned for them, as a pivot's: the stride's
+/// plan is a straight one's. Provenance: **chosen** (#413): about nine
+/// degrees, which a body turning where it stands or walking a tight curve
+/// turns and a straight stride, at none, never does.
+pub(super) const TURNING_STRIDE: f32 = 0.15;
+
+/// How late in its stance a paw on a slope begins to ask less of the sink, and
+/// how early in it it has come to ask all of it, as a share of the stance.
+/// Provenance: **chosen** (#399): the last quarter, where a paw is rolling off
+/// its toes, and the first, where it is taking the weight.
 const LEAVING: f32 = 0.25;
 
 /// The deepest a girdle of a four-legged body rides in `gait`: [`depth`] and
@@ -1132,7 +1183,7 @@ pub(super) fn articulate<F>(
 /// the hips' and the shoulders', and how far ahead of the one the other is
 /// read, all in the frame the body is posed in.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Girdles {
+pub(crate) struct Girdles {
     /// How high the ground stands under the hind feet and under the fore.
     pub(super) hips: f32,
     pub(super) shoulders: f32,
@@ -1168,6 +1219,16 @@ impl Girdles {
     pub(super) fn steep(self) -> f32 {
         let t = ((self.pitch().abs() + self.roll().abs()) / STEEP).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
+    }
+
+    /// The level ground read where these are: nothing under either girdle.
+    fn level(self) -> Self {
+        Self {
+            hips: 0.0,
+            shoulders: 0.0,
+            across: 0.0,
+            ..self
+        }
     }
 
     /// These girdles with the shoulders sunk `by` further than the hips.
@@ -1264,6 +1325,204 @@ where
         across,
         apart: (sides[1].2 - sides[0].2).abs().max(f32::EPSILON),
     })
+}
+
+/// Where [`girdle_ground`] reads `rig`'s girdles, in the frame it is posed in:
+/// along it the hind feet's and the fore feet's, and across it the left feet's
+/// and the right's, or `None` for a body that does not stand on four (#413).
+pub(super) fn girdle_spacing(rig: &Rig) -> Option<[f32; 4]> {
+    if !four_legged(rig) {
+        return None;
+    }
+    let mut spacing = [0.0f32; 4];
+    for limb in rig.ground_contacts() {
+        let home = home_of(rig, limb)?;
+        spacing[usize::from(limb.is_fore())] += home.z * 0.5;
+        spacing[2 + usize::from(!limb.is_left())] += home.x * 0.5;
+    }
+    Some(spacing)
+}
+
+/// Stands a four-legged body ridden over `girdles` on its feet (#413): each
+/// foot solved back over where it rests, onto the ground under it, and planted,
+/// by as much as the ground is [`Girdles::steep`], so ground near the level
+/// leaves the pose as the ride left it. What a body standing in its rest pose
+/// needs and the idle does for itself: the ride turns the legs with the trunk,
+/// and on a slope that carries every foot off the ground under it.
+pub(super) fn stand_on<F>(rig: &Rig, pose: &mut Pose, girdles: Girdles, ground: F)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    let steep = girdles.steep();
+    if steep <= 0.0 || !four_legged(rig) {
+        return;
+    }
+    let ridden = pose.clone();
+    let contacts = rig.ground_contacts();
+    for &limb in &contacts {
+        let Some(home) = home_of(rig, limb) else {
+            continue;
+        };
+        let goal = ground(home).map_or(home, |below| home + Vec3::Y * below.position.y);
+        super::ground::solve_contact(rig, pose, limb, goal);
+    }
+    super::ground::plant_feet_of(
+        rig,
+        pose,
+        &contacts,
+        &ground,
+        &super::ground::FootingConfig::default(),
+    );
+    if steep < 1.0 {
+        for (rotation, was) in pose.rotations.iter_mut().zip(&ridden.rotations) {
+            *rotation = det::slerp(*was, *rotation, steep);
+        }
+        pose.translation = ridden.translation.lerp(pose.translation, steep);
+    }
+}
+
+/// The ground a four-legged body's trunk rides this frame (#413): `read`, what
+/// [`girdle_ground`] answers now, or as far toward it from `ridden`, what the
+/// trunk rode the last frame, as [`RIDE_TURN`] and [`RIDE_RISE`] allow in
+/// `delta` seconds. Either `None` is the level.
+///
+/// **A consumer's ground can change source in a frame**: Overlands goes between
+/// its terrain and a level floor at the edge of a pad or a deck, on a lost
+/// physics step and at a landing, and taken whole each switch on a slope turned
+/// the trunk by the slope in that frame, a dog's by 25 degrees. Followed, it
+/// turns over a few frames. The rates are far above anything ground the body
+/// walks over asks, so everywhere else, and on the level, what is ridden is
+/// `read` itself, to the bit.
+///
+/// **What it costs: the feet go with the trunk.** While the trunk follows, every
+/// state is handed the ground laid on what is ridden ([`Shift`]), so each foot
+/// stands on that plane and not on the ground really under it. Through a 25
+/// degree switch a standing dog's feet stood up to 132 mm off the real ground in
+/// the switch frame, a horse's 351, and more than 10 mm for eight or nine frames
+/// after; walking, up to 261 and 501 mm. Stood on the real ground instead, the
+/// feet would snap by the whole switch in its frame, the very jump this is here
+/// to spread, and reach from a trunk that had not yet turned.
+pub(super) fn follow(
+    rig: &Rig,
+    ridden: Option<Girdles>,
+    read: Option<Girdles>,
+    delta: f32,
+) -> Option<Girdles> {
+    if !four_legged(rig) {
+        return None;
+    }
+    let (from, to) = match (ridden, read) {
+        (None, None) => return None,
+        (Some(from), None) => (from, from.level()),
+        (None, Some(to)) => (to.level(), to),
+        (Some(from), Some(to)) => (from, to),
+    };
+    let Some(hip) = hip_height(rig).filter(|hip| *hip > 0.0) else {
+        return read;
+    };
+    let rise = RIDE_RISE * (super::speed::GRAVITY * hip).sqrt() * delta;
+    let turn = RIDE_TURN * delta;
+    let middle = |girdles: Girdles| (girdles.hips + girdles.shoulders) * 0.5;
+    let lift = |girdles: Girdles| girdles.shoulders - girdles.hips;
+    let toward = super::rest::toward;
+    let height = toward(middle(from), middle(to), rise);
+    let lifted = toward(lift(from), lift(to), turn * to.between);
+    let across = toward(from.across, to.across, turn * to.apart);
+    if height == middle(to) && lifted == lift(to) && across == to.across {
+        return read;
+    }
+    Some(Girdles {
+        hips: height - lifted * 0.5,
+        shoulders: height + lifted * 0.5,
+        across,
+        ..to
+    })
+}
+
+/// How fast a four-legged body's trunk follows the pitch and the roll of the
+/// ground under its girdles, in radians a second, and how fast its height, at
+/// a share of `sqrt(g H)` of its hip's height `H`: see [`follow`]. The turn is
+/// not scaled by the body, because what turns the ground under a body fastest
+/// short of a switch is the body turning on a slope, which goes at the turn
+/// whatever its size. Provenance: **measured** (#413): over the sweeps' ground
+/// the most asked was 1.8 radians a second of pitch and 1.4 of roll, a dog
+/// crossing the step on rolling ground, 0.8 turning where it stands on a 25
+/// degree slope, and 0.31 of `sqrt(g H)` of height, the same step, all at
+/// sixty frames a second; a step's read jumps in the frame a point crosses it,
+/// so faster it asks more and is followed over a frame or two. A 25 degree
+/// switch is followed over about nine frames at sixty a second, 2.9 degrees a
+/// frame.
+const RIDE_TURN: f32 = 3.0;
+const RIDE_RISE: f32 = 1.0;
+
+/// How the ground a body is given differs from the ground read under it
+/// (#413): a plane, laid in the frame the body is posed in, which added to what
+/// is read makes [`girdle_ground`] answer what the trunk rides, so its feet are
+/// stood where its trunk is and not on ground it has yet to turn onto.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Shift {
+    /// How much higher the ground is laid under the hips' read.
+    height: f32,
+    /// How much it rises per metre ahead, and per metre to the left.
+    along: f32,
+    across: f32,
+    /// Where the hips' read is along the body, and the middle across it.
+    behind: f32,
+    middle: f32,
+}
+
+impl Shift {
+    /// The plane that lays the ground `read` stands for on `ridden`'s, or
+    /// `None` where the two are the same, or the body does not stand on four.
+    pub(super) fn between(
+        rig: &Rig,
+        read: Option<Girdles>,
+        ridden: Option<Girdles>,
+    ) -> Option<Self> {
+        if !four_legged(rig) {
+            return None;
+        }
+        let (read, ridden) = match (read, ridden) {
+            (None, None) => return None,
+            (Some(read), None) => (read, read.level()),
+            (None, Some(ridden)) => (ridden.level(), ridden),
+            (Some(read), Some(ridden)) => (read, ridden),
+        };
+        if read == ridden {
+            return None;
+        }
+        let [behind, _, left, right] = girdle_spacing(rig)?;
+        let wide = left - right;
+        if wide.abs() <= f32::EPSILON {
+            return None;
+        }
+        Some(Self {
+            height: ridden.hips - read.hips,
+            along: ridden.rise() - read.rise(),
+            across: (ridden.across - read.across) / wide,
+            behind,
+            middle: (left + right) * 0.5,
+        })
+    }
+
+    /// `below` laid on the plane: raised by it where it is, and its normal
+    /// turned by its slope.
+    pub(super) fn apply(self, below: Ground) -> Ground {
+        let at = below.position;
+        let raised =
+            self.height + self.along * (at.z - self.behind) + self.across * (at.x - self.middle);
+        let normal = if below.normal.y > f32::EPSILON {
+            let slope = Vec2::new(below.normal.x, below.normal.z) / -below.normal.y
+                + Vec2::new(self.across, self.along);
+            Vec3::new(-slope.x, 1.0, -slope.y).normalize()
+        } else {
+            below.normal
+        };
+        Ground {
+            position: Vec3::new(at.x, at.y + raised, at.z),
+            normal,
+        }
+    }
 }
 
 /// How steep, pitch and roll together in radians, ground is where a beast

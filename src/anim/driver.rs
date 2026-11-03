@@ -122,6 +122,12 @@ pub const PIVOT_FROM: f32 = 0.15;
 /// ends, which is the straight stride to the bit.
 const TURN_SETTLED: f32 = 1e-4;
 
+/// How much longer than [`DriverConfig::blend`] a four-legged body takes going
+/// into or out of the water on a slope, at the steepest (#413). Provenance:
+/// **chosen** (#413): three blends, which brings a 25 degree slope's whole turn
+/// under two degrees a frame at sixty frames a second.
+const SWIM_TURN: f32 = 2.0;
+
 /// A layer a caller lays over the body part-way through a driven frame.
 ///
 /// Everything a layer is given is already posed, and it writes only what it
@@ -921,6 +927,20 @@ pub struct Driver {
     /// What a beast's rests solve from its rig alone, kept while the rig is
     /// the same (#377): a held sit costs what an idle frame does.
     rests: super::rest::Rests,
+    /// The ground a four-legged body's trunk rode on the last frame it stood
+    /// on any (#413): what a leap's flight rides, and what the water is gone
+    /// into from. `None` on the level and for any other body.
+    grounded: Option<super::quadruped::Girdles>,
+    /// The ground under a four-legged body's girdles its trunk rode the last
+    /// frame (#413), as it follows what is read there: `None` before the first,
+    /// after a warp on the ground, a hold at rest ([`Hold::Rest`]; a held pose
+    /// keeps it) or a change of body, and in the water, where it takes what it
+    /// reads.
+    ridden: Option<Option<super::quadruped::Girdles>>,
+    /// Where the girdles of the body last driven are read (#413): see
+    /// `quadruped::girdle_spacing`. What was ridden and stood on is forgotten
+    /// when this changes.
+    girdled: Option<[f32; 4]>,
 }
 
 /// How far one paddle carries a swimming beast, in its leg's reach (#370).
@@ -971,6 +991,9 @@ impl Driver {
             blend_asked: false,
             springs: None,
             rests: super::rest::Rests::default(),
+            grounded: None,
+            ridden: None,
+            girdled: None,
         }
     }
 
@@ -1127,9 +1150,18 @@ impl Driver {
     /// clears there.
     ///
     /// The ears' springs start again from where the pose puts them, rather
-    /// than swinging in from where the body was (#370).
+    /// than swinging in from where the body was (#370), and a four-legged
+    /// trunk rides the ground it is put on at once rather than turning onto it
+    /// from where it was (#413). In a leap's flight it lands as it would have,
+    /// turning onto the ground it comes down on from the ground it left: taken
+    /// at once there, a dog warped in the air turned 25 degrees in a frame as
+    /// it landed.
     pub fn warped(&mut self) {
         self.footholds.reset();
+        // Not in a leap's flight, which rides what it left and lands from it.
+        if self.airborne.is_none_or(|air| air.landed) {
+            self.ridden = None;
+        }
         self.paced = None;
         self.turning = 0.0;
         if let Some(springs) = &mut self.springs {
@@ -1198,6 +1230,44 @@ impl Driver {
         }
         self.advance_airborne(rig, vertical, delta, swimming);
         let airborne = self.airborne.is_some();
+        // **The ground the trunk rides follows what is read under it** (#413),
+        // so a consumer's ground switching source in a frame turns a beast's
+        // trunk over a few: see `quadruped::follow`. Every state is handed the
+        // ground laid on what is ridden, its feet with its trunk, and where the
+        // two are the same, as on the level and over any ground walked on, the
+        // ground as it came. Nothing is followed in the water, which floats the
+        // trunk level, nor in a leap's flight, which reads nothing below.
+        // What was ridden is another body's where the girdles stand elsewhere:
+        // a horse's heights carried onto a dog mid-flight flew it 20 cm low,
+        // and a beast's onto a person shifted the person's ground 138 mm.
+        let spacing = super::quadruped::girdle_spacing(rig);
+        if spacing != self.girdled {
+            self.girdled = spacing;
+            self.grounded = None;
+            self.ridden = None;
+        }
+        let read = super::quadruped::girdle_ground(rig, &ground);
+        let flying = self.airborne.is_some_and(|air| !air.landed);
+        let shift = if swimming {
+            self.ridden = None;
+            None
+        } else if flying {
+            None
+        } else {
+            let ridden = match self.ridden {
+                Some(was) => super::quadruped::follow(rig, was, read, delta),
+                None => read,
+            };
+            self.ridden = Some(ridden);
+            super::quadruped::Shift::between(rig, read, ridden)
+        };
+        if !airborne && !swimming {
+            self.grounded = self.ridden.flatten();
+        }
+        let ground = move |at: Vec3| match shift {
+            None => ground(at),
+            Some(shift) => ground(at).map(|below| shift.apply(below)),
+        };
 
         // The eased pace: a first-order lag toward the caller's raw speed,
         // alive only while the gait is. The gate below stays on the RAW speed
@@ -1474,7 +1544,19 @@ impl Driver {
             self.footholds.reset();
         }
         match locomotion {
-            Source::Rest | Source::Gesture => {}
+            // A beast with no idle stands in its rest pose, and rides its
+            // girdles there as every other state does (#413): stood level, a
+            // rest set off from the ridden trunk turned it 5.4 degrees a frame.
+            // And its feet are stood on the ground under them, as the idle
+            // stands them: turned with the trunk alone, a dog's paws sank 120
+            // mm into a 25 degree slope and a horse's 242.
+            Source::Rest => {
+                if let Some(girdles) = super::quadruped::girdle_ground(rig, &ground) {
+                    super::quadruped::ride_ground(rig, &mut pose, girdles);
+                    super::quadruped::stand_on(rig, &mut pose, girdles, ground);
+                }
+            }
+            Source::Gesture => {}
             Source::Idle => {
                 // The whole layer through one call, which advances the schedule
                 // and poses every layer together: a stage a caller has to
@@ -1511,7 +1593,8 @@ impl Driver {
                     _ => self.airborne.map(|air| (air.leap, air.elapsed)),
                 };
                 if let Some((leap, elapsed)) = leaping {
-                    let leapt = leap.drive(rig, &mut pose, elapsed, ground);
+                    let leapt =
+                        leap.drive_riding(rig, &mut pose, elapsed, ground, self.grounded, true);
                     count_straining(&mut straining, &leapt.straining);
                     if leapt.stage.is_grounded() {
                         steps.stance = rig.ground_contacts();
@@ -1629,13 +1712,29 @@ impl Driver {
             && (asked || pivot_edge || repatterned || self.source.needs_blend(source))
             && let (Some(previous), Some(current)) = (&self.previous, &self.current)
         {
-            self.transition = Some(Inertializer::start(
-                previous,
-                current,
-                &pose,
-                delta,
-                config.blend,
-            ));
+            // **Into and out of the water slower, on a slope** (#413): a
+            // swimming body floats level and one on the ground rides its
+            // girdles, so the change turns the whole trunk by the slope; over
+            // the one blend a dog on a 25 degree slope turned it 6 degrees a
+            // frame. Longer by as much as the ground under it is steep; on the
+            // level, the blend it always was. The steeper of the ground now
+            // and the last stood on: a consumer may answer nothing under a
+            // body the frame it begins to swim, as Overlands answers a swimmer.
+            let swum = (source == Source::Swim) != (self.source == Source::Swim);
+            let steep = if swum {
+                let read = |girdles: Option<super::quadruped::Girdles>| {
+                    girdles.map_or(0.0, super::quadruped::Girdles::steep)
+                };
+                read(super::quadruped::girdle_ground(rig, &ground)).max(read(self.grounded))
+            } else {
+                0.0
+            };
+            let blend = if steep > 0.0 {
+                config.blend * (1.0 + SWIM_TURN * steep)
+            } else {
+                config.blend
+            };
+            self.transition = Some(Inertializer::start(previous, current, &pose, delta, blend));
         }
         self.source = source;
         let mut posed = match &mut self.transition {
@@ -2042,6 +2141,7 @@ impl Driver {
         }
         self.source = Source::Rest;
         self.transition = None;
+        self.ridden = None;
         self.previous = self.current.take();
         self.current = Some(posed.clone());
         Driven {

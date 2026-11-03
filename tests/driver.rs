@@ -4910,6 +4910,351 @@ fn a_beast_on_nearly_level_ground_moves_as_it_does_on_the_level() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// Standing, sitting, getting up, lying and getting up again, where it stands:
+/// (seconds, gesture on the first frame).
+const NEAR_LEVEL_RESTS: [(f32, Option<&str>); 5] = [
+    (1.0, None),
+    (3.0, Some("Sit")),
+    (2.5, Some(emote::GET_UP)),
+    (3.0, Some("Lie Down")),
+    (3.0, Some(emote::GET_UP)),
+];
+
+#[test]
+fn a_beast_rests_on_nearly_level_ground_as_it_does_on_the_level() {
+    // #413: a rest laid on ground a hair off the level re-solved its folds for
+    // the millimetres the ground was off, and its answers came out tens of
+    // millimetres off what the level holds: a horse sitting on a millimetre of
+    // noise sat 59 mm off it and moved 32 mm in a frame more than the level's
+    // sit, a rolled body getting up 39 and 36. Ground near the level is now
+    // laid as the level is, raised to it, by as much as it is near: every joint
+    // within a few millimetres of where the level stands it, raised with the
+    // ground, and moving in a frame within as much again of what it moves on
+    // the level.
+    let mut wrong = Vec::new();
+    for (what, avatar) in slope_beasts() {
+        let rig = &avatar.rig;
+        let rested = |ground: NearLevel| {
+            let mut driver = Driver::seeded(INSTRUMENT_SEED);
+            let mut posed = Vec::new();
+            for (seconds, gesture) in NEAR_LEVEL_RESTS {
+                #[expect(clippy::cast_possible_truncation, reason = "a few hundred frames")]
+                #[expect(clippy::cast_sign_loss, reason = "a positive time")]
+                let frames = (seconds / STEP).round() as usize;
+                for index in 0..frames {
+                    let inputs = Inputs {
+                        delta: STEP,
+                        gesture: gesture.filter(|_| index == 0),
+                        ..Inputs::default()
+                    };
+                    let pose = driver
+                        .drive(rig, &inputs, move |point| {
+                            Some(ground.answer(Vec3::ZERO, 0.0, point))
+                        })
+                        .expect("an unheld body is posed")
+                        .pose;
+                    posed.push(pose.forward(rig).positions);
+                }
+            }
+            posed
+        };
+        let level = rested(NearLevel::Level);
+        for ground in [
+            NearLevel::Grade(1.0e-4),
+            NearLevel::Noise(1.0e-3),
+            NearLevel::Raised(0.02),
+            NearLevel::Raised(-0.02),
+        ] {
+            let raised = Vec3::Y * ground.raised();
+            let off: Vec<Vec<Vec3>> = rested(ground)
+                .iter()
+                .zip(&level)
+                .map(|(on, flat)| {
+                    on.iter()
+                        .zip(flat)
+                        .map(|(on, flat)| *on - *flat - raised)
+                        .collect()
+                })
+                .collect();
+            let apart = off
+                .iter()
+                .flatten()
+                .map(|by| by.length())
+                .fold(0.0f32, f32::max);
+            let popped = off
+                .windows(2)
+                .flat_map(|pair| {
+                    pair[0]
+                        .iter()
+                        .zip(&pair[1])
+                        .map(|(was, now)| was.distance(*now))
+                })
+                .fold(0.0f32, f32::max);
+            if apart > REST_NEAR_OFF || popped > REST_NEAR_POP {
+                wrong.push(format!(
+                    "{what} on {ground:?}: a joint rested {:.1} mm off where level ground \
+                     rests it, past {:.1}, and moved {:.1} mm in a frame more than there, past \
+                     {:.1}",
+                    apart * 1000.0,
+                    REST_NEAR_OFF * 1000.0,
+                    popped * 1000.0,
+                    REST_NEAR_POP * 1000.0
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How far any joint of a beast resting on ground a hair off the level, or the
+/// level raised 2 cm, may stand from where the level stands it, and how much
+/// more than there it may move in a frame, in metres. Provenance: **measured**
+/// (#413): at most 4.8 mm off, a rolled body on the raised level as it comes
+/// up from lying onto the idle, which stands it there off where the level does
+/// (see [`RAISED_OFF`]), as HEAD's 3.9 for a dog; and 1.5 mm more in a frame, a
+/// dog on the noise. A horse sat 59 mm off on the noise and moved 32 more.
+const REST_NEAR_OFF: f32 = 0.006;
+const REST_NEAR_POP: f32 = 0.003;
+
+/// A plane rising `grade` per metre ahead of a body standing at the origin
+/// facing `+Z`, or [`level_ground`] itself at none.
+fn graded(grade: f32) -> impl Fn(Vec3) -> Option<symbios_avatar::anim::Ground> + Copy {
+    move |point: Vec3| {
+        if grade == 0.0 {
+            return level_ground(point);
+        }
+        Some(symbios_avatar::anim::Ground {
+            position: Vec3::new(point.x, grade * point.z, point.z),
+            normal: Vec3::new(0.0, 1.0, -grade).normalize(),
+        })
+    }
+}
+
+/// How high each pad of `rig` stands over a plane rising `grade` per metre
+/// ahead, against how high it stands over the level, in metres: after eleven
+/// seconds standing where it is, `gesture` asked a second in, with the idle or
+/// without it.
+fn pads_over(rig: &Rig, gesture: Option<&str>, grade: f32, idle: bool) -> Vec<(Limb, f32)> {
+    let stood = |grade: f32| {
+        let mut driver = Driver::new(
+            DriverConfig {
+                idle,
+                ..DriverConfig::default()
+            },
+            INSTRUMENT_SEED,
+        );
+        let mut posed = Vec::new();
+        for frame in 0..660 {
+            let inputs = Inputs {
+                delta: STEP,
+                gesture: gesture.filter(|_| frame == 60),
+                ..Inputs::default()
+            };
+            posed = driver
+                .drive(rig, &inputs, graded(grade))
+                .expect("an unheld body is posed")
+                .pose
+                .forward(rig)
+                .positions;
+        }
+        posed
+    };
+    let (level, sloped) = (stood(0.0), stood(grade));
+    rig.ground_contacts()
+        .into_iter()
+        .map(|limb| {
+            let pad = rig.in_zone(Zone::Extremity(limb))[0];
+            (limb, sloped[pad].y - grade * sloped[pad].z - level[pad].y)
+        })
+        .collect()
+}
+
+#[test]
+fn a_beast_at_rest_on_a_gentle_slope_keeps_its_feet_on_it() {
+    // #413: laying a rest near the level as the level is, raised to the plane,
+    // was asked of any plane rising under a tenth, about six degrees, and laid
+    // level the feet of a body sitting on one went through it and stood off it:
+    // a horse sitting on a grade of .04 had its hind soles 24.5 mm into it and
+    // its fore 11.2 off, against a tenth of a millimetre in HEAD. Only ground
+    // truly near the level is laid as the level is now. And a beast with no
+    // idle stood its rest pose's feet turned with its ridden trunk, a dog's 120
+    // mm into a 25 degree slope: they stand on it now, as the idle's do.
+    let mut wrong = Vec::new();
+    for (what, avatar) in slope_beasts() {
+        let rig = &avatar.rig;
+        let mut asked = Vec::new();
+        for gesture in ["Sit", "Lie Down"] {
+            for grade in [0.01, 0.02, 0.04, 0.06, 0.1] {
+                asked.push((gesture, grade, true));
+            }
+        }
+        for grade in [0.1, GRADE_25] {
+            asked.push(("standing with no idle", grade, false));
+        }
+        for (rest, grade, idle) in asked {
+            let gesture = Some(rest).filter(|_| idle);
+            for (limb, off) in pads_over(rig, gesture, grade, idle) {
+                if off.abs() > GENTLE_SLOPE_OFF {
+                    wrong.push(format!(
+                        "{what} {rest} on a grade of {grade}: its {limb:?} pad stood {:.1} mm \
+                         off the slope against the level, past {:.1}",
+                        off * 1000.0,
+                        GENTLE_SLOPE_OFF * 1000.0
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How far a pad of a beast at rest on a slope may stand off it, against how
+/// far it stands off the level, in metres. Provenance: **measured** (#413):
+/// HEAD's own, a horse lying on a grade of .1, 0.46 mm.
+const GENTLE_SLOPE_OFF: f32 = 0.001;
+
+#[test]
+fn what_a_body_stood_on_goes_no_further_than_the_body() {
+    // #413: the ground a four-legged trunk last rode and stood on is kept on
+    // its driver, and was kept when the driver went on to another body: a
+    // dog's carried onto a person shifted the person's ground 138 mm in its
+    // first frame, 348 if it leapt, and a horse's carried onto a dog in the air
+    // flew the dog on the horse's heights, 20 cm low. A driver goes on from the
+    // ground a body stood on now exactly as from the level: what a person or
+    // another beast does next is the same to the bit.
+    let bodies = slope_beasts();
+    let (dog, horse) = (&bodies[0].1.rig, &bodies[1].1.rig);
+    let mut person = AvatarRecord::rolled("Person", Archetype::default(), 0);
+    person.sanitize();
+    let person = Avatar::build_with(
+        &person,
+        &AvatarConfig {
+            atlas: 64,
+            ..AvatarConfig::default()
+        },
+    )
+    .expect("a person builds");
+    let leaping = |frame: usize, from: usize| {
+        Vec3::Y
+            * if frame >= from && frame < from + 36 {
+                3.0 - 9.81 * STEP * (frame - from) as f32
+            } else {
+                0.0
+            }
+    };
+    let mut wrong = Vec::new();
+    for (what, first, then, leap_at, swap) in [
+        (
+            "a dog's driver standing, then a person's",
+            dog,
+            &person.rig,
+            None,
+            120,
+        ),
+        (
+            "a dog's driver leaping, then a person's",
+            dog,
+            &person.rig,
+            Some(100),
+            120,
+        ),
+        (
+            "a horse's driver leaping, then a dog's in the air",
+            horse,
+            dog,
+            Some(60),
+            70,
+        ),
+    ] {
+        let driven = |grade: f32| {
+            let mut driver = Driver::seeded(INSTRUMENT_SEED);
+            let mut posed = Vec::new();
+            for frame in 0..swap + 120 {
+                let rig = if frame < swap { first } else { then };
+                let inputs = Inputs {
+                    delta: STEP,
+                    velocity: leap_at.map_or(Vec3::ZERO, |from| leaping(frame, from)),
+                    ..Inputs::default()
+                };
+                let ground = if frame < swap {
+                    graded(grade)
+                } else {
+                    graded(0.0)
+                };
+                let pose = driver
+                    .drive(rig, &inputs, ground)
+                    .expect("an unheld body is posed")
+                    .pose;
+                if frame >= swap {
+                    posed.push(pose);
+                }
+            }
+            posed
+        };
+        if driven(GRADE_25) != driven(0.0) {
+            wrong.push(format!(
+                "{what}: the second body moved by what the first stood on"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn a_beast_warped_in_the_air_lands_as_it_would_have() {
+    // #413: a warp forgot what the trunk rode, and in the air the flight went
+    // on riding what it left while the touchdown took the ground it came down
+    // on at once: a dog warped a quarter second into a leap off a 25 degree
+    // slope onto the level turned 25 degrees in the frame it landed. A warp in
+    // the air now leaves the landing as it would have been.
+    let mut wrong = Vec::new();
+    for (what, avatar) in slope_beasts() {
+        let rig = &avatar.rig;
+        for (from, to) in [(GRADE_25, 0.0), (0.0, GRADE_25)] {
+            let turned = |warp: bool| {
+                let mut driver = Driver::seeded(INSTRUMENT_SEED);
+                let mut before: Option<(f32, f32)> = None;
+                let mut most = 0.0f32;
+                for frame in 0..240usize {
+                    if warp && frame == 75 {
+                        driver.warped();
+                    }
+                    let rising = if (60..96).contains(&frame) {
+                        3.0 - 9.81 * STEP * (frame - 60) as f32
+                    } else {
+                        0.0
+                    };
+                    let inputs = Inputs {
+                        delta: STEP,
+                        velocity: Vec3::Y * rising,
+                        ..Inputs::default()
+                    };
+                    let ground = graded(if frame < 75 { from } else { to });
+                    let posed = driver
+                        .drive(rig, &inputs, ground)
+                        .expect("an unheld body is posed")
+                        .pose
+                        .forward(rig);
+                    let now = trunk_turn(rig, &posed.positions);
+                    if let Some((pitch, roll)) = before {
+                        most = most.max((now.0 - pitch).abs()).max((now.1 - roll).abs());
+                    }
+                    before = Some(now);
+                }
+                most
+            };
+            let (warped, unwarped) = (turned(true), turned(false));
+            if warped > unwarped + 0.1 {
+                wrong.push(format!(
+                    "{what} warped in the air from a grade of {from} to {to}: the trunk turned \
+                     {warped:.1} degrees in a frame, against {unwarped:.1} unwarped"
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// How far any joint of a beast on ground a hair off the level may stand from
 /// where level ground stands it, and how much further going between the two
 /// may jolt it than either does alone, in metres; and the same for ground
@@ -5040,6 +5385,485 @@ fn a_driver_carried_onto_a_rebuilt_body_mid_rest_does_not_jump() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// The pitch and the roll of `rig`'s trunk posed at `at`, in degrees: the line
+/// from the middle of its hips to the middle of its shoulders against the
+/// level, and the line across both girdles from right to left.
+fn trunk_turn(rig: &Rig, at: &[Vec3]) -> (f32, f32) {
+    let top = |limb: Limb| {
+        rig.limb_chain(limb)
+            .map_or(Vec3::ZERO, |chain| at[chain[0]])
+    };
+    let hips = (top(Limb::HindLeft) + top(Limb::HindRight)) * 0.5;
+    let shoulders = (top(Limb::ForeLeft) + top(Limb::ForeRight)) * 0.5;
+    let run = shoulders - hips;
+    let across =
+        top(Limb::HindLeft) - top(Limb::HindRight) + top(Limb::ForeLeft) - top(Limb::ForeRight);
+    let lean = |v: Vec3| libm::atan2f(v.y, (v.x * v.x + v.z * v.z).sqrt()).to_degrees();
+    (lean(run), lean(across))
+}
+
+/// One stretch of [`trunk_through_states`]: (seconds, Froude number or nought,
+/// turn in radians a second, gesture on its first frame, upward speed on its
+/// first frame, in the water).
+type State = (f32, f32, f32, Option<&'static str>, f32, bool);
+
+/// Standing, a leap and its landing and into the water and out, all facing up
+/// the slope, then turning where it stands both ways, walking off, curving and
+/// straightening, stopping, and sitting and getting up.
+const THROUGH_STATES: [(&str, State); 14] = [
+    ("standing", (1.0, 0.0, 0.0, None, 0.0, false)),
+    ("leaping", (0.7, 0.0, 0.0, None, 3.0, false)),
+    ("landed", (1.0, 0.0, 0.0, None, 0.0, false)),
+    ("swimming", (2.0, 0.0, 0.0, None, 0.0, true)),
+    ("out of the water", (1.5, 0.0, 0.0, None, 0.0, false)),
+    ("turning", (1.5, 0.0, 1.5, None, 0.0, false)),
+    ("standing again", (1.0, 0.0, 0.0, None, 0.0, false)),
+    ("turning back", (1.0, 0.0, -1.5, None, 0.0, false)),
+    ("walking off", (1.5, 0.3, 0.0, None, 0.0, false)),
+    ("curving", (1.0, 0.3, 0.8, None, 0.0, false)),
+    ("straightening", (1.0, 0.3, 0.0, None, 0.0, false)),
+    ("stopping", (1.5, 0.0, 0.0, None, 0.0, false)),
+    ("sitting", (3.0, 0.0, 0.0, Some("Sit"), 0.0, false)),
+    (
+        "getting up",
+        (2.5, 0.0, 0.0, Some(emote::GET_UP), 0.0, false),
+    ),
+];
+
+/// The most `rig`'s trunk turns in a frame in each of [`THROUGH_STATES`], pitch
+/// or roll, in degrees, at sixty frames a second on a plane rising `grade` per
+/// metre toward the world's `+Z`, whichever way the body faces on it.
+fn trunk_through_states(rig: &Rig, grade: f32, idle: bool) -> Vec<(&'static str, f32)> {
+    trunk_over(rig, &THROUGH_STATES, &|_, _| grade, false, idle)
+        .into_iter()
+        .map(|state| (state.name, state.turned))
+        .collect()
+}
+
+/// The frames of `states` that `name` takes, at sixty frames a second.
+fn frames_in(states: &[(&'static str, State)], name: &str) -> std::ops::Range<usize> {
+    let mut from = 0;
+    for &(state, (seconds, ..)) in states {
+        #[expect(clippy::cast_possible_truncation, reason = "a few hundred frames")]
+        #[expect(clippy::cast_sign_loss, reason = "a positive time")]
+        let frames = (seconds / STEP).round() as usize;
+        if state == name {
+            return from..from + frames;
+        }
+        from += frames;
+    }
+    from..from
+}
+
+/// What [`trunk_over`] finds a trunk did through one of its states.
+struct Through {
+    name: &'static str,
+    /// The most it turned in a frame, pitch or roll, in degrees.
+    turned: f32,
+    /// Every pose it was drawn in, and how far a chassis carried it up.
+    poses: Vec<(Pose, f32)>,
+}
+
+/// `rig` driven through `states` at sixty frames a second over a plane rising
+/// `grade(frame, height)` per metre toward the world's `+Z`, whichever way the
+/// body faces on it: `0` is [`level_ground`] itself, and NaN nothing at all. `height` is how far a
+/// chassis has carried the body up off the plane in a leap; `carried`, the
+/// plane is answered that far below the body, as a consumer whose chassis
+/// carries the body through the air answers what is under it. Without `idle`,
+/// a body that stops stands in its rest pose, [`DriverConfig::idle`] off.
+fn trunk_over(
+    rig: &Rig,
+    states: &[(&'static str, State)],
+    grade: &dyn Fn(usize, f32) -> f32,
+    carried: bool,
+    idle: bool,
+) -> Vec<Through> {
+    let mut driver = Driver::new(
+        DriverConfig {
+            idle,
+            ..DriverConfig::default()
+        },
+        INSTRUMENT_SEED,
+    );
+    let (mut at, mut facing, mut speed, mut rising) = (Vec3::ZERO, 0.0f32, 0.0f32, 0.0f32);
+    let mut height = 0.0f32;
+    let mut before: Option<(f32, f32)> = None;
+    let mut frame = 0usize;
+    let mut found = Vec::new();
+    for &(name, (seconds, froude, turn, gesture, lift, swimming)) in states {
+        let pace = if froude > 0.0 {
+            Speed::from_froude(froude).metres_per_second(rig)
+        } else {
+            0.0
+        };
+        let mut through = Through {
+            name,
+            turned: 0.0,
+            poses: Vec::new(),
+        };
+        #[expect(clippy::cast_possible_truncation, reason = "a few hundred frames")]
+        #[expect(clippy::cast_sign_loss, reason = "a positive time")]
+        let frames = (seconds / STEP).round() as usize;
+        for index in 0..frames {
+            facing += turn * STEP;
+            speed = speed_toward(speed, pace);
+            if index == 0 {
+                rising = lift;
+            }
+            if lift > 0.0 && carried {
+                height = (height + rising * STEP).max(0.0);
+            }
+            let (sin, cos) = sin_cos(facing);
+            let velocity = Vec3::new(sin * speed, rising, cos * speed);
+            if lift > 0.0 {
+                rising -= 9.81 * STEP;
+                if carried && height <= 0.0 && rising < 0.0 {
+                    rising = 0.0;
+                }
+            }
+            at += Vec3::new(velocity.x, 0.0, velocity.z) * STEP;
+            let here = at;
+            let below = if carried { height } else { 0.0 };
+            let grade = grade(frame, height);
+            let ground = move |point: Vec3| {
+                if grade.is_nan() {
+                    return None;
+                }
+                if grade == 0.0 && below == 0.0 {
+                    return level_ground(point);
+                }
+                let world = into_world(here, facing, point);
+                Some(symbios_avatar::anim::Ground {
+                    position: Vec3::new(point.x, (world.z - here.z) * grade - below, point.z),
+                    normal: Vec3::new(grade * sin, 1.0, -grade * cos).normalize(),
+                })
+            };
+            let inputs = Inputs {
+                delta: STEP,
+                velocity,
+                at: here + Vec3::Y * below,
+                facing,
+                turn,
+                swimming,
+                gesture: gesture.filter(|_| index == 0),
+                ..Inputs::default()
+            };
+            let pose = driver
+                .drive(rig, &inputs, ground)
+                .expect("an unheld body is posed")
+                .pose;
+            let now = trunk_turn(rig, &pose.forward(rig).positions);
+            if let Some((pitch, roll)) = before {
+                through.turned = through
+                    .turned
+                    .max((now.0 - pitch).abs())
+                    .max((now.1 - roll).abs());
+            }
+            before = Some(now);
+            through.poses.push((pose, below));
+            frame += 1;
+        }
+        found.push(through);
+    }
+    found
+}
+
+#[test]
+fn a_beasts_trunk_goes_from_state_to_state_on_a_slope_without_snapping_level() {
+    // #413: a beast on a slope rode its girdles walking, trotting and standing,
+    // and in every other state stood its trunk level, so going into one and out
+    // of it turned the trunk by the whole slope over a blend or in a frame: on
+    // a 25 degree slope a horse turning where it stands pitched 6.9 degrees in a
+    // frame as a paw landed, a dog sitting down or getting up rolled 4.5, a
+    // leap's gathering turned it 6.9 flat and going into the water 6.4. Every
+    // state now rides the girdles, the rest from its start and the leap through
+    // its flight, and the water is gone into over a longer blend. Each state
+    // turns the trunk in a frame no more than `TRUNK_TURN_OVER` past what it
+    // turns it on the level, and into and out of the water no more than
+    // `WATER_TURN_OVER` past. The landing of a fall is not here: it pitches a
+    // trunk 21 degrees in a frame on the level in HEAD (#414).
+    // With the idle and without it, where a body stopped stands in its rest
+    // pose: stood level there, a sit set off from the ridden trunk turned it
+    // 5.4 degrees in a frame.
+    let mut wrong = Vec::new();
+    for ((what, avatar), idle) in slope_beasts()
+        .iter()
+        .flat_map(|beast| [(beast, true), (beast, false)])
+    {
+        let what = if idle {
+            what.to_string()
+        } else {
+            format!("{what} with no idle")
+        };
+        let level = trunk_through_states(&avatar.rig, 0.0, idle);
+        for ((name, most), (_, flat)) in trunk_through_states(&avatar.rig, GRADE_25, idle)
+            .into_iter()
+            .zip(level)
+        {
+            // Into the water and out the trunk turns from the slope to
+            // floating level: no faster than it turns from standing to
+            // floating on the level.
+            let over = if name.contains("water") || name == "swimming" {
+                WATER_TURN_OVER
+            } else {
+                TRUNK_TURN_OVER
+            };
+            if most > flat + over {
+                wrong.push(format!(
+                    "{what} {name}: the trunk turned {most:.1} degrees in a frame, past \
+                     {flat:.1} on the level and {over:.2} more"
+                ));
+            }
+        }
+        // And as Overlands answers a swimmer, nothing under it in the water:
+        // the longer blend is asked of the ground last stood on, which with
+        // nothing read in the frame the body went in it never was.
+        if idle {
+            let swimming = frames_in(&THROUGH_STATES, "swimming");
+            let dropped = trunk_over(
+                &avatar.rig,
+                &THROUGH_STATES,
+                &|frame, _| {
+                    if swimming.contains(&frame) {
+                        f32::NAN
+                    } else {
+                        GRADE_25
+                    }
+                },
+                false,
+                true,
+            );
+            let flat = trunk_through_states(&avatar.rig, 0.0, true);
+            for (state, (name, flat)) in dropped.iter().zip(flat) {
+                if (name.contains("water") || name == "swimming")
+                    && state.turned > flat + WATER_TURN_OVER
+                {
+                    wrong.push(format!(
+                        "{what} {name} with nothing under it in the water: the trunk turned \
+                         {:.1} degrees in a frame, past {flat:.1} on the level and \
+                         {WATER_TURN_OVER:.2} more",
+                        state.turned
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How much more than on the level a beast's trunk may pitch or roll in a
+/// frame at sixty frames a second in each of [`THROUGH_STATES`] on a 25 degree
+/// slope, in degrees. Provenance: **measured** (#413): the most is 1.5 more, a
+/// dog walking off down the slope and a horse turning back where it stands; a
+/// sit was 3.2 more and a leap's gathering 3.8 when they stood the trunk level.
+const TRUNK_TURN_OVER: f32 = 2.0;
+
+/// How much faster than on the level a beast's trunk may turn in a frame going
+/// into the water on a slope or out of it, in degrees. Provenance: **measured**
+/// (#413): on the level it turns 2.6 to 2.7 a frame; up a 25 degree slope it
+/// turned 3.1 to 3.2 over the one blend, and over the longer one 1.0 to 1.1.
+const WATER_TURN_OVER: f32 = 0.25;
+
+/// The beasts the slope sweeps below are driven as: a dog, a horse and a rolled
+/// body.
+fn slope_beasts() -> Vec<(&'static str, Avatar)> {
+    [
+        ("dog", {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(plan::Family::Dog, None, 0.0);
+            AvatarRecord::new("Beast", Archetype::Quadruped(params))
+        }),
+        ("horse", {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(plan::Family::Horse, None, 0.0);
+            AvatarRecord::new("Beast", Archetype::Quadruped(params))
+        }),
+        (
+            "roll 1",
+            AvatarRecord::rolled("Beast", Archetype::Quadruped(QuadrupedParams::default()), 1),
+        ),
+    ]
+    .into_iter()
+    .map(|(what, mut record)| {
+        record.sanitize();
+        let avatar = Avatar::build_with(
+            &record,
+            &AvatarConfig {
+                atlas: 64,
+                ..AvatarConfig::default()
+            },
+        )
+        .expect("a beast builds");
+        (what, avatar)
+    })
+    .collect()
+}
+
+/// Twenty-five degrees, as a grade.
+const GRADE_25: f32 = 0.466_307_66;
+
+/// Standing, walking off, stopping and turning where it stands, through which
+/// [`a_beasts_trunk_follows_its_ground_switching_source_over_a_few_frames`]
+/// switches the ground.
+const SWITCHED_STATES: [(&str, State); 4] = [
+    ("standing", (1.5, 0.0, 0.0, None, 0.0, false)),
+    ("walking", (2.0, 0.3, 0.0, None, 0.0, false)),
+    ("stopping", (1.5, 0.0, 0.0, None, 0.0, false)),
+    ("turning", (2.0, 0.0, 1.5, None, 0.0, false)),
+];
+
+#[test]
+fn a_beasts_trunk_follows_its_ground_switching_source_over_a_few_frames() {
+    // #413: a consumer's ground can change source in a frame - Overlands goes
+    // between its terrain and a level floor at the edge of a pad or a deck, on
+    // a lost physics step and at a landing - and every such switch on a slope
+    // turned a beast's trunk by the whole slope in that frame. The trunk now
+    // follows the ground under its girdles no faster than a few degrees a
+    // frame. Here the ground goes from a 25 degree plane to the level and back,
+    // each in one frame, in the middle of standing, walking and turning: the
+    // trunk turns in a frame no more than the same states turn it on the
+    // unbroken slope, by more than the follow allows.
+    let mut wrong = Vec::new();
+    // Level from half a second into standing, and six tenths of a second into
+    // walking and turning, for half a second or six tenths.
+    let switched = |frame: usize, _: f32| {
+        let level = [(30, 60), (126, 162), (336, 372)]
+            .iter()
+            .any(|&(from, to)| (from..to).contains(&frame));
+        if level { 0.0 } else { GRADE_25 }
+    };
+    for (what, avatar) in slope_beasts() {
+        let unbroken = trunk_over(&avatar.rig, &SWITCHED_STATES, &|_, _| GRADE_25, false, true);
+        let broken = trunk_over(&avatar.rig, &SWITCHED_STATES, &switched, false, true);
+        for (whole, cut) in unbroken.iter().zip(&broken) {
+            if cut.turned > whole.turned + SWITCH_TURN_OVER {
+                wrong.push(format!(
+                    "{what} {}: the trunk turned {:.1} degrees in a frame as its ground \
+                     switched, past {:.1} and {SWITCH_TURN_OVER:.1} more",
+                    cut.name, cut.turned, whole.turned
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How much more than on an unbroken 25 degree slope a beast's trunk may turn
+/// in a frame as its ground switches between the slope and the level, in
+/// degrees. Provenance: **measured** (#413): the follow turns it 2.9 a frame,
+/// and as much over what the states turn it themselves, standing; walking and
+/// turning, where those turns fall in other frames, a horse's 2.6.
+const SWITCH_TURN_OVER: f32 = 3.0;
+
+/// A leap up off a slope and its landing.
+const LEAPT: [(&str, State); 3] = [
+    ("standing", (1.0, 0.0, 0.0, None, 0.0, false)),
+    ("leaping", (0.7, 0.0, 0.0, None, 3.0, false)),
+    ("landed", (1.0, 0.0, 0.0, None, 0.0, false)),
+];
+
+#[test]
+fn a_beast_in_the_air_rides_the_ground_it_left_whatever_is_under_it() {
+    // #413: a leap's flight rode the ground the consumer answered under the
+    // body. Carried by a chassis, what is honestly under a body in the air is
+    // the ground that far below it, and riding that a dog leaping at 3 m/s off
+    // a 25 degree slope peaked 0.57 m up where it peaks 1.05 on the level; a
+    // consumer that answers the level floor while the body is up snapped the
+    // trunk between the slope and the level at takeoff and at touchdown. The
+    // flight now reads nothing, rides what the body stood on as it left, and
+    // takes up what it lands on over the landing: the same leap whatever is
+    // answered under it in the air, rising as far as on the level, and the
+    // trunk turning no faster than the same leap turns it on the level when
+    // the ground under it switches at takeoff or at touchdown.
+    let mut wrong = Vec::new();
+    for (what, avatar) in slope_beasts() {
+        let rig = &avatar.rig;
+        let honest = trunk_over(rig, &LEAPT, &|_, _| GRADE_25, true, true);
+        // The level floor answered while the body is up.
+        let floored = trunk_over(
+            rig,
+            &LEAPT,
+            &|_, up| if up > 0.0 { 0.0 } else { GRADE_25 },
+            true,
+            true,
+        );
+        for (one, other) in honest.iter().zip(&floored) {
+            if one
+                .poses
+                .iter()
+                .map(|(pose, _)| pose)
+                .ne(other.poses.iter().map(|(pose, _)| pose))
+            {
+                wrong.push(format!(
+                    "{what} {}: the pose read the ground under it in the air",
+                    one.name
+                ));
+            }
+        }
+        // As far up as on the level.
+        let level = trunk_over(rig, &LEAPT, &|_, _| 0.0, true, true);
+        let rise = |through: &[Through]| {
+            let root = rig
+                .joints
+                .iter()
+                .position(|joint| joint.parent.is_none())
+                .unwrap_or(0);
+            let flight = &through[1].poses;
+            let height = |(pose, up): &(Pose, f32)| pose.forward(rig).positions[root].y + up;
+            let from = height(&flight[0]);
+            flight.iter().map(height).fold(f32::MIN, f32::max) - from
+        };
+        let (risen, flat) = (rise(&honest), rise(&level));
+        if (risen - flat).abs() > FLIGHT_RISE_OFF {
+            wrong.push(format!(
+                "{what}: off the slope the body rose {:.0} mm, on the level {:.0}",
+                risen * 1000.0,
+                flat * 1000.0
+            ));
+        }
+        // The ground going level as the body leaves the slope, and the slope
+        // as it lands from the level.
+        let left = std::cell::Cell::new(false);
+        let took_off = |_: usize, up: f32| {
+            left.set(left.get() || up > 0.0);
+            if left.get() { 0.0 } else { GRADE_25 }
+        };
+        let landing = std::cell::Cell::new(false);
+        let landed = |_: usize, up: f32| {
+            landing.set(landing.get() || up > 0.0);
+            if landing.get() { GRADE_25 } else { 0.0 }
+        };
+        for (switch, grade) in [
+            ("takeoff", &took_off as &dyn Fn(usize, f32) -> f32),
+            ("touchdown", &landed),
+        ] {
+            for (flat, cut) in level.iter().zip(trunk_over(rig, &LEAPT, grade, true, true)) {
+                if cut.turned > flat.turned + LEAP_TURN_OVER {
+                    wrong.push(format!(
+                        "{what} {}: the ground switching at {switch} turned the trunk {:.1} \
+                         degrees in a frame, past {:.1} and {LEAP_TURN_OVER:.1} more",
+                        cut.name, cut.turned, flat.turned
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How far a beast leaping off a slope may rise otherwise than on the level,
+/// in metres. Provenance: **measured** (#413): a horse's rises 3 mm further,
+/// its trunk pitched up the slope as it tucks, against the 480 mm a dog fell
+/// short when its flight rode the ground under it.
+const FLIGHT_RISE_OFF: f32 = 0.005;
+
+/// How much more than the same leap on the level a beast's trunk may turn in
+/// a frame as the ground under it switches between a 25 degree slope and the
+/// level at takeoff or at touchdown, in degrees. Provenance: **measured**
+/// (#413): landing from the level on the slope a dog's turns 2.6 more, the
+/// follow's 2.9 a frame less what the landing's own pitch takes back.
+const LEAP_TURN_OVER: f32 = 3.0;
 
 /// How far ahead of where it stops [`Terrain`]'s step stands, in withers
 /// heights: under the forefeet of a beast sitting or lying there.

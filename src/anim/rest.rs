@@ -763,9 +763,10 @@ pub(super) fn rest(
 }
 
 /// How much of a slope's turn a rest has taken `down` of the way into `rest`,
-/// or out of it if `rising`: nothing standing, where a beast's trunk rides level
-/// over legs that reach the ground as its idle's do, and all of it by
-/// [`TILT_BY`] of its sit, or of a horse's way down, well above the ground.
+/// or out of it if `rising`: nothing standing, where a beast's trunk rides its
+/// girdles over legs that reach the ground as its idle's do (#413), and all of
+/// it by [`TILT_BY`] of its sit, or of a horse's way down, well above the
+/// ground.
 fn tilt_at(rig: &Rig, rest: Rest, down: f32, rising: bool) -> f32 {
     let through = match rest {
         Rest::Lie if hooved(rig) == 0 || rising => down / LIE_SAT[usize::from(rising)],
@@ -787,14 +788,19 @@ const TILT_BY: f32 = 0.5;
 /// attitude. So the body is turned `tilt` of the way onto the plane that best
 /// fits the ground under its four feet, its pelvis and its withers, about the
 /// middle of them, so on a plane everything that touched the level ground
-/// touches this one to the same fraction of a millimetre, the tail along it. The
-/// neck takes the turn back off the head by the shares [`relevel_head`] gives
-/// it. Each foot is then sent to the ground under itself, its sole turned to
-/// the ground's own slope there; what is left of a slope not yet taken is met
-/// by the trunk sinking for the leg with furthest to reach, as a plant does.
+/// touches this one to the same fraction of a millimetre, the tail along it,
+/// from where a beast standing there rides its girdles (#413), its trunk
+/// pitched and raised as its idle stands it, so the rest sets off from the
+/// trunk the body stood in. The neck takes the turn back off the head by the
+/// shares [`relevel_head`] gives it. Each foot is then sent to the ground under
+/// itself, its sole turned to the ground's own slope there; what is left of a
+/// slope not yet taken is met by the trunk sinking for the leg with furthest to
+/// reach, as a plant does.
 ///
 /// **Level ground is left to the bit**, so the frame the body is in answering
-/// flat is the rest as it was measured.
+/// flat is the rest as it was measured, and ground near it, a plane a hair off
+/// it or a flat heightmap's millimetres, is laid as the level is, raised to it,
+/// by as much as it is near: see [`ROUGH`].
 ///
 /// **And the ground goes on from the last frame's** (#400): `glide` is what
 /// that frame was laid on and the seconds since. The fit is a function of
@@ -821,6 +827,7 @@ where
     F: Fn(Vec3) -> Option<Ground>,
 {
     let level = pose.forward(rig);
+    let as_solved = pose.clone();
     let legs = || body.hinds.iter().chain(&body.fores);
     let under: Vec<Ground> = legs()
         .map(|leg| leg.pad)
@@ -853,6 +860,7 @@ where
             plane: fit,
             feet: legs().map(|_| GROUND).collect(),
             sink: 0.0,
+            raised: GROUND,
         });
     }
     let Fit {
@@ -862,11 +870,45 @@ where
     } = fit;
     let flat = Vec3::new(middle.x, GROUND, middle.y);
     let up = Vec3::new(-slope.x, 1.0, -slope.y).normalize();
-    let turned = det::slerp(Quat::IDENTITY, det::from_rotation_arc(Vec3::Y, up), tilt);
+    let laid = det::from_rotation_arc(Vec3::Y, up);
 
-    // The whole body, about the middle of what it stands on.
+    // The whole body, about the middle of what it stands on, turned from where
+    // a beast standing there rides its girdles (#413): its hips over the
+    // ground under them and its shoulders over theirs, as its idle and its
+    // stride ride them, so a rest sets off from the trunk the body stood in.
+    // From level instead, a horse sitting down on a 25 degree slope dropped its
+    // trunk 16 degrees flat in five frames before the rest's turn took it back.
     let root = rig.joints[body.root].position;
-    let at = flat + Vec3::Y * height + turned * (level.positions[body.root] - flat);
+    let from = level.positions[body.root];
+    let laid_at = flat + Vec3::Y * height + laid * (from - flat);
+    // The height the girdles raise the trunk to, glided as the plane is (#400):
+    // read at once, a sit begun from a turn on a stepping slope rose 122 mm in
+    // a frame.
+    let mut raised = glide.map_or(GROUND, |(was, _)| was.raised);
+    let (turned, at) = match super::quadruped::girdle_ground(rig, &ground) {
+        Some(girdles) if tilt < 1.0 => {
+            raised = match (glide, reach) {
+                (Some((was, _)), Some(reach)) => toward(was.raised, girdles.hips, FIT_RISE * reach),
+                _ => girdles.hips,
+            };
+            let hips: Vec3 = body
+                .hinds
+                .iter()
+                .map(|leg| level.positions[leg.chain[0]])
+                .sum::<Vec3>()
+                / body.hinds.len().max(1) as f32;
+            let ridden = girdles.turn();
+            let ridden_at = hips + ridden * (from - hips) + Vec3::Y * raised;
+            (
+                det::slerp(ridden, laid, tilt),
+                ridden_at.lerp(laid_at, tilt),
+            )
+        }
+        _ => {
+            let turned = det::slerp(Quat::IDENTITY, laid, tilt);
+            (turned, flat + Vec3::Y * height + turned * (from - flat))
+        }
+    };
     pose.translation = at - root;
     pose.rotations[body.root] = turned * pose.rotations[body.root];
     relevel_neck(rig, pose, &level, turned);
@@ -941,12 +983,52 @@ where
         let carried = pose.forward(rig).rotations[leg.chain[1]];
         pose.rotations[leg.chain[2]] = carried.inverse() * attitude;
     }
+    // **And as much of all that as the ground is far from level** (#413): a
+    // plane a hair off it, a flat heightmap's millimetres or level ground set
+    // higher or lower, lays the rest as the level does, only raised to it. The
+    // solve's own answers to such ground came out tens of millimetres off what
+    // the level return holds, from a fold re-solved for a millimetre: a horse
+    // sitting on a millimetre of noise sat 59 mm off it and popped 32 mm.
+    let uneven = under
+        .iter()
+        .map(|below| {
+            (below.position.y - fit.height_at(glam::Vec2::new(below.position.x, below.position.z)))
+                .abs()
+        })
+        .fold(0.0f32, f32::max);
+    let rough = step(0.0, ROUGH, uneven).max(step(0.0, TILTED, slope.length()));
+    if rough < 1.0 {
+        let mut level_raised = as_solved;
+        level_raised.translation.y += height;
+        for (joint, rotation) in pose.rotations.iter_mut().enumerate() {
+            *rotation = det::slerp(level_raised.rotations[joint], *rotation, rough);
+        }
+        pose.translation = level_raised.translation.lerp(pose.translation, rough);
+    }
     Some(Laid {
         plane: fit,
         feet,
         sink,
+        raised,
     })
 }
+
+/// How far from level ground a rest is laid on must be before it is laid as
+/// the slope work below lays it, wholly (#413): any of its supports this far
+/// off the plane they fit, in metres, or the plane rising this much per metre.
+/// Short of both it is laid as the level is, raised to the plane, by as much as
+/// the nearer is short. Provenance: **chosen** (#413): a centimetre, ten of a
+/// flat heightmap's millimetres and far under a step, and a hundredth, about
+/// half a degree. Laid level, a rising plane is stood on by feet the level
+/// solve put on the level, so they go into it and stand off it by its rise
+/// along the body: at a tenth, as a beast's girdles take a slope, a horse
+/// sitting on a grade of .04 put its hind soles 24.5 mm into it. From a
+/// hundredth every sole on a plane stands within HEAD's tenth of a millimetre
+/// of it, and at half that a horse's within 2.1 mm; at a two-hundredth, a horse
+/// sitting down on a millimetre of noise, whose plane leans more than that,
+/// sat 14 mm off where the level sits it.
+const ROUGH: f32 = 0.01;
+const TILTED: f32 = 0.01;
 
 /// `pole`, or where it says little of which way a leg bends, a pole on the side
 /// the knee stands off the line the leg is sent along now (#400).
@@ -1037,7 +1119,7 @@ const POLE_AGREES: f32 = 0.7;
 
 /// `to`, or as far toward it from `from` as `most`: `to` itself, to the bit,
 /// where it is within that (#400).
-fn toward(from: f32, to: f32, most: f32) -> f32 {
+pub(super) fn toward(from: f32, to: f32, most: f32) -> f32 {
     if (to - from).abs() <= most {
         to
     } else {
@@ -1110,13 +1192,16 @@ const FOOT_RISE: f32 = 2.0;
 const SINK_RISE: f32 = 0.65;
 
 /// What the last frame of a rest was laid on (#400): its plane, the height of
-/// the ground each foot stood on, hinds first, and how far the trunk sank for
-/// the leg with furthest to reach.
+/// the ground each foot stood on, hinds first, how far the trunk sank for the
+/// leg with furthest to reach, and how high its girdles raised it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Laid {
     plane: Fit,
     feet: Vec<f32>,
     sink: f32,
+    /// How high its girdles raised the trunk, while the rest still turns
+    /// from them.
+    raised: f32,
 }
 
 /// The plane a rest is laid on: see [`fit_plane`].

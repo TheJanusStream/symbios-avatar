@@ -291,6 +291,37 @@ impl Leap {
     where
         F: Fn(Vec3) -> Option<Ground>,
     {
+        self.drive_riding(rig, pose, elapsed, ground, None, false)
+    }
+
+    /// [`Self::drive`], a four-legged body riding its girdles (#413) where
+    /// `riding` and the driver keeps what it rode last: `took_off` is the
+    /// ground under its girdles on the last frame it stood on any, or `None`
+    /// for the level. The public [`Self::drive`] rides nothing, standing a body
+    /// level throughout as it always has.
+    ///
+    /// **The wind-up and the landing ride the ground they stand on, and the
+    /// flight what it left.** The flight still reads no ground: a body in the
+    /// air rides the girdles it took off from, as its last grounded frame stood
+    /// it. Read in the air instead, the ground a consumer answers under a body
+    /// its chassis carries is nothing to stand on, and a switch of what it
+    /// answers at takeoff or touchdown turned a trunk 24 degrees in a frame.
+    /// The landing rides what it comes down on as the driver hands it, which
+    /// follows that ground from what the flight rode a few degrees a frame;
+    /// eased over the stage as well, the two turns added, and a dog landing on
+    /// a 25 degree slope from the level turned 5.8 degrees in a frame.
+    pub(crate) fn drive_riding<F>(
+        &self,
+        rig: &Rig,
+        pose: &mut Pose,
+        elapsed: f32,
+        ground: F,
+        took_off: Option<super::quadruped::Girdles>,
+        riding: bool,
+    ) -> Leapt
+    where
+        F: Fn(Vec3) -> Option<Ground>,
+    {
         let mut leapt = Leapt {
             stage: self.stage_at(rig, elapsed),
             height: 0.0,
@@ -330,6 +361,22 @@ impl Leap {
                 super::quadruped::sink_end(rig, pose, pitch);
             }
         };
+        // **And a beast that rides its girdles leaps from them and lands on
+        // them** (#413): stood level for the leap, a dog on a 25 degree slope
+        // turned its trunk 24 degrees flat in five frames as it gathered. Only
+        // where the driver keeps what it took off from: see above.
+        let ridden = |pose: &mut Pose, girdles: Option<super::quadruped::Girdles>| {
+            if let Some(girdles) = girdles {
+                super::quadruped::ride_ground(rig, pose, girdles);
+            }
+        };
+        let standing_on = |ground: &F| {
+            if riding {
+                super::quadruped::girdle_ground(rig, ground)
+            } else {
+                None
+            }
+        };
         match leapt.stage {
             Stage::Flight(t) => {
                 // **Rigid, and the feet come with it.** A projectile does not
@@ -338,6 +385,10 @@ impl Leap {
                 // in the body's own frame and therefore carried along with it.
                 self.tuck(rig, pose, t, &mut leapt);
                 pitched(pose);
+                ridden(
+                    pose,
+                    took_off.filter(|_| riding && super::quadruped::four_legged(rig)),
+                );
                 pose.translation.y += leapt.height;
             }
             Stage::WindUp(_) | Stage::Landing(_) => {
@@ -345,6 +396,7 @@ impl Leap {
                 // to bend, so the sink goes in BEFORE the contacts are solved.
                 pose.translation.y += leapt.height;
                 pitched(pose);
+                ridden(pose, standing_on(&ground));
                 let contacts = rig.ground_contacts();
                 let footing =
                     plant_feet_of(rig, pose, &contacts, ground, &FootingConfig::default());

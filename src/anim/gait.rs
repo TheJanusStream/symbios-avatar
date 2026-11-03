@@ -1897,13 +1897,16 @@ where
     // what lies under its hips and under its shoulders, and each paw sunk for
     // from its own girdle's, so a slope pitches the trunk rather than sinking
     // the whole body for the paw furthest down it. Level ground reads as none.
-    let girdles = if gait.limbs.len() == 4 && gait.duty < 1.0 {
+    // On four legs whatever the gait: a gait that never lifts a foot stands on
+    // the same girdles the idle and every stride ride.
+    let girdles = if gait.limbs.len() == 4 {
         super::quadruped::girdle_ground(rig, &ground)
     } else {
         None
     };
-    let mut ridden = None;
-    if let Some(girdles) = girdles {
+    // A gait that never lifts a foot keeps the crouch it had, ridden whole.
+    let mut ridden = girdles.filter(|_| gait.duty >= 1.0);
+    if let Some(girdles) = girdles.filter(|_| gait.duty < 1.0) {
         // Each girdle sinks for its own legs, the hips with the whole body and
         // the shoulders by the difference, through the pitch. The hinds' stride
         // is planned on the slope; the fores' on the level, because a fore's
@@ -1911,6 +1914,11 @@ where
         // the paw at the back of a stance up a .3 grade brought the two
         // together until the leg's solve lost its root, a horse's forefoot
         // going 2.6 times what a frame allows.
+        let still = super::quadruped::hip_height(rig).map_or(0.0, |hip| {
+            stride.length / (hip * super::quadruped::STILL_STRIDE)
+        });
+        let turning = stride.yaw.abs() / super::quadruped::TURNING_STRIDE;
+        let settling = (1.0 - still.clamp(0.0, 1.0)).max(turning.clamp(0.0, 1.0));
         let [hinds, fores] = [false, true].map(|fores| {
             let rise = if fores { 0.0 } else { girdles.rise() };
             let leaving = goals
@@ -1922,7 +1930,7 @@ where
                     _ => None,
                 });
             super::quadruped::depth_rising(rig, gait, stride, rise, Some(fores)).max(
-                super::quadruped::depth_leaving(rig, gait, cycle, leaving, girdles),
+                super::quadruped::depth_leaving(rig, gait, cycle, leaving, girdles, settling),
             )
         });
         // By as much as the ground is steep: on the level the whole body sinks
