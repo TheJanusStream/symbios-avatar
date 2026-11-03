@@ -87,6 +87,7 @@
 //! cargo run --release --example render -- --quadruped --seed 1 --gesture Sit --rise --strip 8  # getting up from it
 //! cargo run --release --example render -- --quadruped --gesture Sit --interrupt 0.5 --strip 8  # told to get up part way down
 //! cargo run --release --example render -- --quadruped --seed 1 --gesture "Lie Down" --at 1  # one moment, four views
+//! cargo run --release --example render -- --quadruped --kin horse --drive 0.3 --speed 1.5 --strip 8  # driven up a slope
 //! cargo run --release --example render -- --quadruped --swim 0.5 --strip 8
 //! cargo run --release --example render -- --quadruped --leap 3 --strip 8
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
@@ -1298,10 +1299,18 @@ fn main() {
     if let Some(frames) = value("--strip").and_then(|count| count.parse::<usize>().ok()) {
         let frames = frames.max(1);
         let span = subject.reach * MARGIN;
+        // A slope falls away under one end of the body: framed lower by it.
+        let sloped = value("--drive")
+            .and_then(|grade| grade.parse::<f32>().ok())
+            .map_or(0.0, f32::abs);
         let frame = Frame {
             turn: std::f32::consts::FRAC_PI_2,
             pitch: 0.0,
-            centre: Vec3::new(subject.middle.x, span * 0.45, subject.middle.z),
+            centre: Vec3::new(
+                subject.middle.x,
+                span * (0.45 - 0.5 * sloped),
+                subject.middle.z,
+            ),
             span,
         };
         let mut strip = Image::new(frames * VIEW, VIEW);
@@ -1384,6 +1393,43 @@ fn main() {
                 }
                 poses
             });
+        // `--drive GRADE` drives the body through the driver on a plane rising
+        // GRADE per metre ahead, at `--speed` metres a second (standing where
+        // there is none), its speed ramped from standing; the strip is its last
+        // second, three seconds in, drawn over the slope (#399).
+        let grade = value("--drive").and_then(|grade| grade.parse::<f32>().ok());
+        let driven: Option<Vec<Pose>> = grade.map(|grade| {
+            use symbios_avatar::anim::driver::{Driver, Inputs};
+            let step = 1.0 / 60.0;
+            let normal = Vec3::new(0.0, 1.0, -grade).normalize();
+            let ground = move |at: Vec3| {
+                Some(Ground {
+                    position: Vec3::new(at.x, at.z * grade, at.z),
+                    normal,
+                })
+            };
+            let pace = speed.unwrap_or(0.0);
+            let mut driver = Driver::seeded(7);
+            let (mut at, mut going) = (Vec3::ZERO, 0.0f32);
+            let mut poses = Vec::new();
+            for index in 0..240 {
+                going += (pace - going).clamp(-2.0 * step, 2.0 * step);
+                let velocity = Vec3::Z * going;
+                at += velocity * step;
+                let inputs = Inputs {
+                    delta: step,
+                    velocity,
+                    at,
+                    ..Inputs::default()
+                };
+                if let Some(driven) = driver.drive(rig, &inputs, ground)
+                    && index >= 180
+                {
+                    poses.push(driven.pose);
+                }
+            }
+            poses
+        });
         // `--swim M/S` swims the strip instead, through one stroke, and
         // `--leap M/S` leaps it, from the wind-up to standing again (#370).
         let swimming = value("--swim").and_then(|pace| pace.parse::<f32>().ok());
@@ -1407,6 +1453,11 @@ fn main() {
                 continue;
             }
             let pose = match (&playing, swimming) {
+                _ if driven.is_some() => {
+                    let poses = driven.as_deref().unwrap_or_default();
+                    let at = index * poses.len() / frames;
+                    poses.get(at).cloned().unwrap_or_else(|| Pose::rest(rig))
+                }
                 (Some(_), _) if interrupted.is_some() => {
                     let poses = interrupted.as_deref().unwrap_or_default();
                     let last = (frames - 1).max(1) as f32;
@@ -1429,7 +1480,10 @@ fn main() {
                 (None, None) => subject.walking(cycle),
             };
             let mut view = subject.view(&pose, 0.0, &frame);
-            ground_line(&mut view, &frame);
+            match grade {
+                Some(grade) => slope_line(&mut view, &frame, grade),
+                None => ground_line(&mut view, &frame),
+            }
             strip.blit(&view, index * VIEW, 0);
             let line = if let [Some(hips), Some(loin), Some(withers)] = trunk {
                 let rest: Vec<Vec3> = rig.joints.iter().map(|joint| joint.position).collect();
@@ -3640,6 +3694,28 @@ fn segment_distance(point: Vec3, from: Vec3, to: Vec3) -> f32 {
     }
     let t = ((point - from).dot(along) / length).clamp(0.0, 1.0);
     point.distance(from + along * t)
+}
+
+/// [`ground_line`] for a plane rising `grade` per metre ahead, seen from the
+/// side (#399).
+fn slope_line(view: &mut Image, frame: &Frame, grade: f32) {
+    if frame.pitch != 0.0 {
+        return;
+    }
+    let camera = frame.camera();
+    let steps = view.width * 2;
+    for at in 0..steps {
+        if at % 12 >= 8 {
+            continue;
+        }
+        let z = frame.centre.z + frame.span * (at as f32 / steps as f32 * 2.0 - 1.0);
+        let point = camera.project_point3(Vec3::new(frame.centre.x, z * grade, z));
+        let column = ((point.x + 1.0) * 0.5 * view.width as f32).round();
+        let row = ((1.0 - point.y) * 0.5 * view.height as f32).round();
+        if (0.0..view.width as f32).contains(&column) && (0.0..view.height as f32).contains(&row) {
+            view.colour[row as usize * view.width + column as usize] = Vec3::new(0.9, 0.25, 0.05);
+        }
+    }
 }
 
 /// Draws the ground across a level view (#377): a thin line at the height

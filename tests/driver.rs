@@ -4079,10 +4079,14 @@ fn pop_on_grade(rig: &Rig, grade: f32, speed: f32) -> f32 {
 fn a_leg_solve_does_not_take_a_tear_for_a_root_on_a_steep_grade() {
     // #399: where a wrist comes up by its shoulder, `wrapped` tears and the
     // stride's search settled on the tear or the root, from one frame to the
-    // next. Second differences on a grade of .30, before and after in mm: the
-    // cross 1254 and 486, roll 1 1083 and 341, roll 2 625 and 166. These are bodies
-    // the fix helps, not the fleet's: uphill at .3 and .4 the fleet's worst did not
-    // move, and #399 stays open for that.
+    // next. Second differences on a grade of .30 in mm, before the search was
+    // guarded and after: the cross 1254 and 486, roll 1 1083 and 341, roll 2 625
+    // and 166; at .4 still 429, 646 and 425. **Changed deliberately** since
+    // each girdle rides its own ground: the trunk pitches with the slope, so no
+    // wrist is brought up by its shoulder on a plane at all, and the worst
+    // reads 67, 50 and 73 at .3 and 62, 48 and 74 at .4, what a stride on a
+    // slope moves anyway. The bounds were each body's own ceiling under the
+    // guard, 520, 370 and 180; now one for all three, at both grades.
     let mut cross = QuadrupedParams::default();
     cross.set_kind(plan::Family::Dog, Some(plan::Family::Horse), 0.5);
     let rolled = |roll| {
@@ -4092,15 +4096,14 @@ fn a_leg_solve_does_not_take_a_tear_for_a_root_on_a_steep_grade() {
             roll,
         )
     };
-    for (what, record, speed, most) in [
+    for (what, record, speed) in [
         (
             "the cross",
             AvatarRecord::new("Beast", Archetype::Quadruped(cross)),
             1.2,
-            0.52,
         ),
-        ("roll 1", rolled(1), 1.2, 0.37),
-        ("roll 2", rolled(2), 3.5, 0.18),
+        ("roll 1", rolled(1), 1.2),
+        ("roll 2", rolled(2), 3.5),
     ] {
         let mut record = record;
         record.sanitize();
@@ -4112,15 +4115,935 @@ fn a_leg_solve_does_not_take_a_tear_for_a_root_on_a_steep_grade() {
             },
         )
         .expect("a beast builds");
-        let pop = pop_on_grade(&avatar.rig, 0.3, speed);
-        assert!(
-            pop < most,
-            "{what}: a joint jumped {:.0} mm past its motion, past {:.0}",
-            pop * 1000.0,
-            most * 1000.0
-        );
+        for grade in [0.3, 0.4] {
+            let pop = pop_on_grade(&avatar.rig, grade, speed);
+            assert!(
+                pop < TORN_POP,
+                "{what} on {grade}: a joint jumped {:.0} mm past its motion, past {:.0}",
+                pop * 1000.0,
+                TORN_POP * 1000.0
+            );
+        }
     }
 }
+
+/// How far a joint of a beast walking up a steep plane may jump past its own
+/// motion in a frame, in metres: see the test above. Provenance: **measured**
+/// (#399): the worst of the three bodies is 74 mm, and a torn leg reads 166 or
+/// more.
+const TORN_POP: f32 = 0.1;
+
+/// The deepest any foot of `rig` stood into a plane rising `grade` per metre
+/// ahead and `camber` across, over the two seconds after it stopped walking at
+/// `froude`: its contact joint against where it stands on the plane, in metres.
+fn sunk_stepping_home(rig: &Rig, grade: f32, camber: f32, froude: f32) -> f32 {
+    let normal = Vec3::new(-camber, 1.0, -grade).normalize();
+    let height = move |at: Vec3| at.x * camber + at.z * grade;
+    let ground = move |at: Vec3| {
+        Some(symbios_avatar::anim::Ground {
+            position: Vec3::new(at.x, height(at), at.z),
+            normal,
+        })
+    };
+    let pads: Vec<usize> = rig
+        .ground_contacts()
+        .into_iter()
+        .map(|limb| rig.in_zone(Zone::Extremity(limb))[0])
+        .collect();
+    let pace = Speed::from_froude(froude).metres_per_second(rig);
+    let mut driver = Driver::seeded(INSTRUMENT_SEED);
+    let mut at = Vec3::ZERO;
+    let mut worst = 0.0f32;
+    for frame in 0..240 {
+        let velocity = if frame < 120 {
+            Vec3::Z * pace
+        } else {
+            Vec3::ZERO
+        };
+        at += velocity * STEP;
+        let inputs = Inputs {
+            delta: STEP,
+            velocity,
+            at,
+            ..Inputs::default()
+        };
+        let posed = driver
+            .drive(rig, &inputs, ground)
+            .expect("an unheld body is posed")
+            .pose
+            .forward(rig);
+        if frame >= 120 {
+            for &pad in &pads {
+                let foot = posed.positions[pad];
+                let stands = height(foot) + rig.joints[pad].position.y;
+                worst = worst.max(stands - foot.y);
+            }
+        }
+    }
+    worst
+}
+
+#[test]
+fn a_beast_stepping_its_feet_home_on_a_slope_steps_over_it() {
+    // Found beside #400: a stopped beast's recovering step was solved at its
+    // rest height over the level floor and lowered with the plant's sink, never
+    // asking the ground, so on a .2 grade a fore stepping home uphill passed
+    // through the slope for a third of a second: a dog's contact joint 108 mm
+    // further into it than it ever stands on the level, a cat's 87 and a
+    // horse's 388. Each foot is measured where the ground stands it, both ways
+    // up a grade and across one, after a walk and after a trot, against the
+    // same reading on the level, where a planted joint stands a few centimetres
+    // under its own height as the sole is laid flat.
+    let mut wrong = Vec::new();
+    for family in plan::Family::ALL {
+        let (avatar, withers) = beast_of(family);
+        let most = STEPPED_INTO * withers;
+        for froude in [0.3, 1.4] {
+            let level = sunk_stepping_home(&avatar.rig, 0.0, 0.0, froude);
+            for (grade, camber) in [(0.2, 0.0), (-0.2, 0.0), (0.0, 0.2)] {
+                let sunk = sunk_stepping_home(&avatar.rig, grade, camber, froude);
+                if sunk - level > most {
+                    wrong.push(format!(
+                        "{family:?} stopped from {froude} on {grade} by {camber}: a foot \
+                         stood {:.0} mm into the ground against {:.0} on the level, past {:.0} \
+                         more",
+                        sunk * 1000.0,
+                        level * 1000.0,
+                        most * 1000.0
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How much further into a slope than into the level ground any contact joint
+/// of a beast stepping its feet home may stand, in withers heights. Provenance:
+/// **measured** (found beside #400): at most 29 mm more on a horse trotting to
+/// a stop down a .2 grade, 0.017 of its height, and a dog's 24 mm, 0.034 of
+/// its; before, 0.15 of a dog's, 0.18 of a cat's and 0.22 of a horse's.
+const STEPPED_INTO: f32 = 0.04;
+
+/// A ground of rolling bumps as a consumer answers one from a heightmap: heights
+/// sampled on a grid of [`TERRAIN_CELL`] and interpolated bilinearly, its slope
+/// the interpolation's own, which changes at once from one cell to the next.
+/// The bumps rise to slopes of about .3 at full `bumps`, the grid steps up
+/// `step` across the line `edge` metres ahead of the origin, which the
+/// interpolation spreads over one cell, and the whole rises `grade` per metre
+/// ahead and `camber` across. In the world, its heights and its up.
+#[derive(Clone, Copy)]
+struct Terrain {
+    bumps: f32,
+    step: f32,
+    edge: f32,
+    grade: f32,
+    camber: f32,
+}
+
+impl Terrain {
+    /// The plane rising `grade` per metre ahead and `camber` across.
+    fn plane(grade: f32, camber: f32) -> Self {
+        Self {
+            bumps: 0.0,
+            step: 0.0,
+            edge: f32::MAX,
+            grade,
+            camber,
+        }
+    }
+}
+
+/// The spacing of [`Terrain`]'s grid, in metres.
+const TERRAIN_CELL: f32 = 0.25;
+
+impl Terrain {
+    fn node(self, i: f32, j: f32) -> f32 {
+        let (x, z) = (i * TERRAIN_CELL, j * TERRAIN_CELL);
+        let bumps = 0.85
+            * self.bumps
+            * (0.09 * libm::sinf(1.9 * x) * libm::cosf(1.3 * z + 0.4)
+                + 0.05 * libm::sinf(2.7 * z + 1.1 * x + 0.7)
+                + 0.03 * libm::sinf(4.3 * x - 3.1 * z));
+        bumps + if z > self.edge { self.step } else { 0.0 } + z * self.grade + x * self.camber
+    }
+
+    fn at(self, x: f32, z: f32) -> (f32, Vec3) {
+        let (i, j) = ((x / TERRAIN_CELL).floor(), (z / TERRAIN_CELL).floor());
+        let (u, v) = (x / TERRAIN_CELL - i, z / TERRAIN_CELL - j);
+        let (a, b) = (self.node(i, j), self.node(i + 1.0, j));
+        let (c, d) = (self.node(i, j + 1.0), self.node(i + 1.0, j + 1.0));
+        let height = a * (1.0 - u) * (1.0 - v) + b * u * (1.0 - v) + c * (1.0 - u) * v + d * u * v;
+        let across = ((b - a) * (1.0 - v) + (d - c) * v) / TERRAIN_CELL;
+        let ahead = ((c - a) * (1.0 - u) + (d - b) * u) / TERRAIN_CELL;
+        (height, Vec3::new(-across, 1.0, -ahead).normalize())
+    }
+}
+
+/// The sine and cosine of `facing`, from the pure-Rust `libm` rather than the
+/// platform's: a test's own input must not move with the machine's libm, and
+/// under the gate's nudged libm the platform's `cos(0)` read a hair under one,
+/// so a ramp landing on the idle threshold set off a frame later.
+fn sin_cos(facing: f32) -> (f32, f32) {
+    (libm::sinf(facing), libm::cosf(facing))
+}
+
+/// Where a body `at` facing `facing` stands a point of its own frame in the
+/// world, along the ground.
+fn into_world(at: Vec3, facing: f32, point: Vec3) -> Vec3 {
+    let (sin, cos) = sin_cos(facing);
+    Vec3::new(
+        at.x + point.x * cos + point.z * sin,
+        point.y,
+        at.z - point.x * sin + point.z * cos,
+    )
+}
+
+/// One stretch of [`over_terrain`]'s drive: how many frames, at what Froude number
+/// (nought standing), turning how fast, and the gesture asked on its first frame.
+type Stretch = (usize, f32, f32, Option<&'static str>);
+
+/// Walking, trotting, stopping, turning where it stands, sitting and getting up,
+/// lying down and getting up, and walking off.
+const OVER_TERRAIN: [Stretch; 11] = [
+    (30, 0.0, 0.0, None),
+    (120, 0.3, 0.0, None),
+    (90, 1.4, 0.0, None),
+    (60, 0.0, 0.0, None),
+    (90, 0.0, 2.0, None),
+    (30, 0.0, 0.0, None),
+    (180, 0.0, 0.0, Some("Sit")),
+    (150, 0.0, 0.0, Some(emote::GET_UP)),
+    (180, 0.0, 0.0, Some("Lie Down")),
+    (180, 0.0, 0.0, Some(emote::GET_UP)),
+    (60, 0.3, 0.0, None),
+];
+
+/// How fast the drive over the terrain changes speed, in metres a second
+/// squared: a caller's ramp. Stepped at once, a walk breaking into a trot swings
+/// a paw past the guard on the level too, 1.25 times it on roll 6, and at three
+/// the level's own worst comes within 3% of it; at this every body here stays
+/// under 0.97 of it.
+const RAMP: f32 = 2.0;
+
+/// `speed` a frame on toward `pace` at [`RAMP`], setting off from standing by
+/// half a frame's step more: the idle threshold of 0.3 m/s then falls between
+/// two frames, at 0.283 and 0.317, rather than on one of them, where whether a
+/// walk starts that frame or the next was the last bit of a sum.
+fn speed_toward(speed: f32, pace: f32) -> f32 {
+    let most = RAMP * STEP;
+    let start = if speed == 0.0 && pace > 0.0 {
+        0.5 * most
+    } else {
+        0.0
+    };
+    speed + start + (pace - speed - start).clamp(-most, most)
+}
+
+/// Where [`OVER_TERRAIN`] has `rig` when it first asks a gesture, along `+Z`.
+fn where_it_stops(rig: &Rig) -> f32 {
+    let (mut along, mut speed) = (0.0f32, 0.0f32);
+    for (frames, froude, _, gesture) in OVER_TERRAIN {
+        if gesture.is_some() {
+            break;
+        }
+        let pace = if froude > 0.0 {
+            Speed::from_froude(froude).metres_per_second(rig)
+        } else {
+            0.0
+        };
+        for _ in 0..frames {
+            speed = speed_toward(speed, pace);
+            along += speed * STEP;
+        }
+    }
+    along
+}
+
+/// What [`over_terrain`] found: the furthest a joint moved in a frame, in shares of
+/// what a frame allows, the frame and the joint; and the deepest a contact
+/// joint stood into its ground while the body stood stopped there, and when
+/// and which.
+struct Swept {
+    moved: (f32, usize, usize),
+    sunk: f32,
+    sunk_at: (usize, usize),
+}
+
+/// `rig`, `withers` high, driven through [`OVER_TERRAIN`] at sixty frames a
+/// second over `terrain`, or over level ground, answering in the body's own
+/// frame as the driver asks: `y` nought under its origin.
+fn over_terrain(rig: &Rig, withers: f32, terrain: Option<Terrain>) -> Swept {
+    let height = |x: f32, z: f32| terrain.map_or((0.0, Vec3::Y), |terrain| terrain.at(x, z));
+    let most = crate::rest::swift(withers, STEP);
+    let pads: Vec<usize> = rig
+        .ground_contacts()
+        .into_iter()
+        .map(|limb| rig.in_zone(Zone::Extremity(limb))[0])
+        .collect();
+    let mut driver = Driver::seeded(INSTRUMENT_SEED);
+    let (mut at, mut facing, mut speed) = (Vec3::ZERO, 0.0f32, 0.0f32);
+    let mut before: Option<Vec<Vec3>> = None;
+    let mut found = Swept {
+        moved: (0.0, 0, 0),
+        sunk: 0.0,
+        sunk_at: (0, 0),
+    };
+    let mut frame = 0usize;
+    for (stretch, (frames, froude, turn, gesture)) in OVER_TERRAIN.into_iter().enumerate() {
+        let pace = if froude > 0.0 {
+            Speed::from_froude(froude).metres_per_second(rig)
+        } else {
+            0.0
+        };
+        for index in 0..frames {
+            facing += turn * STEP;
+            speed = speed_toward(speed, pace);
+            let (sin, cos) = sin_cos(facing);
+            let velocity = Vec3::new(sin, 0.0, cos) * speed;
+            at += velocity * STEP;
+            let base = height(at.x, at.z).0;
+            let ground = move |point: Vec3| {
+                let world = into_world(at, facing, point);
+                let (rise, up) = height(world.x, world.z);
+                Some(symbios_avatar::anim::Ground {
+                    position: Vec3::new(point.x, rise - base, point.z),
+                    normal: Vec3::new(up.x * cos - up.z * sin, up.y, up.x * sin + up.z * cos),
+                })
+            };
+            let inputs = Inputs {
+                delta: STEP,
+                velocity,
+                at,
+                facing,
+                turn,
+                gesture: gesture.filter(|_| index == 0),
+                ..Inputs::default()
+            };
+            let posed = driver
+                .drive(rig, &inputs, ground)
+                .expect("an unheld body is posed")
+                .pose
+                .forward(rig);
+            let now: Vec<Vec3> = posed
+                .positions
+                .iter()
+                .map(|&point| into_world(at, facing, point) + Vec3::Y * base)
+                .collect();
+            if frame > 30
+                && let Some(before) = &before
+            {
+                for joint in (0..now.len()).filter(|&joint| !rig.joints[joint].marker) {
+                    let moved = now[joint].distance(before[joint]) / most;
+                    if moved > found.moved.0 {
+                        found.moved = (moved, frame, joint);
+                    }
+                }
+            }
+            // Stopped, as it steps its feet home: before it turns where it
+            // stands, and after. A turn's own steps are a stride's, which the
+            // guard on joints above answers for.
+            if stretch == 3 || stretch == 5 {
+                for &pad in &pads {
+                    let stands = height(now[pad].x, now[pad].z).0 + rig.joints[pad].position.y;
+                    if stands - now[pad].y > found.sunk {
+                        found.sunk = stands - now[pad].y;
+                        found.sunk_at = (frame, pad);
+                    }
+                }
+            }
+            before = Some(now);
+            frame += 1;
+        }
+    }
+    found
+}
+
+#[test]
+fn a_beast_goes_about_its_business_over_rolling_ground_with_a_step_without_a_jump() {
+    // #399, #400 and the step home found beside them: everything a beast does,
+    // over ground answered from a heightmap - a different height and slope under
+    // every foot, changing as it moves, slopes to .3 and a .15 step at a grid
+    // line ahead of where it stops - against the guard a rest's joints are held
+    // to, and its feet stepped home no further into the ground than on the
+    // level. The step stands under its forefeet as it sits and lies.
+    let mut bodies = Vec::new();
+    for family in plan::Family::ALL {
+        let mut params = QuadrupedParams::default();
+        params.set_kind(family, None, 0.0);
+        bodies.push((
+            format!("{family:?}"),
+            AvatarRecord::new("Beast", Archetype::Quadruped(params)),
+        ));
+    }
+    for roll in [1, 2] {
+        bodies.push((
+            format!("roll {roll}"),
+            AvatarRecord::rolled(
+                "Beast",
+                Archetype::Quadruped(QuadrupedParams::default()),
+                roll,
+            ),
+        ));
+    }
+    let wrong: Vec<String> = std::thread::scope(|scope| {
+        let runs: Vec<_> = bodies
+            .into_iter()
+            .map(|(what, mut record)| {
+                scope.spawn(move || {
+                    record.sanitize();
+                    let Archetype::Quadruped(params) = &record.archetype else {
+                        unreachable!("every record here is a beast")
+                    };
+                    let withers = params.height * 1.2;
+                    let avatar = Avatar::build_with(
+                        &record,
+                        &AvatarConfig {
+                            atlas: 64,
+                            ..AvatarConfig::default()
+                        },
+                    )
+                    .expect("a beast builds");
+                    let rig = &avatar.rig;
+                    let edge = where_it_stops(rig) + STEP_AHEAD * withers;
+                    let level = over_terrain(rig, withers, None);
+                    let terrain = Terrain {
+                        bumps: 1.0,
+                        step: 0.15,
+                        ..Terrain::plane(0.0, 0.0)
+                    };
+                    let over = over_terrain(rig, withers, Some(Terrain { edge, ..terrain }));
+                    let (moved, frame, joint) = over.moved;
+                    let (sunk_frame, sunk_pad) = over.sunk_at;
+                    println!(
+                        "{what}: worst {moved:.2} of the guard, frame {frame} {:?}; feet \
+                         {:.0} mm in stepping home, frame {sunk_frame} {:?}, against {:.0} on \
+                         the level",
+                        rig.joints[joint].zone,
+                        over.sunk * 1000.0,
+                        rig.joints[sunk_pad].zone,
+                        level.sunk * 1000.0
+                    );
+                    let mut wrong = Vec::new();
+                    if moved > 1.0 {
+                        wrong.push(format!(
+                            "{what}: joint {joint} ({:?}) moved {moved:.2} times what a frame \
+                             allows, in frame {frame}",
+                            rig.joints[joint].zone
+                        ));
+                    }
+                    if over.sunk - level.sunk > STEPPED_INTO * withers {
+                        wrong.push(format!(
+                            "{what}: a foot stepping home stood {:.0} mm into the ground, \
+                             {:.0} on the level",
+                            over.sunk * 1000.0,
+                            level.sunk * 1000.0
+                        ));
+                    }
+                    wrong
+                })
+            })
+            .collect();
+        runs.into_iter()
+            .flat_map(|run| run.join().expect("a beast is driven"))
+            .collect()
+    });
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn a_beast_goes_about_its_business_on_a_steep_slope_without_a_jump() {
+    // #399: on a plane the trunk stood level and the stride sank the whole
+    // body for its lowest paw, so up a .3 grade a horse's pelvis sank 380 mm
+    // through each hind's stance and rose in a frame as the hind left the
+    // ground, and its forelegs, crushed under it, lost their solve's root: a
+    // forepaw 2.4 times what a frame allows, roll 6 2.7, roll 4 1.8. Each girdle
+    // now rides its own ground. Everything a beast does, both ways up a .4
+    // grade, across one and on a corner of both, for each family, a cross of
+    // each and three rolls, against the guard a rest's joints are held to.
+    // The walk breaking into a trot is sensitive to where in the stride it
+    // falls in HEAD, on level ground too, up to 1.33 times the guard for a
+    // horse at an unlucky point of its stride (#412). This
+    // test does not claim to cover that; its input is portable and its ramp off
+    // the idle threshold's edge, so the trot comes at the same point however a
+    // machine's libm rounds.
+    let mut bodies = Vec::new();
+    for family in plan::Family::ALL {
+        let mut params = QuadrupedParams::default();
+        params.set_kind(family, None, 0.0);
+        bodies.push((
+            format!("{family:?}"),
+            AvatarRecord::new("Beast", Archetype::Quadruped(params)),
+        ));
+    }
+    for (family, other) in [
+        (plan::Family::Dog, plan::Family::Horse),
+        (plan::Family::Horse, plan::Family::Dog),
+        (plan::Family::Cat, plan::Family::Dog),
+    ] {
+        let mut params = QuadrupedParams::default();
+        params.set_kind(family, Some(other), 0.5);
+        bodies.push((
+            format!("{family:?} crossed with {other:?}"),
+            AvatarRecord::new("Beast", Archetype::Quadruped(params)),
+        ));
+    }
+    for roll in [1, 4, 6] {
+        bodies.push((
+            format!("roll {roll}"),
+            AvatarRecord::rolled(
+                "Beast",
+                Archetype::Quadruped(QuadrupedParams::default()),
+                roll,
+            ),
+        ));
+    }
+    let wrong: Vec<String> = std::thread::scope(|scope| {
+        let runs: Vec<_> = bodies
+            .into_iter()
+            .map(|(what, mut record)| {
+                scope.spawn(move || {
+                    record.sanitize();
+                    let Archetype::Quadruped(params) = &record.archetype else {
+                        unreachable!("every record here is a beast")
+                    };
+                    let withers = params.height * 1.2;
+                    let avatar = Avatar::build_with(
+                        &record,
+                        &AvatarConfig {
+                            atlas: 64,
+                            ..AvatarConfig::default()
+                        },
+                    )
+                    .expect("a beast builds");
+                    let mut wrong = Vec::new();
+                    let mut worst = (0.0f32, 0.0f32, 0.0f32);
+                    for (grade, camber) in
+                        [(0.4, 0.0), (-0.4, 0.0), (0.0, 0.4), (0.3, 0.2), (-0.3, 0.2)]
+                    {
+                        let over =
+                            over_terrain(&avatar.rig, withers, Some(Terrain::plane(grade, camber)));
+                        let (moved, frame, joint) = over.moved;
+                        if moved > worst.0 {
+                            worst = (moved, grade, camber);
+                        }
+                        if moved > 1.0 {
+                            wrong.push(format!(
+                                "{what} on {grade} by {camber}: joint {joint} ({:?}) moved \
+                                 {moved:.2} times what a frame allows, in frame {frame}",
+                                avatar.rig.joints[joint].zone
+                            ));
+                        }
+                    }
+                    println!(
+                        "{what}: worst {:.2} of the guard, on {} by {}",
+                        worst.0, worst.1, worst.2
+                    );
+                    wrong
+                })
+            })
+            .collect();
+        runs.into_iter()
+            .flat_map(|run| run.join().expect("a beast is driven"))
+            .collect()
+    });
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// Ground a hair off the level, as a consumer's flat terrain answers it: see
+/// [`a_beast_on_nearly_level_ground_moves_as_it_does_on_the_level`].
+#[derive(Clone, Copy, Debug)]
+enum NearLevel {
+    Level,
+    /// Level, this high.
+    Raised(f32),
+    /// Rising this much per metre ahead.
+    Grade(f32),
+    /// A heightmap of this much noise, a quarter metre a cell.
+    Noise(f32),
+}
+
+/// A hashed noise height in `-1..1` at a grid node.
+fn noise_node(i: i32, j: i32) -> f32 {
+    #[expect(clippy::cast_sign_loss, reason = "the bits are hashed, not counted")]
+    let mut hash = (i as u32).wrapping_mul(0x9e37_79b1) ^ (j as u32).wrapping_mul(0x85eb_ca77);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x2c1b_3c6d);
+    hash ^= hash >> 12;
+    #[expect(clippy::cast_precision_loss, reason = "a noise value")]
+    let unit = hash as f32 / u32::MAX as f32;
+    unit * 2.0 - 1.0
+}
+
+impl NearLevel {
+    /// How high the ground stands under `point` of a body at `at` facing
+    /// `facing`, in the body's frame, and its up there.
+    fn answer(self, at: Vec3, facing: f32, point: Vec3) -> symbios_avatar::anim::Ground {
+        use symbios_avatar::anim::Ground;
+        match self {
+            Self::Level => Ground::level(Vec3::new(point.x, 0.0, point.z)),
+            Self::Raised(by) => Ground::level(Vec3::new(point.x, by, point.z)),
+            Self::Grade(rise) => Ground {
+                position: Vec3::new(point.x, point.z * rise, point.z),
+                normal: Vec3::new(0.0, 1.0, -rise).normalize(),
+            },
+            Self::Noise(size) => {
+                let world = into_world(at, facing, point);
+                let cell = 0.25;
+                let (i, j) = ((world.x / cell).floor(), (world.z / cell).floor());
+                let (u, v) = (world.x / cell - i, world.z / cell - j);
+                #[expect(clippy::cast_possible_truncation, reason = "a grid's index")]
+                let (i, j) = (i as i32, j as i32);
+                let node = |di: i32, dj: i32| size * noise_node(i + di, j + dj);
+                let (a, b, c, d) = (node(0, 0), node(1, 0), node(0, 1), node(1, 1));
+                let height =
+                    a * (1.0 - u) * (1.0 - v) + b * u * (1.0 - v) + c * (1.0 - u) * v + d * u * v;
+                let across = ((b - a) * (1.0 - v) + (d - c) * v) / cell;
+                let ahead = ((c - a) * (1.0 - u) + (d - b) * u) / cell;
+                let up = Vec3::new(-across, 1.0, -ahead).normalize();
+                let (sin, cos) = sin_cos(facing);
+                Ground {
+                    position: Vec3::new(point.x, height, point.z),
+                    normal: Vec3::new(up.x * cos - up.z * sin, up.y, up.x * sin + up.z * cos),
+                }
+            }
+        }
+    }
+
+    /// How high it stands everywhere, where it is level at a height.
+    fn raised(self) -> f32 {
+        match self {
+            Self::Raised(by) => by,
+            _ => 0.0,
+        }
+    }
+}
+
+/// Stand, walk, trot, stop, turn where it stands, stand, walk on: (frames,
+/// Froude number or nought, turn in radians a second).
+const NEAR_LEVEL_DRIVE: [(usize, f32, f32); 7] = [
+    (30, 0.0, 0.0),
+    (150, 0.3, 0.0),
+    (120, 1.4, 0.0),
+    (90, 0.0, 0.0),
+    (90, 0.0, 2.0),
+    (60, 0.0, 0.0),
+    (90, 0.3, 0.0),
+];
+
+/// The frames [`NEAR_LEVEL_DRIVE`] switches its ground at: walking, trotting,
+/// stopping and turning.
+const NEAR_LEVEL_SWITCHES: [usize; 4] = [120, 260, 350, 440];
+
+/// `rig` driven through [`NEAR_LEVEL_DRIVE`] on the ground `pick` gives each
+/// frame, speed ramped by [`RAMP`]: every frame's joints in the body's frame,
+/// and in the world.
+fn near_level(rig: &Rig, pick: impl Fn(usize) -> NearLevel) -> (Vec<Vec<Vec3>>, Vec<Vec<Vec3>>) {
+    let mut driver = Driver::seeded(INSTRUMENT_SEED);
+    let (mut at, mut facing, mut speed) = (Vec3::ZERO, 0.0f32, 0.0f32);
+    let (mut own, mut world) = (Vec::new(), Vec::new());
+    for (frames, froude, turn) in NEAR_LEVEL_DRIVE {
+        let pace = if froude > 0.0 {
+            Speed::from_froude(froude).metres_per_second(rig)
+        } else {
+            0.0
+        };
+        for _ in 0..frames {
+            facing += turn * STEP;
+            speed = speed_toward(speed, pace);
+            let (sin, cos) = sin_cos(facing);
+            let velocity = Vec3::new(sin, 0.0, cos) * speed;
+            at += velocity * STEP;
+            let ground = pick(own.len());
+            let inputs = Inputs {
+                delta: STEP,
+                velocity,
+                at,
+                facing,
+                turn,
+                ..Inputs::default()
+            };
+            let posed = driver
+                .drive(rig, &inputs, move |point| {
+                    Some(ground.answer(at, facing, point))
+                })
+                .expect("an unheld body is posed")
+                .pose
+                .forward(rig);
+            world.push(
+                posed
+                    .positions
+                    .iter()
+                    .map(|&point| into_world(at, facing, point))
+                    .collect(),
+            );
+            own.push(posed.positions);
+        }
+    }
+    (own, world)
+}
+
+/// The largest second difference of any joint of `rig` over `frames` of
+/// `world`, in metres.
+fn jolt(rig: &Rig, world: &[Vec<Vec3>], frames: std::ops::Range<usize>) -> f32 {
+    let mut most = 0.0f32;
+    for frame in frames.start.max(1)..frames.end.min(world.len() - 1) {
+        for joint in (0..rig.len()).filter(|&joint| !rig.joints[joint].marker) {
+            let second =
+                world[frame + 1][joint] - world[frame][joint] * 2.0 + world[frame - 1][joint];
+            most = most.max(second.length());
+        }
+    }
+    most
+}
+
+#[test]
+fn a_beast_on_nearly_level_ground_moves_as_it_does_on_the_level() {
+    // #399's girdles, against what a consumer's flat ground really answers: a
+    // heightmap is never exactly level. Splitting the crouch per girdle and
+    // solving a stepping foot again after the plant took effect at the least
+    // departure from the level, so on a grade of 1e-4, or a millimetre of noise,
+    // a horse's tail stood 110 mm off where level ground holds it at every phase
+    // of a stride, a dog's head 44 mm at its stop, and going between the two
+    // mid-stride jolted a horse 71 mm past either run alone. The slope's own
+    // answers are taken in by how steep the ground is, and on ground a hair off
+    // the level a body moves as it does on the level, within what HEAD's own
+    // floats make of it, and goes between the two without a jolt of its own.
+    // Ground raised level by 2 cm stands the body 2 cm up.
+    let mut bodies = Vec::new();
+    for family in [plan::Family::Dog, plan::Family::Horse] {
+        let mut params = QuadrupedParams::default();
+        params.set_kind(family, None, 0.0);
+        bodies.push((
+            format!("{family:?}"),
+            AvatarRecord::new("Beast", Archetype::Quadruped(params)),
+        ));
+    }
+    bodies.push((
+        "roll 1".to_string(),
+        AvatarRecord::rolled("Beast", Archetype::Quadruped(QuadrupedParams::default()), 1),
+    ));
+    let wrong: Vec<String> = std::thread::scope(|scope| {
+        let runs: Vec<_> = bodies
+            .into_iter()
+            .map(|(what, mut record)| {
+                scope.spawn(move || {
+                    record.sanitize();
+                    let avatar = Avatar::build_with(
+                        &record,
+                        &AvatarConfig {
+                            atlas: 64,
+                            ..AvatarConfig::default()
+                        },
+                    )
+                    .expect("a beast builds");
+                    let rig = &avatar.rig;
+                    let (level, level_world) = near_level(rig, |_| NearLevel::Level);
+                    let mut wrong = Vec::new();
+                    for ground in [
+                        NearLevel::Grade(1.0e-4),
+                        NearLevel::Noise(1.0e-3),
+                        NearLevel::Raised(0.02),
+                        NearLevel::Raised(-0.02),
+                    ] {
+                        let (off, off_world) = near_level(rig, |_| ground);
+                        let raised = ground.raised();
+                        let (most, jolted) = if raised == 0.0 {
+                            (NEAR_LEVEL_OFF, NEAR_LEVEL_JOLT)
+                        } else {
+                            (RAISED_OFF, RAISED_JOLT)
+                        };
+                        let apart = level
+                            .iter()
+                            .zip(&off)
+                            .flat_map(|(level, off)| {
+                                level
+                                    .iter()
+                                    .zip(off)
+                                    .map(|(level, off)| off.distance(*level + Vec3::Y * raised))
+                            })
+                            .fold(0.0f32, f32::max);
+                        if apart > most {
+                            wrong.push(format!(
+                                "{what} on {ground:?}: a joint stood {:.1} mm off where level \
+                                 ground stands it, past {:.1}",
+                                apart * 1000.0,
+                                most * 1000.0
+                            ));
+                        }
+                        // On and off it at each switch: the jolt beyond what
+                        // either ground's own run reads there.
+                        let (_, switched) = near_level(rig, |frame| {
+                            let [a, b, c, d] = NEAR_LEVEL_SWITCHES;
+                            if (a..b).contains(&frame) || (c..d).contains(&frame) {
+                                ground
+                            } else {
+                                NearLevel::Level
+                            }
+                        });
+                        for at in NEAR_LEVEL_SWITCHES {
+                            let around = at - 2..at + 2;
+                            let own = jolt(rig, &level_world, around.clone()).max(jolt(
+                                rig,
+                                &off_world,
+                                around.clone(),
+                            ));
+                            let extra = jolt(rig, &switched, around) - own;
+                            if extra > jolted {
+                                wrong.push(format!(
+                                    "{what} going onto or off {ground:?} at frame {at}: a joint \
+                                     jolted {:.1} mm past either ground's own, past {:.1}",
+                                    extra * 1000.0,
+                                    jolted * 1000.0
+                                ));
+                            }
+                        }
+                    }
+                    wrong
+                })
+            })
+            .collect();
+        runs.into_iter()
+            .flat_map(|run| run.join().expect("a beast is driven"))
+            .collect()
+    });
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How far any joint of a beast on ground a hair off the level may stand from
+/// where level ground stands it, and how much further going between the two
+/// may jolt it than either does alone, in metres; and the same for ground
+/// raised level by 2 cm, where the jolt is the body rising with the ground.
+/// Provenance: **measured** (#399). A hair off the level, HEAD's own floats read
+/// up to 2.7 mm and jolt nothing; this tree 2.8 and nothing, against 110 and
+/// 71 before the slope's answers were taken in by its steepness. Raised 2 cm,
+/// HEAD stood its joints up to 33 mm off and jolted 20; this tree 21 and 20,
+/// against 110 and 91.
+const NEAR_LEVEL_OFF: f32 = 0.004;
+const NEAR_LEVEL_JOLT: f32 = 0.005;
+const RAISED_OFF: f32 = 0.03;
+const RAISED_JOLT: f32 = 0.025;
+
+#[test]
+fn a_driver_carried_onto_a_rebuilt_body_mid_rest_does_not_jump() {
+    // #400's glide keeps what the last frame of a rest was laid on, and a
+    // driver carried onto another body went on from the first one's: a horse's
+    // driver moved onto a cat half a second into getting up, on 4 cm of noise,
+    // jumped the cat 2.36 times what a frame allows, onto a dog 2.12, onto a cat
+    // starting to lie down on a -.3 grade 1.21. The body a rest is laid for is rebuilt and
+    // what it was laid on forgotten together. From the frame after the swap,
+    // against what the new body allows.
+    let body = |family| {
+        let mut params = QuadrupedParams::default();
+        params.set_kind(family, None, 0.0);
+        let mut record = AvatarRecord::new("Beast", Archetype::Quadruped(params));
+        record.sanitize();
+        let Archetype::Quadruped(params) = &record.archetype else {
+            unreachable!("a beast")
+        };
+        let withers = params.height * 1.2;
+        let avatar = Avatar::build_with(
+            &record,
+            &AvatarConfig {
+                atlas: 64,
+                ..AvatarConfig::default()
+            },
+        )
+        .expect("a beast builds");
+        (avatar, withers)
+    };
+    let [dog, cat, horse] = [plan::Family::Dog, plan::Family::Cat, plan::Family::Horse].map(body);
+    // A walk, a stop, down into a sit, up, down into lying and up: (frames,
+    // Froude number or nought, gesture).
+    let script = [
+        (30, 0.0, None),
+        (90, 0.3, None),
+        (60, 0.0, None),
+        (180, 0.0, Some("Sit")),
+        (150, 0.0, Some(emote::GET_UP)),
+        (180, 0.0, Some("Lie Down")),
+        (180, 0.0, Some(emote::GET_UP)),
+    ];
+    // Half a second into getting up from the sit, and two and ten frames into
+    // lying down.
+    let swaps = [392, 400, 512, 520];
+    let mut wrong = Vec::new();
+    for (what, from, onto) in [
+        ("horse onto cat", &horse, &cat),
+        ("horse onto dog", &horse, &dog),
+        ("dog onto cat", &dog, &cat),
+    ] {
+        for ground in [NearLevel::Noise(0.04), NearLevel::Grade(-0.3)] {
+            for swap in swaps {
+                let mut driver = Driver::seeded(INSTRUMENT_SEED);
+                let mut before: Option<Vec<Vec3>> = None;
+                let (mut frame, mut at) = (0usize, Vec3::ZERO);
+                let mut worst = (0.0f32, 0usize);
+                for (frames, froude, gesture) in script {
+                    let pace = if froude > 0.0 {
+                        Speed::from_froude(froude).metres_per_second(&from.0.rig)
+                    } else {
+                        0.0
+                    };
+                    for index in 0..frames {
+                        let (avatar, withers) = if frame >= swap { onto } else { from };
+                        let rig = &avatar.rig;
+                        if frame == swap {
+                            driver = driver.clone();
+                            before = None;
+                        }
+                        let velocity = Vec3::Z * pace;
+                        at += velocity * STEP;
+                        let inputs = Inputs {
+                            delta: STEP,
+                            velocity,
+                            at,
+                            gesture: gesture.filter(|_| index == 0),
+                            ..Inputs::default()
+                        };
+                        let here = at;
+                        let posed = driver
+                            .drive(rig, &inputs, move |point| {
+                                Some(ground.answer(here, 0.0, point))
+                            })
+                            .expect("an unheld body is posed")
+                            .pose
+                            .forward(rig)
+                            .positions
+                            .iter()
+                            .map(|&point| point + at)
+                            .collect::<Vec<_>>();
+                        if let Some(before) = &before
+                            && frame > swap
+                        {
+                            let most = crate::rest::swift(*withers, STEP);
+                            for joint in (0..rig.len()).filter(|&joint| !rig.joints[joint].marker) {
+                                let moved = posed[joint].distance(before[joint]) / most;
+                                if moved > worst.0 {
+                                    worst = (moved, frame);
+                                }
+                            }
+                        }
+                        before = Some(posed);
+                        frame += 1;
+                    }
+                }
+                if worst.0 > 1.0 {
+                    wrong.push(format!(
+                        "{what} on {ground:?} from frame {swap}: a joint moved {:.2} times \
+                         what a frame allows, in frame {}",
+                        worst.0, worst.1
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How far ahead of where it stops [`Terrain`]'s step stands, in withers
+/// heights: under the forefeet of a beast sitting or lying there.
+const STEP_AHEAD: f32 = 0.33;
 
 #[test]
 fn a_body_seated_in_a_state_is_where_going_down_would_have_it() {

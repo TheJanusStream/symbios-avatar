@@ -1893,7 +1893,45 @@ where
     // about it, each girdle on its own feet (#378): see
     // [`super::quadruped::depth`] and [`super::quadruped::carry`]. **Only what
     // a held foot owes on top**, which is a change of speed's and no stride's.
-    if gait.limbs.len() == 4 && gait.duty < 1.0 {
+    // **And each girdle over its own ground** (#399): the trunk is ridden over
+    // what lies under its hips and under its shoulders, and each paw sunk for
+    // from its own girdle's, so a slope pitches the trunk rather than sinking
+    // the whole body for the paw furthest down it. Level ground reads as none.
+    let girdles = if gait.limbs.len() == 4 && gait.duty < 1.0 {
+        super::quadruped::girdle_ground(rig, &ground)
+    } else {
+        None
+    };
+    let mut ridden = None;
+    if let Some(girdles) = girdles {
+        // Each girdle sinks for its own legs, the hips with the whole body and
+        // the shoulders by the difference, through the pitch. The hinds' stride
+        // is planned on the slope; the fores' on the level, because a fore's
+        // swing folds its wrist up under its shoulder and a shoulder sunk for
+        // the paw at the back of a stance up a .3 grade brought the two
+        // together until the leg's solve lost its root, a horse's forefoot
+        // going 2.6 times what a frame allows.
+        let [hinds, fores] = [false, true].map(|fores| {
+            let rise = if fores { 0.0 } else { girdles.rise() };
+            let leaving = goals
+                .iter()
+                .filter_map(|&(limb, phase, _, target, _)| match phase {
+                    Phase::Stance(through) if fores == limb.is_fore() => {
+                        Some((limb, target, through))
+                    }
+                    _ => None,
+                });
+            super::quadruped::depth_rising(rig, gait, stride, rise, Some(fores)).max(
+                super::quadruped::depth_leaving(rig, gait, cycle, leaving, girdles),
+            )
+        });
+        // By as much as the ground is steep: on the level the whole body sinks
+        // for the girdle that asks most, as it always has, and each girdle for
+        // its own only on a slope.
+        let steep = girdles.steep();
+        steps.crouch = hinds.max(fores) * (1.0 - steep) + hinds * steep;
+        ridden = Some(girdles.shoulders_sunk((fores - steps.crouch) * steep));
+    } else if gait.limbs.len() == 4 && gait.duty < 1.0 {
         let standing = goals
             .iter()
             .filter(|&&(_, phase, ..)| phase.is_stance())
@@ -1902,6 +1940,9 @@ where
             .max(super::quadruped::depth_at(rig, gait, cycle, standing));
     }
     pose.translation.y -= steps.crouch;
+    if let Some(girdles) = ridden {
+        super::quadruped::ride_ground(rig, pose, girdles);
+    }
 
     for &(limb, phase, _, _, doubt) in &goals {
         if phase.is_stance() {

@@ -555,6 +555,9 @@ pub(crate) struct Rests {
     /// How far onto the ground under it the rest last posed is to be turned
     /// ([`Rests::on_ground`]), until that is done.
     posed: Option<f32>,
+    /// The ground the last frame of this rest was laid on, for the next to go
+    /// on from (#400), or `None` where there was no such frame.
+    laid: Option<Laid>,
 }
 
 /// What of a rig a rest reads: every joint's place, size, parent and zone,
@@ -616,21 +619,35 @@ impl Rests {
                 })
             });
             self.solved = Some((key, solved));
+            // Nor what the last frame of another rig was laid on: glided toward
+            // from a new body's first frame, a horse's sink carried onto a cat
+            // getting up moved it 2.4 times what a frame allows.
+            self.laid = None;
         }
         self.solved.as_mut()?.1.as_deref_mut()
     }
 
-    /// Lays the rest just posed in `pose` on `ground`: see [`on_ground`].
-    pub(super) fn on_ground<F>(&mut self, rig: &Rig, pose: &mut Pose, ground: F)
+    /// Lays the rest just posed in `pose` on `ground`, `delta` seconds after
+    /// the last frame: see [`on_ground`].
+    pub(super) fn on_ground<F>(&mut self, rig: &Rig, pose: &mut Pose, ground: F, delta: f32)
     where
         F: Fn(Vec3) -> Option<Ground>,
     {
         let Some(tilt) = self.posed.take() else {
+            self.laid = None;
             return;
         };
+        let was = self.laid.take();
         if let Some(solved) = self.of(rig) {
-            on_ground(rig, &solved.ctx.body, pose, tilt, ground);
+            let glide = was.as_ref().map(|was| (was, delta));
+            self.laid = on_ground(rig, &solved.ctx.body, pose, tilt, ground, glide);
         }
+    }
+
+    /// Forgets the plane the last frame was laid on (#400): for a frame that
+    /// is no rest's, or a body put into one where it stands.
+    pub(super) fn unlay(&mut self) {
+        self.laid = None;
     }
 }
 
@@ -778,7 +795,28 @@ const TILT_BY: f32 = 0.5;
 ///
 /// **Level ground is left to the bit**, so the frame the body is in answering
 /// flat is the rest as it was measured.
-fn on_ground<F>(rig: &Rig, body: &Body, pose: &mut Pose, tilt: f32, ground: F)
+///
+/// **And the ground goes on from the last frame's** (#400): `glide` is what
+/// that frame was laid on and the seconds since. The fit is a function of
+/// which supports answer and where, so it changes all at once when one crosses
+/// the edge of a step or answers `None`: on a .15 step a body's whole trunk
+/// jumped 358 mm in a frame, twice what any part of a rest may move, and with
+/// nothing under some supports on a .2 grade its pelvis 444 mm. So the plane
+/// moves toward the fit no faster than [`FIT_RISE`] and [`FIT_TURN`] allow,
+/// and where the fit is within that of the last frame's, as everywhere on a
+/// plane, it is the fit itself, to the bit. A foot is the same: its ground rises
+/// or falls toward what it reads no faster than [`FOOT_RISE`] allows, so a paw
+/// carried over the edge of a step goes up onto it over a few frames rather than
+/// in one, and a foot over nothing stands on the plane the body is laid on.
+/// Answers what it laid the body on, for the next frame.
+fn on_ground<F>(
+    rig: &Rig,
+    body: &Body,
+    pose: &mut Pose,
+    tilt: f32,
+    ground: F,
+    glide: Option<(&Laid, f32)>,
+) -> Option<Laid>
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
@@ -789,13 +827,39 @@ where
         .chain([body.root, body.withers])
         .filter_map(|joint| ground(level.positions[joint]))
         .collect();
-    if under
+    let flat_under = under
         .iter()
-        .all(|below| below.position.y == GROUND && below.normal == Vec3::Y)
-    {
-        return;
+        .all(|below| below.position.y == GROUND && below.normal == Vec3::Y);
+    // Nothing answering is no plane to go to; the last frame's is kept.
+    let fitted = if under.is_empty() {
+        glide.map_or(Fit::LEVEL, |(was, _)| was.plane)
+    } else if flat_under {
+        Fit::LEVEL
+    } else {
+        Fit::of(&under)
+    };
+    // How far the ground may move in this frame, at a share of `sqrt(g H)`.
+    let reach = glide.map(|(_, delta)| (GRAVITY * rig.extent()).sqrt() * delta);
+    let fit = match (glide, reach) {
+        (Some((was, _)), Some(reach)) => was.plane.toward(
+            fitted,
+            [FIT_MIDDLE, FIT_RISE, FIT_TURN / rig.extent()].map(|share| share * reach),
+        ),
+        _ => fitted,
+    };
+    if fit == Fit::LEVEL && flat_under {
+        // On the level each foot stands on the level.
+        return Some(Laid {
+            plane: fit,
+            feet: legs().map(|_| GROUND).collect(),
+            sink: 0.0,
+        });
     }
-    let (middle, height, slope) = fit_plane(&under);
+    let Fit {
+        middle,
+        height,
+        slope,
+    } = fit;
     let flat = Vec3::new(middle.x, GROUND, middle.y);
     let up = Vec3::new(-slope.x, 1.0, -slope.y).normalize();
     let turned = det::slerp(Quat::IDENTITY, det::from_rotation_arc(Vec3::Y, up), tilt);
@@ -812,16 +876,25 @@ where
     let tilted = pose.forward(rig);
     let mut sink = 0.0f32;
     let mut goals = Vec::with_capacity(4);
-    for leg in legs() {
+    let mut feet = Vec::with_capacity(4);
+    for (index, leg) in legs().enumerate() {
         let foot = tilted.positions[leg.pad];
-        let Some(below) = ground(foot) else {
-            continue;
+        let (read, normal) = ground(foot).map_or_else(
+            || (fit.height_at(glam::Vec2::new(foot.x, foot.z)), up),
+            |below| {
+                let normal = within_turn(below.normal.normalize_or(Vec3::Y), up);
+                (below.position.y, normal)
+            },
+        );
+        let beneath = match (glide.and_then(|(was, _)| was.feet.get(index)), reach) {
+            (Some(&was), Some(reach)) => toward(was, read, FOOT_RISE * reach),
+            _ => read,
         };
-        let normal = below.normal.normalize_or(Vec3::Y);
+        feet.push(beneath);
         let [top, knee, ankle] = leg.chain.map(|joint| rig.joints[joint].position);
         let attitude = det::from_rotation_arc(Vec3::Y, normal) * level.rotations[leg.chain[2]];
         let stands = level.positions[leg.pad].y / normal.y.max(0.1);
-        let wanted = Vec3::new(foot.x, below.position.y + stands, foot.z)
+        let wanted = Vec3::new(foot.x, beneath + stands, foot.z)
             - attitude * (rig.joints[leg.pad].position - ankle);
         // No further than the leg lies now, however straight that is.
         let lies = level.positions[leg.chain[0]].distance(level.positions[leg.chain[2]]);
@@ -832,6 +905,11 @@ where
             sink = sink.max(-along.y - (most * most - flat).max(0.0).sqrt());
         }
         goals.push((leg, wanted, attitude));
+    }
+    // The sink goes on from the last frame's as the plane does: a foot coming
+    // up onto a step takes back at once what the trunk sank for it.
+    if let (Some((was, _)), Some(reach)) = (glide, reach) {
+        sink = toward(was.sink, sink, SINK_RISE * reach);
     }
     pose.translation.y -= sink;
     for (leg, wanted, attitude) in goals {
@@ -849,11 +927,147 @@ where
         } else {
             rig.bend_pole(leg.limb).unwrap_or(knee)
         };
+        // A hind leg folded shut has no side the pole can say (#400): see
+        // `squared_pole`. A fore's elbow is left its pole: asked of a dog's
+        // fores going down, the knee's own side swung an elbow twice what a
+        // frame allows.
+        let pole = if leg.limb.is_fore() {
+            pole
+        } else {
+            let hinge = posed.rotations[leg.chain[1]] * Vec3::X;
+            squared_pole(top, knee, ankle, hinge, wanted, pole, rig.extent())
+        };
         two_bone(rig, pose, leg.chain, wanted, pole);
         let carried = pose.forward(rig).rotations[leg.chain[1]];
         pose.rotations[leg.chain[2]] = carried.inverse() * attitude;
     }
+    Some(Laid {
+        plane: fit,
+        feet,
+        sink,
+    })
 }
+
+/// `pole`, or where it says little of which way a leg bends, a pole on the side
+/// the knee stands off the line the leg is sent along now (#400).
+///
+/// **A leg folded tight bends along the line it is sent down.** A pole is laid
+/// off the knee along its offset from the middle of the leg, and in a leg folded
+/// tight that offset runs along the leg as well as across it: a sitting horse's
+/// hind leg lies with its stifle above its hip and its hock under both, and as a
+/// step down under the hinds asked the hock 77 mm lower, the pole fell on the
+/// line the hock was sent along, what was left of it a few millimetres either
+/// way, and the stifle went from one side of the leg to the other, 448 mm in a
+/// frame. The knee's own offset square to that line keeps the side it bends to,
+/// or where the knee lies on the line too, folded shut, the hinge it turns
+/// about; and the pole goes over to it by how little the laid one says: wholly
+/// below [`POLE_SQUARE`]'s first share, not at all from its second where the
+/// two agree within [`POLE_AGREES`].
+fn squared_pole(
+    top: Vec3,
+    knee: Vec3,
+    ankle: Vec3,
+    hinge: Vec3,
+    wanted: Vec3,
+    pole: Vec3,
+    extent: f32,
+) -> Vec3 {
+    let line = (wanted - top).normalize_or_zero();
+    let square = |off: Vec3| off - line * off.dot(line);
+    let off = pole - top;
+    let share = square(off).length() / off.length().max(f32::EPSILON);
+    // The knee's side: off the line where it stands well off it, and where it
+    // all but lies on it, folded shut, square to the hinge it turns about.
+    let thigh = knee - top;
+    let across = square(thigh);
+    let sense = thigh.cross(ankle - knee).dot(hinge);
+    let hinged = if sense >= 0.0 {
+        line.cross(hinge)
+    } else {
+        hinge.cross(line)
+    };
+    let shut = step(
+        POLE_SHUT[0],
+        POLE_SHUT[1],
+        across.length() / thigh.length().max(f32::EPSILON),
+    );
+    let kept = match (across.try_normalize(), hinged.try_normalize()) {
+        (Some(across), Some(hinged)) => {
+            let hinged = if hinged.dot(across) < 0.0 && shut >= 1.0 {
+                -hinged
+            } else {
+                hinged
+            };
+            (across * shut + hinged * (1.0 - shut)).try_normalize()
+        }
+        (across, hinged) => across.or(hinged),
+    };
+    let (Some(kept), Some(laid)) = (kept, square(off).try_normalize()) else {
+        return pole;
+    };
+    // And by how far the two agree: a pole on the far side of the line from
+    // the knee would carry it over to that side.
+    let [from, to] = POLE_SQUARE;
+    let says = step(from, to, share) * step(0.0, POLE_AGREES, laid.dot(kept));
+    if says >= 1.0 {
+        return pole;
+    }
+    top + (laid * says + kept * (1.0 - says)).normalize_or(kept) * extent
+}
+
+/// Below what share of its distance square to the line a leg is sent along a
+/// pole begins to give way to the knee's own side, and below which it has given
+/// way wholly. Provenance: **chosen** (#400): the folded horse's hind leg stood
+/// at a sixtieth, well inside the first; a rest's legs stand square of the
+/// second but for a few frames of a fold, where the pole was as unsure.
+const POLE_SQUARE: [f32; 2] = [0.15, 0.4];
+
+/// Below what share of its length square to the line a leg is sent along a
+/// thigh begins to be taken for folded shut, so that the hinge its knee turns
+/// about says which side it bends to, and at which it is wholly. Provenance:
+/// **chosen** (#400): the sitting horse's hind leg lay at a sixtieth. Wider, the
+/// hinge was asked of a lying horse's forearm, turned out of its own hinge's
+/// plane, and swung the elbow across.
+const POLE_SHUT: [f32; 2] = [0.0, 0.15];
+
+/// How nearly a pole's side and the knee's must agree for the pole to be taken
+/// whole, the cosine between them. Provenance: **chosen** (#400): within 45
+/// degrees; past a right angle the pole would carry the knee over the line.
+const POLE_AGREES: f32 = 0.7;
+
+/// `to`, or as far toward it from `from` as `most`: `to` itself, to the bit,
+/// where it is within that (#400).
+fn toward(from: f32, to: f32, most: f32) -> f32 {
+    if (to - from).abs() <= most {
+        to
+    } else {
+        from + (to - from).clamp(-most, most)
+    }
+}
+
+/// `normal`, or as far toward it from `up` as [`FOOT_TURN`] turns: the slope a
+/// foot of a rest laid on the plane facing `up` is turned to (#400).
+///
+/// **A foot turned whole swings its ankle about its sole**, by the length of its
+/// cannon or its metapodial. A ground read at points has a slope that changes at
+/// once from one side of an edge to the other - on a heightmap at every line of
+/// its grid, steepest where it climbs a step - and a sitting beast's hind ankle,
+/// turned with it, was sent 300 mm along the ground in a frame. Within the turn, as
+/// everywhere on a plane, the ground's own slope, to the bit.
+fn within_turn(normal: Vec3, up: Vec3) -> Vec3 {
+    let most = FOOT_TURN.det_cos();
+    if normal.dot(up) >= most {
+        return normal;
+    }
+    let axis = up.cross(normal).normalize_or(Vec3::X);
+    Rot::axis_angle(axis, FOOT_TURN) * up
+}
+
+/// How far a foot of a rest may be turned from the plane its body is laid on,
+/// in radians. Provenance: **chosen** (#400): a fifth of a radian, so that a
+/// jump in a slope's reading swings an ankle by no more than a fifth of its
+/// cannon; on a plane a foot reads the plane's own slope and never comes near.
+const FOOT_TURN: f32 = 0.2;
 
 /// The share of a leg's bones a slope's reach may stretch it to, and how near a
 /// foot must already be to where a slope sends it, in metres and in radians,
@@ -863,6 +1077,113 @@ where
 /// rounds to.
 const TILT_REACH: f32 = FORE_GIVE;
 const TILT_CLOSE: f32 = 1.0e-4;
+
+/// How fast the plane a rest is laid on may move toward the one its supports
+/// fit (#400): its middle along the ground and its height there in shares of
+/// `sqrt(g H)` for a body `H` high, and its rise per metre in shares of
+/// `sqrt(g / H)`.
+/// Provenance: **chosen** (#400). A middle carried by supports that move as a
+/// rest moves them never comes near four, the most a rest's joints move, so
+/// only a support answering `None` or answering again holds it back; a step's
+/// whole change of plane takes a fifth of a second or so at the other two, at
+/// which the far end of a lying body moves a tenth of what a rest's joints may.
+const FIT_MIDDLE: f32 = 4.0;
+const FIT_RISE: f32 = 0.5;
+const FIT_TURN: f32 = 0.5;
+
+/// Gravity, for [`FIT_RISE`] and [`FIT_TURN`].
+const GRAVITY: f32 = 9.81;
+
+/// How fast the ground under a foot of a rest may rise or fall toward what it
+/// reads (#400), in shares of `sqrt(g H)` for a body `H` high. Provenance:
+/// **chosen** (#400): half what a rest's joints may move, so a paw going over
+/// the edge of a step takes two or three frames to stand on it, and a paw
+/// carried along any ground with no edge in it is never held back.
+const FOOT_RISE: f32 = 2.0;
+
+/// How fast the trunk's sink for the leg with furthest to reach may change
+/// (#400), in shares of `sqrt(g H)` for a body `H` high. Provenance: **chosen**
+/// (#400): a lying dog's forepaws coming up onto a .15 step took back 71 mm of
+/// sink in a frame, and its whole trunk rose with them, 1.75 times what a rest's
+/// joints may move; at this its worst is 0.89 of that, and no frame of a rest
+/// laid on any of the guards' planes here is held back (at 0.5 some were).
+const SINK_RISE: f32 = 0.65;
+
+/// What the last frame of a rest was laid on (#400): its plane, the height of
+/// the ground each foot stood on, hinds first, and how far the trunk sank for
+/// the leg with furthest to reach.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Laid {
+    plane: Fit,
+    feet: Vec<f32>,
+    sink: f32,
+}
+
+/// The plane a rest is laid on: see [`fit_plane`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Fit {
+    /// The middle of its supports along the ground.
+    middle: glam::Vec2,
+    /// How high it stands there.
+    height: f32,
+    /// How far it rises per metre across and ahead.
+    slope: glam::Vec2,
+}
+
+impl Fit {
+    /// Level ground under the body's own origin.
+    const LEVEL: Self = Self {
+        middle: glam::Vec2::ZERO,
+        height: GROUND,
+        slope: glam::Vec2::ZERO,
+    };
+
+    /// The plane nearest `under`.
+    fn of(under: &[Ground]) -> Self {
+        let (middle, height, slope) = fit_plane(under);
+        Self {
+            middle,
+            height,
+            slope,
+        }
+    }
+
+    /// How high the plane stands at `at` along the ground.
+    fn height_at(&self, at: glam::Vec2) -> f32 {
+        self.height + self.slope.dot(at - self.middle)
+    }
+
+    /// This plane moved toward `goal`, its middle by no more than `most[0]`
+    /// metres, its height there by no more than `most[1]` and its rise per
+    /// metre by no more than `most[2]`: the goal itself, to the bit, where it
+    /// is within all three.
+    fn toward(self, goal: Self, most: [f32; 3]) -> Self {
+        let [travel, rise_most, turn] = most;
+        let step = |from: glam::Vec2, to: glam::Vec2, most: f32| {
+            let along = to - from;
+            let length = along.length();
+            if length <= most {
+                to
+            } else {
+                from + along * (most / length)
+            }
+        };
+        let middle = step(self.middle, goal.middle, travel);
+        let slope = step(self.slope, goal.slope, turn);
+        // The goal's height where the middle has got to, against this plane's
+        // there, so a middle moving along one plane does not rise or fall.
+        let had = self.height_at(middle);
+        let rise = goal.height_at(middle) - had;
+        if middle == goal.middle && slope == goal.slope && rise.abs() <= rise_most {
+            return goal;
+        }
+        Self {
+            middle,
+            height: had + rise.clamp(-rise_most, rise_most),
+            slope,
+        }
+    }
+}
 
 /// The plane nearest `under`: the middle of its points along the ground, how
 /// high it stands there, and how far it rises per metre across and ahead. Level

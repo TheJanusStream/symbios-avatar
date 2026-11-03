@@ -718,9 +718,30 @@ fn sink_for(rig: &Rig, limb: Limb, paw: Vec3) -> Option<f32> {
 /// to another's, put every girdle's low point at the ends of a stride whatever
 /// the gait, and rode the withers and pelvis as a block.
 pub(super) fn depth(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
+    depth_rising(rig, gait, stride, 0.0, None)
+}
+
+/// [`depth`] for a stride whose paws stand on ground rising `rise` per metre
+/// ahead of where each rests (#399), as they do under a trunk ridden over its
+/// girdles' ground on a slope, for the legs of one girdle, the fores where
+/// `fores` says so, or all four: a paw at the back of its stance up a slope is
+/// the lower by the slope's share of its reach behind, so the whole stride asks
+/// more of the leg, the same through it. Sunk only for the paw furthest down
+/// at each moment, a horse up a .4 grade sank its pelvis 300 mm through a
+/// stance and rose that far in the frame its lowest paw left the ground.
+pub(super) fn depth_rising(
+    rig: &Rig,
+    gait: &Gait,
+    stride: &Stride,
+    rise: f32,
+    fores: Option<bool>,
+) -> f32 {
     let ride = Ride::of(gait, Kin::of(rig));
     let mut deepest = 0.0f32;
     for (index, &limb) in gait.limbs.iter().enumerate() {
+        if fores.is_some_and(|fores| fores != limb.is_fore()) {
+            continue;
+        }
         let (Some(home), offset) = (home_of(rig, limb), gait.offsets[index]) else {
             continue;
         };
@@ -732,6 +753,11 @@ pub(super) fn depth(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
             );
             let (pelvis, withers) = ride.at(offset + gait.duty * share);
             let rides = if limb.is_fore() { withers } else { pelvis };
+            let reached = if rise == 0.0 {
+                reached
+            } else {
+                reached + Vec3::Y * (rise * reached.z)
+            };
             if let Some(sink) = sink_for(rig, limb, home + reached) {
                 deepest = deepest.max(sink + rides);
             }
@@ -756,6 +782,39 @@ pub(super) fn depth_at(
         })
         .fold(0.0, f32::max)
 }
+
+/// [`depth_at`] for one girdle's stance paws on ground that is not level (#399),
+/// each measured from its own girdle's ground, which the trunk is ridden over,
+/// each with how far through its stance it is: a paw leaving the ground asks
+/// less of the sink the nearer it is to leaving, by [`LEAVING`], and nothing as
+/// it lifts, by as much as the ground is [`Girdles::steep`]: on the level, as
+/// much as [`depth_at`] asks of it. Asked whole to the last, a girdle sank all through a stance for the
+/// paw at its back, lowest on a slope, and rose by all of it in the frame that
+/// paw left the ground: a horse's pelvis 300 mm up a .4 grade.
+pub(super) fn depth_leaving(
+    rig: &Rig,
+    gait: &Gait,
+    cycle: f32,
+    standing: impl Iterator<Item = (Limb, Vec3, f32)>,
+    girdles: Girdles,
+) -> f32 {
+    let (pelvis, withers) = Ride::of(gait, Kin::of(rig)).at(cycle);
+    standing
+        .filter_map(|(limb, paw, through)| {
+            let paw = paw - Vec3::Y * girdles.under(limb);
+            let rides = if limb.is_fore() { withers } else { pelvis };
+            let sink = sink_for(rig, limb, paw)? + rides;
+            let left = ((1.0 - through) / LEAVING).clamp(0.0, 1.0);
+            let fade = left * left * (3.0 - 2.0 * left);
+            Some(sink * (1.0 - girdles.steep() * (1.0 - fade)))
+        })
+        .fold(0.0, f32::max)
+}
+
+/// How late in its stance a paw on a slope begins to ask less of the sink, as
+/// a share of the stance. Provenance: **chosen** (#399): the last quarter, where
+/// a paw is rolling off its toes.
+const LEAVING: f32 = 0.25;
 
 /// The deepest a girdle of a four-legged body rides in `gait`: [`depth`] and
 /// the [`Ride`] below it, the planning figure `gait::crouch_for` hands out.
@@ -1067,6 +1126,192 @@ pub(super) fn articulate<F>(
         let flexed = 2.0 * laid.x.det_atan2(laid.w);
         pose.rotations[pad] = laid * Rot::x(swinging * (toe_fold - wrapped(flexed)));
     }
+}
+
+/// How high the ground stands under each girdle of a four-legged body (#399):
+/// the hips' and the shoulders', and how far ahead of the one the other is
+/// read, all in the frame the body is posed in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Girdles {
+    /// How high the ground stands under the hind feet and under the fore.
+    pub(super) hips: f32,
+    pub(super) shoulders: f32,
+    /// How far ahead of the hind feet the fore are read.
+    between: f32,
+    /// How much higher the ground stands under the left feet than under the
+    /// right, and how far apart across the body they are read.
+    across: f32,
+    apart: f32,
+}
+
+impl Girdles {
+    /// How high the ground stands under the girdle `limb` hangs from.
+    pub(super) fn under(self, limb: Limb) -> f32 {
+        if limb.is_fore() {
+            self.shoulders
+        } else {
+            self.hips
+        }
+    }
+
+    /// How far the ground rises per metre ahead, from the hips' to the
+    /// shoulders'.
+    pub(super) fn rise(self) -> f32 {
+        (self.shoulders - self.hips) / self.between
+    }
+
+    /// How steep the ground under them is, `0..=1`: nothing on the level, and
+    /// all of it from [`STEEP`] of pitch and roll together (#399). What a
+    /// slope's own answers ask is taken in by this, so that near level ground,
+    /// a flat heightmap's millimetres or a plane a hair off level, is ridden
+    /// as the level is, and going from one to the other moves nothing at once.
+    pub(super) fn steep(self) -> f32 {
+        let t = ((self.pitch().abs() + self.roll().abs()) / STEEP).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    /// These girdles with the shoulders sunk `by` further than the hips.
+    pub(super) fn shoulders_sunk(self, by: f32) -> Self {
+        Self {
+            shoulders: self.shoulders - by,
+            ..self
+        }
+    }
+
+    /// The pitch the ground asks of the trunk, positive with the shoulders the
+    /// higher.
+    pub(super) fn pitch(self) -> f32 {
+        (self.shoulders - self.hips).det_atan2(self.between)
+    }
+
+    /// The roll the ground asks of the trunk, positive with its left the
+    /// higher.
+    pub(super) fn roll(self) -> f32 {
+        self.across.det_atan2(self.apart)
+    }
+
+    /// The whole turn the ground asks of the trunk: [`Self::pitch`] about the
+    /// body's across, then [`Self::roll`] about its length.
+    pub(super) fn turn(self) -> Quat {
+        Rot::x(-self.pitch()) * Rot::z(self.roll())
+    }
+}
+
+/// The ground under each girdle of `rig`, or `None` where it is level, or the
+/// body does not stand on four legs (#399).
+///
+/// **Read over the feet's footprints, not at a point.** Each girdle stands over
+/// its own pair of feet, so its ground is the mean of what `ground` answers over
+/// a cross [`GIRDLE_SPREAD`] of the hip's height wide about where each of them
+/// rests: a body on a slope has its hips over lower ground than its shoulders,
+/// or higher, and a heightmap's step under one foot raises its girdle by a
+/// tenth of the step at each of the points that crosses it, not all at once.
+/// Nothing answering under a girdle leaves it on the other's ground.
+pub(super) fn girdle_ground<F>(rig: &Rig, ground: &F) -> Option<Girdles>
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    if !four_legged(rig) {
+        return None;
+    }
+    let spread = GIRDLE_SPREAD * hip_height(rig)?;
+    let around = [
+        Vec3::ZERO,
+        Vec3::X * spread,
+        -Vec3::X * spread,
+        Vec3::Z * spread,
+        -Vec3::Z * spread,
+    ];
+    let mut level = true;
+    // Height and count of what answered, and where along the body it rests:
+    // behind and ahead, and on the right and the left.
+    let mut read = [(0.0f32, 0usize, 0.0f32); 2];
+    let mut sides = [(0.0f32, 0usize, 0.0f32); 2];
+    for limb in rig.ground_contacts() {
+        let home = home_of(rig, limb)?;
+        let slot = &mut read[usize::from(limb.is_fore())];
+        slot.2 += home.z * 0.5;
+        let side = &mut sides[usize::from(limb.is_left())];
+        side.2 += home.x * 0.5;
+        for &off in &around {
+            if let Some(below) = ground(home + off) {
+                level &= below.position.y == 0.0 && below.normal == Vec3::Y;
+                slot.0 += below.position.y;
+                slot.1 += 1;
+                side.0 += below.position.y;
+                side.1 += 1;
+            }
+        }
+    }
+    if level {
+        return None;
+    }
+    #[expect(clippy::cast_precision_loss, reason = "ten points")]
+    let mean = |(sum, count, _): (f32, usize, f32)| (count > 0).then(|| sum / count as f32);
+    let (hips, shoulders) = match (mean(read[0]), mean(read[1])) {
+        (Some(hips), Some(shoulders)) => (hips, shoulders),
+        (Some(either), None) | (None, Some(either)) => (either, either),
+        (None, None) => return None,
+    };
+    let across = match (mean(sides[0]), mean(sides[1])) {
+        (Some(right), Some(left)) => left - right,
+        _ => 0.0,
+    };
+    Some(Girdles {
+        hips,
+        shoulders,
+        between: (read[1].2 - read[0].2).max(f32::EPSILON),
+        across,
+        apart: (sides[1].2 - sides[0].2).abs().max(f32::EPSILON),
+    })
+}
+
+/// How steep, pitch and roll together in radians, ground is where a beast
+/// rides it wholly as a slope (#399). Provenance: **chosen** (#399): about six
+/// degrees, under the gentlest grade a stride was seen to pop on, .15, and far
+/// over a flat heightmap's few thousandths, where splitting the crouch per
+/// girdle at no pitch at all pitched a horse's trunk and swung its tail 95 mm
+/// off where level ground holds it.
+const STEEP: f32 = 0.1;
+
+/// How wide the cross each foot's ground is read over is, as a share of the
+/// hip's height. Provenance: **chosen** (#399): about a foot's own length either
+/// way, which spreads a heightmap's step under it over a quarter of a stride.
+const GIRDLE_SPREAD: f32 = 0.15;
+
+/// Rides a four-legged body's trunk over the ground under its girdles (#399):
+/// its hips raised to theirs and its shoulders to theirs, turned about the hips,
+/// and the turn taken back off the head, which looks where it was looking.
+///
+/// **Each girdle over its own feet.** Without it the trunk stood level over the
+/// ground under its middle and the stride sank the whole body for whichever paw
+/// was lowest: up a .3 grade a horse's pelvis sank 380 mm through each hind's
+/// stance and came back up in the frame the hind left the ground, and its
+/// forelegs, folded up under a trunk sunk for the hinds, came by their shoulders
+/// until the leg's solve lost its root, a paw going 636 mm in a frame.
+pub(super) fn ride_ground(rig: &Rig, pose: &mut Pose, girdles: Girdles) {
+    let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
+        return;
+    };
+    let tops: Vec<Vec3> = rig
+        .ground_contacts()
+        .into_iter()
+        .filter(|limb| !limb.is_fore())
+        .filter_map(|limb| rig.limb_chain(limb))
+        .map(|[top, _, _]| rig.joints[top].position)
+        .collect();
+    if tops.is_empty() {
+        return;
+    }
+    #[expect(clippy::cast_precision_loss, reason = "two legs")]
+    let hips = tops.iter().sum::<Vec3>() / tops.len() as f32;
+    let lever = hips - rig.joints[root].position;
+    let turn = girdles.turn();
+    let before = pose.rotations[root] * lever;
+    pose.rotations[root] *= turn;
+    pose.translation += before - pose.rotations[root] * lever;
+    pose.translation.y += girdles.hips;
+    relevel_head(rig, pose, turn);
 }
 
 /// Whether `rig` stands on four legs, and so moves as a beast does (#370).

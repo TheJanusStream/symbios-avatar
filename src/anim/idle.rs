@@ -686,6 +686,21 @@ impl Idle {
         // 2 — and the margin is scaled rather than added precisely so a body
         // with nothing to reach for does not crouch at all.
         pose.translation.y -= sink * super::gait::CROUCH_MARGIN;
+        // **And on four legs each girdle stands over its own ground** (#399), as
+        // a walking one rides it: on a slope the trunk pitches, its hips over
+        // the ground under them and its shoulders over theirs, and every foot is
+        // stood on the ground under it before the plant settles it. Stood level
+        // instead, the plant sank the whole body for the foot furthest down, a
+        // dog stopping with its hinds below a step dropped its trunk 200 mm in
+        // six frames, and its foreleg, crushed under it, flipped its elbow.
+        let girdles = if four {
+            super::quadruped::girdle_ground(rig, &ground)
+        } else {
+            None
+        };
+        if let Some(girdles) = girdles {
+            super::quadruped::ride_ground(rig, pose, girdles);
+        }
         // **A recovering foot STEPS, it does not skim.** Sliding an unweighted
         // foot along the floor is better than dragging a weighted one, and it
         // is still a foot sliding on the floor — measured at 127 mm and rising
@@ -711,17 +726,30 @@ impl Idle {
         };
         let contacts = rig.ground_contacts();
         let mut grounded = Vec::with_capacity(contacts.len());
+        // **A foot of it on the ground under it, and a stepping one stepping
+        // over it**, found beside #400: its arc is laid on what the ground
+        // answers beneath where it has got to, as a walk's contact is. Over the
+        // level floor alone it rose from the rest's own height and went down
+        // with the body: a fore stepping home up a .2 grade went about 11 cm
+        // through the slope for a third of a second. It is not solved again
+        // after the plant, which moves it with the body as it always has: on
+        // the ridden girdles the plant hardly sinks it, and solved again, near
+        // level ground moved a dog's stepping forepaw 44 mm off where the level
+        // holds it. Level ground reads as no girdles, and is left as it was to
+        // the bit; a person's recovery is left as it was everywhere.
         for &limb in &contacts {
             let Some(&joint) = rig.in_zone(Zone::Extremity(limb)).first() else {
                 continue;
             };
             let lift = lift_of(limb);
-            solve_contact(
-                rig,
-                pose,
-                limb,
-                rig.joints[joint].position + self.offset_of(limb) + Vec3::Y * lift,
-            );
+            let mut goal = rig.joints[joint].position + self.offset_of(limb) + Vec3::Y * lift;
+            if girdles.is_some()
+                && let Some(beneath) =
+                    ground(Vec3::new(goal.x, rig.joints[joint].position.y, goal.z))
+            {
+                goal.y += beneath.position.y;
+            }
+            solve_contact(rig, pose, limb, goal);
             if lift <= SETTLED {
                 grounded.push(limb);
             }

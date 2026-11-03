@@ -620,6 +620,115 @@ fn a_beast_goes_down_and_gets_up_on_a_plane_out_of_it_and_without_a_jump() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// The plane rising `grade` per metre ahead, with everything `edge` metres ahead
+/// of the body's origin and further stepped `step` up from it, or answering
+/// nothing there where `step` is `None`.
+fn edged(grade: f32, edge: f32, step: Option<f32>) -> impl Fn(Vec3) -> Option<Ground> + Copy {
+    let normal = Vec3::new(0.0, 1.0, -grade).normalize();
+    move |at: Vec3| {
+        let past = at.z > edge;
+        let rise = match step {
+            Some(step) if past => step,
+            None if past => return None,
+            _ => 0.0,
+        };
+        Some(Ground {
+            position: Vec3::new(at.x, at.z * grade + rise, at.z),
+            normal,
+        })
+    }
+}
+
+#[test]
+fn a_beast_resting_across_an_edge_does_not_jump_as_its_supports_cross_it() {
+    // #400: a driven rest is laid on the plane that fits the ground under its
+    // supports, and the fit changed all at once as one crossed the edge of a step
+    // or came to answer `None`: on a .15 step a body's whole trunk jumped 358 mm
+    // in a frame, 2.05 times what any joint of a rest may move, and with nothing
+    // under some supports on a .2 grade the pelvis 444 mm and the neck 463. Here
+    // the edge is laid across the body at the back, the middle and the front of
+    // it, a step up, a step down and nothing past it, through the driver at sixty
+    // frames a second as `a_beast_goes_down_and_gets_up_on_a_plane...` drives it.
+    let wrong: Vec<String> = in_parallel(few(), |beast| {
+        let rig = &beast.avatar.rig;
+        let mut wrong = Vec::new();
+        let frame = 1.0 / 60.0;
+        let most = swift(beast.withers, frame);
+        for name in ["Sit", "Lie Down"] {
+            let going = emote::seconds(rig, name).expect("a state keeps its own time");
+            for edge in [-0.35f32, 0.0, 0.35] {
+                for step in [Some(0.15f32), Some(-0.15), None] {
+                    // Not yet a horse lying down over a step (#400 stays open
+                    // for it): its foreleg folds tight under it, turned out of
+                    // its own hinge's plane, and a step under its foot asks the
+                    // elbow across, 1.0 to 1.5 times what this allows. Its hind
+                    // leg folded shut as it sits, which asked the stifle across
+                    // 1.63 times, keeps its side by its hinge since.
+                    if beast.what.starts_with("Horse appeal")
+                        && name == "Lie Down"
+                        && step.is_some()
+                    {
+                        continue;
+                    }
+                    let ground = edged(0.2, edge * beast.withers, step);
+                    let mut driver = Driver::seeded(400);
+                    let drive = |gesture: Option<&str>, driver: &mut Driver| {
+                        driver
+                            .drive(
+                                rig,
+                                &Inputs {
+                                    delta: frame,
+                                    gesture,
+                                    ..Inputs::default()
+                                },
+                                ground,
+                            )
+                            .expect("an unheld body is posed")
+                            .pose
+                            .forward(rig)
+                    };
+                    for _ in 0..30 {
+                        drive(None, &mut driver);
+                    }
+                    let mut before = drive(Some(name), &mut driver);
+                    #[expect(clippy::cast_possible_truncation, reason = "a few hundred frames")]
+                    let held = ((going + 0.5) / frame) as usize;
+                    let mut at = 0usize;
+                    let mut worst = (0.0f32, 0usize, 0usize);
+                    while driver.gesture().is_some() && at < 3000 {
+                        at += 1;
+                        let after = drive((at == held).then_some(emote::GET_UP), &mut driver);
+                        let (moved, joint) = fastest(rig, &before, &after);
+                        if moved > worst.0 {
+                            worst = (moved, joint, at);
+                        }
+                        before = after;
+                    }
+                    assert!(at < 3000, "{}: {name} never got up", beast.what);
+                    if worst.0 > most {
+                        wrong.push(format!(
+                            "{}: {name} across an edge {edge} WH ahead stepped {step:?}: joint {} \
+                             ({:?}) moved {:.0} mm in frame {}, {:.2} times the {:.0} allowed",
+                            beast.what,
+                            worst.1,
+                            rig.joints[worst.1].zone,
+                            worst.0 * 1000.0,
+                            worst.2,
+                            worst.0 / most,
+                            most * 1000.0
+                        ));
+                    }
+                }
+            }
+        }
+        wrong
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 #[test]
 fn a_grade_taken_toward_nothing_comes_to_the_rest_on_the_level() {
     // No jump at the slider's middle: level ground is left alone to the bit,

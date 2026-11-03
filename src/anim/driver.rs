@@ -1085,6 +1085,8 @@ impl Driver {
         };
         self.transition = None;
         self.blend_asked = false;
+        // Put where it is with no way down: no plane to go on from (#400).
+        self.rests.unlay();
         if through <= 0.0 {
             self.gesture = None;
             return true;
@@ -1547,8 +1549,10 @@ impl Driver {
             });
         if let Some((clip, time)) = playing {
             clip.apply_resting(rig, &mut pose, time, &mut self.rests);
-            self.rests.on_ground(rig, &mut pose, ground);
+            self.rests.on_ground(rig, &mut pose, ground, delta);
             aimed = clip.tracks.iter().any(|track| track.target == Target::Gaze);
+        } else {
+            self.rests.unlay();
         }
         if let Some(over) = inputs.over_locomotion {
             over(rig, &mut pose);
