@@ -88,6 +88,9 @@
 //! cargo run --release --example render -- --quadruped --gesture Sit --interrupt 0.5 --strip 8  # told to get up part way down
 //! cargo run --release --example render -- --quadruped --seed 1 --gesture "Lie Down" --at 1  # one moment, four views
 //! cargo run --release --example render -- --quadruped --kin horse --drive 0.3 --speed 1.5 --strip 8  # driven up a slope
+//! cargo run --release --example render -- --quadruped --kin horse --drive 0 --speed 1.7 --then 3.7 --from 156 --strip 14  # breaking into a trot, frame by frame
+//! cargo run --release --example render -- --quadruped --kin horse --drive 0 --drop 0.6 --from 134 --strip 14  # off a ledge and landing
+//! cargo run --release --example render -- --quadruped --kin horse --drive 0 --jump 2.5 --from 146 --strip 14  # a jump's landing
 //! cargo run --release --example render -- --quadruped --swim 0.5 --strip 8
 //! cargo run --release --example render -- --quadruped --leap 3 --strip 8
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
@@ -1396,35 +1399,72 @@ fn main() {
         // `--drive GRADE` drives the body through the driver on a plane rising
         // GRADE per metre ahead, at `--speed` metres a second (standing where
         // there is none), its speed ramped from standing; the strip is its last
-        // second, three seconds in, drawn over the slope (#399).
+        // second, three seconds in, drawn over the slope (#399). Two seconds
+        // in, `--then M/S` ramps it on to another speed, and `--drop METRES`
+        // takes the ground that far out from under it, a ledge it falls off,
+        // and `--jump M/S` sends it up off the ground at that speed;
+        // `--from FRAME` draws the strip's frames one after another from that
+        // frame rather than across the last second (#412, #414).
         let grade = value("--drive").and_then(|grade| grade.parse::<f32>().ok());
+        let then = value("--then").and_then(|pace| pace.parse::<f32>().ok());
+        let ledge = value("--drop").and_then(|metres| metres.parse::<f32>().ok());
+        let jump = value("--jump").and_then(|launch| launch.parse::<f32>().ok());
+        let from = value("--from").and_then(|frame| frame.parse::<usize>().ok());
         let driven: Option<Vec<Pose>> = grade.map(|grade| {
             use symbios_avatar::anim::driver::{Driver, Inputs};
             let step = 1.0 / 60.0;
             let normal = Vec3::new(0.0, 1.0, -grade).normalize();
-            let ground = move |at: Vec3| {
-                Some(Ground {
-                    position: Vec3::new(at.x, at.z * grade, at.z),
-                    normal,
-                })
-            };
             let pace = speed.unwrap_or(0.0);
             let mut driver = Driver::seeded(7);
             let (mut at, mut going) = (Vec3::ZERO, 0.0f32);
+            let (mut height, mut falling) = (0.0f32, 0.0f32);
             let mut poses = Vec::new();
             for index in 0..240 {
+                let pace = then.filter(|_| index >= 120).unwrap_or(pace);
                 going += (pace - going).clamp(-2.0 * step, 2.0 * step);
-                let velocity = Vec3::Z * going;
-                at += velocity * step;
+                if index == 120
+                    && let Some(launch) = jump
+                {
+                    falling = launch;
+                    height = 1.0e-4;
+                }
+                if ledge.is_some() || jump.is_some() {
+                    if index == 120
+                        && let Some(metres) = ledge
+                    {
+                        height = metres;
+                    }
+                    if index >= 120 && height > 0.0 {
+                        falling -= 9.81 * step;
+                        height = (height + falling * step).max(0.0);
+                    }
+                    if height <= 0.0 {
+                        falling = 0.0;
+                    }
+                }
+                let velocity = Vec3::new(0.0, falling, going);
+                at += Vec3::Z * going * step;
+                let below = height;
+                let ground = move |at: Vec3| {
+                    Some(Ground {
+                        position: Vec3::new(at.x, at.z * grade - below, at.z),
+                        normal,
+                    })
+                };
                 let inputs = Inputs {
                     delta: step,
                     velocity,
                     at,
                     ..Inputs::default()
                 };
-                if let Some(driven) = driver.drive(rig, &inputs, ground)
-                    && index >= 180
+                let shown = match from {
+                    Some(from) => (from..from + frames).contains(&index),
+                    None => index >= 180,
+                };
+                if let Some(mut driven) = driver.drive(rig, &inputs, ground)
+                    && shown
                 {
+                    driven.pose.translation.y += below;
                     poses.push(driven.pose);
                 }
             }

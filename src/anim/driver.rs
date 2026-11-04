@@ -122,6 +122,15 @@ pub const PIVOT_FROM: f32 = 0.15;
 /// ends, which is the straight stride to the bit.
 const TURN_SETTLED: f32 = 1e-4;
 
+/// How much longer than [`DriverConfig::blend`] a four-legged body takes to
+/// change its pattern, a walk breaking into a trot (#412). Provenance:
+/// **measured** (#412): over a sweep of forty moments for the change, a dog's,
+/// a cat's, a horse's and eight rolled bodies', level and up to .4, at 60 and
+/// 144 frames a second, the worst joint went at one blend 1.55 times what a
+/// frame allows, 1.31 on the level at 60; at 1.5 blends 1.16 and 1.00; at
+/// 1.75, 1.12 and 0.91; at 2, 1.13 and 0.88.
+const REPATTERN_BLEND: f32 = 1.75;
+
 /// How much longer than [`DriverConfig::blend`] a four-legged body takes going
 /// into or out of the water on a slope, at the steepest (#413). Provenance:
 /// **chosen** (#413): three blends, which brings a 25 degree slope's whole turn
@@ -920,6 +929,13 @@ pub struct Driver {
     /// Whether the caller has asked the next driven frame to blend in, through
     /// [`Self::blend_now`].
     blend_asked: bool,
+    /// Whether this frame's airborne step came down onto the ground (#414),
+    /// where what the trunk rides takes the height it comes down on at once.
+    touched_down: bool,
+    /// The pitch the flight came down in, which the landing sets off from
+    /// (#414): see [`Leap::drive`]. Kept for the landing it was taken for, and
+    /// forgotten once the body is no longer in the air or landing.
+    landing_from: Option<f32>,
     /// The body's spring chains - a beast's ears (#370) - and where each
     /// joint of them was. [`None`] until the first frame finds them on the
     /// rig it is given.
@@ -989,6 +1005,8 @@ impl Driver {
             gestured_at: None,
             elapsed: 0.0,
             blend_asked: false,
+            touched_down: false,
+            landing_from: None,
             springs: None,
             rests: super::rest::Rests::default(),
             grounded: None,
@@ -1230,6 +1248,9 @@ impl Driver {
         }
         self.advance_airborne(rig, vertical, delta, swimming);
         let airborne = self.airborne.is_some();
+        if !airborne {
+            self.landing_from = None;
+        }
         // **The ground the trunk rides follows what is read under it** (#413),
         // so a consumer's ground switching source in a frame turns a beast's
         // trunk over a few: see `quadruped::follow`. Every state is handed the
@@ -1255,7 +1276,7 @@ impl Driver {
             None
         } else {
             let ridden = match self.ridden {
-                Some(was) => super::quadruped::follow(rig, was, read, delta),
+                Some(was) => super::quadruped::follow(rig, was, read, delta, self.touched_down),
                 None => read,
             };
             self.ridden = Some(ridden);
@@ -1264,6 +1285,8 @@ impl Driver {
         if !airborne && !swimming {
             self.grounded = self.ridden.flatten();
         }
+        // The ground as it came, which a landing plants on (#413).
+        let under = ground;
         let ground = move |at: Vec3| match shift {
             None => ground(at),
             Some(shift) => ground(at).map(|below| shift.apply(below)),
@@ -1443,6 +1466,13 @@ impl Driver {
         // stepping, and where it has not moved the map is the identity to the
         // bit.
         let last = self.cycle;
+        // A four-legged body changing its pattern - a walk breaking into a
+        // trot, a canter into a gallop - moves its feet to where the new
+        // pattern has them, and the blend below takes them there (#370).
+        let repatterned = matches!(
+            (self.gaiting.and_then(Speed::pattern), effort.and_then(Speed::pattern)),
+            (Some(before), Some(now)) if before != now
+        );
         if let (Some(speed), Some(before)) = (effort, self.gaiting)
             && before != speed
         {
@@ -1453,13 +1483,6 @@ impl Driver {
             };
             self.cycle = transition::carry_cycle(&from, &into, self.cycle);
         }
-        // A four-legged body changing its pattern - a walk breaking into a
-        // trot, a canter into a gallop - moves every foot but the one the
-        // carry kept, and the blend below takes them there (#370).
-        let repatterned = matches!(
-            (self.gaiting.and_then(Speed::pattern), effort.and_then(Speed::pattern)),
-            (Some(before), Some(now)) if before != now
-        );
         self.gaiting = effort;
 
         // How far the clock steps, for the footholds' account of a stride's
@@ -1540,7 +1563,11 @@ impl Driver {
         // re-plants on stance entry, so clearing here costs a resumed walk
         // nothing — and it is the teleport reset as well, since anything that
         // stops a body passes through a frame like this one.
-        if locomotion != Source::Gait {
+        // **And at a change of pattern** (#412): held through it, a foot
+        // planted in the walk was let go the frame after, once the trot had
+        // it elsewhere, a dog's hind paw 0.98 times what a frame allows in that
+        // one frame at 144 a second, past the blend.
+        if locomotion != Source::Gait || repatterned {
             self.footholds.reset();
         }
         match locomotion {
@@ -1588,13 +1615,32 @@ impl Driver {
                 swim.drive(rig, &mut pose);
             }
             Source::Leap => {
+                // A leap shown sets off from nothing the body really did: the
+                // pitch a real flight came down in is that landing's alone.
                 let leaping = match inputs.showing {
-                    Some(Showing::Leap(leap)) => Some((leap, self.cycle * leap.duration(rig))),
-                    _ => self.airborne.map(|air| (air.leap, air.elapsed)),
+                    Some(Showing::Leap(leap)) => {
+                        Some((leap, self.cycle * leap.duration(rig), None))
+                    }
+                    _ => self.airborne.map(|air| {
+                        (
+                            air.leap,
+                            air.elapsed,
+                            self.landing_from.filter(|_| air.landed),
+                        )
+                    }),
                 };
-                if let Some((leap, elapsed)) = leaping {
-                    let leapt =
-                        leap.drive_riding(rig, &mut pose, elapsed, ground, self.grounded, true);
+                if let Some((leap, elapsed, landing_from)) = leaping {
+                    let leapt = leap.drive_riding(
+                        rig,
+                        &mut pose,
+                        elapsed,
+                        ground,
+                        under,
+                        Some(super::leap::Riding {
+                            took_off: self.grounded,
+                            landing_from,
+                        }),
+                    );
                     count_straining(&mut straining, &leapt.straining);
                     if leapt.stage.is_grounded() {
                         steps.stance = rig.ground_contacts();
@@ -1733,6 +1779,16 @@ impl Driver {
                 config.blend * (1.0 + SWIM_TURN * steep)
             } else {
                 config.blend
+            };
+            // **And a change of pattern over a longer one** (#412): a walk's
+            // four footfalls stand a quarter of a cycle off a trot's two, so
+            // the change carries a foot planted in the walk into the trot's
+            // swing, and over the one blend a horse's hind paw went 1.31
+            // times what a frame allows on the level.
+            let blend = if repatterned {
+                blend * REPATTERN_BLEND
+            } else {
+                blend
             };
             self.transition = Some(Inertializer::start(previous, current, &pose, delta, blend));
         }
@@ -1979,6 +2035,7 @@ impl Driver {
     /// apex cannot imitate because at the apex it is still on its way down.
     fn advance_airborne(&mut self, rig: &Rig, vertical: f32, delta: f32, swimming: bool) {
         let config = self.config;
+        self.touched_down = false;
         let launched = vertical > config.launch_speed;
         let dropped = vertical < -config.fall_speed;
         let mut relaunched = false;
@@ -1999,10 +2056,18 @@ impl Driver {
                     // actually happened rather than the one predicted at
                     // takeoff, and its clock is set to the head of the landing
                     // — the only stage left to play.
+                    // **The landing sets off from the pitch the flight came
+                    // down in** (#414): the rebuilt landing's own first pose
+                    // is nose down, and a fall's flight, cut short wherever
+                    // the ground arrived, was nose up, so a beast dropped
+                    // 0.6 m pitched its trunk 24 degrees in the frame it came
+                    // down. A person's leap pitches nothing.
+                    self.landing_from = Some(air.leap.pitch_at(rig, air.elapsed));
                     let leap = Leap::new(air.impact.abs());
                     air.leap = leap;
                     air.elapsed = leap.wind_up(rig) + leap.flight();
                     air.landed = true;
+                    self.touched_down = true;
                 }
             }
             Some(air) => {

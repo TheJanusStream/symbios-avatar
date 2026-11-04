@@ -788,7 +788,7 @@ pub(super) fn depth_at(
 /// each with how far through its stance it is: a paw leaving the ground asks
 /// less of the sink the nearer it is to leaving, by [`LEAVING`], and nothing as
 /// it lifts, and in a stride that goes nowhere or turns, `settling` of `0..=1`,
-/// or a fore's at a walk ([`WALKING_DUTY`]), a paw landing nothing as it lands
+/// or a fore's in any stride, a paw landing nothing as it lands
 /// and more as it settles, all by as much as the ground is [`Girdles::steep`]:
 /// on the level, as much as [`depth_at`] asks of it. Asked whole to the last, a
 /// girdle sank all through a stance for the paw at its back, lowest on a slope,
@@ -813,40 +813,26 @@ pub(super) fn depth_leaving(
             // And, in a stride that goes nowhere or turns, comes into it as it
             // lands: asked whole the frame it came down, a pivot's paw landing
             // down a slope tipped a horse's trunk seven degrees in that frame.
-            // A straight stride plans for its landing paw, and easing that in
-            // changed where a walk breaking into a trot threw a hind paw (see
-            // the walk-to-trot issue).
+            // A straight stride plans for its landing hind paw on the slope,
+            // and easing that in as well changed where a walk breaking into a
+            // trot threw it (#412).
             //
-            // **A fore's at a walk too** (#413): a fore's stride is planned on
-            // the level, so nothing of a slope is planned for its landing paw
-            // whichever way the stride goes, and a dog walking down a 25
-            // degree slope tipped its trunk 4.4 degrees in the frame each
-            // forepaw came down. Not at a trot or faster, where it moved a
-            // hind paw a dog breaking into a trot throws past what a frame
-            // allows (the walk-to-trot issue again); faded out through the
-            // walk's lowest duties, so the walk's step to a run moves little.
+            // **A fore's at every stride** (#413, #412): a fore's stride is
+            // planned on the level, so nothing of a slope is planned for its
+            // landing paw whichever way the stride goes, and a dog walking
+            // down a 25 degree slope tipped its trunk 4.4 degrees in the frame
+            // each forepaw came down, trotting down it 6.6 and a cat 8.2.
+            // Eased in only at a walk while a walk's change to a trot threw a
+            // hind paw past what a frame allows (#412), which carrying every
+            // foot across the change ended.
             let landed = (through / LEAVING).clamp(0.0, 1.0);
             let landed = landed * landed * (3.0 - 2.0 * landed);
-            let settling = if limb.is_fore() {
-                let [slow, fast] = WALKING_DUTY;
-                let walking = ((gait.duty - slow) / (fast - slow)).clamp(0.0, 1.0);
-                settling.max(walking * walking * (3.0 - 2.0 * walking))
-            } else {
-                settling
-            };
+            let settling = if limb.is_fore() { 1.0 } else { settling };
             let fade = fade * (1.0 - settling * (1.0 - landed));
             Some(sink * (1.0 - girdles.steep() * (1.0 - fade)))
         })
         .fold(0.0, f32::max)
 }
-
-/// The duties over which a fore's landing paw comes to be eased into its
-/// girdle's sink at every stride, wholly from the second (#413). Provenance:
-/// **measured** (#413): over the sweeps a four-legged walk's duty runs from
-/// 0.58 to 0.68 and a trot's from 0.44 to 0.47; a walk at its slowest, its
-/// duty highest, is eased in wholly, and at its fastest a fifth, so stepping to
-/// a trot changes that little.
-const WALKING_DUTY: [f32; 2] = [0.55, 0.65];
 
 /// How short a stride is that goes nowhere, as a share of the hip's height: a
 /// pivot's, whose paws land with nothing planned for them. Provenance:
@@ -1221,6 +1207,36 @@ impl Girdles {
         t * t * (3.0 - 2.0 * t)
     }
 
+    /// These girdles with their middle height taken out (#414): the turn the
+    /// ground asks of the trunk, and none of its height.
+    pub(super) fn turned(self) -> Self {
+        let middle = (self.hips + self.shoulders) * 0.5;
+        Self {
+            hips: self.hips - middle,
+            shoulders: self.shoulders - middle,
+            ..self
+        }
+    }
+
+    /// The plane these stand for under `at`, in the frame the body is posed
+    /// in: its height there and its up (#414). `None` for a body that does not
+    /// stand on four legs.
+    pub(super) fn plane_under(self, rig: &Rig, at: Vec3) -> Option<Ground> {
+        let [behind, _, left, right] = girdle_spacing(rig)?;
+        let wide = left - right;
+        let across = if wide.abs() > f32::EPSILON {
+            self.across / wide
+        } else {
+            0.0
+        };
+        let along = self.rise();
+        let height = self.hips + along * (at.z - behind) + across * (at.x - (left + right) * 0.5);
+        Some(Ground {
+            position: Vec3::new(at.x, height, at.z),
+            normal: Vec3::new(-across, 1.0, -along).normalize(),
+        })
+    }
+
     /// The level ground read where these are: nothing under either girdle.
     fn level(self) -> Self {
         Self {
@@ -1384,7 +1400,8 @@ where
 /// The ground a four-legged body's trunk rides this frame (#413): `read`, what
 /// [`girdle_ground`] answers now, or as far toward it from `ridden`, what the
 /// trunk rode the last frame, as [`RIDE_TURN`] and [`RIDE_RISE`] allow in
-/// `delta` seconds. Either `None` is the level.
+/// `delta` seconds, and on the frame a body comes down from the air,
+/// `landed`, its height at once. Either `None` is the level.
 ///
 /// **A consumer's ground can change source in a frame**: Overlands goes between
 /// its terrain and a level floor at the edge of a pad or a deck, on a lost
@@ -1407,6 +1424,7 @@ pub(super) fn follow(
     ridden: Option<Girdles>,
     read: Option<Girdles>,
     delta: f32,
+    landed: bool,
 ) -> Option<Girdles> {
     if !four_legged(rig) {
         return None;
@@ -1425,7 +1443,16 @@ pub(super) fn follow(
     let middle = |girdles: Girdles| (girdles.hips + girdles.shoulders) * 0.5;
     let lift = |girdles: Girdles| girdles.shoulders - girdles.hips;
     let toward = super::rest::toward;
-    let height = toward(middle(from), middle(to), rise);
+    // **Coming down, the height is the ground's at once** (#414): what was
+    // ridden last on the ground was a ground falling away under a body about
+    // to leave it, followed as it went, and a beast stepping off a 0.6 m ledge
+    // landed with its paws 300 mm under the ground for nine frames. Its pitch
+    // and its roll are followed still; the landing is blended into.
+    let height = if landed {
+        middle(to)
+    } else {
+        toward(middle(from), middle(to), rise)
+    };
     let lifted = toward(lift(from), lift(to), turn * to.between);
     let across = toward(from.across, to.across, turn * to.apart);
     if height == middle(to) && lifted == lift(to) && across == to.across {

@@ -143,15 +143,27 @@ impl Inertializer {
             let offset = current.rotations[index] * inverse_target;
             let before = previous.rotations[index] * inverse_target;
 
+            // **Both offsets as rotation vectors, the earlier one read along
+            // the later one's axis** (#416). Signing the earlier one's whole
+            // angle by whether its axis leant toward the later one's flipped
+            // its sign wherever the two axes stood near square, and with it
+            // the velocity carried through the blend: a few tenths of a
+            // millimetre of difference in a pose swung a joint's carried turn
+            // from -2.7 radians a second to +4.2, a paw 30 mm. Read along the
+            // axis, the earlier offset goes to nothing there and no further.
+            // An offset of nothing has no axis of its own: it decays about
+            // the way it was moving.
             let (axis, angle) = signed_axis_angle(offset);
-            // Measure the earlier offset about the *same* axis, so the two
-            // angles are comparable and their difference is a real rate.
-            let previous_angle = signed_axis_angle(before).1 * {
-                let (before_axis, _) = signed_axis_angle(before);
-                if before_axis.dot(axis) < 0.0 {
-                    -1.0
-                } else {
-                    1.0
+            let was = {
+                let (axis, angle) = signed_axis_angle(before);
+                axis * angle
+            };
+            let (axis, angle, previous_angle) = if angle.abs() > AXIS_FROM_OFFSET {
+                (axis, angle, was.dot(axis))
+            } else {
+                match (axis * angle - was).try_normalize() {
+                    Some(moving) => (moving, (axis * angle).dot(moving), was.dot(moving)),
+                    None => (axis, angle, was.dot(axis)),
                 }
             };
 
@@ -233,6 +245,12 @@ impl Inertializer {
     }
 }
 
+/// How small a joint's offset at the start of a blend is, in radians, for its
+/// axis to be taken from the way it was moving instead (#416). Provenance:
+/// **chosen** (#416): a microradian, where an axis read off the offset is
+/// rounding.
+const AXIS_FROM_OFFSET: f32 = 1.0e-6;
+
 /// A rotation's axis and angle, with the angle signed into `-π..=π`.
 ///
 /// A quaternion and its negation describe the same rotation, so the raw angle
@@ -285,6 +303,36 @@ mod tests {
         assert!(
             (angle - 0.5).abs() < 1e-3,
             "should start at the outgoing pose, got {angle}"
+        );
+    }
+
+    #[test]
+    fn a_hair_of_difference_in_the_pose_is_a_hair_of_difference_in_the_blend() {
+        // #416: the earlier frame's offset was signed by whether its axis leant
+        // toward the later one's, so where the two stood square a ten-thousandth
+        // either way carried the joint's velocity at -1.8 radians a second or
+        // at +4.2, and the blends of two all but equal poses went apart, a
+        // paw by 30 mm. Read along the later axis, the two blends stay as near
+        // as their poses.
+        let rig = rig();
+        let target = Pose::rest(&rig);
+        let mut current = Pose::rest(&rig);
+        current.rotations[3] = Rot::x(0.02);
+        let leaning = |by: f32| {
+            let mut previous = Pose::rest(&rig);
+            previous.rotations[3] = Rot::axis_angle((Vec3::Z + Vec3::X * by).normalize(), 0.05);
+            previous
+        };
+        let blended = |by: f32| {
+            let mut transition =
+                Inertializer::start(&leaning(by), &current, &target, 1.0 / 60.0, 0.25);
+            transition.advance(3.0 / 60.0);
+            transition.apply(&target).rotations[3]
+        };
+        let apart = blended(1.0e-4).angle_between(blended(-1.0e-4));
+        assert!(
+            apart < 1.0e-4,
+            "two poses a ten-thousandth apart blended {apart} radians apart three frames on"
         );
     }
 

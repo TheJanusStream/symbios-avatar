@@ -291,11 +291,34 @@ impl Leap {
     where
         F: Fn(Vec3) -> Option<Ground>,
     {
-        self.drive_riding(rig, pose, elapsed, ground, None, false)
+        self.drive_riding(rig, pose, elapsed, &ground, &ground, None)
+    }
+
+    /// How far a four-legged body's trunk is pitched nose up at `stage`, in
+    /// radians, nose down negative, the landing set off from `landing_from`
+    /// where it is given (#414); nothing for any other body.
+    fn pitched_at(self, rig: &Rig, stage: Stage, landing_from: Option<f32>) -> f32 {
+        if !super::quadruped::four_legged(rig) {
+            return 0.0;
+        }
+        let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+        match stage {
+            Stage::WindUp(t) => LEAP_PITCH * ease(t),
+            Stage::Flight(t) => LEAP_PITCH * (t * std::f32::consts::PI).det_cos(),
+            Stage::Landing(t) => landing_from.unwrap_or(-LEAP_PITCH) * (1.0 - ease(t)),
+            Stage::Standing => 0.0,
+        }
+    }
+
+    /// How far a four-legged body's trunk is pitched `elapsed` seconds into
+    /// this leap, as [`Self::drive`] pitches it: where a landing rebuilt at
+    /// touchdown sets off from (#414).
+    pub(crate) fn pitch_at(self, rig: &Rig, elapsed: f32) -> f32 {
+        self.pitched_at(rig, self.stage_at(rig, elapsed), None)
     }
 
     /// [`Self::drive`], a four-legged body riding its girdles (#413) where
-    /// `riding` and the driver keeps what it rode last: `took_off` is the
+    /// `riding` is given, as the driver keeps what it rode last: `took_off` is the
     /// ground under its girdles on the last frame it stood on any, or `None`
     /// for the level. The public [`Self::drive`] rides nothing, standing a body
     /// level throughout as it always has.
@@ -310,17 +333,24 @@ impl Leap {
     /// follows that ground from what the flight rode a few degrees a frame;
     /// eased over the stage as well, the two turns added, and a dog landing on
     /// a 25 degree slope from the level turned 5.8 degrees in a frame.
-    pub(crate) fn drive_riding<F>(
+    ///
+    /// **And the landing sets off from the pitch the flight came down in**
+    /// (#414), `landing_from`, where the driver rebuilt the leap at touchdown:
+    /// a fall's flight is cut short wherever the ground arrives, and from the
+    /// landing's own nose down a beast stepping off a 0.6 m ledge pitched its
+    /// trunk 24 degrees in the frame it came down.
+    pub(crate) fn drive_riding<F, G>(
         &self,
         rig: &Rig,
         pose: &mut Pose,
         elapsed: f32,
         ground: F,
-        took_off: Option<super::quadruped::Girdles>,
-        riding: bool,
+        under: G,
+        riding: Option<Riding>,
     ) -> Leapt
     where
         F: Fn(Vec3) -> Option<Ground>,
+        G: Fn(Vec3) -> Option<Ground>,
     {
         let mut leapt = Leapt {
             stage: self.stage_at(rig, elapsed),
@@ -345,22 +375,14 @@ impl Leap {
         // Turned after the tuck in the air, which draws the legs up in the
         // body's own frame, and before the plant on the ground, which puts
         // the feet back down under it.
-        let ease = |t: f32| t * t * (3.0 - 2.0 * t);
-        let pitch = if super::quadruped::four_legged(rig) {
-            match leapt.stage {
-                Stage::WindUp(t) => LEAP_PITCH * ease(t),
-                Stage::Flight(t) => LEAP_PITCH * (t * std::f32::consts::PI).det_cos(),
-                Stage::Landing(t) => -LEAP_PITCH * (1.0 - ease(t)),
-                Stage::Standing => 0.0,
-            }
-        } else {
-            0.0
+        let (riding, took_off, landing_from) = match riding {
+            Some(Riding {
+                took_off,
+                landing_from,
+            }) => (true, took_off, landing_from),
+            None => (false, None, None),
         };
-        let pitched = |pose: &mut Pose| {
-            if pitch != 0.0 {
-                super::quadruped::sink_end(rig, pose, pitch);
-            }
-        };
+        let pitch = self.pitched_at(rig, leapt.stage, landing_from);
         // **And a beast that rides its girdles leaps from them and lands on
         // them** (#413): stood level for the leap, a dog on a 25 degree slope
         // turned its trunk 24 degrees flat in five frames as it gathered. Only
@@ -377,6 +399,7 @@ impl Leap {
                 None
             }
         };
+        let four = super::quadruped::four_legged(rig);
         match leapt.stage {
             Stage::Flight(t) => {
                 // **Rigid, and the feet come with it.** A projectile does not
@@ -384,22 +407,100 @@ impl Leap {
                 // whatever they are holding — which is the tuck below, applied
                 // in the body's own frame and therefore carried along with it.
                 self.tuck(rig, pose, t, &mut leapt);
-                pitched(pose);
-                ridden(
-                    pose,
-                    took_off.filter(|_| riding && super::quadruped::four_legged(rig)),
-                );
+                // **The turn of what it left, not its height** (#414): the
+                // ground under a body about to drop is falling away before the
+                // drop is seen, and the height followed down with it, kept
+                // through the flight, flew a dog stepping off a 0.6 m ledge
+                // 0.45 m under its own body and lifted it all of that in the
+                // frame it landed.
+                let took_off = took_off.filter(|_| riding && four);
+                // **And no paw under the plane it stands on** (#414): pitched
+                // nose down to come down on its fores, a horse's forepaws hung
+                // 198 mm under that plane before they touched, and the landing
+                // stood them back on it in one frame. Drawn up onto it, as the
+                // landing would stand them; a paw above it is left in the air.
+                // The plane is the one it left, turned as it rides it: under a
+                // beast leaping up a hill, the hill.
+                let turned = took_off.map(super::quadruped::Girdles::turned);
+                let plane = |at: Vec3| {
+                    let stands = turned
+                        .and_then(|girdles| girdles.plane_under(rig, at))
+                        .unwrap_or_else(|| Ground::level(Vec3::new(at.x, 0.0, at.z)));
+                    (at.y < stands.position.y).then_some(stands)
+                };
+                if pitch != 0.0 {
+                    super::quadruped::sink_end(rig, pose, pitch);
+                }
+                ridden(pose, turned);
+                if riding && four {
+                    let contacts = rig.ground_contacts();
+                    let config = FootingConfig {
+                        max_pelvis_drop: 0.0,
+                        max_step_up: stepped(rig),
+                        ..FootingConfig::default()
+                    };
+                    plant_feet_of(rig, pose, &contacts, plane, &config);
+                }
                 pose.translation.y += leapt.height;
             }
             Stage::WindUp(_) | Stage::Landing(_) => {
                 // Feet on the floor, body dropping between them: the legs have
                 // to bend, so the sink goes in BEFORE the contacts are solved.
                 pose.translation.y += leapt.height;
-                pitched(pose);
-                ridden(pose, standing_on(&ground));
+                let girdles = standing_on(&ground);
                 let contacts = rig.ground_contacts();
-                let footing =
-                    plant_feet_of(rig, pose, &contacts, ground, &FootingConfig::default());
+                // **A beast's paw is stood on the ground however far under it
+                // the landing put it, as far as its leg reaches** (#414):
+                // pitched nose down onto its fores, a horse landing a level
+                // jump had its forepaws 350 mm under the ground, past the 0.4 m
+                // a plant steps a foot up, for six frames, and then up on it in
+                // one, 435 mm. In the wind-up as at the landing, and for any
+                // caller: a leap's ground is the ground it stands on, not a
+                // step. (Folded that far, a horse landing 1.5 m down onto a 20
+                // degree hill swings a fore knee over at 144 frames a second;
+                // a step any shorter leaves its paws under the ground there
+                // and snaps them up later: see the issue.)
+                //
+                // **And the landing takes up the ground really under them**
+                // (#413), `under`, from the ground the trunk follows: coming
+                // down from a level floor answered in the air onto a 20 degree
+                // hill, the uphill paws stood on the followed plane, a horse's
+                // 281 mm under the hill. Over the first [`TAKEN_UP`] of the
+                // stage rather than at once: stood on the hill in the frame they
+                // touched it, the legs went 9 times what a frame allows.
+                if pitch != 0.0 {
+                    super::quadruped::sink_end(rig, pose, pitch);
+                }
+                ridden(pose, girdles);
+                let config = if four {
+                    FootingConfig {
+                        max_step_up: stepped(rig),
+                        ..FootingConfig::default()
+                    }
+                } else {
+                    FootingConfig::default()
+                };
+                let footing = match leapt.stage {
+                    Stage::Landing(t) if riding && four => {
+                        let took = (t / TAKEN_UP).min(1.0);
+                        let took = took * took * (3.0 - 2.0 * took);
+                        let landed_on = |at: Vec3| {
+                            let (followed, real) = (ground(at), under(at));
+                            match (followed, real) {
+                                (Some(followed), Some(real)) => Some(Ground {
+                                    position: followed.position.lerp(real.position, took),
+                                    normal: followed
+                                        .normal
+                                        .lerp(real.normal, took)
+                                        .normalize_or(Vec3::Y),
+                                }),
+                                (followed, real) => real.or(followed),
+                            }
+                        };
+                        plant_feet_of(rig, pose, &contacts, landed_on, &config)
+                    }
+                    _ => plant_feet_of(rig, pose, &contacts, &ground, &config),
+                };
                 leapt.straining = footing.straining;
             }
             Stage::Standing => {}
@@ -440,6 +541,37 @@ impl Leap {
         }
     }
 }
+
+/// What the driver hands a leap it keeps (#413, #414): the ground under the
+/// girdles on the last frame the body stood on any, or `None` for the level,
+/// and the pitch the flight came down in, for a landing rebuilt at touchdown.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Riding {
+    pub(crate) took_off: Option<super::quadruped::Girdles>,
+    pub(crate) landing_from: Option<f32>,
+}
+
+/// How far a beast's leap steps a paw up onto the ground under it, in metres
+/// (#414): [`STEPPED`] of its leg, and at least what a plant steps a foot up.
+fn stepped(rig: &Rig) -> f32 {
+    (STEPPED * leg_of(rig)).max(FootingConfig::default().max_step_up)
+}
+
+/// How much of its leg's reach a beast's leap steps a paw up (#414).
+/// Provenance: **measured** (#414): over drops of 0.6 and 1.5 m and jumps at
+/// 2.5 and 4 m/s, level and on 20 degrees, a dog, a cat and a horse at 60 and
+/// 144 frames a second, at half to nine tenths of the leg a horse's paws
+/// were left up to 720 mm under the ground and snapped up later, 4.4 to 6.7
+/// times what a frame allows; at the whole leg nothing stands under it.
+const STEPPED: f32 = 1.0;
+
+/// How far into its landing a beast stands its feet wholly on the ground
+/// really under them rather than the ground its trunk follows, as a share of
+/// the stage (#413). Provenance: **measured** (#413): taken at once, a horse
+/// landing from a level floor answered in the air onto a 20 degree hill moved
+/// a leg 9 times what a frame allows at 144 frames a second; over 0.15 to 0.8
+/// of the stage the same landing reads 5.4, its worst frame elsewhere.
+const TAKEN_UP: f32 = 0.3;
 
 /// How far a leaping beast's trunk turns nose up as it gathers and nose down
 /// as it lands, in radians (#370).

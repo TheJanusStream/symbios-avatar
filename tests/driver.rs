@@ -4561,12 +4561,13 @@ fn a_beast_goes_about_its_business_on_a_steep_slope_without_a_jump() {
     // now rides its own ground. Everything a beast does, both ways up a .4
     // grade, across one and on a corner of both, for each family, a cross of
     // each and three rolls, against the guard a rest's joints are held to.
-    // The walk breaking into a trot is sensitive to where in the stride it
-    // falls in HEAD, on level ground too, up to 1.33 times the guard for a
-    // horse at an unlucky point of its stride (#412). This
-    // test does not claim to cover that; its input is portable and its ramp off
-    // the idle threshold's edge, so the trot comes at the same point however a
-    // machine's libm rounds.
+    // The walk breaking into a trot was sensitive to where in the stride it
+    // fell, on level ground too, up to 1.31 times the guard for a horse at an
+    // unlucky point of its stride (#412), and
+    // `a_beast_breaking_into_a_trot_carries_every_foot_across` sweeps that;
+    // this test's input is portable and its ramp off the idle threshold's
+    // edge, so the trot comes at the same point however a machine's libm
+    // rounds.
     let mut bodies = Vec::new();
     for family in plan::Family::ALL {
         let mut params = QuadrupedParams::default();
@@ -5853,10 +5854,12 @@ fn a_beast_in_the_air_rides_the_ground_it_left_whatever_is_under_it() {
 }
 
 /// How far a beast leaping off a slope may rise otherwise than on the level,
-/// in metres. Provenance: **measured** (#413): a horse's rises 3 mm further,
-/// its trunk pitched up the slope as it tucks, against the 480 mm a dog fell
+/// in metres. Provenance: **measured** (#413, #414): 35 to 36 mm further, a
+/// dog's, a horse's and a rolled body's, since the flight rides the turn of
+/// the ground it left and not its height (a ground falling away under a body
+/// about to drop flew it 0.45 m under its own), against the 480 mm a dog fell
 /// short when its flight rode the ground under it.
-const FLIGHT_RISE_OFF: f32 = 0.005;
+const FLIGHT_RISE_OFF: f32 = 0.045;
 
 /// How much more than the same leap on the level a beast's trunk may turn in
 /// a frame as the ground under it switches between a 25 degree slope and the
@@ -5864,6 +5867,359 @@ const FLIGHT_RISE_OFF: f32 = 0.005;
 /// (#413): landing from the level on the slope a dog's turns 2.6 more, the
 /// follow's 2.9 a frame less what the landing's own pitch takes back.
 const LEAP_TURN_OVER: f32 = 3.0;
+
+/// A dog and a horse with their withers heights, in metres.
+fn dog_and_horse() -> Vec<(&'static str, Avatar, f32)> {
+    [("dog", plan::Family::Dog), ("horse", plan::Family::Horse)]
+        .into_iter()
+        .map(|(what, family)| {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(family, None, 0.0);
+            let withers = params.height * 1.2;
+            let mut record = AvatarRecord::new("Beast", Archetype::Quadruped(params));
+            record.sanitize();
+            let avatar = Avatar::build_with(
+                &record,
+                &AvatarConfig {
+                    atlas: 64,
+                    ..AvatarConfig::default()
+                },
+            )
+            .expect("a beast builds");
+            (what, avatar, withers)
+        })
+        .collect()
+}
+
+#[test]
+fn a_beast_breaking_into_a_trot_carries_every_foot_across() {
+    // #412: a walk's four footfalls stand a quarter of a cycle off a trot's
+    // two, so at the change a hind paw planted at the back of the walk's
+    // stance came out in the middle of the trot's swing and the one blend
+    // swept it a stride forward: a horse's 1.31 times what a frame allows on
+    // the level, a dog's 1.03, depending on where in its stride it was asked
+    // to trot. The change is blended over longer now and the feet held
+    // through it let go at once: on the level, wherever the trot is asked, no
+    // joint moves past what a frame allows.
+    let mut wrong = Vec::new();
+    for (what, avatar, withers) in dog_and_horse() {
+        let rig = &avatar.rig;
+        let walk = Speed::from_froude(0.3).metres_per_second(rig);
+        let trot = Speed::from_froude(1.4).metres_per_second(rig);
+        let most = crate::rest::swift(withers, STEP);
+        let mut worst = (0.0f32, 0usize);
+        for late in 0..40 {
+            let walking = 90 + late;
+            let mut driver = Driver::seeded(INSTRUMENT_SEED);
+            let (mut speed, mut at) = (0.0f32, Vec3::ZERO);
+            let mut before: Option<Vec<Vec3>> = None;
+            for frame in 0..walking + 60 {
+                speed = speed_toward(speed, if frame < walking { walk } else { trot });
+                let velocity = Vec3::Z * speed;
+                at += velocity * STEP;
+                let inputs = Inputs {
+                    delta: STEP,
+                    velocity,
+                    at,
+                    ..Inputs::default()
+                };
+                let posed: Vec<Vec3> = driver
+                    .drive(rig, &inputs, level_ground)
+                    .expect("an unheld body is posed")
+                    .pose
+                    .forward(rig)
+                    .positions
+                    .iter()
+                    .map(|&point| point + at)
+                    .collect();
+                if let Some(before) = before.as_ref().filter(|_| frame >= walking) {
+                    for (now, was) in posed.iter().zip(before) {
+                        let moved = now.distance(*was) / most;
+                        if moved > worst.0 {
+                            worst = (moved, late);
+                        }
+                    }
+                }
+                before = Some(posed);
+            }
+        }
+        if worst.0 > 1.0 {
+            wrong.push(format!(
+                "{what}: asked to trot {} frames late, a joint moved {:.2} times what a frame \
+                 allows",
+                worst.1, worst.0
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// What a beast does coming down: off the ground at `launch` metres a second
+/// up, or stepping off a ledge `drop` metres high, onto a plane rising `grade`
+/// per metre ahead, at `fps` frames a second, its ground answered under it in
+/// the air as a chassis carrying it answers it, or with `floored` a level
+/// floor answered in the air. The most its trunk pitches, in degrees a second;
+/// over the landing the furthest any pad stands above and below where it
+/// stands at rest on that ground, in metres; and from three frames before
+/// touchdown to three after the most any joint moves in a frame, in what a
+/// frame allows a body `withers` high.
+fn landed(
+    rig: &Rig,
+    withers: f32,
+    fps: f32,
+    launch: f32,
+    drop: f32,
+    (grade, floored): (f32, bool),
+) -> (f32, f32, f32, f32) {
+    let step = 1.0 / fps;
+    let pads: Vec<usize> = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
+        .collect();
+    let mut driver = Driver::seeded(INSTRUMENT_SEED);
+    let (mut height, mut rising) = (0.0f32, 0.0f32);
+    let mut before: Option<f32> = None;
+    let mut turned = 0.0f32;
+    let mut touched: Option<usize> = None;
+    let mut clear = Vec::new();
+    let most = crate::rest::swift(withers, step);
+    let mut drawn: Option<Vec<Vec3>> = None;
+    let mut moves = Vec::new();
+    #[expect(clippy::cast_possible_truncation, reason = "a few hundred frames")]
+    #[expect(clippy::cast_sign_loss, reason = "a positive rate")]
+    let (off, frames, after) = (fps as usize, (3.0 * fps) as usize, (0.6 * fps) as usize);
+    for frame in 0..frames {
+        if frame == off {
+            if launch > 0.0 {
+                rising = launch;
+                height = 1.0e-4;
+            } else {
+                height = drop;
+            }
+        }
+        if frame >= off && height > 0.0 {
+            rising -= 9.81 * step;
+            height = (height + rising * step).max(0.0);
+            if height <= 0.0 {
+                touched.get_or_insert(frame);
+            }
+        }
+        if height <= 0.0 {
+            rising = 0.0;
+        }
+        let below = height;
+        // A level floor answered in the air, the ground really under the
+        // body only once it is down on it, as a consumer may answer.
+        let answered = if floored && below > 0.0 { 0.0 } else { grade };
+        let ground = move |point: Vec3| {
+            Some(symbios_avatar::anim::Ground {
+                position: Vec3::new(point.x, answered * point.z - below, point.z),
+                normal: Vec3::new(0.0, 1.0, -answered).normalize(),
+            })
+        };
+        let inputs = Inputs {
+            delta: step,
+            velocity: Vec3::Y * rising,
+            ..Inputs::default()
+        };
+        let posed = driver
+            .drive(rig, &inputs, ground)
+            .expect("an unheld body is posed")
+            .pose
+            .forward(rig);
+        let pitch = trunk_turn(rig, &posed.positions).0;
+        let world: Vec<Vec3> = posed
+            .positions
+            .iter()
+            .map(|&at| at + Vec3::Y * below)
+            .collect();
+        moves.push(drawn.as_ref().map_or(0.0, |was: &Vec<Vec3>| {
+            world
+                .iter()
+                .zip(was)
+                .map(|(now, was)| now.distance(*was) / most)
+                .fold(0.0f32, f32::max)
+        }));
+        drawn = Some(world);
+        if let Some(was) = before.filter(|_| frame > off) {
+            turned = turned.max((pitch - was).abs() * fps);
+        }
+        before = Some(pitch);
+        if touched.is_some_and(|at| frame >= at && frame <= at + after) || frame + 1 == frames {
+            clear.push(
+                pads.iter()
+                    .map(|&pad| {
+                        let at = posed.positions[pad];
+                        at.y - (grade * at.z - below)
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+    let rest = clear.pop().expect("the last frame is read");
+    let (mut above, mut under) = (0.0f32, 0.0f32);
+    for frame in &clear {
+        for (now, stands) in frame.iter().zip(&rest) {
+            above = above.max(now - stands);
+            under = under.max(stands - now);
+        }
+    }
+    let moved = touched.map_or(0.0, |at| {
+        moves[at.saturating_sub(3)..(at + 4).min(moves.len())]
+            .iter()
+            .copied()
+            .fold(0.0f32, f32::max)
+    });
+    (turned, above, under, moved)
+}
+
+#[test]
+fn a_beast_comes_down_from_a_jump_or_a_ledge_on_its_feet_without_a_snap() {
+    // #414: at touchdown the leap is rebuilt from the impact that arrived and
+    // its clock set to the head of its landing, whose first pose is nose down,
+    // where a fall's flight, cut short wherever the ground arrives, was nose
+    // up: a beast stepping off a 0.6 m ledge pitched its trunk 23.8 degrees in
+    // the frame it came down, at sixty frames a second and at 144. The landing
+    // sets off from the pitch the flight came down in now. And it stands the
+    // feet on the ground: a horse's forepaws went 437 mm under it landing a
+    // level jump, past what a plant steps a foot up, and every beast's 300 mm
+    // under it for nine frames after a ledge, from the ground it rode falling
+    // away under it before it left it; the flight rode that height, the drawn
+    // body 0.45 m under its own, and came up all of it in the frame it landed.
+    // Every family and eight rolled bodies, jumping at 2.5 and 4 m/s and off a
+    // ledge 0.6 and 1.5 m high, on the level and on a 20 degree hill, at 60
+    // and 144 frames a second: the trunk turns no faster than `LANDING_TURN`,
+    // no pad stands further than `LANDING_OFF` off where it stands at rest, or
+    // `LANDING_OFF_HILL` on the hill, and over touchdown no joint moves past
+    // `LANDING_MOVE` in a frame.
+    let mut bodies: Vec<(String, AvatarRecord)> = plan::Family::ALL
+        .into_iter()
+        .map(|family| {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(family, None, 0.0);
+            (
+                format!("{family:?}"),
+                AvatarRecord::new("Beast", Archetype::Quadruped(params)),
+            )
+        })
+        .collect();
+    for seed in 0..8 {
+        bodies.push((
+            format!("roll {seed}"),
+            AvatarRecord::rolled(
+                "Beast",
+                Archetype::Quadruped(QuadrupedParams::default()),
+                seed,
+            ),
+        ));
+    }
+    let wrong: Vec<String> = std::thread::scope(|scope| {
+        let runs: Vec<_> = bodies
+            .into_iter()
+            .map(|(what, mut record)| {
+                scope.spawn(move || {
+                    record.sanitize();
+                    let avatar = Avatar::build_with(
+                        &record,
+                        &AvatarConfig {
+                            atlas: 64,
+                            ..AvatarConfig::default()
+                        },
+                    )
+                    .expect("a beast builds");
+                    let withers = match &record.archetype {
+                        Archetype::Quadruped(params) => params.height * 1.2,
+                        _ => unreachable!("every record here is a beast"),
+                    };
+                    let mut wrong = Vec::new();
+                    for fps in [60.0f32, 144.0] {
+                        for (how, launch, drop, ground) in [
+                            ("jumping at 2.5 m/s", 2.5, 0.0, (0.0, false)),
+                            ("jumping at 4 m/s", 4.0, 0.0, (0.0, false)),
+                            ("jumping at 4 m/s up a hill", 4.0, 0.0, (0.364, false)),
+                            ("off a ledge", 0.0, 0.6, (0.0, false)),
+                            ("off a high ledge", 0.0, 1.5, (0.0, false)),
+                            ("off a ledge onto a hill", 0.0, 0.6, (0.364, false)),
+                            ("off a high ledge onto a hill", 0.0, 1.5, (0.364, false)),
+                            (
+                                "off a ledge, a floor answered in the air",
+                                0.0,
+                                0.6,
+                                (0.364, true),
+                            ),
+                            (
+                                "off a high ledge, a floor answered in the air",
+                                0.0,
+                                1.5,
+                                (0.364, true),
+                            ),
+                        ] {
+                            let (turned, above, under, moved) =
+                                landed(&avatar.rig, withers, fps, launch, drop, ground);
+                            let off = match ground {
+                                (0.0, _) => LANDING_OFF,
+                                (_, false) => LANDING_OFF_HILL,
+                                (_, true) => LANDING_OFF_FLOORED,
+                            };
+                            let fast = if fps > 60.0 {
+                                LANDING_MOVE_FAST
+                            } else {
+                                LANDING_MOVE
+                            };
+                            if turned > LANDING_TURN || above.max(under) > off || moved > fast {
+                                wrong.push(format!(
+                                    "{what} {how} at {fps} frames a second: the trunk pitched \
+                                     {turned:.0} degrees a second, past {LANDING_TURN:.0}; a \
+                                     pad stood {:.0} mm above where it stands and {:.0} mm \
+                                     under it, past {:.0}; a joint moved {moved:.2} times what \
+                                     a frame allows at touchdown, past {fast:.2}",
+                                    above * 1000.0,
+                                    under * 1000.0,
+                                    off * 1000.0
+                                ));
+                            }
+                        }
+                    }
+                    wrong
+                })
+            })
+            .collect();
+        runs.into_iter()
+            .flat_map(|run| run.join().expect("a beast lands"))
+            .collect()
+    });
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How far any pad of a beast coming down may stand off where it stands at
+/// rest, above or below, from touchdown to six tenths of a second after, in
+/// metres: on the level, on a hill, and on a hill where a level floor was
+/// answered in the air. Provenance: **measured** (#414): on the level 26 mm, a
+/// rolled body's paw coming off a ledge, against 437 and 350 under the ground
+/// in HEAD; on a 20 degree hill 76 mm, the feet standing on the ground the
+/// trunk turns onto as it follows the hill (see `quadruped::follow`), against
+/// 620; from a level floor in the air onto the hill 341 mm under it as the
+/// landing takes the hill up over its first three tenths, against 794.
+const LANDING_OFF: f32 = 0.04;
+const LANDING_OFF_HILL: f32 = 0.09;
+const LANDING_OFF_FLOORED: f32 = 0.4;
+
+/// The most a joint of a beast may move in a frame from three frames before
+/// touchdown to three after, in what a frame allows, at sixty frames a second
+/// and at 144. Provenance: **measured** (#414): 1.55 and 3.03, a 4 m/s jump up
+/// a 20 degree hill, against HEAD's 2.24 and 5.39 off a 0.6 m ledge, where the
+/// flight rode the height of a ground falling away under the body and its paws
+/// came down 300 mm under the ground.
+const LANDING_MOVE: f32 = 2.0;
+const LANDING_MOVE_FAST: f32 = 3.5;
+
+/// How fast a beast's trunk may pitch through a jump or a drop and its
+/// landing, in degrees a second. Provenance: **measured** (#414): 256, coming
+/// down 1.5 m onto a 20 degree hill from a level floor answered in the air,
+/// the trunk taking the hill up as it lands, and 195 everywhere else, against
+/// 1429 at sixty frames a second and 3186 at 144 when the touchdown snapped.
+const LANDING_TURN: f32 = 280.0;
 
 /// How far ahead of where it stops [`Terrain`]'s step stands, in withers
 /// heights: under the forefeet of a beast sitting or lying there.
