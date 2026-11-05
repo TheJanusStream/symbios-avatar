@@ -93,6 +93,7 @@ mod composites;
 pub(crate) mod derive;
 mod fur;
 mod humanoid;
+pub mod kin;
 mod ornament;
 mod quadruped;
 mod zone;
@@ -103,7 +104,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::skeleton::Skeleton;
 
-pub use anatomy::{Anatomy, FootKind, HeadKind, TrunkKind};
+pub use anatomy::{Anatomy, FootKind, HeadKind, Legs, TrunkKind};
 pub use beast_foot::BeastFeet;
 pub use beast_head::BeastHead;
 pub use coat::{Agouti, Coat, CoatChannel, CoatColours, Fantasy, Pattern, Pigment, White};
@@ -113,6 +114,7 @@ pub use composites::{
 };
 pub use fur::Fur;
 pub use humanoid::HumanoidParams;
+pub use kin::{Blended, Kin, Lineage};
 pub use ornament::{
     Antlers, CURVE_RANGE, FLUTES_RANGE, FORK_RANGE, Horn, LENGTH_RANGE, ORNAMENT_SWATCHES,
     Ornament, OrnamentKind, Ornaments, POINTS_RANGE, TAPER_RANGE, THICKNESS_RANGE, TWIST_RANGE,

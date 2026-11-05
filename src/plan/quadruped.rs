@@ -30,6 +30,7 @@ use super::derive::quadruped::{
 
 /// One leg node as the derive gives it: where it stands and its radius.
 type LegNode = (Vec3, f32);
+use super::kin::{self, Anchored, Blended, Bred, Draw, Kin, Lineage, Streams};
 use super::ornament::Ornaments;
 use super::{Anatomy, Coat, CompositePriors, Composites, DEFAULT_BODY_FAT, Fur, Limb, Zone};
 use super::{
@@ -166,10 +167,6 @@ impl Feet {
         }
     }
 }
-
-/// The share of re-rolled quadrupeds that come out a cross of two families
-/// (#366: hybrids are in, the owner's call). Drawn on its own stream.
-const HYBRID_SHARE: f32 = 0.15;
 
 /// The byte a share code writes for "no hybrid".
 const NO_HYBRID: u8 = 255;
@@ -374,33 +371,11 @@ fn meshes(skeleton: &Skeleton) -> bool {
 /// stand taller than a horse.
 const HEIGHT_BAND: (f32, f32) = (0.5, 1.6);
 
-/// Where a roll centres one axis, and how widely it spreads about it.
-#[derive(Clone, Copy, Debug)]
-struct Draw {
-    mean: f32,
-    sigma: f32,
-}
-
-impl Draw {
-    const fn at(mean: f32, sigma: f32) -> Self {
-        Self { mean, sigma }
-    }
-
-    /// The draw `share` of the way to `other`: a cross centres between its
-    /// families and spreads as widely as the wider of the two.
-    fn toward(self, other: Self, share: f32) -> Self {
-        Self {
-            mean: self.mean + (other.mean - self.mean) * share,
-            sigma: self.sigma.max(other.sigma),
-        }
-    }
-}
-
 /// Where each family's rolls centre every axis (#366): the anchors the
 /// families are told apart by. Read [`Family`] for why these are a roll's
-/// centre and not a fixed body.
+/// centre and not a fixed body, and [`kin`] for how a cross blends them.
 #[derive(Clone, Copy, Debug)]
-struct Anchor {
+pub(crate) struct Anchor {
     height: Draw,
     body_length: Draw,
     leg_length: Draw,
@@ -429,6 +404,16 @@ struct Anchor {
 }
 
 impl Anchor {
+    /// The anchor a roll of `params` centres on: its family's, drawn toward
+    /// its hybrid's by its blend.
+    fn for_params(params: &QuadrupedParams) -> Self {
+        Self::of_lineage(params.lineage())
+    }
+}
+
+impl Anchored for Anchor {
+    type Kin = Family;
+
     /// The anchor of one family.
     ///
     /// Heights are a back's, in metres, at a game's scale rather than a
@@ -514,15 +499,9 @@ impl Anchor {
         }
     }
 
-    /// The anchor a roll of `params` centres on: its family's, drawn toward
-    /// its hybrid's by its blend.
-    fn for_params(params: &QuadrupedParams) -> Self {
-        let own = Self::of(params.family);
-        let Some(other) = params.hybrid.filter(|&other| other != params.family) else {
-            return own;
-        };
-        let other = Self::of(other);
-        let share = params.blend.clamp(0.0, 1.0);
+    /// A cross's: every draw `share` of the way to `other`'s, and the body
+    /// fat between the two.
+    fn toward(own: Self, other: Self, share: f32) -> Self {
         let mix = |a: Draw, b: Draw| a.toward(b, share);
         Self {
             height: mix(own.height, other.height),
@@ -643,39 +622,6 @@ impl QuadrupedParams {
         height_envelope()
     }
 
-    /// What becomes of a part `kept` - a family's own, by `of` - when the
-    /// body changes kind: kept while one of its families has it, its
-    /// leading family's otherwise.
-    fn handed_over<T: Copy + PartialEq>(&self, kept: T, of: fn(Family) -> T) -> T {
-        let parents = [Some(self.family), self.hybrid];
-        if parents
-            .into_iter()
-            .flatten()
-            .any(|family| of(family) == kept)
-        {
-            kept
-        } else {
-            of(self.leading_family())
-        }
-    }
-
-    /// A part drawn for a re-roll: its family's, and a cross its hybrid's as
-    /// often as its blend leans that way, each part on its own stream.
-    fn drawn_part<T>(&self, rolls: &Rolls, stream: &str, of: fn(Family) -> T) -> T {
-        match self.hybrid {
-            Some(other) if rolls.range(stream, 0.0, 1.0) < self.blend => of(other),
-            _ => of(self.family),
-        }
-    }
-
-    /// The family a cross leans toward, or the family of a body that is none.
-    fn leading_family(&self) -> Family {
-        match self.hybrid {
-            Some(other) if self.blend >= 0.5 => other,
-            _ => self.family,
-        }
-    }
-
     /// Makes this body a different kind of animal, carrying its own
     /// character across: what a creator's family picker calls (#366).
     ///
@@ -685,59 +631,100 @@ impl QuadrupedParams {
     /// from its old one, in the anchor's own spread: a long-legged dog becomes
     /// a long-legged cat rather than the mean cat, and dragging a cross's blend
     /// morphs the body between its two families as the blend moves. Sanitised
-    /// afterwards, so a cross of a family with itself comes out no cross.
+    /// afterwards, so a cross of a family with itself comes out no cross. The
+    /// same as [`Blended::set_lineage`], in the plan's own words.
     pub fn set_kind(&mut self, family: Family, hybrid: Option<Family>, blend: f32) {
-        let from = Anchor::for_params(self);
-        self.family = family;
-        self.hybrid = hybrid;
-        self.blend = blend;
-        self.sanitize();
-        let to = Anchor::for_params(self);
-        let carry = |value: &mut f32, from: Draw, to: Draw| {
-            *value = to.mean + (*value - from.mean) * (to.sigma / from.sigma);
-        };
-        carry(&mut self.height, from.height, to.height);
-        carry(&mut self.body_length, from.body_length, to.body_length);
-        carry(&mut self.leg_length, from.leg_length, to.leg_length);
-        carry(&mut self.neck_length, from.neck_length, to.neck_length);
-        carry(&mut self.head_size, from.head_size, to.head_size);
-        carry(&mut self.tail_length, from.tail_length, to.tail_length);
-        carry(
-            &mut self.muzzle_length,
-            from.muzzle_length,
-            to.muzzle_length,
+        kin::change_kind(
+            self,
+            Lineage {
+                family,
+                hybrid,
+                blend,
+            },
         );
-        carry(&mut self.stance, from.stance, to.stance);
-        carry(
-            &mut self.neck_carriage,
-            from.neck_carriage,
-            to.neck_carriage,
-        );
-        carry(
-            &mut self.tail_carriage,
-            from.tail_carriage,
-            to.tail_carriage,
-        );
-        carry(&mut self.chest_depth, from.chest_depth, to.chest_depth);
-        carry(&mut self.appeal, from.appeal, to.appeal);
-        carry(
-            &mut self.muzzle_breadth,
-            from.muzzle_breadth,
-            to.muzzle_breadth,
-        );
-        carry(&mut self.stop, from.stop, to.stop);
-        carry(&mut self.eye_set, from.eye_set, to.eye_set);
-        carry(&mut self.ear_size, from.ear_size, to.ear_size);
-        carry(&mut self.ear_point, from.ear_point, to.ear_point);
-        carry(&mut self.ear_carriage, from.ear_carriage, to.ear_carriage);
-        carry(&mut self.whiskers, from.whiskers, to.whiskers);
-        // A part goes with its family, but a cross keeps whichever of its
-        // two families' parts it has, so dragging the blend does not flip
-        // the eyes or the nose back and forth at the middle.
-        self.pupil = self.handed_over(self.pupil, Pupil::of);
-        self.nose = self.handed_over(self.nose, Nose::of);
-        self.feet = self.handed_over(self.feet, Feet::of);
-        self.sanitize();
+    }
+}
+
+/// The streams a quadruped's family and cross are rolled on (#366).
+const STREAMS: Streams = Streams {
+    family: "quadruped.family",
+    hybrid_family: "quadruped.hybridFamily",
+    hybrid: "quadruped.hybrid",
+    blend: "quadruped.blend",
+};
+
+impl Kin for Family {
+    const ALL: &'static [Self] = &Family::ALL;
+
+    fn name(self) -> &'static str {
+        Family::name(self)
+    }
+}
+
+impl Blended for QuadrupedParams {
+    type Kin = Family;
+
+    fn lineage(&self) -> Lineage<Family> {
+        Lineage {
+            family: self.family,
+            hybrid: self.hybrid,
+            blend: self.blend,
+        }
+    }
+
+    fn set_lineage(&mut self, lineage: Lineage<Family>) {
+        kin::change_kind(self, lineage);
+    }
+}
+
+impl Bred for QuadrupedParams {
+    type Anchor = Anchor;
+
+    fn put_lineage(&mut self, lineage: Lineage<Family>) {
+        self.family = lineage.family;
+        self.hybrid = lineage.hybrid;
+        self.blend = lineage.blend;
+    }
+
+    fn carry(&mut self, from: &Anchor, to: &Anchor) {
+        to.height.carry(&mut self.height, from.height);
+        to.body_length
+            .carry(&mut self.body_length, from.body_length);
+        to.leg_length.carry(&mut self.leg_length, from.leg_length);
+        to.neck_length
+            .carry(&mut self.neck_length, from.neck_length);
+        to.head_size.carry(&mut self.head_size, from.head_size);
+        to.tail_length
+            .carry(&mut self.tail_length, from.tail_length);
+        to.muzzle_length
+            .carry(&mut self.muzzle_length, from.muzzle_length);
+        to.stance.carry(&mut self.stance, from.stance);
+        to.neck_carriage
+            .carry(&mut self.neck_carriage, from.neck_carriage);
+        to.tail_carriage
+            .carry(&mut self.tail_carriage, from.tail_carriage);
+        to.chest_depth
+            .carry(&mut self.chest_depth, from.chest_depth);
+        to.appeal.carry(&mut self.appeal, from.appeal);
+        to.muzzle_breadth
+            .carry(&mut self.muzzle_breadth, from.muzzle_breadth);
+        to.stop.carry(&mut self.stop, from.stop);
+        to.eye_set.carry(&mut self.eye_set, from.eye_set);
+        to.ear_size.carry(&mut self.ear_size, from.ear_size);
+        to.ear_point.carry(&mut self.ear_point, from.ear_point);
+        to.ear_carriage
+            .carry(&mut self.ear_carriage, from.ear_carriage);
+        to.whiskers.carry(&mut self.whiskers, from.whiskers);
+    }
+
+    /// A part goes with its family, but a cross keeps whichever of its two
+    /// families' parts it has, so dragging the blend does not flip the eyes
+    /// or the nose back and forth at the middle.
+    fn hand_over(&mut self) {
+        let lineage = self.lineage();
+        self.pupil = lineage.handed_over(self.pupil, Pupil::of);
+        self.nose = lineage.handed_over(self.nose, Nose::of);
+        self.feet = lineage.handed_over(self.feet, Feet::of);
     }
 }
 
@@ -769,7 +756,7 @@ impl BodyPlan for QuadrupedParams {
 
     /// Its family's eyes (#368): a cross's leading family's.
     fn iris(&self, shade: f32) -> [f32; 3] {
-        super::coat::iris(self.leading_family(), shade)
+        super::coat::iris(self.lineage().leading(), shade)
     }
 
     fn sanitize(&mut self) {
@@ -885,7 +872,7 @@ impl BodyPlan for QuadrupedParams {
                 self.neck_carriage = draw("quadruped.neckCarriage", anchor.neck_carriage, signed);
                 self.tail_carriage = draw("quadruped.tailCarriage", anchor.tail_carriage, signed);
                 self.appeal = draw("quadruped.appeal", anchor.appeal, signed);
-                self.feet = self.drawn_part(rolls, "quadruped.feet", Feet::of);
+                self.feet = self.lineage().drawn_part(rolls, "quadruped.feet", Feet::of);
             }
             Category::Head => {
                 self.head_size = draw("quadruped.headSize", anchor.head_size, signed);
@@ -897,11 +884,13 @@ impl BodyPlan for QuadrupedParams {
                 self.ear_size = draw("quadruped.earSize", anchor.ear_size, signed);
                 self.ear_point = draw("quadruped.earPoint", anchor.ear_point, signed);
                 self.ear_carriage = draw("quadruped.earCarriage", anchor.ear_carriage, signed);
-                self.nose = self.drawn_part(rolls, "quadruped.nose", Nose::of);
+                self.nose = self.lineage().drawn_part(rolls, "quadruped.nose", Nose::of);
                 self.whiskers = draw("quadruped.whiskers", anchor.whiskers, signed);
                 // Rarely, off a short list, and over a creator's: see [`Ornaments`].
                 self.ornaments = Ornaments::rolled(rolls, self.muzzle_length);
-                self.pupil = self.drawn_part(rolls, "quadruped.pupil", Pupil::of);
+                self.pupil = self
+                    .lineage()
+                    .drawn_part(rolls, "quadruped.pupil", Pupil::of);
             }
             // Its coat (#368), drawn from its family's loci - a cross's mixed
             // by its blend.
@@ -1263,19 +1252,7 @@ impl QuadrupedParams {
     /// [`crate::AvatarRecord::reroll`], under the frame's lock - so every axis
     /// is centred on the result.
     pub(crate) fn reroll_family(&mut self, rolls: &Rolls) {
-        let pick = |share: f32, among: &[Family]| {
-            among[((share * among.len() as f32) as usize).min(among.len() - 1)]
-        };
-        self.family = pick(rolls.range("quadruped.family", 0.0, 1.0), &Family::ALL);
-        let others: Vec<Family> = Family::ALL
-            .into_iter()
-            .filter(|&family| family != self.family)
-            .collect();
-        let second = pick(rolls.range("quadruped.hybridFamily", 0.0, 1.0), &others);
-        let crossed = rolls.range("quadruped.hybrid", 0.0, 1.0) < HYBRID_SHARE;
-        let blend = rolls.range("quadruped.blend", 0.25, 0.75);
-        self.hybrid = crossed.then_some(second);
-        self.blend = if crossed { blend } else { 0.0 };
+        self.put_lineage(Lineage::rolled(rolls, &STREAMS));
     }
 }
 
@@ -1290,6 +1267,7 @@ fn take_byte(bytes: &mut &[u8]) -> Result<u8, PlanDecodeError> {
 mod tests {
     use super::*;
     use crate::plan::derive::quadruped::SKIN;
+    use crate::plan::kin::HYBRID_SHARE;
     use crate::skeleton::NodeKind;
 
     #[test]

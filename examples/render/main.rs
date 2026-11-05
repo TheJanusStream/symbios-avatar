@@ -108,6 +108,7 @@ use light::Image;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use scene::{Cutout, Frame, GBuffer, Item, Material, Paint, ShadowMap};
+use symbios_avatar::plan::{Blended, Kin, Lineage};
 use symbios_avatar::{
     Archetype, Avatar, AvatarConfig, AvatarMesh, AvatarRecord, Blink, Canon, Category, Expression,
     EyeParams, FaceParams, FootingConfig, Gait, GazeConfig, Ground, Influence, Limb,
@@ -504,23 +505,18 @@ fn main() {
     // Which beast a head is judged on (#388): `--kin horse` turns the roll
     // into a family (`--kin dog+cat` a cross of the two), `--head-axis 1.5` and
     // `--appeal 2` are the big-headed and small-headed ends of the roll.
-    if let Archetype::Quadruped(params) = &mut record.archetype {
-        use symbios_avatar::Family;
-        let family_of = |name: &str| match name {
-            "dog" => Family::Dog,
-            "cat" => Family::Cat,
-            "horse" => Family::Horse,
-            other => {
-                eprintln!("--kin takes dog, cat, horse or two joined by +, not `{other}`");
+    // The kin is the plan's own families, through the machinery every plan
+    // with families shares (#419): a new plan is one more arm here.
+    if let Some(kin) = value("--kin") {
+        match &mut record.archetype {
+            Archetype::Quadruped(params) => set_kin(params, kin),
+            _ => {
+                eprintln!("--kin picks a family, and this plan has none: add --quadruped");
                 std::process::exit(2);
             }
-        };
-        if let Some(kin) = value("--kin") {
-            match kin.split_once('+') {
-                Some((own, other)) => params.set_kind(family_of(own), Some(family_of(other)), 0.5),
-                None => params.set_kind(family_of(kin), None, 0.0),
-            }
         }
+    }
+    if let Archetype::Quadruped(params) = &mut record.archetype {
         if let Some(size) = value("--head-axis").and_then(|v| v.parse::<f32>().ok()) {
             params.head_size = size;
         }
@@ -1086,17 +1082,23 @@ fn main() {
             std::process::exit(2);
         };
         // `--family dog`, `cat` or `horse` keeps the rolls of that family that
-        // are no cross, and `--family cross` keeps only the crosses (#366).
+        // are no cross, and `--family cross` keeps only the crosses (#366): any
+        // of the plan's own families (#419).
         let family = value("--family").cloned();
-        if let Some(name) = &family
-            && !["dog", "cat", "horse", "cross"].contains(&name.as_str())
-        {
-            eprintln!("--family takes dog, cat, horse or cross, not `{name}`");
-            std::process::exit(2);
-        }
-        if family.is_some() && !matches!(record.archetype, Archetype::Quadruped(_)) {
-            eprintln!("--family picks a quadruped's family: add --quadruped");
-            std::process::exit(2);
+        if let Some(name) = &family {
+            let Some(families) = families_of(&record.archetype) else {
+                eprintln!(
+                    "--family picks a plan's family, and this plan has none: add --quadruped"
+                );
+                std::process::exit(2);
+            };
+            if name != "cross" && !families.contains(&name.as_str()) {
+                eprintln!(
+                    "--family takes {} or cross, not `{name}`",
+                    families.join(", ")
+                );
+                std::process::exit(2);
+            }
         }
         // `--fantasy` keeps only the coats drawn in an unnatural palette, and
         // `--pattern NAME` only the coats marked with it (#368).
@@ -1124,10 +1126,7 @@ fn main() {
                 && pattern.is_none_or(|pattern| coat.is_some_and(|coat| coat.pattern == pattern));
             coat && match (&record.archetype, family.as_deref()) {
                 (_, None) => true,
-                (Archetype::Quadruped(params), Some("cross")) => params.hybrid.is_some(),
-                (Archetype::Quadruped(params), Some(name)) => {
-                    params.hybrid.is_none() && params.family.name() == name
-                }
+                (Archetype::Quadruped(params), Some(filter)) => keeps(params, filter),
                 _ => false,
             }
         };
@@ -3935,6 +3934,66 @@ fn coat_words(coat: &symbios_avatar::Coat) -> String {
     words.join(", ")
 }
 
+/// The names of a plan's families, or `None` for a plan that has none (#419):
+/// the one place a plan with families is named, beside [`set_kin`]'s.
+fn families_of(archetype: &Archetype) -> Option<Vec<&'static str>> {
+    match archetype {
+        Archetype::Quadruped(_) => Some(names::<symbios_avatar::Family>()),
+        _ => None,
+    }
+}
+
+/// Every family of a plan, by name, in its own order.
+fn names<K: Kin>() -> Vec<&'static str> {
+    K::ALL.iter().map(|kin| kin.name()).collect()
+}
+
+/// One of a plan's families by name, or the tool's refusal of it.
+fn family_named<K: Kin>(name: &str) -> K {
+    K::parse(name).unwrap_or_else(|| {
+        eprintln!(
+            "--kin takes {} or two joined by +, not `{name}`",
+            names::<K>().join(", ")
+        );
+        std::process::exit(2);
+    })
+}
+
+/// `--kin horse` makes the body that family, `--kin dog+cat` a cross of the
+/// two at half: through the plan's own change of family, so its character is
+/// carried across (#388, #419).
+fn set_kin<P: Blended>(params: &mut P, kin: &str) {
+    let lineage = match kin.split_once('+') {
+        Some((own, other)) => Lineage::cross(family_named::<P::Kin>(own), family_named(other), 0.5),
+        None => Lineage::pure(family_named::<P::Kin>(kin)),
+    };
+    params.set_lineage(lineage);
+}
+
+/// Whether a roll is one `--family` keeps: `cross` keeps the crosses, a
+/// family's name the rolls of that family that are no cross.
+fn keeps<P: Blended>(params: &P, filter: &str) -> bool {
+    let lineage = params.lineage();
+    match filter {
+        "cross" => lineage.hybrid.is_some(),
+        name => lineage.hybrid.is_none() && lineage.family.name() == name,
+    }
+}
+
+/// A body's family as a caption says it: `cat`, or `dog x horse at 0.40`.
+fn lineage_words<P: Blended>(params: &P) -> String {
+    let lineage = params.lineage();
+    match lineage.hybrid {
+        Some(other) => format!(
+            "{} x {} at {:.2}",
+            lineage.family.name(),
+            other.name(),
+            lineage.blend
+        ),
+        None => lineage.family.name().to_string(),
+    }
+}
+
 /// Draws `count` rolls of `plan` that `keep` accepts, seeds `first` onward,
 /// one standing side view each, into a grid (#365).
 ///
@@ -3981,15 +4040,7 @@ fn gallery(
     for (tile, (seed, record)) in records.iter().enumerate() {
         let kind = match &record.archetype {
             Archetype::Quadruped(params) => {
-                let family = match params.hybrid {
-                    Some(other) => format!(
-                        "{} x {} at {:.2}",
-                        params.family.name(),
-                        other.name(),
-                        params.blend
-                    ),
-                    None => params.family.name().to_string(),
-                };
+                let family = lineage_words(params);
                 format!(
                     "{family}: {}; {}",
                     coat_words(&params.coat),

@@ -134,6 +134,7 @@ pub mod rig;
 pub mod skeleton;
 pub mod subdiv;
 pub mod texture;
+pub(crate) mod tolerant;
 pub mod torso;
 pub mod uv;
 
@@ -163,7 +164,7 @@ pub use mesh::{ManifoldReport, PolyMesh};
 pub use plan::{
     Anatomy, Antlers, Archetype, BeastFeet, BeastHead, BodyPlan, Category, Coat, CoatChannel,
     CoatColours, CompositePriors, Composites, Family, Feet, FootKind, Fur, HeadKind, Horn,
-    HumanoidParams, Limb, Nose, Ornament, OrnamentKind, Ornaments, Pupil, QuadrupedParams,
+    HumanoidParams, Legs, Limb, Nose, Ornament, OrnamentKind, Ornaments, Pupil, QuadrupedParams,
     TrunkKind, Zone, ZoneSet,
 };
 pub use record::{AvatarRecord, GENERATOR_VERSION, LockSet, ProfileRecord, ShareCodeError};

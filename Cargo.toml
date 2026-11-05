@@ -1,6 +1,6 @@
 [package]
 name = "symbios-avatar"
-version = "0.19.6"
+version = "0.19.7"
 edition = "2024"
 authors = ["Janus"]
 description = "Engine-agnostic parametric avatar engine: procedural humanoid and creature bodies from small records."
@@ -94,6 +94,11 @@ symbios-texture = "0.8"
 thiserror = "2.0.17"
 
 [dev-dependencies]
+# Tests only (#419): the codec the worker boundary actually uses, so a body with
+# a variant this build does not know is proved to decode through msgpack as well
+# as JSON. A tolerant decode asks the format what it holds, and that answer is
+# the codec's, not serde's, so JSON alone would not prove it.
+rmp-serde = "1"
 # Examples only — writing atlas PNGs to look at. The library itself emits raw
 # pixel buffers and never encodes an image.
 image = { version = "0.25", default-features = false, features = ["png"] }

@@ -74,8 +74,18 @@ use crate::uv::{BeastCharts, Rect, UvConfig, UvUnwrap, unwrap_framed};
 ///
 /// The grouping *is* the draw-call budget: one entry per kind, and adding a kind
 /// costs every avatar in the scene a draw.
+///
+/// **Under `serde-avatar`, a kind this build does not know reads as
+/// [`MeshKind::Skin`]** (#419), from a body a newer build sent: skin in the
+/// widest sense, opaque and lit as the body is, which is the nearest thing to
+/// whatever finish a newer body adds - a membrane, a plumage. Every other kind
+/// draws it worse: hair would cut it into strands through the strand mask and
+/// take the near hair's place beside its far tier, an eye would make it glass,
+/// and cloth would paint it from an atlas it was never charted into. A reader
+/// that looks a kind up takes the first mesh of it, and the body's own skin
+/// comes first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize))]
 pub enum MeshKind {
     /// Skin, in the widest sense: the body and everything made of it.
     Skin,
@@ -86,6 +96,16 @@ pub enum MeshKind {
     /// Eyeballs, which are the one glossy thing on a body.
     Eye,
 }
+
+crate::tolerant::tolerant_unit!(
+    #[cfg(feature = "serde-avatar")]
+    MeshKind, "a kind of mesh", fallback Skin, {
+        Skin => "Skin",
+        Hair => "Hair",
+        Cloth => "Cloth",
+        Eye => "Eye",
+    }
+);
 
 impl MeshKind {
     /// A short name, for reports.
@@ -596,7 +616,7 @@ impl Avatar {
         let weights = weights;
         // Where the skin reaches, for a body whose rests put it on the
         // ground (#377): the joints alone miss it by centimetres.
-        if rig.ground_contacts().len() == 4 {
+        if rig.four_legged() {
             rig.outline = Some(crate::rig::Outline::measure(&body, &weights));
         }
         let zones = weights.zone_map(&body, &rig);
@@ -2363,9 +2383,9 @@ mod tests {
         )
         .expect("builds");
 
-        // Round-tripped through JSON rather than the worker's own msgpack:
-        // this crate should not take a codec dependency to prove a contract
-        // about its own types, and serde's model is the same either way.
+        // Round-tripped through JSON: the worker's own msgpack is proved on
+        // the tolerant decodes, `a_body_from_a_newer_build_decodes_and_moves`,
+        // where the two codecs can differ.
         let wire = serde_json::to_string(&built).expect("serialises");
         let back: Avatar = serde_json::from_str(&wire).expect("deserialises");
 
@@ -2422,6 +2442,118 @@ mod tests {
                     texture_bytes: 0,
                     ..shape.budget
                 }
+            );
+        }
+    }
+
+    /// #419: a kind of mesh a newer build added draws as skin, bare or carrying
+    /// content, through both codecs a sent body crosses by.
+    #[cfg(feature = "serde-avatar")]
+    #[test]
+    fn every_kind_of_mesh_reads_back_and_one_this_build_does_not_know_is_skin() {
+        use crate::tolerant::{round_trips, through_both, unknowns};
+        round_trips(&[
+            MeshKind::Skin,
+            MeshKind::Hair,
+            MeshKind::Cloth,
+            MeshKind::Eye,
+        ]);
+        for unknown in unknowns() {
+            assert_eq!(
+                through_both::<MeshKind>(&unknown),
+                MeshKind::Skin,
+                "{unknown}"
+            );
+        }
+    }
+
+    /// A body a newer build sent, carrying names this build has never heard of,
+    /// still crosses a worker boundary and is posed on this side (#419).
+    ///
+    /// A main thread and its worker can be different releases, so the release
+    /// that adds a kind of head, foot or trunk, a zone, a role or a draw is read
+    /// by builds that predate it. Each name reads as its type's documented
+    /// fallback, through JSON and through the worker's own msgpack
+    /// (`to_vec_named`), whether the name comes bare or carrying content, and a
+    /// key this build has no field for is passed over. What it declares it
+    /// stands on survives, so a newer body's drooping wing is never a leg here.
+    #[cfg(feature = "serde-avatar")]
+    #[test]
+    fn a_body_from_a_newer_build_decodes_and_moves() {
+        use crate::anim::{Driver, Inputs, level_ground};
+        let config = AvatarConfig {
+            atlas: 64,
+            ..AvatarConfig::default()
+        };
+        let beast =
+            AvatarRecord::rolled("Sent", Archetype::Quadruped(QuadrupedParams::default()), 5);
+        let built = Avatar::build_with(&beast, &config).expect("builds");
+        let mut wire = serde_json::to_value(&built).expect("serialises");
+        let tail = built.rig.in_zone(Zone::Tail);
+        assert!(tail.len() >= 3, "the premise: a tail to retag");
+        {
+            let rig = &mut wire["rig"];
+            rig["anatomy"]["head"] = serde_json::json!("beak");
+            rig["anatomy"]["trunk"] = serde_json::json!({ "keel": 2 });
+            rig["anatomy"]["feet"] = serde_json::json!("talons");
+            rig["anatomy"]["wings"] = serde_json::json!(3);
+            rig["joints"][tail[0]]["zone"] = serde_json::json!("wing");
+            rig["joints"][tail[1]]["zone"] = serde_json::json!({ "pinion": "foreLeft" });
+            rig["joints"][tail[2]]["zone"] = serde_json::json!({ "extremity": "wingLeft" });
+            rig["joints"][tail[2]]["role"] = serde_json::json!("Feather");
+            rig["flight"] = serde_json::json!({ "span": 1.5 });
+        }
+        let mut membrane = wire["meshes"][0].clone();
+        membrane["kind"] = serde_json::json!("Membrane");
+        wire["meshes"]
+            .as_array_mut()
+            .expect("a list of meshes")
+            .push(membrane);
+
+        let json: Avatar = serde_json::from_str(&wire.to_string()).expect("JSON reads it");
+        let packed = rmp_serde::to_vec_named(&wire).expect("msgpack writes it");
+        let msgpack: Avatar = rmp_serde::from_slice(&packed).expect("msgpack reads it");
+        assert_eq!(json.rig, msgpack.rig);
+        assert_eq!(json.meshes, msgpack.meshes);
+
+        let rig = &msgpack.rig;
+        assert_eq!(rig.anatomy.head, crate::HeadKind::Beast);
+        assert_eq!(rig.anatomy.trunk, crate::TrunkKind::Beast);
+        assert_eq!(rig.anatomy.feet, crate::FootKind::Beast);
+        assert_eq!(rig.anatomy.legs, built.rig.anatomy.legs);
+        for &joint in &tail[..3] {
+            assert_eq!(rig.joints[joint].zone, Zone::FALLBACK);
+        }
+        assert_eq!(rig.joints[tail[2]].role, crate::Role::Deform);
+        assert_eq!(rig.ground_contacts(), built.rig.ground_contacts());
+        assert_eq!(msgpack.meshes.len(), built.meshes.len() + 1);
+        assert_eq!(
+            msgpack.meshes.last().map(|mesh| mesh.kind),
+            Some(MeshKind::Skin)
+        );
+        assert_eq!(msgpack.meshes[..built.meshes.len()], built.meshes[..]);
+
+        // And it moves: a few seconds of walking off, every frame posed.
+        let mut driver = Driver::seeded(7);
+        let step = 1.0 / 60.0;
+        for frame in 0..180 {
+            let speed = if frame < 60 { 0.0 } else { 1.2 };
+            let driven = driver
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: step,
+                        velocity: glam::Vec3::Z * speed,
+                        at: glam::Vec3::Z * speed * step * frame as f32,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed every frame");
+            let posed = driven.pose.forward(rig);
+            assert!(
+                posed.positions.iter().all(|at| at.is_finite()),
+                "frame {frame} posed a joint nowhere"
             );
         }
     }

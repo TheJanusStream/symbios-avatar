@@ -244,7 +244,7 @@ const STRIDE_LEG: f32 = 0.5;
 
 /// How long the state `name` takes to go into and to get up from on `rig`.
 fn timing(rig: &Rig, name: &str) -> Option<(f32, f32)> {
-    if !super::quadruped::four_legged(rig) {
+    if !rig.four_legged() {
         return None;
     }
     let times = if rig.anatomy.feet == FootKind::Hooves {

@@ -12,8 +12,8 @@
 # which a run with every feature proves unless a test leans on a feature without gating it.
 #
 # Steps that share no build lock run side by side. A step that passed is not run again
-# while everything that can decide it is the same: every file git would see, the
-# toolchain, the command and the flags. The record lives in target/gate/, so losing
+# while everything that can decide it is the same: every file git would see, every file
+# a test reads from a checkout beside this one, the toolchain, the command and the flags. The record lives in target/gate/, so losing
 # target/ only costs the time.
 #
 # It says `gate: passed` only when every step it owes has reported a pass and nothing it
@@ -91,9 +91,21 @@ tree_of() (
     paste "$results/list" <(git hash-object --stdin-paths < "$results/list")
 )
 
+# What the tests read from a checkout beside this one, which no tree of ours holds (#406):
+# every path literal under src/ and tests/ that names a file in a sibling directory, such
+# as ../mesh2motion-app's GLBs. Each is hashed when it is there and named absent when it
+# is not, as a test that reads one skips without it.
+siblings_of() {
+    grep -rhoE '"\.\./[A-Za-z0-9_-][A-Za-z0-9_.-]*/[^"]+"' src tests 2>/dev/null | tr -d '"' | LC_ALL=C sort -u |
+        while IFS= read -r file; do
+            if [ -f "$file" ]; then sha256sum "$file"; else echo "absent $file"; fi
+        done
+}
+
 print_of() {
     {
         tree_of .
+        siblings_of
         [ -f Cargo.lock ] && sha256sum Cargo.lock
         rustc -vV
         cargo -V

@@ -40,7 +40,6 @@ use crate::det::DetMath;
 use glam::Vec3;
 
 use super::gait::{Gait, RUN_DUTY, Stride};
-use super::quadruped::four_legged;
 use super::{Lead, Pattern};
 use crate::plan::FootKind;
 use crate::rig::Rig;
@@ -168,7 +167,9 @@ impl Speed {
         let froude = speed * speed / (GRAVITY * leg);
         Self {
             froude,
-            pattern: four_legged(rig).then(|| Pattern::at(froude, rotary(rig), Lead::Right)),
+            pattern: rig
+                .four_legged()
+                .then(|| Pattern::at(froude, rotary(rig), Lead::Right)),
         }
     }
 
@@ -226,7 +227,7 @@ impl Speed {
     /// [`Self::duty`] is a person's.
     fn resolved(self, rig: &Rig) -> Self {
         match self.pattern {
-            None if four_legged(rig) => Self {
+            None if rig.four_legged() => Self {
                 pattern: Some(Pattern::at(self.froude, rotary(rig), Lead::Right)),
                 ..self
             },
@@ -457,7 +458,7 @@ impl Speed {
         }
         // A four-legged body's cycle is Alexander's (#370), inverted as
         // Grieve's is below.
-        if four_legged(rig) {
+        if rig.four_legged() {
             let relative = stride.length / (duty * leg * QUADRUPED_STRIDE);
             if relative <= f32::EPSILON {
                 return Self::STILL;
@@ -531,7 +532,7 @@ pub(crate) const BEAST_LIFT_OF_STRIDE: f32 = 0.11;
 /// standing under them: on a horse 0.73 of the height the relation means, which
 /// took 29% off its stride, and on a cat 0.95.
 pub(crate) fn measure_of(rig: &Rig) -> f32 {
-    if four_legged(rig) {
+    if rig.four_legged() {
         super::quadruped::hip_height(rig).unwrap_or_else(|| leg_of(rig))
     } else {
         leg_of(rig)

@@ -5,8 +5,10 @@
 //! eye goes to first: a person's rig and meshes, a beast's rig and body, a beast's fur
 //! without a mane and with a limp one, and the hair it draws without one, every channel:
 //! the fur a beast keeps is not what it draws, which is shaded on its way there (#407).
+//! The legs a rig declares (#419) are read by the contacts they decide, as a tree from
+//! before them has none to compare.
 use std::fmt::Write as _;
-use symbios_avatar::{Archetype, Avatar, AvatarRecord, MeshKind, QuadrupedParams, TextureMap};
+use symbios_avatar::{Archetype, Avatar, AvatarRecord, MeshKind, QuadrupedParams, Rig, TextureMap};
 
 /// FNV-1a over what is written to it, so that a whole mesh costs one line.
 struct Fnv(u64);
@@ -46,9 +48,27 @@ fn map_hash(map: &TextureMap) -> u64 {
     fnv.0
 }
 
+/// A rig's every field by hash, but the legs its anatomy declares (#419), which a tree
+/// from before them does not have: they are compared by what they decide, the `contacts`
+/// row, the limbs the body stands on, which such a tree counted off the rest pose.
+fn rig_hash(rig: &Rig) -> u64 {
+    let text = format!("{rig:?}");
+    let text = match text.find(", legs: ") {
+        Some(start) => {
+            let end = start + text[start..].find(" }").expect("the anatomy closes");
+            format!("{}{}", &text[..start], &text[end..])
+        }
+        None => text,
+    };
+    let mut fnv = Fnv::new();
+    fnv.bytes(text.as_bytes());
+    fnv.0
+}
+
 /// Every field of a built avatar, each a row, so that a difference says where it is.
 fn whole(out: &mut String, label: &str, a: &Avatar) {
-    let _ = writeln!(out, "{label} rig-all {:x}", debug_hash(&a.rig));
+    let _ = writeln!(out, "{label} rig-all {:x}", rig_hash(&a.rig));
+    let _ = writeln!(out, "{label} contacts {:?}", a.rig.ground_contacts());
     let _ = writeln!(out, "{label} meshes {:x}", debug_hash(&a.meshes));
     let _ = writeln!(out, "{label} skin-maps {:x}", map_hash(&a.skin));
     let cloth = a.cloth.as_ref().map(map_hash);

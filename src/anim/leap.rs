@@ -298,7 +298,7 @@ impl Leap {
     /// radians, nose down negative, the landing set off from `landing_from`
     /// where it is given (#414); nothing for any other body.
     fn pitched_at(self, rig: &Rig, stage: Stage, landing_from: Option<f32>) -> f32 {
-        if !super::quadruped::four_legged(rig) {
+        if !rig.four_legged() {
             return 0.0;
         }
         let ease = |t: f32| t * t * (3.0 - 2.0 * t);
@@ -399,7 +399,7 @@ impl Leap {
                 None
             }
         };
-        let four = super::quadruped::four_legged(rig);
+        let four = rig.four_legged();
         match leapt.stage {
             Stage::Flight(t) => {
                 // **Rigid, and the feet come with it.** A projectile does not

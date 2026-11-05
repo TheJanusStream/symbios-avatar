@@ -726,7 +726,7 @@ pub fn by_name(name: &str) -> Option<Clip> {
 /// So the roster is the body's to answer, not the clip's to refuse.
 #[must_use]
 pub fn for_body(rig: &Rig, name: &str) -> Option<Clip> {
-    super::quadruped::four_legged(rig)
+    rig.four_legged()
         .then(|| super::emote::by_name(name))
         .flatten()
         .or_else(|| by_name(name))

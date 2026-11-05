@@ -422,7 +422,7 @@ impl Idle {
         // **A beast rises out of its stride over a beat** (#378). A canter rides a
         // horse 22 cm under its height, and left to the blend out of the gait it
         // stood up out of that in five frames, a hop on stopping.
-        if rig.ground_contacts().len() == 4 {
+        if rig.four_legged() {
             self.settling = (-pose.translation.y).max(0.0);
         }
         let posed = pose.forward(rig);
@@ -587,7 +587,7 @@ impl Idle {
         self.elapsed += dt.max(0.0);
         // A beast stands on its fores as well as its hinds (#370), and its
         // trunk is not upright: see [`Self::settle`] and [`Self::advance`].
-        let four = rig.ground_contacts().len() == 4;
+        let four = rig.four_legged();
         self.advance(dt.max(0.0), four);
 
         // The arms first, hung at the sides (#267): a standing body was

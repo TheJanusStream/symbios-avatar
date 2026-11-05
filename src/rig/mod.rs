@@ -96,8 +96,15 @@ pub struct BoneHit {
 /// joint is a joint: it has a parent, it inherits its parent's transform, and
 /// [`crate::anim::Pose`] evaluates it like any other. The role says who is
 /// allowed to bind to it, not how it moves.
+///
+/// **Under `serde-avatar`, a role this build does not know reads as
+/// [`Role::Deform`]** (#419), from a body a newer build sent: what every joint a
+/// skeleton gives is, and the role nothing at run time singles out - no spring
+/// is simulated on it, no expression or grip drives it - so it is posed by
+/// what it hangs from, and the skin on it moves with it. The skin was bound by
+/// the build that sent it, so the role decides no binding here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize))]
 pub enum Role {
     /// Drives the body's own surface. Every joint from a skeleton is one.
     #[default]
@@ -123,6 +130,17 @@ pub enum Role {
     /// want to ask for the digits and nothing else.
     Digit,
 }
+
+crate::tolerant::tolerant_unit!(
+    #[cfg(feature = "serde-avatar")]
+    Role, "a joint's role", fallback Deform, {
+        Deform => "Deform",
+        Helper => "Helper",
+        Spring => "Spring",
+        Facial => "Facial",
+        Digit => "Digit",
+    }
+);
 
 impl Role {
     /// Whether the body's own surface may be bound to a joint in this role.
@@ -208,10 +226,12 @@ pub struct Rig {
     /// Joints ordered parent-before-child, root first.
     pub joints: Vec<Joint>,
     /// What the body's parts are (#365), from the skeleton it was rooted
-    /// from. The rules every pass applies to a part ask this - never how many
-    /// feet the body stands on, which is [`Self::ground_contacts`]' question
-    /// and the gait's. A rig serialised before it existed reads back as a
+    /// from. The rules every pass applies to a part ask this, and since #419
+    /// so does every pass that asks which limbs the body stands on
+    /// ([`Self::legs`]). A rig serialised before it existed reads back as a
     /// person's, whatever it was: rebuild from the record where that matters.
+    /// One serialised before legs were declared reads back with none, and
+    /// counts them as it always did.
     #[cfg_attr(feature = "serde-avatar", serde(default))]
     pub anatomy: crate::plan::Anatomy,
     /// Where the skin over it reaches (#377), once a body has been built
@@ -634,14 +654,51 @@ impl Rig {
         Some([tail[0], tail[1], tail[2]])
     }
 
-    /// Limbs whose extremity rests near the ground.
+    /// The limbs this body stands on (#419): the ones its plan declares
+    /// ([`crate::Anatomy::legs`]) that end in an extremity here.
     ///
-    /// Which limbs carry a body is a property of the body, not of its plan: a
-    /// biped stands on two of its four, a quadruped on all four. Reading it off
-    /// the rest pose gets both right without either having to declare it, and
-    /// gets a future six-legged plan right for free.
+    /// **Declared, never counted**, so a limb that hangs low at rest - a wing's
+    /// drooping tip - is not a leg however low it hangs. A rig from before legs
+    /// were declared, an older build's sent across a worker boundary, declares
+    /// none, and is read as every rig was: by its rest pose, every limb whose
+    /// extremity rests within a quarter of the body's height of the lowest.
+    /// That rule gets a person and a beast right, and nothing a plan builds now
+    /// relies on it.
+    #[must_use]
+    pub fn legs(&self) -> crate::plan::Legs {
+        let Some(declared) = self.anatomy.legs else {
+            return self.resting_extremities().into_iter().collect();
+        };
+        declared
+            .iter()
+            .filter(|&limb| {
+                self.joints
+                    .iter()
+                    .any(|joint| joint.zone == Zone::Extremity(limb))
+            })
+            .collect()
+    }
+
+    /// The limbs this body stands on, in [`Limb::ALL`]'s order: [`Self::legs`].
+    ///
+    /// What the gait steps, a rest kneels and the ground plants, and what
+    /// tells the end of a limb a foot from a hand.
     #[must_use]
     pub fn ground_contacts(&self) -> Vec<Limb> {
+        self.legs().iter().collect()
+    }
+
+    /// Whether this body stands on four legs: what every pass that moves a
+    /// quadruped otherwise from a biped asks (#419), of [`Self::legs`].
+    #[must_use]
+    pub fn four_legged(&self) -> bool {
+        self.legs().len() == 4
+    }
+
+    /// Limbs whose extremity rests near the ground: how legs were found before
+    /// a plan declared them, and how they still are on a rig that declares
+    /// none ([`Self::legs`]).
+    pub(crate) fn resting_extremities(&self) -> Vec<Limb> {
         let extremities: Vec<(Limb, f32)> = Limb::ALL
             .into_iter()
             .filter_map(|limb| {
@@ -769,6 +826,84 @@ impl Rig {
 mod tests {
     use super::*;
     use crate::plan::{Archetype, BodyPlan, HumanoidParams, Limb, QuadrupedParams};
+
+    /// #419: a role a newer build added reads as a deforming joint, bare or
+    /// carrying content, through both codecs a sent body crosses by.
+    #[cfg(feature = "serde-avatar")]
+    #[test]
+    fn every_role_reads_back_and_one_this_build_does_not_know_deforms() {
+        use crate::tolerant::{round_trips, through_both, unknowns};
+        round_trips(&[
+            Role::Deform,
+            Role::Helper,
+            Role::Spring,
+            Role::Facial,
+            Role::Digit,
+        ]);
+        for unknown in unknowns() {
+            assert_eq!(through_both::<Role>(&unknown), Role::Deform, "{unknown}");
+        }
+    }
+
+    /// #419: every person and beast stands on the legs its plan declares, and
+    /// they are the legs the rest pose counted before there was a declaration -
+    /// over rolls of both plans, every family and every cross - so no body
+    /// moved when the count gave way to it.
+    #[test]
+    fn the_declared_legs_are_the_ones_the_rest_pose_counted() {
+        let mut rigs = Vec::new();
+        for seed in 0..48 {
+            for archetype in [
+                Archetype::Humanoid(HumanoidParams::default()),
+                Archetype::Quadruped(QuadrupedParams::default()),
+            ] {
+                let record = crate::AvatarRecord::rolled("Legs", archetype, seed);
+                rigs.push(Rig::from_skeleton(&record.skeleton()).expect("rigs"));
+            }
+        }
+        for family in crate::Family::ALL {
+            for hybrid in std::iter::once(None).chain(crate::Family::ALL.map(Some)) {
+                let mut params = QuadrupedParams::default();
+                params.set_kind(family, hybrid, 0.5);
+                let skeleton = params.skeleton(&crate::Composites::default());
+                rigs.push(Rig::from_skeleton(&skeleton).expect("rigs"));
+            }
+        }
+        for rig in &rigs {
+            let counted: crate::Legs = rig.resting_extremities().into_iter().collect();
+            assert_eq!(rig.anatomy.legs.map(|legs| legs == counted), Some(true));
+            assert_eq!(rig.legs(), counted);
+            assert_eq!(rig.four_legged(), !rig.anatomy.hands);
+        }
+    }
+
+    /// #419: a limb that hangs low is not a leg unless the plan says it is -
+    /// the wing whose tip droops to the ground - and a rig from before legs
+    /// were declared still counts them off its rest pose.
+    #[test]
+    fn a_limb_that_hangs_low_is_no_leg_unless_it_is_declared() {
+        let mut rig =
+            Rig::from_skeleton(&QuadrupedParams::default().skeleton(&crate::Composites::default()))
+                .expect("rigs");
+        assert_eq!(rig.ground_contacts(), Limb::ALL.to_vec());
+        // Every fore limb low enough to count, declared a biped's.
+        rig.anatomy.legs = Some(crate::Legs::HIND);
+        assert_eq!(rig.ground_contacts(), vec![Limb::HindLeft, Limb::HindRight]);
+        assert!(!rig.four_legged());
+        // Declared nothing, it is counted: all four, as before.
+        rig.anatomy.legs = None;
+        assert_eq!(rig.ground_contacts(), Limb::ALL.to_vec());
+        assert!(rig.four_legged());
+        // A declared leg with no extremity on this rig is no contact.
+        rig.anatomy.legs = Some(crate::Legs::ALL);
+        for joint in &mut rig.joints {
+            if joint.zone == Zone::Extremity(Limb::ForeLeft) {
+                joint.zone = Zone::LowerLimb(Limb::ForeLeft);
+            }
+        }
+        assert_eq!(rig.ground_contacts().len(), 3);
+        assert!(!rig.four_legged());
+    }
 
     #[test]
     fn a_foot_has_a_length_and_it_runs_the_way_the_foot_points() {

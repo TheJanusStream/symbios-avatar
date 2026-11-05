@@ -213,6 +213,26 @@ case_a_stopped_run_stops_its_steps_and_puts_the_lock_back() {
     gate --viewer
     code_is 0
 }
+case_a_sibling_file_a_test_reads_keys_the_tests() {
+    # #406: a file beside the checkout that a test reads is in the record's key, so a
+    # change there runs the tests again; and its absence is a key of its own.
+    mkdir -p "$w/kin/static"
+    echo one > "$w/kin/static/a.glb"
+    echo 'const A: &str = "../kin/static/a.glb";' >> "$w/repo/src/lib.rs"
+    gate
+    code_is 0
+    gate
+    code_is 0
+    [ "$(count "$suite")" = 1 ] || wrong "an unchanged sibling ran the tests again"
+    echo two > "$w/kin/static/a.glb"
+    gate
+    code_is 0
+    [ "$(count "$suite")" = 2 ] || wrong "a changed sibling did not run the tests"
+    rm "$w/kin/static/a.glb"
+    gate
+    code_is 0
+    [ "$(count "$suite")" = 3 ] || wrong "a sibling gone did not run the tests"
+}
 case_a_killed_runs_lock_goes_back_on_the_next_run() {
     locked > "$w/original"
     mkdir -p "$w/repo/target/gate"

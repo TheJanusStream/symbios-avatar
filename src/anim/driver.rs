@@ -1395,7 +1395,7 @@ impl Driver {
         // body, as a crawl is, a dog half a metre long paddled at half a beat
         // a second.
         let stroke_rate = || {
-            let (length, per_stroke) = if super::quadruped::four_legged(rig) {
+            let (length, per_stroke) = if rig.four_legged() {
                 (super::speed::leg_of(rig).max(f32::EPSILON), PADDLE_STRIDE)
             } else {
                 (rig.extent().max(f32::EPSILON), config.lengths_per_stroke)

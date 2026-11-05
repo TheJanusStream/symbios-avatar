@@ -1288,7 +1288,7 @@ pub(super) fn girdle_ground<F>(rig: &Rig, ground: &F) -> Option<Girdles>
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
-    if !four_legged(rig) {
+    if !rig.four_legged() {
         return None;
     }
     let spread = GIRDLE_SPREAD * hip_height(rig)?;
@@ -1347,7 +1347,7 @@ where
 /// along it the hind feet's and the fore feet's, and across it the left feet's
 /// and the right's, or `None` for a body that does not stand on four (#413).
 pub(super) fn girdle_spacing(rig: &Rig) -> Option<[f32; 4]> {
-    if !four_legged(rig) {
+    if !rig.four_legged() {
         return None;
     }
     let mut spacing = [0.0f32; 4];
@@ -1370,7 +1370,7 @@ where
     F: Fn(Vec3) -> Option<Ground>,
 {
     let steep = girdles.steep();
-    if steep <= 0.0 || !four_legged(rig) {
+    if steep <= 0.0 || !rig.four_legged() {
         return;
     }
     let ridden = pose.clone();
@@ -1426,7 +1426,7 @@ pub(super) fn follow(
     delta: f32,
     landed: bool,
 ) -> Option<Girdles> {
-    if !four_legged(rig) {
+    if !rig.four_legged() {
         return None;
     }
     let (from, to) = match (ridden, read) {
@@ -1506,7 +1506,7 @@ impl Shift {
         read: Option<Girdles>,
         ridden: Option<Girdles>,
     ) -> Option<Self> {
-        if !four_legged(rig) {
+        if !rig.four_legged() {
             return None;
         }
         let (read, ridden) = match (read, ridden) {
@@ -1598,11 +1598,6 @@ pub(super) fn ride_ground(rig: &Rig, pose: &mut Pose, girdles: Girdles) {
     pose.translation += before - pose.rotations[root] * lever;
     pose.translation.y += girdles.hips;
     relevel_head(rig, pose, turn);
-}
-
-/// Whether `rig` stands on four legs, and so moves as a beast does (#370).
-pub(super) fn four_legged(rig: &Rig) -> bool {
-    rig.ground_contacts().len() == 4
 }
 
 /// The joints a beast's ears hang from (#370): each the parent of a spring at

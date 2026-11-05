@@ -122,7 +122,7 @@ impl Gait {
     #[must_use]
     pub fn trot(rig: &Rig) -> Self {
         let limbs = rig.ground_contacts();
-        if limbs.len() != 4 {
+        if !rig.four_legged() {
             return Self::wave(rig);
         }
         Self {
@@ -154,7 +154,7 @@ impl Gait {
     #[must_use]
     pub fn pattern(rig: &Rig, pattern: super::Pattern, duty: f32) -> Self {
         let limbs = rig.ground_contacts();
-        if limbs.len() != 4 {
+        if !rig.four_legged() {
             return Self {
                 duty,
                 ..Self::wave(rig)
@@ -197,7 +197,7 @@ impl Gait {
     /// The gait a body of this shape moves with by default.
     #[must_use]
     pub fn natural(rig: &Rig) -> Self {
-        if rig.ground_contacts().len() == 4 {
+        if rig.four_legged() {
             Self::trot(rig)
         } else {
             Self::wave(rig)
@@ -1061,7 +1061,7 @@ const SPLIT_OF_REACH: f32 = 0.5;
 /// a pair's two feet, and a beast's fores stand closer than its hinds.
 fn stance_width(rig: &Rig) -> Option<f32> {
     let contacts = rig.ground_contacts();
-    if contacts.len() == 4 {
+    if rig.four_legged() {
         let width = |fore: bool| {
             let pair: Vec<Limb> = contacts
                 .iter()
@@ -1151,7 +1151,7 @@ const FOUR_FOOT_CORNER_EASE: f32 = 0.12;
 /// falls three times as far, and its corner rounded as a person's is stepped
 /// out of the sweep around it.
 fn corner_ease(rig: &Rig) -> f32 {
-    if rig.ground_contacts().len() == 4 {
+    if rig.four_legged() {
         FOUR_FOOT_CORNER_EASE
     } else {
         CORNER_EASE

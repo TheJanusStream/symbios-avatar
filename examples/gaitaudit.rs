@@ -38,7 +38,7 @@
 
 use symbios_avatar::anim::driver::{Driver, Inputs, level_ground};
 use symbios_avatar::anim::{Gait, Lead, Pattern, Phase, Speed};
-use symbios_avatar::plan::Zone;
+use symbios_avatar::plan::{Kin, Zone};
 use symbios_avatar::{Archetype, Avatar, AvatarRecord, Family, Limb, QuadrupedParams, Vec3};
 
 /// Samples a second: fine enough to find a touch-down within a degree.
@@ -49,13 +49,13 @@ fn args_verbose() -> bool {
     std::env::args().any(|arg| arg == "--verbose")
 }
 
+/// One of the quadruped's families by name, as the plan's own machinery reads
+/// it (#419).
 fn family(name: &str) -> Family {
-    match name {
-        "dog" => Family::Dog,
-        "cat" => Family::Cat,
-        "horse" => Family::Horse,
-        other => panic!("--kin takes dog, cat, horse or a+b, not {other}"),
-    }
+    <Family as Kin>::parse(name).unwrap_or_else(|| {
+        let names: Vec<&str> = <Family as Kin>::ALL.iter().map(|kin| kin.name()).collect();
+        panic!("--kin takes {} or a+b, not {name}", names.join(", "))
+    })
 }
 
 /// A body's sensible speeds, in multiples of `sqrt(g h)`, hip height `h`.

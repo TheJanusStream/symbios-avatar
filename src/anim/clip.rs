@@ -648,7 +648,7 @@ impl Clip {
             let quarter = std::f32::consts::FRAC_PI_2;
             match track.target {
                 Target::Pitch => {
-                    if super::quadruped::four_legged(rig) {
+                    if rig.four_legged() {
                         super::quadruped::sink_end_standing(rig, pose, offset.z * quarter);
                     }
                     continue;
@@ -670,7 +670,7 @@ impl Clip {
                     continue;
                 }
                 Target::Sit | Target::Lie => {
-                    if super::quadruped::four_legged(rig) {
+                    if rig.four_legged() {
                         let rest = if track.target == Target::Sit {
                             super::rest::Rest::Sit
                         } else {
@@ -902,7 +902,7 @@ fn tilt_body(rig: &Rig, pose: &mut Pose, offset: Vec3) {
 /// Rolls a four-legged body's forehand `angle` radians about the trunk's own
 /// length, at the loin. See [`Target::Roll`].
 fn roll_trunk(rig: &Rig, pose: &mut Pose, angle: f32) {
-    if angle == 0.0 || !super::quadruped::four_legged(rig) {
+    if angle == 0.0 || !rig.four_legged() {
         return;
     }
     let Some(&loin) = rig.in_zone(Zone::Abdomen).first() else {
@@ -1014,9 +1014,9 @@ fn stands_up(rig: &Rig) -> bool {
 /// stands at rest that side is `-Y` by construction: the humanoid plan puts
 /// heel, ball and toe at one height, and a body whose feet did not rest on the
 /// floor would not be standing. [`Rig::ground_contacts`] is the question "is
-/// this limb one the body stands on", answered off the rest pose rather than
-/// off the plan, so this gets a quadruped's four right for the same reason it
-/// gets a biped's two.
+/// this limb one the body stands on", answered by the legs the plan declares
+/// (#419), so this gets a quadruped's four right for the same reason it gets a
+/// biped's two.
 ///
 /// A **palm** has no such definition, because nothing rests on it, so it comes
 /// from the hand builder's own convention re-derived: `Hand::build` frames a

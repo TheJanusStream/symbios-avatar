@@ -18,7 +18,7 @@ mod head;
 use glam::{Quat, Vec2, Vec3};
 
 use crate::det::DetMath;
-use crate::plan::{BeastHead, Composites, DEFAULT_BODY_FAT, Family, QuadrupedParams};
+use crate::plan::{BeastHead, Blended, Composites, DEFAULT_BODY_FAT, Family, QuadrupedParams};
 
 /// A neck's cross-section, as `(lateral, vertical)` multiples of its radius:
 /// rounder than the body it leaves.
@@ -306,12 +306,11 @@ impl Frame {
     /// The frame `params` stands in: its family's, blended toward its
     /// hybrid's by its blend.
     fn for_params(params: &QuadrupedParams) -> Self {
-        let own = Self::of(params.family);
-        let Some(other) = params.hybrid.filter(|&other| other != params.family) else {
-            return own;
-        };
-        let other = Self::of(other);
-        let t = params.blend.clamp(0.0, 1.0);
+        params.lineage().blended(Self::of, Self::mixed)
+    }
+
+    /// `own` drawn `t` of the way to `other`, measure by measure.
+    fn mixed(own: Self, other: Self, t: f32) -> Self {
         let mix = |a: f32, b: f32| a + (b - a) * t;
         Self {
             length: mix(own.length, other.length),
@@ -433,12 +432,11 @@ impl Schema {
     /// The schema `params` is drawn by: its family's, blended toward its
     /// hybrid's by its blend.
     fn for_params(params: &QuadrupedParams) -> Self {
-        let own = Self::of(params.family);
-        let Some(other) = params.hybrid.filter(|&other| other != params.family) else {
-            return own;
-        };
-        let other = Self::of(other);
-        let t = params.blend.clamp(0.0, 1.0);
+        params.lineage().blended(Self::of, Self::mixed)
+    }
+
+    /// `own` drawn `t` of the way to `other`, measure by measure.
+    fn mixed(own: Self, other: Self, t: f32) -> Self {
         let mix = |a: f32, b: f32| a + (b - a) * t;
         Self {
             head: mix(own.head, other.head),

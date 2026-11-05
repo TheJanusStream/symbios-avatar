@@ -94,7 +94,16 @@ impl Limb {
 }
 
 /// A named region of the body surface.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+///
+/// **A zone this build does not know reads as [`Zone::Abdomen`]** (#419), from
+/// a body a newer build sent - and so does a limb's zone naming a limb it does
+/// not know. The middle of the trunk is the neutral default an untagged node
+/// already takes, and it is the zone that asks least of a joint an older build
+/// reads it on: never a leg, a hand or a foot, so the gait, a rest and a grip
+/// pass it by; never the head or the tail, which gaze and sway would turn;
+/// and every lookup of a body's own loin reads the first one in hierarchy
+/// order, which is the body's and not a part hung further out from its root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Zone {
     /// The skull, including the face and scalp.
@@ -117,6 +126,79 @@ pub enum Zone {
     Extremity(Limb),
 }
 
+/// Every zone without a limb, by the name it is written as.
+const CORE_NAMES: &[(&str, Zone)] = &[
+    ("head", Zone::Head),
+    ("neck", Zone::Neck),
+    ("chest", Zone::Chest),
+    ("abdomen", Zone::Abdomen),
+    ("pelvis", Zone::Pelvis),
+    ("tail", Zone::Tail),
+];
+
+/// A zone of a limb, given the limb.
+type LimbZone = fn(Limb) -> Zone;
+
+/// Every zone of a limb, by the name it is written as.
+const LIMB_NAMES: &[(&str, LimbZone)] = &[
+    ("upperLimb", Zone::UpperLimb),
+    ("lowerLimb", Zone::LowerLimb),
+    ("extremity", Zone::Extremity),
+];
+
+/// Every limb, by the name it is written as: `None` for one this build does
+/// not know, which [`Zone`]'s decode reads its zone's fallback for.
+const LIMB_KINDS: &[(&str, Option<Limb>)] = &[
+    ("foreLeft", Some(Limb::ForeLeft)),
+    ("foreRight", Some(Limb::ForeRight)),
+    ("hindLeft", Some(Limb::HindLeft)),
+    ("hindRight", Some(Limb::HindRight)),
+];
+
+/// A limb a zone names, if this build knows it.
+struct KnownLimb(Option<Limb>);
+
+impl<'de> Deserialize<'de> for KnownLimb {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::tolerant::unit(deserializer, "a limb", LIMB_KINDS, None).map(Self)
+    }
+}
+
+/// [`Zone`]'s decode: see the type for what a name it does not know reads as.
+struct ZoneVisitor;
+
+impl<'de> serde::de::Visitor<'de> for ZoneVisitor {
+    type Value = Zone;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a zone")
+    }
+
+    fn visit_str<E: serde::de::Error>(self, name: &str) -> Result<Zone, E> {
+        // A limb's zone written bare is missing its limb, which no build writes.
+        Ok(crate::tolerant::lookup(CORE_NAMES, name).unwrap_or(Zone::FALLBACK))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Zone, A::Error> {
+        let name = crate::tolerant::only_key(&mut map, &self)?;
+        let zone = match crate::tolerant::lookup(LIMB_NAMES, &name) {
+            Some(of) => map.next_value::<KnownLimb>()?.0.map_or(Zone::FALLBACK, of),
+            None => {
+                map.next_value::<serde::de::IgnoredAny>()?;
+                crate::tolerant::lookup(CORE_NAMES, &name).unwrap_or(Zone::FALLBACK)
+            }
+        };
+        crate::tolerant::no_more(&mut map, &self)?;
+        Ok(zone)
+    }
+}
+
+impl<'de> Deserialize<'de> for Zone {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ZoneVisitor)
+    }
+}
+
 impl Default for Zone {
     /// The neutral body mass, used by nodes a plan has not tagged.
     fn default() -> Self {
@@ -128,6 +210,9 @@ impl Default for Zone {
 pub const ZONE_COUNT: usize = 18;
 
 impl Zone {
+    /// What a zone this build does not know reads as: see [`Zone`].
+    pub const FALLBACK: Zone = Zone::Abdomen;
+
     /// Every zone, in head-to-tail order.
     #[must_use]
     pub fn all() -> Vec<Zone> {
@@ -340,5 +425,31 @@ mod tests {
     #[test]
     fn the_default_zone_is_the_neutral_body_mass() {
         assert_eq!(Zone::default(), Zone::Abdomen);
+    }
+
+    #[test]
+    fn every_zone_reads_back_and_one_this_build_does_not_know_reads_as_the_trunk() {
+        // #419: a zone a newer build added, bare or a limb's, and a known
+        // limb's zone naming a limb this build has not heard of.
+        use crate::tolerant::{round_trips, through_both, unknowns};
+        round_trips(&Zone::all());
+        assert_eq!(
+            serde_json::to_value(Zone::Extremity(Limb::HindLeft)).unwrap(),
+            serde_json::json!({ "extremity": "hindLeft" })
+        );
+        for unknown in unknowns() {
+            assert_eq!(through_both::<Zone>(&unknown), Zone::FALLBACK, "{unknown}");
+        }
+        for newer in [
+            serde_json::json!({ "upperLimb": "wingLeft" }),
+            serde_json::json!({ "extremity": { "wing": 2 } }),
+            serde_json::json!("upperLimb"),
+            serde_json::json!({ "wing": "foreLeft" }),
+        ] {
+            assert_eq!(through_both::<Zone>(&newer), Zone::FALLBACK, "{newer}");
+        }
+        // Still refused: what is no zone at all.
+        assert!(serde_json::from_value::<Zone>(serde_json::json!(7)).is_err());
+        assert!(serde_json::from_value::<Zone>(serde_json::json!({})).is_err());
     }
 }

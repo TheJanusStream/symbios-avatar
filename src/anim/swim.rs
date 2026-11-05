@@ -271,7 +271,7 @@ impl Swim {
             0.0
         };
         // A beast paddles rather than crawls (#370): see `quadruped::paddle`.
-        if super::quadruped::four_legged(rig) {
+        if rig.four_legged() {
             return super::quadruped::paddle(rig, pose, cycle, swum.effort);
         }
 
