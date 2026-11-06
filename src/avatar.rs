@@ -685,6 +685,15 @@ impl Avatar {
             }
             _ => None,
         };
+        // And a winged body's drawn toes theirs (#422): a bird's and a bat's,
+        // in the hind leg's extremity zone - the foot - and after the wings,
+        // whose joints keep the numbers they had. Before the unwrap, which
+        // reserves each foot its region of the atlas as it does a hand.
+        if let Some(feet) = &skeleton.beast_feet {
+            extremities
+                .feet
+                .extend(crate::extremity::toes::grow(&mut rig, feet));
+        }
 
         // The attached parts exist BEFORE the body is unwrapped, so the packer
         // can reserve them regions of the same atlas rather than being asked
@@ -790,9 +799,15 @@ impl Avatar {
                 .covers(&rig, &body, head.radius)
                 .into_iter()
                 .zip(&zones)
-                .map(|(covered, &zone)| {
+                .zip(&body.positions)
+                .map(|((covered, &zone), &point)| {
                     if covered && zone == Zone::Head {
                         face::beast::jaw::INSIDE
+                    } else if zone == Zone::Head {
+                        // An owl's ruff, shaded darker than the dish it rings
+                        // (#422): what outlines a facial disc at a distance.
+                        head.on_ruff(head.local(point))
+                            .map_or(Vec3::ONE, face::beast::ruff_shade)
                     } else {
                         Vec3::ONE
                     }
@@ -1166,13 +1181,19 @@ impl Avatar {
     /// Merges every static part into one mesh per material.
     fn merge(&self) -> Vec<AvatarMesh> {
         let mut skin = self.charted_body();
-        for part in self.parts.extremities.all() {
+        let hands = self.parts.extremities.hands.len();
+        for (index, part) in self.parts.extremities.all().enumerate() {
             let mut mesh = part.mesh.clone();
             mesh.set_normals(mesh.vertex_normals());
             mesh.paint(Vec3::ONE);
             let mut placed =
                 mesh.transformed(Mat4::from_translation(self.rig.joints[part.joint].position));
-            if placed.skin.is_empty() {
+            if index >= hands && !placed.skin.is_empty() {
+                // A winged body's toes (#422): skinned to their own joints,
+                // and grown off a foot the body's surface carries on under
+                // them rather than off a stub to be cut away.
+                skin.append(&placed.split_uv_seams());
+            } else if placed.skin.is_empty() {
                 // A foot rides its ankle whole. A hand does not: it arrives
                 // already skinned to its own twenty-one bones, and binding it
                 // rigidly here would throw them away and glue every finger shut

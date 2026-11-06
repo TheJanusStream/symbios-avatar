@@ -94,10 +94,12 @@
 //! cargo run --release --example render -- --quadruped --swim 0.5 --strip 8
 //! cargo run --release --example render -- --quadruped --leap 3 --strip 8
 //! cargo run --release --example render -- --winged                 # a winged body (#420): an owl by default
-//! cargo run --release --example render -- --winged --kin bat        # or glider, or a cross: --kin bird+bat
+//! cargo run --release --example render -- --winged --kin bat        # or glider, or a cross: --kin bird+bat (bird+bat@0.3 at a blend)
 //! cargo run --release --example render -- --winged --gallery 9 --family glider --pass silhouette  # or bird, bat, cross
 //! cargo run --release --example render -- --winged --kin bat --wings  # its wings folded, half and spread, and one close (#421)
+//! cargo run --release --example render -- --winged --head --beak 1,-1,-1  # a bird's head (#422): beakLength,beakHook,facialDisc, a crow's
 //! cargo run --release --example render -- --wings-crosses             # every cross, folded and spread
+//! cargo run --release --example render -- --winged --close foot --beak 1,-1,-1  # a crow's beak: its toes anisodactyl (#422)
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -224,6 +226,10 @@ enum Focus {
 }
 
 fn main() {
+    run();
+}
+
+fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let value = |flag: &str| {
         args.iter()
@@ -540,6 +546,19 @@ fn main() {
         }
         if let Some(appeal) = value("--appeal").and_then(|v| v.parse::<f32>().ok()) {
             params.appeal = appeal;
+        }
+        // A bird's head (#422): `--beak 1,-1,-1` is beakLength, beakHook and
+        // facialDisc - a crow's.
+        if let Some(spec) = value("--beak") {
+            let axes: Vec<f32> = spec
+                .split(',')
+                .filter_map(|a| a.trim().parse().ok())
+                .collect();
+            let [length, hook, disc] = axes[..] else {
+                eprintln!("--beak takes beakLength,beakHook,facialDisc, not `{spec}`");
+                std::process::exit(2);
+            };
+            (params.beak_length, params.beak_hook, params.facial_disc) = (length, hook, disc);
         }
     }
     // One exact record, as its JSON is saved (#395): `--record cat.json`, for the
@@ -2358,8 +2377,22 @@ impl Subject {
                 let deformed =
                     posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
                 let limb = Limb::HindLeft;
+                // A beast's paw is its extremity's lowest three pad radii
+                // (#422): its pad's bone runs up the pastern, and framed
+                // whole the leg fills the shot and the toes are specks.
+                let rig = &self.avatar.rig;
+                let paw = (rig.anatomy.feet != symbios_avatar::FootKind::Human)
+                    .then(|| rig.in_zone(Zone::Extremity(limb)).first().copied())
+                    .flatten()
+                    .map(|pad| posed.positions[pad].y + 2.0 * rig.joints[pad].radius);
                 for (vertex, zone) in parts.zones.iter().enumerate() {
-                    if matches!(zone, Zone::Extremity(at) | Zone::LowerLimb(at) if *at == limb) {
+                    let ours = match paw {
+                        Some(top) => *zone == Zone::Extremity(limb) && deformed[vertex].y < top,
+                        None => {
+                            matches!(zone, Zone::Extremity(at) | Zone::LowerLimb(at) if *at == limb)
+                        }
+                    };
+                    if ours {
                         hold(deformed[vertex]);
                     }
                 }
@@ -2493,6 +2526,17 @@ impl Subject {
                 );
                 for &point in &part.mesh.positions {
                     hold(to_world.transform_point3(point));
+                }
+                // A winged body's toes grow from a foot the body itself
+                // ends in (#422): the ball or the sole comes into shot.
+                if matches!(focus, Focus::Foot) {
+                    let deformed =
+                        posed.deform(&self.avatar.rig, &parts.body.positions, &parts.weights);
+                    for (vertex, zone) in parts.zones.iter().enumerate() {
+                        if *zone == Zone::Extremity(part.limb) {
+                            hold(deformed[vertex]);
+                        }
+                    }
                 }
                 let wrist = posed.positions[part.joint];
                 hold(wrist + Vec3::splat(part.reach * 0.25));
@@ -4002,8 +4046,15 @@ fn family_named<K: Kin>(name: &str) -> K {
 /// two at half: through the plan's own change of family, so its character is
 /// carried across (#388, #419).
 fn set_kin<P: Blended>(params: &mut P, kin: &str) {
+    // `bird+bat@0.3` a cross at a blend of its own (#422), `bird+bat` at half.
+    let (kin, blend) = match kin.split_once('@') {
+        Some((kin, blend)) => (kin, blend.parse::<f32>().unwrap_or(0.5)),
+        None => (kin, 0.5),
+    };
     let lineage = match kin.split_once('+') {
-        Some((own, other)) => Lineage::cross(family_named::<P::Kin>(own), family_named(other), 0.5),
+        Some((own, other)) => {
+            Lineage::cross(family_named::<P::Kin>(own), family_named(other), blend)
+        }
         None => Lineage::pure(family_named::<P::Kin>(kin)),
     };
     params.set_lineage(lineage);

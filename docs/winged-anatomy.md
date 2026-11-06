@@ -52,6 +52,14 @@ ahead and out and its elbows over the back, to be judged again with its
 membrane; and a cross's posture and marker pattern switch at the halfway
 blend, as decision 5 has it.
 
+At the look at W3's heads and feet (2026-11-06, on #422) the owner took every
+recommendation: the owl's disc rounded at its edge and its ruff a little
+lighter, so the face stops reading as a hood in profile; a rolled bird drawing
+a kind of head first, so about one bird in four has a crow's or a songbird's
+straight beak; a straighter-beaked head's cheeks drawn in further; and as they
+are, the glider's large eyes, the fruit bat's fox face, the bat's foot as W1
+set it and the glider's hallux. The eyes' colours wait for W4.
+
 ## How the body is built
 
 - **The beast's graph, node for node** (`plan::quadruped::hang`): six trunk
@@ -162,8 +170,9 @@ little short of it, since an owl's head is already large.
 
 ## The axes, and why these
 
-Seven, as the quadruped's body has six beside its head's: research-10 names
-the differences that change the rig, and these are the ones its rows support.
+Seven for the body, as the quadruped's has six beside its head's, and three
+for a bird's head (W3, #422): research-10 names the differences that change
+the rig, and these are the ones its rows support.
 
 - **`size`** - the owner's: a cat's to a dog's at a game's scale.
 - **`wingLength`** - span against body is the largest difference inside each
@@ -183,24 +192,119 @@ the differences that change the rig, and these are the ones its rows support.
 - **`headSize`** - an owl's large round head against a crow's, a parrot's
   "big head against the body" (10 section 3.1).
 - **`appeal`** - the owner's: the young.
+- **`beakLength`** (#422) - an owl's short beak, mostly hidden in its disc,
+  at nought; a crow's, "about as long as the rest of its head" (10 6.1; a
+  raven's culmen 0.07 of its total length, S2), at one; shorter below. The
+  beak's visible run is 0.45 cranium radii at nought, 1.3 at one.
+- **`beakHook`** (#422) - how far the upper mandible's line turns down from
+  base to tip: 1.2 rad (an owl's hook) at nought, most of a right angle and a
+  half (a parrot's "deep hooked bill", 10 3.1) at one, a crow's slight curve
+  at minus one and a songbird's straight bill below. **The beak's depth
+  follows both**: its base is 0.55 of its length deep at nought, 0.22 more
+  per unit of hook, never under 0.36 - a parrot's deep bill, a songbird's
+  thin one.
+- **`facialDisc`** (#422) - an owl's facial disc (10 3.1, 6.1: "a ring of
+  stiff feathers", "eyes forward and close together") full at nought, none
+  from minus one. The eyes follow it: on the front of the face with a full
+  disc, round the sides of the head (a crow's, a songbird's) with none.
+
+The bird's reach by the three: **owl** `0, 0, 0`; **crow** `1, -1, -1`;
+**parrot** `0.3, 1, -1`; **songbird** `0.2, -1.3, -1`. **A roll draws a kind
+of bird first, then each axis about it** (the owner's call at W3's review): an
+owl six rolls in ten, a parrot three in twenty, a crow 0.13 and a songbird 0.12
+(`winged.beakKind`), so a straight beak comes up about one bird in four; then
+the beak's length and hook about that kind's with a spread of 0.25, and a disc
+only for an owl, about its own (`winged.beakLength`, `winged.beakHook`,
+`winged.facialDisc`). Drawn alone about the owl with a spread of 0.45, a
+straight beak came up one roll in eight and landed in an owl's disc. Only a
+bird-led body draws them: a bat's or a glider's anchor centres them at an
+owl's and spreads them as a bird's, so a change of family carries a bird's
+beak across and back, and a bat's or a glider's roll keeps what it carries
+(#429), since the axes shape nothing it has. `appeal` shortens the beak, by 0.3 of it at the young's end (10 fact 10:
+"shorten the face and bill").
 
 Not axes, and why: the trunk's length and depth, which 10 gives as
 family-level (a bird's "compact rigid trunk", a glider's elongated one) and
 `mass` and `bodyFat` already move; **plumage volume** (10 note 8), which is
-W4's; the head's own shape (a beak, a disc, ears), which is W3's.
+W4's; the bat's and the glider's faces, which research-10 describes one way
+each (a fruit bat's fox face, a sugar glider's) and which are their families'
+frames, blended across a cross.
 
 ## The head
 
-Until W3 builds a beak, an owl's disc and a bat's fox face (#422), each family
-wears **the beast head** (`plan::beast_head`) with the axes a family stands
-in for: a bird a flat face (`muzzleLength` -1.5, a high brow, eyes to the
-front, small pricked ears that read as tufts, no whiskers, a soft nose); a
-bat a fox's muzzle (`muzzleLength` +0.35, narrow, a pricked ear); a glider a
-short snout under big ears and wide-set eyes. They are the leading family's
-blend and are not stored: a record carries no head axis of the plan's until
-W3 says which it needs. A perching bird's head sits on its breast, so its
-neck's upper run is as wide as the skull it meets (`Nape::throat` set to its
-seat): a beast's throat stood an owl's head on a collar.
+The head is **the beast head** (`plan::beast_head`, #367): a braincase, a
+muzzle, the jaw, the cheeks and the seats of the eyes and ears, declared on
+the skeleton and the head's surface projected onto it. Each family brings the
+beast axes it stands in for (`derive::winged`'s `Face`, blended across a
+cross), and `derive::winged_head` then dresses what the construction made, in
+an order that matters: the disc is carved first, because the eyes and the beak
+are seated on it.
+
+| Family | Mouth | Eyes | Ears | Nose, whiskers |
+|---|---|---|---|---|
+| Bird (owl) | a beak of two mandibles | 1.45 a beast's globe, frontal and close-set with a disc, lateral without | none | no nose cut, none |
+| Bat (fruit bat) | a long, narrow fox muzzle (`muzzleLength` 0.55, `muzzleBreadth` -0.7) | 1.7 a beast's | large, plain, pricked, a round-pointed leaf (1.25 a beast's at `earSize` 1.4) | leather, none |
+| Glider | a short snout (`muzzleLength` -1.0) | 1.9 a beast's, set wide, 0.62 of the globe standing proud | large, rounded (`earSize` 1.5, `earPoint` -0.8) | leather, whiskers |
+
+- **The beak** (`BeakSeat`, swept by `face::beast::beak`) is two closed solids
+  of horn along the line of the gape, seated on the face between and under
+  the eyes, sunk into it by 0.45 of its depth. The upper mandible turns down
+  along its line by its hook (the turn grows as the square of the way along,
+  so the hook gathers at the tip), its section an arch narrower at the culmen
+  than at the cutting edges; the lower is straighter, shorter as the upper
+  hooks (0.95 of its line less 0.18 per radian), its top tucked inside the
+  upper. **The upper rides the head and the lower the jaw**: both are drawn in
+  the eyes' draw (`Adornments::on_head`, `on_jaw`), which carries a part's
+  own colour on any plumage and crosses a worker already, and the lower is
+  bound to the jaw's joint, so `Jaw::pose` - the beast's pant and yawn -
+  parts the beak. A beaked head builds no jaw of skin and no tongue (the jaw
+  is rigged all the same), cuts no nostril, grows no whiskers, and its
+  muzzle's lip lobes sink into the braincase and its cheeks draw in: as built
+  they drew a mammal's mouth line under the beak. The horn is an owl's pale
+  horn darkening toward a crow's black as the beak lengthens, a stand-in until
+  W4 stores a plumage's colours.
+- **The disc** (`Disc`, part of `BeastHead::distance`): a dish carved out of
+  the face as the inside of a ball standing ahead of it, its rim 0.8 cranium
+  radii across from a middle 0.12 below the braincase's centre and its middle
+  0.08 under the rim at full strength, and a ruff - a tube 0.06 radii round
+  the line where the ball crossed the head - smoothly joined on, so the ruff
+  follows the edge wherever the face's own parts put it. The skin within the
+  ruff is shaded darker (`ruff_shade`, a tint by vertex: a colour can only
+  darken the coat), which is what outlines a disc at a distance. The eyes are
+  seated in the dish and their gaze turned 0.7 of the way from its normals,
+  which lean in toward its middle, to straight ahead. **An owl's head is
+  charted round its crown's line** (`uv::BeastCharts`): wrapped round the
+  line from the back of the skull to the face, as a beast's is, the dish came
+  out all one height across, in streaks. The surface's projection axis is
+  drawn back inside the head, which the dish carves its front end out of.
+- **The ears** are the beast's leather cards (`face::beast::ears`), sized by
+  the family's share: none on a bird, 0.3 of a bat's on a bird+bat cross at
+  0.3, and an ear smaller than 0.15 cranium radii none at all. A head with
+  none builds each ear empty, which is no part and rides no joint.
+- **A cross**: the kind of mouth - a beak, or a muzzle with its nose and its
+  jaw - is the leading family's, switching at the halfway blend as the
+  posture does. The eyes' size, set and standing-out, the ears' size and the
+  snout's length blend across the cross and move continuously through the
+  switch; **the disc's turn of the eyes is the bird's share of them**, so it
+  reaches a bat- or glider-led cross by its bird share, as the bird's own eyes
+  do. The disc itself is a part of a bird's face, carved only into a bird-led
+  head, as deep as the bird's share of it.
+- **The young** (`appeal`): the beast's larger globe (`eyeSet`'s seat adds a
+  twentieth of a radius per unit of appeal) and, on a bird, a beak 0.3
+  shorter at the young's end.
+- **Measured** (`tests/winged_heads.rs`): each family's head has its parts
+  and no others; the beak reaches further with `beakLength` and its tip curls
+  further under the lower mandible with `beakHook`; the disc comes with its
+  axis, flattens the face and sets the eyes closer; the lower mandible, and
+  nothing else of the eyes' draw, opens with `Jaw::pose`; a 0.20.0 record and
+  its pinned code read as an owl's head; every family and cross builds finite,
+  its mandibles closed, at the axes' ends. Triangles (`render --budget`): owl
+  15,626 (the beak 520 of the eyes' draw; no ears, no jaw or tongue of skin),
+  crow and parrot 17,300, bat 24,428, glider 22,400; the dearest of
+  `a_winged_body_fits_its_budget`'s families, crosses and rolls 25,130.
+- A perching bird's head sits on its breast, so its neck's upper run is as
+  wide as the skull it meets (`Nape::throat` set to its seat): a beast's
+  throat stood an owl's head on a collar.
 
 ## The wire
 
@@ -220,6 +324,18 @@ seat): a beast's throat stood an owl's head on a collar.
   writes; nothing it carries is new to the layout but the tag. A 0.19.7 reader
   refuses it as an unknown tag; so does this build at any version before 10,
   which no winged code was written at (the five legacy readers are refusals).
+- **The head's axes** (#422): `beakLength`, `beakHook` and `facialDisc` on the
+  record, thousandths in the signed envelope, optional and defaulted, so a
+  0.20.0 record reads as an owl's head; and in a share code **version 13**,
+  three spans appended after the complexion, written only by a winged body
+  whose head is not an owl's. Every other code - a person's, a beast's, an
+  owl-headed winged body's - is written at the version it was, byte for byte,
+  so a 0.20 reader takes it; a 0.20 reader refuses a 13 as a version from the
+  future. A 0.20 winged code (version 10) reads as an owl's head.
+- **The head's new parts ride what already crosses a worker**: the beak in
+  the eyes' draw's `Adornments::on_head` and `on_jaw`, the ruff in the skin's
+  vertex tint; the `BeastHead`'s `beak` and `disc` are skipped when absent, so
+  a beast's skeleton serialises byte for byte as it did.
 - **`GENERATOR_VERSION` does not move**: a winged roll draws on streams of its
   own (`winged.*`), so no seed of a person or a beast moved.
 - **Nothing was added to `mesh_serde::Wire` or `rig::outline`** (the epic's
@@ -284,6 +400,37 @@ seat): a beast's throat stood an owl's head on a collar.
 - **A coat stands in for a surface**: until W4 (#423) stores a plumage, a pelt
   or a membrane, each family is painted with a coat of its leading family's -
   a brown bird, a dark bat, a grey glider - not stored.
+
+### Where the head departs, and why (W3, #422)
+
+- **An owl's disc is a carved dish, not feathers**: research-10 describes "a
+  ring of stiff feathers"; built as relief on the head's surface with a
+  shaded ruff, it reads at a distance and costs no cards. The disc's own
+  feathers, and its paler face, are plumage, W4's.
+- **No ear tufts**: the default owl is a little owl (10 7.2), which has none;
+  a scops or an eagle owl's tufts would be a part of their own.
+- **A bird's eyes turn as a beast's do**: research-10 fact 5 has an owl's
+  eyes move 1 to 4 degrees and the head do the looking. The eyes' range is
+  the eye rig's, shared with every body, and a range of the plan's own would
+  be a new field crossing a worker; the head saccades that stand in for it are
+  the motion phase's (W5, #424).
+- **The lower mandible hinges at the beast jaw's hinge**, under the ear and
+  behind the eye - where a bird's quadrate is, so an open beak drops as a
+  bird's does, about a point far behind it.
+- **The beak is horn-coloured by its length, not by species**: an owl's pale
+  horn toward a crow's black. A parrot's two-tone bill, a songbird's yellow or
+  orange, a cere, are W4's colours.
+- **The disc's turn of the eyes reaches a bat- or glider-led cross** by its
+  bird share, though the head's axes otherwise shape only a bird-led head:
+  held out of a cross's blend, the eyes would step where the mouth's kind
+  switches, and research-10 asks that the young and the crosses push eye size
+  continuously.
+- **The fruit bat's ears are a beast's cards** - plain leather, no tragus, as
+  a fruit bat's are (10 6.1) - so a microbat's tragus and noseleaf are not
+  built; nor is a barn owl's asymmetric ear opening.
+- **A sugar glider's eyes stand out by 0.62 of the globe**, against a beast's
+  0.40: research-10's "large, protruding" eyes (S31). Their dark iris is the
+  plan's, the horse's ramp.
 
 ## The wings (W2, #421)
 
@@ -435,13 +582,118 @@ glider 68.
   brown owl's in vertex colour, the membrane the coat's in its own atlas
   region.
 
+## The feet (W3, #422)
+
+**The feet are the leading family's**, as the posture and the wings are: a
+bird-led body stands on a bird's toes, a bat-led one on a bat's, a
+glider-led one on a glider's paws, each sized by its blended frame, and a
+cross switches at the halfway blend. A bird's and a bat's toes are **drawn
+as a part** on `extremity::hand`'s pattern (`extremity::toes`): grown on the
+rig after the body is bound, each toe a chain of digit joints - one at the
+start of every bone and a leaf at the claw's tip - `Role::Digit` in the
+hind leg's extremity zone, under the foot's pad, so `Rig::extremity_joints`
+holds them and `Rig::extremity_extent` spans them, while the contact stays
+the pad (the plan's own joint, first in the zone) and `Rig::limb_chain`,
+three joints above the extremity on every winged leg, never reaches them.
+Grown after the wings, whose joints keep the numbers they had. The body's
+own foot is shaped under them into what they grow from - a bird's ball, a
+bat's sole - by the analytic foot a beast's paw is shaped by
+(`plan::beast_foot`), and the plan sets its second node only that far ahead
+(`WingedFoot::sole_share`). The layout is one function
+(`plan::winged_foot::drawn`): the part's tubes, its joints and the coat
+painter's talons and bare toes all read it. A glider's paws are a beast's
+analytic paw with a glider's digits; its toes grow no joints, since what a
+glider grips with is its whole paw.
+
+**The arrangement is derived, not stored** (`WingedParams::toes`): from the
+beak's hook, so a bird with a hooked beak grips as an owl and a parrot do,
+zygodactyl, and one with a straighter beak stands anisodactyl, the cut
+halfway between the crow's hook and the owl's (`beakHook` -0.5). The default
+bird, an owl, is zygodactyl. A review shows either through the beak:
+`examples/render -- --winged --close foot --beak 1,-1,-1` (a crow's).
+
+**No new `FootKind`.** Every engine pass that reads the kind asks whether a
+foot is a person's or a hoof (`anim::ground`, `gait`, `rest`, `speed`,
+`emote`); a toed foot stands on its toes as a paw does, so a bird's and a
+bat's are `FootKind::Beast`, and what they carry is declared on the
+skeleton (`BeastFeet::winged`, absent on a beast, whose skeleton is written
+as before). The viewer matches no `FootKind` and would have had nothing
+forced; an older worker would have read a new kind as `Beast` anyway.
+
+| Target | Source | Built |
+|---|---|---|
+| Bird: four toes, phalanges 2-3-4-5 for I to IV, the claw counted | 10 3.1, S17 (H) | as the target, a closed tube a toe |
+| Anisodactyl (I back; II, III, IV forward), about 90% of birds | 10 3.1, S17 (H) | the default: III straight ahead, II and IV 24 and 23 degrees out, I back 7 degrees inside |
+| Zygodactyl (I and IV back; II and III forward): a parrot's, an owl's at will | 10 3.1, S17 | II 15 degrees in, III 6 out, I and IV back 22 and 27 degrees off straight back |
+| Toe lengths | none in 10 (bg, L) | III the frame's toe measure (0.28 T on a bird) from its root; I 0.55, II 0.78, IV 0.86 of it; root radii 0.40-0.44 of the pad's; talons a third to a half of a toe, curling 80-86 degrees |
+| Pads under the toes, hallux opposing the front three (perching) | 10 6.2, S13 | a pad under every joint (the tube's underside 35% fuller), the hallux back |
+| Bat: five near-equal toes, strong hooked claws | the brief; 10 6.2 (hanging) | hallux 2 bones, II-V 3 (the mammal's formula, bg, L); lengths 0.90-1.0 of the longest; claws curling 126 degrees; a fan 28 degrees wide |
+| Bat hind foot 0.4 T to its claws' tips | S21 (M) | sole 0.62 of it, toes the rest |
+| Bat hind limb rotated, knee dorsolateral | S22 (H) | W1's leg (the knee up, out and back) unchanged; the toes point out and forward as W1 set the foot, see departures |
+| Glider hind foot: opposable, clawless hallux; II and III fused | 10 3.3, S31 (M) | a hallux of two balls on the inside, turned out and back as a thumb, no claw; II and III two narrow balls run together; IV the longest |
+| Glider fore paw: five clawed digits | the brief | five, the thumb and fifth splayed, every claw horn |
+| At rest the toes on the ground, not through it | the brief | every drawn foot's lowest point within 1 mm of the ground, every claw's tip 0.2 toe radii off it |
+
+**Measured** (`tests/winged_feet.rs`): toe counts, phalanges and
+arrangement per family and both bird arrangements; contacts and leg chains
+those of the rig the skeleton roots, on every family and cross; every toe
+in `extremity_joints`, no wing joint; the foot's extent along its toes at
+least 1.3 times what it is without them; the toes at rest within a
+millimetre of the ground; closed tubes, at most four influences summing to
+one, all the foot's own digit joints, the feet mirror images to 0.1 mm;
+and no person or beast grows a toe. Triangles: bird 20,578 (toes 1,152),
+bat 25,186 (toes 696), glider 22,060 (unchanged); the dearest of the
+families, six crosses and twelve rolls 25,838, a bat-led roll, under the
+26,000 ceiling. Joints: bird 142 (36 toe joints), bat 168 (38), glider 68.
+
+**Walked** (a scratch probe through `Driver`, standing two seconds, walking
+three at 1.2 m/s, stopping): at rest no drawn toe is below the ground. In a
+stride the gait now reads the toes as sole points and peels a foot about
+its second node, so the toes past it dip at toe-off: a bird's 3 mm, a
+bat's 14 mm, a bat-glider cross's 16 mm, and a bird-led bird-bat cross's
+16 mm in its stride and 42 mm in the one frame it sets off in. W5 owns the
+winged gaits (#424); the toes are joints it can lay flat.
+
+### Where the feet depart, and why
+
+- **Research-10 gives no toe lengths**: every length and radius above is
+  bg and chosen by render, an owl's thick toes and long talons for the
+  default bird.
+- **A bat's toes point forward and out, as W1 set its foot, not trailing
+  out and back.** Turned to trail its heel (S22's rotated limb carried
+  through to the foot), the gait's toe-off - which pitches every
+  four-legged foot's pad about its side and lifts the heel about the toe
+  ahead - rolled the trailing toes 49 to 58 mm into the ground; the knee
+  stays as W1 turned it. The membrane, anchored at the ankle, was never
+  the limit.
+- **A bat's toes are drawn coarser than a bird's** (six sides a ring, no
+  ring between joints): ten toes on a body already within 1,600
+  triangles of its ceiling.
+- **A claw is lifted off its toe's line at its base** just enough that its
+  tip comes down to rest 0.2 toe radii off the ground: an owl's talon
+  continuing the toe's line would end below it. The distal phalanx raised,
+  as a standing bird's is, but drawn in the claw rather than the toe.
+- **A glider's digits melt into its paw** at one refinement pass: its pad
+  is smaller than a dog's, and the hallux reads as a lump on the inside
+  rather than a thumb. A second pass on its paws alone cost 8,000
+  triangles.
+- **A bird's leg is feathered to the ball**: the ball and the toes are
+  bare, scaled skin (the coat's leather, a stand-in until W4), the tarsus
+  above it the coat.
+- **The toes are still** (no grip, no curl yet): perching, hanging and
+  clinging are the owner's later phase, and the chains are what a grip
+  will turn.
+
 ## Left for later phases, and for the owner
 
 - **W2 (#421)**: built - see "The wings". For the owner: the bat's cape
   from its raised elbow to the leg at rest, the bird's folded plate and how
   far its primaries reach, the feather count, the glider's resting fold.
-- **W3 (#422)**: the beak, the owl's disc and eyes, the bat's ears and fox
-  face, the glider's face; toes, talons and claws.
+- **W3 (#422)**: the head and the feet built - see "The head" and "The
+  feet". For the owner: the reach of the beak's axes, the disc's depth and
+  its ruff's shade, the beak's horn, the bat's and the glider's eyes and
+  ears; both bird arrangements, the bat's foot turned with its leg, the
+  glider's hallux.
 - **W4 (#423)**: plumage, contour feathers, the membrane's material, coats.
 - **W5 (#424)**: the ground gaits per posture, the flight source, rests. A
   winged rig is driven today without a panic (`tests/driver.rs`): a bat and a

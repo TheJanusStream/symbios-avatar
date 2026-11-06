@@ -128,9 +128,21 @@ impl Jaw {
         });
         tongue.paint(TONGUE);
         let pivot = beast.tongue.back + (beast.tongue.front - beast.tongue.back) * TONGUE_PIVOT;
+        // **A beaked head has no jaw of skin and no tongue** (#422): its lower
+        // mandible is its jaw, horn drawn with the eyes (`beak`), and it rides
+        // this jaw's joint, which is rigged all the same so a mouth opens it.
+        let (jaw, tongue, inside) = if beast.beak.is_some() {
+            (PolyMesh::new(), PolyMesh::new(), Vec::new())
+        } else {
+            (
+                into_joint(jaw, beast.hinge),
+                into_joint(tongue, pivot),
+                inside,
+            )
+        };
         Self {
-            mesh: into_joint(jaw, beast.hinge),
-            tongue: into_joint(tongue, pivot),
+            mesh: jaw,
+            tongue,
             inside,
             hinge: beast.body(beast.hinge) - origin,
             pivot: beast.body(pivot) - origin,
@@ -189,7 +201,12 @@ impl Jaw {
     /// itself in plain view.
     #[must_use]
     pub fn covers(&self, rig: &Rig, body: &PolyMesh, radius: f32) -> Vec<bool> {
-        let Some(origin) = rig.joints.get(self.head).map(|joint| joint.position) else {
+        let Some(origin) = rig
+            .joints
+            .get(self.head)
+            .map(|joint| joint.position)
+            .filter(|_| !self.mesh.is_empty())
+        else {
             return vec![false; body.vertex_count()];
         };
         let hinge = origin + self.hinge;

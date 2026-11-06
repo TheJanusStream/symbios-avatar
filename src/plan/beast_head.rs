@@ -297,6 +297,104 @@ pub(crate) struct EarSeat {
     pub(crate) fold: f32,
 }
 
+/// A bird's beak (#422): two mandibles of horn swept along the line of the
+/// gape, in the head's frame, in metres.
+///
+/// **A part, not more of the head's surface**, for the reason an ear is one: a
+/// parrot's hook curls down past its lower mandible, and a surface projected
+/// from the head's axis can lie only once along any ray from it. So the beak is
+/// declared here, where the skull seats it, and swept by `face::beast::beak`:
+/// the upper mandible rides the head, the lower the jaw, so an open mouth parts
+/// them. Drawn with the eyes, whose draw carries its own colours: a beak is
+/// horn on any plumage, as a horn is on any coat.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct BeakSeat {
+    /// Where the gape meets the face, sunk into it: the line both mandibles
+    /// are swept along starts here.
+    pub(crate) base: Vec3,
+    /// The way the beak leaves the face, a unit vector in the head's
+    /// mid-plane.
+    pub(crate) forward: Vec3,
+    /// Square to [`Self::forward`] in the mid-plane, toward the crown.
+    pub(crate) up: Vec3,
+    /// How far the upper mandible's line runs from its base to its tip.
+    pub(crate) length: f32,
+    /// How deep the upper mandible stands over the gape at its base.
+    pub(crate) depth: f32,
+    /// How deep the lower mandible hangs under it at its base.
+    pub(crate) lower_depth: f32,
+    /// Half the beak's width at its base.
+    pub(crate) half_width: f32,
+    /// How far the upper mandible's line turns down from its base to its
+    /// tip, in radians: none for a songbird's, most of a right angle for a
+    /// parrot's.
+    pub(crate) hook: f32,
+    /// How far the lower mandible reaches, as a share of the upper's line: a
+    /// hooked beak's upper closes over it.
+    pub(crate) lower_reach: f32,
+    /// The horn's colour at the base and at the tip.
+    pub(crate) colours: [Vec3; 2],
+}
+
+/// An owl's facial disc (#422): a shallow dish of stiff feathers carved into
+/// the front of the head, and the ruff round its edge.
+///
+/// **Carved out of the head and ringed, as a smooth distance**: the dish is
+/// the inside of a ball standing ahead of the face, taken away from the head,
+/// and the rim a tube round the line where the ball's surface crossed the
+/// head's, so the ruff follows the edge wherever the face's own parts put it.
+/// Part of [`BeastHead::distance`], so the eyes seated after it sit in the
+/// dish and look out of it.
+///
+/// **A weaker disc is the same dish blended back toward the bare face**
+/// ([`Self::weight`]), not a shallower one (#422, the critic): a dish made
+/// shallower by its strength hung from a ball that grew as the strength
+/// fell, until near none it was a plane that cut the front of the face off,
+/// and the face jumped back by two thirds of a head radius where the disc
+/// was dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Disc {
+    /// The ball whose inside is the dish.
+    pub(crate) centre: Vec3,
+    /// Its radius.
+    pub(crate) radius: f32,
+    /// How softly the dish's edge turns into the head.
+    pub(crate) carve: f32,
+    /// The ruff's radius about the dish's edge.
+    pub(crate) rim: f32,
+    /// How softly the ruff joins the head.
+    pub(crate) blend: f32,
+    /// How much of the dish and the ruff the head takes, `0` to `1`: the
+    /// distance is blended from the bare head's to the carved one's by it,
+    /// so the face moves smoothly from none to a full disc.
+    #[serde(default = "whole")]
+    pub(crate) weight: f32,
+}
+
+/// A disc's weight when none is written: the whole of it.
+fn whole() -> f32 {
+    1.0
+}
+
+impl Disc {
+    /// The head `head` - a distance - with the dish carved out of it and the
+    /// ruff joined on, at `at`, both by [`Self::weight`].
+    pub(crate) fn apply(&self, head: f32, at: Vec3) -> f32 {
+        let ball = at.distance(self.centre) - self.radius;
+        let carved = -smooth_union(-head, ball, self.carve);
+        let ruff = Vec2::new(head, ball).length() - self.rim;
+        head + (smooth_union(carved, ruff, self.blend) - head) * self.weight
+    }
+
+    /// How far `at` is from the middle of the ruff's tube, against its
+    /// radius as its weight draws it: under one on the ruff, which narrows
+    /// to nothing as the disc fades.
+    pub(crate) fn on_ruff(&self, head: f32, at: Vec3) -> f32 {
+        let ball = at.distance(self.centre) - self.radius;
+        Vec2::new(head, ball).length() / (self.rim * self.weight).max(f32::EPSILON)
+    }
+}
+
 /// The neck's upper run as the head it carries sizes it (#388): a tube of
 /// elliptical sections, in the head's frame, from a little way down the neck
 /// to inside the skull.
@@ -407,6 +505,15 @@ pub struct BeastHead {
     pub(crate) whiskers: Option<WhiskerSeat>,
     /// What it wears, a slot a kind in `OrnamentKind::ALL`'s order (#402).
     pub(crate) ornaments: [Option<OrnamentSeat>; 6],
+    /// A bird's beak (#422): `None` on every head with a muzzle, a beast's
+    /// among them. A beaked head builds no jaw of its own skin and no
+    /// tongue: its lower mandible is its jaw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) beak: Option<BeakSeat>,
+    /// An owl's facial disc (#422), carved into the face; `None` on every
+    /// other head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) disc: Option<Disc>,
 }
 
 /// How far out, in head radii, a ray starts its march inward. Past every part
@@ -486,8 +593,38 @@ impl BeastHead {
             distance = smooth_union(distance, leather.distance(at), nose.blend);
         }
         // A nostril is a hollow: the head minus the nostril, eased at its
-        // rim as a union is at its crease.
-        -smooth_union(-distance, nose.nostril.distance(mirrored), nose.blend)
+        // rim as a union is at its crease. A beaked head cuts none, its
+        // nostril declared with no size (#422).
+        if nose.nostril.radii != Vec3::ZERO {
+            distance = -smooth_union(-distance, nose.nostril.distance(mirrored), nose.blend);
+        }
+        match &self.disc {
+            Some(disc) => disc.apply(distance, at),
+            None => distance,
+        }
+    }
+
+    /// How far `at`, in the head's frame, is from the middle of an owl's ruff,
+    /// in the ruff's radii: under one on it, and `None` on a head with no disc
+    /// (#422). The skin there is shaded darker, as an owl's ruff is.
+    #[must_use]
+    pub(crate) fn on_ruff(&self, at: Vec3) -> Option<f32> {
+        let disc = self.disc.as_ref()?;
+        let mut bare = *self;
+        bare.disc = None;
+        Some(disc.on_ruff(bare.distance(at), at))
+    }
+
+    /// Whether the head carries a beak (#422) rather than a muzzle's mouth.
+    #[must_use]
+    pub fn beaked(&self) -> bool {
+        self.beak.is_some()
+    }
+
+    /// Whether the head has an owl's facial disc carved into it (#422).
+    #[must_use]
+    pub fn has_disc(&self) -> bool {
+        self.disc.is_some()
     }
 
     /// [`Self::distance`] with the neck's upper run joined on: the surface the
@@ -969,6 +1106,8 @@ mod tests {
             },
             whiskers: None,
             ornaments: [None; 6],
+            beak: None,
+            disc: None,
         }
     }
 

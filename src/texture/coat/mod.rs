@@ -471,7 +471,8 @@ impl<'a> Painter<'a> {
             if horn > 0.0 {
                 return Surface::Horn(horn);
             }
-            if foot.kind != Feet::Hooves && local.y < 0.06 * foot.pad {
+            // A pad's leather, and a bird's or a bat's scaled toes (#422).
+            if (foot.kind != Feet::Hooves && local.y < 0.06 * foot.pad) || foot.bare(local) {
                 return Surface::Leather;
             }
         }

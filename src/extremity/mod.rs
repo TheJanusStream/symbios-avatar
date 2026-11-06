@@ -14,6 +14,7 @@
 pub mod beast;
 pub mod foot;
 pub mod hand;
+pub(crate) mod toes;
 
 use glam::{Mat4, Vec3};
 

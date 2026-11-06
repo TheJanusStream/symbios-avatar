@@ -242,6 +242,7 @@ fn crosses() {
                         tail_length: value,
                         head_size: value,
                         appeal: value,
+                        ..WingedParams::default()
                     };
                     params.sanitize();
                     total += 1;

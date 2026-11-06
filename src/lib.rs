@@ -166,7 +166,7 @@ pub use plan::{
     Anatomy, Antlers, Archetype, BeastFeet, BeastHead, BodyPlan, Category, Coat, CoatChannel,
     CoatColours, CompositePriors, Composites, Family, Feet, FootKind, Fur, HeadKind, Horn,
     HumanoidParams, Legs, Limb, Nose, Ornament, OrnamentKind, Ornaments, Pupil, QuadrupedParams,
-    TrunkKind, WingedFamily, WingedParams, Zone, ZoneSet,
+    Toes, TrunkKind, WingedFamily, WingedFoot, WingedParams, Zone, ZoneSet,
 };
 pub use record::{AvatarRecord, GENERATOR_VERSION, LockSet, ProfileRecord, ShareCodeError};
 pub use rig::{

@@ -71,8 +71,13 @@ impl Ring {
     }
 }
 
-/// The head a family wears until W3 builds its own (#422): the beast head's
-/// axes, a flat-faced owl's, a fox-faced bat's, a glider's.
+/// The head a family wears (#422): the beast head's axes, which its
+/// construction reads (`quadruped::head`), and the sizes it departs from a
+/// beast's by (`winged_head`). A flat-faced owl's, its eyes on the front of
+/// its face and no ear to see; a fox-faced fruit bat's, its eyes large and its
+/// ears large and plain; a sugar glider's short snout, its eyes larger still,
+/// set wide and standing out of its head, under large rounded ears (research-10
+/// 6.1). A cross blends every one.
 #[derive(Clone, Copy, Debug)]
 struct Face {
     muzzle_length: f32,
@@ -83,6 +88,12 @@ struct Face {
     ear_point: f32,
     ear_carriage: f32,
     whiskers: f32,
+    /// The eyes' globes against a beast's.
+    eye_scale: f32,
+    /// How much of a globe stands proud of the head (a beast's 0.40).
+    proud: f32,
+    /// The ears against a beast's of the same axes: none on a bird.
+    ear_scale: f32,
 }
 
 /// The body a family is built in, in trunks.
@@ -185,11 +196,14 @@ impl Frame {
                     muzzle_length: -1.5,
                     muzzle_breadth: 0.3,
                     stop: 1.0,
-                    eye_set: -1.2,
+                    eye_set: super::winged_head::FRONTAL_EYES,
                     ear_size: -1.0,
                     ear_point: 1.0,
                     ear_carriage: 1.0,
-                    whiskers: -1.0,
+                    whiskers: -1.5,
+                    eye_scale: 1.45,
+                    proud: 0.40,
+                    ear_scale: 0.0,
                 },
             },
             // A flying fox's (S20, S21): the forearm 1.5 humeri (bg), the
@@ -226,14 +240,17 @@ impl Frame {
                 tail_r: 0.03,
                 taper: 0.14,
                 face: Face {
-                    muzzle_length: 0.35,
-                    muzzle_breadth: -0.4,
-                    stop: 0.5,
-                    eye_set: -0.5,
-                    ear_size: 0.1,
-                    ear_point: 0.4,
+                    muzzle_length: 0.55,
+                    muzzle_breadth: -0.7,
+                    stop: 0.6,
+                    eye_set: -0.4,
+                    ear_size: 1.4,
+                    ear_point: 0.1,
                     ear_carriage: 1.0,
                     whiskers: -0.7,
+                    eye_scale: 1.70,
+                    proud: 0.50,
+                    ear_scale: 1.25,
                 },
             },
             // A sugar glider's (S30, S31, S36): an elongated small mammal on
@@ -270,14 +287,17 @@ impl Frame {
                 tail_r: 0.14,
                 taper: 0.0,
                 face: Face {
-                    muzzle_length: -0.6,
+                    muzzle_length: -1.0,
                     muzzle_breadth: 0.0,
-                    stop: 0.6,
-                    eye_set: 0.3,
-                    ear_size: 0.7,
-                    ear_point: -0.3,
-                    ear_carriage: 0.95,
+                    stop: 0.7,
+                    eye_set: 0.8,
+                    ear_size: 1.5,
+                    ear_point: -0.8,
+                    ear_carriage: 0.9,
                     whiskers: 0.2,
+                    eye_scale: 1.90,
+                    proud: 0.62,
+                    ear_scale: 1.0,
                 },
             },
         }
@@ -326,6 +346,9 @@ impl Frame {
                 ear_point: mix(a.ear_point, b.ear_point),
                 ear_carriage: mix(a.ear_carriage, b.ear_carriage),
                 whiskers: mix(a.whiskers, b.whiskers),
+                eye_scale: mix(a.eye_scale, b.eye_scale),
+                proud: mix(a.proud, b.proud),
+                ear_scale: mix(a.ear_scale, b.ear_scale),
             },
         }
     }
@@ -526,7 +549,10 @@ pub(crate) fn derive(params: &WingedParams, composites: &Composites) -> Built {
     let femur = frame.femur * leg;
     let tibia = frame.tibia * leg;
     let metatarsus = frame.metatarsus * leg;
-    let toe = frame.toe;
+    // How far ahead of the pad the foot's second node stands (#422): a
+    // bird's ball and a bat's sole are only part of the foot, their drawn
+    // toes the rest; a glider's paw is the whole of it.
+    let toe = frame.toe * params.winged_foot().sole_share();
     let pad_r = frame.pad * sturdy;
     let pad_y = pad_r * 0.82;
     let toe_r = pad_r * 0.8;
@@ -908,6 +934,7 @@ pub(crate) fn derive(params: &WingedParams, composites: &Composites) -> Built {
                 0.85
             };
     let face = frame.face;
+    let asked = super::winged_head::Asked::of(params, young);
     let snout = ((1.30 + 1.12 * face.muzzle_length) * (1.0 - 0.30 * appeal)).max(0.15);
     let ahead = head_r * (0.60 + snout) / 1.90;
     let muzzle_r = head_r * 0.58;
@@ -918,11 +945,12 @@ pub(crate) fn derive(params: &WingedParams, composites: &Composites) -> Built {
         muzzle_length: face.muzzle_length,
         muzzle_breadth: face.muzzle_breadth,
         stop: face.stop,
-        eye_set: face.eye_set,
+        eye_set: face.eye_set + asked.eye_set_shift(),
         ear_size: face.ear_size,
         ear_point: face.ear_point,
         ear_carriage: face.ear_carriage,
-        whiskers: face.whiskers,
+        // A beak grows none (#422).
+        whiskers: if asked.beaked() { -1.5 } else { face.whiskers },
         nose: match lineage.leading() {
             WingedFamily::Bird => Nose::Soft,
             WingedFamily::Bat | WingedFamily::Glider => Nose::Leather,
@@ -989,13 +1017,25 @@ pub(crate) fn derive(params: &WingedParams, composites: &Composites) -> Built {
     let mut head = head::head(&chain, &proxy, appeal, trunk_girth.sqrt());
     // A perching bird's head sits on its body, so the neck's run under it is
     // as wide as it is where it meets the skull, not a beast's throat:
-    // without it an owl's head stood on a collar (#422 builds the bird's
-    // own head).
+    // without it an owl's head stood on a collar.
     if posture == Posture::Perch
         && let Some(nape) = &mut head.nape
     {
         nape.throat = nape.seat;
     }
+    // And what the family makes of the beast's head (#422): an owl's disc, the
+    // eyes and the ears sized, and a bird's beak.
+    super::winged_head::dress(
+        &mut head,
+        &proxy,
+        appeal,
+        super::winged_head::Sizes {
+            eyes: face.eye_scale,
+            proud: face.proud,
+            ears: face.ear_scale,
+        },
+        &asked,
+    );
     let dims = Dimensions {
         trunk: trunk.map(|(at, radius, section)| (at * t, radius * t, section)),
         neck_at: neck_at * t,

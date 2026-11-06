@@ -80,8 +80,9 @@ pub(crate) fn shapes(rig: &Rig, feet: &BeastFeet) -> Vec<(Limb, FootShape)> {
             let (&pad, &toe) = (nodes.first()?, nodes.get(1)?);
             let pad_joint = &rig.joints[pad];
             (pad_joint.radius > f32::EPSILON).then(|| {
-                let shape = FootShape::of(
-                    feet.kind,
+                let shape = FootShape::declared(
+                    feet,
+                    limb.is_fore(),
                     pad_joint.position,
                     pad_joint.radius,
                     rig.joints[toe].position,
@@ -166,7 +167,13 @@ mod tests {
         for feet in Feet::ALL {
             let (before, after, rig) = shaped(feet);
             assert!(after.is_closed_manifold(), "{feet:?}: a foot has a hole");
-            let shapes = shapes(&rig, &BeastFeet { kind: feet });
+            let shapes = shapes(
+                &rig,
+                &BeastFeet {
+                    kind: feet,
+                    winged: None,
+                },
+            );
             let refined = refine(&before, &rig, &shapes);
             assert_eq!(shapes.len(), 4, "four feet");
             for (index, (was, now)) in refined.positions.iter().zip(&after.positions).enumerate() {

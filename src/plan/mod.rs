@@ -97,6 +97,7 @@ pub mod kin;
 mod ornament;
 mod quadruped;
 mod winged;
+pub(crate) mod winged_foot;
 mod zone;
 
 use rand::SeedableRng;
@@ -122,6 +123,7 @@ pub use ornament::{
 };
 pub use quadruped::{Family, Feet, Nose, Pupil, QuadrupedParams};
 pub use winged::{WingedFamily, WingedParams};
+pub use winged_foot::{Toes, WingedFoot};
 pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};
 
 /// Smallest and largest biped stature accepted, in metres.

@@ -1896,7 +1896,7 @@ fn winged_lineages() -> Vec<(WingedFamily, Option<WingedFamily>, f32)> {
 
 #[test]
 fn a_non_finite_winged_axis_takes_its_documented_default() {
-    let axes: [Readable<WingedParams>; 7] = [
+    let axes: [Readable<WingedParams>; 10] = [
         ("size", |p, v| p.size = v, |p| p.size),
         ("wing_length", |p, v| p.wing_length = v, |p| p.wing_length),
         ("neck_length", |p, v| p.neck_length = v, |p| p.neck_length),
@@ -1904,6 +1904,9 @@ fn a_non_finite_winged_axis_takes_its_documented_default() {
         ("tail_length", |p, v| p.tail_length = v, |p| p.tail_length),
         ("head_size", |p, v| p.head_size = v, |p| p.head_size),
         ("appeal", |p, v| p.appeal = v, |p| p.appeal),
+        ("beak_length", |p, v| p.beak_length = v, |p| p.beak_length),
+        ("beak_hook", |p, v| p.beak_hook = v, |p| p.beak_hook),
+        ("facial_disc", |p, v| p.facial_disc = v, |p| p.facial_disc),
     ];
     assert_non_finite_axes_fall_back("winged", &axes, Archetype::Winged);
 }
@@ -1974,6 +1977,9 @@ fn random_winged_bodies_always_mesh() {
                 .random_bool(0.4)
                 .then(|| families[rng.random_range(0..3)]),
             blend: rng.random_range(0.0..=1.0),
+            beak_length: axis(&mut rng),
+            beak_hook: axis(&mut rng),
+            facial_disc: axis(&mut rng),
         };
         params.sanitize();
         let mut composites = Composites {

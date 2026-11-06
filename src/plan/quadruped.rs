@@ -1136,7 +1136,10 @@ pub(crate) fn hang(
     // The head the cage's head chain is shaped into, and what its feet
     // are shaped into (#367).
     skeleton.beast_head = Some(d.head);
-    skeleton.beast_feet = Some(super::BeastFeet { kind: feet });
+    skeleton.beast_feet = Some(super::BeastFeet {
+        kind: feet,
+        winged: None,
+    });
     // The trunk, pelvis forward (#375): six rings, each its own depth and
     // width. The pelvis is the root, as it always was.
     let zones = [

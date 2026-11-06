@@ -286,8 +286,10 @@ pub(in crate::plan::derive) fn head(
         },
         whiskers: None,
         ornaments: [None; 6],
+        beak: None,
+        disc: None,
     };
-    head.eye = eye_seat(&head, params, appeal);
+    head.eye = eye_seat(&head, params, appeal, &Look::BEAST);
     head.ear = ear_seat(&head, params, appeal);
     head.whiskers = whisker_seat(&head, params);
     head.ornaments = ornament_seats(&head, params, false);
@@ -1178,7 +1180,12 @@ fn ear_seat(head: &BeastHead, params: &QuadrupedParams, appeal: f32) -> EarSeat 
 /// normal there held near level ([`GAZE_TILT`]), and sunk along the gaze
 /// until [`PROUD`] of the globe stands out. A cute face is drawn with larger
 /// eyes.
-fn eye_seat(head: &BeastHead, params: &QuadrupedParams, appeal: f32) -> EyeSeat {
+pub(in crate::plan::derive) fn eye_seat(
+    head: &BeastHead,
+    params: &QuadrupedParams,
+    appeal: f32,
+    look: &Look,
+) -> EyeSeat {
     let r = head.radius;
     let set = params.eye_set.clamp(-1.5, 1.5);
     let along = |[frontal, middle, lateral]: [f32; 3]| {
@@ -1189,7 +1196,7 @@ fn eye_seat(head: &BeastHead, params: &QuadrupedParams, appeal: f32) -> EyeSeat 
         }
     };
     let rise = along(EYE_RISE).clamp(0.0, 0.6);
-    let radius = r * (0.25 + 0.05 * appeal);
+    let radius = r * (0.25 + 0.05 * appeal) * look.scale;
     let centre = head.cranium.centre;
     // The braincase's front: a seat past it is on the muzzle.
     let brow = centre.z + head.cranium.radii.z;
@@ -1201,8 +1208,11 @@ fn eye_seat(head: &BeastHead, params: &QuadrupedParams, appeal: f32) -> EyeSeat 
         );
         let surface = head.leave(centre, toward).unwrap_or(centre + toward * r);
         let normal = head.normal(surface);
-        let gaze = Vec3::new(normal.x, normal.y * GAZE_TILT, normal.z).normalize_or(Vec3::Z);
-        (surface - gaze * radius * (1.0 - PROUD), gaze)
+        let mut gaze = Vec3::new(normal.x, normal.y * GAZE_TILT, normal.z).normalize_or(Vec3::Z);
+        if look.ahead > 0.0 {
+            gaze = gaze.lerp(Vec3::Z, look.ahead).normalize_or(Vec3::Z);
+        }
+        (surface - gaze * radius * (1.0 - look.proud), gaze)
     };
     // **Round the head until the seat is one** (#367's critic): at the
     // envelope's frontal end a long Roman muzzle's bridge catches the seating
@@ -1223,6 +1233,30 @@ fn eye_seat(head: &BeastHead, params: &QuadrupedParams, appeal: f32) -> EyeSeat 
         radius,
         pupil: params.pupil,
     }
+}
+
+/// How a head's eyes depart from a beast's (#422): the winged plan's larger
+/// globes, a glider's that stand out of its head, an owl's that look straight
+/// ahead out of its dish.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::plan::derive) struct Look {
+    /// The globe's size against a beast's.
+    pub scale: f32,
+    /// How much of the globe stands proud of the head: [`PROUD`] on a beast.
+    pub proud: f32,
+    /// How far the gaze is turned from the surface's normal toward straight
+    /// ahead, `0..=1`: none on a beast, whose eyes look along their skull, and
+    /// most of the way out of a dish, whose normals lean in toward its middle.
+    pub ahead: f32,
+}
+
+impl Look {
+    /// A beast's eyes, as #367 seats them.
+    pub const BEAST: Self = Self {
+        scale: 1.0,
+        proud: PROUD,
+        ahead: 0.0,
+    };
 }
 
 /// How far an eye's centre must stand from the midline, in its globe's

@@ -265,6 +265,19 @@ impl BeastCharts {
     /// What the head `head` declares of its charts.
     pub(crate) fn of(head: &BeastHead) -> Self {
         let [back, front] = head.axis.map(|at| head.body(at));
+        // **An owl's head is wrapped round its crown's line, not its face's**
+        // (#422): its disc is a dish square to the line from the back of the
+        // skull to the face, which a wrap round that line can only flatten by
+        // its height along it, all one height across the dish - in streaks
+        // from its middle out. Round the crown's line the dish is the wrap's
+        // wall, and the seam runs down the back of the head.
+        if head.disc.is_some() {
+            return Self {
+                on_axis: head.body(head.cranium.centre),
+                axis: head.turn * Vec3::Y,
+                up: head.turn * Vec3::Z,
+            };
+        }
         Self {
             on_axis: back,
             axis: (front - back).normalize_or(landmark::FORWARD),

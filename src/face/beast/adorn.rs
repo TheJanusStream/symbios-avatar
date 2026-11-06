@@ -14,7 +14,9 @@
 //! turns, with flutes that twist. A horn, a fang and a tusk are that, and an antler
 //! is that for its beam and again for each tine. What stands where is
 //! `plan::derive::quadruped`'s, read off the head, and what rides the jaw is kept
-//! apart here so that the draw can bind it there.
+//! apart here so that the draw can bind it there. A bird's beak (#422) is drawn
+//! here for a horn's reason, its upper mandible on the head and its lower on the
+//! jaw (`beak`).
 
 use glam::{Mat4, Vec2, Vec3};
 
@@ -90,6 +92,12 @@ impl Adornments {
                 };
                 worn.append(&piece(seat).transformed(into_head));
             }
+        }
+        // A bird's beak (#422): the upper mandible with the head, the lower
+        // with the jaw, so an open mouth parts them.
+        if let Some(seat) = &beast.beak {
+            on_head.append(&super::beak::upper(seat).transformed(into_head));
+            on_jaw.append(&super::beak::lower(seat).transformed(into_head));
         }
         Self {
             whiskers,

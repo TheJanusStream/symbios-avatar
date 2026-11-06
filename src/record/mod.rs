@@ -87,6 +87,15 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
 ///
+/// **10** - a re-rolled bird draws its head (#422): a bird-led winged roll draws
+/// its beak's length and hook and its facial disc, on NEW streams
+/// (`winged.beakLength`, `winged.beakHook`, `winged.facialDisc`), where 0.20.0 drew
+/// every bird an owl's. No existing stream moved and no draw changed, and neither a
+/// person, a beast, a bat nor a glider draws them, so all of those rebuild to the
+/// byte; a bird-led seed keeps every other axis and describes a different head,
+/// which is what this number exists to say. No migration, for generation 7's
+/// reason.
+///
 /// **9** - a small share of re-rolled beasts wear what a creator gives one (#403,
 /// the owner's call, overturning "never rolled"). Two coins on NEW streams:
 ///
@@ -204,7 +213,7 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 9;
+pub const GENERATOR_VERSION: u32 = 10;
 
 /// The generation whose hair a record has to be re-rolled to reach.
 ///
@@ -2237,7 +2246,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 9,
+            GENERATOR_VERSION, 10,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {
@@ -2642,7 +2651,7 @@ mod tests {
         // this fails, every stored quadruped seed now names a different
         // animal, and GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 9,
+            GENERATOR_VERSION, 10,
             "bump the table below with the version"
         );
         let rolled = |seed: i64| {

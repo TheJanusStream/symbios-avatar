@@ -20,7 +20,15 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
-/// **12** - a beast's code ends with the colours a creator picked for its coat
+/// **13** - a winged code (tag 3) ends with its head's three spans (#422):
+/// `beakLength`, `beakHook` and `facialDisc`, after the complexion. **Written
+/// only by a code that needs it**: a winged body with an owl's head, every
+/// person and every beast go on writing the version they wrote, byte for byte,
+/// so a 0.20 reader takes them. A winged code of 10 reads as an owl's head,
+/// which is what it meant. Appended rather than put in the winged payload, so
+/// the layout `Archetype::decode` reads stays the one 0.20 wrote.
+///
+/// **12** -a beast's code ends with the colours a creator picked for its coat
 /// (#401), after the stiffness byte, which this version always carries: a mask of
 /// the picked channels, then three bytes for each. **Written only by a code that
 /// needs it**: a beast that picked none goes on writing 11 or 10, byte for byte.
@@ -111,13 +119,16 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 12;
+pub const SHARE_CODE_VERSION: u8 = 13;
 
 /// The version every code that carries no mane stiffness is written at.
 const PRE_STIFFNESS_VERSION: u8 = 10;
 
 /// The version every code that carries no picked colours is written at, at most.
 const PRE_COLOURS_VERSION: u8 = 11;
+
+/// The last version whose winged payload carries no head (#422).
+const PRE_BEAKS_VERSION: u8 = 12;
 
 /// The oldest format whose codes still decode.
 const OLDEST_VERSION: u8 = 3;
@@ -231,10 +242,16 @@ pub fn encode(archetype: &Archetype, composites: &Composites, skin: &SkinParams)
         }
         _ => None,
     };
-    let version = match (&colours, stiffness) {
-        (Some(_), _) => SHARE_CODE_VERSION,
-        (None, Some(_)) => PRE_COLOURS_VERSION,
-        (None, None) => PRE_STIFFNESS_VERSION,
+    // And only a winged body whose head is not an owl's (#422).
+    let head = match archetype {
+        Archetype::Winged(params) if params.head_needs_bytes() => Some(params),
+        _ => None,
+    };
+    let version = match (&colours, stiffness, head) {
+        (_, _, Some(_)) => SHARE_CODE_VERSION,
+        (Some(_), _, _) => PRE_BEAKS_VERSION,
+        (None, Some(_), _) => PRE_COLOURS_VERSION,
+        (None, None, None) => PRE_STIFFNESS_VERSION,
     };
     let mut payload = vec![version];
     archetype.encode(&mut payload);
@@ -247,6 +264,9 @@ pub fn encode(archetype: &Archetype, composites: &Composites, skin: &SkinParams)
     if let Some((colours, ornaments)) = colours {
         colours.encode(&mut payload);
         ornaments.encode(&mut payload);
+    }
+    if let Some(params) = head {
+        params.put_head(&mut payload);
     }
     payload.push(checksum(&payload));
     group(&base32_encode(&payload))
@@ -331,6 +351,13 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
             params.coat.colours = crate::plan::CoatColours::decode(&mut payload)?;
             params.ornaments.decode_over(&mut payload)?;
         }
+    }
+    // A winged body's head (#422), appended after everything else at 13: no
+    // older reader takes a code at 13, and no winged code below it has one.
+    if version > PRE_BEAKS_VERSION
+        && let Archetype::Winged(params) = &mut archetype
+    {
+        params.take_head(&mut payload)?;
     }
     if !payload.is_empty() {
         return Err(ShareCodeError::Trailing(payload.len()));
@@ -480,6 +507,35 @@ mod tests {
                 "version {version}"
             );
         }
+    }
+
+    #[test]
+    fn a_winged_head_rides_at_thirteen_and_an_owl_s_does_not() {
+        // #422: the head's three spans after the complexion, written only when
+        // the head is not an owl's, so the code above stays a 0.20 one.
+        let asked = crate::WingedParams {
+            beak_length: 1.0,
+            beak_hook: -0.9,
+            facial_disc: -1.0,
+            ..Default::default()
+        };
+        let code = encode(
+            &Archetype::Winged(asked),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        let bytes = base32_decode(&code).expect("decodes");
+        assert_eq!(bytes[0], SHARE_CODE_VERSION);
+        let (Archetype::Winged(back), _, _) = decode(&code).expect("decodes") else {
+            panic!("archetype changed");
+        };
+        assert!((back.beak_length - 1.0).abs() < 0.03, "{back:?}");
+        assert!((back.beak_hook + 0.9).abs() < 0.03, "{back:?}");
+        assert!((back.facial_disc + 1.0).abs() < 0.03, "{back:?}");
+        // Cut off before the head, it is short of what 13 promises.
+        let mut short = bytes[..bytes.len() - 4].to_vec();
+        short.push(checksum(&short));
+        assert!(decode(&base32_encode(&short)).is_err());
     }
 
     #[test]

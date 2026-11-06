@@ -28,6 +28,7 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 
 use super::kin::{self, Anchored, Blended, Bred, Draw, Kin, Lineage, Streams};
+use super::winged_foot::{Toes, WingedFoot};
 use super::{Anatomy, CompositePriors, Composites, DEFAULT_BODY_FAT, FootKind, Legs};
 use super::{BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length};
 use super::{take_byte, take_span};
@@ -137,6 +138,24 @@ pub struct WingedParams {
     /// it cute, the owner's call.
     #[serde(with = "super::scaled")]
     pub appeal: f32,
+    /// How long a bird's beak is (#422): an owl's short one at nought, a
+    /// crow's, about as long as the rest of its head, at one; a songbird's
+    /// shorter at the bottom. Shapes only a bird-led head.
+    #[serde(with = "super::scaled")]
+    pub beak_length: f32,
+    /// How far a bird's upper mandible hooks down over its lower (#422): an
+    /// owl's hook at nought, a parrot's deep curl at one, a crow's slight
+    /// curve and a songbird's straight bill below. The beak deepens as it
+    /// hooks. Shapes only a bird-led head.
+    #[serde(with = "super::scaled")]
+    pub beak_hook: f32,
+    /// How full a bird's facial disc is (#422): an owl's dish of stiff
+    /// feathers ringed by its ruff at nought, none from minus one. The eyes
+    /// follow it, from a crow's on the sides of its head to an owl's on the
+    /// front of its face. Shapes a bird-led head, and the bird's share of a
+    /// cross's eyes.
+    #[serde(with = "super::scaled")]
+    pub facial_disc: f32,
     /// Which kind of animal this is rolled as. See [`WingedFamily`].
     pub family: WingedFamily,
     /// The second family of a cross, if this is one.
@@ -181,6 +200,9 @@ impl Default for WingedParams {
             tail_length: 0.0,
             head_size: 0.0,
             appeal: 0.0,
+            beak_length: 0.0,
+            beak_hook: 0.0,
+            facial_disc: 0.0,
             family: WingedFamily::Bird,
             hybrid: None,
             blend: 0.0,
@@ -198,6 +220,9 @@ pub(crate) struct Anchor {
     tail_length: Draw,
     head_size: Draw,
     appeal: Draw,
+    beak_length: Draw,
+    beak_hook: Draw,
+    facial_disc: Draw,
     /// Where the family's [`Composites::mass`] centres.
     mass: Draw,
     /// Where its [`Composites::age`] centres, in years.
@@ -212,8 +237,14 @@ impl Anchored for Anchor {
     /// a roll strays is the family's. The bird strays furthest, toward the
     /// crow, the parrot and the songbird its corner holds (the owner's call):
     /// a longer neck and legs and a smaller head toward a crow, a long tail
-    /// toward a parrot, a small one toward a songbird.
+    /// toward a parrot, a small one toward a songbird. Its head's three axes
+    /// stray toward each of them too (#422): a crow's long beak, a parrot's
+    /// hook, the disc gone. A bat's and a glider's centre them at an owl's and
+    /// spread them as a bird's, so a change of family carries a bird's beak
+    /// across and back, but a bat or a glider rolls none (`reroll`): they
+    /// shape nothing it has.
     fn of(family: WingedFamily) -> Self {
+        let beak = Draw::at(0.0, 0.45);
         match family {
             WingedFamily::Bird => Self {
                 size: Draw::at(0.60, 0.10),
@@ -223,6 +254,9 @@ impl Anchored for Anchor {
                 tail_length: Draw::at(0.0, 0.55),
                 head_size: Draw::at(0.0, 0.4),
                 appeal: Draw::at(CUTE, 0.3),
+                beak_length: beak,
+                beak_hook: beak,
+                facial_disc: beak,
                 mass: Draw::at(0.0, 0.5),
                 age: Draw::at(32.0, 12.0),
             },
@@ -234,6 +268,9 @@ impl Anchored for Anchor {
                 tail_length: Draw::at(0.0, 0.3),
                 head_size: Draw::at(0.0, 0.3),
                 appeal: Draw::at(CUTE, 0.3),
+                beak_length: beak,
+                beak_hook: beak,
+                facial_disc: beak,
                 mass: Draw::at(0.0, 0.4),
                 age: Draw::at(32.0, 12.0),
             },
@@ -245,6 +282,9 @@ impl Anchored for Anchor {
                 tail_length: Draw::at(0.0, 0.3),
                 head_size: Draw::at(0.0, 0.3),
                 appeal: Draw::at(CUTE, 0.3),
+                beak_length: beak,
+                beak_hook: beak,
+                facial_disc: beak,
                 mass: Draw::at(0.0, 0.4),
                 age: Draw::at(32.0, 12.0),
             },
@@ -261,6 +301,9 @@ impl Anchored for Anchor {
             tail_length: mix(own.tail_length, other.tail_length),
             head_size: mix(own.head_size, other.head_size),
             appeal: mix(own.appeal, other.appeal),
+            beak_length: mix(own.beak_length, other.beak_length),
+            beak_hook: mix(own.beak_hook, other.beak_hook),
+            facial_disc: mix(own.facial_disc, other.facial_disc),
             mass: mix(own.mass, other.mass),
             age: mix(own.age, other.age),
         }
@@ -320,12 +363,50 @@ impl Bred for WingedParams {
             .carry(&mut self.tail_length, from.tail_length);
         to.head_size.carry(&mut self.head_size, from.head_size);
         to.appeal.carry(&mut self.appeal, from.appeal);
+        to.beak_length
+            .carry(&mut self.beak_length, from.beak_length);
+        to.beak_hook.carry(&mut self.beak_hook, from.beak_hook);
+        to.facial_disc
+            .carry(&mut self.facial_disc, from.facial_disc);
     }
 
-    /// No part is stored yet: the head, the feet and the coat a winged body
-    /// is built with are its leading family's until W3 and W4 store them.
+    /// No part is stored: the feet and the coat a winged body is built with
+    /// are its leading family's until W4 stores them, and its head's kind -
+    /// a beak or a muzzle - is its leading family's (#422).
     fn hand_over(&mut self) {}
 }
+
+/// The birds a rolled bird-led head is drawn about (#422): the owner's
+/// default, an owl, and the three its axes reach (docs/winged-anatomy.md
+/// "The axes").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BirdHead {
+    Owl,
+    Parrot,
+    Crow,
+    Songbird,
+}
+
+impl BirdHead {
+    /// Every kind, in [`Self::WEIGHTS`]' order.
+    const ALL: [Self; 4] = [Self::Owl, Self::Parrot, Self::Crow, Self::Songbird];
+    /// How often a roll draws each: an owl most, as the default bird is one,
+    /// and a crow's or a songbird's straight beak about one bird in four.
+    const WEIGHTS: [f32; 4] = [0.60, 0.15, 0.13, 0.12];
+
+    /// Its `beakLength`, `beakHook` and `facialDisc`.
+    const fn axes(self) -> [f32; 3] {
+        match self {
+            Self::Owl => [0.0, 0.0, 0.0],
+            Self::Parrot => [0.3, 1.0, -1.0],
+            Self::Crow => [1.0, -1.0, -1.0],
+            Self::Songbird => [0.2, -1.3, -1.0],
+        }
+    }
+}
+
+/// How far a rolled bird's head axes spread about its kind's.
+const HEAD_SPREAD: f32 = 0.25;
 
 impl WingedParams {
     /// The size envelope `sanitize` clamps to, in metres.
@@ -345,6 +426,33 @@ impl WingedParams {
                 blend,
             },
         );
+    }
+
+    /// Whether a share code must carry this body's head (#422): only when one
+    /// of its three axes is not an owl's, which a code written before them
+    /// meant, so a code of any other winged body stays one a 0.20 reader takes.
+    pub(crate) fn head_needs_bytes(&self) -> bool {
+        [self.beak_length, self.beak_hook, self.facial_disc] != [0.0; 3]
+    }
+
+    /// Writes the head's three axes, as the payload writes its others.
+    pub(crate) fn put_head(&self, out: &mut Vec<u8>) {
+        for axis in [self.beak_length, self.beak_hook, self.facial_disc] {
+            put_span(out, axis, signed_envelope());
+        }
+    }
+
+    /// Reads them back over a body the payload decoded, and sanitises it.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanDecodeError`] when the code ends before all three.
+    pub(crate) fn take_head(&mut self, bytes: &mut &[u8]) -> Result<(), PlanDecodeError> {
+        self.beak_length = take_span(bytes, signed_envelope())?;
+        self.beak_hook = take_span(bytes, signed_envelope())?;
+        self.facial_disc = take_span(bytes, signed_envelope())?;
+        self.sanitize();
+        Ok(())
     }
 
     /// How this body stands: its leading family's.
@@ -381,14 +489,44 @@ impl WingedParams {
         }
     }
 
-    /// The feet its leading family stands on, until W3 builds a bird's.
+    /// The paw a beast's foot would be under its leading family's toes: a
+    /// clawed one, the claws showing, on every family (#422: a glider's
+    /// digits are clawed, but for its hind hallux).
     pub(crate) fn feet(&self) -> super::Feet {
+        super::Feet::Claws
+    }
+
+    /// **How a bird's toes are arranged** (#422): anisodactyl, three forward
+    /// and the hallux back, as about nine birds in ten stand (research-10
+    /// 3.1, S17), or zygodactyl, the fourth turned back beside the hallux, as
+    /// a parrot's are and an owl's when it perches. Derived, not stored: from
+    /// the beak's hook, so the birds that grip as an owl and a parrot do - a
+    /// hooked beak - stand zygodactyl, and a crow's and a songbird's
+    /// straighter beaks anisodactyl ([`ZYGODACTYL_HOOK`]).
+    pub(crate) fn toes(&self) -> Toes {
+        if self.beak_hook >= ZYGODACTYL_HOOK {
+            Toes::Zygodactyl
+        } else {
+            Toes::Anisodactyl
+        }
+    }
+
+    /// The feet this body stands on: its leading family's (#422), a bird's
+    /// toes arranged as [`Self::toes`] says.
+    pub(crate) fn winged_foot(&self) -> WingedFoot {
         match self.lineage().leading() {
-            WingedFamily::Bird | WingedFamily::Bat => super::Feet::Claws,
-            WingedFamily::Glider => super::Feet::Pads,
+            WingedFamily::Bird => WingedFoot::Bird(self.toes()),
+            WingedFamily::Bat => WingedFoot::Bat,
+            WingedFamily::Glider => WingedFoot::Glider,
         }
     }
 }
+
+/// The least beak hook a zygodactyl bird has ([`WingedParams::toes`]):
+/// halfway between the crow's hook, `-1`, and the owl's, `0`
+/// (docs/winged-anatomy.md "The axes"), so the owl and the parrot grip with
+/// two toes back and the crow and the songbird stand on one.
+const ZYGODACTYL_HOOK: f32 = -0.5;
 
 impl BodyPlan for WingedParams {
     fn sanitize(&mut self) {
@@ -401,6 +539,9 @@ impl BodyPlan for WingedParams {
             (&mut self.tail_length, default.tail_length),
             (&mut self.head_size, default.head_size),
             (&mut self.appeal, default.appeal),
+            (&mut self.beak_length, default.beak_length),
+            (&mut self.beak_hook, default.beak_hook),
+            (&mut self.facial_disc, default.facial_disc),
         ] {
             *axis = super::sanitize_axis(*axis, fallback, signed_envelope());
         }
@@ -414,9 +555,12 @@ impl BodyPlan for WingedParams {
         };
     }
 
-    /// A beast's head, trunk and feet (W3 builds a beak and a bird's feet), no
-    /// hands, and the legs its posture stands on: a bird its hind pair, a bat
-    /// and a glider all four.
+    /// A beast's head, trunk and feet (W3 builds a beak), no hands, and the
+    /// legs its posture stands on: a bird its hind pair, a bat and a glider
+    /// all four. **A bird's and a bat's feet are still `FootKind::Beast`**
+    /// (#422): every pass that reads the kind asks whether a foot is a
+    /// person's or a hoof, and a toed foot stands on its toes as a paw does;
+    /// what its toes are is declared on the skeleton (`BeastFeet::winged`).
     fn anatomy(&self) -> Anatomy {
         Anatomy {
             head: super::HeadKind::Beast,
@@ -481,6 +625,27 @@ impl BodyPlan for WingedParams {
             }
             Category::Head => {
                 self.head_size = draw("winged.headSize", anchor.head_size, signed);
+                // A bird's head (#422), on streams of their own so no other
+                // axis's draw moved, and drawn only for a bird-led body, the
+                // one it shapes: a bat's or a glider's keeps what it carries,
+                // so a bird's beak comes back with the bird. **A kind of bird
+                // first, then each axis about it** (the owner's call at W3's
+                // review): drawn alone about the owl, a crow's straight beak
+                // came up one roll in eight and landed in an owl's disc.
+                if self.lineage().leading() == WingedFamily::Bird {
+                    let kind = BirdHead::ALL[rolls.pick("winged.beakKind", &BirdHead::WEIGHTS)];
+                    let [length, hook, disc] = kind.axes();
+                    let about =
+                        |stream: &str, mean: f32| draw(stream, Draw::at(mean, HEAD_SPREAD), signed);
+                    self.beak_length = about("winged.beakLength", length);
+                    self.beak_hook = about("winged.beakHook", hook);
+                    // Only an owl has a disc, drawn about its own.
+                    self.facial_disc = if kind == BirdHead::Owl {
+                        about("winged.facialDisc", disc)
+                    } else {
+                        disc
+                    };
+                }
             }
             // The family is drawn by `reroll_family`, under the frame's lock;
             // the girth is the composites'; nothing here is a colour, a coat,
@@ -623,14 +788,21 @@ impl WingedParams {
     /// Hangs this body's nodes, as its axes ask, on a skeleton.
     fn assemble(&self, composites: &Composites) -> Skeleton {
         let built = super::derive::winged::derive(self, composites);
-        super::quadruped::hang(
+        let mut skeleton = super::quadruped::hang(
             &built.dims,
             self.anatomy(),
             self.feet(),
             built.hind_inside,
             built.fore_inside,
             built.tail_inside,
-        )
+        );
+        // What its feet carry beyond a paw (#422): a bird's or a bat's
+        // toes, drawn on the ball or sole the foot is shaped into, or a
+        // glider's digits.
+        if let Some(feet) = &mut skeleton.beast_feet {
+            feet.winged = Some(self.winged_foot());
+        }
+        skeleton
     }
 
     /// [`Self::search_ease`]'s answer, remembered on this thread.
@@ -935,6 +1107,9 @@ mod tests {
             tail_length: -2.0,
             head_size: 0.3,
             appeal: 1.1,
+            beak_length: 0.8,
+            beak_hook: -0.6,
+            facial_disc: -1.2,
             family: WingedFamily::Bat,
             hybrid: Some(WingedFamily::Glider),
             blend: 0.35,

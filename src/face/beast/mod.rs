@@ -24,9 +24,12 @@
 //!
 //! The parts that stand off the head are built against the same declaration
 //! and kept together as a [`BeastFace`]: the [`ears`], the [`jaw`] with its
-//! tongue, and the whiskers and what it wears ([`adorn`]).
+//! tongue, and the whiskers and what it wears ([`adorn`]) - on a bird's head
+//! its beak (`beak`, #422), which stands in for the jaw's skin and the
+//! tongue, and no ears (each is then built empty, and no part).
 
 pub mod adorn;
+pub(crate) mod beak;
 pub mod ears;
 pub mod jaw;
 
@@ -78,14 +81,21 @@ impl BeastFace {
 
     /// Every part with the joint it rides, in a fixed order - the ears, the
     /// jaw, the tongue - which is the contract between whatever charts them
-    /// and whatever places the charts.
+    /// and whatever places the charts. A part built empty is none: a bird's
+    /// ears, and its jaw and tongue, its beak standing in for them (#422).
     pub fn parts(&self) -> impl Iterator<Item = (&PolyMesh, usize)> {
-        self.ears.parts().chain(self.jaw.parts())
+        self.ears
+            .parts()
+            .chain(self.jaw.parts())
+            .filter(|(mesh, _)| !mesh.is_empty())
     }
 
     /// Every part's mesh, in [`Self::parts`]' order, for writing.
     pub fn meshes_mut(&mut self) -> impl Iterator<Item = &mut PolyMesh> {
-        self.ears.meshes_mut().chain(self.jaw.meshes_mut())
+        self.ears
+            .meshes_mut()
+            .chain(self.jaw.meshes_mut())
+            .filter(|mesh| !mesh.is_empty())
     }
 
     /// Every part's mouth channel, in [`Self::parts`]' order: none for the
@@ -93,9 +103,33 @@ impl BeastFace {
     pub fn mouths(&self) -> impl Iterator<Item = Vec<f32>> {
         self.ears
             .parts()
-            .map(|_| Vec::new())
-            .chain(self.jaw.mouths())
+            .map(|(mesh, _)| (mesh, Vec::new()))
+            .chain(
+                self.jaw
+                    .parts()
+                    .map(|(mesh, _)| mesh)
+                    .zip(self.jaw.mouths()),
+            )
+            .filter(|(mesh, _)| !mesh.is_empty())
+            .map(|(_, mouth)| mouth)
+            .collect::<Vec<_>>()
+            .into_iter()
     }
+}
+
+/// How dark an owl's ruff is shaded at its middle, as a factor on the skin
+/// (#422): a vertex colour can only darken, and a darker rim round the dish is
+/// what reads as a facial disc where its relief no longer does.
+/// Provenance: **chosen by render** (#422), and lightened from 0.50, 0.45,
+/// 0.40 at the owner's review of W3.
+const RUFF_SHADE: Vec3 = Vec3::new(0.64, 0.59, 0.54);
+
+/// The shade of a vertex `off` of the ruff's radius from the middle of an
+/// owl's ruff (`BeastHead::on_ruff`): [`RUFF_SHADE`] within four tenths of a
+/// radius of its middle, fading to none at one.
+pub(crate) fn ruff_shade(off: f32) -> Vec3 {
+    let share = smooth((1.0 - off) / 0.6);
+    Vec3::ONE.lerp(RUFF_SHADE, share)
 }
 
 /// How many times the head zone is refined before it is shaped.

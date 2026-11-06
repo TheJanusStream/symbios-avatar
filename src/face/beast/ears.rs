@@ -78,7 +78,13 @@ impl Ears {
     pub fn build(rig: &Rig, head: usize, beast: &BeastHead) -> Self {
         let origin = rig.joints[head].position;
         let seat = beast.ear;
-        let card = card(&seat);
+        // A head that declares no ear - a bird's (#422) - builds each empty,
+        // which is no part and rides no joint.
+        let card = if seat.length > 0.0 {
+            card(&seat)
+        } else {
+            PolyMesh::new()
+        };
         let place = |side: f32| {
             let mirror = Vec3::new(side, 1.0, 1.0);
             let base = beast.body(seat.base * mirror) - origin;
@@ -121,6 +127,9 @@ impl Ears {
             return;
         };
         for ear in [&mut self.left, &mut self.right] {
+            if ear.mesh.is_empty() {
+                continue;
+            }
             ear.joint = rig.attach(self.head, origin + ear.base, Role::Helper);
             ear.tip_joint = ear
                 .joint

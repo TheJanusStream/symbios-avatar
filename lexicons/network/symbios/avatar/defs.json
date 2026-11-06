@@ -386,6 +386,27 @@
           "maximum": 3000,
           "default": 0
         },
+        "beakLength": {
+          "type": "integer",
+          "description": "How long a bird's beak is (#422): an owl's short one at 0, a crow's, about as long as the rest of its head, at 1000, a songbird's shorter below 0. Shapes only a bird-led head; absent, an owl's. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "beakHook": {
+          "type": "integer",
+          "description": "How far a bird's upper mandible hooks down over its lower (#422): an owl's hook at 0, a parrot's deep curl at 1000, a crow's slight curve and a songbird's straight bill below 0. The beak deepens as it hooks. Shapes only a bird-led head; absent, an owl's. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "facialDisc": {
+          "type": "integer",
+          "description": "How full a bird's facial disc is (#422): an owl's dish of stiff feathers ringed by its ruff at 0, none from -1000. The eyes follow it, from the sides of the head with no disc to the front of the face with a full one. Shapes a bird-led head, and the bird's share of a cross's eyes; absent, an owl's. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
         "family": {
           "type": "string",
           "description": "Which kind of winged animal this is rolled as and built in: the frame its axes are steps from and the centre a re-roll draws them around. A value a reader does not recognise reads as a bird.",
