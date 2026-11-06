@@ -54,12 +54,23 @@
 //! fixed cost the tier does not thin. A build asked for a far tier
 //! (`AvatarConfig::far_hair`) grows the same cards with the mane's solid on a
 //! coarser grid beside it (`grow`).
+//!
+//! **A winged body grows its cards here too** (#423): a bat's or a glider's
+//! fur in these zones, from the fur its plan derives, and a bird's contour
+//! feathers over its whole body (`contour`). Both keep clear of its wings as
+//! they lie at rest and of its eyes (`Clear`, and `Sheet` for a card that
+//! would reach through a folded feather or a membrane, the membrane spread
+//! too), and both are fitted to what the body's other draws leave of its
+//! budget rather than to [`MAX_TRIANGLES`] alone.
 
+mod clear;
+pub(crate) mod contour;
 mod mane;
 #[cfg(test)]
 mod seam;
 mod zone;
 
+pub(crate) use clear::{Clear, Sheet, leave_out, mark_near};
 pub use zone::FurZone;
 
 use glam::Vec3;
@@ -177,6 +188,9 @@ pub(crate) struct Bed<'a> {
     /// How many triangles what the head wears has spent out of the fur's ceiling
     /// (#402).
     pub worn: usize,
+    /// Where a winged body's wings lie over it, which no card roots under
+    /// (#423): `None` on a beast.
+    pub clear: Option<&'a Clear>,
 }
 
 impl Bed<'_> {
@@ -471,6 +485,36 @@ fn stream_seed(seed: i64, zone: FurZone) -> u64 {
 /// times the zone's weight there, and a root is redrawn inside its face
 /// until the weight where it lands accepts it.
 fn scatter(bed: &Bed, zone: FurZone, kept: &Thinned, stream: &mut Pcg64Mcg) -> Vec<(Root, Zone)> {
+    match bed.clear {
+        // A winged body's zones, clear of its wings and its eyes (#423).
+        Some(clear) => scatter_by(
+            bed,
+            &|at, normal, at_zone| {
+                zone.weight(bed, at, normal, at_zone)
+                    * clear.kept(at)
+                    * (1.0 - contour::round_eyes(bed, at))
+            },
+            kept,
+            stream,
+        ),
+        None => scatter_by(
+            bed,
+            &|at, normal, at_zone| zone.weight(bed, at, normal, at_zone),
+            kept,
+            stream,
+        ),
+    }
+}
+
+/// [`scatter`] by any weight over the body, `0..=1` at a point facing along a
+/// normal in a body zone: a zone's, or a winged body's contour feathers'
+/// (`contour`).
+fn scatter_by(
+    bed: &Bed,
+    weight_at: &dyn Fn(Vec3, Vec3, Zone) -> f32,
+    kept: &Thinned,
+    stream: &mut Pcg64Mcg,
+) -> Vec<(Root, Zone)> {
     let count = kept.full();
     if count == 0 {
         return Vec::new();
@@ -478,14 +522,7 @@ fn scatter(bed: &Bed, zone: FurZone, kept: &Thinned, stream: &mut Pcg64Mcg) -> V
     let mesh = bed.body;
     let normals = mesh.shading_normals();
     let weighed: Vec<f32> = (0..mesh.vertex_count())
-        .map(|vertex| {
-            zone.weight(
-                bed,
-                mesh.positions[vertex],
-                normals[vertex],
-                bed.zones[vertex],
-            )
-        })
+        .map(|vertex| weight_at(mesh.positions[vertex], normals[vertex], bed.zones[vertex]))
         .collect();
     let mut patches: Vec<(usize, f32)> = Vec::new();
     let mut total = 0.0;
@@ -537,14 +574,14 @@ fn scatter(bed: &Bed, zone: FurZone, kept: &Thinned, stream: &mut Pcg64Mcg) -> V
         };
         let mut seat = inside(mesh, &normals, bed.weights, face, stream);
         let mut at_zone = zone_at(seat.0);
-        let mut weight = zone.weight(bed, seat.0, seat.1, at_zone);
+        let mut weight = weight_at(seat.0, seat.1, at_zone);
         for _ in 0..RETRIES {
             if weight > stream.random_range(0.0..1.0) {
                 break;
             }
             seat = inside(mesh, &normals, bed.weights, face, stream);
             at_zone = zone_at(seat.0);
-            weight = zone.weight(bed, seat.0, seat.1, at_zone);
+            weight = weight_at(seat.0, seat.1, at_zone);
         }
         if weight <= f32::EPSILON || !kept.keeps(index) {
             continue;
@@ -1028,6 +1065,7 @@ mod tests {
                 coat: &coat,
                 ears: None,
                 worn: 0,
+                clear: None,
             };
             let triangles = neck_faces(&bed);
             let crest = Crest::of(&bed).expect("a crest");
@@ -1305,6 +1343,7 @@ mod tests {
                 coat: &coat,
                 ears: None,
                 worn: 0,
+                clear: None,
             };
             let mut ruffed = 0;
             for (&at, normal) in parts.body.positions.iter().zip(parts.body.vertex_normals()) {
@@ -1344,6 +1383,7 @@ mod tests {
                 coat: &coat,
                 ears: None,
                 worn: 0,
+                clear: None,
             };
             let mut legs = 0;
             for ((&at, &zone), normal) in parts

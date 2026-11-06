@@ -58,9 +58,9 @@ impl Outfit {
         let trousers_raw = garment::claimed(mesh, rig, zones, &trousers);
         let top_raw = garment::claimed(mesh, rig, zones, &top);
         let mut trousers_faces = trousers_raw.clone();
-        garment::close(mesh, &mut trousers_faces, &top_raw);
+        garment::close(mesh, rig, &mut trousers_faces, &top_raw);
         let mut top_faces = top_raw;
-        garment::close(mesh, &mut top_faces, &trousers_faces);
+        garment::close(mesh, rig, &mut top_faces, &trousers_faces);
 
         for (faces, cut, worn) in [
             (&trousers_faces, &trousers, &params.trousers),

@@ -290,6 +290,28 @@ pub struct Parts {
     pub wings: Option<crate::wing::WingParts>,
 }
 
+/// How far round a winged body's wing parts its cards keep clear (#423), as
+/// shares of its back's height: none within the first, fewer out to the
+/// second. A bird's folded feathers lie up to 0.07 of a trunk off its flank,
+/// a bat's cape a centimetre; a card is about a sixth of the back's height
+/// long, and one rooted inside the first reach would lie under the wing or
+/// through the membrane. Provenance: **chosen by render** (#423).
+const CLEAR_FEATHERS: (f32, f32) = (0.03, 0.06);
+/// See [`CLEAR_FEATHERS`].
+const CLEAR_MEMBRANE: (f32, f32) = (0.04, 0.08);
+
+/// The spreads, besides the rest, at which no card of a bat's or a glider's
+/// fur may pass through its membrane (#423): a ruff on the fore limb rides
+/// the arm out through the propatagium as the wing opens, which the rest
+/// alone does not show. Halfway and whole, against the critic's measure: 0
+/// crossings at rest, 18 at a half and 25 whole on the default bat.
+const SPREAD_CLEAR: [f32; 2] = [0.5, 1.0];
+
+/// How near an eye's globe a winged body's card may come, as a share of the
+/// globe's radius (#423): a few millimetres on a bat's, so no card lies across
+/// the eye or in its socket.
+const EYE_MARGIN: f32 = 0.15;
+
 /// A beast's fur ready to draw (#369): in body space already, and shaded by its own
 /// faces as the hair's draw is, unless it has a mane, whose solid carries the
 /// normals it is shaded by (#407). The near tier's and the far tier's alike.
@@ -799,15 +821,11 @@ impl Avatar {
                 .covers(&rig, &body, head.radius)
                 .into_iter()
                 .zip(&zones)
-                .zip(&body.positions)
-                .map(|((covered, &zone), &point)| {
+                .map(|(covered, &zone)| {
+                    // An owl's ruff is its plumage's own colour now, painted
+                    // in the atlas rather than shaded here (#423).
                     if covered && zone == Zone::Head {
                         face::beast::jaw::INSIDE
-                    } else if zone == Zone::Head {
-                        // An owl's ruff, shaded darker than the dish it rings
-                        // (#422): what outlines a facial disc at a distance.
-                        head.on_ruff(head.local(point))
-                            .map_or(Vec3::ONE, face::beast::ruff_shade)
                     } else {
                         Vec3::ONE
                     }
@@ -847,11 +865,28 @@ impl Avatar {
             crate::plan::Archetype::Quadruped(_) | crate::plan::Archetype::Winged(_)
         )
         .then(|| {
-            texture::coat::CoatBody::of(
+            let mut anatomy = texture::coat::CoatBody::of(
                 &rig,
                 skeleton.beast_head.as_ref(),
                 skeleton.beast_feet.as_ref(),
-            )
+            );
+            // A winged body's families' marks and its membrane's region of
+            // the atlas (#423), which the painter and its fur both read.
+            if let crate::plan::Archetype::Winged(params) = &record.archetype {
+                anatomy.winged = Some(texture::coat::WingedCoat {
+                    marks: params.marks(),
+                    membrane: wings
+                        .as_ref()
+                        .filter(|wings| !wings.membrane.is_empty())
+                        .and_then(|wings| {
+                            texture::coat::MembraneChart::of(
+                                &wings.membrane.uvs,
+                                params.naked_membrane(),
+                            )
+                        }),
+                });
+            }
+            anatomy
         });
         let painted = match (&record.archetype, &anatomy) {
             (crate::plan::Archetype::Quadruped(params), Some(anatomy)) => {
@@ -865,15 +900,21 @@ impl Avatar {
                         coat: &params.coat,
                         ears: None,
                         worn: 0,
+                        clear: None,
                     },
                     &params.fur,
                 );
                 texture::coat::paint_coat(&geometry, &rig, &params.coat, anatomy, mane.as_ref())
             }
-            // A winged body's stand-in coat, its leading family's, until it
-            // stores one (#423).
+            // A winged body's surface (#423): a bird-led body's plumage, its
+            // bare toes in a bird's leather, and a bat's or a glider's coat.
             (crate::plan::Archetype::Winged(params), Some(anatomy)) => {
-                texture::coat::paint_coat(&geometry, &rig, &params.coat(), anatomy, None)
+                if params.feathered() {
+                    let plumage = texture::coat::PlumageSampler::new(params.plumage, anatomy);
+                    texture::coat::paint_plumage(&geometry, &rig, &plumage, &params.coat(), anatomy)
+                } else {
+                    texture::coat::paint_coat(&geometry, &rig, &params.coat(), anatomy, None)
+                }
             }
             _ => texture::paint_skin(
                 &geometry,
@@ -991,6 +1032,7 @@ impl Avatar {
                     worn: beast
                         .as_ref()
                         .map_or(0, |beast| beast.adornments.triangles_past_a_unicorn()),
+                    clear: None,
                 };
                 // And its far tier, asked for (#407): a beast grows no person's
                 // hair, so its fur is the whole of the hair's draw a far tier
@@ -1048,7 +1090,151 @@ impl Avatar {
             .map(|far| avatar.placed_hair(far))
             .or_else(|| far_fur.as_ref().map(placed_fur));
         avatar.budget = avatar.measure();
+        if let (crate::plan::Archetype::Winged(params), Some(anatomy)) =
+            (&record.archetype, &anatomy)
+        {
+            avatar.grow_winged_cards(params, anatomy, record.seed);
+        }
         Some(avatar)
+    }
+
+    /// **A winged body's cards** (#423): a bird-led body's contour feathers,
+    /// or a bat's or a glider's fur ([`crate::WingedParams`]'s derived fur),
+    /// grown once every other draw is built and measured, and **fitted to what
+    /// those leave of [`crate::wing::MAX_TRIANGLES`]**, as a beast's fur gives
+    /// up what its head wears (#402). Clear of the wing parts as they lie at
+    /// rest (`hair::fur::Clear`), so no card roots under a folded wing, and
+    /// with every card left out that passes through a folded feather or a
+    /// membrane - the membrane at rest and spread ([`SPREAD_CLEAR`]) - or
+    /// comes near an eye ([`EYE_MARGIN`]); drawn in the hair's draw a bird's
+    /// flight feathers already make, so a winged body makes the draws it did.
+    fn grow_winged_cards(
+        &mut self,
+        params: &crate::plan::WingedParams,
+        anatomy: &texture::coat::CoatBody,
+        seed: i64,
+    ) {
+        use crate::hair::fur::{self, Bed, Clear};
+        let left = crate::wing::MAX_TRIANGLES.saturating_sub(self.budget.tris);
+        let feathered = params.feathered();
+        let fur = params.fur();
+        if left == 0 || !(feathered || fur.any()) {
+            return;
+        }
+        // The wing parts at rest: a bird's folded feathers, a membrane.
+        let wings: Vec<Vec3> = self.parts.wings.as_ref().map_or_else(Vec::new, |wings| {
+            wings
+                .feathers
+                .positions
+                .iter()
+                .chain(&wings.membrane.positions)
+                .copied()
+                .collect()
+        });
+        let (near, far) = if feathered {
+            CLEAR_FEATHERS
+        } else {
+            CLEAR_MEMBRANE
+        };
+        let clear = Clear::around(&wings, near * anatomy.height, far * anatomy.height);
+        let coat = params.coat();
+        // What no card may pass through: the wing parts at rest - a bird's
+        // folded feathers, whose vertices alone are sparse along a long
+        // feather, and a membrane - and a membrane as the wings spread it, each
+        // card moved by its own skin as the pose moves the arm under it.
+        let mut rest = Vec::new();
+        let mut spread = Vec::new();
+        if let Some(wings) = &self.parts.wings {
+            for part in [&wings.feathers, &wings.membrane] {
+                if !part.is_empty() {
+                    rest.push(fur::Sheet::of(part));
+                }
+            }
+            if !wings.membrane.is_empty() {
+                for extension in SPREAD_CLEAR {
+                    let mut pose = Pose::rest(&self.rig);
+                    self.rig.spread_wings(&mut pose, extension, extension);
+                    let posed = pose.forward(&self.rig);
+                    let sheet = fur::Sheet::of(&posed.deform_mesh(&self.rig, &wings.membrane));
+                    spread.push((posed, sheet));
+                }
+            }
+        }
+        // And no card on an eye: the globes in body space, each the ball
+        // about the pivot it turns on.
+        let globes: Vec<(Vec3, f32)> = self.parts.eyes.as_ref().map_or_else(Vec::new, |eyes| {
+            let head = self.rig.joints[eyes.head].position;
+            [&eyes.left, &eyes.right]
+                .into_iter()
+                .map(|eye| {
+                    let radius = eye
+                        .globe
+                        .positions
+                        .iter()
+                        .map(|point| point.distance(eye.pivot))
+                        .fold(0.0, f32::max);
+                    (head + eye.pivot, radius)
+                })
+                .collect()
+        });
+        let grow = |ceiling: usize| {
+            let bed = Bed {
+                body: &self.parts.body,
+                zones: &self.parts.zones,
+                rig: &self.rig,
+                weights: &self.parts.weights,
+                anatomy,
+                coat: &coat,
+                ears: self.parts.beast.as_ref().map(|beast| &beast.ears),
+                worn: fur::MAX_TRIANGLES.saturating_sub(ceiling),
+                clear: Some(&clear),
+            };
+            let mut grown = if feathered {
+                // **The plumage's one call** (#423): the colour at a card's
+                // root, the bird's plumage's (`PlumageSampler`), so a card is
+                // the colour of the skin it grows from.
+                let plumage = texture::coat::PlumageSampler::new(params.plumage, anatomy);
+                fur::contour::grow(
+                    &bed,
+                    &|at, normal, zone| plumage.colour(at, normal, zone),
+                    seed,
+                    ceiling,
+                )
+            } else {
+                fur::grow(&bed, &fur, seed, false).0
+            };
+            // A card rooted clear of a wing part may still reach across it,
+            // or across an eye, so the whole card is left out.
+            let mesh = &grown.mesh;
+            let mut out = vec![false; mesh.vertex_count()];
+            for sheet in &rest {
+                sheet.mark_crossing(&mesh.faces, &mesh.positions, &mut out);
+            }
+            for (posed, sheet) in &spread {
+                let moved = posed.deform_mesh(&self.rig, mesh);
+                sheet.mark_crossing(&mesh.faces, &moved.positions, &mut out);
+            }
+            fur::mark_near(&mesh.faces, &mesh.positions, &globes, EYE_MARGIN, &mut out);
+            let left_out = fur::leave_out(&mut grown, &out);
+            (grown, left_out)
+        };
+        // What the cards left out gave back, asked for once more: thinned to
+        // the ceiling and then cut, the cards fell short of it.
+        let (mut grown, left_out) = grow(left);
+        if left_out > 0 && grown.tris() < left {
+            let (again, _) = grow(left + (left - grown.tris()));
+            if again.tris() <= left && again.tris() > grown.tris() {
+                grown = again;
+            }
+        }
+        // A body already at its ceiling grows none, rather than the one card a
+        // zone keeps however thin it is thinned.
+        if grown.mesh.face_count() == 0 || grown.tris() > left {
+            return;
+        }
+        self.parts.fur = Some(grown);
+        self.meshes = self.merge();
+        self.budget = self.measure();
     }
 
     /// The strand mask every hair card's texture coordinates index (#340).

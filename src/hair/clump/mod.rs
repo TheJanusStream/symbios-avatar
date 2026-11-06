@@ -489,11 +489,16 @@ pub struct Sowing<'a> {
 ///   the 3,390 quoted since #347 was seed 42's, the head the test prints), and
 ///   the product corner under this ceiling is 31,962 against a 32,200 target.
 ///
-/// What that leftover does NOT say, found on the same run and filed as #353:
-/// the six seeds every budget sweep visits are not the dearest bodies. Rolled
-/// bald bodies reach 31,722 (seed 175) and 32,408 on a long broad head (seed
-/// 237), where the leftover under the target is negative. Until #353 widens
-/// the sweep, this constant is the leftover over the six seeds and says so.
+/// **RE-MEASURED AT #353 and left at 3,300** (2026-11-06). That leftover was
+/// taken over six seeds, and the dearest bodies a re-roll makes were none of
+/// them: lean, thin, tall bodies whose top's collar fill climbed over the jaw
+/// (fixed in `dress::garment::close`). The budget sweeps now pin those
+/// composites' corners on twenty seeds, and against what they read with the
+/// collar fixed the target rose to 33,500 by the owner's call: the dearest
+/// bald body is 30,142 (seed 2 long broad, lean thin tall at frame 0), so the
+/// leftover is **3,358** - this ceiling fits it by 58, and the floor under it
+/// is still the 3,276 a helmet on seed 102's own face costs. The product
+/// corner, the greediest legal hair on that body, is 33,440.
 pub const MAX_TRIANGLES: usize = 3_300;
 
 /// How many times a head of hair is regrown to get under [`MAX_TRIANGLES`].

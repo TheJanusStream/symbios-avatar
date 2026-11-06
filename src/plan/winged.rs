@@ -28,8 +28,9 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 
 use super::kin::{self, Anchored, Blended, Bred, Draw, Kin, Lineage, Streams};
+use super::plumage::{BirdKind, Plumage};
 use super::winged_foot::{Toes, WingedFoot};
-use super::{Anatomy, CompositePriors, Composites, DEFAULT_BODY_FAT, FootKind, Legs};
+use super::{Anatomy, Coat, CompositePriors, Composites, DEFAULT_BODY_FAT, FootKind, Legs};
 use super::{BodyPlan, Category, PlanDecodeError, Rolls, put_length, put_span, take_length};
 use super::{take_byte, take_span};
 use crate::skeleton::Skeleton;
@@ -57,6 +58,50 @@ pub enum WingedFamily {
 }
 
 named!(WingedFamily: Bird => "bird", Bat => "bat", Glider => "glider");
+
+impl WingedFamily {
+    /// The coat a body of this family wears until it stores one (#423): what
+    /// `WingedParams::coat()` reads an absent coat as. **A fruit bat's near-black**
+    /// (a flying fox's dark body under its golden mantle, which the coat painter
+    /// lays over it) and **a sugar glider's blue-grey**, each lightening toward its belly as every
+    /// coat does; and **a bird's brown grizzle**, W1's stand-in, which a bird
+    /// wears only on its bare parts - its scaled toes take their leather from
+    /// it, as W3 painted them - since its feathers are its [`Plumage`]'s.
+    #[must_use]
+    pub fn default_coat(self) -> Coat {
+        use super::{Agouti, Pigment};
+        match self {
+            WingedFamily::Bird => Coat {
+                pigment: Pigment::Liver,
+                agouti: Agouti::Wild,
+                ..Coat::default()
+            },
+            WingedFamily::Bat => Coat {
+                pigment: Pigment::Black,
+                ..Coat::default()
+            },
+            // A mid grey, picked outright (the owner's call at W4's review),
+            // lightening toward the belly as every coat does: the diluted
+            // black's blue-grey, 0.44, read nearly white.
+            WingedFamily::Glider => Coat {
+                pigment: Pigment::Black,
+                dilute: true,
+                colours: super::CoatColours {
+                    dark: Some(GLIDER_GREY),
+                    ..super::CoatColours::default()
+                },
+                ..Coat::default()
+            },
+        }
+    }
+}
+
+/// A sugar glider's default coat's grey (#423), picked, sRGB.
+const GLIDER_GREY: [f32; 3] = [0.30, 0.31, 0.33];
+
+/// A parrot's iris across the eyes' shade (#423), from a pale cream to straw,
+/// sRGB: a macaw's pale eye.
+const PARROT_IRIS: ([f32; 3], [f32; 3]) = ([0.80, 0.78, 0.68], [0.93, 0.82, 0.40]);
 
 /// How a winged body stands at rest: its leading family's (#420).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,6 +209,26 @@ pub struct WingedParams {
     /// How far a cross is rolled toward its [`Self::hybrid`] family, `0..=1`.
     #[serde(with = "super::scaled")]
     pub blend: f32,
+    /// What colour a bird's feathers are, tract by tract, and how they are
+    /// marked (#423). See [`Plumage`]. Paints a bird-led body only, and is
+    /// carried across any change of family, so a bird made a bat and back
+    /// keeps its feathers. Left off the wire while it is the default owl's.
+    #[serde(skip_serializing_if = "is_default_plumage")]
+    pub plumage: Plumage,
+    /// What colour a bat's or a glider's fur and membrane are and how it is
+    /// marked (#423): the beast's [`Coat`]. **Absent until a roll or a creator
+    /// stores one**, and absent reads as the leading family's own
+    /// ([`WingedFamily::default_coat`]): a family's default cannot be a field's,
+    /// which a reader fills without knowing the family. Paints a bat- or
+    /// glider-led body only, read through `coat()`'s family rule. Left off the
+    /// wire while absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coat: Option<Coat>,
+}
+
+/// Whether a plumage is the plan's default, which a record leaves unwritten.
+fn is_default_plumage(plumage: &Plumage) -> bool {
+    *plumage == Plumage::default()
 }
 
 /// Neutral size, used when a record omits the field: the bird's.
@@ -206,6 +271,8 @@ impl Default for WingedParams {
             family: WingedFamily::Bird,
             hybrid: None,
             blend: 0.0,
+            plumage: Plumage::default(),
+            coat: None,
         }
     }
 }
@@ -370,43 +437,49 @@ impl Bred for WingedParams {
             .carry(&mut self.facial_disc, from.facial_disc);
     }
 
-    /// No part is stored: the feet and the coat a winged body is built with
-    /// are its leading family's until W4 stores them, and its head's kind -
-    /// a beak or a muzzle - is its leading family's (#422).
+    /// **Nothing is handed over** (#423). The feet and the head's kind - a beak
+    /// or a muzzle - are derived from the leading family, not stored (#422).
+    /// The two surfaces are stored and both are kept, as a beast keeps its coat
+    /// across a change of family (#368): the plumage is a bird's and paints
+    /// only a bird-led body, so it rides a bat or a glider unseen and a bird
+    /// made a bat and back comes back in its own feathers, as its beak does; a
+    /// stored coat is a creator's or a roll's and goes with the body, while an
+    /// absent one reads as whichever family leads, so a bird made a bat wears a
+    /// fruit bat's brown and made a glider a glider's grey.
     fn hand_over(&mut self) {}
 }
 
-/// The birds a rolled bird-led head is drawn about (#422): the owner's
-/// default, an owl, and the three its axes reach (docs/winged-anatomy.md
-/// "The axes").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BirdHead {
-    Owl,
-    Parrot,
-    Crow,
-    Songbird,
-}
-
-impl BirdHead {
-    /// Every kind, in [`Self::WEIGHTS`]' order.
-    const ALL: [Self; 4] = [Self::Owl, Self::Parrot, Self::Crow, Self::Songbird];
-    /// How often a roll draws each: an owl most, as the default bird is one,
-    /// and a crow's or a songbird's straight beak about one bird in four.
-    const WEIGHTS: [f32; 4] = [0.60, 0.15, 0.13, 0.12];
-
-    /// Its `beakLength`, `beakHook` and `facialDisc`.
-    const fn axes(self) -> [f32; 3] {
-        match self {
-            Self::Owl => [0.0, 0.0, 0.0],
-            Self::Parrot => [0.3, 1.0, -1.0],
-            Self::Crow => [1.0, -1.0, -1.0],
-            Self::Songbird => [0.2, -1.3, -1.0],
-        }
-    }
-}
+/// How often a rolled bird-led head is drawn as each kind of bird (#422), in
+/// [`BirdKind::ALL`]'s order: an owl most, as the default bird is one, and a
+/// crow's or a songbird's straight beak about one bird in four.
+const BIRD_WEIGHTS: [f32; 4] = [0.60, 0.15, 0.13, 0.12];
 
 /// How far a rolled bird's head axes spread about its kind's.
 const HEAD_SPREAD: f32 = 0.25;
+
+/// The kind of bird `rolls` draw a bird-led head as, and the head's
+/// `beakLength`, `beakHook` and `facialDisc` drawn about that kind's (#422):
+/// what `Category::Head` stores and what `Category::Colouring` draws a
+/// plumage for. A function of the rolls alone, so the colouring asks again
+/// and is answered as the head was.
+fn rolled_head(rolls: &Rolls) -> (BirdKind, [f32; 3]) {
+    let kind = BirdKind::ALL[rolls.pick("winged.beakKind", &BIRD_WEIGHTS)];
+    let [length, hook, disc] = kind.axes();
+    let signed = signed_envelope();
+    let about = |stream: &str, mean: f32| {
+        let at = Draw::at(mean, HEAD_SPREAD);
+        rolls.shape(stream, at.mean, at.sigma, signed)
+    };
+    let length = about("winged.beakLength", length);
+    let hook = about("winged.beakHook", hook);
+    // Only an owl has a disc, drawn about its own.
+    let disc = if kind == BirdKind::Owl {
+        about("winged.facialDisc", disc)
+    } else {
+        disc
+    };
+    (kind, [length, hook, disc])
+}
 
 impl WingedParams {
     /// The size envelope `sanitize` clamps to, in metres.
@@ -466,27 +539,101 @@ impl WingedParams {
         self.put_lineage(Lineage::rolled(rolls, &STREAMS));
     }
 
-    /// The coat a winged body is painted in until it stores one (W4, #423):
-    /// its leading family's, a stand-in rather than a roll. A brown bird, a
-    /// dark bat and a blue-grey glider with the dark stripe down its back.
+    /// **The coat a winged body's fur, membrane and bare parts are painted in**
+    /// (#423): a bat- or glider-led body's stored `coat`, or its leading
+    /// family's own while it stores none ([`WingedFamily::default_coat`]). A
+    /// bird-led body's feathers are its [`Self::plumage`]'s, and what this
+    /// gives it is a bird's own, whatever it carries: the leather its bare toes
+    /// are painted in, as W3 painted them.
     pub(crate) fn coat(&self) -> super::Coat {
-        use super::{Agouti, Coat, Pigment};
-        match self.lineage().leading() {
-            WingedFamily::Bird => Coat {
-                pigment: Pigment::Liver,
-                agouti: Agouti::Wild,
-                ..Coat::default()
-            },
-            WingedFamily::Bat => Coat {
-                pigment: Pigment::Black,
-                ..Coat::default()
-            },
-            WingedFamily::Glider => Coat {
-                pigment: Pigment::Black,
-                agouti: Agouti::Wild,
-                ..Coat::default()
-            },
+        match (self.lineage().leading(), self.coat) {
+            (WingedFamily::Bird, _) => WingedFamily::Bird.default_coat(),
+            (_, Some(coat)) => coat,
+            (family, None) => family.default_coat(),
         }
+    }
+
+    /// **The kind of bird this body's head is drawn as** (#423), since the
+    /// kind a roll drew its head about is not stored: an owl if the head has a
+    /// disc, which only an owl's roll draws, and otherwise the disc-less kind
+    /// whose head's axes stand nearest its own (#422; `BirdKind::of_head`).
+    /// What a roll draws a plumage for, so a parrot-beaked bird wears a
+    /// parrot's colours and an owl an owl's whatever its beak rolled.
+    pub(crate) fn bird_kind(&self) -> BirdKind {
+        BirdKind::of_head([self.beak_length, self.beak_hook, self.facial_disc])
+    }
+
+    /// The plumage of the kind of bird this body's head is drawn as (an owl's
+    /// with a disc, else the disc-less kind its beak is nearest): its preset,
+    /// an owl's for the default head, a parrot's for a parrot's beak. What a
+    /// creator who has shaped a beak can dress the bird in to match.
+    #[must_use]
+    pub fn plumage_for_head(&self) -> Plumage {
+        Plumage::of(self.bird_kind())
+    }
+
+    /// The plumages a roll picks among for this body (#423): the palettes of
+    /// the kind of bird its head is drawn as (`Self::plumage_for_head`'s), the preset
+    /// first - a swatch row a creator can pick a whole plumage off.
+    #[must_use]
+    pub fn plumage_palettes(&self) -> &'static [Plumage] {
+        super::plumage::palettes(self.bird_kind())
+    }
+
+    /// Whether a share code must carry this body's surfaces (#423): only when
+    /// its plumage is not the default owl's or it stores a coat other than its
+    /// leading family's own, which is what a code written before them meant,
+    /// so every other winged body's code stays one a 0.21 reader takes. A
+    /// bird-led body that stores a coat carries it, since none is its family's.
+    pub(crate) fn surfaces_need_bytes(&self) -> bool {
+        self.plumage != Plumage::default()
+            || self
+                .coat
+                .is_some_and(|coat| match self.lineage().leading() {
+                    WingedFamily::Bird => true,
+                    family => coat != family.default_coat(),
+                })
+    }
+
+    /// Writes the surfaces: a byte of which follow - the plumage, then the
+    /// coat - and each that does.
+    pub(crate) fn put_surfaces(&self, out: &mut Vec<u8>) {
+        let plumage = self.plumage != Plumage::default();
+        out.push(u8::from(plumage) | u8::from(self.coat.is_some()) << 1);
+        if plumage {
+            self.plumage.encode(out);
+        }
+        if let Some(coat) = &self.coat {
+            coat.encode(out);
+            coat.colours.encode(out);
+        }
+    }
+
+    /// Reads them back over a body the payload decoded, and sanitises it. A
+    /// flag this build does not know reads as nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanDecodeError`] when the code ends before what its byte says follows.
+    pub(crate) fn take_surfaces(&mut self, bytes: &mut &[u8]) -> Result<(), PlanDecodeError> {
+        let flags = take_byte(bytes)?;
+        if flags & 1 != 0 {
+            self.plumage = Plumage::decode(bytes)?;
+        }
+        if flags & 2 != 0 {
+            let mut coat = Coat::decode(bytes)?;
+            coat.colours = super::CoatColours::decode(bytes)?;
+            self.coat = Some(coat);
+        }
+        self.sanitize();
+        Ok(())
+    }
+
+    /// Whether this body is feathered (#421, #423): a bird-led body, whose
+    /// surface is its [`Self::plumage`]. A bat- or glider-led body wears its
+    /// coat.
+    pub(crate) fn feathered(&self) -> bool {
+        self.lineage().leading() == WingedFamily::Bird
     }
 
     /// The paw a beast's foot would be under its leading family's toes: a
@@ -545,6 +692,10 @@ impl BodyPlan for WingedParams {
         ] {
             *axis = super::sanitize_axis(*axis, fallback, signed_envelope());
         }
+        self.plumage.sanitize();
+        if let Some(coat) = &mut self.coat {
+            coat.sanitize();
+        }
         if self.hybrid == Some(self.family) {
             self.hybrid = None;
         }
@@ -585,11 +736,26 @@ impl BodyPlan for WingedParams {
     /// A bird's eyes are an owl's amber and gold, a bat's and a glider's dark,
     /// the leading family's: the cat's ramp and the horse's.
     fn iris(&self, shade: f32) -> [f32; 3] {
-        let like = match self.lineage().leading() {
-            WingedFamily::Bird => super::Family::Cat,
-            WingedFamily::Bat | WingedFamily::Glider => super::Family::Horse,
-        };
-        super::coat::iris(like, shade)
+        match (self.lineage().leading(), self.bird_kind()) {
+            // Each kind of bird its own eyes (the owner's call at W4's
+            // review): an owl's amber and gold, the cat's ramp; a parrot's
+            // pale, cream to straw; a crow's and a songbird's dark brown, the
+            // horse's ramp short of its wall eye.
+            (WingedFamily::Bird, BirdKind::Owl) => super::coat::iris(super::Family::Cat, shade),
+            (WingedFamily::Bird, BirdKind::Parrot) => {
+                let t = shade.clamp(0.0, 1.0);
+                [0.0, 1.0, 2.0].map(|i| {
+                    let i = i as usize;
+                    PARROT_IRIS.0[i] + (PARROT_IRIS.1[i] - PARROT_IRIS.0[i]) * t
+                })
+            }
+            (WingedFamily::Bird, BirdKind::Crow | BirdKind::Songbird) => {
+                super::coat::iris(super::Family::Horse, shade.clamp(0.0, 0.85))
+            }
+            (WingedFamily::Bat | WingedFamily::Glider, _) => {
+                super::coat::iris(super::Family::Horse, shade)
+            }
+        }
     }
 
     /// **A body its cage cannot hull is eased toward its leading family's
@@ -633,26 +799,42 @@ impl BodyPlan for WingedParams {
                 // review): drawn alone about the owl, a crow's straight beak
                 // came up one roll in eight and landed in an owl's disc.
                 if self.lineage().leading() == WingedFamily::Bird {
-                    let kind = BirdHead::ALL[rolls.pick("winged.beakKind", &BirdHead::WEIGHTS)];
-                    let [length, hook, disc] = kind.axes();
-                    let about =
-                        |stream: &str, mean: f32| draw(stream, Draw::at(mean, HEAD_SPREAD), signed);
-                    self.beak_length = about("winged.beakLength", length);
-                    self.beak_hook = about("winged.beakHook", hook);
-                    // Only an owl has a disc, drawn about its own.
-                    self.facial_disc = if kind == BirdHead::Owl {
-                        about("winged.facialDisc", disc)
+                    [self.beak_length, self.beak_hook, self.facial_disc] = rolled_head(rolls).1;
+                }
+            }
+            // Its surfaces (#423), each drawn only for the body it paints, so
+            // a body keeps the other it carries, as a bat keeps a bird's beak:
+            // a bird-led body's plumage, for the kind of bird its head is
+            // drawn as, and a bat- or glider-led body's coat, from its
+            // families' loci as a beast's is. Drawn after the head, which a
+            // record's roll draws first (`Category::ALL`).
+            Category::Colouring => {
+                if self.feathered() {
+                    // **The kind the head roll drew**, while the head is the
+                    // one these rolls draw (#423, the critic): read back off
+                    // the head, a crow's and a songbird's beaks, a quarter's
+                    // spread about presets 0.85 apart, dressed one roll in
+                    // fifty as the other. A head these rolls did not draw - a
+                    // creator's, or one a lock kept - is read back off its
+                    // axes (`bird_kind`).
+                    let (drawn, head) = rolled_head(rolls);
+                    let kind = if head == [self.beak_length, self.beak_hook, self.facial_disc] {
+                        drawn
                     } else {
-                        disc
+                        self.bird_kind()
                     };
+                    self.plumage = Plumage::rolled(rolls, kind);
+                } else {
+                    let mut coat = self.coat();
+                    coat.reroll_winged(rolls, self.family, self.hybrid, self.blend);
+                    self.coat = Some(coat);
                 }
             }
             // The family is drawn by `reroll_family`, under the frame's lock;
-            // the girth is the composites'; nothing here is a colour, a coat,
-            // an age or a garment yet.
+            // the girth is the composites'; nothing here is an age or a
+            // garment yet.
             Category::Build
             | Category::Frame
-            | Category::Colouring
             | Category::Hair
             | Category::Age
             | Category::Outfit => {}
@@ -893,6 +1075,53 @@ mod tests {
         params
     }
 
+    /// **A rolled bird wears the plumage of the kind its head was drawn
+    /// as** (#423, the critic): the kind the head roll picked
+    /// (`winged.beakKind`) against the kind the plumage roll reads back off
+    /// the head it drew, over thousands of seeds - at least 99 in 100 agree,
+    /// and an owl whose disc it drew is an owl's plumage every time, however
+    /// wild its beak rolled. Read as the nearest of all four presets, one
+    /// rolled bird in thirty wore another kind's.
+    #[test]
+    fn a_rolled_bird_s_plumage_is_the_kind_its_head_roll_drew() {
+        let (mut birds, mut agree, mut owls) = (0usize, 0usize, 0usize);
+        let mut astray = Vec::new();
+        for seed in 0..6000 {
+            let params = rolled(seed);
+            if params.lineage().leading() != WingedFamily::Bird {
+                continue;
+            }
+            birds += 1;
+            let rolls = Rolls::new(seed);
+            let drawn = BirdKind::ALL[rolls.pick("winged.beakKind", &BIRD_WEIGHTS)];
+            // The kind the plumage roll drew for: the one whose roll on these
+            // streams is the plumage the body wears.
+            let read = BirdKind::ALL
+                .into_iter()
+                .find(|&kind| Plumage::rolled(&rolls, kind) == params.plumage);
+            if read == Some(drawn) {
+                agree += 1;
+            } else if astray.len() < 8 {
+                astray.push((seed, drawn, read));
+            }
+            if drawn == BirdKind::Owl && params.facial_disc > crate::plan::plumage::OWL_DISC {
+                owls += 1;
+                assert_eq!(read, Some(BirdKind::Owl), "seed {seed}: an owl with a disc");
+                // And a creator handed this head is handed an owl's rows.
+                assert_eq!(params.bird_kind(), BirdKind::Owl, "seed {seed}");
+                assert_eq!(params.plumage_palettes()[0], Plumage::OWL, "seed {seed}");
+            }
+        }
+        assert!(
+            birds > 1000 && owls > birds / 3,
+            "the premise: {birds} birds, {owls} owls"
+        );
+        assert!(
+            agree * 100 >= birds * 99,
+            "{agree} of {birds} rolled birds wear their head's kind: {astray:?}"
+        );
+    }
+
     #[test]
     fn sanitize_clamps_and_is_idempotent() {
         let mut params = WingedParams {
@@ -1113,6 +1342,7 @@ mod tests {
             family: WingedFamily::Bat,
             hybrid: Some(WingedFamily::Glider),
             blend: 0.35,
+            ..Default::default()
         };
         let mut out = Vec::new();
         params.encode(&mut out);

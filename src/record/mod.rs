@@ -87,6 +87,25 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// the others, so this should move rarely — but when it does, a reader carrying
 /// an older number knows the body it rebuilds is not the body that was rolled.
 ///
+/// **11** - a re-rolled winged body draws its surface (#423): a bird-led roll
+/// draws its plumage, one of a short list of palettes for the kind of bird its
+/// head is drawn as, a little lighter or darker, and a layout for its marks, on
+/// NEW streams (`winged.plumage`, `winged.plumageShade`, `winged.plumageMarks`);
+/// a bat- or glider-led roll draws a coat from its families' loci on the
+/// beast's coat streams (`coat.*`), which no winged roll drew before. No
+/// existing stream moved and no draw changed, and neither a person nor a beast
+/// draws anything new, so both rebuild to the byte; every winged seed keeps
+/// every axis and describes a body in other colours, which is what this number
+/// exists to say. No migration, for generation 7's reason: a saved winged body
+/// keeps what it stored, which is no surface, and an absent one reads as its
+/// family's default - the default owl's plumage on a bird, its family's own
+/// coat on a bat or a glider. **That is not the stand-in 0.21 painted for
+/// every family**: a bat's default is the near-black 0.21 showed (black,
+/// solid), but a glider's is blue-grey (black, diluted) where 0.21's was a
+/// dark grizzle (black, wild agouti), and a bird is painted in its plumage
+/// where 0.21 painted a brown stand-in coat (liver, wild agouti). A saved
+/// glider or bird looks other than it did.
+///
 /// **10** - a re-rolled bird draws its head (#422): a bird-led winged roll draws
 /// its beak's length and hook and its facial disc, on NEW streams
 /// (`winged.beakLength`, `winged.beakHook`, `winged.facialDisc`), where 0.20.0 drew
@@ -213,7 +232,7 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// categories in sequence from one stream, so any seed rolled by an earlier
 /// build reproduces a different person here. That break is taken deliberately
 /// and once, while the lexicon is unpublished and nothing depends on it.
-pub const GENERATOR_VERSION: u32 = 10;
+pub const GENERATOR_VERSION: u32 = 11;
 
 /// The generation whose hair a record has to be re-rolled to reach.
 ///
@@ -408,6 +427,12 @@ impl Default for AvatarRecord {
 
 impl AvatarRecord {
     /// A named avatar with the given body.
+    ///
+    /// **A winged body wears its family's eyes** (#423): an owl's gold, a bat's
+    /// and a glider's dark brown, the plan's own iris a third of the way along its ramp,
+    /// where every other body keeps the person's blue it always had - a
+    /// winged record's eyes were painted only by a roll, and an unrolled bird
+    /// looked out of a person's. Persons and beasts are untouched.
     #[must_use]
     pub fn new(name: impl Into<String>, archetype: Archetype) -> Self {
         let mut record = Self {
@@ -415,6 +440,14 @@ impl AvatarRecord {
             archetype,
             ..Self::default()
         };
+        if matches!(record.archetype, Archetype::Winged(_)) {
+            paint_iris(
+                &mut record.eyes,
+                &record.archetype,
+                WINGED_EYE_SHADE,
+                WINGED_EYE_FADE,
+            );
+        }
         record.sanitize();
         record
     }
@@ -829,6 +862,13 @@ fn reroll_eyes(eyes: &mut EyeParams, rolls: &Rolls, plan: &Archetype) {
     // constant iris (#229).
     let shade = rolls.range("eyes.shade", 0.0, 1.0).powi(2);
     let fade = rolls.range("eyes.fade", 0.10, 0.35);
+    paint_iris(eyes, plan, shade, fade);
+}
+
+/// Paints an iris of `shade` on `plan`'s ramp, its rim darkened by `fade`: the
+/// colour half of [`reroll_eyes`], which [`AvatarRecord::new`] gives a winged
+/// body too (#423).
+fn paint_iris(eyes: &mut EyeParams, plan: &Archetype, shade: f32, fade: f32) {
     // Through the plan's own palette (#368): a person's ramp, or a beast's
     // family's eyes.
     let centre = plan.iris(shade);
@@ -836,6 +876,16 @@ fn reroll_eyes(eyes: &mut EyeParams, rolls: &Rolls, plan: &Archetype) {
     eyes.outer = centre.map(|channel| channel * (1.0 - fade));
     eyes.ring = eyes.outer.map(|channel| channel * 0.41);
 }
+
+/// Where on its plan's ramp an unrolled winged body's iris stands (#423):
+/// about a roll's mean (`eyes.shade` draws the square of a uniform, a third on
+/// average), an owl's gold on the bird's ramp and a dark brown on a bat's and a
+/// glider's. Provenance: **chosen by render**.
+const WINGED_EYE_SHADE: f32 = 0.33;
+
+/// How much darker an unrolled winged body's iris is at its rim: the middle
+/// of what a roll draws (`eyes.fade`, 0.10 to 0.35).
+const WINGED_EYE_FADE: f32 = 0.22;
 
 /// The share of re-rolled heads that wear a helmet scalp style.
 ///
@@ -2246,7 +2296,7 @@ mod tests {
         // fails, every stored seed now names a different avatar, and
         // GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 10,
+            GENERATOR_VERSION, 11,
             "bump the table below with the version"
         );
         let quantised = |seed: i64| {
@@ -2651,7 +2701,7 @@ mod tests {
         // this fails, every stored quadruped seed now names a different
         // animal, and GENERATOR_VERSION has to move with it.
         assert_eq!(
-            GENERATOR_VERSION, 10,
+            GENERATOR_VERSION, 11,
             "bump the table below with the version"
         );
         let rolled = |seed: i64| {

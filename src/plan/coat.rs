@@ -605,6 +605,52 @@ impl Frequencies {
         }
     }
 
+    /// A fruit bat's (#423): a dark brown or a black, now and then sable
+    /// (darker along the back over a rich russet, which on a crawling bat whose
+    /// back its folded wings cover reads as a golden bat, so one in seven),
+    /// and almost never white. Provenance: **chosen by render**; research-10 5.3
+    /// gives a flying fox's colours, not their frequencies.
+    const BAT: Self = Self {
+        pigment: [0.38, 0.57, 0.05],
+        dilute: 0.05,
+        agouti: [0.75, 0.15, 0.10, 0.0, 0.0],
+        pattern: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        points: 0.0,
+        white: [0.97, 0.0, 0.0, 0.02, 0.01],
+        merle: 0.0,
+        roan: 0.0,
+        dun: 0.0,
+        tortie: 0.0,
+        intensity: (0.6, 0.4),
+    };
+
+    /// A sugar glider's (#423): mostly blue-grey, a black's dilution, some
+    /// grizzled; now and then a mosaic's white patches or a leucistic
+    /// glider's white all over. Provenance: **chosen by render** after
+    /// research-10 5.3 (S31: grey above, cream below).
+    const GLIDER: Self = Self {
+        pigment: [0.85, 0.05, 0.10],
+        dilute: 0.80,
+        agouti: [0.75, 0.0, 0.25, 0.0, 0.0],
+        pattern: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        points: 0.0,
+        white: [0.88, 0.0, 0.0, 0.08, 0.04],
+        merle: 0.0,
+        roan: 0.0,
+        dun: 0.0,
+        tortie: 0.0,
+        intensity: (-0.5, 0.4),
+    };
+
+    /// A winged family's loci, and none for a bird, which grows feathers.
+    fn of_winged(family: super::WingedFamily) -> Option<Self> {
+        match family {
+            super::WingedFamily::Bird => None,
+            super::WingedFamily::Bat => Some(Self::BAT),
+            super::WingedFamily::Glider => Some(Self::GLIDER),
+        }
+    }
+
     /// `share` of the way from `self` to `other`, state by state: a cross's.
     fn toward(self, other: Self, share: f32) -> Self {
         let mix = |a: f32, b: f32| a + (b - a) * share;
@@ -673,6 +719,37 @@ impl Coat {
             Some(other) => own.toward(Frequencies::of(other), blend.clamp(0.0, 1.0)),
             None => own,
         };
+        self.draw(rolls, &odds);
+    }
+
+    /// Draws a fresh coat for a winged body (#423) as [`Self::reroll`] draws a
+    /// beast's, on the same streams, from a fruit bat's and a sugar glider's
+    /// loci: a bat mostly a dark brown or a black, often tipped darker along
+    /// the back, a glider mostly blue-grey, sometimes grizzled, now and then a
+    /// mosaic's white patches or a leucistic glider's white - and, as a beast
+    /// does, a rare unnatural palette or free colours. A bird has no coat to
+    /// draw from, so a cross with one draws its other family's loci alone.
+    pub(crate) fn reroll_winged(
+        &mut self,
+        rolls: &Rolls,
+        family: super::WingedFamily,
+        hybrid: Option<super::WingedFamily>,
+        blend: f32,
+    ) {
+        let blend = blend.clamp(0.0, 1.0);
+        let odds = match (
+            Frequencies::of_winged(family),
+            hybrid.and_then(Frequencies::of_winged),
+        ) {
+            (Some(own), Some(other)) => own.toward(other, blend),
+            (Some(only), None) | (None, Some(only)) => only,
+            (None, None) => Frequencies::BAT,
+        };
+        self.draw(rolls, &odds);
+    }
+
+    /// Draws every locus against `odds`, each on a stream of its own.
+    fn draw(&mut self, rolls: &Rolls, odds: &Frequencies) {
         let chance = |stream: &str, share: f32| rolls.range(stream, 0.0, 1.0) < share;
         let state = |stream: &str| rolls.range(stream, 0.0, 1.0);
         self.pigment = pick(state("coat.pigment"), &odds.pigment, &Pigment::ALL);

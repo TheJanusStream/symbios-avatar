@@ -432,6 +432,175 @@
           "minimum": 0,
           "maximum": 1000,
           "default": 0
+        },
+        "plumage": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#wingedPlumage",
+          "description": "What colour a bird's feathers are, tract by tract, and how they are marked (#423). Paints a bird-led body only, and is kept across a change of family. Absent, a little owl's: every field's default below. Left off while it is."
+        },
+        "coat": {
+          "type": "ref",
+          "ref": "network.symbios.avatar.defs#quadrupedCoat",
+          "description": "What colour a bat's or a glider's fur and membrane are and how it is marked (#423): a beast's coat, its loci and picked colours. Paints a bat- or glider-led body only, and is kept across a change of family. Absent, the leading family's own: a fruit bat's dark brown (pigment liver), a sugar glider's blue-grey (pigment black, diluted). Left off while absent."
+        }
+      }
+    },
+    "wingedPlumage": {
+      "type": "object",
+      "description": "A bird's plumage (#423): a colour per feather tract a field guide reads a bird by, a pattern drawn over them, an owl's disc and ruff, a gloss, and the seed its marks are laid out from. Every colour is free; a roll picks a whole set off a short list for the kind of bird its head is drawn as. The beak's horn and the bare toes are not plumage. An absent field reads as its default here, a little owl's.",
+      "properties": {
+        "head": {
+          "type": "array",
+          "description": "The crown, the nape, the cheeks and the throat: the capital tract, outside an owl's disc. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            440,
+            330,
+            220
+          ]
+        },
+        "upper": {
+          "type": "array",
+          "description": "The back, the mantle and the rump, and the wing's coverts: the dorsal tract, which turns into the under round the flank. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            420,
+            310,
+            210
+          ]
+        },
+        "under": {
+          "type": "array",
+          "description": "The breast, the belly, the flanks and the feathered legs: the ventral tract. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            760,
+            660,
+            520
+          ]
+        },
+        "flight": {
+          "type": "array",
+          "description": "The wing's flight feathers: primaries, secondaries and tertials. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            360,
+            270,
+            180
+          ]
+        },
+        "tail": {
+          "type": "array",
+          "description": "The tail's feathers; its upper coverts are the upper colour's. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            380,
+            280,
+            190
+          ]
+        },
+        "mark": {
+          "type": "array",
+          "description": "What the pattern is drawn in, on every tract it stands out from. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            920,
+            880,
+            780
+          ]
+        },
+        "disc": {
+          "type": "array",
+          "description": "An owl's face inside its ruff. Shows only on a head with a facial disc. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            840,
+            780,
+            660
+          ]
+        },
+        "ruff": {
+          "type": "array",
+          "description": "The ruff round an owl's disc. Shows only on a head with a facial disc. Three channels of sRGB, thousandths.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "minLength": 3,
+          "maxLength": 3,
+          "default": [
+            280,
+            200,
+            130
+          ]
+        },
+        "pattern": {
+          "type": "string",
+          "description": "How it is marked, in the mark colour: plain, bars across the body and the flight and tail feathers, round spots, or narrow streaks down the body. A value a reader does not recognise reads as plain.",
+          "knownValues": [
+            "plain",
+            "barred",
+            "spotted",
+            "streaked"
+          ],
+          "default": "spotted"
+        },
+        "gloss": {
+          "type": "integer",
+          "description": "How glossy the back, the head and the wings are, thousandths: none at 0, a raven's at 1000. A reader smooths the surface's roughness and lays a cool sheen into its colour there.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0
+        },
+        "marks": {
+          "type": "integer",
+          "description": "The seed the plumage's spots, bars and streaks are laid out from, so its marks survive the wire.",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0
         }
       }
     },

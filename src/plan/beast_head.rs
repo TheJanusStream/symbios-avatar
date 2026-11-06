@@ -393,6 +393,17 @@ impl Disc {
         let ball = at.distance(self.centre) - self.radius;
         Vec2::new(head, ball).length() / (self.rim * self.weight).max(f32::EPSILON)
     }
+
+    /// How much of the dish's face a point of the drawn head at `at` is,
+    /// `0..=1` (#423): the face carved out of the head lies on the ball's
+    /// surface, every other point of the head outside it, so a point within a
+    /// ruff's radius of the ball is the dish, fading over that radius, and its
+    /// share narrows with [`Self::weight`] as the disc does.
+    pub(crate) fn in_dish(&self, at: Vec3) -> f32 {
+        let ball = at.distance(self.centre) - self.radius;
+        let rim = self.rim.max(f32::EPSILON);
+        crate::face::smooth(1.0 - ball / rim) * self.weight
+    }
 }
 
 /// The neck's upper run as the head it carries sizes it (#388): a tube of
@@ -606,13 +617,21 @@ impl BeastHead {
 
     /// How far `at`, in the head's frame, is from the middle of an owl's ruff,
     /// in the ruff's radii: under one on it, and `None` on a head with no disc
-    /// (#422). The skin there is shaded darker, as an owl's ruff is.
+    /// (#422). The skin there is painted in a plumage's `ruff` colour (#423).
     #[must_use]
-    pub(crate) fn on_ruff(&self, at: Vec3) -> Option<f32> {
+    pub fn on_ruff(&self, at: Vec3) -> Option<f32> {
         let disc = self.disc.as_ref()?;
         let mut bare = *self;
         bare.disc = None;
         Some(disc.on_ruff(bare.distance(at), at))
+    }
+
+    /// How much of an owl's disc's face a point of the drawn head at `at`, in
+    /// the head's frame, is: `0..=1`, and `None` on a head with no disc (#423).
+    /// What a plumage paints its pale `disc` colour by.
+    #[must_use]
+    pub fn in_dish(&self, at: Vec3) -> Option<f32> {
+        Some(self.disc.as_ref()?.in_dish(at))
     }
 
     /// Whether the head carries a beak (#422) rather than a muzzle's mouth.

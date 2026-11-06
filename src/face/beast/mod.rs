@@ -117,21 +117,6 @@ impl BeastFace {
     }
 }
 
-/// How dark an owl's ruff is shaded at its middle, as a factor on the skin
-/// (#422): a vertex colour can only darken, and a darker rim round the dish is
-/// what reads as a facial disc where its relief no longer does.
-/// Provenance: **chosen by render** (#422), and lightened from 0.50, 0.45,
-/// 0.40 at the owner's review of W3.
-const RUFF_SHADE: Vec3 = Vec3::new(0.64, 0.59, 0.54);
-
-/// The shade of a vertex `off` of the ruff's radius from the middle of an
-/// owl's ruff (`BeastHead::on_ruff`): [`RUFF_SHADE`] within four tenths of a
-/// radius of its middle, fading to none at one.
-pub(crate) fn ruff_shade(off: f32) -> Vec3 {
-    let share = smooth((1.0 - off) / 0.6);
-    Vec3::ONE.lerp(RUFF_SHADE, share)
-}
-
 /// How many times the head zone is refined before it is shaped.
 ///
 /// The cage hands the head over as a sixteen-sided tube, which can carry a

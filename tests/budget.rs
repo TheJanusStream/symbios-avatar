@@ -54,14 +54,28 @@ use symbios_avatar::{Archetype, Avatar, AvatarRecord, Vec3};
 /// helmet is a record's choice, and the tenth of re-rolls that now draw one
 /// cost about 50 triangles of mean hair per tenth.
 ///
-/// **And what this target does not see**, found on the same run and filed as
-/// #353: the six seeds every sweep here visits are not the dearest bodies a
-/// re-roll makes. Over 300 rolled seeds, 3 bodies as rolled and 6 on the long
-/// broad head exceed this target, the dearest 33,224 (seed 175) and 34,112
-/// (seed 237 long broad) - in the BODY, whose bald cost reaches 31,722 and
-/// 32,408. This constant holds against the corners the file measures; #353
-/// decides what the file should measure.
-const TRIANGLE_TARGET: usize = 32_200;
+/// **RAISED TO 33,500 at #353, by the owner's call (2026-11-06)**, when the
+/// sweeps started visiting the bodies a re-roll actually makes. The six seeds
+/// were not the dearest: over 300 rolled seeds the tail was lean, thin and
+/// tall, and every one of its dearest bodies wore a top whose notch fill had
+/// climbed over the jaw (`no_top_climbs_onto_the_head`, fixed in
+/// `garment::close`). With the collar fixed, the composites' lean, thin, tall
+/// corners are pinned on twenty seeds beside the six ([`corners`],
+/// [`CORNER_SEEDS`]), and this target is what the product of the dearest of
+/// them and the greediest legal hair needs: **33,440 at seed 2 long broad,
+/// lean thin tall at frame 0**, measured 2026-11-06, the bald body there
+/// 30,142 and the leftover 3,358 for a hair ceiling of 3,300 whose floor is
+/// 3,276. It holds by 60 (it was 33,200 for a few hours, which held over six
+/// seeds and broke over eighty).
+///
+/// **What it does not cover, and says so** - printed by
+/// `probe_the_rolled_population` every time it runs: the head envelope's ends
+/// past the (1, 1) pin (31,954 bald at (3, 3)), and the heavy, fat, feminine,
+/// tall corner (mass +2, body fat at the top of its range), a documented tail
+/// by the owner's call rather than a pinned corner. With each seed's own hair
+/// over seeds 0-79 it reads p50 31,888 and p99 34,160, and puts 10 of 320
+/// bodies past this target, the dearest 34,664 (seed 2 long broad, frame +1).
+const TRIANGLE_TARGET: usize = 33_500;
 
 /// Draw calls a WebGL2-tier avatar may cost.
 ///
@@ -256,12 +270,22 @@ const MESH_TARGET: usize = 4;
 /// the dearest of them would read 30,568 (a bun) against 30,534 for the
 /// dearest card style put there.
 ///
-/// **That is also this ratchet's blind spot, and it is a bigger one than a
-/// helmet** (#353): the six seeds are not the dearest bodies a re-roll makes.
-/// Over 300 rolled seeds, 14 bodies as rolled and 65 on the long broad head
-/// exceed this ceiling, the dearest 33,224 and 34,112. A ratchet that moves
-/// with the measurement is only as good as what it measures.
-const TRIANGLE_CEILING: usize = 30_200;
+/// **That was also this ratchet's blind spot** (#353): the six seeds were not
+/// the dearest bodies a re-roll makes, and the dearest were a cloth defect - a
+/// top's collar fill climbing over the jaw - which `garment::close` no longer
+/// does. **Up to 32,050 when the sweep started visiting the composites' dear
+/// corners** ([`corners`]: lean, thin and tall at five places on the frame
+/// axis, on twenty seeds at the two dear heads), which is the direction this
+/// constant's first paragraph says needs a reason beside it. The reason is the
+/// one #61 gave: the space measured grew, and no body got dearer - every seed
+/// the sweep visited before reads what it read. Measured 2026-11-06 with the
+/// collar under its level line: **32,012 at seed 2 long broad, lean thin tall
+/// at frame 0**, where the six seeds alone reach 29,988 (seed 1 long broad).
+/// **Set at 32,200, not just over it**: under the gate's libm nudge (CI's
+/// glibc rounds differently, `scripts/gate.sh --libm`) the same body read
+/// 32,056 two steps up, past a ceiling of 32,050, so the margin covers about
+/// four times the swing the nudge showed.
+const TRIANGLE_CEILING: usize = 32_200;
 
 /// Draw calls the crate currently costs.
 ///
@@ -280,6 +304,121 @@ fn built(seed: Option<i64>) -> Avatar {
         record.reroll(seed);
     }
     Avatar::build_for_shape(&record).expect("a biped builds")
+}
+
+/// The seeds every person sweep here rolls.
+const SEEDS: [i64; 6] = [1, 7, 23, 29, 42, 99];
+
+/// The head's two axes pinned to their dear ends (#61): a name, and the
+/// breadth and face length, or `None` for the seed's own.
+type HeadCorner = (&'static str, Option<(f32, f32)>);
+
+/// Every head corner the ratchet and the leftover visit.
+const HEADS: [HeadCorner; 4] = [
+    ("as rolled", None),
+    ("long broad", Some((1.0, 1.0))),
+    ("long narrow", Some((-1.0, 1.0))),
+    ("short broad", Some((1.0, -1.0))),
+];
+
+/// The two the product corner visits, and the two every composite corner is
+/// built at.
+const DEAR_HEADS: [HeadCorner; 2] = [HEADS[0], HEADS[1]];
+
+/// The seeds the composites' [`corners`] are pinned on: twenty, by the owner's
+/// call (#353, 2026-11-06). Six were not enough - over eighty seeds the same
+/// corners' dearest bald body was seed 2's, past every one of the six - and
+/// seeds 0-19 hold seed 2.
+const CORNER_SEEDS: std::ops::Range<i64> = 0..20;
+
+/// The composites' dear corners, pinned on every seed as the head's axes are
+/// (#353): lean, thin and tall, at each of five places on the frame axis.
+///
+/// **Chosen from what the population's tail turned out to be, not argued.**
+/// Over 300 rolled seeds the dearest bodies were all lean (body fat 0.08 or
+/// less) and thin (mass -0.9 or lower), and every frame band from -2 to +1
+/// reached the tail; their tops' collar fill climbed over the jaw, which is
+/// what `no_top_climbs_onto_the_head` now holds. Six seeds rolled none of
+/// them, and a seed draws mass and fat no further than a timid roll does, so
+/// they are pinned: mass at -2 (the population's 1st percentile is -2.42),
+/// body fat at the bottom of [`symbios_avatar::plan::BODY_FAT_RANGE`], the
+/// stature at the top of the conservative height range (2.2 m: height moves a
+/// body's cost by tens of triangles, and it is pinned because the tail is
+/// tall). A label, then femininity, mass, body fat and height.
+fn corners() -> Vec<(String, [f32; 4])> {
+    let lean = symbios_avatar::plan::BODY_FAT_RANGE.0;
+    let tall = symbios_avatar::plan::humanoid_height_range().1;
+    [-2.0f32, -1.0, 0.0, 1.0, 2.0]
+        .into_iter()
+        .map(|frame| {
+            (
+                format!("lean thin tall at frame {frame:+}"),
+                [frame, -2.0, lean, tall],
+            )
+        })
+        .collect()
+}
+
+/// Every person a sweep here builds, with `dress` applied last: each of
+/// [`SEEDS`] as rolled at each of `heads`, and each of [`CORNER_SEEDS`] at
+/// each of the composites' [`corners`] at the two [`DEAR_HEADS`].
+///
+/// One list read by the ratchet, the leftover and the product alike, so the
+/// three can never sweep different bodies (#353). The corners take the two
+/// dear heads only - every dearest corner measured was long broad, and the
+/// narrow and short heads would double the sweep for none of them - and are
+/// built on [`costed`]'s threads.
+fn swept(heads: &[HeadCorner], dress: impl Fn(&mut AvatarRecord)) -> Vec<(String, AvatarRecord)> {
+    let lean: Vec<(String, Option<[f32; 4]>)> = corners()
+        .into_iter()
+        .map(|(name, corner)| (name, Some(corner)))
+        .collect();
+    let corner_seeds: Vec<i64> = CORNER_SEEDS.collect();
+    let mut bodies = swept_over(&SEEDS, &[(String::new(), None)], heads, &dress);
+    bodies.extend(swept_over(&corner_seeds, &lean, &DEAR_HEADS, &dress));
+    bodies
+}
+
+/// [`swept`]'s builder, over any seeds and composite corners: each seed at
+/// each corner (`None` for the seed's own composites) at each head.
+fn swept_over(
+    seeds: &[i64],
+    composites: &[(String, Option<[f32; 4]>)],
+    heads: &[HeadCorner],
+    dress: &impl Fn(&mut AvatarRecord),
+) -> Vec<(String, AvatarRecord)> {
+    let mut bodies = Vec::new();
+    for &seed in seeds {
+        for (label, corner) in composites {
+            for &(name, skull) in heads {
+                let mut record = AvatarRecord::new("Budget", Archetype::default());
+                record.reroll(seed);
+                if let Some([femininity, mass, body_fat, _]) = *corner {
+                    record.composites.femininity = femininity;
+                    record.composites.mass = mass;
+                    record.composites.body_fat = body_fat;
+                }
+                if let Archetype::Humanoid(params) = &mut record.archetype {
+                    if let Some((breadth, length)) = skull {
+                        params.head_breadth = breadth;
+                        params.face_length = length;
+                    }
+                    if let Some([_, _, _, height]) = *corner {
+                        params.height = height;
+                    }
+                }
+                dress(&mut record);
+                record.sanitize();
+                let label = if label.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {label}")
+                };
+                bodies.push((format!("seed {seed} {name}{label}"), record));
+            }
+        }
+    }
+    bodies
 }
 
 #[test]
@@ -321,31 +460,22 @@ fn the_ceiling_holds_across_the_parameter_space() {
     // with a long broad skull costs 29,886, and the whole of that 534 is a
     // record's to spend. The head's own two axes are pinned to their ends here
     // for the same reason `tests/plan.rs` sweeps corners rather than samples.
+    //
+    // **And so are the composites', since #353**: the dearest bodies a re-roll
+    // makes were lean, thin and tall, and six seeds drew none of them. See
+    // [`corners`], which every person sweep here shares through [`swept`].
+    let bodies = swept(&HEADS, |_| {});
+    let built = costed(&bodies, |at, record| {
+        let avatar =
+            Avatar::build_for_shape(record).unwrap_or_else(|| panic!("{at} does not build"));
+        (avatar.budget.tris, avatar.budget.meshes)
+    });
     let mut worst = (String::new(), 0);
-    for seed in [1, 7, 23, 29, 42, 99] {
-        for (name, breadth, length) in [
-            ("as rolled", None, None),
-            ("long broad", Some(1.0f32), Some(1.0f32)),
-            ("long narrow", Some(-1.0), Some(1.0)),
-            ("short broad", Some(1.0), Some(-1.0)),
-        ] {
-            let mut record = AvatarRecord::new("Budget", Archetype::default());
-            record.reroll(seed);
-            if let Archetype::Humanoid(params) = &mut record.archetype {
-                params.head_breadth = breadth.unwrap_or(params.head_breadth);
-                params.face_length = length.unwrap_or(params.face_length);
-            }
-            let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
-            let at = format!("seed {seed} {name}");
-            if avatar.budget.tris > worst.1 {
-                worst = (at.clone(), avatar.budget.tris);
-            }
-            assert!(
-                avatar.budget.meshes <= MESH_CEILING,
-                "{at} costs {} draws",
-                avatar.budget.meshes
-            );
+    for ((at, _), &(tris, meshes)) in bodies.iter().zip(&built) {
+        if tris > worst.1 {
+            worst = (at.clone(), tris);
         }
+        assert!(meshes <= MESH_CEILING, "{at} costs {meshes} draws");
     }
     // **The triangle assertion is made AFTER the sweep, and printed either way,
     // because computing the dearest corner and then throwing it away is what
@@ -1172,24 +1302,19 @@ fn the_budget_holds_for_the_dearest_hair_on_the_dearest_head() {
     // triangles larger than on a long broad seeded one. Its replacement is
     // measured rather than quoted, by
     // `the_hair_ceiling_is_what_the_budget_actually_leaves` (#209).
+    // The same bodies the ratchet sweeps, composites' corners and all
+    // (#353), at the two heads that are ever the dearest.
+    let bodies = swept(&DEAR_HEADS, |record| record.hair = greediest());
+    let built = costed(&bodies, |at, record| {
+        Avatar::build_for_shape(record)
+            .unwrap_or_else(|| panic!("{at} does not build"))
+            .budget
+            .tris
+    });
     let mut worst = (String::new(), 0);
-    for seed in [1, 7, 23, 29, 42, 99] {
-        for (name, breadth, length) in [
-            ("as rolled", None, None),
-            ("long broad", Some(1.0f32), Some(1.0f32)),
-        ] {
-            let mut record = AvatarRecord::new("Greedy", Archetype::default());
-            record.reroll(seed);
-            if let Archetype::Humanoid(params) = &mut record.archetype {
-                params.head_breadth = breadth.unwrap_or(params.head_breadth);
-                params.face_length = length.unwrap_or(params.face_length);
-            }
-            record.hair = greediest();
-            record.sanitize();
-            let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
-            if avatar.budget.tris > worst.1 {
-                worst = (format!("seed {seed} {name}"), avatar.budget.tris);
-            }
+    for ((at, _), &tris) in bodies.iter().zip(&built) {
+        if tris > worst.1 {
+            worst = (at.clone(), tris);
         }
     }
     println!("dearest product corner: {} at {}", worst.1, worst.0);
@@ -1467,26 +1592,20 @@ fn the_hair_ceiling_is_what_the_budget_actually_leaves() {
     // Measured as the body WITHOUT hair rather than as a subtraction from a
     // haired one, because a tiered head of hair is not the hair the sum was
     // taken over.
+    //
+    // Over the same bodies the ratchet sweeps, the composites' corners
+    // included (#353): the leftover is only what the DEAREST body leaves.
+    let bodies = swept(&HEADS, |record| record.hair = HairRecord::bald());
+    let built = costed(&bodies, |at, record| {
+        Avatar::build_for_shape(record)
+            .unwrap_or_else(|| panic!("{at} does not build"))
+            .budget
+            .tris
+    });
     let mut worst = (String::new(), 0);
-    for seed in [1, 7, 23, 29, 42, 99] {
-        for (name, breadth, length) in [
-            ("as rolled", None, None),
-            ("long broad", Some(1.0f32), Some(1.0f32)),
-            ("long narrow", Some(-1.0), Some(1.0)),
-            ("short broad", Some(1.0), Some(-1.0)),
-        ] {
-            let mut record = AvatarRecord::new("Bald", Archetype::default());
-            record.reroll(seed);
-            if let Archetype::Humanoid(params) = &mut record.archetype {
-                params.head_breadth = breadth.unwrap_or(params.head_breadth);
-                params.face_length = length.unwrap_or(params.face_length);
-            }
-            record.hair = HairRecord::bald();
-            record.sanitize();
-            let avatar = Avatar::build_for_shape(&record).expect("a biped builds");
-            if avatar.budget.tris > worst.1 {
-                worst = (format!("seed {seed} {name}"), avatar.budget.tris);
-            }
+    for ((at, _), &tris) in bodies.iter().zip(&built) {
+        if tris > worst.1 {
+            worst = (at.clone(), tris);
         }
     }
     let leftover = TRIANGLE_TARGET - worst.1;
@@ -1546,6 +1665,486 @@ fn probe_where_the_body_got_cheaper() {
                 mesh.mesh.triangulated().len()
             );
         }
+    }
+}
+
+/// Triangles of garment claim on head-owned skin: faces whose nearest bone is
+/// the head's. No cut claims any, and since #353 no notch fill reaches any.
+fn on_the_head(avatar: &Avatar) -> usize {
+    let body = &avatar.parts.body;
+    let rig = &avatar.rig;
+    avatar
+        .parts
+        .outfit
+        .garments
+        .iter()
+        .flat_map(|garment| &garment.claim)
+        .map(|&face| face as usize)
+        .filter(|&face| {
+            let at = body.face_centroid(face);
+            rig.joints[rig.nearest_bone(at).joint].zone == symbios_avatar::Zone::Head
+        })
+        .map(|face| body.faces[face].len() - 2)
+        .sum()
+}
+
+#[test]
+fn no_top_climbs_onto_the_head() {
+    // **#353's defect, held.** A top claims the chest, the abdomen and its
+    // sleeves, and `garment::close` fills the notches in that claim's hem to a
+    // fixed point. On lean, thin bodies the fill used to climb from the collar
+    // up the column and over the jaw - a garment on the chin, cloth at 7,000
+    // to 17,000 triangles where a median body wears 4,400, and every one of
+    // the dearest bodies a re-roll made. The raw claim never took head skin;
+    // the fill now treats it as held.
+    //
+    // On the bodies it was measured on (seed 175 as rolled took 2,736
+    // triangles of head; seed 237 long broad 3,600) and on the composites'
+    // lean, thin corners the sweeps pin, at two seeds (seed 42 at frame -2
+    // reached 5,996).
+    let mut bodies: Vec<(String, AvatarRecord)> = [
+        (175, None),
+        (246, None),
+        (212, None),
+        (202, None),
+        (237, Some((1.0f32, 1.0f32))),
+        (8, Some((1.0, 1.0))),
+        (267, Some((1.0, 1.0))),
+    ]
+    .into_iter()
+    .map(|(seed, skull)| {
+        let mut record = AvatarRecord::new("Collar", Archetype::default());
+        record.reroll(seed);
+        if let (Archetype::Humanoid(params), Some((breadth, length))) =
+            (&mut record.archetype, skull)
+        {
+            params.head_breadth = breadth;
+            params.face_length = length;
+        }
+        record.sanitize();
+        let head = if skull.is_some() {
+            "long broad"
+        } else {
+            "as rolled"
+        };
+        (format!("seed {seed} {head}"), record)
+    })
+    .collect();
+    let lean: Vec<(String, Option<[f32; 4]>)> = corners()
+        .into_iter()
+        .map(|(name, corner)| (name, Some(corner)))
+        .collect();
+    bodies.extend(swept_over(&[42, 63, 99], &lean, &DEAR_HEADS, &|_| {}));
+    //
+    // **And the collar it stops at is level, with no spikes and no sawteeth**
+    // (#353's review). Stopped at the head alone, the fill still climbed the
+    // whole band of neck-owned skin up to the head's boundary, which is not a
+    // level ring: two points of cloth stood above the collar and the boundary
+    // kept two to ten open notches. So the collar's highest neck face may
+    // stand no more than [`COLLAR_RISE`] over the raw claim's own top, and at
+    // most one mirrored pair of notches may stay open - the grid's step where
+    // the neck's refined band meets the coarse surface, which `close`'s own
+    // docstring explains no level line avoids.
+    let read = costed(&bodies, |at, record| {
+        let avatar =
+            Avatar::build_for_shape(record).unwrap_or_else(|| panic!("{at} does not build"));
+        let (rise, notches) = collar(&avatar, record);
+        (
+            avatar.parts.outfit.len(),
+            on_the_head(&avatar),
+            rise,
+            notches,
+        )
+    });
+    let mut climbed = Vec::new();
+    for ((at, _), &(garments, head, rise, notches)) in bodies.iter().zip(&read) {
+        assert!(
+            garments > 0,
+            "{at} wears nothing, so this proves nothing about it"
+        );
+        println!(
+            "{at}: collar {:.1} mm over the raw claim, {notches} notches",
+            rise * 1000.0
+        );
+        if head > 0 {
+            climbed.push(format!("{at}: {head} triangles of garment on the head"));
+        }
+        if rise > COLLAR_RISE {
+            climbed.push(format!(
+                "{at}: the collar stands {:.1} mm over the raw claim's top",
+                rise * 1000.0
+            ));
+        }
+        if notches > 2 {
+            climbed.push(format!("{at}: {notches} notches open in the collar"));
+        }
+    }
+    assert!(climbed.is_empty(), "{}", climbed.join("\n"));
+}
+
+/// How far a top's collar may stand over its raw claim's highest point along
+/// the neck bone, in metres. An unchanged body's fill stands about 7 mm over
+/// it, and a collar re-cut under a level line -1 to 16 (seed 267 long broad).
+/// Stopped at the head alone, the fill stood 20 mm and more over it (36 at
+/// seed 8 long broad), with up to eight notches open where it met the head.
+const COLLAR_RISE: f32 = 0.02;
+
+/// How a body's top meets its neck: how far its highest neck- or head-owned
+/// face's centroid stands over the raw claim's highest face along the neck
+/// bone, and how many notches stay open in the claim - unclaimed faces the
+/// trousers do not hold whose claimed neighbours touch two of their sides, a
+/// side being a run of consecutive edges within about twenty degrees of each
+/// other (a coarse face over a refined row touches it twice along one side,
+/// and that is a straight hem).
+///
+/// The raw claim is the top's cut as `dress::Outfit::wear` makes it: the
+/// chest and the abdomen, and each arm to the sleeve's length.
+fn collar(avatar: &Avatar, record: &AvatarRecord) -> (f32, usize) {
+    use symbios_avatar::Zone;
+    use symbios_avatar::dress::{GarmentCut, garment};
+    use symbios_avatar::plan::{Limb, ZoneSet};
+    let body = &avatar.parts.body;
+    let rig = &avatar.rig;
+    let length = record.outfit.top.length;
+    let cut = GarmentCut {
+        zones: ZoneSet::default().with(Zone::Chest).with(Zone::Abdomen),
+        limbs: [Limb::ForeLeft, Limb::ForeRight]
+            .map(|limb| (length > 0.0).then_some((limb, length))),
+        ..Default::default()
+    };
+    let raw = garment::claimed(body, rig, &avatar.parts.zones, &cut);
+    let mut claimed = vec![false; body.faces.len()];
+    let mut held = vec![false; body.faces.len()];
+    let [trousers, top] = &avatar.parts.outfit.garments[..] else {
+        panic!("a person wears a top and trousers");
+    };
+    for &face in &top.claim {
+        claimed[face as usize] = true;
+    }
+    for &face in &trousers.claim {
+        held[face as usize] = true;
+    }
+    let neck = rig.in_zone(Zone::Neck)[0];
+    let (root, tip) = rig.bone(neck);
+    let axis = (tip - root).normalize();
+    let along = |face: usize| (body.face_centroid(face) - root).dot(axis);
+    let top_of_raw = (0..raw.len())
+        .filter(|&face| raw[face])
+        .map(along)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let top_of_collar = (0..claimed.len())
+        .filter(|&face| {
+            claimed[face]
+                && matches!(
+                    rig.joints[rig.nearest_bone(body.face_centroid(face)).joint].zone,
+                    Zone::Neck | Zone::Head
+                )
+        })
+        .map(along)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let mut users: std::collections::HashMap<(u32, u32), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (index, face) in body.faces.iter().enumerate() {
+        for at in 0..face.len() {
+            let (a, b) = (face[at], face[(at + 1) % face.len()]);
+            users.entry((a.min(b), a.max(b))).or_default().push(index);
+        }
+    }
+    let notches = (0..body.faces.len())
+        .filter(|&index| !claimed[index] && !held[index])
+        .filter(|&index| {
+            let face = &body.faces[index];
+            let count = face.len();
+            let direction = |edge: usize| {
+                (body.positions[face[(edge + 1) % count] as usize]
+                    - body.positions[face[edge] as usize])
+                    .normalize_or_zero()
+            };
+            let turns =
+                |edge: usize| direction(edge).dot(direction((edge + count - 1) % count)) < 0.94;
+            let start = (0..count).find(|&edge| turns(edge)).unwrap_or(0);
+            let mut sides: Vec<usize> = (0..count)
+                .filter(|&at| {
+                    let (a, b) = (face[at], face[(at + 1) % count]);
+                    users[&(a.min(b), a.max(b))]
+                        .iter()
+                        .any(|&other| other != index && claimed[other])
+                })
+                .map(|at| {
+                    (1..=((at + count - start) % count))
+                        .filter(|&step| turns((start + step) % count))
+                        .count()
+                })
+                .collect();
+            sides.sort_unstable();
+            sides.dedup();
+            sides.len() >= 2
+        })
+        .count();
+    (top_of_collar - top_of_raw, notches)
+}
+
+/// How many seeds [`probe_the_rolled_population`] rolls of each plan.
+const POPULATION: i64 = 300;
+
+/// Builds every record on its own thread share and returns what `cost` reads
+/// off each, in the order the records were given.
+fn costed<T: Send>(
+    records: &[(String, AvatarRecord)],
+    cost: impl Fn(&str, &AvatarRecord) -> T + Sync,
+) -> Vec<T> {
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
+    let mut out: Vec<(usize, T)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|share| {
+                let cost = &cost;
+                scope.spawn(move || {
+                    records
+                        .iter()
+                        .enumerate()
+                        .skip(share)
+                        .step_by(threads)
+                        .map(|(index, (at, record))| (index, cost(at, record)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("a costing thread panicked"))
+            .collect()
+    });
+    out.sort_by_key(|(index, _)| *index);
+    out.into_iter().map(|(_, cost)| cost).collect()
+}
+
+/// Prints the median, the 90th and 99th percentiles and the dearest of a
+/// population's costs, nearest-rank.
+fn tail(label: &str, costs: &[(String, usize)]) {
+    let mut sorted: Vec<usize> = costs.iter().map(|(_, tris)| *tris).collect();
+    sorted.sort_unstable();
+    let at = |share: f32| sorted[((share * sorted.len() as f32) as usize).min(sorted.len() - 1)];
+    let dearest = costs
+        .iter()
+        .max_by_key(|(_, tris)| *tris)
+        .expect("a population is not empty");
+    println!(
+        "{label}: p50 {} p90 {} p99 {}, dearest {} at {} (of {})",
+        at(0.5),
+        at(0.9),
+        at(0.99),
+        dearest.1,
+        dearest.0,
+        costs.len()
+    );
+}
+
+#[test]
+#[ignore = "instrument for #353: the rolled population's tail, to set beside the sweeps' corners"]
+fn probe_the_rolled_population() {
+    // **The sweeps above pin corners, and a corner is only worth pinning if it
+    // is where the population's tail is** (#353). Six seeds were never the
+    // dearest bodies a re-roll makes, and nothing in the suite said so until
+    // #351 rolled 300 by hand. This rolls them on demand - a few minutes -
+    // and prints what the sweeps' printed corners are to be read against.
+    //
+    // People bald, because the hair ceiling is what a bald body leaves: as
+    // rolled, on the long broad head the sweeps pin, and at the head
+    // envelope's ends past it, (2, 2) and (3, 3), which a roll reaches the
+    // first of and a record both - kept visible here rather than pinned, by
+    // the owner's call. Beside each, how many wear a garment on HEAD-owned
+    // skin, which should be none: before #353 a top's notch fill climbed over
+    // the jaw on lean, thin bodies, and those were every one of the dearest.
+    let heads: [HeadCorner; 4] = [
+        HEADS[0],
+        HEADS[1],
+        ("head at (2, 2)", Some((2.0, 2.0))),
+        ("head at (3, 3)", Some((3.0, 3.0))),
+    ];
+    let people: Vec<(String, AvatarRecord)> = (0..POPULATION)
+        .flat_map(|seed| {
+            heads.map(|(name, skull)| {
+                let mut record = AvatarRecord::new("Population", Archetype::default());
+                record.reroll(seed);
+                if let (Archetype::Humanoid(params), Some((breadth, length))) =
+                    (&mut record.archetype, skull)
+                {
+                    params.head_breadth = breadth;
+                    params.face_length = length;
+                }
+                record.hair = HairRecord::bald();
+                record.sanitize();
+                (format!("seed {seed} {name}"), record)
+            })
+        })
+        .collect();
+    let read = costed(&people, |at, record| {
+        let avatar =
+            Avatar::build_for_shape(record).unwrap_or_else(|| panic!("{at} does not build"));
+        (avatar.budget.tris, on_the_head(&avatar))
+    });
+    for (name, _) in heads {
+        let rows: Vec<(String, usize, usize)> = people
+            .iter()
+            .zip(&read)
+            .filter(|((at, _), _)| at.ends_with(name))
+            .map(|((at, _), &(tris, head))| (at.clone(), tris, head))
+            .collect();
+        let costs: Vec<(String, usize)> = rows.iter().map(|(at, t, _)| (at.clone(), *t)).collect();
+        tail(&format!("bald people {name}"), &costs);
+        let collared: Vec<&(String, usize, usize)> =
+            rows.iter().filter(|(_, _, head)| *head > 0).collect();
+        println!(
+            "  {} of them wear a garment on head-owned skin{}",
+            collared.len(),
+            collared
+                .iter()
+                .max_by_key(|(_, tris, _)| *tris)
+                .map_or(String::new(), |(at, tris, head)| format!(
+                    ", the dearest {at} at {tris} ({head} on the head)"
+                ))
+        );
+    }
+
+    // **And the swept corners over eighty seeds rather than six** (#353's
+    // review): the sweeps pin the lean, thin, tall corners on six seeds, and
+    // a corner's cost still depends on everything else a seed rolls. Bald at
+    // both of the product's heads, then the greediest legal hair on the
+    // dearest of those - the leftover and the product the target is argued
+    // from, over a wider draw.
+    let wide: Vec<i64> = (0..80).collect();
+    let lean: Vec<(String, Option<[f32; 4]>)> = corners()
+        .into_iter()
+        .map(|(name, corner)| (name, Some(corner)))
+        .collect();
+    let bald = swept_over(&wide, &lean, &DEAR_HEADS, &|record: &mut AvatarRecord| {
+        record.hair = HairRecord::bald();
+    });
+    let read = costed(&bald, |at, record| {
+        Avatar::build_for_shape(record)
+            .unwrap_or_else(|| panic!("{at} does not build"))
+            .budget
+            .tris
+    });
+    let mut costs: Vec<(String, usize)> = bald
+        .iter()
+        .zip(&read)
+        .map(|((at, _), &tris)| (at.clone(), tris))
+        .collect();
+    tail("bald lean thin tall corners, seeds 0-79", &costs);
+    costs.sort_by_key(|(_, tris)| std::cmp::Reverse(*tris));
+    let dearest: Vec<(String, AvatarRecord)> = costs
+        .iter()
+        .take(8)
+        .filter_map(|(at, _)| bald.iter().find(|(name, _)| name == at).cloned())
+        .map(|(at, mut record)| {
+            record.hair = greediest();
+            record.sanitize();
+            (at, record)
+        })
+        .collect();
+    let read = costed(&dearest, |at, record| {
+        Avatar::build_for_shape(record)
+            .unwrap_or_else(|| panic!("{at} does not build"))
+            .budget
+            .tris
+    });
+    let product: Vec<(String, usize)> = dearest
+        .iter()
+        .zip(&read)
+        .map(|((at, _), &tris)| (at.clone(), tris))
+        .collect();
+    tail("  the greediest hair on the eight dearest", &product);
+
+    // **And the composites' corner the sweeps do NOT pin** (#353): heavy,
+    // fat, feminine and tall, where the swelled chest's own refinement pass
+    // and the cloth cut over it cost most - with each seed's OWN hair, which
+    // is what a re-roll that lands near it would wear. Pinned, it would leave
+    // the hair less than its floor under the target: a question for the
+    // owner, printed here so it stays one.
+    let heavy: Vec<(String, Option<[f32; 4]>)> = [1.0f32, 2.0]
+        .into_iter()
+        .map(|frame| {
+            (
+                format!("heavy fat tall at frame {frame:+}"),
+                Some([
+                    frame,
+                    2.0,
+                    symbios_avatar::plan::BODY_FAT_RANGE.1,
+                    symbios_avatar::plan::humanoid_height_range().1,
+                ]),
+            )
+        })
+        .collect();
+    let haired = swept_over(&wide, &heavy, &DEAR_HEADS, &|_| {});
+    let read = costed(&haired, |at, record| {
+        Avatar::build_for_shape(record)
+            .unwrap_or_else(|| panic!("{at} does not build"))
+            .budget
+            .tris
+    });
+    let costs: Vec<(String, usize)> = haired
+        .iter()
+        .zip(&read)
+        .map(|((at, _), &tris)| (at.clone(), tris))
+        .collect();
+    tail(
+        "heavy corners with their own hair, seeds 0-79 (not pinned)",
+        &costs,
+    );
+    println!(
+        "  {} of {} past the {TRIANGLE_TARGET} target",
+        costs
+            .iter()
+            .filter(|(_, tris)| *tris > TRIANGLE_TARGET)
+            .count(),
+        costs.len()
+    );
+
+    // Beasts per family, built as rolled and bald as the beast sweep shears
+    // them (no fur, a unicorn's horn): the sweep pins each family's every
+    // axis at both ends, and this is the population those corners stand for.
+    let beasts: Vec<(String, AvatarRecord)> = (0..POPULATION)
+        .map(|seed| {
+            let mut record = AvatarRecord::new(
+                "Population",
+                Archetype::Quadruped(symbios_avatar::QuadrupedParams::default()),
+            );
+            record.reroll(seed);
+            (format!("seed {seed}"), record)
+        })
+        .collect();
+    let read = costed(&beasts, |at, record| {
+        let built =
+            Avatar::build_for_shape(record).unwrap_or_else(|| panic!("{at} does not build"));
+        let mut shorn = record.clone();
+        let mut family = "";
+        if let Archetype::Quadruped(params) = &mut shorn.archetype {
+            family = params.family.name();
+            params.fur = symbios_avatar::Fur::default();
+            params.ornaments = symbios_avatar::Ornaments {
+                horn: Some(symbios_avatar::Ornament::UNICORN),
+                ..symbios_avatar::Ornaments::default()
+            };
+        }
+        let bald =
+            Avatar::build_for_shape(&shorn).unwrap_or_else(|| panic!("{at} bald does not build"));
+        (family, built.budget.tris, bald.budget.tris)
+    });
+    for family in symbios_avatar::Family::ALL {
+        let rows: Vec<(String, usize, usize)> = beasts
+            .iter()
+            .zip(&read)
+            .filter(|(_, (rolled, _, _))| *rolled == family.name())
+            .map(|((at, _), &(_, built, bald))| (at.clone(), built, bald))
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        let built: Vec<(String, usize)> = rows.iter().map(|(at, t, _)| (at.clone(), *t)).collect();
+        let bald: Vec<(String, usize)> = rows.iter().map(|(at, _, t)| (at.clone(), *t)).collect();
+        tail(&format!("{}, built", family.name()), &built);
+        tail(&format!("{}, bald", family.name()), &bald);
     }
 }
 

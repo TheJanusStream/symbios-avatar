@@ -20,6 +20,16 @@ use crate::texture::SkinParams;
 
 /// Format version, bumped when the byte layout changes.
 ///
+/// **14** - a winged code ends with its surfaces (#423) after its head's three
+/// spans, which this version always carries: a byte of which follow, then a
+/// bird's plumage - eight colours a byte a channel, its pattern, its gloss and
+/// the two bytes of its marks' seed - and a bat's or a glider's coat, the
+/// beast's six bytes and its picked colours' block. **Written only by a code
+/// that needs it**: a winged body whose plumage is the default owl's and that
+/// stores no coat but its leading family's own goes on writing 13 or 10, byte
+/// for byte, so a 0.21 reader takes it, and versions up to 13 read as the
+/// default owl's plumage and the family's own coat, which is what they meant.
+///
 /// **13** - a winged code (tag 3) ends with its head's three spans (#422):
 /// `beakLength`, `beakHook` and `facialDisc`, after the complexion. **Written
 /// only by a code that needs it**: a winged body with an owl's head, every
@@ -119,7 +129,10 @@ use crate::texture::SkinParams;
 /// a clean refusal rather than a body nobody asked for. Codes are for passing a
 /// look between people and re-encoding one was never a round trip; the record
 /// is the canonical avatar and reads unchanged.
-pub const SHARE_CODE_VERSION: u8 = 13;
+pub const SHARE_CODE_VERSION: u8 = 14;
+
+/// The last version whose winged code carries no surfaces (#423).
+const PRE_SURFACES_VERSION: u8 = 13;
 
 /// The version every code that carries no mane stiffness is written at.
 const PRE_STIFFNESS_VERSION: u8 = 10;
@@ -242,16 +255,25 @@ pub fn encode(archetype: &Archetype, composites: &Composites, skin: &SkinParams)
         }
         _ => None,
     };
-    // And only a winged body whose head is not an owl's (#422).
-    let head = match archetype {
-        Archetype::Winged(params) if params.head_needs_bytes() => Some(params),
+    // And only a winged body whose surfaces are not its family's own (#423),
+    // and after that, whose head is not an owl's (#422). The layout of version
+    // 14 carries the head whatever it is.
+    let surfaces = match archetype {
+        Archetype::Winged(params) if params.surfaces_need_bytes() => Some(params),
         _ => None,
     };
-    let version = match (&colours, stiffness, head) {
-        (_, _, Some(_)) => SHARE_CODE_VERSION,
-        (Some(_), _, _) => PRE_BEAKS_VERSION,
-        (None, Some(_), _) => PRE_COLOURS_VERSION,
-        (None, None, None) => PRE_STIFFNESS_VERSION,
+    let head = match archetype {
+        Archetype::Winged(params) if surfaces.is_some() || params.head_needs_bytes() => {
+            Some(params)
+        }
+        _ => None,
+    };
+    let version = match (&colours, stiffness, head, surfaces) {
+        (_, _, _, Some(_)) => SHARE_CODE_VERSION,
+        (_, _, Some(_), None) => PRE_SURFACES_VERSION,
+        (Some(_), _, None, None) => PRE_BEAKS_VERSION,
+        (None, Some(_), None, None) => PRE_COLOURS_VERSION,
+        (None, None, None, None) => PRE_STIFFNESS_VERSION,
     };
     let mut payload = vec![version];
     archetype.encode(&mut payload);
@@ -267,6 +289,9 @@ pub fn encode(archetype: &Archetype, composites: &Composites, skin: &SkinParams)
     }
     if let Some(params) = head {
         params.put_head(&mut payload);
+    }
+    if let Some(params) = surfaces {
+        params.put_surfaces(&mut payload);
     }
     payload.push(checksum(&payload));
     group(&base32_encode(&payload))
@@ -358,6 +383,10 @@ pub fn decode(code: &str) -> Result<(Archetype, Composites, SkinParams), ShareCo
         && let Archetype::Winged(params) = &mut archetype
     {
         params.take_head(&mut payload)?;
+        // Its surfaces (#423), after the head at 14, for the head's reason.
+        if version > PRE_SURFACES_VERSION {
+            params.take_surfaces(&mut payload)?;
+        }
     }
     if !payload.is_empty() {
         return Err(ShareCodeError::Trailing(payload.len()));
@@ -525,7 +554,7 @@ mod tests {
             &SkinParams::default(),
         );
         let bytes = base32_decode(&code).expect("decodes");
-        assert_eq!(bytes[0], SHARE_CODE_VERSION);
+        assert_eq!(bytes[0], PRE_SURFACES_VERSION);
         let (Archetype::Winged(back), _, _) = decode(&code).expect("decodes") else {
             panic!("archetype changed");
         };

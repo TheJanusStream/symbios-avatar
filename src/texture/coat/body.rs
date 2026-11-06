@@ -47,6 +47,10 @@ pub(crate) struct CoatBody {
     /// Where each leg leaves the trunk (#376): what a mark asks instead of a
     /// texel's zone wherever it changes from the barrel to a leg.
     pub junctions: Junctions,
+    /// A winged body's own surface (#423): its families' marks and where its
+    /// membrane lies in the atlas. `None` on a beast, whose coat is painted
+    /// as it always was.
+    pub winged: Option<super::winged::WingedCoat>,
 }
 
 impl CoatBody {
@@ -90,6 +94,7 @@ impl CoatBody {
             head: head.copied(),
             feet: feet.map_or_else(Vec::new, |feet| crate::extremity::beast::shapes(rig, feet)),
             junctions: Junctions::of(rig),
+            winged: None,
         }
     }
 

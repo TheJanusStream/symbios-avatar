@@ -100,6 +100,7 @@
 //! cargo run --release --example render -- --winged --head --beak 1,-1,-1  # a bird's head (#422): beakLength,beakHook,facialDisc, a crow's
 //! cargo run --release --example render -- --wings-crosses             # every cross, folded and spread
 //! cargo run --release --example render -- --winged --close foot --beak 1,-1,-1  # a crow's beak: its toes anisodactyl (#422)
+//! cargo run --release --example render -- --winged --beak 1,-1,-1 --plumage crow  # a crow's plumage (#423): or owl, parrot, songbird, beak (the head's nearest)
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -523,7 +524,15 @@ fn run() {
     if let Some(kin) = value("--kin") {
         match &mut record.archetype {
             Archetype::Quadruped(params) => set_kin(params, kin),
-            Archetype::Winged(params) => set_kin(params, kin),
+            Archetype::Winged(params) => {
+                set_kin(params, kin);
+                // An unrolled winged body's eyes are its family's (#423), which
+                // a record is given when it is made: made a bird, then turned
+                // into a bat here, it would look out of an owl's.
+                if seed.is_none() {
+                    record.eyes = AvatarRecord::new("Kin", Archetype::Winged(*params)).eyes;
+                }
+            }
             _ => {
                 eprintln!(
                     "--kin picks a family, and this plan has none: add --quadruped or --winged"
@@ -560,6 +569,32 @@ fn run() {
             };
             (params.beak_length, params.beak_hook, params.facial_disc) = (length, hook, disc);
         }
+        // A bird's plumage (#423): `--plumage crow` dresses it in a kind's
+        // preset (owl, crow, parrot, songbird), `--plumage beak` in the one its
+        // head's axes stand nearest.
+        if let Some(kind) = value("--plumage") {
+            use symbios_avatar::Plumage;
+            params.plumage = match kind.as_str() {
+                "owl" => Plumage::OWL,
+                "crow" => Plumage::CROW,
+                "parrot" => Plumage::PARROT,
+                "songbird" => Plumage::SONGBIRD,
+                "beak" => params.plumage_for_head(),
+                _ => {
+                    eprintln!("--plumage takes owl, crow, parrot, songbird or beak, not `{kind}`");
+                    std::process::exit(2);
+                }
+            };
+        }
+    }
+    // An unrolled bird's eyes follow the head `--beak` gave it (#423), as a
+    // record made with that head would have them: a crow's dark, a parrot's
+    // pale, where it was made an owl and would look out of an owl's gold.
+    if seed.is_none()
+        && value("--beak").is_some()
+        && let Archetype::Winged(params) = &record.archetype
+    {
+        record.eyes = AvatarRecord::new("Beak", Archetype::Winged(*params)).eyes;
     }
     // One exact record, as its JSON is saved (#395): `--record cat.json`, for the
     // body someone is wearing rather than a roll that looks like it.
@@ -4009,6 +4044,9 @@ fn coat_words(coat: &symbios_avatar::Coat) -> String {
     if coat.fantasy != Fantasy::None {
         words.push(format!("in {}", coat.fantasy.name()));
     }
+    if !coat.colours.is_empty() {
+        words.push("free colours".to_string());
+    }
     words.push(format!(
         "intensity {:.2}, marks {}",
         coat.intensity, coat.marks
@@ -4138,7 +4176,7 @@ fn gallery(
                 )
             }
             Archetype::Winged(params) => format!(
-                "{}: size {:.2}, wing {:+.2}, neck {:+.2}, legs {:+.2}, tail {:+.2}, head {:+.2}, appeal {:+.2}",
+                "{}: size {:.2}, wing {:+.2}, neck {:+.2}, legs {:+.2}, tail {:+.2}, head {:+.2}, appeal {:+.2}, beak {:+.2},{:+.2},{:+.2}; {}",
                 lineage_words(params),
                 params.size,
                 params.wing_length,
@@ -4146,7 +4184,11 @@ fn gallery(
                 params.leg_length,
                 params.tail_length,
                 params.head_size,
-                params.appeal
+                params.appeal,
+                params.beak_length,
+                params.beak_hook,
+                params.facial_disc,
+                surface_words(params)
             ),
             other => other.name().to_string(),
         };
@@ -4216,6 +4258,34 @@ fn gallery(
         records.len(),
         seed - 1
     );
+}
+
+/// A winged body's surfaces in words (#423): its plumage's upper and under
+/// colours, pattern and gloss, and the coat it stores, if any.
+fn surface_words(params: &symbios_avatar::WingedParams) -> String {
+    let rgb = |colour: [f32; 3]| {
+        format!(
+            "#{:02x}{:02x}{:02x}",
+            (colour[0] * 255.0) as u8,
+            (colour[1] * 255.0) as u8,
+            (colour[2] * 255.0) as u8
+        )
+    };
+    let plumage = &params.plumage;
+    let coat = params
+        .coat
+        .as_ref()
+        .map_or_else(|| "family coat".to_string(), coat_words);
+    format!(
+        "plumage head {} upper {} under {} flight {} tail {}, {} gloss {:.2}; {coat}",
+        rgb(plumage.head),
+        rgb(plumage.upper),
+        rgb(plumage.under),
+        rgb(plumage.flight),
+        rgb(plumage.tail),
+        plumage.pattern.name(),
+        plumage.gloss
+    )
 }
 
 /// A winged body posed at one extension of both wings and its tail (#421).

@@ -1980,6 +1980,7 @@ fn random_winged_bodies_always_mesh() {
             beak_length: axis(&mut rng),
             beak_hook: axis(&mut rng),
             facial_disc: axis(&mut rng),
+            ..WingedParams::default()
         };
         params.sanitize();
         let mut composites = Composites {

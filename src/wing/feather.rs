@@ -32,7 +32,9 @@
 //! rounded at the tip - and curved a little toward the body when folded,
 //! which spread is a wing's camber. Cut from the strand mask's solid run, so
 //! a card is drawn whole where a lock of hair would fray; coloured per
-//! vertex with a stand-in plumage until W4 (#423) paints one.
+//! vertex from the bird's plumage (#423) by the one sampler its skin is
+//! painted with (`texture::coat::PlumageSampler::card`), each card by the
+//! kind of feather it is and where it roots.
 
 use glam::{Vec2, Vec3};
 
@@ -42,6 +44,7 @@ use crate::hair::mask::{StrandMask, lane_of};
 use crate::mesh::PolyMesh;
 use crate::plan::{WingedParams, Zone};
 use crate::rig::Rig;
+use crate::texture::coat::{Feather, FeatherTone, PlumageSampler};
 
 /// A spread bird wing (research-10 4.1: the elbow at 150 to 160 degrees, the
 /// wrist at 160 to 170): the humerus swept back, the forearm forward, the
@@ -170,13 +173,6 @@ const VANE: [(f32, f32); 6] = [
 /// card cut from inside it is drawn whole.
 const MASK_SPAN: (f32, f32) = (0.02, 0.56);
 
-/// The stand-in plumage until W4 paints one (#423), in sRGB as every vertex
-/// colour is: a brown owl's flight feathers darker than its coverts, each
-/// root darker than its tip.
-const FLIGHT_TONE: (Vec3, Vec3) = (Vec3::new(0.30, 0.22, 0.15), Vec3::new(0.50, 0.38, 0.26));
-/// See [`FLIGHT_TONE`].
-const COVERT_TONE: (Vec3, Vec3) = (Vec3::new(0.42, 0.31, 0.21), Vec3::new(0.60, 0.47, 0.33));
-
 /// The tail: twelve rectrices (research-10 5.1: 12 in most birds), the
 /// central pair's length in trunks at the plan's own tail and how far
 /// `tailLength` moves it, closed a few degrees apart and fanned to this
@@ -232,7 +228,8 @@ struct Card {
     width: f32,
     /// How far up `normal` it stands, to overlie the cards it covers.
     lift: f32,
-    tone: (Vec3, Vec3),
+    /// Its colour along its length, from the plumage (#423).
+    tone: FeatherTone,
 }
 
 /// One bird wing, its feathers' joints attached and their drives recorded.
@@ -247,13 +244,15 @@ fn on_bone(rig: &Rig, joint: usize, next: usize, t: f32) -> Vec3 {
 }
 
 /// A bird's wing on `arm`: its arm spread and its feathers rooted on it,
-/// folded on the flank of `body` (its surface and its vertex normals).
+/// folded on the flank of `body` (its surface and its vertex normals), each
+/// coloured from `plumage` (#423).
 pub(crate) fn wing(
     rig: &mut Rig,
     book: &mut Book,
     trunk: &Trunk,
     arm: &Arm,
     body: (&PolyMesh, &[Vec3]),
+    plumage: &PlumageSampler,
 ) -> Wing {
     let side = arm.side;
     let plane = trunk.plane(side, DIHEDRAL);
@@ -312,10 +311,11 @@ pub(crate) fn wing(
                    rest: Vec3,
                    (length, theta): (f32, f32),
                    (width, unit): (f32, f32),
-                   tone: (Vec3, Vec3),
+                   kind: Feather,
                    (rank, rise): (f32, f32)| {
         let root = on_bone(rig, joint, next, along);
         let quill = Book::attach(rig, joint, root, zone);
+        let tone = plumage.card(root, kind);
         let mut card = Card {
             hold: Hold::one(quill),
             root,
@@ -357,7 +357,7 @@ pub(crate) fn wing(
             rest,
             spec,
             (PRIMARY_WIDTH, hand_unit),
-            FLIGHT_TONE,
+            Feather::Remex,
             (rank, 0.0),
         );
         rank += 1.0;
@@ -386,7 +386,7 @@ pub(crate) fn wing(
             rest,
             spec,
             width,
-            FLIGHT_TONE,
+            Feather::Remex,
             (rank, if index < 10 { 0.0 } else { INNER_RISE * 0.5 }),
         );
         rank += 1.0;
@@ -402,7 +402,7 @@ pub(crate) fn wing(
             rest,
             spec,
             (INNER_WIDTH, humerus),
-            COVERT_TONE,
+            Feather::Covert,
             (rank, INNER_RISE),
         );
         rank += 1.0;
@@ -420,15 +420,16 @@ pub(crate) fn wing(
         book.turn(joint, target, FAN_SCHEDULE, Some(arm.limb));
         for (index, &(length, theta)) in ALULA.iter().enumerate() {
             let off = theta - ALULA[1].1;
+            let root = root + hand * (0.02 * humerus * index as f32);
             cards.push(Card {
                 hold: Hold::one(joint),
-                root: root + hand * (0.02 * humerus * index as f32),
+                root,
                 dir: swing(rest, normal, side, off),
                 normal,
                 length: length * hand_unit,
                 width: 0.25 * length * hand_unit,
                 lift: (rank + index as f32 * 0.3) * lift,
-                tone: COVERT_TONE,
+                tone: plumage.card(root, Feather::Covert),
             });
         }
         rank += 1.0;
@@ -439,7 +440,7 @@ pub(crate) fn wing(
     // two over the primaries, the greater, median, lesser and marginal over
     // the secondaries, and one over the tertials and humerals - two to a
     // gap, so they read as layered feathers rather than a plate.
-    let between = |a: &Card, b: &Card, at: f32, share: f32, row_lift: f32, tone| Card {
+    let between = |a: &Card, b: &Card, at: f32, share: f32, row_lift: f32| Card {
         hold: Hold::mix(&[(&a.hold, 1.0 - at), (&b.hold, at)]),
         root: a.root.lerp(b.root, at),
         dir: a.dir.lerp(b.dir, at).normalize_or(a.dir),
@@ -447,20 +448,13 @@ pub(crate) fn wing(
         length: (a.length + (b.length - a.length) * at) * share,
         width: (a.length + (b.length - a.length) * at) * share * COVERT_WIDTH,
         lift: row_lift,
-        tone,
+        tone: plumage.card(a.root.lerp(b.root, at), Feather::Covert),
     };
     let rows = |cards: &mut Vec<Card>, under: &[Card], shares: &[f32], rank: &mut f32| {
         for &share in shares {
             for pair in under.windows(2) {
                 for at in [0.25, 0.75] {
-                    cards.push(between(
-                        &pair[0],
-                        &pair[1],
-                        at,
-                        share,
-                        *rank * lift,
-                        COVERT_TONE,
-                    ));
+                    cards.push(between(&pair[0], &pair[1], at, share, *rank * lift));
                 }
             }
             *rank += 1.0;
@@ -493,13 +487,15 @@ pub(crate) struct Tail {
     cards: Vec<Card>,
 }
 
-/// The tail fan on a bird's tail, if it has one, rooted in `body`'s rump.
+/// The tail fan on a bird's tail, if it has one, rooted in `body`'s rump and
+/// coloured from `plumage` (#423).
 pub(crate) fn tail(
     rig: &mut Rig,
     book: &mut Book,
     trunk: &Trunk,
     params: &WingedParams,
     body: &PolyMesh,
+    plumage: &PlumageSampler,
 ) -> Option<Tail> {
     // **Rooted just inside the rump**, where the fan's quills are buried,
     // and held by the tail's first joint: a bird's bony tail is a stub of
@@ -540,33 +536,35 @@ pub(crate) fn tail(
         // a rounded tail.
         let rank = middle - (index as f32 - middle).abs();
         let reach = length * (1.0 - 0.08 * out.abs());
+        let root = root + lateral * (out * 0.06 * length);
         cards.push(Card {
             hold,
-            root: root + lateral * (out * 0.06 * length),
+            root,
             dir,
             normal,
             length: reach,
             width: reach * RECTRIX_WIDTH,
             lift: rank * lift,
-            tone: FLIGHT_TONE,
+            tone: plumage.card(root, Feather::Rectrix),
         });
     }
     // The upper tail coverts, over the rectrices' bases.
     for index in 0..5 {
         let out = (index as f32 - 2.0) / 2.0;
         let edge = if out < 0.0 { edges[0] } else { edges[1] };
+        let root = root + lateral * (out * 0.05 * length);
         cards.push(Card {
             hold: Hold(vec![
                 (edge, 0.6 * out.abs()),
                 (pygostyle, 1.0 - 0.6 * out.abs()),
             ]),
-            root: root + lateral * (out * 0.05 * length),
+            root,
             dir: det::Rot::axis_angle(normal, out * TAIL_CLOSED) * closed,
             normal,
             length: length * 0.45,
             width: length * 0.45 * COVERT_WIDTH,
             lift: (middle + 1.0) * lift,
-            tone: COVERT_TONE,
+            tone: plumage.card(root, Feather::TailCovert),
         });
     }
     Some(Tail { cards })
@@ -701,7 +699,7 @@ impl Card {
                 + self.dir * (self.length * t)
                 + self.normal * (self.lift - CAMBER * self.length * t * t);
             let half = across * (0.5 * self.width * wide);
-            let tone = ((self.tone.0 + (self.tone.1 - self.tone.0) * t) * shade).min(Vec3::ONE);
+            let tone = (self.tone.at(t) * shade).min(Vec3::ONE);
             let v = MASK_SPAN.0 + (MASK_SPAN.1 - MASK_SPAN.0) * t;
             for (offset, u) in [(-half, lo), (half, hi)] {
                 card.push_vertex(centre + offset);

@@ -429,7 +429,7 @@ fn declared_defaults_match_the_values_the_crate_writes() {
     // VALUE, and the two definitions carrying the most axes were exempt from it.
     // A default that drifts is invisible to every reader who omits the field and
     // to nobody else, which is the hardest kind of schema defect to notice.
-    let cases: [(&str, Value); 14] = [
+    let cases: [(&str, Value); 15] = [
         (
             // The identity anchor of the whole composite overhaul (#161): the
             // formulas are written so that THIS description reproduces the body
@@ -460,6 +460,12 @@ fn declared_defaults_match_the_values_the_crate_writes() {
         (
             "quadrupedCoat",
             serde_json::to_value(symbios_avatar::Coat::default()).expect("serialises"),
+        ),
+        // A bird's plumage (#423): a little owl's, which a reader that omits
+        // it, or any of its fields, paints.
+        (
+            "wingedPlumage",
+            serde_json::to_value(symbios_avatar::Plumage::default()).expect("serialises"),
         ),
         // A beast's fur (#369): none anywhere, which a reader that omits it
         // draws.
@@ -711,7 +717,7 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
     // is exactly one Rust type's serialised shape and that is what makes the
     // comparison total rather than a spot check.
     let defs = lexicon("defs");
-    let cases: [(&str, Value); 27] = [
+    let cases: [(&str, Value); 28] = [
         (
             "composites",
             serde_json::to_value(symbios_avatar::Composites::default()).expect("serialises"),
@@ -753,12 +759,20 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
         // A cross, because `hybrid` is written only on a body that is one.
         (
             "winged",
+            // A crow's plumage and a stored coat (#423), because both are
+            // written only when they are not the default owl's and absent.
             serde_json::to_value(symbios_avatar::WingedParams {
                 hybrid: Some(symbios_avatar::WingedFamily::Glider),
                 blend: 0.5,
+                plumage: symbios_avatar::Plumage::CROW,
+                coat: Some(symbios_avatar::Coat::default()),
                 ..Default::default()
             })
             .expect("serialises"),
+        ),
+        (
+            "wingedPlumage",
+            serde_json::to_value(symbios_avatar::Plumage::default()).expect("serialises"),
         ),
         // Every kind, each away from what `horn` says.
         (

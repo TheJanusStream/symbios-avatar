@@ -394,38 +394,236 @@ fn along((start, end): (Vec3, Vec3), point: Vec3) -> (f32, f32) {
 /// other garment holds — a notch is never filled across a seam, or the two
 /// garments would claim the same face and flicker (`the_top_and_the_trousers_
 /// do_not_claim_the_same_face`).
-pub fn close(mesh: &PolyMesh, mine: &mut [bool], blocked: &[bool]) {
-    let mut users: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
-    for (index, face) in mesh.faces.iter().enumerate() {
-        for at in 0..face.len() {
-            let key = edge_key(face[at], face[(at + 1) % face.len()]);
-            users.entry(key).or_default().push(index);
-        }
+///
+/// **And a fill that climbs onto the head is taken again under a level
+/// collar** (#353). Run to a fixed point, the fill flattens a staircase to
+/// the level of its highest step, and on lean, thin bodies the chest's own
+/// skin runs high up the sides of the neck: the top's collar climbed the
+/// column, through the refined surface under the jaw, and over the chin - a
+/// garment on the face, 2,000 to 6,000 triangles of claim doubled into cloth,
+/// and every one of the dearest bodies a re-roll made. No cut claims head
+/// skin on its own. So when the fill reaches a head face above the raw
+/// claim's highest point along the neck bone, it is run again from the raw
+/// claim under a level line square to that bone - every face whose centroid
+/// is above the line, and every face of the head, off limits. The line is
+/// the lowest at or above the raw claim's top that leaves the fewest notches,
+/// unclaimed faces touching the claim on two of their sides: none on most
+/// such bodies. Where the neck's refined band meets the coarse surface
+/// beside it the grid's rows step by a face,
+/// and on some bodies one mirrored pair of those steps stays open at every
+/// level a collar can stand at below the jaw: filling one only moves it up a
+/// row, which is how the climb began. A body whose fill stayed under the head
+/// is cut exactly as it always was.
+pub fn close(mesh: &PolyMesh, rig: &Rig, mine: &mut [bool], blocked: &[bool]) {
+    let raw = mine.to_vec();
+    let held = |index: usize| blocked.get(index).copied().unwrap_or(false);
+    let neighbours = Neighbours::of(mesh);
+    neighbours.fill(mine, held);
+    let Some(collar) = Collar::of(mesh, rig, &raw) else {
+        return;
+    };
+    if !(0..mine.len()).any(|face| mine[face] && collar.climbed(face)) {
+        return;
     }
-    loop {
-        let mut filled = false;
-        for index in 0..mesh.faces.len() {
-            if mine[index] || blocked.get(index).copied().unwrap_or(false) {
-                continue;
-            }
-            let face = &mesh.faces[index];
-            let holding = (0..face.len())
-                .filter(|&at| {
-                    let key = edge_key(face[at], face[(at + 1) % face.len()]);
-                    users[&key]
-                        .iter()
-                        .any(|&other| other != index && mine[other])
-                })
-                .count();
-            if holding >= 2 {
-                mine[index] = true;
-                filled = true;
-            }
+    let mut fewest: Option<(usize, Vec<bool>)> = None;
+    for line in collar.lines() {
+        let mut trial = raw.clone();
+        neighbours.fill(&mut trial, |index| {
+            held(index) || collar.column[index] == Some(Zone::Head) || collar.along[index] > line
+        });
+        let notches = collar.notched(mesh, &neighbours, &trial, held);
+        if fewest.as_ref().is_none_or(|(least, _)| notches < *least) {
+            fewest = Some((notches, trial));
         }
-        if !filled {
+        if notches == 0 {
             break;
         }
     }
+    if let Some((_, best)) = fewest {
+        mine.copy_from_slice(&best);
+    }
+}
+
+/// Which faces share each edge of each face, measured once per [`close`].
+struct Neighbours {
+    /// For each face, for each of its edges in order, the other faces on it.
+    of: Vec<Vec<Vec<usize>>>,
+}
+
+impl Neighbours {
+    fn of(mesh: &PolyMesh) -> Self {
+        let mut users: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+        for (index, face) in mesh.faces.iter().enumerate() {
+            for at in 0..face.len() {
+                let key = edge_key(face[at], face[(at + 1) % face.len()]);
+                users.entry(key).or_default().push(index);
+            }
+        }
+        let of = mesh
+            .faces
+            .iter()
+            .enumerate()
+            .map(|(index, face)| {
+                (0..face.len())
+                    .map(|at| {
+                        users[&edge_key(face[at], face[(at + 1) % face.len()])]
+                            .iter()
+                            .copied()
+                            .filter(|&other| other != index)
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect();
+        Self { of }
+    }
+
+    /// Which of `face`'s edges a claimed face shares.
+    fn holding(&self, face: usize, mine: &[bool]) -> impl Iterator<Item = usize> + '_ {
+        let claimed: Vec<bool> = self.of[face]
+            .iter()
+            .map(|others| others.iter().any(|&other| mine[other]))
+            .collect();
+        (0..claimed.len()).filter(move |&at| claimed[at])
+    }
+
+    /// The fill [`close`] runs: any face `held` refuses, refused; any other
+    /// face sharing two or more edges with the claim, claimed, to a fixed
+    /// point. The condition only grows with the claim, so the fixed point is
+    /// the same whatever order the faces are visited in.
+    fn fill(&self, mine: &mut [bool], held: impl Fn(usize) -> bool) {
+        let mut queue: Vec<usize> = (0..mine.len())
+            .filter(|&face| mine[face])
+            .flat_map(|face| self.of[face].iter().flatten().copied())
+            .collect();
+        while let Some(face) = queue.pop() {
+            if mine[face] || held(face) || self.holding(face, mine).count() < 2 {
+                continue;
+            }
+            mine[face] = true;
+            queue.extend(self.of[face].iter().flatten().copied());
+        }
+    }
+}
+
+/// Where a raw claim's collar stands on the neck (#353): each face's owner
+/// and its height along the neck bone, and the highest any raw-claimed face
+/// reaches.
+struct Collar {
+    /// Whether each face's nearest bone is the neck's or the head's.
+    column: Vec<Option<Zone>>,
+    /// Each face's centroid along the neck bone, in metres from its root.
+    along: Vec<f32>,
+    /// The raw claim's highest point along the neck bone.
+    line: f32,
+    /// The lowest face of the head along the same bone.
+    jaw: f32,
+}
+
+impl Collar {
+    /// Measured on `mesh` for the claim `raw`; `None` for a body with no neck
+    /// or no head, or an empty claim.
+    fn of(mesh: &PolyMesh, rig: &Rig, raw: &[bool]) -> Option<Self> {
+        let &neck = rig.in_zone(Zone::Neck).first()?;
+        rig.in_zone(Zone::Head).first()?;
+        let (root, tip) = rig.bone(neck);
+        let axis = (tip - root).try_normalize()?;
+        let mut column = Vec::with_capacity(mesh.faces.len());
+        let mut along = Vec::with_capacity(mesh.faces.len());
+        for face in 0..mesh.faces.len() {
+            let at = mesh.face_centroid(face);
+            let zone = rig.joints[rig.nearest_bone(at).joint].zone;
+            column.push(matches!(zone, Zone::Neck | Zone::Head).then_some(zone));
+            along.push((at - root).dot(axis));
+        }
+        let line = (0..mesh.faces.len())
+            .filter(|&face| raw.get(face).copied().unwrap_or(false))
+            .map(|face| along[face])
+            .reduce(f32::max)?;
+        let jaw = (0..mesh.faces.len())
+            .filter(|&face| column[face] == Some(Zone::Head))
+            .map(|face| along[face])
+            .fold(f32::INFINITY, f32::min);
+        Some(Self {
+            column,
+            along,
+            line,
+            jaw,
+        })
+    }
+
+    /// A face of the head above the raw claim's top: one the fill has no
+    /// business reaching.
+    fn climbed(&self, face: usize) -> bool {
+        self.column[face] == Some(Zone::Head) && self.along[face] > self.line
+    }
+
+    /// The level lines a collar may stand at, lowest first: the raw claim's
+    /// top, then midway between each pair of neck-owned faces' heights above
+    /// it, short of the jaw.
+    fn lines(&self) -> Vec<f32> {
+        let mut heights: Vec<f32> = (0..self.along.len())
+            .filter(|&face| self.column[face] == Some(Zone::Neck))
+            .map(|face| self.along[face])
+            .filter(|&height| height > self.line && height < self.jaw)
+            .collect();
+        heights.sort_by(f32::total_cmp);
+        let mut lines = vec![self.line];
+        for pair in heights.windows(2) {
+            // A millimetre apart or less is one row, not two.
+            if pair[1] - pair[0] > 0.001 {
+                lines.push(0.5 * (pair[0] + pair[1]));
+            }
+        }
+        lines
+    }
+
+    /// How many notches a claim leaves open: unclaimed faces no other garment
+    /// holds whose claimed neighbours touch two of their SIDES, where a side
+    /// is a run of consecutive near-parallel edges. A coarse face above a
+    /// refined row shares two edges with it along one straight side, and that
+    /// is a level hem rather than a notch.
+    fn notched(
+        &self,
+        mesh: &PolyMesh,
+        neighbours: &Neighbours,
+        mine: &[bool],
+        held: impl Fn(usize) -> bool,
+    ) -> usize {
+        (0..mine.len())
+            .filter(|&face| !mine[face] && !held(face))
+            .filter(|&face| {
+                let mut sides: Vec<usize> = neighbours
+                    .holding(face, mine)
+                    .map(|at| side_of(mesh, face, at))
+                    .collect();
+                sides.sort_unstable();
+                sides.dedup();
+                sides.len() >= 2
+            })
+            .count()
+    }
+}
+
+/// Which side of `face` its edge `at` lies on: consecutive edges whose
+/// directions agree to within about twenty degrees are one side.
+fn side_of(mesh: &PolyMesh, face: usize, at: usize) -> usize {
+    let corners = &mesh.faces[face];
+    let count = corners.len();
+    let direction = |edge: usize| {
+        (mesh.positions[corners[(edge + 1) % count] as usize]
+            - mesh.positions[corners[edge] as usize])
+            .normalize_or_zero()
+    };
+    let turns = |edge: usize| direction(edge).dot(direction((edge + count - 1) % count)) < 0.94;
+    // Start counting at a corner that turns, so a side running through the
+    // first corner is not split in two.
+    let Some(start) = (0..count).find(|&edge| turns(edge)) else {
+        return 0;
+    };
+    (1..=((at + count - start) % count))
+        .filter(|&step| turns((start + step) % count))
+        .count()
 }
 
 impl Garment {
@@ -448,7 +646,7 @@ impl Garment {
         colour: [f32; 3],
     ) -> Option<Self> {
         let mut mine = claimed(mesh, rig, zones, cut);
-        close(mesh, &mut mine, &[]);
+        close(mesh, rig, &mut mine, &[]);
         Self::sew(mesh, rig, weights, zones, &mine, cut, colour)
     }
 
@@ -1623,7 +1821,7 @@ mod tests {
             ..Default::default()
         };
         let mut mine = claimed(&mesh, &rig, &zones, &cut);
-        close(&mesh, &mut mine, &[]);
+        close(&mesh, &rig, &mut mine, &[]);
         let covered: Vec<&Vec<u32>> = mesh
             .faces
             .iter()
@@ -1668,7 +1866,7 @@ mod tests {
         };
         let mut mine = claimed(&mesh, &rig, &zones, &cut);
         let raw = mine.iter().filter(|&&mine| mine).count();
-        close(&mesh, &mut mine, &[]);
+        close(&mesh, &rig, &mut mine, &[]);
         let garment =
             Garment::sew(&mesh, &rig, &weights, &zones, &mine, &cut, [0.5; 3]).expect("a torso");
         assert_eq!(

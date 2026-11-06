@@ -268,9 +268,9 @@ are seated on it.
   radii across from a middle 0.12 below the braincase's centre and its middle
   0.08 under the rim at full strength, and a ruff - a tube 0.06 radii round
   the line where the ball crossed the head - smoothly joined on, so the ruff
-  follows the edge wherever the face's own parts put it. The skin within the
-  ruff is shaded darker (`ruff_shade`, a tint by vertex: a colour can only
-  darken the coat), which is what outlines a disc at a distance. The eyes are
+  follows the edge wherever the face's own parts put it. The ruff is darker
+  than the dish it rings, which is what outlines a disc at a distance: a tint
+  by vertex until W4 painted both in the plumage's colours ("Surfaces"). The eyes are
   seated in the dish and their gaze turned 0.7 of the way from its normals,
   which lean in toward its middle, to straight ahead. **An owl's head is
   charted round its crown's line** (`uv::BeastCharts`): wrapped round the
@@ -397,16 +397,15 @@ are seated on it.
 - **A wing does not swing as an arm** (`anim::gait::hang_arms`,
   `swing_arms`): a limb that bears no weight is an arm only on a body with
   hands. The bird's wing is still until W5 moves it.
-- **A coat stands in for a surface**: until W4 (#423) stores a plumage, a pelt
-  or a membrane, each family is painted with a coat of its leading family's -
-  a brown bird, a dark bat, a grey glider - not stored.
+- **A coat stood in for a surface** until W4 (#423) stored a plumage and a
+  coat: see "Surfaces".
 
 ### Where the head departs, and why (W3, #422)
 
 - **An owl's disc is a carved dish, not feathers**: research-10 describes "a
   ring of stiff feathers"; built as relief on the head's surface with a
-  shaded ruff, it reads at a distance and costs no cards. The disc's own
-  feathers, and its paler face, are plumage, W4's.
+  shaded ruff, it reads at a distance and costs no cards. Its paler face and
+  darker ruff are its plumage's since W4 ("Surfaces").
 - **No ear tufts**: the default owl is a little owl (10 7.2), which has none;
   a scops or an eagle owl's tufts would be a part of their own.
 - **A bird's eyes turn as a beast's do**: research-10 fact 5 has an owl's
@@ -578,9 +577,8 @@ glider 68.
 - **A bird's humerals rise over its back when spread** (0.6 of the way out
   of the wing's plane, the tertials half that): the plane through the
   shoulder runs under the back, and in it they passed through the body.
-- **Plumage and membrane colour are stand-ins** (W4, #423): the feathers a
-  brown owl's in vertex colour, the membrane the coat's in its own atlas
-  region.
+- **The feathers take the plumage** (W4, #423): see "Surfaces". The
+  membrane is the coat's, in its own atlas region.
 
 ## The feet (W3, #422)
 
@@ -684,6 +682,374 @@ winged gaits (#424); the toes are joints it can lay flat.
   clinging are the owner's later phase, and the chains are what a grip
   will turn.
 
+## Surfaces (W4, #423)
+
+**The surface is the leading family's**, as the posture, the wings and the
+feet are: a bird-led body is painted from its plumage, a bat- or glider-led
+one from its coat, and a cross switches at the halfway blend. Both are stored
+on `WingedParams`, and each is kept across a change of family (below). Judge
+them with `cargo run --release --example render -- --winged --beak 1,-1,-1
+--plumage crow` (or `owl`, `parrot`, `songbird`, or `beak` for the preset its
+head is nearest), `--winged --head` for an owl's disc, and `--winged --gallery 9
+--family bird` (or `bat`, `glider`), whose tiles print each body's surfaces.
+
+### Plumage (`plan::Plumage`)
+
+**Colours by tract, not loci.** A beast's coat is the genetics a breeder would
+name; a bird varies by which colour each feather tract wears, and a field
+guide describes one that way (10 5.1, 5.3: "patterns follow feather tracts").
+So a plumage is a colour per tract, a pattern, an owl's disc, a gloss and the
+seed its marks are laid out from, every colour free:
+
+| Field | Reaches |
+|---|---|
+| `head` | the crown, nape, cheeks and throat, outside a disc; the throat's undersides take `under` |
+| `upper` | the back, mantle and rump, and the wing's coverts, humerals and alula |
+| `under` | the breast, belly, flanks and the feathered legs |
+| `flight` | the remiges: primaries, secondaries, tertials |
+| `tail` | the rectrices (the upper tail coverts are `upper`'s) |
+| `mark` | what the pattern is drawn in |
+| `disc`, `ruff` | an owl's face inside its ruff, and the rim: shown only on a head with a disc |
+| `pattern` | `plain`, `barred`, `spotted`, `streaked` |
+| `gloss` | `0..1`: none to a raven's |
+| `marks` | the layout seed |
+
+**Presets per kind of bird** (`Plumage::OWL`, `CROW`, `PARROT`, `SONGBIRD`),
+each the first of a short list of palettes after birds a field guide shows:
+owls (a little owl, the default; a tawny, a barn owl, a snowy, a great grey),
+crows (a carrion crow; a raven, a jackdaw, a hooded crow, a magpie), parrots (a
+scarlet macaw; a blue-and-yellow macaw, a rainbow lorikeet, a budgerigar, an
+African grey, a cockatoo) and songbirds (an eastern bluebird; a robin, a house
+sparrow, a cardinal, a blue tit, a song thrush). Every colour is chosen by
+render. **A roll draws the kind its head is drawn as**: the kind is not
+stored, so the plumage roll asks the head roll's streams again for the kind
+they drew (`winged.beakKind`) while the head is the one they drew, and
+otherwise - a creator's head, one a lock kept - reads it back off the head's
+three axes (`WingedParams::bird_kind`): **an owl if it has a disc**
+(`facialDisc` above -0.75, a quarter of a full one; only an owl's roll draws
+one), else the disc-less preset nearest it. Read as the nearest of all four,
+an owl whose hook rolled wild stood nearer a parrot and wore a macaw's red
+with no disc (49 of 1,190 owls), and a crow's and a songbird's beaks, a
+quarter's spread about presets 0.85 apart, wore each other's colours about
+one roll in fifty: 1,898 of the 1,987 bird-led rolls in 6,000 seeds wore their
+head roll's kind, 1,947 with the disc read first, and now every one does. A roll picks one of that kind's palettes
+evenly (`winged.plumage`), lighter or darker by up to a tenth all over
+(`winged.plumageShade`), with a fresh layout (`winged.plumageMarks`): a
+parrot-beaked bird wears a parrot's colours, as a beast's roll picks its free
+colours off a list (#403). `WingedParams::plumage_palettes` and
+`plumage_for_head` hand a creator the same rows to pick a whole plumage from.
+
+**The painter** (`texture::coat::paint_plumage`, `PlumageSampler`):
+
+- **Tracts by the body's own frame.** A perching bird's trunk is raised
+  0.95 rad, so "up" is not its back: the back is the side its dorsal axis faces
+  (square to the spine from the hips to the withers, toward the sky), and the
+  upper tract turns into the under round the flank over a band (the cosine
+  -0.45 to 0.25). The head's colour fades in by how far a texel lies off the
+  declared head and a feathered leg's by how much of a hind leg it is (the
+  beast's junctions, its wing arms excluded): no tract stops on a zone's line.
+- **A mark shows where it stands out**: the pattern is drawn on a tract only
+  as far as their luminances differ (0.12 to 0.30), so a little owl's cream
+  spots land on its brown back and crown and not its buff breast, a thrush's
+  dark ones on its pale breast, a snowy owl's dark bars everywhere. Spots at 16
+  per back height; bars 13, narrow, wavering and broken into lengths (drawn
+  whole they read as a striped jersey); streaks 20 cells drawn out five times
+  along the spine.
+- **An owl's disc is painted, not tinted**: #422's `ruff_shade` vertex tint
+  is folded in and gone. The face inside the ruff is `disc` and the rim
+  `ruff`, read off the declared head's carved dish (`BeastHead::in_dish`,
+  `on_ruff`), so a pale face ringed dark is exactly what a record says. The
+  ruff's colour reaches 1.15 to 1.8 of its radii off its middle line: its
+  surface stands one radius off, and #422's reach, 0.4 to 1, painted nearly
+  nothing in the atlas.
+- **A crow's gloss is a roughness and a sheen.** The skin's ORM map carries
+  roughness, so a gloss lowers it over the back, the coverts and the head
+  (0.72 to 0.40 on a crow's back, 0.32 a raven's) and its highlight tightens;
+  the draw has no view-dependent channel, so a cool sheen, drifting between a
+  corvid's blue-violet and blue-green, is laid into the colour there (0.22 of it
+  at a full gloss). **A true iridescence** - the hue turning with the angle it
+  is seen at - would need a thin-film or iridescence term in the skin's material
+  (Bevy's `StandardMaterial` has none) or a material extension reading a
+  hue-shift map; the feather cards, in the hair's draw, share its material and
+  take only the sheen.
+- **The beak and the toes are not plumage**: the beak keeps the horn its
+  length gives it (#422) and the bare toes and talons the leather and horn W3
+  painted them in, from the bird's own coat (`WingedFamily::default_coat`).
+
+**One sampler for every feather** (`PlumageSampler::card(root, normal, zone,
+feather) -> FeatherTone`): W2's stand-in tones (`FLIGHT_TONE`,
+`COVERT_TONE`) are gone, and every card takes its colour root to tip from
+where it roots and what it is - a remex `flight`, a covert, humeral or alula
+`upper`, a rectrix `tail`, an upper tail covert `upper`, a contour feather the
+skin's own colour at its root - each root darker than its tip, barred across
+on a barred plumage (two bars, at the rows a six-row card has), every other
+covert tipped with the mark on a spotted one, and glossed as the skin is. The
+contour feathers a later part grows call the same sampler.
+
+### Coats (`WingedParams::coat`)
+
+A bat's or a glider's fur and membrane are **the beast's `Coat`**, its loci
+and its picked colours, stored as `coat: Option<Coat>`: **absent until a roll
+or a creator stores one, absent reading as the leading family's own**
+(`WingedFamily::default_coat`): a fruit bat's near-black (black, solid: a flying fox's dark body, its golden mantle a mark the painter lays over it), a
+sugar glider's mid grey (a picked grey, 0.30, over the diluted black, whose
+blue-grey read nearly white: the owner's call at W4's review), each lightening
+toward its belly as every coat does. `WingedParams::coat()` is what every reader asks: the stored
+coat on a bat- or glider-led body, its family's while none is, and on a
+bird-led body a bird's own, whose leather paints its toes. A roll draws a coat
+for a bat- or glider-led body from its families' loci on the beast's coat
+streams (`Coat::reroll_winged`): a bat mostly dark brown or black, one in seven
+sable (a russet tipped dark along the back); a glider mostly blue-grey, a quarter
+grizzled, now and then a mosaic's white patches or a leucistic glider's white;
+and as a beast's, one in twenty-five an unnatural palette and one in twenty
+free colours. A cross with a bird draws its mammal family's loci alone. Every
+frequency is chosen by render: research-10 5.3 gives the colours, not how
+often. The glider's dorsal stripe and the fruit bat's mantle are the family
+marks, painted with the fur (#423's other half).
+
+### The wire
+
+- **The record**: `plumage` (`#wingedPlumage`) and `coat` (`#quadrupedCoat`)
+  on the `winged` definition, optional and defaulted, each left off while it
+  is the default owl's and absent, so a body in its family's surfaces writes
+  the record 0.21 wrote. A 0.21 record, which stores neither, reads as its
+  family's defaults: the default owl's plumage and its family's own coat.
+  **Those are not all the stand-ins 0.21 showed**: a bat's default is the
+  near-black 0.21 painted (black, solid), but a glider's is now blue-grey
+  (black, diluted) where 0.21's stand-in was a dark grizzle (black, wild
+  agouti), and a bird is painted in its plumage where 0.21 painted a brown
+  stand-in coat (liver, wild agouti), so a 0.21 glider or bird does not look
+  as it did. Colours are thousandths; the gloss is thousandths of a share.
+- **The share code, version 14**: after the head's three spans, which 14
+  always carries, a byte of which surfaces follow, then the plumage (eight
+  colours a byte a channel, the pattern, the gloss, the marks' two bytes: 28)
+  and the coat (the beast's six bytes and its picked colours' block). **Written
+  only by a body that needs it**: a winged body whose plumage is the default
+  owl's and which stores no coat but its leading family's own goes on writing
+  13 or 10, byte for byte, so a 0.21 reader takes it; a 0.21 reader refuses a
+  14 as a version from the future. Codes up to 13 read as the default plumage
+  and the family's coat, which a glider and a bird wear in other colours than
+  0.21 painted them (above).
+- **Sanitised and quantised**: every colour clamped to `0..1` on the wire's
+  grid, a channel that is not a number reading as black (a coat's picked
+  colours' rule), the gloss to a share; every preset is authored on the grid,
+  so it is what it reads back as.
+- **A change of family keeps both surfaces** (`set_kind`, after the beast,
+  whose coat goes with the body across a change of family, #368): the plumage
+  paints only a bird-led body, so it rides a bat or a glider unseen and a bird
+  made a bat and back comes back in its own feathers, as its beak does; a
+  stored coat is a creator's or a roll's and goes with the body, while an
+  absent one reads as whichever family leads, so a bird made a bat wears a
+  fruit bat's brown and made a glider a glider's grey. Nothing is handed over.
+- **`GENERATOR_VERSION` 11**: a winged roll draws its surface on new streams
+  (`winged.plumage*`) and the beast's coat streams, which no winged roll drew
+  before; no person or beast moved. No migration: a saved winged body stores
+  no surface and reads as its family's defaults, above.
+
+### The eyes
+
+**An unrolled winged body wears its family's eyes**: `AvatarRecord::new` gives
+a winged record the plan's own iris at 0.33 of its ramp (about a roll's mean;
+the rim darkened 0.22) - an owl's gold, a bat's and a glider's dark brown -
+where it had a person's blue until rolled. Persons and beasts keep theirs, to
+the byte. **Each kind of bird has its own** (the owner's call at W4's
+review), read off the head as its plumage is: an owl's gold (the cat's ramp),
+a parrot's pale cream to straw, a crow's and a songbird's dark brown (the
+horse's ramp, short of its wall eye).
+
+### Where the surfaces depart, and why
+
+- **A plumage is colours, not feathers' genetics**: no locus says why a bird
+  is the colour it is, so a cross between two birds cannot take a colour from
+  each parent the way a beast's coat can; every bird is a whole palette.
+- **The kind is the head's, read back** where a roll did not draw the head:
+  a creator who reshapes a beak keeps the plumage they have, and the rows
+  they are handed are an owl's on a head with a disc and otherwise the
+  nearer kind's.
+- **One pattern a plumage**, drawn wherever it stands out: a little owl's
+  spotted back and streaked breast are one or the other, and a pattern on the
+  breast of a pale-bellied owl does not show.
+- **No wing bars, rump patches, eye stripes or two-tone bills** (10 5.3's
+  pattern rules): a parrot's yellow coverts, a robin's orange face against its
+  olive crown, a magpie's white scapulars are tracts the plumage does not
+  separate. Each would be a colour more on the wire.
+- **The gloss is static**: a sheen in the colour where a real one turns with
+  the view (above); the feather cards cannot take a lower roughness, since
+  they share the hair's material.
+- **A barred feather has two bars**: a card is lofted in six rows.
+- **Countershading on a coat, none on a plumage**: a coat lightens toward the
+  belly by its own rule (#368); a plumage's belly is its `under`.
+
+## Cards, marks and the membrane (W4, #423)
+
+Three surfaces, each the leading family's, as the wings are: a bird-led body
+is feathered, a bat- or glider-led body furred, and a bat's membrane is naked
+skin with a material of its own. A bird's feathers take its plumage
+(`texture::coat::PlumageSampler`, see "Surfaces"); a bat's or a glider's fur,
+marks and membrane its coat (`WingedParams::coat()`, stored or its family's).
+
+**A bird's contour feathers** (`hair::fur::contour`, 10 5.1). Up to 760
+cards, each a small feather of seven triangles - narrow at the quill,
+broadest past the middle, rounded to a point - scattered over the body's own
+faces by area (the head's a little denser, its cards smaller, the legs'
+smaller still) and laid along the body's flow: from the beak back over the
+crown and down the nape, down and back along the body, down a leg. **Back
+over front**: each card goes in under the skin and lies along it, its tip
+laid on the skin where it lands and lifted 0.07 of its length, bowed out over
+the skin where the body bulges under it, so the card ahead covers where the
+next comes out. They leave clear an owl's dish (inside the ball whose inside
+the dish is, as strongly as the disc is carved), a margin round the beak and
+round each eye - all read off the parts the head declares, in its frame,
+never off whether a point is inside the head - the bare scaled ball and toes
+(the foot's zone), and the flank the folded wing lies over (`Clear`: the body
+within 0.03 of the back's height of any folded feather grows none, out to
+0.06 fewer). **And a card that still passes through a folded feather is left
+out whole** (`Sheet`, `leave_out`): `Clear` reads the feathers' vertices,
+which are sparse along a long feather, and the default owl had 20 card faces
+crossing its folded wing, a bird-bat cross at appeal -1 195. A card whose tip would have to be carried more than a third of
+its length to land on the skin - over the crease where the head sits on the
+breast - is left out. Each card is coloured at its root by **one call**, the
+`colour` closure `Avatar::grow_winged_cards` hands `contour::grow`: the bird's
+plumage sampler (`PlumageSampler::colour`), so a card at its root is the
+colour of the skin it grows from. A card is a shade deeper at its quill
+than its tip and a little lighter or darker than its neighbours.
+
+**A bat's and a glider's fur** (`hair::fur`'s zones, 10 5.3) from a fur
+derived on the plan, not stored (`WingedParams::fur()`): a fruit bat a ruff
+of 1.6 (its mantle's long fur, which on a crawling bat's low back reaches
+about a fifth of the back's height), no tail (*Pteropus* has none, S21) and
+no tufts on its plain ears; a sugar glider a brush along its tail of 1.0 and
+nothing else; each zone blended across a cross by its blend, and none on a
+bird-led body. The ruff reaches the cheeks and the throat behind the jaw,
+never the muzzle, so the fruit bat keeps the fox face 10 6.1 gives it.
+Coloured as a beast's fur is, so a bat's ruff takes its mantle. **None on
+the membrane**: no card roots within 0.04 of the back's height of a membrane
+at rest (0.08 fewer), and a card that still reaches through one is left out
+whole (`Sheet`, `leave_out`) - **at rest, half spread and spread**, each card
+moved by its own skin as the pose moves the arm under it: a ruff card on the
+fore limb or the chest rides the arm out through the propatagium as the wing
+opens, which the rest alone does not show (the default bat had none crossing
+at rest, 18 edges half spread and 25 spread). **None on an eye**: no card of a
+winged body roots within 1.25 of the declared globe's radius of an eye (as
+the contour feathers' face term), and a card one of whose edges comes within
+1.15 of the globe's own radius of it is left out whole (`mark_near`); a ruff,
+1.6 long and reaching the cheeks, lay across a rolled bat's eye up to 1.7 cm
+deep in a 5.7 cm globe, and kept from rooting alone, still reached seeds 6,
+32 and 71's. The ruff stays 1.6: what is left out keeps it off the eye.
+
+**The marks** (`texture::coat`'s `winged`, 10 5.3), derived and not stored,
+each as strong as its family's share of the body, on bat- and glider-led
+bodies only: a fruit bat's **mantle**, a golden brown (leaning a quarter of
+the way to the coat's own light) over the neck and the shoulders, over the
+top and down the sides, faint under the throat, gone down the chest, the
+fore limbs and before the head; a sugar glider's **dorsal stripe**, its coat's
+dark darker still, a share of the spine wide, from the forehead (ending
+before the snout) down the back and fading over the rump, and its **face
+stripes**, a ring round each eye and on through it to the ear's root. Every
+mark is placed by anatomy - the spine, the junctions, the head's frame - so
+none stops on a chart's line, and laid after the pattern and before the
+belly lightens.
+
+**The membrane's material** (10 5.2). A membrane has a region of the atlas to
+itself, and each texel there says what it is by where it lies
+(`wing::charted`): each piece a column, its rows from root to free edge (a
+propatagium across its column). A bat's sheet is dark brown, near black;
+from halfway out it warms and pales toward its free edge, as if lit through,
+half the way to a reddish brown at the edge; faint darker fibres run along its
+rows; its roughness is leather's, a little duller; its digits are the bone
+under their skin, darker. A glider's patagium is furred, so it is its coat,
+paling a little toward its edge.
+
+**Measured** (`tests/winged_cards.rs`): every bird-led body - owl, crow,
+parrot and songbird heads, crosses either side of the halfway blend, rolls -
+grows at least 500 contour feathers, none rooted in an owl's dish, none
+within a twentieth of a head radius (half a centimetre on the owl) of a
+mandible, none bound to a foot, no edge of one through its folded wing;
+every bat- and glider-led body - families, crosses either way round at 0.3,
+0.45, 0.55 and 0.7, rolls - grows fur, a bat its ruff and a glider its
+brush, and no edge of a card passes through its membrane at rest, half
+spread or spread; no winged body's card has a vertex inside or within a
+tenth of a radius of an eye's globe (families, crosses, the young end of
+bat-glider crosses, rolls); a bat's shoulders are paler and
+warmer than its back, a glider's spine darker than its flank and the line
+behind its eye darker than its cheek; a bat's membrane is paler and warmer at
+its free edge than in its middle, and dark there, and a glider's patagium paler
+at its edge; and every body, cards and all, makes its draws and costs no more
+than `wing::MAX_TRIANGLES`. Each test was run against the code with its guard
+taken out and failed.
+
+### The budget
+
+A winged body's cards are **fitted to what its other draws leave of the
+27,200** (`wing::MAX_TRIANGLES`, raised from 26,000 at the owner's call at
+W4's review), as a beast's fur gives up what its head
+wears: the body is built and measured without them, and they are grown to
+the remainder, thinned in an order that spreads over the body (`Thinned`).
+A card left out - through a wing part, at rest or spread, or near an eye -
+gives its share back, and the cards are asked for once more with it.
+Triangles, each body as `build_for_shape` builds it:
+
+| Body | Whole | Cards | Of what they ask |
+|---|---|---|---|
+| Bird (owl) | 21,594 | 4,816 (688 contour feathers) | all |
+| Bat | 25,888 | 764 (ruff) | all |
+| Glider | 23,060 | 660 (tail's brush) | all |
+| Bird x bat 0.3 / 0.7 | 23,152 / 25,994 | 4,690 / 804 | all / 872 |
+| Bat x glider 0.3 / 0.7 | 25,996 / 23,696 | 308 / 1,596 | 1,308 / all |
+| Glider x bird 0.3 / 0.7 | 22,946 / 24,848 | 654 / 4,900 | all |
+
+The dearest of the families, crosses (0.3, 0.45, 0.55, 0.7 either way
+round) at appeals -1, 0 and 1.5, and 100 rolls is 26,000; the thinnest fur
+any bat-led one wears is seed 2's 156 triangles, of the 1,332 it asks.
+
+**At 26,000 a bat-led cross could not wear its whole fur, so the ceiling is
+27,200.** The table above and the paragraph before it are the 26,000
+measurements that decided it. A bat's body
+without cards is 25,124 (the membrane and digits 5,392 of it, the toes 696),
+which leaves its own ruff room, just; a bat-glider cross asks for a ruff and
+a brush, about 1,320, on a body as dear, and the dearest such roll keeps a
+few dozen cards. Built untiered, the dearest of the same 181 bodies is
+27,158 (seed 2, a bat-glider cross), and 49 of them pass 26,000 - 47
+bat-led, and two bird-glider crosses at appeal 1.5 at 26,285; **a ceiling of
+27,158 lets every one of them wear its cards whole**, still well under the
+engine's 33,500 target for a person (docs/budget.md). The other levers are the membrane's grid (a pair of
+plagiopatagia alone is 2,576), which W2 tuned for a continuous extension,
+and are not this phase's.
+
+### Where the cards, marks and membrane depart, and why
+
+- **Hundreds of contour feathers, not thousands**: 10 counts 1,100 to 4,600 on
+  a songbird. Each card stands for several, and the coat painted under them
+  fills what a few hundred leave.
+- **A contour feather is a solid card, its outline the geometry's**, cut from
+  the strand mask's solid run as a flight feather is: the mask's frayed end
+  read as hair.
+- **No feather tracts or apteria**: research-10 names the tracts but gives
+  their layout for no species; the cards cover the body evenly, and a bird's
+  plumage colours (a stored plumage, builder A's) are where tracts will show.
+- **No plumage volume**: 10 note 8's "fluffing and sleeking" axis is not
+  built; the cards lie at one lift.
+- **An owl's dish is bare of cards**: its stiff feathers are W3's carved
+  relief and shading.
+- **A bat's fur is a ruff, not a pelt**: a beast's zones grow long hair, and
+  the rest of a beast is painted; so is a bat's. Its dense body fur (10 5.3)
+  is the coat's grain.
+- **The light through a membrane is faked in colour**: the skin's draw is one
+  opaque material shared with the body. A real one needs the renderer to give
+  the membrane a draw of its own with a two-sided material that transmits -
+  diffuse transmission through a thickness, or a thin-surface subsurface
+  term, lit from behind - and a map of how thin it is where; the colour here is
+  what such a membrane looks like with the sun behind it at a game's distance.
+- **The fibres barely read**: research-10's elastin bundles are drawn as faint
+  lines along the sheet's rows, visible close up and gone at play size. No
+  veins.
+- **Both sides of a membrane are one texture**: its two sheets share their
+  texture coordinates, so a glider's patagium cannot be grey above and cream
+  below (S31) without charting the underside apart.
+- **The marks key on the family, not the coat**: a recoloured bat keeps its
+  mantle (leaning toward its coat's light), a glider its stripes. A record
+  cannot turn them off.
+
 ## Left for later phases, and for the owner
 
 - **W2 (#421)**: built - see "The wings". For the owner: the bat's cape
@@ -694,7 +1060,14 @@ winged gaits (#424); the toes are joints it can lay flat.
   its ruff's shade, the beak's horn, the bat's and the glider's eyes and
   ears; both bird arrangements, the bat's foot turned with its leg, the
   glider's hallux.
-- **W4 (#423)**: plumage, contour feathers, the membrane's material, coats.
+- **W4 (#423)**: plumage, coats, the wire and the eyes built - see
+  "Surfaces" - and the cards, the marks and the membrane - see "Cards, marks
+  and the membrane". For the owner: each kind's palettes and how often a roll
+  picks each, the disc's face and ruff, the crow's sheen, the bat's and the
+  glider's default coats; the contour feathers' size and lift, the mantle's
+  gold, the glider's stripes, the membrane's lit edge. At the review the
+  owner raised the ceiling to 27,200, chose a mid grey glider and eyes by
+  the kind of bird.
 - **W5 (#424)**: the ground gaits per posture, the flight source, rests. A
   winged rig is driven today without a panic (`tests/driver.rs`): a bat and a
   glider walk as beasts, a bird as a biped beast.

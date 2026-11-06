@@ -41,6 +41,9 @@ pub enum FurZone {
     Feathering,
     /// At the ears' tips.
     Tufts,
+    /// A bird's contour feathers over its whole body (#423): cards of their
+    /// own (`contour`), placed and cut there, which no beast's record asks for.
+    Contour,
 }
 
 /// How a zone's cards are cut, as shares of the back's height where they are
@@ -89,6 +92,7 @@ impl FurZone {
             Self::Tail => "tail",
             Self::Feathering => "feathering",
             Self::Tufts => "tufts",
+            Self::Contour => "contour",
         }
     }
 
@@ -101,6 +105,7 @@ impl FurZone {
             Self::Tail => fur.tail,
             Self::Feathering => fur.feathering,
             Self::Tufts => fur.tufts,
+            Self::Contour => 0.0,
         }
     }
 
@@ -124,6 +129,8 @@ impl FurZone {
             Self::Feathering => cut(56, 0.12, 0.03, 0.5, 0.75, 0.6, 0.3),
             // Grown off an ear's tip, into the air: it meets no skin to hide.
             Self::Tufts => cut(5, 0.09, 0.012, 0.15, 0.1, 0.0, 1.0),
+            // Cut by `contour` itself, which reads none of this.
+            Self::Contour => cut(0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0),
         }
     }
 
@@ -190,8 +197,8 @@ impl FurZone {
                     * step(0.34, 0.22, rise)
                     * step(0.1, 0.5, normal.dot(-bed.forward()))
             }
-            // Grown on the ears, not on the body.
-            Self::Tufts => 0.0,
+            // Grown on the ears, not on the body; and placed by `contour`.
+            Self::Tufts | Self::Contour => 0.0,
         }
     }
 
@@ -211,8 +218,8 @@ impl FurZone {
             Self::Tail => bed.distal(root.at),
             // To the ground, and a little back.
             Self::Feathering => (Vec3::NEG_Y * 0.85 - forward * 0.15).normalize(),
-            // On up the ear.
-            Self::Tufts => root.out,
+            // On up the ear; and laid by `contour`.
+            Self::Tufts | Self::Contour => root.out,
         }
     }
 }

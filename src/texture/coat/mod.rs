@@ -51,9 +51,13 @@
 mod body;
 mod marks;
 mod palette;
+mod plumage;
+mod winged;
 
 pub(crate) use body::CoatBody;
 pub use palette::{coat_colour, coat_swatches};
+pub(crate) use plumage::{Feather, FeatherTone, PlumageSampler};
+pub(crate) use winged::{MembraneChart, WingedCoat};
 
 use glam::Vec3;
 use symbios_texture::generator::TextureMap;
@@ -237,6 +241,34 @@ pub(crate) fn paint_coat(
     body: &CoatBody,
     mane: Option<&ManeRoots>,
 ) -> TextureMap {
+    paint(geometry, rig, coat, body, mane, None)
+}
+
+/// Paints a bird's plumage into the atlas its body was baked into (#423):
+/// every feathered texel from `plumage` (`PlumageSampler::colour` and its
+/// roughness), and the bare parts - the scaled toes and their talons - from
+/// `coat`'s leather and horn as W3 painted them.
+#[must_use]
+pub(crate) fn paint_plumage(
+    geometry: &AtlasGeometry,
+    rig: &Rig,
+    plumage: &PlumageSampler,
+    coat: &Coat,
+    body: &CoatBody,
+) -> TextureMap {
+    paint(geometry, rig, coat, body, None, Some(plumage))
+}
+
+/// [`paint_coat`]'s walk over the atlas, every feathered texel from `feathers`
+/// where a bird's plumage is given.
+fn paint(
+    geometry: &AtlasGeometry,
+    rig: &Rig,
+    coat: &Coat,
+    body: &CoatBody,
+    mane: Option<&ManeRoots>,
+    feathers: Option<&PlumageSampler>,
+) -> TextureMap {
     let palette = Palette::of(coat);
     let fields = Fields::new(coat.marks, body.height);
     let count = geometry.texels.len();
@@ -248,14 +280,36 @@ pub(crate) fn paint_coat(
         let Some(texel) = sample else { continue };
         let painter = Painter::new(texel, coat, &palette, &fields, body);
         let surface = painter.surface();
-        let (colour, roughness, fur) = match surface {
-            Surface::Fur => (painter.fur(), FUR_ROUGHNESS, 1.0),
-            Surface::Leather => (painter.leather(), LEATHER_ROUGHNESS, 0.0),
-            Surface::Horn(share) => (
-                painter.fur().lerp(painter.horn(), share),
-                FUR_ROUGHNESS + (HORN_ROUGHNESS - FUR_ROUGHNESS) * share,
-                1.0 - share,
+        let coat_of = |painter: &Painter| match feathers {
+            Some(plumage) => (
+                plumage.colour(texel.position, texel.normal, texel.zone),
+                plumage.roughness(texel.position, texel.normal, texel.zone),
             ),
+            None => (painter.fur(), FUR_ROUGHNESS),
+        };
+        // A winged body's membrane (#423), in its own region of the atlas.
+        let membrane = body
+            .winged
+            .and_then(|winged| winged.membrane)
+            .and_then(|chart| {
+                let local = chart.local(index, geometry.width, geometry.height)?;
+                Some((chart.naked, crate::wing::charted(local, chart.naked), local))
+            });
+        let (colour, roughness, fur) = match (membrane, surface) {
+            (Some((naked, charted, local)), _) => painter.membrane(naked, charted, local),
+            (None, Surface::Fur) => {
+                let (colour, roughness) = coat_of(&painter);
+                (colour, roughness, 1.0)
+            }
+            (None, Surface::Leather) => (painter.leather(), LEATHER_ROUGHNESS, 0.0),
+            (None, Surface::Horn(share)) => {
+                let (colour, roughness) = coat_of(&painter);
+                (
+                    colour.lerp(painter.horn(), share),
+                    roughness + (HORN_ROUGHNESS - roughness) * share,
+                    1.0 - share,
+                )
+            }
         };
         let colour = match mane {
             Some(mane) if surface == Surface::Fur => {
@@ -511,6 +565,10 @@ impl<'a> Painter<'a> {
         }
         if self.coat.points {
             colour = self.pointed(colour);
+        }
+        // A winged body's families' marks (#423), over its pattern.
+        if let Some(winged) = &self.body.winged {
+            colour = self.marked(colour, winged.marks);
         }
         colour = self.countershaded(colour);
         colour = self.broken(colour);

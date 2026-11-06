@@ -95,9 +95,11 @@ mod fur;
 mod humanoid;
 pub mod kin;
 mod ornament;
+mod plumage;
 mod quadruped;
 mod winged;
 pub(crate) mod winged_foot;
+mod winged_fur;
 mod zone;
 
 use rand::SeedableRng;
@@ -121,9 +123,11 @@ pub use ornament::{
     Antlers, CURVE_RANGE, FLUTES_RANGE, FORK_RANGE, Horn, LENGTH_RANGE, ORNAMENT_SWATCHES,
     Ornament, OrnamentKind, Ornaments, POINTS_RANGE, TAPER_RANGE, THICKNESS_RANGE, TWIST_RANGE,
 };
+pub use plumage::{Plumage, PlumagePattern};
 pub use quadruped::{Family, Feet, Nose, Pupil, QuadrupedParams};
 pub use winged::{WingedFamily, WingedParams};
 pub use winged_foot::{Toes, WingedFoot};
+pub(crate) use winged_fur::WingedMarks;
 pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};
 
 /// Smallest and largest biped stature accepted, in metres.

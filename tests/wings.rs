@@ -420,8 +420,9 @@ fn a_winged_body_fits_its_budget() {
     assert!(worst.1 <= WINGED_CEILING, "{} costs {}", worst.0, worst.1);
 }
 
-/// A winged body's ceiling, about a beast's (#421): 26,000 triangles.
-const WINGED_CEILING: usize = 26_000;
+/// A winged body's ceiling (#421): 26,000 triangles, raised to 27,200 at
+/// W4 (#423) so a bat-led cross wears its fur whole (`wing::MAX_TRIANGLES`).
+const WINGED_CEILING: usize = 27_200;
 
 /// A wing is no part of a foot (#421, the end review). A bat's digits, a
 /// glider's spars and a bird's feathers take the zone of the arm they grow

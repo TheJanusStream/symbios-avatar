@@ -44,6 +44,23 @@
 mod feather;
 mod membrane;
 
+pub(crate) use membrane::{Charted, charted};
+
+/// What a whole winged body may cost, in triangles (#421, #423): about a
+/// beast's, its every draw counted - the skin with its membrane and toes, the
+/// eyes and beak, and the hair's draw its flight feathers share with its
+/// contour feathers or its fur. A winged body's cards are fitted to what its
+/// other draws leave of it (`Avatar`'s winged cards), so none goes past it.
+///
+/// Provenance: **chosen** at W2 (#421) against the dearest body then, a
+/// bat-led roll at 25,142, at 26,000; and **raised to 27,200 at W4 (#423),
+/// the owner's call**, where the cards take what is left: at 26,000 a
+/// bat-led cross kept as little as 156 of the 1,332 fur triangles it asked
+/// for, and every winged body wears its cards whole under 27,158 (the
+/// dearest, seed 2, a bat-glider cross, over 181 bodies of every family,
+/// cross and appeal and 100 rolls).
+pub const MAX_TRIANGLES: usize = 27_200;
+
 use glam::{Mat3, Quat, Vec3};
 
 use crate::anim::Pose;
@@ -278,6 +295,11 @@ pub(crate) fn grow(
     let kind = Kind::of(params);
     let trunk = Trunk::of(rig)?;
     let normals = body.vertex_normals();
+    // The plumage every feather is coloured from (#423), on the body as it is
+    // before any wing joint is attached: the tail zone's last joint is then
+    // still the plan's own, not a fan's edge.
+    let read = crate::texture::coat::CoatBody::of(rig, None, None);
+    let plumage = crate::texture::coat::PlumageSampler::new(params.plumage, &read);
     let mut book = Book::new(rig.len());
     let mut sides = Vec::new();
     for limb in [Limb::ForeLeft, Limb::ForeRight] {
@@ -291,6 +313,7 @@ pub(crate) fn grow(
                 &trunk,
                 &arm,
                 (body, &normals),
+                &plumage,
             )),
             Kind::Bat => Side::Membrane(membrane::bat(rig, &mut book, &trunk, &arm)),
             Kind::Glider => Side::Membrane(membrane::glider(rig, &mut book, &trunk, &arm)),
@@ -298,7 +321,7 @@ pub(crate) fn grow(
         sides.push((arm, side));
     }
     let tail = (kind == Kind::Feathers)
-        .then(|| feather::tail(rig, &mut book, &trunk, params, body))
+        .then(|| feather::tail(rig, &mut book, &trunk, params, body, &plumage))
         .flatten();
     rig.wings = Some(book.resolve(rig));
 

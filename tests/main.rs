@@ -65,6 +65,8 @@ mod throat;
 mod topology;
 mod torso;
 mod uv;
+mod winged_cards;
 mod winged_feet;
 mod winged_heads;
+mod winged_surfaces;
 mod wings;

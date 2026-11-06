@@ -490,6 +490,7 @@ fn a_mane_keeps_clear_of_the_ears_and_what_the_head_wears() {
                     coat: &coat,
                     ears: Some(&beast.ears),
                     worn: 0,
+                    clear: None,
                 };
                 let capsules = capsules(&bed, head);
                 assert!(capsules.len() > 2, "{name}: nothing worn");

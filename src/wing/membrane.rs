@@ -187,6 +187,52 @@ const THUMB_RADIUS: f32 = 0.020;
 /// Sides around a digit's tube.
 const TUBE_SIDES: usize = 6;
 
+/// The corner of a membrane's chart its digits' tubes are drawn in, as a
+/// share of the chart each way: every tube in the same sliver, over the root
+/// rows of the first piece, which lie inside the arm.
+const DIGIT_CHART: f32 = 0.05;
+
+/// How many pieces a bat's membrane is charted in, a column each: the
+/// plagiopatagium, the dactylopatagium and the propatagium, in that order.
+/// A glider's patagium is one.
+const BAT_PIECES: f32 = 3.0;
+
+/// What a texel of a membrane's own chart is (#423), as its painter asks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Charted {
+    /// A bat's digit or thumb: the bone under its skin.
+    Digit,
+    /// The membrane itself, `edge` of the way from where it roots - in the
+    /// body or along a limb - to its free edge, `0..=1`.
+    Sheet {
+        /// How far out toward the free edge.
+        edge: f32,
+    },
+}
+
+/// **What lies at `local` in a membrane's chart** (#423), `0..1` each way
+/// across the region the build reserved for it: read off the layout `Wing::mesh`
+/// gives it, so the painter knows a texel by where it is, as a mouth knows
+/// its pocket. Each piece is a column, its rows running from root to free
+/// edge (`sheet`'s `v`), but a propatagium's, whose free edge is its leading
+/// one, across its column; a bat's tubes are the corner `DIGIT_CHART` wide.
+pub(crate) fn charted(local: Vec2, bat: bool) -> Charted {
+    let local = local.clamp(Vec2::ZERO, Vec2::ONE);
+    if !bat {
+        return Charted::Sheet { edge: local.y };
+    }
+    if local.x < DIGIT_CHART && local.y < DIGIT_CHART {
+        return Charted::Digit;
+    }
+    let column = local.x * BAT_PIECES;
+    if column >= BAT_PIECES - 1.0 {
+        return Charted::Sheet {
+            edge: (column - (BAT_PIECES - 1.0)).min(1.0),
+        };
+    }
+    Charted::Sheet { edge: local.y }
+}
+
 /// One membrane wing, its joints attached and its drives recorded.
 pub(crate) struct Wing {
     kind: Kind,
@@ -738,10 +784,10 @@ impl Wing {
             .chain(self.thumb.map(|chain| (chain.to_vec(), THUMB_RADIUS)));
         for (chain, radius) in tubes {
             let mut tube = tube(rig, &chain, radius * self.forearm, self.normal);
-            tube.uvs = tube.uvs.iter().map(|uv| *uv * 0.05).collect();
+            tube.uvs = tube.uvs.iter().map(|uv| *uv * DIGIT_CHART).collect();
             tube.set_normals(tube.vertex_normals());
             // A digit roots at the wrist and runs out to the membrane's edge.
-            reach.extend(tube.uvs.iter().map(|uv| uv.y / 0.05));
+            reach.extend(tube.uvs.iter().map(|uv| uv.y / DIGIT_CHART));
             mesh.append(&tube);
         }
         (mesh, reach)
