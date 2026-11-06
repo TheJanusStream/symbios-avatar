@@ -169,6 +169,15 @@ pub(super) fn wrap_junctions(
         if skeleton.bridge_aim(socket.joint, socket.toward).is_none() {
             continue;
         }
+        // Only a leg that hangs from its girdle wraps under it: a crawling
+        // bat's arm rises from its chest to an elbow over its back (#420),
+        // and wrapped, its junction drew a web from the keel up the arm.
+        // Every beast's elbow and stifle stand below their girdles.
+        if skeleton.nodes[socket.toward as usize].position.y
+            > skeleton.nodes[socket.joint as usize].position.y
+        {
+            continue;
+        }
         let Some((spine, far)) = keel(skeleton, socket, sockets, mesh) else {
             continue;
         };

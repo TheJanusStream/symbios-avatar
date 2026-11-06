@@ -330,6 +330,90 @@
         }
       }
     },
+    "winged": {
+      "type": "object",
+      "description": "A winged creature (#420): a bird, a fruit bat, a sugar glider, or a cross of two of them. Axes run -1 to 1 with 0 the family's own, unless noted, and each is a step from the family's frame, which a cross blends between its two families. How the body stands is its leading family's: a bird on its hind pair, a bat and a glider on all four. Its girth is the composites': mass and bodyFat reach it, and femininity does not. A reader that does not know this variant reads it as an unknown body and must keep every field.",
+      "required": [
+        "size"
+      ],
+      "properties": {
+        "size": {
+          "type": "integer",
+          "description": "How big the body is: its head-and-body length in millimetres, the bill or the nose to the root of the tail, as a field guide measures it, at its family's own proportions. A cat's to a dog's at a game's scale. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": 50,
+          "maximum": 2400,
+          "default": 600
+        },
+        "wingLength": {
+          "type": "integer",
+          "description": "How long the wing's arm is: the humerus and the forearm, and the hand a wing hangs from them. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "neckLength": {
+          "type": "integer",
+          "description": "How long the neck is: an owl's hidden one at the bottom, a crow's at the top. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "legLength": {
+          "type": "integer",
+          "description": "How long the hind legs are below the trunk. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "tailLength": {
+          "type": "integer",
+          "description": "How long the tail is: a bat's nub at the bottom of its family's range, a parrot's or a glider's long tail at the top. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "headSize": {
+          "type": "integer",
+          "description": "How big the head is against the body. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "appeal": {
+          "type": "integer",
+          "description": "How the body is drawn, from naturalistic at the bottom to its family's young at the top: a bigger head and a shorter face, a rounder body, a shorter neck and tail, and on a bat a shorter arm. Thousandths, -3000 to 3000. Exploration envelope (#160): readers clamp to these bounds and every combination still builds.",
+          "minimum": -3000,
+          "maximum": 3000,
+          "default": 0
+        },
+        "family": {
+          "type": "string",
+          "description": "Which kind of winged animal this is rolled as and built in: the frame its axes are steps from and the centre a re-roll draws them around. A value a reader does not recognise reads as a bird.",
+          "knownValues": [
+            "bird",
+            "bat",
+            "glider"
+          ],
+          "default": "bird"
+        },
+        "hybrid": {
+          "type": "string",
+          "description": "The second family of a cross, when this is one, and absent when it is not. A cross is built in its two families' frames blended `blend` of the way toward this one, and stands as the one it leans toward. A value a reader does not recognise reads as a bird.",
+          "knownValues": [
+            "bird",
+            "bat",
+            "glider"
+          ]
+        },
+        "blend": {
+          "type": "integer",
+          "description": "How far a cross is drawn toward its `hybrid` family, in thousandths: 0 none of the way, 1000 all of it, and from 500 it stands as that family does. Always 0 on a body that is not a cross.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0
+        }
+      }
+    },
     "quadrupedCoat": {
       "type": "object",
       "description": "A quadruped's coat (#368), recorded as coat-genetics loci: a reader derives the colours from the loci, so a coat stays a few small values, a cross can take each locus from either parent, and a creator changes a coat the way it varies in life - a liver dog is the black dog's coat with one locus turned. The genetics are a game's: every locus is open to every family, whichever one carries it in life. A locus value a reader does not recognise reads as that locus's default. Beside the loci, 'colours' holds whatever a creator picked over them (#401).",

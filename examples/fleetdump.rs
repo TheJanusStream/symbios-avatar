@@ -34,7 +34,10 @@ impl std::fmt::Write for Fnv {
 
 fn debug_hash(value: &impl std::fmt::Debug) -> u64 {
     let mut fnv = Fnv::new();
-    let _ = write!(fnv, "{value:?}");
+    // A winged body's wings (#421): `None` on every person and beast, and
+    // absent from a dump made before they were.
+    let text = format!("{value:?}").replace(", wings: None", "");
+    fnv.bytes(text.as_bytes());
     fnv.0
 }
 
@@ -60,6 +63,7 @@ fn rig_hash(rig: &Rig) -> u64 {
         }
         None => text,
     };
+    let text = text.replace(", wings: None", "");
     let mut fnv = Fnv::new();
     fnv.bytes(text.as_bytes());
     fnv.0

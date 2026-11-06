@@ -65,3 +65,4 @@ mod throat;
 mod topology;
 mod torso;
 mod uv;
+mod wings;

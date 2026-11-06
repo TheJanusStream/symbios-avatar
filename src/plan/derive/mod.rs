@@ -48,3 +48,4 @@
 
 pub(crate) mod humanoid;
 pub(super) mod quadruped;
+pub(super) mod winged;

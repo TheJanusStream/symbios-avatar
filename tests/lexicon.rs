@@ -179,6 +179,11 @@ fn every_archetype_variant_is_declared_and_named_by_its_ref() {
     for archetype in [
         Archetype::Humanoid(HumanoidParams::default()),
         Archetype::Quadruped(QuadrupedParams::default()),
+        Archetype::Winged(symbios_avatar::WingedParams {
+            hybrid: Some(symbios_avatar::WingedFamily::Bat),
+            blend: 0.5,
+            ..Default::default()
+        }),
     ] {
         let json = serde_json::to_value(&archetype).expect("serialises");
         let tag = json["$type"]
@@ -267,6 +272,21 @@ fn declared_axis_bounds_match_the_ranges_the_crate_enforces() {
             "{fragment} maximum height disagrees with the crate"
         );
     }
+    // A winged body's size (#420), a length in millimetres as a height is.
+    let size = &defs["defs"]["winged"]["properties"]["size"];
+    let range = symbios_avatar::WingedParams::size_envelope();
+    assert_eq!(
+        (size["minimum"].as_i64(), size["maximum"].as_i64()),
+        (
+            Some((range.0 * 1000.0).round() as i64),
+            Some((range.1 * 1000.0).round() as i64)
+        ),
+        "winged size disagrees with the crate"
+    );
+    assert_eq!(
+        size["default"].as_i64(),
+        Some((symbios_avatar::WingedParams::default().size * 1000.0).round() as i64)
+    );
 
     // A beast's fur's lengths (#369) and its coat's intensity (#368): the
     // envelope over each one's own conservative range.
@@ -691,7 +711,7 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
     // is exactly one Rust type's serialised shape and that is what makes the
     // comparison total rather than a spot check.
     let defs = lexicon("defs");
-    let cases: [(&str, Value); 26] = [
+    let cases: [(&str, Value); 27] = [
         (
             "composites",
             serde_json::to_value(symbios_avatar::Composites::default()).expect("serialises"),
@@ -726,6 +746,16 @@ fn every_declared_field_is_one_the_crate_actually_writes() {
                     tusks: Some(symbios_avatar::OrnamentKind::Tusks.preset()),
                     ..Default::default()
                 },
+                ..Default::default()
+            })
+            .expect("serialises"),
+        ),
+        // A cross, because `hybrid` is written only on a body that is one.
+        (
+            "winged",
+            serde_json::to_value(symbios_avatar::WingedParams {
+                hybrid: Some(symbios_avatar::WingedFamily::Glider),
+                blend: 0.5,
                 ..Default::default()
             })
             .expect("serialises"),
@@ -888,6 +918,22 @@ fn every_stored_choice_is_declared_with_the_names_the_crate_writes() {
         ("quadruped", "nose", written(&Nose::ALL, Nose::name)),
         ("quadruped", "feet", written(&Feet::ALL, Feet::name)),
         ("quadruped", "horn", written(&Horn::ALL, Horn::name)),
+        (
+            "winged",
+            "family",
+            written(
+                &symbios_avatar::WingedFamily::ALL,
+                symbios_avatar::WingedFamily::name,
+            ),
+        ),
+        (
+            "winged",
+            "hybrid",
+            written(
+                &symbios_avatar::WingedFamily::ALL,
+                symbios_avatar::WingedFamily::name,
+            ),
+        ),
         (
             "quadrupedCoat",
             "pigment",

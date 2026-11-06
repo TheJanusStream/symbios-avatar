@@ -281,6 +281,13 @@ pub struct Parts {
     /// The openable mouth's seam and pocket vertices, if one was cut.
     #[cfg_attr(feature = "serde-avatar", serde(skip))]
     pub mouth: Option<face::Mouth>,
+    /// A winged body's wings (#421): its membranes and a bat's digits, drawn
+    /// with the skin, and its flight feathers and tail fan, drawn with the
+    /// hair, at the fold. What spreads them is on the rig
+    /// ([`Rig::wings`]), which crosses a worker boundary; these are the parts
+    /// the merge was made from, and do not.
+    #[cfg_attr(feature = "serde-avatar", serde(skip))]
+    pub wings: Option<crate::wing::WingParts>,
 }
 
 /// A beast's fur ready to draw (#369): in body space already, and shaded by its own
@@ -667,13 +674,24 @@ impl Avatar {
         if let Some(beast) = &mut beast {
             beast.rig(&mut rig);
         }
+        // And a winged body's wings theirs (#421): its digits, its feathers'
+        // joints and its tail fan's, and what folds and spreads them. After
+        // the binding, which their joints must not take skin from, and
+        // before the unwrap, which reserves a membrane its region of the
+        // atlas as it does a hand's.
+        let mut wings = match &record.archetype {
+            crate::plan::Archetype::Winged(params) => {
+                crate::wing::grow(&mut rig, &body, &weights, params)
+            }
+            _ => None,
+        };
 
         // The attached parts exist BEFORE the body is unwrapped, so the packer
         // can reserve them regions of the same atlas rather than being asked
         // afterwards for whatever the body did not want. The parts are the half
         // that needs the texels — a face is judged on its nose, its mouth and
         // its ears, and none of those is part of the body mesh.
-        let mut wanted: Vec<Vec2> = attached_meshes(&features, &extremities, &eyes, &beast)
+        let mut wanted: Vec<Vec2> = attached_meshes(&features, &extremities, &eyes, &beast, &wings)
             .map(|(mesh, zone)| chart_request(mesh, zone, &config.uv))
             .collect();
         // One more region when there is a mouth: its pocket cannot share the
@@ -706,6 +724,7 @@ impl Avatar {
             &mut extremities,
             &mut eyes,
             &mut beast,
+            &mut wings,
             &reserved,
         );
 
@@ -734,7 +753,7 @@ impl Avatar {
 
         // Baked in body space, which is where a painter wants them: a nose is
         // then painted by the same complexion arithmetic as the cheek beside it.
-        let placed = attached_in_body(&rig, &features, &extremities, &eyes, &beast);
+        let placed = attached_in_body(&rig, &features, &extremities, &eyes, &beast, &wings);
         let borrowed: Vec<(&PolyMesh, Zone, &[f32])> = placed
             .iter()
             .map(|(mesh, zone, mouth)| (mesh, *zone, mouth.as_slice()))
@@ -808,7 +827,11 @@ impl Avatar {
         // A beast wears a coat painted from its loci (#368), a person a skin
         // painted from its complexion.
         // The body a beast's coat and fur read (#368, #369).
-        let anatomy = matches!(record.archetype, crate::plan::Archetype::Quadruped(_)).then(|| {
+        let anatomy = matches!(
+            record.archetype,
+            crate::plan::Archetype::Quadruped(_) | crate::plan::Archetype::Winged(_)
+        )
+        .then(|| {
             texture::coat::CoatBody::of(
                 &rig,
                 skeleton.beast_head.as_ref(),
@@ -831,6 +854,11 @@ impl Avatar {
                     &params.fur,
                 );
                 texture::coat::paint_coat(&geometry, &rig, &params.coat, anatomy, mane.as_ref())
+            }
+            // A winged body's stand-in coat, its leading family's, until it
+            // stores one (#423).
+            (crate::plan::Archetype::Winged(params), Some(anatomy)) => {
+                texture::coat::paint_coat(&geometry, &rig, &params.coat(), anatomy, None)
             }
             _ => texture::paint_skin(
                 &geometry,
@@ -985,6 +1013,7 @@ impl Avatar {
             unwrap: charts,
             body,
             mouth,
+            wings,
         };
 
         let mut avatar = Self {
@@ -1208,6 +1237,22 @@ impl Avatar {
             }
         }
 
+        // A winged body's membranes and digits (#421), already in body space
+        // and skinned to the joints they were grown on.
+        if let Some(wings) = &self.parts.wings
+            && !wings.membrane.is_empty()
+        {
+            // Its normals are its own: each carried back from the spread
+            // wing with its vertex, so a spread membrane shades as the taut
+            // sheet it is, whatever its fold did to them.
+            let mut mesh = wings.membrane.clone();
+            if mesh.normals.is_empty() {
+                mesh.set_normals(mesh.vertex_normals());
+            }
+            mesh.paint(Vec3::ONE);
+            skin.append(&mesh.split_uv_seams());
+        }
+
         let mut merged = vec![AvatarMesh {
             kind: MeshKind::Skin,
             mesh: skin,
@@ -1236,6 +1281,22 @@ impl Avatar {
             match merged.iter_mut().find(|drawn| drawn.kind == MeshKind::Hair) {
                 Some(hair) => hair.mesh.append(&placed.mesh),
                 None => merged.push(placed),
+            }
+        }
+
+        // A bird's flight feathers and tail fan (#421), in the same draw: cards
+        // cut from the strand mask as fur is, coloured per vertex.
+        if let Some(wings) = &self.parts.wings
+            && !wings.feathers.is_empty()
+        {
+            let mut mesh = wings.feathers.clone();
+            mesh.set_normals(mesh.vertex_normals());
+            match merged.iter_mut().find(|drawn| drawn.kind == MeshKind::Hair) {
+                Some(hair) => hair.mesh.append(&mesh),
+                None => merged.push(AvatarMesh {
+                    kind: MeshKind::Hair,
+                    mesh,
+                }),
             }
         }
 
@@ -1402,6 +1463,7 @@ fn attached_meshes<'a>(
     extremities: &'a Extremities,
     eyes: &'a Option<Eyes>,
     beast: &'a Option<face::beast::BeastFace>,
+    wings: &'a Option<crate::wing::WingParts>,
 ) -> impl Iterator<Item = (&'a PolyMesh, Zone)> {
     features
         .iter()
@@ -1425,6 +1487,13 @@ fn attached_meshes<'a>(
             beast
                 .iter()
                 .flat_map(|beast| beast.parts().map(|(mesh, _)| (mesh, Zone::Head))),
+        )
+        // A winged body's membranes last of all (#421), for the lids' reason.
+        .chain(
+            wings
+                .iter()
+                .filter(|wings| !wings.membrane.is_empty())
+                .map(|wings| (&wings.membrane, Zone::Chest)),
         )
 }
 
@@ -1452,6 +1521,7 @@ fn place_charts(
     extremities: &mut Extremities,
     eyes: &mut Option<Eyes>,
     beast: &mut Option<face::beast::BeastFace>,
+    wings: &mut Option<crate::wing::WingParts>,
     reserved: &[Rect],
 ) {
     let meshes = features
@@ -1463,6 +1533,12 @@ fn place_charts(
             beast
                 .iter_mut()
                 .flat_map(face::beast::BeastFace::meshes_mut),
+        )
+        .chain(
+            wings
+                .iter_mut()
+                .filter(|wings| !wings.membrane.is_empty())
+                .map(|wings| &mut wings.membrane),
         );
     for (mesh, rect) in meshes.zip(reserved) {
         *mesh = mesh.uvs_within(rect.min, rect.size());
@@ -1481,6 +1557,7 @@ fn attached_in_body(
     extremities: &Extremities,
     eyes: &Option<Eyes>,
     beast: &Option<face::beast::BeastFace>,
+    wings: &Option<crate::wing::WingParts>,
 ) -> Vec<(PolyMesh, Zone, Vec<f32>)> {
     let mut placed = Vec::new();
     if let Some(face) = features {
@@ -1514,6 +1591,12 @@ fn attached_in_body(
             let to_body = Mat4::from_translation(rig.joints[joint].position);
             placed.push((mesh.transformed(to_body), Zone::Head, mouth));
         }
+    }
+    // A winged body's membranes, in body space already (#421).
+    if let Some(wings) = wings
+        && !wings.membrane.is_empty()
+    {
+        placed.push((wings.membrane.clone(), Zone::Chest, Vec::new()));
     }
     placed
 }

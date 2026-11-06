@@ -444,6 +444,45 @@ mod tests {
     }
 
     #[test]
+    fn a_winged_body_round_trips_and_is_written_at_version_ten() {
+        // #420: tag 3, at the oldest version anything still writes, so the
+        // only change a reader sees is the tag; a 0.19.7 reader refuses it as
+        // an unknown tag, and so does this build at any version before 10.
+        let original = Archetype::Winged(crate::WingedParams {
+            size: 0.82,
+            wing_length: 0.6,
+            appeal: 1.2,
+            family: crate::WingedFamily::Bat,
+            hybrid: Some(crate::WingedFamily::Bird),
+            blend: 0.3,
+            ..Default::default()
+        });
+        let code = encode(&original, &Composites::default(), &SkinParams::default());
+        let bytes = base32_decode(&code).expect("decodes");
+        assert_eq!(bytes[0], PRE_STIFFNESS_VERSION);
+        assert_eq!(bytes[1], 3);
+        let (Archetype::Winged(back), _, _) = decode(&code).expect("decodes") else {
+            panic!("archetype changed");
+        };
+        assert_eq!(back.family, crate::WingedFamily::Bat);
+        assert_eq!(back.hybrid, Some(crate::WingedFamily::Bird));
+        assert!((back.size - 0.82).abs() < 0.001);
+        for version in [3u8, 5, 7, 8, 9] {
+            let mut old = bytes.clone();
+            old[0] = version;
+            let last = old.len() - 1;
+            old[last] = checksum(&old[..last]);
+            assert_eq!(
+                decode(&base32_encode(&old)).map(|_| ()),
+                Err(ShareCodeError::Payload(PlanDecodeError::UnknownArchetype(
+                    3
+                ))),
+                "version {version}"
+            );
+        }
+    }
+
+    #[test]
     fn quadrupeds_round_trip_too() {
         let original = Archetype::Quadruped(QuadrupedParams {
             height: 0.9,

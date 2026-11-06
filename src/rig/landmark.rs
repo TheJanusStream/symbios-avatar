@@ -149,7 +149,9 @@ impl Landmarks {
             if let Some(&wrist) = rig.in_zone(Zone::LowerLimb(limb)).last() {
                 anchors.insert(Landmark::LimbWrist(limb), limb_anchor(rig, wrist));
             }
-            if let Some(&tip) = rig.in_zone(Zone::Extremity(limb)).last() {
+            // The foot's own tip, not a wing's: a bat's digits and a bird's
+            // feathers share the extremity's zone (#421).
+            if let Some(&tip) = rig.extremity_joints(limb).last() {
                 anchors.insert(Landmark::LimbTip(limb), limb_anchor(rig, tip));
             }
         }

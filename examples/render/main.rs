@@ -93,6 +93,11 @@
 //! cargo run --release --example render -- --quadruped --kin horse --drive 0 --jump 2.5 --from 146 --strip 14  # a jump's landing
 //! cargo run --release --example render -- --quadruped --swim 0.5 --strip 8
 //! cargo run --release --example render -- --quadruped --leap 3 --strip 8
+//! cargo run --release --example render -- --winged                 # a winged body (#420): an owl by default
+//! cargo run --release --example render -- --winged --kin bat        # or glider, or a cross: --kin bird+bat
+//! cargo run --release --example render -- --winged --gallery 9 --family glider --pass silhouette  # or bird, bat, cross
+//! cargo run --release --example render -- --winged --kin bat --wings  # its wings folded, half and spread, and one close (#421)
+//! cargo run --release --example render -- --wings-crosses             # every cross, folded and spread
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -489,6 +494,8 @@ fn main() {
     // only one of them has ever been looked at.
     let archetype = if args.iter().any(|arg| arg == "--quadruped") {
         Archetype::Quadruped(symbios_avatar::QuadrupedParams::default())
+    } else if args.iter().any(|arg| arg == "--winged") {
+        Archetype::Winged(symbios_avatar::WingedParams::default())
     } else {
         Archetype::default()
     };
@@ -510,13 +517,24 @@ fn main() {
     if let Some(kin) = value("--kin") {
         match &mut record.archetype {
             Archetype::Quadruped(params) => set_kin(params, kin),
+            Archetype::Winged(params) => set_kin(params, kin),
             _ => {
-                eprintln!("--kin picks a family, and this plan has none: add --quadruped");
+                eprintln!(
+                    "--kin picks a family, and this plan has none: add --quadruped or --winged"
+                );
                 std::process::exit(2);
             }
         }
     }
     if let Archetype::Quadruped(params) = &mut record.archetype {
+        if let Some(size) = value("--head-axis").and_then(|v| v.parse::<f32>().ok()) {
+            params.head_size = size;
+        }
+        if let Some(appeal) = value("--appeal").and_then(|v| v.parse::<f32>().ok()) {
+            params.appeal = appeal;
+        }
+    }
+    if let Archetype::Winged(params) = &mut record.archetype {
         if let Some(size) = value("--head-axis").and_then(|v| v.parse::<f32>().ok()) {
             params.head_size = size;
         }
@@ -1076,6 +1094,24 @@ fn main() {
     // tier - because each tile is its own record built as it rolled; only the
     // pass, `--seed` (the first roll), `--to-scale`, `--family`,
     // `--portrait`, `--fantasy` and `--pattern` carry.
+    // A winged body's wings (#421): `--wings` draws one body folded, half
+    // and spread, from the side, the three quarters and above, and one wing
+    // close; `--wings-crosses` every pair of families crossed, folded and
+    // spread. `--extend E` poses any other sheet's wings at E instead.
+    if args.iter().any(|arg| arg == "--wings-crosses") {
+        wing_crosses(value("--pass").cloned(), &out);
+        return;
+    }
+    if args.iter().any(|arg| arg == "--wings") {
+        let name = value("--kin").cloned().unwrap_or_else(|| "winged".into());
+        wing_sheets(
+            &record,
+            value("--pass").cloned(),
+            &out,
+            &name.replace('+', "-"),
+        );
+        return;
+    }
     if let Some(given) = value("--gallery") {
         let Some(count) = given.parse::<usize>().ok().filter(|&count| count > 0) else {
             eprintln!("--gallery takes how many rolls to draw, at least one, not `{given}`");
@@ -1088,7 +1124,7 @@ fn main() {
         if let Some(name) = &family {
             let Some(families) = families_of(&record.archetype) else {
                 eprintln!(
-                    "--family picks a plan's family, and this plan has none: add --quadruped"
+                    "--family picks a plan's family, and this plan has none: add --quadruped or --winged"
                 );
                 std::process::exit(2);
             };
@@ -1127,6 +1163,7 @@ fn main() {
             coat && match (&record.archetype, family.as_deref()) {
                 (_, None) => true,
                 (Archetype::Quadruped(params), Some(filter)) => keeps(params, filter),
+                (Archetype::Winged(params), Some(filter)) => keeps(params, filter),
                 _ => false,
             }
         };
@@ -1134,6 +1171,7 @@ fn main() {
             Archetype::Quadruped(_) => {
                 Archetype::Quadruped(symbios_avatar::QuadrupedParams::default())
             }
+            Archetype::Winged(_) => Archetype::Winged(symbios_avatar::WingedParams::default()),
             _ => Archetype::default(),
         };
         let to_scale = args.iter().any(|arg| arg == "--to-scale");
@@ -3939,6 +3977,7 @@ fn coat_words(coat: &symbios_avatar::Coat) -> String {
 fn families_of(archetype: &Archetype) -> Option<Vec<&'static str>> {
     match archetype {
         Archetype::Quadruped(_) => Some(names::<symbios_avatar::Family>()),
+        Archetype::Winged(_) => Some(names::<symbios_avatar::WingedFamily>()),
         _ => None,
     }
 }
@@ -4047,6 +4086,17 @@ fn gallery(
                     fur_words(&params.fur)
                 )
             }
+            Archetype::Winged(params) => format!(
+                "{}: size {:.2}, wing {:+.2}, neck {:+.2}, legs {:+.2}, tail {:+.2}, head {:+.2}, appeal {:+.2}",
+                lineage_words(params),
+                params.size,
+                params.wing_length,
+                params.neck_length,
+                params.leg_length,
+                params.tail_length,
+                params.head_size,
+                params.appeal
+            ),
             other => other.name().to_string(),
         };
         println!("tile {tile}: seed {seed}, {kind}");
@@ -4115,6 +4165,198 @@ fn gallery(
         records.len(),
         seed - 1
     );
+}
+
+/// A winged body posed at one extension of both wings and its tail (#421).
+fn wing_pose(rig: &Rig, extension: f32) -> Pose {
+    let mut pose = Pose::rest(rig);
+    rig.spread_wings(&mut pose, extension, extension);
+    rig.spread_tail(&mut pose, extension);
+    pose
+}
+
+/// The centre and largest side of what a pose draws.
+fn posed_bounds(subject: &Subject, pose: &Pose) -> (Vec3, Vec3) {
+    let mut lo = Vec3::splat(f32::MAX);
+    let mut hi = Vec3::splat(f32::MIN);
+    for drawn in subject.avatar.posed(pose, 0.0) {
+        for &at in &drawn.mesh.positions {
+            lo = lo.min(at);
+            hi = hi.max(at);
+        }
+    }
+    (lo, hi)
+}
+
+/// The three views a wing is judged from at each extension, framed on what
+/// the pose draws: side on, the front three quarters from above, and
+/// straight down from above.
+fn wing_frames(subject: &Subject, pose: &Pose) -> [Frame; 3] {
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+    let (lo, hi) = posed_bounds(subject, pose);
+    let centre = (lo + hi) * 0.5;
+    let span = (hi - lo).max_element().max(0.1) * 1.08;
+    [
+        Frame {
+            turn: FRAC_PI_2,
+            pitch: 0.05,
+            centre,
+            span,
+        },
+        Frame {
+            turn: FRAC_PI_4,
+            pitch: 0.45,
+            centre,
+            span,
+        },
+        Frame {
+            turn: 0.0,
+            pitch: FRAC_PI_2 - 0.02,
+            centre,
+            span,
+        },
+    ]
+}
+
+/// One winged body's wing sheets (#421): `wings-NAME.png`, three rows -
+/// folded, half and spread - of three views each; and `wing-close-NAME.png`,
+/// the left wing close, folded from the side and spread from above and
+/// below.
+fn wing_sheets(record: &AvatarRecord, pass: Option<String>, out: &std::path::Path, name: &str) {
+    let Some(avatar) = Avatar::build(record) else {
+        eprintln!("this body does not build");
+        return;
+    };
+    print_wing_budget(name, &avatar);
+    let show = Show {
+        eyes: record.eyes,
+        pass,
+        ..Show::default()
+    };
+    let subject = Subject::new(avatar, show, None, Vec::new(), Vec::new());
+    let mut sheet = Image::new(3 * VIEW, 3 * VIEW);
+    for (row, extension) in [0.0f32, 0.5, 1.0].into_iter().enumerate() {
+        let pose = wing_pose(&subject.avatar.rig, extension);
+        for (column, frame) in wing_frames(&subject, &pose).iter().enumerate() {
+            let view = subject.view(&pose, 0.0, frame);
+            sheet.blit(&view, column * VIEW, row * VIEW);
+        }
+    }
+    write(out, &format!("wings-{name}"), &sheet);
+
+    // The left wing close: framed on its own joints at each pose.
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let rig = &subject.avatar.rig;
+    let wing_joints: Vec<usize> = (0..rig.len())
+        .filter(|&joint| {
+            matches!(
+                rig.joints[joint].zone,
+                Zone::UpperLimb(Limb::ForeLeft)
+                    | Zone::LowerLimb(Limb::ForeLeft)
+                    | Zone::Extremity(Limb::ForeLeft)
+            )
+        })
+        .collect();
+    // Framed on every drawn vertex the left wing's joints hold most.
+    let close = |pose: &Pose, turn: f32, pitch: f32| {
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for drawn in subject.avatar.posed(pose, 0.0) {
+            for (at, skin) in drawn.mesh.positions.iter().zip(&drawn.mesh.skin) {
+                if wing_joints.contains(&(skin[0].joint as usize)) {
+                    lo = lo.min(*at);
+                    hi = hi.max(*at);
+                }
+            }
+        }
+        Frame {
+            turn,
+            pitch,
+            centre: (lo + hi) * 0.5,
+            span: (hi - lo).max_element().max(0.05) * 1.15,
+        }
+    };
+    let folded = wing_pose(rig, 0.0);
+    let half = wing_pose(rig, 0.5);
+    let spread = wing_pose(rig, 1.0);
+    let mut sheet = Image::new(2 * VIEW, 2 * VIEW);
+    for (index, (pose, frame)) in [
+        (&folded, close(&folded, -FRAC_PI_2, 0.05)),
+        (&half, close(&half, -FRAC_PI_2 * 0.6, 0.6)),
+        (&spread, close(&spread, 0.0, FRAC_PI_2 - 0.02)),
+        (&spread, close(&spread, PI, -FRAC_PI_2 + 0.02)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let view = subject.view(pose, 0.0, &frame);
+        sheet.blit(&view, (index % 2) * VIEW, (index / 2) * VIEW);
+    }
+    write(out, &format!("wing-close-{name}"), &sheet);
+    println!("wrote wings-{name}.png and wing-close-{name}.png");
+}
+
+/// What a winged body costs, draw by draw (#421).
+fn print_wing_budget(name: &str, avatar: &Avatar) {
+    let draws: Vec<String> = avatar
+        .meshes
+        .iter()
+        .map(|drawn| format!("{} {}", drawn.kind.name(), drawn.mesh.triangulated().len()))
+        .collect();
+    let wings = avatar.parts.wings.as_ref();
+    println!(
+        "{name}: {} triangles in {} draws ({}), {} joints; membrane {} and feathers {} triangles",
+        avatar.budget.tris,
+        avatar.budget.meshes,
+        draws.join(", "),
+        avatar.budget.joints,
+        wings.map_or(0, |w| w.membrane.triangulated().len()),
+        wings.map_or(0, |w| w.feathers.triangulated().len()),
+    );
+}
+
+/// Every pair of winged families crossed at both sides of the halfway blend,
+/// each folded side on and spread from above (#421): `wings-crosses.png`.
+fn wing_crosses(pass: Option<String>, out: &std::path::Path) {
+    use WingedFamily::{Bat, Bird, Glider};
+    use symbios_avatar::{WingedFamily, WingedParams};
+    let crosses = [
+        (Bird, Bat, 0.3),
+        (Bird, Bat, 0.7),
+        (Bat, Glider, 0.3),
+        (Bat, Glider, 0.7),
+        (Glider, Bird, 0.3),
+        (Glider, Bird, 0.7),
+    ];
+    let mut sheet = Image::new(4 * VIEW, 3 * VIEW);
+    for (index, &(family, other, blend)) in crosses.iter().enumerate() {
+        let mut params = WingedParams::default();
+        params.set_kind(family, Some(other), blend);
+        let record = AvatarRecord::new("Cross", Archetype::Winged(params));
+        let Some(avatar) = Avatar::build(&record) else {
+            eprintln!("{family:?} x {other:?} at {blend} does not build");
+            continue;
+        };
+        print_wing_budget(&format!("{family:?} x {other:?} {blend}"), &avatar);
+        let show = Show {
+            eyes: record.eyes,
+            pass: pass.clone(),
+            ..Show::default()
+        };
+        let subject = Subject::new(avatar, show, None, Vec::new(), Vec::new());
+        for (column, extension) in [0.0f32, 1.0].into_iter().enumerate() {
+            let pose = wing_pose(&subject.avatar.rig, extension);
+            let frames = wing_frames(&subject, &pose);
+            let frame = if extension == 0.0 {
+                frames[0]
+            } else {
+                frames[2]
+            };
+            let view = subject.view(&pose, 0.0, &frame);
+            sheet.blit(&view, ((index % 2) * 2 + column) * VIEW, (index / 2) * VIEW);
+        }
+    }
+    write(out, "wings-crosses", &sheet);
+    println!("wrote wings-crosses.png");
 }
 
 /// How a gallery frames its tiles.

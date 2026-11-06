@@ -1111,118 +1111,140 @@ impl QuadrupedParams {
 
     /// Hangs the nodes of one derived body on a skeleton.
     fn assemble(&self, d: &Dimensions) -> Skeleton {
-        let mut skeleton = Skeleton::new();
-        skeleton.anatomy = self.anatomy();
-        // The head the cage's head chain is shaped into, and what its feet
-        // are shaped into (#367).
-        skeleton.beast_head = Some(d.head);
-        skeleton.beast_feet = Some(super::BeastFeet { kind: self.feet });
-        // The trunk, pelvis forward (#375): six rings, each its own depth and
-        // width. The pelvis is the root, as it always was.
-        let zones = [
-            Zone::Pelvis,
-            Zone::Abdomen,
-            Zone::Abdomen,
-            Zone::Chest,
-            Zone::Chest,
-            Zone::Chest,
+        hang(d, self.anatomy(), self.feet, HIND_INSIDE, FORE_INSIDE, 0)
+    }
+}
+
+/// Hangs the nodes of one derived body on a skeleton: the graph every plan on
+/// the beast's graph class shares (#420), the quadruped's and the winged's.
+/// `hind_inside` and `fore_inside` say how many of each leg's nodes, from the
+/// body down, are markers inside it; a quadruped's are [`HIND_INSIDE`] and
+/// [`FORE_INSIDE`], and a limb whose nodes are all markers meshes nothing.
+/// `tail_inside` says the same of the tail from its root: none of a
+/// quadruped's, all of a bird's, whose visible tail is the fan its tail part
+/// draws (#421).
+pub(crate) fn hang(
+    d: &Dimensions,
+    anatomy: Anatomy,
+    feet: Feet,
+    hind_inside: usize,
+    fore_inside: usize,
+    tail_inside: usize,
+) -> Skeleton {
+    let mut skeleton = Skeleton::new();
+    skeleton.anatomy = anatomy;
+    // The head the cage's head chain is shaped into, and what its feet
+    // are shaped into (#367).
+    skeleton.beast_head = Some(d.head);
+    skeleton.beast_feet = Some(super::BeastFeet { kind: feet });
+    // The trunk, pelvis forward (#375): six rings, each its own depth and
+    // width. The pelvis is the root, as it always was.
+    let zones = [
+        Zone::Pelvis,
+        Zone::Abdomen,
+        Zone::Abdomen,
+        Zone::Chest,
+        Zone::Chest,
+        Zone::Chest,
+    ];
+    let mut ring = None;
+    let mut trunk = [0u32; TRUNK_NODES];
+    for (index, (&(at, radius, section), zone)) in d.trunk.iter().zip(zones).enumerate() {
+        let node = Node::new(at, radius).with_scale(section).in_zone(zone);
+        let added = match ring {
+            None => skeleton.add_node(node),
+            Some(previous) => skeleton.extend_from(previous, node),
+        };
+        trunk[index] = added;
+        ring = Some(added);
+    }
+    let (hips, withers) = (trunk[0], trunk[TRUNK_NODES - 1]);
+    let neck = skeleton.extend_from(
+        withers,
+        Node::new(d.neck_at, d.neck_r)
+            .with_scale(d.neck_section)
+            .in_zone(Zone::Neck),
+    );
+    // The head is a chain out of the neck: the back of the skull, the
+    // cranium, the muzzle, the nose. All of it is the head's zone,
+    // because all of it is what a head is.
+    let occiput = skeleton.extend_from(
+        neck,
+        Node::new(d.occiput_at, d.occiput_r).in_zone(Zone::Head),
+    );
+    let cranium = skeleton.extend_from(occiput, Node::new(d.head_at, d.head_r).in_zone(Zone::Head));
+    let muzzle = skeleton.extend_from(
+        cranium,
+        Node::new(d.muzzle_at, d.muzzle_r).in_zone(Zone::Head),
+    );
+    skeleton.extend_from(muzzle, Node::new(d.nose_at, d.nose_r).in_zone(Zone::Head));
+
+    let mut tail = hips;
+    for (index, &(at, radius)) in d.tail.iter().enumerate() {
+        let mut node = Node::new(at, radius).in_zone(Zone::Tail);
+        if index < tail_inside {
+            node = node.as_marker();
+        }
+        tail = skeleton.extend_from(tail, node);
+    }
+
+    // Left is `+X`, as it is on every plan - see `plan::humanoid` for the
+    // convention and for why the `−X` side is built first. This body faces
+    // `+Z` too: its head sits ahead of its tail.
+    for (side, fore, hind) in [
+        (-1.0f32, Limb::ForeRight, Limb::HindRight),
+        (1.0, Limb::ForeLeft, Limb::HindLeft),
+    ] {
+        // [`Dimensions`] gives every leg on the `+X` side; this is the
+        // mirror, and it is the only place a side is decided.
+        let at = |node: Vec3| Vec3::new(side * node.x, node.y, node.z);
+        // Zoned as the humanoid's limbs are (#366): two nodes in the upper
+        // limb, the ankle - the hock, the carpus - in the lower, the foot
+        // in the extremity. `Rig::limb_chain` then hands the leg IK the
+        // same three joints it gets on a person, and the pad, the first
+        // extremity node, is the contact the gait plants.
+        // Zoned as the humanoid's limbs are (#366): the upper limb, the
+        // ankle - the hock, the carpus - in the lower, the foot in the
+        // extremity. The bones inside the trunk are upper-limb MARKERS
+        // (#374): the rig keeps them, the cage sweeps the leg straight
+        // from the girdle to the first joint outside the body. Then
+        // `Rig::limb_chain`, which takes the last three of the upper and
+        // lower limb, hands the leg IK the shoulder, the elbow and the
+        // carpus - or the hip, the stifle and the hock - and the pad, the
+        // first extremity node, is the contact the gait plants.
+        let zone = |limb: Limb, index: usize, count: usize| match count - index {
+            1 | 2 => Zone::Extremity(limb),
+            3 => Zone::LowerLimb(limb),
+            _ => Zone::UpperLimb(limb),
+        };
+        let legs: [(u32, Limb, &[LegNode], usize); 2] = [
+            (hips, hind, &d.hind, hind_inside),
+            (withers, fore, &d.fore, fore_inside),
         ];
-        let mut ring = None;
-        let mut trunk = [0u32; TRUNK_NODES];
-        for (index, (&(at, radius, section), zone)) in d.trunk.iter().zip(zones).enumerate() {
-            let node = Node::new(at, radius).with_scale(section).in_zone(zone);
-            let added = match ring {
-                None => skeleton.add_node(node),
-                Some(previous) => skeleton.extend_from(previous, node),
-            };
-            trunk[index] = added;
-            ring = Some(added);
-        }
-        let (hips, withers) = (trunk[0], trunk[TRUNK_NODES - 1]);
-        let neck = skeleton.extend_from(
-            withers,
-            Node::new(d.neck_at, d.neck_r)
-                .with_scale(d.neck_section)
-                .in_zone(Zone::Neck),
-        );
-        // The head is a chain out of the neck: the back of the skull, the
-        // cranium, the muzzle, the nose. All of it is the head's zone,
-        // because all of it is what a head is.
-        let occiput = skeleton.extend_from(
-            neck,
-            Node::new(d.occiput_at, d.occiput_r).in_zone(Zone::Head),
-        );
-        let cranium =
-            skeleton.extend_from(occiput, Node::new(d.head_at, d.head_r).in_zone(Zone::Head));
-        let muzzle = skeleton.extend_from(
-            cranium,
-            Node::new(d.muzzle_at, d.muzzle_r).in_zone(Zone::Head),
-        );
-        skeleton.extend_from(muzzle, Node::new(d.nose_at, d.nose_r).in_zone(Zone::Head));
-
-        let mut tail = hips;
-        for &(at, radius) in &d.tail {
-            tail = skeleton.extend_from(tail, Node::new(at, radius).in_zone(Zone::Tail));
-        }
-
-        // Left is `+X`, as it is on every plan - see `plan::humanoid` for the
-        // convention and for why the `−X` side is built first. This body faces
-        // `+Z` too: its head sits ahead of its tail.
-        for (side, fore, hind) in [
-            (-1.0f32, Limb::ForeRight, Limb::HindRight),
-            (1.0, Limb::ForeLeft, Limb::HindLeft),
-        ] {
-            // [`Dimensions`] gives every leg on the `+X` side; this is the
-            // mirror, and it is the only place a side is decided.
-            let at = |node: Vec3| Vec3::new(side * node.x, node.y, node.z);
-            // Zoned as the humanoid's limbs are (#366): two nodes in the upper
-            // limb, the ankle - the hock, the carpus - in the lower, the foot
-            // in the extremity. `Rig::limb_chain` then hands the leg IK the
-            // same three joints it gets on a person, and the pad, the first
-            // extremity node, is the contact the gait plants.
-            // Zoned as the humanoid's limbs are (#366): the upper limb, the
-            // ankle - the hock, the carpus - in the lower, the foot in the
-            // extremity. The bones inside the trunk are upper-limb MARKERS
-            // (#374): the rig keeps them, the cage sweeps the leg straight
-            // from the girdle to the first joint outside the body. Then
-            // `Rig::limb_chain`, which takes the last three of the upper and
-            // lower limb, hands the leg IK the shoulder, the elbow and the
-            // carpus - or the hip, the stifle and the hock - and the pad, the
-            // first extremity node, is the contact the gait plants.
-            let zone = |limb: Limb, index: usize, count: usize| match count - index {
-                1 | 2 => Zone::Extremity(limb),
-                3 => Zone::LowerLimb(limb),
-                _ => Zone::UpperLimb(limb),
-            };
-            let legs: [(u32, Limb, &[LegNode], usize); 2] = [
-                (hips, hind, &d.hind, HIND_INSIDE),
-                (withers, fore, &d.fore, FORE_INSIDE),
-            ];
-            for (girdle, limb, nodes, inside) in legs {
-                let mut parent = girdle;
-                for (index, &(position, radius)) in nodes.iter().enumerate() {
-                    let zone = zone(limb, index, nodes.len());
-                    let mut node = Node::new(at(position), radius).in_zone(zone);
-                    if index < inside {
-                        node = node.as_marker();
-                    }
-                    // The thigh's muscle rides the stifle's ring, the first
-                    // the cage sweeps below the croup (#374).
-                    if index == inside && limb == hind {
-                        node = node.with_scale(d.stifle_section);
-                    }
-                    // The foot's two nodes stand on a flat edge rather than a
-                    // vertex, for the reason `plan::humanoid` gives its sole.
-                    if matches!(zone, Zone::Extremity(_)) {
-                        node = node.with_roll(HALF_SEGMENT);
-                    }
-                    parent = skeleton.extend_from(parent, node);
+        for (girdle, limb, nodes, inside) in legs {
+            let mut parent = girdle;
+            for (index, &(position, radius)) in nodes.iter().enumerate() {
+                let zone = zone(limb, index, nodes.len());
+                let mut node = Node::new(at(position), radius).in_zone(zone);
+                if index < inside {
+                    node = node.as_marker();
                 }
+                // The thigh's muscle rides the stifle's ring, the first
+                // the cage sweeps below the croup (#374).
+                if index == inside && limb == hind {
+                    node = node.with_scale(d.stifle_section);
+                }
+                // The foot's two nodes stand on a flat edge rather than a
+                // vertex, for the reason `plan::humanoid` gives its sole.
+                if matches!(zone, Zone::Extremity(_)) {
+                    node = node.with_roll(HALF_SEGMENT);
+                }
+                parent = skeleton.extend_from(parent, node);
             }
         }
-
-        skeleton
     }
+
+    skeleton
 }
 
 impl QuadrupedParams {

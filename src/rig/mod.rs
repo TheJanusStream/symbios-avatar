@@ -247,6 +247,19 @@ pub struct Rig {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub outline: Option<Outline>,
+    /// What folds and spreads a winged body's wings and fans its tail
+    /// (#421), once its wing parts have been grown on it: read by
+    /// [`Self::spread_wings`] and [`Self::spread_tail`]. `None` on every
+    /// other body, and on a rig rooted straight from a skeleton.
+    ///
+    /// Left out of a sent rig that has none, so a person's and a beast's are
+    /// written exactly as they were before there were wings, and an older
+    /// build reading a winged body's passes it by.
+    #[cfg_attr(
+        feature = "serde-avatar",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub wings: Option<crate::wing::Wings>,
 }
 
 impl Rig {
@@ -339,6 +352,7 @@ impl Rig {
             joints,
             anatomy: skeleton.anatomy,
             outline: None,
+            wings: None,
         })
     }
 
@@ -555,10 +569,17 @@ impl Rig {
     /// joint they call `foot_l`. Selecting a foot from [`Zone::Extremity`] alone
     /// drops the heel and then reports that the foot has not got one.
     ///
+    /// **A wing's own joints are left out** (#421, the end review). A bat's
+    /// digits, a glider's spars and a bird's feathers take the zone of the arm
+    /// they grow from, and none of them is the foot: folded back along a bat's
+    /// forearm, its digits read to the gait as a heel half a metre long, and
+    /// the last of them as the tip a prop is held at. See
+    /// [`crate::wing::Wings::joints`].
+    ///
     /// Returns an empty vector for a limb this body does not have.
     #[must_use]
     pub fn extremity_joints(&self, limb: Limb) -> Vec<usize> {
-        let mut joints = self.in_zone(Zone::Extremity(limb));
+        let mut joints = self.foot_zone(limb);
         if let Some(&first) = joints.first()
             && let Some(parent) = self.joints[first].parent
             && !joints.contains(&parent)
@@ -600,7 +621,7 @@ impl Rig {
     pub fn extremity_extent(&self, limb: Limb, along: Vec3) -> Option<(f32, f32)> {
         let along = along.normalize_or_zero();
         let joints = self.extremity_joints(limb);
-        let &contact = self.in_zone(Zone::Extremity(limb)).first()?;
+        let &contact = self.foot_zone(limb).first()?;
         if along == Vec3::ZERO {
             return Some((0.0, 0.0));
         }
@@ -613,6 +634,16 @@ impl Rig {
                     (behind.max(-along), ahead.max(along))
                 }),
         )
+    }
+
+    /// The joints in `limb`'s extremity zone that are its own: all of them,
+    /// but for the joints a wing added there ([`Self::extremity_joints`]).
+    fn foot_zone(&self, limb: Limb) -> Vec<usize> {
+        let mut joints = self.in_zone(Zone::Extremity(limb));
+        if let Some(wings) = &self.wings {
+            joints.retain(|&joint| !wings.owns(joint));
+        }
+        joints
     }
 
     /// The joint `limb` hangs from: its first upper-limb joint, a person's

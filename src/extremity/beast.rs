@@ -69,8 +69,12 @@ pub fn shape(mesh: &PolyMesh, rig: &Rig, feet: &BeastFeet) -> PolyMesh {
 /// Every foot the rig ends a leg in, with its shape: the first two joints of
 /// each extremity zone are its pad and its toes.
 pub(crate) fn shapes(rig: &Rig, feet: &BeastFeet) -> Vec<(Limb, FootShape)> {
+    // The limbs it stands on (#420): a bird's wing ends in no paw, and its
+    // hand is markers inside the flank a paw would be pressed onto.
+    let legs = rig.legs();
     Limb::ALL
         .into_iter()
+        .filter(|&limb| legs.contains(limb))
         .filter_map(|limb| {
             let nodes = rig.in_zone(Zone::Extremity(limb));
             let (&pad, &toe) = (nodes.first()?, nodes.get(1)?);

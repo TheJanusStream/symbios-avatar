@@ -13,7 +13,7 @@
 //! deeper for a heavier body under the same back, a fatter one's most at the
 //! belly, whose underline drops; the girdles' depth is their bone's.
 
-mod head;
+pub(in crate::plan::derive) mod head;
 
 use glam::{Quat, Vec2, Vec3};
 

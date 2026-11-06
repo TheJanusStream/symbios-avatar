@@ -96,6 +96,7 @@ mod humanoid;
 pub mod kin;
 mod ornament;
 mod quadruped;
+mod winged;
 mod zone;
 
 use rand::SeedableRng;
@@ -120,6 +121,7 @@ pub use ornament::{
     Ornament, OrnamentKind, Ornaments, POINTS_RANGE, TAPER_RANGE, THICKNESS_RANGE, TWIST_RANGE,
 };
 pub use quadruped::{Family, Feet, Nose, Pupil, QuadrupedParams};
+pub use winged::{WingedFamily, WingedParams};
 pub use zone::{Limb, ZONE_COUNT, Zone, ZoneSet};
 
 /// Smallest and largest biped stature accepted, in metres.
@@ -132,6 +134,13 @@ pub fn humanoid_height_range() -> (f32, f32) {
 #[must_use]
 pub fn quadruped_height_range() -> (f32, f32) {
     quadruped::HEIGHT_RANGE
+}
+
+/// Smallest and largest winged head-and-body length in the plan's
+/// conservative range, in metres (#420): a cat's to a dog's at a game's scale.
+#[must_use]
+pub fn winged_size_range() -> (f32, f32) {
+    winged::SIZE_RANGE
 }
 
 /// A group of axes that can be locked or re-rolled together.
@@ -573,6 +582,8 @@ pub enum PlanDecodeError {
 pub const HUMANOID_TYPE: &str = "network.symbios.avatar.defs#humanoid";
 /// Type name of the quadruped variant.
 pub const QUADRUPED_TYPE: &str = "network.symbios.avatar.defs#quadruped";
+/// Type name of the winged variant (#420): a bird, a bat, a glider.
+pub const WINGED_TYPE: &str = "network.symbios.avatar.defs#winged";
 
 /// Which kind of body a record describes.
 ///
@@ -599,6 +610,12 @@ pub enum Archetype {
     Humanoid(HumanoidParams),
     /// A four-legged creature.
     Quadruped(QuadrupedParams),
+    /// A winged creature (#420): a bird, a bat, a sugar glider or a cross.
+    ///
+    /// **A build from before it reads it as [`Self::Unknown`]**, and builds
+    /// the honest stand-in: nothing about the plan is on a field an older
+    /// reader knows, so its record survives that reader's rewrite whole.
+    Winged(WingedParams),
     /// A body this build does not know about, preserved as written.
     Unknown {
         /// The `$type` that was read.
@@ -614,6 +631,7 @@ impl Serialize for Archetype {
         let (type_name, body) = match self {
             Archetype::Humanoid(params) => (HUMANOID_TYPE, serde_json::to_value(params)),
             Archetype::Quadruped(params) => (QUADRUPED_TYPE, serde_json::to_value(params)),
+            Archetype::Winged(params) => (WINGED_TYPE, serde_json::to_value(params)),
             Archetype::Unknown { type_name, fields } => {
                 let mut map = serializer.serialize_map(Some(fields.len() + 1))?;
                 map.serialize_entry("$type", type_name)?;
@@ -662,6 +680,9 @@ impl<'de> Deserialize<'de> for Archetype {
             QUADRUPED_TYPE => serde_json::from_value(body)
                 .map(Archetype::Quadruped)
                 .map_err(D::Error::custom),
+            WINGED_TYPE => serde_json::from_value(body)
+                .map(Archetype::Winged)
+                .map_err(D::Error::custom),
             _ => Ok(Archetype::Unknown {
                 type_name,
                 fields: match body {
@@ -690,6 +711,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(_) => 1,
             Archetype::Quadruped(_) => 2,
+            Archetype::Winged(_) => winged::WINGED_TAG,
             Archetype::Unknown { .. } => 0,
         }
     }
@@ -700,6 +722,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(_) => "humanoid",
             Archetype::Quadruped(_) => "quadruped",
+            Archetype::Winged(_) => "winged",
             Archetype::Unknown { type_name, .. } => type_name,
         }
     }
@@ -723,6 +746,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(params) => params.sanitize(),
             Archetype::Quadruped(params) => params.sanitize(),
+            Archetype::Winged(params) => params.sanitize(),
             Archetype::Unknown { .. } => {}
         }
     }
@@ -738,6 +762,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(params) => params.anatomy(),
             Archetype::Quadruped(params) => params.anatomy(),
+            Archetype::Winged(params) => params.anatomy(),
             Archetype::Unknown { .. } => Anatomy::HUMAN,
         }
     }
@@ -750,6 +775,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(params) => params.composite_priors(),
             Archetype::Quadruped(params) => params.composite_priors(),
+            Archetype::Winged(params) => params.composite_priors(),
             Archetype::Unknown { .. } => CompositePriors::PERSON,
         }
     }
@@ -760,6 +786,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(params) => params.iris(shade),
             Archetype::Quadruped(params) => params.iris(shade),
+            Archetype::Winged(params) => params.iris(shade),
             Archetype::Unknown { .. } => crate::face::eye::iris_pigment(shade),
         }
     }
@@ -775,6 +802,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(params) => params.skeleton(composites),
             Archetype::Quadruped(params) => params.skeleton(composites),
+            Archetype::Winged(params) => params.skeleton(composites),
             Archetype::Unknown { .. } => HumanoidParams::default().skeleton(composites),
         }
     }
@@ -786,6 +814,7 @@ impl Archetype {
     pub fn reroll_kind(&mut self, rolls: &Rolls) {
         match self {
             Archetype::Quadruped(params) => params.reroll_family(rolls),
+            Archetype::Winged(params) => params.reroll_family(rolls),
             Archetype::Humanoid(_) | Archetype::Unknown { .. } => {}
         }
     }
@@ -798,6 +827,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(params) => params.reroll(category, rolls, composites),
             Archetype::Quadruped(params) => params.reroll(category, rolls, composites),
+            Archetype::Winged(params) => params.reroll(category, rolls, composites),
             Archetype::Unknown { .. } => {}
         }
     }
@@ -808,6 +838,7 @@ impl Archetype {
         match self {
             Archetype::Humanoid(params) => params.encode(out),
             Archetype::Quadruped(params) => params.encode(out),
+            Archetype::Winged(params) => params.encode(out),
             Archetype::Unknown { .. } => {}
         }
     }
@@ -823,6 +854,7 @@ impl Archetype {
         match tag {
             1 => Ok(Archetype::Humanoid(HumanoidParams::decode(bytes)?)),
             2 => Ok(Archetype::Quadruped(QuadrupedParams::decode(bytes)?)),
+            winged::WINGED_TAG => Ok(Archetype::Winged(WingedParams::decode(bytes)?)),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }
@@ -846,6 +878,7 @@ impl Archetype {
             2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_pre_families(
                 bytes,
             )?)),
+            winged::WINGED_TAG => Ok(Archetype::Winged(WingedParams::decode_pre_families(bytes)?)),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }
@@ -863,6 +896,7 @@ impl Archetype {
         match tag {
             1 => Ok(Archetype::Humanoid(HumanoidParams::decode_legacy(bytes)?)),
             2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_legacy(bytes)?)),
+            winged::WINGED_TAG => Ok(Archetype::Winged(WingedParams::decode_legacy(bytes)?)),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }
@@ -885,6 +919,9 @@ impl Archetype {
             2 => Ok(Archetype::Quadruped(
                 QuadrupedParams::decode_pre_distribution(bytes)?,
             )),
+            winged::WINGED_TAG => Ok(Archetype::Winged(WingedParams::decode_pre_distribution(
+                bytes,
+            )?)),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }
@@ -907,6 +944,7 @@ impl Archetype {
             2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_pre_chest(
                 bytes,
             )?)),
+            winged::WINGED_TAG => Ok(Archetype::Winged(WingedParams::decode_pre_chest(bytes)?)),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }
@@ -927,6 +965,7 @@ impl Archetype {
             2 => Ok(Archetype::Quadruped(QuadrupedParams::decode_reserved(
                 bytes,
             )?)),
+            winged::WINGED_TAG => Ok(Archetype::Winged(WingedParams::decode_reserved(bytes)?)),
             other => Err(PlanDecodeError::UnknownArchetype(other)),
         }
     }
@@ -1285,6 +1324,29 @@ mod tests {
                 Archetype::Quadruped(QuadrupedParams::default()),
                 Anatomy::BEAST,
             ),
+            // #420: a bird stands on its hind pair, a bat and a glider on all
+            // four, and the rig keeps whichever its plan declared.
+            (
+                Archetype::Winged(WingedParams::default()),
+                Anatomy {
+                    legs: Some(Legs::HIND),
+                    ..Anatomy::BEAST
+                },
+            ),
+            (
+                Archetype::Winged(WingedParams {
+                    family: WingedFamily::Bat,
+                    ..Default::default()
+                }),
+                Anatomy::BEAST,
+            ),
+            (
+                Archetype::Winged(WingedParams {
+                    family: WingedFamily::Glider,
+                    ..Default::default()
+                }),
+                Anatomy::BEAST,
+            ),
         ] {
             assert_eq!(archetype.anatomy(), anatomy);
             let skeleton = archetype.skeleton(&composites);
@@ -1336,6 +1398,65 @@ mod tests {
         );
 
         assert_left_limbs_are_at_positive_x(&skeleton, "the quadruped");
+    }
+
+    #[test]
+    fn a_winged_body_faces_forward_and_puts_its_left_at_positive_x() {
+        // #420, the quadruped's test on every family and a cross across the
+        // two postures: a head ahead of a tail, and each limb named Left at +X.
+        for (family, hybrid) in [
+            (WingedFamily::Bird, None),
+            (WingedFamily::Bat, None),
+            (WingedFamily::Glider, None),
+            (WingedFamily::Bird, Some(WingedFamily::Bat)),
+            (WingedFamily::Bat, Some(WingedFamily::Glider)),
+        ] {
+            let params = WingedParams {
+                family,
+                hybrid,
+                blend: if hybrid.is_some() { 0.5 } else { 0.0 },
+                ..Default::default()
+            };
+            let skeleton = Archetype::Winged(params).skeleton(&crate::Composites::default());
+            let (_, head) = span(&skeleton, Zone::Head, |at| at.z);
+            let (tail, _) = span(&skeleton, Zone::Tail, |at| at.z);
+            assert!(
+                head > tail,
+                "{family:?} x {hybrid:?}: the head is at {:.1} mm and the tail at {:.1} mm",
+                head * 1000.0,
+                tail * 1000.0
+            );
+            assert_left_limbs_are_at_positive_x(&skeleton, &format!("{family:?} x {hybrid:?}"));
+        }
+    }
+
+    #[test]
+    fn a_winged_share_code_payload_has_its_own_tag_and_no_older_layout() {
+        // #420: tag 3, read back whole; a layout older than version 10 never
+        // carried one, and an older build refuses the tag as unknown.
+        let winged = Archetype::Winged(WingedParams {
+            family: WingedFamily::Glider,
+            ..Default::default()
+        });
+        assert_eq!(winged.tag(), 3);
+        let mut payload = Vec::new();
+        winged.encode(&mut payload);
+        let mut read = payload.as_slice();
+        let Ok(Archetype::Winged(back)) = Archetype::decode(&mut read) else {
+            panic!("a winged payload reads back");
+        };
+        assert_eq!(back.family, WingedFamily::Glider);
+        assert!(read.is_empty());
+        for older in [
+            Archetype::decode_pre_families,
+            Archetype::decode_pre_distribution,
+            Archetype::decode_pre_chest,
+            Archetype::decode_reserved,
+            Archetype::decode_legacy,
+        ] {
+            let mut read = payload.as_slice();
+            assert_eq!(older(&mut read), Err(PlanDecodeError::UnknownArchetype(3)));
+        }
     }
 
     #[test]

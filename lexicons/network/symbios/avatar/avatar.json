@@ -25,7 +25,8 @@
             "description": "The body this avatar describes. Open: readers that do not recognise a variant should say so rather than substitute another body.",
             "refs": [
               "network.symbios.avatar.defs#humanoid",
-              "network.symbios.avatar.defs#quadruped"
+              "network.symbios.avatar.defs#quadruped",
+              "network.symbios.avatar.defs#winged"
             ]
           },
           "composites": {

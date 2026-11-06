@@ -137,6 +137,7 @@ pub mod texture;
 pub(crate) mod tolerant;
 pub mod torso;
 pub mod uv;
+pub mod wing;
 
 pub use anim::{
     Airborne, Carriage, Clip, ClipLibrary, Continuity, Curve, Driven, Driver, DriverConfig,
@@ -165,7 +166,7 @@ pub use plan::{
     Anatomy, Antlers, Archetype, BeastFeet, BeastHead, BodyPlan, Category, Coat, CoatChannel,
     CoatColours, CompositePriors, Composites, Family, Feet, FootKind, Fur, HeadKind, Horn,
     HumanoidParams, Legs, Limb, Nose, Ornament, OrnamentKind, Ornaments, Pupil, QuadrupedParams,
-    TrunkKind, Zone, ZoneSet,
+    TrunkKind, WingedFamily, WingedParams, Zone, ZoneSet,
 };
 pub use record::{AvatarRecord, GENERATOR_VERSION, LockSet, ProfileRecord, ShareCodeError};
 pub use rig::{
@@ -180,6 +181,7 @@ pub use subdiv::catmull_clark;
 /// otherwise name it without depending on `symbios-texture` at exactly the
 /// version this crate pins.
 pub use symbios_texture::generator::TextureMap;
+pub use wing::{Drive, WingParts, WingSide, Wings};
 
 /// How many extra times the front of the head is split.
 ///

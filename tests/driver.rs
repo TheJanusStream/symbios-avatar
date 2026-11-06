@@ -6364,3 +6364,69 @@ fn what_stirs_a_body_is_what_gets_a_beast_up() {
     assert!(driver.airborne().is_some(), "launched");
     assert!(driver.stirred(&Inputs::default()), "an airborne body is");
 }
+
+/// **A winged body is driven without a panic** (#420): standing, walking off,
+/// stopping, swimming a moment and asked for a gesture, for a few seconds, on a
+/// bird that stands on two legs, a bat and a glider on four, and a cross of
+/// each pair. Its motion is W5's (#424); what W1 owes a consumer is that a
+/// body it drives is posed every frame, and posed finitely.
+#[test]
+fn a_winged_body_is_driven_without_a_panic() {
+    use symbios_avatar::plan::{Blended, Lineage};
+    use symbios_avatar::{WingedFamily, WingedParams};
+    let lineages = [
+        Lineage::pure(WingedFamily::Bird),
+        Lineage::pure(WingedFamily::Bat),
+        Lineage::pure(WingedFamily::Glider),
+        Lineage::cross(WingedFamily::Bird, WingedFamily::Bat, 0.3),
+        Lineage::cross(WingedFamily::Bat, WingedFamily::Glider, 0.6),
+        Lineage::cross(WingedFamily::Glider, WingedFamily::Bird, 0.6),
+    ];
+    for lineage in lineages {
+        let mut params = WingedParams::default();
+        params.set_lineage(lineage);
+        let record = AvatarRecord::new("Winged", Archetype::Winged(params));
+        let avatar = Avatar::build_with(
+            &record,
+            &AvatarConfig {
+                atlas: 64,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|| panic!("{lineage:?} builds"));
+        let rig = avatar.rig.clone();
+        assert_eq!(
+            rig.legs().len(),
+            if lineage.leading() == WingedFamily::Bird {
+                2
+            } else {
+                4
+            },
+            "{lineage:?} stands on its posture's legs"
+        );
+        let mut chassis = Chassis::seeded(INSTRUMENT_SEED);
+        let mut at = Vec3::ZERO;
+        // Two seconds standing, two walking off, two stopped, a moment in the
+        // water, and a gesture asked for once it is out.
+        for frame in 0..480 {
+            let speed = match frame {
+                120..240 => 1.2,
+                _ => 0.0,
+            };
+            at += Vec3::Z * (speed * STEP);
+            let driven = match frame {
+                360..390 => chassis.swim(&rig, at),
+                420 => chassis.ask(&rig, at, "Sit"),
+                _ => chassis.step(&rig, at),
+            };
+            assert!(
+                driven
+                    .pose
+                    .rotations
+                    .iter()
+                    .all(|rotation| rotation.is_finite()),
+                "{lineage:?} frame {frame}: a pose that is not finite"
+            );
+        }
+    }
+}

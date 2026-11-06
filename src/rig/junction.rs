@@ -103,6 +103,11 @@ impl Junctions {
                 let below = [Zone::LowerLimb(limb), Zone::Extremity(limb)]
                     .into_iter()
                     .flat_map(|zone| rig.in_zone(zone));
+                // A limb that meshes nothing leaves no trunk: a bird's wing
+                // arm, every joint of it a marker inside its flank (#420).
+                if below.clone().all(|joint| rig.joints[joint].marker) {
+                    return None;
+                }
                 // Each joint in its own section, not its widest: measured in
                 // the thigh's deep radius all round, the stifle reached in
                 // past the midline into the groin, and onto the tail.

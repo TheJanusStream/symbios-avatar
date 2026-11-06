@@ -15,7 +15,8 @@ use symbios_avatar::face::{HeadTraits, Skull};
 use symbios_avatar::plan::{AGE_RANGE, BODY_FAT_RANGE, DEFAULT_AGE, DEFAULT_BODY_FAT, Family};
 use symbios_avatar::{
     Archetype, AvatarRecord, BODY_SUBDIVISIONS, BodyPlan, CageConfig, Composites, HumanoidParams,
-    Limb, Patch, QuadrupedParams, Rig, Skeleton, Vec3, Zone, build_body, build_cage,
+    Limb, Patch, QuadrupedParams, Rig, Skeleton, Vec3, WingedFamily, WingedParams, Zone,
+    build_body, build_cage,
 };
 
 /// Builds a body and asserts it is watertight, reporting the parameters if not.
@@ -1878,4 +1879,140 @@ fn the_sole_is_flat_along_the_foot_it_stands_on() {
             .map(|y| (y * 10000.0).round() / 10.0)
             .collect::<Vec<_>>()
     );
+}
+
+/// Every family of the winged plan, and a cross of each pair at both sides of
+/// its posture's switch (#420).
+fn winged_lineages() -> Vec<(WingedFamily, Option<WingedFamily>, f32)> {
+    use WingedFamily::{Bat, Bird, Glider};
+    let mut lineages = vec![(Bird, None, 0.0), (Bat, None, 0.0), (Glider, None, 0.0)];
+    for (a, b) in [(Bird, Bat), (Bat, Glider), (Glider, Bird)] {
+        for blend in [0.25, 0.49, 0.51, 0.75] {
+            lineages.push((a, Some(b), blend));
+        }
+    }
+    lineages
+}
+
+#[test]
+fn a_non_finite_winged_axis_takes_its_documented_default() {
+    let axes: [Readable<WingedParams>; 7] = [
+        ("size", |p, v| p.size = v, |p| p.size),
+        ("wing_length", |p, v| p.wing_length = v, |p| p.wing_length),
+        ("neck_length", |p, v| p.neck_length = v, |p| p.neck_length),
+        ("leg_length", |p, v| p.leg_length = v, |p| p.leg_length),
+        ("tail_length", |p, v| p.tail_length = v, |p| p.tail_length),
+        ("head_size", |p, v| p.head_size = v, |p| p.head_size),
+        ("appeal", |p, v| p.appeal = v, |p| p.appeal),
+    ];
+    assert_non_finite_axes_fall_back("winged", &axes, Archetype::Winged);
+}
+
+#[test]
+fn every_winged_axis_meshes_at_its_extremes() {
+    // #420: each axis at the envelope's ends and between, on every family and
+    // on crosses either side of their posture's switch, small and large, with
+    // the girth at the same end.
+    let axes: [Axis<WingedParams>; 6] = [
+        ("wing_length", |p, v| p.wing_length = v),
+        ("neck_length", |p, v| p.neck_length = v),
+        ("leg_length", |p, v| p.leg_length = v),
+        ("tail_length", |p, v| p.tail_length = v),
+        ("head_size", |p, v| p.head_size = v),
+        ("appeal", |p, v| p.appeal = v),
+    ];
+    for (family, hybrid, blend) in winged_lineages() {
+        for size in [0.05f32, 0.6, 2.4] {
+            for (name, apply) in axes {
+                for value in [-3.0f32, -1.0, 1.0, 3.0] {
+                    let mut params = WingedParams {
+                        size,
+                        family,
+                        hybrid,
+                        blend,
+                        ..Default::default()
+                    };
+                    apply(&mut params, value);
+                    params.sanitize();
+                    let mut composites = Composites {
+                        mass: value,
+                        body_fat: DEFAULT_BODY_FAT + 0.15 * value,
+                        ..NEUTRAL
+                    };
+                    composites.sanitize();
+                    assert_meshable(
+                        &Archetype::Winged(params),
+                        &composites,
+                        &format!(
+                            "winged {family:?} x {hybrid:?} at {blend} size {size} {name}={value}"
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn random_winged_bodies_always_mesh() {
+    // Every axis anywhere in the envelope at once, crosses at any blend, and
+    // the composites anywhere in theirs: the slider corners an editor reaches.
+    let mut rng = Pcg64Mcg::seed_from_u64(0x0420_3B1D);
+    let families = [WingedFamily::Bird, WingedFamily::Bat, WingedFamily::Glider];
+    for sample in 0..800 {
+        let axis = |rng: &mut Pcg64Mcg| rng.random_range(-3.0..=3.0f32);
+        let mut params = WingedParams {
+            size: rng.random_range(0.05..=2.4),
+            wing_length: axis(&mut rng),
+            neck_length: axis(&mut rng),
+            leg_length: axis(&mut rng),
+            tail_length: axis(&mut rng),
+            head_size: axis(&mut rng),
+            appeal: axis(&mut rng),
+            family: families[rng.random_range(0..3)],
+            hybrid: rng
+                .random_bool(0.4)
+                .then(|| families[rng.random_range(0..3)]),
+            blend: rng.random_range(0.0..=1.0),
+        };
+        params.sanitize();
+        let mut composites = Composites {
+            mass: rng.random_range(-3.0..=3.0),
+            body_fat: rng.random_range(BODY_FAT_RANGE.0..=BODY_FAT_RANGE.1),
+            age: rng.random_range(AGE_RANGE.0..=AGE_RANGE.1),
+            ..NEUTRAL
+        };
+        composites.sanitize();
+        assert_meshable(
+            &Archetype::Winged(params),
+            &composites,
+            &format!("random winged #{sample}: {params:?} {composites:?}"),
+        );
+    }
+}
+
+#[test]
+fn every_rerolled_winged_record_meshes_and_builds() {
+    // The path a creator's randomise button takes, crosses included (about one
+    // roll in seven), and every fortieth roll built whole.
+    let mut crosses = 0;
+    for seed in 0..400i64 {
+        let mut record = AvatarRecord::new("Roll", Archetype::Winged(WingedParams::default()));
+        record.reroll(seed);
+        if let Archetype::Winged(params) = &record.archetype {
+            crosses += usize::from(params.hybrid.is_some());
+        }
+        assert_meshable(
+            &record.archetype,
+            &record.composites,
+            &format!("rerolled winged seed {seed}"),
+        );
+        if seed % 40 == 0 {
+            assert!(
+                symbios_avatar::Avatar::build(&record).is_some(),
+                "rerolled winged seed {seed} does not build"
+            );
+        }
+    }
+    assert!(crosses > 20, "only {crosses} crosses in 400 rolls");
 }

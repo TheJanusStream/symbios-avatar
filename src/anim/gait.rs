@@ -3282,7 +3282,9 @@ const RUN_PUMP: f32 = 0.35;
 /// cannot drift apart: an idle body and a walking one that hang their arms
 /// differently would pop at every start and stop.
 pub fn hang_arms(rig: &Rig, pose: &mut Pose) {
-    if !pose.fits(rig) {
+    // A limb that bears no weight is an arm only on a body with hands: a
+    // bird's is a wing folded along its flank (#420), which W5 moves.
+    if !pose.fits(rig) || !rig.anatomy.hands {
         return;
     }
     let carries = rig.ground_contacts();
@@ -3322,7 +3324,8 @@ pub fn hang_arms(rig: &Rig, pose: &mut Pose) {
 /// pose once; running this twice compounds its own drop, as any additive layer
 /// would.
 pub fn swing_arms(rig: &Rig, pose: &mut Pose, gait: &Gait, stride: &Stride, cycle: f32) {
-    if !pose.fits(rig) {
+    // See [`hang_arms`]: a wing does not swing as an arm.
+    if !pose.fits(rig) || !rig.anatomy.hands {
         return;
     }
     // **The arms answer the legs' FORE-AND-AFT excursion, because that is what

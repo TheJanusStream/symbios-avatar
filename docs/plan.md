@@ -244,6 +244,14 @@ Still ahead, in rough order:
   ear flicked, a wag), and has a roster of its own - sit, lie down, play bow,
   shake, wag, ear flick, head tilt, yawn, pant, sniff - in goal-space clips
   with the parts only a beast moves.
+- **Winged bodies** - epic #418, a third plan blending a bird, a fruit bat
+  and a sugar glider as the quadruped blends its three. Its first visible
+  phase (#420) builds it on the beast's graph with the fore limb a wing's
+  arm, in each family's proportions as research-10 gives them, standing as
+  its leading family does - a bird on its hind pair, a bat crawling on its
+  wrists, a glider on all four - with crosses between any two; the wings'
+  own parts, the heads and feet, the surfaces and the motion are its later
+  phases. docs/winged-anatomy.md has the targets and the departures.
 - **Creator UX** — seed-lock editor, share-code flow, staged preview, spanning
   both crates.
 

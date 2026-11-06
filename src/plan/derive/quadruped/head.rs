@@ -24,10 +24,10 @@ use crate::plan::{Nose, QuadrupedParams};
 
 /// One node of the head chain: where it sits, at rest in body space, and its
 /// radius.
-pub(super) type Ball = (Vec3, f32);
+pub(in crate::plan::derive) type Ball = (Vec3, f32);
 
 /// The head chain the parts are placed about.
-pub(super) struct Chain {
+pub(in crate::plan::derive) struct Chain {
     /// The nod that turns the head on its neck; the head's frame turns with
     /// it.
     pub nod: Quat,
@@ -89,7 +89,7 @@ const GAZE_TILT: f32 = 0.25;
 /// `appeal` arrives saturated as the rest of the derive reads it, and
 /// `fullness` is the girth's factor at the cheek: a fat animal's face is a
 /// round one.
-pub(super) fn head(
+pub(in crate::plan::derive) fn head(
     chain: &Chain,
     params: &QuadrupedParams,
     appeal: f32,

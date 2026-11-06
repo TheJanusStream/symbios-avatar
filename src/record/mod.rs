@@ -2098,6 +2098,50 @@ mod tests {
     }
 
     #[test]
+    fn a_winged_record_is_an_older_build_s_honest_stand_in() {
+        // #420: a build from before the winged plan reads its `$type` as one
+        // it does not know. Read here by a name this build does not know
+        // either - the arm 0.19.7 takes - it is the stand-in, it builds the
+        // person every unknown body builds, it survives the re-roll and the
+        // rewrite an older client puts it through, and written back under its
+        // own name it is the winged body it was. (The same was read with the
+        // published 0.19.7 itself: docs/winged-anatomy.md, "The wire".)
+        let params = crate::WingedParams {
+            family: crate::WingedFamily::Bat,
+            hybrid: Some(crate::WingedFamily::Glider),
+            blend: 0.4,
+            tail_length: -0.7,
+            ..Default::default()
+        };
+        let mut record = AvatarRecord::new("Fox", Archetype::Winged(params));
+        record.reroll(9);
+        let written = serde_json::to_value(&record).expect("writes");
+        assert_eq!(written["archetype"]["$type"], crate::plan::WINGED_TYPE);
+        let mut renamed = written.clone();
+        renamed["archetype"]["$type"] = "network.symbios.avatar.defs#older".into();
+        let mut older: AvatarRecord =
+            serde_json::from_value(renamed).expect("an older build reads it");
+        assert!(!older.archetype.is_understood());
+        assert_eq!(older.archetype.anatomy(), crate::Anatomy::HUMAN);
+        assert!(!older.skeleton().nodes.is_empty());
+        older.sanitize();
+        older.reroll(10);
+        let mut back = serde_json::to_value(&older).expect("rewrites");
+        assert_eq!(
+            back["archetype"].as_object().map(|o| o.len()),
+            written["archetype"].as_object().map(|o| o.len())
+        );
+        back["archetype"]["$type"] = crate::plan::WINGED_TYPE.into();
+        assert_eq!(back["archetype"], written["archetype"]);
+        let read: AvatarRecord = serde_json::from_value(back).expect("this build reads it back");
+        assert_eq!(read.archetype, record.archetype);
+        // And nothing on it is a float: atproto has none.
+        for (field, value) in written["archetype"].as_object().expect("an object") {
+            assert!(!value.is_f64(), "{field} was written as a float");
+        }
+    }
+
+    #[test]
     fn an_outfit_written_before_0_10_loads_with_its_colours_and_cuts() {
         // The record-level half of `dress::params`'s migration: a published
         // avatar in the old outfit shape loads, keeps its dyed colours, reads
