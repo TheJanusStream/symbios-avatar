@@ -418,6 +418,19 @@ pub struct Eyes {
     /// The record axes the pair was built from, kept so the iris can be
     /// painted from the same description that placed the globes.
     pub params: EyeParams,
+    /// How far these eyes turn from straight ahead before the head takes
+    /// over, in radians, where it is not [`OCULAR_LIMIT`] (#424): a bird's,
+    /// whose eyes barely move and whose head does the looking. Read through
+    /// [`Self::range`].
+    ///
+    /// **`None` on every person and beast**, and left off the wire there, so
+    /// their eyes are written as they were; a rig read from an older build
+    /// carries none and turns its eyes as every body did.
+    #[cfg_attr(
+        feature = "serde-avatar",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub range: Option<f32>,
 }
 
 /// The globe's radius on a body of reference stature, in metres.
@@ -572,6 +585,7 @@ impl Eyes {
             ),
             head: canon.head,
             params: *params,
+            range: None,
         }
     }
 
@@ -613,6 +627,7 @@ impl Eyes {
             right: place(sunk * mirror, gaze * mirror, -1.0),
             head,
             params: *params,
+            range: None,
         }
     }
 
@@ -753,7 +768,7 @@ impl Eyes {
     /// them, so a near target converges the pair and a far one leaves them
     /// parallel — vergence for free, out of the geometry, with nothing to tune.
     ///
-    /// Clamped to [`OCULAR_LIMIT`] as a cone about straight ahead. Returns how
+    /// Clamped to [`Self::range`] as a cone about straight ahead. Returns how
     /// far the further eye had to turn, in radians, and whether both reached
     /// the target within that limit — a caller aiming a head can use the second
     /// to decide whether to turn further.
@@ -768,6 +783,7 @@ impl Eyes {
         // rather than per eye: both globes hang off the same head and a second
         // forward pass would only cost the same answer again.
         let posed = pose.forward(rig);
+        let limit = self.range();
         let mut turned = 0.0f32;
         let mut reached = true;
         for eye in [&self.left, &self.right] {
@@ -798,14 +814,49 @@ impl Eyes {
             } else {
                 angle
             };
-            reached &= angle.abs() <= OCULAR_LIMIT;
-            turned = turned.max(angle.abs().min(OCULAR_LIMIT));
+            reached &= angle.abs() <= limit;
+            turned = turned.max(angle.abs().min(limit));
             if let Some(rotation) = pose.rotations.get_mut(joint) {
-                *rotation = Quat::from_axis_angle(axis, angle.clamp(-OCULAR_LIMIT, OCULAR_LIMIT));
+                *rotation = Quat::from_axis_angle(axis, angle.clamp(-limit, limit));
             }
         }
         (turned, reached)
     }
+
+    /// How far these eyes turn from straight ahead, in radians: their own
+    /// [`Self::range`] where they carry one, a bird's, and [`OCULAR_LIMIT`]
+    /// on every other body.
+    #[must_use]
+    pub fn range(&self) -> f32 {
+        self.range
+            .filter(|range| range.is_finite())
+            .map_or(OCULAR_LIMIT, |range| range.clamp(0.0, OCULAR_LIMIT))
+    }
+}
+
+/// How far a bird's eyes turn in their sockets (#424), in radians: an owl's
+/// with its full facial disc, and a bird's with none - a crow's or a
+/// songbird's.
+///
+/// **A bird looks with its head** (research-10 fact 5 and 6.1, S12): a barn
+/// owl's eyes move 1 to 4 degrees, so the owl's is 3; a starling's reach 32
+/// degrees at most and a peafowl's go 10 between saccades, and a pigeon's
+/// eyes give only 10 to 20 percent of its gaze changes, so the bird with no
+/// disc turns its eyes 10 degrees and leaves the rest to its head.
+/// Provenance: **the research's**, the owl's the middle of S12's range, the
+/// discless bird's the peafowl's habit rather than the starling's limit.
+pub const BIRD_EYE_RANGE: [f32; 2] = [0.052, 0.175];
+
+/// How far the eyes of a winged body turn (#424): a bird's own range by how
+/// full its disc is (`disc`, `0` none to `1` an owl's), toward a beast's
+/// [`OCULAR_LIMIT`] by how little of the body is bird (`bird`, `0..=1`) - a
+/// bat's and a glider's eyes are a beast's.
+#[must_use]
+pub fn winged_range(bird: f32, disc: f32) -> f32 {
+    let disc = disc.clamp(0.0, 1.0);
+    let bird = bird.clamp(0.0, 1.0);
+    let own = BIRD_EYE_RANGE[1] + (BIRD_EYE_RANGE[0] - BIRD_EYE_RANGE[1]) * disc;
+    OCULAR_LIMIT + (own - OCULAR_LIMIT) * bird
 }
 
 /// Furthest an eye turns from straight ahead before the head takes over, in

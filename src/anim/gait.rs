@@ -1978,7 +1978,9 @@ where
     // it does not change shape, so the whole of it goes up together, feet
     // included. Applied before the legs were solved this would instead be the
     // legs reaching back down for goals that had stayed on the floor.
-    steps.rise = flight_rise(rig, gait, stride, cycle);
+    // A bird's hop is thrown, not sprung (#424): see `winged::ground::hop_rise`.
+    steps.rise = super::winged::ground::hop_rise(rig, gait, stride, cycle)
+        .unwrap_or_else(|| flight_rise(rig, gait, stride, cycle));
     pose.translation.y += steps.rise;
 
     // Where each swing contact actually ended up, for [`Walk::settle`]'s
@@ -2171,6 +2173,10 @@ impl Walk {
             swing_arms(rig, pose, gait, stride, self.cycle);
             lean_with(rig, pose, gait, stride, self.head_level);
             super::quadruped::carry(rig, pose, gait, &mut steps, self.cycle, self.head_level);
+            // A bird's head holds and thrusts, or bobs with its hop (#424).
+            super::winged::ground::bob(rig, pose, gait, stride, self.cycle);
+            // And a bat's and a glider's bound leaves the ground (#424).
+            super::winged::ground::bound(rig, pose, gait, stride, self.cycle, &mut steps);
         }
         // After the lean, which the neck has just taken back off to hold the
         // head level — a gaze applied first would be levelled away, the same
@@ -2309,6 +2315,10 @@ impl Walk {
         };
         roll_feet(rig, pose, gait, stride, self.cycle, &ground, &footing);
         super::quadruped::articulate(rig, pose, gait, stride, self.cycle, &owned, &ground);
+        // And a winged foot's drawn toes on the ground, not through it (#424).
+        super::winged::ground::lay_toes(rig, pose, gait, self.cycle, &ground);
+        // And a bird's folded wings no lower than they stand (#424).
+        super::winged::ground::hold_wings(rig, pose, &ground);
         walked
     }
 }
@@ -3886,9 +3896,16 @@ fn striding(gait: &Gait, rig: &Rig) -> Foot {
 }
 
 /// [`striding`], of a body known to be under way.
+///
+/// **A pantograph's only on four legs**, as [`striding`] says: a bird stands
+/// on two toed feet, and its foot's peel, solved in the pantograph while the
+/// rest of its stride stood the foot, swung its knee 52 mm out of its own
+/// bend and back in one frame as each heel began to lift (#424).
 fn striding_of(rig: &Rig) -> Foot {
     if rig.anatomy.feet == FootKind::Human {
         Foot::Carried
+    } else if !rig.four_legged() {
+        Foot::Stood
     } else {
         Foot::Striding
     }
@@ -3903,12 +3920,15 @@ pub(crate) fn home_of(rig: &Rig, limb: Limb) -> Option<Vec3> {
 /// How far forward of where a contact rests its stride is centred: on four
 /// legs (#370, #378) the paw passes a little behind the leg's own pivot at
 /// midstance ([`super::quadruped::centred`]), and nowhere on two, or for a gait
-/// that never lifts a foot.
+/// that never lifts a foot - nor for a crawling bat (#424), whose wrists are
+/// planted well ahead of its shoulders and its feet out behind its hips:
+/// centred under its blades, its wrists were drawn back 23 cm and its elbows
+/// folded up over its spine within four frames of setting off.
 ///
 /// Every reader of a contact's arc - the step, the crouch, the foothold ledger
 /// - moves it by this, so none of them disagrees about where a foot is going.
 pub(crate) fn stride_lead(rig: &Rig, limb: Limb, gait: &Gait) -> Option<Vec3> {
-    if gait.limbs.len() != 4 || gait.duty >= 1.0 {
+    if gait.limbs.len() != 4 || gait.duty >= 1.0 || super::winged::crawls(rig) {
         return None;
     }
     super::quadruped::centred(rig, limb)

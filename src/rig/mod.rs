@@ -553,6 +553,24 @@ impl Rig {
             .collect()
     }
 
+    /// The body's own tail, root to tip: its tail zone's joints but the
+    /// wings' (#425).
+    ///
+    /// **Not the tail zone**, on a bird: its fan's two edge joints are zoned
+    /// as the tail they grow from and attached after the bony stub, so the
+    /// zone reads the stub's five joints and then two edges at the rump, and
+    /// its last joint is not the tip. Everything that drives or measures a
+    /// tail as a chain - its tip, a turn shared along it, each joint and the
+    /// next - reads this. On every other body it is the zone, joint for joint.
+    #[must_use]
+    pub fn tail(&self) -> Vec<usize> {
+        let mut joints = self.in_zone(Zone::Tail);
+        if let Some(wings) = &self.wings {
+            joints.retain(|&joint| !wings.owns(joint));
+        }
+        joints
+    }
+
     /// The joints that deform a limb's extremity, in hierarchy order.
     ///
     /// **Not the same as the extremity zone**, and the difference is the whole

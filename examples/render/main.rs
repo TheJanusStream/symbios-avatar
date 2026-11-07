@@ -101,6 +101,9 @@
 //! cargo run --release --example render -- --wings-crosses             # every cross, folded and spread
 //! cargo run --release --example render -- --winged --close foot --beak 1,-1,-1  # a crow's beak: its toes anisodactyl (#422)
 //! cargo run --release --example render -- --winged --beak 1,-1,-1 --plumage crow  # a crow's plumage (#423): or owl, parrot, songbird, beak (the head's nearest)
+//! cargo run --release --example render -- --winged --beak 1,-1,-1 --drive 0 --speed 0.6 --from 180 --strip 12  # a crow's walk (#424): its head holds and thrusts
+//! cargo run --release --example render -- --winged --size 0.4 --beak 0.2,-1.3,-1 --drive 0 --speed 0.4 --strip 8  # a small bird hops
+//! cargo run --release --example render -- --winged --kin bat --drive 0 --speed 1.0 --strip 8  # a bat's bound (0.25 its crawl); --kin glider too
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -555,6 +558,10 @@ fn run() {
         }
         if let Some(appeal) = value("--appeal").and_then(|v| v.parse::<f32>().ok()) {
             params.appeal = appeal;
+        }
+        // Its size (#424): `--size 0.4` a small bird, which hops at every pace.
+        if let Some(size) = value("--size").and_then(|v| v.parse::<f32>().ok()) {
+            params.size = size;
         }
         // A bird's head (#422): `--beak 1,-1,-1` is beakLength, beakHook and
         // facialDisc - a crow's.
@@ -1156,6 +1163,19 @@ fn run() {
         wing_crosses(value("--pass").cloned(), &out);
         return;
     }
+    // A winged body's flight (#424): `--flight` drives one body through a
+    // takeoff, flapping, a glide, a dive, a flare and a landing, a row of
+    // each from the side and from ahead.
+    if args.iter().any(|arg| arg == "--flight") {
+        let name = value("--kin").cloned().unwrap_or_else(|| "winged".into());
+        flight_strips(
+            &record,
+            value("--pass").cloned(),
+            &out,
+            &name.replace('+', "-"),
+        );
+        return;
+    }
     if args.iter().any(|arg| arg == "--wings") {
         let name = value("--kin").cloned().unwrap_or_else(|| "winged".into());
         wing_sheets(
@@ -1261,7 +1281,7 @@ fn run() {
             .find(|pattern| pattern.name().replace(' ', "-") == name.as_str())
             .unwrap_or_else(|| {
                 eprintln!(
-                    "--gait takes walk, trot, pace, canter, gallop or rotary-gallop, not `{name}`"
+                    "--gait takes walk, trot, pace, canter, gallop, rotary-gallop or bound, not `{name}`"
                 );
                 std::process::exit(2);
             })
@@ -1723,10 +1743,14 @@ fn run() {
             // `--underside`: the same moment from below, in front and from
             // the low three-quarters, where a leg's junction reads (#387).
             let underside = args.iter().any(|arg| arg == "--underside");
+            // `--overhead`: from above, where a winged body's curl reads (#424).
+            let overhead = args.iter().any(|arg| arg == "--overhead");
             let frames = if upper_legs {
                 subject.upper_leg_frames()
             } else if underside {
                 subject.underside_frames()
+            } else if overhead {
+                subject.overhead_frames()
             } else {
                 subject.sheet_frames()
             };
@@ -2271,6 +2295,27 @@ impl Subject {
         };
         // Front, side, back, three-quarter.
         [of(0.0), of(FRAC_PI_2), of(PI), of(FRAC_PI_4)]
+    }
+
+    /// The four views a winged body's rest is judged from (#424): straight
+    /// down from above, nose at the top of the frame, where a curl and a
+    /// wrapped tail read; and from above the three-quarters in front, beside
+    /// and behind - framed closer than a standing body, since a body at rest
+    /// spends less of its length upward.
+    fn overhead_frames(&self) -> [Frame; 4] {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        let of = |turn: f32, pitch: f32| Frame {
+            turn,
+            pitch,
+            centre: Vec3::new(self.middle.x, self.middle.y * 0.6, self.middle.z),
+            span: self.reach * MARGIN * 0.8,
+        };
+        [
+            of(PI, FRAC_PI_2 - 0.02),
+            of(FRAC_PI_4, 0.5),
+            of(FRAC_PI_2, 0.25),
+            of(PI - FRAC_PI_4, 0.5),
+        ]
     }
 
     /// The four views a leg's junction with the trunk is judged from (#387):
@@ -4414,6 +4459,143 @@ fn wing_sheets(record: &AvatarRecord, pass: Option<String>, out: &std::path::Pat
     }
     write(out, &format!("wing-close-{name}"), &sheet);
     println!("wrote wings-{name}.png and wing-close-{name}.png");
+}
+
+/// One winged body's flight (#424): driven through a takeoff from standing,
+/// a second's flapping, a glide, a dive, a glide again, a flare by time to
+/// contact and a landing, carrying itself so its takeoff rises and its
+/// landing comes down. `flight-NAME.png` is six rows - takeoff, flap,
+/// glide, dive, flare, land - of six frames each from the side, and
+/// `flight-ahead-NAME.png` the same from ahead and a little above; each
+/// row framed on everything it draws.
+fn flight_strips(record: &AvatarRecord, pass: Option<String>, out: &std::path::Path, name: &str) {
+    use symbios_avatar::anim::driver::{Carriage, Driver, DriverConfig, Inputs, level_ground};
+    use symbios_avatar::{Flight, FlightMode};
+    let Some(avatar) = Avatar::build(record) else {
+        eprintln!("this body does not build");
+        return;
+    };
+    let show = Show {
+        eyes: record.eyes,
+        pass,
+        ..Show::default()
+    };
+    let subject = Subject::new(avatar, show, None, Vec::new(), Vec::new());
+    let rig = &subject.avatar.rig;
+    let mut driver = Driver::new(
+        DriverConfig {
+            carriage: Carriage::Own,
+            ..DriverConfig::default()
+        },
+        7,
+    );
+    let delta = 1.0 / 120.0;
+    // Each segment: its mode, how long, and its speed through the air.
+    let segments: [(Option<FlightMode>, f32, f32); 9] = [
+        (None, 0.4, 0.0),
+        (Some(FlightMode::Takeoff), 0.6, 2.0),
+        (Some(FlightMode::Flap), 1.2, 4.0),
+        (Some(FlightMode::Glide), 0.8, 6.0),
+        (Some(FlightMode::Dive), 0.7, 10.0),
+        (Some(FlightMode::Glide), 0.5, 7.0),
+        (Some(FlightMode::Glide), 0.6, 4.0),
+        (Some(FlightMode::Land), 0.4, 0.0),
+        (None, 0.4, 0.0),
+    ];
+    let mut frames: Vec<(usize, f32, Pose, String)> = Vec::new();
+    let mut since = 0.0f32;
+    for (index, &(mode, seconds, speed)) in segments.iter().enumerate() {
+        let steps = (seconds / delta).round() as usize;
+        for step in 0..steps {
+            let t = step as f32 * delta;
+            // The second glide closes on a top: its last 0.6 s is a flare
+            // by time to contact.
+            let contact = (index == 6).then(|| (seconds - t).max(0.0) * 0.75);
+            let flight = mode.map(|mode| Flight {
+                contact,
+                ..Flight::new(mode)
+            });
+            let inputs = Inputs {
+                delta,
+                velocity: Vec3::Z * speed,
+                flight,
+                ..Inputs::default()
+            };
+            let Some(driven) = driver.drive(rig, &inputs, level_ground) else {
+                continue;
+            };
+            let word = driver
+                .flight(rig)
+                .map_or("ground".to_string(), |flown| format!("{:?}", flown.mode));
+            frames.push((index, since, driven.pose, word));
+            since += delta;
+        }
+    }
+    // The rows: which segment, and the stretch of it shown.
+    let pick = |segment: usize, from: f32, to: f32| -> Vec<Pose> {
+        let within: Vec<&(usize, f32, Pose, String)> =
+            frames.iter().filter(|frame| frame.0 == segment).collect();
+        let start = within.first().map_or(0.0, |frame| frame.1);
+        (0..6)
+            .filter_map(|column| {
+                let at = start + from + (to - from) * column as f32 / 5.0;
+                within
+                    .iter()
+                    .min_by(|a, b| (a.1 - at).abs().total_cmp(&(b.1 - at).abs()))
+                    .map(|frame| frame.2.clone())
+            })
+            .collect()
+    };
+    let beat = driver_rate(rig).map_or(0.3, |rate| 1.0 / rate);
+    let rows = [
+        pick(1, 0.0, 0.5),
+        pick(2, 0.6, 0.6 + beat * 5.0 / 6.0),
+        pick(3, 0.0, 0.7),
+        pick(4, 0.0, 0.6),
+        pick(6, 0.1, 0.59),
+        pick(7, 0.0, 0.38),
+    ];
+    for (file, turn, pitch) in [
+        (format!("flight-{name}"), std::f32::consts::FRAC_PI_2, 0.05),
+        (format!("flight-ahead-{name}"), 0.0, 0.25),
+    ] {
+        let mut sheet = Image::new(6 * VIEW, 6 * VIEW);
+        for (row, poses) in rows.iter().enumerate() {
+            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for pose in poses {
+                let (a, b) = posed_bounds(&subject, pose);
+                lo = lo.min(a);
+                hi = hi.max(b);
+            }
+            let frame = Frame {
+                turn,
+                pitch,
+                centre: (lo + hi) * 0.5,
+                span: (hi - lo).max_element().max(0.1) * 1.08,
+            };
+            for (column, pose) in poses.iter().enumerate() {
+                let view = subject.view(pose, 0.0, &frame);
+                sheet.blit(&view, column * VIEW, row * VIEW);
+            }
+        }
+        write(out, &file, &sheet);
+    }
+    println!("wrote flight-{name}.png and flight-ahead-{name}.png");
+}
+
+/// The cruise beat's rate a winged body flaps at, beats a second, read off a
+/// driver flapping it once.
+fn driver_rate(rig: &Rig) -> Option<f32> {
+    use symbios_avatar::anim::driver::{Driver, Inputs, level_ground};
+    use symbios_avatar::{Flight, FlightMode};
+    let mut driver = Driver::seeded(1);
+    let inputs = Inputs {
+        delta: 1.0 / 60.0,
+        flight: Some(Flight::new(FlightMode::Flap)),
+        ..Inputs::default()
+    };
+    driver.drive(rig, &inputs, level_ground)?;
+    driver.flight(rig).map(|flown| flown.rate)
 }
 
 /// What a winged body costs, draw by draw (#421).

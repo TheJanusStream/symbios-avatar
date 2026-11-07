@@ -461,14 +461,27 @@ fn luminance(colour: Vec3) -> f32 {
 }
 
 /// The body's own texels, where on it each is and its colour.
+///
+/// **Only those its charts cover**, not the gutters dilation grows round
+/// them (#424): baked without the parts the avatar baked beside it, the
+/// body's gutters grow over texels a part's region holds in the atlas - a
+/// bat's toes, packed beside its rump once its foot trails, read here as
+/// 150 pale texels on its back. A grown texel copies its neighbour's
+/// position, so a position held by more than one texel is a gutter's.
 fn body_texels(avatar: &Avatar) -> Vec<(texture::Texel, Vec3)> {
     let parts = &avatar.parts;
     let geometry = texture::bake(&parts.body, &parts.unwrap, &[], &[], ATLAS);
+    let key = |texel: &texture::Texel| texel.position.to_array().map(f32::to_bits);
+    let mut held = std::collections::HashMap::new();
+    for texel in geometry.texels.iter().flatten() {
+        *held.entry(key(texel)).or_insert(0usize) += 1;
+    }
     geometry
         .texels
         .iter()
         .enumerate()
         .filter_map(|(index, texel)| texel.map(|texel| (texel, colour(avatar, index))))
+        .filter(|(texel, _)| held[&key(texel)] == 1)
         .collect()
 }
 

@@ -123,7 +123,7 @@ impl Body {
             withers,
             hinds,
             fores,
-            tail: rig.in_zone(Zone::Tail),
+            tail: rig.tail(),
         })
     }
 }
@@ -212,7 +212,7 @@ impl HindLeg {
 /// The lowest skin a meshed joint's ring is expected to reach in `posed`: an
 /// ellipse its section's size across the bone that ends at it, turned with
 /// that bone. The root carries a cap behind it as far as its radius.
-fn ring_low(rig: &Rig, posed: &Posed, joint: usize) -> Option<f32> {
+pub(super) fn ring_low(rig: &Rig, posed: &Posed, joint: usize) -> Option<f32> {
     let it = &rig.joints[joint];
     if it.marker || it.role != Role::Deform {
         return None;
@@ -280,7 +280,7 @@ fn lowest_each<const N: usize>(
 
 /// The lowest skin held by joints in `zones` reaches in `posed`: see
 /// [`lowest_each`].
-fn lowest_in(rig: &Rig, posed: &Posed, zones: impl Fn(Zone) -> bool) -> f32 {
+pub(super) fn lowest_in(rig: &Rig, posed: &Posed, zones: impl Fn(Zone) -> bool) -> f32 {
     lowest_each::<1>(rig, posed, |joint| {
         zones(rig.joints[joint].zone).then_some(0)
     })[0]

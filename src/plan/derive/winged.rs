@@ -498,6 +498,10 @@ const CRAWL_BELLY: f32 = 0.10;
 const CRAWL_WRIST: Vec2 = Vec2::new(0.55, 0.70);
 /// See [`CRAWL_WRIST`].
 const CRAWL_FOOT: Vec2 = Vec2::new(0.40, -0.25);
+/// Which way a crawling bat's hind foot runs from its pad, `(out, up, ahead)`:
+/// out and back, its toes trailing (#424), as a bat's rotated hind limb sets
+/// it on the ground (S22, research-11 2.3).
+const CRAWL_TOES: Vec3 = Vec3::new(0.45, 0.0, -0.9);
 
 /// How far a standing glider's legs are bent: the hip's height as a share of
 /// the femur, tibia and metatarsus laid end to end; the humerus's slope down
@@ -720,7 +724,12 @@ pub(crate) fn derive(params: &WingedParams, composites: &Composites) -> Built {
                     (knee, hind_radius(1.2)),
                     (ankle, hind_radius(0.8)),
                     (foot, pad_r),
-                    (foot + Vec3::new(0.4, 0.0, 0.9).normalize() * toe, toe_r),
+                    // The foot trails out and back from its pad, its toes
+                    // behind it, with the leg it ends (S22's rotated limb):
+                    // the gait lays them on the ground through a stride
+                    // (#424; W1 and W3 pointed it forward and out, which
+                    // the toe-off rolled 49 to 58 mm into the ground).
+                    (foot + CRAWL_TOES.normalize() * toe, toe_r),
                 ],
                 1,
             )

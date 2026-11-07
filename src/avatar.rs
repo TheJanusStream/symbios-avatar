@@ -300,6 +300,19 @@ const CLEAR_FEATHERS: (f32, f32) = (0.03, 0.06);
 /// See [`CLEAR_FEATHERS`].
 const CLEAR_MEMBRANE: (f32, f32) = (0.04, 0.08);
 
+/// How a bird's flank is feathered under its folded wing (#424): the share
+/// of a card's weight it keeps there, and of its length - and out to
+/// `hair::fur::clear::SHORT_REACH` times as far, since a card rooted beside
+/// the fold reaches under it. Cleared (#423), a spread wing bared painted
+/// skin: 25 of the default bird's 575 trunk vertices had no card rooted within
+/// 0.06 of its back's height, and 77 of 876 on seed 113; kept whole and
+/// shortened to two fifths, 12 and 38. **The weight is kept whole** because a
+/// lighter one measured worse: the cards are scattered at random, so fewer
+/// leave more gaps (at 0.6, 15 and 89), and what cleared the flank was as
+/// much the long cards beside it left out for crossing the fold as the
+/// weight under it. Provenance: **chosen by measure and render**.
+const UNDER_WING: (f32, f32) = (1.0, 0.4);
+
 /// The spreads, besides the rest, at which no card of a bat's or a glider's
 /// fur may pass through its membrane (#423): a ruff on the fore limb rides
 /// the arm out through the propatagium as the wing opens, which the rest
@@ -567,6 +580,17 @@ impl Avatar {
                 .as_ref()
                 .map(|canon| Eyes::build(&rig, &body, canon, &record.eyes)),
         };
+        // A bird's eyes barely turn and its head does the looking (#424): an
+        // owl's least, by its disc, and a cross's by its bird share. A bat's
+        // and a glider's are a beast's, and carry none.
+        if let (Some(eyes), crate::plan::Archetype::Winged(params)) = (&mut eyes, &record.archetype)
+        {
+            let bird = crate::wing::Kinship::of(params).bird;
+            if bird > 0.0 {
+                let disc = (1.0 + params.facial_disc).clamp(0.0, 1.0);
+                eyes.range = Some(face::eye::winged_range(bird, disc));
+            }
+        }
         let mut beast =
             crown.map(|(head, joint)| face::beast::BeastFace::build(&rig, joint, head, &body));
 
@@ -1137,6 +1161,13 @@ impl Avatar {
             CLEAR_MEMBRANE
         };
         let clear = Clear::around(&wings, near * anatomy.height, far * anatomy.height);
+        // A bird's flank under its folded wing is feathered with short cards,
+        // not cleared (#424): spread, a wing bared painted skin under it.
+        let clear = if feathered {
+            clear.thinned_to(UNDER_WING.0, UNDER_WING.1)
+        } else {
+            clear
+        };
         let coat = params.coat();
         // What no card may pass through: the wing parts at rest - a bird's
         // folded feathers, whose vertices alone are sparse along a long
@@ -2846,6 +2877,80 @@ mod tests {
                 "frame {frame} posed a joint nowhere"
             );
         }
+
+        // **A winged body's motion facts cross too** (#424): its kinship, its
+        // gaits and how low its folded wing hangs, through msgpack as they
+        // were built, a key a newer build adds to them passed over; and a rig
+        // sent from before them, which has none, decodes with none, reads its
+        // family off its stance, and is still driven.
+        let mut params = crate::WingedParams::default();
+        (params.beak_length, params.beak_hook, params.facial_disc) = (1.0, -1.0, -1.0);
+        let crow = Avatar::build_with(
+            &AvatarRecord::new("Crow", Archetype::Winged(params)),
+            &config,
+        )
+        .expect("builds");
+        let wings = crow.rig.wings.as_ref().expect("wings");
+        let (kinship, gaits, low) = (wings.kinship, wings.gaits, wings.low);
+        assert_eq!(
+            kinship,
+            Some(crate::Kinship::pure(crate::WingedFamily::Bird))
+        );
+        assert!(gaits.bob > 0.0 && gaits.hops_from.is_some() && low.is_some());
+        let mut wire = serde_json::to_value(&crow).expect("serialises");
+        wire["rig"]["wings"]["gaits"]["flaps"] = serde_json::json!(2);
+        wire["rig"]["wings"]["kinship"]["perches"] = serde_json::json!(true);
+        let packed = rmp_serde::to_vec_named(&wire).expect("msgpack writes it");
+        let sent: Avatar = rmp_serde::from_slice(&packed).expect("msgpack reads it");
+        let wings = sent.rig.wings.as_ref().expect("wings");
+        assert_eq!(
+            (wings.kinship, wings.gaits, wings.low),
+            (kinship, gaits, low)
+        );
+        for key in ["kinship", "gaits", "low"] {
+            wire["rig"]["wings"]
+                .as_object_mut()
+                .expect("wings are a map")
+                .remove(key);
+        }
+        let packed = rmp_serde::to_vec_named(&wire).expect("msgpack writes it");
+        let older: Avatar = rmp_serde::from_slice(&packed).expect("msgpack reads it");
+        let rig = &older.rig;
+        let wings = rig.wings.as_ref().expect("wings");
+        assert_eq!(
+            (wings.kinship, wings.gaits, wings.low),
+            (None, crate::wing::Gaits::default(), None)
+        );
+        assert_eq!(
+            wings.kinship(rig),
+            crate::Kinship::pure(crate::WingedFamily::Bird)
+        );
+        let mut driver = Driver::seeded(7);
+        let mut moved = 0.0f32;
+        for frame in 0..180 {
+            let speed = if frame < 60 { 0.0 } else { 0.8 };
+            let driven = driver
+                .drive(
+                    rig,
+                    &Inputs {
+                        delta: step,
+                        velocity: glam::Vec3::Z * speed,
+                        at: glam::Vec3::Z * speed * step * frame as f32,
+                        ..Inputs::default()
+                    },
+                    level_ground,
+                )
+                .expect("an unheld body is posed every frame");
+            let posed = driven.pose.forward(rig);
+            assert!(
+                posed.positions.iter().all(|at| at.is_finite()),
+                "a crow from before W5, frame {frame}, posed a joint nowhere"
+            );
+            for (at, joint) in posed.positions.iter().zip(&rig.joints) {
+                moved = moved.max(at.distance(joint.position));
+            }
+        }
+        assert!(moved > 0.01, "a crow from before W5 never moved: {moved}");
     }
 
     /// A beast's whiskers and what it wears are drawn on the far side of a worker

@@ -724,12 +724,35 @@ pub fn by_name(name: &str) -> Option<Clip> {
 /// it sits, where its feet go - move a person as readily as a beast: asked of
 /// a person, a sit would fold their legs under them and lay their feet flat.
 /// So the roster is the body's to answer, not the clip's to refuse.
+///
+/// **A winged body is offered its own and nothing else** (#424): a bird's,
+/// a bat's or a glider's [`super::winged`] roster - never a person's wave laid
+/// over its folded wings, nor a beast's sit, which a bat's or a glider's four
+/// legs would otherwise have been asked.
 #[must_use]
 pub fn for_body(rig: &Rig, name: &str) -> Option<Clip> {
+    if rig.wings.is_some() {
+        return super::winged::rests::for_body(rig, name);
+    }
     rig.four_legged()
         .then(|| super::emote::by_name(name))
         .flatten()
         .or_else(|| by_name(name))
+}
+
+/// The names a host can offer `rig` (#424), each one [`for_body`] plays on
+/// it: a winged body's own family's roster ([`super::winged::rests::roster`]), a
+/// beast's on four legs ([`super::emote::ROSTER`]), and a person's
+/// ([`ROSTER`]) on any other body.
+#[must_use]
+pub fn roster(rig: &Rig) -> &'static [&'static str] {
+    if rig.wings.is_some() {
+        super::winged::rests::roster(rig)
+    } else if rig.four_legged() {
+        super::emote::ROSTER
+    } else {
+        ROSTER
+    }
 }
 
 /// The roster this module covers, in the baked set's own names.

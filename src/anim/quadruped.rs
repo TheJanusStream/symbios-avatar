@@ -897,6 +897,13 @@ pub(super) fn carry(
     let trunk = rig.joints[girdle].position - rig.joints[root].position;
     let pitch = (withers - pelvis).det_atan2(trunk.length().max(f32::EPSILON));
     let fold = harmonics(gait, cycle) * flight * kin.of_feet(FOLD_PAWS, FOLD_HOOVES);
+    // A bat's and a glider's bound folds and stretches its back the more
+    // (#424): see `winged::ground::BOUND_FLEX`.
+    let fold = if super::winged::bounds(rig) {
+        fold * super::winged::ground::BOUND_FLEX
+    } else {
+        fold
+    };
     let twice = ride.twice(cycle);
 
     // The trunk's first duty is to leave a foot on the ground where the step
@@ -1092,6 +1099,11 @@ pub(super) fn articulate<F>(
     let trotting = ((0.58 - gait.duty) / 0.15).clamp(0.0, 1.0);
     let at_speed = |(walk, faster): (f32, f32)| walk + (faster - walk) * trotting;
     let along = Heading::toward(stride.direction).along();
+    let fold = if super::winged::kinship(rig).is_some() {
+        super::winged::ground::fold_share(rig, gait, stride)
+    } else {
+        1.0
+    };
     for (index, &limb) in gait.limbs.iter().enumerate() {
         let Some(chain) = rig.limb_chain(limb) else {
             continue;
@@ -1104,6 +1116,12 @@ pub(super) fn articulate<F>(
         let swinging = match phase {
             Phase::Swing(t) => fold_along(t),
             Phase::Stance(_) => 0.0,
+        };
+        // A small winged body's fast stride folds its paws the less (#424).
+        let swinging = if super::winged::kinship(rig).is_some() {
+            swinging * fold
+        } else {
+            swinging
         };
         let (joint_fold, toe_fold) = if limb.is_fore() {
             (
@@ -1119,7 +1137,8 @@ pub(super) fn articulate<F>(
         } else {
             (-HOCK_FOLD, HIND_TOES_FOLD)
         };
-        if swinging > 0.0 && owned.contains(&limb) {
+        // A crawling bat's paw is its wrist, and is not folded (#424).
+        if swinging > 0.0 && owned.contains(&limb) && !super::winged::crawls(rig) {
             // The paw folds up and back about the wrist, the wrist staying near
             // where the leg was going: left low with its wrist thrown out ahead,
             // a folding fore straightened its elbow and flicked through it.
@@ -1161,6 +1180,14 @@ pub(super) fn articulate<F>(
         // way: a fold past the half turn from flat flipped the toes through 230
         // mm in a sample.
         let flexed = 2.0 * laid.x.det_atan2(laid.w);
+        // A crawling bat's foot trails its toes a sole's length behind the
+        // pad, and folded as a paw's toes are it flicked up through 55 mm a
+        // frame as it lifted (#424): it is carried flat.
+        let swinging = if super::winged::crawls(rig) {
+            0.0
+        } else {
+            swinging
+        };
         pose.rotations[pad] = laid * Rot::x(swinging * (toe_fold - wrapped(flexed)));
     }
 }
@@ -1736,7 +1763,7 @@ pub(super) fn paddle(rig: &Rig, pose: &mut Pose, cycle: f32, effort: f32) -> Swu
     }
 
     // The tail out behind, a little side to side with the stroke.
-    let tail = rig.in_zone(Zone::Tail);
+    let tail = rig.tail();
     if let (Some(&dock), Some(&tip)) = (tail.first(), tail.last()) {
         let run = rig.joints[tip].position - rig.joints[dock].position;
         let hangs = (-run.y).det_atan2(-run.z);
@@ -1808,7 +1835,7 @@ fn turned(moment: f32) -> Vec2 {
 /// back rises toward it - a tail already carried higher keeps its own - and
 /// waves with the fold, behind it.
 fn swish(rig: &Rig, pose: &mut Pose, gait: &Gait, cycle: f32, flight: f32) {
-    let tail = rig.in_zone(Zone::Tail);
+    let tail = rig.tail();
     let (Some(&dock), Some(&tip)) = (tail.first(), tail.last()) else {
         return;
     };

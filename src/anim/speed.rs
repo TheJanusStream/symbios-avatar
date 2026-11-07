@@ -40,6 +40,7 @@ use crate::det::DetMath;
 use glam::Vec3;
 
 use super::gait::{Gait, RUN_DUTY, Stride};
+use super::winged::{self, ground::BirdGait};
 use super::{Lead, Pattern};
 use crate::plan::FootKind;
 use crate::rig::Rig;
@@ -143,6 +144,9 @@ pub struct Speed {
     /// none for any other body - whose gait is its shape's, and whose
     /// arithmetic is a person's to the bit.
     pattern: Option<Pattern>,
+    /// How a bird goes at this speed (#424) - a walk that turns into a
+    /// grounded run, or a hop - or none for any other body.
+    bird: Option<BirdGait>,
 }
 
 impl Speed {
@@ -150,6 +154,7 @@ impl Speed {
     pub const STILL: Self = Self {
         froude: 0.0,
         pattern: None,
+        bird: None,
     };
 
     /// From a ground speed in metres per second, on this body.
@@ -169,7 +174,8 @@ impl Speed {
             froude,
             pattern: rig
                 .four_legged()
-                .then(|| Pattern::at(froude, rotary(rig), Lead::Right)),
+                .then(|| pattern_at(rig, froude, Lead::Right)),
+            bird: winged::ground::bird_gait(rig, froude, None),
         }
     }
 
@@ -183,6 +189,7 @@ impl Speed {
         Self {
             froude: froude.max(0.0),
             pattern: None,
+            bird: None,
         }
     }
 
@@ -197,11 +204,45 @@ impl Speed {
         };
         Self {
             pattern: Some(match before {
+                Some(before) if winged::bounds(rig) => {
+                    Pattern::held_bounding(self.froude, before, lead)
+                }
                 Some(before) => Pattern::held(self.froude, before, rotary(rig), lead),
                 None => now.on(lead),
             }),
             ..self
         }
+    }
+
+    /// This speed with the gait a bird going at `before` keeps at it (#424):
+    /// a hop taken up is kept until the speed falls below four fifths of
+    /// where it began. Any other body's speed is unchanged.
+    #[must_use]
+    pub(crate) fn hop_held(self, rig: &Rig, before: Option<Self>) -> Self {
+        if self.bird.is_none() {
+            return self;
+        }
+        Self {
+            bird: winged::ground::bird_gait(
+                rig,
+                self.froude,
+                before.and_then(|before| before.bird),
+            ),
+            ..self
+        }
+    }
+
+    /// Whether a bird hops at this speed (#424).
+    #[must_use]
+    pub(crate) fn hops(self) -> bool {
+        self.bird == Some(BirdGait::Hop)
+    }
+
+    /// Whether a bird hops at this speed on `rig`, once it has its gait - a
+    /// speed made without a body, a standstill turned for a pivot, has none.
+    #[must_use]
+    pub(crate) fn hops_on(self, rig: &Rig) -> bool {
+        self.resolved(rig).hops()
     }
 
     /// This speed in `pattern`, whatever the speed (#370): a gait asked for
@@ -228,11 +269,24 @@ impl Speed {
     fn resolved(self, rig: &Rig) -> Self {
         match self.pattern {
             None if rig.four_legged() => Self {
-                pattern: Some(Pattern::at(self.froude, rotary(rig), Lead::Right)),
+                pattern: Some(pattern_at(rig, self.froude, Lead::Right)),
+                ..self
+            },
+            None if self.bird.is_none() => Self {
+                bird: winged::ground::bird_gait(rig, self.froude, None),
                 ..self
             },
             _ => self,
         }
+    }
+
+    /// The share of its cycle a contact spends down at this speed on `rig`:
+    /// [`Self::duty`] once a body has its gait - a four-legged one its
+    /// pattern (#415), which a speed made without one, a standstill turned
+    /// for a pivot, lacks, and whose bare duty is then a person's. The duty
+    /// its gait steps at.
+    pub(crate) fn duty_on(self, rig: &Rig) -> f32 {
+        self.resolved(rig).duty()
     }
 
     /// This speed's pattern at another Froude number: a turn's working foot
@@ -269,6 +323,7 @@ impl Speed {
     pub fn is_running(self) -> bool {
         match self.pattern {
             Some(pattern) => pattern.flies() || self.duty() < 0.5,
+            None if self.hops() => true,
             None => self.froude > FROUDE_TRANSITION,
         }
     }
@@ -280,6 +335,11 @@ impl Speed {
     /// [`GRIEVE_BETA`] for the reading of the exponent and the check on it.
     #[must_use]
     pub fn step_length(self, rig: &Rig) -> f32 {
+        // A bird's from its stride, Alexander's (#424): see
+        // `winged::ground::BIRD_STRIDE`.
+        if let Some(bird) = self.resolved(rig).bird {
+            return winged::ground::bird_step(rig, self.froude, bird == BirdGait::Hop);
+        }
         let leg = leg_of(rig);
         if self.froude <= 0.0 || leg <= f32::EPSILON {
             return 0.0;
@@ -303,6 +363,13 @@ impl Speed {
         }
         if let Some(pattern) = self.pattern {
             return pattern.duty(self.froude);
+        }
+        // A bird's walk runs on without a step, and its hop is a run's
+        // (#424).
+        match self.bird {
+            Some(BirdGait::Walk) => return winged::ground::bird_duty(self.froude),
+            Some(BirdGait::Hop) => return winged::ground::hop_duty(self.froude),
+            None => {}
         }
         if !self.is_running() {
             let along = (self.froude / FROUDE_TRANSITION).clamp(0.0, 1.0);
@@ -329,8 +396,11 @@ impl Speed {
         if let Some(pattern) = this.pattern {
             return Gait::pattern(rig, pattern, this.duty());
         }
+        if this.hops() {
+            return winged::ground::hop_gait(rig, this.duty());
+        }
         Gait {
-            duty: self.duty(),
+            duty: this.duty(),
             ..Gait::natural(rig)
         }
     }
@@ -349,13 +419,18 @@ impl Speed {
     /// feet one at a time, and counting them would double its cycle.
     #[must_use]
     pub fn cycle_length(self, rig: &Rig) -> f32 {
-        if self.resolved(rig).pattern.is_some() {
+        if let Some(pattern) = self.resolved(rig).pattern {
             if self.froude <= 0.0 {
                 return 0.0;
             }
-            return measure_of(rig)
-                * QUADRUPED_STRIDE
-                * self.froude.det_powf(QUADRUPED_STRIDE_POWER);
+            let cycle =
+                measure_of(rig) * QUADRUPED_STRIDE * self.froude.det_powf(QUADRUPED_STRIDE_POWER);
+            // A bat's and a glider's bound is a longer leap (#424).
+            return if winged::bounds(rig) && matches!(pattern, Pattern::Bound(_)) {
+                cycle * winged::ground::BOUND_STRIDE
+            } else {
+                cycle
+            };
         }
         self.step_length(rig) * self.gait(rig).footfalls() as f32
     }
@@ -408,7 +483,7 @@ impl Speed {
             // heel kicks up toward the glutes; a beast's feet do not, and a
             // tucked swing lifted a trotting dog's hind paw to its belly
             // (#370).
-            tuck: if this.pattern.is_some() {
+            tuck: if this.pattern.is_some() || this.hops() {
                 0.0
             } else {
                 ((self.froude - FROUDE_TRANSITION) / (TUCK_FROUDE - FROUDE_TRANSITION))
@@ -449,6 +524,24 @@ impl Speed {
         if leg <= f32::EPSILON || duty <= f32::EPSILON {
             return Self::STILL;
         }
+        // A bird's, by its feet - together a hop, apart a walk - and its
+        // stride, Alexander's (#424).
+        if winged::bird(rig).is_some() && gait.duty < 1.0 {
+            let bird = if winged::ground::hops(gait) {
+                BirdGait::Hop
+            } else {
+                BirdGait::Walk
+            };
+            return Self {
+                froude: winged::ground::bird_froude(
+                    rig,
+                    stride.length / (duty * footfalls),
+                    bird == BirdGait::Hop,
+                ),
+                pattern: None,
+                bird: Some(bird),
+            };
+        }
         // A standing gait keeps every contact down for the whole cycle, so
         // there is no stance to divide by and no travel to recover — whatever
         // stride the caller is holding, a body that never lifts a foot is not
@@ -463,18 +556,27 @@ impl Speed {
             if relative <= f32::EPSILON {
                 return Self::STILL;
             }
+            let found = Pattern::ALL
+                .into_iter()
+                .flat_map(|pattern| [pattern, pattern.on(Lead::Left)])
+                .find(|&pattern| lands_as(&Gait::pattern(rig, pattern, duty), gait));
+            // A bat's and a glider's bound, its longer leap taken back off
+            // (#424).
+            let relative = match found {
+                Some(Pattern::Bound(_)) if winged::bounds(rig) => {
+                    relative / winged::ground::BOUND_STRIDE
+                }
+                _ => relative,
+            };
             let froude = relative.det_powf(1.0 / QUADRUPED_STRIDE_POWER);
             // The pattern whose footfalls these are, so a canter held below
             // its band or led on the left hands back what produced it; a gait
             // no pattern draws reads as the one its Froude number picks.
-            let pattern = Pattern::ALL
-                .into_iter()
-                .flat_map(|pattern| [pattern, pattern.on(Lead::Left)])
-                .find(|&pattern| lands_as(&Gait::pattern(rig, pattern, duty), gait))
-                .unwrap_or_else(|| Pattern::at(froude, rotary(rig), Lead::Right));
+            let pattern = found.unwrap_or_else(|| pattern_at(rig, froude, Lead::Right));
             return Self {
                 froude,
                 pattern: Some(pattern),
+                bird: None,
             };
         }
         let step = stride.length / (duty * footfalls);
@@ -485,7 +587,19 @@ impl Speed {
         Self {
             froude: relative.det_powf(2.0 / GRIEVE_BETA),
             pattern: None,
+            bird: None,
         }
+    }
+}
+
+/// The pattern a four-legged body moves in at `froude`, from a standstill: a
+/// beast's walk, trot, canter and gallop ([`Pattern::at`]), and a bat's and a
+/// glider's walk and bound (#424).
+fn pattern_at(rig: &Rig, froude: f32, lead: Lead) -> Pattern {
+    if winged::bounds(rig) {
+        Pattern::bounding_at(froude, lead)
+    } else {
+        Pattern::at(froude, rotary(rig), lead)
     }
 }
 
@@ -532,7 +646,9 @@ pub(crate) const BEAST_LIFT_OF_STRIDE: f32 = 0.11;
 /// standing under them: on a horse 0.73 of the height the relation means, which
 /// took 29% off its stride, and on a cat 0.95.
 pub(crate) fn measure_of(rig: &Rig) -> f32 {
-    if rig.four_legged() {
+    // A bird's too (#424): research-11 2.1 puts its stride and its Froude
+    // number on its hip's height, as research-08 does a beast's.
+    if rig.four_legged() || winged::bird(rig).is_some() {
         super::quadruped::hip_height(rig).unwrap_or_else(|| leg_of(rig))
     } else {
         leg_of(rig)

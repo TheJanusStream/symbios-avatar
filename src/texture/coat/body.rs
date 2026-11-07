@@ -74,16 +74,14 @@ impl CoatBody {
         let withers = girdle
             .or_else(|| first(Zone::Chest))
             .unwrap_or(hips + Vec3::Z);
-        let tail = rig.in_zone(Zone::Tail);
-        let tail = tail
+        // The tail's own joints, never a bird's fan edges (#425).
+        let chain = rig.tail();
+        let tail = chain
             .first()
-            .zip(tail.last())
+            .zip(chain.last())
             .map(|(&root, &tip)| (rig.joints[root].position, rig.joints[tip].position));
         // Along its first bone, or its whole run on a tail of one.
-        let dock = rig
-            .in_zone(Zone::Tail)
-            .get(1)
-            .map(|&joint| rig.joints[joint].position);
+        let dock = chain.get(1).map(|&joint| rig.joints[joint].position);
         let dock = tail.map(|(root, tip)| (dock.unwrap_or(tip) - root).normalize_or(Vec3::NEG_Z));
         Self {
             hips,

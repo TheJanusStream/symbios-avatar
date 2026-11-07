@@ -62,6 +62,10 @@ pub enum Family {
     Swim,
     /// A gesture — a wave, a bow — laid over whatever else is happening.
     Expressive,
+    /// A winged body held in the air by its host (#424): every mode of it is
+    /// one continuum, its values eased, so only leaving it or coming into it
+    /// is joined.
+    Flight,
 }
 
 impl Family {

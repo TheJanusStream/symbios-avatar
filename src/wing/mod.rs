@@ -58,7 +58,9 @@ pub(crate) use membrane::{Charted, charted};
 /// bat-led cross kept as little as 156 of the 1,332 fur triangles it asked
 /// for, and every winged body wears its cards whole under 27,158 (the
 /// dearest, seed 2, a bat-glider cross, over 181 bodies of every family,
-/// cross and appeal and 100 rolls).
+/// cross and appeal and 100 rolls). At W5 (#424) the contour cards under a
+/// folded wing are thinned rather than cleared, so a spread wing shows no
+/// bare skin, and the dearest is 27,164 (the same seed 2).
 pub const MAX_TRIANGLES: usize = 27_200;
 
 use glam::{Mat3, Quat, Vec3};
@@ -165,6 +167,219 @@ pub struct Wings {
     /// out. Read by [`Self::owns`].
     #[cfg_attr(feature = "serde-avatar", serde(default))]
     pub joints: Vec<usize>,
+    /// Which families the body is (#424): each one's share of its lineage
+    /// and the one that leads it, written once when the wings are grown -
+    /// what every winged motion reads ([`Self::kinship`]): the ground gaits
+    /// and the roster by the leading family, a flight's beat and a rest's
+    /// curl by the shares.
+    ///
+    /// **`None` on a rig from an older build**, read across a worker
+    /// boundary. [`Self::kinship`] then reads the family off the rig's stance,
+    /// for every reader alike: wholly a bird on two legs, wholly a bat on
+    /// four - a glider from before it was written goes as a bat, which no
+    /// rig's joints can tell it from.
+    #[cfg_attr(
+        feature = "serde-avatar",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub kinship: Option<Kinship>,
+    /// How a bird goes on the ground (#424): its head-bob and its hop, its
+    /// kind's and its size's ([`Gaits::of`]). Neither on a body a bird does
+    /// not lead; default on a rig from an older build, whose bird then walks
+    /// and runs without either.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub gaits: Gaits,
+    /// How high the lowest point of the drawn wing parts stands at the fold,
+    /// in body space, the ground at nought (#424): how far a perching body
+    /// can come down before its folded wing meets the ground. `None` on a rig
+    /// from an older build, which a rest then does not limit.
+    #[cfg_attr(
+        feature = "serde-avatar",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub low: Option<f32>,
+}
+
+/// Which families a winged body is (#424), and which leads it: each family's
+/// share of its lineage, summing to one - a family's own body all of one, a
+/// cross shared by its blend - and its leading family, as its posture and its
+/// surface are that family's ([`crate::plan::Lineage::leading`]).
+///
+/// **Every choice of one family is the leading one's, every blend the
+/// shares'**: the gait a body goes in, whether it beats its wings and how it
+/// takes off, which roster it is offered; a beat's rate and width, a rest's
+/// curl and its times. The shares cannot name a family at an even blend, so
+/// a cross at exactly 0.5 takes the leading family's answer to every one of
+/// those choices, the one its surface wears.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
+pub struct Kinship {
+    /// How far a bird, `0..=1`.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub bird: f32,
+    /// How far a bat.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub bat: f32,
+    /// How far a glider.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub glider: f32,
+    /// The family that leads it.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub leading: WingedFamily,
+}
+
+impl Kinship {
+    /// The kinship a body of `params` is drawn from.
+    #[must_use]
+    pub fn of(params: &WingedParams) -> Self {
+        let lineage = params.lineage();
+        let mut kinship = Self::pure(lineage.family);
+        if let Some(other) = lineage.crossed() {
+            let blend = lineage.blend.clamp(0.0, 1.0);
+            *kinship.share_mut(lineage.family) = 1.0 - blend;
+            *kinship.share_mut(other) += blend;
+        }
+        kinship.leading = lineage.leading();
+        kinship
+    }
+
+    /// A body wholly of `family`.
+    #[must_use]
+    pub fn pure(family: WingedFamily) -> Self {
+        let mut kinship = Self {
+            bird: 0.0,
+            bat: 0.0,
+            glider: 0.0,
+            leading: family,
+        };
+        *kinship.share_mut(family) = 1.0;
+        kinship
+    }
+
+    fn share_mut(&mut self, family: WingedFamily) -> &mut f32 {
+        match family {
+            WingedFamily::Bird => &mut self.bird,
+            WingedFamily::Bat => &mut self.bat,
+            WingedFamily::Glider => &mut self.glider,
+        }
+    }
+
+    /// A per-family number blended by these shares: `bird`, `bat` and
+    /// `glider` each family's own.
+    #[must_use]
+    pub fn mix(&self, bird: f32, bat: f32, glider: f32) -> f32 {
+        let total = (self.bird + self.bat + self.glider).max(f32::EPSILON);
+        (self.bird * bird + self.bat * bat + self.glider * glider) / total
+    }
+
+    /// Whether the body beats its wings at all: a glider glides (the
+    /// owner's decision, #418), and so does a cross a glider leads, as its
+    /// posture and its surface are a glider's - [`Self::leading`], so a cross
+    /// at an even blend beats exactly when it wears a beater's surface.
+    #[must_use]
+    pub fn flaps(&self) -> bool {
+        self.leading != WingedFamily::Glider
+    }
+}
+
+/// How a winged body goes on the ground (#424), read off its plan when its
+/// wings are grown: a bird's two habits, which are its kind's and its size's
+/// (research-11 2.1 and 2.2) - pigeons, fowl and corvids bob and raptors,
+/// owls and parrots do not; small birds hop, and a crow walks and hops.
+/// Which gaits a body goes by at all is its leading family's
+/// ([`Kinship::leading`], the owner's decision 5): a bird walks and runs on
+/// two legs, a bat crawls and bounds on its wrists and feet, a glider walks
+/// and bounds on all four.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde-avatar", derive(serde::Serialize, serde::Deserialize))]
+pub struct Gaits {
+    /// How far a bird's head holds and thrusts as it walks, `0` none to `1`
+    /// the whole of each step: none on a hooked beak - an owl's, a parrot's -
+    /// and all of it on a straight one, a crow's or a songbird's. Nought on a
+    /// bat and a glider.
+    #[cfg_attr(feature = "serde-avatar", serde(default))]
+    pub bob: f32,
+    /// The Froude number from which a bird hops rather than walks or runs:
+    /// nought on a small bird, which hops at every pace; a walk's end on a
+    /// straight-beaked one, which walks and then hops, as a crow does; `None`
+    /// on one that walks and runs, and on a bat and a glider.
+    #[cfg_attr(
+        feature = "serde-avatar",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub hops_from: Option<f32>,
+}
+
+/// A bird whose `size` is at most this hops at every pace, in metres of head
+/// and body: the bottom eighth of the plan's range, a songbird's end of it.
+/// Provenance: **chosen** (#424) on research-11 2.1, "small passerines
+/// usually hop": the dossier gives the habit, not a size.
+pub const HOP_SIZE: f32 = 0.45;
+
+/// The beak's hook from which a bird bobs none, and the one from which it
+/// bobs whole: the toes' cut (`WingedParams::toes`, -0.5) is where a hooked
+/// beak ends, and the crow's straight beak (-1) bobs all of it.
+const BOB_HOOK: (f32, f32) = (-0.5, -1.0);
+
+impl Gaits {
+    /// What a body built from `params`, of `kinship`, goes by: nothing of a
+    /// bird's unless a bird leads it.
+    #[must_use]
+    pub fn of(params: &WingedParams, kinship: &Kinship) -> Self {
+        if kinship.leading != WingedFamily::Bird {
+            return Self::default();
+        }
+        let straight =
+            ((BOB_HOOK.0 - params.beak_hook) / (BOB_HOOK.0 - BOB_HOOK.1)).clamp(0.0, 1.0);
+        let hops_from = if params.size <= HOP_SIZE {
+            Some(0.0)
+        } else if params.beak_hook <= BOB_HOOK.0 {
+            Some(crate::anim::speed::FROUDE_TRANSITION)
+        } else {
+            None
+        };
+        Self {
+            bob: straight * straight * (3.0 - 2.0 * straight),
+            hops_from,
+        }
+    }
+}
+
+/// One wing's pose beyond its extension (#424): how far it is spread, and
+/// how its stroke carries it, all in the trunk's own frame so a body's rest
+/// pitch is no part of it.
+///
+/// **The stroke turns the wing about its own roots**: the arm about its
+/// shoulder and a bat's digits and a bird's feathers with it, wholly; a
+/// membrane's spars about their roots on the flank, each by its place
+/// between the hip (none of the stroke) and the shoulder (all of it), so the
+/// sheet between the arm and the leg turns by a share of the whole; the hind
+/// leg a membrane reaches not at all. `reach` swings every drive alike, the
+/// legs included: all four limbs forward into a flare.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Stroke {
+    /// `0` folded, as the body rests, to `1` spread: [`Wings::pose`]'s.
+    pub extension: f32,
+    /// How far the wing is raised about the trunk's long axis, in radians,
+    /// up positive: the beat's up and down, and a glide's dihedral.
+    pub elevation: f32,
+    /// How far it is swept forward about the trunk's up, in radians, back
+    /// negative: the beat's fore and aft.
+    pub sweep: f32,
+    /// How far every limb a wing drives swings forward about the trunk's up,
+    /// in radians, back negative.
+    pub reach: f32,
+}
+
+impl Stroke {
+    /// A wing at `extension` with no stroke: [`Wings::pose`]'s.
+    #[must_use]
+    pub fn at(extension: f32) -> Self {
+        Self {
+            extension,
+            ..Self::default()
+        }
+    }
 }
 
 impl Wings {
@@ -192,9 +407,129 @@ impl Wings {
         }
     }
 
+    /// Writes the wing that is `limb` into `pose` at `extension`, as
+    /// [`Self::pose`] writes both, and leaves the other alone (#424): a
+    /// stretch lays out one wing at a time.
+    pub fn pose_side(&self, pose: &mut Pose, limb: Limb, extension: f32) {
+        for side in self.sides.iter().filter(|side| side.limb == limb) {
+            write(&side.drives, pose, extension);
+        }
+    }
+
     /// Writes the tail fan into `pose`, `0` closed to `1` fanned.
     pub fn fan_tail(&self, pose: &mut Pose, spread: f32) {
         write(&self.tail, pose, spread);
+    }
+
+    /// Which families the body is (#424): what [`Self::kinship`] holds, and on
+    /// a rig that holds none, from an older build, the family its stance
+    /// belongs to - wholly a bird on two legs, wholly a bat on four.
+    #[must_use]
+    pub fn kinship(&self, rig: &Rig) -> Kinship {
+        self.kinship.unwrap_or_else(|| {
+            Kinship::pure(if rig.four_legged() {
+                WingedFamily::Bat
+            } else {
+                WingedFamily::Bird
+            })
+        })
+    }
+
+    /// Writes each wing at its [`Stroke`] (#424): [`Self::pose`] at its
+    /// extension, then turned by its stroke about each part's own roots. A
+    /// stroke of nothing is [`Self::pose`] to the bit.
+    pub fn stroke(&self, rig: &Rig, pose: &mut Pose, left: Stroke, right: Stroke) {
+        let Some(trunk) = Trunk::of(rig) else {
+            self.pose(pose, left.extension, right.extension);
+            return;
+        };
+        let pelvis = rig
+            .in_zone(Zone::Pelvis)
+            .first()
+            .map_or(Vec3::ZERO, |&joint| rig.joints[joint].position);
+        for side in &self.sides {
+            let (stroke, sign) = if side.limb.is_left() {
+                (left, 1.0)
+            } else {
+                (right, -1.0)
+            };
+            if stroke.elevation == 0.0 && stroke.sweep == 0.0 && stroke.reach == 0.0 {
+                write(&side.drives, pose, stroke.extension);
+                continue;
+            }
+            let reach = Rot::axis_angle(trunk.up, -sign * stroke.reach);
+            let turned = |share: f32| {
+                reach
+                    * Rot::axis_angle(trunk.up, -sign * stroke.sweep * share)
+                    * Rot::axis_angle(trunk.along, sign * stroke.elevation * share)
+            };
+            let extension = stroke.extension.clamp(0.0, 1.0);
+            let mut done: Vec<(usize, Quat)> = Vec::with_capacity(side.drives.len());
+            for drive in &side.drives {
+                let share = self.stroke_share(rig, drive.joint, pelvis, &trunk);
+                let world = (turned(share) * drive.at(extension)).normalize();
+                let anchor = drive
+                    .anchor
+                    .and_then(|anchor| done.iter().find(|(joint, _)| *joint == anchor))
+                    .map_or(Quat::IDENTITY, |&(_, world)| world);
+                done.push((drive.joint, world));
+                if let Some(rotation) = pose.rotations.get_mut(drive.joint) {
+                    *rotation = (anchor.inverse() * world).normalize();
+                }
+            }
+        }
+    }
+
+    /// How much of a wing's stroke `joint` takes: all of it on the arm and
+    /// whatever grows from it, none on a hind leg, and on a spar rooted on
+    /// the flank its root's place from the hip to the shoulder.
+    fn stroke_share(&self, rig: &Rig, joint: usize, pelvis: Vec3, trunk: &Trunk) -> f32 {
+        let mut at = joint;
+        let mut root = joint;
+        while self.owns(at) {
+            root = at;
+            match rig.joints[at].parent {
+                Some(parent) => at = parent,
+                None => break,
+            }
+        }
+        match rig.joints[at].zone {
+            Zone::UpperLimb(limb) | Zone::LowerLimb(limb) | Zone::Extremity(limb) => {
+                if limb.is_fore() { 1.0 } else { 0.0 }
+            }
+            _ => ((rig.joints[root].position - pelvis).dot(trunk.along)
+                / trunk.length.max(f32::EPSILON))
+            .clamp(0.0, 1.0),
+        }
+    }
+
+    /// Writes the tail fan at `spread` and turns it (#424): `yaw` radians
+    /// toward the body's left about the trunk's up - a rudder - and `pitch`
+    /// radians down, a tail depressed into a flare.
+    pub fn steer_tail(&self, rig: &Rig, pose: &mut Pose, spread: f32, yaw: f32, pitch: f32) {
+        let Some(trunk) = Trunk::of(rig) else {
+            write(&self.tail, pose, spread);
+            return;
+        };
+        if yaw == 0.0 && pitch == 0.0 {
+            write(&self.tail, pose, spread);
+            return;
+        }
+        let turn = Rot::axis_angle(trunk.up, yaw)
+            * Rot::axis_angle(trunk.along.cross(trunk.up).normalize_or(Vec3::NEG_X), pitch);
+        let spread = spread.clamp(0.0, 1.0);
+        let mut done: Vec<(usize, Quat)> = Vec::with_capacity(self.tail.len());
+        for drive in &self.tail {
+            let world = (turn * drive.at(spread)).normalize();
+            let anchor = drive
+                .anchor
+                .and_then(|anchor| done.iter().find(|(joint, _)| *joint == anchor))
+                .map_or(Quat::IDENTITY, |&(_, world)| world);
+            done.push((drive.joint, world));
+            if let Some(rotation) = pose.rotations.get_mut(drive.joint) {
+                *rotation = (anchor.inverse() * world).normalize();
+            }
+        }
     }
 
     /// Whether the wings added `joint` to the rig ([`Self::joints`]).
@@ -237,6 +572,22 @@ impl Rig {
     pub fn spread_tail(&self, pose: &mut Pose, spread: f32) {
         if let Some(wings) = &self.wings {
             wings.fan_tail(pose, spread);
+        }
+    }
+
+    /// Poses this body's wings at a [`Stroke`] each (#424): see
+    /// [`Wings::stroke`]. A body with no wings is left as it was.
+    pub fn stroke_wings(&self, pose: &mut Pose, left: Stroke, right: Stroke) {
+        if let Some(wings) = &self.wings {
+            wings.stroke(self, pose, left, right);
+        }
+    }
+
+    /// Fans this body's tail and turns it (#424): see [`Wings::steer_tail`].
+    /// A body with no fan is left as it was.
+    pub fn steer_tail(&self, pose: &mut Pose, spread: f32, yaw: f32, pitch: f32) {
+        if let Some(wings) = &self.wings {
+            wings.steer_tail(self, pose, spread, yaw, pitch);
         }
     }
 }
@@ -341,6 +692,14 @@ pub(crate) fn grow(
         rig.wings = Some(book.resolve(rig));
     }
 
+    // Which families the body is and how it goes on the ground (#424), which
+    // nothing below rewrites: every winged motion reads them.
+    if let Some(wings) = &mut rig.wings {
+        let kinship = Kinship::of(params);
+        wings.gaits = Gaits::of(params, &kinship);
+        wings.kinship = Some(kinship);
+    }
+
     // The surfaces, now every drive is known: a membrane is laid out with the
     // whole body spread. Then the extension is held short of tearing any
     // blend a drawn vertex makes, and the surfaces laid out again if it was.
@@ -376,8 +735,23 @@ pub(crate) fn grow(
             .chain(&parts.membrane.skin)
             .chain(&parts.feathers.skin),
     );
-    if fit(rig, &blends) {
-        return Some(surfaces(rig));
+    let parts = if fit(rig, &blends) {
+        surfaces(rig)
+    } else {
+        parts
+    };
+    // How far the folded wing stands off the ground, for a rest (#424).
+    let low = parts
+        .membrane
+        .positions
+        .iter()
+        .chain(&parts.feathers.positions)
+        .map(|at| at.y)
+        .fold(f32::MAX, f32::min);
+    if let Some(wings) = &mut rig.wings
+        && low < f32::MAX
+    {
+        wings.low = Some(low);
     }
     Some(parts)
 }
@@ -888,11 +1262,44 @@ impl Hold {
 /// next, held as the crate holds a bone (by its proximal joint) and shared
 /// with the bone either side across each joint, so a chain bends rather
 /// than hinging its surface.
-pub(crate) fn on_chain(rig: &Rig, joints: &[usize], bone: usize, t: f32) -> (Vec3, Hold) {
+///
+/// **Across a joint a helper splits** (`helpers`, #424: a bat's knuckles),
+/// the surface is shared with the helper instead of the bone beyond: wholly
+/// the helper's at the joint, the bone's own by the bone's middle. The
+/// helper turns halfway between the two bones, so no vertex blends two
+/// turns more than half a knuckle's fold apart, and a hand folded flat
+/// skins without flipping.
+pub(crate) fn on_chain(
+    rig: &Rig,
+    joints: &[usize],
+    bone: usize,
+    t: f32,
+    helpers: &[Helper],
+) -> (Vec3, Hold) {
     let a = Arm::at(rig, joints[bone]);
     let b = Arm::at(rig, joints[bone + 1]);
     let at = a + (b - a) * t;
     let driver = joints[bone];
+    let helper = |from: usize, to: usize| {
+        helpers
+            .iter()
+            .find(|helper| helper.from == from && helper.to == to)
+            .map(|helper| helper.joint)
+    };
+    if t < 0.5
+        && bone > 0
+        && let Some(joint) = helper(joints[bone - 1], driver)
+    {
+        let share = (1.0 - 2.0 * t) * (1.0 - 2.0 * t);
+        return (at, Hold(vec![(joint, share), (driver, 1.0 - share)]));
+    }
+    if t > 0.5
+        && bone + 2 < joints.len()
+        && let Some(joint) = helper(driver, joints[bone + 1])
+    {
+        let share = (2.0 * t - 1.0) * (2.0 * t - 1.0);
+        return (at, Hold(vec![(driver, 1.0 - share), (joint, share)]));
+    }
     let hold = if t < 0.5 && bone > 0 {
         let share = 0.5 * (1.0 - 2.0 * t) * (1.0 - 2.0 * t);
         Hold(vec![(joints[bone - 1], share), (driver, 1.0 - share)])
@@ -910,15 +1317,37 @@ pub(crate) fn on_chain(rig: &Rig, joints: &[usize], bone: usize, t: f32) -> (Vec
 /// chains of as many bones, sampled alike, meet bone to bone, and a strip
 /// between two digits never blends one's phalanx with the other's
 /// metacarpal, whose turns can lie more than a half turn apart.
-pub(crate) fn along_bones(rig: &Rig, joints: &[usize], count: usize) -> Vec<(Vec3, Hold)> {
+pub(crate) fn along_bones(
+    rig: &Rig,
+    joints: &[usize],
+    count: usize,
+    helpers: &[Helper],
+) -> Vec<(Vec3, Hold)> {
     let bones = joints.len() - 1;
     (0..count)
         .map(|index| {
             let at = bones as f32 * index as f32 / (count - 1).max(1) as f32;
             let bone = (at.floor() as usize).min(bones - 1);
-            on_chain(rig, joints, bone, (at - bone as f32).clamp(0.0, 1.0))
+            on_chain(
+                rig,
+                joints,
+                bone,
+                (at - bone as f32).clamp(0.0, 1.0),
+                helpers,
+            )
         })
         .collect()
+}
+
+/// A joint splitting the turn across another (#424): `joint` rests where
+/// `to` does, hangs from `from`, and turns halfway between the two, so a
+/// surface shared across the joint blends no two turns more than half the
+/// joint's fold apart ([`on_chain`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Helper {
+    pub from: usize,
+    pub to: usize,
+    pub joint: usize,
 }
 
 /// `count` points along a chain of joints, evenly by length, root to tip.
@@ -937,7 +1366,7 @@ pub(crate) fn along_chain(rig: &Rig, joints: &[usize], count: usize) -> Vec<(Vec
                 bone += 1;
             }
             let t = (left / lengths[bone].max(f32::EPSILON)).clamp(0.0, 1.0);
-            on_chain(rig, joints, bone, t)
+            on_chain(rig, joints, bone, t, &[])
         })
         .collect()
 }

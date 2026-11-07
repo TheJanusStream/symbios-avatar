@@ -9,7 +9,9 @@
 //! on a body without the part, and [`Target::Cant`], which any head can make.
 //!
 //! **A person is never offered one.** [`super::gesture::for_body`] answers
-//! these names only on four legs, and the [`super::Driver`] asks it, because
+//! these names only on four legs - and not on a winged body's, a bat's or a
+//! glider's, which has its own roster ([`super::winged`], #424) - and the
+//! [`super::Driver`] asks it, because
 //! the parts of an emote any body has - where it looks, how low it sits,
 //! where its feet go - move a person as readily as a beast: a sit asked of a
 //! person folded their legs under them and laid their feet flat.
@@ -202,8 +204,13 @@ pub fn lie_down() -> Clip {
 /// forelegs out first and then rises as from a sit; a horse puts its
 /// forelegs out ahead of its chest one and then the other, passes through
 /// its dog-sit and heaves up.
+///
+/// **On a winged body, its own rests** (#424): [`super::winged::rests::getting_up`].
 #[must_use]
 pub fn getting_up(rig: &Rig, name: &str) -> Option<(Clip, f32)> {
+    if rig.wings.is_some() {
+        return super::winged::rests::getting_up(rig, name);
+    }
     let target = match name {
         "Sit" => Target::Sit,
         "Lie Down" => Target::Lie,
@@ -222,8 +229,13 @@ pub fn getting_up(rig: &Rig, name: &str) -> Option<(Clip, f32)> {
 /// `None` for one that takes whatever its caller gives a gesture, a name
 /// the roster does not have, or a body that does not stand on four legs
 /// (#377).
+///
+/// **On a winged body, its own rests** (#424): [`super::winged::rests::seconds`].
 #[must_use]
 pub fn seconds(rig: &Rig, name: &str) -> Option<f32> {
+    if rig.wings.is_some() {
+        return super::winged::rests::seconds(rig, name);
+    }
     Some(timing(rig, name)?.0)
 }
 

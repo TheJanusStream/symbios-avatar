@@ -681,6 +681,13 @@ fn solve_leg(
     let Some(&contact) = rig.in_zone(Zone::Extremity(limb)).first() else {
         return false;
     };
+    // A crawling bat's splayed leg is stood and swung about its own bend,
+    // never a beast's stride (#424): see `winged::crawls`.
+    let foot = if foot == Foot::Striding && super::winged::crawls(rig) {
+        Foot::Stood
+    } else {
+        foot
+    };
 
     // **A limb nothing has posed, asked for exactly where it already is, is
     // left alone** (#262). Solving is not free: `two_bone` reaches the goal and

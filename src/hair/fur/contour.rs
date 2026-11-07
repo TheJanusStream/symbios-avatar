@@ -169,7 +169,11 @@ pub(crate) fn grow(
         let along = (way - out * way.dot(out)).normalize_or(out.any_orthonormal_vector());
         let across = out.cross(along).normalize_or(Vec3::X);
         let jitter = stream.random_range(0.85..1.15);
+        // Shorter under a folded wing (#424), as far as the flank there is
+        // thinned, so a card lies under the fold rather than through it.
+        let under = bed.clear.map_or(1.0, |clear| clear.length(root.at));
         let length = LENGTH
+            * under
             * height
             * (1.0 - HEAD_SMALLER * on_head)
             * (1.0 - LEG_SMALLER * on_leg)

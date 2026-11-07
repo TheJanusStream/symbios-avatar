@@ -36,7 +36,8 @@
 use glam::{Quat, Vec2, Vec3};
 
 use super::{
-    Arm, Book, Hold, Kind, Plane, Spread, Trunk, along_bones, along_chain, frame, swing, turn,
+    Arm, Book, Helper, Hold, Kind, Plane, Spread, Trunk, along_bones, along_chain, frame, swing,
+    turn,
 };
 use crate::det;
 use crate::mesh::{PolyMesh, VertexSkin};
@@ -110,7 +111,20 @@ const DIGITS: [Digit; 4] = [
 /// apart partway through the extension, and dual-quaternion skinning made
 /// the membrane between them jump: this is the flattest fold measured to
 /// stay continuous.
-const ZIGZAG: ([f32; 2], [f32; 2]) = ([2.6, -2.5], [0.05, 0.08]);
+///
+/// **Flatter since the knuckles split their turns** (#424): a helper joint
+/// at each digit's root, knuckle and middle joint turns halfway between the
+/// bones either side ([`Helper`]), and the skin across the joint is shared
+/// with it rather than with the bone beyond, so no vertex blends two turns
+/// more than half the fold apart. The first phalanx now lies back at 152
+/// degrees and the second at 169. Measured spread, on the bat, its crosses,
+/// its longest and shortest wings and every bat-led roll of forty, the hand
+/// opens to its own curve (12 degrees at the most) for a first fold to 155
+/// degrees; at 158 a few of them have `super::fit` trim digits IV and V half
+/// shut (150 degrees), their first phalanges' turns, each near a half turn,
+/// parting on opposite arcs. Without the helpers it trims them at this fold
+/// (26 to 28 degrees open).
+const ZIGZAG: ([f32; 2], [f32; 2]) = ([2.65, -2.95], [0.05, 0.08]);
 
 /// How far the cape a bat's plagiopatagium makes at rest - from its raised
 /// arm down to its leg - is drawn in toward the flank under it, as a share
@@ -246,6 +260,8 @@ pub(crate) struct Wing {
     hind: Option<[usize; 3]>,
     /// The membrane's own spars, flank to trailing edge, root first.
     spars: Vec<Vec<usize>>,
+    /// The joints splitting a bat's knuckles' turns (#424).
+    helpers: Vec<Helper>,
     /// The forearm's length, which the spars are sized by.
     forearm: f32,
     /// The trunk's length, which the shell's thickness is.
@@ -357,6 +373,7 @@ pub(crate) fn bat(rig: &mut Rig, book: &mut Book, trunk: &Trunk, arm: &Arm) -> W
     };
     let zone = Zone::Extremity(arm.limb);
     let mut digits = Vec::with_capacity(DIGITS.len());
+    let mut helpers = Vec::with_capacity(3 * DIGITS.len());
     for digit in &DIGITS {
         let lengths = digit.bones.map(|share| share * forearm);
         // Back along the forearm: `folded` is measured from the forearm's own
@@ -384,6 +401,20 @@ pub(crate) fn bat(rig: &mut Rig, book: &mut Book, trunk: &Trunk, arm: &Arm) -> W
         {
             let world = turn(frame(rest, normal), frame(plane.dir(theta), plane.dorsal));
             book.turn(joint, world, DIGIT_SCHEDULE, Some(arm.limb));
+        }
+        // **A helper at each joint of the hand** (#424), turning halfway
+        // between the bones either side, which the skin across the joint is
+        // shared with: folded flat, a knuckle's two bones turn nearly a half
+        // turn apart spread, and blended directly they flipped.
+        for (from, to, at) in [
+            (arm.wrist, root, root_at),
+            (root, knuckle, knuckle_at),
+            (knuckle, middle, middle_at),
+        ] {
+            let half = det::slerp(book.world_of(rig, from), book.world_of(rig, to), 0.5);
+            let joint = Book::attach(rig, from, at, zone);
+            book.turn(joint, half, DIGIT_SCHEDULE, Some(arm.limb));
+            helpers.push(Helper { from, to, joint });
         }
         digits.push([root, knuckle, middle, tip]);
     }
@@ -415,6 +446,7 @@ pub(crate) fn bat(rig: &mut Rig, book: &mut Book, trunk: &Trunk, arm: &Arm) -> W
         thumb: Some([root, knuckle, tip]),
         hind,
         spars: Vec::new(),
+        helpers,
         forearm,
         trunk: trunk.length,
         normal,
@@ -440,6 +472,7 @@ pub(crate) fn glider(rig: &mut Rig, book: &mut Book, trunk: &Trunk, arm: &Arm) -
         thumb: None,
         hind,
         spars: Vec::new(),
+        helpers: Vec::new(),
         forearm,
         trunk: trunk.length,
         normal,
@@ -679,7 +712,7 @@ impl Wing {
         };
         // A chain of joints as an edge, bone by bone; the leg by its length,
         // as a bat's spars blend it.
-        let chain = |joints: &[usize]| -> Edge { along_bones(rig, joints, SAMPLES) };
+        let chain = |joints: &[usize]| -> Edge { along_bones(rig, joints, SAMPLES, &self.helpers) };
         let leg_edge = match self.kind {
             Kind::Bat => along_chain(rig, &[hip, knee, ankle], SAMPLES),
             _ => chain(&[hip, knee, ankle]),
@@ -783,7 +816,13 @@ impl Wing {
             .map(|chain| (chain.to_vec(), DIGIT_RADIUS))
             .chain(self.thumb.map(|chain| (chain.to_vec(), THUMB_RADIUS)));
         for (chain, radius) in tubes {
-            let mut tube = tube(rig, &chain, radius * self.forearm, self.normal);
+            let mut tube = tube(
+                rig,
+                &chain,
+                radius * self.forearm,
+                self.normal,
+                &self.helpers,
+            );
             tube.uvs = tube.uvs.iter().map(|uv| *uv * DIGIT_CHART).collect();
             tube.set_normals(tube.vertex_normals());
             // A digit roots at the wrist and runs out to the membrane's edge.
@@ -1043,7 +1082,7 @@ fn sheet(
 /// at its root and half that at its tip, capped at both ends: a digit's bone
 /// under its skin. Each ring at a joint is shared between the bones either
 /// side; each mid-bone ring is its bone's alone.
-fn tube(rig: &Rig, chain: &[usize], radius: f32, reference: Vec3) -> PolyMesh {
+fn tube(rig: &Rig, chain: &[usize], radius: f32, reference: Vec3, helpers: &[Helper]) -> PolyMesh {
     let points: Vec<Vec3> = chain.iter().map(|&joint| Arm::at(rig, joint)).collect();
     let bones = points.len() - 1;
     // Stations: each joint and each bone's middle, with the hold at each.
@@ -1057,10 +1096,13 @@ fn tube(rig: &Rig, chain: &[usize], radius: f32, reference: Vec3) -> PolyMesh {
     for bone in 0..bones {
         let (a, b) = (points[bone], points[bone + 1]);
         let along = (b - a).normalize_or(Vec3::Z);
-        let joint_hold = if bone == 0 {
-            Hold::one(chain[0])
-        } else {
-            Hold(vec![(chain[bone - 1], 0.5), (chain[bone], 0.5)])
+        let helper = helpers
+            .iter()
+            .find(|helper| bone > 0 && helper.from == chain[bone - 1] && helper.to == chain[bone]);
+        let joint_hold = match helper {
+            _ if bone == 0 => Hold::one(chain[0]),
+            Some(helper) => Hold::one(helper.joint),
+            None => Hold(vec![(chain[bone - 1], 0.5), (chain[bone], 0.5)]),
         };
         let incoming = if bone == 0 {
             along

@@ -963,7 +963,13 @@ impl Idle {
         // rather than the body shrugging one-sided, and solved against their own
         // lever for the same reason the spine is.
         // A limb the body stands on is a leg, and a breath does not lift it
-        // (#370): the same rule `super::gait::hang_arms` keeps.
+        // (#370); and one that bears no weight is an arm only on a body with
+        // hands - a bird's is a wing folded along its flank, whose marker
+        // shoulders a breath turned (#424): the rules
+        // `super::gait::hang_arms` keeps.
+        if !rig.anatomy.hands {
+            return;
+        }
         let carries = rig.ground_contacts();
         for limb in [Limb::ForeLeft, Limb::ForeRight] {
             if carries.contains(&limb) {
@@ -1189,6 +1195,10 @@ impl Idle {
         // One rise and fall over the fidget, so it begins and ends at nothing
         // and cannot step when it starts or stops.
         let amount = (done * std::f32::consts::PI).det_sin() * self.roll * SHOULDER_ROLL;
+        // Only an arm's shoulder rolls, as only an arm's breathes (#424).
+        if !rig.anatomy.hands {
+            return true;
+        }
         let carries = rig.ground_contacts();
         for limb in [Limb::ForeLeft, Limb::ForeRight] {
             if carries.contains(&limb) {
@@ -1207,7 +1217,7 @@ impl Idle {
     /// drifting slowly from side to side, and on each fidget one ear flicking
     /// back and the tail giving a short wag, while the head glances.
     fn enliven(&self, rig: &Rig, pose: &mut Pose) {
-        let tail = rig.in_zone(Zone::Tail);
+        let tail = rig.tail();
         // The drift: the same noise the sway reads, much slower.
         let drift = self
             .field
@@ -1628,7 +1638,7 @@ mod tests {
             .filter_map(|tip| rig.joints[tip].parent)
             .collect();
         assert_eq!(ears.len(), 2, "two ears");
-        let tail = rig.in_zone(Zone::Tail);
+        let tail = rig.tail();
         let mut idle = Idle::seeded(7);
         let (mut fidgets, mut flicked, mut still) = (0usize, [0.0f32; 2], 0.0f32);
         let (mut wag, mut drift) = (0.0f32, 0.0f32);

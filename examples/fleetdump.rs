@@ -35,8 +35,11 @@ impl std::fmt::Write for Fnv {
 fn debug_hash(value: &impl std::fmt::Debug) -> u64 {
     let mut fnv = Fnv::new();
     // A winged body's wings (#421): `None` on every person and beast, and
-    // absent from a dump made before they were.
-    let text = format!("{value:?}").replace(", wings: None", "");
+    // absent from a dump made before they were; and a bird's eye range
+    // (#424), the same.
+    let text = format!("{value:?}")
+        .replace(", wings: None", "")
+        .replace(", range: None", "");
     fnv.bytes(text.as_bytes());
     fnv.0
 }

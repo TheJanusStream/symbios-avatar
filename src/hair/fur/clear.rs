@@ -93,12 +93,18 @@ impl Grid {
     }
 }
 
+/// How much further than the cards thin they are shortened near a wing part
+/// (#424), as a multiple of the thinning's outer reach.
+const SHORT_REACH: f32 = 2.5;
+
 /// The body a winged body's cards keep clear of (#423): within `near` of any
 /// point of its wing parts none roots, and from there out to `far` fewer.
 pub(crate) struct Clear {
     grid: Grid,
     near: f32,
     far: f32,
+    floor: f32,
+    short: f32,
 }
 
 impl Clear {
@@ -109,15 +115,47 @@ impl Clear {
             grid: Grid::of(points, far),
             near,
             far,
+            floor: 0.0,
+            short: 1.0,
         }
     }
 
-    /// How much of a card's weight a root at `at` keeps, `0..=1`: none under
-    /// a wing part, all of it clear of one.
-    pub(crate) fn kept(&self, at: Vec3) -> f32 {
+    /// Thinned to `floor` of a card's weight under a wing part rather than
+    /// cleared, and its cards there `short` of their length (#424): what a
+    /// bird's flank keeps under its folded wing, which shows when the wing
+    /// spreads.
+    pub(crate) fn thinned_to(self, floor: f32, short: f32) -> Self {
+        Self {
+            floor: floor.clamp(0.0, 1.0),
+            short: short.clamp(0.0, 1.0),
+            ..self
+        }
+    }
+
+    /// How much of its length a card rooted at `at` keeps, `0..=1`: all of
+    /// it clear of a wing part, and under one the share it is thinned to.
+    ///
+    /// **Out to [`SHORT_REACH`] times as far as the cards thin**: a card is
+    /// longer than the thinning's reach, so one rooted beside the fold lies
+    /// under it as surely as one rooted beneath.
+    pub(crate) fn length(&self, at: Vec3) -> f32 {
+        if self.short >= 1.0 {
+            return 1.0;
+        }
+        let far = self.far * SHORT_REACH;
         self.grid
-            .near(at, 1)
-            .map_or(1.0, |(_, distance)| step(self.near, self.far, distance))
+            .near(at, SHORT_REACH.ceil() as i32)
+            .map_or(1.0, |(_, distance)| {
+                self.short + (1.0 - self.short) * step(self.near, far, distance)
+            })
+    }
+
+    /// How much of a card's weight a root at `at` keeps, `0..=1`: the floor
+    /// under a wing part - none, unless thinned - and all of it clear of one.
+    pub(crate) fn kept(&self, at: Vec3) -> f32 {
+        self.grid.near(at, 1).map_or(1.0, |(_, distance)| {
+            self.floor + (1.0 - self.floor) * step(self.near, self.far, distance)
+        })
     }
 }
 

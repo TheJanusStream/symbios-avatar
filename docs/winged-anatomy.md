@@ -396,7 +396,8 @@ are seated on it.
   would dent its side.
 - **A wing does not swing as an arm** (`anim::gait::hang_arms`,
   `swing_arms`): a limb that bears no weight is an arm only on a body with
-  hands. The bird's wing is still until W5 moves it.
+  hands. Nor does it breathe or roll in a fidget (`anim::idle`, #424): the
+  idle's shoulders are an arm's too. The bird's wing is still on the ground.
 - **A coat stood in for a surface** until W4 (#423) stored a plumage and a
   coat: see "Surfaces".
 
@@ -481,7 +482,7 @@ match.
 |---|---|---|
 | Bat digits II-V off the wrist, thumb clawed | 10 3.2, S25 | II-V of 3 bones each, digit III 0.67 + 0.50 + 0.58 FA (S20, bg), V 1.28 FA; thumb 0.26 FA, free, a claw point |
 | Bat spread: III leads the tip, V about 90 deg behind it, elbow 120-150 | 10 4.2 (bg) | III 28 deg, V 100 deg behind the forearm; elbow 134 deg |
-| Bat fold: digits back along the forearm, phalanges folded back (S46) | 10 4.2 | metacarpals 171-176 deg back along the forearm, within 5 deg of one another; P1 folded back 149, P2 forward 143, each layer leaning out a little |
+| Bat fold: digits back along the forearm, phalanges folded back (S46) | 10 4.2 | metacarpals 171-176 deg back along the forearm, within 5 deg of one another; P1 folded back 152, P2 forward 169 (149 and 143 before W5's knuckle helpers), each layer leaning out a little |
 | Dactylopatagium II-V, plagiopatagium V to the ankle, propatagium shoulder to thumb | 10 5.2, S22, S25 | all three, closed thin shells, the trailing edges scalloped (one sweep V-to-ankle, one per pair of fingertips) |
 | Membrane 130-300 um | S23, S24 | 0.4% of the trunk either side (about 1.2 mm), see departures |
 | Glider patagium digit V to the ankle | S30, S31 | the forefoot (palm) to the ankle, one shell, on three spars |
@@ -565,11 +566,19 @@ glider 68.
 - **A membrane body's extension carries its hind legs out**, behind the arm:
   the trailing edge is anchored at the ankle (S22). W5 may want the legs on
   their own value.
-- **A bat's hand folds a Z at 149 and 143 degrees, not flat**: flatter, the
-  turns of neighbouring bones - at a knuckle blended across digits IV and V,
-  or between V and the spar beside it - came more than a half turn apart
-  partway through the extension, and dual-quaternion skinning made the
-  membrane jump. A few short shards of the fold still show.
+- **A bat's hand folds a Z at 152 and 169 degrees, not quite flat** (W5,
+  #424; W2 stopped at 149 and 143): flatter, the turns of a knuckle's two
+  bones come a half turn apart spread, and dual-quaternion skinning blending
+  them directly made the membrane jump. W5 adds a **helper joint at each
+  joint of the hand** - the digit's root at the wrist, its knuckle and its
+  middle joint - turning halfway between the bones either side
+  (`wing::Helper`); the skin across the joint is shared with it rather than
+  with the bone beyond (`wing::on_chain`), so no vertex blends two turns more
+  than half the fold apart. 24 joints on a bat (192 in all, under a
+  skinned mesh's 256). The first phalanx stops at 152: at 158 the guard
+  (`wing::fit`) trims digits IV and V half shut spread on some bodies,
+  their first phalanges' near half turns parting on opposite arcs; without
+  the helpers it trims them 27 degrees shut at 152 too.
 - **A bat's cape is drawn 60% of the way in toward its flank** at rest; the
   spread membrane near the body carries a slight ripple for it.
 - **The bird's tail is rooted in its rump, not on W1's stub**, which ends
@@ -627,7 +636,7 @@ forced; an older worker would have read a new kind as `Beast` anyway.
 | Pads under the toes, hallux opposing the front three (perching) | 10 6.2, S13 | a pad under every joint (the tube's underside 35% fuller), the hallux back |
 | Bat: five near-equal toes, strong hooked claws | the brief; 10 6.2 (hanging) | hallux 2 bones, II-V 3 (the mammal's formula, bg, L); lengths 0.90-1.0 of the longest; claws curling 126 degrees; a fan 28 degrees wide |
 | Bat hind foot 0.4 T to its claws' tips | S21 (M) | sole 0.62 of it, toes the rest |
-| Bat hind limb rotated, knee dorsolateral | S22 (H) | W1's leg (the knee up, out and back) unchanged; the toes point out and forward as W1 set the foot, see departures |
+| Bat hind limb rotated, knee dorsolateral | S22 (H) | W1's leg (the knee up, out and back) unchanged; since W5 (#424) the foot trails out and back from its pad, its toes behind it |
 | Glider hind foot: opposable, clawless hallux; II and III fused | 10 3.3, S31 (M) | a hallux of two balls on the inside, turned out and back as a thumb, no claw; II and III two narrow balls run together; IV the longest |
 | Glider fore paw: five clawed digits | the brief | five, the thumb and fifth splayed, every claw horn |
 | At rest the toes on the ground, not through it | the brief | every drawn foot's lowest point within 1 mm of the ground, every claw's tip 0.2 toe radii off it |
@@ -646,24 +655,24 @@ families, six crosses and twelve rolls 25,838, a bat-led roll, under the
 
 **Walked** (a scratch probe through `Driver`, standing two seconds, walking
 three at 1.2 m/s, stopping): at rest no drawn toe is below the ground. In a
-stride the gait now reads the toes as sole points and peels a foot about
-its second node, so the toes past it dip at toe-off: a bird's 3 mm, a
-bat's 14 mm, a bat-glider cross's 16 mm, and a bird-led bird-bat cross's
-16 mm in its stride and 42 mm in the one frame it sets off in. W5 owns the
-winged gaits (#424); the toes are joints it can lay flat.
+stride the gait read the toes as sole points and peeled a foot about the
+foremost of them, carrying the rest rigidly, so the toes dipped at toe-off:
+a bird's 3 mm, a bat's 14 mm, a bat-glider cross's 16 mm, and a bird-led
+bird-bat cross's 16 mm in its stride and 42 mm in the one frame it set off
+in. W5 lays them on the ground (#424): see "Motion", "On the ground".
 
 ### Where the feet depart, and why
 
 - **Research-10 gives no toe lengths**: every length and radius above is
   bg and chosen by render, an owl's thick toes and long talons for the
   default bird.
-- **A bat's toes point forward and out, as W1 set its foot, not trailing
-  out and back.** Turned to trail its heel (S22's rotated limb carried
-  through to the foot), the gait's toe-off - which pitches every
-  four-legged foot's pad about its side and lifts the heel about the toe
-  ahead - rolled the trailing toes 49 to 58 mm into the ground; the knee
-  stays as W1 turned it. The membrane, anchored at the ankle, was never
-  the limit.
+- **A bat's foot trails out and back since W5** (#424; `CRAWL_TOES` in
+  the derive), S22's rotated limb carried through to the foot. W1 and W3
+  pointed it forward and out because the gait's toe-off, which pitches every
+  four-legged foot's pad about its side, rolled trailing toes 49 to 58 mm
+  into the ground; W5 lays the toes on the ground through every stride
+  instead (`anim::winged::ground::lay_toes`). The membrane, anchored at the ankle,
+  was never the limit.
 - **A bat's toes are drawn coarser than a bird's** (six sides a ring, no
   ring between joints): ten toes on a body already within 1,600
   triangles of its ceiling.
@@ -678,9 +687,9 @@ winged gaits (#424); the toes are joints it can lay flat.
 - **A bird's leg is feathered to the ball**: the ball and the toes are
   bare, scaled skin (the coat's leather, a stand-in until W4), the tarsus
   above it the coat.
-- **The toes are still** (no grip, no curl yet): perching, hanging and
-  clinging are the owner's later phase, and the chains are what a grip
-  will turn.
+- **The toes do not grip or curl**: perching, hanging and clinging are the
+  owner's later phase, and the chains are what a grip will turn. On the
+  ground they are turned together about the pad to lie on it (#424).
 
 ## Surfaces (W4, #423)
 
@@ -903,7 +912,10 @@ round each eye - all read off the parts the head declares, in its frame,
 never off whether a point is inside the head - the bare scaled ball and toes
 (the foot's zone), and the flank the folded wing lies over (`Clear`: the body
 within 0.03 of the back's height of any folded feather grows none, out to
-0.06 fewer). **And a card that still passes through a folded feather is left
+0.06 fewer - **until W5** (#424): spread, a wing bared painted skin under it,
+so the flank keeps its cards' weight and grows them shortened, to two
+fifths within 0.03 and out to 0.15, where a card rooted beside the fold
+reaches under it: `Clear::thinned_to`, `UNDER_WING`). **And a card that still passes through a folded feather is left
 out whole** (`Sheet`, `leave_out`): `Clear` reads the feathers' vertices,
 which are sparse along a long feather, and the default owl had 20 card faces
 crossing its folded wing, a bird-bat cross at appeal -1 195. A card whose tip would have to be carried more than a third of
@@ -1012,7 +1024,9 @@ few dozen cards. Built untiered, the dearest of the same 181 bodies is
 27,158 (seed 2, a bat-glider cross), and 49 of them pass 26,000 - 47
 bat-led, and two bird-glider crosses at appeal 1.5 at 26,285; **a ceiling of
 27,158 lets every one of them wear its cards whole**, still well under the
-engine's 33,500 target for a person (docs/budget.md). The other levers are the membrane's grid (a pair of
+engine's 33,500 target for a person (docs/budget.md). W5 (#424) thins the
+contour cards under a folded wing rather than clearing them, so a spread
+wing shows no bare skin; the dearest is then 27,164, the same seed 2. The other levers are the membrane's grid (a pair of
 plagiopatagia alone is 2,576), which W2 tuned for a continuous extension,
 and are not this phase's.
 
@@ -1050,6 +1064,533 @@ and are not this phase's.
   mantle (leaning toward its coat's light), a glider its stripes. A record
   cannot turn them off.
 
+## Motion (W5, #424)
+
+A winged body moves through the driver that moves a person and a beast,
+and everything it adds lives in one place, `anim::winged`, a file for each
+concern: **on the ground** (`ground`: the bird's walk, hop and run, the bat's
+crawl and bound, the glider's bound, the drawn toes on the ground), **in the
+air** (`flight`: a sustained source its host flies) and **at rest** (`rests`:
+the family's rests and emotes and its roster). Every entry asks the rig's
+wings first, so no person or beast is touched.
+
+**What the body is, stored once.** `Wings::kinship` (a `Kinship`) holds each
+family's share of the lineage and the leading family, written when the wings
+are grown and `serde(default)` across the worker. Every choice of one
+family (which gait, whether the wings beat and how a takeoff opens them,
+which roster) is the leading family's (`Lineage::leading`), so a cross at
+exactly 0.5 takes the one answer its surface and its posture wear; every
+blend (a beat's rate, width and fold, the dihedral, a rest's curl and its
+times) is the shares'. **A rig from an older build carries none**, and every reader
+alike takes the family its stance belongs to: wholly a bird on two legs,
+wholly a bat on four (a glider from before it was written goes as a bat,
+which no rig's joints tell apart). Beside it each concern keeps its own: a
+bird's `Gaits` (`bob`, `hops_from`) and `Wings::low` (how low the folded wing
+hangs), both written at the build, and the flight's numbers, read off the
+rig as it flies. None of it is on `mesh_serde::Wire` or the rig's outline.
+
+**The driver's order**, highest first (`anim::winged`'s header states it
+whole, `driver.rs` beside the code):
+
+1. **The water and a shown motion** outrank a flight.
+2. **A flight** (`Inputs::flight`, on a body with wings) holds the body in
+   the air for as long as the host gives one, and plays **no rest and no
+   emote**: one asked mid-flight is let go, not kept for the landing, and
+   one playing when a flight is given - a flight given mid-perch - ends that
+   frame, the change of source to `Source::Fly` blending the body out of it.
+   The flight starts from the ground posture's values, the wings folded.
+3. **The ground gait or the idle** carries every other frame. A landing
+   hands back when the host gives no flight once `Land` has absorbed and
+   folded: the gait or the idle takes the next frame, blended from the
+   landing's last pose.
+4. **A rest or an emote** rides over the gait or the idle, as a beast's
+   does, and whatever stirs the body gets it up from a rest in a hurry.
+
+The drawn toes are lifted out of the ground after the blend
+(`ground::keep_toes_up`) on the gait's and the idle's frames only, the
+blends into them included: a flight's and a rest's or emote's poses own their
+feet - a landing plants them, a perch grips them, a curl folds them under.
+
+**Persons and beasts do not move.** `scripts/compare-motion.sh` drives four
+people and ten beasts through a stand, a walk, a trot or run, a gallop or a
+sprint, a curve, a stop, a pivot and an idle (`examples/motiondump`) on this
+tree and on HEAD's, and compares every frame's pose bit for bit: identical
+at 60 frames a second; at 144, people identical and beasts identical up to
+the first frame they pivot (#415, below). A person or a beast handed a
+flight moves exactly as without one (`tests/winged_flight.rs`), and none is
+offered or moved by a rest's or an emote's target (`tests/winged_rests.rs`).
+
+**The whole life** (`tests/winged_life.rs`): the three families, each pair
+crossed at 0.49, 0.5 and 0.51, and three rolls, driven through standing, a
+walk, the fast gait, a stop, a takeoff, flapping, a glide, a flare, a
+landing, a walk, the family's rest and up, an emote and standing again, at
+60 frames a second and at steps of a fortieth and a hundred and twentieth in
+turn: no joint moves in a frame more than twice the most it moved in the four
+frames either side and a hundredth of the trunk (each frame's travel read at
+a sixtieth's length), and on the ground no drawn point goes more than 6 mm
+under where the body stood. Without the blend out of a landing, a bird's
+pad moved 88 mm a sixtieth against 17 around it. Two things are let off, and
+are the owner's: through a change of pace on the ground a glider's forepaw
+rolls 6 to 10 mm into the ground, as a beast's paw does (a dog's 44 mm and a
+horse's 120 in the same stretches), and is held to the toes' 1.5 mm there;
+and over the uneven steps a bird's and a glider-led cross's thigh jumps 50 to
+80 mm in one frame of a stride, whatever the frame's length (a person and a
+dog step evenly), so the ground gait's own frames are held to the pop bound
+at 60 only.
+
+### On the ground (`anim::winged::ground`)
+
+Every winged body is driven by the gait that drives a person and a beast - a
+bird on two legs, a bat and a glider on four - and `anim::winged::ground`
+adds what research-11 says each family does that the others do not. **The
+gaits are the leading family's** (`Kinship::leading`), as the posture is; a
+bird's two habits are read off its plan when its wings are grown
+(`wing::Gaits::of`) and carried on the rig (`Wings::gaits`: its `bob` and
+`hops_from`), so they cross a worker boundary with the rig. A rig from an
+older build carries none, and its bird walks and runs with neither.
+
+| Target | Source | Built |
+|---|---|---|
+| Bird stride on hip height, `lambda/h = 2.3 Fr^0.3`, Froude on hip height | 11 2.1 (M-L) | `BIRD_STRIDE` 2.3; a person's step off the leg's reach was half as long again on a bird's short leg, and its crouch for each long step dropped the body 22 mm in two frames as each foot landed |
+| Walk to run near Fr 0.5 without a jump in duty, grounded running | 11 2.1, fact 6 (M) | a person's walk duty to Fr 0.5 (0.65 to 0.55), then falling to 0.5 at Fr 1.2 (a grounded run) and on to a sprint's 0.22 (`bird_duty`) |
+| Head-bob: one a step, hold still in the world, thrust about half the step, the hold just after a foot lifts | 11 2.2 (H, M) | `bob_offset`: held from 0.05 of a step after the trailing foot lifts, thrust over half the step on a smoothstep, centred on where the head rode; the neck turns so the head moves exactly that far along the walk, the head turned back to keep its bearing; held along the ground, not in height (about 10 mm of the walk's bounce and the neck's dip over a hold) |
+| Bob fades past Fr 0.5 | 11 2.2 (M) | `bob_share`: whole to Fr 0.3, none from 0.5 |
+| Who bobs: pigeons, fowl, corvids; not raptors, owls, parrots | 11 2.1 (M-H) | by the beak: none on a hooked one (`beakHook` from -0.5 up: the owl, the parrot), all of it on a straight one (from -1: the crow, the songbird) - the toes' own cut |
+| Who hops: small passerines; a corvid walks below about 1 m/s, then hops | 11 2.1 (M-H) | `hops_from`: at every pace on a bird of `size` 0.45 m or less (`HOP_SIZE`); from Fr 0.5 on a straight-beaked one, back to a walk below four fifths of it; never on a hooked one, which runs |
+| Hop: two feet together, a run's step and duty | 11 2.1 (H, qualitative) | both feet down together, a run's duty (0.35 to 0.22), a step 1.6 times a walking step (`HOP_STRIDE`, chosen by render: at a run's step a songbird cleared a quarter of its hip and read as bouncing on the spot, now half); risen as a body thrown for the time it is in the air, `g t^2 / 8` (`hop_rise`) |
+| Hop body: head retracts as the legs fold, extends as it leaves, retracts before landing | 11 2.1 (M) | the head 0.2 of the leg ahead at take-off and behind it half a cycle later (0.08 did not show) |
+| Bat: lateral-sequence walk on wrists and thumbs, the feet behind | 11 2.3 (M) | the beast's walk on the wrist's pad (the plan's fore contact since W1), the hind foot trailing out and back (`CRAWL_TOES`) |
+| Bat bound at 0.56 to 1.14 m/s, forelimb-driven | 11 2.3 (M, H) | `Pattern::Bound` from a beast's change to a trot (Fr 0.5): the hinds together, the fores at 0.3 and 0.36 of the cycle, the flight after them; duty 0.32 to 0.24, a stride 1.4 times a beast's, thrown three times its flight's height and the back folding 1.8 times a beast's (all chosen by render at the look review, where the bound read as a fast walk: every foot now off the ground by 36% of a bat's hip and 29% of a glider's, the back through 0.61 and 0.63 rad, from 0.38 and 0.40) |
+| Glider: half-bound and bound, hinds together | 11 2.4 (L) | the same bound after the same walk |
+
+**A crawling bat's legs are its own** (`winged::crawls`): the pantograph that
+stands a beast's paw and the pole a beast's stride swings a leg about both
+work in the body's side plane, where a bat's leg is folded out of it, and its
+elbow jumped 100 to 330 mm between frames in a pivot and a trot before W5 (the
+0.22 tree, measured). Its legs are solved about the bend they were built
+with, each foot stood upright; its strides are centred on its own feet, not
+under its blades and hips as a beast's are, which drew its wrists 23 cm back
+and folded its elbows in over its spine within four frames of setting off;
+and neither its wrist nor its trailing foot is folded in the swing, where a
+paw's fold flicked the foot's toes up through 55 mm a frame. So its elbows
+stay high and out over its wrists, and no joint of its body moves more than
+45 mm a frame setting off into its crawl or its bound. A glider's legs are
+a beast's, and go as a beast's do.
+
+**The drawn toes stay on the ground** (`ground::lay_toes`): through a stance
+the foot is laid square to the ground under it and its toes and second node
+turned together about the pad by the least turn that brings the lowest of
+them to its height at rest, so they lie on the ground as the pad peels off
+about them; the stance's turn is let go of over the first 0.3 of the swing,
+and in the air no toe passes into the ground. After the driver's blend
+(`keep_toes_up`), a pad a blend left in the ground is lifted out by the leg
+and its toes laid out of it: a bird setting off sank its pads 28 mm in the
+first frame, each joint turned on its own between two poses that stand on the
+ground.
+
+**Measured on the ground** (`tests/winged_motion.rs`, through `Driver` at 60
+frames a second):
+
+- A crow walking at 0.6 m/s (Fr 0.19) holds its head within 30 mm/s for 7 of
+  a step's 13 frames and thrusts it at up to 1.8 m/s, one hold a step; the
+  head dips 18 mm as the neck reaches. The default owl never holds.
+- A songbird-sized bird hops at 0.4 m/s at 5 Hz, its body rising 24 mm and
+  its feet 31 mm; a crow walks at 0.6 m/s and hops at 1.6.
+- A bat walks in a lateral sequence at 0.4 m/s on two feet or more, and
+  bounds at 1.0; a glider bounds at 1.2, where a dog at the same Froude
+  number trots.
+- The lowest drawn toe, standing, setting off, walking and running at 0.5
+  and 1.2 m/s and stopping, on a bird, a crow, a songbird, a bat and two
+  crosses: never more than 0.1 mm under the ground (before: bird 6 mm, bat
+  14, bat-glider 16, bird-led bird-bat 10 in stride and 42 setting off).
+
+**Fixed beside it:**
+
+- **The idle's breath and fidget leave a wing alone**: a limb that bears no
+  weight is an arm only on a body with hands, the rule `hang_arms` keeps
+  since W1; the breath still turned a bird's marker shoulders.
+- **A bird's tail is one chain** (#425): `Rig::tail` is the tail zone's own
+  joints, never the wings' fan edges attached after the stub, and every
+  reader of a tail as a chain reads it - the paddle and the swish, a clip's
+  shared turn, the rest, the idle's wag and the coat painter's tip.
+- **A bird steps as evenly over uneven frames as over even ones**: its
+  foot's peel was solved in a beast's pantograph (`gait::striding_of`)
+  while the rest of its stride stood the foot, so its knee swung 52 mm out
+  of its own bend and back in one frame as each heel lifted; and a blend
+  read the velocity of the last two drawn poses over this frame rather than
+  the one between them (`Driver::drawn_over`), three times too fast where a
+  short frame followed a long one. Both showed only over uneven steps
+  (`tests/winged_life.rs`, `winged_motion`).
+- **A glider's paw stays on the ground as its pace changes**: a blend
+  rolled its forepaw and put its sole 6 to 13 mm under with its pad on the
+  ground, as a beast's paw (a dog's 44 mm, left to it). After the blend
+  (`winged::ground::keep_toes_up`) a winged foot coming down is lifted by
+  as far as its pad, its sole's ring or its second node stands under, past
+  2 mm, in the plane its leg is bent in, taken in over its last 2 cm. A
+  toe's turn is sought from where it was carried and eases to its reach as
+  its root runs out, never jumping across the pad.
+- **A small four-legged body's paws turn no faster than a beast's**: a
+  glider folds its paws in the swing as a dog does, over a swing a third
+  as long, and bounding at 3 m/s turned a forepaw 2.8 rad in a frame (a
+  dog 1.3). A winged body's swing fold is now the share of a beast's its
+  swing's length is of 0.4 s (`winged::ground::fold_share`); the ground
+  gaits turn no joint more than 0.8 rad a sixtieth at 60 frames a second
+  and 0.95 over uneven steps, held to 1.25 in `tests/winged_life.rs`.
+- **A bird's folded wings ride no lower than they stand**: a walk's or a
+  run's crouch and lean carried them down, a Bird x Bat cross at 0.49 by
+  14 mm at 3 m/s. Each wing is turned up about its root by as much as its
+  outer joints stand under their height at rest (`hold_wings`); 5.6 mm of
+  the cards' drop is left, under the ground bound. That cross's primaries
+  standing 83 mm under the ground at rest are its build's, left to #433.
+- **A pivot's clock goes the same at any frame rate** (#415): a pivot's
+  speed is a standstill's turned, which knows no pattern, so its bare duty
+  was a person's while a four-legged gait stepped at its pattern's, and
+  mapped from one onto the other every frame the turn eased, the clock
+  gained a twentieth of its stance a frame - two and a half times as much a
+  second at 144 frames a second as at 60, a horse's feet 605 mm apart
+  between the two. The gain is now held to what it is a second at 60
+  (`driver::REFERENCE_RATE`), phase by phase - a stance's progress and a
+  swing's remainder each scaled by its own share (`driver::carry_scaled`) -
+  so a pivot at 60 is the one it was to the bit, and at 90, 144 and 240
+  frames a second and at uneven steps a turning body's clock steps within a
+  twentieth of a cycle of 60's while its turn eases. Mapping from the duty
+  the gait steps at instead drops the gain altogether, and moves every
+  beast's pivot at 60 too; that is the owner's call.
+
+
+### In the air (`anim::winged::flight`)
+
+A winged body in the air is its own source, `Source::Fly`, driven by its
+host frame by frame: a leap's flight is ballistic and over
+in a second, a flier stays up for as long as its host flies it. Everything
+here is on a body with wings (`Rig::wings`); a person or a beast handed a
+flight moves exactly as without one.
+
+#### What the host gives
+
+`Inputs::flight: Option<Flight>`, `None` on the ground (the default, so every
+caller from before is unchanged). A `Flight` is:
+
+| Field | Type | What it is |
+|---|---|---|
+| `mode` | `FlightMode` | `Takeoff`, `Flap`, `Glide`, `Soar`, `Dive`, `Flare`, `Land` |
+| `air` | `Option<Vec3>` | the air's velocity past the body, m/s; `None` reads `Inputs::velocity` |
+| `phase` | `Option<f32>` | where the wings are in their beat, in beats (`0` the top of a downstroke); `None` lets the engine keep its own clock |
+| `contact` | `Option<f32>` | seconds to what the body lands on; under `FLARE_TAU` (0.45 s) it flares |
+
+`Inputs::turn` (the yaw rate) steers the tail as a rudder and lifts the outer
+wing; a glider eases its inner membrane instead. `Driver::flight(rig)`
+answers what the body was posed doing (`Flown`, `#[non_exhaustive]`: the
+mode in effect, the beat's clock and rate, the drawn extension, the beat's
+width, the flare's depth, how far the trunk is levelled, and three a host
+hands on by: `lifted: bool`, the takeoff's push over and the feet off;
+`settled: bool`, a landing down, absorbed, folded and, carrying itself, at
+the ground; `height: f32`, the hover's height carrying itself, 0 carried).
+
+**Handing on, with no durations guessed** (`anim::winged::flight`, "Handing
+on"): a takeoff into flapping **two beats after `lifted`** - when `phase` has
+grown by two from its value that frame, the takeoff's two big beats; in beats
+it reads alike at every size, where a bird at size 2.4 lifts off at about
+0.45 s and beats about once a second and a songbird at 0.1 beats ten times in
+0.6 s. A landing back to no flight **once `settled`**. A landing asked of a
+body on the ground is a landing from no height: its feet put down, its wings
+folded, no absorb.
+
+**The host carries the attitude.** A host writes the body's heading, pitch
+and bank itself, so the pose is the body riding that attitude: its trunk
+levelled along its own `+Z` (a perched bird stands 1.05 rad nose up and flies
+level), its head held as it was by its neck, only the beat's small pitch and
+a flare's last lift of the nose added. A body that carries itself
+(`Carriage::Own`) hovers instead, risen by its takeoff and brought down by
+its landing, on a critically damped spring stepped in closed form, so a frame
+of any length lands where it should: to 0.8 of its height, or, where its
+wings reach further, high enough that the lowest of a takeoff's beats clears
+the ground by 0.15 of the wing's reach and 0.08 of its height (a bat, whose
+wing reaches 0.75 m on a body 0.36 m tall, hovers at 0.82 m, not 0.29).
+
+**No wing into the ground** (W5's look review): near the ground - a
+takeoff's first beats, a landing's last, a host that carries a body low -
+each wing's stroke is raised as far as keeps every joint of it (to the
+digits' tips, a feather reckoned 2.6 humeri past its joint along the wing)
+0.06 of the body's height over the ground, posed again, and never raised
+further than helps: a partial, raised stroke. A folded wing is the ground
+posture's and is not raised, nor a wing the ground holds as a leg. Through a
+takeoff and a landing the root is held up by whatever a foot would sink,
+its sole reckoned under each joint and further as it tilts, and a hind foot
+flattens to meet the ground as it nears.
+
+#### From Overlands' `FlightMode`
+
+Overlands (#1861, adopted in #1862) flies an arcade model whose modes the
+engine mirrors:
+
+| Overlands | `Inputs::flight` |
+|---|---|
+| `Ground` | `None` |
+| `Takeoff` | `Takeoff` |
+| `Flap` | `Flap`, `phase: beats + (since_beat / beat_period).min(1)` |
+| `Glide` | `Glide` (`Soar` on rising air, which it does not yet fly) |
+| `Dive` | `Dive` |
+| `Flare` | `Flare`, `contact` from its approach's tau |
+| `Land` | `Land` |
+
+`air` is its chassis velocity in still air; the phase may jump by half a beat
+where a press beats early, and the engine follows it rather than copying it:
+its clock runs between half and twice its own rate to catch the host's, and
+never backward.
+On a peer, which knows only the mode, the phase and contact are `None` and
+the engine keeps its own clock and flares on its own time.
+
+#### How each mode looks, and what scales
+
+Every number the pose reads - the wings' extension, the beat's width, the
+dihedral and sweep, the tail's fan, the legs' tuck, the trunk's levelling,
+the flare's depth - is eased toward its mode's target through a first-order
+lag of its own, so no change of mode pops; the beat's clock never jumps.
+The wings are posed through `Rig::stroke_wings(pose, left, right)` with a
+`wing::Stroke` each - an extension, an elevation about the trunk's long axis,
+a sweep about its up, and a reach that swings every limb a wing drives - and
+the tail through `Rig::steer_tail(pose, fan, yaw, pitch)`. A stroke turns the
+arm wholly, a membrane's spars by their root's place from the hip to the
+shoulder, and the hind leg not at all.
+
+- **Takeoff** (research-11 3): from the ground a crouch and a push, the
+  legs a spring released over a quarter turn; the wings' first downstroke
+  begins at 0.8 of the push, so the legs give `LEG_SHARE` (0.88) of the
+  lift-off speed and the wings the rest; then beats a fifth faster and 1.3
+  times as wide as a cruise's. **Each part long and deep enough to be seen**
+  (the look review): a crouch of at least 0.18 s (outlasting the blend out of
+  the ground) and 0.2 of the leg, a push of at least 0.1 s, so a body carrying
+  itself lifts off at about 0.27 s. The wings stay folded through the crouch
+  and open in the push - a bird's from its start, leaning a third of the way
+  level into it so its half-open wings are carried clear; a bat's and a
+  glider's, whose wings are the legs they push with, over its last 0.4. A
+  host that carries the body has already launched it, so its takeoff starts
+  crouched; one that carries itself crouches first. The crouch takes at most
+  half of what each leg it stands on can still fold (a glider, which stands
+  crouched, never turns a knee over its pole) and 1.2 times its belly's
+  height over the ground, reckoned at its trunk's joints and, on a body whose
+  wings are no legs, its folded wing's lowest drawn point (`Wings::low`). A
+  landing asked mid-push absorbs from the crouch it finds. Off the ground the
+  trunk levels on a critically damped spring, from rest.
+- **Flap** (research-11 4): the beat's rate `m^-0.28`, its trunk cubed - 3.0 a
+  second at the default bird's trunk (0.311 m), 2.6 at the bat's (0.269), as
+  the trunk to the -0.84 from there, the consuming application's own law; a
+  half-width of 0.80 rad (bird) or 0.62 (bat); a downstroke of 0.56 or 0.50
+  of the beat; the upstroke folding the wing by 0.25 or 0.38 of its extension
+  at its middle - a bird's flexed wing, a bat's strong flex; the tip swept
+  forward on the downstroke and back on the upstroke. The body heaves up
+  through the downstroke and pitches nose up, by `1 - speed / cruise` (cruise
+  6.5 m/s at the reference): a slow beat bobs, a cruise does not. A glider
+  never flaps, nor a cross a glider leads (`Kinship::flaps`): asked to, it
+  glides.
+- **Glide**: spread, still, the dihedral 0.10 (bird), 0.04 (bat), 0.0 (the
+  glider's flat X); a bird's tail fanned a third. **Soar**: a little more
+  dihedral, the tail fanned to circle.
+- **Dive**: the wings half folded and swept back, a stoop - 0.3 of the
+  extension on a bird, 0.5 on a bat and 0.4 on a glider, whose halfway pose
+  is partway to the crawl's fold.
+- **Flare** (research-11 6.1, 8.1): by time to contact - from 0.45 s, full by
+  0.1 - whatever mode the host is in, and deeper the nearer: the wings
+  forward and raised, braking beats 1.25 times as wide, the tail fanned and
+  depressed, a bird's legs swung forward and its trunk raised back toward its
+  perch by 0.45 of its rest pitch over the host's own (near vertical), a bat's
+  and a glider's nose lifted 0.25 rad. Without a contact, over 0.35 s.
+- **Land**: the legs absorb, a dip of a quarter of the leg over its half
+  period - held, as a takeoff's crouch is, to what the legs fold and the
+  belly clears, and on a body standing on its wings to as far as they are
+  folded - the feet put on the ground over 0.2 s, a wing's own paw levelled
+  as far as the plant does not yet hold it; the
+  wings fold, the trunk returns to its ground posture, the tail closes. The
+  absorb starts at touchdown: at once on a carried body, and on one carrying
+  itself once its hover has brought it down (aiming 0.05 of its height under
+  the ground, so it arrives), held spread with its legs reaching until then.
+  A wing's own limb - a bat's wrist, a glider's every leg - is put down from
+  its fold rather than solved where it stands half spread, and a wing opens
+  or folds in no less than a sixth of a second - **in a landing, no less
+  than half a second**, the feet put down over a fifth (the look review: a
+  glider's spread legs swung down and planted in two frames, its patagium
+  flipping from a sheet to a hanging panel with them); a body standing on
+  its wings gives up their raise off the ground as its feet go down. The ground gait or the
+  idle takes over, blended, the frame the host gives no flight (the order
+  above).
+
+The beat's rate, width, downstroke, upstroke fold, sweep, dihedral, heave and
+pitch blend across a cross by its families' shares (`Kinship`); whether it
+beats, and whether its wings rise in its push, do not: they are its leading
+family's (`Kinship::leading`), as its surface is, so a cross at an even blend
+beats exactly when it wears a beater's surface.
+
+### At rest: rests and emotes (`anim::winged::rests`)
+
+The owner's order holds: "landing on the tops of things first, hanging and
+clinging later", so a bird perches and roosts on whatever it stands on, a
+bat rests on the ground and a glider curls there; the bat's hang and the
+glider's cling wait for their phase. Everything is in `anim::winged::rests`, written
+as goal-space clips as the person's and the beast's rosters are, with five
+targets of a winged body's own, each doing nothing on a body without wings:
+
+| Target | Key | What it moves |
+|---|---|---|
+| `Wing(limb)` | `x` extension 0-1, `y` raise, `z` sweep (quarter turns) | one wing off its fold (`Wings::pose_side`), then turned whole at the shoulder; out of what the pose held over its first tenth, since a bat's wing is the leg the plant put down |
+| `Fan` | `z` 0-1 | a bird's tail fan (`Rig::spread_tail`) |
+| `Grip` | `z` 0-1 | every drawn toe: the joints past its root bent 2 rad in all toward the sole, and the root lifted as a knuckle just as far as brings the claw's tip back to the height it stood at (found by halving, at most 1.4 rad), so the claws close on a flat top without going through it |
+| `Tuck` | `z` share of 0.8 of a half turn, `x` side, `y` extra dip | the head turned back about the body's up, half at the neck and half at the head, a bird's neck leaned back 0.7 rad first and the head dipped 0.8 rad past the lean |
+| `Curl` | `z` 0-1 | a four-legged winged body down on its belly (its trunk's skin, read off the rig's outline as a beast's lying down reads it, 4 mm off the ground), legs folded under - hind feet laid, forefeet stood on their pads, each foot raised by whatever its shin and pad sink - a bat's wrists drawn in by its bat share, the spine bent 2.3 rad round, the tail laid along the ground at its ring's depth wrapped 3.4 rad round the outside and the head turned on and dipped, by its glider share; then, in four passes always taken, lifted by whatever of its skin is still under the ground: the outline but the feet, shins and tail, every upper limb's ring, and a membrane's trunk-rooted spars read 30 mm deep |
+
+`Roll` now rolls a winged body on two legs too, about its trunk's own line
+(a bird carries its trunk raised); a person is refused it as before.
+
+**Rests** are states, gone into at the body's own pace, held, and got up
+from by the way down played back: the driver plays them as it plays a
+beast's sit, since `emote::seconds` and `emote::getting_up` answer a winged
+body's rests.
+
+| Family | Rest | Pose (10 6.2) | Down, up (s, leg 0.25 m) |
+|---|---|---|---|
+| Bird | **Perch** | crouched 0.22 of its leg's reach on planted feet (no further than its folded wing stands off the ground, `Wings::low`), the toes gripping, the head level and still glancing about: "the belly feathers settle over the feet" | 0.6, 0.4 |
+| Bird | **Roost** | down 0.36 (limited as the perch) so the tarsi fold under and it "looks legless", gripping, the head turned back over the left shoulder and laid into the scapulars, the lids shut | 1.6, 0.9 |
+| Bat | **Rest** | the curl with no curl: on its belly, wrists drawn 45% in toward the shoulders, head down 0.5 rad, the lids shut | 1.2, 0.8 |
+| Glider | **Curl** | curled round as low as its folded patagium lets it, the tail wrapped about it, the lids shut | 2.2, 1.6 |
+
+A bat-glider cross offers its leading family's name for the one motion, and
+lies between the two by its glider share: the curl, the drawn-in wrists and
+the times each the share of the family they are (`tests/winged_rests.rs`
+measures the spine's bend rising with the share). A bird-led cross perches
+and roosts as a bird; a bat- or glider-led one rests as its family. **A
+sleeping body shuts its eyes**: the driver closes the lids by how far into a
+roost, a rest or a curl the body is, over the blink.
+
+**Emotes** start and end at rest: **Preen** (a bird's) and **Groom** (a
+bat's or a glider's), the head turned 0.8 of the tuck (a bat's or a
+glider's 0.62, level, all four feet down) round to the left wing, a bird's
+lifted a little to meet it, in four nibbles; a bird's **Wing Stretch**, the
+left wing spread 0.75 and laid down and back (lifted instead where the
+folded wing stands within 12 cm of the ground) with the left leg lifted and
+stretched back under it, inside its reach, and the tail fanned, then both
+wings raised 0.75 of a quarter turn over the back (S16); a bat's **Wing
+Stretch**, each wing opened 0.45 out and lifted in turn; a glider's
+**Stretch**, a bow of 0.1 with its forepaws walked 0.22 out and stood on the
+ground, its head up and its tail raised high; **Shake**, a bird's trunk
+rolled 0.18 of a quarter turn side to side with its head canting first, then
+its wings, lifted as they open, and fan flicked, a bat's or a glider's risen
+0.05 on its legs and shaken as a dog's in three slower swings - the trunk
+rolled 0.2, the head whipped side to side ahead of it - with all four feet
+held, its wings - the forelegs it stands on - still; and **Head Tilt**, the
+head canted 0.3 and swayed side to side and up to look with one eye (an owl
+judging depth, 10 6.2), a bat's and a glider's ears perked besides.
+
+**Each emote reads at a glance** (the look review): at its widest some
+joint of the body's own - not a tail, an ear or a feather - moves at least a
+tenth of the body's height from where it stood (`tests/winged_rests.rs`).
+Before, a glider's head tilt moved its body 1.6% of its height, its shake
+5.6% and its stretch 8.2%, a bat's head tilt 1.4%, a bird's 5.2%; now
+16.8%, 16.1%, 16.7%, 26.5% and 10.3%.
+
+**The roster is the body's**: `gesture::roster(rig)` is what a host offers
+- a bird's, a bat's or a glider's by its leading family, a beast's on four
+legs, a person's otherwise - and `gesture::for_body` answers a winged body
+only its own names, so a bird is never laid a person's wave over its folded
+wings and a bat never asked a beast's sit. The roster, the curl's share and
+the times read the body's `Kinship` (above); how low a perch may crouch
+reads `Wings::low`, how far the folded wing stands off the ground, written
+when the wings are grown - `None` on a rig from an older build, whose rests
+then go unlimited.
+
+**A bird looks with its head** (10 fact 5, 6.1, S12). Its eyes turn
+`face::eye::winged_range`: an owl's 3 degrees with its full disc, a bird's
+with no disc 10 (a peafowl's habit between saccades, not a starling's 32 at
+most), toward a beast's 30 by how little of a cross is bird; a bat's and a
+glider's are a beast's. The range rides on `Eyes::range`, `None` and off the
+wire on every person and beast, set at the build from the plan. The driver's
+idle glance turns a bird's head up to 1.5 rad on its neck and head, not its
+chest, and makes the turn in the first 30% of the glance's ramp and holds
+it: "a series of quick head saccades, each one a held pose".
+
+**No person or beast is offered or moved by any of it.** Every new target is refused on a body
+without wings, every new name answered only on one, and the eye range and
+the bird's glance apply to a winged body alone. A scratch probe drove four
+persons and six beasts through every name of both rosters - each clip over
+21 times, its getting up, and 420 driver frames asked and told to get up -
+and through two gaze configurations at four targets with their eyes, and
+twenty seconds of idle glances, on the 0.22.0 tree and on this one: every
+line identical, to the bit.
+
+**Held to the ground and to a frame's travel** (#424, the critic's
+review): `tests/winged_rests.rs` drives every name of every family's
+roster, on the three families, each pair crossed at 0.49, 0.5 and 0.51 and
+ten rolls, at 25 moments of its clip and through the driver from asking to
+standing again: the whole drawn body - skin, toes, membrane and feathers -
+never more than 6 mm under the ground beyond what stood under it before,
+and no joint travelling more than 67 mm in a sixtieth of a second. Before
+the fixes it found a bat's shake driving its wrists 116 mm in, a glider's
+bow its paws 78 mm, a glider's curl its thighs 51 mm and its patagium 20 mm,
+a bird-bat cross's roost its wing 197 mm, and a bird's stretched leg
+turning over, 283 mm in one frame.
+
+### Where the motion departs, and why
+
+**On the ground**
+
+- **The default owl does not bob**: research-11 lists owls and parrots
+  among the birds that walk without it, so the bob follows the beak. One
+  constant (`BOB_HOOK`) gives every bird some.
+- **A hop is low**: thrown for its time in the air, a 0.4 m bird's hop
+  rises a few centimetres, where the dossier's rule of thumb (L, no measured
+  figure) has half a body length.
+- **The bound's duty and footfalls are chosen**: research-11 has none.
+- **A bat's hind feet lift little** (5 mm at 1 m/s): the beast's hind lift
+  on a short, splayed leg. A crawl reads as one.
+- **The toes do not curl in the air**: a swing carries them as the pad
+  holds them.
+
+**In the air**
+
+- **A bird's legs trail back**, drawn up toward the hip, rather than tucked
+  forward under the belly as an owl carries them: levelled from its perch,
+  the leg hangs back, and a tuck forward would need a hip turn the bridge leg
+  does not have.
+- **The upstroke folds along the extension's own arcs**: a wing at 0.7 of
+  its extension is partway back toward its fold, not a flexed wing held out,
+  so a deep fold (a bat's at 0.6 read crumpled) is held to 0.38.
+- **No tip reversal, no backward flick, no flap-bounding**: one stroke shape,
+  its width and fold blended; the bat's flick and a small bird's bound are
+  left for a later pass.
+- **A takeoff's leg share is kinematic**: the share of the lift-off speed
+  gained before the first downstroke begins, which is what a pose can show;
+  research-11's figure is a share of the impulse.
+- **The tail steers by yaw only**, and the rudder turns the fan's edges
+  alone, not the stub: written before #425 made the stub one chain
+  (`Rig::tail`), which a later pass can pitch.
+
+**At rest**
+
+- **A glider lies no lower than its folded patagium**, which the fold (W2)
+  hangs from spars rooted in its chest to within a few centimetres of the
+  ground: its curl is made at about its standing height, the legs gathered
+  and the spine and tail curled round. Folding the patagium up against the
+  flank would let it lie down.
+- **A bat's and a glider's wings stay down in their emotes**: they are the
+  forelegs the body stands on, so the shake does not flick them, the groom
+  does not lift them, and the glider's bow does not open its patagium.
+- **No fluffing.** Research-10's fluffed outline wants the contour feathers
+  raised off the body, which no pose can do: they are cards bound to the
+  trunk's joints. The shake flicks the wings and fan instead.
+- **On level ground**: a winged rest is posed against the level its body
+  stands on, as a beast's play bow is, not fitted to the ground under each
+  support as a beast's sit is (#381); on a slope its feet, belly and tail
+  rest on the level through it.
+- **The roost's tuck is over the left shoulder always**, and the preen
+  reaches the left wing: one side reads, and a mirrored clip is one sign.
+- **A perch's grip is on a flat top**: the toes close as a fist on a table
+  does, the knuckles up, every claw off it. A branch's grip, which wraps
+  the toes round something under them, wants the perch's own shape, which
+  the engine is not given.
+- **Times are chosen**: research-10 and research-11 time none of the rests.
+- **A bird's head turns no further than 1.5 rad on a glance**: an owl's
+  "up to 270 degrees" is the neck's reach, not a glance's, and `look_at`
+  clamps about the rest facing.
+
 ## Left for later phases, and for the owner
 
 - **W2 (#421)**: built - see "The wings". For the owner: the bat's cape
@@ -1068,6 +1609,13 @@ and are not this phase's.
   gold, the glider's stripes, the membrane's lit edge. At the review the
   owner raised the ceiling to 27,200, chose a mid grey glider and eyes by
   the kind of bird.
-- **W5 (#424)**: the ground gaits per posture, the flight source, rests. A
-  winged rig is driven today without a panic (`tests/driver.rs`): a bat and a
-  glider walk as beasts, a bird as a biped beast.
+- **W5 (#424)**: the motion built - see "Motion": the ground gaits per
+  posture, the flight source, the rests and emotes. For the owner: whether
+  the default owl should bob after all, the hop's height, the bat's crawl
+  and bound, the glider's bound; each flight mode's look per family (the
+  strips `render --winged --kin K --flight`), the beat's width and upstroke
+  fold, the bird's trailing legs, the dive's half fold; the perch's crouch
+  and grip, the roost's tuck, the bat's drawn-in wrists, the glider's curl,
+  each emote's reach; the hang and the cling (the later phase); a glider
+  from an older build read as a bat; the glider's forepaw at a change of
+  pace and the bird's and glider-led cross's thigh over uneven steps.

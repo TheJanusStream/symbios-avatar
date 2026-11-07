@@ -208,6 +208,35 @@ pub enum Target {
     /// [`Target::Sit`] is (#377). Does nothing on a body that does not stand
     /// on four legs.
     Lie,
+    /// One wing of a winged body, off its fold (#424): its extension the
+    /// key's `x`, `0` folded as it rests to `1` spread
+    /// ([`Rig::spread_wings`]); the whole wing then raised by its `y` and
+    /// swept forward by its `z`, in quarter turns at the shoulder, so a
+    /// stretch can lay a spread wing down and back or lift both over the
+    /// back. Does nothing on a body with no wings.
+    Wing(Limb),
+    /// How far a bird's tail fans, the key's `z`, `0` closed to `1` fanned
+    /// ([`Rig::spread_tail`]) (#424). Does nothing on a body with no fan.
+    Fan,
+    /// How far a winged body's drawn toes curl into a grip, the key's `z`,
+    /// `0` flat to `1` closed (#424): a bird's on its perch. Does nothing on
+    /// a body with no drawn toes - a person's, a beast's, a glider's.
+    Grip,
+    /// How far a winged body's head turns back over its shoulder, the key's
+    /// `z` of the way, toward the body's left for a positive `x` and its
+    /// right for a negative one, and dips by its `y` in quarter turns
+    /// (#424): a roosting bird's head laid back into its scapulars, and a
+    /// preening one's reaching for its wing. Turned past any gaze's limit,
+    /// as a bird's neck does. Does nothing on a body with no wings.
+    Tuck,
+    /// How far a four-legged winged body has lain down to rest, the key's
+    /// `z`, `0` standing to `1` down (#424): low on its belly, its legs
+    /// folded under it, a bat's wrists drawn in close and its head down on
+    /// them, a glider curled round with its tail wrapped about it - each by
+    /// its family's share of the body, so a cross between them lies between
+    /// the two. Does nothing on a body that has no wings or does not stand
+    /// on four legs.
+    Curl,
 }
 
 impl Target {
@@ -250,7 +279,12 @@ impl Target {
             | Target::Jaw
             | Target::Cant
             | Target::Sit
-            | Target::Lie => Vec::new(),
+            | Target::Lie
+            | Target::Wing(_)
+            | Target::Fan
+            | Target::Grip
+            | Target::Tuck
+            | Target::Curl => Vec::new(),
         }
     }
 }
@@ -617,10 +651,19 @@ impl Clip {
         // five-element sort.
         let mut ordered: Vec<&Track> = self.tracks.iter().collect();
         ordered.sort_by_key(|track| match track.target {
-            Target::Root | Target::Tilt | Target::Pitch | Target::Sit | Target::Lie => 0,
+            Target::Root
+            | Target::Tilt
+            | Target::Pitch
+            | Target::Sit
+            | Target::Lie
+            | Target::Curl => 0,
             Target::Trunk | Target::Roll => 1,
             Target::Gaze => 3,
             Target::Cant | Target::Tail | Target::Ears | Target::Jaw => 4,
+            // A winged body's own parts (#424): after the limbs are solved,
+            // since a bat's wing is the leg it walks on, and the head's turn
+            // back after its gaze, which it goes past.
+            Target::Wing(_) | Target::Fan | Target::Grip | Target::Tuck => 5,
             _ => 2,
         });
 
@@ -688,6 +731,26 @@ impl Clip {
                     if let Some(&head) = rig.in_zone(Zone::Head).first() {
                         pose.rotations[head] *= Rot::z(-offset.z * quarter);
                     }
+                    continue;
+                }
+                Target::Wing(limb) => {
+                    super::winged::rests::wing(rig, pose, limb, offset);
+                    continue;
+                }
+                Target::Fan => {
+                    rig.spread_tail(pose, offset.z.clamp(0.0, 1.0));
+                    continue;
+                }
+                Target::Grip => {
+                    super::winged::rests::grip(rig, pose, offset.z);
+                    continue;
+                }
+                Target::Tuck => {
+                    super::winged::rests::tuck(rig, pose, offset);
+                    continue;
+                }
+                Target::Curl => {
+                    super::winged::rests::curl(rig, pose, offset.z);
                     continue;
                 }
                 _ => {}
@@ -901,20 +964,28 @@ fn tilt_body(rig: &Rig, pose: &mut Pose, offset: Vec3) {
 
 /// Rolls a four-legged body's forehand `angle` radians about the trunk's own
 /// length, at the loin. See [`Target::Roll`].
+///
+/// **And a winged body's on two legs** (#424): a bird shaking its feathers
+/// rolls its trunk about the trunk's own line, which a perching bird carries
+/// raised, over legs that hang from the pelvis below the roll.
 fn roll_trunk(rig: &Rig, pose: &mut Pose, angle: f32) {
-    if angle == 0.0 || !rig.four_legged() {
+    if angle == 0.0 {
         return;
     }
     let Some(&loin) = rig.in_zone(Zone::Abdomen).first() else {
         return;
     };
-    pose.rotations[loin] *= Rot::z(-angle);
+    if rig.four_legged() {
+        pose.rotations[loin] *= Rot::z(-angle);
+    } else if rig.wings.is_some() {
+        super::winged::rests::roll(rig, pose, loin, angle);
+    }
 }
 
 /// Swings a tail by `turn` - its `x` across, its `y` up, in radians - shared
 /// evenly down it. See [`Target::Tail`].
 fn swing_tail(rig: &Rig, pose: &mut Pose, turn: Vec3) {
-    let tail = rig.in_zone(Zone::Tail);
+    let tail = rig.tail();
     if tail.is_empty() || (turn.x == 0.0 && turn.y == 0.0) {
         return;
     }

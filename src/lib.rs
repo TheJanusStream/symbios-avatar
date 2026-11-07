@@ -140,11 +140,11 @@ pub mod uv;
 pub mod wing;
 
 pub use anim::{
-    Airborne, Carriage, Clip, ClipLibrary, Continuity, Curve, Driven, Driver, DriverConfig,
-    Footholds, Footing, FootingConfig, Gait, Gaze, GazeConfig, Ground, Heading, Hold, Idle,
-    IdleConfig, Idled, Inertializer, JointTrack, Key, Leap, Leapt, LibraryError, Play, Pose,
-    PoseClip, Posed, Scale, Showing, Slot, Source, Space, Speed, Stride, Swim, Swum, Target, Track,
-    Turn, Walk, Walked, contacts_in, look_at, plant_feet,
+    Airborne, Carriage, Clip, ClipLibrary, Continuity, Curve, Driven, Driver, DriverConfig, Flight,
+    FlightMode, Flown, Footholds, Footing, FootingConfig, Gait, Gaze, GazeConfig, Ground, Heading,
+    Hold, Idle, IdleConfig, Idled, Inertializer, JointTrack, Key, Leap, Leapt, LibraryError, Play,
+    Pose, PoseClip, Posed, Scale, Showing, Slot, Source, Space, Speed, Stride, Swim, Swum, Target,
+    Track, Turn, Walk, Walked, contacts_in, look_at, plant_feet,
 };
 pub use avatar::{Avatar, AvatarConfig, AvatarMesh, Budget, MeshKind, Parts};
 pub use cage::{CageConfig, CageError, build_cage};
@@ -181,7 +181,7 @@ pub use subdiv::catmull_clark;
 /// otherwise name it without depending on `symbios-texture` at exactly the
 /// version this crate pins.
 pub use symbios_texture::generator::TextureMap;
-pub use wing::{Drive, WingParts, WingSide, Wings};
+pub use wing::{Drive, Gaits, Kinship, Stroke, WingParts, WingSide, Wings};
 
 /// How many extra times the front of the head is split.
 ///

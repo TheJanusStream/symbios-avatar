@@ -52,6 +52,11 @@ pub enum Pattern {
     /// The same four beats round the body, the leads on opposite sides:
     /// rotary, a dog's and a cat's.
     RotaryGallop(Lead),
+    /// A half-bound: the hinds together, the fores a little apart, the
+    /// leading one last, and a moment in the air after the fores push off -
+    /// a bat's on its wrists and a glider's, where a beast trots and
+    /// gallops (#424).
+    Bound(Lead),
 }
 
 /// The Froude numbers a quadruped changes up at: walk to trot, trot to canter,
@@ -82,6 +87,23 @@ const WALK_DUTY: (f32, f32) = (0.68, 0.58);
 const TROT_DUTY: (f32, f32) = (0.47, 0.39);
 const CANTER_DUTY: (f32, f32) = (0.38, 0.33);
 const GALLOP_DUTY: (f32, f32) = (0.32, 0.27);
+
+/// A bound's duty at a walk's end and at a gallop's top.
+/// Provenance: **chosen by render** (#424), a gallop's and a little less: a
+/// vampire bat bounds at 0.56 to 1.14 m/s, research-11 2.3, with no duty
+/// measured; a squirrel's half-bound has a long flight after the fores push
+/// off (bg, L). Between a canter's and a gallop's (0.40 to 0.30), a bat's
+/// and a glider's bounds left no moment with every foot off the ground.
+const BOUND_DUTY: (f32, f32) = (0.32, 0.24);
+
+/// When in a bound the leading fore lands after the hinds, and how far after
+/// the trailing fore.
+/// Provenance: **chosen** (#424): the fores land as the hinds lift, at the
+/// hinds' duty, so the cycle's one flight is the fores', who drive a bat's
+/// bound (research-11 2.3, "the
+/// forelimbs, not the hindlimbs, produce the propulsive force"); and a
+/// half-bound's fores a little apart, as a gallop's pair.
+const BOUND_FORES: (f32, f32) = (0.3, 0.06);
 
 /// The Froude number a gallop's duty reaches its least at.
 const GALLOP_TOP: f32 = 8.0;
@@ -147,6 +169,31 @@ impl Pattern {
         }
     }
 
+    /// The pattern a body that bounds moves in at `froude` (#424): a walk,
+    /// and from a beast's change into a trot, a bound on `lead`.
+    #[must_use]
+    pub fn bounding_at(froude: f32, lead: Lead) -> Self {
+        if froude >= UP[0] {
+            Self::Bound(lead)
+        } else {
+            Self::Walk
+        }
+    }
+
+    /// The pattern a body that bounds, moving in `before`, moves in at
+    /// `froude` (#424): [`Self::bounding_at`]'s on the way up, and back to a
+    /// walk only once the speed has fallen below four fifths of the change.
+    /// A lead once taken is kept.
+    #[must_use]
+    pub fn held_bounding(froude: f32, before: Self, lead: Lead) -> Self {
+        let lead = before.lead().unwrap_or(lead);
+        match before {
+            Self::Walk => Self::bounding_at(froude, lead),
+            _ if froude < UP[0] * DOWN => Self::Walk,
+            _ => Self::Bound(lead),
+        }
+    }
+
     /// Of `self` and `other`, the one lower on the speed axis.
     fn lower_of(self, other: Self) -> Self {
         if self.rank() <= other.rank() {
@@ -161,7 +208,7 @@ impl Pattern {
     fn rank(self) -> usize {
         match self {
             Self::Walk => 0,
-            Self::Trot | Self::Pace => 1,
+            Self::Trot | Self::Pace | Self::Bound(_) => 1,
             Self::Canter(_) => 2,
             Self::Gallop(_) | Self::RotaryGallop(_) => 3,
         }
@@ -174,6 +221,7 @@ impl Pattern {
             Self::Canter(_) => Self::Canter(lead),
             Self::Gallop(_) => Self::Gallop(lead),
             Self::RotaryGallop(_) => Self::RotaryGallop(lead),
+            Self::Bound(_) => Self::Bound(lead),
             Self::Walk | Self::Trot | Self::Pace => self,
         }
     }
@@ -182,17 +230,20 @@ impl Pattern {
     #[must_use]
     pub fn lead(self) -> Option<Lead> {
         match self {
-            Self::Canter(lead) | Self::Gallop(lead) | Self::RotaryGallop(lead) => Some(lead),
+            Self::Canter(lead)
+            | Self::Gallop(lead)
+            | Self::RotaryGallop(lead)
+            | Self::Bound(lead) => Some(lead),
             Self::Walk | Self::Trot | Self::Pace => None,
         }
     }
 
     /// Whether a body moving in it has a moment with no foot down at every
-    /// speed: a canter's and a gallop's. A trot flies once its duty falls
-    /// below a half; a walk never does.
+    /// speed: a canter's, a gallop's and a bound's. A trot flies once its
+    /// duty falls below a half; a walk never does.
     #[must_use]
     pub fn flies(self) -> bool {
-        self.rank() >= 2
+        self.rank() >= 2 || matches!(self, Self::Bound(_))
     }
 
     /// The share of its cycle each foot spends down at `froude`.
@@ -203,6 +254,7 @@ impl Pattern {
             Self::Trot | Self::Pace => ((UP[0], UP[1]), TROT_DUTY),
             Self::Canter(_) => ((UP[1], UP[2]), CANTER_DUTY),
             Self::Gallop(_) | Self::RotaryGallop(_) => ((UP[2], GALLOP_TOP), GALLOP_DUTY),
+            Self::Bound(_) => ((UP[0], GALLOP_TOP), BOUND_DUTY),
         };
         let along = ((froude - band.0) / (band.1 - band.0)).clamp(0.0, 1.0);
         slow + (fast - slow) * along
@@ -244,17 +296,22 @@ impl Pattern {
             (Self::RotaryGallop(_), Limb::HindLeft) => GALLOP_PAIR,
             (Self::RotaryGallop(_), Limb::ForeLeft) => 0.5,
             (Self::RotaryGallop(_), Limb::ForeRight) => 0.5 + GALLOP_PAIR,
+            // The hinds together, then the fores, the right last.
+            (Self::Bound(_), Limb::HindLeft | Limb::HindRight) => 0.0,
+            (Self::Bound(_), Limb::ForeLeft) => BOUND_FORES.0,
+            (Self::Bound(_), Limb::ForeRight) => BOUND_FORES.0 + BOUND_FORES.1,
         }
     }
 
     /// Every pattern a body can be asked for, on the right lead.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Walk,
         Self::Trot,
         Self::Pace,
         Self::Canter(Lead::Right),
         Self::Gallop(Lead::Right),
         Self::RotaryGallop(Lead::Right),
+        Self::Bound(Lead::Right),
     ];
 
     /// Its name, for an instrument's flag and a viewer's row.
@@ -267,6 +324,7 @@ impl Pattern {
             Self::Canter(_) => "canter",
             Self::Gallop(_) => "gallop",
             Self::RotaryGallop(_) => "rotary gallop",
+            Self::Bound(_) => "bound",
         }
     }
 }

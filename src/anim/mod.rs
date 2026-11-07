@@ -51,7 +51,12 @@
 //!   at the speed in hand.
 //! * [`Clip`] — authored motion, described by semantic queries and normalised
 //!   goals so one description serves every body. [`gesture`] is a person's
-//!   roster of them and [`emote`] a beast's (#370).
+//!   roster of them, [`emote`] a beast's (#370) and [`winged::rests`] a
+//!   bird's, a bat's and a glider's, their rests among them (#424).
+//! * [`winged`] - what a winged body adds to all of it (#424): its gaits on
+//!   the ground, its flight as a source of its own ([`Flight`] on
+//!   [`Inputs::flight`]), its rests and emotes, and the order the driver
+//!   takes the three in.
 //! * [`PoseClip`] — the opposite trade, and it exists because the first one
 //!   cannot be walked back: motion that was performed on a body carries joint
 //!   angles no query recovers, so an imported clip keeps them. Addressed by
@@ -109,6 +114,7 @@ pub mod spring;
 pub mod swim;
 pub mod transition;
 pub mod turn;
+pub mod winged;
 
 pub use blend::Inertializer;
 pub use clip::{Clip, Key, Scale, Space, Target, Track};
@@ -137,3 +143,4 @@ pub use spring::{SpringConfig, Springs};
 pub use swim::{Swim, Swum};
 pub use transition::{Entry, Family, Frames};
 pub use turn::Turn;
+pub use winged::flight::{Flight, FlightMode, Flown};

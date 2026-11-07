@@ -99,6 +99,7 @@ use super::spring::{SpringConfig, Springs};
 use super::swim::Swim;
 use super::transition::{self, Family};
 use super::turn::{TURN_REACH, Turn};
+use super::winged::flight::{Aloft, Flight, Flown};
 use super::{Lead, Pattern, Target, gesture};
 
 /// The yaw rate a body standing still must turn at to step round rather than
@@ -121,6 +122,44 @@ pub const PIVOT_FROM: f32 = 0.15;
 /// lands — on exactly the turn asked for, and so on exactly zero when a turn
 /// ends, which is the straight stride to the bit.
 const TURN_SETTLED: f32 = 1e-4;
+
+/// The frame rate every motion here was measured and judged at, in frames a
+/// second: what a per-frame step is scaled from at any other (#415).
+pub const REFERENCE_RATE: f32 = 60.0;
+
+/// [`transition::carry_cycle`] from a gait that stepped at `stepped` but whose
+/// speed reads `bare`, onto `into`, with the gain the mismatch makes in a
+/// frame at [`REFERENCE_RATE`] taken to its `share`-th power (#415).
+///
+/// **Phase by phase**, as the carry maps it: a stance's progress is scaled by
+/// `into / bare` a frame, and the rest of a swing by `(1 - into) / (1 -
+/// bare)`, each the change of duty the gait truly made times the mismatch's
+/// share of it - so a second's frames gain what a second at the reference
+/// rate does, whichever phase the leading foot is in. A gait that never
+/// lifts a foot has no phases to scale, and is carried as before.
+fn carry_scaled(into: &Gait, (bare, stepped): (f32, f32), share: f32, cycle: f32) -> f32 {
+    let duty = into.duty;
+    let inside = |value: f32| value > 0.0 && value < 1.0;
+    if !(inside(duty) && inside(bare) && inside(stepped)) {
+        let from = Gait {
+            duty: bare,
+            ..into.clone()
+        };
+        return transition::carry_cycle(&from, into, cycle);
+    }
+    let first = into.offsets.first().copied().unwrap_or(0.0);
+    let local = (cycle - first).rem_euclid(1.0);
+    // Where the stance ends, as this frame's share of the mismatch has it.
+    let stance = stepped * (bare / stepped).det_powf(share);
+    let moved = if local < stance {
+        local / stance * duty
+    } else {
+        let rest =
+            (1.0 - duty) / (1.0 - stepped) * ((1.0 - stepped) / (1.0 - bare)).det_powf(share);
+        (1.0 - (1.0 - local) * rest).max(duty)
+    };
+    (first + moved).rem_euclid(1.0)
+}
 
 /// How much longer than [`DriverConfig::blend`] a four-legged body takes to
 /// change its pattern, a walk breaking into a trot (#412). Provenance:
@@ -260,6 +299,9 @@ pub enum Source {
     Swim,
     /// A gesture riding over whatever else the body is doing.
     Gesture,
+    /// A winged body held in the air by its host (#424): beating, gliding,
+    /// diving, flaring and landing, as [`Inputs::flight`] says.
+    Fly,
 }
 
 impl Source {
@@ -279,6 +321,7 @@ impl Source {
             Source::Leap => Some(Family::Jump),
             Source::Swim => Some(Family::Swim),
             Source::Gesture => Some(Family::Expressive),
+            Source::Fly => Some(Family::Flight),
         }
     }
 
@@ -584,6 +627,16 @@ pub struct Inputs<'a> {
     pub pattern: Option<Pattern>,
     /// The walk's ablation switches.
     pub walk: WalkFlags,
+    /// A winged body in the air, and what it is doing there (#424), or
+    /// [`None`] on the ground: the host's mode, the air past it, its beat's
+    /// phase if the host keeps it, and the time to what it lands on. See
+    /// [`super::winged::flight`].
+    ///
+    /// **Read only on a body with wings** ([`Rig::wings`]), and under the
+    /// water and a shown motion, which outrank it; while it is given, the
+    /// body is [`Source::Fly`] and the vertical speed starts no leap. A
+    /// person or a beast given one moves exactly as it would without it.
+    pub flight: Option<Flight>,
     /// How fast the body is turning, in radians a second, positive toward its
     /// own left.
     ///
@@ -658,6 +711,7 @@ impl Default for Inputs<'_> {
             gait: None,
             pattern: None,
             walk: WalkFlags::default(),
+            flight: None,
             turn: 0.0,
             lids: None,
             face: Expression::NEUTRAL,
@@ -686,6 +740,7 @@ impl std::fmt::Debug for Inputs<'_> {
             .field("gait", &self.gait)
             .field("pattern", &self.pattern)
             .field("walk", &self.walk)
+            .field("flight", &self.flight)
             .field("turn", &self.turn)
             .field("lids", &self.lids)
             .field("face", &self.face)
@@ -898,6 +953,10 @@ pub struct Driver {
     /// Whether the gait last frame was a pivot (#361) — kept so a change
     /// between stepping round and walking off blends.
     pivoted: bool,
+    /// How long the frame that drew [`Self::current`] was, in seconds: the
+    /// time the last two drawn poses lie apart, which a blend reads their
+    /// velocity over (#424). Nought before any frame.
+    drawn_over: f32,
     /// The leap in progress, or [`None`] while the body is on the ground.
     airborne: Option<Airborne>,
     /// The frame before last, as drawn — the velocity a transition carries
@@ -957,6 +1016,9 @@ pub struct Driver {
     /// `quadruped::girdle_spacing`. What was ridden and stood on is forgotten
     /// when this changes.
     girdled: Option<[f32; 4]>,
+    /// A winged body's flight, while its host flies it (#424): its beat's
+    /// clock and every value its pose eases through.
+    aloft: Option<Aloft>,
 }
 
 /// How far one paddle carries a swimming beast, in its leg's reach (#370).
@@ -994,6 +1056,7 @@ impl Driver {
             paced: None,
             turning: 0.0,
             pivoted: false,
+            drawn_over: 0.0,
             airborne: None,
             previous: None,
             current: None,
@@ -1012,6 +1075,7 @@ impl Driver {
             grounded: None,
             ridden: None,
             girdled: None,
+            aloft: None,
         }
     }
 
@@ -1078,6 +1142,13 @@ impl Driver {
         self.airborne
     }
 
+    /// What a flying body was posed doing on the last frame driven, or
+    /// [`None`] when it was not flying (#424).
+    #[must_use]
+    pub fn flight(&self, rig: &Rig) -> Option<Flown> {
+        self.aloft.as_ref().map(|aloft| aloft.flown(rig))
+    }
+
     /// The gesture playing and how long it has played, in seconds: up to
     /// [`DriverConfig::gesture_secs`], or for a beast's state as long as the
     /// state lasts, going down, held and getting up (#377).
@@ -1094,13 +1165,16 @@ impl Driver {
     /// of a sit or a lying down and keeps it from going into one, and this is
     /// what [`Self::drive`] asks, so a caller that has to know beforehand reads
     /// the same answer. Only [`Inputs::velocity`], [`Inputs::showing`] and
-    /// [`Inputs::swimming`] are read. Asked before a frame, it does not yet see
-    /// a leap that frame's own vertical speed will start.
+    /// [`Inputs::swimming`] are read, and whether the body is flying (#424) -
+    /// a winged body its host flies, never one with no wings. Asked before a
+    /// frame, it does not yet see a leap that frame's own vertical speed will
+    /// start, nor a flight that frame begins.
     #[must_use]
     pub fn stirred(&self, inputs: &Inputs<'_>) -> bool {
         Vec2::new(inputs.velocity.x, inputs.velocity.z).length() >= STIR
             || self.airborne.is_some()
             || inputs.swimming
+            || self.aloft.is_some()
             || matches!(inputs.showing, Some(Showing::Leap(_) | Showing::Swim(_)))
     }
 
@@ -1246,7 +1320,47 @@ impl Driver {
         if swimming {
             self.airborne = None;
         }
-        self.advance_airborne(rig, vertical, delta, swimming);
+        // **A winged body its host flies is in the air for as long as it
+        // says** (#424): no leap is started or kept under it, and the water
+        // and a shown motion outrank it. A body with no wings ignores it.
+        //
+        // **The order a winged body is driven in** (`anim::winged` states it
+        // whole): the water and a shown motion; then a flight, which plays no
+        // rest or emote - one asked is let go, one playing ends (below, where
+        // the gesture is started); then a leap, the gait or the idle, with a
+        // rest or an emote laid over them. A landing hands back when the host
+        // gives no flight: the gait or the idle carries the next frame,
+        // blended from the landing's last pose as any change of source is.
+        let flight = inputs
+            .flight
+            .filter(|_| rig.wings.is_some() && !swimming && inputs.showing.is_none());
+        if let Some(flight) = flight {
+            self.airborne = None;
+            let entered = match self.aloft.as_mut() {
+                Some(_) => true,
+                None => match Aloft::enter(rig, &flight, config.carriage) {
+                    Some(aloft) => {
+                        self.aloft = Some(aloft);
+                        true
+                    }
+                    None => false,
+                },
+            };
+            if entered && let Some(aloft) = self.aloft.as_mut() {
+                aloft.step(
+                    rig,
+                    &flight,
+                    inputs.velocity,
+                    self.turning,
+                    delta,
+                    config.carriage,
+                );
+            }
+        } else {
+            self.aloft = None;
+            self.advance_airborne(rig, vertical, delta, swimming);
+        }
+        let aloft = self.aloft.is_some();
         let airborne = self.airborne.is_some();
         if !airborne {
             self.landing_from = None;
@@ -1268,7 +1382,7 @@ impl Driver {
             self.ridden = None;
         }
         let read = super::quadruped::girdle_ground(rig, &ground);
-        let flying = self.airborne.is_some_and(|air| !air.landed);
+        let flying = self.airborne.is_some_and(|air| !air.landed) || aloft;
         let shift = if swimming {
             self.ridden = None;
             None
@@ -1282,7 +1396,7 @@ impl Driver {
             self.ridden = Some(ridden);
             super::quadruped::Shift::between(rig, read, ridden)
         };
-        if !airborne && !swimming {
+        if !airborne && !swimming && !aloft {
             self.grounded = self.ridden.flatten();
         }
         // The ground as it came, which a landing plants on (#413).
@@ -1322,7 +1436,9 @@ impl Driver {
             let speed = Speed::new(rig, paced);
             match inputs.pattern.filter(|_| speed.pattern().is_some()) {
                 Some(asked) => speed.in_pattern(asked),
-                None => speed.held(rig, self.gaiting.and_then(Speed::pattern), lead),
+                None => speed
+                    .held(rig, self.gaiting.and_then(Speed::pattern), lead)
+                    .hop_held(rig, self.gaiting),
             }
         });
         // How far the body actually travels for the pace its stride is built
@@ -1414,6 +1530,8 @@ impl Driver {
         let legs = pacing.map(|speed| Self::walking(rig, inputs, speed, turn, travel));
         let (locomotion, derived_cadence) = if swimming {
             (Source::Swim, stroke_rate())
+        } else if aloft {
+            (Source::Fly, 0.0)
         } else if showing_leap || airborne {
             (Source::Leap, 0.0)
         } else if let Some((_, _, cadence)) = legs.as_ref() {
@@ -1469,19 +1587,40 @@ impl Driver {
         // A four-legged body changing its pattern - a walk breaking into a
         // trot, a canter into a gallop - moves its feet to where the new
         // pattern has them, and the blend below takes them there (#370).
+        // And so does a bird taking up a hop or putting it down (#424).
         let repatterned = matches!(
             (self.gaiting.and_then(Speed::pattern), effort.and_then(Speed::pattern)),
             (Some(before), Some(now)) if before != now
+        ) || matches!(
+            (self.gaiting, effort),
+            (Some(before), Some(now)) if before.hops_on(rig) != now.hops_on(rig)
         );
+        //
+        // **What a frame gains, a second gains at any rate** (#415): a pivot's
+        // speed is a standstill's turned, which knows no pattern, so its bare
+        // duty is a person's while a four-legged gait steps at its pattern's,
+        // and mapped from the one onto the other every frame the turn eases,
+        // the clock gains a twentieth of its stance a frame - at 144 frames a
+        // second two and a half times what it gains at 60, a horse's feet
+        // half a metre apart between the two. The gain is held to what it is
+        // at [`REFERENCE_RATE`] a second, the rate every pivot was measured
+        // and judged at, so a pivot there is the one it was to the bit; a
+        // duty its gait steps at is mapped from exactly, as it always was.
         if let (Some(speed), Some(before)) = (effort, self.gaiting)
             && before != speed
         {
             let into = speed.gait(rig);
-            let from = Gait {
-                duty: before.duty(),
-                ..into.clone()
+            let (bare, stepped) = (before.duty(), before.duty_on(rig));
+            let share = delta * REFERENCE_RATE;
+            self.cycle = if bare == stepped || share == 1.0 {
+                let from = Gait {
+                    duty: bare,
+                    ..into.clone()
+                };
+                transition::carry_cycle(&from, &into, self.cycle)
+            } else {
+                carry_scaled(&into, (bare, stepped), share, self.cycle)
             };
-            self.cycle = transition::carry_cycle(&from, &into, self.cycle);
         }
         self.gaiting = effort;
 
@@ -1493,7 +1632,7 @@ impl Driver {
         let advanced = if let Some(held) = inputs.cycle {
             self.cycle = held;
             ((held - last + 0.5).rem_euclid(1.0) - 0.5).max(0.0)
-        } else if !airborne || swimming {
+        } else if (!airborne || swimming) && !aloft {
             self.cycle = (self.cycle + delta * cadence).fract();
             delta * cadence
         } else {
@@ -1504,7 +1643,16 @@ impl Driver {
         // the body being moved, leaving the ground or swimming gets it up in a
         // hurry, from wherever it is.
         let stirred = self.stirred(inputs);
-        self.start_gesture(rig, inputs.gesture, stirred);
+        // A flying body plays no gesture: its arms are its wings (#424). A
+        // rest or an emote asked mid-flight is let go rather than kept for
+        // the landing, and one playing when a flight begins - a flight given
+        // mid-perch - ends here, the change of source to [`Source::Fly`]
+        // blending the body out of it.
+        if aloft {
+            self.gesture = None;
+        } else {
+            self.start_gesture(rig, inputs.gesture, stirred);
+        }
         // Advanced and retired before the pose is built, so a gesture that
         // finished this frame does not get one last frame of overlay.
         let mut up = None;
@@ -1584,6 +1732,11 @@ impl Driver {
                 }
             }
             Source::Gesture => {}
+            Source::Fly => {
+                if let Some(aloft) = &self.aloft {
+                    aloft.pose(rig, &mut pose, ground, config.carriage);
+                }
+            }
             Source::Idle => {
                 // The whole layer through one call, which advances the schedule
                 // and poses every layer together: a stage a caller has to
@@ -1725,11 +1878,23 @@ impl Driver {
         {
             // The pose either side of the turn, rather than a share of the turn:
             // `look_at`'s last joint always completes what is asked of it.
-            let before = (idled.glance_share < 1.0).then(|| pose.rotations.clone());
-            look_at(rig, &mut pose, target, &super::idle::glance_config());
+            //
+            // **A bird looks with its head** (#424): its eyes barely turn, so
+            // its head goes further, and in a quick saccade it then holds.
+            let bird = super::winged::rests::looks_with_head(rig);
+            let (config, share) = if bird {
+                (
+                    super::winged::rests::glance_config(),
+                    super::winged::rests::head_saccade(idled.glance_share),
+                )
+            } else {
+                (super::idle::glance_config(), idled.glance_share)
+            };
+            let before = (share < 1.0).then(|| pose.rotations.clone());
+            look_at(rig, &mut pose, target, &config);
             if let Some(before) = before {
                 for (turned, was) in pose.rotations.iter_mut().zip(before) {
-                    *turned = det::slerp(was, *turned, idled.glance_share);
+                    *turned = det::slerp(was, *turned, share);
                 }
             }
         }
@@ -1790,7 +1955,16 @@ impl Driver {
             } else {
                 blend
             };
-            self.transition = Some(Inertializer::start(previous, current, &pose, delta, blend));
+            // **Over the frame the two were drawn across**, not this one
+            // (#424): read over a short frame after a long one, a stop's
+            // carried velocity came out three times what the body moved at,
+            // and a crow's thigh jumped 50 mm in the first frame of its stop.
+            let over = if self.drawn_over > 0.0 {
+                self.drawn_over
+            } else {
+                delta
+            };
+            self.transition = Some(Inertializer::start(previous, current, &pose, over, blend));
         }
         self.source = source;
         let mut posed = match &mut self.transition {
@@ -1803,7 +1977,17 @@ impl Driver {
                 pose.clone()
             }
         };
+        // A winged body's drawn toes on the ground through the blend too
+        // (#424): see `winged::ground::keep_toes_up`. **The gait's and the
+        // idle's frames only**, the blends into them included: a flight's and
+        // a rest's or an emote's poses own their feet - a landing plants
+        // them, a perch grips them, a curl folds them under (the order in
+        // `anim::winged`).
+        if !matches!(source, Source::Fly | Source::Gesture) {
+            super::winged::ground::keep_toes_up(rig, &mut posed, &ground);
+        }
         self.previous = self.current.take();
+        self.drawn_over = delta;
         self.current = Some(posed.clone());
 
         // The ears follow late (#370): their spring chains are stepped over
@@ -1826,6 +2010,22 @@ impl Driver {
 
         // The blink rides AFTER the blend — see `Inputs::eyes`.
         let closure = self.closure(inputs, delta);
+        // **A winged body asleep shuts its eyes** (#424): a roosting bird's
+        // and a resting bat's or glider's lids close as it goes down and open
+        // as it gets up, over whatever the blink is doing.
+        let closure = self
+            .gesture
+            .as_ref()
+            .and_then(|active| {
+                let resting = active.resting.as_ref()?;
+                let asleep = super::winged::rests::sleeps(rig, &active.name)?;
+                let through = match resting.phase {
+                    Phase::Up => 1.0 - resting.through,
+                    _ => resting.through,
+                };
+                Some(closure.max(asleep * through.clamp(0.0, 1.0)))
+            })
+            .unwrap_or(closure);
         if let Some(eyes) = inputs.eyes {
             eyes.blink(&mut posed, closure);
         }
@@ -2208,6 +2408,7 @@ impl Driver {
         self.transition = None;
         self.ridden = None;
         self.previous = self.current.take();
+        self.drawn_over = delta;
         self.current = Some(posed.clone());
         Driven {
             pose: posed,
