@@ -21,8 +21,10 @@
 //!
 //! **A glider's patagium** runs from the outside of the forefoot to the
 //! ankle along the flank (S30, S31), on a body with no digits of its own: it
-//! roots in the flank and rides the fore and hind legs, its free edge
-//! scalloped between the forefoot and the ankle.
+//! roots in the flank and, spread, reaches along the fore and hind legs, its
+//! free edge scalloped between the forefoot and the ankle. **Folded, it is a
+//! narrow band on the flank** (#434), a few millimetres off the skin and
+//! going as the skin goes: see [`Seam`] and [`Hinges`].
 //!
 //! **Laid out spread, rested by its binding's inverse** (see [`super`]): a
 //! membrane's shape is simple spread and its fold is what its weights make
@@ -39,10 +41,11 @@ use super::{
     Arm, Book, Helper, Hold, Kind, Plane, Spread, Trunk, along_bones, along_chain, frame, swing,
     turn,
 };
-use crate::det;
+use crate::anim::pose::{Pose, Posed};
+use crate::det::{self, Rot};
 use crate::mesh::{PolyMesh, VertexSkin};
 use crate::plan::{Limb, Zone};
-use crate::rig::{Rig, SkinWeights};
+use crate::rig::{Rig, Role, SkinWeights};
 
 /// One of a bat's spars, II to V: its bones' lengths as shares of the
 /// forearm (metacarpal, then the two phalanges), where it points spread
@@ -183,10 +186,68 @@ const SCALLOP: f32 = 0.10;
 
 /// How many spars of its own a plagiopatagium or a glider's patagium is
 /// stretched on between the arm and the leg (research-11 7: "an extra spar
-/// per digit"): each a two-bone chain from the flank to the trailing edge,
+/// per digit"): a bat's each a chain from the flank to the trailing edge,
 /// folded at rest and straight spread, so the membrane between neighbours
 /// turns by a share of the whole and its fold stays against the body.
 const SPARS: usize = 3;
+
+/// How many of a glider's spars reach its free edge between the forefoot's
+/// and the ankle's (#434), beside the seven that reach round its legs
+/// ([`Seam`]): the free edge scalloped across four strips, as W2's three
+/// spars scalloped it. Provenance: **chosen by render**.
+const GLIDER_SPARS: usize = 3;
+
+/// How far above the line from the shoulder joint to the hip joint a
+/// glider's patagium roots along its flank, as a share of the trunk (#434):
+/// about the flank's widest, so the fold hangs from it down a skin that
+/// falls away under it. Provenance: **chosen by render**.
+const SEAM_RISE: f32 = 0.1;
+
+/// How far behind the shoulder joint and ahead of the hip joint a glider's
+/// seam ends, at the least and the most, as shares of the trunk (#434):
+/// where the skin across is the trunk's own ([`TRUNK_SKIN`]), clear of the
+/// upper arm and the thigh beside the flank, which move with their legs and
+/// would carry the fold away or close over it. Provenance: **measured**
+/// (`winged_rests`' trunk test).
+const SEAM_ENDS: [f32; 2] = [0.3, 0.5];
+
+/// How much of the skin across from a glider's seam's end its trunk holds,
+/// and how far the fold's end stands clear of the upper arm's and the
+/// thigh's bones past their radius, as a share of the trunk ([`SEAM_ENDS`]).
+const TRUNK_SKIN: f32 = 0.95;
+/// See [`TRUNK_SKIN`].
+const LIMB_CLEAR: f32 = 0.05;
+
+/// How far down the flank from its seam a glider's folded patagium reaches,
+/// and how far off the skin it lies there, as shares of the trunk (#434):
+/// about a centimetre and a quarter, and three millimetres, on the default
+/// glider. Provenance: **chosen by render**; the clearance **measured**
+/// (`winged_rests`' trunk test).
+const FOLD_DEPTH: f32 = 0.03;
+/// See [`FOLD_DEPTH`].
+const FOLD_CLEAR: f32 = 0.018;
+/// How far off the skin a glider's fold lies along its seam, as a share of
+/// [`FOLD_CLEAR`] (#434).
+const ROOT_CLEAR: f32 = 0.8;
+
+/// How far every joint of a body is bent, in radians, to ask which follows
+/// the skin at a glider's spar root best ([`Bent`]): about as far as a curl
+/// bends the spine at each joint. Provenance: **chosen**.
+const BEND: f32 = 0.4;
+
+/// How far each crank that carries a glider's membrane out along a spar
+/// turns between the fold and the spread, in radians ([`Seam`]): a quarter
+/// turn, so its carrier rests within its chord of its root, half of it up
+/// the flank, which no carrier may rest above the highest joint for
+/// ([`LONGER`]).
+const CRANK: f32 = std::f32::consts::FRAC_PI_2;
+
+/// How many times longer a glider's carriers carry the membrane than its
+/// spars reach, and how many times less of any point of the fold each holds
+/// ([`Seam`]): so folded, the hinges, which follow the skin, hold at least
+/// half of every point. Shorter where a carrier would rest above every
+/// joint of the body. Provenance: **measured** (`winged_rests`' trunk test).
+const LONGER: f32 = 2.0;
 
 /// How many points each edge of a membrane is sampled at, and the grid it is
 /// laid out on: rows from root to trailing edge, columns across each strip
@@ -260,6 +321,10 @@ pub(crate) struct Wing {
     hind: Option<[usize; 3]>,
     /// The membrane's own spars, flank to trailing edge, root first.
     spars: Vec<Vec<usize>>,
+    /// A glider's spars (#434), front to back, and the hinges its fold
+    /// hangs from.
+    seams: Vec<Seam>,
+    hinges: Hinges,
     /// The joints splitting a bat's knuckles' turns (#424).
     helpers: Vec<Helper>,
     /// The forearm's length, which the spars are sized by.
@@ -446,6 +511,11 @@ pub(crate) fn bat(rig: &mut Rig, book: &mut Book, trunk: &Trunk, arm: &Arm) -> W
         thumb: Some([root, knuckle, tip]),
         hind,
         spars: Vec::new(),
+        seams: Vec::new(),
+        hinges: Hinges {
+            joints: Vec::new(),
+            carriers: Vec::new(),
+        },
         helpers,
         forearm,
         trunk: trunk.length,
@@ -472,6 +542,11 @@ pub(crate) fn glider(rig: &mut Rig, book: &mut Book, trunk: &Trunk, arm: &Arm) -
         thumb: None,
         hind,
         spars: Vec::new(),
+        seams: Vec::new(),
+        hinges: Hinges {
+            joints: Vec::new(),
+            carriers: Vec::new(),
+        },
         helpers: Vec::new(),
         forearm,
         trunk: trunk.length,
@@ -479,18 +554,180 @@ pub(crate) fn glider(rig: &mut Rig, book: &mut Book, trunk: &Trunk, arm: &Arm) -
     }
 }
 
-/// Where a two-bone chain from `root` to `tip` bends, toward `pole`, its
-/// bones `a` and `b` long: the cosine by the law of cosines, the sine by the
-/// root, no trigonometry.
-fn bend(root: Vec3, tip: Vec3, a: f32, b: f32, pole: Vec3) -> Vec3 {
-    let span = tip - root;
-    let length = span.length().max(1e-6);
-    let along = span / length;
-    let reach = length.clamp((a - b).abs() + 1e-4, (a + b) * 0.999);
-    let across = (pole - along * pole.dot(along)).normalize_or(along.any_orthonormal_vector());
-    let cos = ((a * a + reach * reach - b * b) / (2.0 * a * reach)).clamp(-1.0, 1.0);
-    let sin = (1.0 - cos * cos).max(0.0).sqrt();
-    root + (along * cos + across * sin) * a
+/// **One of a glider's spars** (#434): a line from its root on the seam
+/// along the flank out to the patagium's spread outline - the shoulder, the
+/// elbow, the wrist and the forefoot in front, the free edge between, the
+/// ankle, the knee and the hip behind - and, folded, a short line from the
+/// same root down the flank to `foot`, just off the skin. A pose turns joints
+/// and never shortens a bone, so the membrane is carried out along the spar
+/// by a carrier that turns without carrying it round: hung from a pin at the
+/// root that turns by the hinge's turn and a crank's ([`CRANK`]), it turns
+/// back to the hinge's turn alone, so it holds what it carries turned as the
+/// hinges turn it and moved by the crank's chord. It holds at most `scale` of
+/// any point of the fold, the rest the hinges hold ([`Hinges`]), and its
+/// chord is as much longer: so folded, where the hinges follow the skin, the
+/// carrier's own joint moves the fold that much the less.
+struct Seam {
+    root: Vec3,
+    foot: Vec3,
+    carrier: usize,
+    scale: f32,
+}
+
+/// What stands in an edge's binding for the hinges ([`Hinges`]), which each
+/// point of the fold shares as the skin under it is shared.
+const HINGES: usize = usize::MAX;
+
+impl Seam {
+    /// The spar as an edge of the membrane, `count` points root to tip: each
+    /// resting its share of the way down the fold, held by the carrier by
+    /// that share of `scale` and by the hinges for the rest.
+    fn edge(&self, count: usize) -> Edge {
+        (0..count)
+            .map(|index| {
+                let u = index as f32 / (count - 1).max(1) as f32;
+                let carried = u * self.scale;
+                (
+                    self.root + (self.foot - self.root) * u,
+                    Hold(vec![(HINGES, 1.0 - carried), (self.carrier, carried)]),
+                )
+            })
+            .collect()
+    }
+}
+
+/// **A glider's hinges** (#434): one for each joint holding the skin along
+/// its seam, hung from that joint, each turning the fold onto the spread wing
+/// alike about one line - the seam - so a point of the fold held by them as
+/// the skin under it is held by their joints goes, folded, exactly as that
+/// skin goes, and spread, exactly where one hinge would take it.
+struct Hinges {
+    /// Each joint and its hinge.
+    joints: Vec<(usize, usize)>,
+    /// Each carrier and the joint it hangs from ([`Seam`]).
+    carriers: Vec<(usize, usize)>,
+}
+
+impl Hinges {
+    /// The binding of a point of the fold resting at `rest`, from `mixed`,
+    /// its carriers' shares and [`HINGES`]'s: the carriers kept whole, and the
+    /// hinges' share split as the skin nearest is held, less what the
+    /// carriers' own joints hold of it already, among as many of the joints
+    /// it still wants most as the four influences leave room for. Folded, a
+    /// carrier moves as its joint does, so the point then goes as near as four
+    /// joints can take it to as the skin goes.
+    fn hold(&self, body: &PolyMesh, weights: &SkinWeights, rest: Vec3, mixed: &Hold) -> VertexSkin {
+        let carriers: Vec<(usize, f32)> = mixed
+            .0
+            .iter()
+            .copied()
+            .filter(|&(joint, share)| joint != HINGES && share > 1e-6)
+            .collect();
+        let carried: f32 = carriers.iter().map(|&(_, share)| share).sum();
+        let room = crate::rig::skin::MAX_INFLUENCES.saturating_sub(carriers.len());
+        let Hold(skin) = nearest_hold(body, weights, rest);
+        let mut shares: Vec<(usize, f32)> = skin
+            .iter()
+            .filter_map(|&(joint, share)| {
+                let own: f32 = carriers
+                    .iter()
+                    .filter(|&&(carrier, _)| {
+                        self.carriers
+                            .iter()
+                            .any(|&(of, by)| of == carrier && by == joint)
+                    })
+                    .map(|&(_, carried)| carried)
+                    .sum();
+                self.joints
+                    .iter()
+                    .find(|&&(of, _)| of == joint)
+                    .map(|&(_, hinge)| (hinge, share - own))
+            })
+            .filter(|&(_, share)| share > 1e-6)
+            .collect();
+        shares.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        shares.truncate(room.max(1));
+        let total: f32 = shares.iter().map(|&(_, share)| share).sum();
+        let mut hold = carriers;
+        if total > 1e-6 {
+            hold.extend(
+                shares
+                    .into_iter()
+                    .map(|(hinge, share)| (hinge, share / total * (1.0 - carried))),
+            );
+        } else if let Some(&(_, hinge)) = self.joints.first() {
+            hold.push((hinge, 1.0 - carried));
+        }
+        Hold(hold).cut()
+    }
+}
+
+/// How a glider's fold is laid (#434): on `flank`, off the skin by `clear`
+/// at its root and at its free edge, held by `hinges` as the skin `body` and
+/// `weights` bind, its free edge scalloped across the strips `scallop`.
+struct Fold<'a> {
+    flank: &'a Flank,
+    clear: [f32; 2],
+    hinges: &'a Hinges,
+    weights: &'a SkinWeights,
+    scallop: (usize, usize),
+}
+
+/// **Which joint a glider's carrier hangs from** (#434): the one of those
+/// holding the skin at its spar's root that follows that skin best, measured
+/// with every joint of the body bent alike, each way about each axis in turn
+/// ([`BEND`]). A carrier moves rigidly with its joint, and the fold it holds
+/// lies on the skin: hung from the trunk joint holding the most skin at the
+/// root, a fold went 27 mm into the shoulder in a curl, where the skin is the
+/// shoulder blade's.
+struct Bent {
+    poses: Vec<Posed>,
+}
+
+impl Bent {
+    fn of(rig: &Rig) -> Self {
+        // Each way about each axis, so the two sides choose alike.
+        let poses = [Vec3::X, Vec3::Y, Vec3::Z, -Vec3::X, -Vec3::Y, -Vec3::Z]
+            .into_iter()
+            .map(|axis| {
+                let mut pose = Pose::rest(rig);
+                let turn = Rot::axis_angle(axis, BEND);
+                for (joint, rotation) in pose.rotations.iter_mut().enumerate() {
+                    if rig.joints[joint].role == Role::Deform {
+                        *rotation = turn;
+                    }
+                }
+                pose.forward(rig)
+            })
+            .collect();
+        Self { poses }
+    }
+
+    /// The joint of `hold`, the skin's binding at `at`, that moves `at` as the
+    /// skin moves it, the furthest it strays across the bends the least.
+    fn follower(&self, rig: &Rig, hold: &Hold, at: Vec3) -> usize {
+        let skin = hold.cut();
+        let weights = SkinWeights {
+            vertices: vec![skin],
+        };
+        let strays = |joint: usize| {
+            self.poses
+                .iter()
+                .map(|posed| {
+                    let moved = posed.deform(rig, &[at], &weights)[0];
+                    let rigid = posed.positions[joint]
+                        + posed.rotations[joint] * (at - rig.joints[joint].position);
+                    moved.distance(rigid)
+                })
+                .fold(0.0, f32::max)
+        };
+        hold.0
+            .iter()
+            .filter(|&&(_, share)| share >= 0.05)
+            .map(|&(joint, _)| (joint, strays(joint)))
+            .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+            .map_or_else(|| skin[0].joint as usize, |(joint, _)| joint)
+    }
 }
 
 /// One edge of a membrane, root to trailing edge: each point where it rests
@@ -508,90 +745,250 @@ impl Wing {
     /// half turn apart on a glider-led cross with long wings at about 0.47
     /// of the extension, where the membrane between them flipped by three
     /// quarters of a metre. Blended as a bat's are, they came close to
-    /// flipping across the whole extension instead. What holds them now is
+    /// flipping across the whole extension instead. What holds a bat's now is
     /// each turn's arc in the body's frame, one schedule for the arm, the leg
-    /// and the spars, and the trim `super::fit` makes.
+    /// and the spars, and the trim `super::fit` makes; a glider's membrane
+    /// hangs only from joints that turn alike ([`Seam`]).
     pub(crate) fn spars(
         &mut self,
         rig: &mut Rig,
         book: &mut Book,
         spread: &[Vec3],
         arm: &Arm,
-        body: &PolyMesh,
+        (body, weights): (&PolyMesh, &SkinWeights),
     ) {
         match self.kind {
             Kind::Bat => self.blended_spars(rig, book, arm, body),
-            _ => self.flank_spars(rig, book, spread, arm, body),
+            _ => self.flank_spars(rig, book, spread, arm, (body, weights)),
         }
     }
 
-    /// **A glider's spars run from the flank**: each a two-bone chain rooted on
-    /// the trunk just under the flank, between the shoulder and the hip,
-    /// reaching the free edge - straight from the forefoot to the ankle when
-    /// spread, folded at its middle at rest, bent out and down from the body,
-    /// its tip where the edge rests. Blended from the foreleg and the leg as
-    /// a bat's are, every bone of them turned near a half turn and the
-    /// blends between them came close to flipping across the whole
-    /// extension. `spread` is where each joint stands with the arm and the
-    /// leg spread.
+    /// **A glider's patagium folds onto a seam along its flank** (#434): its
+    /// spars ([`Seam`]) root on the skin along a line about the flank's widest
+    /// ([`SEAM_RISE`]), from where the trunk's own skin begins behind the
+    /// upper arm to where it ends ahead of the thigh ([`SEAM_ENDS`]), and
+    /// fold down it; spread, they reach round the patagium's outline - the
+    /// shoulder, the elbow, the wrist, the forefoot, [`GLIDER_SPARS`] points
+    /// on the free edge, the ankle, the knee and the hip. Folded, the whole
+    /// membrane is a band under a centimetre deep lying on the flank under the
+    /// seam ([`FOLD_DEPTH`], [`FOLD_CLEAR`]), its outside the spread wing's
+    /// upper side, held by hinges as the skin under it is held ([`Hinges`]),
+    /// so it goes as that skin goes, and by carriers that take it out along
+    /// the spars. `spread` is where each joint stands with the arm and the leg
+    /// spread.
+    ///
+    /// **Why not folded spars**: a strip of membrane between two edges
+    /// spreads by the blend of their two turns, so neighbouring spars have to
+    /// turn alike, and a bone keeps its length. Two-bone spars folded out and
+    /// down beside the legs stood off the flank as a pale plate (0.23.0);
+    /// spars pleated back and forth along the flank turned alike, but their
+    /// pleats stood a centimetre or two off it and read as stacked strips,
+    /// and cost 162 joints. Here every spar turns by one hinge turn, and its
+    /// length is what its carrier's crank adds: three joints a spar, and a
+    /// hinge for each joint holding the seam's skin. **Why hinges**: a spar
+    /// hung from one joint, the one of those holding the skin at its root
+    /// that follows it best ([`Bent`]), went up to 13 mm into the skin where a
+    /// curl or a shake bent the spine under it, since the skin there is two
+    /// joints' blend; a carrier is still hung so, but holds at most half.
     fn flank_spars(
         &mut self,
         rig: &mut Rig,
         book: &mut Book,
         spread: &[Vec3],
         arm: &Arm,
-        body: &PolyMesh,
+        (body, weights): (&PolyMesh, &SkinWeights),
     ) {
-        let Some([hip, _, ankle]) = self.hind else {
+        let Some([hip, knee, ankle]) = self.hind else {
             return;
         };
-        let outer = arm.palm;
-        let trunk: Vec<usize> = (0..rig.len())
-            .filter(|&joint| {
-                matches!(
-                    rig.joints[joint].zone,
-                    Zone::Pelvis | Zone::Abdomen | Zone::Chest
-                ) && rig.joints[joint].role == crate::rig::Role::Deform
+        let bent = Bent::of(rig);
+        // The joints the extension turns, which no hinge hangs from: one
+        // would carry its hinge away spread.
+        let driven: Vec<usize> = rig
+            .wings
+            .iter()
+            .flat_map(|wings| wings.sides.iter().flat_map(|side| &side.drives))
+            .map(|drive| drive.joint)
+            .collect();
+        // The highest any joint rests, which no carrier rests above.
+        let top = rig
+            .joints
+            .iter()
+            .map(|joint| joint.position.y)
+            .fold(f32::MIN, f32::max);
+        let (shoulder, hip_at) = (Arm::at(rig, arm.shoulder), Arm::at(rig, hip));
+        let along = (shoulder - hip_at).normalize_or(self.plane.forward);
+        let rise = self.plane.dorsal * (SEAM_RISE * self.trunk);
+        let (depth, clear) = (FOLD_DEPTH * self.trunk, FOLD_CLEAR * self.trunk);
+        let flank = Flank::of(
+            body,
+            shoulder.y.min(hip_at.y) + rise.y - 2.0 * depth,
+            shoulder.y.max(hip_at.y) + rise.y + depth,
+        );
+        // The seam's ends: in from the shoulder and the hip until the skin
+        // across is the trunk's own, clear of the upper arm and the thigh
+        // that lie along the flank and move with their legs - a long-armed
+        // cross's further in.
+        let trunk_skin = |at: Vec3| {
+            let Hold(skin) = nearest_hold(body, weights, flank.across(at, self.side, 0.0));
+            skin.iter()
+                .filter(|&&(joint, _)| {
+                    matches!(
+                        rig.joints[joint].zone,
+                        Zone::Pelvis | Zone::Abdomen | Zone::Chest
+                    )
+                })
+                .map(|&(_, share)| share)
+                .sum::<f32>()
+                >= TRUNK_SKIN
+        };
+        // And clear of the upper arm's and the thigh's own bones, each a
+        // capsule from its joint to the next: a planted leg stays as the
+        // trunk rolls over it, and closed over the fold's end.
+        let clear_of = |at: Vec3, bone: [usize; 2]| {
+            let (a, b) = (Arm::at(rig, bone[0]), Arm::at(rig, bone[1]));
+            let radius = rig.joints[bone[0]].radius.max(rig.joints[bone[1]].radius);
+            [at, at - self.plane.dorsal * depth]
+                .into_iter()
+                .all(|point| {
+                    let span = b - a;
+                    let t =
+                        ((point - a).dot(span) / span.length_squared().max(1e-9)).clamp(0.0, 1.0);
+                    point.distance(a + span * t) > radius + LIMB_CLEAR * self.trunk
+                })
+        };
+        let end = |from: Vec3, inward: Vec3, bone: [usize; 2]| {
+            let mut share = SEAM_ENDS[0];
+            loop {
+                let at = from + inward * (share * self.trunk) + rise;
+                let on = flank.across(at, self.side, clear);
+                if share >= SEAM_ENDS[1] || (trunk_skin(at) && clear_of(on, bone)) {
+                    return from + inward * (share.min(SEAM_ENDS[1]) * self.trunk) + rise;
+                }
+                share += 0.02;
+            }
+        };
+        let front = end(shoulder, -along, [arm.shoulder, arm.elbow]);
+        let rear = end(hip_at, along, [hip, knee]);
+        // Where each spar reaches spread: round the arm, across the free edge
+        // and round the leg.
+        let (outer, ankle_spread) = (spread[arm.palm], spread[ankle]);
+        let mut tips: Vec<Vec3> = [arm.shoulder, arm.elbow, arm.wrist, arm.palm]
+            .map(|joint| spread[joint])
+            .to_vec();
+        tips.extend((1..=GLIDER_SPARS).map(|index| {
+            outer + (ankle_spread - outer) * (index as f32 / (GLIDER_SPARS + 1) as f32)
+        }));
+        tips.extend([ankle, knee, hip].map(|joint| spread[joint]));
+        let count = tips.len();
+        // Each spar: its root, its fold's foot and its tip spread.
+        let plans: Vec<(Vec3, Vec3, Vec3)> = tips
+            .into_iter()
+            .enumerate()
+            .map(|(index, tip)| {
+                let share = index as f32 / (count - 1) as f32;
+                let base = front + (rear - front) * share;
+                let root = flank.across(base, self.side, ROOT_CLEAR * clear);
+                let foot = flank.across(base - self.plane.dorsal * depth, self.side, clear);
+                (root, foot, tip)
             })
             .collect();
-        let (shoulder, hip_at) = (Arm::at(rig, arm.shoulder), Arm::at(rig, hip));
-        let (outer_rest, ankle_rest) = (Arm::at(rig, outer), Arm::at(rig, ankle));
-        let (outer_spread, ankle_spread) = (spread[outer], spread[ankle]);
-        let pole = Vec3::new(self.side, 0.0, 0.0) - self.plane.dorsal * 0.5;
+        // One hinge turn for the whole wing: the fold's mean line down the
+        // flank onto straight out, and the flank's outside onto the upper side,
+        // about the line its rotation turns about, through the seam's middle.
+        let down = plans
+            .iter()
+            .map(|(root, foot, _)| *foot - *root)
+            .sum::<Vec3>()
+            .normalize_or(-self.plane.dorsal);
+        let seam = (plans[count - 1].0 - plans[0].0).normalize_or(-along);
+        let outward = {
+            let n = seam.cross(down).normalize_or(self.plane.out);
+            if n.x * self.side < 0.0 { -n } else { n }
+        };
+        let hinge_turn = turn(
+            frame(down, outward),
+            frame(self.plane.out, self.plane.dorsal),
+        );
+        let unturn = hinge_turn.inverse();
+        let (axis, _) = det::to_axis_angle(hinge_turn);
+        let middle = plans[count / 2].0;
+        let on_axis = |at: Vec3| middle + axis * (at - middle).dot(axis);
         let zone = Zone::Extremity(arm.limb);
-        for index in 1..=SPARS {
-            let share = index as f32 / (SPARS + 1) as f32;
-            let root_at = under_flank(body, shoulder + (hip_at - shoulder) * share, self.side);
-            let end_spread = outer_spread + (ankle_spread - outer_spread) * share;
-            let length = root_at.distance(end_spread);
-            let end_rest = outer_rest + (ankle_rest - outer_rest) * share;
-            let reach = root_at.distance(end_rest).min(length * 0.98);
-            let end_rest = root_at + (end_rest - root_at).normalize_or(pole) * reach;
-            let middle_rest = bend(root_at, end_rest, length * 0.5, length * 0.5, pole);
-            let middle_spread = (root_at + end_spread) * 0.5;
-            let parent = trunk
-                .iter()
-                .copied()
-                .min_by(|&a, &b| {
-                    Arm::at(rig, a)
-                        .distance_squared(root_at)
-                        .total_cmp(&Arm::at(rig, b).distance_squared(root_at))
-                })
-                .unwrap_or(arm.shoulder);
-            let root = Book::attach(rig, parent, root_at, zone);
-            let middle = Book::attach(rig, root, middle_rest, zone);
-            let tip = Book::attach(rig, middle, end_rest, zone);
-            let first = det::from_rotation_arc(
-                (middle_rest - root_at).normalize_or(Vec3::Z),
-                (middle_spread - root_at).normalize_or(Vec3::Z),
+        // A hinge for every joint holding the skin along the fold, at its
+        // roots, its feet and between them.
+        let mut held: Vec<usize> = Vec::new();
+        for pair in plans.windows(2) {
+            let ((a, fa, _), (b, fb, _)) = (pair[0], pair[1]);
+            for at in [a, fa, (a + b) * 0.5, (fa + fb) * 0.5, b, fb] {
+                let Hold(skin) = nearest_hold(body, weights, at);
+                for (joint, share) in skin {
+                    if share >= 0.02 && !driven.contains(&joint) && !held.contains(&joint) {
+                        held.push(joint);
+                    }
+                }
+            }
+        }
+        held.sort_unstable();
+        for joint in held {
+            let hinge = Book::attach(rig, joint, on_axis(Arm::at(rig, joint)), zone);
+            book.turn(hinge, hinge_turn, DIGIT_SCHEDULE, Some(arm.limb));
+            self.hinges.joints.push((joint, hinge));
+        }
+        // Where a point resting at `at` stands spread, held by the hinges.
+        let hinged = |at: Vec3| middle + hinge_turn * (at - middle);
+        let (sin, cos) = det::sin_cos(0.5 * CRANK);
+        for (root, foot, tip) in plans {
+            // How far the carrier has to take a point of the spar beyond where
+            // the hinges take it, per share of the spar.
+            let spread_root = hinged(root);
+            let beyond = tip - spread_root - hinge_turn * (foot - root);
+            let skin = nearest_hold(body, weights, root);
+            let parent = bent.follower(
+                rig,
+                &Hold(
+                    skin.0
+                        .into_iter()
+                        .filter(|(joint, _)| !driven.contains(joint))
+                        .collect(),
+                ),
+                root,
             );
-            let carried = first * (end_rest - middle_rest).normalize_or(Vec3::Z);
-            let second =
-                det::from_rotation_arc(carried, (end_spread - middle_spread).normalize_or(Vec3::Z))
-                    * first;
-            book.turn(root, first, DIGIT_SCHEDULE, Some(arm.limb));
-            book.turn(middle, second, DIGIT_SCHEDULE, Some(arm.limb));
-            self.spars.push(vec![root, middle, tip]);
+            // Its chord, in the fold's frame, `LONGER` times that and held
+            // the same times less - shorter if it would rest above every
+            // joint of the body.
+            let chord = |longer: f32| {
+                let reach =
+                    unturn * ((middle - root) - hinge_turn * (middle - root) + beyond * longer);
+                let length = reach.length().max(1e-6);
+                let way = reach / length;
+                let normal =
+                    (outward - way * outward.dot(way)).normalize_or(way.any_orthonormal_vector());
+                let across = normal.cross(way) * self.side;
+                let offset = -(way + across * (cos / sin)) * (0.5 * length);
+                (reach, offset)
+            };
+            let mut longer = LONGER;
+            let (mut reach, mut offset) = chord(longer);
+            while longer > 1.0 && (root + offset).y > top {
+                longer = (longer - 0.25).max(1.0);
+                (reach, offset) = chord(longer);
+            }
+            let crank = det::from_rotation_arc(
+                offset.normalize_or(Vec3::Y),
+                (offset + reach).normalize_or(Vec3::Y),
+            );
+            let pin = Book::attach(rig, parent, root, zone);
+            book.turn(pin, hinge_turn * crank, DIGIT_SCHEDULE, Some(arm.limb));
+            let carrier = Book::attach(rig, pin, root + offset, zone);
+            book.turn(carrier, hinge_turn, DIGIT_SCHEDULE, Some(arm.limb));
+            self.hinges.carriers.push((carrier, parent));
+            self.seams.push(Seam {
+                root,
+                foot,
+                carrier,
+                scale: 1.0 / longer,
+            });
         }
     }
 
@@ -713,30 +1110,47 @@ impl Wing {
         // A chain of joints as an edge, bone by bone; the leg by its length,
         // as a bat's spars blend it.
         let chain = |joints: &[usize]| -> Edge { along_bones(rig, joints, SAMPLES, &self.helpers) };
-        let leg_edge = match self.kind {
-            Kind::Bat => along_chain(rig, &[hip, knee, ankle], SAMPLES),
-            _ => chain(&[hip, knee, ankle]),
-        };
         let half = HALF_THICKNESS * self.trunk;
         let mut pieces: Vec<(PolyMesh, Vec<f32>)> = Vec::new();
-        // The plagiopatagium, or a glider's patagium: from the arm in front,
-        // over the spars, to the leg behind, its trailing edge scalloped
-        // between their tips.
-        let front = self.front(arm);
-        let cape = if self.kind == Kind::Bat {
-            CAPE_CLING
+        // The plagiopatagium: from the arm in front, over the spars, to the
+        // leg behind, its trailing edge scalloped between their tips. A
+        // glider's patagium is its spars alone (#434), the first and the last
+        // its edges, none riding inside a limb.
+        let (edges, attached, cape, hug, across) = if self.kind == Kind::Bat {
+            let mut edges = vec![chain(&self.front(arm))];
+            edges.extend(self.spars.iter().map(|spar| chain(spar)));
+            edges.push(along_chain(rig, &[hip, knee, ankle], SAMPLES));
+            (edges, (true, true), CAPE_CLING, None, 4)
         } else {
-            0.0
+            let edges: Vec<Edge> = self.seams.iter().map(|seam| seam.edge(SAMPLES)).collect();
+            let (low, high) = edges
+                .iter()
+                .flatten()
+                .fold((f32::MAX, f32::MIN), |(low, high), (at, _)| {
+                    (low.min(at.y), high.max(at.y))
+                });
+            // Its first spar runs along the flank to the shoulder and its
+            // last to the hip, inside the body spread as an arm's or a leg's
+            // edge rides inside it: rooted, as a bat's are.
+            (edges, (true, true), 0.0, Some((low - 0.01, high + 0.01)), 2)
         };
-        let mut edges = vec![chain(&front)];
-        edges.extend(self.spars.iter().map(|spar| chain(spar)));
-        edges.push(leg_edge);
+        let flank = hug.map(|(low, high)| Flank::of(body, low, high));
+        let clear = FOLD_CLEAR * self.trunk;
+        // Scalloped from the forefoot's spar to the ankle's: the arm's and
+        // the leg's own stretches of the outline are taut.
+        let hug = flank.as_ref().map(|flank| Fold {
+            flank,
+            clear: [ROOT_CLEAR * clear, clear],
+            hinges: &self.hinges,
+            weights,
+            scallop: (3, 4 + GLIDER_SPARS),
+        });
         pieces.push(sheet(
             &edges,
-            (18, 4),
-            (true, true),
+            (18, across),
+            attached,
             true,
-            (spread, body, cape),
+            (spread, body, cape, hug),
             &self.plane,
             half,
         ));
@@ -749,7 +1163,7 @@ impl Wing {
                     (14, 4),
                     (false, false),
                     false,
-                    (spread, body, 0.0),
+                    (spread, body, 0.0, None),
                     &self.plane,
                     half,
                 ));
@@ -791,7 +1205,7 @@ impl Wing {
                     (14, 3),
                     (true, false),
                     false,
-                    (spread, body, 0.0),
+                    (spread, body, 0.0, None),
                     &self.plane,
                     half,
                 ));
@@ -838,6 +1252,75 @@ impl Wing {
 /// leaves the body at once rather than from deep inside it.
 fn under_flank(body: &PolyMesh, at: Vec3, side: f32) -> Vec3 {
     carry_out(body, at, side, -0.006)
+}
+
+/// A body's skin as a glider's fold is laid on it (#434): its triangles
+/// within a band of heights, the left side's, so the skin across from a
+/// point is where a line out from the body's midline first leaves the body -
+/// the trunk's own skin, not a limb lying along it, which a line carried
+/// out until it stands clear of the body found instead on a glider-led
+/// cross's upper arm.
+struct Flank {
+    triangles: Vec<[Vec3; 3]>,
+}
+
+impl Flank {
+    /// The skin of `body` between the heights `low` and `high`.
+    fn of(body: &PolyMesh, low: f32, high: f32) -> Self {
+        let triangles = body
+            .triangulated()
+            .iter()
+            .map(|tri| tri.map(|index| body.positions[index as usize]))
+            .filter(|tri| {
+                let (bottom, top) = tri.iter().fold((f32::MAX, f32::MIN), |(b, t), at| {
+                    (b.min(at.y), t.max(at.y))
+                });
+                top >= low && bottom <= high
+            })
+            .collect();
+        Self { triangles }
+    }
+
+    /// The skin across from `at` on the side `side`, at its height and its
+    /// place along the body, `margin` outside it: where a line out from the
+    /// midline first leaves the body, asked on the left and mirrored, as
+    /// [`carry_out`] is. Where no skin lies across from it, `at` itself.
+    fn across(&self, at: Vec3, side: f32, margin: f32) -> Vec3 {
+        let from = Vec3::new(0.0, at.y, at.z);
+        let first = self
+            .triangles
+            .iter()
+            .filter_map(|tri| leaves(from, tri))
+            .filter(|&run| run > 0.0)
+            .fold(f32::MAX, f32::min);
+        if first == f32::MAX {
+            return at;
+        }
+        Vec3::new(side * (first + margin).max(0.0), at.y, at.z)
+    }
+}
+
+/// How far along `+x` from `from` the line crosses the triangle `tri`, if it
+/// does: Moller and Trumbore's test, its edges held a hair inclusive so a
+/// line through an edge of two meets one of them.
+fn leaves(from: Vec3, tri: &[Vec3; 3]) -> Option<f32> {
+    let (a, b, c) = (tri[0], tri[1], tri[2]);
+    let (e1, e2) = (b - a, c - a);
+    let p = Vec3::X.cross(e2);
+    let det = e1.dot(p);
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let inverse = 1.0 / det;
+    let s = from - a;
+    let u = s.dot(p) * inverse;
+    let q = s.cross(e1);
+    let v = Vec3::X.dot(q) * inverse;
+    const EDGE: f32 = 1e-5;
+    if u < -EDGE || v < -EDGE || u + v > 1.0 + EDGE {
+        return None;
+    }
+    Some(e2.dot(q) * inverse)
 }
 
 /// `at`, inside the body, carried across it along `x` on the side `side`
@@ -925,7 +1408,7 @@ fn sheet(
     (nu, nv): (usize, usize),
     attached: (bool, bool),
     whole: bool,
-    (spread, body, cling): (&Spread, &PolyMesh, f32),
+    (spread, body, cling, hug): (&Spread, &PolyMesh, f32, Option<Fold<'_>>),
     plane: &Plane,
     half: f32,
 ) -> (PolyMesh, Vec<f32>) {
@@ -944,13 +1427,25 @@ fn sheet(
             let strip = (j / nv).min(strips - 1);
             let v = (j - strip * nv) as f32 / nv as f32;
             // One sweep of the scallop across the whole edge, or one between
-            // each pair of spar tips.
-            let across = if whole { j as f32 / columns as f32 } else { v };
+            // each pair of spar tips; a glider's across its free edge alone.
+            let (across, sag) = match &hug {
+                Some(fold) => {
+                    let (start, span) =
+                        (fold.scallop.0 * nv, (fold.scallop.1 - fold.scallop.0) * nv);
+                    if j >= start && j <= start + span {
+                        ((j - start) as f32 / span.max(1) as f32, scallop)
+                    } else {
+                        (0.0, 0.0)
+                    }
+                }
+                None if whole => (j as f32 / columns as f32, scallop),
+                None => (v, scallop),
+            };
             let (sin, _) = det::sin_cos(std::f32::consts::PI * across);
-            let reach = u * (1.0 - scallop * sin * u * u);
+            let reach = u * (1.0 - sag * sin * u * u);
             let (a, hold_a) = sample(&edges[strip], reach);
             let (b, hold_b) = sample(&edges[strip + 1], reach);
-            let hold = Hold::mix(&[(&hold_a, 1.0 - v), (&hold_b, v)]).cut();
+            let mixed = Hold::mix(&[(&hold_a, 1.0 - v), (&hold_b, v)]);
             // **Never through the body**: a free point of the fold that
             // would rest inside it is carried out across it to clear its
             // surface. What roots in the flank or rides a limb stays.
@@ -973,10 +1468,25 @@ fn sheet(
                     }
                 }
             }
-            let rest = if free {
-                carry_out(body, rest, plane.out.x.signum(), 4.0 * half)
-            } else {
-                rest
+            let (rest, hold) = match &hug {
+                // **A glider's fold laid on the skin** (#434): every point of
+                // it, root included, standing off the skin across from it by
+                // its share of the way from the clearance at the root to the
+                // one at the free edge (its strips are ruled between spars a
+                // few centimetres apart along a flank that bulges between
+                // them), and held by the hinges as the skin there is.
+                Some(fold) => {
+                    let [root, edge] = fold.clear;
+                    let rest =
+                        fold.flank
+                            .across(rest, plane.out.x.signum(), root + (edge - root) * reach);
+                    (rest, fold.hinges.hold(body, fold.weights, rest, &mixed))
+                }
+                None if free => (
+                    carry_out(body, rest, plane.out.x.signum(), 4.0 * half),
+                    mixed.cut(),
+                ),
+                None => (rest, mixed.cut()),
             };
             grid.push((rest, hold, spread.forward(&hold, rest)));
         }

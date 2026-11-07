@@ -1274,6 +1274,19 @@ impl Girdles {
         }
     }
 
+    /// These girdles `share` of the way from the level (#435): every height
+    /// they read taken by `share`, so a ride over them turns and raises the
+    /// trunk that share of the way, and all of it at `1`, to the bit. What a
+    /// winged body's landing rides as its feet come onto sloped ground.
+    pub(super) fn scaled(self, share: f32) -> Self {
+        Self {
+            hips: self.hips * share,
+            shoulders: self.shoulders * share,
+            across: self.across * share,
+            ..self
+        }
+    }
+
     /// These girdles with the shoulders sunk `by` further than the hips.
     pub(super) fn shoulders_sunk(self, by: f32) -> Self {
         Self {

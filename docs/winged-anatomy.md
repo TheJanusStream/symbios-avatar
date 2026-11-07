@@ -485,8 +485,8 @@ match.
 | Bat fold: digits back along the forearm, phalanges folded back (S46) | 10 4.2 | metacarpals 171-176 deg back along the forearm, within 5 deg of one another; P1 folded back 152, P2 forward 169 (149 and 143 before W5's knuckle helpers), each layer leaning out a little |
 | Dactylopatagium II-V, plagiopatagium V to the ankle, propatagium shoulder to thumb | 10 5.2, S22, S25 | all three, closed thin shells, the trailing edges scalloped (one sweep V-to-ankle, one per pair of fingertips) |
 | Membrane 130-300 um | S23, S24 | 0.4% of the trunk either side (about 1.2 mm), see departures |
-| Glider patagium digit V to the ankle | S30, S31 | the forefoot (palm) to the ankle, one shell, on three spars |
-| Glider at rest reads as a small mammal, a fold at the flank | 10 fact 9, 4.3 | a narrow fold along the flank between the legs |
+| Glider patagium digit V to the ankle | S30, S31 | the forefoot (palm) to the ankle, one shell, on ten spars from a seam along the flank, reaching round the foreleg, the free edge and the leg spread (#434; three, riding the legs, at W2) |
+| Glider at rest reads as a small mammal, a fold at the flank | 10 fact 9, 4.3 | a band under a seam along the flank between the upper arm and the thigh, under a centimetre deep and about 4 mm off the skin, its outer face the coat (#434; at W2 a plate standing off the flank and under the belly) |
 | Bird: 10 primaries, 10 secondaries, 3 tertials, coverts, alula | 10 5.1 | 10 (6 on the carpometacarpus, 4 on the digit), 10, 3, three humerals; greater, median, lesser and marginal coverts over the secondaries, greater and lesser primary coverts, a row over the tertials, two to a gap (114 a wing); a 3-card alula |
 | Overlap: each remex over the next toward the tip, tertials on top | S45, 5.1 | each card a lift (0.2% T) above the one it overlies, folded and spread |
 | Folded: stacked along the flank; spread: the fan opens | 10 4.1, 5.1 | primaries along the hand when folded, fanned from 22 to 93 deg behind straight out when spread |
@@ -499,13 +499,54 @@ edges beside it, two influences each, blended across the strip: four in all,
 never truncated, so the binding is continuous. The fold is therefore what
 was built; the spread is the binding's. A plagiopatagium or a patagium needs
 spars of its own (research-11 7: "an extra spar per digit") so no strip
-between neighbours turns by much: a glider's three are two-bone chains from
-the flank to the free edge; **a bat's three are its arm and its leg
+between neighbours turns by much: **a bat's three are its arm and its leg
 blended**, each bone resting where the arm's and the leg's rest blended and
 turning by their two turns slerped, since a flank spar of its own two bones
 had to fold sharply to fit a crawl and stood out of the fold as a spike.
 (Blended on a glider, every bone of them turned near a half turn and the
-guard trimmed the patagium to a strip.)
+guard trimmed the patagium to a strip.) **A glider's patagium folds onto a
+seam along its flank** (#434): ten spars root on the skin along a line a
+tenth of the trunk above the shoulder and hip joints (about the flank's
+widest), from where the trunk's own skin begins behind the upper arm to
+where it ends ahead of the thigh - at least three tenths of the trunk in
+from each joint, further on a long-limbed cross, until the skin across is
+95% the trunk's and the fold's end stands clear of the limb's bones; spread,
+they reach round the patagium's outline - the shoulder, the elbow, the wrist,
+the forefoot, three points on the free edge, the ankle, the knee, the hip - so
+the spread wing is W2's, taut along the arm and the leg and scalloped
+between the forefoot and the ankle alone; folded, each is a line from its
+root down the flank, the whole membrane a band 3% of the trunk deep (about 8
+mm) lying 4 mm off the skin, each point laid off the skin across from it
+where a line out from the midline first leaves the body, so it lies on the
+trunk, never on a limb over it. A pose turns joints and never shortens a
+bone, so a spar is carried out by a **carrier**: hung from a pin at its root
+that turns by the hinge's turn and a quarter turn of a crank, it turns back
+to the hinge's turn alone, so it holds what it carries moved by the crank's
+chord. The rest of every point is held by **hinges**, one hung from each
+joint holding the skin along the seam, each turning the fold onto the spread
+plane alike about one line; a point's hinge share is split as the skin under
+it is held (less what its carriers' own joints hold already), so folded it
+goes as that skin goes, and the carriers' chords are twice the spars' reach
+so they hold at most half of any point. Every joint the membrane hangs from
+turns alike at every extension, so the binding blends only how far each
+moved, which blends straight, and nothing the guard measures can tear; the
+arm and the leg are held short first, on the body's own blends, and the
+spars laid out to where they then reach. The first spar runs along the
+flank into the shoulder and the last into the hip, rooted as an arm's or a
+leg's edge is. Half spread, the band has swung halfway out and down and
+stretched about halfway, a drape between the legs. W2's glider had three
+two-bone spars from the flank to the free edge, folded out and down at the
+middle beside the legs, and the patagium rode the legs themselves: at rest a
+flat plate standing off the flank and under the belly (#434). #434's first
+round pleated nine spars back and forth along the flank (a joint at each
+pleat and a helper at each fold, 230 joints a glider), and the pleats stood a
+centimetre or two off the skin and read as stacked strips. Hung from one
+joint each, as both rounds' spars were, a fold on the skin went up to 13 mm
+into it where a curl or a shake bent the spine under it: the skin there is
+two joints' blend.
+**Left for later**: a glider-led cross with a bat in it moves its wing as a
+bat's in its gaits and rests (`rests::wing`), so its patagium opens partway
+there, as W2's did.
 Every edge is sampled bone by bone, so a strip never blends one digit's
 phalanx with its neighbour's metacarpal, whose turns lie more than a half
 turn apart and made dual-quaternion skinning jump. The two sheets stand
@@ -548,7 +589,12 @@ in the hair's draw), bat 24,490 (membrane and digits 5,392), glider 22,060
 (patagium 2,576); the dearest of the families, six crosses and twelve rolls
 25,142. After the owner's look (v2): bird 19,426 (feathers 3,030 - 303
 cards); bat, glider and crosses unchanged. Joints: bird 106, bat 130,
-glider 68.
+glider 68. After #434 the glider's patagium is 2,880 triangles (eighteen
+columns across nine strips, against sixteen; the whole glider 23,364, the
+dearest glider-led body of forty rolls 24,004) on 100 joints at the most
+(a pin and a carrier for each of ten spars a side and a hinge for each joint
+holding the seam's skin); `tests/winged_fold.rs` holds the fold to the skin,
+its coat, its frames and its joints, and the spread edges to the legs.
 
 ### Where the wings depart, and why
 
@@ -1414,6 +1460,33 @@ shoulder, and the hind leg not at all.
   its wings gives up their raise off the ground as its feet go down. The ground gait or the
   idle takes over, blended, the frame the host gives no flight (the order
   above).
+  **A landing lets its beat go** (#435): what the beat adds as the landing
+  begins - its elevation, sweep and pitch, and its upstroke's fold - is held
+  and let go of from rest on a critically damped spring (10 a second), kept
+  off the ground for as long as it lasts, its heave at the rate the beat's
+  width used to ease out at, and the beat's width set to nothing; eased out
+  with the clock still running, a bat's braking strokes went on through its
+  landing's first frames, its wingtip 150 to 300 mm a frame at 60 a second
+  (Overlands' end review). And a raise that holds a wing off the ground is
+  let go of at no more than 4 radians a second as the ground stops needing
+  it, the wing leaving the ground a little ahead of its stroke: let go in a
+  frame, a cross's wingtip went from 40 mm a frame to 203 as a flare's last
+  upstroke left the ground. **On sloped ground
+  it settles into the ground's own stance** (#435): its trunk rides the
+  ground under its girdles as the ground sources do, coming onto it over
+  0.25 s as its feet go down (and off it as a push leaves it), each foot is
+  stood back over where it rests and its pelvis let drop as the idle's is,
+  its toes are laid on the slope, and it is held up by its pads along the
+  ground's up rather than by its whole foot reckoned against the level.
+  Settled level, a landing on a 20 degree slope stood up to 0.31 m off what
+  the idle draws there, and the hand back moved a bat 82 mm in a frame
+  (Overlands W6.4). On the level all of it is as it was, to the bit. A
+  landing has settled once its beat has gone as well as its wings folded.
+- **Takeoff from a landing** (#435): a takeoff asked of a landing down on
+  its feet crouches and pushes as one from standing does, crouching first
+  (as a body carrying itself does) from wherever the landing has its root;
+  before, it never crouched or pushed, its root rising a few millimetres
+  where a takeoff from standing dips 17 to 22.
 
 The beat's rate, width, downstroke, upstroke fold, sweep, dihedral, heave and
 pitch blend across a cross by its families' shares (`Kinship`); whether it
@@ -1565,11 +1638,12 @@ turning over, 283 mm in one frame.
 
 **At rest**
 
-- **A glider lies no lower than its folded patagium**, which the fold (W2)
-  hangs from spars rooted in its chest to within a few centimetres of the
-  ground: its curl is made at about its standing height, the legs gathered
-  and the spine and tail curled round. Folding the patagium up against the
-  flank would let it lie down.
+- **A glider lies no lower than its folded patagium**, which the curl reads
+  off the joints rooted in its trunk, 30 mm under each (`SPAR_DEPTH`, a
+  bat's too). Since #434 the fold is a band under a seam along the flank, so
+  that read no longer holds the curl up as W2's fold to within a few
+  centimetres of the ground did; the trunk's outline and its folded thighs
+  hold it. How low a glider should lie is the owner's to say.
 - **A bat's and a glider's wings stay down in their emotes**: they are the
   forelegs the body stands on, so the shake does not flick them, the groom
   does not lift them, and the glider's bow does not open its patagium.

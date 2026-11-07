@@ -64,6 +64,26 @@
 //!   mid-absorb and all.
 //! - **A landing asked of a body on the ground** is a landing from no height:
 //!   its feet put down and its wings folded, with no absorb.
+//! - **A takeoff asked of a landing down on its feet** (#435) - a host
+//!   holding a landing until it has settled, a jump asked meanwhile - crouches
+//!   and pushes as one from standing does, crouching first whoever carries the
+//!   body, from wherever the landing has its root; [`Flown::lifted`] is
+//!   false until its push is over, as any takeoff's. Under
+//!   `Carriage::Chassis` that crouch lasts at least 0.18 s before the push,
+//!   where a fresh takeoff there has none (its host has launched already):
+//!   a host that launches its chassis at once hands one frame of no flight
+//!   first, so the takeoff starts fresh (as Overlands does), or launches only
+//!   once [`Flown::lifted`].
+//!
+//! **A landing on sloped ground settles into the ground's own stance**
+//! (#435): its trunk rides the ground under its girdles as the ground
+//! sources ride it (`quadruped::ride_ground`), each foot is stood back over
+//! where it rests and its pelvis let drop as theirs is, and its toes are laid
+//! on the slope (`winged::ground::keep_toes_up`), so [`Flown::settled`] means
+//! the pose the ground source draws there and the hand back moves nothing
+//! much. A landing lets its beat go rather than beating it out: what the
+//! beat was adding is let go of from rest, so a bat's braking strokes stop
+//! with its landing.
 
 use glam::{Quat, Vec3};
 
@@ -73,7 +93,9 @@ use crate::rig::Rig;
 use crate::wing::{Kinship, Stroke};
 
 use crate::anim::driver::Carriage;
-use crate::anim::ground::{FootingConfig, Ground, plant_feet_of, solve_contact_toward};
+use crate::anim::ground::{
+    FootingConfig, Ground, plant_feet_of, solve_contact, solve_contact_toward,
+};
 use crate::anim::leap::LEG_STIFFNESS;
 use crate::anim::pose::Pose;
 use crate::anim::speed::GRAVITY;
@@ -182,8 +204,9 @@ pub struct Flown {
     /// takeoff on into flapping from here - see the module's "Handing on".
     pub lifted: bool,
     /// Whether a landing has settled: down, its absorb played out, its wings
-    /// folded and, on a body that carries itself, its hover height at the
-    /// ground. A host hands a landing back - no flight - from here.
+    /// folded, the beat it came down with let go of (#435) and, on a body
+    /// that carries itself, its hover height at the ground. A host hands a
+    /// landing back - no flight - from here.
     pub settled: bool,
     /// How high a body that carries itself hovers over where it stood, in
     /// metres; nothing on a carried body, whose host carries its height.
@@ -424,12 +447,44 @@ const PLANT_DOWN: f32 = 0.2;
 /// A hovering body's height follows its target as a critically damped spring
 /// of this frequency, in Hertz.
 const HOVER_HZ: f32 = 0.8;
+/// How long the trunk takes to come onto the ground under its feet, and to
+/// leave it, in seconds (#435): the feet's own [`PLANT_DOWN`] and a little,
+/// so a landing on a slope turns its trunk onto it no faster than the ground
+/// sources' own follow turns it (`quadruped::follow`, about three radians a
+/// second), and a push off it leaves it as the body levels.
+const RIDE: f32 = 0.25;
+/// How far the ground under the feet is tilted, pitch and roll together in
+/// radians, where a body's landing stands on it wholly as a slope (#435):
+/// the ground sources' own measure (`quadruped::Girdles::steep`), so ground
+/// near the level, a heightmap's few thousandths, is stood on as the level
+/// is, and the level itself to the bit.
+const SLOPED: f32 = 0.1;
+/// How fast what a beat was doing as a landing begins is let go of, as a
+/// critically damped spring of this rate, a second (#435): set off from
+/// rest, a stroke at a bat's full braking width comes back to the wing's
+/// rest at no more than about 3.7 of its radians a second. Its width eased
+/// out over [`EASE_WIDTH`] with the clock running on, a bat's last braking
+/// strokes went on through its landing's first frames, its wingtip 200 to
+/// 300 mm a frame at 60 a second (Overlands' end review). Its heave, which
+/// lifts the whole body, is let go of at the rate the beat's width eased
+/// out at before, `2 / EASE_WIDTH`: held, it sank a body still coming down
+/// to its landing as an absorb in the air.
+const LET_GO: f32 = 10.0;
+/// How fast a wing a raise holds off the ground is let go of as the ground
+/// no longer needs it, in radians a second (#435): pinned against the ground
+/// as its stroke rose and let go in a frame, a cross's wingtip went from
+/// 40 mm a frame to 203 as a flare's last upstroke left the ground. A raise
+/// that goes only lifts the wing further off the ground.
+const RELEASE: f32 = 4.0;
 
 /// What a flier's body reads, from its rig: its families, its size, and the
 /// numbers they make.
 #[derive(Clone, Copy, Debug)]
 struct Build {
     flaps: bool,
+    /// Whether its wings carry flight feathers, which reach past the joints
+    /// they ride.
+    feathered: bool,
     /// Whether a bird leads the body, whose wings open as its legs push; a
     /// bat's and a glider's at the push's end.
     early: bool,
@@ -568,6 +623,7 @@ impl Build {
             (HOVER * height).max(reach * deepest.det_sin() * (1.0 + CLEAR_REACH) + CLEAR * height);
         Some(Self {
             flaps,
+            feathered: !wings.tail.is_empty(),
             early: flier.leading == crate::plan::WingedFamily::Bird,
             rate: beats(RATE.0, RATE.1) * size.det_powf(RATE_EXPONENT),
             width,
@@ -602,9 +658,16 @@ impl Build {
     /// itself; a host that carries one has already launched it.
     fn anticipation(&self, carriage: Carriage) -> f32 {
         match carriage {
-            Carriage::Own => (ANTICIPATION * self.push).max(MIN_CROUCH),
+            Carriage::Own => self.crouch_first(),
             Carriage::Chassis => 0.0,
         }
+    }
+
+    /// How long a takeoff that crouches first crouches before it pushes: one
+    /// carrying itself, and any asked of a landing down on its feet (#435),
+    /// which is on the ground whoever carries it.
+    fn crouch_first(&self) -> f32 {
+        (ANTICIPATION * self.push).max(MIN_CROUCH)
     }
 
     /// When a takeoff's first downstroke begins, seconds into it.
@@ -710,8 +773,44 @@ pub(crate) struct Aloft {
     /// Whether the flight began on the ground in its landing, with nothing
     /// to come down from.
     grounded: bool,
+    /// How far the trunk rides the ground under its feet, `0..1`, as the
+    /// ground sources ride it (#435): through a push off the ground and a
+    /// landing down on it, coming and going over [`RIDE`]. Nothing on the
+    /// level, which has nothing to ride.
+    riding: f32,
+    /// Where the root was carried when a takeoff asked of a landing down on
+    /// its feet began (#435), which its crouch eases down from: that takeoff
+    /// crouches first, whoever carries the body. `None` for any other.
+    crouch_from: Option<f32>,
     /// Whether the body carries itself, as the last frame was stepped.
     carried: bool,
+    /// What the beat was adding when a landing or a takeoff off its feet
+    /// began, let go of over [`LET_GO`] (#435): the wing's elevation and
+    /// sweep and the trunk's pitch, in radians, and its heave, in metres,
+    /// each by [`Self::left`].
+    residue: [f32; 4],
+    /// How much of [`Self::residue`] is left, `1` to `0`, and how fast it
+    /// is going.
+    left: f32,
+    leaving: f32,
+    /// How much of [`Self::residue`]'s heave and of [`Self::low`] is left,
+    /// and how fast it is going: see [`LET_GO`].
+    heave_left: f32,
+    heave_leaving: f32,
+    /// How far under its rest a feathered wing was when its beat was let go
+    /// of, in radians, let go of with the heave: see [`LET_GO`].
+    low: f32,
+    /// How far the wings were held off the ground, as a share of the raise,
+    /// when the beat was let go of: what holds it off as long as what was
+    /// let go of lasts, folded or not.
+    kept: f32,
+    /// How far each wing was raised off the ground on the last frame posed,
+    /// left and right, in radians, and how long that frame was: what a raise
+    /// is let go of from ([`RELEASE`]). Kept by [`Self::pose`], which takes
+    /// `&mut self` for it: a `Cell` here made the `Driver` lose `Sync`, which
+    /// every consumer keeping one in a Bevy component needs.
+    raised: [f32; 2],
+    stepped: f32,
 }
 
 /// Moves `value` toward `target` through a first-order lag of `tau`
@@ -727,6 +826,31 @@ fn ease(value: f32, target: f32, tau: f32, delta: f32) -> f32 {
 fn smooth(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// How sloped the ground under `rig`'s feet is, `0` level to `1` from
+/// [`SLOPED`] (#435): its pitch and its roll together under each foot where
+/// it rests, the steepest. Exactly nothing on the level at height 0
+/// (`level_ground`); a level floor at another height is ridden as the ground
+/// sources ride it.
+fn sloped<F>(rig: &Rig, ground: &F) -> f32
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    let steepest = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| {
+            let foot = *rig.in_zone(Zone::Extremity(limb)).first()?;
+            let up = ground(rig.joints[foot].position)?.normal;
+            if up == Vec3::Y {
+                return Some(0.0);
+            }
+            let rise = up.y.max(1e-6);
+            Some(up.x.abs().det_atan2(rise) + up.z.abs().det_atan2(rise))
+        })
+        .fold(0.0f32, f32::max);
+    smooth(steepest / SLOPED)
 }
 
 impl Aloft {
@@ -786,6 +910,23 @@ impl Aloft {
             absorbed: false,
             grounded: flight.mode == FlightMode::Land,
             carried: carriage == Carriage::Own,
+            // On its feet, a takeoff's or a landing's first frame stands as
+            // the ground source it comes from stood.
+            riding: if matches!(flight.mode, FlightMode::Takeoff | FlightMode::Land) {
+                1.0
+            } else {
+                0.0
+            },
+            crouch_from: None,
+            residue: [0.0; 4],
+            left: 0.0,
+            leaving: 0.0,
+            heave_left: 0.0,
+            heave_leaving: 0.0,
+            low: 0.0,
+            kept: 0.0,
+            raised: [0.0; 2],
+            stepped: 0.0,
         })
     }
 
@@ -805,6 +946,8 @@ impl Aloft {
             lifted: self.pushing.is_none(),
             settled: self.mode == FlightMode::Land
                 && self.absorbed
+                && self.width <= SETTLED_FOLD
+                && self.left <= SETTLED_FOLD
                 && self.drawn_extension(rig) <= SETTLED_FOLD
                 && (!self.carried || self.height <= TOUCHDOWN * self.reach(rig)),
             height: if self.carried { self.height } else { 0.0 },
@@ -873,12 +1016,27 @@ impl Aloft {
         if mode != self.mode {
             // A takeoff asked again in the air has no ground to push off;
             // a landing starts its absorb at touchdown, below.
+            // **But one asked of a landing down on its feet has** (#435): a
+            // host holds a landing until it has settled, and a jump asked
+            // meanwhile never crouched or pushed, a bird's root dipping
+            // nothing where a takeoff from standing dips 17 to 22 mm.
+            let from_feet = mode == FlightMode::Takeoff
+                && self.mode == FlightMode::Land
+                && self.landing.is_some();
             if self.mode == FlightMode::Land {
                 self.landing = None;
                 self.absorbed = false;
             }
-            if mode != FlightMode::Takeoff {
+            // **A landing lets its beat go, not beats it out** (#435): see
+            // [`LET_GO`].
+            if mode == FlightMode::Land {
+                self.let_go(&build);
+            }
+            if from_feet {
+                self.push_from_feet(&build);
+            } else if mode != FlightMode::Takeoff {
                 self.pushing = None;
+                self.crouch_from = None;
             }
             self.mode = mode;
             self.in_mode = 0.0;
@@ -895,7 +1053,11 @@ impl Aloft {
         );
 
         // The push, scripted from where the body was when it began.
-        let anticipation = build.anticipation(carriage);
+        let anticipation = if self.crouch_from.is_some() {
+            build.crouch_first()
+        } else {
+            build.anticipation(carriage)
+        };
         let mut pushed = false;
         let mut opening = true;
         if let Some(since) = self.pushing.as_mut() {
@@ -910,9 +1072,20 @@ impl Aloft {
                 opening = t >= anticipation
                     && (build.early || t >= anticipation + LATE_OPEN * build.push);
                 self.offset = if t < anticipation {
-                    -build.crouch
-                        * 0.5
-                        * (1.0 - (std::f32::consts::PI * t / anticipation).det_cos())
+                    match self.crouch_from {
+                        // From the root's height as the landing left it:
+                        // mid-absorb or stood.
+                        Some(from) => {
+                            from + (-build.crouch - from)
+                                * 0.5
+                                * (1.0 - (std::f32::consts::PI * t / anticipation).det_cos())
+                        }
+                        None => {
+                            -build.crouch
+                                * 0.5
+                                * (1.0 - (std::f32::consts::PI * t / anticipation).det_cos())
+                        }
+                    }
                 } else {
                     -build.crouch
                         * (std::f32::consts::FRAC_PI_2 * (t - anticipation) / build.push).det_cos()
@@ -936,6 +1109,7 @@ impl Aloft {
                 }
                 self.offset = 0.0;
                 self.pushing = None;
+                self.crouch_from = None;
             }
         }
 
@@ -991,6 +1165,20 @@ impl Aloft {
             _ => 0.0,
         };
         self.flare = ease(self.flare, flare, EASE_FLARE, delta);
+        // What a landing let go of, let go of from rest.
+        {
+            let omega = LET_GO;
+            let carry = self.leaving + omega * self.left;
+            let decay = (-omega * delta).det_exp();
+            self.left = (self.left + carry * delta) * decay;
+            self.leaving = (self.leaving - omega * carry * delta) * decay;
+            let omega = 2.0 / EASE_WIDTH;
+            let carry = self.heave_leaving + omega * self.heave_left;
+            let decay = (-omega * delta).det_exp();
+            self.heave_left = (self.heave_left + carry * delta) * decay;
+            self.heave_leaving = (self.heave_leaving - omega * carry * delta) * decay;
+        }
+        self.stepped = delta;
 
         let targets = self.targets(&build, mode, pushed, opening);
         // A push opens a bird's wings in its tenth of a second, so its first
@@ -1114,6 +1302,13 @@ impl Aloft {
         } else {
             (self.planted - delta / PLANT).max(planted)
         };
+        // The trunk onto the ground under the feet as they come onto it, and
+        // off it as they leave (#435).
+        self.riding = if planted > self.riding {
+            (self.riding + delta / RIDE).min(planted)
+        } else {
+            (self.riding - delta / RIDE).max(planted)
+        };
         // A body standing on its wings - a bat's, a glider's - absorbs only as
         // far as they are folded under it: half spread, the legs the absorb
         // bends are still wings, and sinking it put a glider's paws and a
@@ -1137,6 +1332,101 @@ impl Aloft {
         } else if !pushed {
             self.offset = ease(self.offset, 0.0, EASE_LIMBS, delta);
         }
+    }
+
+    /// What the beat adds this frame: the wing's elevation and sweep and the
+    /// trunk's pitch, in radians, and its heave, in metres.
+    fn stroke(&self, build: &Build) -> [f32; 4] {
+        let pi = std::f32::consts::PI;
+        let u = build.stroke_at(self.phase);
+        let share = if build.width > f32::EPSILON {
+            (self.width / build.width).min(TAKEOFF_WIDTH * 1.2)
+        } else {
+            0.0
+        };
+        let beat = if self.lifting && self.phase < 0.0 {
+            0.5 * (1.0 - (pi * (u - 1.0).max(0.0)).det_cos())
+        } else {
+            (pi * u).det_cos()
+        };
+        let swing = (pi * u).det_sin();
+        let unplanted = 1.0 - self.planted;
+        [
+            self.width * beat,
+            build.sweep * share * swing,
+            build.pitch * self.slow * share * swing * unplanted,
+            -build.heave * self.slow * share * beat * unplanted,
+        ]
+    }
+
+    /// **What a beat still adds is let go of** (#435): held, and let go of
+    /// from rest over [`LET_GO`], its upstroke's fold kept in the wing's
+    /// extension, and the beat's width set to nothing: what a landing does
+    /// with the beat it comes down with, and a takeoff off a landing's feet
+    /// with whatever is left of it, so its clock can be set anew with nothing
+    /// drawn moving. Nothing on a body that was not beating - a glider -
+    /// whose landing is as it was.
+    fn let_go(&mut self, build: &Build) {
+        if self.width <= f32::EPSILON {
+            return;
+        }
+        let mut stroke = self.stroke(build);
+        // A feathered wing let go of under its rest goes back up at the rate
+        // the beat's width used to ease out at: held low while it folded, a
+        // big owl's primaries swept 136 mm into the ground, past what the
+        // raise reckons a feather reaches.
+        let low = if build.feathered && stroke[0] < 0.0 {
+            std::mem::take(&mut stroke[0])
+        } else {
+            0.0
+        };
+        for (held, now) in self.residue.iter_mut().zip(stroke).take(3) {
+            *held = *held * self.left + now;
+        }
+        self.left = 1.0;
+        self.leaving = 0.0;
+        self.low = self.low * self.heave_left + low;
+        // A body that carries itself, still coming down, carries the heave
+        // in its hover, which its landing's spring brings down from there:
+        // in the root it read as an absorb in the air.
+        let heave = if self.carried && self.landing.is_none() {
+            self.height += stroke[3];
+            0.0
+        } else {
+            stroke[3]
+        };
+        self.residue[3] = self.residue[3] * self.heave_left + heave;
+        self.heave_left = 1.0;
+        self.heave_leaving = 0.0;
+        self.extension = (self.extension - self.folded(build)).clamp(0.0, 1.0);
+        self.kept = (self.extension / RAISE_OPEN).min(1.0);
+        self.width = 0.0;
+        self.widening = 0.0;
+    }
+
+    /// **A takeoff asked of a landing down on its feet** (#435): it crouches
+    /// and pushes as one from standing does - crouching first, as one
+    /// carrying itself does, since it is on the ground whoever carries it -
+    /// from wherever the landing has its root, mid-absorb or stood.
+    ///
+    /// **And nothing drawn moves as it begins.** The takeoff holds its beat
+    /// at the bottom until its first upstroke, where the landing's clock is
+    /// anywhere: so whatever the beat still adds is let go of
+    /// ([`Self::let_go`]) as a landing lets it go, and the takeoff's beat
+    /// widens from nothing.
+    fn push_from_feet(&mut self, build: &Build) {
+        self.let_go(build);
+        let anticipation = build.crouch_first();
+        self.phase = match build.rising(anticipation) {
+            Some(_) => build.downstroke.clamp(0.2, 0.8) - 1.0,
+            None => -build.first(anticipation) * build.rate * TAKEOFF_RATE,
+        };
+        self.lifting = build.rising(anticipation).is_some();
+        self.pace = 1.0;
+        self.pushing = Some(0.0);
+        self.crouch_from = Some(self.offset);
+        // Off the ground now, with a height to come down from.
+        self.grounded = false;
     }
 
     /// **Touchdown**: a landing absorbs once the feet are down - at once
@@ -1261,7 +1551,7 @@ impl Aloft {
     /// partial stroke, raised, as a bird or a bat beats close to the ground.
     /// The raise is measured on the joints, so it is held short of a jump: a
     /// pass that would leave the wing further under is undone.
-    pub(crate) fn pose<F>(&self, rig: &Rig, pose: &mut Pose, ground: F, carriage: Carriage)
+    pub(crate) fn pose<F>(&mut self, rig: &Rig, pose: &mut Pose, ground: F, carriage: Carriage)
     where
         F: Fn(Vec3) -> Option<Ground>,
     {
@@ -1278,9 +1568,14 @@ impl Aloft {
         } else {
             0.0
         };
-        let scale = (1.0 - held) * smooth(extension / RAISE_OPEN);
+        // What a landing let go of is kept off the ground as long as it
+        // lasts, folded or not (#435): the wing a let-go beat holds low is no
+        // folded wing's. As far as it was kept when let go of, so nothing
+        // jumps.
+        let scale = (1.0 - held) * smooth((extension / RAISE_OPEN).max(self.left * self.kept));
         self.compose(rig, pose, &ground, carriage, [0.0; 2]);
         if scale <= 0.0 {
+            self.raised = [0.0; 2];
             return;
         }
         let mut short = self.under_ground(rig, pose, &ground);
@@ -1290,7 +1585,7 @@ impl Aloft {
         for _ in 0..RAISE_PASSES {
             let worst = short[0].max(short[1]);
             if worst <= 1e-4 {
-                return;
+                break;
             }
             let next =
                 [0, 1].map(|side| (lift[side] + short[side]).min(std::f32::consts::FRAC_PI_2));
@@ -1304,12 +1599,31 @@ impl Aloft {
             );
             let after = self.under_ground(rig, &trial, &ground);
             if after[0].max(after[1]) >= worst {
-                return;
+                break;
             }
             *pose = trial;
             lift = next;
             short = after;
         }
+        // **And let go of no faster than [`RELEASE`]** (#435): a raise the
+        // ground no longer needs eases off, the wing leaving the ground a
+        // little ahead of its stroke rather than all at once.
+        let was = self.raised;
+        let floor = [0, 1].map(|side| (was[side] - RELEASE * self.stepped).max(0.0));
+        if (0..2).any(|side| floor[side] > lift[side]) {
+            let eased = [0, 1].map(|side| lift[side].max(floor[side]));
+            let mut trial = fresh.clone();
+            self.compose(
+                rig,
+                &mut trial,
+                &ground,
+                carriage,
+                eased.map(|lift| lift * scale),
+            );
+            *pose = trial;
+            lift = eased;
+        }
+        self.raised = lift;
     }
 
     /// How far each wing - left, right - must be raised for no joint of it
@@ -1437,8 +1751,11 @@ impl Aloft {
         }
 
         // The wings at their stroke, and the tail.
-        let elevation = self.raise + self.width * beat;
-        let sweep = self.sweep + build.sweep * share * swing;
+        let elevation = self.raise
+            + self.width * beat
+            + self.residue[0] * self.left
+            + self.low * self.heave_left;
+        let sweep = self.sweep + build.sweep * share * swing + self.residue[1] * self.left;
         let extension = (self.extension - self.folded(&build)).clamp(0.0, 1.0);
         let reach = FLARE_REACH * flare;
         let side = |banked: f32, steer: f32, raised: f32| Stroke {
@@ -1460,6 +1777,7 @@ impl Aloft {
         // The trunk levelled about its middle, the beat's pitch and a flare's
         // nose over it, and the head held as it was.
         let nose_up = build.pitch * self.slow * share * swing * (1.0 - self.planted)
+            + self.residue[2] * self.left
             + if build.raised > 0.3 {
                 0.0
             } else {
@@ -1492,12 +1810,28 @@ impl Aloft {
         }
 
         // The beat's heave, a slow beat's, and what carries the root.
-        let heave = -build.heave * self.slow * share * beat * (1.0 - self.planted);
+        let heave = -build.heave * self.slow * share * beat * (1.0 - self.planted)
+            + self.residue[3] * self.heave_left;
         let carried = match carriage {
             Carriage::Own => self.height,
             Carriage::Chassis => 0.0,
         };
         pose.translation.y += heave + self.offset + carried;
+
+        // **On sloped ground the trunk rides it as the ground sources ride
+        // it** (#435), as far as the feet are on it: each girdle over the
+        // ground under its own feet (`quadruped::ride_ground`). Stood level
+        // instead, a settled landing on a 20 degree slope stood up to 0.3 m
+        // off what the idle draws there, and the hand back moved a bat 82 mm
+        // in a frame. Nothing on the level at height 0, which reads no girdles, nor on
+        // two legs, whose trunk no ground source rides.
+        let riding = smooth(self.riding);
+        let girdles = crate::anim::quadruped::girdle_ground(rig, ground);
+        if riding > 0.0
+            && let Some(girdles) = girdles
+        {
+            crate::anim::quadruped::ride_ground(rig, pose, girdles.scaled(riding));
+        }
 
         // **The hind feet flatten to meet the ground as it nears** (#424,
         // the look review): reaching into a landing, a bird's claws pointed
@@ -1562,6 +1896,8 @@ impl Aloft {
         // The feet on the ground, as far as they are held to it: a wing's
         // own limb only as far as it is folded, since a spread wing is no
         // leg.
+        let sloped = sloped(rig, ground);
+        let laying = self.planted * sloped;
         if self.planted > 0.0 {
             // **A wing's own limb is put down from its fold** (#424, the
             // critic): solved where it stood half spread, a glider-led
@@ -1586,12 +1922,47 @@ impl Aloft {
                     planted.rotations[joint] = Quat::IDENTITY;
                 }
             }
+            // **And on sloped ground stood as the ground sources stand it**
+            // (#435): each foot solved back over where it rests - onto the
+            // ground under it on four legs, as the idle does - and the pelvis
+            // let drop for a foot below the others, by as much as the ground
+            // is sloped. On the level, planted where it is with no drop, to
+            // the bit: the root's height there is the absorb's.
+            if sloped > 0.0 {
+                let mut stood = planted.clone();
+                for &limb in &contacts {
+                    let Some(&foot) = rig.in_zone(Zone::Extremity(limb)).first() else {
+                        continue;
+                    };
+                    let mut goal = rig.joints[foot].position;
+                    if girdles.is_some()
+                        && let Some(beneath) = ground(goal)
+                    {
+                        goal.y += beneath.position.y;
+                    }
+                    solve_contact(rig, &mut stood, limb, goal);
+                }
+                for (rotation, solved) in planted.rotations.iter_mut().zip(&stood.rotations) {
+                    *rotation = det::slerp(*rotation, *solved, sloped);
+                }
+            }
             let config = FootingConfig {
-                max_pelvis_drop: 0.0,
+                max_pelvis_drop: FootingConfig::default().max_pelvis_drop * sloped,
                 ..FootingConfig::default()
             };
             plant_feet_of(rig, &mut planted, &contacts, ground, &config);
+            let dropped = pose.translation.y - planted.translation.y;
             let folded = (1.0 - extension).powi(2);
+            // On sloped ground wholly a leg by the time it is folded as far
+            // as a landing settles (#435): held a twenty-fifth short of it, a
+            // bat x glider's arm stood 3 mm off where the idle plants it on a
+            // 20 degree slope, and went there in the hand back's first frame.
+            let folded = if laying > 0.0 {
+                let whole = ((1.0 - extension) / (1.0 - SETTLED_FOLD)).min(1.0).powi(2);
+                folded + (whole - folded) * laying
+            } else {
+                folded
+            };
             for (joint, (rotation, held)) in pose
                 .rotations
                 .iter_mut()
@@ -1610,6 +1981,21 @@ impl Aloft {
                     *rotation = det::slerp(*rotation, *held, weight);
                 }
             }
+            pose.translation.y -= dropped * self.planted;
+            // **And its toes laid on sloped ground as the ground sources lay
+            // them** (`winged::ground::keep_toes_up`, #435): held square to a
+            // foot stood upright on a 20 degree slope, a bird's toes ran
+            // 20 mm and more into the rise ahead of them, and the root was
+            // held up off the slope by all of it.
+            if laying > 0.0 {
+                let mut laid = pose.clone();
+                super::ground::keep_toes_up(rig, &mut laid, ground);
+                for (rotation, toed) in pose.rotations.iter_mut().zip(&laid.rotations) {
+                    if *rotation != *toed {
+                        *rotation = det::slerp(*rotation, *toed, laying);
+                    }
+                }
+            }
         }
         // **And no foot under the ground** (#424, the look review): a
         // landing's absorb sank a glider's paws 1-2 cm while its folding
@@ -1621,15 +2007,42 @@ impl Aloft {
         let posed = pose.forward(rig);
         let sunk = contacts
             .iter()
-            .flat_map(|&limb| rig.in_zone(Zone::Extremity(limb)))
-            .filter(|&joint| !wings.owns(joint))
-            .filter_map(|foot| {
+            .flat_map(|&limb| {
+                let zone = rig.in_zone(Zone::Extremity(limb));
+                let pad = zone.first().copied();
+                zone.into_iter()
+                    .map(move |joint| (joint, Some(joint) == pad))
+            })
+            .filter(|&(joint, _)| !wings.owns(joint))
+            .filter_map(|(foot, pad)| {
                 let at = posed.positions[foot];
                 let down = posed.rotations[foot] * Vec3::NEG_Y;
                 let cos = (-down.y).clamp(0.0, 1.0);
                 let sin = (1.0 - cos * cos).max(0.0).sqrt();
-                let sole = rig.joints[foot].position.y.max(0.0) * (cos + SOLE_TILT * sin);
-                ground(at).map(|below| below.position.y + sole - at.y)
+                let height = rig.joints[foot].position.y.max(0.0);
+                let sole = height * (cos + SOLE_TILT * sin);
+                ground(at).map(|below| {
+                    let short = below.position.y + sole - at.y;
+                    // **Stood on sloped ground, held up as the ground sources
+                    // hold it** (#435): by its pad, its own height at rest
+                    // off the ground along its up, the toes and the rest of
+                    // the foot laid by `winged::ground::keep_toes_up` or left
+                    // as the idle leaves them. The reckoning above reads a
+                    // foot along a 20 degree slope as tilted by it, the far
+                    // end of it into the rise, and held a landing's root 6 to
+                    // 20 mm up off the slope that the idle then dropped it.
+                    let laid = if pad {
+                        let up = below.normal;
+                        (height - (at - below.position).dot(up)) / up.y.max(0.25)
+                    } else {
+                        0.0
+                    };
+                    if laying > 0.0 {
+                        short + (laid - short) * laying
+                    } else {
+                        short
+                    }
+                })
             })
             .fold(0.0f32, f32::max);
         pose.translation.y += sunk * self.grounding;

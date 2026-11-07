@@ -1387,6 +1387,13 @@ impl Driver {
             self.ridden = None;
             None
         } else if flying {
+            // **What a flier rode before it took off is forgotten** (#435):
+            // its landing rides what it lands on (`winged::flight`), and the
+            // ground source it hands back to rides that from its first frame,
+            // not the ground it left, followed back from there.
+            if aloft {
+                self.ridden = None;
+            }
             None
         } else {
             let ridden = match self.ridden {
@@ -1733,7 +1740,7 @@ impl Driver {
             }
             Source::Gesture => {}
             Source::Fly => {
-                if let Some(aloft) = &self.aloft {
+                if let Some(aloft) = self.aloft.as_mut() {
                     aloft.pose(rig, &mut pose, ground, config.carriage);
                 }
             }

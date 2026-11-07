@@ -666,8 +666,10 @@ pub(crate) fn grow(
                 (body, &normals),
                 &plumage,
             )),
-            Kind::Bat => Side::Membrane(membrane::bat(rig, &mut book, &trunk, &arm)),
-            Kind::Glider => Side::Membrane(membrane::glider(rig, &mut book, &trunk, &arm)),
+            Kind::Bat => Side::Membrane(Box::new(membrane::bat(rig, &mut book, &trunk, &arm))),
+            Kind::Glider => {
+                Side::Membrane(Box::new(membrane::glider(rig, &mut book, &trunk, &arm)))
+            }
         };
         sides.push((arm, side));
     }
@@ -679,6 +681,14 @@ pub(crate) fn grow(
     // A membrane's spars, which follow the arm and the leg spread, so after
     // them; then every drive again.
     if kind != Kind::Feathers {
+        // **A glider's arm and leg are held short first** (#434): its
+        // membrane hangs from joints that all turn alike, which no blend
+        // tears, and its spars are laid out to where the arm and the leg
+        // reach spread, so they have to reach there - held short after, as a
+        // long-winged cross's are, the patagium's edge stood off its arm.
+        if kind == Kind::Glider {
+            fit(rig, &blended_skins(weights.vertices.iter()));
+        }
         let spread = {
             let mut pose = Pose::rest(rig);
             rig.spread_wings(&mut pose, 1.0, 1.0);
@@ -686,10 +696,23 @@ pub(crate) fn grow(
         };
         for (arm, side) in &mut sides {
             if let Side::Membrane(plan) = side {
-                plan.spars(rig, &mut book, &spread, arm, body);
+                plan.spars(rig, &mut book, &spread, arm, (body, weights));
             }
         }
-        rig.wings = Some(book.resolve(rig));
+        let mut wings = book.resolve(rig);
+        if let Some(fitted) = rig.wings.as_ref().filter(|_| kind == Kind::Glider) {
+            for drive in wings.sides.iter_mut().flat_map(|side| &mut side.drives) {
+                if let Some(held) = fitted
+                    .sides
+                    .iter()
+                    .flat_map(|side| &side.drives)
+                    .find(|held| held.joint == drive.joint)
+                {
+                    drive.spread = held.spread;
+                }
+            }
+        }
+        rig.wings = Some(wings);
     }
 
     // Which families the body is and how it goes on the ground (#424), which
@@ -916,7 +939,7 @@ fn fit(rig: &mut Rig, blends: &[Vec<(usize, f32)>]) -> bool {
 /// One wing's plan, before its surface is built.
 enum Side {
     Feathers(feather::Wing),
-    Membrane(membrane::Wing),
+    Membrane(Box<membrane::Wing>),
 }
 
 /// The trunk's own frame, which a spread wing is laid out in: `along` from

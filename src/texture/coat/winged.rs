@@ -19,7 +19,8 @@
 //! lies there (`wing::charted`): a bat's sheet is dark, paler and warmer
 //! toward its free edge as if lit through, with faint fibres running along
 //! its rows; its digits are the bone under their skin, darker; and a glider's
-//! patagium, which is furred, is its coat, paling a little toward its edge.
+//! patagium, which is furred, is its coat, paling at its rim (#434), so folded
+//! on the flank it wears the coat outside.
 //!
 //! **The light through it is faked in colour.** The skin's draw is one opaque
 //! material with the body's, so a membrane cannot let light through; a real
@@ -85,6 +86,14 @@ const LIT_FROM: f32 = 0.5;
 /// 0.35 at W4's merge for the stored blue-grey coat, on which the paler
 /// target sits close to the coat itself.
 const FURRED_EDGE: f32 = 0.5;
+
+/// How far out toward its free edge a glider's patagium starts to pale (#434):
+/// its rim alone. Folded, the patagium lies along the flank with its free
+/// edge lowest, and paling from 0.4 of the way out, the whole lower half of
+/// the fold read as a pale panel against the coat beside it; from 0.85, its
+/// foot a paler line under the band. Provenance: **chosen by render**, and
+/// **measured** (`tests/winged_fold.rs`' coat).
+const FURRED_FROM: f32 = 0.92;
 
 /// The fibres along a membrane's rows: how many across its chart from root to
 /// edge, how dark one is against the sheet, and how wide, as a share of the
@@ -243,7 +252,7 @@ impl Painter<'_> {
             }
             Charted::Sheet { edge } => {
                 let fur = self.fur();
-                let lit = step(0.4, 1.0, edge);
+                let lit = step(FURRED_FROM, 1.0, edge);
                 let warm = fur.lerp(WHITE, 0.5).lerp(LIT, 0.1);
                 (fur.lerp(warm, FURRED_EDGE * lit), FUR_ROUGHNESS, 1.0)
             }
