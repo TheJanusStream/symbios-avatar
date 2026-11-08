@@ -726,6 +726,7 @@ impl Idle {
         };
         let contacts = rig.ground_contacts();
         let mut grounded = Vec::with_capacity(contacts.len());
+        let mut down = Vec::with_capacity(contacts.len());
         // **A foot of it on the ground under it, and a stepping one stepping
         // over it**, found beside #400: its arc is laid on what the ground
         // answers beneath where it has got to, as a walk's contact is. Over the
@@ -753,6 +754,8 @@ impl Idle {
             if lift <= SETTLED {
                 grounded.push(limb);
             }
+            let reach = lift / super::winged::ground::STAND_REACH;
+            down.push((limb, 1.0 - reach.clamp(0.0, 1.0)));
         }
         // **Plant what is down, not what is stepping** — the same distinction
         // `gait::Walk::settle` makes when it hands the plant its stance list
@@ -765,6 +768,8 @@ impl Idle {
         if four {
             self.enliven(rig, pose);
         }
+        // And a winged body's toes laid on the ground it stands on (#436).
+        super::winged::ground::stand_toes(rig, pose, &down, &ground);
 
         Idled {
             bearing,

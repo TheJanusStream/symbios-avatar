@@ -435,3 +435,89 @@ fn a_bat_keeps_a_carried_beak_through_a_head_re_roll() {
         [back.beak_length, back.beak_hook, back.facial_disc]
     );
 }
+
+/// **A young bird's beak is shorter** (#429; research-10 fact 10): the same
+/// beak reaches less far out of the head, in its radii, on a bird drawn all
+/// the way to its young (`appeal` 1.5) than on one drawn as an adult, and a
+/// crow's long beak by more than an owl's short one.
+#[test]
+fn a_young_bird_s_beak_is_shorter() {
+    let bird = Lineage::pure(WingedFamily::Bird);
+    let reach = |head: [f32; 3], appeal: f32| {
+        let mut asked = params(bird, head);
+        asked.appeal = appeal;
+        let (avatar, head) = built(asked);
+        furthest(&mandibles(&avatar, &head).0) / head.radius
+    };
+    let mut cut = Vec::new();
+    for head in [OWL, [1.0, -1.0, -1.0]] {
+        let (adult, young) = (reach(head, 0.0), reach(head, 1.5));
+        assert!(
+            young < adult - 0.05,
+            "{head:?}: a young bird's beak reaches {young:.3} radii, an adult's {adult:.3}"
+        );
+        cut.push(adult - young);
+    }
+    assert!(
+        cut[1] > cut[0],
+        "the crow's beak was cut {:.3}, the owl's {:.3}",
+        cut[1],
+        cut[0]
+    );
+}
+
+/// **The head's streams moved no other axis's roll** (#429): a winged
+/// record rolled from each of eight seeds draws the family, the cross and
+/// every axis 0.20.0 drew - before the head's axes and their streams existed -
+/// as 0.20.0 drew them (read off the published 0.20.0, 2026-11-07). The rolls
+/// go through the platform's `ln` and `cos` before they are rounded to
+/// thousandths, so a value is held within one and a half of them: a libm a
+/// unit off at a half-thousandth moves it by one, and a stream renamed moves
+/// it wholesale (seed 1's headSize to -0.529).
+#[test]
+fn the_head_s_streams_moved_no_other_roll() {
+    use WingedFamily::{Bat, Bird, Glider};
+    /// A seed, its family, cross, blend and size, then its wingLength,
+    /// neckLength, legLength, tailLength, headSize and appeal.
+    type Rolled = (i64, WingedFamily, Option<WingedFamily>, f32, f32, [f32; 6]);
+    #[rustfmt::skip]
+    const ROLLED: [Rolled; 8] = [
+        (1, Bat, None, 0.0, 0.697, [0.487, -2.93, -0.289, 0.104, 0.207, 0.851]),
+        (2, Bat, Some(Glider), 0.329, 0.576, [0.056, 0.414, 0.257, 0.106, -0.22, 1.543]),
+        (3, Bat, None, 0.0, 0.737, [-0.074, 0.63, 0.004, -0.356, -0.198, 1.696]),
+        (5, Bird, None, 0.0, 0.437, [0.209, -0.727, -0.51, -0.128, 0.211, 0.534]),
+        (8, Glider, Some(Bat), 0.748, 0.572, [0.129, -0.401, -0.107, 0.12, 0.086, 0.651]),
+        (13, Bat, Some(Glider), 0.331, 0.635, [-0.18, -0.431, -0.292, -0.108, 0.013, 0.915]),
+        (21, Bat, None, 0.0, 0.847, [-0.441, 0.643, 0.074, -0.412, 0.544, 0.267]),
+        (34, Bird, None, 0.0, 0.488, [0.124, -0.581, -1.33, 0.121, 0.115, 1.028]),
+    ];
+    for (seed, family, hybrid, blend, size, axes) in ROLLED {
+        let mut record = AvatarRecord::new("Roll", Archetype::Winged(WingedParams::default()));
+        record.reroll(seed);
+        let Archetype::Winged(rolled) = record.archetype else {
+            panic!("a roll changed the plan");
+        };
+        let now = [
+            rolled.wing_length,
+            rolled.neck_length,
+            rolled.leg_length,
+            rolled.tail_length,
+            rolled.head_size,
+            rolled.appeal,
+        ];
+        assert_eq!(
+            (rolled.family, rolled.hybrid),
+            (family, hybrid),
+            "seed {seed} rolls another body than 0.20.0 rolled"
+        );
+        let near = |a: f32, b: f32| (a - b).abs() < 0.0015;
+        assert!(
+            near(rolled.blend, blend)
+                && near(rolled.size, size)
+                && now.iter().zip(axes).all(|(&a, b)| near(a, b)),
+            "seed {seed} rolls other than 0.20.0 rolled it: blend {}, size {}, axes {now:?}",
+            rolled.blend,
+            rolled.size
+        );
+    }
+}

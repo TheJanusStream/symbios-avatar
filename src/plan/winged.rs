@@ -504,8 +504,21 @@ impl WingedParams {
     /// Whether a share code must carry this body's head (#422): only when one
     /// of its three axes is not an owl's, which a code written before them
     /// meant, so a code of any other winged body stays one a 0.20 reader takes.
+    ///
+    /// **Asked of the bytes the head would write, not the axes** (#429): the
+    /// span has no byte for nought, so an owl's axis writes the byte nearest
+    /// it, which reads back a hair off it. Asked of the floats, a head whose
+    /// bytes were the owl's (`beakLength` 0.004) wrote 13 and read back as
+    /// that byte's head, 0.012 on every axis, and a body decoded from such a
+    /// 13 never wrote a 10 again. Asked of the bytes, it writes 10 and reads
+    /// back as the owl's, and every head decoded from a code this build
+    /// writes writes that code again.
     pub(crate) fn head_needs_bytes(&self) -> bool {
-        [self.beak_length, self.beak_hook, self.facial_disc] != [0.0; 3]
+        let mut head = Vec::with_capacity(3);
+        self.put_head(&mut head);
+        let mut owl = Vec::with_capacity(3);
+        Self::default().put_head(&mut owl);
+        head != owl
     }
 
     /// Writes the head's three axes, as the payload writes its others.
@@ -581,18 +594,19 @@ impl WingedParams {
     }
 
     /// Whether a share code must carry this body's surfaces (#423): only when
-    /// its plumage is not the default owl's or it stores a coat other than its
-    /// leading family's own, which is what a code written before them meant,
-    /// so every other winged body's code stays one a 0.21 reader takes. A
-    /// bird-led body that stores a coat carries it, since none is its family's.
+    /// its plumage is not the default owl's or it stores a coat, which is what
+    /// a code written before them meant, so every other winged body's code
+    /// stays one a 0.21 reader takes.
+    ///
+    /// **A stored coat rides whatever it is** (#431), its leading family's own
+    /// included: a stored coat goes with the body across a change of family
+    /// and an absent one reads as whichever family leads, so a bat storing a
+    /// bat's coat and a bat storing none look alike only while a bat leads.
+    /// Dropped from its code, as up to 0.23.1, the bat came back storing none,
+    /// and made a glider it wore a glider's grey where the bat it was read
+    /// from wore its black.
     pub(crate) fn surfaces_need_bytes(&self) -> bool {
-        self.plumage != Plumage::default()
-            || self
-                .coat
-                .is_some_and(|coat| match self.lineage().leading() {
-                    WingedFamily::Bird => true,
-                    family => coat != family.default_coat(),
-                })
+        self.plumage != Plumage::default() || self.coat.is_some()
     }
 
     /// Writes the surfaces: a byte of which follow - the plumage, then the

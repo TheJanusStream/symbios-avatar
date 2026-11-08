@@ -47,7 +47,9 @@ pub enum Landmark {
     LimbMid(Limb),
     /// A limb's far joint: a wrist, or an ankle.
     LimbWrist(Limb),
-    /// The end of a limb: a hand, or a foot.
+    /// The end of a limb: a hand, or a foot. A hand's is its last joint, a
+    /// person's fingertip; a hind foot's the last joint its plan hung, its toe
+    /// node, and never a drawn toe's claw (#430).
     LimbTip(Limb),
 }
 
@@ -150,8 +152,25 @@ impl Landmarks {
                 anchors.insert(Landmark::LimbWrist(limb), limb_anchor(rig, wrist));
             }
             // The foot's own tip, not a wing's: a bat's digits and a bird's
-            // feathers share the extremity's zone (#421).
-            if let Some(&tip) = rig.extremity_joints(limb).last() {
+            // feathers share the extremity's zone (#421). **And on a hind
+            // foot, the last joint its plan hung** - the toe node - not a
+            // drawn toe's (#430): a bird's and a bat's toes are attached under
+            // the pad after the plan's joints, the middle toe last, and the
+            // last of its joints is its claw's point, radius nought, on the
+            // ground and on a bat turned outward, where a prop at the foot
+            // stood on the claw. A hand keeps its last joint, a person's
+            // fingertip: a hand's digits are attached too.
+            let joints = rig.extremity_joints(limb);
+            let tip = if limb.is_fore() {
+                joints.last()
+            } else {
+                joints
+                    .iter()
+                    .rev()
+                    .find(|&&joint| rig.joints[joint].node.is_some())
+                    .or(joints.last())
+            };
+            if let Some(&tip) = tip {
                 anchors.insert(Landmark::LimbTip(limb), limb_anchor(rig, tip));
             }
         }

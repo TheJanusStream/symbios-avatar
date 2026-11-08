@@ -1715,8 +1715,11 @@ where
 /// planted — [`super::Footholds`] is the one caller, and the plumbing is
 /// crate-internal so the public surface stays the stateless one. An anchored
 /// stance takes its horizontal from the anchor and its vertical from the
-/// ground beneath it, exactly as an unanchored stance seats itself; swings are
-/// never anchored. An empty slice is [`step`] to the bit.
+/// ground beneath it, exactly as an unanchored stance seats itself. An anchor
+/// given for a swinging contact is instead the gap a winged body's foot lifted
+/// with, from the stride's own take-off: the swing sets off from there and
+/// lets it go by its landing ([`seated_offset`], #437); the ledger gives one to
+/// no other body. An empty slice is [`step`] to the bit.
 pub(crate) fn step_anchored<F>(
     rig: &Rig,
     pose: &mut Pose,
@@ -1797,6 +1800,9 @@ where
                 let beneath = ground(home + level).map_or(0.0, |there| there.position.y);
                 level + Vec3::Y * beneath
             } else {
+                // A swing carrying the gap its foot lifted with sets off
+                // from where that foot stood (#437): see [`seated_offset`].
+                let carried = anchored(limb).filter(|_| matches!(phase, Phase::Swing(_)));
                 led(
                     seated_offset(
                         led(home + widen, lead),
@@ -1805,6 +1811,7 @@ where
                         phase,
                         gait.duty,
                         &ground,
+                        carried,
                     ) + widen,
                     lead,
                 )
@@ -1859,10 +1866,15 @@ where
                 let home = home_of(rig, limb)?;
                 let widen = Vec3::X * (home.x * SPREAD_ON_DOUBT * doubt);
                 let lead = stride_lead(rig, limb, gait);
-                let level = led(
+                let mut level = led(
                     contact_offset(led(home + widen, lead), stride, phase) + widen,
                     lead,
                 );
+                // And a swing carrying its foot's gap is charged for what is
+                // left of it, as the stance it lifted from was (#437).
+                if let (Phase::Swing(through), Some(carried)) = (phase, anchored(limb)) {
+                    level += Vec3::new(carried.x, 0.0, carried.z) * (1.0 - smoothstep(through));
+                }
                 Vec3::new(level.x, offset.y, level.z)
             };
             // The compliance term rides in the doubtful limb's own entry of
@@ -2437,6 +2449,21 @@ impl Walked {
 /// at the start of the flight where the obstacle is, not in the middle where a
 /// smoothstep puts it.
 ///
+/// # A swing that carries a gap
+///
+/// `carried` (horizontal, in the body) is how far from the stride's own
+/// take-off a winged body's held foot stood when it lifted (#437), `None`
+/// for every other swing and every other body, to the bit.
+///
+/// **The take-off end is moved, not the path.** The gap is let go of over
+/// the swing by the very smoothstep the flight is eased by, so a carried
+/// swing is the same flight from the point the foot really left, and every
+/// probe of it - the ramp's take-off height, the roof along the way and the
+/// cone about the end - is read over the ground it really crosses. Adding
+/// the gap to the uncarried swing's horizontal alone kept the height of the
+/// ground under the uncarried path: on a 20 degree slope the foot dropped or
+/// rose by the gap times the grade as it lifted, a held bat's arm 112.7 mm
+/// a sixtieth facing down one.
 fn seated_offset<F>(
     home: Vec3,
     foot: (f32, f32),
@@ -2444,6 +2471,7 @@ fn seated_offset<F>(
     phase: Phase,
     duty: f32,
     ground: &F,
+    carried: Option<Vec3>,
 ) -> Vec3
 where
     F: Fn(Vec3) -> Option<Ground>,
@@ -2483,6 +2511,12 @@ where
         0.0
     };
     let leaving = traced(home, stride, 0.5 + drift * t);
+    // Set off from where the foot stood, for a swing that carries a gap.
+    let carried = carried.map(|gap| Vec3::new(gap.x, 0.0, gap.z));
+    let leaving = match carried {
+        Some(gap) => leaving + gap,
+        None => leaving,
+    };
     let arriving = traced(home, stride, -0.5 - drift * (1.0 - t));
     let (from, to) = (beneath(leaving), beneath(arriving));
 
@@ -2548,7 +2582,12 @@ where
         leaving.lerp(arriving, smoothstep(t))
     } else {
         let (from, to) = (0.5 + drift * t, -0.5 - drift * (1.0 - t));
-        traced(home, stride, from + (to - from) * smoothstep(t))
+        let arc = traced(home, stride, from + (to - from) * smoothstep(t));
+        // A carried gap let go of along the arc as it is along the chord.
+        match carried {
+            Some(gap) => arc + gap * (1.0 - smoothstep(t)),
+            None => arc,
+        }
     };
 
     let along_stride = stride.direction;
@@ -5711,6 +5750,7 @@ mod tests {
                         Phase::Swing(t),
                         gait.duty,
                         &travelling(origin, world),
+                        None,
                     );
                     home + offset + Vec3::new(0.0, world(origin), origin)
                 })

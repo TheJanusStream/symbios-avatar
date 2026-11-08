@@ -238,8 +238,9 @@ fn bird(toes: Toes) -> [Recipe; 4] {
             radius: 0.40,
             curl: 1.4,
         },
-        // The middle toe last: the last joint a foot attaches is its tip
-        // (`Landmark::LimbTip`), which is the middle toe's claw.
+        // The middle toe last, as W3 laid it out. The foot's tip
+        // (`Landmark::LimbTip`) is not its claw: it is the plan's toe node
+        // (#430), whatever order the toes are attached in.
         Recipe {
             digit: 3,
             yaw: third,

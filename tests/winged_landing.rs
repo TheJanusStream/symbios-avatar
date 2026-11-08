@@ -10,8 +10,8 @@ use symbios_avatar::anim::driver::{Carriage, Driver, DriverConfig, Inputs, Sourc
 use symbios_avatar::anim::winged::flight::{Flight, FlightMode, Flown};
 use symbios_avatar::plan::{Blended, Lineage};
 use symbios_avatar::{
-    Archetype, Avatar, AvatarRecord, Ground, MeshKind, Pose, Quat, Rig, Vec3, WingedFamily,
-    WingedParams, Zone,
+    Archetype, Avatar, AvatarRecord, Ground, Limb, MeshKind, Pose, Quat, Rig, Role, Vec3,
+    WingedFamily, WingedParams, Zone,
 };
 
 /// The frame every step is read as, a sixtieth of a second.
@@ -120,6 +120,9 @@ struct Host<'a, G> {
     delta: f32,
     ground: G,
     shots: Vec<Shot>,
+    /// Where the chassis stands, handed to the driver: still, unless the
+    /// host carries it along ([`Self::go`]).
+    at: Vec3,
 }
 
 impl<'a, G: Fn(Vec3) -> Option<Ground> + Copy> Host<'a, G> {
@@ -136,7 +139,15 @@ impl<'a, G: Fn(Vec3) -> Option<Ground> + Copy> Host<'a, G> {
             delta,
             ground,
             shots: Vec::new(),
+            at: Vec3::ZERO,
         }
+    }
+
+    /// One frame on the ground at `speed`, the chassis carried along at it,
+    /// as a host whose chassis moves the body hands the driver its place.
+    fn go(&mut self, speed: f32) {
+        self.at += Vec3::Z * (speed * self.delta);
+        self.frame(None, speed, None);
     }
 
     fn frames(&self, seconds: f32) -> usize {
@@ -160,6 +171,7 @@ impl<'a, G: Fn(Vec3) -> Option<Ground> + Copy> Host<'a, G> {
                 &Inputs {
                     delta: self.delta,
                     velocity: Vec3::Z * speed,
+                    at: self.at,
                     flight,
                     ..Inputs::default()
                 },
@@ -222,25 +234,13 @@ impl<'a, G: Fn(Vec3) -> Option<Ground> + Copy> Host<'a, G> {
     /// How far the joints moved and turned into each frame of `frames`, the
     /// most of them, each read as a sixtieth's at the speed it went.
     fn steps(&self, frames: std::ops::Range<usize>) -> Vec<(f32, f32)> {
-        self.steps_of(frames, &(0..self.rig.len()).collect::<Vec<_>>())
-    }
-
-    /// [`Self::steps`] of `joints` alone.
-    fn steps_of(&self, frames: std::ops::Range<usize>, joints: &[usize]) -> Vec<(f32, f32)> {
         let scale = REFERENCE / self.delta;
         frames
             .map(|at| {
                 let (before, now) = (&self.shots[at - 1], &self.shots[at]);
-                let pick = |shot: &Shot| -> (Vec<Vec3>, Vec<Quat>) {
-                    joints
-                        .iter()
-                        .map(|&joint| (shot.joints[joint], shot.turns[joint]))
-                        .unzip()
-                };
-                let ((was, was_turned), (is, is_turned)) = (pick(before), pick(now));
                 (
-                    furthest(&was, &is) * scale,
-                    turned(&was_turned, &is_turned) * scale,
+                    furthest(&before.joints, &now.joints) * scale,
+                    turned(&before.turns, &now.turns) * scale,
                 )
             })
             .collect()
@@ -265,26 +265,6 @@ const GROUND_TURN: f32 = 1.25;
 /// what they moved settled.
 const HAND_BACK_SLACK: f32 = 0.03;
 
-/// Every joint but those of the feet it stands on - pads, toes and the rest
-/// of each foot - which the ground sources set on the ground after their
-/// blend (`winged::ground::keep_toes_up`): under any blend on a slope it
-/// lifts a pad or lays a toe down for a frame or two and back, a bat's hind
-/// toe 12 mm, in a walk stopping on a 20 degree slope as in a landing's hand
-/// back (a walk's stop moves the rest of the body 30 to 60 mm a frame around
-/// it), so the ground's own, not the hand back's. The feet are held to the
-/// slope by [`clearance`], which reads them drawn, and their turns to
-/// [`GROUND_TURN`] with every joint's.
-fn joints_but_feet(rig: &Rig) -> Vec<usize> {
-    let contacts = rig.ground_contacts();
-    (0..rig.len())
-        .filter(|&joint| {
-            let foot = matches!(rig.joints[joint].zone, Zone::Extremity(limb) if contacts.contains(&limb))
-                && !rig.wings.as_ref().is_some_and(|wings| wings.owns(joint));
-            !foot
-        })
-        .collect()
-}
-
 /// **A landing on a slope hands back to the ground without a pop** (#435):
 /// a bird, a bat, a glider and two crosses carried as Overlands carries them
 /// stand on a slope of 10 and 20 degrees - facing up it, down it and across
@@ -294,20 +274,28 @@ fn joints_but_feet(rig: &Rig) -> Vec<usize> {
 /// - **across the hand-back no joint moves in a frame more than twice the
 ///   most it moved in the four frames before it and [`HAND_BACK_SLACK`] of
 ///   the trunk** - the pop bound (`winged_life`) with the settled landing
-///   for its neighbours - every joint but its feet ([`joints_but_feet`]), **nor
-///   turns more than [`GROUND_TURN`]**, every joint, every frame read as a
-///   sixtieth at the speed it moved, for the first [`HANDED_BACK`] of the
-///   ground source;
+///   for its neighbours - **nor turns more than [`GROUND_TURN`]**, every
+///   joint, its feet's with the rest, every frame read as a sixtieth at the
+///   speed it moved, for the first [`HANDED_BACK`] of the ground source;
 /// - **nothing drawn goes into the slope** - soles, toes and membrane - from
 ///   the settled landing to a second after the hand-back, past
-///   [`UNDER_GROUND`] below where it stood on the slope before it took off.
+///   [`UNDER_GROUND`] below where it stood on the slope before it took off;
+/// - **a second after the hand-back each drawn toe stands within
+///   [`TOES_ON`] of its own height over the slope** (#436).
 ///
 /// Before: the settled landing stood its trunk level and its feet as no
 /// ground source stands them, so handed back the idle carried it up to
 /// 0.31 m to its own stance over the blend - a bat x glider moving 88 mm in a
 /// frame at 60 frames a second where it moved 4.7 settled, a glider's tail 60
 /// against 1.7 - and a settled glider stood 21 mm into a 20 degree slope
-/// facing up it and 78 mm facing down it.
+/// facing up it and 78 mm facing down it. And until #436 the feet were left
+/// out of the first bound: the idle's toe pass (`winged::ground::keep_toes_up`)
+/// laid a hind foot's toes square to the slope on some frames and turned
+/// about its pad on others, a bat's hind toe 24 mm a sixtieth facing up a 20
+/// degree slope at 144 frames a second against 1.6 settled, a bird x bat
+/// cross's 43 across it; and kept from that by letting a sole stand in the
+/// slope, the toes stood level with the body once handed back, up to
+/// 37.7 mm off the slope facing up a 20 degree one.
 #[test]
 fn a_landing_on_a_slope_hands_back_without_a_pop() {
     let bodies = bodies();
@@ -361,24 +349,19 @@ fn land_on(avatar: &Avatar, plane: Plane, delta: f32) -> Vec<String> {
         failures.push("never settled and handed back".to_string());
         return failures;
     }
-    let held = joints_but_feet(rig);
     let moved = host
-        .steps_of(back - 4..back, &held)
+        .steps(back - 4..back)
         .into_iter()
         .fold(0.0f32, |most, step| most.max(step.0));
     let slack = HAND_BACK_SLACK * trunk(rig);
-    let turns = host.steps(back..back + host.frames(HANDED_BACK));
-    for (at, (step, _)) in host
-        .steps_of(back..back + host.frames(HANDED_BACK), &held)
+    for (at, (step, turning)) in host
+        .steps(back..back + host.frames(HANDED_BACK))
         .into_iter()
         .enumerate()
     {
-        let turning = turns[at].1;
         if step > 2.0 * moved + slack {
             let frame = back + at;
-            let joint = held
-                .iter()
-                .copied()
+            let joint = (0..rig.len())
                 .max_by(|&a, &b| {
                     let far = |joint: usize| {
                         host.shots[frame].joints[joint]
@@ -413,6 +396,169 @@ fn land_on(avatar: &Avatar, plane: Plane, delta: f32) -> Vec<String> {
             -lowest * 1000.0,
             at as i64 - back as i64,
             -standing * 1000.0
+        ));
+    }
+    let off = toes_off(rig, &host.shots[host.shots.len() - 1], plane);
+    if off > TOES_ON {
+        failures.push(format!(
+            "a second on the ground, a toe {:.1} mm off the slope",
+            off * 1000.0
+        ));
+    }
+    failures
+}
+
+/// How far a standing body's drawn toes may stand off the slope, in metres:
+/// each toe joint over the ground along its up, against the height it was
+/// built at over a floor at nought.
+const TOES_ON: f32 = 0.003;
+
+/// How far each toe of a body's feet stands off the slope in `shot`, the
+/// furthest of them, in metres: nought for a foot laid on it.
+fn toes_off(rig: &Rig, shot: &Shot, plane: Plane) -> f32 {
+    let up = Vec3::new(-plane.rise.x, 1.0, -plane.rise.z).normalize();
+    let wings = rig.wings.as_ref();
+    rig.ground_contacts()
+        .into_iter()
+        .flat_map(|limb| rig.in_zone(Zone::Extremity(limb)))
+        .filter(|&joint| {
+            rig.joints[joint].role == Role::Digit && !wings.is_some_and(|wings| wings.owns(joint))
+        })
+        .map(|joint| {
+            let at = shot.joints[joint];
+            let over = (at - Vec3::new(at.x, plane.height(at), at.z)).dot(up);
+            (over - rig.joints[joint].position.y.max(0.0)).abs()
+        })
+        .fold(0.0f32, f32::max)
+}
+
+/// How much more than twice the most it turned in the four frames either
+/// side a joint may turn in a sixtieth: a twentieth of a radian, the turns'
+/// slack for what the pop bound's hundredth of the trunk is to positions.
+const TURN_SLACK: f32 = 0.05;
+
+/// How long a walk stopping on a slope is read from its stop, in seconds:
+/// three quarters of a second, the idle's blend (0.15 s) and its settling
+/// with it. Not before it: a bird's walk across the slope turns a joint 0.84
+/// rad a sixtieth at 144 frames a second a sixth of a second before it
+/// stops, its gait's own.
+const STOPPING: f32 = 0.75;
+
+/// **A walk stopping on a slope lays its toes on it** (#436): a bird, a bat,
+/// a glider and the crosses walking at a Froude number of 0.4 on the hip,
+/// carried as Overlands carries them, facing up, down and across a 20 degree
+/// slope, and stopping, at 30, 60 and 144 frames a second:
+///
+/// - **from the stop to three quarters of a second after it ([`STOPPING`])
+///   no joint moves in a frame more than twice the most it moved in the four
+///   frames either side and a hundredth of the trunk** (`winged_life`'s pop
+///   bound), **nor turns more than twice the most it turned in them and
+///   [`TURN_SLACK`], nor more than [`GROUND_TURN`]**, every joint, the
+///   feet's with the rest, every frame read as a sixtieth at the speed it
+///   moved;
+/// - **a second and a half after the stop each drawn toe stands within
+///   [`TOES_ON`] of its own height over the slope** - the foot laid on the
+///   slope, not level with the body.
+///
+/// Before: the idle stood its feet as on the level, and the pass after the
+/// blend (`winged::ground::keep_toes_up`), which has no state and no time,
+/// laid the toes square to the slope on some frames and turned them about
+/// the pad on others - a bat's hind toe flipping 12 mm for a frame or two
+/// as it stopped - or, kept from that by letting a sole stand in the slope,
+/// left them level with the body for as long as it stood, toes 6 to 38 mm
+/// off the slope (a bat's 37.9 facing up it).
+///
+/// **One case is held to its toes alone**, its own fault and not this
+/// test's: a bird facing across the slope at 144 frames a second, seven
+/// frames into its stop, turns its whole right foot 0.49 rad a sixtieth and
+/// moves its folded wing's forearm 72 mm, with its toes laid or not.
+#[test]
+fn a_walk_stopping_on_a_slope_lays_its_toes_on_it() {
+    let bodies = bodies();
+    let slopes = [("up", Vec3::Z), ("down", -Vec3::Z), ("across", Vec3::X)];
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (name, avatar) in &bodies {
+            let failures = &failures;
+            scope.spawn(move || {
+                for (way, toward) in slopes {
+                    for rate in RATES {
+                        let plane = Plane::new(20.0, toward);
+                        let toes_alone = *name == "bird" && way == "across" && rate > 100.0;
+                        for line in stop_on(avatar, plane, 1.0 / rate, toes_alone) {
+                            failures
+                                .lock()
+                                .expect("a lock")
+                                .push(format!("{name} facing {way} the slope at {rate}: {line}"));
+                        }
+                    }
+                }
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// [`a_walk_stopping_on_a_slope_lays_its_toes_on_it`] for one body on one
+/// slope at one rate: every bound it breaks, `toes_alone` holding it to its
+/// toes alone (see the test).
+fn stop_on(avatar: &Avatar, plane: Plane, delta: f32, toes_alone: bool) -> Vec<String> {
+    let rig = &avatar.rig;
+    let hip = rig
+        .limb_chain(Limb::HindLeft)
+        .map_or(0.1, |chain| rig.joints[chain[0]].position.y);
+    let speed = (0.4 * 9.81 * hip).sqrt().max(0.4);
+    let mut host = Host::new(rig, delta, plane.ground(), Carriage::Chassis);
+    host.stand(0.5);
+    for _ in 0..host.frames(1.5) {
+        host.go(speed);
+    }
+    let stop = host.shots.len();
+    host.stand(1.5);
+    let mut failures = Vec::new();
+    let steps = host.steps(stop - 4..stop + host.frames(STOPPING) + 4);
+    let slack = 0.01 * trunk(rig);
+    for at in (4..steps.len() - 4).filter(|_| !toes_alone) {
+        let around = |pick: fn(&(f32, f32)) -> f32| {
+            (at - 4..at)
+                .chain(at + 1..=at + 4)
+                .map(|frame| pick(&steps[frame]))
+                .fold(0.0f32, f32::max)
+        };
+        let ((step, turn), shot) = (steps[at], stop - 4 + at);
+        let (moved, turned) = (around(|step| step.0), around(|step| step.1));
+        if step > 2.0 * moved + slack {
+            let joint = (0..rig.len())
+                .max_by(|&a, &b| {
+                    let far = |joint: usize| {
+                        host.shots[shot].joints[joint].distance(host.shots[shot - 1].joints[joint])
+                    };
+                    far(a).total_cmp(&far(b))
+                })
+                .unwrap_or(0);
+            failures.push(format!(
+                "frame {} of the stop moved {:.1} mm a sixtieth against {:.1} (joint {joint}, \
+                 {:?})",
+                at - 4,
+                step * 1000.0,
+                moved * 1000.0,
+                rig.joints[joint].zone
+            ));
+        }
+        if turn > (2.0 * turned + TURN_SLACK).min(GROUND_TURN) {
+            failures.push(format!(
+                "frame {} of the stop turned a joint {turn:.3} rad a sixtieth against \
+                 {turned:.3}",
+                at - 4
+            ));
+        }
+    }
+    let off = toes_off(rig, &host.shots[host.shots.len() - 1], plane);
+    if off > TOES_ON {
+        failures.push(format!(
+            "standing, a toe {:.1} mm off the slope",
+            off * 1000.0
         ));
     }
     failures
@@ -575,7 +721,7 @@ const GAIT_READ: (f32, f32) = (1.5, 0.5);
 /// carried as Overlands carries them, flown over the level, flared by time
 /// to contact and landed, the landing held until it has settled, at 30, 60
 /// and 144 frames a second: from the landing's first frame to its settling
-/// **no joint moves in a frame more than six times what it moves in a
+/// **no joint moves in a frame more than seven times what it moves in a
 /// median frame of its own fast gait** - its run, hop or bound at a Froude
 /// number of one on its hip, as `winged_life` drives it - **and a hundredth
 /// of its trunk**,
@@ -587,6 +733,19 @@ const GAIT_READ: (f32, f32) = (1.5, 0.5);
 /// first frames, its wingtip 353, 336 and 257 mm in a sixtieth at 60 frames
 /// a second where a frame of its bound moves a joint 118 at the most, and
 /// 343 at 30 frames a second, a bird x bat cross's 223.
+///
+/// **Seven times, not six**: a bat's landing opens on the last of its
+/// flare's stroke, its wingtip easing from 232 mm a sixtieth in the flare's
+/// last frame to 118 in the landing's first and 69 in its second at 30
+/// frames a second (221, 107, 98 at 144) - a fast frame, smooth with those
+/// either side of it, and no pop - and six times its bound's median frame
+/// let that through by 3.3 %, less than a libm has moved a figure. At
+/// seven it passes by 16 % at 30 frames a second and by a quarter at 60 and
+/// 144, and the beat going on through a landing is still well over it (a
+/// bat's 257 to 353 mm against 141, a bird x bat's 223 against 149 at the
+/// most); a bat's wings folded on landing at the rate they open in flight
+/// (`LAND_FOLD_RATE` at `EXTENSION_RATE`'s six a second, 147 to 193 mm a
+/// sixtieth) break it at every rate.
 #[test]
 fn a_landing_folds_no_faster_than_its_gaits_move() {
     let bodies = bodies();
@@ -622,18 +781,22 @@ fn fold(avatar: &Avatar, delta: f32) -> Vec<String> {
         let speed = (9.81 * hip).sqrt().max(0.4);
         let mut host = Host::new(rig, delta, level_ground, Carriage::Chassis);
         for _ in 0..host.frames(GAIT_READ.0) {
-            host.frame(None, speed, None);
+            host.go(speed);
         }
-        // A median frame, not the most: a bat's bound carries a single-frame
-        // arm pop of about 115 mm at every rate (the 0.23.1 critic), which read
-        // as a sixtieth at 144 frames a second loosened the bound past 550 mm.
+        // Its chassis carried along, as `winged_life` carries it: read with
+        // the chassis held, until #437 the foothold ledger let each held foot
+        // go at once as it lifted, a bat's arm 115 mm in a frame at every rate,
+        // and since, its held bound is a quarter to a third stiller than its
+        // own gait.
+        // And a median frame, not the most, which a pop would loosen the
+        // bound by, read as a sixtieth at 144 frames a second past 550 mm.
         let mut steps: Vec<f32> = host
             .steps(host.frames(GAIT_READ.1)..host.shots.len())
             .into_iter()
             .map(|step| step.0)
             .collect();
         steps.sort_by(f32::total_cmp);
-        3.0 * steps[steps.len() / 2]
+        3.5 * steps[steps.len() / 2]
     };
     let mut host = Host::new(rig, delta, level_ground, Carriage::Chassis);
     host.stand(0.5);

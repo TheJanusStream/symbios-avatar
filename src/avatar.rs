@@ -906,6 +906,7 @@ impl Avatar {
                             texture::coat::MembraneChart::of(
                                 &wings.membrane.uvs,
                                 params.naked_membrane(),
+                                config.uv.gutter,
                             )
                         }),
                 });

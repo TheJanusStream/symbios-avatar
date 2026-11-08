@@ -175,9 +175,11 @@ fn acos_approx(v: f32) -> f32 {
     }
 }
 
-/// Component-wise dot in fixed left-to-right association.
+/// Component-wise dot in fixed left-to-right association: a quaternion's
+/// `dot`, and with itself the square of its `length`, the same bits natively
+/// and in a browser (`wing::fit`'s blend test reads it, #427).
 #[inline]
-fn dot4(a: Quat, b: Quat) -> f32 {
+pub(crate) fn dot4(a: Quat, b: Quat) -> f32 {
     ((a.x * b.x + a.y * b.y) + a.z * b.z) + a.w * b.w
 }
 

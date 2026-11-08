@@ -440,3 +440,162 @@ fn every_family_and_cross_builds_its_feet_clean() {
         }
     }
 }
+
+/// **A foot's tip is the plan's toe node, not a claw's point** (#430): on
+/// every family and cross, each hind foot's `LimbTip` - where a prop at the
+/// foot sits - is the last joint its plan hung, with a real radius, and the
+/// foot socket's seat stands clear of the ground by it; the socket's joint,
+/// the ankle the foot hangs from (what Overlands' leg band rides), is the
+/// plan's own. A person's hand keeps its fingertip, a digit joint. Up to
+/// 0.23.1 a bird's and a bat's tip was the middle toe's claw point, radius
+/// nought, and a bird's seat stood 1.7 mm off the ground.
+#[test]
+fn a_foot_s_tip_is_its_toe_node_and_never_a_claw() {
+    use symbios_avatar::{Landmark, Socket};
+    for (name, lineage) in lineages() {
+        let avatar = built(lineage);
+        let rig = &avatar.rig;
+        let marks = rig.landmarks();
+        for (limb, socket) in [
+            (Limb::HindLeft, Socket::LeftFoot),
+            (Limb::HindRight, Socket::RightFoot),
+        ] {
+            let plan = rig
+                .in_zone(Zone::Extremity(limb))
+                .into_iter()
+                .rfind(|&joint| rig.joints[joint].node.is_some())
+                .expect("a foot the plan hung");
+            let tip = marks.get(Landmark::LimbTip(limb)).expect("a foot's tip");
+            assert_eq!(
+                tip.position, rig.joints[plan].position,
+                "{name} {limb:?}: the tip is not the toe node"
+            );
+            assert!(
+                tip.radius > 0.005,
+                "{name} {limb:?}: a tip of radius {}",
+                tip.radius
+            );
+            let seat = socket
+                .seat(rig, &avatar.parts.surface, 0.0)
+                .expect("a foot seat");
+            assert!(
+                seat.position.y > tip.radius,
+                "{name} {limb:?}: the seat stands {} m off the ground",
+                seat.position.y
+            );
+            let carrier = socket.joint(rig).expect("a foot joint");
+            assert!(
+                rig.joints[carrier].node.is_some() && rig.joints[carrier].role != Role::Digit,
+                "{name} {limb:?}: the socket rides a drawn toe"
+            );
+        }
+    }
+    let person = Avatar::build_for_shape(&AvatarRecord::default()).expect("a person builds");
+    let rig = &person.rig;
+    let hand = rig
+        .landmarks()
+        .get(Landmark::LimbTip(Limb::ForeLeft))
+        .expect("a hand's tip");
+    let fingertip = rig
+        .joints
+        .iter()
+        .any(|joint| joint.role == Role::Digit && joint.position == hand.position);
+    assert!(fingertip, "a person's hand tip is no longer a fingertip");
+}
+
+/// One texel of `avatar`'s atlas under `uv`: its colour and its roughness.
+fn texel(avatar: &Avatar, uv: symbios_avatar::Vec2) -> (Vec3, f32) {
+    let map = &avatar.skin;
+    let (width, height) = (map.width as usize, map.height as usize);
+    let x = ((uv.x * width as f32) as usize).min(width - 1);
+    let y = ((uv.y * height as f32) as usize).min(height - 1);
+    let at = (y * width + x) * 4;
+    (
+        Vec3::new(
+            f32::from(map.albedo[at]),
+            f32::from(map.albedo[at + 1]),
+            f32::from(map.albedo[at + 2]),
+        ) / 255.0,
+        f32::from(map.roughness[at + 1]) / 255.0,
+    )
+}
+
+/// **The atlas paints a drawn foot's talons horn and its toes bare skin**
+/// (#430), read off a built body's own atlas, where only `FootShape`'s unit
+/// test asked before: on a bird either way round and on a bat, the far half
+/// of every claw is horn - its roughness - and the middle of every toe short
+/// of its claw bare, scaled skin - a leather's - and neither the coat's nor
+/// the plumage's.
+#[test]
+fn the_atlas_paints_talons_horn_and_toes_bare() {
+    /// The painter's roughness of a claw's horn and of bare skin.
+    const HORN: f32 = 0.35;
+    const BARE: f32 = 0.42;
+    for (name, lineage, hook) in [
+        (
+            "owl",
+            Lineage::pure(WingedFamily::Bird),
+            hook_for(Toes::Zygodactyl),
+        ),
+        (
+            "crow",
+            Lineage::pure(WingedFamily::Bird),
+            hook_for(Toes::Anisodactyl),
+        ),
+        ("bat", Lineage::pure(WingedFamily::Bat), 0.0),
+    ] {
+        // At the default atlas: a shape's build paints a 64-texel one, on
+        // which a claw is a texel shared with the toe beside it.
+        let mut record = record(lineage);
+        if let Archetype::Winged(params) = &mut record.archetype {
+            params.beak_hook = hook;
+        }
+        let avatar = Avatar::build_with(&record, &symbios_avatar::AvatarConfig::default())
+            .expect("a winged body builds");
+        let rig = &avatar.rig;
+        let (mut horn, mut claws, mut bare, mut toes_read) = (0, 0, 0, 0);
+        for part in &avatar.parts.extremities.feet {
+            assert_eq!(
+                part.mesh.uvs.len(),
+                part.mesh.vertex_count(),
+                "{name}: uncharted"
+            );
+            let origin = rig.joints[part.joint].position;
+            for toe in toes(rig, part.limb) {
+                let point = |joint: usize| rig.joints[joint].position;
+                let n = toe.joints.len();
+                let (claw_root, claw_tip) = (point(toe.joints[n - 2]), point(toe.joints[n - 1]));
+                let root = point(toe.joints[0]);
+                let claw = claw_tip.distance(claw_root);
+                for (at, &uv) in part.mesh.positions.iter().zip(&part.mesh.uvs) {
+                    let at = *at + origin;
+                    let (_, roughness) = texel(&avatar, uv);
+                    if at.distance(claw_tip) < 0.4 * claw {
+                        claws += 1;
+                        horn += usize::from((roughness - HORN).abs() < 0.01);
+                    }
+                    // Round the middle third of the toe short of its claw.
+                    let run = claw_root - root;
+                    let share = (at - root).dot(run) / run.length_squared();
+                    let off = (at - (root + run * share)).length();
+                    if (0.33..0.67).contains(&share) && off < 0.4 * run.length() {
+                        toes_read += 1;
+                        bare += usize::from((roughness - BARE).abs() < 0.01);
+                    }
+                }
+            }
+        }
+        assert!(
+            claws > 20 && toes_read > 20,
+            "{name}: {claws} claw and {toes_read} toe vertices"
+        );
+        assert!(
+            horn as f32 >= 0.9 * claws as f32,
+            "{name}: {horn} of {claws} claw vertices horn"
+        );
+        assert!(
+            bare as f32 >= 0.9 * toes_read as f32,
+            "{name}: {bare} of {toes_read} toe vertices bare"
+        );
+    }
+}

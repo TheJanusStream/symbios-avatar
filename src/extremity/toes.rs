@@ -4,9 +4,11 @@
 //! **On `extremity::hand`'s pattern**: grown on the rig after the body is
 //! bound, every joint [`Role::Digit`], so the binding never offers one skin,
 //! and in the leg's extremity zone - the parent the toes hang from is the
-//! foot's pad - so [`Rig::extremity_joints`], the foot every gait, ground
-//! contact and `LimbTip` reads, holds them and `Rig::extremity_extent` spans
-//! them. Attached after every joint the plan hangs, the foot's contact is
+//! foot's pad - so [`Rig::extremity_joints`], the foot every gait and ground
+//! contact reads, holds them and `Rig::extremity_extent` spans them. The
+//! foot's `LimbTip` landmark, where a prop at the foot sits, is the plan's
+//! toe node and none of these (#430): the last of them is a claw's point.
+//! Attached after every joint the plan hangs, the foot's contact is
 //! still the zone's first joint, and `Rig::limb_chain` - three joints above
 //! the extremity on every winged leg - never reaches them. A wing's joints
 //! share the fore limb's zone and are left out of the foot by

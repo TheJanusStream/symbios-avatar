@@ -103,13 +103,36 @@ impl Drive {
     /// spars' turns a few degrees either side of one, about axes a little
     /// apart, end close together and pass nearly a half turn apart midway,
     /// and a membrane blended between them flips. `fit` trims the turns
-    /// wherever a blended pair would come that close.
+    /// wherever a blended pair would come that close. An extension that is not
+    /// finite reads as the fold (#427).
     #[must_use]
     pub fn at(&self, extension: f32) -> Quat {
+        let extension = if extension.is_finite() {
+            extension
+        } else {
+            0.0
+        };
         let span = (self.to - self.from).max(f32::EPSILON);
         let share = ((extension - self.from) / span).clamp(0.0, 1.0);
         arc(self.spread, share * share * (3.0 - 2.0 * share))
     }
+}
+
+/// An extension or a spread as a pose reads it, `0..=1` (#427): one that is not
+/// a number or not finite reads as `0`, the fold. `f32::clamp` passes a NaN
+/// through, and a NaN extension posed every driven joint NaN.
+fn unit(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// An angle a stroke turns by, in radians: one that is not finite reads as
+/// none (#427), so it cannot pose a joint NaN.
+fn finite(angle: f32) -> f32 {
+    if angle.is_finite() { angle } else { 0.0 }
 }
 
 /// `share` of the way along `turn`'s own arc from the identity: the turn by
@@ -437,8 +460,15 @@ impl Wings {
 
     /// Writes each wing at its [`Stroke`] (#424): [`Self::pose`] at its
     /// extension, then turned by its stroke about each part's own roots. A
-    /// stroke of nothing is [`Self::pose`] to the bit.
+    /// stroke of nothing is [`Self::pose`] to the bit. An extension or an angle
+    /// that is not finite reads as `0` (#427).
     pub fn stroke(&self, rig: &Rig, pose: &mut Pose, left: Stroke, right: Stroke) {
+        let [left, right] = [left, right].map(|stroke| Stroke {
+            extension: unit(stroke.extension),
+            elevation: finite(stroke.elevation),
+            sweep: finite(stroke.sweep),
+            reach: finite(stroke.reach),
+        });
         let Some(trunk) = Trunk::of(rig) else {
             self.pose(pose, left.extension, right.extension);
             return;
@@ -463,7 +493,7 @@ impl Wings {
                     * Rot::axis_angle(trunk.up, -sign * stroke.sweep * share)
                     * Rot::axis_angle(trunk.along, sign * stroke.elevation * share)
             };
-            let extension = stroke.extension.clamp(0.0, 1.0);
+            let extension = stroke.extension;
             let mut done: Vec<(usize, Quat)> = Vec::with_capacity(side.drives.len());
             for drive in &side.drives {
                 let share = self.stroke_share(rig, drive.joint, pelvis, &trunk);
@@ -505,8 +535,10 @@ impl Wings {
 
     /// Writes the tail fan at `spread` and turns it (#424): `yaw` radians
     /// toward the body's left about the trunk's up - a rudder - and `pitch`
-    /// radians down, a tail depressed into a flare.
+    /// radians down, a tail depressed into a flare. A value that is not finite
+    /// reads as `0` (#427).
     pub fn steer_tail(&self, rig: &Rig, pose: &mut Pose, spread: f32, yaw: f32, pitch: f32) {
+        let (spread, yaw, pitch) = (unit(spread), finite(yaw), finite(pitch));
         let Some(trunk) = Trunk::of(rig) else {
             write(&self.tail, pose, spread);
             return;
@@ -517,7 +549,6 @@ impl Wings {
         }
         let turn = Rot::axis_angle(trunk.up, yaw)
             * Rot::axis_angle(trunk.along.cross(trunk.up).normalize_or(Vec3::NEG_X), pitch);
-        let spread = spread.clamp(0.0, 1.0);
         let mut done: Vec<(usize, Quat)> = Vec::with_capacity(self.tail.len());
         for drive in &self.tail {
             let world = (turn * drive.at(spread)).normalize();
@@ -541,8 +572,9 @@ impl Wings {
 
 /// Writes `drives` into `pose` at `extension`: each joint's turn in the
 /// body's frame, reckoned against its anchor's turn at the same extension.
+/// An extension that is not finite writes the fold ([`unit()`]).
 fn write(drives: &[Drive], pose: &mut Pose, extension: f32) {
-    let extension = extension.clamp(0.0, 1.0);
+    let extension = unit(extension);
     let mut turned: Vec<(usize, Quat)> = Vec::with_capacity(drives.len());
     for drive in drives {
         let world = drive.at(extension);
@@ -794,6 +826,45 @@ const SHARE_FLOOR: f32 = 0.2;
 /// How many steps of the extension the blends are checked at.
 const BLEND_STEPS: usize = 96;
 
+/// How many times at most [`fit`] trims a pair's branches.
+const ROUNDS: usize = 60;
+
+/// A share of a drive's spread turn held a tenth shorter (#427): a tenth
+/// at a time, and at [`SHARE_FLOOR`] at the least - from above the floor a
+/// tenth less would undershoot it, to about 0.185.
+fn held_short(share: f32) -> f32 {
+    (share * 0.9).max(SHARE_FLOOR)
+}
+
+/// **The loop [`fit`] runs** (#427): trims the first pair `torn` reports of
+/// `state` with `give`, and asks `torn` again after every trim, at most
+/// [`ROUNDS`] times. A pair `give` can trim no further - every branch below
+/// it at the floor - is passed over from then on, and costs no round: left
+/// in, it came back after the next trim and spent another, so several of
+/// them ahead of a pair that could be mended ran the loop out before it was.
+/// Returns whether anything was trimmed.
+fn mend<S, P: Copy + Ord>(
+    state: &mut S,
+    torn: impl Fn(&S) -> Vec<P>,
+    mut give: impl FnMut(&mut S, P) -> bool,
+) -> bool {
+    let mut spent = std::collections::BTreeSet::new();
+    let mut now = torn(state);
+    let mut rounds = 0;
+    while rounds < ROUNDS {
+        let Some(&pair) = now.iter().find(|pair| !spent.contains(*pair)) else {
+            break;
+        };
+        if give(state, pair) {
+            rounds += 1;
+            now = torn(state);
+        } else {
+            spent.insert(pair);
+        }
+    }
+    rounds > 0
+}
+
 /// Every distinct binding a drawn vertex carries of more than one joint,
 /// its shares rounded to a twentieth: what the guard ([`fit`]) blends as
 /// skinning does.
@@ -827,9 +898,12 @@ fn blended_skins<'a>(skins: impl Iterator<Item = &'a VertexSkin>) -> Vec<Vec<(us
 /// accumulates it - would bring a part within [`BLEND_MARGIN`] of a half
 /// turn from the running sum, where skinning flips it and the surface
 /// jumps, scales back the turns on the two branches that part below the
-/// pair a tenth at a time, never below [`SHARE_FLOOR`]. Returns whether anything
-/// changed. (Putting a turn on its long arc instead mended a pair and swung
-/// the membrane through the trunk on its way.) A long arm on a glider's crouch rests with its
+/// pair a tenth at a time, never below [`SHARE_FLOOR`] ([`mend`]). Returns
+/// whether anything changed. The test is reckoned in a fixed order
+/// ([`det::dot4`]), so a pair an ulp from the margin is trimmed natively and
+/// in a browser alike (#427). (Putting a turn on its long arc instead mended a
+/// pair and swung the membrane through the trunk on its way.) A long arm on
+/// a glider's crouch rests with its
 /// elbow nearly shut, and opening it all the way is a half turn for the skin
 /// across it whatever arc it takes: such an elbow opens short of straight.
 fn fit(rig: &mut Rig, blends: &[Vec<(usize, f32)>]) -> bool {
@@ -877,7 +951,7 @@ fn fit(rig: &mut Rig, blends: &[Vec<(usize, f32)>]) -> bool {
                 let mut sum = posed.rotations[first] * weight;
                 for &(joint, weight) in &parts[1..] {
                     let part = posed.rotations[joint];
-                    let agree = sum.dot(part) / sum.length().max(f32::EPSILON);
+                    let agree = det::dot4(sum, part) / det::dot4(sum, sum).sqrt().max(f32::EPSILON);
                     if agree.abs() < BLEND_MARGIN || agree < 0.0 {
                         torn.insert((first, joint));
                     }
@@ -887,7 +961,7 @@ fn fit(rig: &mut Rig, blends: &[Vec<(usize, f32)>]) -> bool {
         }
         torn.into_iter().collect()
     };
-    let drive_of = |wings: &mut Wings, joint: usize| -> Option<(usize, usize)> {
+    let drive_of = |wings: &Wings, joint: usize| -> Option<(usize, usize)> {
         wings.sides.iter().enumerate().find_map(|(side, drives)| {
             drives
                 .drives
@@ -899,26 +973,20 @@ fn fit(rig: &mut Rig, blends: &[Vec<(usize, f32)>]) -> bool {
     let original = wings.clone();
     let mut shares: std::collections::BTreeMap<(usize, usize), f32> =
         std::collections::BTreeMap::new();
-    let mut changed = false;
-    let mut now = torn(&wings);
-    for _ in 0..60 {
-        let Some(&(a, b)) = now.first() else {
-            break;
-        };
-        changed = true;
+    let changed = mend(&mut wings, torn, |wings, (a, b)| {
         let branches: Vec<(usize, usize)> = parting(a, b)
             .into_iter()
-            .filter_map(|joint| drive_of(&mut wings, joint))
+            .filter_map(|joint| drive_of(wings, joint))
             .collect();
         // Held short, a tenth at a time.
         let mut gave = false;
         for &(side, at) in &branches {
             let share = shares.entry((side, at)).or_insert(1.0);
             if *share > SHARE_FLOOR {
-                *share *= 0.9;
+                *share = held_short(*share);
                 gave = true;
                 let was = original.sides[side].drives[at].spread;
-                let sign = if wings.sides[side].drives[at].spread.dot(was) < 0.0 {
+                let sign = if det::dot4(wings.sides[side].drives[at].spread, was) < 0.0 {
                     -1.0
                 } else {
                     1.0
@@ -926,12 +994,8 @@ fn fit(rig: &mut Rig, blends: &[Vec<(usize, f32)>]) -> bool {
                 wings.sides[side].drives[at].spread = arc(was * sign, *share);
             }
         }
-        if !gave {
-            now.remove(0);
-            continue;
-        }
-        now = torn(&wings);
-    }
+        gave
+    });
     rig.wings = Some(wings);
     changed
 }

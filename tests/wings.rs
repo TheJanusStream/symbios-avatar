@@ -217,38 +217,104 @@ fn a_wing_does_not_pass_through_the_trunk() {
 /// own bodies; a bird's wing folded into its trunk reads 61 percent.
 const INSIDE_SHARE: f32 = 0.0125;
 
-/// The largest step any drawn vertex takes between two of `steps` evenly
-/// spaced extensions from 0 to 1, against the mean of those largest steps.
-fn steps(avatar: &Avatar, steps: usize) -> (f32, f32, f32) {
+/// Every drawn vertex of `avatar` but its eyes' at `extension`, both wings
+/// spread so far and the tail fanned as far.
+fn drawn_at(avatar: &Avatar, extension: f32) -> Vec<Vec3> {
     let rig = &avatar.rig;
-    let at = |extension: f32| {
-        let mut pose = Pose::rest(rig);
-        rig.spread_wings(&mut pose, extension, extension);
-        rig.spread_tail(&mut pose, extension);
-        avatar
-            .posed(&pose, 0.0)
-            .into_iter()
-            .filter(|drawn| drawn.kind != MeshKind::Eye)
-            .flat_map(|drawn| drawn.mesh.positions)
-            .collect::<Vec<Vec3>>()
-    };
+    let mut pose = Pose::rest(rig);
+    rig.spread_wings(&mut pose, extension, extension);
+    rig.spread_tail(&mut pose, extension);
+    avatar
+        .posed(&pose, 0.0)
+        .into_iter()
+        .filter(|drawn| drawn.kind != MeshKind::Eye)
+        .flat_map(|drawn| drawn.mesh.positions)
+        .collect()
+}
+
+/// The least step a vertex's largest must be for [`jumps`] to weigh it
+/// against its mean: a vertex that barely moves has a mean of nothing, and
+/// a hundredth of a millimetre's turn would read as a jump of thousands.
+const JUMP_FLOOR: f32 = 0.002;
+
+/// How far a vertex's largest step may stand above its own mean step: the
+/// sweep below measured 1.86 at most, a bat-bird cross's longest wings, and a
+/// 56 degree flip planted within 20 mm of a bat's hand joint 3.8.
+const JUMP_RATIO: f32 = 3.0;
+
+/// What [`jumps`] found: the vertex whose largest step stands furthest
+/// above its own mean step, of those whose largest is at least
+/// [`JUMP_FLOOR`] - that ratio, the step, the mean, and the extension the
+/// step ends at - and how far any vertex moved in all.
+struct Jumps {
+    ratio: f32,
+    worst: f32,
+    mean: f32,
+    at: f32,
+    travelled: f32,
+    /// The measure up to 0.23.1, for comparison: the largest step any
+    /// vertex took against the mean of each step's largest.
+    across: f32,
+}
+
+/// **Each vertex against its own mean step** (#428): the frames `at` gives
+/// at `steps` evenly spaced extensions from 0 to 1, each drawn vertex's
+/// largest step between two of them against the mean of its own steps. A
+/// flip jumps a vertex by its lever from the joint times the angle, against
+/// a step of a millimetre or so it takes elsewhere; weighed against every
+/// vertex's largest steps, which the wingtip's set at about 4 mm, a flip
+/// within 25 mm of its pivot passed.
+fn jumps(at: impl Fn(f32) -> Vec<Vec3>, steps: usize) -> Jumps {
     let mut previous = at(0.0);
-    let (mut worst, mut sum, mut at_worst) = (0.0f32, 0.0f32, 0.0f32);
+    let count = previous.len();
+    let (mut worst, mut sum, mut when) = (
+        vec![0.0f32; count],
+        vec![0.0f32; count],
+        vec![0.0f32; count],
+    );
+    let (mut largest, mut largest_sum) = (0.0f32, 0.0f32);
     for step in 1..=steps {
         let extension = step as f32 / steps as f32;
         let now = at(extension);
-        let moved = previous
-            .iter()
-            .zip(&now)
-            .map(|(a, b)| a.distance(*b))
-            .fold(0.0f32, f32::max);
-        sum += moved;
-        if moved > worst {
-            (worst, at_worst) = (moved, extension);
+        assert_eq!(now.len(), count, "the drawn vertices changed in number");
+        let mut step_largest = 0.0f32;
+        for (vertex, (a, b)) in previous.iter().zip(&now).enumerate() {
+            let moved = a.distance(*b);
+            step_largest = step_largest.max(moved);
+            sum[vertex] += moved;
+            if moved > worst[vertex] {
+                (worst[vertex], when[vertex]) = (moved, extension);
+            }
         }
+        largest = largest.max(step_largest);
+        largest_sum += step_largest;
         previous = now;
     }
-    (worst, sum / steps as f32, at_worst)
+    let mut found = Jumps {
+        ratio: 0.0,
+        worst: 0.0,
+        mean: 0.0,
+        at: 0.0,
+        travelled: sum.iter().copied().fold(0.0, f32::max),
+        across: largest / (largest_sum / steps as f32).max(f32::EPSILON),
+    };
+    for vertex in 0..count {
+        let mean = sum[vertex] / steps as f32;
+        if worst[vertex] < JUMP_FLOOR || mean <= 0.0 {
+            continue;
+        }
+        let ratio = worst[vertex] / mean;
+        if ratio > found.ratio {
+            found = Jumps {
+                ratio,
+                worst: worst[vertex],
+                mean,
+                at: when[vertex],
+                ..found
+            };
+        }
+    }
+    found
 }
 
 /// A winged body of `lineage` at its axes' far ends: `0` as rolled, `1` the
@@ -275,7 +341,9 @@ fn corner(lineage: Lineage<WingedFamily>, which: usize) -> AvatarRecord {
 
 /// **The extension poses continuously, at every body a record reaches**
 /// (#421; the critic's sweep): over 0 to 1 in two hundred steps no drawn
-/// vertex jumps - every step moves at most six times the mean step - for
+/// vertex jumps - no vertex whose largest step is [`JUMP_FLOOR`] or more
+/// takes one over [`JUMP_RATIO`] times its own mean step (#428; it was six
+/// times the mean of every step's largest, which a small flip passed) - for
 /// every family and every cross at blends 0.3, 0.5 and 0.6 either way round,
 /// each as rolled, with its longest wings on its shortest legs, with its
 /// longest wings, and with its heaviest composites. A jump is two joints a
@@ -302,20 +370,93 @@ fn the_extension_poses_every_wing_continuously() {
         }
     }
     let mut failures = Vec::new();
+    let mut steepest = (String::new(), 0.0f32);
     for (name, lineage) in all {
         for which in 0..4 {
             let record = corner(lineage, which);
             let avatar = Avatar::build_for_shape(&record).expect("a winged body builds");
-            let (worst, mean, at) = steps(&avatar, 200);
-            assert!(mean > 0.0, "{name} corner {which}: the wings never moved");
-            if worst > mean * 6.0 {
+            let found = jumps(|extension| drawn_at(&avatar, extension), 200);
+            assert!(
+                found.travelled > 0.0,
+                "{name} corner {which}: the wings never moved"
+            );
+            if found.ratio > steepest.1 {
+                steepest = (format!("{name} corner {which}"), found.ratio);
+            }
+            if found.ratio > JUMP_RATIO {
                 failures.push(format!(
-                    "{name} corner {which}: a step of {worst:.3} m at {at:.3} against a mean of {mean:.4} m"
+                    "{name} corner {which}: a step of {:.4} m at {:.3} against its mean of {:.5} m",
+                    found.worst, found.at, found.mean
                 ));
             }
         }
     }
+    println!(
+        "steepest step against its mean: {:.2} at {}",
+        steepest.1, steepest.0
+    );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// **A small flip fails the continuity measure** (#428): the bat's drawn
+/// vertices about a joint of its hand, turned past the middle of the sweep
+/// as a skinning flip would turn them - twelve degrees a lever of 80 mm
+/// round, a 95/5 blend's, and fifty-six within 20 mm, an 80/20 blend's.
+/// Weighed against every vertex's largest steps, neither stood out.
+#[test]
+fn a_small_flip_fails_the_continuity_measure() {
+    let avatar = built(Lineage::pure(WingedFamily::Bat));
+    let rig = &avatar.rig;
+    let wings = rig.wings.as_ref().expect("wings");
+    let joint = wings.joints[wings.joints.len() / 2];
+    let pivot = |extension: f32| {
+        let mut pose = Pose::rest(rig);
+        rig.spread_wings(&mut pose, extension, extension);
+        rig.spread_tail(&mut pose, extension);
+        pose.forward(rig).positions[joint]
+    };
+    let honest = jumps(|extension| drawn_at(&avatar, extension), 200);
+    assert!(honest.ratio <= JUMP_RATIO, "unplanted: {:.2}", honest.ratio);
+    for (angle, lever) in [(12.0f32, (0.07, 0.09)), (56.0, (0.012, 0.02))] {
+        // The vertices the flip carries: those at the lever from the joint
+        // where it flips, halfway through.
+        const FROM: f32 = 0.5;
+        let at_flip = drawn_at(&avatar, FROM);
+        let centre = pivot(FROM);
+        let carried: Vec<usize> = at_flip
+            .iter()
+            .enumerate()
+            .filter(|(_, point)| (lever.0..lever.1).contains(&point.distance(centre)))
+            .map(|(vertex, _)| vertex)
+            .collect();
+        assert!(
+            !carried.is_empty(),
+            "{angle} degrees: no vertex at the lever"
+        );
+        let turn = symbios_avatar::Quat::from_axis_angle(Vec3::Y, angle.to_radians());
+        let flipped = |extension: f32| {
+            let mut points = drawn_at(&avatar, extension);
+            if extension >= FROM {
+                let centre = pivot(extension);
+                for &vertex in &carried {
+                    points[vertex] = centre + turn * (points[vertex] - centre);
+                }
+            }
+            points
+        };
+        let found = jumps(flipped, 200);
+        println!(
+            "a {angle} degree flip at {lever:?} m: {:.2} of its own mean step, \
+             {:.2} of every step's largest",
+            found.ratio, found.across
+        );
+        assert!(
+            found.ratio > JUMP_RATIO,
+            "a {angle} degree flip at {lever:?} m passed: a step of {:.4} m against its mean of {:.5}",
+            found.worst,
+            found.mean
+        );
+    }
 }
 
 /// **Every family and cross builds, rests folded and spreads**: its rest is
@@ -472,6 +613,53 @@ fn a_wing_is_no_part_of_a_foot() {
                     "{name}: {limb:?}'s tip is {reach:.3} m from its contact"
                 );
             }
+        }
+    }
+}
+
+/// **A wing posed at an extension that is not a number folds** (#427): the
+/// extension, a stroke's angles and the tail's spread, yaw and pitch, each
+/// NaN or infinite, pose every joint finite - the extension and the spread
+/// as the fold - where every driven joint came out NaN.
+#[test]
+fn a_non_finite_extension_poses_the_fold_and_nothing_nan() {
+    use symbios_avatar::Stroke;
+    for family in [WingedFamily::Bird, WingedFamily::Bat, WingedFamily::Glider] {
+        let avatar = built(Lineage::pure(family));
+        let rig = &avatar.rig;
+        let rest = Pose::rest(rig);
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut pose = Pose::rest(rig);
+            rig.spread_wings(&mut pose, bad, bad);
+            rig.spread_tail(&mut pose, bad);
+            for (joint, (now, was)) in pose.rotations.iter().zip(&rest.rotations).enumerate() {
+                assert!(
+                    now.is_finite() && now.angle_between(*was) < 2e-3,
+                    "{family:?} at {bad}: joint {joint} posed {now:?}"
+                );
+            }
+            let stroke = Stroke {
+                extension: bad,
+                elevation: bad,
+                sweep: bad,
+                reach: bad,
+            };
+            let mut stroked = Pose::rest(rig);
+            rig.stroke_wings(&mut stroked, stroke, Stroke::at(bad));
+            rig.steer_tail(&mut stroked, bad, bad, bad);
+            for (joint, (now, was)) in stroked.rotations.iter().zip(&rest.rotations).enumerate() {
+                assert!(
+                    now.is_finite() && now.angle_between(*was) < 2e-3,
+                    "{family:?} stroked at {bad}: joint {joint} posed {now:?}"
+                );
+            }
+            let drawn = avatar.posed(&stroked, 0.0);
+            assert!(
+                drawn
+                    .iter()
+                    .all(|mesh| mesh.mesh.positions.iter().all(|point| point.is_finite())),
+                "{family:?} at {bad}: a drawn vertex is not finite"
+            );
         }
     }
 }

@@ -649,11 +649,19 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
 /// tail's rings across it and the tail's brush grew out of it - the flap
 /// the probe saw on a cat's croup. The tail's zone starts a root's radius
 /// short of the root, where its surface does.
+///
+/// **And never where the dock is a marker** (#426): a bird's bony tail is a
+/// stub of markers under its rump that draws nothing of its own (its visible
+/// tail is the fan), so the skin past its root is the rump's, and handed to
+/// the tail a stored coat would paint the tail's colour across it.
 fn handover(rig: &Rig, joint: usize, child: usize) -> f32 {
     let (parent, dock) = (&rig.joints[joint], &rig.joints[child]);
     if dock.zone != Zone::Tail || !matches!(parent.zone, Zone::Pelvis | Zone::Abdomen | Zone::Chest)
     {
         return 0.5;
+    }
+    if dock.marker {
+        return f32::INFINITY;
     }
     let length = parent.position.distance(dock.position);
     (1.0 - dock.radius / length.max(f32::EPSILON)).max(0.5)

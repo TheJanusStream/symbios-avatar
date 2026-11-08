@@ -128,23 +128,35 @@ pub(crate) struct MembraneChart {
     /// Whether it is a bat's naked membrane rather than a glider's furred
     /// patagium.
     pub naked: bool,
+    /// How far past its region it claims texels at most, in texture
+    /// coordinates: half the gutter between charts (#431).
+    pub reach: f32,
 }
 
 impl MembraneChart {
     /// The region `uvs` cover: a membrane's own texture coordinates fill the
-    /// region it was placed in.
-    pub(crate) fn of(uvs: &[Vec2], naked: bool) -> Option<Self> {
+    /// region it was placed in, `gutter` apart from every other chart's.
+    pub(crate) fn of(uvs: &[Vec2], naked: bool, gutter: f32) -> Option<Self> {
         let first = *uvs.first()?;
         let (min, max) = uvs.iter().fold((first, first), |(low, high), uv| {
             (low.min(*uv), high.max(*uv))
         });
         let size = max - min;
-        (size.min_element() > 0.0).then_some(Self { min, size, naked })
+        (size.min_element() > 0.0).then_some(Self {
+            min,
+            size,
+            naked,
+            reach: 0.5 * gutter.max(0.0),
+        })
     }
 
     /// Where in the region the texel `index` of a `width` by `height` atlas
     /// lies, `0..1` each way, if it lies in it or a texel short of it: the
-    /// texels a membrane's triangles touch at its border are its own.
+    /// texels a membrane's triangles touch at its border are its own. **But
+    /// never past the middle of the gutter** (#431): on an atlas so small a
+    /// texel is wider than half the gutter - the default gutter, 0.004, is a
+    /// texel at 256 - a texel's margin reached a neighbouring chart's edge
+    /// texels and painted them membrane.
     pub(crate) fn local(&self, index: usize, width: u32, height: u32) -> Option<Vec2> {
         let (width, height) = (width.max(1), height.max(1));
         let (x, y) = (index as u32 % width, index as u32 / width);
@@ -153,7 +165,9 @@ impl MembraneChart {
             (y as f32 + 0.5) / height as f32,
         );
         let local = (uv - self.min) / self.size;
-        let margin = Vec2::new(1.0 / width as f32, 1.0 / height as f32) / self.size;
+        let margin = Vec2::new(1.0 / width as f32, 1.0 / height as f32)
+            .min(Vec2::splat(self.reach))
+            / self.size;
         let inside = local.cmpge(-margin).all() && local.cmple(Vec2::ONE + margin).all();
         inside.then(|| local.clamp(Vec2::ZERO, Vec2::ONE))
     }
@@ -256,6 +270,54 @@ impl Painter<'_> {
                 let warm = fur.lerp(WHITE, 0.5).lerp(LIT, 0.1);
                 (fur.lerp(warm, FURRED_EDGE * lit), FUR_ROUGHNESS, 1.0)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **A membrane's chart claims its own texels and none of its
+    /// neighbour's** (#431): every texel whose centre lies in its region, and
+    /// at the default atlas the texel's margin past it as before; but on no
+    /// atlas a texel whose centre lies in a chart one gutter away. At 128 and
+    /// 200 texels a texel is wider than the gutter, and a texel's margin
+    /// reached into the neighbour.
+    #[test]
+    fn a_membrane_chart_claims_no_neighbour_s_texel() {
+        const GUTTER: f32 = 0.004;
+        let chart = MembraneChart::of(
+            &[Vec2::new(0.25, 0.25), Vec2::new(0.45, 0.45)],
+            true,
+            GUTTER,
+        )
+        .expect("a region");
+        let neighbour = 0.45 + GUTTER;
+        for size in [64u32, 128, 200, 256, 512, 1024, 2048] {
+            let mut stolen = 0;
+            for index in 0..(size * size) as usize {
+                let (x, y) = (index as u32 % size, index as u32 / size);
+                let uv = (Vec2::new(x as f32, y as f32) + 0.5) / size as f32;
+                let claimed = chart.local(index, size, size).is_some();
+                let inside = uv.cmpge(Vec2::splat(0.25)).all() && uv.cmple(Vec2::splat(0.45)).all();
+                assert!(!inside || claimed, "{size}: its own texel {x},{y} left out");
+                if claimed && (uv.x >= neighbour || uv.y >= neighbour) {
+                    stolen += 1;
+                }
+                // The default atlas's margin, a texel, as before.
+                let texel = 1.0 / size as f32;
+                if size >= 1024
+                    && uv.cmpge(Vec2::splat(0.25 - 0.9 * texel)).all()
+                    && uv.cmple(Vec2::splat(0.45 + 0.9 * texel)).all()
+                {
+                    assert!(claimed, "{size}: the texel's margin at {x},{y} left out");
+                }
+            }
+            assert_eq!(
+                stolen, 0,
+                "{size}: {stolen} of a neighbour's texels painted membrane"
+            );
         }
     }
 }

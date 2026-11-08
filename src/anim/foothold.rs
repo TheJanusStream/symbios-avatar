@@ -51,6 +51,14 @@
 //! for smoothness over it — and neither touches a straight walk at the speed
 //! changes the ledger was built for.
 //!
+//! A foot that yielded is let go where it stands when it lifts: the swing
+//! sets off from the stride's own answer, the yield's bound away. On a winged
+//! body that is a pop (#437) - a held chassis left a bat's wrist 98 mm from
+//! its swing, its wing arm's reach being long - so there the gap is carried
+//! into the swing, which sets off from where the foot stood and lets the gap
+//! go by its landing (`gait::seated_offset`); a person and a beast let go at
+//! once, as they always have.
+//!
 //! # Warps
 //!
 //! A held point is only meaningful while the body is somewhere near it. A
@@ -84,6 +92,21 @@ pub struct Footholds {
     /// The facing the holds were last served under, or `None` before the first
     /// frame — kept so a body that turns carries its holds round with it.
     facing: Option<f32>,
+    /// On a winged body, how far each contact's hold stood from the stride's
+    /// own answer the last frame it was down: the gap its swing sets off
+    /// from and lets go of (#437).
+    ///
+    /// **A hold let go at once is a pop.** A body travelling slower than the
+    /// stride it walks - a chassis that a wall holds while its velocity still
+    /// asks for a bound - leaves each planted foot standing the yield's bound
+    /// ([`HOLD_ALONG`] of its reach) ahead of the stride's answer, and the
+    /// swing set off from the stride's answer: a bat's wrist, whose reach is
+    /// its wing arm's, jumped 98 mm in one frame at every rate and its arm
+    /// 115 mm, its hind feet 65. Carried, the swing sets off from where the
+    /// foot stood, seated on the ground there, and lands where the stride puts
+    /// it (`gait::seated_offset`). Winged bodies only, for now: a person or a
+    /// beast lets go at once, as it always has.
+    carried: Vec<(Limb, Vec3)>,
 }
 
 /// How far along the stride a hold may stand from the stride's own answer
@@ -153,6 +176,7 @@ impl Footholds {
     pub fn reset(&mut self) {
         self.held.clear();
         self.facing = None;
+        self.carried.clear();
     }
 
     /// One frame of a walk with its planted feet held: advance the ledger,
@@ -244,6 +268,8 @@ impl Footholds {
             .unwrap_or(Vec3::Z);
         let across = Vec3::new(along.z, 0.0, -along.x);
 
+        // A winged body carries a hold's gap into its swing (#437).
+        let carries = rig.wings.is_some();
         let mut anchors: Vec<(Limb, Vec3)> = Vec::new();
         for (index, &limb) in gait.limbs.iter().enumerate() {
             let Some(home) = home_of(rig, limb) else {
@@ -265,6 +291,20 @@ impl Footholds {
             };
             if !down {
                 *hold = None;
+                // A swing carries the gap its foot lifted with: handed to the
+                // step whole as an anchor, which a swinging contact sets off
+                // from and lets go of by its landing. A stance at a duty of
+                // one is standing, and carries nothing.
+                let gap = self.carried.iter().position(|(of, _)| *of == limb);
+                match (phase, gap) {
+                    (Phase::Swing(_), Some(gap)) if carries => {
+                        anchors.push((limb, self.carried[gap].1));
+                    }
+                    (Phase::Stance(_), Some(gap)) => {
+                        self.carried.swap_remove(gap);
+                    }
+                    _ => {}
+                }
                 continue;
             }
 
@@ -315,6 +355,13 @@ impl Footholds {
                     derived
                 }
             };
+            if carries {
+                let gap = anchor - derived;
+                match self.carried.iter_mut().find(|(of, _)| *of == limb) {
+                    Some((_, carried)) => *carried = gap,
+                    None => self.carried.push((limb, gap)),
+                }
+            }
             anchors.push((limb, anchor));
         }
 

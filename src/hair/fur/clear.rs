@@ -288,28 +288,58 @@ pub(crate) fn leave_out(growth: &mut FurGrowth, out: &[bool]) -> usize {
         spent += face.len().saturating_sub(2);
     }
     let mut kept = Vec::with_capacity(mesh.faces.len());
-    let mut given_back = vec![(0usize, std::collections::HashSet::new()); growth.grown.len()];
+    // Each line's triangles given back, the cards it gives back, and every
+    // card it holds.
+    let mut given_back = vec![
+        (
+            0usize,
+            std::collections::HashSet::new(),
+            std::collections::HashSet::new()
+        );
+        growth.grown.len()
+    ];
     for (face, &line) in mesh.faces.iter().zip(&zone_of) {
         let card = root(&mut parent, face[0] as usize);
+        let given = given_back.get_mut(line);
         if crossing[card] {
-            if let Some((tris, cards)) = given_back.get_mut(line) {
+            if let Some((tris, out, held)) = given {
                 *tris += face.len().saturating_sub(2);
-                cards.insert(card);
+                out.insert(card);
+                held.insert(card);
             }
         } else {
+            if let Some((_, _, held)) = given {
+                held.insert(card);
+            }
             kept.push(face.clone());
         }
     }
     let mut left_out = 0;
-    for (line, (tris, cards)) in growth.grown.iter_mut().zip(given_back) {
+    for (line, (tris, out, held)) in growth.grown.iter_mut().zip(given_back) {
         left_out += tris.min(line.tris);
         line.tris = line.tris.saturating_sub(tris);
-        line.clumps = line.clumps.saturating_sub(cards.len());
+        line.clumps -= clumps_left_out(line.clumps, out.len(), held.len());
     }
     growth.mesh.faces = kept;
     growth.mesh.compact();
     growth.grown.retain(|line| line.clumps > 0 && line.tris > 0);
     left_out
+}
+
+/// How many of a ledger line's `clumps` leaving out `out` of the `held` cards
+/// it holds takes away (#431): every one when every card goes, and otherwise
+/// the cards' share of them, rounded down, short of all - a clump may be
+/// lofted as more than one card, and a clump one of whose cards stays is
+/// still drawn. Counted a card a clump, two cards of one line's two-card
+/// clumps left out took the line's every clump while half its triangles were
+/// still drawn, and the line, dropped from the ledger, no longer counted them.
+/// On cards one to a clump, every winged body's, it is one clump a card.
+fn clumps_left_out(clumps: usize, out: usize, held: usize) -> usize {
+    if out >= held {
+        clumps
+    } else {
+        (out * clumps / held.max(1)).min(clumps.saturating_sub(1))
+    }
 }
 
 /// Marks in `out` both ends of every edge of `faces` that comes within
@@ -359,4 +389,79 @@ fn crosses(from: Vec3, to: Vec3, [a, b, c]: &[Vec3; 3]) -> bool {
     let v = run.dot(q) / det;
     let t = ac.dot(q) / det;
     (0.0..=1.0).contains(&u) && v >= 0.0 && u + v <= 1.0 && (0.0..=1.0).contains(&t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hair::fur::{FurZone, GrownZone};
+
+    /// `cards` quads side by side, sharing no vertex - each its own card -
+    /// in one ledger line of `clumps`.
+    fn growth(cards: usize, clumps: usize) -> FurGrowth {
+        let mut mesh = PolyMesh::new();
+        for card in 0..cards {
+            let x = card as f32;
+            let at = [(0.0, 0.0), (0.5, 0.0), (0.5, 1.0), (0.0, 1.0)]
+                .map(|(dx, y)| mesh.push_vertex(Vec3::new(x + dx, y, 0.0)));
+            mesh.push_face(at.to_vec());
+        }
+        FurGrowth {
+            mesh,
+            grown: vec![GrownZone {
+                zone: FurZone::Contour,
+                clumps,
+                tris: cards * 2,
+            }],
+        }
+    }
+
+    /// The first vertex of each of `cards`, marked.
+    fn marked(growth: &FurGrowth, cards: &[usize]) -> Vec<bool> {
+        let mut out = vec![false; growth.mesh.vertex_count()];
+        for &card in cards {
+            out[card * 4] = true;
+        }
+        out
+    }
+
+    /// The triangles the mesh still draws.
+    fn drawn(growth: &FurGrowth) -> usize {
+        growth
+            .mesh
+            .faces
+            .iter()
+            .map(|face| face.len().saturating_sub(2))
+            .sum()
+    }
+
+    /// **The ledger counts clumps, not cards** (#431): two cards of a line
+    /// of two two-card clumps left out keep a clump and the half of the
+    /// line's triangles still drawn on it. Counted a card a clump, the line
+    /// lost both its clumps and was dropped while four triangles were drawn.
+    #[test]
+    fn leaving_out_cards_keeps_the_clumps_still_drawn() {
+        let mut two_a_clump = growth(4, 2);
+        let out = marked(&two_a_clump, &[0, 2]);
+        assert_eq!(leave_out(&mut two_a_clump, &out), 4);
+        assert_eq!(drawn(&two_a_clump), 4);
+        assert_eq!(
+            two_a_clump.tris(),
+            drawn(&two_a_clump),
+            "the ledger lost triangles still drawn: {:?}",
+            two_a_clump.grown
+        );
+        assert_eq!(two_a_clump.grown[0].clumps, 1);
+        // A card a clump, as every winged body's are: one clump a card.
+        let mut one_a_clump = growth(4, 4);
+        let out = marked(&one_a_clump, &[1]);
+        leave_out(&mut one_a_clump, &out);
+        assert_eq!(one_a_clump.grown[0].clumps, 3);
+        assert_eq!(one_a_clump.tris(), drawn(&one_a_clump));
+        // And every card gone takes the line.
+        let mut gone = growth(4, 2);
+        let out = marked(&gone, &[0, 1, 2, 3]);
+        leave_out(&mut gone, &out);
+        assert!(gone.grown.is_empty() && drawn(&gone) == 0);
+    }
 }

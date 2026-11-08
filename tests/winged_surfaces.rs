@@ -10,8 +10,8 @@
 use symbios_avatar::plan::{Blended, BodyPlan, Lineage, Pigment};
 use symbios_avatar::texture::coat_colour;
 use symbios_avatar::{
-    Archetype, Avatar, AvatarConfig, AvatarRecord, Coat, CoatChannel, EyeParams, Plumage,
-    QuadrupedParams, Vec3, WingedFamily, WingedParams, Zone,
+    Archetype, Avatar, AvatarConfig, AvatarRecord, Coat, CoatChannel, EyeParams, Influence,
+    Plumage, QuadrupedParams, SkinWeights, Vec3, WingedFamily, WingedParams, Zone,
 };
 
 /// The atlas the surfaces are read off: fine enough for an owl's ruff, which
@@ -466,8 +466,10 @@ fn a_0_21_record_and_code_read_as_their_family_s_defaults_fields_absent() {
 
 #[test]
 fn a_surface_rides_a_code_only_when_it_needs_to() {
-    // A body storing exactly its family's own coat writes no surface: the code
-    // is the one it would write storing none.
+    // A body storing exactly its family's own coat writes it (#431): the same
+    // look as storing none while a bat leads, but a stored coat goes with the
+    // body across a change of family, and one read back as none wore the
+    // glider's grey made a glider where the bat it was read from wore black.
     let bat = of(Lineage::pure(WingedFamily::Bat));
     let code =
         |params: WingedParams| AvatarRecord::new("Code", Archetype::Winged(params)).share_code();
@@ -475,7 +477,35 @@ fn a_surface_rides_a_code_only_when_it_needs_to() {
         coat: Some(WingedFamily::Bat.default_coat()),
         ..bat
     };
-    assert_eq!(code(own), code(bat));
+    assert_ne!(code(own), code(bat), "a stored coat dropped from its code");
+    let back = AvatarRecord::from_share_code("Back", &code(own)).expect("decodes");
+    let Archetype::Winged(mut back) = back.archetype else {
+        panic!("still winged");
+    };
+    // Read back a byte a span off, as every code is: the bat's own coat.
+    let read = back.coat.expect("the stored coat read back");
+    let bat_own = WingedFamily::Bat.default_coat();
+    assert_eq!(
+        (read.pigment, read.dilute, read.agouti, read.colours),
+        (
+            bat_own.pigment,
+            bat_own.dilute,
+            bat_own.agouti,
+            bat_own.colours
+        ),
+        "{read:?}"
+    );
+    assert_eq!(code(back), code(own), "and written again as it was read");
+    // Made a glider, both still wear the bat's black, not the glider's grey.
+    back.set_kind(WingedFamily::Glider, None, 0.0);
+    let read = back.coat.expect("the coat goes with the body");
+    assert!(!read.dilute && read.colours.dark.is_none(), "{read:?}");
+    // A body storing none writes none, as 0.21 wrote it.
+    let read = AvatarRecord::from_share_code("Back", &code(bat)).expect("decodes");
+    let Archetype::Winged(read) = read.archetype else {
+        panic!("still winged");
+    };
+    assert_eq!(read.coat, None);
     // Anything else does, and comes back: a crow's plumage on a bird, a black
     // coat with a picked light on a bat.
     let crow = bird(CROW_HEAD, Plumage::CROW);
@@ -634,4 +664,75 @@ fn a_glider_wears_a_mid_grey_coat() {
         luminance(belly) > luminance(back),
         "a glider's belly is lighter than its back: {belly} against {back}"
     );
+}
+
+/// **A bird's rump is its trunk's, not its tail's** (#426): a bird's bony
+/// tail is a stub of markers under its rump that draws nothing of its own -
+/// its visible tail is the fan - so no skin the pelvis holds is zoned the
+/// tail, however much of the rump it holds, on an owl, a crow, a songbird and
+/// a cross a bird leads, and no vertex of their bodies as built; a bat's and a
+/// glider's tails are drawn, and the pelvis still hands the skin over their
+/// docks to them, where a stored coat paints a tail's colour.
+///
+/// Read with every body vertex held by the pelvis alone, as well as as
+/// built: a built bird's rump is held by its abdomen, whose bone runs to no
+/// tail, so as built the handover reaches none of these birds today, and the
+/// zone map is what any binding of their rump is read through. Before, the
+/// pelvis's skin past about 74% of the way to a marker dock was handed to the
+/// tail: held by the pelvis, 20 vertices of a bird-led cross's rump (a pure
+/// bird's dock is a short drop under its pelvis, which none lies along).
+#[test]
+fn a_birds_rump_is_its_trunks_not_its_tails() {
+    use WingedFamily::{Bat, Bird, Glider};
+    // How many of the body's vertices are zoned the tail as built, and with
+    // every one of them held by the pelvis, of how many.
+    let tail = |params: WingedParams| -> (usize, usize, usize) {
+        let record = AvatarRecord::new("Rump", Archetype::Winged(params));
+        let avatar = Avatar::build_for_shape(&record).expect("a winged body builds");
+        let (rig, parts) = (&avatar.rig, &avatar.parts);
+        let pelvis = u16::try_from(rig.in_zone(Zone::Pelvis)[0]).expect("a joint");
+        let held = SkinWeights {
+            vertices: vec![
+                [
+                    Influence {
+                        joint: pelvis,
+                        weight: 1.0,
+                    },
+                    Influence::default(),
+                    Influence::default(),
+                    Influence::default(),
+                ];
+                parts.body.positions.len()
+            ],
+        };
+        let tails = |zones: &[Zone]| zones.iter().filter(|&&zone| zone == Zone::Tail).count();
+        (
+            tails(&parts.zones),
+            tails(&held.zone_map(&parts.body, rig)),
+            parts.body.positions.len(),
+        )
+    };
+    let bird_led = of(Lineage::cross(Glider, Bird, 0.7));
+    for (name, params) in [
+        ("owl", of(Lineage::pure(Bird))),
+        ("crow", bird(CROW_HEAD, Plumage::default())),
+        ("songbird", bird([0.2, -1.3, -1.0], Plumage::default())),
+        ("glider x bird 0.7", bird_led),
+    ] {
+        let (built, held, all) = tail(params);
+        assert_eq!(
+            (built, held),
+            (0, 0),
+            "a {name}'s body zones its tail's {built} of {all} vertices as built, {held} held \
+             by the pelvis"
+        );
+    }
+    for (name, family) in [("bat", Bat), ("glider", Glider)] {
+        let (built, held, all) = tail(of(Lineage::pure(family)));
+        assert!(
+            built > all / 100 && held > 0,
+            "a {name}'s drawn tail keeps its zone: {built} of {all} vertices as built, {held} \
+             held by the pelvis"
+        );
+    }
 }

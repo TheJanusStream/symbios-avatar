@@ -28,9 +28,10 @@
 //!   crawling bat's legs are its own (`winged::crawls`).
 //! * **The drawn toes stay on the ground** (`lay_toes`): through a stance
 //!   every toe lies on the ground or over it, as a foot's pad peels off
-//!   about its toes; in the air none passes into it, and after the driver's
-//!   blend a pad or a toe it left in the ground is lifted out of it
-//!   (`keep_toes_up`).
+//!   about its toes; in the air none passes into it; standing, the idle
+//!   lays them on the ground as a stance does (`stand_toes`, #436); and
+//!   after the driver's blend a pad or a toe it left in the ground is lifted
+//!   out of it (`keep_toes_up`).
 //!
 //! Nothing here moves a person or a beast: every entry asks the rig's wings
 //! first, which only a winged body has.
@@ -569,6 +570,49 @@ where
     }
 }
 
+/// Lays a standing winged body's drawn toes on the ground as a stance lays
+/// them (#436): each foot of `feet` square to the ground under it, its
+/// lowest point on it ([`lay_toes`] down), for the idle to stand on - each
+/// by as much as it is down, given beside it in `0..=1`: a foot the idle
+/// steps is let go of as it lifts and laid again as it lands.
+///
+/// **In the idle's own pose, before any blend**, so a change into the idle -
+/// a walk stopping, a landing handed back - eases the toes onto the ground
+/// with every other joint. Left to the pass after the blend
+/// ([`keep_toes_up`]), which has no state and no time, a stop on a slope
+/// either left the toes level with the body for as long as it stood there,
+/// or laid them on some frames and turned them about the pad on others, a
+/// bat's hind toe flipping 12 mm for a frame or two. **And by as much as
+/// each foot is down**: laid only once a stepping foot had landed, a cross's
+/// hind toes turned 0.36 radians in the frame its step ended.
+pub(crate) fn stand_toes<F>(rig: &Rig, pose: &mut Pose, feet: &[(Limb, f32)], ground: &F)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    if rig.wings.is_none() || !pose.fits(rig) {
+        return;
+    }
+    for &(limb, down) in feet {
+        let Some(&pad) = rig.in_zone(Zone::Extremity(limb)).first() else {
+            continue;
+        };
+        let down = down.clamp(0.0, 1.0);
+        if down <= 0.0 {
+            continue;
+        }
+        let stood = pose.rotations[pad];
+        lay_foot(rig, pose, limb, Some(Phase::Stance(0.5)), ground);
+        if down < 1.0 {
+            pose.rotations[pad] = det::slerp(stood, pose.rotations[pad], down);
+        }
+    }
+}
+
+/// How high a foot the idle steps is lifted before [`stand_toes`] lets its
+/// toes go whole, in metres: the last two centimetres of its step, as
+/// [`SOLE_REACH`] is of a stride's descent.
+pub(crate) const STAND_REACH: f32 = 0.02;
+
 /// Lifts any drawn toe of a winged body's feet that the frame's last layer
 /// left in the ground back onto it (#424), whatever is driving the body: a
 /// blend from a stand into a walk carries the toes along the difference
@@ -703,7 +747,19 @@ where
         .iter()
         .map(|&(joint, height)| (held.inverse() * (posed.positions[joint] - at), height))
         .collect();
-    rest.extend(sole(rig, pad));
+    // The pad's sole as [`keep_toes_up`] leaves it after a blend: up to
+    // [`SOLE_SLACK`] in the ground, which a sole drawn round its ring takes
+    // in its curve (#436). Held to the floor here, no turn about the pad
+    // could bring a sole already that far in out of it - one side of its
+    // ring rises as the other sinks - so the toes were laid square to the
+    // ground on some frames and turned about the pad on others, a bat's hind
+    // toe flipping 12 to 18 mm for a frame or two on a slope.
+    let slack = if phase.is_none() { SOLE_SLACK } else { 0.0 };
+    rest.extend(
+        sole(rig, pad)
+            .into_iter()
+            .map(|(offset, height)| (offset, height - slack)),
+    );
     let rest = &rest;
     // How far the lowest point stands over its own height above the ground,
     // the foot held at `base` and turned by `angle` about its axis across.

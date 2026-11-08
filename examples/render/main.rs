@@ -104,6 +104,7 @@
 //! cargo run --release --example render -- --winged --beak 1,-1,-1 --drive 0 --speed 0.6 --from 180 --strip 12  # a crow's walk (#424): its head holds and thrusts
 //! cargo run --release --example render -- --winged --size 0.4 --beak 0.2,-1.3,-1 --drive 0 --speed 0.4 --strip 8  # a small bird hops
 //! cargo run --release --example render -- --winged --kin bat --drive 0 --speed 1.0 --strip 8  # a bat's bound (0.25 its crawl); --kin glider too
+//! cargo run --release --example render -- --winged --kin bat --drive 0 --speed 1.0 --held --from 180 --strip 16  # its chassis held where it stands (#437)
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -1515,7 +1516,10 @@ fn run() {
         // takes the ground that far out from under it, a ledge it falls off,
         // and `--jump M/S` sends it up off the ground at that speed;
         // `--from FRAME` draws the strip's frames one after another from that
-        // frame rather than across the last second (#412, #414).
+        // frame rather than across the last second (#412, #414). `--held`
+        // keeps the chassis where it stands while the velocity still asks for
+        // the pace - a chassis a wall holds (#437).
+        let held = args.iter().any(|arg| arg == "--held");
         let grade = value("--drive").and_then(|grade| grade.parse::<f32>().ok());
         let then = value("--then").and_then(|pace| pace.parse::<f32>().ok());
         let ledge = value("--drop").and_then(|metres| metres.parse::<f32>().ok());
@@ -1554,7 +1558,9 @@ fn run() {
                     }
                 }
                 let velocity = Vec3::new(0.0, falling, going);
-                at += Vec3::Z * going * step;
+                if !held {
+                    at += Vec3::Z * going * step;
+                }
                 let below = height;
                 let ground = move |at: Vec3| {
                     Some(Ground {

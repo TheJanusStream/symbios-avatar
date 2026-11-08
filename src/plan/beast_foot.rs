@@ -59,7 +59,7 @@ const HOOF: f32 = 1.05;
 
 /// One foot's shape, in its own frame: the origin on the ground under the
 /// pad's centre, `+Z` toward the toes, `+Y` up and `+X` across.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FootShape {
     /// What the foot is.
     pub(crate) kind: Feet,
@@ -80,6 +80,11 @@ pub(crate) struct FootShape {
     /// How far ahead of the pad the foot's second node stands, in metres:
     /// what a drawn foot's ball or sole runs to and its toes are sized by.
     reach: f32,
+    /// The toes drawn on it as a part ([`Self::drawn_toes`]), laid out once
+    /// when the shape is declared (#430): the coat painter asks after them
+    /// at every texel of the foot, and laying them out each time - four or
+    /// five toes, a bisection each - made a winged build a tenth slower.
+    toes: Vec<DrawnToe>,
 }
 
 impl FootShape {
@@ -97,6 +102,7 @@ impl FootShape {
             fore: false,
             lateral: if pad_at.x < 0.0 { -1.0 } else { 1.0 },
             reach: Vec2::new(toe_at.x - pad_at.x, toe_at.z - pad_at.z).length(),
+            toes: Vec::new(),
         }
     }
 
@@ -109,23 +115,26 @@ impl FootShape {
         pad: f32,
         toe_at: Vec3,
     ) -> Self {
-        Self {
+        let mut shape = Self {
             // A bat's fore "foot" is its wrist's pad and its thumb, the
             // wing's (#421): a paw, as it was, under no drawn toes.
             winged: feet.winged.filter(|winged| !(fore && winged.drawn())),
             fore,
             ..Self::of(feet.kind, pad_at, pad, toe_at)
-        }
+        };
+        shape.toes = shape
+            .winged
+            .filter(|winged| winged.drawn())
+            .map_or_else(Vec::new, |winged| {
+                super::winged_foot::drawn(winged, shape.pad, shape.reach, shape.lateral)
+            });
+        shape
     }
 
     /// The toes drawn on it as a part, in its frame: a bird's or a bat's
-    /// (#422), and none on any other foot.
-    pub(crate) fn drawn_toes(&self) -> Vec<DrawnToe> {
-        self.winged
-            .filter(|winged| winged.drawn())
-            .map_or_else(Vec::new, |winged| {
-                super::winged_foot::drawn(winged, self.pad, self.reach, self.lateral)
-            })
+    /// (#422), and none on any other foot. Laid out when it was declared.
+    pub(crate) fn drawn_toes(&self) -> &[DrawnToe] {
+        &self.toes
     }
 
     /// What a drawn foot's toes grow from, in its frame: a bird's ball, a
@@ -312,7 +321,7 @@ impl FootShape {
             }
             Some(_) => {
                 // Past each claw's base, along its curve.
-                let talon = self.drawn_toes().iter().any(|toe| {
+                let talon = self.toes.iter().any(|toe| {
                     let (base, next) = (toe.claw[0], toe.claw[1]);
                     (at - base).dot(next - base) > 0.0
                         && near_run(&toe.claw, at, 1.4 * toe.claw_radius_at(0.0))
@@ -346,7 +355,7 @@ impl FootShape {
     pub(crate) fn bare(&self, at: Vec3) -> bool {
         self.winged.is_some_and(WingedFoot::drawn)
             && (at.y < BARE_BALL * self.pad
-                || self.drawn_toes().iter().any(|toe| {
+                || self.toes.iter().any(|toe| {
                     let reach = 1.7 * toe.radius * (1.0 + toe.pads);
                     near_run(&toe.joints, at, reach)
                 }))
@@ -491,7 +500,7 @@ mod tests {
         let foot = winged(WingedFoot::Bird(Toes::Anisodactyl), false, 0.2);
         let toes = foot.drawn_toes();
         assert_eq!(toes.len(), 4);
-        for toe in &toes {
+        for toe in toes {
             let tip = toe.claw[CLAW_SAMPLES - 1];
             assert_eq!(foot.horn(tip), 1.0, "toe {}'s talon", toe.digit);
             let middle = (toe.joints[0] + toe.joints[1]) * 0.5;

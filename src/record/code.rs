@@ -26,15 +26,20 @@ use crate::texture::SkinParams;
 /// the two bytes of its marks' seed - and a bat's or a glider's coat, the
 /// beast's six bytes and its picked colours' block. **Written only by a code
 /// that needs it**: a winged body whose plumage is the default owl's and that
-/// stores no coat but its leading family's own goes on writing 13 or 10, byte
-/// for byte, so a 0.21 reader takes it, and versions up to 13 read as the
-/// default owl's plumage and the family's own coat, which is what they meant.
+/// stores no coat goes on writing 13 or 10, byte for byte, so a 0.21 reader
+/// takes it, and versions up to 13 read as the default owl's plumage and no
+/// stored coat - the family's own - which is what they meant. A stored coat
+/// rides whatever it is (#431): one equal to its family's own went unwritten
+/// up to 0.23.1 and came back as none, which reads as another family's coat
+/// once the body changes family.
 ///
 /// **13** - a winged code (tag 3) ends with its head's three spans (#422):
 /// `beakLength`, `beakHook` and `facialDisc`, after the complexion. **Written
 /// only by a code that needs it**: a winged body with an owl's head, every
 /// person and every beast go on writing the version they wrote, byte for byte,
-/// so a 0.20 reader takes them. A winged code of 10 reads as an owl's head,
+/// so a 0.20 reader takes them. An owl's head is asked of the bytes (#429): a
+/// head whose three bytes are the owl's writes 10 and reads back as the
+/// owl's. A winged code of 10 reads as an owl's head,
 /// which is what it meant. Appended rather than put in the winged payload, so
 /// the layout `Archetype::decode` reads stays the one 0.20 wrote.
 ///
@@ -565,6 +570,69 @@ mod tests {
         let mut short = bytes[..bytes.len() - 4].to_vec();
         short.push(checksum(&short));
         assert!(decode(&base32_encode(&short)).is_err());
+    }
+
+    #[test]
+    fn an_owl_s_head_is_chosen_on_its_bytes() {
+        // #429: a head whose three bytes are the owl's writes 10, the owl's
+        // code, and reads back as the owl's head exactly. Chosen on the
+        // floats, `beakLength` 0.004 wrote a 13 and read back as 0.012 on
+        // every axis, the two it had left at nought included.
+        let code = |head: [f32; 3]| {
+            let mut params = crate::WingedParams::default();
+            [params.beak_length, params.beak_hook, params.facial_disc] = head;
+            encode(
+                &Archetype::Winged(params),
+                &Composites::default(),
+                &SkinParams::default(),
+            )
+        };
+        let owl = code([0.0; 3]);
+        for near in [[0.004, 0.0, 0.0], [0.0, 0.02, 0.0], [0.011, 0.023, 0.001]] {
+            assert_eq!(code(near), owl, "{near:?} is the owl's in bytes");
+            let (Archetype::Winged(back), _, _) = decode(&code(near)).expect("decodes") else {
+                panic!("archetype changed");
+            };
+            assert_eq!(
+                [back.beak_length, back.beak_hook, back.facial_disc],
+                [0.0; 3],
+                "{near:?}"
+            );
+        }
+        // A step off the owl's byte is a head, and rides at 13.
+        let bytes = base32_decode(&code([-0.001, 0.0, 0.0])).expect("decodes");
+        assert_eq!(bytes[0], PRE_SURFACES_VERSION);
+        // Every head read back from a code writes that code again.
+        let steps = [
+            -3.0, -1.3, -0.5, -0.03, -0.001, 0.0, 0.004, 0.012, 0.03, 0.7, 1.9, 3.0,
+        ];
+        for length in steps {
+            for hook in steps {
+                for disc in [-3.0, -1.0, 0.0, 0.012, 1.5] {
+                    let first = code([length, hook, disc]);
+                    let (archetype, composites, skin) = decode(&first).expect("decodes");
+                    assert_eq!(
+                        encode(&archetype, &composites, &skin),
+                        first,
+                        "{:?}",
+                        [length, hook, disc]
+                    );
+                }
+            }
+        }
+        // And a 13 an older build wrote for a head the owl's in bytes reads
+        // as that byte's head, a hair off the owl's, and writes the owl's 10.
+        let mut old = base32_decode(&owl).expect("decodes");
+        old.pop();
+        old[0] = PRE_SURFACES_VERSION;
+        old.extend([128, 128, 128]);
+        old.push(checksum(&old));
+        let (archetype, composites, skin) = decode(&base32_encode(&old)).expect("decodes");
+        let Archetype::Winged(read) = &archetype else {
+            panic!("archetype changed");
+        };
+        assert!((read.beak_length - 0.012).abs() < 0.001, "{read:?}");
+        assert_eq!(encode(&archetype, &composites, &skin), owl);
     }
 
     #[test]

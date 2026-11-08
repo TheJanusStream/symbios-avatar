@@ -328,8 +328,12 @@ are seated on it.
   record, thousandths in the signed envelope, optional and defaulted, so a
   0.20.0 record reads as an owl's head; and in a share code **version 13**,
   three spans appended after the complexion, written only by a winged body
-  whose head is not an owl's. Every other code - a person's, a beast's, an
-  owl-headed winged body's - is written at the version it was, byte for byte,
+  whose head is not an owl's - asked of the three bytes it would write (#429),
+  so a head whose bytes are the owl's (an axis from 0 to 0.023) writes 10 and
+  reads back as the owl's, and a head read from a code this build writes
+  writes that code again (a 13 an older build wrote with the owl's three bytes
+  reads 0.012 an axis and writes 10). Every other code - a person's, a beast's,
+  an owl-headed winged body's - is written at the version it was, byte for byte,
   so a 0.20 reader takes it; a 0.20 reader refuses a 13 as a version from the
   future. A 0.20 winged code (version 10) reads as an owl's head.
 - **The head's new parts ride what already crosses a worker**: the beak in
@@ -459,7 +463,12 @@ membrane's, the feathers' - is accumulated across the extension as
 dual-quaternion skinning accumulates it, and wherever a part would come
 within 174 degrees of a half turn from the running sum (where skinning
 flips it), the turns on the two branches that part below the pair, and the
-joint they part at, are scaled back a tenth at a time, never below a fifth.
+joint they part at, are scaled back a tenth at a time, never below a fifth
+(held at it, #427: a tenth less from above it reached 0.185), and a pair whose
+branches are all at the floor is passed over for good, so it costs the loop
+none of its sixty trims. The test is reckoned in a fixed order (`det::dot4`),
+so a browser trims what a native build does; and an extension that is not a
+number poses the fold, where it posed every driven joint NaN.
 It never touches a bird or a glider as rolled; on a bat it trims three hand
 bones a side to 90% (the knuckle blended across digits IV and V reaches 160
 degrees); on the far corners - the longest wings on the shortest legs of a
@@ -580,8 +589,11 @@ inside a limb), folded, at 0.3, 0.6 and spread, on every family and cross,
 every axis at each end and twelve rolls, at most 1.03% stand inside the
 trunk's own skin (four vertices a wing, a glider-led cross's patagium corner
 under a bird-blended belly; a wing mutated to fold into the trunk reads 61%);
-over 200 steps of the extension no step moves any drawn vertex more than six
-times the mean step, on every family and every cross at blends 0.3, 0.5 and
+over 200 steps of the extension no drawn vertex steps more than three times
+its own mean step (#428: the largest of all 1.86; it was six times the mean of
+every step's largest, which a twelve-degree flip 80 mm from a bat's hand
+joint passed at 3.45 and a 56-degree one within 20 mm at 1.93, and which the
+per-vertex measure fails at 6.9 and 3.8), on every family and every cross at blends 0.3, 0.5 and
 0.6 either way round, each as rolled, with the longest wings on the shortest
 legs, with the longest wings, and with the heaviest composites; the wings are mirror images to a millimetre, and spread
 at least 1.6 times as wide as folded. Triangles: bird 17,866 (feathers 1,470
@@ -629,6 +641,13 @@ its coat, its frames and its joints, and the spread edges to the legs.
   spread membrane near the body carries a slight ripple for it.
 - **The bird's tail is rooted in its rump, not on W1's stub**, which ends
   about five centimetres behind the body.
+- **Its rump is the trunk's, not the tail's** (#426): the binding's zone
+  map hands the skin past a tail's root over to the tail
+  (`SkinWeights::zone_map`), never where the dock is a marker - a bird's
+  stub draws nothing, and a stored coat would paint the tail's colour
+  across the rump. As built no bird's rump is held by its pelvis, so
+  nothing drawn moved; held by it, a bird-led cross's rump gave 20 vertices
+  to the tail.
 - **A bird's humerals rise over its back when spread** (0.6 of the way out
   of the wing's plane, the tertials half that): the plane through the
   shoulder runs under the back, and in it they passed through the body.
@@ -648,7 +667,13 @@ hind leg's extremity zone, under the foot's pad, so `Rig::extremity_joints`
 holds them and `Rig::extremity_extent` spans them, while the contact stays
 the pad (the plan's own joint, first in the zone) and `Rig::limb_chain`,
 three joints above the extremity on every winged leg, never reaches them.
-Grown after the wings, whose joints keep the numbers they had. The body's
+Grown after the wings, whose joints keep the numbers they had. **The foot's
+tip is not a toe's** (#430): the `LimbTip` landmark, where a prop at the foot
+sits (`Socket::LeftFoot`'s anchor and seat), is the last joint the plan hung,
+the toe node with its real radius, as it was before the toes were drawn. Up
+to 0.23.1 it was the last drawn joint, the middle toe's claw point - radius
+nought, on the ground, and on a bat turned about 23 degrees outward. The
+socket's joint, the ankle the foot hangs from, never moved. The body's
 own foot is shaped under them into what they grow from - a bird's ball, a
 bat's sole - by the analytic foot a beast's paw is shaped by
 (`plan::beast_foot`), and the plan sets its second node only that far ahead
@@ -880,9 +905,13 @@ marks, painted with the fur (#423's other half).
   colours a byte a channel, the pattern, the gloss, the marks' two bytes: 28)
   and the coat (the beast's six bytes and its picked colours' block). **Written
   only by a body that needs it**: a winged body whose plumage is the default
-  owl's and which stores no coat but its leading family's own goes on writing
-  13 or 10, byte for byte, so a 0.21 reader takes it; a 0.21 reader refuses a
-  14 as a version from the future. Codes up to 13 read as the default plumage
+  owl's and which stores no coat goes on writing 13 or 10, byte for byte, so a
+  0.21 reader takes it; a 0.21 reader refuses a 14 as a version from the
+  future. **A stored coat rides whatever it is** (#431): up to 0.23.1 one equal
+  to its leading family's own was left off, and the body came back storing
+  none - the same look while that family led, but made another family it
+  wore that family's coat where the body it was read from kept its own.
+  Codes up to 13 read as the default plumage
   and the family's coat, which a glider and a bird wear in other colours than
   0.21 painted them (above).
 - **Sanitised and quantised**: every colour clamped to `0..1` on the wire's
@@ -1287,7 +1316,69 @@ frames a second):
   14 mm at 3 m/s. Each wing is turned up about its root by as much as its
   outer joints stand under their height at rest (`hold_wings`); 5.6 mm of
   the cards' drop is left, under the ground bound. That cross's primaries
-  standing 83 mm under the ground at rest are its build's, left to #433.
+  standing 83 mm under the ground at rest are its build's, still: the
+  whole life's, the flight's and the rests' bounds read that wing from where
+  it stood, and turned up off the floor at rest its cards went 40 to 55 mm
+  under in a landing, a walk and a wing stretch (tried for #433 and left).
+- **Nothing drawn passes into the ground** (#433): a ground bound now reads
+  everything drawn, not the toes alone (`tests/winged_motion.rs`), standing
+  and walking, at the fast gait and stopping, nothing under 6 mm, on every
+  family, a crow, a songbird, the crosses at halfway and just past it (and
+  a Glider x Bird just short of it) and three rolls. It found a bat's thumb, aimed from the wrist at the hand's node on
+  the ground and longer than that reach, running on 14.5 mm into it (a
+  bat-led roll's 13): the thumb now roots and runs no lower than its own
+  tube over the floor (`wing::membrane`). Two crosses are left out, each its
+  own fault: a Bird x Bat cross at 0.49's primaries (above), and a Bat x
+  Glider cross at 0.49 bounding, its glider's tail 21.6 mm into the ground
+  as its back flexes. A bird's leg skin, which W5's critic read 5 to 16 mm
+  under at rest, stands on the floor on 0.23.1.
+- **A bound steps without a pop wherever its chassis is** (#437): a host
+  that holds its chassis still while its velocity still asks for a pace - a
+  wall in the way, or a host that hands the driver no position - leaves each
+  planted foot at the foothold ledger's yield, 0.15 of its reach ahead of
+  the stride's answer, and the ledger let it go at once as it lifted: a
+  bat's wrist jumped 98 mm in one frame at every rate and its wing arm 115,
+  its hind feet 65, a glider's 40 at 144 frames a second. On a winged body
+  the gap a foot lifts with is carried into its swing: the swing sets off
+  from where the foot stood and lets the gap go by the flight's own
+  smoothstep (`gait::seated_offset`), so it lands where the stride puts it; a
+  person and a beast let go at once, as they always have. **The take-off
+  end is moved, not the path**, so the swing's height is read off the
+  ground it really crosses: carried along the level alone, its height still
+  came off the ground under the path the stride would have swung, and on a
+  20 degree slope a held foot dropped or rose by the gap times the grade as
+  it lifted - a held bat facing down the slope 112.7 mm a sixtieth at 144
+  frames a second, eight frames popping, a bat x glider 266.8 - where now
+  they move 35.7 and 69.3 and nothing pops, up, down or across it. Carried
+  along, a bound was smooth before and is unchanged. **What else moved**:
+  a turn on the spot holds its feet as a held chassis does, so a pivot
+  carries the gap too, and moves 12 to 36 mm off where it went for every
+  winged body - stiller, a bird's at 144 frames a second 26.1 mm a
+  sixtieth at the most where it moved 52.5 and popped twice.
+- **A foot stopping on a slope lays its toes on it, and does not flip
+  them** (#436): after the blend (`keep_toes_up`) a foot whose sole a blend
+  left in the ground had its toes turned about the pad from the blend's
+  attitude, and where no turn could bring the sole out - one side of its
+  ring rises as the other sinks - laid square to the ground instead, so a
+  foot stopping on a slope went from one to the other and back, a bat's
+  hind toe 24 mm a sixtieth facing up a 20 degree slope at 144 frames a
+  second, a bird x bat cross's 43 across it. That pass has no state and no
+  time, so it cannot choose between the two smoothly: a sole is now let
+  stand in the ground after a blend as far as the pad pass leaves it (2 mm),
+  so it turns a toe only when a toe itself is in the ground, and **the idle
+  lays its own feet on the ground** as a stance does, square to it and the
+  lowest point on it (`stand_toes`), each by as much as it is down, a foot
+  the idle steps let go of as it lifts. Laid in the idle's own pose, before
+  the blend, a stop or a landing's hand back eases the toes onto the slope
+  with every other joint, and they lie on it for as long as the body
+  stands: within 0.5 mm of their height over a 20 degree slope a second and
+  a half after a stop, up, down or across, where letting the sole stand in
+  without laying them left them level with the body, 6 to 38 mm off it.
+  The feet are held to the landing's hand back pop bound with every other
+  joint. **What else moved**: on the level a body standing from rest moves
+  nothing (0.01 mm), and one stopping moves its toes up to 5 mm while the
+  idle steps its feet home over the second after the stop, laid as they
+  set down, and stands as it stood before.
 - **A pivot's clock goes the same at any frame rate** (#415): a pivot's
   speed is a standstill's turned, which knows no pattern, so its bare duty
   was a person's while a four-legged gait stepped at its pattern's, and

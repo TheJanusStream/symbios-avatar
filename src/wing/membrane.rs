@@ -487,7 +487,23 @@ pub(crate) fn bat(rig: &mut Rig, book: &mut Book, trunk: &Trunk, arm: &Arm) -> W
     // The thumb, on the ground ahead of the wrist where the crawl plants it
     // (the hand's second node), and forward at the leading edge spread.
     let ahead = (Arm::at(rig, arm.tip) - w).normalize_or(-toward_elbow);
+    // Rooted and run no lower than its own tube over the floor (#433): aimed
+    // at the hand's node on the ground from the wrist above it, a thumb
+    // longer than that reach ran on down into it, its drawn tip 14.5 mm under
+    // the floor a bat stands on, and a low wrist's put its root 3 mm under.
     let root_at = w + ahead * (0.02 * forearm);
+    let root_at = Vec3::new(root_at.x, root_at.y.max(THUMB_RADIUS * forearm), root_at.z);
+    let ahead = {
+        let run = (THUMB[0] + THUMB[1]) * forearm;
+        let lowest = (THUMB_RADIUS * forearm - root_at.y) / run;
+        let level = Vec3::new(ahead.x, 0.0, ahead.z).normalize_or(-toward_elbow);
+        if ahead.y < lowest && lowest > -1.0 {
+            let drop = lowest.min(0.0);
+            level * (1.0 - drop * drop).sqrt() + Vec3::Y * drop
+        } else {
+            ahead
+        }
+    };
     let knuckle_at = root_at + ahead * (THUMB[0] * forearm);
     let tip_at = knuckle_at + ahead * (THUMB[1] * forearm);
     let root = Book::attach(rig, arm.wrist, root_at, zone);
