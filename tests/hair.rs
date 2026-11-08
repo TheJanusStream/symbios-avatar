@@ -2792,7 +2792,7 @@ fn every_card_is_cut_from_one_lane_of_the_strand_mask() {
             // station may run its lane backwards, and the way round may change
             // only between two stations that are the same two points swapped.
             let mut last: Option<(bool, [Vec3; 2])> = None;
-            for (index, station) in uvs.chunks_exact(2).enumerate() {
+            for (index, station) in uvs.as_chunks::<2>().0.iter().enumerate() {
                 let forward =
                     (station[0].x - from).abs() < 1e-5 && (station[1].x - to).abs() < 1e-5;
                 let turned = (station[0].x - to).abs() < 1e-5 && (station[1].x - from).abs() < 1e-5;

@@ -5093,7 +5093,7 @@ fn a_beast_at_rest_on_a_gentle_slope_keeps_its_feet_on_it() {
             asked.push(("standing with no idle", grade, false));
         }
         for (rest, grade, idle) in asked {
-            let gesture = Some(rest).filter(|_| idle);
+            let gesture = idle.then_some(rest);
             for (limb, off) in pads_over(rig, gesture, grade, idle) {
                 if off.abs() > GENTLE_SLOPE_OFF {
                     wrong.push(format!(

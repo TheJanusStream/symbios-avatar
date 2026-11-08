@@ -1077,7 +1077,9 @@ mod tests {
         avatar
             .skin
             .albedo
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|texel| (0..3).all(|channel| texel[channel].abs_diff(stored[channel]) <= 1))
             .count()
     }
@@ -1529,8 +1531,10 @@ mod tests {
             let moved = unpicked
                 .skin
                 .albedo
-                .chunks_exact(4)
-                .zip(maned.skin.albedo.chunks_exact(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(maned.skin.albedo.as_chunks::<4>().0.iter())
                 .filter(|(a, b)| a != b)
                 .count();
             assert!(

@@ -1070,13 +1070,19 @@ mod tests {
         // The plain garment's texels carry its colour exactly, somewhere.
         let blue = [byte(0.2), byte(0.3), byte(0.8)];
         assert!(
-            map.albedo.chunks_exact(4).any(|texel| texel[..3] == blue),
+            map.albedo
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|texel| texel[..3] == blue),
             "the plain trousers' colour is nowhere in the atlas"
         );
         // And the woven top varies: a weave is not one colour.
         let mut colours: Vec<[u8; 3]> = map
             .albedo
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|texel| [texel[0], texel[1], texel[2]])
             .filter(|texel| *texel != blue && *texel != [255; 3])
             .collect();
@@ -1242,7 +1248,7 @@ mod tests {
         let body = dressed(&params);
         let map =
             paint(&body.outfit, &body.rig, &body.unwrap, &body.face_of, 64).expect("an atlas");
-        for texel in map.normal.chunks_exact(4) {
+        for texel in map.normal.as_chunks::<4>().0 {
             let n = Vec3::new(
                 f32::from(texel[0]),
                 f32::from(texel[1]),

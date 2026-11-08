@@ -433,7 +433,9 @@ mod tests {
         let mask = strand_mask();
         assert!(
             mask.rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .all(|texel| texel[..3] == [255, 255, 255]),
             "the mask carries colour, which would tint every card it cuts"
         );
