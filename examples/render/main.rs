@@ -105,6 +105,7 @@
 //! cargo run --release --example render -- --winged --size 0.4 --beak 0.2,-1.3,-1 --drive 0 --speed 0.4 --strip 8  # a small bird hops
 //! cargo run --release --example render -- --winged --kin bat --drive 0 --speed 1.0 --strip 8  # a bat's bound (0.25 its crawl); --kin glider too
 //! cargo run --release --example render -- --winged --kin bat --drive 0 --speed 1.0 --held --from 180 --strip 16  # its chassis held where it stands (#437)
+//! cargo run --release --example render -- --winged --kin bat --poses poses-Bat.txt  # a host's dumped frames as strips (#448: Overlands' probe_dump_a_flown_life writes them)
 //! cargo run --release --example render -- --head --far 12  # at the pixels a peer 12 m off gets
 //! cargo run --release --example render -- --tier far  # the FAR tier's hair in the hair's place
 //! cargo run --release --example render -- --tier near # built with a far tier, drawn near (the control)
@@ -1162,6 +1163,17 @@ fn run() {
     // spread. `--extend E` poses any other sheet's wings at E instead.
     if args.iter().any(|arg| arg == "--wings-crosses") {
         wing_crosses(value("--pass").cloned(), &out);
+        return;
+    }
+    // A host's motion as strips (Overlands #1877, kept by #448): `--poses
+    // FILE` draws the frames a host dumped - each line `row col lift qx qy qz
+    // qw tx ty tz`, then the pose's joint rotations - with the chassis'
+    // attitude laid on the root. Overlands' ignored probe
+    // `probe_dump_a_flown_life` (src/player/rigged/beast_tests/flight.rs)
+    // writes such a file for the bird, the bat and the glider.
+    if let Some(file) = value("--poses") {
+        let name = value("--kin").cloned().unwrap_or_else(|| "winged".into());
+        pose_strips(&record, file, &out, &name.replace('+', "-"));
         return;
     }
     // A winged body's flight (#424): `--flight` drives one body through a
@@ -4587,6 +4599,111 @@ fn flight_strips(record: &AvatarRecord, pass: Option<String>, out: &std::path::P
         write(out, &file, &sheet);
     }
     println!("wrote flight-{name}.png and flight-ahead-{name}.png");
+}
+
+/// A host's dumped frames (Overlands #1877, kept by #448): a row per line's
+/// row, side on and ahead, each row framed on what it draws, the ground
+/// line at y = 0. Each line is `row col lift qx qy qz qw tx ty tz` - the
+/// chassis' height and turn, the root's offset from rest - then one
+/// rotation per joint of this record's rig, in rig order.
+fn pose_strips(record: &AvatarRecord, file: &str, out: &std::path::Path, name: &str) {
+    let Some(avatar) = Avatar::build(record) else {
+        eprintln!("this body does not build");
+        std::process::exit(2);
+    };
+    let subject = Subject::new(
+        avatar,
+        Show {
+            eyes: record.eyes,
+            ..Show::default()
+        },
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+    let rig = &subject.avatar.rig;
+    let root = rig
+        .joints
+        .iter()
+        .position(|joint| joint.parent.is_none())
+        .expect("a rig has a root");
+    let rest = rig.joints[root].position;
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| {
+        eprintln!("--poses could not read `{file}`: {e}");
+        std::process::exit(2);
+    });
+    let mut rows: Vec<Vec<Pose>> = Vec::new();
+    for (at, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let numbers: Result<Vec<f32>, _> = line.split_whitespace().map(str::parse).collect();
+        let v = numbers.unwrap_or_else(|e| {
+            eprintln!("--poses line {}: not a number ({e})", at + 1);
+            std::process::exit(2);
+        });
+        if v.len() < 10 || (v.len() - 10) != rig.len() * 4 {
+            eprintln!(
+                "--poses line {}: {} numbers, and this rig of {} joints wants {} - the dump is of another body (match --kin and the seed to the host's)",
+                at + 1,
+                v.len(),
+                rig.len(),
+                10 + rig.len() * 4
+            );
+            std::process::exit(2);
+        }
+        let (row, lift) = (v[0] as usize, v[2]);
+        let turn = Quat::from_xyzw(v[3], v[4], v[5], v[6]);
+        let translation = Vec3::new(v[7], v[8], v[9]);
+        let rotations: Vec<Quat> = v[10..]
+            .chunks(4)
+            .map(|q| Quat::from_xyzw(q[0], q[1], q[2], q[3]))
+            .collect();
+        let mut pose = Pose {
+            rotations,
+            translation,
+        };
+        // The chassis' turn about the body's origin, and its height.
+        pose.rotations[root] = turn * pose.rotations[root];
+        pose.translation = turn * (rest + translation) + Vec3::Y * lift - rest;
+        while rows.len() <= row {
+            rows.push(Vec::new());
+        }
+        rows[row].push(pose);
+    }
+    if rows.is_empty() {
+        eprintln!("--poses: `{file}` holds no frames");
+        std::process::exit(2);
+    }
+    let columns = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+    for (file, turn, pitch) in [
+        (format!("poses-{name}"), std::f32::consts::FRAC_PI_2, 0.0),
+        (format!("poses-ahead-{name}"), 0.6, 0.0),
+    ] {
+        let mut sheet = Image::new(columns * VIEW, rows.len() * VIEW);
+        for (row, poses) in rows.iter().enumerate() {
+            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for pose in poses {
+                let (a, b) = posed_bounds(&subject, pose);
+                lo = lo.min(a);
+                hi = hi.max(b);
+            }
+            lo.y = lo.y.min(0.0);
+            let frame = Frame {
+                turn,
+                pitch,
+                centre: (lo + hi) * 0.5,
+                span: (hi - lo).max_element().max(0.1) * 1.08,
+            };
+            for (column, pose) in poses.iter().enumerate() {
+                let mut view = subject.view(pose, 0.0, &frame);
+                ground_line(&mut view, &frame);
+                sheet.blit(&view, column * VIEW, row * VIEW);
+            }
+        }
+        write(out, &file, &sheet);
+    }
+    println!("wrote poses-{name}.png and poses-ahead-{name}.png");
 }
 
 /// The cruise beat's rate a winged body flaps at, beats a second, read off a

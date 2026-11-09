@@ -1403,6 +1403,16 @@ in a second, a flier stays up for as long as its host flies it. Everything
 here is on a body with wings (`Rig::wings`); a person or a beast handed a
 flight moves exactly as without one.
 
+Two strips show it. `render --winged --kin K --flight` drives a body through
+the modes here, in this crate. `render --winged --kin K --poses FILE` (#448)
+draws a host's own frames instead - what a flight in Overlands made of the
+body, chassis and all - from the file Overlands' ignored probe
+`probe_dump_a_flown_life` (src/player/rigged/beast_tests/flight.rs) writes:
+one line per frame, `row col lift qx qy qz qw tx ty tz` and a rotation per
+joint. Render a motion phase as strips, side on and ahead, before calling
+it done: the winged epic's green tests let a downstroke through the ground,
+takeoffs that did not read and a touchdown snap reach the renders.
+
 #### What the host gives
 
 `Inputs::flight: Option<Flight>`, `None` on the ground (the default, so every
