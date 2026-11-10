@@ -1696,6 +1696,12 @@ const GROUND_SLACK: f32 = 0.015;
 /// hovering at 0.29 m beat its wings 0.22 m into the ground and 0.45 m in its
 /// takeoff's first beats; a bird's crouch drooped its primaries 0.027 m in;
 /// a glider's landing sank its paws 0.052 m, a bird's toes 0.042.
+///
+/// **And a Bird x Bat cross at 0.4 with them** (#440): until then it and the
+/// cross at 0.49 stood their folded feathers 36 and 83 mm under the ground,
+/// and lower than that nothing went; stood off it, a carried takeoff's first
+/// beats put their primaries 11.8 and 25.0 mm into the ground, their joints
+/// all reckoned clear of it (`winged::flight`'s raise now reads the cards).
 #[test]
 fn nothing_drawn_goes_under_the_ground_in_takeoff_or_landing() {
     use WingedFamily::{Bat, Bird, Glider};
@@ -1716,6 +1722,10 @@ fn nothing_drawn_goes_under_the_ground_in_takeoff_or_landing() {
             ));
         }
     }
+    bodies.push((
+        "Bird x Bat 0.4".to_string(),
+        winged(Lineage::cross(Bird, Bat, 0.4)),
+    ));
     let mut failures = Vec::new();
     for (name, record) in &bodies {
         let avatar = Avatar::build(record).expect("a winged body builds");

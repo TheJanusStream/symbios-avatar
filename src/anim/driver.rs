@@ -1019,7 +1019,21 @@ pub struct Driver {
     /// A winged body's flight, while its host flies it (#424): its beat's
     /// clock and every value its pose eases through.
     aloft: Option<Aloft>,
+    /// How much of `winged::ground::keep_clear` the last frame drew, `0..=1`
+    /// (#441): eased in and out across a rest and a swim, over twice the
+    /// blend, rather than switched in a frame.
+    kept: f32,
 }
+
+/// How many blends [`Driver::drive`] eases `winged::ground::keep_clear` in
+/// and out over (#441), across a rest and a swim: two, three tenths of a
+/// second at the default blend.
+/// Provenance: **chosen** (#441): over two, a bat on a 20 degree slope it
+/// faces up, easing its hands and belly out going into a rest or a swim
+/// and in coming out, moves no joint more than 10.1 mm a sixtieth further
+/// than without them at 60 frames a second (a rest's), where switched in a
+/// frame one moved 117.9 further (a swim's).
+const KEEP_EASE: f32 = 2.0;
 
 /// How far one paddle carries a swimming beast, in its leg's reach (#370).
 /// Provenance: **the literature, rounded**: a dog swimming at about a metre a
@@ -1076,6 +1090,7 @@ impl Driver {
             ridden: None,
             girdled: None,
             aloft: None,
+            kept: 1.0,
         }
     }
 
@@ -1202,6 +1217,8 @@ impl Driver {
         self.blend_asked = false;
         // Put where it is with no way down: no plane to go on from (#400).
         self.rests.unlay();
+        // Nor is what keeps a body on four out of the ground eased (#441).
+        self.kept = if through <= 0.0 { 1.0 } else { 0.0 };
         if through <= 0.0 {
             self.gesture = None;
             return true;
@@ -1225,7 +1242,12 @@ impl Driver {
         true
     }
 
-    /// The pose the body was last drawn in, if it has been driven.
+    /// The pose the body was last drawn in, if it has been driven, as the
+    /// blend keeps it to blend from: before what is laid over it after the
+    /// blend - a beast's ears' springs, the blink and the lids, and what
+    /// keeps a winged body on four legs out of the ground it is handed (its
+    /// hands, belly and tail, #441), which on a slope can stand a hand
+    /// 120 mm off this one. [`Driven::pose`] is the pose as drawn.
     #[must_use]
     pub fn posed(&self) -> Option<&Pose> {
         self.current.as_ref()
@@ -1502,7 +1524,33 @@ impl Driver {
         // to hand the idle its arrival. A heading changes the stride, not the
         // gait: walking and running is the leg vaulting over its foot, at the
         // speed the body goes whichever way it goes (#362, `stepping`).
-        let pacing = travelling.or_else(|| pivoting.then_some(Speed::STILL));
+        //
+        // **A winged body stepping round where it stands walks round, however
+        // fast it turns** (#446). A standstill turned knows no pattern, so its
+        // gait is the one its working foot's speed picks, and a bat's wrists
+        // stand so far out that a spin of two and a half radians a second
+        // takes them past the speed it bounds from: its pivot changed from a
+        // walk to a bound between two frames as its turn eased up through
+        // that, with nothing to blend the change (the speed itself carries no
+        // pattern to have changed), and its head dropped 44 mm in the frame;
+        // and back as the turn eased down through it, a forefoot 95 mm.
+        // One foot going faster does not change the gait a body is in (#370),
+        // and a body going nowhere is in its walk: from where its working
+        // foot would break into a bound, its standstill is turned in its
+        // walk's pattern. Below that it is the standstill it always was, to
+        // the bit, and so is a person's and a beast's at any turn.
+        let still = if pivoting
+            && super::winged::bounds(rig)
+            && turn
+                .working(rig, Speed::STILL)
+                .pattern_on(rig)
+                .is_some_and(|pattern| pattern != Pattern::Walk)
+        {
+            Speed::STILL.in_pattern(Pattern::Walk)
+        } else {
+            Speed::STILL
+        };
+        let pacing = travelling.or_else(|| pivoting.then_some(still));
         let effort = pacing.map(|speed| turn.working(rig, speed));
 
         // **The stroke's clock, which the swim leaves to its caller.** Both
@@ -1996,6 +2044,41 @@ impl Driver {
         self.previous = self.current.take();
         self.drawn_over = delta;
         self.current = Some(posed.clone());
+        // And what a winged body on four legs draws beside its feet - its
+        // belly, its hands with their thumbs, its tail - kept out of the
+        // ground it is handed (#441): see `winged::ground::keep_clear`. A
+        // flight's frames too, whose landing puts them down, and an emote's,
+        // which rides over the stance; not a rest's, posed against a level,
+        // nor a swim's, which the water floats. **On the pose handed back
+        // alone, never the one kept to blend from**: a hand is turned by the
+        // ground's own tilt, and a blend that carried a turned hand into the
+        // next frame had it turned twice, 38 degrees on a slope of 20 for as
+        // long as a change of pace took; and run on the pose blended from, a
+        // stop's blend of two legs solved apart threw a Bat x Bird cross's
+        // folded hand 34.5 mm a sixtieth at 144 frames a second, against 13.5.
+        //
+        // **Eased in and out, never switched**: nothing kept to blend from
+        // carries it, so switched on and off with the source a bat's whole
+        // hand turn and belly lift went in one frame at either edge of a rest
+        // or a swim, 122 mm and the slope's whole 20 degrees on a slope it
+        // faced up, and of every emote while it was left out of them.
+        let keeps = source != Source::Swim && !resting;
+        self.kept = if config.blend > 0.0 {
+            let step = delta / (KEEP_EASE * config.blend);
+            if keeps {
+                (self.kept + step).min(1.0)
+            } else {
+                (self.kept - step).max(0.0)
+            }
+        } else if keeps {
+            1.0
+        } else {
+            0.0
+        };
+        if self.kept > 0.0 {
+            let share = self.kept * self.kept * (3.0 - 2.0 * self.kept);
+            super::winged::ground::keep_clear(rig, &mut posed, &ground, share);
+        }
 
         // The ears follow late (#370): their spring chains are stepped over
         // the pose as drawn, so they bob with the gait's own motion. In the

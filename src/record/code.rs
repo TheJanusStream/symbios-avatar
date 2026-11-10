@@ -636,6 +636,140 @@ mod tests {
     }
 
     #[test]
+    fn an_owl_s_plumage_is_chosen_on_its_bytes() {
+        // #438: a plumage whose bytes are the default owl's writes the owl's
+        // code, 10, and reads back as the owl's plumage exactly. Chosen on
+        // the floats, `head[0]` 0.441 against the owl's 0.44 wrote a 14
+        // carrying the owl's own bytes, which a 0.21 reader refuses.
+        use crate::Plumage;
+        let code = |plumage: Plumage| {
+            encode(
+                &Archetype::Winged(crate::WingedParams {
+                    plumage,
+                    ..Default::default()
+                }),
+                &Composites::default(),
+                &SkinParams::default(),
+            )
+        };
+        let owl = code(Plumage::OWL);
+        assert_eq!(version_of(&owl), PRE_STIFFNESS_VERSION);
+        // Half a byte is 0.00196: each of these rounds to the owl's byte,
+        // above it and below it.
+        let near = [
+            Plumage {
+                head: [0.441, 0.33, 0.22],
+                ..Plumage::OWL
+            },
+            Plumage {
+                head: [0.439, 0.33, 0.22],
+                ..Plumage::OWL
+            },
+            Plumage {
+                ruff: [0.28, 0.20, 0.131],
+                gloss: 0.001,
+                ..Plumage::OWL
+            },
+        ];
+        for plumage in near {
+            assert_eq!(code(plumage), owl, "{plumage:?} is the owl's in bytes");
+            let (Archetype::Winged(back), _, _) = decode(&code(plumage)).expect("decodes") else {
+                panic!("archetype changed");
+            };
+            assert_eq!(back.plumage, Plumage::OWL, "{plumage:?}");
+        }
+        // A byte off the owl's, either way, is a plumage and rides at 14, and
+        // so do another pattern, a gloss and a marks seed of its own.
+        let off = [
+            Plumage {
+                head: [0.443, 0.33, 0.22],
+                ..Plumage::OWL
+            },
+            Plumage {
+                head: [0.437, 0.33, 0.22],
+                ..Plumage::OWL
+            },
+            Plumage {
+                pattern: crate::PlumagePattern::Plain,
+                ..Plumage::OWL
+            },
+            Plumage {
+                gloss: 0.003,
+                ..Plumage::OWL
+            },
+            Plumage {
+                marks: 1,
+                ..Plumage::OWL
+            },
+        ];
+        for plumage in off {
+            assert_eq!(
+                version_of(&code(plumage)),
+                SHARE_CODE_VERSION,
+                "{plumage:?}"
+            );
+        }
+        // Every plumage read back from a code writes that code again.
+        let steps = [
+            0.0, 0.001, 0.2, 0.437, 0.439, 0.44, 0.441, 0.443, 0.7, 0.999, 1.0,
+        ];
+        for red in steps {
+            for gloss in [0.0, 0.001, 0.003, 0.5, 1.0] {
+                for marks in [0, 1, u16::MAX] {
+                    let first = code(Plumage {
+                        head: [red, 0.33, 0.22],
+                        gloss,
+                        marks,
+                        ..Plumage::OWL
+                    });
+                    let (archetype, composites, skin) = decode(&first).expect("decodes");
+                    assert_eq!(
+                        encode(&archetype, &composites, &skin),
+                        first,
+                        "{:?}",
+                        (red, gloss, marks)
+                    );
+                }
+            }
+        }
+        // And a 14 an older build wrote for a plumage the owl's in bytes
+        // reads as those bytes' plumage, a hair off the owl's, and writes the
+        // owl's 10.
+        let mut old = base32_decode(&owl).expect("decodes");
+        old.pop();
+        old[0] = SHARE_CODE_VERSION;
+        crate::WingedParams::default().put_head(&mut old);
+        old.push(1);
+        Plumage::OWL.encode(&mut old);
+        old.push(checksum(&old));
+        let (archetype, composites, skin) = decode(&base32_encode(&old)).expect("decodes");
+        let Archetype::Winged(read) = &archetype else {
+            panic!("archetype changed");
+        };
+        assert_ne!(read.plumage, Plumage::OWL, "a byte's grid is not the owl's");
+        assert!((read.plumage.head[0] - 0.44).abs() < 0.002, "{read:?}");
+        assert_eq!(encode(&archetype, &composites, &skin), owl);
+        // A stored coat still rides, with no plumage beside it.
+        let coated = crate::WingedParams {
+            family: crate::WingedFamily::Bat,
+            coat: Some(crate::WingedFamily::Bat.default_coat()),
+            plumage: near[0],
+            ..Default::default()
+        };
+        let coated = encode(
+            &Archetype::Winged(coated),
+            &Composites::default(),
+            &SkinParams::default(),
+        );
+        assert_eq!(version_of(&coated), SHARE_CODE_VERSION);
+        let (Archetype::Winged(back), _, _) = decode(&coated).expect("decodes") else {
+            panic!("archetype changed");
+        };
+        assert_eq!(back.plumage, Plumage::OWL);
+        assert!(back.coat.is_some());
+    }
+
+    #[test]
     fn quadrupeds_round_trip_too() {
         let original = Archetype::Quadruped(QuadrupedParams {
             height: 0.9,

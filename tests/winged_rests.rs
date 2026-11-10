@@ -732,7 +732,8 @@ fn a_birds_glance_is_a_quick_head_saccade() {
 }
 
 /// Every winged body the ground-and-travel sweep reads: the three families,
-/// each pair crossed either side of and at the halfway blend, and ten rolls.
+/// each pair crossed either side of and at the halfway blend, a Bird x Bat
+/// cross at 0.4 and ten rolls.
 fn sweep_bodies() -> Vec<(String, AvatarRecord)> {
     use WingedFamily::{Bat, Bird, Glider};
     let mut bodies = Vec::new();
@@ -754,6 +755,14 @@ fn sweep_bodies() -> Vec<(String, AvatarRecord)> {
             ));
         }
     }
+    // And a neighbour of the cross whose long folded wing hung into the
+    // ground until #440: what it hid at 0.49, it hid here.
+    let mut params = WingedParams::default();
+    params.set_lineage(Lineage::cross(Bird, Bat, 0.4));
+    bodies.push((
+        "Bird x Bat 0.4".to_string(),
+        AvatarRecord::new("Winged", Archetype::Winged(params)),
+    ));
     for seed in 1..=10 {
         let mut record = AvatarRecord::new("Roll", Archetype::Winged(WingedParams::default()));
         record.reroll(seed);
@@ -769,12 +778,19 @@ const FRAME_TRAVEL: f32 = 0.067;
 
 /// **No rest or emote puts the body through the ground or jumps a joint**:
 /// every name of every family's roster, on the three families, each pair
-/// crossed at 0.49, 0.5 and 0.51, and ten rolls, at 25 moments of its clip
-/// and through the driver from asking to standing again - the whole drawn
+/// crossed at 0.49, 0.5 and 0.51, a Bird x Bat cross at 0.4 and ten rolls,
+/// at 25 moments of its clip and through the driver from asking to standing
+/// again - the whole drawn
 /// body's lowest point (skin, toes, membrane and feathers) never more than
 /// [`UNDER_GROUND`] below the ground beyond what stood below it before the
 /// motion began, and through the driver no joint travelling more than
 /// [`FRAME_TRAVEL`] in a frame.
+///
+/// **What stood below it before hid a wing stretch** until #440: a Bird x
+/// Bat cross at 0.49 stood its folded feathers 83 mm under the ground and
+/// one at 0.4 36, and under that its stretch pointed the claws of its
+/// stretched leg 13.7 and 10.8 mm into the ground, and laid as its fold's
+/// height let it lie, the wing's primaries at 0.4 into it as well.
 #[test]
 fn no_rest_or_emote_sinks_the_body_or_jumps_a_joint() {
     let bodies = sweep_bodies();

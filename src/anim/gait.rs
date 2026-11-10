@@ -1803,6 +1803,9 @@ where
                 // A swing carrying the gap its foot lifted with sets off
                 // from where that foot stood (#437): see [`seated_offset`].
                 let carried = anchored(limb).filter(|_| matches!(phase, Phase::Swing(_)));
+                // And a winged body's turning swing looks along its own
+                // flight for ground to clear (#446): see [`seated_offset`].
+                let turned = super::winged::ground::turned_share(rig, stride);
                 led(
                     seated_offset(
                         led(home + widen, lead),
@@ -1812,6 +1815,7 @@ where
                         gait.duty,
                         &ground,
                         carried,
+                        turned,
                     ) + widen,
                     lead,
                 )
@@ -2464,6 +2468,33 @@ impl Walked {
 /// ground under the uncarried path: on a 20 degree slope the foot dropped or
 /// rose by the gap times the grade as it lifted, a held bat's arm 112.7 mm
 /// a sixtieth facing down one.
+///
+/// # A winged body's turning swing looks along its own flight
+///
+/// `turned` is how much of a winged body's stride is its turn, `0..=1`
+/// ([`super::winged::ground::turned_share`], #446): nought for every other
+/// body and every stride that does not turn, which is this as it always was,
+/// to the bit. **The roof measures how far ground lies beyond the sole along
+/// the way the foot goes**, and the stride's direction is not that way on a
+/// turn: a pivot's feet swing across it, round the body. Read along the
+/// stride's direction, every probe on a pivot's flight lay beside the sole
+/// and none beyond it, so all of them were ground the foot had to clear
+/// outright, and on a slope across the flight the landing's end, uphill, held
+/// the foot up from its take-off - only the cone about the take-off kept it
+/// lower. A glider-led body spinning on a 20 degree slope across it lifted its
+/// downhill forepaw some 35 mm over its ramp as the paw swept in under its
+/// chest uphill, its wrist came within 6.5 mm of its shoulder, where a leg
+/// whose bones differ by 12.6 mm has its elbow pointing back against
+/// the wrist's own direction, and as the wrist passed the shoulder from
+/// outside to inside the elbow was thrown 116 mm out in one frame (Glider x
+/// Bird 0.3, 337.8 mm a sixtieth at 144 frames a second, a joint turned 4.1
+/// rad). So for as much of the stride as is its turn the roof looks along the
+/// flight itself, from take-off to landing; the sole's span along it is still
+/// the foot's length.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one private seat, every input a different thing it reads"
+)]
 fn seated_offset<F>(
     home: Vec3,
     foot: (f32, f32),
@@ -2472,6 +2503,7 @@ fn seated_offset<F>(
     duty: f32,
     ground: &F,
     carried: Option<Vec3>,
+    turned: f32,
 ) -> Vec3
 where
     F: Fn(Vec3) -> Option<Ground>,
@@ -2590,7 +2622,16 @@ where
         }
     };
 
-    let along_stride = stride.direction;
+    // Along the flight for a winged body's turn: see the docs above.
+    let along_stride = if turned > 0.0 {
+        let flight = Vec3::new(arriving.x - leaving.x, 0.0, arriving.z - leaving.z);
+        stride
+            .direction
+            .lerp(flight.normalize_or_zero(), turned)
+            .normalize_or(stride.direction)
+    } else {
+        stride.direction
+    };
     // The sole span and the end cones are geometry about where the foot
     // actually is, so `here` reads the eased horizontal too — seating the
     // eased path under the linear one's roof would lift the foot for ground it
@@ -5751,6 +5792,7 @@ mod tests {
                         gait.duty,
                         &travelling(origin, world),
                         None,
+                        0.0,
                     );
                     home + offset + Vec3::new(0.0, world(origin), origin)
                 })

@@ -32,6 +32,12 @@
 //!   lays them on the ground as a stance does (`stand_toes`, #436); and
 //!   after the driver's blend a pad or a toe it left in the ground is lifted
 //!   out of it (`keep_toes_up`).
+//! * **A body on four legs is kept out of the ground it is handed**
+//!   (`keep_clear`, #440 and #441): on the pose handed back, its belly
+//!   lifted off the ground under it, a crawling body's hands laid along it -
+//!   thumb, membrane and folded digits with the wrist - and its tail lifted
+//!   off it, the ground under a hand and the belly read as a plane round it.
+//!   A level floor is all the build knows; a slope is the pose's.
 //!
 //! Nothing here moves a person or a beast: every entry asks the rig's wings
 //! first, which only a winged body has.
@@ -420,11 +426,13 @@ pub(crate) fn hop_rise(rig: &Rig, gait: &Gait, stride: &Stride, cycle: f32) -> O
 /// as its lowest joint stands under its height at rest over the wing's
 /// longest reach.
 ///
-/// **What motion adds, not what the plan built**: a Bird x Bat cross at 0.49
-/// stands with its folded primaries 83 mm under the ground (#433, the body's
-/// own), and running at 3 m/s its crouch and lean took them 14 mm further;
-/// they are held where they stood. Nothing on a body whose fore limbs are
-/// legs, or one with no wings.
+/// **What motion adds, not where the build stands them**: a Bird x Bat cross
+/// at 0.3, whose long folded feathers the hug lays down its flank to 6.6 mm
+/// over the ground, took them 10.4 mm lower running at 3 m/s, by its crouch
+/// and its lean, 3.8 mm into the ground (at 0.49, 14 mm, until #440 laid
+/// that cross's wing back along the body, `wing::feather`); they are held
+/// where they stood. Nothing on a body whose fore limbs are legs, or one
+/// with no wings.
 pub(crate) fn hold_wings<F>(rig: &Rig, pose: &mut Pose, ground: &F)
 where
     F: Fn(Vec3) -> Option<Ground>,
@@ -522,13 +530,89 @@ const FOLD_SWING: f32 = 0.4;
 /// folds its paws by (#424): all of it over a swing of [`FOLD_SWING`] or
 /// longer, less over a shorter, so a small body's fast stride turns its toes
 /// no faster than a beast's.
+///
+/// **A turning stride's swing is timed by its working foot** (#446), as its
+/// cadence is ([`working_stride`]): a body stepping round where it stands
+/// covers no ground, the speed its stride's length reads back had no cadence,
+/// and so every pivot folded its paws whole, a beast's fold over a swing of
+/// less than a tenth of a second - a glider's forepaw turned 1.8 rad a
+/// sixtieth at 144 frames a second and 1.5 in one frame at 60, and a Bat x
+/// Glider cross's 2.0. **And by [`PIVOT_FOLD`] of that for as much of the
+/// stride as is its turn**, a pivot's swing being over sooner than its
+/// cadence says. A stride that does not turn is timed as it was, to the bit.
 pub(crate) fn fold_share(rig: &Rig, gait: &Gait, stride: &Stride) -> f32 {
-    let cadence = Speed::of(rig, gait, stride).cadence(rig);
+    let (stride, turned) = working_stride(rig, stride);
+    let cadence = Speed::of(rig, gait, &stride).cadence(rig);
     if cadence <= f32::EPSILON {
         return 1.0;
     }
-    ((1.0 - gait.duty) / cadence / FOLD_SWING).clamp(0.0, 1.0)
+    let share = ((1.0 - gait.duty) / cadence / FOLD_SWING).clamp(0.0, 1.0);
+    share * (1.0 - (1.0 - PIVOT_FOLD) * turned)
 }
+
+/// `stride` as the foot furthest from the body's middle takes it, and how
+/// much of it is its turn, `0..=1`: its stance the length of that foot's own
+/// path, the stride's travel and the arc its turn carries the foot round
+/// together, and the share of that the arc is. A stride that does not turn is
+/// itself, to the bit, and none of it its turn.
+///
+/// **A turning stride is stepped at its working foot's pace**
+/// ([`crate::anim::turn::Turn::cadence`]), not its middle's: a body stepping
+/// round where it stands covers no ground at all, so the speed its stride's
+/// length reads back is a standstill's, with no cadence to time a swing by.
+fn working_stride(rig: &Rig, stride: &Stride) -> (Stride, f32) {
+    if stride.yaw == 0.0 {
+        return (*stride, 0.0);
+    }
+    let reach = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
+        .map(|joint| {
+            let at = rig.joints[joint].position;
+            (at.x * at.x + at.z * at.z).sqrt()
+        })
+        .fold(0.0f32, f32::max);
+    let round = reach * stride.yaw;
+    let (along, round) = (stride.length * stride.length, round * round);
+    if along + round <= f32::EPSILON {
+        return (*stride, 0.0);
+    }
+    (
+        Stride {
+            length: (along + round).sqrt(),
+            ..*stride
+        },
+        round / (along + round),
+    )
+}
+
+/// How much of `stride` is its turn, `0..=1`, as [`working_stride`] reckons
+/// it at the foot furthest from the body's middle: nought on any body but a
+/// winged one, and on a stride that does not turn. Read by the swing's seat
+/// (`gait::seated_offset`, #446), which looks along a turning swing's own
+/// flight for ground to clear for as much of it as this.
+pub(crate) fn turned_share(rig: &Rig, stride: &Stride) -> f32 {
+    if rig.wings.is_none() {
+        return 0.0;
+    }
+    working_stride(rig, stride).1
+}
+
+/// How much of the fold its swing's length earns a stride that only turns
+/// folds its paws by: see [`fold_share`].
+/// Provenance: **measured** (#446): a glider stepping round at a radian a
+/// second swings a forepaw in 0.08 s where its working foot's cadence says
+/// 0.15, the pivot's clock gaining on its cadence for as long as the turn
+/// eases (`driver::carry_scaled`, #415), which is most of any turn. At a
+/// half, no joint of a glider, a Bat x Glider or a Glider x Bird cross turns
+/// more than 0.42 rad a sixtieth stepping or spinning round on the level at
+/// 30, 60 or 144 frames a second, and on a 20 degree slope up, down or across
+/// it no more than 0.51 (the Bat x Glider spinning at 144) once its swing
+/// looks along its own flight for ground to clear (`gait::seated_offset`):
+/// before that, a Glider x Bird spinning across the slope turned a joint
+/// 4.12 rad, its elbow thrown, which was the seat's and not the fold's.
+const PIVOT_FOLD: f32 = 0.5;
 
 /// How far ahead of its rest a foot's swing carries the toes' stance attitude
 /// into the air before letting it go, as a share of the swing.
@@ -683,6 +767,416 @@ where
             }
         }
         lay_foot(rig, pose, limb, None, ground);
+    }
+}
+
+/// Keeps what a winged body on four legs draws beside its feet out of the
+/// ground it is handed (#441): its belly lifted off it ([`lift_belly`]), a
+/// crawling body's hands laid along it ([`lay_hands`]) and its tail lifted
+/// off it ([`lift_tail`]). Each reads the ground under the part itself and
+/// the pose it is given, and nothing kept from a frame before, so a frame
+/// and the next answer alike; on a level floor a hand is left to the bit,
+/// and a belly and a tail that stand clear of it. `share` of each, `0..=1`:
+/// the driver eases it in and out.
+///
+/// Call on the pose as it is handed back, after the driver's blend and
+/// never on the pose kept to blend from ([`crate::anim::Driver::drive`]
+/// does, at the whole share whatever carries the body but the water, which
+/// floats it, and a rest, which is posed against the level it lies on, and
+/// eased between over two blends).
+///
+/// **The ground under a hand and the belly is read as a plane round it**
+/// ([`plane_under`]), not by the normal at one point: the ground a game
+/// hands a body is often heights on a grid, bilinear between them, whose
+/// tilt jumps at every cell's edge - Overlands' every quarter metre, edges
+/// that stand still under a body as it goes - and a fore pad crosses one
+/// every stride. Read at the pad, a bat's hand turned 7.3 degrees, then 1.5,
+/// then 7.0 in single frames walking toward a 10 cm crest, and everything
+/// it carries swung 45 mm a sixtieth and back. Each axis of the plane takes
+/// the gentler of its two sides, so a hand on the flat beside a step reads
+/// the flat, not half the ramp a grid makes of the step.
+pub(crate) fn keep_clear<F>(rig: &Rig, pose: &mut Pose, ground: &F, share: f32)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    if rig.wings.is_none() || !rig.four_legged() || !pose.fits(rig) || share <= 0.0 {
+        return;
+    }
+    #[cfg(test)]
+    if LEFT_OUT.with(std::cell::Cell::get) {
+        return;
+    }
+    let share = share.min(1.0);
+    lift_belly(rig, pose, ground, share);
+    lay_hands(rig, pose, ground, share);
+    lift_tail(rig, pose, ground, share);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether [`keep_clear`] is left out on this thread: the motion its own
+    /// tests measure it against (`winged::keep_clear_tests`). Per thread, so
+    /// a test that leaves it out changes nothing for one run beside it.
+    pub(super) static LEFT_OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// How far round a pad [`lay_hands`] reads the ground's tilt, in the hip's
+/// height either side ([`plane_under`]).
+///
+/// Provenance: **measured** (#441), on the game's ground (`keep_clear_tests`):
+/// what a bat's hands are turned by stepped 14.4 mm a sixtieth from one
+/// frame to the next, walking over a 0.25 m bilinear grid toward a 25 cm
+/// crest, read at one hip either side, 8.6 at two and 112.7 read at the pad
+/// alone; and its drawn points stood 2.5 mm under the crest at one, one and
+/// a half and two, 9.0 read at the pad and 16.9 at seven (a leg's reach,
+/// which is a bat's wing arm). One and a half: for a bat 0.15 m, more than
+/// half a cell either side, the hand's span with its thumb.
+const HAND_PLANE: f32 = 1.5;
+
+/// How far round the trunk's middle [`lift_belly`] reads the ground's tilt,
+/// in the trunk's length either side: half, so the plane spans the trunk.
+const BELLY_PLANE: f32 = 0.5;
+
+/// The ground under `at` as a plane over `reach` either side of it: where
+/// it stands, and the tilt read along each axis from the ground `reach` to
+/// either side, or the ground's own normal where any of those answers
+/// nothing.
+///
+/// **Each axis takes the gentler of its two sides** ([`limited`]), and none
+/// where they rise opposite ways. A central difference across both sides
+/// read a step's ramp - a curb or a deck's edge, which a host's height grid
+/// hands over as a ramp a cell wide - beside a hand standing on the flat,
+/// turned the hand down into the flat by up to 0.33 rad and laid its edge
+/// 14.8 mm into ground it cleared without `keep_clear` (a bat beside a 20 cm
+/// step; a bat over a 20 cm drop ahead read 37.3 mm under, worse than with
+/// no `keep_clear` at all). Taking the gentler side reads level beside a
+/// step and over a crest, and it is still a plane's own tilt on a plane and
+/// exactly up on a level floor; and on ground whose heights are continuous -
+/// a bilinear grid's are, where its normal is not - the tilt is continuous
+/// too.
+fn plane_under<F>(ground: &F, at: Vec3, reach: f32) -> Option<Ground>
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    let below = ground(at)?;
+    if reach <= 0.0 {
+        return Some(below);
+    }
+    let sample = |offset: Vec3| ground(at + offset).map(|answer| answer.position);
+    let (Some(right), Some(left), Some(ahead), Some(behind)) = (
+        sample(Vec3::X * reach),
+        sample(-Vec3::X * reach),
+        sample(Vec3::Z * reach),
+        sample(-Vec3::Z * reach),
+    ) else {
+        return Some(below);
+    };
+    let here = below.position;
+    // How fast the ground rises from `from` to `to` along `axis`.
+    let rise = |from: Vec3, to: Vec3, axis: Vec3| {
+        let run = (to - from).dot(axis);
+        if run.abs() <= f32::EPSILON {
+            0.0
+        } else {
+            (to.y - from.y) / run
+        }
+    };
+    let across = limited(rise(here, right, Vec3::X), rise(left, here, Vec3::X));
+    let along = limited(rise(here, ahead, Vec3::Z), rise(behind, here, Vec3::Z));
+    // Taken from nought rather than negated, so a level ground's tilt has no
+    // negative zero in it and reads exactly up.
+    let normal = Vec3::new(0.0 - across, 1.0, 0.0 - along);
+    if !normal.is_finite() {
+        return Some(below);
+    }
+    Some(Ground {
+        position: below.position,
+        normal: normal.normalize(),
+    })
+}
+
+/// The gentler of two rises where they agree in sign, and none where they
+/// do not (a minmod limiter): what [`plane_under`] takes along each axis. It
+/// is continuous in both, so a tilt read from continuous heights stays
+/// continuous.
+fn limited(one: f32, other: f32) -> f32 {
+    if one * other <= 0.0 {
+        0.0
+    } else if one.abs() <= other.abs() {
+        one
+    } else {
+        other
+    }
+}
+
+/// How far over the ground the trunk's joints stand, each in its own ring's
+/// radius, for [`lift_belly`] to know its skin is clear without reading it:
+/// a ring and three twentieths.
+///
+/// Provenance: **measured** (#441): the skin of a bat, a glider, their
+/// crosses at the halfway blend and the crosses with a bird a bat or a
+/// glider leads reaches at most 6.1 mm below its joint less its ring (a
+/// glider's, on a ring of 85 mm: 0.072 of it), standing, walking, bounding
+/// and turning on the level and on 20 degree slopes every way. A bat's
+/// rings are 94 mm on a belly 32 mm off the ground, so a ring and a quarter
+/// never let it off.
+const TRUNK_CLEAR: f32 = 1.15;
+
+/// The turn `joint` is drawn in, `top` and the joints down to it turned
+/// since `posed` was read and everything above `top` not: what a fresh
+/// [`Pose::forward`] answers for it, to the bit, without one.
+fn turned_below(
+    rig: &Rig,
+    pose: &Pose,
+    posed: &crate::anim::pose::Posed,
+    top: usize,
+    joint: usize,
+) -> Quat {
+    let mut path = Vec::new();
+    let mut at = Some(joint);
+    while let Some(here) = at {
+        path.push(here);
+        if here == top {
+            break;
+        }
+        at = rig.joints[here].parent;
+    }
+    let base = rig.joints[top]
+        .parent
+        .map_or(Quat::IDENTITY, |parent| posed.rotations[parent]);
+    path.iter()
+        .rev()
+        .fold(base, |turn, &here| turn * pose.rotations[here])
+}
+
+/// The bend a leg is drawn in, as the point its middle joint bends toward:
+/// its own in `posed`, and where that is nearly straight the one it was
+/// built with ([`keep_toes_up`]'s, which says why).
+fn drawn_pole(rig: &Rig, posed: &crate::anim::pose::Posed, limb: Limb, chain: [usize; 3]) -> Vec3 {
+    let [root, mid, tip] = chain.map(|joint| posed.positions[joint]);
+    let line = (tip - root).normalize_or_zero();
+    let bend = (mid - root) - line * (mid - root).dot(line);
+    if bend.length() > 0.1 * root.distance(mid) {
+        mid + bend.normalize() * rig.extent()
+    } else {
+        rig.bend_pole(limb).unwrap_or(mid)
+    }
+}
+
+/// Lifts a four-legged winged body by as far as its trunk's skin stands in
+/// the ground under it (#441), its feet left where they stand: the skin read
+/// off the rig's outline of it, square to the ground under the trunk's
+/// middle, and every leg solved back to its foot in the bend it is drawn in.
+///
+/// **A stride sinks the trunk for its legs' reach** (`quadruped::depth`),
+/// and up a slope the more, a paw at the back of its stance the lower by the
+/// slope's share of its reach behind: a beast's belly stands a leg's length
+/// over the ground and has it to spare, where a bat's stands 32 mm over it
+/// and bounding up a 20 degree slope went 19 mm in, a bat-led cross with a
+/// bird's deep keel 22. A leg that cannot reach its foot from there lifts
+/// it; a trunk that stands clear is left as it is, and **one whose every
+/// joint stands its ring and more over the ground is not read at all**
+/// ([`TRUNK_CLEAR`]): read every frame, a bat standing on the level paid 25
+/// microseconds of a 233 frame for nothing.
+fn lift_belly<F>(rig: &Rig, pose: &mut Pose, ground: &F, share: f32)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    let (Some(&pelvis), Some(&withers)) = (
+        rig.in_zone(Zone::Pelvis).first(),
+        rig.in_zone(Zone::Chest).last(),
+    ) else {
+        return;
+    };
+    let posed = pose.forward(rig);
+    let middle = 0.5 * (posed.positions[pelvis] + posed.positions[withers]);
+    let reach = BELLY_PLANE * posed.positions[pelvis].distance(posed.positions[withers]);
+    let Some(below) = plane_under(ground, middle, reach) else {
+        return;
+    };
+    let up = below.normal.normalize_or(Vec3::Y);
+    let trunk = |zone: Zone| matches!(zone, Zone::Pelvis | Zone::Abdomen | Zone::Chest);
+    // Nothing to read where every joint of the trunk stands well over the
+    // ground by its own ring: a body standing or going on the level, which
+    // is most of them, pays no reading of its skin.
+    let floor = below.position.dot(up);
+    if (0..rig.len()).all(|joint| {
+        !trunk(rig.joints[joint].zone)
+            || posed.positions[joint].dot(up) - floor > TRUNK_CLEAR * rig.joints[joint].radius
+    }) {
+        return;
+    }
+    // The outline reads heights; turned so the ground's own up is the
+    // height, it reads how far off the ground's plane the skin stands.
+    let low = if up == Vec3::Y {
+        crate::anim::rest::lowest_in(rig, &posed, trunk)
+    } else {
+        let level = det::from_rotation_arc(up, Vec3::Y);
+        let turned = crate::anim::pose::Posed {
+            positions: posed.positions.iter().map(|&at| level * at).collect(),
+            rotations: posed.rotations.iter().map(|&turn| level * turn).collect(),
+        };
+        crate::anim::rest::lowest_in(rig, &turned, trunk)
+    };
+    let short = share * (below.position.dot(up) - low);
+    if short <= 0.0 || !short.is_finite() {
+        return;
+    }
+    let feet: Vec<(Limb, [usize; 3], Vec3, Quat, Vec3)> = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| {
+            let chain = rig.limb_chain(limb)?;
+            Some((
+                limb,
+                chain,
+                posed.positions[chain[2]],
+                posed.rotations[chain[2]],
+                drawn_pole(rig, &posed, limb, chain),
+            ))
+        })
+        .collect();
+    pose.translation += up * short;
+    for (_, chain, at, held, pole) in feet {
+        crate::anim::ik::two_bone(rig, pose, chain, at, pole + up * short);
+        let above = turned_below(rig, pose, &posed, chain[0], chain[1]);
+        pose.rotations[chain[2]] = above.inverse() * held;
+    }
+}
+
+/// Lays a crawling body's hands along the ground under them (#441): each
+/// wrist it stands on turned with the ground, from the level it was built
+/// over to the slope under its pad, about the pad, which stays where and
+/// as it stands - and with the wrist every part of the wing it carries: the
+/// thumb ahead of it, the membrane's leading edge beside it and the folded
+/// digits over it.
+///
+/// **A crawling wrist stands upright, whatever it stands on**
+/// (`winged::crawls`), and its thumb is built along a level floor ahead of
+/// it (`wing::membrane`, #433): on ground rising 20 degrees ahead a bat's
+/// ran 37 mm into it, walking and bounding, and the membrane's edge beside
+/// the wrist 17 mm into ground rising to one side. **While the hand is
+/// near the ground**: whole within a leg's reach of where it stands and let
+/// go of over the next, so a wing in the air is the flight's. The slope is
+/// the plane round the pad ([`plane_under`], [`HAND_PLANE`]). On a level
+/// floor nothing is turned.
+fn lay_hands<F>(rig: &Rig, pose: &mut Pose, ground: &F, share: f32)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    if !super::crawls(rig) {
+        return;
+    }
+    let leg = crate::anim::speed::leg_of(rig);
+    if leg <= f32::EPSILON {
+        return;
+    }
+    // Read again only once a hand is turned.
+    let mut posed = pose.forward(rig);
+    for limb in rig.ground_contacts() {
+        if !limb.is_fore() {
+            continue;
+        }
+        let (Some(chain), Some(&pad)) = (
+            rig.limb_chain(limb),
+            rig.in_zone(Zone::Extremity(limb)).first(),
+        ) else {
+            continue;
+        };
+        let wrist = chain[2];
+        let at = posed.positions[pad];
+        let hip = crate::anim::quadruped::hip_height(rig).unwrap_or(0.0);
+        let Some(below) = plane_under(ground, at, HAND_PLANE * hip) else {
+            continue;
+        };
+        let up = below.normal.normalize_or(Vec3::Y);
+        if up == Vec3::Y {
+            continue;
+        }
+        // Whole while the hand is within a leg's reach of where it stands,
+        // and let go of over the next: a bound throws a bat's hands a third
+        // of its hip's height off the ground every cycle, and let go of by
+        // that, the folded digits over each wrist swung 67 mm in a frame.
+        let lifted = (at - below.position).dot(up) - rig.joints[pad].position.y;
+        let down = 1.0 - ((lifted - leg) / leg).clamp(0.0, 1.0);
+        let down = share * down * down * (3.0 - 2.0 * down);
+        if down <= 0.0 {
+            continue;
+        }
+        let turn = det::slerp(Quat::IDENTITY, det::from_rotation_arc(Vec3::Y, up), down);
+        let held = posed.rotations[wrist];
+        let to = at + turn * (posed.positions[wrist] - at);
+        let pole = drawn_pole(rig, &posed, limb, chain);
+        crate::anim::ik::two_bone(rig, pose, chain, to, pole);
+        let above = turned_below(rig, pose, &posed, chain[0], chain[1]);
+        pose.rotations[wrist] = above.inverse() * turn * held;
+        // The pad keeps the attitude it stood in: the footing has laid its
+        // sole on the ground already, and turned again with the wrist it
+        // pitched twice over, its front edge 5 mm into a slope falling away.
+        pose.rotations[pad] = (turn * held).inverse() * posed.rotations[pad];
+        posed = pose.forward(rig);
+    }
+}
+
+/// Lifts a four-legged winged body's tail off the ground (#440, #441): turned
+/// up about its root, across the body, by as much as the lowest of its joints
+/// stands in the ground under it - each kept its own ring's depth over it, or
+/// as high as it rests if that is lower.
+///
+/// **Nothing else holds a tail up**: it is carried rigidly on the pelvis and
+/// waved, and a Bat x Glider cross's, which rests 19 mm off the floor, went
+/// 21.6 mm into it as its back first gathered into a bound, and 53 mm
+/// bounding up a 20 degree slope, the ground rising under a tail the trunk's
+/// pitch had not yet lifted. A tail that stands clear is left as it is.
+fn lift_tail<F>(rig: &Rig, pose: &mut Pose, ground: &F, share: f32)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    let tail = rig.tail();
+    let (Some(&dock), Some(&tip)) = (tail.first(), tail.last()) else {
+        return;
+    };
+    if dock == tip {
+        return;
+    }
+    // Twice: a tail is no straight lever, and the first turn leaves a
+    // little of a curved one's depth.
+    for _ in 0..2 {
+        let posed = pose.forward(rig);
+        let from = posed.positions[dock];
+        let mut asked = 0.0f32;
+        let mut over = Vec3::Y;
+        for &joint in &tail[1..] {
+            let at = posed.positions[joint];
+            let Some(below) = ground(at) else {
+                continue;
+            };
+            let up = below.normal.normalize_or(Vec3::Y);
+            let room = rig.joints[joint]
+                .radius
+                .min(rig.joints[joint].position.y)
+                .max(0.0);
+            let short = room - (at - below.position).dot(up);
+            let lever = at.distance(from);
+            if short > 0.0 && lever > f32::EPSILON {
+                let turn = (short / lever).min(1.0).det_asin();
+                if turn > asked {
+                    (asked, over) = (turn, up);
+                }
+            }
+        }
+        if asked <= 0.0 {
+            return;
+        }
+        let run = posed.positions[tip] - from;
+        let Some(axis) = run.cross(over).try_normalize() else {
+            return;
+        };
+        let above = rig.joints[dock]
+            .parent
+            .map_or(Quat::IDENTITY, |parent| posed.rotations[parent]);
+        pose.rotations[dock] =
+            above.inverse() * Rot::axis_angle(axis, share * asked) * posed.rotations[dock];
     }
 }
 
@@ -858,8 +1352,17 @@ where
 }
 
 /// The least turn on from `start`, whichever way lifts it, at which
-/// `clearance` - below nought at `start` - comes back to nought: `start`
-/// itself if no turn within [`TOE_TURN`] of it does.
+/// `clearance` - below nought at `start` - comes back to nought.
+///
+/// **Where no turn within [`TOE_TURN`] brings it out, the turn that brings
+/// it nearest out, taken up as that comes within [`LIFT_NEAR`] of out**
+/// (#446): `start` itself while it is further in than that. Answered with
+/// `start` until a turn first brought the toes out and with that turn from
+/// then on, a foot lifting a millimetre in a slow step - a bat's hind foot as
+/// a turn on the spot dies away - left its toes in the ground for five frames
+/// and turned them an eighth of a radian in the sixth: 12 mm in one frame at
+/// a rolled bat's toe tips, 28 mm a sixtieth at 144 frames a second against
+/// 10 around it.
 fn lift_from(clearance: &impl Fn(f32) -> f32, start: f32) -> f32 {
     let way = if clearance(start + TOE_NUDGE) >= clearance(start - TOE_NUDGE) {
         1.0
@@ -869,10 +1372,13 @@ fn lift_from(clearance: &impl Fn(f32) -> f32, start: f32) -> f32 {
     #[expect(clippy::cast_precision_loss, reason = "a handful of steps")]
     let step = TOE_TURN / TOE_STEPS as f32;
     let mut inside = start;
+    // Where it comes nearest out of the ground, if no turn brings it out.
+    let mut nearest = (clearance(start), start);
     for index in 1..=TOE_STEPS {
         #[expect(clippy::cast_precision_loss, reason = "a handful of steps")]
         let outside = start + step * index as f32 * way;
-        if clearance(outside) >= 0.0 {
+        let there = clearance(outside);
+        if there >= 0.0 {
             let mut outside = outside;
             for _ in 0..24 {
                 let middle = 0.5 * (inside + outside);
@@ -884,10 +1390,34 @@ fn lift_from(clearance: &impl Fn(f32) -> f32, start: f32) -> f32 {
             }
             return outside;
         }
+        if there > nearest.0 {
+            nearest = (there, outside);
+        }
         inside = outside;
     }
-    start
+    if nearest.1 == start {
+        return start;
+    }
+    // About the nearest step, narrowed to where it comes nearest out.
+    let (mut low, mut high) = (nearest.1 - step, nearest.1 + step);
+    for _ in 0..24 {
+        let (one, two) = ((2.0 * low + high) / 3.0, (low + 2.0 * high) / 3.0);
+        if clearance(one) >= clearance(two) {
+            high = two;
+        } else {
+            low = one;
+        }
+    }
+    let best = 0.5 * (low + high);
+    let near = (1.0 + clearance(best) / LIFT_NEAR).clamp(0.0, 1.0);
+    start + (best - start) * (near * near * (3.0 - 2.0 * near))
 }
+
+/// How far short of out of the ground the turn that brings a foot's toes
+/// nearest out of it is when [`lift_from`] begins to take it up, in metres:
+/// two millimetres, [`SOLE_SLACK`]'s, so the turn is whole by the time a turn
+/// can bring the toes out and nothing of it where they are deep in.
+const LIFT_NEAR: f32 = 0.002;
 
 /// The turn nearest nought, `way` (`1` or `-1`) within [`TOE_TURN`], at which
 /// `clearance` crosses nought - `at_zero` being what it reads at nought - or

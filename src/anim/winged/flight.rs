@@ -563,7 +563,7 @@ impl Build {
         // Nor so deep the belly meets the ground: a bat crawls with its
         // belly a tenth of its trunk off it.
         // Nor so deep a folded wing that is no leg meets it, a cross's whose
-        // feathers hang to the ground.
+        // feathers hang low.
         let legs_of = rig.ground_contacts();
         let belly = (0..rig.len())
             .filter(|&joint| match rig.joints[joint].zone {
@@ -576,9 +576,13 @@ impl Build {
             .map(|joint| rig.joints[joint].position.y - rig.joints[joint].radius)
             .fold(f32::MAX, f32::min)
             // And its folded wing's drawn feathers, which on a bird-led cross
-            // with a bat's long arm hang to the ground already.
+            // with a bat's long arm hang within 5 cm of the ground: that
+            // height itself and no more of it (#440), where a belly reckoned
+            // at its joints is taken [`CROUCH_BELLY`] times over - a cross at
+            // 0.45, its feathers 43 mm off the ground, crouched them 8.5 mm
+            // into it.
             .min(match wings.low {
-                Some(low) if !legs_of.iter().any(|limb| limb.is_fore()) => low,
+                Some(low) if !legs_of.iter().any(|limb| limb.is_fore()) => low / CROUCH_BELLY,
                 _ => f32::MAX,
             });
         let crouch = (2.0 * legs * half_period / std::f32::consts::PI)
@@ -1549,8 +1553,9 @@ impl Aloft {
     /// first beats, the landing's last, a host that keeps the body low - its
     /// stroke is raised by as much as brings it clear, and posed again: a
     /// partial stroke, raised, as a bird or a bat beats close to the ground.
-    /// The raise is measured on the joints, so it is held short of a jump: a
-    /// pass that would leave the wing further under is undone.
+    /// The raise is measured on the joints and on a feathered wing's cards
+    /// (#440, [`Self::under_ground`]), so it is held short of a jump: a pass
+    /// that would leave the wing further under is undone.
     pub(crate) fn pose<F>(&mut self, rig: &Rig, pose: &mut Pose, ground: F, carriage: Carriage)
     where
         F: Fn(Vec3) -> Option<Ground>,
@@ -1578,7 +1583,9 @@ impl Aloft {
             self.raised = [0.0; 2];
             return;
         }
-        let mut short = self.under_ground(rig, pose, &ground);
+        // Its flight feathers too, each card where it is drawn (#440).
+        let vanes = crate::wing::vanes(rig);
+        let mut short = self.under_ground(rig, pose, &ground, &vanes);
         let mut lift = [0.0f32; 2];
         // Raised until clear, and never further than helps: a pass that
         // leaves a wing further under than the last is undone.
@@ -1597,7 +1604,7 @@ impl Aloft {
                 carriage,
                 next.map(|lift| lift * scale),
             );
-            let after = self.under_ground(rig, &trial, &ground);
+            let after = self.under_ground(rig, &trial, &ground, &vanes);
             if after[0].max(after[1]) >= worst {
                 break;
             }
@@ -1630,7 +1637,21 @@ impl Aloft {
     /// to stand under the ground in `pose`, in radians: a joint the fold
     /// rests on the ground (a bat's wrist) may stand on it, and every other
     /// is kept [`WING_CLEAR`] of the body's height over it.
-    fn under_ground<F>(&self, rig: &Rig, pose: &Pose, ground: &F) -> [f32; 2]
+    ///
+    /// **And for no corner of a flight feather to** (#440), `vanes` the
+    /// body's ([`crate::wing::vanes`]): the cards themselves, on the ground
+    /// and no lower. A feather's reach past its joint is reckoned outward
+    /// from the shoulder ([`FEATHER_OVERHANG`]), where a wing bent at the
+    /// wrist in its downstroke trails its primaries below that line: a Bird
+    /// x Bat cross's, 0.41 m long, went 25 mm into the ground in a takeoff's
+    /// first beats and a cross at 0.4's 12, with every joint reckoned clear.
+    fn under_ground<F>(
+        &self,
+        rig: &Rig,
+        pose: &Pose,
+        ground: &F,
+        vanes: &[crate::wing::Vane],
+    ) -> [f32; 2]
     where
         F: Fn(Vec3) -> Option<Ground>,
     {
@@ -1683,6 +1704,21 @@ impl Aloft {
                 if deficit > 0.0 {
                     let arm = at.distance(from).max(1e-3);
                     most = most.max((deficit / arm).min(1.0).det_asin());
+                }
+            }
+            for vane in vanes
+                .iter()
+                .filter(|vane| rig.joints[vane.joint].zone == Zone::Extremity(side.limb))
+            {
+                for at in vane.posed(&posed.positions, &posed.rotations) {
+                    let Some(below) = ground(at) else {
+                        continue;
+                    };
+                    let deficit = below.position.y - at.y;
+                    if deficit > 0.0 {
+                        let arm = at.distance(from).max(1e-3);
+                        most = most.max((deficit / arm).min(1.0).det_asin());
+                    }
                 }
             }
             short[usize::from(!side.limb.is_left())] = most;

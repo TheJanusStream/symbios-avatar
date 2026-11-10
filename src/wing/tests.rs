@@ -115,3 +115,85 @@ fn a_non_finite_extension_reads_as_the_fold() {
     assert_eq!(unit(0.4), 0.4);
     assert_eq!(unit(1.7), 1.0);
 }
+
+/// **A pose reads every flight feather where its card was built** (#440):
+/// [`vanes`] - the cards read back off the rig, each from its joint's drive
+/// and the feather tables - stands every corner of every primary, secondary,
+/// tertial and humeral within half a millimetre of the mesh's own card on
+/// that joint, on a bird, a crow, three bird-led crosses and twenty rolls;
+/// and a body with no feathers has none.
+#[test]
+fn a_poses_feathers_are_the_cards_as_built() {
+    use crate::plan::Lineage;
+    use crate::{Archetype, Avatar, AvatarConfig, AvatarRecord};
+    let config = AvatarConfig {
+        atlas: 64,
+        ..Default::default()
+    };
+    let of = |lineage: Lineage<WingedFamily>, crow: bool| {
+        let mut params = WingedParams::default();
+        params.set_lineage(lineage);
+        if crow {
+            (params.beak_length, params.beak_hook, params.facial_disc) = (1.0, -1.0, -1.0);
+        }
+        AvatarRecord::new("Winged", Archetype::Winged(params))
+    };
+    use WingedFamily::{Bat, Bird, Glider};
+    let mut records = vec![
+        ("bird".to_string(), of(Lineage::pure(Bird), false)),
+        ("crow".to_string(), of(Lineage::pure(Bird), true)),
+        (
+            "bird x bat 0.3".to_string(),
+            of(Lineage::cross(Bird, Bat, 0.3), false),
+        ),
+        (
+            "bird x bat 0.49".to_string(),
+            of(Lineage::cross(Bird, Bat, 0.49), false),
+        ),
+        (
+            "bird x glider 0.49".to_string(),
+            of(Lineage::cross(Bird, Glider, 0.49), false),
+        ),
+    ];
+    for seed in 1..=20 {
+        let mut rolled = AvatarRecord::new("Roll", Archetype::Winged(WingedParams::default()));
+        rolled.reroll(seed);
+        records.push((format!("roll {seed}"), rolled));
+    }
+    let mut feathered = 0;
+    for (name, record) in &records {
+        let avatar = Avatar::build_with(record, &config).expect("builds");
+        let read = vanes(&avatar.rig);
+        let wings = avatar.parts.wings.as_ref().expect("wing parts");
+        if wings.feathers.positions.is_empty() {
+            assert!(read.is_empty(), "{name}: vanes on a body with no feathers");
+            continue;
+        }
+        feathered += 1;
+        assert_eq!(read.len(), 52, "{name}: 26 flight feathers a wing");
+        let mesh = &wings.feathers;
+        for vane in &read {
+            // The mesh's card on this joint alone: twelve vertices in a run.
+            let alone = |vertex: usize| {
+                let mut held = mesh.skin[vertex].iter().filter(|hold| hold.weight > 0.0);
+                held.next().map(|hold| hold.joint as usize) == Some(vane.joint)
+                    && held.next().is_none()
+            };
+            let first = (0..mesh.positions.len())
+                .step_by(vane.corners.len())
+                .find(|&vertex| alone(vertex))
+                .unwrap_or_else(|| panic!("{name}: no card on joint {}", vane.joint));
+            let from = avatar.rig.joints[vane.joint].position;
+            for (at, corner) in vane.corners.iter().enumerate() {
+                let apart = (from + *corner).distance(mesh.positions[first + at]);
+                assert!(
+                    apart < 5.0e-4,
+                    "{name}: joint {} corner {at} read {:.2} mm off its card",
+                    vane.joint,
+                    apart * 1000.0
+                );
+            }
+        }
+    }
+    assert!(feathered >= 8, "the premise: {feathered} feathered bodies");
+}

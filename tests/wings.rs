@@ -1,8 +1,8 @@
 //! Winged bodies' wings (#421): the membranes are closed shells, every wing
 //! vertex is bound to at most four joints summing to one, a folded wing lies
-//! outside the body it folds on, the extension poses continuously, every
-//! family and cross builds and folds, the budget holds, and no wing is part
-//! of a foot.
+//! outside the body it folds on and off the ground it stands on, the
+//! extension poses continuously, every family and cross builds and folds, the
+//! budget holds, and no wing is part of a foot.
 
 use symbios_avatar::plan::Blended;
 use symbios_avatar::plan::Lineage;
@@ -662,4 +662,157 @@ fn a_non_finite_extension_poses_the_fold_and_nothing_nan() {
             );
         }
     }
+}
+
+/// How high over the ground a folded feather stands at the least, as a
+/// share of the trunk: `wing::feather`'s floor of 0.02, less a tenth of it.
+const FOLD_FLOOR: f32 = 0.018;
+
+/// **No folded feather lies on the ground** (#440): a bird, a Bird x Bat
+/// cross from 0.2 to 0.49, the same body named the other way round at 0.5
+/// and 0.51, a Bird x Glider cross and every bird-led roll of the first
+/// forty stand the lowest point of their folded feathers at least
+/// [`FOLD_FLOOR`] of their trunk over the ground - `wing::feather`'s floor,
+/// which a wing the laying would carry lower is taken off - and the same on
+/// both sides.
+///
+/// Before: a card's tip was carried along the normal of the nearest point of
+/// the body, which for a feather longer than the body it folds on is a leg
+/// or a foot, and laid on that it lay on the ground and ran on through it:
+/// a Bird x Bat cross's folded wing stood 0.096 of its trunk over the ground
+/// at 0.25 and 0.024 at 0.3, and under it from there - 10 mm at 0.35, 36 at
+/// 0.4, 64 at 0.45, 83 at 0.49 and 88 as a Bat x Bird at 0.5.
+#[test]
+fn no_folded_feather_lies_on_the_ground() {
+    use WingedFamily::{Bat, Bird, Glider};
+    let record = |lineage: Lineage<WingedFamily>| {
+        let mut params = WingedParams::default();
+        params.set_lineage(lineage);
+        AvatarRecord::new("Winged", Archetype::Winged(params))
+    };
+    let mut bodies = vec![("bird".to_string(), record(Lineage::pure(Bird)))];
+    for blend in [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.49] {
+        bodies.push((
+            format!("bird x bat {blend}"),
+            record(Lineage::cross(Bird, Bat, blend)),
+        ));
+    }
+    for blend in [0.5, 0.51] {
+        bodies.push((
+            format!("bat x bird {blend}"),
+            record(Lineage::cross(Bat, Bird, blend)),
+        ));
+    }
+    bodies.push((
+        "bird x glider 0.49".to_string(),
+        record(Lineage::cross(Bird, Glider, 0.49)),
+    ));
+    for seed in 1..=40 {
+        let mut rolled = AvatarRecord::new("Roll", Archetype::Winged(WingedParams::default()));
+        rolled.reroll(seed);
+        let leads = matches!(&rolled.archetype,
+            Archetype::Winged(params) if params.lineage().leading() == Bird);
+        if leads {
+            bodies.push((format!("roll {seed}"), rolled));
+        }
+    }
+    assert!(
+        bodies.len() > 15,
+        "the premise: {} bird-led bodies",
+        bodies.len()
+    );
+    let mut failures = Vec::new();
+    for (name, record) in &bodies {
+        let avatar = Avatar::build_for_shape(record).expect("a winged body builds");
+        let rig = &avatar.rig;
+        let pelvis = rig.joints[rig.in_zone(Zone::Pelvis)[0]].position;
+        let withers = rig.joints[*rig.in_zone(Zone::Chest).last().expect("a chest")].position;
+        let trunk = pelvis.distance(withers);
+        let (_, feathers) = wing_parts(&avatar);
+        assert!(!feathers.positions.is_empty(), "{name}: no feathers");
+        let low = |left: bool| {
+            feathers
+                .positions
+                .iter()
+                .filter(|at| (at.x >= 0.0) == left)
+                .map(|at| at.y)
+                .fold(f32::MAX, f32::min)
+        };
+        let (left, right) = (low(true), low(false));
+        if left.min(right) < FOLD_FLOOR * trunk {
+            failures.push(format!(
+                "{name}: its folded feathers {:.1} mm over the ground, {:.3} of its trunk",
+                left.min(right) * 1000.0,
+                left.min(right) / trunk
+            ));
+        }
+        if (left - right).abs() > 1.0e-4 {
+            failures.push(format!(
+                "{name}: its left wing {:.2} mm over the ground and its right {:.2}",
+                left * 1000.0,
+                right * 1000.0
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// **A folded wing leaves the flank as one, and by degrees** (#440): a Bird
+/// x Bat cross from 0.2 to 0.49, a hundredth at a time -
+///
+/// - **up to 0.32, where the hug lays every folded feather over the
+///   ground, no feather reaches further behind the pelvis than the tail's
+///   tip does**: the wing is laid as it was before #440;
+/// - **and no hundredth moves the folded wing's rearmost point more than a
+///   quarter of the trunk**, from where it hugs the flank to where the fold
+///   points it, back along the body and in over the rump.
+///
+/// Before, each card the hug laid lower than 0.15 of the trunk over the
+/// ground was left where the fold points it, and the rest as laid: from
+/// 0.22, a card at a time swung out to point straight back, the wing's
+/// rearmost point going from 0.354 of the trunk behind the pelvis at 0.21
+/// to 0.735 at 0.22 - past the tail's tip, at 0.547, and on to 0.856 at
+/// 0.32 - while the rest hung down the flank as a second layer.
+#[test]
+fn a_folded_wing_leaves_the_flank_as_one_and_by_degrees() {
+    use WingedFamily::{Bat, Bird};
+    let mut failures = Vec::new();
+    let mut last: Option<(f32, f32)> = None;
+    for step in 20..=49 {
+        let blend = step as f32 / 100.0;
+        let mut params = WingedParams::default();
+        params.set_lineage(Lineage::cross(Bird, Bat, blend));
+        let record = AvatarRecord::new("Winged", Archetype::Winged(params));
+        let avatar = Avatar::build_for_shape(&record).expect("a winged body builds");
+        let rig = &avatar.rig;
+        let pelvis = rig.joints[rig.in_zone(Zone::Pelvis)[0]].position;
+        let withers = rig.joints[*rig.in_zone(Zone::Chest).last().expect("a chest")].position;
+        let trunk = pelvis.distance(withers);
+        let tail = rig.joints[*rig.tail().last().expect("a tail")].position;
+        let (_, feathers) = wing_parts(&avatar);
+        let rearmost = feathers
+            .positions
+            .iter()
+            .map(|at| at.z)
+            .fold(f32::MAX, f32::min);
+        let behind = (pelvis.z - rearmost) / trunk;
+        if blend <= 0.32 && rearmost < tail.z {
+            failures.push(format!(
+                "bird x bat {blend:.2}: its folded wing reaches {behind:.3} of its trunk behind \
+                 the pelvis, its tail's tip {:.3}",
+                (pelvis.z - tail.z) / trunk
+            ));
+        }
+        if let Some((was, before)) = last
+            && (behind - before).abs() > 0.25
+        {
+            failures.push(format!(
+                "bird x bat {was:.2} to {blend:.2}: its folded wing's rearmost point moved \
+                 {:.3} of its trunk, {before:.3} to {behind:.3} behind the pelvis",
+                (behind - before).abs()
+            ));
+        }
+        last = Some((blend, behind));
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

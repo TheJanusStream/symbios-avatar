@@ -576,8 +576,33 @@ plane turned halfway to the body's - every flight feather rides a joint of
 its own, which carries any fold onto its spread place, so a card can lie on
 an egg and still spread flat (bent to lie there, it spread as a banana; kept
 in one plane, the fold stood off the flank as a plate). Laid on the left and
-mirrored. A covert is held between the two feathers it lies over, graded by
-its place between them. **Sized by the bone it grows on**: primaries by the
+mirrored. **And never onto the ground** (#440): the carry takes a tip
+along the normal of the nearest point of the body, which for a feather
+longer than the body it folds on is a leg or a foot, so a Bird x Bat
+cross's secondaries, sized to a bat's forearm (0.38 to 0.41 m on a trunk
+of 0.28), were laid on the ground and ran on through it, 83 mm under at
+0.49, 64 at 0.45, 36 at 0.4 and 10 at 0.35, their tips anywhere from under
+the far foot to ahead of the quill. **A wing the hug lays lower than 0.02
+of the trunk over the ground goes over as one** (`feather::going_over`,
+`Card::settle`): every card turned the same share of the way from where the
+hug laid it to where the fold points it - back along the body and in over
+the rump, its tip not carried - by how far under that floor the hug laid
+the wing's lowest card, the whole way at a tenth of the trunk under it, and
+tucked up in its own plane to a floor rising with the share from 0.02 to
+0.15 of the trunk. So a bird, the rolls and a Bird x Bat cross to 0.32 are
+laid as they always were (that cross's lowest card 0.024 of its trunk over
+the ground at 0.3); from 0.33 to 0.37 its wing goes over, its rearmost
+point moving at most a fifth of the trunk a hundredth of the blend; and
+from there it lies back along the body, 60 to 94 mm over the ground. Laid
+card by card instead (the round before: each card under 0.15 of the trunk
+left where the fold points it, the rest as laid), from 0.22 one card after
+another swung out to point straight back past the tail while the rest hung
+down the flank, two layers of one wing as a creator dragged the blend; and
+a floor that low with the share alone, the cards going over stood 6 mm off
+the ground and sank 7 to 21 mm into it in a wing stretch, a preen and a
+shake at 0.4 and 0.49. A covert
+is held between the two feathers it lies over, graded by its place between
+them. **Sized by the bone it grows on**: primaries by the
 hand, secondaries by the forearm, humerals by the humerus, each against a
 crow's ratios, so a bat-blended cross's longer forearm grows secondaries to
 fill it.
@@ -907,7 +932,11 @@ marks, painted with the fur (#423's other half).
   only by a body that needs it**: a winged body whose plumage is the default
   owl's and which stores no coat goes on writing 13 or 10, byte for byte, so a
   0.21 reader takes it; a 0.21 reader refuses a 14 as a version from the
-  future. **A stored coat rides whatever it is** (#431): up to 0.23.1 one equal
+  future. **The default owl's plumage is asked of the bytes it would write**
+  (#438), as the head is (#429): a plumage within half a byte of the owl's on
+  every channel writes the owl's code and reads back as the owl's, where up to
+  0.24.1 it wrote a 14 carrying exactly the owl's bytes; such a 14 still reads,
+  and writes the owl's code after. **A stored coat rides whatever it is** (#431): up to 0.23.1 one equal
   to its leading family's own was left off, and the body came back storing
   none - the same look while that family led, but made another family it
   wore that family's coat where the body it was read from kept its own.
@@ -1186,6 +1215,20 @@ The drawn toes are lifted out of the ground after the blend
 blends into them included: a flight's and a rest's or emote's poses own their
 feet - a landing plants them, a perch grips them, a curl folds them under.
 
+**And a body on four legs is kept out of the ground it is handed**
+(`ground::keep_clear`, #441): on the pose handed back, after the blend and
+never on the pose kept to blend from, whatever carries the body but the
+water and a rest - its belly lifted off the ground, a crawling body's hands
+laid along it, its tail lifted off it. **Eased, never switched**: nothing
+kept to blend from carries it, so it is eased out going into a swim or a
+rest and in coming out over two blends (`KEEP_EASE`); switched with the
+source, a bat's whole hand turn and belly lift went in one frame at either
+edge of every emote, rest and swim, a joint 115 to 118 mm a sixtieth further
+than without it at 60 frames a second on a 20 degree slope it faced up (290
+at 144), the slope's whole 20 degrees. An emote keeps the stance, and the
+hold with it. See "On the ground". `Driver::posed` is the pose kept to blend
+from, before it.
+
 **Persons and beasts do not move.** `scripts/compare-motion.sh` drives four
 people and ten beasts through a stand, a walk, a trot or run, a gallop or a
 sprint, a curve, a stop, a pivot and an idle (`examples/motiondump`) on this
@@ -1315,23 +1358,88 @@ frames a second):
   run's crouch and lean carried them down, a Bird x Bat cross at 0.49 by
   14 mm at 3 m/s. Each wing is turned up about its root by as much as its
   outer joints stand under their height at rest (`hold_wings`); 5.6 mm of
-  the cards' drop is left, under the ground bound. That cross's primaries
-  standing 83 mm under the ground at rest are its build's, still: the
-  whole life's, the flight's and the rests' bounds read that wing from where
-  it stood, and turned up off the floor at rest its cards went 40 to 55 mm
-  under in a landing, a walk and a wing stretch (tried for #433 and left).
-- **Nothing drawn passes into the ground** (#433): a ground bound now reads
-  everything drawn, not the toes alone (`tests/winged_motion.rs`), standing
-  and walking, at the fast gait and stopping, nothing under 6 mm, on every
-  family, a crow, a songbird, the crosses at halfway and just past it (and
-  a Glider x Bird just short of it) and three rolls. It found a bat's thumb, aimed from the wrist at the hand's node on
-  the ground and longer than that reach, running on 14.5 mm into it (a
-  bat-led roll's 13): the thumb now roots and runs no lower than its own
-  tube over the floor (`wing::membrane`). Two crosses are left out, each its
-  own fault: a Bird x Bat cross at 0.49's primaries (above), and a Bat x
-  Glider cross at 0.49 bounding, its glider's tail 21.6 mm into the ground
-  as its back flexes. A bird's leg skin, which W5's critic read 5 to 16 mm
-  under at rest, stands on the floor on 0.23.1.
+  the cards' drop is left, under the ground bound. (Until #440 that cross
+  stood its folded secondaries 83 mm under the ground at rest, its build's,
+  and every bound read its wing from where it stood: see "How a feather is
+  built" and the next two.)
+- **Nothing drawn passes into the ground** (#433, #440): a ground bound
+  reads everything drawn, not the toes alone (`tests/winged_motion.rs`),
+  standing and walking, at the fast gait and stopping, nothing under 6 mm,
+  measured from the ground itself, on every family, a crow, a songbird, each
+  pair crossed at 0.49, 0.5 and 0.51 with the neighbours of the two that
+  failed, and three rolls. It found a bat's thumb, aimed from the wrist at
+  the hand's node on the ground and longer than that reach, running on
+  14.5 mm into it (a bat-led roll's 13): the thumb now roots and runs no
+  lower than its own tube over the floor (`wing::membrane`). And the two
+  crosses #433 left out (#440): a Bird x Bat cross at 0.49's folded wing,
+  83 mm under, was its cards' laying (above), and a Bat x Glider cross at
+  0.49's tail, 21.6 mm into the ground as its back first gathered into a
+  bound, had nothing to hold it up (`keep_clear`, below; 4.0 mm now, 2.9 of
+  them the membrane's edge by its thumb as it is built). A bird's leg skin,
+  which W5's critic read 5 to 16 mm under at rest, stands on the floor on
+  0.23.1.
+- **A folded wing off the ground showed what its motion did** (#440): with
+  that cross's cards 83 mm under at rest, the flight's, the rests' and the
+  whole life's bounds, which read from where a body stood, had passed three
+  things. A takeoff's first beats put its primaries 25 mm into the ground
+  (a cross at 0.4's 12): the flight's raise reckons a feather outward from
+  the shoulder, where a wing bent at the wrist trails them lower, and now
+  reads the cards themselves (`wing::vanes`, each flight feather read back
+  off the rig from its joint's drive and the feather tables, to half a
+  millimetre of the mesh). A wing stretch laid its primaries 19 to 86 mm
+  into the ground wherever the fold's height let it lie down, and is raised
+  until none passes into it; and the stretch's leg, its foot carried on a
+  shank stretched back, pointed its claws 14 mm into it (11 at 0.4, 7 at
+  0.3, none on a bird), and is lifted by as far as they stand in it
+  (`rests::stretch_raise`, `stretch_lift`).
+- **A body on four legs is kept out of the ground it is handed** (#441):
+  three things a slope showed, each kept out of it by `ground::keep_clear`
+  on the pose handed back - a function of that pose and the ground under
+  the part, nothing kept between frames, so on ground all but level it does
+  all but nothing (at one part in ten thousand it moves no joint a hundredth
+  of a millimetre, where the gaits' own reading of that ground moves one up
+  to 0.5 mm) and on the level a hand is left to the bit.
+  **A crawling body's hands are laid along the ground**: a bat's wrist
+  stands upright whatever it stands on and its thumb is built along a level
+  floor ahead of it, so on a 20 degree slope faced up it ran 37 mm into the
+  ground, and the membrane's edge beside the wrist 17 mm into ground rising
+  to either side. Each wrist is turned by the ground's own tilt about its
+  pad, which stays where and as the footing laid it, and carries the thumb,
+  the membrane's edge and the folded digits with it; whole within a leg's
+  reach of the ground and let go of over the next, so a wing in the air is
+  the flight's. **The belly is lifted off it**: a stride sinks the trunk
+  for its legs' reach, up a slope the more, and a bat's belly stands 32 mm
+  over the ground where a beast's stands a leg's length: bounding up the
+  slope it went 19 mm in, a bat-led cross with a bird's keel 22. The body is
+  lifted by as far as its trunk's skin (the rig's outline) stands in the
+  ground and every leg solved back to its foot; a trunk whose every joint
+  stands more than its ring over the ground is not read (a bat standing on
+  the level paid 25 microseconds a frame for nothing). **On the ground a
+  game hands it**: the hand's slope and the belly's are each the plane
+  through the ground round it (`plane_under`: one and a half hips either
+  side of a pad, half the trunk either side of its middle), not the normal
+  at one point, and each axis of it takes the gentler of its two sides:
+  read across both at once, a hand standing on the flat beside a step -
+  which a grid hands over as a ramp one cell wide - read half the ramp, and
+  a bat beside a 20 cm step laid its hand's edge 14.8 mm into the flat it
+  cleared without this (`keep_clear_lays_no_hand_into_the_flat_beside_a_step`).
+  Overlands hands a body on four heights a quarter metre
+  apart, bilinear between them, whose tilt jumps at every cell's edge, and
+  read at the pad a bat's hand turned 7.3, 1.5 and 7.0 degrees in single
+  frames as its pad crossed one, everything it carries swinging 45 mm and
+  back, every stride: over that ground with centimetre bumps and a 10 cm
+  crest, a joint moved up to 121 mm a sixtieth further walking than without
+  it, and now no more than 10.7 (`winged::keep_clear_tests`). **And the
+  tail**: turned up
+  about its root by as much as its lowest joint stands in the ground, its
+  ring's depth kept over it - a Bat x Glider cross's went 53 mm in bounding
+  up the slope. Up, down and across it both ways, at 30, 60 and 144 frames
+  a second, a bat, a glider and every cross one of them leads now stand and
+  go within 5.0 mm of it (a bat 0.8). **Turned on the pose handed back
+  alone**: a hand turned on the pose kept to blend from was turned twice
+  through every change of pace, 38 degrees on a slope of 20. **A bird on a
+  slope is not held to it** - it stands on a level floor in Overlands - and
+  walking down one still draws 11 to 13 mm into it (#443, #444).
 - **A bound steps without a pop wherever its chassis is** (#437): a host
   that holds its chassis still while its velocity still asks for a pace - a
   wall in the way, or a host that hands the driver no position - leaves each
@@ -1393,6 +1501,90 @@ frames a second):
   twentieth of a cycle of 60's while its turn eases. Mapping from the duty
   the gait steps at instead drops the gain altogether, and moves every
   beast's pivot at 60 too; that is the owner's call.
+- **A wrist is eased short of its leg's fold** (#445): a two-bone leg has
+  a square-root singularity folded shut as it has at full reach - its wrist
+  no nearer its shoulder than the difference of its bones, where the elbow
+  swings through the last of its angle in a millimetre of the wrist's - and
+  `ik::two_bone` keeps that end hard, a beast's leg standing nearly straight
+  and never coming there. A glider-led cross with a bat's share stands a
+  glider's stance on a bat's long arm bones: a Bat x Glider at 0.5 has an
+  upper arm of 181 mm and a forearm of 253, its wrist 124 mm from its
+  shoulder at rest and shut at 72. On a 20 degree slope its stance ends at
+  104 and the swing's lift took the wrist under 80 and past shut, where the
+  stride's solve, the swing's re-aim and the fold each landed somewhere
+  else: walking down the slope carried, its elbow moved 84 mm a sixtieth at
+  144 frames a second and went 47 back the next frame (the same joint the
+  other way), and held walking up it 83 and 72 back; no pole flipped. On a
+  winged body the stride's wrist is now eased over the last two fifths of
+  that difference (`quadruped::clear_of_fold`, `ik`'s soft reach turned
+  round, C1), in the pantograph's own reckoning (`stand`), the leg's solve
+  (`ground::solve_leg`, a stride's only) and the swing's fold
+  (`articulate`) alike: the same walks move a joint 60 and 35 mm a sixtieth
+  at the most and go 10 and 6 back. **What else moved**: only bodies whose
+  stride comes within the zone - that cross on a slope (its elbow up to 58
+  mm from where it was thrown, a planted pad 0.3 mm, nothing lower) and by
+  0.3 mm carried on the level (1.5 held); a glider, a Glider x Bird cross
+  and every bat-led body stride as they did, to the bit or within 0.05 mm.
+  Held to it by `tests/winged_steps.rs`, which also bounds a joint going
+  back along the way it had just come (a zig-zag): the pop bound did not
+  see one.
+- **A turn on the spot steps without a pop** (#446): three things jumped,
+  each its own (`tests/winged_steps.rs`, a pivot at a radian a second and a
+  spin at two and a half, left and right, at 30, 60 and 144 frames a
+  second). **A bat-led body's spin changed gait between two frames**: a
+  standstill turned knows no pattern, so its gait was the one its working
+  foot's speed picks, and a bat's wrists stand so far out that a spin takes
+  them past the speed it bounds from - a walk to a bound as the turn eased
+  up, unblended, a bat's head 44 mm in the frame, and back as it eased down,
+  a forefoot 95 (106.8 and 227.1 mm a sixtieth at 144 frames a second). One
+  foot going faster does not change the gait a body is in (#370): from
+  where its working foot would bound, a winged body's standstill is turned
+  in its walk's pattern (`Driver::drive`), and below that it is the pivot it
+  was, to the bit. **A glider-led body's paws folded whole in every
+  pivot**: a stride that only turns has no length to read a swing's time
+  off, so `fold_share` gave a beast's whole fold to a swing of a twelfth of
+  a second, a forepaw turning 1.8 to 2.0 rad a sixtieth at 144 frames a
+  second and 1.4 to 1.7 at 60. A turning stride's swing is now timed by its
+  working foot, as its cadence is, and folds half of that for as much of it
+  as is its turn (`PIVOT_FOLD`: a pivot's clock gains on its cadence while
+  its turn eases, #415, and its swing is over in half the time): 0.2 to 0.42
+  rad a sixtieth. **A bat's hind toes were thrown out of the ground in one
+  frame** as a turn died away: `lift_from` answered with no turn until one
+  first brought the toes out, then with that turn, an eighth of a radian
+  off - a rolled bat's toe tips 28 mm a sixtieth against 10 at 144 frames a
+  second; it now takes up the turn that brings them nearest out as that
+  comes within 2 mm of out. **What else moved**: a glider-led body's
+  forepaw folds less in every pivot (its toes up to 72 mm from where they
+  folded to) and by 2 mm through a curve walked at 0.8 rad/s; a bat-led
+  body's spin past the bound's speed is a walk; a bat-led body's hind toe
+  moves 1 to 2 mm in a frame or a few of a stride, and up to 15 as a pivot
+  ends; a bird and a bird-led cross move nothing.
+- **A turn on a slope seats its swing for the ground it crosses** (#446,
+  after it). A swing is seated over the highest ground within reach of its
+  sole along the flight (`gait::seated_offset`'s roof), and that reach was
+  read along the stride's direction, which a pivot's feet swing across: a
+  pivot's every probe lay beside the sole, so the landing's ground held the
+  foot up from its take-off. On a 20 degree slope across the turn a
+  downhill forepaw sweeping in under the chest uphill rose some 35 mm over
+  its ramp; a Glider x Bird cross's wrist came within 6.5 mm of its
+  shoulder, where its arm (bones 100 and 113 mm, folded to 12.6) has its
+  elbow pointing back against the wrist's own direction, and as the wrist
+  passed the shoulder from outside to inside the elbow was thrown 116 mm
+  out in one frame: spinning, 337.8 mm a sixtieth at 144 frames a second, a
+  joint turned 4.12 rad (108.6 mm and 1.48 rad at 60). A Bat x Glider
+  cross pivoting popped its elbow at 60 (49.3 mm a sixtieth), and a bat
+  spinning went back 0.13 to 0.14 of its trunk at 30 and 60. For as much of
+  a winged body's stride as is its turn (`winged::ground::turned_share`)
+  the roof now looks along the swing's own flight, take-off to landing; a
+  stride that does not turn, and every person's and beast's, is seated as
+  it was, to the bit, and on the level nothing changes at all. The same
+  spin moves 37.1 mm a sixtieth at 144 and turns no joint more than 0.42
+  rad, as on the level; no body of four pops turning up, down or across
+  the slope at 30, 60 or 144 frames a second (`tests/winged_steps.rs`).
+  **What else moved**: on a slope only, a winged body's curve and pivot -
+  motiondump's slope scenario (15 degrees ahead, 10 across) moves a bat's,
+  a glider's and a Bat x Glider's joints up to 16, 9 and 11 mm through its
+  curve and pivot, a bird's 5 and a Bird x Bat's 2 in its pivot.
 
 
 ### In the air (`anim::winged::flight`)
@@ -1459,7 +1651,8 @@ wing reaches 0.75 m on a body 0.36 m tall, hovers at 0.82 m, not 0.29).
 takeoff's first beats, a landing's last, a host that carries a body low -
 each wing's stroke is raised as far as keeps every joint of it (to the
 digits' tips, a feather reckoned 2.6 humeri past its joint along the wing)
-0.06 of the body's height over the ground, posed again, and never raised
+0.06 of the body's height over the ground, and every corner of every flight
+feather's card out of it (`wing::vanes`, #440), posed again, and never raised
 further than helps: a partial, raised stroke. A folded wing is the ground
 posture's and is not raised, nor a wing the ground holds as a leg. Through a
 takeoff and a landing the root is held up by whatever a foot would sink,
@@ -1516,8 +1709,10 @@ shoulder, and the hind leg not at all.
   crouched; one that carries itself crouches first. The crouch takes at most
   half of what each leg it stands on can still fold (a glider, which stands
   crouched, never turns a knee over its pole) and 1.2 times its belly's
-  height over the ground, reckoned at its trunk's joints and, on a body whose
-  wings are no legs, its folded wing's lowest drawn point (`Wings::low`). A
+  height over the ground, reckoned at its trunk's joints; and, on a body whose
+  wings are no legs, no more than its folded wing's lowest drawn point stands
+  off it (`Wings::low`, the whole of it and not 1.2 times since #440: a Bird
+  x Bat cross at 0.45 crouched its feathers 8.5 mm into the ground). A
   landing asked mid-push absorbs from the crouch it finds. Off the ground the
   trunk levels on a critically damped spring, from rest.
 - **Flap** (research-11 4): the beat's rate `m^-0.28`, its trunk cubed - 3.0 a
@@ -1640,8 +1835,10 @@ bat's or a glider's), the head turned 0.8 of the tuck (a bat's or a
 glider's 0.62, level, all four feet down) round to the left wing, a bird's
 lifted a little to meet it, in four nibbles; a bird's **Wing Stretch**, the
 left wing spread 0.75 and laid down and back (lifted instead where the
-folded wing stands within 12 cm of the ground) with the left leg lifted and
-stretched back under it, inside its reach, and the tail fanned, then both
+folded wing stands within 12 cm of the ground, and raised past that until
+none of its flight feathers passes into it, #440) with the left leg lifted
+and stretched back under it, inside its reach (and lifted further by as far
+as its claws would stand in the ground), and the tail fanned, then both
 wings raised 0.75 of a quarter turn over the back (S16); a bat's **Wing
 Stretch**, each wing opened 0.45 out and lifted in turn; a glider's
 **Stretch**, a bow of 0.1 with its forepaws walked 0.22 out and stood on the
@@ -1754,7 +1951,11 @@ turning over, 283 mm in one frame.
 - **On level ground**: a winged rest is posed against the level its body
   stands on, as a beast's play bow is, not fitted to the ground under each
   support as a beast's sit is (#381); on a slope its feet, belly and tail
-  rest on the level through it.
+  rest on the level through it, and what keeps a standing or a going body
+  out of a slope (`keep_clear`, #441) leaves a rest's frames alone, eased
+  out as it goes down and in as it gets up; an emote, which keeps the
+  stance, keeps it too. A bat's forearm reaches into a 20 degree slope it
+  rests facing up, on the tree #441 landed on and since.
 - **The roost's tuck is over the left shoulder always**, and the preen
   reaches the left wing: one side reads, and a mirrored clip is one sign.
 - **A perch's grip is on a flat top**: the toes close as a fist on a table
@@ -1793,4 +1994,5 @@ turning over, 283 mm in one frame.
   and grip, the roost's tuck, the bat's drawn-in wrists, the glider's curl,
   each emote's reach; the hang and the cling (the later phase); a glider
   from an older build read as a bat; the glider's forepaw at a change of
-  pace and the bird's and glider-led cross's thigh over uneven steps.
+  pace and the bird's and glider-led cross's thigh over uneven steps; how
+  little a glider's paws now fold stepping round on the spot (#446).

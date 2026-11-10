@@ -69,8 +69,13 @@ pub(crate) struct FootShape {
     origin: Vec3,
     /// The frame's turn out of body space: a yaw, since a foot stands level.
     turn: Quat,
-    /// A winged body's foot (#422), or `None` on a beast's.
-    pub(crate) winged: Option<WingedFoot>,
+    /// A winged body's foot (#422), or `None` on a beast's. **Private, and
+    /// set only where [`Self::toes`] is laid out for it** (#439,
+    /// [`Self::declared`]): the cached toes are this field's, so a foot whose
+    /// field changed after it was declared would answer [`Self::horn`] and
+    /// [`Self::bare`] from the toes of the foot it was, and a bird's talons
+    /// would be painted as coat with no error.
+    winged: Option<WingedFoot>,
     /// Whether it ends a fore limb: a glider's fore paw is five-toed.
     fore: bool,
     /// `+1` where the frame's `+X` is the foot's outside, a left foot's, and
@@ -134,7 +139,15 @@ impl FootShape {
     /// The toes drawn on it as a part, in its frame: a bird's or a bat's
     /// (#422), and none on any other foot. Laid out when it was declared.
     pub(crate) fn drawn_toes(&self) -> &[DrawnToe] {
+        debug_assert!(self.laid_out(), "a foot's toes are not its own");
         &self.toes
+    }
+
+    /// Whether the cached toes are this foot's (#439): some exactly when it
+    /// draws toes as a part. What [`Self::of`] and [`Self::declared`] leave,
+    /// and what every reader of the cache checks in a build with assertions.
+    fn laid_out(&self) -> bool {
+        self.toes.is_empty() != self.winged.is_some_and(WingedFoot::drawn)
     }
 
     /// What a drawn foot's toes grow from, in its frame: a bird's ball, a
@@ -307,6 +320,7 @@ impl FootShape {
     /// `0..=1`: the tip of a showing claw, a hoof below its coronet, or
     /// none. In the foot's frame; the coat painter colours it (#368).
     pub(crate) fn horn(&self, at: Vec3) -> f32 {
+        debug_assert!(self.laid_out(), "a foot's toes are not its own");
         match self.winged {
             Some(WingedFoot::Glider) => {
                 let showing =
@@ -353,6 +367,7 @@ impl FootShape {
     /// scaled skin rather than coat (#422): anywhere along a bird's or a
     /// bat's toes short of their claws, which [`Self::horn`] answers first.
     pub(crate) fn bare(&self, at: Vec3) -> bool {
+        debug_assert!(self.laid_out(), "a foot's toes are not its own");
         self.winged.is_some_and(WingedFoot::drawn)
             && (at.y < BARE_BALL * self.pad
                 || self.toes.iter().any(|toe| {
@@ -514,6 +529,46 @@ mod tests {
         let wrist = winged(WingedFoot::Bat, true, 0.2);
         assert_eq!(wrist.winged, None, "a bat's wrist grows drawn toes");
         assert!(wrist.drawn_toes().is_empty());
+    }
+
+    #[test]
+    fn every_foot_made_has_its_own_toes_laid_out() {
+        // #439: the cache is some exactly on a foot that draws toes, however
+        // the foot was made.
+        for kind in [Feet::Claws, Feet::Pads, Feet::Hooves] {
+            assert!(foot(kind).laid_out(), "{kind:?}");
+        }
+        let feet = [
+            WingedFoot::Bird(Toes::Anisodactyl),
+            WingedFoot::Bird(Toes::Zygodactyl),
+            WingedFoot::Bat,
+            WingedFoot::Glider,
+        ];
+        for which in feet {
+            for fore in [false, true] {
+                for x in [-0.2, 0.2] {
+                    let shape = winged(which, fore, x);
+                    assert!(shape.laid_out(), "{which:?}, fore {fore}, at {x}");
+                    assert_eq!(
+                        shape.drawn_toes().is_empty(),
+                        !(which.drawn() && !fore),
+                        "{which:?}, fore {fore}, at {x}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A foot whose kind was changed after its toes were laid out is caught
+    /// where the toes are read (#439), in a build with assertions: before, it
+    /// read no toes and answered a bird's talon as coat.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a foot's toes are not its own")]
+    fn a_foot_changed_after_it_was_declared_is_caught() {
+        let mut shape = foot(Feet::Claws);
+        shape.winged = Some(WingedFoot::Bird(Toes::Anisodactyl));
+        let _ = shape.horn(Vec3::new(0.0, 0.01, 0.05));
     }
 
     #[test]

@@ -417,8 +417,19 @@ const PREEN_WING: Vec3 = Vec3::new(0.12, 0.12, 0.0);
 /// over the back.
 ///
 /// **Laid down only as far as the folded wing stands clear**: a bird-led
-/// cross whose long bat's wing already hangs to the ground stretches it
-/// lifted instead, which laid down went 23 mm further into it.
+/// cross whose long bat's wing hangs low stretches it lifted instead, which
+/// laid down went 23 mm into the ground.
+///
+/// **And only as far as its feathers and its claws clear the ground**
+/// (#440), on this body: the wing is raised past that until no flight
+/// feather of it passes into the ground on its way out or held
+/// ([`stretch_raise`]), and the stretched leg lifted by as far as its foot
+/// stands in it ([`stretch_lift`]). How low the folded wing stands says
+/// little of how far the spread one reaches: a Bird x Bat cross at 0.4, its
+/// fold 86 mm clear, put its primaries 19 mm into the ground held level and
+/// 62 laid down as a bird's is; and its foot, carried on a shank stretched
+/// back, pointed its claws down into it, 11 mm there and 14 at 0.49, where
+/// a bird's stand 80 mm over it.
 fn bird_stretch(rig: &Rig) -> Clip {
     let clear = rig
         .wings
@@ -426,6 +437,7 @@ fn bird_stretch(rig: &Rig) -> Clip {
         .and_then(|wings| wings.low)
         .map_or(1.0, |low| (low / STRETCH_CLEAR).clamp(0.0, 1.0));
     let raise = STRETCH_DOWN.y * clear + STRETCH_LIFT * (1.0 - clear);
+    let raise = stretch_raise(rig, raise);
     let down = Vec3::new(STRETCH_DOWN.x, raise, STRETCH_DOWN.z);
     // Each phase eased over a fifth of the gesture, so no joint runs faster
     // than a wing can be carried.
@@ -439,26 +451,34 @@ fn bird_stretch(rig: &Rig) -> Clip {
         .extend(up.keys.into_iter().filter(|key| key.time > one[3]));
     // The same key for the right wing: [`wing`] mirrors a raise and a sweep.
     let right = held(Target::Wing(Limb::ForeRight), STRETCH_UP, both);
-    Clip::new([
-        left,
-        right,
-        // The knee kept forward and down, as a bird's is, so the solve never
-        // turns the leg over as the foot passes behind the hip.
-        // Lifted clear before it goes back, and set down from above as it
-        // comes home: carried back along the ground, its toes dragged 28 mm
-        // through it.
+    // The knee kept forward and down, as a bird's is, so the solve never
+    // turns the leg over as the foot passes behind the hip.
+    // Lifted clear before it goes back, and set down from above as it
+    // comes home: carried back along the ground, its toes dragged 28 mm
+    // through it.
+    let stretched = |leg: Vec3| {
         Track::new(
             Target::Just(Limb::HindLeft),
             [
                 Key::new(0.0, Vec3::ZERO),
-                Key::new(one[1] * 0.45, Vec3::Y * STRETCH_LEG.y),
-                Key::new(one[1], STRETCH_LEG),
-                Key::new(one[2], STRETCH_LEG),
-                Key::new(one[3] - (one[3] - one[2]) * 0.4, Vec3::Y * STRETCH_LEG.y),
+                Key::new(one[1] * 0.45, Vec3::Y * leg.y),
+                Key::new(one[1], leg),
+                Key::new(one[2], leg),
+                Key::new(one[3] - (one[3] - one[2]) * 0.4, Vec3::Y * leg.y),
                 Key::new(one[3], Vec3::ZERO),
                 Key::new(1.0, Vec3::ZERO),
             ],
-        ),
+        )
+    };
+    let lift = stretch_lift(
+        rig,
+        |lift| Clip::new([stretched(STRETCH_LEG + Vec3::Y * lift)]),
+        one[1],
+    );
+    Clip::new([
+        left,
+        right,
+        stretched(STRETCH_LEG + Vec3::Y * lift),
         held(Target::Fan, Vec3::Z * STRETCH_FAN, one),
         Track::new(Target::Just(Limb::HindRight), [Key::new(0.0, Vec3::ZERO)])
             .in_world()
@@ -483,8 +503,75 @@ const STRETCH_FAN: f32 = 0.9;
 const STRETCH_CLEAR: f32 = 0.12;
 
 /// How far a stretched wing that hangs to the ground folded is lifted
-/// instead, in quarter turns.
+/// instead, in quarter turns: the most any stretch is raised.
 const STRETCH_LIFT: f32 = 0.4;
+
+/// How much further a stretched wing is raised at a time until its feathers
+/// clear the ground, in quarter turns, and where along its way out it is
+/// read, as shares of the stretch.
+const STRETCH_STEP: f32 = 0.02;
+const STRETCH_PATH: [f32; 5] = [0.5, 0.625, 0.75, 0.875, 1.0];
+
+/// How far a bird's stretched left wing is raised, in quarter turns: `raise`,
+/// and past it by [`STRETCH_STEP`] at a time, to [`STRETCH_LIFT`] at the
+/// most, until no corner of a flight feather of it ([`crate::wing::vanes`])
+/// stands under the level ground along [`STRETCH_PATH`]. `raise` itself on a
+/// wing whose feathers clear it there, and on a body with none.
+fn stretch_raise(rig: &Rig, raise: f32) -> f32 {
+    let limb = Limb::ForeLeft;
+    let vanes: Vec<crate::wing::Vane> = crate::wing::vanes(rig)
+        .into_iter()
+        .filter(|vane| rig.joints[vane.joint].zone == Zone::Extremity(limb))
+        .collect();
+    if vanes.is_empty() {
+        return raise;
+    }
+    let under = |raise: f32| {
+        STRETCH_PATH.iter().any(|&share| {
+            let mut pose = Pose::rest(rig);
+            let out = Vec3::new(STRETCH_DOWN.x, raise, STRETCH_DOWN.z) * share;
+            wing(rig, &mut pose, limb, out);
+            let posed = pose.forward(rig);
+            vanes.iter().any(|vane| {
+                vane.posed(&posed.positions, &posed.rotations)
+                    .any(|corner| corner.y < 0.0)
+            })
+        })
+    };
+    let mut raise = raise;
+    while raise < STRETCH_LIFT && under(raise) {
+        raise = (raise + STRETCH_STEP).min(STRETCH_LIFT);
+    }
+    raise
+}
+
+/// How far a bird's stretched leg is lifted over where [`STRETCH_LEG`] puts
+/// it, in the leg's reach: by as far as any joint of its foot - its pad, its
+/// toes and its claws' tips - stands under the height it rests at, `held`
+/// through the clip `stretched` makes of a lift, sought three times over.
+/// Nothing on a foot that stands clear, as a bird's does.
+fn stretch_lift(rig: &Rig, stretched: impl Fn(f32) -> Clip, held: f32) -> f32 {
+    let limb = Limb::HindLeft;
+    let Some(reach) = rig.limb_reach(limb).filter(|reach| *reach > f32::EPSILON) else {
+        return 0.0;
+    };
+    let foot = rig.extremity_joints(limb);
+    let mut lift = 0.0f32;
+    for _ in 0..3 {
+        let mut pose = Pose::rest(rig);
+        stretched(lift).apply(rig, &mut pose, held);
+        let posed = pose.forward(rig);
+        let short = foot
+            .iter()
+            .map(|&joint| rig.joints[joint].position.y - posed.positions[joint].y)
+            .fold(0.0f32, f32::max);
+        if short <= 0.0 {
+            break;
+        }
+        lift += short / reach;
+    }
+    lift
+}
 
 /// A bat's stretch: each wing opened out to the side and a little up in
 /// turn, the body holding on the other three.

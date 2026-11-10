@@ -22,7 +22,8 @@
 //! - **Each leg is a pantograph** ([`stand`]): the shoulder blade turns with
 //!   the forearm and the metatarsus with the femur, so a leg swings from high
 //!   in the body as one long spring. A swinging leg folds at the carpus and
-//!   the toes ([`articulate`]).
+//!   the toes ([`articulate`]). A winged body's wrist is eased short of its
+//!   leg's own fold ([`clear_of_fold`], #445), which a beast's never nears.
 //!
 //! **Read off the footfalls, not off the pattern's name.** The ride and the
 //! fold are harmonics of a sum over the four contacts, so a walk's, a trot's
@@ -378,6 +379,7 @@ pub(super) fn stand(rig: &Rig, pose: &mut Pose, chain: [usize; 3], goal: Vec3, f
     let line_rest = angle(rest(ankle) - rest(top));
     let bend = wrapped(thigh_rest - line_rest).signum();
     let fore = limb.is_fore();
+    let winged = rig.wings.is_some();
     let posed = pose.forward(rig);
     // A fore's root turns on its blade with the forearm; a hind's stays.
     let blade = rig.joints[top]
@@ -409,6 +411,13 @@ pub(super) fn stand(rig: &Rig, pose: &mut Pose, chain: [usize; 3], goal: Vec3, f
             asked
         } else {
             within_reach(asked, upper + lower)
+        };
+        // A winged body's leg is eased short of its fold (#445), as its solve
+        // eases it: see `clear_of_fold`.
+        let asked = if winged {
+            clear_of_fold(asked, upper, lower)
+        } else {
+            asked
         };
         let reach = asked.clamp((upper - lower).abs() + 1.0e-4, (upper + lower) * 0.999);
         let cosine = (upper * upper + reach * reach - lower * lower) / (2.0 * upper * reach);
@@ -674,6 +683,68 @@ fn within_reach(asked: f32, length: f32) -> f32 {
     let room = (FOLD_REACH_MOST - FOLD_REACH_KNEE) * length;
     let over = (asked - knee) / room;
     knee + room * over / (1.0 + over)
+}
+
+/// How far a leg's wrist lies from the leg's top, given how far it is asked to,
+/// its bones `upper` and `lower` long: as asked until the leg is nearly folded
+/// shut, then easing to a stop clear of shut rather than running into it
+/// (#445). [`within_reach`]'s twin, at the leg's other end.
+///
+/// **A two-bone solve has a square-root singularity folded shut as it has at
+/// full reach**: a wrist no nearer its leg's top than the difference of its
+/// bones, where the upper bone points straight away from it, and the elbow
+/// swings through the last of its angle in a millimetre of the wrist's. A
+/// beast's leg stands nearly straight and never comes there, which is why
+/// [`super::ik::two_bone`] keeps that end hard. A glider-led cross with a
+/// bat's share stands on a bat's long arm bones folded into a glider's stance:
+/// a Bat x Glider at 0.5 has an upper arm of 181 mm and a forearm of 253, its
+/// wrist 124 mm from its shoulder at rest and shut at 72. On a 20 degree slope
+/// a stance ends with its wrist 104 mm from its shoulder and the swing's lift
+/// brings it under 80 and past shut, where the leg's solve, the swing's re-aim
+/// and the fold each landed somewhere else: its elbow went 35 mm one way and
+/// 20 back in two frames at 144 frames a second, 84 mm a sixtieth, every
+/// stride.
+///
+/// The shape is [`super::ik`]'s soft reach turned round: exact until
+/// [`FOLD_SOFT`] of the bones' difference short of shut, then a quadratic ease
+/// whose slope falls from one to nought, flat from shut inward at half the
+/// zone clear of it. C1, so a wrist's goal entering the zone moves nothing at
+/// once.
+pub(super) fn clear_of_fold(asked: f32, upper: f32, lower: f32) -> f32 {
+    let shut = (upper - lower).abs();
+    let zone = shut * FOLD_SOFT;
+    let into = shut + zone - asked;
+    if into <= 0.0 || zone <= f32::EPSILON {
+        return asked;
+    }
+    let into = into.min(zone);
+    shut + zone - into + into * into / (2.0 * zone)
+}
+
+/// How much of the difference of a leg's bones [`clear_of_fold`] eases a wrist
+/// through, short of shut. Provenance: **measured** (#445): at a Bat x Glider
+/// cross's elbow a millimetre of its wrist's reach is 2.5 mm at rest, 3.3 at
+/// two fifths of the difference clear of shut and 8 at 5 mm clear, where its
+/// swing took it; eased over two fifths, never more than where the zone
+/// starts. Its stance on a 20 degree slope stays clear of the zone, so no
+/// planted foot is moved by it.
+const FOLD_SOFT: f32 = 0.4;
+
+/// `wrist` for `chain`'s leg rooted at `root`, eased clear of the leg's fold:
+/// [`clear_of_fold`] along the line from the root, on the bones as they rest.
+pub(super) fn short_of_fold(rig: &Rig, chain: [usize; 3], root: Vec3, wrist: Vec3) -> Vec3 {
+    let rest = |joint: usize| rig.joints[joint].position;
+    let (upper, lower) = (
+        rest(chain[0]).distance(rest(chain[1])),
+        rest(chain[1]).distance(rest(chain[2])),
+    );
+    let span = wrist - root;
+    let asked = span.length();
+    let eased = clear_of_fold(asked, upper, lower);
+    if eased == asked || asked <= f32::EPSILON {
+        return wrist;
+    }
+    root + span * (eased / asked)
 }
 
 /// How much of a leg's length a folding wrist reaches before [`within_reach`] eases
@@ -1158,6 +1229,13 @@ pub(super) fn articulate<F>(
                 + joint(chain[1]).distance(joint(chain[2]));
             let span = goal + hang - root;
             let wrist = root + span.normalize_or_zero() * within_reach(span.length(), length);
+            // And a winged body's no nearer its fold than its solve eases it
+            // (#445).
+            let wrist = if super::winged::kinship(rig).is_some() {
+                short_of_fold(rig, chain, root, wrist)
+            } else {
+                wrist
+            };
             two_bone(rig, pose, chain, wrist, side_pole(rig, chain, root, wrist));
         }
         // The toes: flat on the ground as the leg stands over them, turned to
@@ -1881,6 +1959,46 @@ mod tests {
     use crate::anim::pose::Posed;
     use crate::anim::{Lead, Pattern, Speed};
     use crate::plan::{BodyPlan, QuadrupedParams};
+
+    #[test]
+    fn a_wrist_is_eased_short_of_its_legs_fold() {
+        // #445. A Bat x Glider cross's arm: shut at 72 mm, eased from 100.8.
+        let (upper, lower) = (0.181f32, 0.253f32);
+        let shut = lower - upper;
+        let zone = shut * FOLD_SOFT;
+        // As asked, to the bit, anywhere clear of the zone.
+        for asked in [shut + zone, 0.124, 0.3, upper + lower] {
+            assert_eq!(clear_of_fold(asked, upper, lower), asked);
+        }
+        // Never nearer shut than half the zone, from shut inward flat.
+        for asked in [shut, shut * 0.5, 0.0] {
+            let eased = clear_of_fold(asked, upper, lower);
+            assert!((eased - (shut + 0.5 * zone)).abs() < 1.0e-6, "{eased}");
+        }
+        // Rising all the way, no faster than asked, and joined without a
+        // step in place or in slope where the zone starts.
+        let step = zone / 200.0;
+        let mut last = clear_of_fold(shut, upper, lower);
+        for index in 1..=220 {
+            #[expect(clippy::cast_precision_loss, reason = "a few hundred steps")]
+            let asked = shut + step * index as f32;
+            let eased = clear_of_fold(asked, upper, lower);
+            let rose = eased - last;
+            assert!(
+                (-1.0e-6..=step + 1.0e-6).contains(&rose),
+                "at {asked}: rose {rose} over a step of {step}"
+            );
+            assert!(
+                eased >= asked - 1.0e-6,
+                "at {asked}: {eased} is nearer shut"
+            );
+            last = eased;
+        }
+        let just_in = clear_of_fold(shut + zone - step, upper, lower);
+        assert!((just_in - (shut + zone - step)).abs() < step * 0.01);
+        // A leg of even bones has no fold to near, and is left as asked.
+        assert_eq!(clear_of_fold(0.001, 0.1, 0.1), 0.001);
+    }
 
     #[test]
     fn a_tear_is_not_taken_for_a_root() {

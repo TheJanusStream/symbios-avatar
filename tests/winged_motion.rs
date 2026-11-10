@@ -7,7 +7,7 @@
 //! Every body is driven through [`Driver::drive`], as an application drives
 //! one, carried by a chassis that steps it at the speed asked.
 
-use super::winged_bounds::{UNDER_GROUND, lowest_drawn, lowest_toe, pops_over};
+use super::winged_bounds::{UNDER_GROUND, lowest_drawn, lowest_drawn_over, lowest_toe, pops_over};
 use symbios_avatar::anim::driver::{Driven, Driver, Inputs, level_ground, velocity_of};
 use symbios_avatar::anim::winged::ground::bob_share;
 use symbios_avatar::anim::{Clip, Key, Pattern, Target, Track};
@@ -104,6 +104,26 @@ fn drive_steps(
     steps: impl Fn(usize) -> f32,
     plan: impl Fn(f32) -> (f32, f32),
 ) -> Vec<Frame> {
+    drive_over(rig, seconds, steps, plan, Vec3::ZERO)
+}
+
+/// [`drive_steps`] over ground rising by `rise` along each axis (the level
+/// at none): a plane through the body's origin, in the frame it is posed in,
+/// as a host on a slope hands the driver its ground.
+fn drive_over(
+    rig: &Rig,
+    seconds: f32,
+    steps: impl Fn(usize) -> f32,
+    plan: impl Fn(f32) -> (f32, f32),
+    rise: Vec3,
+) -> Vec<Frame> {
+    let up = Vec3::new(-rise.x, 1.0, -rise.z).normalize();
+    let sloped = move |point: Vec3| {
+        Some(Ground {
+            position: Vec3::new(point.x, rise.x * point.x + rise.z * point.z, point.z),
+            normal: up,
+        })
+    };
     let mut driver = Driver::seeded(7);
     let (mut at, mut facing, mut time) = (Vec3::ZERO, 0.0f32, 0.0f32);
     let mut last: Option<Vec3> = None;
@@ -116,20 +136,20 @@ fn drive_steps(
         at += Vec3::new(facing.sin(), 0.0, facing.cos()) * (speed * delta);
         let velocity = last.map_or(Vec3::ZERO, |last| velocity_of(last, at, delta));
         last = Some(at);
-        let driven = driver
-            .drive(
-                rig,
-                &Inputs {
-                    delta,
-                    velocity,
-                    at,
-                    facing,
-                    turn,
-                    ..Inputs::default()
-                },
-                level_ground,
-            )
-            .expect("an unheld body is posed");
+        let inputs = Inputs {
+            delta,
+            velocity,
+            at,
+            facing,
+            turn,
+            ..Inputs::default()
+        };
+        let driven = if rise == Vec3::ZERO {
+            driver.drive(rig, &inputs, level_ground)
+        } else {
+            driver.drive(rig, &inputs, sloped)
+        }
+        .expect("an unheld body is posed");
         out.push(Frame {
             driven,
             at,
@@ -482,29 +502,29 @@ fn no_drawn_toe_passes_into_the_ground() {
     }
 }
 
-/// **Nothing drawn passes into the ground, standing or going** (#433): the
-/// three families, a crow and a songbird, each pair crossed at the halfway
-/// blend and just past it (0.5 and 0.51) and a Glider x Bird just short of
-/// it as well (0.49: the other two pairs' are left out, below), and three
-/// rolls, standing a second and then
-/// walking, going at their fast gait (a Froude number of 0.15 and of one on
-/// the hip) and stopping on the level at 60 frames a second: **no drawn
-/// point - skin, membrane, digits and flight feathers, not only the toes -
-/// lies more than [`UNDER_GROUND`] under the ground, standing or going**
-/// (the rests' and the whole life's bound), every other frame, measured from
-/// the ground itself and not from where the body stood.
+/// **Nothing drawn passes into the ground, standing or going** (#433, #440):
+/// the three families, a crow and a songbird, each pair crossed just short
+/// of the halfway blend, at it and just past it (0.49, 0.5 and 0.51), the
+/// two crosses that failed at 0.49 at their neighbours as well and named the
+/// other way round (a Bird x Bat at 0.4 and 0.45 and a Bat x Bird at 0.51; a
+/// Bat x Glider at 0.45 and a Glider x Bat at 0.51), and three rolls,
+/// standing a second and then walking, going at their fast gait (a Froude
+/// number of 0.15 and of one on the hip) and stopping on the level at 60
+/// frames a second: **no drawn point - skin, membrane, digits and flight
+/// feathers, not only the toes - lies more than [`UNDER_GROUND`] under the
+/// ground, standing or going** (the rests' and the whole life's bound),
+/// every other frame, measured from the ground itself and not from where
+/// the body stood.
 ///
 /// Before: a bat's thumb, aimed from its wrist at the hand's node on the
 /// ground and longer than that reach, ran on into it, 14.5 mm under standing
-/// and going, and two bat-led rolls' 13.1 and 9.6.
-///
-/// **Two crosses are left out, each its own fault, not this test's**: a Bird x
-/// Bat cross at 0.49 stands with its folded primaries 83 mm under the ground
-/// (its plan lays its long hand back along its raised trunk; the whole life,
-/// the flight's and the rests' bounds read it from where it stood, so turning
-/// its cards up at rest showed every motion of that wing taking them 40 to 55
-/// mm under); and a Bat x Glider cross at 0.49 bounding puts its glider's tail
-/// 21.6 mm into the ground as its back flexes.
+/// and going, and two bat-led rolls' 13.1 and 9.6 (#433). And until #440 two
+/// crosses were left out of this: a Bird x Bat cross at 0.49 stood with its
+/// folded secondaries 82.9 mm under the ground (64.0 at 0.45 and 36.4 at
+/// 0.4), carried there as they were laid on its body (`wing::feather`); and
+/// a Bat x Glider cross at 0.49 put its tail 21.6 mm into the ground as its
+/// back first gathered into a bound, which nothing held up
+/// (`winged::ground::keep_clear`).
 #[test]
 fn nothing_drawn_passes_into_the_ground_standing_or_going() {
     use WingedFamily::{Bat, Bird, Glider};
@@ -515,16 +535,21 @@ fn nothing_drawn_passes_into_the_ground_standing_or_going() {
         ("bat".to_string(), winged(Lineage::pure(Bat), |_| {})),
         ("glider".to_string(), winged(Lineage::pure(Glider), |_| {})),
     ];
-    for (a, b) in [(Bird, Bat), (Bat, Glider), (Glider, Bird)] {
-        for blend in [0.49, 0.5, 0.51] {
-            if blend == 0.49 && b != Bird {
-                continue;
-            }
-            bodies.push((
-                format!("{a:?} x {b:?} {blend}"),
-                winged(Lineage::cross(a, b, blend), |_| {}),
-            ));
-        }
+    let crosses = [(Bird, Bat), (Bat, Glider), (Glider, Bird)]
+        .into_iter()
+        .flat_map(|(a, b)| [0.49, 0.5, 0.51].map(|blend| (a, b, blend)))
+        .chain([
+            (Bird, Bat, 0.4),
+            (Bird, Bat, 0.45),
+            (Bat, Bird, 0.51),
+            (Bat, Glider, 0.45),
+            (Glider, Bat, 0.51),
+        ]);
+    for (a, b, blend) in crosses {
+        bodies.push((
+            format!("{a:?} x {b:?} {blend}"),
+            winged(Lineage::cross(a, b, blend), |_| {}),
+        ));
     }
     for seed in 1..=3 {
         let mut rolled = AvatarRecord::new("Roll", Archetype::Winged(WingedParams::default()));
@@ -534,48 +559,274 @@ fn nothing_drawn_passes_into_the_ground_standing_or_going() {
     let mut failures = Vec::new();
     for (name, avatar) in &bodies {
         let rig = &avatar.rig;
-        let at = |froude: f32| (froude * 9.81 * rig_hip(rig)).sqrt().max(0.4);
-        let (walk, fast) = (at(0.15), at(1.0));
-        let frames = drive(rig, 5.0, 60.0, |t| {
-            let speed = if t < 1.0 {
-                0.0
-            } else if t < 2.5 {
-                walk
-            } else if t < 4.0 {
-                fast
-            } else {
-                0.0
-            };
-            (speed, 0.0)
-        });
-        let (mut standing, mut going) = ((0.0f32, 0usize), (0.0f32, 0usize));
-        for (index, frame) in frames.iter().enumerate().step_by(2) {
-            let low = lowest_drawn(avatar, &frame.driven.pose);
-            let worst = if frame.time < 1.0 {
-                &mut standing
-            } else {
-                &mut going
-            };
-            if low < worst.0 {
-                *worst = (low, index);
-            }
-        }
-        if standing.0 < -UNDER_GROUND {
-            failures.push(format!(
-                "{name}: {:.1} mm under the ground standing, frame {}",
-                -standing.0 * 1000.0,
-                standing.1
-            ));
-        }
-        if going.0 < -UNDER_GROUND {
-            failures.push(format!(
-                "{name}: {:.1} mm under the ground going, frame {}",
-                -going.0 * 1000.0,
-                going.1
-            ));
-        }
+        let frames = drive(rig, 5.0, 60.0, paces(rig));
+        failures.extend(under_ground(name, avatar, &frames, Vec3::ZERO));
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Standing a second, walking a second and a half, going at the fast gait
+/// as long and stopping: a Froude number of 0.15 and of one on `rig`'s hip.
+fn paces(rig: &Rig) -> impl Fn(f32) -> (f32, f32) {
+    let at = |froude: f32| (froude * 9.81 * rig_hip(rig)).sqrt().max(0.4);
+    let (walk, fast) = (at(0.15), at(1.0));
+    move |t| {
+        let speed = if t < 1.0 {
+            0.0
+        } else if t < 2.5 {
+            walk
+        } else if t < 4.0 {
+            fast
+        } else {
+            0.0
+        };
+        (speed, 0.0)
+    }
+}
+
+/// Where every other frame of `frames` draws `avatar` more than
+/// [`UNDER_GROUND`] under ground rising by `rise` along each axis, standing
+/// (its first second) and going: the deepest of each, as a failure's line.
+fn under_ground(name: &str, avatar: &Avatar, frames: &[Frame], rise: Vec3) -> Vec<String> {
+    let (mut standing, mut going) = ((0.0f32, 0usize), (0.0f32, 0usize));
+    for (index, frame) in frames.iter().enumerate().step_by(2) {
+        let low = lowest_drawn_over(avatar, &frame.driven.pose, rise);
+        let worst = if frame.time < 1.0 {
+            &mut standing
+        } else {
+            &mut going
+        };
+        if low < worst.0 {
+            *worst = (low, index);
+        }
+    }
+    [("standing", standing), ("going", going)]
+        .into_iter()
+        .filter(|(_, worst)| worst.0 < -UNDER_GROUND)
+        .map(|(when, worst)| {
+            format!(
+                "{name}: {:.1} mm under the ground {when}, frame {}",
+                -worst.0 * 1000.0,
+                worst.1
+            )
+        })
+        .collect()
+}
+
+/// A 20 degree slope's rise a metre, facing up it, down it and across it
+/// both ways.
+fn slopes() -> [(&'static str, Vec3); 4] {
+    let grade = 20.0f32.to_radians().tan();
+    [
+        ("up the slope", Vec3::Z * grade),
+        ("down the slope", -Vec3::Z * grade),
+        ("across the slope, its left the higher", Vec3::X * grade),
+        ("across the slope, its right the higher", -Vec3::X * grade),
+    ]
+}
+
+/// The bodies that stand on four legs, which Overlands hands the real
+/// terrain: a bat, a glider, their crosses about the halfway blend, and the
+/// crosses with a bird that a bat or a glider leads, each named both ways
+/// round.
+fn bodies_on_four() -> Vec<(String, Lineage<WingedFamily>)> {
+    use WingedFamily::{Bat, Bird, Glider};
+    let mut bodies = vec![
+        ("bat".to_string(), Lineage::pure(Bat)),
+        ("glider".to_string(), Lineage::pure(Glider)),
+    ];
+    for (a, b, blend) in [
+        (Bat, Glider, 0.49),
+        (Bat, Glider, 0.5),
+        (Glider, Bat, 0.5),
+        (Bird, Bat, 0.5),
+        (Bat, Bird, 0.49),
+        (Bat, Bird, 0.3),
+        (Glider, Bird, 0.49),
+        (Bird, Glider, 0.5),
+    ] {
+        bodies.push((
+            format!("{a:?} x {b:?} {blend}"),
+            Lineage::cross(a, b, blend),
+        ));
+    }
+    bodies
+}
+
+/// **Nothing drawn passes into a slope under a body on four legs** (#441): a
+/// bat, a glider and every cross one of them leads ([`bodies_on_four`]),
+/// standing a second and then walking, going at its fast gait and stopping
+/// ([`paces`]) on a 20 degree slope - facing up it, down it and across it
+/// both ways - at 30, 60 and 144 frames a second: **no drawn point lies more
+/// than [`UNDER_GROUND`] under the slope, standing or going**, every other
+/// frame, measured straight down to the slope itself.
+///
+/// Before, at 60 frames a second: a bat's thumb, built along a level floor
+/// ahead of a wrist that stands upright whatever it stands on, 37.3 mm into
+/// a slope it faced up, and the membrane's edge beside its wrist 17.0 mm
+/// into one rising to either side, 14.3 standing there; a Bat x Bird cross
+/// at 0.3's thumb 27.6 mm; a Bat x Glider cross at 0.49's tail 52.7 mm
+/// facing up the slope and 27.7 across it, its wrist's membrane 19.1
+/// standing across it; and a Bird x Bat cross at 0.5's belly 20.8 mm
+/// bounding up it, 11.6 as it stopped. A glider and the crosses it leads
+/// stood within the bound but one, a Bird x Glider at 0.5 bounding up the
+/// slope 6.3 mm. And with a bat's thumb and wrist laid on the slope, its
+/// belly was next: 19.4 mm bounding up it.
+#[test]
+fn nothing_drawn_passes_into_a_slope_under_a_body_on_four() {
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (name, lineage) in bodies_on_four() {
+            let failures = &failures;
+            scope.spawn(move || {
+                let avatar = winged(lineage, |_| {});
+                let rig = &avatar.rig;
+                assert!(rig.four_legged(), "the premise: {name} stands on four");
+                let mut found = Vec::new();
+                for (on, rise) in slopes() {
+                    for hz in [30.0f32, 60.0, 144.0] {
+                        let frames = drive_over(rig, 5.0, |_| 1.0 / hz, paces(rig), rise);
+                        let label = format!("{name} {on} at {hz}");
+                        found.extend(under_ground(&label, &avatar, &frames, rise));
+                    }
+                }
+                failures.lock().expect("a lock").extend(found);
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// How far a joint on ground rising one part in ten thousand may stand from
+/// where the level floor puts it, in metres: see
+/// [`a_slopes_hold_comes_in_from_nothing_and_holds_a_body_still`]. A
+/// millimetre, twice what the gaits' own reading of that ground moves one
+/// (0.53 mm at the most, before #441 and after: a foot planted a tenth of a
+/// millimetre higher is a leg solved a little otherwise).
+const NEAR_LEVEL: f32 = 1.0e-3;
+
+/// How much further than standing on the level a joint may move in a frame
+/// standing on a slope, in metres a sixtieth of a second.
+const STILL_ON_A_SLOPE: f32 = 5.0e-4;
+
+/// **A slope's hold on a body comes in from nothing, and holds it still**
+/// (#441): what keeps a body on four legs out of a slope
+/// (`winged::ground::keep_clear`: its hands laid along the ground, its
+/// belly and its tail lifted off it) answers the ground's own tilt, so on
+/// ground that is all but level it does all but nothing, and on a slope it
+/// does the same every frame. A bat, a Bat x Glider cross at 0.49 and a
+/// Bird x Bat cross at 0.5:
+///
+/// - **on ground rising one part in ten thousand** - ahead, behind and to
+///   either side - standing, walking and bounding at 60 frames a second,
+///   **stand every joint within [`NEAR_LEVEL`] of where the level floor
+///   puts it**, every frame: real terrain is never exactly level, and a
+///   hold keyed on a slope being nought pops at every road's edge (to the
+///   stop, after which the idle's own glances fall on other frames on the
+///   two grounds, a joint of a bat's 39 mm apart for one of them, as before
+///   #441);
+/// - **standing on a 20 degree slope**, each way, at 30, 60 and 144 frames
+///   a second, **move no joint further in a frame than standing on the
+///   level does and [`STILL_ON_A_SLOPE`]**, from half a second in: a body
+///   that stands still and flickers moves the same distance every frame;
+/// - and **through the whole of it on each slope turn no joint more than
+///   [`GROUND_TURN`] in a sixtieth of a second**.
+#[test]
+fn a_slopes_hold_comes_in_from_nothing_and_holds_a_body_still() {
+    use WingedFamily::{Bat, Bird, Glider};
+    let bodies = [
+        ("bat", Lineage::pure(Bat)),
+        ("bat x glider 0.49", Lineage::cross(Bat, Glider, 0.49)),
+        ("bird x bat 0.5", Lineage::cross(Bird, Bat, 0.5)),
+    ];
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (name, lineage) in bodies {
+            let failures = &failures;
+            scope.spawn(move || {
+                let found = slope_hold_failures(name, lineage);
+                failures.lock().expect("a lock").extend(found);
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// [`a_slopes_hold_comes_in_from_nothing_and_holds_a_body_still`] for one
+/// body: every bound it breaks.
+fn slope_hold_failures(name: &str, lineage: Lineage<WingedFamily>) -> Vec<String> {
+    let mut failures = Vec::new();
+    let avatar = winged(lineage, |_| {});
+    let rig = &avatar.rig;
+    let joints = |frames: &[Frame]| -> Vec<(Vec<Vec3>, Vec<Quat>)> {
+        frames
+            .iter()
+            .map(|frame| {
+                let posed = frame.driven.pose.forward(rig);
+                (posed.positions, posed.rotations)
+            })
+            .collect()
+    };
+    // The furthest a joint moves in a frame standing, from half a second in
+    // to the second it sets off at, read as a sixtieth's.
+    let standing = |frames: &[(Vec<Vec3>, Vec<Quat>)], hz: f32| {
+        let (from, to) = ((0.5 * hz) as usize, (1.0 * hz) as usize - 1);
+        bound_steps(&frames[..to], from, hz)
+            .iter()
+            .map(|step| step.0)
+            .fold(0.0f32, f32::max)
+    };
+    let level = joints(&drive(rig, 5.0, 60.0, paces(rig)));
+    for (on, rise) in slopes() {
+        let near = joints(&drive_over(
+            rig,
+            5.0,
+            |_| 1.0 / 60.0,
+            paces(rig),
+            rise.normalize() * 1.0e-4,
+        ));
+        let (apart, frame) = level
+            .iter()
+            .zip(&near)
+            .take(4 * 60)
+            .map(|(a, b)| super::winged_bounds::furthest(&a.0, &b.0))
+            .enumerate()
+            .fold((0.0f32, 0), |most, (frame, apart)| {
+                if apart > most.0 { (apart, frame) } else { most }
+            });
+        if apart > NEAR_LEVEL {
+            failures.push(format!(
+                "{name} all but level, {on}: a joint {:.2} mm from where the level puts it, \
+                 frame {frame}",
+                apart * 1000.0
+            ));
+        }
+        for hz in [30.0f32, 60.0, 144.0] {
+            let flat = joints(&drive(rig, 1.0, hz, |_| (0.0, 0.0)));
+            let sloped = joints(&drive_over(rig, 5.0, |_| 1.0 / hz, paces(rig), rise));
+            let (still, moved) = (standing(&flat, hz), standing(&sloped, hz));
+            if moved > still + STILL_ON_A_SLOPE {
+                failures.push(format!(
+                    "{name} standing {on} at {hz}: a joint moved {:.2} mm a sixtieth, {:.2} on \
+                     the level",
+                    moved * 1000.0,
+                    still * 1000.0
+                ));
+            }
+            let turned = bound_steps(&sloped, 1, hz)
+                .iter()
+                .map(|step| step.1)
+                .fold(0.0f32, f32::max);
+            if turned > GROUND_TURN {
+                failures.push(format!(
+                    "{name} {on} at {hz}: a joint turned {turned:.2} rad a sixtieth"
+                ));
+            }
+        }
+    }
+    failures
 }
 
 /// **A bird's tail is one chain** (#425): its tail zone holds the bony stub's
@@ -977,26 +1228,55 @@ fn a_gliders_paws_turn_no_faster_than_a_beasts() {
 }
 
 /// **A bird's folded wing rides no lower running than it stands** (#424): a
-/// Bird x Bat cross at 0.49 stands with its folded primaries 83 mm under the
-/// ground - its build's (#433) - and running at 3 m/s takes no drawn point
-/// more than 6 mm under where it stood. Before, its crouch and lean took
-/// them 14 mm further.
+/// Bird x Bat cross at 0.3, whose long folded feathers the hug lays down its
+/// flank to 6.6 mm over the ground, running at 3 m/s takes no point of them
+/// more than 6 mm under where they stood, and nothing drawn that far under
+/// the ground. Before, its crouch and lean took them 10.4 mm lower, 3.8 mm
+/// into the ground (`winged::ground::hold_wings` left out; 14 mm at 0.49
+/// until #440, when that cross's feathers stood 83 mm under the ground).
+///
+/// At 0.3 because a cross with more of a bat's forearm folds its wing back
+/// along the body and over the rump (#440, `wing::feather`), where running
+/// does not lower it: at 0.49 it stood at 58 mm and ran no lower without
+/// the hold, and laid by #440's first fold 5.4 mm lower, under the bound
+/// either way.
 #[test]
 fn a_birds_folded_wing_rides_no_lower_running_than_it_stands() {
     use super::winged_bounds::UNDER_GROUND;
     let avatar = winged(
-        Lineage::cross(WingedFamily::Bird, WingedFamily::Bat, 0.49),
+        Lineage::cross(WingedFamily::Bird, WingedFamily::Bat, 0.3),
         |_| {},
     );
-    let frames = drive(&avatar.rig, 5.0, 60.0, walking(3.0));
-    let standing = lowest_drawn(&avatar, &frames[30].driven.pose).min(0.0);
+    let rig = &avatar.rig;
+    let feathers = &avatar.parts.wings.as_ref().expect("wings").feathers;
+    let wing = |pose: &Pose| {
+        let moved = pose.forward(rig).deform_mesh(rig, feathers);
+        moved
+            .positions
+            .iter()
+            .map(|at| at.y)
+            .fold(f32::MAX, f32::min)
+    };
+    let frames = drive(rig, 5.0, 60.0, walking(3.0));
+    let standing = wing(&frames[30].driven.pose);
+    assert!(
+        standing > 0.0,
+        "the premise: its folded feathers stand {:.1} mm over the ground",
+        standing * 1000.0
+    );
     for (index, frame) in frames.iter().enumerate().skip(60).step_by(2) {
-        let low = lowest_drawn(&avatar, &frame.driven.pose);
+        let low = wing(&frame.driven.pose);
         assert!(
             low > standing - UNDER_GROUND,
-            "frame {index}: {:.1} mm under, standing {:.1}",
-            -low * 1000.0,
-            -standing * 1000.0
+            "frame {index}: its feathers {:.1} mm over the ground, standing {:.1}",
+            low * 1000.0,
+            standing * 1000.0
+        );
+        let low = lowest_drawn(&avatar, &frame.driven.pose);
+        assert!(
+            low > -UNDER_GROUND,
+            "frame {index}: {:.1} mm under the ground",
+            -low * 1000.0
         );
     }
 }

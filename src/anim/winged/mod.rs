@@ -54,6 +54,13 @@
 //! flight's and a rest's or emote's poses own their feet - a landing plants
 //! them, a perch grips them, a curl folds them under.
 //!
+//! **And a body on four legs kept out of the ground it is handed**
+//! (`ground::keep_clear`, #441), last of all, on the pose handed back and
+//! never the one kept to blend from: its belly, its hands with their thumbs
+//! and its tail, on every frame but a swim's, which the water floats, and a
+//! rest's, which is posed against a level - eased out into those and in out
+//! of them over two blends, never switched in a frame.
+//!
 //! **Nothing here moves a person or a beast**: every entry asks the rig's
 //! wings first ([`crate::Rig::wings`]), which only a winged body has.
 //!
@@ -69,6 +76,9 @@ use crate::wing::{Gaits, Kinship};
 pub mod flight;
 pub mod ground;
 pub mod rests;
+
+#[cfg(test)]
+mod keep_clear_tests;
 
 /// Which families `rig` is, or `None` for a body with no wings: see
 /// [`crate::Wings::kinship`].

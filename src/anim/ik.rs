@@ -79,7 +79,9 @@ pub fn two_bone(rig: &Rig, pose: &mut Pose, chain: [usize; 3], target: Vec3, pol
     // its bones; clamping keeps the triangle solvable either way. The long end
     // is soft where the short end is hard — see [`soft_reach`] — because full
     // extension is a singularity a goal can cross and the folded limit is not a
-    // place any gait sends a goal through at speed.
+    // place a person's or a beast's gait sends a goal through at speed. A
+    // winged body's stride can (#445), and eases its own goals short of it
+    // before they come here: see `quadruped::clear_of_fold`.
     let longest = upper + lower - EPSILON;
     let shortest = (upper - lower).abs() + EPSILON;
     let solved = soft_reach(reach, longest).max(shortest);

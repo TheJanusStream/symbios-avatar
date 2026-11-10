@@ -594,9 +594,9 @@ impl WingedParams {
     }
 
     /// Whether a share code must carry this body's surfaces (#423): only when
-    /// its plumage is not the default owl's or it stores a coat, which is what
-    /// a code written before them meant, so every other winged body's code
-    /// stays one a 0.21 reader takes.
+    /// its plumage is not the default owl's ([`Self::plumage_needs_bytes`]) or
+    /// it stores a coat, which is what a code written before them meant, so
+    /// every other winged body's code stays one a 0.21 reader takes.
     ///
     /// **A stored coat rides whatever it is** (#431), its leading family's own
     /// included: a stored coat goes with the body across a change of family
@@ -606,13 +606,33 @@ impl WingedParams {
     /// and made a glider it wore a glider's grey where the bat it was read
     /// from wore its black.
     pub(crate) fn surfaces_need_bytes(&self) -> bool {
-        self.plumage != Plumage::default() || self.coat.is_some()
+        self.plumage_needs_bytes() || self.coat.is_some()
+    }
+
+    /// Whether a share code must carry this body's plumage: only when the
+    /// bytes it would write are not the default owl's.
+    ///
+    /// **Asked of the bytes, not the floats** (#438), as the head is (#429):
+    /// a colour goes as a byte a channel, so a plumage within half a byte of
+    /// the owl's on every channel - `head[0]` 0.441 against the owl's 0.44,
+    /// which the viewer's thousandths reach - writes exactly the owl's bytes.
+    /// Asked of the floats, it wrote a 14 carrying nothing a 13 or a 10 lacks,
+    /// which a 0.21 reader refuses, and a plumage read back from one, on the
+    /// byte's grid and so never the owl's own floats, went on writing 14.
+    /// Asked of the bytes, it writes the owl's code and reads back as the
+    /// owl's.
+    fn plumage_needs_bytes(&self) -> bool {
+        let mut plumage = Vec::with_capacity(28);
+        self.plumage.encode(&mut plumage);
+        let mut owl = Vec::with_capacity(28);
+        Plumage::default().encode(&mut owl);
+        plumage != owl
     }
 
     /// Writes the surfaces: a byte of which follow - the plumage, then the
     /// coat - and each that does.
     pub(crate) fn put_surfaces(&self, out: &mut Vec<u8>) {
-        let plumage = self.plumage != Plumage::default();
+        let plumage = self.plumage_needs_bytes();
         out.push(u8::from(plumage) | u8::from(self.coat.is_some()) << 1);
         if plumage {
             self.plumage.encode(out);

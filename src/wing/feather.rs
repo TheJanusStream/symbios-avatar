@@ -36,7 +36,7 @@
 //! painted with (`texture::coat::PlumageSampler::card`), each card by the
 //! kind of feather it is and where it roots.
 
-use glam::{Vec2, Vec3};
+use glam::{Quat, Vec2, Vec3};
 
 use super::{Arm, Book, Hold, Trunk, frame, swing, turn};
 use crate::det;
@@ -306,7 +306,6 @@ pub(crate) fn wing(
     // A flight feather on its own joint: rooted `along` the bone from
     // `joint` to `next`, lying `rest` at the fold and `theta` spread.
     let feather = |rig: &mut Rig,
-                   book: &mut Book,
                    (joint, next, along): (usize, usize, f32),
                    rest: Vec3,
                    (length, theta): (f32, f32),
@@ -326,15 +325,20 @@ pub(crate) fn wing(
             lift: rank * lift,
             tone,
         };
-        // Laid on the body first: its joint carries it from where it lies.
-        card.hug(body, lift);
+        // Laid on the body first: its joint carries it from where it lies
+        // (and off the ground, once the whole wing is laid: `settle`).
+        let folded = card.clone();
+        card.hug(body, lift, true);
         // Spread, it rises `rise` of the way out of the wing's plane: an
         // inner feather over the back, which the plane through the shoulder
         // runs under.
         let spread = (plane.dir(theta) + plane.dorsal * rise).normalize();
-        let target = turn(frame(card.dir, card.normal), frame(spread, plane.dorsal));
-        book.turn(quill, target, FAN_SCHEDULE, Some(arm.limb));
-        card
+        Laid {
+            card,
+            folded,
+            quill,
+            spread,
+        }
     };
 
     // The primaries, P10 lowest, so their stack is laid down tip first.
@@ -352,7 +356,6 @@ pub(crate) fn wing(
         let rest = fold(PRIMARY_TUCK - 0.012 * (9 - index) as f32);
         let card = feather(
             rig,
-            book,
             (bone.0, bone.1, along),
             rest,
             spec,
@@ -363,7 +366,6 @@ pub(crate) fn wing(
         rank += 1.0;
         primaries.push(card);
     }
-    primaries.reverse();
     // The secondaries, S1 by the wrist inward, then the tertials by the
     // elbow, each over the last.
     let mut secondaries = Vec::with_capacity(SECONDARIES.len());
@@ -381,7 +383,6 @@ pub(crate) fn wing(
         };
         let card = feather(
             rig,
-            book,
             (arm.elbow, arm.wrist, along),
             rest,
             spec,
@@ -392,12 +393,12 @@ pub(crate) fn wing(
         rank += 1.0;
         secondaries.push(card);
     }
+    let mut humerals = Vec::with_capacity(HUMERALS.len());
     // The humerals, over the tertials.
     for (index, &spec) in HUMERALS.iter().enumerate() {
         let rest = fold(SECONDARY_TUCK + 0.18 + 0.04 * index as f32);
         let card = feather(
             rig,
-            book,
             (arm.shoulder, arm.elbow, 0.85 - 0.2 * index as f32),
             rest,
             spec,
@@ -406,8 +407,33 @@ pub(crate) fn wing(
             (rank, INNER_RISE),
         );
         rank += 1.0;
-        cards.push(card);
+        humerals.push(card);
     }
+    // Off the ground, the wing as one (#440): every card turned the same
+    // share of the way from where the carry laid it to where the fold
+    // points it, by how far under the floor the carry laid its lowest.
+    let share = going_over(primaries.iter().chain(&secondaries).chain(&humerals), lift);
+    let settled = |laid: Vec<Laid>, book: &mut Book| -> Vec<Card> {
+        laid.into_iter()
+            .map(
+                |Laid {
+                     mut card,
+                     folded,
+                     quill,
+                     spread,
+                 }| {
+                    card.settle(&folded, body, lift, share);
+                    let target = turn(frame(card.dir, card.normal), frame(spread, plane.dorsal));
+                    book.turn(quill, target, FAN_SCHEDULE, Some(arm.limb));
+                    card
+                },
+            )
+            .collect()
+    };
+    let mut primaries = settled(primaries, book);
+    primaries.reverse();
+    let secondaries = settled(secondaries, book);
+    cards.extend(settled(humerals, book));
     // The alula, three cards on one joint at the wrist.
     {
         let root = on_bone(rig, arm.wrist, arm.palm, 0.04);
@@ -464,9 +490,12 @@ pub(crate) fn wing(
     rows(&mut cards, &primaries, &PRIMARY_COVERTS, &mut rank);
     rows(&mut cards, &secondaries[..10], &COVERT_ROWS, &mut rank);
     rows(&mut cards, &secondaries[9..], &INNER_COVERTS, &mut rank);
-    // The coverts laid on the body as their feathers are.
+    // The coverts laid on the body as their feathers are, and off the
+    // ground as far.
     for card in &mut cards[coverts..] {
-        card.hug(body, lift);
+        let folded = card.clone();
+        card.hug(body, lift, true);
+        card.settle(&folded, body, lift, share);
     }
     cards.extend(primaries);
     cards.extend(secondaries);
@@ -479,6 +508,141 @@ impl Wing {
     pub(crate) fn mesh(&self) -> (PolyMesh, Vec<f32>) {
         lofted(&self.cards, 0)
     }
+}
+
+/// One flight feather as a pose can read it (#440): the joint that carries
+/// it, and its card's corners at the fold, each from that joint - a row of
+/// two for every row of [`VANE`], as the card is lofted.
+#[derive(Clone, Debug)]
+pub(crate) struct Vane {
+    /// The quill's joint, which alone holds the card.
+    pub joint: usize,
+    /// The card's corners at the fold, from the joint.
+    pub corners: [Vec3; VANE.len() * 2],
+}
+
+impl Vane {
+    /// Where the card's corners stand in a pose, `at` and `turned` its
+    /// joints' places and turns ([`crate::anim::Posed`]).
+    pub(crate) fn posed<'a>(
+        &'a self,
+        at: &'a [Vec3],
+        turned: &'a [Quat],
+    ) -> impl Iterator<Item = Vec3> + 'a {
+        let (from, turn) = (at[self.joint], turned[self.joint]);
+        self.corners.iter().map(move |&corner| from + turn * corner)
+    }
+}
+
+/// How many flight feathers a wing carries on joints of their own: the
+/// primaries, the secondaries with the tertials, and the humerals - and one
+/// joint more, the alula's.
+const QUILLS: usize = PRIMARIES.len() + SECONDARIES.len() + HUMERALS.len();
+
+/// **Every flight feather of `rig`'s wings, read back off the rig** (#440):
+/// the primaries, the secondaries and tertials and the humerals of each wing,
+/// each the card [`wing`] lofted on its own joint. Empty on a body with no
+/// feathers, and on a rig whose wings were not grown as [`wing`] grows them.
+///
+/// **A pose cannot see a feather otherwise**: a rig carries a quill's joint
+/// and no card, and the cards reach two fifths of a metre past their joints
+/// on a long-armed cross. What moves a wing near the ground - a beat on it,
+/// a stretch laid down - asks this where its feathers are; measured on the
+/// joints alone, a takeoff's first downstroke put that cross's primaries
+/// 25 mm into the ground.
+///
+/// **Read back, not stored**: a card's place at the fold is its spread place
+/// carried back by its joint's own drive ([`super::Drive::spread`], written
+/// from the card as it was laid), and its spread place and its size are the
+/// tables' and the arm's. So it is the card as built wherever the drive is
+/// the one written - a drive [`super::fit`] held short of its spread would
+/// read a little off, which it does to no bird-led body measured
+/// (`wing::tests` holds a bird, a crow, three crosses and the bird-led of
+/// twenty rolls to half a millimetre of their meshes).
+pub(crate) fn vanes(rig: &Rig) -> Vec<Vane> {
+    let Some(wings) = rig.wings.as_ref() else {
+        return Vec::new();
+    };
+    // Feathers and a tail fan come together (`super::grow`).
+    if wings.tail.is_empty() {
+        return Vec::new();
+    }
+    let Some(trunk) = Trunk::of(rig) else {
+        return Vec::new();
+    };
+    let lift = LIFT * trunk.length;
+    let mut vanes = Vec::new();
+    for side in &wings.sides {
+        let Some(arm) = Arm::of(rig, side.limb) else {
+            continue;
+        };
+        let zone = Zone::Extremity(arm.limb);
+        let quills: Vec<usize> = wings
+            .joints
+            .iter()
+            .copied()
+            .filter(|&joint| rig.joints[joint].zone == zone)
+            .collect();
+        // Its flight feathers' joints, in the order [`wing`] attached them,
+        // and the alula's after them.
+        if quills.len() != QUILLS + 1 {
+            continue;
+        }
+        let plane = trunk.plane(arm.side, DIHEDRAL);
+        let (s, e, w, p, t) = (
+            Arm::at(rig, arm.shoulder),
+            Arm::at(rig, arm.elbow),
+            Arm::at(rig, arm.wrist),
+            Arm::at(rig, arm.palm),
+            Arm::at(rig, arm.tip),
+        );
+        let humerus = s.distance(e);
+        let forearm_unit = e.distance(w) / 1.22;
+        let hand_unit = ((w.distance(p) + p.distance(t)) / 1.08).max(forearm_unit * 0.8);
+        // Each feather as [`wing`] grew it: its length and its direction
+        // spread, its width's share and its unit, and how far it rises.
+        let primaries = PRIMARIES
+            .iter()
+            .rev()
+            .map(|&spec| (spec, PRIMARY_WIDTH, hand_unit, 0.0));
+        let secondaries = SECONDARIES.iter().enumerate().map(|(index, &spec)| {
+            if index < 10 {
+                (spec, SECONDARY_WIDTH, forearm_unit, 0.0)
+            } else {
+                (spec, INNER_WIDTH, forearm_unit, INNER_RISE * 0.5)
+            }
+        });
+        let humerals = HUMERALS
+            .iter()
+            .map(|&spec| (spec, INNER_WIDTH, humerus, INNER_RISE));
+        for (rank, (&joint, ((length, theta), wide, unit, rise))) in quills
+            .iter()
+            .zip(primaries.chain(secondaries).chain(humerals))
+            .enumerate()
+        {
+            let Some(drive) = side.drives.iter().find(|drive| drive.joint == joint) else {
+                continue;
+            };
+            let spread = frame(
+                (plane.dir(theta) + plane.dorsal * rise).normalize(),
+                plane.dorsal,
+            );
+            let back = drive.spread.inverse();
+            let (dir, normal) = (back * spread.x_axis, back * spread.y_axis);
+            let across = normal.cross(dir).normalize_or(Vec3::X);
+            let (length, width) = (length * unit, wide * length * unit);
+            let mut corners = [Vec3::ZERO; VANE.len() * 2];
+            for (row, &(t, wide)) in VANE.iter().enumerate() {
+                let centre =
+                    dir * (length * t) + normal * (rank as f32 * lift - CAMBER * length * t * t);
+                let half = across * (0.5 * width * wide);
+                corners[row * 2] = centre - half;
+                corners[row * 2 + 1] = centre + half;
+            }
+            vanes.push(Vane { joint, corners });
+        }
+    }
+    vanes
 }
 
 /// A bird's tail fan: its rectrices and coverts on two edge joints at the
@@ -598,6 +762,66 @@ const HUG_GAP: f32 = 0.008;
 /// as a share of its length.
 const HUG_REACH: f32 = 0.6;
 
+/// How high over the ground the hug may lay a folded wing's lowest card
+/// before the wing is taken off it ([`going_over`]), as a share of the
+/// trunk: five or six millimetres on an avatar's bird.
+///
+/// Provenance: **chosen** (#440), just over the ground, so every body the
+/// hug lays over it is laid as it always was: a bird's folded wing stands
+/// 0.39 of its trunk over the ground, the lowest of sixty rolls 0.32, and a
+/// Bird x Bat cross 0.18 at 0.2, 0.10 at 0.25 and 0.024 at 0.3. It is the
+/// crosses with more of a bat's long forearm that the hug carried down -
+/// from 0.33 on under the ground, 83 mm under at 0.49. At 0.15 of the trunk
+/// (the round before), each card under it was left where the fold points
+/// it and the rest as laid, so from 0.22 one card after another swung out
+/// to point straight back past the tail while the rest hung down the flank,
+/// two layers of one wing.
+const FOLD_FLOOR: f32 = 0.02;
+
+/// How far under [`FOLD_FLOOR`] the hug would lay a wing's lowest card
+/// before the wing is left wholly where the fold points it, as a share of
+/// the trunk.
+///
+/// Provenance: **chosen** (#440): a Bird x Bat cross's wing is laid as the
+/// hug lays it to 0.32, goes over by 0.33 to 0.37 - its rearmost point at
+/// most a fifth of the trunk further back a hundredth - and from there lies
+/// back along the body and in over the rump, 60 to 94 mm over the ground.
+const FOLD_BLEND: f32 = 0.1;
+
+/// How high over the ground a folded card left where the fold points it
+/// lies at the least, as a share of the trunk: the floor a wing going over
+/// rises to as it goes ([`Card::settle`]).
+///
+/// Provenance: **chosen** (#440): a cross's folded wing laid near the
+/// ground moves with its arm, and a Bird x Bat cross at 0.4 and 0.49 whose
+/// cards stood 6 mm over the ground at rest sank them 7 to 21 mm into it in
+/// a Wing Stretch, a Preen and a Shake, and 30 mm in a takeoff.
+const FOLD_TOP: f32 = 0.15;
+
+/// A flight feather's card laid on the body, before the wing is taken off
+/// the ground ([`going_over`], [`Card::settle`]): as the carry laid it, as
+/// the fold put it, its quill's joint and the way it points spread.
+struct Laid {
+    card: Card,
+    folded: Card,
+    quill: usize,
+    spread: Vec3,
+}
+
+/// How far a wing whose flight feathers the carry laid as `laid` is turned
+/// from the carry to the fold ([`Card::settle`]), `0..=1`: nothing while
+/// the lowest of them stands on [`FOLD_FLOOR`] or over it, and the whole
+/// way once it would lie [`FOLD_BLEND`] under it, eased between.
+fn going_over<'a>(laid: impl Iterator<Item = &'a Laid>, lift: f32) -> f32 {
+    let trunk = lift / LIFT;
+    let low = laid.map(|laid| laid.card.low()).fold(f32::MAX, f32::min);
+    let under = ((trunk * FOLD_FLOOR - low) / (trunk * FOLD_BLEND)).clamp(0.0, 1.0);
+    under * under * (3.0 - 2.0 * under)
+}
+
+/// How finely [`Card::tuck`] seeks its turn.
+const TUCK_STEPS: usize = 48;
+
 impl Card {
     /// **Lays this folded card on `body`, straight**: its tip carried along
     /// the body's normal there until it stands its gap and its lift off the
@@ -610,9 +834,13 @@ impl Card {
     /// **Laid on the left, always, and reflected**: the inside test casts a
     /// ray a little off the axes and the nearest vertex ties differently on
     /// the two sides, so a card laid on each side came out unlike its mirror.
-    fn hug(&mut self, body: (&PolyMesh, &[Vec3]), lift: f32) {
+    ///
+    /// `carried` onto the body, or left where it points and backed off the
+    /// body alone. **And never onto the ground** (#440): see
+    /// [`Self::settle`], which a wing's cards go through once all are laid.
+    fn hug(&mut self, body: (&PolyMesh, &[Vec3]), lift: f32, carried: bool) {
         if self.root.x >= 0.0 {
-            self.lay(body, lift);
+            self.lay(body, lift, carried);
             return;
         }
         let flip = Vec3::new(-1.0, 1.0, 1.0);
@@ -620,14 +848,15 @@ impl Card {
         self.root *= flip;
         self.dir *= flip;
         self.normal *= flip;
-        self.lay(body, lift);
+        self.lay(body, lift, carried);
         self.root = root;
         self.dir *= flip;
         self.normal *= flip;
     }
 
-    /// [`Self::hug`] on the left.
-    fn lay(&mut self, (body, normals): (&PolyMesh, &[Vec3]), lift: f32) {
+    /// [`Self::hug`] on the left, its tip `carried` onto the body or left
+    /// where it points.
+    fn lay(&mut self, (body, normals): (&PolyMesh, &[Vec3]), lift: f32, carried: bool) {
         if body.positions.is_empty() || normals.len() != body.positions.len() {
             return;
         }
@@ -642,7 +871,7 @@ impl Card {
                 .map_or(0, |(index, _)| index)
         };
         let wanted = lift / LIFT * HUG_GAP + self.lift;
-        for _ in 0..3 {
+        for _ in 0..if carried { 3 } else { 0 } {
             let tip = self.root + self.dir * self.length;
             let at = nearest(tip);
             let stands = (tip - body.positions[at]).dot(normals[at]);
@@ -678,6 +907,97 @@ impl Card {
         if normal.dot(self.normal) > 0.0 {
             self.normal = normal.normalize_or(self.normal);
         }
+    }
+
+    /// Takes this card, laid by [`Self::hug`], **off the ground** (#440):
+    /// turned `share` of the way toward where the fold put it (`folded`,
+    /// laid again without the carry and tucked up to [`FOLD_TOP`] if the
+    /// fold itself points it under), and tucked up to a floor rising from
+    /// [`FOLD_FLOOR`] to [`FOLD_TOP`] by as much. The share is its wing's
+    /// ([`going_over`]), so a wing goes over as one and by degrees as a
+    /// cross takes more of a bat's forearm.
+    ///
+    /// **The carry is what took it there, not the fold**: a tip is carried
+    /// along the normal of the nearest point of the body, which for a
+    /// feather longer than the body it folds on is a leg or a foot, and laid
+    /// on that it lies on the ground - then, held to its length, runs on
+    /// through it. A Bird x Bat cross at 0.49, its feathers sized to a bat's
+    /// long forearm (0.38 to 0.41 m on a trunk of 0.28), stood eight
+    /// secondaries a side 5 to 83 mm under the ground, their tips anywhere
+    /// from under the far foot to ahead of the quill; where the fold puts
+    /// them, back along the body and in over the rump, the lowest stands
+    /// 58 mm over it.
+    fn settle(&mut self, folded: &Card, body: (&PolyMesh, &[Vec3]), lift: f32, share: f32) {
+        if share <= 0.0 {
+            return;
+        }
+        let trunk = lift / LIFT;
+        let top = trunk * FOLD_TOP;
+        let mut free = folded.clone();
+        free.tuck(top);
+        free.hug(body, lift, false);
+        free.tuck(top);
+        self.dir = self.dir.lerp(free.dir, share).normalize_or(free.dir);
+        let normal = self.normal.lerp(free.normal, share);
+        self.normal = (normal - self.dir * normal.dot(self.dir)).normalize_or(free.normal);
+        self.tuck(trunk * (FOLD_FLOOR + (FOLD_TOP - FOLD_FLOOR) * share));
+    }
+
+    /// How high the lowest point of this card stands as it is lofted
+    /// ([`Self::loft`]'s rows), the ground at nought.
+    fn low(&self) -> f32 {
+        let across = self.normal.cross(self.dir).normalize_or(Vec3::X);
+        VANE.iter()
+            .map(|&(t, wide)| {
+                let centre = self.root
+                    + self.dir * (self.length * t)
+                    + self.normal * (self.lift - CAMBER * self.length * t * t);
+                centre.y - (across.y * (0.5 * self.width * wide)).abs()
+            })
+            .fold(f32::MAX, f32::min)
+    }
+
+    /// Tucks this folded card up until no point of it stands lower than
+    /// `floor` over the ground: turned about its quill in its own plane, the
+    /// way the fold's tuck turns it in over the back, by the least turn that
+    /// clears it.
+    fn tuck(&mut self, floor: f32) {
+        use crate::det::DetMath;
+        if self.low() >= floor {
+            return;
+        }
+        let across = self.normal.cross(self.dir).normalize_or(Vec3::X);
+        let across = if across.y < 0.0 { -across } else { across };
+        let from = self.dir;
+        // As far as straight up its plane, where it stands highest.
+        let most = across.y.det_atan2(from.y);
+        let turned = |angle: f32| {
+            let (sin, cos) = det::sin_cos(angle);
+            (from * cos + across * sin).normalize_or(from)
+        };
+        let mut probe = self.clone();
+        let mut low_at = |angle: f32| {
+            probe.dir = turned(angle);
+            probe.low()
+        };
+        let (mut under, mut over) = (0.0f32, most);
+        for step in 1..=TUCK_STEPS {
+            let angle = most * step as f32 / TUCK_STEPS as f32;
+            if low_at(angle) >= floor {
+                over = angle;
+                break;
+            }
+            under = angle;
+        }
+        for _ in 0..20 {
+            let middle = 0.5 * (under + over);
+            if low_at(middle) >= floor {
+                over = middle;
+            } else {
+                under = middle;
+            }
+        }
+        self.dir = turned(over);
     }
 
     /// Lofts this card into `mesh`: [`VANE`]'s rows across its rachis, in

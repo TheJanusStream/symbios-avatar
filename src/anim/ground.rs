@@ -747,7 +747,14 @@ fn solve_leg(
         } else {
             pole
         };
-        reached = two_bone(rig, pose, chain, target + offset, pole);
+        // And a winged body's stride never runs its wrist into its fold
+        // (#445): see `quadruped::clear_of_fold`.
+        let goal = if foot == Foot::Striding && rig.wings.is_some() {
+            super::quadruped::short_of_fold(rig, chain, posed.positions[chain[0]], target + offset)
+        } else {
+            target + offset
+        };
+        reached = two_bone(rig, pose, chain, goal, pole);
     }
     attitude(rig, pose, chain, contact, foot, lay, target);
 

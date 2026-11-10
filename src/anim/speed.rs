@@ -289,6 +289,13 @@ impl Speed {
         self.resolved(rig).duty()
     }
 
+    /// The order `rig`'s feet land in at this speed, once it has its gait: a
+    /// four-legged body's pattern, which a speed made without one - a
+    /// standstill turned for a pivot - is yet to be handed.
+    pub(crate) fn pattern_on(self, rig: &Rig) -> Option<Pattern> {
+        self.resolved(rig).pattern
+    }
+
     /// This speed's pattern at another Froude number: a turn's working foot
     /// goes faster than the body without the body changing gait.
     pub(crate) fn at_froude(self, froude: f32) -> Self {

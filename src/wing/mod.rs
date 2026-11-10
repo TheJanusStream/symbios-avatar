@@ -44,6 +44,7 @@
 mod feather;
 mod membrane;
 
+pub(crate) use feather::{Vane, vanes};
 pub(crate) use membrane::{Charted, charted};
 
 /// What a whole winged body may cost, in triangles (#421, #423): about a

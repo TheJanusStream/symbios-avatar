@@ -57,6 +57,14 @@ pub fn pops_over(
 /// ground - its skin with its toes and membrane, and its flight feathers -
 /// in `pose`, in metres above the ground.
 pub fn lowest_drawn(avatar: &Avatar, pose: &Pose) -> f32 {
+    lowest_drawn_over(avatar, pose, Vec3::ZERO)
+}
+
+/// [`lowest_drawn`] over a plane through the body's origin rising by `rise`
+/// along each axis (#441) - the ground a slope's host hands the driver, in
+/// the frame the body is posed in: how far over it, straight up, the lowest
+/// drawn point stands.
+pub fn lowest_drawn_over(avatar: &Avatar, pose: &Pose, rise: Vec3) -> f32 {
     let rig = &avatar.rig;
     let posed = pose.forward(rig);
     let mut low = f32::MAX;
@@ -68,7 +76,11 @@ pub fn lowest_drawn(avatar: &Avatar, pose: &Pose) -> f32 {
         .chain(avatar.parts.wings.as_ref().map(|wings| &wings.feathers))
     {
         let moved = posed.deform_mesh(rig, mesh);
-        low = moved.positions.iter().map(|at| at.y).fold(low, f32::min);
+        low = moved
+            .positions
+            .iter()
+            .map(|at| at.y - (rise.x * at.x + rise.z * at.z))
+            .fold(low, f32::min);
     }
     low
 }
