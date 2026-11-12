@@ -2,7 +2,9 @@
 //! (#445, #446): a bat, a glider and their crosses walking and bounding over
 //! a 20 degree slope, carried and held, and turning on the spot on the level
 //! and on the slope, left and right, at 30, 60 and 144 frames a second - positions and angles bounded
-//! against each frame's neighbours, and against a joint going there and back.
+//! against each frame's neighbours, and against a joint going there and back -
+//! and standing still and pivoting on gentle slopes, half a degree to twelve
+//! (#449).
 //!
 //! Every body is driven through [`Driver::drive`], as an application drives
 //! one. A bird, and a cross a bird leads, stands on a level floor in
@@ -494,14 +496,14 @@ const NEAR_LEVEL: f32 = 0.001;
 /// against the frames around it; a bat spinning went back 0.13 to 0.14 of
 /// the trunk at 30 and 60.
 ///
-/// **On the slope the frames are read until a second after the turn has
-/// stopped** ([`SLOPE_STANDING`]), where the level reads the whole of its
-/// standing: further on, the idle steps its feet home, and standing on a
-/// slope a Glider x Bat cross's hind leg is left in its rest bend for one
-/// frame where its stance solve finds the rest contact within its tolerance
-/// of the goal (`ground::solve_leg`'s early return, #262), 63.8 mm a sixtieth
-/// at 144 frames a second, 4.3 s into a pivot. That is the idle's, not a
-/// turn's, and is left to its own issue.
+/// **On the slope as on the level the frames are read to the end of the
+/// standing** (#449): read until a second after the turn had stopped while
+/// standing on a slope a Glider x Bat cross's hind leg was left in its rest
+/// bend for one frame where its stance solve found the rest contact within
+/// its tolerance of the goal (`ground::solve_leg`'s early return, #262),
+/// rolled 0.21 rad off the plane every frame round it solves it on - a
+/// stifle 63.8 mm a sixtieth at 144 frames a second, 4.3 s into a pivot to
+/// the right across the slope rising to its right.
 #[test]
 fn a_body_on_four_turns_on_the_spot_without_a_pop() {
     let bodies = bodies();
@@ -510,7 +512,7 @@ fn a_body_on_four_turns_on_the_spot_without_a_pop() {
         for (name, avatar) in &bodies {
             let failures = &failures;
             scope.spawn(move || {
-                let found = turn_failures(name, &avatar.rig);
+                let found = turn_failures(name, &avatar.rig, &steep_grounds(), &TURNS, &RATES);
                 failures.lock().expect("a lock").extend(found);
             });
         }
@@ -536,50 +538,72 @@ const SPIN_BACK: f32 = 0.12;
 /// Glider cross's wrist 0.255 against 0.100), which is its gait's and no pop.
 const SPIN_TURN_SLACK: f32 = 0.1;
 
-/// How long after a turn has stopped a turn on a slope is read for, in
-/// seconds: see [`a_body_on_four_turns_on_the_spot_without_a_pop`].
-const SLOPE_STANDING: f32 = 1.0;
+/// A named turn on the spot: how long it is driven, in seconds, and how
+/// fast it turns at each moment, in radians a second.
+type Turned<'a> = (&'a str, f32, &'a dyn Fn(f32) -> f32);
 
-/// A named turn on the spot: how long it is driven on the level, in seconds,
-/// when it stops turning, and how fast it turns at each moment, in radians a
-/// second.
-type Turned<'a> = (&'a str, f32, f32, &'a dyn Fn(f32) -> f32);
+/// A pivot where the body stands, a turn of a radian a second for two and a
+/// half seconds from the half second in, toward the body's left.
+fn pivot(t: f32) -> f32 {
+    if (0.5..3.0).contains(&t) { 1.0 } else { 0.0 }
+}
 
-/// [`a_body_on_four_turns_on_the_spot_without_a_pop`] for one body: every
-/// bound it breaks.
-fn turn_failures(name: &str, rig: &Rig) -> Vec<String> {
-    let mut failures = Vec::new();
-    let slack = slack(rig);
-    let pivot = |t: f32| if (0.5..3.0).contains(&t) { 1.0 } else { 0.0 };
-    let spin = |t: f32| match t {
+/// A spin, two and a half radians a second toward the body's left for two
+/// seconds from the half second in, then 0.6 back for two.
+fn spin(t: f32) -> f32 {
+    match t {
         t if t < 0.5 => 0.0,
         t if t < 2.5 => 2.5,
         t if t < 4.5 => -0.6,
         _ => 0.0,
-    };
-    let turns: [Turned; 2] = [
-        ("pivoting", 4.5, 3.0, &pivot),
-        ("spinning", 6.0, 4.5, &spin),
-    ];
-    let grade = 20.0f32.to_radians().tan();
-    let grounds = [
-        ("on the level", Vec3::ZERO),
-        ("facing up the slope", Vec3::Z * grade),
-        ("facing down the slope", -Vec3::Z * grade),
-        ("across the slope, rising left", Vec3::X * grade),
-        ("across the slope, rising right", -Vec3::X * grade),
-    ];
-    for (turn, seconds, stops, plan) in turns {
+    }
+}
+
+/// The turns [`a_body_on_four_turns_on_the_spot_without_a_pop`] drives.
+const TURNS: [Turned; 2] = [("pivoting", 4.5, &pivot), ("spinning", 6.0, &spin)];
+
+/// A named ground: how it is named and how it rises along each axis.
+type Grounds = Vec<(String, Vec3)>;
+
+/// The level, and a slope of `degrees` faced up, down and across both ways.
+fn faced(degrees: f32) -> Grounds {
+    let grade = degrees.to_radians().tan();
+    [
+        ("facing up", Vec3::Z),
+        ("facing down", -Vec3::Z),
+        ("across, rising left", Vec3::X),
+        ("across, rising right", -Vec3::X),
+    ]
+    .into_iter()
+    .map(|(on, way)| (format!("{on} a {degrees} degree slope"), way * grade))
+    .collect()
+}
+
+/// The level and a 20 degree slope faced every way.
+fn steep_grounds() -> Grounds {
+    let mut grounds = vec![("on the level".to_string(), Vec3::ZERO)];
+    grounds.extend(faced(20.0));
+    grounds
+}
+
+/// [`a_body_on_four_turns_on_the_spot_without_a_pop`] for one body, each of
+/// `turns` both ways on each of `grounds` at each of `rates`: every bound it
+/// breaks.
+fn turn_failures(
+    name: &str,
+    rig: &Rig,
+    grounds: &[(String, Vec3)],
+    turns: &[Turned],
+    rates: &[f32],
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    let slack = slack(rig);
+    for &(turn, seconds, plan) in turns {
         for (on, rise) in grounds {
-            let seconds = if rise == Vec3::ZERO {
-                seconds
-            } else {
-                stops + SLOPE_STANDING
-            };
             for (side, way) in [("left", 1.0f32), ("right", -1.0)] {
-                for hz in RATES {
+                for &hz in rates {
                     let from = (hz / 3.0).round() as usize;
-                    let frames = turning(rig, hz, seconds, rise, |t| way * plan(t));
+                    let frames = turning(rig, hz, seconds, *rise, |t| way * plan(t));
                     let label = format!("{name} {turn} {side} {on} at {hz}");
                     let (back, frame, joint) = turned_back(&frames, from, hz);
                     // In trunks: the slack is a hundredth of one.
@@ -608,4 +632,101 @@ fn turn_failures(name: &str, rig: &Rig) -> Vec<String> {
         }
     }
     failures
+}
+
+/// The gentle grades [`a_body_on_four_stands_on_a_gentle_slope_without_a_pop`]
+/// reads, in degrees: most of the ground a host hands a body.
+const GENTLE: [f32; 7] = [0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0];
+
+/// The most a joint of a body standing still may move in a sixtieth, as a
+/// share of [`slack`]'s hundredth of the trunk: the whole of it. Standing
+/// still on any of [`GENTLE`]'s grades a body's breathing and sway move a
+/// joint 2.0 mm a sixtieth at the most (a glider half a degree across, at
+/// 144 frames a second), 0.77 of the hundredth - most of it the hand-over
+/// between a leg left as it rests and one solved that the solve's tolerance
+/// allows, as on the level, where a Bat x Glider cross moves one 2.2.
+const STILL: f32 = 1.0;
+
+/// **A body on four stands and turns on a gentle slope without a pop**
+/// (#449): a bat, a glider, the two at the halfway blend both ways round,
+/// each crossed with a bird and two rolled bats, standing still on slopes of
+/// [`GENTLE`]'s grades faced up, down and across both ways, at 30, 60 and
+/// 144 frames a second, from a third of a second in:
+///
+/// - **no joint moves more than [`STILL`] of a hundredth of the trunk in a
+///   sixtieth**, nor pops against the four frames either side ([`pops`]);
+///
+/// and pivoting on the spot both ways on the same slopes but the half
+/// degree's, at 60 and 144 frames a second, read to a second and a half
+/// after the turn stops, as [`a_body_on_four_turns_on_the_spot_without_a_pop`]
+/// reads it on the steep one: **no joint goes back along the way it had
+/// just come by more than [`SPIN_BACK`] of the trunk, nor pops.**
+///
+/// Where a leg nothing had posed came within its solve's tolerance of its
+/// goal, `ground::solve_leg` left it as it rests, and on a body the slope
+/// turns its rest is turned off the bend and the foot every frame round it
+/// solves (#262's early return). **Taken where its bend alone stood within
+/// the solve's five millimetres of slack**, it still jumped by up to that
+/// on gentle slopes: standing still at 144 frames a second, a Glider x Bat
+/// cross a degree across one moved a joint 7.9 mm a sixtieth, a rolled bat
+/// (seed 13) 7.8, a bat half a degree across 6.9 and a Bat x Bird cross
+/// 5.9, three hundredths of the trunk, against 0.8 to 1.4 solved on every
+/// frame; pivoting a degree or two
+/// across, a Bat x Glider cross at the halfway blend popped 8.8 mm over
+/// twice the frames round it. **Taken wherever the contact arrived**, as
+/// before #449, the same pivots at 144 frames a second threw a joint back
+/// along the way it had come by up to 91.0 mm a sixtieth (a bat 3 to 8
+/// degrees across turning right), 89.0 (a rolled bat, seed 4, at 8) and
+/// 86.1 (a Glider x Bat cross at 8 and 12), a third of the trunk.
+#[test]
+fn a_body_on_four_stands_on_a_gentle_slope_without_a_pop() {
+    let bodies = bodies();
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (name, avatar) in &bodies {
+            let failures = &failures;
+            scope.spawn(move || {
+                let rig = &avatar.rig;
+                let slack = slack(rig);
+                let mut found = Vec::new();
+                for degrees in GENTLE {
+                    let grounds = faced(degrees);
+                    for (on, rise) in &grounds {
+                        for hz in RATES {
+                            let from = (hz / 3.0).round() as usize;
+                            let frames = turning(rig, hz, 4.0, *rise, |_| 0.0);
+                            let label = format!("{name} standing {on} at {hz}");
+                            let most = steps(&frames, from, hz)
+                                .iter()
+                                .map(|step| step.0)
+                                .fold(0.0f32, f32::max);
+                            if std::env::var("W20_DIAG").is_ok() {
+                                println!(
+                                    "{label}: most {:.2} mm, {:.2} of the hundredth",
+                                    most * 1000.0,
+                                    most / slack
+                                );
+                            }
+                            if most > STILL * slack {
+                                found.push(format!(
+                                    "{label}: a joint moved {:.1} mm a sixtieth, {:.2} of a \
+                                     hundredth of the trunk",
+                                    most * 1000.0,
+                                    most / slack
+                                ));
+                            }
+                            found.extend(pops(&label, &frames, from, hz, (slack, TURN_SLACK)));
+                        }
+                    }
+                    if degrees >= 1.0 {
+                        let turns: [Turned; 1] = [("pivoting", 4.5, &pivot)];
+                        found.extend(turn_failures(name, rig, &grounds, &turns, &[60.0, 144.0]));
+                    }
+                }
+                failures.lock().expect("a lock").extend(found);
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -36,8 +36,9 @@
 //!   (`keep_clear`, #440 and #441): on the pose handed back, its belly
 //!   lifted off the ground under it, a crawling body's hands laid along it -
 //!   thumb, membrane and folded digits with the wrist - and its tail lifted
-//!   off it, the ground under a hand and the belly read as a plane round it.
-//!   A level floor is all the build knows; a slope is the pose's.
+//!   off it, the ground under a hand, the belly and each joint of the tail
+//!   read as a plane round it. A level floor is all the build knows; a slope
+//!   is the pose's.
 //!
 //! Nothing here moves a person or a beast: every entry asks the rig's wings
 //! first, which only a winged body has.
@@ -776,17 +777,20 @@ where
 /// off it ([`lift_tail`]). Each reads the ground under the part itself and
 /// the pose it is given, and nothing kept from a frame before, so a frame
 /// and the next answer alike; on a level floor a hand is left to the bit,
-/// and a belly and a tail that stand clear of it. `share` of each, `0..=1`:
-/// the driver eases it in and out.
+/// and a belly and a tail that stand clear of it. `share` of the belly and
+/// the tail, and `hands` of the hands, each `0..=1`: the driver eases them
+/// in and out.
 ///
 /// Call on the pose as it is handed back, after the driver's blend and
 /// never on the pose kept to blend from ([`crate::anim::Driver::drive`]
 /// does, at the whole share whatever carries the body but the water, which
-/// floats it, and a rest, which is posed against the level it lies on, and
-/// eased between over two blends).
+/// floats it, eased between over two blends; and the belly and the tail
+/// not in a rest, which lays them on the ground itself - its hands it
+/// stands as the idle does, for this to lay, #450).
 ///
-/// **The ground under a hand and the belly is read as a plane round it**
-/// ([`plane_under`]), not by the normal at one point: the ground a game
+/// **The ground under a hand, the belly and each joint of the tail is read
+/// as a plane round it** ([`plane_under`]), not by the normal at one point
+/// (the tail's since #453): the ground a game
 /// hands a body is often heights on a grid, bilinear between them, whose
 /// tilt jumps at every cell's edge - Overlands' every quarter metre, edges
 /// that stand still under a body as it goes - and a fore pad crosses one
@@ -795,21 +799,31 @@ where
 /// it carries swung 45 mm a sixtieth and back. Each axis of the plane takes
 /// the gentler of its two sides, so a hand on the flat beside a step reads
 /// the flat, not half the ramp a grid makes of the step.
-pub(crate) fn keep_clear<F>(rig: &Rig, pose: &mut Pose, ground: &F, share: f32)
+pub(crate) fn keep_clear<F>(rig: &Rig, pose: &mut Pose, ground: &F, share: f32, hands: f32)
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
-    if rig.wings.is_none() || !rig.four_legged() || !pose.fits(rig) || share <= 0.0 {
+    if rig.wings.is_none()
+        || !rig.four_legged()
+        || !pose.fits(rig)
+        || (share <= 0.0 && hands <= 0.0)
+    {
         return;
     }
     #[cfg(test)]
     if LEFT_OUT.with(std::cell::Cell::get) {
         return;
     }
-    let share = share.min(1.0);
-    lift_belly(rig, pose, ground, share);
-    lay_hands(rig, pose, ground, share);
-    lift_tail(rig, pose, ground, share);
+    let (share, hands) = (share.min(1.0), hands.min(1.0));
+    if share > 0.0 {
+        lift_belly(rig, pose, ground, share);
+    }
+    if hands > 0.0 {
+        lay_hands(rig, pose, ground, hands);
+    }
+    if share > 0.0 {
+        lift_tail(rig, pose, ground, share);
+    }
 }
 
 #[cfg(test)]
@@ -835,7 +849,19 @@ const HAND_PLANE: f32 = 1.5;
 
 /// How far round the trunk's middle [`lift_belly`] reads the ground's tilt,
 /// in the trunk's length either side: half, so the plane spans the trunk.
-const BELLY_PLANE: f32 = 0.5;
+pub(super) const BELLY_PLANE: f32 = 0.5;
+
+/// How far round each of its joints [`lift_tail`] reads the ground's tilt,
+/// in the tail's length either side ([`plane_under`]): half, so the plane
+/// spans the tail, as [`BELLY_PLANE`]'s spans the trunk.
+///
+/// Provenance: **chosen** (#453). Read at the joint alone, a Bat x Glider
+/// cross's tail lifted out of the game's ground rising 20 degrees behind it
+/// stepped 2.2 mm at each cell's edge it was carried over (a step that stayed
+/// as the sampling doubled, `keep_clear_tests`); read over a plane a quarter,
+/// a half or a whole of its length either side, it moves smoothly, and the
+/// game's ground walking, bounding and turning reads alike at all three.
+const TAIL_PLANE: f32 = 0.5;
 
 /// The ground under `at` as a plane over `reach` either side of it: where
 /// it stands, and the tilt read along each axis from the ground `reach` to
@@ -854,9 +880,9 @@ const BELLY_PLANE: f32 = 0.5;
 /// exactly up on a level floor; and on ground whose heights are continuous -
 /// a bilinear grid's are, where its normal is not - the tilt is continuous
 /// too.
-fn plane_under<F>(ground: &F, at: Vec3, reach: f32) -> Option<Ground>
+pub(super) fn plane_under<F>(ground: &F, at: Vec3, reach: f32) -> Option<Ground>
 where
-    F: Fn(Vec3) -> Option<Ground>,
+    F: Fn(Vec3) -> Option<Ground> + ?Sized,
 {
     let below = ground(at)?;
     if reach <= 0.0 {
@@ -1121,7 +1147,9 @@ where
 /// Lifts a four-legged winged body's tail off the ground (#440, #441): turned
 /// up about its root, across the body, by as much as the lowest of its joints
 /// stands in the ground under it - each kept its own ring's depth over it, or
-/// as high as it rests if that is lower.
+/// as high as it rests if that is lower - the ground under each read as a
+/// plane round it, half the tail's length either side ([`TAIL_PLANE`],
+/// #453).
 ///
 /// **Nothing else holds a tail up**: it is carried rigidly on the pelvis and
 /// waved, and a Bat x Glider cross's, which rests 19 mm off the floor, went
@@ -1139,6 +1167,15 @@ where
     if dock == tip {
         return;
     }
+    let length: f32 = tail
+        .windows(2)
+        .map(|pair| {
+            rig.joints[pair[0]]
+                .position
+                .distance(rig.joints[pair[1]].position)
+        })
+        .sum();
+    let reach = TAIL_PLANE * length;
     // Twice: a tail is no straight lever, and the first turn leaves a
     // little of a curved one's depth.
     for _ in 0..2 {
@@ -1148,7 +1185,7 @@ where
         let mut over = Vec3::Y;
         for &joint in &tail[1..] {
             let at = posed.positions[joint];
-            let Some(below) = ground(at) else {
+            let Some(below) = plane_under(ground, at, reach) else {
                 continue;
             };
             let up = below.normal.normalize_or(Vec3::Y);

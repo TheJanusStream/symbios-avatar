@@ -61,7 +61,7 @@ use glam::{Quat, Vec3};
 use crate::anim::clip::{Clip, Key, Target, Track};
 use crate::anim::emote::GET_UP;
 use crate::anim::gaze::GazeConfig;
-use crate::anim::ground::{Foot, solve_contact_laid_by, solve_contact_with};
+use crate::anim::ground::{Foot, Ground, solve_contact_laid_by, solve_contact_with};
 use crate::anim::pose::Pose;
 use crate::det::{self, DetMath, Rot};
 use crate::plan::{Limb, WingedFamily, Zone};
@@ -135,7 +135,7 @@ pub fn for_body(rig: &Rig, name: &str) -> Option<Clip> {
         "Preen" | "Groom" => preen(kin),
         "Wing Stretch" if kin.leading == WingedFamily::Bird => bird_stretch(rig),
         "Wing Stretch" => bat_stretch(),
-        "Stretch" => glider_stretch(),
+        "Stretch" => glider_stretch(rig),
         "Shake" => shake(kin),
         "Head Tilt" => head_tilt(kin),
         _ => return None,
@@ -588,12 +588,18 @@ fn bat_stretch() -> Clip {
 }
 
 /// A glider's stretch: a bow, its forepaws walked out ahead on the ground
-/// and its rump up. Its patagium stays folded: opening it turns the foreleg
-/// it hangs from off the ground.
-fn glider_stretch() -> Clip {
+/// and its rump up, its forehand sunk as far as its forelegs fold
+/// ([`bow_sink`]). Its patagium stays folded: opening it turns the foreleg it
+/// hangs from off the ground.
+fn glider_stretch(rig: &Rig) -> Clip {
+    bowed(bow_sink(rig))
+}
+
+/// [`glider_stretch`] with its trunk turned `sink` quarter turns nose down.
+fn bowed(sink: f32) -> Clip {
     let span = [0.0, 0.25, 0.7, 0.95];
     let mut tracks = vec![
-        held(Target::Pitch, Vec3::NEG_Z * GLIDER_BOW[0], span),
+        held(Target::Pitch, Vec3::NEG_Z * sink, span),
         held(Target::Gaze, Vec3::Y * 0.35, span),
         held(Target::Tail, Vec3::Y * 0.4, span),
     ];
@@ -608,15 +614,86 @@ fn glider_stretch() -> Clip {
     Clip::new(tracks)
 }
 
-/// How far a glider's bow turns its trunk nose down, in quarter turns, and
-/// how far its forepaws walk out ahead, in the leg's reach, stood on the
-/// ground.
+/// How far a glider-led body's bow turns its trunk nose down, in quarter
+/// turns: [`GLIDER_BOW`]'s, but no further than leaves its foreleg folded to
+/// [`BOW_FOLD`] of its reach at the bow's depth on the level, sought by
+/// halving - as [`drop`] keeps a perch over its folded wing.
+///
+/// **A foreleg folded nearly shut has no elbow to speak of** (#451's
+/// critic). A glider's own folds to 0.29 of its reach; a cross with a bird's
+/// shoulder stands higher on a shorter foreleg, already folded to 0.37 of it
+/// standing, and its full bow folded it to 0.17 (Glider x Bird 0.35) and,
+/// on the downhill side of a 20 degree slope, to 0.08. There the line from
+/// its shoulder to its wrist is short enough to swing round the shoulder as
+/// the paw walks out, and turns to stand opposite the way the elbow bends
+/// (`Rig::bend_pole`), where the solve's bend plane is undetermined: the
+/// elbow went from bent back to bent out in one frame as the bow arrived or
+/// left, a fore upper limb turning 1.15 rad a sixtieth of a second at 60
+/// frames a second (Glider x Bird 0.3) and 1.71 at 144 (0.35), across the
+/// game's slope, against the glider's 0.07. Sunk only as far as leaves the
+/// fold open, no cross's bow turns a joint faster than the glider's on the
+/// same ground by more than a tenth of a radian. A glider bows as before; a
+/// Glider x Bird 0.2 sinks 0.072, one at 0.3 half as far as a glider (0.05)
+/// and one at 0.45 a fifth (0.019), its bow the paws walked out, the head
+/// raised and the tail up.
+fn bow_sink(rig: &Rig) -> f32 {
+    let limb = Limb::ForeLeft;
+    let (Some(chain), Some(reach)) = (rig.limb_chain(limb), rig.limb_reach(limb)) else {
+        return GLIDER_BOW[0];
+    };
+    if reach <= f32::EPSILON {
+        return GLIDER_BOW[0];
+    }
+    // The fold at the bow's depth, of the trunk's turn and that foreleg's
+    // walk alone: nothing else in the clip moves the foreleg.
+    let open = |sink: f32| {
+        let mut clip = bowed(sink);
+        clip.tracks
+            .retain(|track| track.target == Target::Pitch || track.target == Target::Just(limb));
+        let mut pose = Pose::rest(rig);
+        clip.apply(rig, &mut pose, 0.5);
+        let posed = pose.forward(rig);
+        posed.positions[chain[0]].distance(posed.positions[chain[2]]) / reach >= BOW_FOLD
+    };
+    if open(GLIDER_BOW[0]) {
+        return GLIDER_BOW[0];
+    }
+    let (mut deep, mut shallow) = (GLIDER_BOW[0], 0.0f32);
+    for _ in 0..BOW_HALVINGS {
+        let between = 0.5 * (deep + shallow);
+        if open(between) {
+            shallow = between;
+        } else {
+            deep = between;
+        }
+    }
+    shallow
+}
+
+/// How far a glider's bow turns its trunk nose down at most, in quarter
+/// turns ([`bow_sink`]), and how far its forepaws walk out ahead, in the
+/// leg's reach, stood on the ground.
 /// Provenance: **tuned** (#424) to the glider's short forelimb: at a beast's
 /// play bow's sink and reach, its paws went 62 to 110 mm into the ground.
 /// Raised to **a bow that reads** at the look review, where 0.05 and 0.15
 /// moved the body 8% of its height: its paws stood on the ground, the
 /// forehand goes further down.
 const GLIDER_BOW: [f32; 2] = [0.1, 0.22];
+
+/// How far in a bow on the level a glider-led body's foreleg may fold at
+/// most: its wrist's distance from its shoulder, in the leg's reach.
+/// Provenance: **measured** (#451's critic), over Glider x Bird crosses at
+/// 0.2 to 0.45 named both ways on a 20 degree slope - up, down and across
+/// both ways, as a plane and as the game hands it - at 30, 60 and 144 frames
+/// a second: at 0.22 a Glider x Bird 0.2 going down the game's slope still
+/// turned a fore upper limb 0.24 rad a sixtieth, at 0.25 none is past the
+/// glider's own by a tenth of a radian, from 15 to 22.5 degrees. Under the
+/// glider's own fold (0.29), so a glider bows as it did.
+const BOW_FOLD: f32 = 0.25;
+
+/// How many times [`bow_sink`] halves the sink it seeks: to a sixty-fourth
+/// of [`GLIDER_BOW`]'s.
+const BOW_HALVINGS: usize = 6;
 
 /// Shaking: a bird ruffles its trunk side to side about its own line, its
 /// head going first, then flicks its wings and its tail; a bat or a glider
@@ -1012,7 +1089,187 @@ pub(crate) fn roll(rig: &Rig, pose: &mut Pose, loin: usize, angle: f32) {
 /// 4. **Its tail wrapped round** the outside of the curl along the ground,
 ///    by the glider's share.
 /// 5. **Its head down**, onto its wrists or into the curl.
-pub(crate) fn curl(rig: &Rig, pose: &mut Pose, down: f32) {
+///
+/// **On `ground`** (#450): the body laid down on the plane the ground makes
+/// under its trunk, and each foot and the tail on the ground under it.
+///
+/// **Laid on the plane under it, then curled as on the level, and laid
+/// back.** The body is turned, about the ground under its trunk's middle,
+/// from that plane onto the level the curl is solved against
+/// ([`Under::level`]), curled there with each foot sent to the ground under
+/// it and the tail kept over it, as far over it as it would be over the
+/// level floor ([`Under::floor`]), and turned back onto the plane
+/// ([`Under::lay`]). Solved against the level floor alone, a bat resting
+/// facing up a 20 degree slope put its forearm 222 mm into it, facing down
+/// it 70 mm, and across it 93: the legs were folded to the floor's height
+/// wherever the ground under them stood.
+///
+/// **The plane is [`super::ground::plane_under`]'s**, over half the trunk's
+/// length either side of its middle, as `keep_clear` lifts the belly over
+/// it: a plane's own tilt on a plane, and on a host's height grid - whose
+/// tilt jumps at every cell's edge - continuous, and level beside a step.
+/// A level ground is the level curl to the bit; ground answering nothing
+/// under the trunk is taken as the level.
+pub(crate) fn curl_on(
+    rig: &Rig,
+    pose: &mut Pose,
+    down: f32,
+    ground: &dyn Fn(Vec3) -> Option<Ground>,
+) {
+    if down <= 0.0 || !rig.four_legged() || !pose.fits(rig) {
+        return;
+    }
+    let Some(under) = Under::of(rig, pose, ground) else {
+        curl_over(rig, pose, down, None);
+        return;
+    };
+    under.level(rig, pose);
+    let floor = |at: Vec3| under.floor(ground, at);
+    curl_over(
+        rig,
+        pose,
+        down,
+        Some(Floor {
+            under: &floor,
+            tilted: under.tilted,
+        }),
+    );
+    under.lay(rig, pose);
+    if super::crawls(rig) {
+        stand_wrists(rig, pose);
+    }
+}
+
+/// Stands a crawling body's wrists upright again where the curl laid its
+/// pads (#450), as its idle stands them on any ground: `keep_clear` lays a
+/// crawling wrist along the slope under it on every frame on the ground, a
+/// rest's included, from upright (`ground::lay_hands`). Left turned with the
+/// plane the curl was laid on, it was turned by the slope twice while that
+/// laying went on, a bat's folded digits 24 mm into a 20 degree slope it
+/// faced down as it lay down.
+fn stand_wrists(rig: &Rig, pose: &mut Pose) {
+    for limb in rig.ground_contacts() {
+        if !limb.is_fore() {
+            continue;
+        }
+        let (Some(chain), Some(&pad)) = (
+            rig.limb_chain(limb),
+            rig.in_zone(Zone::Extremity(limb)).first(),
+        ) else {
+            continue;
+        };
+        let posed = pose.forward(rig);
+        let [top, mid, wrist] = chain.map(|joint| posed.positions[joint]);
+        let line = (wrist - top).normalize_or_zero();
+        let bend = (mid - top) - line * (mid - top).dot(line);
+        let pole = match bend.try_normalize() {
+            Some(bend) => mid + bend * rig.extent(),
+            None => rig.bend_pole(limb).unwrap_or(mid),
+        };
+        solve_contact_with(rig, pose, limb, posed.positions[pad], pole, Foot::Stood);
+    }
+}
+
+/// The plane a resting body is laid on (#450): where the ground under its
+/// trunk's middle is, and the turn from the level to the plane there.
+#[derive(Clone, Copy, Debug)]
+struct Under {
+    /// The ground under the trunk's middle.
+    at: Vec3,
+    /// From up to the plane's up.
+    turn: Quat,
+    /// How far from level the plane is, `0..=1`: see [`LAID_TILT`].
+    tilted: f32,
+}
+
+impl Under {
+    /// The plane under `pose`'s trunk on `ground`, or `None` where that is
+    /// the level floor itself, or nothing answers under the trunk.
+    fn of(rig: &Rig, pose: &Pose, ground: &dyn Fn(Vec3) -> Option<Ground>) -> Option<Self> {
+        let (Some(&pelvis), Some(&withers)) = (
+            rig.in_zone(Zone::Pelvis).first(),
+            rig.in_zone(Zone::Chest).last(),
+        ) else {
+            return None;
+        };
+        let posed = pose.forward(rig);
+        let (hips, chest) = (posed.positions[pelvis], posed.positions[withers]);
+        let reach = super::ground::BELLY_PLANE * hips.distance(chest);
+        let below = super::ground::plane_under(ground, 0.5 * (hips + chest), reach)?;
+        let up = below.normal.normalize_or(Vec3::Y);
+        if up == Vec3::Y && below.position.y == 0.0 {
+            return None;
+        }
+        let rise = Vec3::new(up.x, 0.0, up.z).length() / up.y.max(f32::EPSILON);
+        Some(Self {
+            at: below.position,
+            turn: det::from_rotation_arc(Vec3::Y, up),
+            tilted: smooth((rise / LAID_TILT).clamp(0.0, 1.0)),
+        })
+    }
+
+    /// The ground under the trunk's middle, brought to the level floor.
+    fn flat(self) -> Vec3 {
+        Vec3::new(self.at.x, 0.0, self.at.z)
+    }
+
+    /// Where `at`, in the frame the body is posed in, lies once the plane
+    /// is turned onto the level floor.
+    fn levelled(self, at: Vec3) -> Vec3 {
+        self.flat() + self.turn.inverse() * (at - self.at)
+    }
+
+    /// Turns the body in `pose` from the plane onto the level floor.
+    fn level(self, rig: &Rig, pose: &mut Pose) {
+        turn_whole(rig, pose, self.turn.inverse(), self.at, self.flat());
+    }
+
+    /// Turns the body in `pose` from the level floor back onto the plane.
+    fn lay(self, rig: &Rig, pose: &mut Pose) {
+        turn_whole(rig, pose, self.turn, self.flat(), self.at);
+    }
+
+    /// How high the ground under `at` stands over the level floor, both
+    /// in the levelled frame: nought over the plane itself, and over ground
+    /// answering nothing.
+    fn floor(self, ground: &dyn Fn(Vec3) -> Option<Ground>, at: Vec3) -> f32 {
+        let posed = self.at + self.turn * (at - self.flat());
+        ground(posed).map_or(0.0, |below| self.levelled(below.position).y)
+    }
+}
+
+/// How far the plane a body rests on must rise a metre before its legs fold
+/// from where they stood and about the bend they stood in, wholly
+/// ([`fold_legs`]): short of it they fold as on the level, as far as it is
+/// short, so ground a hair off level folds them as the level does.
+/// Provenance: **chosen** (#450), the rise a beast's rest takes for its
+/// slope (`rest::TILTED`, #413): a hundredth, about half a degree.
+const LAID_TILT: f32 = 0.01;
+
+/// What a resting body is curled over off the level ([`curl_on`]): how high
+/// the ground under a point stands over the level floor, and how far from
+/// level the plane it is laid on is ([`Under::tilted`]).
+#[derive(Clone, Copy)]
+struct Floor<'a> {
+    under: &'a dyn Fn(Vec3) -> f32,
+    tilted: f32,
+}
+
+/// Turns every joint of `pose` by `turn` about `from`, and carries `from`
+/// to `to`: the whole body moved as one.
+fn turn_whole(rig: &Rig, pose: &mut Pose, turn: Quat, from: Vec3, to: Vec3) {
+    let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
+        return;
+    };
+    let rest = rig.joints[root].position;
+    let at = to + turn * (rest + pose.translation - from);
+    pose.translation = at - rest;
+    pose.rotations[root] = turn * pose.rotations[root];
+}
+
+/// [`curl_on`] over `ground`, or the level floor itself at none.
+fn curl_over(rig: &Rig, pose: &mut Pose, down: f32, ground: Option<Floor>) {
+    let floor = ground.map(|ground| ground.under);
     let down = down.clamp(0.0, 1.0);
     if down <= 0.0 || !rig.four_legged() {
         return;
@@ -1025,7 +1282,9 @@ pub(crate) fn curl(rig: &Rig, pose: &mut Pose, down: f32) {
     let drawn = (1.0 - glider_share(kin)) * eased;
     // Whatever of the skin stood below the ground before, which the body
     // is lifted to no higher than.
-    let floor = lowest_skin(rig, pose).min(0.0);
+    let lowest_skin_before = lowest_skin(rig, pose).min(0.0);
+    // And where the feet stood, which on the ground they are sent from.
+    let stood = floor.map(|_| pose.forward(rig).positions);
 
     // 1. Down: the trunk's own skin, read off the rig's outline of it where
     // it has one as a beast's lying down reads it, off its rings where not.
@@ -1072,16 +1331,23 @@ pub(crate) fn curl(rig: &Rig, pose: &mut Pose, down: f32) {
     for pass in 0..=CURL_PASSES {
         *pose = curled_pose.clone();
         pose.translation.y += lift;
-        fold_legs(rig, pose, eased, curled, drawn);
+        fold_legs(
+            rig,
+            pose,
+            eased,
+            curled,
+            drawn,
+            ground.zip(stood.as_deref()),
+        );
         if curled > 0.0 {
-            wrap_tail(rig, pose, curled);
+            wrap_tail(rig, pose, curled, ground);
         }
         if let Some(&head) = rig.in_zone(Zone::Head).first() {
             pose.rotations[head] *=
                 Rot::y(CURL_HEAD_TURN * curled) * Rot::x(CURL_HEAD_DOWN * eased);
         }
         if pass < CURL_PASSES {
-            lift += (floor + CURL_CLEARANCE - lowest_skin(rig, pose)).max(0.0);
+            lift += (lowest_skin_before + CURL_CLEARANCE - lowest_skin(rig, pose)).max(0.0);
         }
     }
 }
@@ -1135,10 +1401,30 @@ fn lowest_skin(rig: &Rig, pose: &Pose) -> f32 {
 /// patagium sags 24 mm under the spar that roots it in the chest.
 const SPAR_DEPTH: f32 = 0.03;
 
-/// Step 3 of [`curl`]: a resting body's legs folded under it, each foot sent
+/// Step 3 of [`curl_on`]: a resting body's legs folded under it, each foot sent
 /// to the ground below where its girdle has gone and drawn in toward it, and
 /// laid flat as the body sinks over it.
-fn fold_legs(rig: &Rig, pose: &mut Pose, eased: f32, curled: f32, drawn: f32) {
+///
+/// On the ground ([`curl_on`]), `ground` says how high the ground under a
+/// point stands over the level floor - each foot is sent that much higher,
+/// and its shin and pad held that much higher too - and where each joint
+/// stood before the body went down: off the level ([`LAID_TILT`]) a foot
+/// goes from there `eased` of the way. On a slope a body's idle stands its
+/// feet elsewhere than the level's goals, and sent there at once a bat's
+/// forefoot moved 20 mm in the frame its getting up handed back to the idle
+/// on a slope of 20 degrees it faced up.
+fn fold_legs(
+    rig: &Rig,
+    pose: &mut Pose,
+    eased: f32,
+    curled: f32,
+    drawn: f32,
+    ground: Option<(Floor, &[Vec3])>,
+) {
+    let floor = ground.map(|(floor, _)| floor.under);
+    // How far from where they stood the feet are sent, and about the bend
+    // they stood in: `eased`, on ground [`LAID_TILT`] off level or more.
+    let sent = |tilted: f32| 1.0 - tilted * (1.0 - eased);
     let posed = pose.forward(rig);
     for limb in rig.ground_contacts() {
         let (Some(chain), Some(&pad)) = (
@@ -1162,8 +1448,35 @@ fn fold_legs(rig: &Rig, pose: &mut Pose, eased: f32, curled: f32, drawn: f32) {
         };
         let under = Vec3::new(reach.x * draw, reach.y, reach.z * draw);
         let mut goal = carry(rig.joints[top].position + under);
-        goal.y = rig.joints[pad].position.y;
+        goal = match ground {
+            Some((floor, stood)) => {
+                goal.y = rig.joints[pad].position.y + (floor.under)(goal);
+                stood[pad].lerp(goal, sent(floor.tilted))
+            }
+            None => Vec3::new(goal.x, rig.joints[pad].position.y, goal.z),
+        };
         let pole = rig.bend_pole(limb).map_or(goal + Vec3::Y, carry);
+        // On the ground, folded from the bend the leg stood in, `eased` of
+        // the way to the one carried with its girdle: on a slope a body's
+        // idle stands its legs bent about poles its girdles do not carry,
+        // and folded about the carried one from the first frame, a bat's
+        // elbows went 90 mm round between its getting up and its idle across
+        // a slope of 20 degrees.
+        let pole = match ground {
+            Some((floor, stood)) => {
+                let [root, mid, tip] = chain.map(|joint| stood[joint]);
+                let line = (tip - root).normalize_or_zero();
+                let bend = (mid - root) - line * (mid - root).dot(line);
+                match bend.try_normalize() {
+                    Some(bend) => {
+                        let drawn = posed.positions[top] + (mid - root) + bend * rig.extent();
+                        drawn.lerp(pole, sent(floor.tilted))
+                    }
+                    None => pole,
+                }
+            }
+            None => pole,
+        };
         // The hind feet laid flat under it as a beast's lying down lays them;
         // the forefeet stood on their pads, as a bat crawls on its wrists -
         // a glider's laid flat turned its patagium's root at the wrist 20 mm
@@ -1191,8 +1504,12 @@ fn fold_legs(rig: &Rig, pose: &mut Pose, eased: f32, curled: f32, drawn: f32) {
             let laid = pose.forward(rig);
             let short = held
                 .iter()
-                .filter_map(|&(joint, floor)| {
-                    Some(floor - crate::anim::rest::ring_low(rig, &laid, joint)?)
+                .filter_map(|&(joint, low)| {
+                    let ring = crate::anim::rest::ring_low(rig, &laid, joint)?;
+                    Some(match floor {
+                        Some(floor) => low + floor(laid.positions[joint]) - ring,
+                        None => low - ring,
+                    })
                 })
                 .fold(0.0f32, f32::max);
             if short <= 0.0 {
@@ -1238,7 +1555,19 @@ const TAIL_WRAP: f32 = 3.4;
 /// the way from where the pose had it: its first joint where it is, each
 /// further one on an arc at its own radius above the ground, turning toward
 /// the body's left as the trunk does.
-fn wrap_tail(rig: &Rig, pose: &mut Pose, share: f32) {
+///
+/// On the ground ([`curl_on`]), `ground` says how high the ground under a
+/// point stands over the level floor: each joint is kept that much higher,
+/// and one the aim leaves under it - each joint is aimed along the line to
+/// its target, and a bone longer than that line carries the next past it -
+/// is aimed again over it, as far as the plane it rests on is off level
+/// ([`LAID_TILT`]). A body standing on a slope stands lower over it than on
+/// the level, and its tail, carried on its pelvis, hangs the lower: wrapped
+/// from there a Glider x Bat cross's tip was aimed 18 mm under its target and
+/// went 12.7 mm into a slope of 20 degrees it faced up, 6.5 at the most on
+/// the level.
+fn wrap_tail(rig: &Rig, pose: &mut Pose, share: f32, ground: Option<Floor>) {
+    let floor = ground.map(|ground| ground.under);
     let tail = rig.tail();
     if tail.len() < 2 {
         return;
@@ -1266,13 +1595,20 @@ fn wrap_tail(rig: &Rig, pose: &mut Pose, share: f32) {
         // radius - and a little more.
         let it = &rig.joints[joint];
         let ring = it.radius * it.scale.x.max(it.scale.y).max(1.0) + CURL_CLEARANCE;
-        let low = posed.positions[joint].y.min(ring);
-        let drop = (at.y - low).max(0.0).min(length);
-        let run = (length * length - drop * drop).max(0.0).sqrt();
         // Turned by the share of the wrap this bone covers, toward the left
         // (+X) for a tail running back.
         let turn = -TAIL_WRAP * share * length / total;
         heading = (Rot::y(turn) * heading).normalize_or(heading);
+        let low = match floor {
+            // Over the ground about where this bone lays it.
+            Some(floor) => {
+                let over = floor(at + heading * length);
+                (posed.positions[joint].y - over).min(ring) + over
+            }
+            None => posed.positions[joint].y.min(ring),
+        };
+        let drop = (at.y - low).max(0.0).min(length);
+        let run = (length * length - drop * drop).max(0.0).sqrt();
         at = Vec3::new(at.x, at.y - drop, at.z) + heading * run;
         targets.push(at);
     }
@@ -1282,10 +1618,43 @@ fn wrap_tail(rig: &Rig, pose: &mut Pose, share: f32) {
         let it = &rig.joints[tail[index]];
         let ring = it.radius * it.scale.x.max(it.scale.y).max(1.0) + CURL_CLEARANCE;
         *target = posed.positions[tail[index]].lerp(*target, share);
-        target.y = target.y.max(ring);
+        target.y = match floor {
+            Some(floor) => target.y.max(ring + floor(*target)),
+            None => target.y.max(ring),
+        };
     }
     aim_chain(rig, pose, &tail, &targets);
+    let Some(ground) = ground else {
+        return;
+    };
+    for _ in 0..TAIL_PASSES {
+        let posed = pose.forward(rig);
+        let mut under = false;
+        let lifted: Vec<Vec3> = tail
+            .iter()
+            .enumerate()
+            .map(|(index, &joint)| {
+                let mut at = posed.positions[joint];
+                let it = &rig.joints[joint];
+                let ring = it.radius * it.scale.x.max(it.scale.y).max(1.0) + CURL_CLEARANCE;
+                let short = ring + (ground.under)(at) - at.y;
+                if index > 0 && short > 0.0 {
+                    at.y += ground.tilted * short;
+                    under = true;
+                }
+                at
+            })
+            .collect();
+        if !under {
+            break;
+        }
+        aim_chain(rig, pose, &tail, &lifted);
+    }
 }
+
+/// How many times [`wrap_tail`] aims a tail again over the ground it was
+/// left under.
+const TAIL_PASSES: usize = 2;
 
 /// Turns each joint of `chain` in turn so the next lies along the line to
 /// its target, from the root of the chain outward: the bones keep their

@@ -52,14 +52,24 @@
 //! **And the drawn toes after the blend** (`ground::keep_toes_up`) on the
 //! gait's and the idle's frames only, the blends into them included: a
 //! flight's and a rest's or emote's poses own their feet - a landing plants
-//! them, a perch grips them, a curl folds them under.
+//! them, a perch grips them, a curl folds them under. **A rest or an emote
+//! laid over the idle stands on the idle's feet as drawn** (#451, #450):
+//! their toes kept up before the clip, which holds each foot from where that
+//! pose stands it, and a curl goes down from them and gets up to them.
+//!
+//! **A rest is laid on the ground under it** (#450): a bat's rest and a
+//! glider's curl turned from the plane under its trunk onto the level they
+//! are solved against, each foot and the tail sent to the ground under it,
+//! and turned back (`rests::curl_on`).
 //!
 //! **And a body on four legs kept out of the ground it is handed**
 //! (`ground::keep_clear`, #441), last of all, on the pose handed back and
 //! never the one kept to blend from: its belly, its hands with their thumbs
-//! and its tail, on every frame but a swim's, which the water floats, and a
-//! rest's, which is posed against a level - eased out into those and in out
-//! of them over two blends, never switched in a frame.
+//! and its tail, on every frame but a swim's, which the water floats, and
+//! its belly and tail not on a rest's, which lays them on the ground itself -
+//! eased out into those and in out of them over two blends, never switched
+//! in a frame. A crawling body's hands are laid through a rest too: it
+//! stands them as the idle does.
 //!
 //! **Nothing here moves a person or a beast**: every entry asks the rig's
 //! wings first ([`crate::Rig::wings`]), which only a winged body has.

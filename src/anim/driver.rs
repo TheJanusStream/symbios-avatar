@@ -1023,6 +1023,14 @@ pub struct Driver {
     /// (#441): eased in and out across a rest and a swim, over twice the
     /// blend, rather than switched in a frame.
     kept: f32,
+    /// What [`Self::seat`] overwrote [`Self::kept`] with, while no frame has
+    /// been driven since (#452): what [`Self::blend_now`] gives back, so the
+    /// weight eases from the frame last drawn with the pose blended from it.
+    unseated: Option<f32>,
+    /// How much of `keep_clear`'s laying of a crawling body's hands the last
+    /// frame drew, `0..=1` (#450): [`Self::kept`]'s, but kept through a rest,
+    /// which stands those hands as the idle does for it to lay.
+    kept_hands: f32,
 }
 
 /// How many blends [`Driver::drive`] eases `winged::ground::keep_clear` in
@@ -1091,6 +1099,8 @@ impl Driver {
             girdled: None,
             aloft: None,
             kept: 1.0,
+            kept_hands: 1.0,
+            unseated: None,
         }
     }
 
@@ -1204,7 +1214,9 @@ impl Driver {
     ///
     /// **It draws there on the next frame**, with no blend from what it last
     /// drew: a driver that has drawn nothing has nothing to blend from, and one
-    /// that has can be told to with [`Self::blend_now`].
+    /// that has can be told to with [`Self::blend_now`] - which blends the
+    /// weight of what keeps a winged body on four out of the ground back in
+    /// with the pose (#452), where without it the seat sets it at once.
     ///
     /// Answers whether `name` is a state of this body; a name that is not
     /// changes nothing. No clock runs, so a fresh body brought down in a rebuild
@@ -1217,7 +1229,18 @@ impl Driver {
         self.blend_asked = false;
         // Put where it is with no way down: no plane to go on from (#400).
         self.rests.unlay();
-        // Nor is what keeps a body on four out of the ground eased (#441).
+        // Nor is what keeps a body on four out of the ground eased (#441):
+        // the state's weight at once, for the next frame to draw with no
+        // blend. **The weight it overwrote is kept** (#452), for a blend
+        // asked after the seat to give back: blended into, the pose eased
+        // from the frame last drawn while the weight had already jumped, a
+        // bat seated at a rest on a slope of 20 degrees moving 80 to 93 mm a
+        // sixtieth more than without it in the seat's frame at 60 frames a
+        // second, 305 at 144. The first seat's, if seated twice
+        // with no frame between: what the last frame drew with.
+        if self.unseated.is_none() {
+            self.unseated = Some(self.kept);
+        }
         self.kept = if through <= 0.0 { 1.0 } else { 0.0 };
         if through <= 0.0 {
             self.gesture = None;
@@ -1296,8 +1319,20 @@ impl Driver {
     /// A request, not a state: one call is one transition, taken by the next
     /// frame that is actually driven. A driver that has drawn fewer than two
     /// frames has nothing to blend from and lets the request go.
+    ///
+    /// **After [`Self::seat`], the weight it set is blended too** (#452): what
+    /// keeps a winged body on four out of the ground goes back to the weight
+    /// the last frame drew with, and eases to the state's with the pose. Not
+    /// on a driver with nothing to blend from, whose pose the seat sets at
+    /// once: its weight is set with it.
     pub fn blend_now(&mut self) {
         self.blend_asked = true;
+        if let Some(kept) = self.unseated.take()
+            && self.previous.is_some()
+            && self.current.is_some()
+        {
+            self.kept = kept;
+        }
     }
 
     /// One frame: decide what is carrying the body, run it, and hand back the
@@ -1322,6 +1357,8 @@ impl Driver {
             return None;
         }
         self.elapsed += delta;
+        // A frame with time in it: what a seat overwrote is the state's now.
+        self.unseated = None;
         match inputs.hold {
             Hold::Pose => return None,
             Hold::Rest => return Some(self.hold_at_rest(rig, inputs, delta)),
@@ -1885,7 +1922,25 @@ impl Driver {
                 }
             });
         if let Some((clip, time)) = playing {
-            clip.apply_resting(rig, &mut pose, time, &mut self.rests);
+            // **A winged body's emote stands on the feet its idle would
+            // draw** (#451): the toes the idle has in a slope lifted out of
+            // it first, as they are after the blend on the idle's own frames
+            // (`keep_toes_up`), so the feet the clip holds where they stand
+            // (`Clip::apply`) are the ones the idle hands back to. Held from
+            // the idle as it is before that, a bat's forearm moved 21 mm in
+            // the frame a Groom ended on a slope of 20 degrees it faced up.
+            // The idle's alone: a stride's feet are settled after the clip,
+            // and its own toes after the blend. **And a winged rest's** (#450):
+            // a curl goes down from the idle's pose and gets up back to it,
+            // and from the idle as it is before the toes are kept up, a bat
+            // getting up from a rest on a slope of 20 degrees it faced up
+            // moved its forepads 21 mm in the frame it handed back. On the
+            // level that changes a rest by at most 0.44 mm (a Bat x Bird
+            // cross's toes).
+            if locomotion == Source::Idle {
+                super::winged::ground::keep_toes_up(rig, &mut pose, &ground);
+            }
+            clip.apply_resting(rig, &mut pose, time, &mut self.rests, &ground);
             self.rests.on_ground(rig, &mut pose, ground, delta);
             aimed = clip.tracks.iter().any(|track| track.target == Target::Gaze);
         } else {
@@ -2035,9 +2090,10 @@ impl Driver {
         // A winged body's drawn toes on the ground through the blend too
         // (#424): see `winged::ground::keep_toes_up`. **The gait's and the
         // idle's frames only**, the blends into them included: a flight's and
-        // a rest's or an emote's poses own their feet - a landing plants
-        // them, a perch grips them, a curl folds them under (the order in
-        // `anim::winged`).
+        // a rest's poses own their feet - a landing plants them, a perch
+        // grips them, a curl folds them under (the order in `anim::winged`) -
+        // and an emote laid over the idle stands on the idle's toes, kept up
+        // before the clip holds its feet (#451, where the clip is applied).
         if !matches!(source, Source::Fly | Source::Gesture) {
             super::winged::ground::keep_toes_up(rig, &mut posed, &ground);
         }
@@ -2048,8 +2104,9 @@ impl Driver {
         // belly, its hands with their thumbs, its tail - kept out of the
         // ground it is handed (#441): see `winged::ground::keep_clear`. A
         // flight's frames too, whose landing puts them down, and an emote's,
-        // which rides over the stance; not a rest's, posed against a level,
-        // nor a swim's, which the water floats. **On the pose handed back
+        // which rides over the stance; not a rest's belly and tail, which it
+        // lays on the ground itself (#450), nor a swim's, which the water
+        // floats. **On the pose handed back
         // alone, never the one kept to blend from**: a hand is turned by the
         // ground's own tilt, and a blend that carried a turned hand into the
         // next frame had it turned twice, 38 degrees on a slope of 20 for as
@@ -2062,22 +2119,38 @@ impl Driver {
         // hand turn and belly lift went in one frame at either edge of a rest
         // or a swim, 122 mm and the slope's whole 20 degrees on a slope it
         // faced up, and of every emote while it was left out of them.
-        let keeps = source != Source::Swim && !resting;
-        self.kept = if config.blend > 0.0 {
-            let step = delta / (KEEP_EASE * config.blend);
-            if keeps {
-                (self.kept + step).min(1.0)
+        //
+        // **A crawling body's hands are laid through a rest too** (#450): a
+        // rest stands them as the idle does, on any ground, and on a slope
+        // nothing else lays them along it. Laid by the rest itself instead,
+        // they were turned by the slope twice while this eased out, a bat's
+        // folded digits 24 mm into a 20 degree slope it faced down as it lay
+        // down.
+        let ease = |kept: f32, keeps: bool| {
+            if config.blend > 0.0 {
+                let step = delta / (KEEP_EASE * config.blend);
+                if keeps {
+                    (kept + step).min(1.0)
+                } else {
+                    (kept - step).max(0.0)
+                }
+            } else if keeps {
+                1.0
             } else {
-                (self.kept - step).max(0.0)
+                0.0
             }
-        } else if keeps {
-            1.0
-        } else {
-            0.0
         };
-        if self.kept > 0.0 {
-            let share = self.kept * self.kept * (3.0 - 2.0 * self.kept);
-            super::winged::ground::keep_clear(rig, &mut posed, &ground, share);
+        self.kept = ease(self.kept, source != Source::Swim && !resting);
+        self.kept_hands = ease(self.kept_hands, source != Source::Swim);
+        if self.kept > 0.0 || self.kept_hands > 0.0 {
+            let smooth = |kept: f32| kept * kept * (3.0 - 2.0 * kept);
+            super::winged::ground::keep_clear(
+                rig,
+                &mut posed,
+                &ground,
+                smooth(self.kept),
+                smooth(self.kept_hands),
+            );
         }
 
         // The ears follow late (#370): their spring chains are stepped over

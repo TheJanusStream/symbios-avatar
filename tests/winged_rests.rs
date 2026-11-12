@@ -5,7 +5,7 @@
 //! a bird's eyes nearly still while its head turns; and no person or beast
 //! offered or moved by any of it.
 
-use super::winged_bounds::{UNDER_GROUND, furthest, lowest_drawn};
+use super::winged_bounds::{UNDER_GROUND, furthest, lowest_drawn, lowest_drawn_over};
 use symbios_avatar::anim::driver::{Driver, Inputs, level_ground};
 use symbios_avatar::anim::winged::rests as winged;
 use symbios_avatar::anim::{Clip, Key, Target, Track, emote, gesture, look_at};
@@ -784,7 +784,12 @@ const FRAME_TRAVEL: f32 = 0.067;
 /// body's lowest point (skin, toes, membrane and feathers) never more than
 /// [`UNDER_GROUND`] below the ground beyond what stood below it before the
 /// motion began, and through the driver no joint travelling more than
-/// [`FRAME_TRAVEL`] in a frame.
+/// [`FRAME_TRAVEL`] in a frame. **And a rest of a body on four legs the same
+/// on a 20 degree slope** ([`SLOPES`], #450): up it, down it and across it
+/// both ways, the ground below each drawn point the slope's. Solved against
+/// the level floor, a bat's Rest facing up the slope went 221 mm into it
+/// (roll 4's 246), and in the frame its getting up handed back a joint
+/// travelled 249 mm (268); 101 lines failed.
 ///
 /// **What stood below it before hid a wing stretch** until #440: a Bird x
 /// Bat cross at 0.49 stood its folded feathers 83 mm under the ground and
@@ -842,67 +847,118 @@ fn sweep_one(label: &str, avatar: &Avatar) -> Vec<String> {
             ));
         }
         // Through the driver: asked, held as long as a rest takes to go down,
-        // told to get up, and run until it stands again.
-        let step = 1.0 / 60.0;
-        let mut driver = Driver::seeded(13);
-        let up = emote::seconds(rig, name).map(|down| 4 + ((down + 0.3) / step) as usize);
-        let mut before: Option<Vec<Vec3>> = None;
-        let mut first: Option<f32> = None;
-        let (mut lowest, mut travel) = ((f32::MAX, 0usize), (0.0f32, 0usize));
-        let mut stood = 0;
-        for frame in 0..900 {
-            let gesture = match frame {
-                3 => Some(*name),
-                frame if Some(frame) == up => Some(emote::GET_UP),
-                _ => None,
-            };
-            let inputs = Inputs {
-                delta: step,
-                gesture,
-                ..Inputs::default()
-            };
-            let Some(driven) = driver.drive(rig, &inputs, level_ground) else {
-                continue;
-            };
-            let at = driven.pose.forward(rig).positions;
-            if let Some(before) = &before {
-                let moved = furthest(before, &at);
-                if moved > travel.0 {
-                    travel = (moved, frame);
-                }
-            }
-            before = Some(at);
-            if frame == 2 || frame % 3 == 0 {
-                let low = lowest_drawn(avatar, &driven.pose);
-                if frame == 2 {
-                    first = Some(low.min(0.0));
-                } else if low < lowest.0 {
-                    lowest = (low, frame);
-                }
-            }
-            if frame > 3 && driver.gesture().is_none() {
-                stood += 1;
-                if stood > 30 {
-                    break;
-                }
+        // told to get up, and run until it stands again - on the level, and a
+        // body on four's rest on a 20 degree slope every way it can face
+        // (#450).
+        let grounds: &[(&str, Vec3)] = if rig.four_legged() && emote::seconds(rig, name).is_some() {
+            &SLOPES
+        } else {
+            &SLOPES[..1]
+        };
+        for &(on, rise) in grounds {
+            failures.extend(driven_failures(label, avatar, name, on, rise));
+        }
+    }
+    failures
+}
+
+/// The ground [`no_rest_or_emote_sinks_the_body_or_jumps_a_joint`] drives
+/// a body over: the level, and for a rest of a body on four legs - which
+/// Overlands stands on the terrain - a plane through its origin rising 20
+/// degrees ahead, behind and to either side, by its rise along each axis.
+const SLOPES: [(&str, Vec3); 5] = [
+    ("", Vec3::ZERO),
+    (" facing up a 20 degree slope", Vec3::new(0.0, 0.0, 0.364)),
+    (
+        " facing down a 20 degree slope",
+        Vec3::new(0.0, 0.0, -0.364),
+    ),
+    (
+        " across a 20 degree slope rising left",
+        Vec3::new(0.364, 0.0, 0.0),
+    ),
+    (
+        " across a 20 degree slope rising right",
+        Vec3::new(-0.364, 0.0, 0.0),
+    ),
+];
+
+/// [`sweep_one`]'s drive of `name` over the plane rising by `rise` (the
+/// level at none), called `on`: every failure, one line each.
+fn driven_failures(label: &str, avatar: &Avatar, name: &str, on: &str, rise: Vec3) -> Vec<String> {
+    let rig = &avatar.rig;
+    let mut failures = Vec::new();
+    let up_of_plane = Vec3::new(-rise.x, 1.0, -rise.z).normalize();
+    let sloped = move |point: Vec3| {
+        Some(symbios_avatar::Ground {
+            position: Vec3::new(point.x, rise.x * point.x + rise.z * point.z, point.z),
+            normal: up_of_plane,
+        })
+    };
+    let step = 1.0 / 60.0;
+    let mut driver = Driver::seeded(13);
+    let up = emote::seconds(rig, name).map(|down| 4 + ((down + 0.3) / step) as usize);
+    let mut before: Option<Vec<Vec3>> = None;
+    let mut first: Option<f32> = None;
+    let (mut lowest, mut travel) = ((f32::MAX, 0usize), (0.0f32, 0usize));
+    let mut stood = 0;
+    for frame in 0..900 {
+        let gesture = match frame {
+            3 => Some(name),
+            frame if Some(frame) == up => Some(emote::GET_UP),
+            _ => None,
+        };
+        let inputs = Inputs {
+            delta: step,
+            gesture,
+            ..Inputs::default()
+        };
+        let driven = if rise == Vec3::ZERO {
+            driver.drive(rig, &inputs, level_ground)
+        } else {
+            driver.drive(rig, &inputs, sloped)
+        };
+        let Some(driven) = driven else {
+            continue;
+        };
+        let at = driven.pose.forward(rig).positions;
+        if let Some(before) = &before {
+            let moved = furthest(before, &at);
+            if moved > travel.0 {
+                travel = (moved, frame);
             }
         }
-        let first = first.unwrap_or(standing);
-        if lowest.0 < first - UNDER_GROUND {
-            failures.push(format!(
-                "{label} {name}: driven, {:.1} mm below the ground at frame {}, standing {:.1}",
-                -lowest.0 * 1000.0,
-                lowest.1,
-                -first * 1000.0
-            ));
+        before = Some(at);
+        if frame == 2 || frame % 3 == 0 {
+            let low = lowest_drawn_over(avatar, &driven.pose, rise);
+            if frame == 2 {
+                first = Some(low.min(0.0));
+            } else if low < lowest.0 {
+                lowest = (low, frame);
+            }
         }
-        if travel.0 > FRAME_TRAVEL {
-            failures.push(format!(
-                "{label} {name}: driven, a joint travelled {:.0} mm in frame {}",
-                travel.0 * 1000.0,
-                travel.1
-            ));
+        if frame > 3 && driver.gesture().is_none() {
+            stood += 1;
+            if stood > 30 {
+                break;
+            }
         }
+    }
+    let first = first.unwrap_or_else(|| lowest_drawn(avatar, &Pose::rest(rig)).min(0.0));
+    if lowest.0 < first - UNDER_GROUND {
+        failures.push(format!(
+            "{label} {name}{on}: driven, {:.1} mm below the ground at frame {}, standing {:.1}",
+            -lowest.0 * 1000.0,
+            lowest.1,
+            -first * 1000.0
+        ));
+    }
+    if travel.0 > FRAME_TRAVEL {
+        failures.push(format!(
+            "{label} {name}{on}: driven, a joint travelled {:.0} mm in frame {}",
+            travel.0 * 1000.0,
+            travel.1
+        ));
     }
     failures
 }

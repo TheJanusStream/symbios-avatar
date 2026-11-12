@@ -2,7 +2,10 @@
 //! (`ground::keep_clear`, #440 and #441), measured against the same motion
 //! without it: on the ground Overlands hands such a body - heights on a
 //! quarter-metre grid, bilinear between them - and across every edge where it
-//! comes in or goes out.
+//! comes in or goes out. And what the feet an emote holds do on such ground
+//! (#451, #454), how a glider crossed with a bird bows on it (#451's critic),
+//! a seat blended into (#452), a rest laid on it (#450) and a tail lifted
+//! over its grid (#453).
 //!
 //! Here and not in `tests/` because the motion it is measured against is
 //! the driver's own with `keep_clear` left out, which only the crate can ask
@@ -162,6 +165,24 @@ fn drive(
     plan: &dyn Fn(f32) -> Ask,
     left_out: bool,
 ) -> Vec<(Vec<Vec3>, Vec<Quat>)> {
+    drive_poses(rig, hz, seconds, terrain, plan, left_out)
+        .into_iter()
+        .map(|pose| {
+            let posed = pose.forward(rig);
+            (posed.positions, posed.rotations)
+        })
+        .collect()
+}
+
+/// [`drive`]'s frames as the poses the driver handed back.
+fn drive_poses(
+    rig: &crate::Rig,
+    hz: f32,
+    seconds: f32,
+    terrain: Terrain,
+    plan: &dyn Fn(f32) -> Ask,
+    left_out: bool,
+) -> Vec<crate::anim::pose::Pose> {
     use crate::det::DetMath;
     LEFT_OUT.with(|out| out.set(left_out));
     let delta = 1.0 / hz;
@@ -202,8 +223,7 @@ fn drive(
             }
         }
         .expect("an unheld body is posed");
-        let posed = driven.pose.forward(rig);
-        out.push((posed.positions, posed.rotations));
+        out.push(driven.pose);
     }
     LEFT_OUT.with(|out| out.set(false));
     out
@@ -387,10 +407,11 @@ const FLIGHT_EDGE: (f32, f32) = (0.025, 0.45);
 /// **What keeps a body on four out of the ground comes in and goes out
 /// without a jump** (#441): a bat, a Bat x Glider cross at 0.49 and a Bat x
 /// Bird cross at 0.3, named both ways round, on a 20 degree slope - facing
-/// up it, down it and across it both ways - into and out of a Head Tilt (an
-/// emote, which keeps the stance and the hold), a Rest and its Get Up (which
-/// let it go), a swim (which the water floats) and a takeoff and a landing,
-/// at 30, 60 and 144 frames a second: **no joint moves or turns further in
+/// up it, down it and across it both ways - into and out of a Head Tilt, a
+/// Groom and a Shake (emotes, which keep the stance and the hold; the Groom
+/// and the Shake since #454), a Rest and its Get Up (which let it go), a
+/// swim (which the water floats) and a takeoff and a landing, at 30, 60 and
+/// 144 frames a second: **no joint moves or turns further in
 /// a frame than in the same motion without it by more than [`EDGE`]**, or
 /// [`FLIGHT_EDGE`] through the flight.
 ///
@@ -403,9 +424,17 @@ const FLIGHT_EDGE: (f32, f32) = (0.025, 0.45);
 #[test]
 fn keep_clear_comes_and_goes_without_a_jump() {
     let grade = 20.0f32.to_radians().tan();
-    let scenes: [(&str, Plan); 4] = [
+    let scenes: [(&str, Plan); 6] = [
         ("a Head Tilt", |t| Ask {
             gesture: (1.0..1.03).contains(&t).then_some("Head Tilt"),
+            ..Ask::default()
+        }),
+        ("a Groom", |t| Ask {
+            gesture: (1.0..1.03).contains(&t).then_some("Groom"),
+            ..Ask::default()
+        }),
+        ("a Shake", |t| Ask {
+            gesture: (1.0..1.03).contains(&t).then_some("Shake"),
             ..Ask::default()
         }),
         ("a Rest and its Get Up", |t| Ask {
@@ -579,5 +608,693 @@ fn keep_clear_lays_no_hand_into_the_flat_beside_a_step() {
         }
     });
     let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The bodies on four legs an emote is measured on: [`bodies`]' three bat-led
+/// ones and a glider, each emote by its name in the body's roster.
+fn on_four() -> Vec<(&'static str, Lineage<WingedFamily>)> {
+    let mut on_four: Vec<_> = bodies().into_iter().take(3).collect();
+    on_four.push(("glider", Lineage::pure(WingedFamily::Glider)));
+    on_four
+}
+
+/// The most any joint moves and turns in a frame over `frames[from..to]`,
+/// each read as a sixtieth of a second's at `hz`, in metres and radians,
+/// and the frames they were read at.
+fn fastest(
+    frames: &[(Vec<Vec3>, Vec<Quat>)],
+    hz: f32,
+    from: usize,
+    to: usize,
+) -> ((f32, usize), (f32, usize)) {
+    let scale = hz / 60.0;
+    let (mut moved, mut turned) = ((0.0f32, 0), (0.0f32, 0));
+    for at in from.max(1)..to.min(frames.len()) {
+        let ((was, was_turned), (is, turns)) = (&frames[at - 1], &frames[at]);
+        for (a, b) in is.iter().zip(was) {
+            if a.distance(*b) * scale > moved.0 {
+                moved = (a.distance(*b) * scale, at);
+            }
+        }
+        for (a, b) in turns.iter().zip(was_turned) {
+            if a.angle_between(*b) * scale > turned.0 {
+                turned = (a.angle_between(*b) * scale, at);
+            }
+        }
+    }
+    (moved, turned)
+}
+
+/// How much faster than on the level any joint may move and turn in a frame
+/// as an emote is gone into and handed back on a slope, in metres and
+/// radians a sixtieth of a second.
+const HAND_BACK: (f32, f32) = (0.02, 0.1);
+
+/// **A winged body on four legs goes into an emote and hands back to its
+/// stance on a slope as it does on the level** (#451): a bat, a Bat x
+/// Glider cross at 0.49, a Bat x Bird cross at 0.3 and a glider, standing,
+/// through a Groom, a Shake and a stretch - each emote that holds its feet -
+/// on a 20 degree
+/// slope - facing up it, down it and across it both ways - as a plane and
+/// as the game hands it ([`Patch`]), at 30, 60 and 144 frames a second: **no
+/// joint moves or turns faster than [`HAND_BACK`] past the fastest of the
+/// same emote on the level**, over its first fifth of a second and over its
+/// last tenth and the three tenths after it.
+///
+/// Before, an emote held each foot where it rests on the rig, at the level
+/// floor's height whatever the ground under it - a bat's forepads 172 mm in
+/// a slope it faced up through its whole Groom - and the drawn toes kept out
+/// of the ground on the stance's frames and not the emote's lifted them out
+/// in the frame it ended: a joint moved 248.1 mm a sixtieth (a bat's forearm
+/// facing up the slope at 60 frames a second; 615.4 at 144), and turned 3.1
+/// radians (a glider's, at 144).
+#[test]
+fn an_emote_hands_back_to_the_stance_without_a_jump() {
+    let grade = 20.0f32.to_radians().tan();
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (name, lineage) in on_four() {
+            let failures = &failures;
+            scope.spawn(move || {
+                let avatar = body(lineage);
+                let rig = &avatar.rig;
+                let roster = super::rests::roster(rig);
+                let mut grounds = Vec::new();
+                for (on, rise) in rises(grade) {
+                    grounds.push((
+                        format!("facing {on} a 20 degree slope"),
+                        Terrain::Plane(rise),
+                    ));
+                    grounds.push((
+                        format!("facing {on} the game's 20 degree slope"),
+                        Terrain::Game(rise),
+                    ));
+                }
+                let mut found = Vec::new();
+                for emote in ["Groom", "Shake", "Wing Stretch", "Stretch"] {
+                    if !roster.contains(&emote) {
+                        continue;
+                    }
+                    let plan = move |t: f32| Ask {
+                        gesture: (1.0..1.03).contains(&t).then_some(emote),
+                        ..Ask::default()
+                    };
+                    for hz in [30.0f32, 60.0, 144.0] {
+                        let at = |t: f32| (t * hz).round() as usize;
+                        let edges = [("going into", 1.0, 1.2), ("handing back from", 2.35, 2.8)];
+                        let level = drive(rig, hz, 3.0, Terrain::Plane(Vec3::ZERO), &plan, false);
+                        for (on, terrain) in &grounds {
+                            let frames = drive(rig, hz, 3.0, *terrain, &plan, false);
+                            for (edge, from, to) in edges {
+                                let ((moved, moved_at), (turned, turned_at)) =
+                                    fastest(&frames, hz, at(from), at(to));
+                                let ((flat, _), (flat_turned, _)) =
+                                    fastest(&level, hz, at(from), at(to));
+                                if moved > flat + HAND_BACK.0 || turned > flat_turned + HAND_BACK.1
+                                {
+                                    found.push(format!(
+                                        "{name} {edge} its {emote} {on} at {hz}: a joint moved \
+                                         {:.1} mm a sixtieth (frame {moved_at}) against {:.1} on \
+                                         the level, and turned {turned:.3} rad (frame \
+                                         {turned_at}) against {flat_turned:.3}",
+                                        moved * 1000.0,
+                                        flat * 1000.0
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                failures.lock().expect("a lock").extend(found);
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// How much faster than the same walk with no emote over it and the same
+/// Shake standing on the level together any joint may move and turn in a
+/// frame while a Shake is laid over a walk, in metres and radians a
+/// sixtieth of a second.
+const SHAKE_WALKING: (f32, f32) = (0.01, 0.05);
+
+/// **A Shake laid over a walk moves no joint faster than the walk and the
+/// Shake do together** (#454): a bat, a Bat x Glider cross at 0.49, a Bat x Bird cross at
+/// 0.3 and a glider walking (a Froude number of 0.15 on the hip) on the
+/// level and on a 20 degree slope - up it, down it and across it both
+/// ways - and asked for a Shake, with what keeps a body on four out of the
+/// ground and without it, at 30, 60 and 144 frames a second: **no joint
+/// moves or turns faster in any frame of it than [`SHAKE_WALKING`] past the
+/// fastest of the same walk without it and of the same Shake standing on
+/// the level together**: the two motions laid one over the other, and
+/// nothing jumping between them.
+///
+/// Before, the Shake held each foot where it rests on the rig, at the level
+/// floor's height, and the stride's settle laid each foot it set down onto
+/// the ground under it and let it go as it lifted, and the drawn toes a
+/// slope had in the ground were lifted out in the frame it ended: across the
+/// slope a joint of a bat moved 207.7 mm a sixtieth at 60 frames a second
+/// and 596.0 at 144, against 68.1 and 73.9 for the walk and the Shake
+/// together, with what keeps it out of the ground left out.
+#[test]
+fn a_shake_laid_over_a_walk_moves_no_joint_faster_than_the_two() {
+    let grade = 20.0f32.to_radians().tan();
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (name, lineage) in on_four() {
+            let failures = &failures;
+            scope.spawn(move || {
+                let avatar = body(lineage);
+                let rig = &avatar.rig;
+                let speed = (0.15 * 9.81 * hip(rig)).sqrt().max(0.4);
+                let shaking = move |t: f32| Ask {
+                    speed,
+                    gesture: (1.0..1.03).contains(&t).then_some("Shake"),
+                    ..Ask::default()
+                };
+                let walking = move |_: f32| Ask {
+                    speed,
+                    ..Ask::default()
+                };
+                let standing = |t: f32| Ask {
+                    gesture: (1.0..1.03).contains(&t).then_some("Shake"),
+                    ..Ask::default()
+                };
+                let mut grounds = vec![("on the level", Vec3::ZERO)];
+                grounds.extend(rises(grade));
+                let mut found = Vec::new();
+                for (on, rise) in grounds {
+                    for left_out in [false, true] {
+                        for hz in [30.0f32, 60.0, 144.0] {
+                            let terrain = Terrain::Plane(rise);
+                            let with = drive(rig, hz, 3.0, terrain, &shaking, left_out);
+                            let without = drive(rig, hz, 3.0, terrain, &walking, left_out);
+                            let (from, to) = ((0.9 * hz) as usize, with.len());
+                            let ((moved, at), (turned, turned_at)) = fastest(&with, hz, from, to);
+                            let level = Terrain::Plane(Vec3::ZERO);
+                            let stood = drive(rig, hz, 3.0, level, &standing, left_out);
+                            let ((walked, _), (walk_turned, _)) = fastest(&without, hz, from, to);
+                            let ((shook, _), (shook_turned, _)) = fastest(&stood, hz, from, to);
+                            let (walked, walk_turned) =
+                                (walked + shook, walk_turned + shook_turned);
+                            if moved > walked + SHAKE_WALKING.0
+                                || turned > walk_turned + SHAKE_WALKING.1
+                            {
+                                found.push(format!(
+                                    "{name} shaking as it walks {on} (rising 20 degrees), \
+                                     keep_clear {}, at {hz}: a joint moved {:.1} mm a sixtieth \
+                                     (frame {at}) against the walk's and the Shake's {:.1}, and \
+                                     turned {turned:.3} rad (frame {turned_at}) against \
+                                     {walk_turned:.3}",
+                                    if left_out { "left out" } else { "on" },
+                                    moved * 1000.0,
+                                    walked * 1000.0
+                                ));
+                            }
+                        }
+                    }
+                }
+                failures.lock().expect("a lock").extend(found);
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Each frame's joints and their turns, `rig` standing a second on
+/// `terrain` at `hz`, then seated at its rest held ([`Driver::seat`]) and
+/// told to blend into it ([`Driver::blend_now`]), and driven half a second
+/// more, with `keep_clear` or `left_out`.
+fn seated_and_blended(
+    rig: &crate::Rig,
+    hz: f32,
+    terrain: Terrain,
+    left_out: bool,
+) -> Vec<(Vec<Vec3>, Vec<Quat>)> {
+    LEFT_OUT.with(|out| out.set(left_out));
+    let rest = super::rests::roster(rig)
+        .iter()
+        .copied()
+        .find(|&name| matches!(name, "Rest" | "Curl"))
+        .expect("a body on four rests");
+    let mut driver = Driver::seeded(7);
+    let inputs = Inputs {
+        delta: 1.0 / hz,
+        ..Inputs::default()
+    };
+    let frames = (1.5 * hz).round() as usize;
+    let mut out = Vec::with_capacity(frames);
+    for frame in 0..frames {
+        if frame == hz.round() as usize {
+            driver.seat(rig, rest, 1.0);
+            driver.blend_now();
+        }
+        let driven = match terrain {
+            Terrain::Plane(rise) => {
+                let up = Vec3::new(-rise.x, 1.0, -rise.z).normalize();
+                driver.drive(rig, &inputs, move |point: Vec3| {
+                    Some(Ground {
+                        position: Vec3::new(point.x, rise.x * point.x + rise.z * point.z, point.z),
+                        normal: up,
+                    })
+                })
+            }
+            Terrain::Game(rise) => {
+                let patch = Patch::new(rise, Vec3::ZERO, 0.0);
+                let patch = &patch;
+                driver.drive(rig, &inputs, move |point: Vec3| patch.ground(point))
+            }
+        }
+        .expect("an unheld body is posed");
+        let posed = driven.pose.forward(rig);
+        out.push((posed.positions, posed.rotations));
+    }
+    LEFT_OUT.with(|out| out.set(false));
+    out
+}
+
+/// How much further than without `keep_clear` a joint of a bat facing across
+/// the slope at 144 frames a second may move and turn in a frame as it is
+/// seated at its rest and blended into it, in metres and radians a sixtieth
+/// of a second: over the most one moved and turned (40.1 mm and 0.183 rad,
+/// on a plane; 37.3 mm and 0.108 on the game's slope), not in the seat's
+/// frame but the fourteenth after it, where its hand laid on the slope
+/// (`ground::lay_hands`, at two thirds of its weight) moves 17 mm in a frame
+/// as the blend carries the leg into the rest - `keep_clear` acting through
+/// the fast blend the seat's restored weight allows, a fair trade against
+/// the 207 to 213 mm (0.75 rad) it moved in the seat's frame before. Every
+/// other body, slope and rate is within [`EDGE`] (at most 10.7 mm and 0.086
+/// rad).
+const SEAT_EDGE: (f32, f32) = (0.045, 0.2);
+
+/// **A body seated at a rest and blended into it eases what keeps it out of
+/// the ground with the pose** (#452): a bat, a Bat x Glider cross at 0.49 and
+/// a Bat x Bird cross at 0.3, standing a second on a 20 degree slope - facing
+/// up it, down it and across it both ways, as a plane and as the game hands
+/// it - then seated at its rest held and told to blend, as a host leaving a
+/// scrub does, at 30, 60 and 144 frames a second: **no joint moves or turns
+/// further in a frame than in the same motion without it by more than
+/// [`EDGE`]**, or [`SEAT_EDGE`] for a bat facing across the slope at 144.
+///
+/// Before, the seat set the rest's weight at once - none - while the blend
+/// eased the pose from the frame last drawn, so the hands and belly the
+/// slope had turned and lifted went in the seat's frame: a joint moved up to
+/// 92.9 mm a sixtieth more than without it at 60 frames a second and 305.0
+/// at 144 (a bat facing up the game's slope), and turned 0.89 rad more
+/// (Bat x Bird 0.3 there, at 144).
+#[test]
+fn a_seat_blended_into_eases_keep_clear_with_the_pose() {
+    let grade = 20.0f32.to_radians().tan();
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (name, lineage) in bodies().into_iter().take(3) {
+            let failures = &failures;
+            scope.spawn(move || {
+                let avatar = body(lineage);
+                let rig = &avatar.rig;
+                let mut found = Vec::new();
+                for (on, rise) in rises(grade) {
+                    for (ground, terrain) in [
+                        ("a plane", Terrain::Plane(rise)),
+                        ("the game's", Terrain::Game(rise)),
+                    ] {
+                        for hz in [30.0f32, 60.0, 144.0] {
+                            let with = seated_and_blended(rig, hz, terrain, false);
+                            let without = seated_and_blended(rig, hz, terrain, true);
+                            let ((moved, at), (turned, turned_at)) = excess(&with, &without, hz, 1);
+                            let (most, most_turned) =
+                                if name == "bat" && on.starts_with("across") && hz == 144.0 {
+                                    SEAT_EDGE
+                                } else {
+                                    EDGE
+                                };
+                            if moved > most || turned > most_turned {
+                                found.push(format!(
+                                    "{name} seated and blended facing {on} a 20 degree slope \
+                                     ({ground}) at {hz}: a joint moved {:.1} mm a sixtieth more \
+                                     than without it (frame {at}) and turned {turned:.3} rad more \
+                                     (frame {turned_at})",
+                                    moved * 1000.0
+                                ));
+                            }
+                        }
+                    }
+                }
+                failures.lock().expect("a lock").extend(found);
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The glider-led crosses with a bird the bow is measured on: Glider x Bird
+/// at 0.2 to 0.45, and the same bodies named the other way round.
+fn bowing() -> Vec<(String, Lineage<WingedFamily>)> {
+    use WingedFamily::{Bird, Glider};
+    let mut bowing = Vec::new();
+    for share in [0.2f32, 0.25, 0.3, 0.35, 0.4, 0.45] {
+        bowing.push((
+            format!("Glider x Bird {share}"),
+            Lineage::cross(Glider, Bird, share),
+        ));
+        bowing.push((
+            format!("Bird x Glider {}", 1.0 - share),
+            Lineage::cross(Bird, Glider, 1.0 - share),
+        ));
+    }
+    bowing
+}
+
+/// **A glider-led cross with a bird bows on a slope as smoothly as a glider
+/// does** (#451's critic): Glider x Bird crosses at 0.2, 0.25, 0.3, 0.35,
+/// 0.4 and 0.45, and the same bodies named the other way round, standing
+/// through a Stretch on the level and on a 20 degree slope - facing up it,
+/// down it and across it both ways - as a plane and as the game hands it
+/// ([`Patch`]), at 30, 60 and 144 frames a second: **over the whole of it,
+/// going into the bow, holding it and coming back, no joint moves or turns
+/// faster than [`HAND_BACK`] past the fastest of a glider's own Stretch on
+/// the same ground**. Against the glider on its own ground and not on the
+/// level, since a slope speeds a glider's bow too (0.13 rad a sixtieth
+/// facing down it, against 0.06 on the level), and a bird's share turns the
+/// head up in a quicker saccade facing up one.
+///
+/// Before, a cross bowed as deep as a glider on a shorter foreleg standing
+/// higher, folding it nearly shut (`rests::bow_sink`), and its elbow went
+/// from bent back to bent out in a frame as the bow arrived or left: a fore
+/// upper limb turned 1.15 rad a sixtieth across the game's slope at 60
+/// frames a second (Glider x Bird 0.3) and 1.71 at 144 (0.35), and 0.11 on
+/// the level, against the glider's 0.07 and 0.06.
+#[test]
+fn a_glider_crossed_with_a_bird_bows_as_smoothly_as_a_glider() {
+    let grade = 20.0f32.to_radians().tan();
+    let plan = |t: f32| Ask {
+        gesture: (1.0..1.03).contains(&t).then_some("Stretch"),
+        ..Ask::default()
+    };
+    let mut grounds = vec![("on the level".to_owned(), Terrain::Plane(Vec3::ZERO))];
+    for (on, rise) in rises(grade) {
+        grounds.push((
+            format!("facing {on} a 20 degree slope"),
+            Terrain::Plane(rise),
+        ));
+        grounds.push((
+            format!("facing {on} the game's 20 degree slope"),
+            Terrain::Game(rise),
+        ));
+    }
+    let rates = [30.0f32, 60.0, 144.0];
+    let window = |hz: f32| ((1.0 * hz).round() as usize, (2.9 * hz).round() as usize);
+    let glider = body(Lineage::pure(WingedFamily::Glider));
+    // The glider's fastest move and turn on each ground, at each rate.
+    let own: Vec<Vec<_>> = grounds
+        .iter()
+        .map(|(_, terrain)| {
+            rates
+                .iter()
+                .map(|&hz| {
+                    let (from, to) = window(hz);
+                    fastest(
+                        &drive(&glider.rig, hz, 3.0, *terrain, &plan, false),
+                        hz,
+                        from,
+                        to,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (name, lineage) in bowing() {
+            let (failures, grounds, own) = (&failures, &grounds, &own);
+            scope.spawn(move || {
+                let avatar = body(lineage);
+                let rig = &avatar.rig;
+                assert!(
+                    super::rests::roster(rig).contains(&"Stretch"),
+                    "{name} bows as a glider"
+                );
+                let mut found = Vec::new();
+                for ((on, terrain), own) in grounds.iter().zip(own) {
+                    for (&hz, &((flat, _), (flat_turned, _))) in rates.iter().zip(own) {
+                        let (from, to) = window(hz);
+                        let frames = drive(rig, hz, 3.0, *terrain, &plan, false);
+                        let ((moved, moved_at), (turned, turned_at)) =
+                            fastest(&frames, hz, from, to);
+                        if moved > flat + HAND_BACK.0 || turned > flat_turned + HAND_BACK.1 {
+                            found.push(format!(
+                                "{name} bowing {on} at {hz}: a joint moved {:.1} mm a sixtieth \
+                                 (frame {moved_at}) against a glider's {:.1}, and turned \
+                                 {turned:.3} rad (frame {turned_at}) against {flat_turned:.3}",
+                                moved * 1000.0,
+                                flat * 1000.0
+                            ));
+                        }
+                    }
+                }
+                failures.lock().expect("a lock").extend(found);
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The lowest of everything drawn of `avatar` that can meet the ground in
+/// `pose` ([`lowest_over`]) over `terrain` under a body that stands where it
+/// started, at the origin facing `+Z`.
+fn lowest_on(avatar: &Avatar, pose: &crate::anim::pose::Pose, terrain: Terrain) -> f32 {
+    match terrain {
+        Terrain::Plane(rise) => {
+            let posed = pose.forward(&avatar.rig);
+            avatar
+                .meshes
+                .iter()
+                .filter(|mesh| mesh.kind == crate::MeshKind::Skin)
+                .map(|mesh| &mesh.mesh)
+                .chain(avatar.parts.wings.as_ref().map(|wings| &wings.feathers))
+                .flat_map(|mesh| posed.deform_mesh(&avatar.rig, mesh).positions)
+                .map(|at| at.y - (rise.x * at.x + rise.z * at.z))
+                .fold(f32::MAX, f32::min)
+        }
+        Terrain::Game(rise) => lowest_over(avatar, pose, &Patch::new(rise, Vec3::ZERO, 0.0)),
+    }
+}
+
+/// How much lower than on the level a resting body's lowest drawn point may
+/// stand over a slope, and how much faster any of its joints may move and
+/// turn in a frame, in metres and radians a sixtieth of a second.
+const REST_SLOPE: (f32, f32, f32) = (0.006, 0.02, 0.1);
+
+/// **A winged body on four legs rests on a slope as it does on the level**
+/// (#450): a bat, a Bat x Glider cross at 0.49, a Bat x Bird cross at 0.3, a
+/// glider and a Glider x Bat cross at the halfway blend, standing, lying down
+/// to rest (a bat's Rest or a glider's Curl), held there and getting up, on
+/// a 20 degree slope - facing up it, down it and across it both ways - as a
+/// plane and as the game hands it ([`Patch`]), at 30, 60 and 144 frames a
+/// second: **no drawn point stands more than [`REST_SLOPE`]'s first lower
+/// over the ground than the same rest's lowest on the level** (read at 60),
+/// **and no joint moves or turns faster in a frame than its second and third
+/// past the fastest of the same rest on the level and of the same body
+/// standing on the same ground** - whose drawn toes and pads a slope stirs
+/// more than the level, a bat's 0.03 rad a frame at any rate against 0.01.
+///
+/// Before, a winged rest was solved against the level floor whatever the
+/// ground under it: a bat resting facing up the slope put its forearm 222 mm
+/// into it (238 on the game's; a Bat x Bird cross 232 and 249, a Glider x Bat
+/// cross 208 and 218), facing down it 70, across it 93, and in the frame its
+/// getting up handed back to the stance, standing on the slope, a joint
+/// moved 250 mm a sixtieth at 60 frames a second and 634 at 144. Laid on the
+/// slope, no drawn point stands more than 5.0 mm lower than on the level (a
+/// bat across the game's slope, 5.1 mm into it against 0.1), and no joint
+/// moves more than 8.9 mm a sixtieth (a Bat x Bird cross across the game's
+/// slope at 144) or turns more than 0.06 rad faster than the same body
+/// resting on the level or standing there.
+#[test]
+fn a_winged_rest_lies_on_the_slope_under_it() {
+    let grade = 20.0f32.to_radians().tan();
+    let mut bodies = on_four();
+    bodies.push((
+        "glider x bat 0.5",
+        Lineage::cross(WingedFamily::Glider, WingedFamily::Bat, 0.5),
+    ));
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (name, lineage) in bodies {
+            let failures = &failures;
+            scope.spawn(move || {
+                let avatar = body(lineage);
+                let rig = &avatar.rig;
+                let rest = if super::rests::roster(rig).contains(&"Rest") {
+                    "Rest"
+                } else {
+                    "Curl"
+                };
+                let plan = move |t: f32| Ask {
+                    gesture: if (0.5..0.53).contains(&t) {
+                        Some(rest)
+                    } else if (4.0..4.03).contains(&t) {
+                        Some(crate::anim::emote::GET_UP)
+                    } else {
+                        None
+                    },
+                    ..Ask::default()
+                };
+                let mut found = Vec::new();
+                for hz in [30.0f32, 60.0, 144.0] {
+                    let level = Terrain::Plane(Vec3::ZERO);
+                    let flat = drive_poses(rig, hz, 6.0, level, &plan, false);
+                    let posed = |poses: &[crate::anim::pose::Pose]| -> Vec<(Vec<Vec3>, Vec<Quat>)> {
+                        poses
+                            .iter()
+                            .map(|pose| {
+                                let posed = pose.forward(rig);
+                                (posed.positions, posed.rotations)
+                            })
+                            .collect()
+                    };
+                    let every = (hz / 20.0).round() as usize;
+                    let lowest = |poses: &[crate::anim::pose::Pose], terrain: Terrain| {
+                        poses
+                            .iter()
+                            .step_by(every)
+                            .map(|pose| lowest_on(&avatar, pose, terrain))
+                            .fold(f32::MAX, f32::min)
+                    };
+                    let ((most, _), (most_turned, _)) = fastest(&posed(&flat), hz, 1, flat.len());
+                    let low = (hz == 60.0).then(|| lowest(&flat, level));
+                    for (on, rise) in rises(grade) {
+                        for (ground, terrain) in [
+                            ("a 20 degree slope", Terrain::Plane(rise)),
+                            ("the game's 20 degree slope", Terrain::Game(rise)),
+                        ] {
+                            let poses = drive_poses(rig, hz, 6.0, terrain, &plan, false);
+                            let ((moved, moved_at), (turned, turned_at)) =
+                                fastest(&posed(&poses), hz, 1, poses.len());
+                            // And the same body standing there, whose own toes
+                            // and pads a slope stirs more than the level does.
+                            let standing = drive(rig, hz, 6.0, terrain, &|_| Ask::default(), false);
+                            let ((stands, _), (stands_turned, _)) =
+                                fastest(&standing, hz, 1, standing.len());
+                            let (most, most_turned) =
+                                (most.max(stands), most_turned.max(stands_turned));
+                            if std::env::var("W22_DIAG").is_ok() {
+                                println!(
+                                    "{name} {rest} facing {on} {ground} at {hz}: moved {:.1} \
+                                     ({:.1}), turned {turned:.3} ({most_turned:.3}){}",
+                                    moved * 1000.0,
+                                    most * 1000.0,
+                                    low.map_or(String::new(), |low| format!(
+                                        ", lowest {:.1} ({:.1} level)",
+                                        lowest(&poses, terrain) * 1000.0,
+                                        low * 1000.0
+                                    ))
+                                );
+                            }
+                            if moved > most + REST_SLOPE.1 || turned > most_turned + REST_SLOPE.2 {
+                                found.push(format!(
+                                    "{name} resting facing {on} {ground} at {hz}: a joint moved \
+                                     {:.1} mm a sixtieth (frame {moved_at}) against {:.1} resting \
+                                     on the level or standing there, and turned {turned:.3} rad \
+                                     (frame {turned_at}) against {most_turned:.3}",
+                                    moved * 1000.0,
+                                    most * 1000.0
+                                ));
+                            }
+                            if let Some(low) = low {
+                                let sloped = lowest(&poses, terrain);
+                                if sloped < low - REST_SLOPE.0 {
+                                    found.push(format!(
+                                        "{name} resting facing {on} {ground}: a drawn point \
+                                         {:.1} mm over the ground, {:.1} on the level",
+                                        sloped * 1000.0,
+                                        low * 1000.0
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                failures.lock().expect("a lock").extend(found);
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("a lock");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// **A tail lifted out of the game's ground is lifted continuously as it
+/// goes over it** (#453): a Bat x Glider cross at 0.49 and a glider, each
+/// standing at rest over the game's ground rising 20 degrees behind it - a
+/// bilinear grid ([`Patch`]), whose tilt jumps at every cell's edge -
+/// carried back over one cell in 200 even steps and in 400, and its tail
+/// lifted out of the ground by `keep_clear` at each: **the largest step any
+/// of its tail's joints takes about the tail's first joint at least nearly
+/// halves at twice the sampling**, as a motion's does and a jump's does not.
+///
+/// Before, each joint read the ground at one point, its tilt the cell's own,
+/// so the lift stepped at each cell's edge: the largest step stayed where it
+/// was at twice the sampling (a Bat x Glider cross's 2.19 mm and 2.20),
+/// where read over a plane round each joint (`ground::plane_under`) it
+/// halves (0.47 and 0.23). A glider's lift halves either way here (0.45 and
+/// 0.23), and is held to it.
+#[test]
+fn a_tail_is_lifted_over_the_games_ground_without_a_step() {
+    let ground = Patch::new(-Vec3::Z * 20.0f32.to_radians().tan(), Vec3::ZERO, 0.0);
+    let mut failures = Vec::new();
+    for (name, lineage) in [
+        (
+            "bat x glider 0.49",
+            Lineage::cross(WingedFamily::Bat, WingedFamily::Glider, 0.49),
+        ),
+        ("glider", Lineage::pure(WingedFamily::Glider)),
+    ] {
+        let avatar = body(lineage);
+        let rig = &avatar.rig;
+        let tail = rig.tail();
+        assert!(tail.len() > 2, "{name} has a tail");
+        // The tail about its first joint, carried `back` metres back.
+        let lifted = |back: f32| {
+            let mut pose = crate::anim::pose::Pose::rest(rig);
+            pose.translation.z -= back;
+            super::ground::keep_clear(rig, &mut pose, &|point| ground.ground(point), 1.0, 0.0);
+            let posed = pose.forward(rig);
+            tail.iter()
+                .map(|&joint| posed.positions[joint] - posed.positions[tail[0]])
+                .collect::<Vec<_>>()
+        };
+        let worst = |steps: usize| {
+            let mut was = lifted(0.0);
+            let mut worst = 0.0f32;
+            for step in 1..=steps {
+                let now = lifted(STEP * step as f32 / steps as f32);
+                for (a, b) in was.iter().zip(&now) {
+                    worst = worst.max(a.distance(*b));
+                }
+                was = now;
+            }
+            worst
+        };
+        let (coarse, fine) = (worst(200), worst(400));
+        if std::env::var("W22_DIAG").is_ok() {
+            println!(
+                "{name}: {:.3} mm and {:.3} mm",
+                coarse * 1000.0,
+                fine * 1000.0
+            );
+        }
+        if coarse <= 0.0 || fine > 0.6 * coarse {
+            failures.push(format!(
+                "{name}: the tail stepped {:.3} mm and then {:.3} mm at twice the sampling - a \
+                 step that does not shrink as the sampling doubles is a jump",
+                coarse * 1000.0,
+                fine * 1000.0
+            ));
+        }
+    }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

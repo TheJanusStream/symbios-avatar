@@ -1214,14 +1214,30 @@ The drawn toes are lifted out of the ground after the blend
 (`ground::keep_toes_up`) on the gait's and the idle's frames only, the
 blends into them included: a flight's and a rest's or emote's poses own their
 feet - a landing plants them, a perch grips them, a curl folds them under.
+**An emote laid over the idle stands on the idle's feet as the idle draws
+them** (#451): the idle's toes are lifted out of the ground before the
+clip, and every foot a clip holds in the world is held from where the pose
+under it stands it (`Clip::apply`), never from where it rests on the rig -
+so on a slope an emote's feet are on the ground, not at the level floor's
+height, and the emote hands back to the very feet the idle draws. Held from
+the rig's rest, a bat's forepads stood 172 mm in a 20 degree slope it
+groomed facing up, and its forearm moved 248 mm a sixtieth in the frame the
+Groom ended; and a Shake laid over a walk across such a slope moved a fore
+upper limb 166 mm a sixtieth (#454), each foot the stride set down settled
+onto the ground and let go to the floor's height as it lifted.
 
 **And a body on four legs is kept out of the ground it is handed**
 (`ground::keep_clear`, #441): on the pose handed back, after the blend and
 never on the pose kept to blend from, whatever carries the body but the
-water and a rest - its belly lifted off the ground, a crawling body's hands
-laid along it, its tail lifted off it. **Eased, never switched**: nothing
-kept to blend from carries it, so it is eased out going into a swim or a
-rest and in coming out over two blends (`KEEP_EASE`); switched with the
+water - its belly lifted off the ground and its tail lifted off it, but in a
+rest, which lays them itself (below), and a crawling body's hands laid along
+it, a rest's too (#450). The tail's ground, as a hand's and the belly's, is
+read as a plane round each of its joints (`plane_under`, half the tail's
+length either side, #453): read at one point a Bat x Glider cross's lifted
+tail stepped 2.2 mm at each edge of the game's height grid it crossed.
+**Eased, never switched**: nothing kept to blend from carries it, so it is
+eased out going into a swim or a rest and in coming out over two blends
+(`KEEP_EASE`); switched with the
 source, a bat's whole hand turn and belly lift went in one frame at either
 edge of every emote, rest and swim, a joint 115 to 118 mm a sixtieth further
 than without it at 60 frames a second on a 20 degree slope it faced up (290
@@ -1805,7 +1821,7 @@ targets of a winged body's own, each doing nothing on a body without wings:
 | `Fan` | `z` 0-1 | a bird's tail fan (`Rig::spread_tail`) |
 | `Grip` | `z` 0-1 | every drawn toe: the joints past its root bent 2 rad in all toward the sole, and the root lifted as a knuckle just as far as brings the claw's tip back to the height it stood at (found by halving, at most 1.4 rad), so the claws close on a flat top without going through it |
 | `Tuck` | `z` share of 0.8 of a half turn, `x` side, `y` extra dip | the head turned back about the body's up, half at the neck and half at the head, a bird's neck leaned back 0.7 rad first and the head dipped 0.8 rad past the lean |
-| `Curl` | `z` 0-1 | a four-legged winged body down on its belly (its trunk's skin, read off the rig's outline as a beast's lying down reads it, 4 mm off the ground), legs folded under - hind feet laid, forefeet stood on their pads, each foot raised by whatever its shin and pad sink - a bat's wrists drawn in by its bat share, the spine bent 2.3 rad round, the tail laid along the ground at its ring's depth wrapped 3.4 rad round the outside and the head turned on and dipped, by its glider share; then, in four passes always taken, lifted by whatever of its skin is still under the ground: the outline but the feet, shins and tail, every upper limb's ring, and a membrane's trunk-rooted spars read 30 mm deep |
+| `Curl` | `z` 0-1 | (on the ground under it, #450: see "On the ground under it") a four-legged winged body down on its belly (its trunk's skin, read off the rig's outline as a beast's lying down reads it, 4 mm off the ground), legs folded under - hind feet laid, forefeet stood on their pads, each foot raised by whatever its shin and pad sink - a bat's wrists drawn in by its bat share, the spine bent 2.3 rad round, the tail laid along the ground at its ring's depth wrapped 3.4 rad round the outside and the head turned on and dipped, by its glider share; then, in four passes always taken, lifted by whatever of its skin is still under the ground: the outline but the feet, shins and tail, every upper limb's ring, and a membrane's trunk-rooted spars read 30 mm deep |
 
 `Roll` now rolls a winged body on two legs too, about its trunk's own line
 (a bird carries its trunk raised); a person is refused it as before.
@@ -1842,14 +1858,19 @@ as its claws would stand in the ground), and the tail fanned, then both
 wings raised 0.75 of a quarter turn over the back (S16); a bat's **Wing
 Stretch**, each wing opened 0.45 out and lifted in turn; a glider's
 **Stretch**, a bow of 0.1 with its forepaws walked 0.22 out and stood on the
-ground, its head up and its tail raised high; **Shake**, a bird's trunk
-rolled 0.18 of a quarter turn side to side with its head canting first, then
-its wings, lifted as they open, and fan flicked, a bat's or a glider's risen
-0.05 on its legs and shaken as a dog's in three slower swings - the trunk
-rolled 0.2, the head whipped side to side ahead of it - with all four feet
-held, its wings - the forelegs it stands on - still; and **Head Tilt**, the
-head canted 0.3 and swayed side to side and up to look with one eye (an owl
-judging depth, 10 6.2), a bat's and a glider's ears perked besides.
+ground, its head up and its tail raised high - a glider-led cross with a
+bird's shoulder bowing only as far as leaves its foreleg folded to a quarter
+of its reach (a Glider x Bird 0.3 half as far, `rests::bow_sink`): folded
+nearly shut, its elbow went from bent back to bent out in a frame as the bow
+arrived or left on a slope, 1.15 rad a sixtieth of a second; **Shake**, a
+bird's trunk rolled 0.18 of a quarter turn side to side with its head
+canting first, then its wings, lifted as they open, and fan flicked, a bat's
+or a glider's risen 0.05 on its legs and shaken as a dog's in three slower
+swings - the trunk rolled 0.2, the head whipped side to side ahead of it -
+with all four feet held, its wings - the forelegs it stands on - still; and
+**Head Tilt**, the head canted 0.3 and swayed side to side and up to look
+with one eye (an owl judging depth, 10 6.2), a bat's and a glider's ears
+perked besides.
 
 **Each emote reads at a glance** (the look review): at its widest some
 joint of the body's own - not a tail, an ear or a feather - moves at least a
@@ -1948,14 +1969,34 @@ turning over, 283 mm in one frame.
 - **No fluffing.** Research-10's fluffed outline wants the contour feathers
   raised off the body, which no pose can do: they are cards bound to the
   trunk's joints. The shake flicks the wings and fan instead.
-- **On level ground**: a winged rest is posed against the level its body
-  stands on, as a beast's play bow is, not fitted to the ground under each
-  support as a beast's sit is (#381); on a slope its feet, belly and tail
-  rest on the level through it, and what keeps a standing or a going body
-  out of a slope (`keep_clear`, #441) leaves a rest's frames alone, eased
-  out as it goes down and in as it gets up; an emote, which keeps the
-  stance, keeps it too. A bat's forearm reaches into a 20 degree slope it
-  rests facing up, on the tree #441 landed on and since.
+- **On the ground under it** (#450): a bat's rest and a glider's curl are
+  solved against the level, and on any other ground the body is turned,
+  about the ground under its trunk's middle, from the plane there
+  (`plane_under`, half the trunk either side) onto that level, curled with
+  each foot sent to the ground under it and the tail kept over it, and
+  turned back (`rests::curl_on`). Off the level by a hundredth or more
+  (`LAID_TILT`, as a beast's rest's `TILTED`) its feet fold from where the
+  idle stood them and about the bend they stood in, as far as it is gone
+  down, a tail aimed under the ground is aimed again over it, and a crawling
+  body's wrists are stood upright as the idle stands them, for `keep_clear`
+  to lay along the slope as on every other frame; the idle's toes are kept
+  up before it, as an emote's are. Solved against the level floor whatever
+  the ground, a bat resting facing up a 20 degree slope put its forearm 222
+  mm into it, and getting up handed back with a joint moving 250 mm in the
+  frame (634 a sixtieth at 144 frames a second); now no drawn point stands
+  more than 5 mm lower than on the level, up, down or across a 20 degree
+  slope or the game's grid of one. Ground that answers nothing under the
+  trunk is the level. **A bird's perch and roost are not laid so**: their
+  feet are held where the idle stands them, but the body comes down
+  straight over them, and on a 20 degree slope a roosting owl's feathers
+  reach 25 mm (facing up) to 60 (down) into it - a bird stands on the level
+  in Overlands.
+- **A bird's stretched leg is the one foot an emote carries from where it
+  rests** (its Wing Stretch's, carried with the body): on a slope it still
+  sets that foot down at the level floor's height and hands back with a
+  jump (73 mm in a frame, facing up 20 degrees). A bird stands on the level
+  in Overlands; held from the stance instead, the leg turned over as it
+  went back behind the hip.
 - **The roost's tuck is over the left shoulder always**, and the preen
   reaches the left wing: one side reads, and a mirrored clip is one sign.
 - **A perch's grip is on a flat top**: the toes close as a fist on a table

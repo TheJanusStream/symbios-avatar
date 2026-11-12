@@ -235,7 +235,8 @@ pub enum Target {
     /// them, a glider curled round with its tail wrapped about it - each by
     /// its family's share of the body, so a cross between them lies between
     /// the two. Does nothing on a body that has no wings or does not stand
-    /// on four legs.
+    /// on four legs. Laid on the ground under it as [`super::Driver::drive`]
+    /// plays it (#450); a clip applied on its own lays it on the level.
     Curl,
 }
 
@@ -615,17 +616,26 @@ impl Clip {
     /// caller may want — a gesture that a stubby-armed body cannot complete is
     /// worth knowing about — rather than a failure.
     pub fn apply(&self, rig: &Rig, pose: &mut Pose, time: f32) -> Vec<Limb> {
-        self.apply_resting(rig, pose, time, &mut super::rest::Rests::default())
+        self.apply_resting(
+            rig,
+            pose,
+            time,
+            &mut super::rest::Rests::default(),
+            &super::driver::level_ground,
+        )
     }
 
     /// [`Self::apply`], what a rest solves from the rig alone kept in `rests`
-    /// between calls (#377): see [`super::rest::Rests`].
+    /// between calls (#377): see [`super::rest::Rests`]. A winged body's rest
+    /// is laid on `ground` (#450, [`Target::Curl`]); [`Self::apply`] lays it on
+    /// the level.
     pub(crate) fn apply_resting(
         &self,
         rig: &Rig,
         pose: &mut Pose,
         time: f32,
         rests: &mut super::rest::Rests,
+        ground: &dyn Fn(Vec3) -> Option<super::ground::Ground>,
     ) -> Vec<Limb> {
         if !pose.fits(rig) {
             return Vec::new();
@@ -666,6 +676,26 @@ impl Clip {
             Target::Wing(_) | Target::Fan | Target::Grip | Target::Tuck => 5,
             _ => 2,
         });
+
+        // **A winged body's feet are held from where the pose it is laid over
+        // stands them** (#451, #454): a world track's goal is the foot's place
+        // there, not where it rests on the rig. Measured from its rest, a
+        // foot was held at the level floor's height whatever the ground under
+        // it - a bat grooming on a slope of 20 degrees it faced up had its
+        // forepads 172 mm in the ground and facing down 195 mm over it, and
+        // the drawn toes, kept out of the ground on every frame but an
+        // emote's, threw its forearm 248 mm in the frame the Groom handed
+        // back; and walking, each foot the stride sets down was settled onto
+        // the ground under it and let go to the floor's height as it lifted.
+        // Read before any track moves the body, so a foot is held where it
+        // stood as the body braces, rolls or crouches over it. A person's and
+        // a beast's are measured from their rest, as they always were.
+        let stood = (rig.wings.is_some()
+            && self
+                .tracks
+                .iter()
+                .any(|track| track.space == Space::World && !track.target.resolve(rig).is_empty()))
+        .then(|| pose.forward(rig).positions);
 
         for track in ordered {
             let Some(offset) = track.offset_at(time, self.looping) else {
@@ -750,7 +780,7 @@ impl Clip {
                     continue;
                 }
                 Target::Curl => {
-                    super::winged::rests::curl(rig, pose, offset.z);
+                    super::winged::rests::curl_on(rig, pose, offset.z, ground);
                     continue;
                 }
                 _ => {}
@@ -778,11 +808,16 @@ impl Clip {
                 0.0
             };
             for limb in track.target.resolve(rig) {
-                let (Some(reach), Some(home), Some(rest_pole)) = (
-                    rig.limb_reach(limb),
-                    rest_contact(rig, limb),
-                    rig.bend_pole(limb),
-                ) else {
+                let home = match (&stood, track.space) {
+                    (Some(stood), Space::World) => rig
+                        .in_zone(Zone::Extremity(limb))
+                        .first()
+                        .map(|&pad| stood[pad]),
+                    _ => rest_contact(rig, limb),
+                };
+                let (Some(reach), Some(home), Some(rest_pole)) =
+                    (rig.limb_reach(limb), home, rig.bend_pole(limb))
+                else {
                     continue;
                 };
                 // Both the goal and the fold direction go through the same

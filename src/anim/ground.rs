@@ -34,7 +34,7 @@ use crate::det::{self, Rot};
 use glam::{Quat, Vec3};
 
 use super::ik::two_bone;
-use super::pose::Pose;
+use super::pose::{Pose, Posed};
 use super::pose_clip::PoseClip;
 use crate::plan::{FootKind, Limb, Zone};
 use crate::rig::Rig;
@@ -707,11 +707,63 @@ fn solve_leg(
     // distance but whether anything has posed the limb at all: the rest
     // configuration is itself a valid answer to a rest goal, and the one the
     // body's author chose.
+    //
+    // **But only where the solve would draw the limb as it rests** (#449):
+    // its middle joint swung no further than [`rest_swing`] reads to bend it
+    // on its pole's side, and its foot turned no further than [`rest_lean`]
+    // reads to stand it in `foot`'s attitude, the two together within
+    // [`CONTACT_TOLERANCE`] - so where a limb goes from one side of that to
+    // the other, the hand-over between its rest and the solve moves it no
+    // further than the solve's own tolerance. Where the body over it is
+    // turned, the rest bend and the rest foot are turned with it and the pole
+    // and the attitude are not: a Glider x Bat cross standing across a 20
+    // degree slope rides its trunk rolled the slope's whole 20 degrees, and
+    // its hind leg rests on a plane 0.21 rad off the one every frame round it
+    // solves it on. Left in its rest bend in the one frame its contact came
+    // within the tolerance of the goal, its stifle went 26.7 mm out and back
+    // in that frame, 63.8 mm a sixtieth at 144 frames a second. **The
+    // tolerance, not the verdict's slack, and the foot as well as the
+    // bend**: let through while the swing alone stayed within the verdict's
+    // five millimetres or more, the hand-over still jumped by that much on
+    // gentle slopes, where the swing is small - a Bat x Glider cross a degree
+    // across one moved a joint 8.0 mm a sixtieth standing still at 144 frames
+    // a second, against 0.7 solved every frame - and let through on the swing
+    // alone, a body pitched as a slope faced up or down pitches it kept its
+    // rest foot leaning off upright, a Glider x Bat cross half a degree up
+    // one moving 5.1 mm. A level body's limb rests in or near its pole's
+    // plane with its foot upright, so the level is left nearly as it was: a
+    // person's or a beast's as it was but for one frame of a cat's idle,
+    // whose paw went 0.7 mm a sixtieth out and back at 144 frames a second
+    // and no longer does, and a winged body's by under a millimetre, but
+    // for a Glider x Bird cross getting up from its curl, whose 5.6 mm a
+    // sixtieth among frames of 3 it took down to 2.8;
+    // persons and beasts on a slope stand their ankles to it, which poses
+    // the limb, and never come here at all. **Nor is a stride's**
+    // ([`Foot::Striding`]): its pole swings round with the stride
+    // (`quadruped::side_pole`) and the gait's own passes solve the leg again
+    // after this one whatever it did - solved here instead, a Cat x Horse
+    // cross's forepaw walking on the level ended a hundredth of a millimetre
+    // off where it walks.
+    let joint = |index: usize| rig.joints[chain[index]].position;
+    let span = joint(0).distance(joint(1)) + joint(1).distance(joint(2));
+    let allowed = CONTACT_STRAIN.max(span * super::ik::SOFT_ZONE);
     let untouched = chain
         .iter()
         .all(|&joint| pose.rotations[joint].angle_between(Quat::IDENTITY) <= REST_SLACK);
-    if untouched && pose.forward(rig).positions[contact].distance(target) <= CONTACT_TOLERANCE {
-        return true;
+    if untouched {
+        let posed = pose.forward(rig);
+        if posed.positions[contact].distance(target) <= CONTACT_TOLERANCE {
+            // The bend first, which costs no second sweep.
+            let drawn_as_rests = || {
+                let swing = rest_swing(&posed, chain, pole);
+                swing <= CONTACT_TOLERANCE
+                    && swing + rest_lean(rig, pose, &posed, (chain, contact), foot, (lay, target))
+                        <= CONTACT_TOLERANCE
+            };
+            if foot == Foot::Striding || drawn_as_rests() {
+                return true;
+            }
+        }
     }
 
     // **A stance stands a beast's foot up as the leg is solved** (#370). It
@@ -777,10 +829,56 @@ fn solve_leg(
     // extension, so the verdict allows the whole zone — the deliberate half,
     // and as much again for the hang wobbling across the limit — before it
     // cries strain. On the default leg that is 7.1 mm against the old flat 5.
-    let joint = |index: usize| rig.joints[chain[index]].position;
-    let span = joint(0).distance(joint(1)) + joint(1).distance(joint(2));
-    let allowed = CONTACT_STRAIN.max(span * super::ik::SOFT_ZONE);
     reached || pose.forward(rig).positions[contact].distance(target) <= allowed
+}
+
+/// How far a solve would swing `chain`'s middle joint, drawn in `posed`, to
+/// fold the limb toward `pole` rather than the way it is drawn: its distance
+/// off the line from the limb's top to its end, times the chord between the
+/// two directions square to that line. Nought for a limb drawn straight,
+/// which has no way it is drawn.
+///
+/// **What a solve sent where a limb already stands costs** (#449): it keeps
+/// the line and turns the bend about it onto its pole's side, which is the
+/// rest's own side when the limb stands as it was built and not when the
+/// body above it has been turned and the pole has not.
+fn rest_swing(posed: &Posed, chain: [usize; 3], pole: Vec3) -> f32 {
+    let [root, mid, tip] = chain.map(|joint| posed.positions[joint]);
+    let line = (tip - root).normalize_or_zero();
+    let square = |run: Vec3| run - line * run.dot(line);
+    let bend = square(mid - root);
+    match (bend.try_normalize(), square(pole - root).try_normalize()) {
+        (Some(drawn), Some(asked)) => bend.length() * drawn.distance(asked),
+        _ => 0.0,
+    }
+}
+
+/// How far a solve would move the foot hanging off `chain`'s last joint
+/// against its contact, standing it in `foot`'s attitude ([`attitude`])
+/// from the way `pose`, drawn in `posed`, holds it: the distance the ankle
+/// would go from where it hangs over the contact. Nought for a carried foot,
+/// and for a stood one already upright, as every foot of a level body at
+/// rest is.
+///
+/// **The foot's half of what a solve sent where a limb already stands
+/// costs** (#449), beside [`rest_swing`]'s bend: on a body pitched or
+/// rolled as a slope turns it, its rest foot is turned with it, and a solve
+/// stands it upright again.
+fn rest_lean(
+    rig: &Rig,
+    pose: &Pose,
+    posed: &Posed,
+    (chain, contact): ([usize; 3], usize),
+    foot: Foot,
+    (lay, target): (f32, Vec3),
+) -> f32 {
+    if foot == Foot::Carried {
+        return 0.0;
+    }
+    let mut stood = pose.clone();
+    attitude(rig, &mut stood, chain, contact, foot, lay, target);
+    let hang = |drawn: &Posed| drawn.positions[chain[2]] - drawn.positions[contact];
+    hang(&stood.forward(rig)).distance(hang(posed))
 }
 
 /// Turns the foot hanging off `chain`'s last joint to `foot`'s attitude:
@@ -1157,6 +1255,108 @@ mod contact_tests {
                 worst * 1000.0
             );
         }
+    }
+
+    /// A winged body of `lineage`, which stands on four.
+    fn winged(lineage: crate::plan::Lineage<crate::plan::WingedFamily>) -> Rig {
+        use crate::plan::Blended;
+        let mut params = crate::WingedParams::default();
+        params.set_lineage(lineage);
+        let record = crate::AvatarRecord::new("Winged", crate::Archetype::Winged(params));
+        crate::Avatar::build_for_shape(&record)
+            .expect("a winged body builds")
+            .rig
+    }
+
+    /// **#449.** A leg nothing has posed, sent along a path through where it
+    /// already stands on a body turned as a slope turns it, moves along the
+    /// path, not out of its rest and back: a Glider x Bat cross standing
+    /// across a 20 degree slope rides its trunk rolled the slope's 20
+    /// degrees, its hind leg resting on a plane 0.21 rad off the one the
+    /// solve folds it on, and left in that rest bend wherever its contact
+    /// came within the solve's tolerance of the goal, its stifle went 26.7
+    /// mm out and back in a frame of the driver's - here, rolled on its
+    /// rest, a joint moved 23.5 mm in a step of a tenth of a millimetre.
+    ///
+    /// **On every grade, not only the steep one**: the body rolled and
+    /// pitched every half degree from 20 one way to 20 the other, a glider,
+    /// a bat and the Glider x Bat cross, all four legs - what one leg does
+    /// on one roll its mirror does on the other. Let through while the
+    /// swing of its bend alone stayed within the solve's five millimetres of
+    /// slack, a leg still jumped by up to that slack on gentle grades, and
+    /// pitched by its rest foot leaning off upright: a bat's forelegs 6.4 mm
+    /// rolled 1.5 degrees, the cross's hind legs 6.0 at 4.5, a glider's hind
+    /// legs 34.2 pitched 20 degrees nose up - and 11.3 at 6.5 with the swing
+    /// held within the solve's own tolerance but the foot left out. Now no joint moves more than
+    /// the millimetre the level's own hand-over at that tolerance costs (0.8
+    /// mm, a bat's forelegs pitched half a degree). **And on a level body it
+    /// is still left alone** (#262).
+    #[test]
+    fn a_leg_nothing_has_posed_on_a_rolled_body_moves_with_its_goal() {
+        use crate::plan::{Lineage, WingedFamily};
+        let bodies = [
+            (
+                "Glider x Bat",
+                Lineage::cross(WingedFamily::Glider, WingedFamily::Bat, 0.5),
+            ),
+            ("bat", Lineage::pure(WingedFamily::Bat)),
+            ("glider", Lineage::pure(WingedFamily::Glider)),
+        ];
+        let mut failures = Vec::new();
+        for (name, lineage) in bodies {
+            let rig = winged(lineage);
+            for limb in [
+                Limb::HindLeft,
+                Limb::HindRight,
+                Limb::ForeLeft,
+                Limb::ForeRight,
+            ] {
+                let chain = rig.limb_chain(limb).expect("a leg");
+                let contact = rig.in_zone(Zone::Extremity(limb))[0];
+                for (turn, axis) in [("rolled", Vec3::Z), ("pitched", Vec3::X)] {
+                    for half in -40i8..=40 {
+                        let degrees = f32::from(half) * 0.5;
+                        let mut turned = Pose::rest(&rig);
+                        turned.rotations[0] =
+                            Rot::axis_angle(axis, degrees.to_radians()) * turned.rotations[0];
+                        let home = turned.forward(&rig).positions[contact];
+                        let drawn = |goal: Vec3| {
+                            let mut pose = turned.clone();
+                            solve_contact(&rig, &mut pose, limb, goal);
+                            let posed = pose.forward(&rig);
+                            [chain[1], chain[2], contact].map(|joint| posed.positions[joint])
+                        };
+                        // Two millimetres either side, a tenth of one at a time.
+                        let mut worst = 0.0f32;
+                        let mut was = drawn(home - Vec3::Y * 0.002);
+                        for step in 1..=40u8 {
+                            let now = drawn(home + Vec3::Y * (f32::from(step) * 1e-4 - 0.002));
+                            for (a, b) in was.iter().zip(&now) {
+                                worst = worst.max(a.distance(*b));
+                            }
+                            was = now;
+                        }
+                        if worst >= 1e-3 {
+                            failures.push(format!(
+                                "{name} {limb:?} {turn} {degrees} degrees: a joint moved {:.1} mm \
+                                 as its goal moved a tenth of a millimetre",
+                                worst * 1000.0
+                            ));
+                        }
+                    }
+                }
+                let mut level = Pose::rest(&rig);
+                let home = level.forward(&rig).positions[contact];
+                assert!(solve_contact(&rig, &mut level, limb, home));
+                assert!(
+                    chain
+                        .iter()
+                        .all(|&joint| level.rotations[joint] == Pose::rest(&rig).rotations[joint]),
+                    "{name} {limb:?}: a level body's unposed leg sent where it stands was solved"
+                );
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }
 
