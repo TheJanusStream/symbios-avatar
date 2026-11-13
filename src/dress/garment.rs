@@ -185,7 +185,8 @@ const ON_BONE: f32 = 1.05;
 /// the zone's, within `ON_BONE`. A corner of one of the cut's
 /// [`limbs`](GarmentCut::limbs) counts only up to that limb's share, measured
 /// as its position along the limb's [`Chain`], so the hem is a ring square to
-/// the limb wherever it lands.
+/// the limb wherever it lands - unless the face also has a corner in the
+/// cut's own zones, which makes it the limb's root, covered at any length.
 #[must_use]
 pub fn claimed(mesh: &PolyMesh, rig: &Rig, zones: &[Zone], cut: &GarmentCut) -> Vec<bool> {
     let zone_of = |corner: u32| zones.get(corner as usize).copied();
@@ -260,10 +261,12 @@ pub fn claimed(mesh: &PolyMesh, rig: &Rig, zones: &[Zone], cut: &GarmentCut) -> 
             // goes on its own; a limb's corners gathered by limb, with where
             // along it each lies.
             let mut anchored = false;
+            let mut trunk = false;
             let mut along: Vec<(usize, f32)> = Vec::new();
             for &corner in face {
                 if in_zones(corner) {
                     anchored = true;
+                    trunk = true;
                 } else if let Some(index) = limb_of(corner) {
                     anchored = true;
                     let (_, reach, chain) = &limbs[index];
@@ -281,14 +284,28 @@ pub fn claimed(mesh: &PolyMesh, rig: &Rig, zones: &[Zone], cut: &GarmentCut) -> 
             // slide it the rest of the way. A limb carries only four rows or
             // so per segment, and a hem that could only sit on a ring moved
             // in jumps of a sixth of the limb.
+            //
+            // **And a face with a corner on the cut's own trunk is the limb's
+            // ROOT, which every length covers** (#281). A length says how far
+            // down the limb a garment runs, and a face touching the pelvis is
+            // not down the leg at all: at the crotch the hip node stands out
+            // beside the pelvis and the crotch's skin hangs below and inside
+            // it, so read along the thigh's bone that skin lies at 0.17 to 0.21
+            // of the leg on seed 9 - past the shortest trousers' 0.175. The
+            // claim refused it, and the notch fill took it back only where the
+            // faces round it happened to make notches: seeds 16 and 29 wore
+            // their shorts open between the legs already, and once the crotch
+            // stopped folding through itself seed 9 did too. Not one published
+            // seed's garments move for it.
             anchored
-                && limbs.iter().enumerate().all(|(index, (_, reach, _))| {
-                    let (low, high) = along.iter().filter(|(limb, _)| *limb == index).fold(
-                        (f32::INFINITY, f32::NEG_INFINITY),
-                        |(low, high), &(_, at)| (low.min(at), high.max(at)),
-                    );
-                    low > high || 0.5 * (low + high) <= *reach
-                })
+                && (trunk
+                    || limbs.iter().enumerate().all(|(index, (_, reach, _))| {
+                        let (low, high) = along.iter().filter(|(limb, _)| *limb == index).fold(
+                            (f32::INFINITY, f32::NEG_INFINITY),
+                            |(low, high), &(_, at)| (low.min(at), high.max(at)),
+                        );
+                        low > high || 0.5 * (low + high) <= *reach
+                    }))
         })
         .collect()
 }

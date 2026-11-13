@@ -700,6 +700,16 @@ impl BeastHead {
     /// first sample inside any, so a ray that clips a lip's lobe on its way to the
     /// jaw lands on the lobe. From there the landing is the first way out of the
     /// head and the run together. `None` when `at` gives the ray no direction.
+    ///
+    /// **Except for a vertex nearer the run, whose ray leaves the run's own wall
+    /// short of the head (#408).** Under a head carried high the run hangs below
+    /// the muzzle, and a ray from the run's line forward through the throat passes
+    /// under the jaw and rises into it near the nose: taken outermost first, that
+    /// crossing drew the throat's skin out under the muzzle, and a hundred faces
+    /// there and more came out inside out, hidden by the jaw. Such a ray lands
+    /// where it first leaves the head and the run together, the wall beside the
+    /// vertex, as the cast from the run's line means it to; any other ray lands as
+    /// it did.
     #[must_use]
     pub fn surface_through(&self, at: Vec3) -> Option<Vec3> {
         let [back, front] = self.axis;
@@ -707,14 +717,30 @@ impl BeastHead {
         let share =
             ((at - back).dot(along) / along.length_squared().max(f32::EPSILON)).clamp(0.0, 1.0);
         let on_axis = back + along * share;
-        let anchor = self.nape.as_ref().map_or(on_axis, |nape| {
+        let (anchor, nearer_run) = self.nape.as_ref().map_or((on_axis, false), |nape| {
             let lead = (self.distance(at) - nape.distance(at)) / nape.blend;
             let lean = (0.5 * (lead + 1.0)).clamp(0.0, 1.0);
-            on_axis.lerp(nape.line_beside(at), lean * lean * (3.0 - 2.0 * lean))
+            (
+                on_axis.lerp(nape.line_beside(at), lean * lean * (3.0 - 2.0 * lean)),
+                lead > 0.0,
+            )
         });
         let direction = (at - anchor).try_normalize()?;
-        let start = march(|at| self.distance(at), anchor, direction, self.radius).unwrap_or(anchor);
         let step = self.radius / STEPS_PER_RADIUS;
+        let mut start =
+            march(|at| self.distance(at), anchor, direction, self.radius).unwrap_or(anchor);
+        if nearer_run && self.drawn_distance(anchor) <= 0.0 {
+            // Out of the run's own wall, where the ray leaves it short of the head.
+            let short = (start - anchor).length() - step;
+            let mut gone = step;
+            while gone < short {
+                if self.drawn_distance(anchor + direction * gone) > 0.0 {
+                    start = anchor + direction * (gone - step);
+                    break;
+                }
+                gone += step;
+            }
+        }
         if self.drawn_distance(start) > 0.0 {
             return Some(start);
         }

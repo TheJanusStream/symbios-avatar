@@ -9,7 +9,9 @@
 //! floor and `clavicle_x`'s, plus `extremity`'s pair. They are listed together
 //! on [`Dimensions`] and derived individually beside the expressions that meet
 //! them — and two of those six ends turned out under audit not to be walls at
-//! all, which the table on [`Dimensions`] says.
+//! all, which the table on [`Dimensions`] says. #409 added the floors and caps
+//! that hold every slider corner off them once the composites combine: the
+//! same table lists them.
 //!
 //! **Why this body has no trapezius, and what would give it one** — a
 //! body-plan constraint, established over six refuted constructions.
@@ -261,6 +263,16 @@ const CLAVICLE_RING_BLEND: f32 = 0.62;
 /// alternative is a magic 0.82 with the dependency unrecorded, which is the
 /// worse defect.
 const MAX_SOCKET_FRACTION: f32 = 0.82;
+/// [`CageConfig::socket_margin`](crate::CageConfig::socket_margin), mirrored for
+/// the same reason as [`MAX_SOCKET_FRACTION`] and with the same risk: a socket
+/// clears its siblings' rings by this share of its own ring's largest
+/// half-extent, so a floor priced without it lands exactly on the wall (#409).
+const SOCKET_MARGIN: f32 = 0.06;
+/// [`CageConfig::socket_distance`](crate::CageConfig::socket_distance),
+/// mirrored on the same terms: a socket is first placed this many of its
+/// joint's radii out, which is where its ring's blend toward the next node
+/// starts (#409).
+const SOCKET_DISTANCE: f32 = 0.9;
 /// See [`PELVIS_SECTION`]. A neck is very nearly round, but not quite — and it
 /// is not centred on its own joint either, which is what the depth here is for.
 ///
@@ -822,18 +834,43 @@ const A_POSE: f32 = 0.70;
 ///                               wall exists above the reachable 0.16
 ///   hip_x       >= 0.49  · pelvis_r   below it the two hip sockets overlap
 ///                                     (wall 0.468); does not bind inside ±1
+///               >= 0.47  · pelvis_r   again after the frame's division (#409;
+///                                     wall 0.45)
+///               >= 0.66  · hip_r      the two hip sockets overlap (wall 0.635)
 ///   clavicle_x  >= 1.41  · girdle_r   below it the girdle's neck socket runs
 ///                                     out of bone (wall 1.36)
+///   clavicle_r  <= 0.85  · girdle_r   past it the clavicle's socket or the
+///                                     girdle's hull fails (#409; wall 0.885)
+///   neck ring   <= clavicle_x / 1.42  the neck's socket ring on the girdle,
+///                                     priced as the mesher blends it; past it a
+///                                     short neck's ring buries the clavicles'
+///                                     sockets (#409; wall 1.37)
+///   neck bone   >= a second floor     the clavicle's rise and the socket's own
+///                                     margin, priced on the smaller ring (#409)
 ///   extremity    0.55 .. 1.36   the foot is a chain of small nodes on a
 ///                               stature-fixed length (walls 0.41 and 1.42);
-///                               the bottom end is editorial too
+///                               the bottom end is editorial too, and the
+///                               foot's share is held where the ankle is no
+///                               more than 1.43 heels wide (#409; wall 1.49)
 /// ```
 ///
 /// **Every figure in that table is measured against the gate it actually
 /// stands on** — a coefficient against the 1500 random bodies and the corners,
 /// a saturation against the 400 rerolled records — rather than carried
-/// forward. Two of the six ends are not mesher walls at all. Each is derived
-/// beside its own expression.
+/// forward. Two of the six original ends are not mesher walls at all. Each is
+/// derived beside its own expression.
+///
+/// **The #409 rows are measured against the slider census** (`examples/
+/// cornercensus --people`, 20,000 corners) and a uniform draw over the whole
+/// envelope, which the 1500 random bodies never reach: those bodies hold the
+/// signed axes to ±1 and the mass and fat at neutral. Before them 2,481 of the
+/// census's corners and 2,438 of 100,000 uniform bodies refused; none do in
+/// 320,000 and 400,000 now. The floors also bind on some bodies that built
+/// before: no published seed and none of rolls 0-299 moves, and 9 of 2,000
+/// rolls do (feminine or narrow-hipped, in the wildcard tail), but about one
+/// slider body in five that built moves - 29 % of 353 built census corners,
+/// 19 % of 391 built uniform bodies, at most hip_x +9.3 %, clavicle_r -20.1 %,
+/// the neck bone +12.2 %, neck_r -8.6 % and the feet +4.2 %.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Dimensions {
     /// Height of the pelvis node above the ground plane.
@@ -1713,7 +1750,25 @@ impl Dimensions {
         // clearance against the clavicle's socket and cannot be computed without
         // it. See [`Dimensions::clavicle_r`] for what the pair mean.
         let arm_upper = frame(femininity, 0.0369, 0.0304);
-        let clavicle_r = h * 0.040 * girth.at(0.61, 0.62, 0.35) * arm_upper;
+        //
+        // **Never fatter than 0.85 of the girdle it hangs off** (#409). The two
+        // carry different girth exponents and different frame factors, so on a
+        // heavy, soft, feminine body with narrow shoulders the clavicle grows to
+        // the girdle's own radius while `clavicle_x` sits on its floor in
+        // girdle radii: the clavicle's socket then cannot clear the girdle's
+        // other rings, or the girdle's hull will not close. No corner of the
+        // census reaches it; 43 of 100,000 bodies drawn uniformly over the
+        // whole envelope did, all with `femininity` over 1.7 and `mass` over
+        // 2.4. The wall is 0.885 on that draw, and 0.85 is it less the ~4% the
+        // other floors here carry. It binds on two rolls in 2,000, by under 2%.
+        // The clavicle is a stub inside attached geometry, so what the eye sees
+        // of this is the neck's floor below, which reads it.
+        const CLAVICLE_UNDER_GIRDLE: f32 = 0.85;
+        let clavicle_r = (h * 0.040 * girth.at(0.61, 0.62, 0.35) * arm_upper)
+            .min(girdle_r * CLAVICLE_UNDER_GIRDLE);
+        // How far the clavicle stands above the girdle, which the neck's floor
+        // has to clear as well as the ring on it. Hoisted for the same reason.
+        let clavicle_rise = h * 0.004;
 
         // The girdle is a joint, so its neck socket has to clear the clavicles'.
         // The neck above it is a plain connector and constrains nothing — an
@@ -1926,7 +1981,9 @@ impl Dimensions {
         // and the clavicle's plane has to clear that. They demand 1.31–1.76
         // girdle radii and are covered anyway, because their own length term is
         // longer than either figure. A body that ever fails there wants
-        // `clavicle_x`, not this.
+        // `clavicle_x`, not this - or a narrower neck, which is what #409 gave
+        // the slight bodies of the slider census that did (see `neck_r`'s cap
+        // beside `clavicle_x`).
         //
         // Provenance: **derived from the mesher, then bounded by bisection**
         // (#174). See [`CLAVICLE_RING_BLEND`] for the blend and its margin.
@@ -1935,6 +1992,26 @@ impl Dimensions {
         let neck_clearance = (GIRDLE_SECTION.y * girdle_r * (1.0 - CLAVICLE_RING_BLEND)
             + clavicle_r * CLAVICLE_RING_BLEND)
             / MAX_SOCKET_FRACTION;
+        // **And a second bound, which the blend above cannot be** (#409). The
+        // fit was taken on 400 rolled records, and it leaves out two terms that
+        // its margin hid there: the clavicle stands `clavicle_rise` above the
+        // girdle, and the neck's socket clears the clavicles' rings by
+        // [`SOCKET_MARGIN`] of its own. Where the girdle is small for its
+        // stature (the rise is `h · 0.004` whatever the girdle does, up to a
+        // quarter of its radius on a slight body) or the clavicle is nearly as
+        // fat as it, those two outrun the margin and the fit stops being a
+        // bound: 363 corners of the census refused at the girdle's neck
+        // socket, and 671 once the floors around it let more of them that far.
+        // The census's wall is under 0.92 of this. It prices the ring at
+        // the smaller of the two half-extents it blends between, which no blend
+        // can undercut, and adds both terms back. It sits under the fit on
+        // ordinary bodies, so it moves only short necks on such a girdle.
+        let neck_clearance = neck_clearance.max(
+            (clavicle_rise
+                + (GIRDLE_SECTION.y * girdle_r).min(clavicle_r)
+                + SOCKET_MARGIN * (GIRDLE_SECTION.y * girdle_r).min(neck_r))
+                / MAX_SOCKET_FRACTION,
+        );
         let neck_y = girdle_y + (h * 0.064 * (1.0 + 0.3 * params.neck_length)).max(neck_clearance);
         // How far the head reaches below its own joint, and it is a HEAD measure
         // rather than a stature one. This was `(h * 0.052).max(head_r * 0.45)`,
@@ -2154,6 +2231,18 @@ impl Dimensions {
             * (0.64 + 0.10 * params.hip_width).max(0.49)
             * frame(femininity, 0.0973, 0.0986)
             / frame(femininity, 0.0910, 0.1019);
+        //
+        // **The floor above is in pelvis radii BEFORE that division, and the
+        // division can take it under the wall** (#409). On a feminine frame the
+        // anchors' ratio falls below one - to 0.878 at the frame's clamp - so a
+        // narrow-hipped feminine body landed at 0.43 pelvis radii, under the
+        // 0.468 the sweep measured, and the hip's socket could not clear the
+        // spine's ring: 922 corners of the census refused at the pelvis. So the
+        // result is floored again, after the division. The wall there is 0.45
+        // on the census; 0.47 is it plus ~4%, which binds only on a feminine
+        // body whose `hip_width` is already past about -1.3.
+        const HIP_FLOOR: f32 = 0.47;
+        let hip_x = hip_x.max(pelvis_r * HIP_FLOOR);
         let hip_y = pelvis_y - hip_drop;
 
         // Where the knee sits between hip and ankle, and so how the leg's length
@@ -2408,19 +2497,8 @@ impl Dimensions {
         // meshing.
         let extremity = (1.0 + 0.3 * params.extremity_size).clamp(0.55, 1.36);
         //
-        // **The NARROWEST node of the level run sets the plane, and which end
-        // sets it is a meshability constraint rather than a preference.** Any
-        // common depth flattens the sole; picking the ball's — the deepest —
-        // asks every other node to stretch DOWN to meet it, and a section
-        // deepened is a section widened in its own plane, which eats the
-        // clearance a socket needs to open the hull. `tests/plan.rs` rejected it
-        // at once: `h=1.2 femininity=-3` wanted 0.0530 of bone where the foot
-        // had 0.0383. Taking the toe's depth instead moves every section the
-        // other way — shallower or unchanged, never deeper — so the sole comes
-        // out flat and no socket loses a millimetre it had before.
-        let sole_depth = foot_r * extremity * FOOT_TOE_WIDE * FOOT_FLAT;
-        let foot_y = sole_depth * FOOT_SOLE_KEPT;
-        let cap_y = foot_y * (1.0 - FOOT_CAP_DROP);
+        // The plane itself is set beside the foot's radii below, once the floor
+        // the ankle puts under them is known (#409).
 
         // The clavicle has to reach past the chest socket's corners before an
         // arm can attach — the single tightest constraint on the whole body.
@@ -2545,6 +2623,46 @@ impl Dimensions {
         // are co-extreme. 1.30 is that wall plus ~4% for the interactions the
         // seed sweep found; inside the old ±1 range the clamp never binds.
         let clavicle_x = girdle_r * (1.51 + 0.08 * params.shoulder_width).max(1.41);
+        // **The base of a short neck stands inside the shoulders** (#409). The
+        // neck's girth gain is softened (see above) and the girdle's is not, so
+        // on a slight body the neck keeps most of its width while the girdle
+        // and `clavicle_x` shrink with the ribcage. Where the neck is long that
+        // costs nothing: its socket sits on the girdle at `socket_distance`
+        // girdle radii and its ring blends from the girdle's half-width toward
+        // the neck's by how far along the bone that is, so it stays the
+        // girdle's size. A short neck takes its socket most of the way to the
+        // neck node and its ring most of the way to the neck's width, and at
+        // `mass` -3 with narrow feminine shoulders that ring was wider than the
+        // clavicles' sockets could clear (705 corners of the census).
+        //
+        // So it is the RING that is held inside the shoulder line, priced the
+        // way `Socket::set_dist` sizes it - blended by how far along the bone
+        // the socket stands, which is its first placement or the distance the
+        // neck's floor above says it must reach to clear the clavicles,
+        // whichever is further - and the neck is narrowed only as far as that
+        // takes. The wall is `clavicle_x` 1.37 ring half-widths on the census
+        // (1.36 refuses 154 corners); 1.42 is it plus ~4%. It narrows no roll in
+        // 2,000; a short neck on a slight, narrow-shouldered body is narrowed,
+        // and there the neck's girth follows `neck_length` and `shoulder_width`
+        // (femininity 3, mass -3, shoulder -3: neck_length from -0.25 to -3
+        // takes neck_r from 41.3 to 26.5 mm; the jaw hides it, no pinch shows).
+        // Narrowing the whole neck instead, at `clavicle_x / 1.4`,
+        // was tried and moved fifteen slight rolls, seed 0 among them, and took
+        // seed 0's chin under its own lip's floor (`the_chin_leads_its_own_lip`,
+        // 1.48 mm against 1.5).
+        const NECK_RING_UNDER_SHOULDER: f32 = 1.42;
+        let neck_bone = neck_y - girdle_y;
+        let neck_blend = ((SOCKET_DISTANCE * girdle_r)
+            .max(MAX_SOCKET_FRACTION * neck_clearance)
+            .min(MAX_SOCKET_FRACTION * neck_bone)
+            / neck_bone)
+            .min(1.0);
+        let neck_r = neck_r.min(
+            (clavicle_x / NECK_RING_UNDER_SHOULDER
+                - (1.0 - neck_blend) * GIRDLE_SECTION.x * girdle_r)
+                / neck_blend,
+        );
+        //
         // How high the shoulder mass arrives — and **raising it does not
         // shorten the visible neck, which was measured and is worth not
         // repeating** (#129).
@@ -2587,7 +2705,7 @@ impl Dimensions {
         //
         // Provenance: **unsourced**, and left there deliberately — #129 swept it
         // and the sweep argues for the value it already had.
-        let clavicle_y = girdle_y + h * 0.004;
+        let clavicle_y = girdle_y + clavicle_rise;
         // How far outboard of the clavicle the arm's chain starts.
         //
         // Down from 0.048. This and `clavicle_x` share the shoulder's width
@@ -2807,10 +2925,34 @@ impl Dimensions {
         // INTO the wrist instead of ballooning past it, which is the wrist
         // waist the render was missing.
         let hand_r = h * 0.013 * extremity;
-        let heel_r = foot_r * FOOT_HEEL_WIDE * extremity;
-        let cap_r = foot_r * FOOT_CAP_WIDE * extremity;
-        let ball_r = foot_r * FOOT_BALL_WIDE * extremity;
-        let toe_r = foot_r * FOOT_TOE_WIDE * extremity;
+        // **A heel no narrower than the ankle above it can stand on** (#409).
+        // `extremity` shrinks the foot to 0.55 and the ankle takes `mass`
+        // through the limb budget, so a heavy young body with the smallest feet
+        // put an ankle half again as wide as its heel on top of it, and the
+        // heel's hull stopped closing (380 corners of the census, 491 once the
+        // pelvis let more of them through). The wall is an ankle 1.49 heels
+        // wide; 1.43 is it less ~4%. The hand keeps the asked `extremity`:
+        // nothing hangs a fatter node on it.
+        const FOOT_UNDER_ANKLE: f32 = 1.43;
+        let foot_extremity = extremity.max(ankle_r / (FOOT_UNDER_ANKLE * FOOT_HEEL_WIDE * foot_r));
+        let heel_r = foot_r * FOOT_HEEL_WIDE * foot_extremity;
+        let cap_r = foot_r * FOOT_CAP_WIDE * foot_extremity;
+        let ball_r = foot_r * FOOT_BALL_WIDE * foot_extremity;
+        let toe_r = foot_r * FOOT_TOE_WIDE * foot_extremity;
+        //
+        // **The NARROWEST node of the level run sets the plane, and which end
+        // sets it is a meshability constraint rather than a preference.** Any
+        // common depth flattens the sole; picking the ball's - the deepest -
+        // asks every other node to stretch DOWN to meet it, and a section
+        // deepened is a section widened in its own plane, which eats the
+        // clearance a socket needs to open the hull. `tests/plan.rs` rejected it
+        // at once: `h=1.2 femininity=-3` wanted 0.0530 of bone where the foot
+        // had 0.0383. Taking the toe's depth instead moves every section the
+        // other way - shallower or unchanged, never deeper - so the sole comes
+        // out flat and no socket loses a millimetre it had before.
+        let sole_depth = foot_r * foot_extremity * FOOT_TOE_WIDE * FOOT_FLAT;
+        let foot_y = sole_depth * FOOT_SOLE_KEPT;
+        let cap_y = foot_y * (1.0 - FOOT_CAP_DROP);
 
         // **No seed rests its feet touching** (#305). The foot chain ran at
         // `hip_x`, full stop, and `hip_x` is the pelvis's business — so a
@@ -2831,6 +2973,17 @@ impl Dimensions {
         //
         // Provenance: **measured** over the roll envelope, 2026-08-20.
         const FOOT_CLEARANCE: f32 = 0.25;
+        // **And in the hip's own radii, which is what the closed form above
+        // `hip_x` is written in** (#409). `hip_r` and `pelvis_r` carry
+        // different exponents and only the pelvis takes the frame, so a heavy,
+        // soft, masculine body grows its hips a fifth fatter for its pelvis
+        // than the default does, and at the floor in pelvis radii its two hip
+        // sockets overlapped (111 corners of the census). The wall is 0.635 hip
+        // radii; 0.66 is it plus ~4%. It sits under the pelvis floor on the
+        // default body (0.49 pelvis radii is 0.716 hip radii there), so it binds
+        // only near that corner.
+        const HIP_SPREAD: f32 = 0.66;
+        let hip_x = hip_x.max(hip_r * HIP_SPREAD);
         let foot_half = ball_r * FOOT_KEPT;
         let foot_x = hip_x.max(foot_half * (1.0 + FOOT_CLEARANCE));
 

@@ -236,6 +236,58 @@ impl Cover {
     }
 }
 
+/// The beard regions reaching one texel, laid as one coverage (#432).
+///
+/// **One beard, not three coats of paint.** The chin's patch and the flanks'
+/// overlap under the jaw by design, so that no bare stripe opens between them,
+/// and each used to be laid over the texel in turn: at a density of 0.665 the
+/// overlap took `1 - (1 - 0.665)^2`, 0.89, and painted as a denser patch at each
+/// corner of the jaw and under the chin. Density is coverage and nothing else
+/// (#344), so where regions meet they share it: the coverage is their sum, held
+/// to the densest of them, and the colour is theirs in proportion to how much
+/// each brings. One region alone is laid exactly as it always was.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Beard {
+    /// The regions' coverages, summed.
+    held: f32,
+    /// The densest region's density.
+    densest: f32,
+    /// The regions' colours, each times its coverage.
+    tone: Vec3,
+    /// The region bringing the most, with its coverage and colour.
+    strongest: Option<(Follicle, f32, Vec3)>,
+    /// How many regions reach the texel.
+    count: u8,
+}
+
+impl Beard {
+    /// Adds one region at its mask's `weight` here.
+    pub fn add(&mut self, follicle: Follicle, weight: f32, paint: &Paint) {
+        let held = weight * paint.density;
+        if held <= 0.0 {
+            return;
+        }
+        self.held += held;
+        self.densest = self.densest.max(paint.density);
+        self.tone += paint.tone() * held;
+        if self.strongest.is_none_or(|(_, most, _)| held > most) {
+            self.strongest = Some((follicle, held, paint.tone()));
+        }
+        self.count += 1;
+    }
+
+    /// How much of the texel the beard covers, in what colour, and which region
+    /// brings the most of it - or `None` where no region reaches.
+    #[must_use]
+    pub fn laid(&self) -> Option<(f32, Vec3, Follicle)> {
+        let (follicle, held, tone) = self.strongest?;
+        if self.count == 1 {
+            return Some((held, tone, follicle));
+        }
+        Some((self.held.min(self.densest), self.tone / self.held, follicle))
+    }
+}
+
 /// The painted layer, region by region.
 ///
 /// One entry per [`Follicle`], in the same order, so that a panel, a record and
@@ -439,6 +491,58 @@ mod tests {
         }
         // And a scalp or a brow keeps the grain #205 tuned.
         assert!(Cover::of(Follicle::Scalp).is_none() && Cover::of(Follicle::Brows).is_none());
+    }
+
+    #[test]
+    fn beard_regions_that_meet_share_one_coverage() {
+        // **One beard, not three coats of paint** (#432). Laid one over the
+        // other, two regions each whole at a density of 0.665 took
+        // `1 - (1 - 0.665)^2` = 0.89 of the skin; together they take the
+        // density, and a region alone is laid exactly as it always was.
+        let ginger = Paint {
+            density: 0.665,
+            colour: [0.6, 0.35, 0.15],
+        };
+        let mut alone = Beard::default();
+        alone.add(Follicle::Chin, 0.4, &ginger);
+        let (held, tone, follicle) = alone.laid().expect("a region reaches");
+        assert_eq!(held, 0.4 * 0.665, "a region alone must be laid as it was");
+        assert_eq!(tone, ginger.tone());
+        assert_eq!(follicle, Follicle::Chin);
+
+        let mut both = Beard::default();
+        both.add(Follicle::Chin, 1.0, &ginger);
+        both.add(Follicle::Flanks, 1.0, &ginger);
+        let (held, tone, _) = both.laid().expect("two regions reach");
+        assert!(
+            (held - 0.665).abs() < 1e-6 && (tone - ginger.tone()).length() < 1e-6,
+            "two whole regions of one beard cover {held} in {tone:?}"
+        );
+
+        // Where they hand over, each part way, their shares add, so the seam
+        // between two regions is no thinner than either side of it.
+        let mut seam = Beard::default();
+        seam.add(Follicle::Chin, 0.5, &ginger);
+        seam.add(Follicle::Flanks, 0.5, &ginger);
+        assert!((seam.laid().expect("a seam").0 - 0.665).abs() < 1e-6);
+
+        // Two colours mix by what each brings, and the densest region caps it.
+        let grey = Paint {
+            density: 0.3,
+            colour: [0.5, 0.5, 0.5],
+        };
+        let mut mixed = Beard::default();
+        mixed.add(Follicle::Chin, 1.0, &ginger);
+        mixed.add(Follicle::Flanks, 1.0, &grey);
+        let (held, tone, follicle) = mixed.laid().expect("two regions reach");
+        let expected = (ginger.tone() * 0.665 + grey.tone() * 0.3) / 0.965;
+        assert!((held - 0.665).abs() < 1e-6 && (tone - expected).length() < 1e-6);
+        assert_eq!(follicle, Follicle::Chin, "the chin brings the most");
+
+        // A region that does not reach adds nothing.
+        let mut none = Beard::default();
+        none.add(Follicle::Moustache, 0.0, &ginger);
+        assert!(none.laid().is_none());
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! rest and up again, and an emote - held to the bounds the flight and the
 //! rests are held to on their own.
 
-use super::winged_bounds::{UNDER_GROUND, lowest_drawn, pops_over};
+use super::winged_bounds::{UNDER_GROUND, lowest_drawn, pops_over, turn_between};
 use symbios_avatar::anim::driver::{Driver, DriverConfig, Inputs, Source, level_ground};
 use symbios_avatar::anim::emote;
 use symbios_avatar::anim::winged::flight::{Flight, FlightMode};
@@ -211,7 +211,7 @@ fn live(label: &str, avatar: &Avatar, steps: Steps) -> Vec<String> {
             .iter()
             .zip(&turns[at - 1])
             .enumerate()
-            .map(|(joint, (a, b))| (a.angle_between(*b) * reference / deltas[at], joint))
+            .map(|(joint, (a, b))| (turn_between(*b, *a) * reference / deltas[at], joint))
             .fold(
                 (0.0f32, 0usize),
                 |best, this| if this.0 > best.0 { this } else { best },

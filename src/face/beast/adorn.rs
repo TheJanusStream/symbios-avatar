@@ -639,10 +639,10 @@ mod tests {
     /// clear stretch closes, but over several steps of a slider rather than one: the
     /// first clear tilt stepped by up to .53 of a head radius in one.
     ///
-    /// **Short of one**: an upper fang's thickness on the snub cat still steps by up to
-    /// .33 where its root, drawn in under the lip, moves from one column of places to
-    /// the next right at the jaw's shoulder, where the least lean that clears the jaw
-    /// turns on a hair of where the root is. #410 holds it.
+    /// The snub cat's upper fang along its thickness was the last exception: it stepped
+    /// by up to .33 while its lean read the jaw inside its own root's ring, and since
+    /// #410 it hangs straight there and its worst step is .093, as its root rises up
+    /// the lip.
     #[test]
     fn no_slider_makes_a_piece_jump() {
         const WIRE: f32 = 0.001;
@@ -661,12 +661,6 @@ mod tests {
                 .expect("a sampled head");
             for kind in OrnamentKind::ALL {
                 for (axis, low, high) in axes {
-                    if name == "cat muzzle -3"
-                        && kind == OrnamentKind::UpperFangs
-                        && axis == "thickness"
-                    {
-                        continue;
-                    }
                     // The tip, in head radii, at a slider's value in steps of the grid.
                     let tip = |grid: i32| {
                         let value = grid as f32 * WIRE;

@@ -277,5 +277,12 @@ fn a_beard_painted_at_full_density_is_its_own_colour() {
 ///
 /// Measured at #344: 1.003 on average at a density of one, the lowest tenth at
 /// 0.979 in a light brown and 0.998 in a dark one - the grain's swing in the
-/// hair's own shade, and a texel's byte rounding.
+/// hair's own shade, and a texel's byte rounding. Re-measured at #432, whose
+/// feather reads a mask over a little ellipse of skin round each texel, so that
+/// a texel whole at its centre but within that reach of the flanks' edge is
+/// not quite whole: the chin 1.000 and 1.001, the lowest tenth 0.997 and 0.976;
+/// the flanks 0.986 and 0.987, the lowest tenth 0.968 and 0.964, and no lower
+/// under any nudge of libm the engine's gate tries. At a density of a half the
+/// regions read 0.492 to 0.501 where they read 0.528 to 0.541 before, the
+/// overlap under the jaw no longer laying the chin and the flanks twice.
 const PAINTED_SLACK: f32 = 0.025;

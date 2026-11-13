@@ -841,13 +841,41 @@ fn turn_in_body(rig: &Rig, pose: &mut Pose, joint: usize, turn: Quat) {
 /// Lays out the wing that is `limb` as a [`Target::Wing`] key asks: its
 /// extension `offset.x`, raised by `offset.y` and swept forward by
 /// `offset.z` in quarter turns at its shoulder. A right wing's raise and
-/// sweep are the left's mirrored.
+/// sweep are the left's mirrored. Over the level floor: see [`wing_on`].
 ///
 /// **Out of whatever the pose held, not out of the fold**: a bat's wing is
 /// the leg it walks on, which the plant has already put down, so over the
 /// first [`WING_TAKE`] of the extension each joint the wing drives turns
 /// from where the pose had it to where the wing's own extension puts it.
-pub(crate) fn wing(rig: &Rig, pose: &mut Pose, limb: Limb, offset: Vec3) {
+fn wing(rig: &Rig, pose: &mut Pose, limb: Limb, offset: Vec3) {
+    wing_on(rig, pose, limb, offset, &crate::anim::driver::level_ground);
+}
+
+/// [`wing`] over `ground`, as [`crate::anim::Driver::drive`] plays a
+/// [`Target::Wing`] track (#457).
+///
+/// **A bat's wing is laid out as it was authored, over the level**: its
+/// shoulder and its hip, which the wing's membrane spreads with it, are
+/// turned to where the extension puts them in the body, whatever the ground
+/// under it. On a slope its stance had stood the legs it lifts for the
+/// slope, the wrist upright at the end of a foreleg reaching up it and the
+/// hind toes laid along it, and carried into the wing's spread as they stood, they
+/// went into the ground as it opened: a bat's hind toes 56.6 mm into a 20
+/// degree slope it faced up, the thumb on the side higher across one 27 mm.
+/// So on a slope, **as the wing takes the limbs it lifts, what they carry
+/// that the wing does not drive** - the wrist and the ankle, the pads and
+/// the toes - **turns back to how the wing was authored over** (their rest),
+/// by as far as the ground under the trunk is off level (`Under::tilted`),
+/// and **every foot of those limbs is kept out of the ground under it**
+/// (`ground::keep_feet_up`), lifted in the plane its leg is drawn in. On the
+/// level both leave the wing as it was: nothing there is in the ground.
+pub(crate) fn wing_on(
+    rig: &Rig,
+    pose: &mut Pose,
+    limb: Limb,
+    offset: Vec3,
+    ground: &dyn Fn(Vec3) -> Option<Ground>,
+) {
     let Some(wings) = &rig.wings else {
         return;
     };
@@ -858,27 +886,170 @@ pub(crate) fn wing(rig: &Rig, pose: &mut Pose, limb: Limb, offset: Vec3) {
     if extension <= 0.0 && offset.y == 0.0 && offset.z == 0.0 {
         return;
     }
-    let before: Vec<Quat> = side
-        .drives
-        .iter()
-        .map(|drive| pose.rotations[drive.joint])
+    let drives: Vec<usize> = side.drives.iter().map(|drive| drive.joint).collect();
+    let before: Vec<Quat> = drives.iter().map(|&joint| pose.rotations[joint]).collect();
+    // The legs the wing lifts: a bat's foreleg, and the hind leg its
+    // membrane spreads.
+    let legs: Vec<Limb> = rig
+        .ground_contacts()
+        .into_iter()
+        .filter(|&leg| {
+            rig.limb_chain(leg)
+                .is_some_and(|chain| chain.iter().any(|joint| drives.contains(joint)))
+        })
         .collect();
+    let tilted = Under::of(rig, pose, ground).map_or(0.0, |under| under.tilted);
     wings.pose_side(pose, limb, extension);
     let take = smooth((extension / WING_TAKE).clamp(0.0, 1.0));
-    for (drive, was) in side.drives.iter().zip(before) {
-        let written = pose.rotations[drive.joint];
-        pose.rotations[drive.joint] = det::slerp(was, written, take);
+    for (&joint, was) in drives.iter().zip(before) {
+        let written = pose.rotations[joint];
+        pose.rotations[joint] = det::slerp(was, written, take);
+    }
+    if tilted > 0.0 {
+        for &leg in &legs {
+            let Some(chain) = rig.limb_chain(leg) else {
+                continue;
+            };
+            let carried = std::iter::once(chain[2]).chain(rig.in_zone(Zone::Extremity(leg)));
+            for joint in carried.filter(|joint| !drives.contains(joint)) {
+                pose.rotations[joint] =
+                    det::slerp(pose.rotations[joint], Quat::IDENTITY, take * tilted);
+            }
+        }
     }
     let quarter = std::f32::consts::FRAC_PI_2;
-    if offset.y == 0.0 && offset.z == 0.0 {
-        return;
+    if (offset.y != 0.0 || offset.z != 0.0)
+        && let Some(&shoulder) = drives.first()
+    {
+        let mirror = if limb.is_left() { 1.0 } else { -1.0 };
+        let turn = Rot::y(-mirror * offset.z * quarter) * Rot::z(mirror * offset.y * quarter);
+        turn_in_body(rig, pose, shoulder, turn);
     }
-    let Some(shoulder) = side.drives.first().map(|drive| drive.joint) else {
-        return;
+    super::ground::keep_feet_up(rig, pose, ground, &legs);
+}
+
+/// The legs the wing that is `limb` lifts as it lays out ([`wing_on`]): a
+/// bat's foreleg, and the hind leg its membrane spreads.
+fn lifted_by(rig: &Rig, limb: Limb) -> Vec<Limb> {
+    let Some(side) = rig
+        .wings
+        .as_ref()
+        .and_then(|wings| wings.sides.iter().find(|side| side.limb == limb))
+    else {
+        return Vec::new();
     };
-    let mirror = if limb.is_left() { 1.0 } else { -1.0 };
-    let turn = Rot::y(-mirror * offset.z * quarter) * Rot::z(mirror * offset.y * quarter);
-    turn_in_body(rig, pose, shoulder, turn);
+    let drives: Vec<usize> = side.drives.iter().map(|drive| drive.joint).collect();
+    rig.ground_contacts()
+        .into_iter()
+        .filter(|&leg| {
+            rig.limb_chain(leg)
+                .is_some_and(|chain| chain.iter().any(|joint| drives.contains(joint)))
+        })
+        .collect()
+}
+
+/// The legs a clip's wings have taken any of (`taken`, as [`wings_taken`]
+/// reads it): what a stride's settle leaves off the ground (#460).
+pub(crate) fn legs_taken(rig: &Rig, taken: &[(Limb, f32)]) -> Vec<Limb> {
+    let mut legs = Vec::new();
+    for &(limb, share) in taken {
+        if share > 0.0 {
+            for leg in lifted_by(rig, limb) {
+                if !legs.contains(&leg) {
+                    legs.push(leg);
+                }
+            }
+        }
+    }
+    legs
+}
+
+/// Every joint of the legs a clip's wings have taken (`taken`, as
+/// [`wings_taken`] reads it), with its turn in `pose` and how far the wing
+/// has it: what [`give_back`] hands back to the wing after a stride's settle
+/// (#460). **And on a body on two, the wing's own root** (#460's fixer),
+/// which the stride's `ground::hold_wings` turns up for any feather under
+/// the height it stands at folded - a wing laid out by the clip is the
+/// clip's, as it is standing, where nothing holds it. Empty where no wing
+/// has taken a leg or been laid out.
+pub(crate) fn wing_held(rig: &Rig, pose: &Pose, taken: &[(Limb, f32)]) -> Vec<(usize, Quat, f32)> {
+    let mut held: Vec<(usize, Quat, f32)> = Vec::new();
+    for &(limb, share) in taken {
+        let share = share.clamp(0.0, 1.0);
+        if share <= 0.0 {
+            continue;
+        }
+        let mut joints = Vec::new();
+        for leg in lifted_by(rig, limb) {
+            let Some(chain) = rig.limb_chain(leg) else {
+                continue;
+            };
+            joints.extend(chain.into_iter().chain(rig.in_zone(Zone::Extremity(leg))));
+        }
+        if !rig.four_legged() {
+            joints.extend(rig.in_zone(Zone::UpperLimb(limb)).first().copied());
+        }
+        for joint in joints {
+            match held.iter_mut().find(|(at, ..)| *at == joint) {
+                Some(entry) => entry.2 = entry.2.max(share),
+                None => held.push((joint, pose.rotations[joint], share)),
+            }
+        }
+    }
+    held
+}
+
+/// Every joint of the legs a winged body on two walks on, with its turn in
+/// `pose`, all of it: what [`give_back`] hands back to the stride after an
+/// emote is laid over a walk (#460's fixer). Empty on a body on four.
+pub(crate) fn walked_legs(rig: &Rig, pose: &Pose) -> Vec<(usize, Quat, f32)> {
+    if rig.wings.is_none() || rig.four_legged() {
+        return Vec::new();
+    }
+    let mut held: Vec<(usize, Quat, f32)> = Vec::new();
+    for leg in rig.ground_contacts() {
+        let Some(chain) = rig.limb_chain(leg) else {
+            continue;
+        };
+        for joint in chain.into_iter().chain(rig.in_zone(Zone::Extremity(leg))) {
+            if !held.iter().any(|&(at, ..)| at == joint) {
+                held.push((joint, pose.rotations[joint], 1.0));
+            }
+        }
+    }
+    held
+}
+
+/// Turns each joint [`wing_held`] read back toward the turn it had, by as
+/// far as the wing has its leg (#460).
+pub(crate) fn give_back(pose: &mut Pose, held: &[(usize, Quat, f32)]) {
+    for &(joint, turn, share) in held {
+        if let Some(now) = pose.rotations.get_mut(joint) {
+            *now = det::slerp(*now, turn, share).normalize();
+        }
+    }
+}
+
+/// How far each wing `clip` lays out at `time` has taken the leg it is
+/// ([`wing_on`], over the first [`WING_TAKE`] of its extension), `0..=1`, on
+/// a winged body: what `ground::keep_clear` lets go of a crawling hand by
+/// (#457). None on a body with no wings.
+pub(crate) fn wings_taken(rig: &Rig, clip: &Clip, time: f32) -> Vec<(Limb, f32)> {
+    if rig.wings.is_none() {
+        return Vec::new();
+    }
+    clip.tracks
+        .iter()
+        .filter_map(|track| match track.target {
+            Target::Wing(limb) => track.offset_at(time, clip.looping).map(|offset| {
+                (
+                    limb,
+                    smooth((offset.x.clamp(0.0, 1.0) / WING_TAKE).clamp(0.0, 1.0)),
+                )
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// How much of a wing's extension it takes to turn from the pose it was in

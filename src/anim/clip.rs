@@ -34,7 +34,7 @@ use glam::{Quat, Vec3};
 
 use super::gait::incline_trunk;
 use super::gaze::{GazeConfig, look_at};
-use super::ground::{Foot, solve_contact_laid_by, solve_contact_with};
+use super::ground::{Foot, solve_contact_held, solve_contact_laid_by, solve_contact_with};
 use super::pose::Pose;
 use crate::plan::{Limb, Zone};
 use crate::rig::{Rig, Role, landmark};
@@ -695,7 +695,7 @@ impl Clip {
                 .tracks
                 .iter()
                 .any(|track| track.space == Space::World && !track.target.resolve(rig).is_empty()))
-        .then(|| pose.forward(rig).positions);
+        .then(|| pose.forward(rig));
 
         for track in ordered {
             let Some(offset) = track.offset_at(time, self.looping) else {
@@ -764,7 +764,7 @@ impl Clip {
                     continue;
                 }
                 Target::Wing(limb) => {
-                    super::winged::rests::wing(rig, pose, limb, offset);
+                    super::winged::rests::wing_on(rig, pose, limb, offset, ground);
                     continue;
                 }
                 Target::Fan => {
@@ -812,7 +812,7 @@ impl Clip {
                     (Some(stood), Space::World) => rig
                         .in_zone(Zone::Extremity(limb))
                         .first()
-                        .map(|&pad| stood[pad]),
+                        .map(|&pad| stood.positions[pad]),
                     _ => rest_contact(rig, limb),
                 };
                 let (Some(reach), Some(home), Some(rest_pole)) =
@@ -844,11 +844,32 @@ impl Clip {
                         )
                     })
                     .unwrap_or(rest_pole);
-                let goal = frame.at(home + offset * unit);
+                let mut goal = frame.at(home + offset * unit);
+                // **And sent along the ground under it** (#457): a winged
+                // foot's world offset is the author's on the level, and on a
+                // slope it is carried up or down by as far as the ground
+                // rises from where the foot stood to where it is sent - a
+                // glider's bow walking its forepaws out ahead put them 12 mm
+                // into a 20 degree slope it faced up, a Glider x Bat cross's
+                // 27. Nothing on the level, nor for a foot held where it is.
+                let stood_world = stood.as_ref().filter(|_| track.space == Space::World);
+                if stood_world.is_some()
+                    && offset != Vec3::ZERO
+                    && let (Some(from), Some(to)) = (ground(home), ground(goal))
+                {
+                    goal.y += to.position.y - from.position.y;
+                }
                 // A laid foot goes down as the track does: see
-                // [`solve_contact_laid_by`].
+                // [`solve_contact_laid_by`]. **A winged foot held where it
+                // stands keeps the attitude it stood at** (#457): see
+                // [`solve_contact_held`].
+                let held = stood_world
+                    .filter(|_| track.foot == Foot::Stood)
+                    .and_then(|stood| Some(stood.rotations[rig.limb_chain(limb)?[2]]));
                 let reached = if track.foot == Foot::Laid {
                     solve_contact_laid_by(rig, pose, limb, goal, frame.at(pole), engaged)
+                } else if let Some(held) = held {
+                    solve_contact_held(rig, pose, limb, goal, frame.at(pole), held)
                 } else {
                     solve_contact_with(rig, pose, limb, goal, frame.at(pole), track.foot)
                 };

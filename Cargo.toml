@@ -1,6 +1,6 @@
 [package]
 name = "symbios-avatar"
-version = "0.24.3"
+version = "0.24.4"
 edition = "2024"
 authors = ["Janus"]
 description = "Engine-agnostic parametric avatar engine: procedural humanoid and creature bodies from small records."
@@ -119,6 +119,13 @@ path = "tests/main.rs"
 [[example]]
 name = "render"
 path = "examples/render/main.rs"
+test = true
+
+# The chest ruler's own tests, for the same reason (#294): its rays once
+# bisected over their whole length and read an arm as a chest.
+[[example]]
+name = "chestsection"
+path = "examples/chestsection.rs"
 test = true
 
 # The test profile, measured (#332).

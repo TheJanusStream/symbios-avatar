@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use symbios_texture::generator::TextureMap;
 use symbios_texture::normal::{BoundaryMode, height_to_normal};
 
-use super::bake::AtlasGeometry;
+use super::bake::{AtlasGeometry, Footprint, Footprints};
 use crate::hair::follicle::{Follicle, Follicles};
 use crate::hair::painted::PaintedHair;
 use crate::plan::{Composites, Zone};
@@ -464,9 +464,30 @@ fn wrinkled(zone: Zone) -> bool {
 /// why this is a plain function rather than a
 /// [`symbios_texture::generator::TextureGenerator`]: that trait promises to
 /// generate at any requested size, and a baked atlas cannot honour it.
+///
+/// A beard painted here has the hard edge: its masks are read at each texel's
+/// centre alone, because how much skin a texel spans is measured beside the
+/// atlas rather than in it, and [`crate::Avatar::build`] is what bakes and
+/// paints with that measure, feathering the edge over the texels the atlas has
+/// (#432).
 #[must_use]
 pub fn paint_skin(
     geometry: &AtlasGeometry,
+    rig: &Rig,
+    params: &SkinParams,
+    condition: &Condition,
+    hair: Option<&PaintedLayer>,
+) -> TextureMap {
+    paint_skin_with(geometry, None, rig, params, condition, hair)
+}
+
+/// [`paint_skin`], with how much skin each texel spans, from
+/// [`super::bake::bake_measured`], to feather a beard's edge by - see
+/// [`feathered`]. `None` paints the hard edge.
+#[must_use]
+pub(crate) fn paint_skin_with(
+    geometry: &AtlasGeometry,
+    footprints: Option<&Footprints>,
     rig: &Rig,
     params: &SkinParams,
     condition: &Condition,
@@ -619,9 +640,31 @@ pub fn paint_skin(
             // the relief and roughness take: they want one number for hair
             // standing out of skin, whichever region it belongs to.
             let mut coarsest = 1.0f32;
-            for follicle in Follicle::ALL {
+            // **The beard regions are read through a feather and laid as one**
+            // (#432). See [`feathered`] for the first and
+            // [`crate::hair::painted::Beard`] for the second.
+            let bearded = Follicle::ALL.into_iter().any(|follicle| {
+                crate::hair::painted::Cover::of(follicle).is_some()
+                    && hair.painted.of(follicle).shows()
+            });
+            let footprint = footprints.and_then(|all| all.get(index));
+            let feather =
+                bearded.then(|| feathered(hair.follicles, local, texel.normal, footprint));
+            let mut beard = crate::hair::painted::Beard::default();
+            for (slot, follicle) in Follicle::ALL.into_iter().enumerate() {
                 let paint = hair.painted.of(follicle);
                 if !paint.shows() {
+                    continue;
+                }
+                // **A beard region's paint is coverage** (#344): at a density of
+                // one the texel is the hair's colour, with the grain in the
+                // coverage and the shade rather than in skin showing through.
+                // See [`crate::hair::painted::Cover`]. Gathered here and laid
+                // below, all three at once.
+                if crate::hair::painted::Cover::of(follicle).is_some() {
+                    if let Some(weights) = feather {
+                        beard.add(follicle, weights[slot], paint);
+                    }
                     continue;
                 }
                 let held = hair.follicles.weight(follicle, local) * paint.density;
@@ -634,18 +677,6 @@ pub fn paint_skin(
                 // cells of checkerboard. See [`Grain`].
                 let grain = crate::hair::painted::Grain::of(follicle);
                 let speckle = noise3(&stubble_field, p, grain.cells) * 0.5 + 0.5;
-                // **A beard region's paint is coverage** (#344): at a density of
-                // one the texel is the hair's colour, with the grain in the
-                // coverage and the shade rather than in skin showing through.
-                // See [`crate::hair::painted::Cover`].
-                if let Some(cover) = crate::hair::painted::Cover::of(follicle) {
-                    let resolved = resolvable(grain.cells);
-                    let hair = (paint.tone() * cover.shade(speckle, resolved))
-                        .clamp(Vec3::ZERO, Vec3::ONE);
-                    colour = colour.lerp(hair, cover.amount(held, speckle, resolved));
-                    painted = (painted + held).min(1.0);
-                    continue;
-                }
                 let broken = grain.at(speckle, resolvable(grain.cells));
                 // Toward the hair's own colour, darkened by the skin under it
                 // rather than replacing it: a hair painted on skin is a hair
@@ -656,6 +687,17 @@ pub fn paint_skin(
                 colour = colour.lerp(paint.tone(), held * broken * grain.reach);
                 painted = (painted + held).min(1.0);
                 coarsest = coarsest.min(broken);
+            }
+            // The beard, laid once over whichever of its regions reach here.
+            if let Some((held, tone, follicle)) = beard.laid() {
+                let grain = crate::hair::painted::Grain::of(follicle);
+                let speckle = noise3(&stubble_field, p, grain.cells) * 0.5 + 0.5;
+                let resolved = resolvable(grain.cells);
+                if let Some(cover) = crate::hair::painted::Cover::of(follicle) {
+                    let hair = (tone * cover.shade(speckle, resolved)).clamp(Vec3::ZERO, Vec3::ONE);
+                    colour = colour.lerp(hair, cover.amount(held, speckle, resolved));
+                    painted = (painted + held).min(1.0);
+                }
             }
             painted *= coarsest;
         }
@@ -776,6 +818,144 @@ pub fn paint_skin(
         mip_level_count: 1,
     }
 }
+
+/// The follicle weights at one texel, read over a little ellipse of skin
+/// around it rather than at its centre alone (#432).
+///
+/// **A mask's edge is a few millimetres of skin, and under the jaw that is less
+/// than a texel.** The head is one chart wrapped round the neck, so its texel
+/// rows go by height and its columns by the way round: where the skin under the
+/// jaw and behind it turns to face along that wrap, a texel spans four to eight
+/// millimetres of it, and a chin patch fading over five went from bare skin to
+/// its whole colour between one texel and the next - the coarse, hard-edged
+/// patches under the chin and down the back of the jaw. Measured on seeds 175
+/// and 237 (#432), a beard-texel's widest step to its neighbour is 1.6 to 2.0 mm
+/// at the median, 7.4 to 7.8 at the ninetieth percentile.
+///
+/// So the weights are averaged over a little ellipse of the skin round the
+/// texel, a Gaussian [`FEATHER`] of the texel's own [`Footprint`] across each
+/// way: on the face, where a texel is a millimetre, it moves an edge by a
+/// fraction of its own fade; under the jaw it spreads the edge over the texels
+/// the atlas actually has there. **An ellipse, not a disc**, because under the
+/// jaw the atlas is coarse one way and fine the other: a disc as wide as the
+/// coarse step spread the edge over four to sixteen of the fine texels, painting
+/// a half-tone halo past a mask's edge and thinning the beard inside it - though
+/// no flatter than [`FEATHER_ROUNDNESS`], whose reasons are the fold under the
+/// chin. Sampled in body space like every other field here, and sized
+/// by a field that is itself continuous over the body, so the feather agrees
+/// with itself across the chart's seams: sized by the painter's own step to the
+/// next texel instead, two texels at one place on the jaw read different steps
+/// and painted up to a third of the beard's density apart. A whole mask stays
+/// whole and an empty one empty, to the bit: the weights are normalised by the
+/// same sum, in the same order. No footprint, or one of no size, reads the
+/// centre alone.
+fn feathered(
+    follicles: &Follicles,
+    local: Vec3,
+    normal: Vec3,
+    footprint: Option<&Footprint>,
+) -> [f32; 5] {
+    let Some([major, minor]) = footprint
+        .map(|footprint| footprint.axes)
+        .filter(|[major, _]| major.length() > f32::EPSILON)
+    else {
+        return follicles.weights(local);
+    };
+    // No flatter than `FEATHER_ROUNDNESS`, the fine way read at right angles
+    // to the coarse one where the footprint has no width that way at all.
+    let least = FEATHER_ROUNDNESS * major.length();
+    let minor = if minor.length() >= least {
+        minor
+    } else {
+        minor
+            .try_normalize()
+            .unwrap_or_else(|| normal.cross(major).normalize_or_zero())
+            * least
+    };
+    let (major, minor) = (major * FEATHER, minor * FEATHER);
+    let mut sum = follicles.weights(local);
+    let mut total = 1.0f32;
+    let mut take = |offset: Vec3, weight: f32| {
+        let weights = follicles.weights(local + offset);
+        for (into, from) in sum.iter_mut().zip(weights) {
+            *into += from * weight;
+        }
+        total += weight;
+    };
+    for (inner, outer) in FEATHER_RING.iter().zip(FEATHER_RING_TURNED) {
+        take(major * inner[0] + minor * inner[1], FEATHER_INNER);
+        take((major * outer[0] + minor * outer[1]) * 2.0, FEATHER_OUTER);
+    }
+    sum.map(|weight| weight / total)
+}
+
+/// How wide the beard's feather is, in the texel's own footprints each way:
+/// the Gaussian's deviation, whose two rings [`feathered`] samples at one and
+/// two of it.
+///
+/// Provenance: **measured** (#432) between guards that pull opposite ways,
+/// with [`FEATHER_ROUNDNESS`], each held to a hundredth inside its bound under
+/// every nudge of libm the engine's gate tries. Wider takes more off the
+/// largest step a beard's coverage takes between two neighbouring texels
+/// (`a_painted_beard_fades_over_texels_the_atlas_has`, bound 0.80 and the
+/// thousandth-worst 0.55): on seed 237 0.733 and 0.511 here, at most 0.736 and
+/// 0.526 under a nudge; at 1.0 the thousandth-worst read 0.541 under one.
+/// Narrower paints less of a halo past a mask's edge and thins less of the
+/// beard inside it (`a_feathered_beard_paints_no_halo_and_thins_no_edge`), and
+/// reads more of the flanks under a whole mask as whole
+/// (`a_beard_painted_at_full_density_is_its_own_colour`, the lowest tenth
+/// bound at 0.95 and the mean at 0.975): 0.964 and 0.986 here, under every
+/// nudge. Builder E's round disc of one footprint read 0.711 and 0.475 on the
+/// first and 0.952 and 0.983 on the second, and painted the most halo: 182 to
+/// 446 texels across twelve bearded rolls, against 108 to 301 here.
+const FEATHER: f32 = 1.05;
+
+/// How flat the feather's ellipse may be: its short axis no shorter than this
+/// share of its long one.
+///
+/// **The footprint's fine way is not to be trusted all the way down.** Where
+/// the head's chart folds under the chin, two sheets of skin lie over one
+/// patch of the atlas and the texels in it fall to one sheet or the other, so
+/// two texels side by side stand five to ten millimetres apart on the skin
+/// where the faces there read one or two the fine way, and elsewhere under the
+/// jaw the faces round a vertex read the fine way finer than the texels stand.
+/// A feather that fine left those steps nearly as hard as no feather at all:
+/// with no floor, seed 237's steepest step read 0.957 of the density at 1.0
+/// footprint and still 0.920 at 1.25 (bound 0.80), its thousandth-worst 0.608
+/// and 0.551 (bound 0.55); at 0.6 of the long axis 0.775 and 0.544, at 0.7
+/// 0.749 and 0.526. Rounder gives the halo back: 0.8 at 1.0 footprint painted
+/// more of it than 0.7 at 1.05 on four of five rolls, and as much on the fifth.
+///
+/// Provenance: **measured** (#432), with [`FEATHER`].
+const FEATHER_ROUNDNESS: f32 = 0.7;
+
+/// The inner ring's directions, a hexagon.
+const FEATHER_RING: [[f32; 2]; 6] = [
+    [1.0, 0.0],
+    [0.5, 0.866_025_4],
+    [-0.5, 0.866_025_4],
+    [-1.0, 0.0],
+    [-0.5, -0.866_025_4],
+    [0.5, -0.866_025_4],
+];
+
+/// The outer ring's, the same hexagon turned by half a step so its samples
+/// fall between the inner ring's.
+const FEATHER_RING_TURNED: [[f32; 2]; 6] = [
+    [0.866_025_4, 0.5],
+    [0.0, 1.0],
+    [-0.866_025_4, 0.5],
+    [-0.866_025_4, -0.5],
+    [0.0, -1.0],
+    [0.866_025_4, -0.5],
+];
+
+/// A Gaussian's weight one deviation out, `exp(-1/2)`, written out so that no
+/// platform's `exp` decides a byte of the atlas.
+const FEATHER_INNER: f32 = 0.606_530_66;
+
+/// And two deviations out, `exp(-2)`.
+const FEATHER_OUTER: f32 = 0.135_335_28;
 
 /// Samples 3-D noise at `frequency` cycles per metre, in `-1..=1`.
 fn noise3(field: &Simplex, point: Vec3, frequency: f32) -> f32 {

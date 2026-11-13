@@ -664,6 +664,33 @@ pub(crate) fn solve_contact_laid_by(
     )
 }
 
+/// [`solve_contact_with`] a [`Foot::Stood`] foot, stood at `held` - the
+/// attitude its ankle had in the pose a clip is laid over - rather than
+/// upright in the pose's space (#457): a winged body's foot a clip holds
+/// where it stands, which its idle stood to the slope under it. Stood
+/// upright instead, the ankle swung over the contact and carried the leg
+/// with it, a rolled glider's stifle 8 mm lower and into a slope it faced up
+/// as it groomed or shook. On the level its idle stands it upright, as
+/// [`Foot::Stood`] would.
+pub(crate) fn solve_contact_held(
+    rig: &Rig,
+    pose: &mut Pose,
+    limb: Limb,
+    target: Vec3,
+    pole: Vec3,
+    held: Quat,
+) -> bool {
+    solve_leg_held(
+        rig,
+        pose,
+        limb,
+        target,
+        pole,
+        (Foot::Stood, 1.0),
+        Some(held),
+    )
+}
+
 /// The solve behind every entry above: `foot`'s attitude, a laid one `lay`
 /// of the way.
 fn solve_leg(
@@ -674,6 +701,20 @@ fn solve_leg(
     pole: Vec3,
     foot: Foot,
     lay: f32,
+) -> bool {
+    solve_leg_held(rig, pose, limb, target, pole, (foot, lay), None)
+}
+
+/// [`solve_leg`], a [`Foot::Stood`] foot stood at `held` where one is given
+/// ([`solve_contact_held`]) and upright where none is.
+fn solve_leg_held(
+    rig: &Rig,
+    pose: &mut Pose,
+    limb: Limb,
+    target: Vec3,
+    pole: Vec3,
+    (foot, lay): (Foot, f32),
+    held: Option<Quat>,
 ) -> bool {
     let Some(chain) = rig.limb_chain(limb) else {
         return false;
@@ -757,7 +798,15 @@ fn solve_leg(
             let drawn_as_rests = || {
                 let swing = rest_swing(&posed, chain, pole);
                 swing <= CONTACT_TOLERANCE
-                    && swing + rest_lean(rig, pose, &posed, (chain, contact), foot, (lay, target))
+                    && swing
+                        + rest_lean(
+                            rig,
+                            pose,
+                            &posed,
+                            (chain, contact),
+                            (foot, held),
+                            (lay, target),
+                        )
                         <= CONTACT_TOLERANCE
             };
             if foot == Foot::Striding || drawn_as_rests() {
@@ -775,7 +824,7 @@ fn solve_leg(
     // ankle is sent, which is what the crouch's sink is reckoned for.
     let mut reached = false;
     for _ in 0..CONTACT_PASSES {
-        attitude(rig, pose, chain, contact, foot, lay, target);
+        attitude(rig, pose, chain, contact, (foot, held), lay, target);
         let posed = pose.forward(rig);
         // The convergence check reads the pose the *previous* pass left, which
         // costs at most one extra pass and saves a whole forward-kinematics
@@ -808,7 +857,7 @@ fn solve_leg(
         };
         reached = two_bone(rig, pose, chain, goal, pole);
     }
-    attitude(rig, pose, chain, contact, foot, lay, target);
+    attitude(rig, pose, chain, contact, (foot, held), lay, target);
 
     // **The verdict gets its own tolerance, and a looser one.** `reached` means
     // "this limb strained" to every caller, and neither of the obvious readings
@@ -869,14 +918,14 @@ fn rest_lean(
     pose: &Pose,
     posed: &Posed,
     (chain, contact): ([usize; 3], usize),
-    foot: Foot,
+    (foot, held): (Foot, Option<Quat>),
     (lay, target): (f32, Vec3),
 ) -> f32 {
     if foot == Foot::Carried {
         return 0.0;
     }
     let mut stood = pose.clone();
-    attitude(rig, &mut stood, chain, contact, foot, lay, target);
+    attitude(rig, &mut stood, chain, contact, (foot, held), lay, target);
     let hang = |drawn: &Posed| drawn.positions[chain[2]] - drawn.positions[contact];
     hang(&stood.forward(rig)).distance(hang(posed))
 }
@@ -886,13 +935,14 @@ fn rest_lean(
 /// [`level_feet`] lays a sole in on level ground - in the leg's pantograph
 /// as [`super::quadruped::stand`] stands a stride's, or laid `lay` of the way
 /// flat ahead of its ankle with `contact`'s toes turned back as far; a
-/// carried foot is left alone.
+/// carried foot is left alone. A stood foot given `held` is stood at that
+/// attitude in the pose's space instead of upright ([`solve_contact_held`]).
 fn attitude(
     rig: &Rig,
     pose: &mut Pose,
     chain: [usize; 3],
     contact: usize,
-    foot: Foot,
+    (foot, held): (Foot, Option<Quat>),
     lay: f32,
     target: Vec3,
 ) {
@@ -905,10 +955,11 @@ fn attitude(
     }
     let carried = pose.forward(rig).rotations[chain[1]];
     if foot == Foot::Stood {
-        pose.rotations[chain[2]] = folded_within(
-            carried.inverse(),
-            ankle_limit(rig, &FootingConfig::default()),
-        );
+        let limit = ankle_limit(rig, &FootingConfig::default());
+        pose.rotations[chain[2]] = match held {
+            Some(held) => folded_within(carried.inverse() * held, limit),
+            None => folded_within(carried.inverse(), limit),
+        };
         return;
     }
     // A quarter turn about the body's across carries a foot hanging down to

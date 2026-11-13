@@ -11,7 +11,7 @@
 //! Overlands as a person does and is not here: `winged_motion` and
 //! `winged_life` hold its strides.
 
-use super::winged_bounds::pops_over;
+use super::winged_bounds::{pops_over, turn_between};
 use symbios_avatar::anim::driver::{Driver, Inputs, level_ground};
 use symbios_avatar::plan::{Blended, Lineage};
 use symbios_avatar::{
@@ -172,7 +172,7 @@ fn steps(frames: &[Posed], from: usize, hz: f32) -> Vec<(f32, f32)> {
             let turned = is_turned
                 .iter()
                 .zip(was_turned)
-                .map(|(a, b)| a.angle_between(*b))
+                .map(|(a, b)| turn_between(*b, *a))
                 .fold(0.0f32, f32::max);
             (moved * scale, turned * scale)
         })
@@ -220,8 +220,11 @@ fn median_of(mut values: Vec<f32>) -> f32 {
 const GROUND_TURN: f32 = 1.25;
 
 /// How much more than twice the most it turned in the frames around it a
-/// joint may turn in a sixtieth: `winged_motion`'s.
-const TURN_SLACK: f32 = 0.05;
+/// joint may turn in a sixtieth: over twice the most any frame here turns
+/// past that (0.014 rad), read on normalised rotations (#458). Read raw, the
+/// driver's rotations a few ten-thousandths off unit length took up to 0.07
+/// rad of noise, and this was `winged_motion`'s twentieth of a radian.
+const TURN_SLACK: f32 = 0.03;
 
 /// Every frame of `frames` from `from` on that pops against its neighbours,
 /// in place or in turn: a joint moved more than twice the most it moved in

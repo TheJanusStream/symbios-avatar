@@ -565,6 +565,43 @@ mod tests {
     }
 
     #[test]
+    fn the_shortest_trousers_close_between_the_legs() {
+        // **A pair of shorts with a hole in the crotch** (#281). The crotch's
+        // skin hangs below and inside the hip, so read along the thigh it lies
+        // past `SHORTS` on some bodies, and the claim refused it: a notch fill
+        // took it back only where its neighbours happened to make notches.
+        // Where they did not, the two leg openings ran together through the
+        // crotch into one hem loop that crossed the midline under the hips -
+        // seeds 16 and 29 before the claim took a face touching the pelvis at
+        // any length, and seed 9 once the crotch stopped folding through itself.
+        // A leg's hem keeps to its own side; only the waist crosses over.
+        for seed in [9i64, 16, 29] {
+            let (mesh, rig, weights, zones) = body(seed);
+            let outfit = Outfit::wear(&mesh, &rig, &weights, &zones, &cut(FOREARM, SHORTS));
+            let trousers = &outfit.garments[0];
+            let hips = rig
+                .in_zone(Zone::UpperLimb(Limb::HindLeft))
+                .into_iter()
+                .map(|joint| rig.joints[joint].position.y)
+                .fold(f32::NEG_INFINITY, f32::max);
+            for ring in &trousers.hem {
+                let points: Vec<Vec3> = ring
+                    .iter()
+                    .map(|&column| trousers.mesh.positions[column as usize])
+                    .collect();
+                let crosses = points.iter().any(|p| p.x > 0.0) && points.iter().any(|p| p.x < 0.0);
+                let lowest = points.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
+                assert!(
+                    !crosses || lowest > hips,
+                    "seed {seed}: the shorts' hem crosses the midline {:.0} mm under the hips, \
+                     so the crotch is open between the legs",
+                    (hips - lowest) * 1000.0
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_hem_lands_where_its_length_says() {
         // What "any length" has to mean (#356): the DELIVERED hem — after the
         // claim, the smoothing and the placement — sits at the length along

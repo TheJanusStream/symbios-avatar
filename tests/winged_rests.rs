@@ -5,7 +5,7 @@
 //! a bird's eyes nearly still while its head turns; and no person or beast
 //! offered or moved by any of it.
 
-use super::winged_bounds::{UNDER_GROUND, furthest, lowest_drawn, lowest_drawn_over};
+use super::winged_bounds::{UNDER_GROUND, furthest, lowest_drawn, lowest_drawn_over, turn_between};
 use symbios_avatar::anim::driver::{Driver, Inputs, level_ground};
 use symbios_avatar::anim::winged::rests as winged;
 use symbios_avatar::anim::{Clip, Key, Target, Track, emote, gesture, look_at};
@@ -573,7 +573,7 @@ fn eye_turn(avatar: &Avatar, pose: &Pose) -> f32 {
     [&eyes.left, &eyes.right]
         .into_iter()
         .filter_map(|eye| eye.globe_joint)
-        .map(|joint| pose.rotations[joint].angle_between(symbios_avatar::Quat::IDENTITY))
+        .map(|joint| turn_between(symbios_avatar::Quat::IDENTITY, pose.rotations[joint]))
         .fold(0.0f32, f32::max)
 }
 

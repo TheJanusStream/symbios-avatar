@@ -990,15 +990,6 @@ fn the_underside_of_the_jaw_does_not_bulge() {
     }
 }
 
-/// How many crossing triangle pairs the whole sweep may carry below the waist.
-///
-/// A high-water mark, not a target: **the right number is zero and every one of
-/// these is a body that is not a solid.** It is here because nothing measured
-/// this until #116's remainder was worked through, and pinning it is what stops
-/// it getting worse while the cage is fixed. See `the_body_is_a_solid_below_the_waist`
-/// for the per-record ledger and the mechanism.
-const CROSSING_CEILING: usize = 353;
-
 #[test]
 fn the_body_is_a_solid_below_the_waist() {
     // **The defect under #116, finally named.** That issue counts vertices
@@ -1043,7 +1034,8 @@ fn the_body_is_a_solid_below_the_waist() {
     // Below the waist only, because the head carries the mouth, and the mouth
     // is a sealed pocket whose two surfaces near-touch on purpose (#154).
     //
-    // The ledger, on the shipped subdivision, `Avatar::build` as it ships:
+    // The ledger the issue opened with (#281, 2026-08-18), on the shipped
+    // subdivision, `Avatar::build` as it ships, below 1 m:
     //
     // ```text
     //   default        10      seed 9          22
@@ -1054,10 +1046,30 @@ fn the_body_is_a_solid_below_the_waist() {
     //                          fem-1 mass-1   102
     // ```
     //
-    // The crotch is not even the worst of it. A LEAN body's toes are: 102 and
-    // 125 pairs at `y` 0.013, where a foot meshed into the leg (#111) folds
-    // through itself once there is no fat to hold it apart. That is a defect
-    // nobody has seen because nothing looked.
+    // Re-measured on 2026-11-12, before the fix: the lean corners' toes and
+    // seed 7 had gone to zero with the feet's rework (#303-#306), and every
+    // pair left was at the CROTCH, on the inner wall of a thigh just under
+    // the pelvis - default 10, seed 4 12, seed 9 22, seed 12 18, the two heavy
+    // corners 18 and 22, and the worst of a wider sweep seed 16 24, a heavy
+    // masculine corner 36 and the narrowest hips 52, thirty of which
+    // were the two thighs crossing each other. 98 of 200 rolls carried some.
+    //
+    // **Born in the cage, and why:** the hip ring is laid on the bisector of
+    // the turn from the hip socket, which faces almost straight out of the
+    // pelvis, to the thigh, which falls to the knee - 65 degrees, with the
+    // socket under 20 mm short of a ring 190 mm across - so its inner side
+    // swung back behind the socket, over the floor of the pelvis's hull, and the thigh's
+    // inner wall ran up through that floor before it turned down. 21 pairs on
+    // the default body's cage, ten after one subdivision; on seed 9, 22 after
+    // one and 38 after a second, so resolution was never going to clear it.
+    // `cage::limb::clear_sockets` holds each ring beside a hip socket in front
+    // of that socket's plane, and the count is zero on every body below - and on
+    // 200 rolls, 125 composite corners and every humanoid slider at its ends,
+    // swept when it landed.
+    //
+    // Below the WAIST, the body's own abdomen joint, rather than below a metre:
+    // a short body's mouth sits under a metre (seeds 26, 30 and 113 counted
+    // their lips there), and the head is not what this asks about.
 
     // THE CONTROL, and it runs first, because a crossing sweep that finds pairs
     // on a surface which has none is measuring its own arithmetic and every
@@ -1083,9 +1095,8 @@ fn the_body_is_a_solid_below_the_waist() {
     }
     for level in 0..=3 {
         let ball = symbios_avatar::catmull_clark(&cube, level);
-        assert_eq!(
-            crossings_below_the_waist(&ball, f32::MAX),
-            0,
+        assert!(
+            crossings_below(&ball, f32::MAX).is_empty(),
             "the control: a subdivided cube at {level} levels cannot cross itself"
         );
     }
@@ -1116,35 +1127,300 @@ fn the_body_is_a_solid_below_the_waist() {
             record,
         ));
     }
+    // And the worst of the wider sweep the fix was measured on: two rolls, a
+    // heavy masculine corner, and the narrowest hips the slider builds,
+    // whose two thighs crossed each other as well as themselves.
+    for seed in [10i64, 16] {
+        let mut record = AvatarRecord::new("Rolled", Archetype::default());
+        record.reroll(seed);
+        records.push((format!("seed {seed}"), record));
+    }
+    let mut record = AvatarRecord::new("Extreme", Archetype::default());
+    record.composites.femininity = -1.0;
+    record.composites.mass = 3.0;
+    record.composites.body_fat = 0.2;
+    record.sanitize();
+    records.push(("fem -1 mass +3 fat 0.20".to_string(), record));
+    let mut record = AvatarRecord::default();
+    if let Archetype::Humanoid(params) = &mut record.archetype {
+        params.hip_width = -3.0;
+    }
+    record.sanitize();
+    records.push(("hipWidth -3".to_string(), record));
 
-    let mut total = 0;
     let mut report = Vec::new();
+    let mut crossed = Vec::new();
     for (name, record) in &records {
         let avatar = Avatar::build_with(record, &geometry_only()).expect("builds");
-        let found = crossings_below_the_waist(&avatar.parts.body, 1.0);
-        total += found;
-        report.push(format!("{name}: {found}"));
+        let waist = avatar.rig.joints[avatar.rig.in_zone(Zone::Abdomen)[0]]
+            .position
+            .y;
+        let found = crossings_below(&avatar.parts.body, waist);
+        report.push(format!("{name}: {}", found.len()));
+        // Where, by the zones of the two triangles and the middle of the pair
+        // in millimetres, so a failure names the place as well as the count.
+        let zone = |corners: &[u32; 3]| avatar.parts.zones[corners[0] as usize];
+        crossed.extend(found.iter().take(4).map(|(at, first, second)| {
+            format!(
+                "{name}: {:?} through {:?} at ({:.0}, {:.0}, {:.0}) mm",
+                zone(first),
+                zone(second),
+                at.x * 1000.0,
+                at.y * 1000.0,
+                at.z * 1000.0
+            )
+        }));
     }
     // Printed whether it passes or not, which is `docs/instruments.md` rule 9:
     // a passing test that prints nothing is how a distribution drifts unseen.
     println!(
-        "crossing triangle pairs below the waist — {}",
+        "crossing triangle pairs below the waist - {}",
         report.join(", ")
     );
     assert!(
-        total <= CROSSING_CEILING,
-        "the body surface crosses itself in {total} places below the waist over the sweep, \
-         against a ceiling of {CROSSING_CEILING}: {report:?}"
+        crossed.is_empty(),
+        "the body surface crosses itself below the waist, which a closed body may not do \
+         anywhere: {report:?}. The first of each body's: {crossed:#?}"
     );
 }
 
-/// Pairs of triangles that cross, sharing no vertex, below `ceiling` in `y`.
+/// The clips the posed crotch is asked of, in the order [`POSED_BEFORE`]
+/// lists them: the first three from the shipped artifact, the rest retargeted
+/// from the CC0 library beside this checkout when it is there.
+const POSED_CLIPS: [&str; 8] = [
+    "Walk",
+    "Sprint",
+    "Sitting_Idle",
+    "Fixing_Kneeling",
+    "Crouch_Idle",
+    "Meditate",
+    "Jumping Jacks",
+    "Strafe_left",
+];
+
+/// Crossing triangle pairs at the crotch over eight frames of each of
+/// [`POSED_CLIPS`], on the tree before #281's hip pass (c9de995), per body.
+///
+/// The baseline the pass is held to: a fix for the standing crotch may not
+/// make the moving one worse.
+const POSED_BEFORE: [(&str, [usize; 8]); 11] = [
+    ("default", [65, 181, 400, 188, 496, 504, 15, 84]),
+    ("seed 6", [3, 162, 376, 183, 430, 448, 0, 39]),
+    ("seed 9", [199, 300, 496, 398, 668, 640, 179, 225]),
+    ("seed 10", [195, 273, 464, 297, 670, 624, 98, 189]),
+    ("seed 11", [125, 222, 416, 195, 381, 504, 45, 113]),
+    ("seed 14", [137, 248, 432, 174, 484, 496, 54, 138]),
+    ("hipWidth -3", [379, 485, 760, 587, 679, 1112, 387, 513]),
+    (
+        "fem -1 mass +3 fat 0.20",
+        [287, 368, 304, 430, 592, 1264, 270, 266],
+    ),
+    (
+        "fem -1 mass -1 fat 0.03",
+        [6, 173, 360, 176, 500, 688, 1, 99],
+    ),
+    (
+        "fem +1 mass -1 fat 0.03",
+        [33, 221, 744, 238, 514, 456, 59, 133],
+    ),
+    ("fem +1 mass +3 fat 1.00", [6, 98, 0, 141, 53, 464, 0, 0]),
+];
+
+/// [`POSED_BEFORE`]'s bodies, by its names.
+fn posed_body(name: &str) -> AvatarRecord {
+    if let Some(seed) = name.strip_prefix("seed ") {
+        let mut record = AvatarRecord::new("Rolled", Archetype::default());
+        record.reroll(seed.parse().expect("a seed"));
+        return record;
+    }
+    let mut record = AvatarRecord::default();
+    match name {
+        "default" => {}
+        "hipWidth -3" => {
+            if let Archetype::Humanoid(params) = &mut record.archetype {
+                params.hip_width = -3.0;
+            }
+        }
+        corner => {
+            let read = |at: usize| -> f32 {
+                corner
+                    .split(' ')
+                    .nth(at)
+                    .expect("a figure")
+                    .parse()
+                    .expect("a number")
+            };
+            record.composites.femininity = read(1);
+            record.composites.mass = read(3);
+            record.composites.body_fat = read(5);
+        }
+    }
+    record.sanitize();
+    record
+}
+
+#[test]
+fn the_crotch_stays_a_solid_in_motion() {
+    // **The other half of #281: a fix for the standing crotch, asked of the
+    // moving one.** The hip pass carries the inner wall of each groin out of
+    // the pelvis by up to 91 mm on the cage, and skin that has moved has to
+    // be held by the right bones or the first raised knee folds it through
+    // its neighbours. Bound where the pass left it, the inner groin's skin
+    // went from half thigh to nine tenths, and a sprint drove a thin sliver
+    // of it through the belly (seed 9, from below), a kneel a slit into the
+    // fold: the critic counted the crossings and found deep flexion WORSE
+    // than before the pass on several bodies. Measured the critic's way:
+    // triangles touching the pelvis or a thigh, crossing pairs sharing no
+    // vertex, eight frames across each clip, each foot levelled on the floor
+    // and none planted - so the count is the clip's and the skin's, not the
+    // foot solver's, which drags a crossed leg to the floor in a sit.
+    //
+    // ```text
+    //              before the pass   pass, skin bound where it stands   now
+    //   seed 9   Sprint   300            113                            75
+    //   seed 6   Sitting  376            392                           352
+    //   heavy f+1 Kneel   141            167                           149
+    //   heavy f-1 Sit-x  1264           1288                          1272
+    //   walk, jumping jacks: 0 on nine of the eleven bodies (3 to 387 before)
+    // ```
+    //
+    // **The bar is the tree before the pass, plus one crossing a frame**, and
+    // two cells use some of that: the heaviest feminine corner's kneel (141
+    // to 149) and the heavy masculine corner's cross-legged sit (1264 to
+    // 1272), both on the surface the push itself moved, whatever the skin is
+    // bound to (10 to 20 mm of bind-back all read 149 and 1272 to 1280). And
+    // walk and jumping jacks keep the zero the pass gave them, but for two
+    // pairs that are not the crotch: the heaviest feminine corner's thigh
+    // against its own calf in a stride, 6 as before, and the lean feminine
+    // corner's two thighs meeting as the jack closes, 24 (59 before).
+    //
+    // The library is a sibling checkout, not vendored (`examples/render`'s
+    // `LIBRARY`), so without it this asks the three shipped clips only.
+    let shipped = symbios_avatar::ClipLibrary::read(
+        &std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/clips.bin"))
+            .expect("assets/clips.bin is checked in"),
+    )
+    .expect("the artifact parses");
+    let library: Vec<symbios_avatar::gltf::Gltf> = [
+        "../mesh2motion-app/static/animations/human-base-animations.glb",
+        "../mesh2motion-app/static/animations/human-addon-animations.glb",
+    ]
+    .iter()
+    .filter_map(|path| std::fs::read(path).ok())
+    .map(|bytes| symbios_avatar::gltf::Gltf::read(&bytes).expect("a library reads"))
+    .collect();
+    if library.is_empty() {
+        eprintln!("the CC0 library is not checked out beside this repository: shipped clips only");
+    }
+    let near = [
+        Zone::Pelvis,
+        Zone::UpperLimb(symbios_avatar::Limb::HindLeft),
+        Zone::UpperLimb(symbios_avatar::Limb::HindRight),
+    ];
+    const FRAMES: usize = 8;
+
+    let mut report = Vec::new();
+    let mut worse = Vec::new();
+    for (name, before) in POSED_BEFORE {
+        let avatar = Avatar::build_with(&posed_body(name), &geometry_only()).expect("builds");
+        let rig = &avatar.rig;
+        let mut clips: Vec<symbios_avatar::PoseClip> = POSED_CLIPS[..3]
+            .iter()
+            .map(|clip| shipped.get(clip).expect("a curated clip").clone())
+            .collect();
+        for library in &library {
+            let skin = library.skin(0).expect("the library's skin");
+            let matched = symbios_avatar::retarget::Correspondence::human(rig, library, &skin)
+                .expect("a person matches the library");
+            for wanted in &POSED_CLIPS[3..] {
+                if let Some(animation) = library.clip(wanted) {
+                    clips.push(
+                        symbios_avatar::retarget::clip(
+                            rig, library, &matched, animation, 30.0, false,
+                        )
+                        .expect("a clip retargets"),
+                    );
+                }
+            }
+        }
+        let mut crotch = avatar.parts.body.clone();
+        crotch.faces.retain(|face| {
+            face.iter()
+                .any(|&corner| near.contains(&avatar.parts.zones[corner as usize]))
+        });
+        let mut line = Vec::new();
+        for clip in &clips {
+            let column = POSED_CLIPS
+                .iter()
+                .position(|wanted| *wanted == clip.name)
+                .expect("one of the clips asked for");
+            let mut found = 0;
+            for frame in 0..FRAMES {
+                let mut pose = clip.pose(rig, clip.duration() * frame as f32 / FRAMES as f32);
+                // Feet levelled, none planted: see above.
+                symbios_avatar::anim::plant_feet_of(
+                    rig,
+                    &mut pose,
+                    &[],
+                    |foot| {
+                        Some(symbios_avatar::Ground::level(Vec3::new(
+                            foot.x, 0.0, foot.z,
+                        )))
+                    },
+                    &symbios_avatar::FootingConfig::default(),
+                );
+                let mut posed = crotch.clone();
+                posed.positions = pose.forward(rig).deform(
+                    rig,
+                    &avatar.parts.body.positions,
+                    &avatar.parts.weights,
+                );
+                found += crossings_below(&posed, f32::MAX).len();
+            }
+            line.push(format!("{} {found} ({})", clip.name, before[column]));
+            let bar = before[column] + FRAMES;
+            if found > bar {
+                worse.push(format!(
+                    "{name}, {}: {found} crossing pairs over {FRAMES} frames, against {} before \
+                     the hip pass",
+                    clip.name, before[column]
+                ));
+            }
+            let kept_at_zero = match (name, clip.name.as_str()) {
+                ("fem +1 mass +3 fat 1.00", "Walk") => Some(6),
+                ("fem +1 mass -1 fat 0.03", "Jumping Jacks") => Some(24),
+                (_, "Walk" | "Jumping Jacks") => Some(0),
+                _ => None,
+            };
+            if let Some(most) = kept_at_zero
+                && found > most
+            {
+                worse.push(format!(
+                    "{name}, {}: {found} crossing pairs, where the hip pass left {most}",
+                    clip.name
+                ));
+            }
+        }
+        report.push(format!("{name}: {}", line.join(", ")));
+    }
+    println!(
+        "crossing pairs at the crotch, eight frames a clip (before the hip pass):\n  {}",
+        report.join("\n  ")
+    );
+    assert!(
+        worse.is_empty(),
+        "the crotch crosses itself in motion more than it did: {worse:#?}"
+    );
+}
+
+/// Pairs of triangles that cross, sharing no vertex, below `ceiling` in `y`:
+/// for each, the middle of the pair and the corners of its two triangles.
 ///
 /// Binned into a uniform grid first, so this is near-linear in the triangle
 /// count rather than the two hundred million pair tests a body would otherwise
 /// need. Sharing a vertex is excluded because two triangles of the same fan
 /// meet along an edge by construction and that is not a crossing.
-fn crossings_below_the_waist(mesh: &PolyMesh, ceiling: f32) -> usize {
+fn crossings_below(mesh: &PolyMesh, ceiling: f32) -> Vec<(Vec3, [u32; 3], [u32; 3])> {
     let mut tris: Vec<([Vec3; 3], [u32; 3])> = Vec::new();
     for face in &mesh.faces {
         for at in 1..face.len().saturating_sub(1) {
@@ -1182,6 +1458,7 @@ fn crossings_below_the_waist(mesh: &PolyMesh, ceiling: f32) -> usize {
         }
     }
     let mut found: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut pairs = Vec::new();
     for bucket in bins.values() {
         for (at, &left) in bucket.iter().enumerate() {
             for &right in &bucket[at + 1..] {
@@ -1200,11 +1477,13 @@ fn crossings_below_the_waist(mesh: &PolyMesh, ceiling: f32) -> usize {
                 }
                 if pierces(a, b) || pierces(b, a) {
                     found.insert((first, second));
+                    let middle = (a[0] + a[1] + a[2] + b[0] + b[1] + b[2]) / 6.0;
+                    pairs.push((middle, *corners, *others));
                 }
             }
         }
     }
-    found.len()
+    pairs
 }
 
 /// Whether any edge of `edges` passes through the triangle `face`.

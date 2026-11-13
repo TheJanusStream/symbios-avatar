@@ -11,7 +11,12 @@
 //! 3. At each joint, place one socket ring per incident limb, hull the sockets,
 //!    and delete the socket facets to leave openings the tubes plug into.
 //! 4. Cap leaf ends.
-//! 5. On a beast, draw each leg's junction in under the trunk (`leg_root`).
+//! 5. On a person, hold the ring beside each hip socket in front of that
+//!    socket's plane, so no thigh runs back into the pelvis
+//!    (`limb::clear_sockets`): the three or four inner columns of each hip
+//!    ring, by a median 38 mm and up to 91 mm on the heaviest bodies. The
+//!    skin is bound where those vertices stood before (`Avatar::build`).
+//! 6. On a beast, draw each leg's junction in under the trunk (`leg_root`).
 //!
 //! Because socket rings are *shared* between the joint hull and the limb tube,
 //! no stitching pass is needed and the result is a closed 2-manifold by
@@ -282,6 +287,25 @@ fn build_with_limbs(
     skeleton: &Skeleton,
     config: &CageConfig,
 ) -> Result<(PolyMesh, Vec<Socket>, Vec<limb::LimbBuild>), CageError> {
+    build_all(skeleton, config).map(|(mesh, sockets, builds, _)| (mesh, sockets, builds))
+}
+
+/// [`build_cage`], handing back how far `limb::clear_sockets` carried each
+/// cage vertex as well: zero for every vertex it left alone, and an empty list
+/// on a body it does not run on.
+pub(crate) fn build_cage_pushed(
+    skeleton: &Skeleton,
+    config: &CageConfig,
+) -> Result<(PolyMesh, Vec<Vec3>), CageError> {
+    build_all(skeleton, config).map(|(mesh, _, _, pushed)| (mesh, pushed))
+}
+
+/// A cage with its sockets, each limb's rings and the pushes of
+/// [`build_cage_pushed`].
+type Built = (PolyMesh, Vec<Socket>, Vec<limb::LimbBuild>, Vec<Vec3>);
+
+/// [`build_with_limbs`], handing back the pushes of [`build_cage_pushed`] too.
+fn build_all(skeleton: &Skeleton, config: &CageConfig) -> Result<Built, CageError> {
     let limbs = skeleton.limbs()?;
     let mut mesh = PolyMesh::new();
     let mut sockets: Vec<Socket> = Vec::new();
@@ -307,11 +331,21 @@ fn build_with_limbs(
         joint::build_joint(skeleton, joint, &indices, &mut sockets, config, &mut mesh)?;
     }
     // After every hull, whose faces then simply follow the vertices it moves.
+    // A person's thighs held in front of their hip sockets (#281). Only a
+    // person's: a beast's and a winged body's cages fold elsewhere as well
+    // (their necks, their bridged legs, a bird's toes), and carried out on
+    // those the same rule cleared some of their crossings and made others,
+    // which is their own work rather than a side effect of this.
+    let pushed = if skeleton.anatomy.human_trunk() {
+        limb::clear_sockets(skeleton, &sockets, &builds, config, &mut mesh)
+    } else {
+        Vec::new()
+    };
     leg_root::wrap_junctions(skeleton, &sockets, &builds, &mut mesh);
 
     for build in &builds {
         limb::emit_limb_faces(build, &mut mesh);
     }
 
-    Ok((mesh, sockets, builds))
+    Ok((mesh, sockets, builds, pushed))
 }

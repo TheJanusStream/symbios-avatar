@@ -7,7 +7,9 @@
 //! Every body is driven through [`Driver::drive`], as an application drives
 //! one, carried by a chassis that steps it at the speed asked.
 
-use super::winged_bounds::{UNDER_GROUND, lowest_drawn, lowest_drawn_over, lowest_toe, pops_over};
+use super::winged_bounds::{
+    UNDER_GROUND, lowest_drawn, lowest_drawn_over, lowest_toe, pops_over, turn_between,
+};
 use symbios_avatar::anim::driver::{Driven, Driver, Inputs, level_ground, velocity_of};
 use symbios_avatar::anim::winged::ground::bob_share;
 use symbios_avatar::anim::{Clip, Key, Pattern, Target, Track};
@@ -1216,7 +1218,7 @@ fn a_gliders_paws_turn_no_faster_than_a_beasts() {
             let turn = a
                 .iter()
                 .zip(&b)
-                .map(|(a, b)| a.angle_between(*b))
+                .map(|(a, b)| turn_between(*a, *b))
                 .fold(0.0f32, f32::max);
             assert!(
                 turn < 1.25,
@@ -1391,9 +1393,12 @@ fn a_small_birds_hop_clears_the_ground_and_swings_its_head() {
 const GROUND_TURN: f32 = 1.25;
 
 /// How much more than twice the most it turned in the frames around it a
-/// joint may turn in a sixtieth: a twentieth of a radian, the turns' slack
-/// for what the pop bound's hundredth of the trunk is to positions.
-const TURN_SLACK: f32 = 0.05;
+/// joint may turn in a sixtieth: a fiftieth of a radian, the turns' slack for
+/// what the pop bound's hundredth of the trunk is to positions. Read on
+/// normalised rotations (#458), no bound's frame turns past twice the most
+/// around it at all; read raw, the noise a twentieth of a radian was set to
+/// take came to 0.07.
+const TURN_SLACK: f32 = 0.02;
 
 /// Two seconds of a bound at `hz`, at its Froude number of one on the
 /// hip (as `winged_life` drives it), its chassis carried along (`carried`)
@@ -1452,7 +1457,7 @@ fn bound_steps(frames: &[(Vec<Vec3>, Vec<Quat>)], from: usize, hz: f32) -> Vec<(
             let turned = is_turned
                 .iter()
                 .zip(was_turned)
-                .map(|(a, b)| a.angle_between(*b))
+                .map(|(a, b)| turn_between(*a, *b))
                 .fold(0.0f32, f32::max);
             (moved * scale, turned * scale)
         })

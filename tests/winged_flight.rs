@@ -6,7 +6,7 @@
 //! under its wing; and a body with no wings, or with no flight asked, moves
 //! exactly as it did.
 
-use super::winged_bounds::{UNDER_GROUND, furthest, lowest_drawn, pops};
+use super::winged_bounds::{UNDER_GROUND, furthest, lowest_drawn, pops, turn_between};
 use symbios_avatar::anim::driver::{Carriage, Driver, DriverConfig, Inputs, Source, level_ground};
 use symbios_avatar::anim::winged::flight::{
     FLARE_TAU, Flight, FlightMode, Flown, LEG_SHARE, RATE_EXPONENT,
@@ -1193,7 +1193,7 @@ fn turned(rotations: &[Vec<symbios_avatar::Quat>]) -> Vec<f32> {
             rotations[at]
                 .iter()
                 .zip(&rotations[at - 1])
-                .map(|(a, b)| a.angle_between(*b))
+                .map(|(a, b)| turn_between(*b, *a))
                 .fold(0.0, f32::max)
         })
         .collect()
@@ -1598,7 +1598,7 @@ fn no_joint_turns_over_in_a_landing() {
                         let turn = rotations
                             .iter()
                             .zip(was)
-                            .map(|(a, b)| a.angle_between(*b))
+                            .map(|(a, b)| turn_between(*b, *a))
                             .fold(0.0, f32::max);
                         if turn > 0.8 {
                             failures.push(format!(

@@ -340,8 +340,8 @@ fn carry_head(rig: &Rig, pose: &mut Pose, along: Vec3, ahead: f32) {
         .parent
         .map_or(Quat::IDENTITY, |parent| posed.rotations[parent]);
     let neck_world = turn * posed.rotations[neck];
-    pose.rotations[neck] = above.inverse() * neck_world;
-    pose.rotations[head] = neck_world.inverse() * posed.rotations[head];
+    pose.rotations[neck] = (above.inverse() * neck_world).normalize();
+    pose.rotations[head] = (neck_world.inverse() * posed.rotations[head]).normalize();
 }
 /// How much further a bat's and a glider's back folds and stretches in a
 /// bound than a beast's at a gallop. Provenance: **chosen by render** (#424):
@@ -511,7 +511,7 @@ where
             .parent
             .map_or(Quat::IDENTITY, |parent| posed.rotations[parent]);
         pose.rotations[root] =
-            above.inverse() * Rot::axis_angle(axis, angle) * posed.rotations[root];
+            (above.inverse() * Rot::axis_angle(axis, angle) * posed.rotations[root]).normalize();
     }
 }
 
@@ -707,10 +707,19 @@ pub(crate) fn keep_toes_up<F>(rig: &Rig, pose: &mut Pose, ground: &F)
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
+    keep_feet_up(rig, pose, ground, &rig.ground_contacts());
+}
+
+/// [`keep_toes_up`] for the feet of `limbs` alone: what a clip's wing keeps
+/// out of the ground of the legs it lifts (`rests::wing_on`, #457).
+pub(crate) fn keep_feet_up<F>(rig: &Rig, pose: &mut Pose, ground: &F, limbs: &[Limb])
+where
+    F: Fn(Vec3) -> Option<Ground> + ?Sized,
+{
     if rig.wings.is_none() || !pose.fits(rig) {
         return;
     }
-    for limb in rig.ground_contacts() {
+    for &limb in limbs {
         // The pad first: a blend turns each joint of a leg on its own, and
         // the foot it carries between two that stand on the ground goes into
         // it - a bird setting off sank its pads 28 mm in the first frame.
@@ -779,7 +788,9 @@ where
 /// and the next answer alike; on a level floor a hand is left to the bit,
 /// and a belly and a tail that stand clear of it. `share` of the belly and
 /// the tail, and `hands` of the hands, each `0..=1`: the driver eases them
-/// in and out.
+/// in and out. A hand a clip's wing has taken, by how far it has taken it
+/// (`spread`, from `rests::wings_taken`, which the driver eases out of once
+/// a gesture is cut short), is let go of: see [`lay_hands`].
 ///
 /// Call on the pose as it is handed back, after the driver's blend and
 /// never on the pose kept to blend from ([`crate::anim::Driver::drive`]
@@ -799,8 +810,13 @@ where
 /// it carries swung 45 mm a sixtieth and back. Each axis of the plane takes
 /// the gentler of its two sides, so a hand on the flat beside a step reads
 /// the flat, not half the ramp a grid makes of the step.
-pub(crate) fn keep_clear<F>(rig: &Rig, pose: &mut Pose, ground: &F, share: f32, hands: f32)
-where
+pub(crate) fn keep_clear<F>(
+    rig: &Rig,
+    pose: &mut Pose,
+    ground: &F,
+    share: f32,
+    (hands, spread): (f32, &[(Limb, f32)]),
+) where
     F: Fn(Vec3) -> Option<Ground>,
 {
     if rig.wings.is_none()
@@ -819,7 +835,7 @@ where
         lift_belly(rig, pose, ground, share);
     }
     if hands > 0.0 {
-        lay_hands(rig, pose, ground, hands);
+        lay_hands(rig, pose, ground, hands, spread);
     }
     if share > 0.0 {
         lift_tail(rig, pose, ground, share);
@@ -832,6 +848,52 @@ thread_local! {
     /// tests measure it against (`winged::keep_clear_tests`). Per thread, so
     /// a test that leaves it out changes nothing for one run beside it.
     pub(super) static LEFT_OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// How much lift [`keep_elbows_up`] gives an elbow `short` of its ring's
+/// height over the ground, eased in over `ease` either side of touching:
+/// none from `ease` clear of it, all of `short` from `ease` into it, and
+/// between the two a curve with the slope of each at its ends.
+fn eased_lift(short: f32, ease: f32) -> f32 {
+    if ease <= 0.0 {
+        return short.max(0.0);
+    }
+    if short <= -ease {
+        0.0
+    } else if short >= ease {
+        short
+    } else {
+        (short + ease) * (short + ease) / (4.0 * ease)
+    }
+}
+
+/// Over how much of its ring's height either side of touching the ground
+/// [`keep_elbows_up`] eases an elbow's lift in ([`eased_lift`]), as a share
+/// of that height. The lift never falls short of keeping the ring out of the
+/// ground: it only begins sooner.
+/// Provenance: **measured** (#462's fixer), over roll 9's emotes and rests
+/// on slopes of 10 to 30 degrees: no easing turned its foreleg 0.64 rad a
+/// sixtieth at 144 frames a second, half of the ring 0.31 and the whole
+/// ring 0.23 (its Stretch across a 20 degree slope, against 0.10 for the
+/// clip alone).
+const ELBOW_EASE: f32 = 1.0;
+
+/// How near the lowest point of its circle about the shoulder-to-wrist line,
+/// in radians round it, [`keep_elbows_up`] hands the swing of an elbow drawn
+/// on the side away from the body over to the side toward it.
+/// Provenance: **measured** (#462's fixer): over roll 9's emotes and rests
+/// on slopes of 10 to 30 degrees, a Stretch draws a foreleg's elbow on the
+/// side away from the body from 0.3 rad off that lowest point and is swung
+/// out there, as it always was; its Curl crosses the lowest point, and over
+/// this its shoulder turns no faster than the clip's own 0.21 rad a
+/// sixtieth.
+const ELBOW_WINDOW: f32 = 0.3;
+
+#[cfg(test)]
+thread_local! {
+    /// Whether [`keep_elbows_up`] is left out on this thread: the motion its
+    /// own test measures it against (`winged::keep_clear_tests`).
+    pub(super) static ELBOWS_LEFT_OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// How far round a pad [`lay_hands`] reads the ground's tilt, in the hip's
@@ -1066,7 +1128,7 @@ where
     for (_, chain, at, held, pole) in feet {
         crate::anim::ik::two_bone(rig, pose, chain, at, pole + up * short);
         let above = turned_below(rig, pose, &posed, chain[0], chain[1]);
-        pose.rotations[chain[2]] = above.inverse() * held;
+        pose.rotations[chain[2]] = (above.inverse() * held).normalize();
     }
 }
 
@@ -1086,7 +1148,13 @@ where
 /// go of over the next, so a wing in the air is the flight's. The slope is
 /// the plane round the pad ([`plane_under`], [`HAND_PLANE`]). On a level
 /// floor nothing is turned.
-fn lay_hands<F>(rig: &Rig, pose: &mut Pose, ground: &F, share: f32)
+///
+/// **And let go of as a clip's wing takes the hand** (#457), by `spread`'s
+/// share for its limb: a Wing Stretch lifts the hand only a few centimetres
+/// as its wing opens, and turned with the slope there, about a pad no longer
+/// on it, the thumb of a wing being laid out went 12 mm into a slope a bat
+/// faced down. The wing lays itself out over the ground (`rests::wing_on`).
+fn lay_hands<F>(rig: &Rig, pose: &mut Pose, ground: &F, share: f32, spread: &[(Limb, f32)])
 where
     F: Fn(Vec3) -> Option<Ground>,
 {
@@ -1125,7 +1193,11 @@ where
         // that, the folded digits over each wrist swung 67 mm in a frame.
         let lifted = (at - below.position).dot(up) - rig.joints[pad].position.y;
         let down = 1.0 - ((lifted - leg) / leg).clamp(0.0, 1.0);
-        let down = share * down * down * (3.0 - 2.0 * down);
+        let spread = spread
+            .iter()
+            .find(|(spread, _)| *spread == limb)
+            .map_or(0.0, |&(_, spread)| spread.clamp(0.0, 1.0));
+        let down = share * (1.0 - spread) * down * down * (3.0 - 2.0 * down);
         if down <= 0.0 {
             continue;
         }
@@ -1135,11 +1207,11 @@ where
         let pole = drawn_pole(rig, &posed, limb, chain);
         crate::anim::ik::two_bone(rig, pose, chain, to, pole);
         let above = turned_below(rig, pose, &posed, chain[0], chain[1]);
-        pose.rotations[wrist] = above.inverse() * turn * held;
+        pose.rotations[wrist] = (above.inverse() * turn * held).normalize();
         // The pad keeps the attitude it stood in: the footing has laid its
         // sole on the ground already, and turned again with the wrist it
         // pitched twice over, its front edge 5 mm into a slope falling away.
-        pose.rotations[pad] = (turn * held).inverse() * posed.rotations[pad];
+        pose.rotations[pad] = ((turn * held).inverse() * posed.rotations[pad]).normalize();
         posed = pose.forward(rig);
     }
 }
@@ -1213,7 +1285,113 @@ where
             .parent
             .map_or(Quat::IDENTITY, |parent| posed.rotations[parent]);
         pose.rotations[dock] =
-            above.inverse() * Rot::axis_angle(axis, share * asked) * posed.rotations[dock];
+            (above.inverse() * Rot::axis_angle(axis, share * asked) * posed.rotations[dock])
+                .normalize();
+    }
+}
+
+/// Swings each fore elbow of a winged body on four up out of the ground under
+/// it (#462), about the line from its shoulder to its wrist, so the wrist,
+/// the hand and the shoulder stay where and as they stand: by as far as the
+/// elbow stands nearer the ground than its own ring, the ground read as a
+/// plane round it ([`plane_under`]). An elbow clear of the ground is left
+/// as it is, so on the level, and wherever an emote does not fold a foreleg
+/// into a slope, nothing moves.
+///
+/// **Swung toward the body, whichever side of the line the clip draws it**
+/// (#462's fixer): the lift reaches the first point of its circle about
+/// that line high enough on the side the clip draws the elbow - the nearer
+/// way - except where the clip draws it within [`ELBOW_WINDOW`] of the
+/// circle's lowest point on the side away from the body, where the swing is
+/// handed over to the side toward it as the elbow nears that point. Swung
+/// the nearer way wherever it was, an elbow the clip pointed straight down
+/// flipped from one side to the other as it crossed that point: roll 9's
+/// Curl facing down a 30 degree slope swung its right elbow 30 mm across
+/// and turned the shoulder over it 0.63 rad in one frame at 30, 60 and 144
+/// frames a second. Toward the body because that is where the clips draw
+/// a folded foreleg's elbow nearly every frame it is lifted (its Stretch
+/// and its Curl, on every slope); the side is the body's own, so the left
+/// and the right foreleg mirror each other.
+///
+/// **And lifted as it comes near the ground, not only once it is in it**
+/// ([`eased_lift`]): held at the ground from the frame it touched, roll 9's
+/// Stretch across a 20 degree slope swung the foreleg 0.42 rad a sixtieth
+/// at 60 frames a second and 0.64 at 144 (on the game's ground) as each hold
+/// began and ended, against 0.09 for the clip alone.
+pub(crate) fn keep_elbows_up<F>(rig: &Rig, pose: &mut Pose, ground: &F)
+where
+    F: Fn(Vec3) -> Option<Ground>,
+{
+    if rig.wings.is_none() || !rig.four_legged() || !pose.fits(rig) {
+        return;
+    }
+    #[cfg(test)]
+    if ELBOWS_LEFT_OUT.with(std::cell::Cell::get) {
+        return;
+    }
+    let hip = crate::anim::quadruped::hip_height(rig).unwrap_or(0.0);
+    for limb in rig.ground_contacts() {
+        if !limb.is_fore() {
+            continue;
+        }
+        let Some(chain) = rig.limb_chain(limb) else {
+            continue;
+        };
+        let posed = pose.forward(rig);
+        let [root, mid, tip] = chain.map(|joint| posed.positions[joint]);
+        let Some(below) = plane_under(ground, mid, HAND_PLANE * hip) else {
+            continue;
+        };
+        let up = below.normal.normalize_or(Vec3::Y);
+        let ring = rig.joints[chain[1]].radius;
+        let short = ring - (mid - below.position).dot(up);
+        let lift = eased_lift(short, ELBOW_EASE * ring);
+        if lift <= 0.0 || !lift.is_finite() {
+            continue;
+        }
+        let Some(axis) = (tip - root).try_normalize() else {
+            continue;
+        };
+        let foot = root + axis * (mid - root).dot(axis);
+        let arm = mid - foot;
+        // The way round the line the elbow swings that lifts it most, and
+        // square to that the way that swings it in toward the body; and
+        // where round its circle, from that top, the clip draws it.
+        let upright = up - axis * up.dot(axis);
+        let (Some(top), reach) = (upright.try_normalize(), arm.length() * upright.length()) else {
+            continue;
+        };
+        if reach <= f32::EPSILON {
+            continue;
+        }
+        let side = rig.joints[chain[0]].position.x.signum();
+        let shoulders = rig.joints[chain[0]]
+            .parent
+            .map_or(Quat::IDENTITY, |parent| posed.rotations[parent]);
+        let mut aside = axis.cross(top);
+        if aside.dot(shoulders * (Vec3::X * side)) > 0.0 {
+            aside = -aside;
+        }
+        let at = arm.dot(aside).det_atan2(arm.dot(top));
+        let off = ((arm.dot(up) + lift) / reach).clamp(-1.0, 1.0).det_acos();
+        if at.abs() <= off {
+            continue;
+        }
+        // Toward the body, or the nearer way, handed over near the bottom.
+        let turn = if at >= 0.0 {
+            off
+        } else {
+            let pi = std::f32::consts::PI;
+            let window = (pi - off).clamp(f32::EPSILON, ELBOW_WINDOW);
+            let t = (1.0 - (pi + at) / window).clamp(0.0, 1.0);
+            -off - (std::f32::consts::TAU - 2.0 * off) * t * t * (3.0 - 2.0 * t)
+        };
+        let swung = top * turn.det_cos() + aside * turn.det_sin();
+        let held = posed.rotations[chain[2]];
+        let pole = foot + swung * rig.extent();
+        crate::anim::ik::two_bone(rig, pose, chain, tip, pole);
+        let above = turned_below(rig, pose, &posed, chain[0], chain[1]);
+        pose.rotations[chain[2]] = (above.inverse() * held).normalize();
     }
 }
 
@@ -1241,7 +1419,7 @@ const PAD_SLACK: f32 = 1.0e-4;
 /// [`lay_toes`] for one foot, at `phase`, or [`keep_toes_up`] for it at none.
 fn lay_foot<F>(rig: &Rig, pose: &mut Pose, limb: Limb, phase: Option<Phase>, ground: &F)
 where
-    F: Fn(Vec3) -> Option<Ground>,
+    F: Fn(Vec3) -> Option<Ground> + ?Sized,
 {
     let own = rig.extremity_joints(limb);
     let zone = rig.in_zone(Zone::Extremity(limb));
@@ -1385,7 +1563,12 @@ where
     let above = rig.joints[pad]
         .parent
         .map_or(Quat::IDENTITY, |parent| posed.rotations[parent]);
-    pose.rotations[pad] = above.inverse() * turned;
+    // Normalised (#458): `above` is a product down the leg, not quite of unit
+    // length, and its inverse taken as if it were left the pad's rotation up
+    // to 7e-4 off it, which a turn read raw (`Quat::angle_between`) took for
+    // up to 0.07 rad a frame that alternated. Every rotation this module
+    // writes back from the frame as posed is normalised alike.
+    pose.rotations[pad] = (above.inverse() * turned).normalize();
 }
 
 /// The least turn on from `start`, whichever way lifts it, at which

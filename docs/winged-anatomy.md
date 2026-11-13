@@ -1196,7 +1196,14 @@ rig as it flies. None of it is on `mesh_serde::Wire` or the rig's outline.
 **The driver's order**, highest first (`anim::winged`'s header states it
 whole, `driver.rs` beside the code):
 
-1. **The water and a shown motion** outrank a flight.
+1. **The water and a shown motion** outrank a flight. A swim, and a leap,
+   play **no rest and no emote** either (#461): one asked is let go and one
+   playing ends that frame, the change of source blending the body out of
+   it. Played on under the swim, a bat asked to swim mid-Wing-Stretch facing
+   down a 20 degree slope moved a joint 508 mm in that frame at 60 frames a
+   second (8 swimming from standing), its swim come in under the emote
+   unblended and the feet the emote holds held to the floor; one falling 165
+   (18).
 2. **A flight** (`Inputs::flight`, on a body with wings) holds the body in
    the air for as long as the host gives one, and plays **no rest and no
    emote**: one asked mid-flight is let go, not kept for the landing, and
@@ -1208,7 +1215,8 @@ whole, `driver.rs` beside the code):
    folded: the gait or the idle takes the next frame, blended from the
    landing's last pose.
 4. **A rest or an emote** rides over the gait or the idle, as a beast's
-   does, and whatever stirs the body gets it up from a rest in a hurry.
+   does; being carried gets the body up from a rest in a hurry, and the
+   water or a leap ends it (1.).
 
 The drawn toes are lifted out of the ground after the blend
 (`ground::keep_toes_up`) on the gait's and the idle's frames only, the
@@ -1225,6 +1233,31 @@ groomed facing up, and its forearm moved 248 mm a sixtieth in the frame the
 Groom ended; and a Shake laid over a walk across such a slope moved a fore
 upper limb 166 mm a sixtieth (#454), each foot the stride set down settled
 onto the ground and let go to the floor's height as it lifted.
+
+**And an emote reaches no further into a slope than on the level** (#457,
+`keep_clear_tests.rs`). A foot it holds keeps the attitude the pose under it
+stood it at (`ground::solve_contact_held`) rather than being stood upright -
+upright off a slope, its ankle swung over the pad and a rolled glider's
+stifle went 7.6 mm into a slope it groomed facing up; a foot it sends out
+across the world is sent along the ground under it, up or down by as far as
+the ground rises - a glider's bow walked its forepaws out level, 12 mm into
+a slope it faced up, and facing down a slope steeper than 20 degrees its
+foreleg folded shut and flicked (#455: a Glider x Bird 0.45 turned a joint
+0.58 rad a sixtieth on 25 degrees, a Glider x Bird 0.3 flipped one 7.5 on
+30); and a bat's wing, laid out as authored over the level, eases what it
+carries but does not drive - the wrist, the ankle, the pads and the toes,
+which its stance had set for the slope - to how it was authored over, by as
+far as the ground is off level, keeps the feet of the legs it lifts out of
+the ground (`ground::keep_feet_up`), and `keep_clear` lets go of a crawling
+hand as the wing takes it (`rests::wings_taken`): before, its hind toes went
+57 mm into a slope it faced up and its thumb 27 mm into one rising on its
+side. On the level none of the three changes a thing. **What the wing had
+taken is taken back over two blends when the emote is cut short**
+(`Driver::take_wings`, as `KEEP_EASE` eases the rest of `keep_clear`): read
+afresh from the clip every frame, a takeoff mid-Wing-Stretch, which ends the
+emote, laid the spread hand back on the slope in its first frame, a joint
+395 mm a sixtieth further than without `keep_clear` at 144 frames a second,
+where now 20 (`keep_clear_tests.rs`).
 
 **And a body on four legs is kept out of the ground it is handed**
 (`ground::keep_clear`, #441): on the pose handed back, after the blend and
@@ -1603,6 +1636,74 @@ frames a second):
   curve and pivot, a bird's 5 and a Bird x Bat's 2 in its pivot.
 
 
+**A leap and a fall are sized on the legs a winged body stands on** (#456,
+#459, `anim::leap`, `tests/winged_leaps.rs`). A leap's spring, squash and
+tuck were read off the reach of the longest leg's bones - a bat's wing-arm,
+0.70 m, over a hind leg standing its pad 0.16 m from its hip - and every
+winged leap and fall turned joints over in a frame: a glider's hind hip half
+a turn at a time through its flight, 3.14 rad a sixtieth at 60 frames a
+second and 7.54 at 144. Now a winged body's leg is the shortest of its legs
+from hip to pad as it stands, its squash at most a fifth of that
+(`WINGED_SQUASH`: its legs stand folded already), a body on four pitches its
+trunk no further than sinks the end that goes down a quarter of its leg
+(`WINGED_SINK`), and its tuck draws each leg up by its own length from the
+flight's first frame, solved as its stance solves it and held off the plane
+it left, measured under the body's origin, in the same solve. A winged
+body's fall - the way it leaves the ground in Overlands, whose jump is a
+flight's takeoff - is joined at the end of its arc, its legs reaching for the
+ground, so a fall cut short by the ground lands without its legs tucked.
+**Its feet come down as they land** (#456's fixer, `leap::stand_square`): the
+tuck holds each foot square to the plane it left and raises it straight up
+to stand on it, the wind-up and the landing stand theirs square to the
+ground under them, and the flight sinks the trunk as far as the plant would
+on that plane (`leap::sink_to`). Tucked upright and laid on a slope only by
+the toes' own lift in the frame it came down, a Bat x Glider cross at 0.5
+walking up a 20 degree slope turned its fore shoulder 0.69 rad in that frame
+at 60 and at 144 frames a second, its foreleg folded to within 3 mm of as
+far as it folds; and held where its ride set it, a bat's forefeet hung 31
+mm over a slope it faced down until its landing sank its trunk in a frame.
+No joint of any family or the crosses measured turns faster than 0.85 rad a
+sixtieth or moves faster than 0.12 m through a leap or a fall on the level
+(standing, walking, and for a fall bounding), a fall off a deck's edge, or -
+for the bodies on four, which Overlands hands sloped ground - a leap or a
+fall standing or walking on a 20 degree slope, at 30, 60 or 144 frames a
+second (`tests/winged_leaps.rs`); on a slope none turns one faster than
+0.39. A person's and a beast's leaps are as before.
+What is left: a Bird x Glider cross landing facing down a slope still flicks
+an ear spring over (a bird stands on the level in Overlands), and a fall
+entered from a gait standing over a cliff in the host's terrain grid (a
+1.5 m step in one cell) still pops in its first frame, the gait's own pose
+there.
+
+**A Wing Stretch laid over a walk leaves the legs its wings lift off the
+stride** (#460): counted standing, the settle sank the trunk for a hand in
+the air and stood a foot the wing held as its step came round, a bat
+walking at 0.3 m/s moving a joint 111.8 mm in a frame at 60 frames a second.
+Those legs are left off the stance and handed back to the wing after the
+settle by as far as the wing has them (`rests::wing_held`); on the level the
+stretch over a walk moves no joint faster than the walk and the stretch
+together. On a slope a hand rejoins the stride with a smaller step as its
+wing folds (up to 70 mm a sixtieth past the two together, from 273). **A
+bird keeps walking on its legs** (#460's fixer): its stretch draws one leg
+back and holds the other where it stands, and the stride planted each again
+as its step came round - a bird walking at 0.3 m/s moved a wing's tip 299.7
+mm in a frame at 60 frames a second. Under any emote laid over a walk a
+body on two keeps the stride's legs (`rests::walked_legs`), and the wings
+the clip lays out are the clip's, not lifted by the stride's
+`ground::hold_wings`; on the level the bird's stretch over a walk now moves
+no joint faster than the walk and the stretch together.
+
+**An emote's fore elbows stay out of the ground** (#462,
+`ground::keep_elbows_up`): a bow cannot see the ground, and a rolled
+glider's (roll 9) Stretch across a 20 degree slope put its downhill fore
+elbow 24 mm into it. An elbow nearer the ground than its own ring is swung up
+about the line from its shoulder to its wrist, the hand where it stood -
+toward the body, where the clips draw a folded foreleg's elbow, so an elbow
+pointing straight down does not flip from side to side (roll 9's Curl facing
+down a 30 degree slope turned its shoulder 0.63 rad in one frame), and
+lifted as it nears the ground, eased in over its ring's height, not held at
+the ground from the frame it touches (`keep_clear_tests.rs`).
+
 ### In the air (`anim::winged::flight`)
 
 A winged body in the air is its own source, `Source::Fly`, driven by its
@@ -1817,7 +1918,7 @@ targets of a winged body's own, each doing nothing on a body without wings:
 
 | Target | Key | What it moves |
 |---|---|---|
-| `Wing(limb)` | `x` extension 0-1, `y` raise, `z` sweep (quarter turns) | one wing off its fold (`Wings::pose_side`), then turned whole at the shoulder; out of what the pose held over its first tenth, since a bat's wing is the leg the plant put down |
+| `Wing(limb)` | `x` extension 0-1, `y` raise, `z` sweep (quarter turns) | one wing off its fold (`Wings::pose_side`), then turned whole at the shoulder; out of what the pose held over its first tenth, since a bat's wing is the leg the plant put down; on a slope what its legs carry eased to how it was authored, and their feet kept out of the ground (#457: see "The driver's order") |
 | `Fan` | `z` 0-1 | a bird's tail fan (`Rig::spread_tail`) |
 | `Grip` | `z` 0-1 | every drawn toe: the joints past its root bent 2 rad in all toward the sole, and the root lifted as a knuckle just as far as brings the claw's tip back to the height it stood at (found by halving, at most 1.4 rad), so the claws close on a flat top without going through it |
 | `Tuck` | `z` share of 0.8 of a half turn, `x` side, `y` extra dip | the head turned back about the body's up, half at the neck and half at the head, a bird's neck leaned back 0.7 rad first and the head dipped 0.8 rad past the lean |
@@ -1857,8 +1958,8 @@ and stretched back under it, inside its reach (and lifted further by as far
 as its claws would stand in the ground), and the tail fanned, then both
 wings raised 0.75 of a quarter turn over the back (S16); a bat's **Wing
 Stretch**, each wing opened 0.45 out and lifted in turn; a glider's
-**Stretch**, a bow of 0.1 with its forepaws walked 0.22 out and stood on the
-ground, its head up and its tail raised high - a glider-led cross with a
+**Stretch**, a bow of 0.1 with its forepaws walked 0.22 out along the ground
+and stood on it, its head up and its tail raised high - a glider-led cross with a
 bird's shoulder bowing only as far as leaves its foreleg folded to a quarter
 of its reach (a Glider x Bird 0.3 half as far, `rests::bow_sink`): folded
 nearly shut, its elbow went from bent back to bent out in a frame as the bow

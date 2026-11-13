@@ -802,10 +802,22 @@ const ROOT_CLEAR: f32 = 1.2;
 /// moves: a fang hung at the jaw's widest touches the jaw there by construction, and
 /// a hair either side of touching decided between hanging straight and leaning out as
 /// far as it goes (#404).
+///
+/// **The whole of that section, not its first place alone (#410)**: every place
+/// along the line still within the ring round the root, which a lean barely moves
+/// either. Left in, a thick fang's first few places read a sliver of the jaw the
+/// root's own ring stands in, a little less whatever the lean, and the least lean
+/// that cleared them was where the last of that sliver let go: on a snub cat a hair
+/// of root height swung it from hanging straight to half a radian out, and the tip
+/// stepped by a third of a head radius along the thickness slider.
 fn jaw_clearance(head: &BeastHead, seat: &OrnamentSeat) -> f32 {
     let round = seat.direction.cross(seat.side);
     let mut clearance = f32::INFINITY;
+    let (root, section) = (seat.base, seat.radius_at(0.0) * JAW_AIR);
     for (at, along) in seat.read_along(CLEAR_READINGS).into_iter().skip(1) {
+        if at.distance(root) < section {
+            continue;
+        }
         let reach = seat.radius_at(along) * JAW_AIR;
         for point in 0..JAW_RING {
             let angle = std::f32::consts::TAU * point as f32 / JAW_RING as f32;

@@ -1,9 +1,19 @@
 //! The per-frame bounds a winged body's motion is held to (#424), shared by
 //! `winged_flight`, `winged_rests`, `winged_motion` and `winged_life`: how far its joints move
-//! into a frame, where a frame pops against its neighbours, and how low its
-//! whole drawn body and its drawn toes reach.
+//! into a frame and how far they turn, where a frame pops against its
+//! neighbours, and how low its whole drawn body and its drawn toes reach.
 
-use symbios_avatar::{Avatar, MeshKind, Pose, Vec3};
+use symbios_avatar::{Avatar, MeshKind, Pose, Quat, Vec3};
+
+/// How far a joint turned from `before` to `now`, in radians, read on the
+/// rotations normalised (#458): the driver hands back rotations up to about
+/// a thousandth off unit length, and `Quat::angle_between` takes twice the
+/// arccosine of their dot product as it stands, so a length that alternates
+/// read as up to 0.07 rad a frame that alternates on a joint that never
+/// turned.
+pub fn turn_between(before: Quat, now: Quat) -> f32 {
+    now.normalize().angle_between(before.normalize())
+}
 
 /// How far each joint moved from `before` to `now`, the most of them.
 pub fn furthest(before: &[Vec3], now: &[Vec3]) -> f32 {

@@ -7,6 +7,7 @@
 //! the hind leg; no joint of it turns by more than a beast's paw does in a
 //! frame; and a glider carries few joints for it.
 
+use super::winged_bounds::turn_between;
 use symbios_avatar::anim::driver::{Driver, Inputs, level_ground, velocity_of};
 use symbios_avatar::anim::gesture;
 use symbios_avatar::plan::{Blended, Lineage};
@@ -366,7 +367,9 @@ fn a_gliders_folded_patagium_wears_its_coat_outside() {
 /// How far any joint of a winged body's wings may turn in a sixtieth of a
 /// second walking or bounding, in radians: a beast's paw turns about 0.1, and
 /// a glider's toe flipped by 2.8 inside a millimetre's travel once (#424).
-const FRAME_TURN: f32 = 0.15;
+/// A tenth: the most any wing joint turns here is 0.063, read on normalised
+/// rotations (#458).
+const FRAME_TURN: f32 = 0.1;
 
 /// **No joint of a glider's folded wing turns over between frames** (#434):
 /// walking and bounding, every joint the wings added - the folded spars and
@@ -385,7 +388,7 @@ fn no_joint_of_a_gliders_folded_wing_turns_over_between_frames() {
                 let now = pose.forward(rig).rotations;
                 if let Some(before) = &before {
                     for &joint in &joints {
-                        let turned = before[joint].angle_between(now[joint]);
+                        let turned = turn_between(before[joint], now[joint]);
                         if turned > worst.0 {
                             worst = (turned, format!("{name} at {speed} m/s, joint {joint}"));
                         }

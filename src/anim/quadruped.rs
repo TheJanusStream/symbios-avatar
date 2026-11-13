@@ -1323,6 +1323,21 @@ impl Girdles {
         }
     }
 
+    /// These girdles with the height their plane has under the body's origin
+    /// taken out (#456): the turn the ground asks of the trunk, and the
+    /// height it asks of each girdle against the origin's.
+    pub(super) fn turned_at_origin(self, rig: &Rig) -> Self {
+        let Some(under) = self.plane_under(rig, Vec3::ZERO) else {
+            return self.turned();
+        };
+        let height = under.position.y;
+        Self {
+            hips: self.hips - height,
+            shoulders: self.shoulders - height,
+            ..self
+        }
+    }
+
     /// The plane these stand for under `at`, in the frame the body is posed
     /// in: its height there and its up (#414). `None` for a body that does not
     /// stand on four legs.

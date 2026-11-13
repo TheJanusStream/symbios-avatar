@@ -5,7 +5,7 @@
 //! nothing drawn into the slope, and a takeoff asked of a landing down on its
 //! feet crouches and pushes as one from standing does.
 
-use super::winged_bounds::{UNDER_GROUND, furthest};
+use super::winged_bounds::{UNDER_GROUND, furthest, turn_between};
 use symbios_avatar::anim::driver::{Carriage, Driver, DriverConfig, Inputs, Source, level_ground};
 use symbios_avatar::anim::winged::flight::{Flight, FlightMode, Flown};
 use symbios_avatar::plan::{Blended, Lineage};
@@ -100,7 +100,7 @@ fn clearance(avatar: &Avatar, pose: &Pose, plane: Plane) -> f32 {
 fn turned(before: &[Quat], now: &[Quat]) -> f32 {
     now.iter()
         .zip(before)
-        .map(|(a, b)| a.angle_between(*b))
+        .map(|(a, b)| turn_between(*b, *a))
         .fold(0.0, f32::max)
 }
 
@@ -433,9 +433,12 @@ fn toes_off(rig: &Rig, shot: &Shot, plane: Plane) -> f32 {
 }
 
 /// How much more than twice the most it turned in the four frames either
-/// side a joint may turn in a sixtieth: a twentieth of a radian, the turns'
+/// side a joint may turn in a sixtieth: a fiftieth of a radian, the turns'
 /// slack for what the pop bound's hundredth of the trunk is to positions.
-const TURN_SLACK: f32 = 0.05;
+/// Read on normalised rotations (#458), no stop's frame turns past twice the
+/// most around it (a twentieth of a radian once took the raw readings'
+/// noise).
+const TURN_SLACK: f32 = 0.02;
 
 /// How long a walk stopping on a slope is read from its stop, in seconds:
 /// three quarters of a second, the idle's blend (0.15 s) and its settling

@@ -32,7 +32,9 @@
 //!
 //! 1. **The water and a shown motion** outrank a flight: a winged body asked
 //!    to swim swims, and a leap or a swim shown is played, whatever its host
-//!    says of the air.
+//!    says of the air. **A swim plays no rest and no emote, nor does a
+//!    leap** (#461): as under a flight, one asked is let go and one playing
+//!    ends that frame, blended out of.
 //! 2. **A flight** ([`crate::anim::Inputs::flight`]), on a body with wings,
 //!    holds it in the air for as long as the host gives one: no leap starts
 //!    under it, and it plays **no rest and no emote** - one asked mid-flight
@@ -46,8 +48,8 @@
 //!    the gait or the idle takes over the next frame, blended from the
 //!    landing's last pose.
 //! 4. **A rest or an emote** is laid over the ground gait or the idle, as a
-//!    beast's is, and a rest is got up from in a hurry by whatever stirs the
-//!    body - being carried, swimming, a leap.
+//!    beast's is, and a rest is got up from in a hurry by being carried; the
+//!    water and a leap end it at once (1.).
 //!
 //! **And the drawn toes after the blend** (`ground::keep_toes_up`) on the
 //! gait's and the idle's frames only, the blends into them included: a
@@ -56,6 +58,26 @@
 //! laid over the idle stands on the idle's feet as drawn** (#451, #450):
 //! their toes kept up before the clip, which holds each foot from where that
 //! pose stands it, and a curl goes down from them and gets up to them.
+//!
+//! **An emote reaches no further into a slope than on the level** (#457): a
+//! foot it holds keeps the attitude the idle stood it at, one it walks out is
+//! sent along the ground, and a wing it spreads eases what its legs carry to
+//! how the wing was authored over and keeps their feet out of the ground
+//! (`rests::wing_on`), `keep_clear` letting go of a crawling hand as the wing
+//! takes it - and, once a takeoff, a swim or a leap cuts the emote short,
+//! taking it back over two blends, never in a frame (`Driver::take_wings`).
+//!
+//! **A leap and a fall are sized on the legs a winged body stands on**
+//! (#456, #459, `anim::leap`): its leg read from hip to pad as it stands,
+//! not off its bones' reach, and its fall joined at the end of its arc, its
+//! legs reaching for the ground; its feet are tucked, planted and set down
+//! square to the ground they leave and land on, as the toes' own lift
+//! would lay them (`leap::stand_square`). **A Wing Stretch laid over a
+//! walk** leaves the legs its wings lift off the stride on four and hands
+//! them back to the wing after the settle (#460, `rests::wing_held`); on
+//! two, the stride keeps its legs under any emote laid over it, and the
+//! clip the wings it lays out (`rests::walked_legs`). **An emote's fore elbows are kept out of the
+//! ground** (#462, `ground::keep_elbows_up`), swung toward the body.
 //!
 //! **A rest is laid on the ground under it** (#450): a bat's rest and a
 //! glider's curl turned from the plane under its trunk onto the level they

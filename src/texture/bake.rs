@@ -7,12 +7,16 @@
 //! which is what makes procedural skin tractable — freckles on a cheek become
 //! plain arithmetic on a position rather than a search through geometry.
 //!
+//! Beside the buffer, for the crate's own painter, the bake measures how much
+//! skin each texel spans, along each of the atlas's axes: the footprint a
+//! painted beard's edge is feathered over (#432).
+//!
 //! Charts do not tile the atlas, so texels between them start empty. They are
 //! **dilated** outward afterwards, because a bilinear tap or a mip level near a
 //! chart edge otherwise pulls in background and draws a dark seam around every
 //! body part.
 
-use glam::{Vec2, Vec3};
+use glam::{Mat3, Vec2, Vec3};
 
 use crate::mesh::PolyMesh;
 use crate::plan::Zone;
@@ -37,6 +41,150 @@ pub struct Texel {
     pub mouth: f32,
     /// Which part of the body it belongs to.
     pub zone: Zone,
+}
+
+/// How much skin one texel spans at a place on the body (#432): the ellipse a
+/// disc one texel across in the atlas covers on the skin there.
+///
+/// **An ellipse, because the atlas is often coarse one way and fine the
+/// other.** Under the jaw and behind the cheek the head's chart steps four to
+/// eight millimetres a texel one way and one or two the other, so anything
+/// sized by the coarse step alone - a round disc as wide as the longest axis -
+/// reaches across a dozen fine texels the other way.
+///
+/// **Not the step to a neighbouring texel**, which is what a painter could
+/// otherwise measure for itself: that step is a property of the atlas, and at a
+/// chart's edge or a seam two texels at one place on the body read two
+/// different steps - so anything sized by it is sized differently on the two
+/// sides of the seam. This is a property of the surface: each vertex reads the
+/// atlas's stretch as a tensor, which no chart's orientation enters, averaged
+/// over the faces round it on every side of a seam it sits on, so the field is
+/// continuous over the body, as every other field here is.
+///
+/// **Beside the [`AtlasGeometry`] rather than in a [`Texel`]**, which is public
+/// with every field public, so a field added there is a break for any crate
+/// that writes one out. [`bake_measured`] hands them out as [`Footprints`],
+/// and only the crate's own painter reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Footprint {
+    /// The ellipse's two semi-axes on the skin, in metres, the longer first: at
+    /// right angles to each other and to the texel's normal. Both zero where
+    /// nothing measured it, which is everywhere off the head: see
+    /// [`bake_measured`].
+    pub(crate) axes: [Vec3; 2],
+}
+
+impl Footprint {
+    /// The ellipse a stretch tensor - see [`spreads`] - draws in the tangent
+    /// plane of `normal`.
+    ///
+    /// Square roots only, so every platform reads the same bits.
+    fn of(spread: Mat3, normal: Vec3) -> Self {
+        let (one, two) = normal.any_orthonormal_pair();
+        let (a, b, c) = (
+            one.dot(spread * one),
+            one.dot(spread * two),
+            two.dot(spread * two),
+        );
+        let ([big, small], turn) = principal(a, b, c);
+        let major = one * turn.x + two * turn.y;
+        let minor = one * -turn.y + two * turn.x;
+        Self {
+            axes: [major * big.sqrt(), minor * small.sqrt()],
+        }
+    }
+}
+
+/// Nothing measured: what [`Footprints`] reads off the head.
+const NOTHING: Footprint = Footprint {
+    axes: [Vec3::ZERO; 2],
+};
+
+/// The side of one tile of [`Footprints`], in texels.
+const TILE: usize = 16;
+
+/// The [`Footprint`]s of one bake, addressed by the index of a texel in
+/// [`AtlasGeometry::texels`], **kept for the head only** (#432).
+///
+/// Only the head's texels are ever measured, so one footprint for every texel
+/// of the atlas was 24 MB at 1024 texels of which all but the head read
+/// nothing - and Overlands builds every peer's avatar in a web worker, whose
+/// linear memory never shrinks back. The head's charts lie all over the
+/// atlas, so not even a grid over their bounds is small: the atlas is cut into
+/// tiles of [`TILE`] texels a side, and a tile is only kept once a footprint is
+/// written into it. A texel in a tile never written reads
+/// [`Footprint::default`], as it did.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Footprints {
+    /// The atlas's width and height, in texels.
+    atlas: [usize; 2],
+    /// The atlas's tiles, row-major: each one's footprints, row-major, once
+    /// one has been written into it.
+    tiles: Vec<Option<Box<[Footprint; TILE * TILE]>>>,
+}
+
+impl Footprints {
+    /// Nothing measured, over an atlas `width` by `height` texels.
+    fn over(width: u32, height: u32) -> Self {
+        let atlas = [width as usize, height as usize];
+        let [across, down] = atlas.map(|side| side.div_ceil(TILE));
+        Self {
+            atlas,
+            tiles: vec![None; across * down],
+        }
+    }
+
+    /// Which tile texel `index` of the atlas is in, and where in it.
+    fn place(&self, index: usize) -> Option<(usize, usize)> {
+        let [width, height] = self.atlas;
+        let (x, y) = (index % width.max(1), index / width.max(1));
+        (y < height).then(|| {
+            let tile = (y / TILE) * width.div_ceil(TILE) + x / TILE;
+            (tile, (y % TILE) * TILE + x % TILE)
+        })
+    }
+
+    /// The footprint of texel `index` of the atlas, or `None` in a tile
+    /// nothing was written into.
+    pub(crate) fn get(&self, index: usize) -> Option<&Footprint> {
+        let (tile, at) = self.place(index)?;
+        self.tiles[tile].as_ref().map(|tile| &tile[at])
+    }
+
+    /// The footprint of texel `index` of the atlas, to write: its tile is
+    /// kept from here on.
+    fn get_mut(&mut self, index: usize) -> Option<&mut Footprint> {
+        let (tile, at) = self.place(index)?;
+        let tile = self.tiles[tile].get_or_insert_with(|| Box::new([NOTHING; TILE * TILE]));
+        Some(&mut tile[at])
+    }
+}
+
+impl std::ops::Index<usize> for Footprints {
+    type Output = Footprint;
+
+    /// The footprint of texel `index` of the atlas, nothing off the head.
+    fn index(&self, index: usize) -> &Footprint {
+        self.get(index).unwrap_or(&NOTHING)
+    }
+}
+
+/// The two eigenvalues of the symmetric 2 x 2 `[[a, b], [b, c]]`, the larger
+/// first and neither below zero, and the unit direction of the larger.
+///
+/// Each direction read from the row that is well conditioned for it, so a
+/// nearly round tensor still hands back a unit vector.
+fn principal(a: f32, b: f32, c: f32) -> ([f32; 2], Vec2) {
+    let half = 0.5 * (a - c);
+    let root = (half * half + b * b).sqrt();
+    let mean = 0.5 * (a + c);
+    let (big, small) = ((mean + root).max(0.0), (mean - root).max(0.0));
+    let turn = if a >= c {
+        Vec2::new(big - c, b)
+    } else {
+        Vec2::new(b, big - a)
+    };
+    ([big, small], turn.normalize_or(Vec2::X))
 }
 
 /// The body, rasterised into texture space.
@@ -116,8 +264,28 @@ pub fn bake(
     mouth: &[f32],
     size: u32,
 ) -> AtlasGeometry {
+    bake_measured(mesh, uv, parts, mouth, size).0
+}
+
+/// [`bake`], and how much skin each texel spans beside it: one [`Footprint`] a
+/// texel, addressed like [`AtlasGeometry::texels`], carried across each
+/// triangle and out into the gutters with the texel it belongs to (#432).
+///
+/// **The head's texels only**, the one part of the body anything is feathered
+/// on (the painted beard); every other texel's footprint is left at nothing.
+/// Read over the whole atlas it cost a fifth of the bake again, about twenty
+/// milliseconds a body at 1024 texels, persons and beasts alike; and stored
+/// over the whole atlas it cost 24 MB there, which [`Footprints`] keeps to the
+/// head's corner.
+pub(crate) fn bake_measured(
+    mesh: &PolyMesh,
+    uv: &UvUnwrap,
+    parts: &[(&PolyMesh, Zone, &[f32])],
+    mouth: &[f32],
+    size: u32,
+) -> (AtlasGeometry, Footprints) {
     if size == 0 || (uv.faces.is_empty() && parts.is_empty()) {
-        return AtlasGeometry::default();
+        return (AtlasGeometry::default(), Footprints::default());
     }
 
     let mut geometry = AtlasGeometry {
@@ -125,6 +293,7 @@ pub fn bake(
         height: size,
         texels: vec![None; (size * size) as usize],
     };
+    let mut measured = Footprints::over(size, size);
 
     if !uv.faces.is_empty() {
         let normals = uv.gather(&mesh.vertex_normals());
@@ -137,6 +306,16 @@ pub fn bake(
         } else {
             vec![0.0; uv.uvs.len()]
         };
+        // Read per body vertex, over every chart face it touches on every side
+        // of its seams, and only then split, so that both sides agree.
+        let spreads = uv.gather(&spreads(
+            &uv.uvs,
+            &positions,
+            &uv.faces,
+            |vertex| uv.source[vertex as usize] as usize,
+            mesh.vertex_count(),
+            size,
+        ));
         for (index, face) in uv.faces.iter().enumerate() {
             let zone = uv.charts[uv.chart_of_face[index] as usize].zone;
             // Fan-triangulate: a quad from a subdivided body is planar enough
@@ -145,28 +324,38 @@ pub fn bake(
                 let triangle = [face[0], face[corner], face[corner + 1]];
                 rasterize(
                     &mut geometry,
+                    &mut measured,
                     zone,
-                    triangle.map(|v| uv.uvs[v as usize]),
-                    triangle.map(|v| positions[v as usize]),
-                    triangle.map(|v| normals[v as usize]),
-                    triangle.map(|v| creases[v as usize]),
-                    triangle.map(|v| mouths[v as usize]),
+                    &Corners {
+                        uvs: triangle.map(|v| uv.uvs[v as usize]),
+                        positions: triangle.map(|v| positions[v as usize]),
+                        normals: triangle.map(|v| normals[v as usize]),
+                        creases: triangle.map(|v| creases[v as usize]),
+                        mouths: triangle.map(|v| mouths[v as usize]),
+                        spreads: triangle.map(|v| spreads[v as usize]),
+                    },
                 );
             }
         }
     }
 
     for &(part, zone, mouth) in parts {
-        draw_part(&mut geometry, part, zone, mouth);
+        draw_part(&mut geometry, &mut measured, part, zone, mouth);
     }
 
-    dilate(&mut geometry, DILATION);
-    geometry
+    dilate(&mut geometry, &mut measured, DILATION);
+    (geometry, measured)
 }
 
 /// Rasterises one attached part, using the coordinates it carries and its
 /// mouth channel, if it has one.
-fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone, mouth: &[f32]) {
+fn draw_part(
+    geometry: &mut AtlasGeometry,
+    measured: &mut Footprints,
+    part: &PolyMesh,
+    zone: Zone,
+    mouth: &[f32],
+) {
     if part.uvs.len() != part.positions.len() {
         return;
     }
@@ -179,21 +368,135 @@ fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone, mouth: &
             0.0
         }
     };
+    let spreads = spreads(
+        &part.uvs,
+        &part.positions,
+        &part.faces,
+        |vertex| vertex as usize,
+        part.positions.len(),
+        geometry.width,
+    );
     for face in &part.faces {
         for corner in 1..face.len().saturating_sub(1) {
             let triangle = [face[0], face[corner], face[corner + 1]];
             rasterize(
                 geometry,
+                measured,
                 zone,
-                triangle.map(|v| part.uvs[v as usize]),
-                triangle.map(|v| part.positions[v as usize]),
-                triangle.map(|v| normals[v as usize]),
-                triangle.map(|v| creases[v as usize]),
-                triangle.map(mouths),
+                &Corners {
+                    uvs: triangle.map(|v| part.uvs[v as usize]),
+                    positions: triangle.map(|v| part.positions[v as usize]),
+                    normals: triangle.map(|v| normals[v as usize]),
+                    creases: triangle.map(|v| creases[v as usize]),
+                    mouths: triangle.map(mouths),
+                    spreads: triangle.map(|v| spreads[v as usize]),
+                },
             );
         }
     }
 }
+
+/// How much skin one texel spans at each vertex (#432), as a stretch tensor:
+/// over the faces round the vertex, the outer products of the skin each step
+/// along the atlas's two axes spans, averaged by the skin each face covers.
+///
+/// `key` names the vertex a corner belongs to - the body's own vertex for an
+/// unwrapped corner, so that the copies a seam makes of one vertex share one
+/// reading - and `keys` is how many there are.
+///
+/// - **A tensor rather than the two steps themselves**, because the steps are
+///   the atlas's and the tensor is the skin's: `u u' + v v'` is the same
+///   whichever way a chart is turned or mirrored, so faces from the two charts
+///   either side of a seam average to one reading, where averaging two charts'
+///   steps would add a step along one chart's rows to a step along the other's
+///   columns. [`Footprint::of`] reads the ellipse back out of it.
+/// - **Averaged by skin, not by texels**, because where a chart is coarse its
+///   faces are thin in the atlas: under the jaw most of the skin lies in faces
+///   the projection has flattened to a fraction of a texel, and weighed by the
+///   texels each takes, the few whole faces between them outvoted them and the
+///   jaw's underside read two millimetres a texel where its neighbouring texels
+///   stand seven apart.
+/// - **Each face's stretch held to [`COARSEST`] along each of its axes**,
+///   because a face flattened to a sliver reads metres a texel the long way
+///   (its own texels belong to the faces round it), and one sliver beside a
+///   nostril would otherwise read as coarse as the whole underside of the jaw.
+///
+/// Square roots only, so every platform reads the same bits.
+fn spreads(
+    uvs: &[Vec2],
+    positions: &[Vec3],
+    faces: &[Vec<u32>],
+    key: impl Fn(u32) -> usize,
+    keys: usize,
+    size: u32,
+) -> Vec<Mat3> {
+    let scale = size as f32;
+    let mut sums = vec![(Mat3::ZERO, 0.0f32); keys];
+    for face in faces {
+        for corner in 1..face.len().saturating_sub(1) {
+            let triangle = [face[0], face[corner], face[corner + 1]];
+            let [t0, t1, t2] = triangle.map(|v| uvs[v as usize] * scale);
+            let [p0, p1, p2] = triangle.map(|v| positions[v as usize]);
+            let (d1, d2) = (t1 - t0, t2 - t0);
+            let det = d1.x * d2.y - d2.x * d1.y;
+            if det.abs() < 1e-9 {
+                continue;
+            }
+            let (e1, e2) = (p1 - p0, p2 - p0);
+            // The surface's rate of change along the atlas's two axes.
+            let along_u = (e1 * d2.y - e2 * d1.y) / det;
+            let along_v = (e2 * d1.x - e1 * d2.x) / det;
+            // That 3 x 2 map's singular directions on the skin, each as long
+            // as its singular value, and each held to the coarsest.
+            let ([big, small], turn) = principal(
+                along_u.length_squared(),
+                along_u.dot(along_v),
+                along_v.length_squared(),
+            );
+            let held = |squared: f32| {
+                if squared > COARSEST * COARSEST {
+                    COARSEST * COARSEST / squared
+                } else {
+                    1.0
+                }
+            };
+            let major = along_u * turn.x + along_v * turn.y;
+            let minor = along_u * -turn.y + along_v * turn.x;
+            let spread = outer(major) * held(big) + outer(minor) * held(small);
+            let skin = 0.5 * e1.cross(e2).length();
+            for vertex in triangle {
+                if let Some(sum) = sums.get_mut(key(vertex)) {
+                    sum.0 += spread * skin;
+                    sum.1 += skin;
+                }
+            }
+        }
+    }
+    sums.into_iter()
+        .map(|(spread, skin)| {
+            if skin > 0.0 {
+                spread * (1.0 / skin)
+            } else {
+                Mat3::ZERO
+            }
+        })
+        .collect()
+}
+
+/// `v v'`, the tensor of one direction.
+fn outer(v: Vec3) -> Mat3 {
+    Mat3::from_cols(v * v.x, v * v.y, v * v.z)
+}
+
+/// The coarsest a face reads along either axis in [`spreads`], in metres a
+/// texel.
+///
+/// The head's chart is at its coarsest under the jaw and behind the cheek, where
+/// a texel stands up to about eight millimetres from the next (#432); a face
+/// reading more than that is a sliver of the projection, not a texel of skin.
+///
+/// Provenance: **measured** on seeds 175 and 237 (#432).
+const COARSEST: f32 = 0.008;
 
 /// How far outside a triangle, in texels, a texel centre may sit and still be
 /// filled by it.
@@ -212,16 +515,33 @@ fn draw_part(geometry: &mut AtlasGeometry, part: &PolyMesh, zone: Zone, mouth: &
 /// anyway.
 const COVER: f32 = 0.71;
 
-/// Fills every texel a triangle covers or touches — see [`COVER`].
-fn rasterize(
-    geometry: &mut AtlasGeometry,
-    zone: Zone,
+/// One triangle's corners, everything the rasteriser carries across it.
+struct Corners {
     uvs: [Vec2; 3],
     positions: [Vec3; 3],
     normals: [Vec3; 3],
     creases: [f32; 3],
     mouths: [f32; 3],
+    /// The stretch tensors of [`spreads`].
+    spreads: [Mat3; 3],
+}
+
+/// Fills every texel a triangle covers or touches - see [`COVER`] - and the
+/// [`Footprint`] beside each.
+fn rasterize(
+    geometry: &mut AtlasGeometry,
+    measured: &mut Footprints,
+    zone: Zone,
+    corners: &Corners,
 ) {
+    let Corners {
+        uvs,
+        positions,
+        normals,
+        creases,
+        mouths,
+        spreads,
+    } = corners;
     let scale = Vec2::new(geometry.width as f32, geometry.height as f32);
     let pixels = uvs.map(|uv| uv * scale);
 
@@ -268,16 +588,26 @@ fn rasterize(
             }
             weights /= total;
 
-            geometry.texels[(y * geometry.width + x) as usize] = Some(Texel {
+            let at = (y * geometry.width + x) as usize;
+            let normal = (normals[0] * weights.x + normals[1] * weights.y + normals[2] * weights.z)
+                .normalize_or(Vec3::Y);
+            geometry.texels[at] = Some(Texel {
                 position: positions[0] * weights.x
                     + positions[1] * weights.y
                     + positions[2] * weights.z,
-                normal: (normals[0] * weights.x + normals[1] * weights.y + normals[2] * weights.z)
-                    .normalize_or(Vec3::Y),
+                normal,
                 crease: creases[0] * weights.x + creases[1] * weights.y + creases[2] * weights.z,
                 mouth: mouths[0] * weights.x + mouths[1] * weights.y + mouths[2] * weights.z,
                 zone,
             });
+            if zone == Zone::Head
+                && let Some(footprint) = measured.get_mut(at)
+            {
+                *footprint = Footprint::of(
+                    spreads[0] * weights.x + spreads[1] * weights.y + spreads[2] * weights.z,
+                    normal,
+                );
+            }
         }
     }
 }
@@ -287,8 +617,8 @@ fn edge(a: Vec2, b: Vec2, c: Vec2) -> f32 {
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
 
-/// Grows filled texels outward into the gutters.
-fn dilate(geometry: &mut AtlasGeometry, passes: u32) {
+/// Grows filled texels outward into the gutters, each with its [`Footprint`].
+fn dilate(geometry: &mut AtlasGeometry, measured: &mut Footprints, passes: u32) {
     let (width, height) = (geometry.width as i64, geometry.height as i64);
 
     for _ in 0..passes {
@@ -311,10 +641,17 @@ fn dilate(geometry: &mut AtlasGeometry, passes: u32) {
                         if nx < 0 || ny < 0 || nx >= width || ny >= height {
                             return None;
                         }
-                        previous[(ny * width + nx) as usize]
+                        let there = (ny * width + nx) as usize;
+                        previous[there].map(|texel| (texel, there))
                     });
-                if let Some(texel) = found {
+                if let Some((texel, there)) = found {
                     geometry.texels[here] = Some(texel);
+                    // Filled before this pass, so already what it ends as.
+                    if let Some(&footprint) = measured.get(there)
+                        && let Some(into) = measured.get_mut(here)
+                    {
+                        *into = footprint;
+                    }
                     grew = true;
                 }
             }
@@ -403,6 +740,7 @@ mod tests {
             height: 128,
             texels: vec![None; 128 * 128],
         };
+        let mut measured = Footprints::over(128, 128);
         let normals = uv.gather(&mesh.vertex_normals());
         let positions = uv.gather(&mesh.positions);
         for (index, face) in uv.faces.iter().enumerate() {
@@ -411,20 +749,187 @@ mod tests {
                 let triangle = [face[0], face[corner], face[corner + 1]];
                 rasterize(
                     &mut bare,
+                    &mut measured,
                     zone,
-                    triangle.map(|v| uv.uvs[v as usize]),
-                    triangle.map(|v| positions[v as usize]),
-                    triangle.map(|v| normals[v as usize]),
-                    [0.0; 3],
-                    [0.0; 3],
+                    &Corners {
+                        uvs: triangle.map(|v| uv.uvs[v as usize]),
+                        positions: triangle.map(|v| positions[v as usize]),
+                        normals: triangle.map(|v| normals[v as usize]),
+                        creases: [0.0; 3],
+                        mouths: [0.0; 3],
+                        spreads: [Mat3::ZERO; 3],
+                    },
                 );
             }
         }
         let before = bare.coverage();
-        dilate(&mut bare, DILATION);
+        dilate(&mut bare, &mut measured, DILATION);
         assert!(
             bare.coverage() > before,
             "dilation must grow coverage past {before:.3}"
+        );
+    }
+
+    #[test]
+    fn a_footprint_is_one_texel_of_skin_each_way_and_one_reading_at_a_seam() {
+        // **What the beard's feather is sized by** (#432), so it must say how
+        // far apart the texels round it stand on the skin, along each of the
+        // atlas's axes, and it must say the same on both sides of a seam: a
+        // painter sized by its own step to the next texel read two different
+        // steps at one place on the jaw, and two texels a fifth of a millimetre
+        // apart painted a third of a beard's density apart.
+        //
+        // Read as the step to the next texel along each axis, measured in the
+        // footprint's own ellipse: one where the ellipse is a texel of skin each
+        // way. Measured at #432 on the default head: 0.978 at the median, 0.959
+        // where the atlas is twice as coarse one way as the other; a round
+        // footprint as wide as the ellipse's long axis reads 0.900 and 0.764
+        // there, the fine way's steps a fraction of one.
+        let skeleton = HumanoidParams::default().skeleton(&crate::Composites::default());
+        let cage = build_cage(&skeleton, &CageConfig::default()).expect("meshes");
+        let mesh = catmull_clark(&cage, crate::BODY_SUBDIVISIONS);
+        let rig = Rig::from_skeleton(&skeleton).expect("rigs");
+        let zones = skin::bind(&mesh, &rig, &SkinConfig::default()).zone_map(&mesh, &rig);
+        let uv = unwrap(&mesh, &rig, &zones, &UvConfig::default());
+        let size = 1024;
+        let (geometry, measured) = bake_measured(&mesh, &uv, &[], &[], size);
+        // Kept for the head only: measured at #432 on the default head, 410 of
+        // the atlas's 4096 tiles, 2.5 MB of footprints where one a texel was 24.
+        let kept = measured.tiles.iter().flatten().count();
+        assert!(
+            kept * 8 <= measured.tiles.len(),
+            "the footprints keep {kept} of {} tiles",
+            measured.tiles.len()
+        );
+        assert_eq!(
+            geometry,
+            bake_geometry(&mesh, &uv, size),
+            "measuring must not change what is baked"
+        );
+        let width = geometry.width as usize;
+        // The step `s` in the ellipse's own measure, `|M^-1/2 s|`.
+        let reading = |footprint: &Footprint, step: Vec3| {
+            let [major, minor] = footprint.axes;
+            Vec2::new(
+                step.dot(major) / major.length_squared(),
+                step.dot(minor) / minor.length_squared(),
+            )
+            .length()
+        };
+        let (mut steps, mut long) = (Vec::new(), Vec::new());
+        for (at, texel) in geometry.texels.iter().enumerate() {
+            let Some(here) = texel else { continue };
+            let [major, minor] = measured[at].axes;
+            if here.zone != Zone::Head {
+                assert_eq!(
+                    measured[at],
+                    Footprint::default(),
+                    "a footprint off the head at {:?}",
+                    here.position
+                );
+                continue;
+            }
+            assert!(
+                major.is_finite()
+                    && minor.is_finite()
+                    && major.length() >= minor.length() * (1.0 - 1e-5)
+                    && major.dot(minor).abs() <= 1e-3 * major.length_squared()
+                    && major.dot(here.normal).abs() <= 1e-3 * major.length(),
+                "a footprint of {major:?} and {minor:?} at {:?}",
+                here.position
+            );
+            // Where a face is held to the coarsest it reads, the step past it
+            // is longer than the footprint by design.
+            if minor.length() < 1e-5 || major.length() > 0.9 * COARSEST {
+                continue;
+            }
+            let along = [(at % width + 1 < width).then_some(at + 1), Some(at + width)];
+            let both = along.map(|next| {
+                let there = geometry.texels.get(next?).copied().flatten()?;
+                let step = there.position - here.position;
+                (here.zone == there.zone
+                    && here.normal.dot(there.normal) >= 0.9
+                    && step.length() >= 1e-6)
+                    .then(|| (step.length(), reading(&measured[at], step)))
+                    .filter(|&(_, read)| read < 3.0)
+            });
+            for &(_, read) in both.iter().flatten() {
+                steps.push(read);
+            }
+            // Where the atlas itself is twice as coarse one way as the other.
+            if let [Some((one, first)), Some((two, second))] = both
+                && one.max(two) >= 2.0 * one.min(two)
+            {
+                long.extend([first, second]);
+            }
+        }
+        let median = |all: &mut Vec<f32>| {
+            all.sort_by(f32::total_cmp);
+            all[all.len() / 2]
+        };
+        assert!(long.len() > 1000, "only {} stretched readings", long.len());
+        let (everywhere, stretched) = (median(&mut steps), median(&mut long));
+        println!(
+            "the step to the next texel reads {everywhere:.3} of the footprint at the median, \
+             {stretched:.3} over {} readings where it is twice as coarse one way as the other",
+            long.len()
+        );
+        assert!(
+            (0.85..=1.18).contains(&everywhere) && (0.85..=1.18).contains(&stretched),
+            "the step to the next texel is {everywhere:.2} of a footprint at the median, \
+             {stretched:.2} where the atlas is coarse one way"
+        );
+
+        // The two sides of a seam on the head: texels at one place on the
+        // body, from two places in the atlas farther apart than the gutters
+        // grow. (Off the head nothing is measured, and nothing is feathered.)
+        let cell = 5e-5f32;
+        let mut cells = std::collections::HashMap::<[i64; 3], Vec<usize>>::new();
+        for (at, texel) in geometry.texels.iter().enumerate() {
+            if let Some(texel) = texel.filter(|texel| texel.zone == Zone::Head) {
+                let key = (texel.position / cell).floor().as_i64vec3().to_array();
+                cells.entry(key).or_default().push(at);
+            }
+        }
+        let tensor = |footprint: &Footprint| {
+            let [major, minor] = footprint.axes;
+            outer(major) + outer(minor)
+        };
+        // Two copies the gutters grew from one texel stand up to twice their
+        // reach apart.
+        let reach = 2 * DILATION as usize + 2;
+        let (mut twins, mut worst) = (0usize, 0.0f32);
+        for found in cells.values() {
+            for (one, &mine) in found.iter().enumerate() {
+                for &theirs in &found[one + 1..] {
+                    let (dx, dy) = (
+                        (mine % width).abs_diff(theirs % width),
+                        (mine / width).abs_diff(theirs / width),
+                    );
+                    if dx.max(dy) <= reach {
+                        continue;
+                    }
+                    twins += 1;
+                    let gap = tensor(&measured[mine]) - tensor(&measured[theirs]);
+                    let frobenius = (gap.x_axis.length_squared()
+                        + gap.y_axis.length_squared()
+                        + gap.z_axis.length_squared())
+                    .sqrt();
+                    let scale = measured[mine].axes[0].length_squared().max(1e-12);
+                    worst = worst.max(frobenius / scale);
+                }
+            }
+        }
+        println!(
+            "{twins} texels on two sides of a seam differ by at most {worst:.4} of a footprint"
+        );
+        assert!(
+            twins > 100,
+            "only {twins} texels share a place across a seam"
+        );
+        assert!(
+            worst < 0.02,
+            "two texels at one place on two sides of a seam read footprints {worst:.3} apart"
         );
     }
 

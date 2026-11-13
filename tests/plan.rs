@@ -698,6 +698,221 @@ fn the_worst_slider_corners_build_a_beast() {
     assert!(refused.is_empty(), "these do not build: {refused:#?}");
 }
 
+/// One corner of a person's sliders, as an editor can drag them (#409): every
+/// signed axis at an envelope end or the middle, the composites at theirs, the
+/// height anywhere, sanitised as a record from outside is. The same draw as
+/// `examples/cornercensus --people`, so a corner this names is a corner the
+/// census names.
+fn person_corner(rng: &mut Pcg64Mcg) -> AvatarRecord {
+    let end = |rng: &mut Pcg64Mcg| [-3.0f32, 0.0, 3.0][rng.random_range(0..3)];
+    let params = HumanoidParams {
+        height: rng.random_range(0.0..=4.0),
+        shoulder_width: end(rng),
+        hip_width: end(rng),
+        limb_length: end(rng),
+        neck_length: end(rng),
+        head_size: end(rng),
+        head_breadth: end(rng),
+        face_length: end(rng),
+        extremity_size: end(rng),
+        chest_volume: end(rng),
+        chest_projection: end(rng),
+        chest_lift: end(rng),
+        chest_spacing: end(rng),
+        chest_fullness: end(rng),
+    };
+    let mut record = AvatarRecord::new("Corner", Archetype::Humanoid(params));
+    record.composites.mass = end(rng);
+    record.composites.femininity = end(rng);
+    record.composites.body_fat =
+        [BODY_FAT_RANGE.0, DEFAULT_BODY_FAT, BODY_FAT_RANGE.1][rng.random_range(0..3)];
+    record.composites.age = [AGE_RANGE.0, AGE_RANGE.1][rng.random_range(0..2)];
+    record.sanitize();
+    record
+}
+
+#[test]
+fn every_corner_of_a_persons_sliders_meshes() {
+    // #409: the beast's census (#391) run over people found 2,481 of 20,000
+    // corners refusing to build, about one in eight, at six sites: the
+    // pelvis's hip socket on a narrow-hipped feminine frame, its two hip
+    // sockets overlapping on a heavy soft masculine one, its hull; the
+    // girdle's clavicle socket under a slight body's fat short neck, its neck
+    // socket on narrow feminine shoulders; and the heel's hull under a heavy
+    // ankle on the smallest feet. Each was a floor in `Dimensions` that the
+    // composites had walked past; each is mended where it stands, and
+    // `examples/cornercensus --people` finds none in 320,000.
+    let mut rng = Pcg64Mcg::seed_from_u64(0x391);
+    for sample in 0..2000 {
+        let record = person_corner(&mut rng);
+        assert_meshable(
+            &record.archetype,
+            &record.composites,
+            &format!(
+                "person corner #{sample}: {:?} {:?}",
+                record.archetype, record.composites
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_person_meshes_anywhere_in_the_envelope() {
+    // #409's other half: the census draws each axis at an end or the middle,
+    // and a slider stops anywhere between. Drawn uniformly over every axis's
+    // whole envelope and every composite's, 2,438 bodies in 100,000 refused
+    // before #409, and 43 of them at a site no corner reaches - a heavy, soft,
+    // feminine body with narrowish shoulders whose clavicle grew as fat as
+    // its girdle. None refuses in 400,000 now.
+    let mut rng = Pcg64Mcg::seed_from_u64(0x409);
+    let axis = |rng: &mut Pcg64Mcg| rng.random_range(-3.0f32..=3.0);
+    for sample in 0..2000 {
+        let params = HumanoidParams {
+            height: rng.random_range(0.0..=4.0),
+            shoulder_width: axis(&mut rng),
+            hip_width: axis(&mut rng),
+            limb_length: axis(&mut rng),
+            neck_length: axis(&mut rng),
+            head_size: axis(&mut rng),
+            head_breadth: axis(&mut rng),
+            face_length: axis(&mut rng),
+            extremity_size: axis(&mut rng),
+            chest_volume: axis(&mut rng),
+            chest_projection: axis(&mut rng),
+            chest_lift: axis(&mut rng),
+            chest_spacing: axis(&mut rng),
+            chest_fullness: axis(&mut rng),
+        };
+        let mut record = AvatarRecord::new("Anywhere", Archetype::Humanoid(params));
+        record.composites = Composites {
+            femininity: axis(&mut rng),
+            mass: axis(&mut rng),
+            body_fat: rng.random_range(BODY_FAT_RANGE.0..=BODY_FAT_RANGE.1),
+            age: rng.random_range(AGE_RANGE.0..=AGE_RANGE.1),
+        };
+        record.sanitize();
+        assert_meshable(
+            &record.archetype,
+            &record.composites,
+            &format!(
+                "person #{sample}: {:?} {:?}",
+                record.archetype, record.composites
+            ),
+        );
+    }
+}
+
+#[test]
+fn the_worst_slider_corners_build_a_person() {
+    // #409's sites through the whole build, each at the composites and the
+    // axes that decide it in the census's corner that missed by most, stood at
+    // 1.75 m and the rest of its axes simplified - each of these refused as it
+    // stands before #409. The cage is not the only thing that has to take a
+    // body its floors held back.
+    let person =
+        |shoulder_width: f32, hip_width: f32, neck_length: f32, extremity_size: f32, rest: f32| {
+            HumanoidParams {
+                height: 1.75,
+                shoulder_width,
+                hip_width,
+                limb_length: rest,
+                neck_length,
+                head_size: rest,
+                head_breadth: rest,
+                face_length: rest,
+                extremity_size,
+                chest_volume: rest,
+                chest_projection: rest,
+                chest_lift: rest,
+                chest_spacing: rest,
+                chest_fullness: rest,
+            }
+        };
+    let corners = [
+        // The clavicle's socket under a slight body's fat, short neck: the
+        // census's worst wanted 1.43 of the bone it had.
+        (
+            "clavicle socket",
+            person(-3.0, 3.0, -3.0, 3.0, 0.0),
+            3.0,
+            -3.0,
+            BODY_FAT_RANGE.0,
+            AGE_RANGE.1,
+        ),
+        // The neck's socket on narrow feminine shoulders: 1.08 of it.
+        (
+            "neck socket",
+            person(-3.0, 0.0, -3.0, 3.0, -3.0),
+            3.0,
+            0.0,
+            BODY_FAT_RANGE.1,
+            AGE_RANGE.0,
+        ),
+        // A hip's socket on a narrow feminine pelvis: 1.17 of it.
+        (
+            "hip socket",
+            person(3.0, -3.0, -3.0, 0.0, -3.0),
+            3.0,
+            3.0,
+            BODY_FAT_RANGE.0,
+            AGE_RANGE.0,
+        ),
+        // The two hip sockets of a heavy, soft, masculine body, overlapping.
+        (
+            "hip sockets overlap",
+            person(0.0, -3.0, 3.0, 0.0, 0.0),
+            -3.0,
+            3.0,
+            BODY_FAT_RANGE.1,
+            AGE_RANGE.0,
+        ),
+        // The pelvis's hull on an old, heavy, lean, feminine body.
+        (
+            "pelvis hull",
+            person(-3.0, -3.0, 3.0, 0.0, -3.0),
+            3.0,
+            3.0,
+            BODY_FAT_RANGE.0,
+            AGE_RANGE.1,
+        ),
+        // The heel's hull under a heavy ankle on the smallest feet.
+        (
+            "heel hull",
+            person(3.0, 3.0, 3.0, -3.0, 0.0),
+            0.0,
+            3.0,
+            DEFAULT_BODY_FAT,
+            AGE_RANGE.0,
+        ),
+        // The clavicle grown as fat as its girdle, which no corner reaches.
+        (
+            "fat clavicle",
+            person(-1.5, 0.0, -0.9, 0.0, 0.0),
+            2.83,
+            2.75,
+            0.49,
+            60,
+        ),
+    ];
+    let refused: Vec<String> = corners
+        .into_iter()
+        .filter_map(|(site, params, femininity, mass, body_fat, age)| {
+            let mut record = AvatarRecord::new("Corner", Archetype::Humanoid(params));
+            record.composites = Composites {
+                femininity,
+                mass,
+                body_fat,
+                age,
+            };
+            record.sanitize();
+            symbios_avatar::Avatar::build_for_shape(&record)
+                .is_none()
+                .then(|| format!("{site}: {params:?} {:?}", record.composites))
+        })
+        .collect();
+    assert!(refused.is_empty(), "these do not build: {refused:#?}");
+}
+
 /// How far the skin of a quadruped's chest stands ahead of its left shoulder
 /// joint, along the midline at the joint's height, in withers heights; `None`
 /// when that line does not pass through the chest at all.

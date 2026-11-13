@@ -345,6 +345,22 @@ pub(crate) fn corner_hold_at(rig: &Rig, corner: (usize, f32, usize), position: V
 /// meant to move it.
 #[must_use]
 pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
+    bind_sided(mesh, &[], rig, config)
+}
+
+/// [`bind`], reading which part of the body each vertex is ON at `sides`
+/// rather than where `mesh` puts it, for every vertex `sides` reaches.
+///
+/// For skin bound somewhere other than where it stands (#281): the distances
+/// that weigh each bone are measured from `mesh`, but which limb the vertex
+/// belongs to - and so which limbs' bones the cross-limb gate lets hold it -
+/// is the place it really is.
+pub(crate) fn bind_sided(
+    mesh: &PolyMesh,
+    sides: &[Vec3],
+    rig: &Rig,
+    config: &SkinConfig,
+) -> SkinWeights {
     let vertices = mesh.positions.len();
     let joints = rig.len();
     let Some(first_deforming) = rig.deforming().next() else {
@@ -431,7 +447,8 @@ pub fn bind(mesh: &PolyMesh, rig: &Rig, config: &SkinConfig) -> SkinWeights {
         // Which body part this vertex is ON, asked exactly the way
         // [`crate::face::skull::shape`] asks it. See [`owner_of`]: for one bone
         // in the rig the answer decides which end of it turns this vertex.
-        let mine = rig.joints[rig.nearest_bone(position).joint].zone;
+        let on = sides.get(vertex).copied().unwrap_or(position);
+        let mine = rig.joints[rig.nearest_bone(on).joint].zone;
         limbs[vertex] = mine.limb();
 
         // Iterated by *segment*, credited to the joint that deforms it. See the

@@ -241,6 +241,21 @@ const FAR: f32 = 0.40;
 /// Halvings per bisection. Thirty takes any trunk to well under a micron.
 const HALVINGS: usize = 30;
 
+/// Millimetres a ray walks between containment tests before it bisects.
+///
+/// **A ray is walked to its FIRST crossing and bisected there, never bisected
+/// over its whole length** (#294). Bisecting between the axis and [`FAR`]
+/// finds A crossing, and which one depends on where the midpoints happen to
+/// fall: a ray that leaves the trunk, crosses the gap under an arm and enters
+/// the arm can come back with the arm's far side. On a soft body at
+/// femininity -1 that is what the crest read - 130.9 mm of "relief" at 0.88
+/// of a quarter turn, 62 mm under the girdle, where the carved surface's
+/// bisection landed in the arm and the bare one's in the trunk - and the
+/// pole spans, the cut through it and every reading taken down that cut went
+/// with it. Two millimetres is finer than any gap between a limb and the
+/// trunk the readings are about.
+const MARCH: f32 = 2.0;
+
 /// Millimetres between samples across a section.
 ///
 /// Far finer than any cell on the trunk — those run to tens of millimetres —
@@ -662,17 +677,68 @@ impl Trunk {
     }
 }
 
+/// How far a ray from a point inside the body travels before it first leaves
+/// it, in metres: walked in [`MARCH`] steps to the first point outside, then
+/// bisected between that step and the last one inside. [`FAR`] if it never
+/// leaves.
+fn exit(mesh: &PolyMesh, from: Vec3, direction: Vec3) -> f32 {
+    let step = MARCH / 1000.0;
+    let mut inside = 0.0f32;
+    let mut outside = loop {
+        let next = inside + step;
+        if next >= FAR {
+            break FAR;
+        }
+        if !mesh.contains(from + direction * next) {
+            break next;
+        }
+        inside = next;
+    };
+    for _ in 0..HALVINGS {
+        let mid = 0.5 * (inside + outside);
+        if mesh.contains(from + direction * mid) {
+            inside = mid;
+        } else {
+            outside = mid;
+        }
+    }
+    inside
+}
+
 /// How far the surface reaches forward from the trunk's axis at a point, or
 /// `None` where the axis point itself is outside the body.
 fn reach(mesh: &PolyMesh, across: f32, up: f32) -> Option<f32> {
     let from = Vec3::new(across, up, 0.0);
-    if !mesh.contains(from) {
-        return None;
-    }
-    let (mut inside, mut outside) = (0.0f32, FAR);
+    mesh.contains(from).then(|| exit(mesh, from, Vec3::Z))
+}
+
+/// How far forward the FRONT of the body stands on the line through `across`
+/// and `up`, in metres, or `None` where nothing of the body lies on it.
+///
+/// Walked in from [`FAR`] ahead rather than out from the coronal plane, which
+/// is what a vertical cut wants (#294): the lower pole of a full chest hangs
+/// over a ribcage narrower than it, so at the lobe's own `x` the plane `z = 0`
+/// is outside the body for the lowest few centimetres of the pole and
+/// [`reach`] has nothing to start from there - on a soft body at femininity +1
+/// the cut came back with no samples under the peak, the lower bow NaN, and
+/// the fold and the border an exact zero. Where `z = 0` is inside and the line
+/// crosses the surface once, this is [`reach`] to the bisection.
+fn front(mesh: &PolyMesh, across: f32, up: f32) -> Option<f32> {
+    let step = MARCH / 1000.0;
+    let mut outside = FAR;
+    let mut inside = loop {
+        let next = outside - step;
+        if next <= -FAR {
+            return None;
+        }
+        if mesh.contains(Vec3::new(across, up, next)) {
+            break next;
+        }
+        outside = next;
+    };
     for _ in 0..HALVINGS {
         let mid = 0.5 * (inside + outside);
-        if mesh.contains(from + Vec3::Z * mid) {
+        if mesh.contains(Vec3::new(across, up, mid)) {
             inside = mid;
         } else {
             outside = mid;
@@ -1001,34 +1067,13 @@ fn radial(mesh: &PolyMesh, trunk: &Trunk, azimuth: f32, up: f32) -> Option<f32> 
     }
     let angle = azimuth * std::f32::consts::FRAC_PI_2;
     let out = Vec3::new(angle.sin(), 0.0, angle.cos());
-    let (mut inside, mut outside) = (0.0f32, FAR);
-    for _ in 0..HALVINGS {
-        let mid = 0.5 * (inside + outside);
-        if mesh.contains(from + out * mid) {
-            inside = mid;
-        } else {
-            outside = mid;
-        }
-    }
-    Some(inside)
+    Some(exit(mesh, from, out))
 }
 
 /// How far the surface reaches BACKWARD from the trunk's axis at a point.
 fn depth_back(mesh: &PolyMesh, across: f32, up: f32) -> Option<f32> {
     let from = Vec3::new(across, up, 0.0);
-    if !mesh.contains(from) {
-        return None;
-    }
-    let (mut inside, mut outside) = (0.0f32, FAR);
-    for _ in 0..HALVINGS {
-        let mid = 0.5 * (inside + outside);
-        if mesh.contains(from - Vec3::Z * mid) {
-            inside = mid;
-        } else {
-            outside = mid;
-        }
-    }
-    Some(inside)
+    mesh.contains(from).then(|| exit(mesh, from, -Vec3::Z))
 }
 
 /// Local maxima of a profile that stand [`PROMINENCE`] above the dips beside
@@ -1286,7 +1331,19 @@ fn verdict(mesh: &PolyMesh, plain: &PolyMesh, rig: &Rig, trunk: &Trunk) {
 ///
 /// Sampled at [`CREST_STEP`] rather than [`STEP`] because what this wants from
 /// each height is an argmax and not a shape.
-fn crest(surface: &PolyMesh, plain: &PolyMesh, trunk: &Trunk) -> Vec<(f32, f32, f32)> {
+///
+/// **Only where the carved surface it reads is the trunk's own** (#294), by
+/// the selector [`half_width`] and [`cut`] already use. An argmax over
+/// azimuths finds whatever is furthest out, and at the armpit that is not a
+/// chest: on a soft body at femininity +1 the lobe's lateral tail meets the
+/// inner arm at 0.97 of a quarter turn, 63 mm under the girdle, so the carved
+/// ray's first crossing out of the trunk is already inside the arm and it
+/// leaves through the arm's far side - a 182.6 mm "crest" one sample wide.
+/// That crossing belongs to the upper arm, so the gate drops the azimuth on the
+/// reading's own definition of a trunk rather than on a threshold. (Gating on
+/// the bare surface instead does not catch it: there the bare trunk's own
+/// surface is the chest's.)
+fn crest(surface: &PolyMesh, plain: &PolyMesh, rig: &Rig, trunk: &Trunk) -> Vec<(f32, f32, f32)> {
     // The azimuth step that puts a sample every `CREST_STEP` round the section
     // at the chest, so the resolution of the search is the one the constant
     // names whatever the trunk's own size is doing.
@@ -1301,6 +1358,7 @@ fn crest(surface: &PolyMesh, plain: &PolyMesh, trunk: &Trunk) -> Vec<(f32, f32, 
                 radial(surface, trunk, azimuth, up),
                 radial(plain, trunk, azimuth, up),
             ) && with - without > best.0
+                && is_trunk(rig, on_ray(trunk, azimuth, up, with))
             {
                 best = (with - without, azimuth);
             }
@@ -1374,6 +1432,16 @@ fn authored(
     profile
 }
 
+/// The point `out` metres from the trunk's axis along an azimuth, at `up`.
+fn on_ray(trunk: &Trunk, azimuth: f32, up: f32, out: f32) -> Vec3 {
+    let angle = azimuth * std::f32::consts::FRAC_PI_2;
+    Vec3::new(
+        trunk.axis.x + out * angle.sin(),
+        up,
+        trunk.axis.z + out * angle.cos(),
+    )
+}
+
 /// Where across the section an azimuth lands on the surface, in metres off the
 /// midline.
 ///
@@ -1404,8 +1472,12 @@ fn cut(surface: &PolyMesh, rig: &Rig, trunk: &Trunk, across: f32) -> Vec<(f32, f
     let mut profile = Vec::new();
     let mut up = trunk.waist;
     while up <= trunk.girdle + 1e-6 {
-        if let Some(forward) = reach(surface, across, up)
+        if let Some(forward) = front(surface, across, up)
             && is_trunk(rig, Vec3::new(across, up, forward))
+            // A line that only grazes the body at the coronal plane - a flank,
+            // with the axis point outside the body - has no front: two such
+            // samples (-0.008 mm) once read as a 17 mm "fold" on the bare row.
+            && !(forward.abs() < MARCH / 1000.0 && reach(surface, across, up).is_none())
         {
             profile.push((up, forward));
         }
@@ -1504,12 +1576,17 @@ impl Cut {
         let base = SLOPE_BASE / 1000.0;
         let mut fold = (0.0f32, 0.0f32);
         let mut border = (0.0f32, 0.0f32);
+        // Whether the cut held anything to read either from, so that a reading
+        // with no samples under it says so rather than reporting the zero it
+        // started from (#294).
+        let (mut folds, mut borders) = (false, false);
         for &(up, forward) in &profile {
             if up >= peak || up - notch < trunk.waist {
                 continue;
             }
             if let (Some(under), Some(over)) = (at(&profile, up - notch), at(&profile, up + notch))
             {
+                folds = true;
                 let depth = 0.5 * (under + over) - forward;
                 if depth > fold.0 {
                     fold = (depth, peak - up);
@@ -1529,6 +1606,7 @@ impl Cut {
                 continue;
             }
             if let (Some(under), Some(over)) = (at(&profile, up - base), at(&profile, up + base)) {
+                borders = true;
                 let slope = ((over - under) / (2.0 * base)).abs();
                 if slope > border.0 {
                     border = (slope, up);
@@ -1558,6 +1636,12 @@ impl Cut {
             (Some(left), Some(middle), Some(right)) => 0.5 * (left + right) - middle,
             _ => f32::NAN,
         };
+        if !folds {
+            fold = (f32::NAN, f32::NAN);
+        }
+        if !borders {
+            border = (f32::NAN, f32::NAN);
+        }
         Self {
             bow: (bow(peak, high), bow(low, peak)),
             fold,
@@ -1570,14 +1654,28 @@ impl Cut {
 
     /// The row's own columns, so the carved reading and its control are printed
     /// by one piece of code and cannot come out in different units.
+    ///
+    /// A reading the cut holds no surface for reads `off body` rather than
+    /// `NaN` or the zero it started from (#294): on a full chest the lower pole
+    /// hangs over a ribcage narrower than it, so the vertical line through the
+    /// peak leaves the body before the pole ends, and there is no silhouette
+    /// there to bow, fold or slope.
     fn row(&self) -> String {
+        let read = |value: f32, shown: &dyn Fn(f32) -> String| {
+            if value.is_finite() {
+                shown(value)
+            } else {
+                "off body".to_string()
+            }
+        };
+        let signed = |value: f32| format!("{:+.2}", value * 1000.0);
         format!(
-            "{:+.2} | {:+.2} | {:.2} | {:.0} | {:.3} | {:.2} | {:.2} | {}",
-            self.bow.0 * 1000.0,
-            self.bow.1 * 1000.0,
-            self.fold.0 * 1000.0,
-            self.fold.1 * 1000.0,
-            self.border.0,
+            "{} | {} | {} | {} | {} | {:.2} | {:.2} | {}",
+            read(self.bow.0, &signed),
+            read(self.bow.1, &signed),
+            read(self.fold.0, &|value| format!("{:.2}", value * 1000.0)),
+            read(self.fold.1, &|value| format!("{:.0}", value * 1000.0)),
+            read(self.border.0, &|value| format!("{value:.3}")),
             self.dip * 1000.0,
             self.groove * 1000.0,
             self.sides,
@@ -1705,7 +1803,7 @@ impl Shape {
             traits,
             ..
         } = body;
-        let delivered = Poles::of(&crest(surface, plain, trunk))?;
+        let delivered = Poles::of(&crest(surface, plain, rig, trunk))?;
         // The sagittal plane through the crest, which is where the silhouette
         // readings are taken — see [`abscissa`].
         let across = abscissa(surface, trunk, delivered.azimuth, delivered.peak.0);
@@ -1779,7 +1877,7 @@ fn integrate(profile: &[(f32, f32)], from: f32, to: f32) -> f32 {
 /// is a summary nobody can check, and three ledgers in this crate went stale
 /// because the number was computed and thrown away. `--profile` prints it.
 fn profiles(body: &Body) {
-    let crest = crest(&body.surface, &body.plain, &body.trunk);
+    let crest = crest(&body.surface, &body.plain, &body.rig, &body.trunk);
     let Some(&(peak, _, azimuth)) = crest.iter().max_by(|a, b| a.1.total_cmp(&b.1)) else {
         return;
     };
@@ -1889,7 +1987,9 @@ fn shape(seed: i64, over: &Overrides, bands: &[Band]) {
         }
     }
     println!(
-        "\n  the `bare` row is the same four silhouette readings on the UNCARVED body under \
+        "\n  a reading is `off body` where the vertical line through the peak holds no surface \
+         for it, which a full lower pole hanging over a narrower ribcage does\n\
+         \n  the `bare` row is the same four silhouette readings on the UNCARVED body under \
          that chest, over the same cut and the same spans: whatever it says, the ribcage said, \
          not the carve. the `authored` row is what the carve asked for, probed through \
          `carve_chest` itself at the reading's own resolution: what it and the top row \
@@ -2104,6 +2204,87 @@ fn costing(body: &Body) {
             pass.cell.0 * 1000.0,
             pass.cell.1 * 1000.0,
             pass.cell.2 * 1000.0,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A closed axis-aligned box, faces wound outward.
+    fn boxed(mesh: &mut PolyMesh, low: Vec3, high: Vec3) {
+        let first = mesh.positions.len() as u32;
+        for corner in 0..8u32 {
+            mesh.push_vertex(Vec3::new(
+                if corner & 1 == 0 { low.x } else { high.x },
+                if corner & 2 == 0 { low.y } else { high.y },
+                if corner & 4 == 0 { low.z } else { high.z },
+            ));
+        }
+        for face in [
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+        ] {
+            mesh.push_face(face.iter().map(|&at| first + at).collect::<Vec<u32>>());
+        }
+    }
+
+    #[test]
+    fn a_ray_reads_the_first_surface_it_leaves_and_not_the_one_beyond_a_gap() {
+        // #294: a ray from the trunk crosses the gap under an arm and enters
+        // the arm. Bisected over its whole length it read the arm's far side,
+        // 350 mm out, which is what made a soft body's crest 130.9 mm at
+        // femininity -1. Here the trunk is a box reaching 100 mm forward and the
+        // arm one from 150 to 350 mm.
+        let mut mesh = PolyMesh::new();
+        boxed(
+            &mut mesh,
+            Vec3::new(-0.1, -0.1, -0.1),
+            Vec3::new(0.1, 0.1, 0.1),
+        );
+        boxed(
+            &mut mesh,
+            Vec3::new(-0.1, -0.1, 0.15),
+            Vec3::new(0.1, 0.1, 0.35),
+        );
+        let forward = reach(&mesh, 0.0, 0.0).expect("the axis is inside the trunk");
+        assert!(
+            (forward - 0.1).abs() < 1e-4,
+            "the trunk ends 100 mm forward, read {:.1} mm",
+            forward * 1000.0
+        );
+        // And a vertical cut walked in from the front finds the front.
+        let front = front(&mesh, 0.0, 0.0).expect("the line crosses the body");
+        assert!(
+            (front - 0.35).abs() < 1e-4,
+            "the body's front is 350 mm forward, read {:.1} mm",
+            front * 1000.0
+        );
+    }
+
+    #[test]
+    fn a_cut_reads_a_front_whose_line_misses_the_coronal_plane() {
+        // #294: the lower pole of a full chest hangs over a ribcage narrower
+        // than it, so the vertical line through its peak leaves the body at
+        // `z = 0` and a reach from there had nothing to start from. A box
+        // standing 40 to 120 mm forward of the plane has a front at 120 mm.
+        let mut mesh = PolyMesh::new();
+        boxed(
+            &mut mesh,
+            Vec3::new(-0.1, -0.1, 0.04),
+            Vec3::new(0.1, 0.1, 0.12),
+        );
+        assert_eq!(reach(&mesh, 0.0, 0.0), None, "z = 0 is outside the box");
+        let front = front(&mesh, 0.0, 0.0).expect("the line crosses the box");
+        assert!(
+            (front - 0.12).abs() < 1e-4,
+            "the front is 120 mm forward, read {:.1} mm",
+            front * 1000.0
         );
     }
 }

@@ -26,15 +26,23 @@
 //! way it would land from a jump of that height, because as far as the leg is
 //! concerned those are the same arrival.
 //!
+//! **A winged body's leg is the one it stands on** (#456, #459): see
+//! `leg_of`. Its bones reach far past where it stands its feet - a bat's
+//! wing-arm 0.70 m against a wrist 0.28 m off its shoulder - so its leap is
+//! sized, squashed, pitched and tucked on its legs as they stand, and its
+//! feet are tucked, planted and set down square to the ground they leave
+//! and land on, its flight's trunk sunk as its plant sinks it
+//! (`stand_square`, `sink_to`).
+//!
 //! **A fall is a leap that never launched.** [`Leap::falling`] is the whole of
 //! it: no wind-up, no upward speed, and a landing that absorbs whatever the
 //! drop supplies. The ground vanishing under a walking body is not a different
 //! motion, and giving it one would mean two things to keep in agreement.
 
-use crate::det::DetMath;
+use crate::det::{self, DetMath};
 use glam::Vec3;
 
-use super::ground::{FootingConfig, Ground, plant_feet_of, solve_contact_toward};
+use super::ground::{Foot, FootingConfig, Ground, plant_feet_of, solve_contact_toward};
 use super::pose::Pose;
 use super::speed::GRAVITY;
 use crate::plan::{Limb, Zone};
@@ -190,7 +198,7 @@ impl Leap {
             return 0.0;
         }
         let froude = self.impact() * self.impact() / (GRAVITY * leg);
-        (leg * (froude / LEG_STIFFNESS).sqrt()).min(leg * MAX_SQUASH)
+        (leg * (froude / LEG_STIFFNESS).sqrt()).min(leg * squash_most(rig))
     }
 
     /// How long the wind-up before takeoff lasts, in seconds.
@@ -302,10 +310,11 @@ impl Leap {
             return 0.0;
         }
         let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+        let most = leap_pitch(rig);
         match stage {
-            Stage::WindUp(t) => LEAP_PITCH * ease(t),
-            Stage::Flight(t) => LEAP_PITCH * (t * std::f32::consts::PI).det_cos(),
-            Stage::Landing(t) => landing_from.unwrap_or(-LEAP_PITCH) * (1.0 - ease(t)),
+            Stage::WindUp(t) => most * ease(t),
+            Stage::Flight(t) => most * (t * std::f32::consts::PI).det_cos(),
+            Stage::Landing(t) => landing_from.unwrap_or(-most) * (1.0 - ease(t)),
             Stage::Standing => 0.0,
         }
     }
@@ -406,7 +415,12 @@ impl Leap {
                 // change shape, so the root simply moves and the legs keep
                 // whatever they are holding — which is the tuck below, applied
                 // in the body's own frame and therefore carried along with it.
-                self.tuck(rig, pose, t, &mut leapt);
+                // A winged body is tucked once its trunk is turned:
+                // see below.
+                let winged = on_wings(rig);
+                if !winged {
+                    self.tuck(rig, pose, t, &mut leapt, None);
+                }
                 // **The turn of what it left, not its height** (#414): the
                 // ground under a body about to drop is falling away before the
                 // drop is seen, and the height followed down with it, kept
@@ -421,18 +435,48 @@ impl Leap {
                 // landing would stand them; a paw above it is left in the air.
                 // The plane is the one it left, turned as it rides it: under a
                 // beast leaping up a hill, the hill.
-                let turned = took_off.map(super::quadruped::Girdles::turned);
-                let plane = |at: Vec3| {
-                    let stands = turned
+                //
+                // **A winged body on four takes out the height the plane it
+                // left has under its origin, not under its girdles' middle**
+                // (#456): a bat's origin stands near its hips, well behind
+                // that middle, and with the middle's height taken out its
+                // trunk flew 79 mm over where its landing set it down on a 20
+                // degree slope it faced down, and dropped all of it in the
+                // frame it landed.
+                let turned = took_off.map(|girdles| {
+                    if winged {
+                        girdles.turned_at_origin(rig)
+                    } else {
+                        girdles.turned()
+                    }
+                });
+                let stands = |at: Vec3| {
+                    turned
                         .and_then(|girdles| girdles.plane_under(rig, at))
-                        .unwrap_or_else(|| Ground::level(Vec3::new(at.x, 0.0, at.z)));
+                        .unwrap_or_else(|| Ground::level(Vec3::new(at.x, 0.0, at.z)))
+                };
+                let plane = |at: Vec3| {
+                    let stands = stands(at);
                     (at.y < stands.position.y).then_some(stands)
                 };
                 if pitch != 0.0 {
                     super::quadruped::sink_end(rig, pose, pitch);
                 }
                 ridden(pose, turned);
-                if riding && four {
+                if winged {
+                    // **Tucked in the frame the trunk is turned to, each foot
+                    // held off the plane it left in the one solve** (#459):
+                    // tucked first and planted after, two solves that read a
+                    // short, folded leg apart swung a glider's hind hip about
+                    // half a turn in the frame a paw came up off that plane.
+                    // Held off the plane whether or not the body rides its
+                    // girdles: the level it stands on where it does not, so
+                    // a wind-up planted on it hands its feet to the flight
+                    // where they stood.
+                    let onto = |at: Vec3| Some(stands(at));
+                    sink_to(rig, pose, &onto);
+                    self.tuck(rig, pose, t, &mut leapt, Some(&onto));
+                } else if riding && four {
                     let contacts = rig.ground_contacts();
                     let config = FootingConfig {
                         max_pelvis_drop: 0.0,
@@ -480,27 +524,36 @@ impl Leap {
                 } else {
                     FootingConfig::default()
                 };
-                let footing = match leapt.stage {
+                let took = match leapt.stage {
                     Stage::Landing(t) if riding && four => {
                         let took = (t / TAKEN_UP).min(1.0);
-                        let took = took * took * (3.0 - 2.0 * took);
-                        let landed_on = |at: Vec3| {
-                            let (followed, real) = (ground(at), under(at));
-                            match (followed, real) {
-                                (Some(followed), Some(real)) => Some(Ground {
-                                    position: followed.position.lerp(real.position, took),
-                                    normal: followed
-                                        .normal
-                                        .lerp(real.normal, took)
-                                        .normalize_or(Vec3::Y),
-                                }),
-                                (followed, real) => real.or(followed),
-                            }
-                        };
-                        plant_feet_of(rig, pose, &contacts, landed_on, &config)
+                        Some(took * took * (3.0 - 2.0 * took))
                     }
-                    _ => plant_feet_of(rig, pose, &contacts, &ground, &config),
+                    _ => None,
                 };
+                let beneath = |at: Vec3| {
+                    let Some(took) = took else {
+                        return ground(at);
+                    };
+                    let (followed, real) = (ground(at), under(at));
+                    match (followed, real) {
+                        (Some(followed), Some(real)) => Some(Ground {
+                            position: followed.position.lerp(real.position, took),
+                            normal: followed
+                                .normal
+                                .lerp(real.normal, took)
+                                .normalize_or(Vec3::Y),
+                        }),
+                        (followed, real) => real.or(followed),
+                    }
+                };
+                let footing = plant_feet_of(rig, pose, &contacts, beneath, &config);
+                // **And a winged body's feet stood square to that ground**
+                // (#456's fixer), as its tuck holds them off the plane it
+                // left: see `stand_square`.
+                if on_wings(rig) {
+                    stand_square(rig, pose, &footing.planted, &beneath);
+                }
                 leapt.straining = footing.straining;
             }
             Stage::Standing => {}
@@ -514,7 +567,33 @@ impl Leap {
     /// straight at the instant they leave and the instant they land — which is
     /// what lets the landing spring start from a known shape rather than from
     /// wherever the tuck happened to be.
-    fn tuck(&self, rig: &Rig, pose: &mut Pose, through: f32, leapt: &mut Leapt) {
+    ///
+    /// **A winged body tucks each leg by its own standing length, from
+    /// the first frame of the flight, as its stance stands it** (#456, #459),
+    /// once its trunk is turned ([`Self::drive_riding`]), and keeps each foot
+    /// off `onto` - the plane it took off from - in the same solve. Sized on
+    /// the longest leg's bone reach, a bat's hind leg, 0.159 m from hip to
+    /// pad, was asked to draw its foot 0.14 m up its wing-arm's reach of 0.70,
+    /// and its hip turned over in a frame twelve times in a flight. Left in
+    /// its rest pose until the tuck began and then solved, its legs came out
+    /// of the stance's bend into the rig's own and back - a glider's hind hip
+    /// 2.5 rad off the idle's - and turned over as the solve took over;
+    /// solved as the plant solves a leg (its foot stood, about the pole the
+    /// plant bends it about), a flight ends in the pose its landing begins in.
+    /// **Its foot stood square to `onto`** (#456's fixer), as its landing
+    /// stands it ([`stand_square`]).
+    fn tuck(
+        &self,
+        rig: &Rig,
+        pose: &mut Pose,
+        through: f32,
+        leapt: &mut Leapt,
+        onto: Option<&dyn Fn(Vec3) -> Option<Ground>>,
+    ) {
+        if on_wings(rig) {
+            self.tuck_winged(rig, pose, through, leapt, onto);
+            return;
+        }
         let reach = leg_of(rig);
         let lift = reach * TUCK_OF_REACH * (through * std::f32::consts::PI).det_sin();
         if lift <= f32::EPSILON {
@@ -539,6 +618,149 @@ impl Leap {
                 leapt.straining.push(limb);
             }
         }
+    }
+
+    /// [`Self::tuck`] for a winged body (#456, #459).
+    fn tuck_winged(
+        &self,
+        rig: &Rig,
+        pose: &mut Pose,
+        through: f32,
+        leapt: &mut Leapt,
+        onto: Option<&dyn Fn(Vec3) -> Option<Ground>>,
+    ) {
+        let share = TUCK_OF_REACH * (through * std::f32::consts::PI).det_sin();
+        let Some(root) = rig.joints.iter().position(|joint| joint.parent.is_none()) else {
+            return;
+        };
+        let posed = pose.forward(rig);
+        // Where a point of the rest pose is carried by the trunk as it is
+        // turned: the tuck draws the legs up in the body's own frame.
+        let carried = |at: Vec3| {
+            posed.positions[root] + posed.rotations[root] * (at - rig.joints[root].position)
+        };
+        for limb in rig.ground_contacts() {
+            let (Some(chain), Some(&contact), Some(pole), Some(leg)) = (
+                rig.limb_chain(limb),
+                rig.in_zone(Zone::Extremity(limb)).first(),
+                rig.bend_pole(limb),
+                standing_leg(rig, limb),
+            ) else {
+                continue;
+            };
+            let hip = carried(rig.joints[chain[0]].position);
+            let home = carried(rig.joints[contact].position);
+            let toward = (hip - home).normalize_or(Vec3::Y);
+            let mut target = home + toward * (leg * share);
+            // Off the plane as the landing stands it - raised straight up,
+            // as the plant raises a foot, to stand on it - and square to it,
+            // as the landing stands it (`stand_square`), so the drawn toes'
+            // own lift after the blend finds nothing to do in the air or on
+            // the ground. Held off along its up instead, a foot was set 20 mm
+            // back from where the landing put it down; and held upright, its
+            // toes went into the slope as it landed and their lift raised it
+            // in that frame (see `stand_square`).
+            let solved = match onto.and_then(|onto| onto(target)) {
+                Some(stands) => {
+                    target = held_off(rig, contact, target, &stands);
+                    let square =
+                        det::from_rotation_arc(Vec3::Y, stands.normal.normalize_or(Vec3::Y));
+                    super::ground::solve_contact_held(rig, pose, limb, target, pole, square)
+                }
+                None => {
+                    super::ground::solve_contact_with(rig, pose, limb, target, pole, Foot::Stood)
+                }
+            };
+            if !solved {
+                leapt.straining.push(limb);
+            }
+        }
+    }
+}
+
+/// `target` for the pad `pad`, raised straight up until it stands as high
+/// over `below` along its up as the pad stands over the floor at rest - left
+/// where it is if it stands higher (#456's fixer).
+fn held_off(rig: &Rig, pad: usize, target: Vec3, below: &Ground) -> Vec3 {
+    let up = below.normal.normalize_or(Vec3::Y);
+    let short = rig.joints[pad].position.y.max(0.0) - (target - below.position).dot(up);
+    if short > 0.0 && up.y > f32::EPSILON {
+        target + Vec3::Y * (short / up.y)
+    } else {
+        target
+    }
+}
+
+/// Sinks a winged body in its flight as far as its plant would sink it on
+/// the plane `onto` answers (#456's fixer): by as far as the foot that
+/// stands highest over where that plane would stand it stands over it, up
+/// to the most a plant sinks a body ([`FootingConfig::max_pelvis_drop`]).
+///
+/// **A flight's trunk rides where it stood and lands**: held where its
+/// ride sets it, a bat's forefeet hung 31 mm over a 20 degree slope it
+/// faced down, and its landing's plant sank its trunk that far in the frame
+/// it came down - its elbow 50 mm in that frame at 60 and at 144 frames a
+/// second. On the level its feet stand where the plane would stand them, and
+/// nothing sinks.
+fn sink_to(rig: &Rig, pose: &mut Pose, onto: &dyn Fn(Vec3) -> Option<Ground>) {
+    let posed = pose.forward(rig);
+    let deepest = rig
+        .ground_contacts()
+        .into_iter()
+        .filter_map(|limb| rig.in_zone(Zone::Extremity(limb)).first().copied())
+        .filter_map(|pad| {
+            let at = posed.positions[pad];
+            let below = onto(at)?;
+            Some(below.position.y + rig.joints[pad].position.y.max(0.0) - at.y)
+        })
+        .fold(0.0f32, f32::min);
+    pose.translation.y += deepest.max(-FootingConfig::default().max_pelvis_drop);
+}
+
+/// Stands each of `limbs` a winged body's leap has planted square to the
+/// ground `beneath` answers under its pad, the pad [`held_off`] it (#456's
+/// fixer): what its flight's tuck holds its feet as, off the plane it left.
+/// On the level the plant has stood them so already, and they are left.
+///
+/// **A foot comes down as it lands**: planted upright, as its tuck held it,
+/// a winged body's foot on a slope had its toes in it, and
+/// `winged::ground::keep_toes_up` lifted the pad out by them after the
+/// blend in the frame the body came down - for a Bat x Glider cross at 0.5
+/// walking up a 20 degree slope, its wrist 14 mm nearer a shoulder its
+/// foreleg stood folded to within 3 mm of as far as it folds, the shoulder
+/// turned 0.69 rad in the frame at 60 and at 144 frames a second; and a
+/// Glider x Bird cross at 0.3 facing up one folded its hind leg past its
+/// fold through the landing, its hip 1.32 rad in a frame at 30.
+fn stand_square(
+    rig: &Rig,
+    pose: &mut Pose,
+    limbs: &[Limb],
+    beneath: &dyn Fn(Vec3) -> Option<Ground>,
+) {
+    for &limb in limbs {
+        let (Some(&pad), Some(pole)) = (
+            rig.in_zone(Zone::Extremity(limb)).first(),
+            rig.bend_pole(limb),
+        ) else {
+            continue;
+        };
+        let at = pose.forward(rig).positions[pad];
+        let Some(below) = beneath(at) else {
+            continue;
+        };
+        let up = below.normal.normalize_or(Vec3::Y);
+        if up.y >= 1.0 - 1.0e-6 {
+            continue;
+        }
+        let target = held_off(rig, pad, at, &below);
+        super::ground::solve_contact_held(
+            rig,
+            pose,
+            limb,
+            target,
+            pole,
+            det::from_rotation_arc(Vec3::Y, up),
+        );
     }
 }
 
@@ -599,13 +821,128 @@ fn contact_time(rig: &Rig) -> f32 {
     std::f32::consts::PI * (leg / (LEG_STIFFNESS * GRAVITY)).sqrt()
 }
 
-/// The reach of the longest leg the body stands on, in metres.
+/// The reach of the longest leg the body stands on, in metres - or, on a
+/// winged body, the shortest of its legs from hip to pad as it stands
+/// ([`standing_leg`], #456).
+///
+/// **A winged body's leg is not its bones' reach**: a bat stands on its
+/// wing-arm, whose bones reach 0.70 m and fold to stand its wrist 0.28 m
+/// from its shoulder, and on a hind leg reaching 0.34 m that stands its pad
+/// 0.16 m from its hip; a glider's legs stand folded to half their reach.
+/// Read off the reach, a bat's landing sank its trunk 0.25 m on a hip 0.10 m
+/// off the ground, and its spring half period was a quarter of a second for
+/// a body a tenth of a metre tall. A person's leg stands straight and a
+/// beast's nearly so: theirs is read as it always was.
 fn leg_of(rig: &Rig) -> f32 {
+    if on_wings(rig) {
+        let shortest = rig
+            .ground_contacts()
+            .into_iter()
+            .filter_map(|limb| standing_leg(rig, limb))
+            .fold(f32::INFINITY, f32::min);
+        return if shortest.is_finite() { shortest } else { 0.0 };
+    }
     rig.ground_contacts()
         .into_iter()
         .filter_map(|limb| rig.limb_reach(limb))
         .fold(0.0f32, f32::max)
 }
+
+/// Whether `rig` is a winged body, whose leap is sized and solved on the legs
+/// it stands on (#456, #459): a bat, a glider and the crosses either leads on
+/// four, and a bird on two.
+///
+/// **A bird too**: its legs reach about as far as they stand, but read off
+/// their reach a Bird x Glider cross landed a fall 0.12 m deep in a sixth of
+/// a second, and its ears, springs stepped after the pose, flicked 2.4 rad
+/// in a frame at 30 frames a second; landing on its standing leg it sinks
+/// 0.05 m and they follow.
+pub(super) fn on_wings(rig: &Rig) -> bool {
+    rig.wings.is_some()
+}
+
+/// How far `limb` stands its pad from its hip in the rest pose, in metres:
+/// the leg a winged body is sized on (#456).
+fn standing_leg(rig: &Rig, limb: Limb) -> Option<f32> {
+    let chain = rig.limb_chain(limb)?;
+    let pad = *rig.in_zone(Zone::Extremity(limb)).first()?;
+    Some(
+        rig.joints[chain[0]]
+            .position
+            .distance(rig.joints[pad].position),
+    )
+}
+
+/// The deepest a leg is asked to compress, as a share of [`leg_of`]:
+/// [`MAX_SQUASH`], or [`WINGED_SQUASH`] on a winged body.
+fn squash_most(rig: &Rig) -> f32 {
+    if on_wings(rig) {
+        WINGED_SQUASH
+    } else {
+        MAX_SQUASH
+    }
+}
+
+/// How far a leaping beast's trunk turns as it gathers and lands, in
+/// radians: [`LEAP_PITCH`], and on a winged body on four no further than
+/// sinks the end that goes down [`WINGED_SINK`] of its leg (#459).
+///
+/// **A winged body's trunk is long over short legs**: turned the quarter
+/// radian a dog's is about its shoulders, a glider's hips sank 70 mm on a
+/// leg standing 116 mm, and its hind legs, held off the plane it took off
+/// from, folded shut and turned over in a frame.
+fn leap_pitch(rig: &Rig) -> f32 {
+    if !on_wings(rig) {
+        return LEAP_PITCH;
+    }
+    let tops = |fore: bool| {
+        let (sum, count) = rig
+            .ground_contacts()
+            .into_iter()
+            .filter(|limb| limb.is_fore() == fore)
+            .filter_map(|limb| rig.limb_chain(limb))
+            .fold((Vec3::ZERO, 0.0f32), |(sum, count), [top, _, _]| {
+                (sum + rig.joints[top].position, count + 1.0)
+            });
+        (count > 0.0).then(|| sum / count)
+    };
+    let (Some(fore), Some(hind)) = (tops(true), tops(false)) else {
+        return LEAP_PITCH;
+    };
+    let span = fore.distance(hind);
+    if span <= f32::EPSILON {
+        return LEAP_PITCH;
+    }
+    (WINGED_SINK * leg_of(rig) / span)
+        .min(1.0)
+        .det_asin()
+        .min(LEAP_PITCH)
+}
+
+/// How far a winged body on four sinks the end its leap's pitch turns down,
+/// as a share of its leg ([`leap_pitch`], #459).
+/// Provenance: **measured** (#459): over a level leap at 3 m/s, a glider, a
+/// Glider x Bird cross at 0.3 and a Bat x Glider cross at 0.5 turned a hind
+/// hip half a turn in a frame at every pitch from the whole quarter radian
+/// to a quarter of it while their legs were still tucked from the rest pose
+/// and planted after; once tucked in one solve ([`Leap::tuck`]), a quarter
+/// of the leg leaves no joint of any of them turning faster than its
+/// landing does.
+const WINGED_SINK: f32 = 0.25;
+
+/// The deepest a winged body is asked to compress its leg, as a share of
+/// [`leg_of`] (#456, #459).
+/// Provenance: **measured** (#459): such a leg stands folded already - a
+/// glider's to half its reach, a Bat x Glider cross's foreleg to a third -
+/// and any landing faster than about 1.5 m/s asks for more than the whole
+/// [`MAX_SQUASH`]. At 0.45 and at 0.3 of it, landing on a 20 degree slope
+/// it faced up folded a glider's hind leg until its knee stood over its
+/// hip and turned half a turn a frame (3.0 rad a sixtieth at 60 frames a
+/// second at 0.45, 2.3 at 0.3); at 0.2, its feet set down square to the
+/// slope ([`stand_square`]), no body landing on one turns a joint faster
+/// than 0.39 rad a sixtieth (a Bat x Bird cross at 0.3, its hind hip, at
+/// 144 frames a second).
+const WINGED_SQUASH: f32 = 0.2;
 
 /// Which part of a leap a body is in, and how far through that part.
 #[derive(Clone, Copy, Debug, PartialEq)]

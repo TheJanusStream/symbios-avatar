@@ -72,6 +72,7 @@ mod winged_flight;
 mod winged_fold;
 mod winged_heads;
 mod winged_landing;
+mod winged_leaps;
 mod winged_life;
 mod winged_motion;
 mod winged_rests;

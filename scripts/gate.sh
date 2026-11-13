@@ -215,14 +215,17 @@ nudge() {
         for ulps in 1 2; do
             runs+=("$dir$ulps-lib" "$dir$ulps-int")
             # avatar:: since #411: hashes of a built beast pinned there held on this
-            # machine's glibc and on no other.
+            # machine's glibc and on no other. The painted beard's guards since #432:
+            # their margins are a hundredth or two, read on rolled bodies whose mesh
+            # moves under a nudge.
             (
                 guarded env SHIM_FN=all SHIM_DIR=$dir SHIM_ULPS=$ulps LD_PRELOAD="$shim" "$lib" \
-                    anim:: face::beast:: uv:: texture::coat:: plan:: record:: hair::fur:: cage:: rig::junction avatar:: \
+                    anim:: face::beast:: uv:: texture::coat:: texture::beard_tests:: texture::bake:: \
+                    plan:: record:: hair::fur:: cage:: rig::junction avatar:: \
                     > "$logs/libm-$dir$ulps-lib.log" 2>&1
                 echo $? > "$results/libm-$dir$ulps-lib"
                 guarded env SHIM_FN=all SHIM_DIR=$dir SHIM_ULPS=$ulps LD_PRELOAD="$shim" "$int" \
-                    driver:: rest:: uv:: budget:: lexicon:: \
+                    driver:: rest:: uv:: budget:: lexicon:: texture::a_beard_painted \
                     > "$logs/libm-$dir$ulps-int.log" 2>&1
                 echo $? > "$results/libm-$dir$ulps-int"
             ) &

@@ -61,6 +61,11 @@ pub const TROUSER_RANGE: (f32, f32) = (SHORTS, 1.0);
 /// above the knee on every body the envelope produces. In the length's own
 /// units that is `0.35` of the upper half.
 ///
+/// **It does not clear the crotch on every body** (#281): the crotch's skin
+/// hangs below and inside the hip, and read along the thigh's bone it lies at
+/// 0.17 to 0.21 of the leg on seed 9. What covers it is the claim, which takes
+/// a face touching the pelvis at any length (`garment::claimed`), not this.
+///
 /// Provenance: **measured** at #314, as the thigh share it was.
 pub const SHORTS: f32 = 0.35 * 0.5;
 

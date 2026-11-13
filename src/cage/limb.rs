@@ -12,6 +12,7 @@ use glam::{Quat, Vec2, Vec3};
 
 use super::{CageConfig, CageError, MIN_BONE_LENGTH, Socket};
 use crate::mesh::PolyMesh;
+use crate::plan::Zone;
 use crate::skeleton::{Chain, NodeKind, Skeleton};
 
 /// How many vertices each ring carries.
@@ -286,6 +287,91 @@ pub(crate) fn build_limb(
     })
 }
 
+/// Holds each ring beside a person's hip socket in front of that socket's
+/// plane (#281), and says how far it carried each vertex.
+///
+/// **A tube that runs back into the joint it leaves crosses that joint's
+/// hull, and no subdivision undoes it.** A person's hip socket faces almost
+/// straight out of the pelvis, and the thigh turns down at the hip node just
+/// past it - 65 degrees, with the socket under 20 mm short of a hip ring
+/// 190 mm across, on the default body. The ring is laid on the bisector of
+/// that turn, so its inner, lower side swings back toward the midline, past
+/// the socket and above the floor of the pelvis's hull between the two
+/// sockets: measured on the default body, the ring's inner vertex stood 33 mm
+/// behind the socket's plane, 9 mm off the midline and 29 mm above the hull's
+/// floor. The thigh's inner wall then ran up and in from the floor, turned,
+/// and ran down to the knee, through the floor facet: 21 crossing triangle
+/// pairs on the default body's cage and ten after the shipped subdivision,
+/// and on seed 9, 22 after it and 38 after a second, every one of them at the
+/// crotch.
+///
+/// So a vertex of the ring after a hip socket that stands behind that
+/// socket's plane is carried along the socket's own axis until it stands in
+/// front of it by the daylight the socket keeps from its siblings,
+/// [`CageConfig::socket_margin`] of its ring - the same plane and the same
+/// margin `joint::required_distance` holds the hull to. Along the axis
+/// because that is the shortest way out, and the one that keeps the groin:
+/// carried down the thigh or along its column instead, the crease from the
+/// hip to the crotch flattened into a level ledge.
+///
+/// **What it moves, measured on 401 rolls and ten composite corners:** the
+/// three inner columns of each hip ring (four on 21 of those 411 bodies), by
+/// a median 38 mm on the cage, 59 mm at the ninetieth percentile and up to
+/// 91 mm on the heaviest corners - about 0.36 to 0.41 of the ring's own
+/// clearance radius on every body, so a big body's push is big because its
+/// thigh is. Subdivision carries about two thirds of that onto the surface.
+/// A vertex in front of the plane is not touched, so a ring with room is
+/// where it was.
+///
+/// **Only the hips**, because that is the fold measured, and the same rule
+/// run over every socket also nudged rings that were never crossing anything:
+/// a foot's ring 0.18 mm on ten of 401 rolls, lowering the sole 0.12 mm, and
+/// a neck ring by up to 4.2 mm, each outside the fold this was measured on
+/// and left to its own issue.
+///
+/// The rings are moved after every hull, which is what makes the socket's
+/// plane final, and before the faces are emitted, which simply follow. The
+/// push comes back per cage vertex, zero where nothing moved, so the skin can
+/// be bound where the cage first laid the groin (see `Avatar::build`): bound
+/// where the push leaves it, the inner wall of the groin lay in the thigh's
+/// reach and swung with it, and a raised knee drove it through the belly.
+pub(crate) fn clear_sockets(
+    skeleton: &Skeleton,
+    sockets: &[Socket],
+    builds: &[LimbBuild],
+    config: &CageConfig,
+    mesh: &mut PolyMesh,
+) -> Vec<Vec3> {
+    let mut pushed = vec![Vec3::ZERO; mesh.positions.len()];
+    for build in builds {
+        let count = build.rings.len();
+        if count < 3 {
+            continue;
+        }
+        for (socket_ring, beside) in [(0, 1), (count - 1, count - 2)] {
+            let Some(socket) = sockets.iter().find(|socket| {
+                socket.ring == build.rings[socket_ring]
+                    && skeleton.nodes[socket.joint as usize].zone == Zone::Pelvis
+                    && skeleton.nodes[socket.toward as usize].zone.limb().is_some()
+            }) else {
+                continue;
+            };
+            let centre = socket.center();
+            let daylight = config.socket_margin * socket.clearance_radius();
+            for &vertex in &build.rings[beside] {
+                let at = mesh.positions[vertex as usize];
+                let room = socket.dir.dot(at - centre);
+                if room < daylight {
+                    let push = socket.dir * (daylight - room);
+                    mesh.positions[vertex as usize] = at + push;
+                    pushed[vertex as usize] = push;
+                }
+            }
+        }
+    }
+    pushed
+}
+
 /// Emits the tube walls between consecutive rings, plus any leaf caps.
 pub(crate) fn emit_limb_faces(build: &LimbBuild, mesh: &mut PolyMesh) {
     for pair in build.rings.windows(2) {
@@ -440,6 +526,137 @@ pub(crate) fn transport(u: Vec3, v: Vec3, from: Vec3, to: Vec3) -> (Vec3, Vec3) 
 mod tests {
     use super::*;
     use crate::Node;
+
+    /// Whether `socket` is a hip's: on the pelvis, opening onto a leg.
+    fn hip(skeleton: &Skeleton, socket: &Socket) -> bool {
+        skeleton.nodes[socket.joint as usize].zone == Zone::Pelvis
+            && skeleton.nodes[socket.toward as usize].zone.limb().is_some()
+    }
+
+    #[test]
+    fn only_the_hips_move_and_by_what_the_docs_say() {
+        // **The pass is for the crotch, and moves nothing else** (#281). Run
+        // over every socket it also nudged rings that were crossing nothing:
+        // seed 40's foot rings 0.18 mm (its sole 0.12 mm lower), and seeds
+        // 245's and 247's neck rings 4.2 and 0.8 mm. Asked of the pushes the
+        // pass hands back: every vertex it moved lies on the ring beside a
+        // hip socket, at most four columns of each ring move, and no push is
+        // longer than the figure `clear_sockets` states (91 mm on the
+        // heaviest corner of 411 bodies; these reach 67 mm). Without the
+        // hips-only rule: a moved vertex on seed 40's foot ring.
+        let mut records = Vec::new();
+        for seed in [40i64, 245, 247, 9] {
+            let mut record = crate::AvatarRecord::new("Rolled", crate::Archetype::default());
+            record.reroll(seed);
+            records.push((format!("seed {seed}"), record));
+        }
+        let config = CageConfig::default();
+        let mut longest = 0.0f32;
+        for (name, record) in &records {
+            let skeleton = record.skeleton();
+            let (_, sockets, builds, pushed) =
+                super::super::build_all(&skeleton, &config).expect("a person meshes");
+            let mut hip_rings: Vec<[u32; RING]> = Vec::new();
+            for build in &builds {
+                let count = build.rings.len();
+                if count < 3 {
+                    continue;
+                }
+                for (end, beside) in [(0, 1), (count - 1, count - 2)] {
+                    if sockets
+                        .iter()
+                        .any(|s| s.ring == build.rings[end] && hip(&skeleton, s))
+                    {
+                        hip_rings.push(build.rings[beside]);
+                    }
+                }
+            }
+            assert_eq!(hip_rings.len(), 2, "{name}: two hips");
+            for (vertex, push) in pushed.iter().enumerate() {
+                if *push == Vec3::ZERO {
+                    continue;
+                }
+                longest = longest.max(push.length());
+                assert!(
+                    hip_rings.iter().any(|ring| ring.contains(&(vertex as u32))),
+                    "{name}: cage vertex {vertex} moved {:.2} mm, and it is on no hip ring",
+                    push.length() * 1000.0
+                );
+            }
+            for ring in &hip_rings {
+                let moved = ring
+                    .iter()
+                    .filter(|&&vertex| pushed[vertex as usize] != Vec3::ZERO)
+                    .count();
+                assert!(moved <= 4, "{name}: {moved} columns of a hip ring moved");
+            }
+        }
+        println!("the longest push: {:.1} mm", longest * 1000.0);
+        assert!(longest < 0.091, "a push of {:.1} mm", longest * 1000.0);
+    }
+
+    #[test]
+    fn no_ring_of_a_person_stands_behind_its_socket() {
+        // **The crotch's self-crossing, at its source** (#281). A ring beside a
+        // socket that stands behind the socket's plane is a tube running back
+        // into its joint, through the hull's facets there, and no subdivision
+        // takes that out. Without `clear_sockets` the worst ring of these four
+        // bodies stood 67.2 mm short of its socket's daylight, a hip ring, the
+        // inner wall of its thigh rising through the pelvis's floor. Asked of
+        // the plane and its daylight, the condition the pass keeps. Of the
+        // hips, which are all the pass holds (see
+        // `only_the_hips_move_and_by_what_the_docs_say`); of the whole cage
+        // these four bodies read the same, since no other ring of theirs
+        // stands behind its socket.
+        let mut records = vec![crate::AvatarRecord::default()];
+        for seed in [9i64, 16] {
+            let mut record = crate::AvatarRecord::new("Rolled", crate::Archetype::default());
+            record.reroll(seed);
+            records.push(record);
+        }
+        let mut narrow = crate::AvatarRecord::default();
+        if let crate::Archetype::Humanoid(params) = &mut narrow.archetype {
+            params.hip_width = -3.0;
+        }
+        narrow.sanitize();
+        records.push(narrow);
+
+        let config = CageConfig::default();
+        let mut worst = f32::INFINITY;
+        for record in &records {
+            let skeleton = record.skeleton();
+            let (mesh, sockets, builds) =
+                super::super::build_with_limbs(&skeleton, &config).expect("a person meshes");
+            for build in &builds {
+                let count = build.rings.len();
+                for (end, beside) in [(0, 1), (count - 1, count.saturating_sub(2))] {
+                    let Some(socket) = sockets.iter().find(|s| s.ring == build.rings[end]) else {
+                        continue;
+                    };
+                    if count < 3 || !hip(&skeleton, socket) {
+                        continue;
+                    }
+                    let daylight = config.socket_margin * socket.clearance_radius();
+                    for &vertex in &build.rings[beside] {
+                        let room = socket
+                            .dir
+                            .dot(mesh.positions[vertex as usize] - socket.center());
+                        worst = worst.min(room - daylight);
+                    }
+                }
+            }
+        }
+        println!(
+            "the nearest any ring comes to its socket's daylight: {:.2} mm",
+            worst * 1000.0
+        );
+        assert!(
+            worst > -1e-5,
+            "a ring stands {:.1} mm short of its socket's daylight, behind or too near the \
+             socket's plane: that tube runs back into its joint",
+            -worst * 1000.0
+        );
+    }
 
     #[test]
     fn a_section_offset_moves_the_surface_and_leaves_the_joint() {

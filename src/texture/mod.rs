@@ -42,6 +42,8 @@
 #[cfg(feature = "serde-avatar")]
 pub mod atlas_serde;
 pub mod bake;
+#[cfg(test)]
+mod beard_tests;
 pub(crate) mod coat;
 pub mod skin;
 

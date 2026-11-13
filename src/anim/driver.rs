@@ -1023,14 +1023,31 @@ pub struct Driver {
     /// (#441): eased in and out across a rest and a swim, over twice the
     /// blend, rather than switched in a frame.
     kept: f32,
-    /// What [`Self::seat`] overwrote [`Self::kept`] with, while no frame has
-    /// been driven since (#452): what [`Self::blend_now`] gives back, so the
-    /// weight eases from the frame last drawn with the pose blended from it.
-    unseated: Option<f32>,
+    /// What [`Self::seat`] overwrote [`Self::kept`] and [`Self::taken`]
+    /// with, while no frame has been driven since (#452): what
+    /// [`Self::blend_now`] gives back, so the weights ease from the frame
+    /// last drawn with the pose blended from it.
+    unseated: Option<(f32, Vec<(Limb, f32)>)>,
     /// How much of `keep_clear`'s laying of a crawling body's hands the last
     /// frame drew, `0..=1` (#450): [`Self::kept`]'s, but kept through a rest,
     /// which stands those hands as the idle does for it to lay.
     kept_hands: f32,
+    /// How far each wing a clip lays out had taken its leg as the last frame
+    /// drew it, `0..=1` by limb (#457): what `keep_clear` lets go of a
+    /// crawling hand by. The clip's own reading while it plays
+    /// (`winged::rests::wings_taken`), and eased out of once it is cut short
+    /// ([`Self::let_go`]).
+    taken: Vec<(Limb, f32)>,
+    /// The gesture [`Self::taken`] was read from, by its name and the time
+    /// of the clip it was read at: a gesture that ends, or is replaced, or
+    /// starts its clip again, is not this one going on.
+    taken_from: Option<(String, f32)>,
+    /// What a wing a gesture was cut short in had taken its leg by (#457's
+    /// critic): each limb's share as it was cut and how much of the ease out
+    /// over [`KEEP_EASE`] blends is left, `1` to `0`, drawn eased. Cut by a
+    /// takeoff, the hand a Wing Stretch had spread was laid back onto a
+    /// slope at once.
+    let_go: Vec<(Limb, f32, f32)>,
 }
 
 /// How many blends [`Driver::drive`] eases `winged::ground::keep_clear` in
@@ -1101,6 +1118,9 @@ impl Driver {
             kept: 1.0,
             kept_hands: 1.0,
             unseated: None,
+            taken: Vec::new(),
+            taken_from: None,
+            let_go: Vec::new(),
         }
     }
 
@@ -1237,10 +1257,15 @@ impl Driver {
         // bat seated at a rest on a slope of 20 degrees moving 80 to 93 mm a
         // sixtieth more than without it in the seat's frame at 60 frames a
         // second, 305 at 144. The first seat's, if seated twice
-        // with no frame between: what the last frame drew with.
+        // with no frame between: what the last frame drew with. **And the
+        // hands a clip's wings had taken** (#457), let go of at once with it:
+        // what a gesture cut short had taken is eased out of, but a seat
+        // draws the state at once.
         if self.unseated.is_none() {
-            self.unseated = Some(self.kept);
+            self.unseated = Some((self.kept, std::mem::take(&mut self.taken)));
         }
+        self.taken.clear();
+        self.let_go.clear();
         self.kept = if through <= 0.0 { 1.0 } else { 0.0 };
         if through <= 0.0 {
             self.gesture = None;
@@ -1327,11 +1352,12 @@ impl Driver {
     /// once: its weight is set with it.
     pub fn blend_now(&mut self) {
         self.blend_asked = true;
-        if let Some(kept) = self.unseated.take()
+        if let Some((kept, taken)) = self.unseated.take()
             && self.previous.is_some()
             && self.current.is_some()
         {
             self.kept = kept;
+            self.taken = taken;
         }
     }
 
@@ -1739,8 +1765,18 @@ impl Driver {
         // rest or an emote asked mid-flight is let go rather than kept for
         // the landing, and one playing when a flight begins - a flight given
         // mid-perch - ends here, the change of source to [`Source::Fly`]
-        // blending the body out of it.
-        if aloft {
+        // blending the body out of it. **Nor does a winged body in the water
+        // or in a leap** (#461): its rests and emotes stand on the ground,
+        // and kept playing over a swim or a fall the source stayed the
+        // gesture's, so the swim or the leap came in under it with no blend,
+        // the feet it holds held to the floor under it and its hands kept on
+        // it: a bat asked to swim mid-Wing-Stretch facing down a 20 degree
+        // slope moved a joint 508 mm in that frame at 60 frames a second,
+        // against 8 swimming from standing, and one falling 165 against 18.
+        // Ended, the change of source blends the body out of it. A person's
+        // and a beast's gesture rides over a swim and a leap as it always
+        // has.
+        if aloft || ((swimming || airborne) && rig.wings.is_some()) {
             self.gesture = None;
         } else {
             self.start_gesture(rig, inputs.gesture, stirred);
@@ -1921,6 +1957,10 @@ impl Driver {
                     gesture::for_body(rig, &active.name).map(|clip| (clip, resting.through))
                 }
             });
+        // How far each wing the clip lays out has taken its leg: what keeps a
+        // winged body on four out of the ground lets go of a crawling hand by
+        // it (#457, `winged::ground::keep_clear`). Empty on any other body.
+        self.take_wings(rig, playing.as_ref(), delta);
         if let Some((clip, time)) = playing {
             // **A winged body's emote stands on the feet its idle would
             // draw** (#451): the toes the idle has in a slope lifted out of
@@ -1940,7 +1980,26 @@ impl Driver {
             if locomotion == Source::Idle {
                 super::winged::ground::keep_toes_up(rig, &mut pose, &ground);
             }
+            // **A winged body on two walks on its legs whatever the clip
+            // asks of them** (#460's fixer): a bird's Wing Stretch draws one
+            // leg back and holds the other where it stands, and laid over a
+            // walk the stride planted each again as its step came round - a
+            // bird walking at 0.3 m/s moved a wing's tip 299.7 mm in a frame
+            // and turned a hip 1.25 rad at 60 frames a second. Its legs are
+            // the stride's, handed back after the clip; its wings the clip's
+            // (`rests::wing_held`). A change between walking and not is the
+            // change of source the blend eases. Nothing on four, whose legs
+            // the wing takes from the stride instead (below).
+            let walked = walking
+                .as_ref()
+                .map(|_| super::winged::rests::walked_legs(rig, &pose));
             clip.apply_resting(rig, &mut pose, time, &mut self.rests, &ground);
+            if let Some(walked) = &walked {
+                super::winged::rests::give_back(&mut pose, walked);
+            }
+            // And a winged body's fore elbows out of the ground the clip
+            // folded them toward (#462): see `winged::ground::keep_elbows_up`.
+            super::winged::ground::keep_elbows_up(rig, &mut pose, &ground);
             self.rests.on_ground(rig, &mut pose, ground, delta);
             aimed = clip.tracks.iter().any(|track| track.target == Target::Gaze);
         } else {
@@ -1968,9 +2027,22 @@ impl Driver {
             .as_ref()
             .is_some_and(|active| active.resting.is_some());
         if let Some((gait, stride)) = walking.as_ref().filter(|_| !resting) {
+            // **What a winged body's wing has taken is not walked on** (#460):
+            // a Wing Stretch over a walk lifts a bat's foreleg and spreads its
+            // hind leg as the wing opens, and the stride still counted them
+            // standing, so the settle sank the trunk for a hand in the air
+            // and stood a foot the wing held in the frame its step came round,
+            // a bat walking at 0.3 m/s moving a joint 111.8 mm in a frame at
+            // 60 frames a second. Those legs are left off the stance and
+            // handed back to the wing after the settle, by as far as the wing
+            // has them, so nothing switches as a wing takes or lets go of one.
+            let held = super::winged::rests::wing_held(rig, &pose, &self.taken);
+            let lifted = super::winged::rests::legs_taken(rig, &self.taken);
+            steps.stance.retain(|limb| !lifted.contains(limb));
             let walked = self
                 .walk_at(inputs, inputs.walk.footing)
                 .settle(rig, &mut pose, gait, stride, &steps, ground);
+            super::winged::rests::give_back(&mut pose, &held);
             if let Some(footing) = &walked.footing {
                 count_straining(&mut straining, &footing.straining);
             }
@@ -2149,7 +2221,7 @@ impl Driver {
                 &mut posed,
                 &ground,
                 smooth(self.kept),
-                smooth(self.kept_hands),
+                (smooth(self.kept_hands), &self.taken),
             );
         }
 
@@ -2457,12 +2529,27 @@ impl Driver {
             // landing from the first airborne frame and plants the feet in
             // mid-air all the way down.
             let leap = Leap::new(vertical.abs());
+            //
+            // **A winged body's fall is joined at the end of its arc** (#456):
+            // its legs reaching for the ground, as a fall that outlasts its
+            // prediction holds them (above), not drawn up as a jump's are at
+            // its height. Joined where its feet leave, a fall cut short by the
+            // ground - a bat stepping off a 0.6 m deck lands a third of the
+            // way into the arc its speed predicts - came down with its legs
+            // still tucked, and the landing stood them in the frame it
+            // touched, a bat's forelimb 64 mm. A person's and a beast's fall
+            // are joined as they always were.
+            let joined = if vertical < 0.0 && rig.wings.is_some() {
+                leap.wind_up(rig) + leap.flight() - f32::EPSILON
+            } else {
+                leap.wind_up(rig)
+            };
             self.airborne = Some(Airborne {
                 leap,
                 // Past the wind-up: a caller whose body is already off the
                 // ground has no anticipation left to spend, so the leap is
                 // joined at the instant its feet leave.
-                elapsed: leap.wind_up(rig),
+                elapsed: joined,
                 falling: vertical < -config.settle_speed,
                 impact: vertical.min(0.0),
                 landed: false,
@@ -2508,6 +2595,69 @@ impl Driver {
             return;
         }
         self.begin_gesture(rig, name, stirred, true);
+    }
+
+    /// How far each wing the clip `playing` lays out has taken its leg this
+    /// frame, into [`Self::taken`] (#457): the clip's reading while the
+    /// gesture it was read from goes on, and **eased out of, never dropped,
+    /// once that gesture is cut short** - by a takeoff, a swim, a new gesture
+    /// or rest asked over it, its clip started again - over [`KEEP_EASE`]
+    /// blends from the share it had, as [`Self::kept_hands`] eases (a seat
+    /// lets go of it at once, as it sets that). What keeps a crawling body's
+    /// hands on the ground lets go of each by this after the blend, so a
+    /// share dropped in a frame is a hand turned back onto the slope in one:
+    /// a bat taking off mid-Wing-Stretch across a 20 degree slope moved a
+    /// joint 418 mm a sixtieth in the takeoff's frame at 144 frames a
+    /// second, 395 of it `keep_clear`'s; now 33, where the same takeoff on
+    /// the level moves one 26. A gesture's natural end is eased out of the
+    /// same way, as its tracks close on the fold without reaching it by its
+    /// last frame: a Wing Stretch's last frame still lets go of the right
+    /// hand by about 0.16 at 60 frames a second and 0.5 at 30.
+    fn take_wings(&mut self, rig: &Rig, playing: Option<&(super::clip::Clip, f32)>, delta: f32) {
+        let now = self.gesture.as_ref().zip(playing);
+        let going_on = match (&self.taken_from, now) {
+            (Some((name, at)), Some((active, (_, time)))) => *name == active.name && time >= at,
+            _ => false,
+        };
+        match now {
+            Some((_, (_, time))) if going_on => {
+                if let Some((_, at)) = self.taken_from.as_mut() {
+                    *at = *time;
+                }
+            }
+            Some((active, (_, time))) => self.taken_from = Some((active.name.clone(), *time)),
+            None => self.taken_from = None,
+        }
+        if !going_on {
+            for &(limb, share) in &self.taken {
+                if share <= 0.0 {
+                    continue;
+                }
+                match self.let_go.iter_mut().find(|(cut, ..)| *cut == limb) {
+                    Some(going) => *going = (limb, share, 1.0),
+                    None => self.let_go.push((limb, share, 1.0)),
+                }
+            }
+        }
+        let step = if self.config.blend > 0.0 {
+            delta / (KEEP_EASE * self.config.blend)
+        } else {
+            1.0
+        };
+        for (_, _, left) in &mut self.let_go {
+            *left -= step;
+        }
+        self.let_go.retain(|&(_, _, left)| left > 0.0);
+        self.taken = playing.map_or_else(Vec::new, |(clip, time)| {
+            super::winged::rests::wings_taken(rig, clip, *time)
+        });
+        for &(limb, share, left) in &self.let_go {
+            let eased = share * left * left * (3.0 - 2.0 * left);
+            match self.taken.iter_mut().find(|(taken, _)| *taken == limb) {
+                Some((_, taken)) => *taken = taken.max(eased),
+                None => self.taken.push((limb, eased)),
+            }
+        }
     }
 
     /// Starts the gesture `name`, if the cooldown allows it when `throttled`,

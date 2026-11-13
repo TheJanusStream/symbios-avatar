@@ -14,8 +14,13 @@
 //! the vertex lies nearer ([`BeastHead::surface_through`]), and the few cells that
 //! still come out of order in the crook are evened out along the surface
 //! (`unfold`, #395). Where the run reaches down over the trunk, which never moves,
-//! the neck is faded off it, and every face of the trunk the run draws a corner of
-//! is refined with the run, so the join has neither a step nor a bent face (#396).
+//! the neck is faded off it, never more steeply than a slope short of the head
+//! (#392), and every face of the trunk the run draws a corner of is refined with
+//! the run, so the join has neither a step nor a bent face (#396), nor a shelf
+//! (#392). A vertex nearer the run is cast out of the run's own wall rather than
+//! on under the jaw (#408), which keeps the throat right side out at the carriages
+//! beasts roll; a neck carried at the top of the slider under a short muzzle or a
+//! small head still folds a little in the crook.
 //!
 //! Applied to the **rest** mesh before anything is bound or unwrapped, as the
 //! human skull is, so skin weights and texture charts follow it without
@@ -159,7 +164,7 @@ pub fn shape(mesh: &PolyMesh, rig: &Rig, head: &BeastHead) -> PolyMesh {
     let owned = owned(&shaped, rig);
     let shares = fade(&shaped, &owned, head.radius * FADE);
     let carrying = carrying(&shaped, rig);
-    let loose = loose(&shaped, &carrying, head);
+    let loose = loose(&shaped, &carrying, head, &shares);
     let mut twins = twins(&shaped, &carrying, head);
     let cage = shaped.positions.clone();
     for (((point, share), &carries), loose) in shaped
@@ -451,7 +456,29 @@ fn carrying(mesh: &PolyMesh, rig: &Rig) -> Vec<bool> {
 /// base, a dark slit on a pale coat. Faded from that skin, the neck leaves it
 /// without one, and where the trunk stands below the run's start nothing is
 /// faded, since nothing there would have moved.
-fn loose(mesh: &PolyMesh, carrying: &[bool], head: &BeastHead) -> Vec<f32> {
+///
+/// **And never drawn in more steeply than [`STEEPEST`] (#392).** A short neck off
+/// a deep chest has the chest's skin standing far up its run, which would draw the
+/// neck beside it in by six centimetres: faded over [`HOLD`] alone, that was a
+/// shelf the neck stood on, with a V down the breast where the trunk's line
+/// notches the neck. Held to a slope, the neck flares into the chest instead, and
+/// how far the skin so held is drawn in is evened out across it, with the skin
+/// [`EVEN_MARGIN`] edges round it, since a distance from a ragged line has a ridge
+/// down every notch in it that a draw following it would crease along. Evened as
+/// a draw rather than a share, a tongue of the neck reaching down the breast
+/// between the trunk's skin is drawn in no deeper than the skin all round it,
+/// where as a share it kept the fade's own, a pit at the foot of the notch.
+/// Wherever the fade alone stays well under the slope - every body with a neck to
+/// speak of - the share is the fade's to the bit.
+///
+/// **And the slope gives way to the head (#392).** `shares` is each vertex's share
+/// of the head's own shaping: as that takes a vertex over the cap eases off, gone
+/// once the head holds a third of it ([`HEAD_TAKES`]), so a head sitting straight on its
+/// trunk, an owl's, has its skin drawn by the fade the head's rays were laid out
+/// against, and the skin under its chin no more turned inside out than that left
+/// it. On a small head over a deep chest the same is what keeps the flare from
+/// meeting the neck in a ring of pleats.
+fn loose(mesh: &PolyMesh, carrying: &[bool], head: &BeastHead, shares: &[f32]) -> Vec<f32> {
     let free: Vec<bool> = mesh
         .positions
         .iter()
@@ -461,8 +488,132 @@ fn loose(mesh: &PolyMesh, carrying: &[bool], head: &BeastHead) -> Vec<f32> {
             carries || head.carried(raw) == raw
         })
         .collect();
-    fade(mesh, &free, HOLD * head.radius)
+    let hold = HOLD * head.radius;
+    let pulls: Vec<f32> = mesh
+        .positions
+        .iter()
+        .map(|&point| {
+            let raw = head.local(point);
+            head.carried(raw).distance(raw)
+        })
+        .collect();
+    let most = pulls.iter().copied().fold(0.0, f32::max);
+    let along = along_surface(mesh, &free, hold.max(2.0 * most / STEEPEST));
+    let faded: Vec<f32> = along
+        .iter()
+        .map(|&distance| smooth(distance / hold))
+        .collect();
+    // How much of each vertex the head's own fade has taken over, by when the cap
+    // gives way to the fade.
+    let headed: Vec<f32> = shares
+        .iter()
+        .map(|&share| (share * HEAD_TAKES).min(1.0))
+        .collect();
+    let mut held = vec![false; mesh.vertex_count()];
+    let mut loose: Vec<f32> = along
+        .iter()
+        .zip(&pulls)
+        .zip(&faded)
+        .zip(&headed)
+        .zip(&mut held)
+        .map(|((((&distance, &pull), &share), &headed), held)| {
+            // How far the skin may be drawn in this far from the trunk, eased into
+            // what the fade draws it so that nothing creases where one takes over.
+            let (wanted, most) = (pull * share, STEEPEST * distance);
+            let knee = 0.25 * (wanted + most);
+            if !distance.is_finite() || most - wanted >= knee || headed >= 1.0 {
+                return share;
+            }
+            *held = distance > 0.0;
+            let drawn = if wanted - most >= knee {
+                most
+            } else {
+                let lean = 0.5 + 0.5 * (most - wanted) / knee;
+                most + (wanted - most) * lean - knee * lean * (1.0 - lean)
+            };
+            drawn / pull
+        })
+        .collect();
+    if !held.contains(&true) {
+        return loose;
+    }
+    let mut neighbours: Vec<Vec<u32>> = vec![Vec::new(); mesh.vertex_count()];
+    for face in &mesh.faces {
+        for corner in 0..face.len() {
+            let (a, b) = (face[corner], face[(corner + 1) % face.len()]);
+            neighbours[a as usize].push(b);
+            neighbours[b as usize].push(a);
+        }
+    }
+    // With the neck's skin below it that the run draws in less, so that a tongue
+    // of the neck reaching down between the trunk's skin is evened out to its tip
+    // rather than ending in skin the fade alone draws deeper than all round it.
+    // Never a corner of the trunk's faces, whose fade off the trunk starts level,
+    // nor up the run, where the draw is the run's own and evening it would dent it.
+    for _ in 0..EVEN_MARGIN {
+        let was = held.clone();
+        for (vertex, near) in neighbours.iter().enumerate() {
+            held[vertex] |= carrying[vertex]
+                && pulls[vertex] > 0.0
+                && along[vertex] > 0.0
+                && along[vertex].is_finite()
+                && headed[vertex] < 1.0
+                && near.iter().all(|&other| carrying[other as usize])
+                && near
+                    .iter()
+                    .any(|&other| was[other as usize] && pulls[vertex] < pulls[other as usize]);
+        }
+    }
+    // Evened out as a draw rather than a share, what is held has no ridge and no
+    // pit, and whatever is not held is left alone.
+    let mut draws: Vec<f32> = loose.iter().zip(&pulls).map(|(&s, &p)| s * p).collect();
+    for _ in 0..EVEN_PASSES {
+        let was = draws.clone();
+        for (vertex, near) in neighbours.iter().enumerate() {
+            if held[vertex] {
+                // Each neighbour by how near it is, as the mesh is finer by the neck.
+                let at = mesh.positions[vertex];
+                let (mut sum, mut weight) = (0.0, 0.0);
+                for &other in near {
+                    let near = 1.0 / at.distance(mesh.positions[other as usize]).max(1.0e-6);
+                    sum += was[other as usize] * near;
+                    weight += near;
+                }
+                draws[vertex] = sum / weight;
+            }
+        }
+    }
+    for vertex in 0..loose.len() {
+        if held[vertex] {
+            loose[vertex] = (draws[vertex] / pulls[vertex]).min(1.0);
+        }
+        // Given way to the fade as the head takes the vertex over.
+        loose[vertex] += (faded[vertex] - loose[vertex]) * headed[vertex];
+    }
+    loose
 }
+
+/// How many times [`loose`] evens out the draw it holds to [`STEEPEST`] (#392).
+/// Provenance: **tuned by render** (#392): a pit stayed at the foot of the notch
+/// down a deep chest's breast with none, and was gone at forty.
+const EVEN_PASSES: usize = 40;
+
+/// How many edges down the run past what [`loose`] holds to [`STEEPEST`] it evens
+/// out too. Provenance: **tuned by render** (#392): held alone, a small-headed
+/// cat's breast kept a narrow pit where the neck reaches down between the trunk's
+/// skin, the vertex below drawn in by the fade alone, deeper than all round it; at
+/// one edge the tip of the pit stayed, at two it was gone. Grown up the run too,
+/// a crest dented where the run draws its neck in hardest, and grown onto the
+/// trunk's faces, the default cat's bent by 42 degrees against 28.
+const EVEN_MARGIN: usize = 2;
+
+/// How soon, as the head's own fade takes a vertex over, [`loose`]'s cap gives way
+/// to the plain fade: all of it once the head holds a third. Provenance: **tuned
+/// against the inward-face census** (#392): on the owl whose head sits straight on
+/// its trunk (winged roll 88), the cap's reach lies inside the head's fade, and
+/// held there it turned 316 faces under the chin inside out against 276 without
+/// it; given way all at once at the head's share, 280; by a third, 268.
+const HEAD_TAKES: f32 = 3.0;
 
 /// How far along the surface, in head radii, the neck's skin takes to leave the
 /// trunk's where the run reaches over the trunk: four centimetres on a cat's
@@ -471,6 +622,12 @@ fn loose(mesh: &PolyMesh, carrying: &[bool], head: &BeastHead) -> Vec<f32> {
 /// Provenance: **tuned by render** (#396): a quarter left dark flecks on the
 /// flanks of a deep chest, and a whole radius a dimple under its neck.
 const HOLD: f32 = 0.5;
+
+/// How steeply, in metres per metre of skin, [`loose`] lets the neck be drawn in from
+/// the trunk it leaves (#392): [`HOLD`]'s own steepest for a pull of a third of a
+/// head radius, eased in from a fifth. Provenance: **tuned by render** (#392): at a
+/// metre per metre, eased in over less, the V down a deep chest's breast stayed.
+const STEEPEST: f32 = 0.75;
 
 /// Whether each vertex is the head's, asked of the rig as `skull::shape`
 /// asks it: the neck runs up into the same space, and a throat shaped as a
@@ -550,6 +707,15 @@ fn refine(mesh: &PolyMesh, rig: &Rig, head: &BeastHead) -> PolyMesh {
 /// a vertex on the far side of the jaw from the throat is not faded for being
 /// near it through the head.
 pub(crate) fn fade(mesh: &PolyMesh, owned: &[bool], reach: f32) -> Vec<f32> {
+    along_surface(mesh, owned, reach)
+        .iter()
+        .map(|&distance| smooth(distance / reach))
+        .collect()
+}
+
+/// How far each vertex is along the mesh's edges from the nearest vertex that is not
+/// `owned`: read out to `reach`, and infinite past it.
+fn along_surface(mesh: &PolyMesh, owned: &[bool], reach: f32) -> Vec<f32> {
     let mut neighbours: Vec<Vec<u32>> = vec![Vec::new(); mesh.vertex_count()];
     for face in &mesh.faces {
         for corner in 0..face.len() {
@@ -581,9 +747,6 @@ pub(crate) fn fade(mesh: &PolyMesh, owned: &[bool], reach: f32) -> Vec<f32> {
         }
     }
     along
-        .iter()
-        .map(|&distance| smooth(distance / reach))
-        .collect()
 }
 
 #[cfg(test)]
@@ -898,10 +1061,13 @@ mod tests {
     }
 
     /// See [`the_throat_does_not_fold_as_the_neck_rises`]. Set after reading
-    /// `throat_table`: the worst is .0171, a cat at the top of the sweep. Any one
-    /// of the cast, [`unfold`] and the straightened columns undone comes over this,
-    /// at .0225, .0236 and .0288.
-    const SWEPT_AREA: f32 = 0.022;
+    /// `throat_table`: the worst is .0094, a cat at the top of the sweep, whose crook
+    /// still folds (see [`CAT_CROOK`]); the others stay under .0003. Before a vertex
+    /// nearer the run was cast out of the run's own wall (#408) the worst was .0191,
+    /// and the dog, the horse and the cross read .011 to .014. Any one of the cast,
+    /// [`unfold`] and the straightened columns undone came over .022, at .0225, .0236
+    /// and .0288.
+    const SWEPT_AREA: f32 = 0.012;
 
     /// What the atlas does to the skin of one face of a chart: the stretch, the
     /// density it keeps, and the face's area. `None` for a face with no area.
@@ -1099,18 +1265,18 @@ mod tests {
     }
 
     /// See [`a_beast_s_head_and_breast_are_charted_evenly`]. Set after reading
-    /// `throat_table`: a head's worst tenth is 5.45, and a chest's worst hundredth
-    /// 19.2, on a dog. A head's worst hundredth is 8.68 on a rolled beast and 6.3 on
-    /// a swept one up to a carriage of 1; past that the head lies against the neck,
-    /// and the crook between them reaches 55 on a cross carried at 1.2, as a neck's
-    /// worst tenth reaches 15.2 there. A neck's worst hundredth is 36.2, on a roll.
-    /// None of that crook shows on the surface at those carriages.
-    const HEAD_TENTH: f32 = 6.0;
+    /// `throat_table`: a head's worst tenth is 2.77, and a chest's worst hundredth
+    /// 16.6, on a dog. A head's worst hundredth is 8.68 on a rolled beast and 6.3 on
+    /// a swept one; a neck's worst tenth is 2.69 and its worst hundredth 3.88. Before
+    /// a vertex nearer the run was cast out of the run's own wall (#408), the throat's
+    /// skin was drawn out under the muzzle on a neck carried high, and the head's
+    /// worst tenth read 5.45 there, its worst hundredth 55, and a neck's 15.2 and 31.
+    const HEAD_TENTH: f32 = 3.5;
     const HEAD_ROLLED_HUNDREDTH: f32 = 10.0;
-    const HEAD_SWEPT_HUNDREDTH: f32 = 60.0;
+    const HEAD_SWEPT_HUNDREDTH: f32 = 8.0;
     const CHEST_HUNDREDTH: f32 = 22.0;
-    const NECK_TENTH: f32 = 17.0;
-    const NECK_HUNDREDTH: f32 = 40.0;
+    const NECK_TENTH: f32 = 3.5;
+    const NECK_HUNDREDTH: f32 = 5.0;
 
     #[test]
     fn the_upper_neck_is_charted_evenly() {
@@ -1136,16 +1302,18 @@ mod tests {
     }
 
     /// See [`the_upper_neck_is_charted_evenly`]. Set after reading `throat_table`:
-    /// the worst stretch is 3.24 and the thinnest .805 of its median.
+    /// the worst stretch is 3.23, on seed 14, but for the roll below, and the thinnest
+    /// .802 of its median.
     const UPPER_STRETCH: f32 = 4.0;
     const UPPER_THIN: f32 = 0.6;
-    /// The one roll held to a bound of its own (#396). Its run draws the cage in
-    /// by about 5 cm where the neck leaves the shoulder, and since the draw fades
-    /// in from the trunk skin it reaches over, one face there, about 5 mm across,
-    /// lies edge-on in this chart: 9.93 to one, where the next worst roll reads
-    /// 3.10, with no streak in its albedo. #392's shelf is the same squeeze.
+    /// The one roll held to a bound of its own (#396). Its run draws the cage in by
+    /// about 5 cm where the neck leaves the shoulder, and one face there, about 5 mm
+    /// across, lies nearly edge-on in this chart, with no streak in its albedo: 9.93
+    /// to one drawn in over [`HOLD`] alone, 3.56 held to [`STEEPEST`] (#392) with the
+    /// shares evened, and 4.10 with the draw evened, which keeps a deep breast free of
+    /// a pit; no number of passes brings it under 4.0.
     const SQUEEZED_ROLL: i64 = 94;
-    const SQUEEZED_STRETCH: f32 = 12.0;
+    const SQUEEZED_STRETCH: f32 = 4.5;
 
     /// The faces of `shaped` that are the head's outright and face inward,
     /// against the drawn surface's outward normal at their centres (#371),
@@ -1236,6 +1404,160 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn the_throat_is_not_drawn_out_under_the_muzzle_as_the_neck_rises() {
+        // From a carriage of about .9 up, a ray cast from the run's line forward
+        // through the throat passed under the jaw and rose into it near the nose,
+        // and taken there it drew the throat's skin out under the muzzle: 100 and 96
+        // faces inside out on the two rolled beasts it was found on, 52 to 122 on the
+        // dog, the horse and the cross over the top of the sweep, all hidden by the
+        // jaw (#408). Each body carries the most it may still fold: see the bounds
+        // for the cat and for the two corners of the head's sliders.
+        use crate::plan::Family;
+        let mut bodies: Vec<(String, usize, crate::AvatarRecord)> = [211, 258]
+            .map(|seed| (format!("seed {seed}"), 0, rolled(seed)))
+            .into();
+        for (name, record) in carriage_bodies() {
+            for carriage in carriage_sweep() {
+                let most = if name == "cat" && carriage >= 1200 {
+                    CAT_CROOK
+                } else {
+                    0
+                };
+                bodies.push((
+                    format!("{name} at {carriage}"),
+                    most,
+                    with_carriage(&record, carriage),
+                ));
+            }
+        }
+        let corners = [
+            (
+                "dog, muzzle -3",
+                Family::Dog,
+                -3.0,
+                0.0,
+                1200,
+                SHORT_MUZZLE_CROOK,
+            ),
+            (
+                "cat, head -3",
+                Family::Cat,
+                0.0,
+                -3.0,
+                1100,
+                SMALL_HEAD_CROOK,
+            ),
+        ];
+        for (name, family, muzzle_length, head_size, from, crook) in corners {
+            let mut params = QuadrupedParams::default();
+            params.set_kind(family, None, 0.5);
+            params.muzzle_length = muzzle_length;
+            params.head_size = head_size;
+            let record = crate::AvatarRecord::new("Beast", crate::Archetype::Quadruped(params));
+            for carriage in carriage_sweep() {
+                let most = if carriage >= from { crook } else { 0 };
+                bodies.push((
+                    format!("{name} at {carriage}"),
+                    most,
+                    with_carriage(&record, carriage),
+                ));
+            }
+        }
+        let rows = across((0..bodies.len() as i64).collect(), |index| {
+            let (refined, shaped, rig, head) = based(&bodies[index as usize].2);
+            inside_out(&shaped, &refined, &rig, &head)
+        });
+        for ((name, most, _), (folded, _, at)) in bodies.iter().zip(rows) {
+            assert!(folded <= *most, "{name}: {folded} inside out at {at:.2?}");
+        }
+    }
+
+    /// See [`the_throat_is_not_drawn_out_under_the_muzzle_as_the_neck_rises`]: what
+    /// is left, on a cat carried from 1.2 up, a slider's corner no cat rolls near
+    /// (they roll about -.5). 2 faces at 1.2 and 62 to 70 from 1.25, at about (.56,
+    /// -.88, .38) head radii, in the crook proper between the throat and the run,
+    /// inside both, where the rays from either line lie along the crease; [`unfold`]
+    /// does not even it out at ten times its passes. It was there before #408 too,
+    /// 82 and 90 at 1.25 and 1.3.
+    const CAT_CROOK: usize = 72;
+
+    /// The same crook at two corners of the head's sliders, carried from where the
+    /// fold starts (#408 left these lower but not gone, and turned none of them
+    /// inside out that were not before): the dog's shortest muzzle folds 94 to 114
+    /// faces from a carriage of 1.2 (102 to 128 before #408), and the cat's smallest
+    /// head 4 at 1.1 and 58 to 108 from 1.2 (66, and 106 to 136, before). A short
+    /// muzzle folds on every family, the horse's most, 68 at 1.1 and 118 to 160 from
+    /// 1.2, as #408 left it; a small head on the cat above all, the others reading 18
+    /// at most.
+    const SHORT_MUZZLE_CROOK: usize = 120;
+    const SMALL_HEAD_CROOK: usize = 112;
+
+    #[test]
+    fn a_head_on_its_trunk_has_no_more_of_its_chin_turned_inside_out() {
+        // A winged head sits on its trunk with barely a neck, and the cap on how
+        // steeply the neck is drawn off the trunk (#392) reached into the head's own
+        // fade there: held, it turned 316 faces under the owl's chin inside out on
+        // winged roll 88, where 276 had been, and 76 on rolls 64 and 136 against 74.
+        // No winged roll may turn more than it did before the cap. See the table.
+        let rows = across((0..WINGED_ROLLS).collect(), |seed| {
+            let record = crate::AvatarRecord::rolled(
+                "Winged",
+                crate::Archetype::Winged(crate::plan::WingedParams::default()),
+                seed,
+            );
+            let (refined, shaped, rig, head) = based(&record);
+            inside_out(&shaped, &refined, &rig, &head)
+        });
+        for (seed, (folded, _, at)) in (0..WINGED_ROLLS).zip(rows) {
+            let most = WINGED_FOLDED
+                .iter()
+                .find(|&&(rolled, _)| rolled == seed)
+                .map_or(0, |&(_, most)| most);
+            assert!(
+                folded <= most,
+                "winged roll {seed}: {folded} inside out, against {most}, at {:.2?}",
+                &at[..at.len().min(4)]
+            );
+        }
+    }
+
+    /// How many winged rolls
+    /// [`a_head_on_its_trunk_has_no_more_of_its_chin_turned_inside_out`] reads.
+    const WINGED_ROLLS: i64 = 150;
+
+    /// The winged rolls whose heads are turned inside out somewhere as they were before
+    /// the cap (version 0.24.3), with how many faces each; every other roll has none.
+    /// Under the chin and the facial disc, where the head meets the trunk with no neck
+    /// between: a winged head's own, which #392 leaves as it found it but for roll 88,
+    /// 268 since the cap gives way to the head, and roll 7, 176.
+    const WINGED_FOLDED: [(i64, usize); 24] = [
+        (7, 178),
+        (23, 84),
+        (25, 64),
+        (33, 148),
+        (34, 148),
+        (36, 154),
+        (46, 90),
+        (57, 136),
+        (64, 74),
+        (73, 214),
+        (84, 94),
+        (88, 276),
+        (106, 154),
+        (111, 168),
+        (121, 16),
+        (126, 40),
+        (127, 104),
+        (129, 194),
+        (130, 16),
+        (133, 130),
+        (134, 70),
+        (136, 74),
+        (140, 12),
+        (146, 30),
+    ];
 
     // ---- The back of the head and the join (#388).
 
@@ -1406,18 +1728,25 @@ mod tests {
     fn the_neck_grows_into_the_head_without_a_step() {
         // Between neighbouring sections, three tenths of a head radius apart,
         // in head radii. Bound set after reading `nape_table`: the worst of
-        // the sized neck is 0.43, on a cat's small head where the run meets
-        // the chest; the cage's neck stepped 0.43 to 0.74 at a horse's jowl.
+        // the sized neck is 0.40, at a cross's jowl; the cage's neck stepped
+        // 0.43 to 0.74 at a horse's jowl. The lowest pair of sections, where
+        // the run meets the chest, has its own bound: see it.
         // A dog's or a cat's cage neck stepped less, 0.23: it pinched rather
         // than stepped, which the next test catches. **A number on the mesh,
         // not a proof of how it looks.**
         for (name, params) in heads() {
             let (head, sections, _) = drawn_sections(&params);
-            for pair in sections.windows(2) {
-                let step = (pair[0] - pair[1]).abs().max_element() / head.radius;
+            let lowest = sections.len() - 2;
+            for (pair, sections) in sections.windows(2).enumerate() {
+                let step = (sections[0] - sections[1]).abs().max_element() / head.radius;
+                let most = if pair == lowest {
+                    LOWEST_STEP
+                } else {
+                    NECK_STEP
+                };
                 assert!(
-                    step < NECK_STEP,
-                    "{name}: a step of {step:.2} radii in {sections:?}"
+                    step < most,
+                    "{name}: a step of {step:.2} radii at pair {pair} in {sections:?}"
                 );
             }
         }
@@ -1425,6 +1754,13 @@ mod tests {
 
     /// See [`the_neck_grows_into_the_head_without_a_step`].
     const NECK_STEP: f32 = 0.45;
+
+    /// The same between the two lowest sections, which on a cat's small head read the
+    /// chest the neck flares into since #392 rather than the neck: 0.52 there, on a
+    /// cat with a head of -1.5 and an appeal of .5, whose steps down that pair were
+    /// .12, .33 and .52 against .09, .28 and .43 when it stood on a shelf. No other
+    /// body's lowest pair reads over 0.42.
+    const LOWEST_STEP: f32 = 0.55;
 
     #[test]
     fn the_neck_at_the_head_is_sized_by_the_head() {
@@ -1937,10 +2273,156 @@ mod tests {
     const BASE_BENT: f32 = 45.0;
     const BASE_STEP: f32 = 0.5;
 
-    /// The same, for the short neck off the deep chest, where the run draws the
-    /// chest in by five centimetres over a few of its own: 70 degrees and 1.07
-    /// edges, against 174 and 8.3 before #396. What is left is the run's own fade
-    /// across the chest (#392).
-    const DEEP_BENT: f32 = 90.0;
+    /// The same, for the short neck off the deep chest, where the run would draw the
+    /// chest in by six centimetres over a few of its own: 46 degrees and 1.01 edges,
+    /// against 70 and 1.07 before #392 and 174 and 8.3 before #396.
+    const DEEP_BENT: f32 = 55.0;
     const DEEP_STEP: f32 = 1.5;
+
+    // ---- The neck off a deep chest (#392).
+
+    /// How steeply, at worst, the shaping draws in the neck below its joint: over
+    /// every edge of the refined mesh there, how much the two ends move apart, by the
+    /// edge's length. A slope the skin is drawn in at.
+    fn steepest_draw(record: &crate::AvatarRecord) -> f32 {
+        let (refined, shaped, _, head) = based(record);
+        let knee = head.nape.expect("a run").knee;
+        let moved = |vertex: usize| shaped.positions[vertex] - refined.positions[vertex];
+        let mut steepest: f32 = 0.0;
+        for face in &refined.faces {
+            for corner in 0..face.len() {
+                let (a, b) = (
+                    face[corner] as usize,
+                    face[(corner + 1) % face.len()] as usize,
+                );
+                let below = |vertex: usize| {
+                    head.along_nape(head.local(refined.positions[vertex]))
+                        .is_some_and(|along| along < knee)
+                };
+                if below(a) && below(b) {
+                    let edge = refined.positions[a].distance(refined.positions[b]);
+                    steepest = steepest.max((moved(a) - moved(b)).length() / edge);
+                }
+            }
+        }
+        steepest
+    }
+
+    #[test]
+    fn a_short_neck_off_a_deep_chest_flares_into_it_rather_than_standing_on_a_shelf() {
+        // The short neck off the deep chest the shelf was found on, and the roll whose
+        // neck left its shoulder at a knob from the same squeeze. See the bound.
+        let mut deep = QuadrupedParams::default();
+        deep.set_kind(crate::plan::Family::Cat, None, 0.0);
+        deep.neck_length = -3.0;
+        deep.chest_depth = 3.0;
+        let bodies = [
+            (
+                "the deep chest",
+                crate::AvatarRecord::new("Beast", crate::Archetype::Quadruped(deep)),
+            ),
+            ("seed 94", rolled(94)),
+        ];
+        for (name, record) in bodies {
+            let steepest = steepest_draw(&record);
+            assert!(
+                steepest < DRAWN_STEEPEST,
+                "{name}: the neck is drawn in at {steepest} metres per metre"
+            );
+        }
+    }
+
+    /// See [`a_short_neck_off_a_deep_chest_flares_into_it_rather_than_standing_on_a_shelf`].
+    /// Set after reading the two bodies: 1.59 on the deep chest and 1.39 on seed 94,
+    /// against 2.81 and 1.97 before #392 (1.43 and 1.47 with the shares evened rather
+    /// than the draw). What is left is on the throat just under the neck joint,
+    /// across edges a fifteenth of a head radius long; a dog's, a horse's and a
+    /// cross's own read under .4, a cat's .97 at the same place (.72 with the shares
+    /// evened), with nothing in the render.
+    const DRAWN_STEEPEST: f32 = 1.7;
+
+    /// How deep, at worst, the shaping sinks a vertex of the throat's side of the neck
+    /// below its joint beneath the skin round it: how much further it is drawn in than
+    /// its neighbours are, on the average weighted by nearness, by its mean edge. A
+    /// groove or a pit in the draw, which the trunk's skin beside it does not share.
+    fn deepest_groove(record: &crate::AvatarRecord) -> f32 {
+        let (refined, shaped, _, head) = based(record);
+        let knee = head.nape.expect("a run").knee;
+        let mut neighbours: Vec<Vec<u32>> = vec![Vec::new(); refined.vertex_count()];
+        for face in &refined.faces {
+            for corner in 0..face.len() {
+                let (a, b) = (face[corner], face[(corner + 1) % face.len()]);
+                if !neighbours[a as usize].contains(&b) {
+                    neighbours[a as usize].push(b);
+                    neighbours[b as usize].push(a);
+                }
+            }
+        }
+        let drawn = |vertex: usize| shaped.positions[vertex].distance(refined.positions[vertex]);
+        let mut deepest: f32 = 0.0;
+        for (vertex, near) in neighbours.iter().enumerate() {
+            let raw = head.local(refined.positions[vertex]);
+            // Drawn up toward the run's line: the throat's side, not the crest's.
+            if drawn(vertex) == 0.0
+                || !head.along_nape(raw).is_some_and(|along| along < knee)
+                || (head.carried(raw) - raw).y <= 0.0
+            {
+                continue;
+            }
+            let at = refined.positions[vertex];
+            let (mut sum, mut weight, mut edges) = (0.0, 0.0, 0.0);
+            for &other in near {
+                let edge = at.distance(refined.positions[other as usize]);
+                sum += drawn(other as usize) / edge;
+                weight += 1.0 / edge;
+                edges += edge;
+            }
+            let mean_edge = edges / near.len() as f32;
+            deepest = deepest.max((drawn(vertex) - sum / weight) / mean_edge);
+        }
+        deepest
+    }
+
+    #[test]
+    fn a_neck_reaching_down_a_deep_breast_leaves_no_pit_in_it() {
+        // Where the trunk's line notches the neck, a tongue of the neck's skin reaches
+        // down the breast between the trunk's, which never moves. Held to a slope and
+        // evened as a share, the tongue's foot was drawn in by the fade alone and stood
+        // a dark pit on a small-headed cat's deep breast (#392). See the bound.
+        let mut small = QuadrupedParams::default();
+        small.set_kind(crate::plan::Family::Cat, None, 0.5);
+        small.head_size = -2.0;
+        small.appeal = 0.5;
+        small.neck_length = 0.0;
+        small.chest_depth = 3.0;
+        let mut deep = QuadrupedParams::default();
+        deep.set_kind(crate::plan::Family::Cat, None, 0.0);
+        deep.neck_length = -3.0;
+        deep.chest_depth = 3.0;
+        let bodies = [
+            (
+                "the small head",
+                crate::AvatarRecord::new("Beast", crate::Archetype::Quadruped(small)),
+            ),
+            (
+                "the deep chest",
+                crate::AvatarRecord::new("Beast", crate::Archetype::Quadruped(deep)),
+            ),
+            ("seed 226", rolled(226)),
+        ];
+        let rows = across((0..bodies.len() as i64).collect(), |index| {
+            deepest_groove(&bodies[index as usize].1)
+        });
+        for ((name, _), groove) in bodies.iter().zip(rows) {
+            assert!(groove < BREAST_GROOVE, "{name}: a groove of {groove}");
+        }
+    }
+
+    /// See [`a_neck_reaching_down_a_deep_breast_leaves_no_pit_in_it`]. Set after
+    /// reading the three bodies: .23 on the small head, .05 on the deep chest and .20
+    /// on seed 226, against .47, .23 and .33 with the shares evened, the pit plain on
+    /// the first and a dimple on the last. **Not a bound for every body**: elsewhere
+    /// the run's own shaping draws the throat's midline in under the head, reading
+    /// up to .5 on bodies no cap touches.
+    const BREAST_GROOVE: f32 = 0.3;
 }

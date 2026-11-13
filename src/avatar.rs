@@ -325,6 +325,22 @@ const SPREAD_CLEAR: [f32; 2] = [0.5, 1.0];
 /// the eye or in its socket.
 const EYE_MARGIN: f32 = 0.15;
 
+/// How far back toward where the cage first laid it a person's groin skin is
+/// bound, at most, in metres (#281): the hip pass's push on the surface, up to
+/// this.
+///
+/// **Measured, not argued**, by `the_crotch_stays_a_solid_in_motion`'s
+/// crossings over eight clips and eleven bodies. Bound where the push leaves
+/// it, a sprint, a kneel, a crouch and a sit all crossed more than before the
+/// push on some body; bound all the way back, a cross-legged sit on the heavy
+/// masculine corner crossed 1560 times against 1264 with no push at all. 10,
+/// 15 and 20 mm all sit between, and 15 is the one that leaves no clip on any
+/// of the eleven bodies more than one crossing a frame above that baseline.
+/// A length rather than a share of the push because the push grows with the
+/// body (up to 66 mm on the surface of the heaviest corner) and it is the
+/// heaviest bodies, bound back furthest, that crossed.
+const GROIN_BOUND_BACK: f32 = 0.015;
+
 /// A beast's fur ready to draw (#369): in body space already, and shaded by its own
 /// faces as the hair's draw is, unless it has a mane, whose solid carries the
 /// normals it is shaded by (#407). The near tier's and the far tier's alike.
@@ -493,8 +509,8 @@ impl Avatar {
         // the carve, the mouth cut and the built features all have to agree
         // about one mouth. See `FaceParams::on`.
         let face_params = record.face.on(&traits);
-        let mut body =
-            crate::build_body(&skeleton, &config.cage, config.subdivisions, &traits).ok()?;
+        let (mut body, pushed) =
+            crate::build_body_pushed(&skeleton, &config.cage, config.subdivisions, &traits).ok()?;
         let mut rig = Rig::from_skeleton(&skeleton).ok()?;
         // A swelled chest earns its own refinement pass, here because the
         // chest's traits are this function's and `build_body` knows only the
@@ -597,7 +613,25 @@ impl Avatar {
         let mut weights = {
             let mut on_the_wall = body.clone();
             on_the_wall.positions[..wall.len()].copy_from_slice(&wall);
-            skin::bind(&on_the_wall, &rig, &config.skin)
+            // **And the groin is bound back toward where the cage first laid
+            // it** (#281), by the hip pass's push, up to `GROIN_BOUND_BACK`.
+            // The pass carries the inner wall of each groin out along the hip
+            // socket's axis, into the thigh's reach: bound where it stands,
+            // its share went from about half thigh to nine tenths (seed 9,
+            // 0.46 to 0.87), and a raised knee swung that skin through the
+            // belly - the sliver at the inner groin in a sprint, the slit in
+            // a kneel. Bound all the way back, a deep cross-legged sit went
+            // the other way: the most-pushed skin (50 mm on the heavy
+            // masculine corner) came back nine tenths the pelvis's, and the
+            // thigh turning out swept through it. Which side of the body a
+            // vertex is ON is still read where it stands: on the narrowest
+            // hips the groin's skin started across the midline, and read
+            // there it would have been bound to the other leg.
+            let sides = on_the_wall.positions[..pushed.len()].to_vec();
+            for (at, push) in on_the_wall.positions.iter_mut().zip(&pushed) {
+                *at -= push.clamp_length_max(GROIN_BOUND_BACK);
+            }
+            skin::bind_sided(&on_the_wall, &sides, &rig, &config.skin)
         };
         // The seam's own vertices leave the field's blend: the parting's two
         // edges are coincident at rest, so the field hands them identical
@@ -829,7 +863,10 @@ impl Avatar {
             }
             inside
         };
-        let geometry = texture::bake(&body, &charts, &borrowed, &inside, config.atlas);
+        // And how much skin each texel spans, which the painter feathers a
+        // beard's edge by (#432).
+        let (geometry, footprints) =
+            texture::bake::bake_measured(&body, &charts, &borrowed, &inside, config.atlas);
         // A beast's palate (#367): the head's skin its shut jaw covers, which
         // an open one shows, tinted as the inside of a mouth. **By vertex,
         // not in the atlas**: the palate shares its chart with the cheek and
@@ -941,8 +978,9 @@ impl Avatar {
                     texture::coat::paint_coat(&geometry, &rig, &params.coat(), anatomy, None)
                 }
             }
-            _ => texture::paint_skin(
+            _ => texture::skin::paint_skin_with(
                 &geometry,
+                Some(&footprints),
                 &rig,
                 &complexion,
                 &texture::Condition::of(&record.composites),

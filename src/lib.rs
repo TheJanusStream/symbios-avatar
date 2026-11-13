@@ -292,8 +292,34 @@ pub fn build_body(
     subdivisions: usize,
     traits: &face::HeadTraits,
 ) -> Result<PolyMesh, CageError> {
-    let cage = build_cage(skeleton, config)?;
+    build_body_pushed(skeleton, config, subdivisions, traits).map(|(mesh, _)| mesh)
+}
+
+/// [`build_body`], handing back how far the cage's hip pass
+/// (`cage::limb::clear_sockets`) carried each of the surface's vertices as
+/// well: the cage's pushes, subdivided with the cage, so indexed like the
+/// subdivided surface. Empty on a body the pass moved nothing on.
+///
+/// Subdivision is linear in the cage's positions, so subdividing the pushes
+/// is exactly the difference the pass made to the subdivided surface. The
+/// refinements after it only append vertices and move none, and the shaping
+/// passes work on the head, the neck and the feet, so the first vertices keep
+/// their indices and the pushes still describe them.
+pub(crate) fn build_body_pushed(
+    skeleton: &Skeleton,
+    config: &CageConfig,
+    subdivisions: usize,
+    traits: &face::HeadTraits,
+) -> Result<(PolyMesh, Vec<Vec3>), CageError> {
+    let (cage, pushed) = cage::build_cage_pushed(skeleton, config)?;
     let mut mesh = catmull_clark(&cage, subdivisions);
+    let pushed = if pushed.iter().any(|push| *push != Vec3::ZERO) {
+        let mut field = cage.clone();
+        field.positions = pushed;
+        catmull_clark(&field, subdivisions).positions
+    } else {
+        Vec::new()
+    };
     if let Ok(rig) = Rig::from_skeleton(skeleton) {
         // Resolution first, then shape. `refine_face` only adds vertices and
         // moves none, so `shape_skull` maps all of them onto the skull together
@@ -340,7 +366,7 @@ pub fn build_body(
         // scales height about the ground the sole already stands on.
         extremity::foot::shape(&mut mesh, &rig);
     }
-    Ok(mesh)
+    Ok((mesh, pushed))
 }
 pub use texture::{AtlasGeometry, Condition, SkinParams, bake_geometry, paint_skin};
 pub use uv::{Chart, UvConfig, UvUnwrap, unwrap};
